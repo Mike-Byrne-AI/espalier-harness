@@ -371,7 +371,7 @@ then: git switch main && git pull --ff-only origin main`; when another session
 holds it, the remedy is to end that session first). Then each registered
 worktree under `.claude/worktrees/` is removed only when it is clean, merged
 into `origin/main`, holds no lock or a lock whose holder process has exited,
-has no plan in progress, no live session is in it, and every ignored file in
+no live session is in it, no other process works in it, and every ignored file in
 it is a cache, a build output or a regenerable report (`reports/`,
 `.espalier/`, `dist/`), a byte-identical copy of the root's (what
 `.worktreeinclude` copied in, the reports aside: they are regenerable, so a
@@ -396,7 +396,16 @@ line names the lanes and the release to run in the worktree. A seat whose
 claims cannot be read (the mail driver is deployed but does not import) is
 kept too; only a deploy without the mail driver reads as no claims.
 On Windows a folder a process holds open (a terminal or an editor in it)
-cannot be renamed, and the reaper keeps any folder that refuses a rename. A
+cannot be renamed, and the reaper keeps any folder that refuses a rename.
+Elsewhere a rename proves nothing, so the reaper reads which folder each
+process works in (the `/proc` cwd links, or one `lsof`) and keeps a folder any
+other process works in, a run left under `nohup` after its session ended
+among them (`a process works in it (pid 4242)`); a process table it could not
+read keeps every folder it reached, and a host with neither reader keeps
+none on that ground. A plan left in progress keeps a worktree with work in
+it, never a clean, merged one: that lane finished, so the worktree is
+removed, its plan saved with the rest of its `cc/` state, and the line says
+which (`x (its plan was never closed; the lane merged)`). A
 merged branch a removed worktree held is deleted. A `Worktrees:` line names
 what was removed, what was kept and why (`2 commit(s) not in main (lane/y)`,
 `a live Claude session is in it (pid 4242)`, `locked by hand`, `1 ignored file
@@ -2739,7 +2748,7 @@ inside a window of twenty.
 | `configchange_blocked_kill_switch` | refusal | a settings change that would arm a kill-switch is denied |
 | `configchange_blocked_unwired` | refusal | a project settings change that would unwire a governance gate the session runs is denied; `details.findings` names the gates |
 | `configchange_blocked_internal_error` | refusal | `config_guard` crashed and blocked the settings change fail-closed; `details.hook`, `details.error` as above |
-| `pretooluse_blocked_speed_bump` | pause | a speed-bump checkpoint fires once on a before-effect command (`git clean -f`, a force-push, a gate-weakening edit, a fetch piped straight into an interpreter on either shell); `details.checkpoint` names the checkpoint, and the re-issued command proceeds |
+| `pretooluse_blocked_speed_bump` | pause | a speed-bump checkpoint fires once on a before-effect command (`git clean -f`, a force-push, a gate-weakening edit, a fetch piped straight into an interpreter on either shell, a kill by pid of a run another checkout of this clone is working, read where a process's working directory can be read (macOS and Linux), or one under the box lock's holder for another seat, the one reading on Windows; a kill the nudge passes is not thereby your own run, since a process it cannot read passes too); `details.checkpoint` names the checkpoint, and the re-issued command proceeds |
 | `stop_blocked_pytest` | pause | Gate 1 blocked the Stop: the core test run, or the command Gate 1 runs as your suite (`ESPALIER_STOP_GATE_TEST_CMD`, the declared `[extra_actions] test`, or the detected command; `details.source` names which of the three: `env`, `espalier.toml`, `fingerprint`), failed, timed out or could not be started; `details.rule` names the case, `details.returncode` the exit code, and `details.error` the exception's class when the command never started |
 | `stop_blocked_docs_refresh` | pause | Gate 2 blocked the Stop: ten or more source writes and no docs refresh recorded (or a relief record that is not one); `details.rule` names the case, `details.write_count` the count |
 | `stop_blocked_code_review` | pause | Gate 3 blocked the Stop: ten or more source writes and no code review has run (or a relief record that is not one); `details.rule`, `details.write_count` as above |

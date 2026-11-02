@@ -1987,75 +1987,8 @@ class TestLooseProcessCheckout:
         mod._loose_processes_line(tmp_path, _LOOSE_TABLE)
         assert asked == [], "a call given a table reads no live cwd: a fixture pid can be a live one"
 
-    def test_the_lsof_arm_reads_its_output_whatever_the_exit_code(self, monkeypatch, tmp_path):
-        mod = _load()
-        monkeypatch.setattr(mod, "_PROC_ROOT", tmp_path / "no-proc")
-        monkeypatch.setattr(mod.shutil, "which", lambda name, path=None: "/usr/sbin/lsof")
-        seen = []
-
-        def lsof(argv, **kw):
-            seen.append((argv, kw.get("timeout")))
-            # Exit 1: one listed pid could not be read (pid 1 is root's); the
-            # rest still print, measured on macOS.
-            return subprocess.CompletedProcess(argv, 1, "p71609\nfcwd\nn/a/b c\np72404\nfcwd\nn/c\nwarning\n", "")
-
-        monkeypatch.setattr(mod._hook_utils, "run_bounded", lsof)
-        assert mod._read_process_cwds([71609, 72404, 1]) == {71609: "/a/b c", 72404: "/c"}
-        assert mod._parse_lsof_cwds("p\u00b2\nn/x\np7\nn/y\n") == {7: "/y"}, "a non-ASCII digit is no pid"
-        assert seen == [(["/usr/sbin/lsof", "-w", "-a", "-d", "cwd", "-p", "71609,72404,1", "-Fn"],
-                         mod._LOOSE_CWD_SECONDS)]
-        seen.clear()
-        assert mod._read_process_cwds([]) == {} and seen == [], "no pid: no spawn"
-        mod._read_process_cwds(list(range(100, 100 + mod._LOOSE_CWD_PID_CAP + 8)))
-        assert seen[0][0][6].split(",") == [str(p) for p in range(100, 100 + mod._LOOSE_CWD_PID_CAP)]
-
-    def test_the_lsof_arm_reads_nothing_when_lsof_cannot_answer(self, monkeypatch, tmp_path):
-        mod = _load()
-        monkeypatch.setattr(mod, "_PROC_ROOT", tmp_path / "no-proc")
-
-        def hung(argv, **kw):
-            raise subprocess.TimeoutExpired(argv, kw.get("timeout"))
-
-        monkeypatch.setattr(mod.shutil, "which", lambda name, path=None: "/usr/sbin/lsof")
-        monkeypatch.setattr(mod._hook_utils, "run_bounded", hung)
-        assert mod._read_process_cwds([4242]) == {}
-        monkeypatch.setattr(mod.shutil, "which", lambda name, path=None: None)
-        monkeypatch.setattr(mod._hook_utils, "run_bounded", lambda *a, **k: pytest.fail("spawned with no lsof"))
-        assert mod._read_process_cwds([4242]) == {}
-
-    def test_lsof_is_never_taken_from_the_checkout(self, monkeypatch, tmp_path):
-        """An empty or relative PATH entry is the hook's cwd, the checkout: a
-        file named `lsof` there would run at every session start."""
-        from tests._stubs import write_stub
-        mod = _load()
-        planted = write_stub(tmp_path / "lsof", "#!/bin/sh\nexit 0\n")
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr(mod, "_LSOF_FALLBACK_DIRS", ())
-        for path in ("", ":/nonexistent", ".", "relative/bin"):
-            monkeypatch.setenv("PATH", path)
-            assert mod._lsof_path() is None, path
-        monkeypatch.setenv("PATH", f":{tmp_path}")
-        assert mod._lsof_path() == str(planted), "an absolute entry still answers"
-
-    def test_the_proc_arm_reads_each_cwd_link_with_no_spawn(self, monkeypatch, tmp_path):
-        mod = _load()
-        proc = tmp_path / "proc"
-        (proc / "self").mkdir(parents=True)
-        os.symlink(str(tmp_path), proc / "self" / "cwd")
-        (proc / "4242").mkdir()
-        os.symlink("/a/b (deleted)", proc / "4242" / "cwd")
-        (proc / "4301").mkdir()   # no cwd link to read: another user's process, or gone
-        monkeypatch.setattr(mod, "_PROC_ROOT", proc)
-        monkeypatch.setattr(mod._hook_utils, "run_bounded", lambda *a, **k: pytest.fail("the /proc arm spawned"))
-        assert mod._read_process_cwds([4242, 4301]) == {4242: "/a/b (deleted)"}
-
-    def test_the_live_reader_finds_this_process_cwd(self):
-        """The one live drive: whichever arm this host takes reads a real pid."""
-        mod = _load()
-        got = mod._read_process_cwds([os.getpid()])
-        if not got and not (mod._PROC_ROOT / "self" / "cwd").exists() and not mod._lsof_path():
-            pytest.skip("this host has neither /proc cwd links nor lsof")
-        assert os.path.realpath(got[os.getpid()]) == os.path.realpath(os.getcwd())
+    # The reader's own rows (the lsof and /proc arms, the PATH rule, the live
+    # drive) moved with it to tests/test_checkout_sync.py::TestTheProcessReader.
 
 
 # ─── the /ship lane: the banner names the operator's open and unpulled PRs ──

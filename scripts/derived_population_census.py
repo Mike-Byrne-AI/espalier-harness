@@ -1539,6 +1539,16 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "so it self-enrols a new checkpoint. File stays MIXED for the pre-existing "
         "exact-set assertion at the git-regex axis.",
     ),
+    "tests/test_speedbump_kill.py": (
+        2, "ee9fc45dfd84f6128f9d2044204864e88b00ae7ad41702a39bd9bdda88ad88af",
+        "CORRECT_BY_PROPERTY",
+        "ADDED 2026-11-02 (DEF-4078, CP-KILL): both rows read `_speedbump.SPEEDBUMPS` to find "
+        "CP-KILL by its id, its position in the registry and its own fields (cap exempt, the "
+        "per-pid flag key, a per-fire body). A lookup of one named member, not a population "
+        "claim: a retired or renamed CP-KILL reds by StopIteration or ValueError, never "
+        "passes vacuously, and the registry's own shape is pinned one file over "
+        "(tests/test_speedbump_irreversible.py, TestRegistryIntegration).",
+    ),
     "tests/test_speedbump_metacognitive.py": (
         5, "5d718547ff74de90543b152f8f1091c53dbf58bd37869e5e2438bab178a704b0",
         "MIXED_WITH_PRIOR_PASS",

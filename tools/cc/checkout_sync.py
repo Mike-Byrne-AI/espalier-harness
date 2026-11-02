@@ -29,11 +29,13 @@ Two jobs, each touching nothing unless every safety condition holds:
   of its own, or a branch whose remote still exists is named, never moved.
 * :func:`reap_worktrees` -- a registered worktree under ``.claude/worktrees/``
   is removed only when it is clean, its HEAD is in ``origin/<default>``, any
-  lock names a dead pid, no plan in it is in progress, every ignored file in
-  it is a cache, a byte-identical copy of the root's, or session state saved
-  first, no seat named for the worktree alone still holds a live claim on the
-  mail channel (only that name can release it), and **no live session is in
-  it**. Liveness reads Claude Code's own
+  lock names a dead pid, every ignored file in it is a cache, a
+  byte-identical copy of the root's, or session state saved first, no seat
+  named for the worktree alone still holds a live claim on the mail channel
+  (only that name can release it), no process works in it, and **no live
+  session is in it**. A plan still open in it keeps a worktree with work in
+  it, never a clean, merged one: that lane finished, and the removal names
+  the plan that was never closed (DEF-4047). Liveness reads Claude Code's own
   session registry (``~/.claude/sessions/<pid>.json``, and the same under
   ``$CLAUDE_CONFIG_DIR``), whose entries carry each running session's
   ``cwd``: an idle session leaves no file-write trace, so a recency scan
@@ -403,13 +405,13 @@ def _pid_alive_windows(pid: int) -> bool | None:
         return None
 
 
-def _parent_map() -> dict[int, int]:
+def _parent_map(timeout: float = GIT_CAP_S) -> dict[int, int]:
     """pid -> parent pid for every process on the host, in one read; {} when
     the table cannot be read. Windows: a Toolhelp32 snapshot (no spawn);
-    elsewhere: one ``ps``."""
+    elsewhere: one ``ps``, killed at ``timeout``."""
     if os.name == "nt":
         return _parent_map_windows()
-    r = run(["ps", "-A", "-o", "pid=,ppid="], cwd=Path.cwd(), timeout=GIT_CAP_S)
+    r = run(["ps", "-A", "-o", "pid=,ppid="], cwd=Path(os.path.abspath("/")), timeout=timeout)
     table: dict[int, int] = {}
     if r is None or r.returncode != 0:
         return table
@@ -474,6 +476,151 @@ def ancestor_pids(depth: int = 8) -> list[int]:
         found.append(parent)
         pid = parent
     return found
+
+
+def ancestors_of(pid: int, table: dict[int, int] | None = None, depth: int = 8) -> list[int]:
+    """``pid``'s ancestors, nearest first, up to ``depth`` levels, from one
+    read of the process table (``table`` when the caller holds one); [] when
+    it cannot be read."""
+    table = _parent_map() if table is None else table
+    found: list[int] = []
+    seen = {pid}
+    for _ in range(depth):
+        parent = table.get(pid)
+        if not parent or parent in seen:
+            break
+        found.append(parent)
+        seen.add(parent)
+        pid = parent
+    return found
+
+
+# -- whose process is it (DEF-4070, DEF-4078, DEF-4079) ---------------------------
+#
+# Seats on one box share one process table, and a run a seat detached on
+# purpose (a tier leg under nohup, the fresh-clone gate) is a process with no
+# session in it: on 2026-10-31 one seat ended another's tier, read from the
+# table as a stray of its own. This is the one reader of where a process
+# works, for the SessionStart `Loose:` line, the CP-KILL speed bump and
+# :func:`held_open`: the `/proc/<pid>/cwd` links where the host has them (no
+# spawn), else one `lsof` (10 ms for a few pids, about 30 ms for every
+# process on macOS, measured 2026-11-02; it exits 1 when any process cannot
+# be read and still prints the rest, so its output is read whatever the exit
+# code). Windows has neither, and nothing is read there.
+_PROC_ROOT = Path("/proc")
+CWD_PID_CAP = 32        # pids read by name in one call
+CWD_READ_S = 2.0        # one lsof, killed at this
+# `lsof` sits in an sbin directory on macOS, which a hook's PATH can leave out.
+_LSOF_FALLBACK_DIRS = ("/usr/sbin", "/usr/bin", "/sbin")
+
+
+def lsof_path() -> str | None:
+    """`lsof` from the absolute PATH entries and the fallbacks alone: an empty
+    or relative entry is the caller's cwd (a hook's is the checkout), where a
+    file named `lsof` would otherwise run."""
+    dirs = [d for d in os.environ.get("PATH", "").split(os.pathsep) if os.path.isabs(d)]
+    found = shutil.which("lsof", path=os.pathsep.join([*dirs, *_LSOF_FALLBACK_DIRS]))
+    return found if found is not None and os.path.isabs(found) else None
+
+
+def parse_lsof_cwds(text: str) -> dict[int, str]:
+    """``{pid: cwd}`` from `lsof -Fn` output (``p<pid>``, ``fcwd``, ``n<path>``
+    lines); a line of any other shape is skipped."""
+    found: dict[int, str] = {}
+    pid: int | None = None
+    for line in text.splitlines():
+        if line[:1] == "p" and line[1:].isascii() and line[1:].isdigit():
+            pid = int(line[1:])
+        elif line[:1] == "n" and pid is not None and pid not in found:
+            found[pid] = line[1:]
+    return found
+
+
+def process_cwds(pids: list[int] | None = None, *, timeout: float = CWD_READ_S) -> dict[int, str] | None:
+    """The working directory of each process that can be read, by pid: the
+    first `CWD_PID_CAP` of ``pids``, or every process this user can read when
+    ``pids`` is None. A pid missing from the result was not read (gone, or
+    another user's). {} where nothing is asked or the host has no reader
+    (Windows, or neither `/proc` cwd links nor `lsof`); None when the reader
+    ran and could not answer (`lsof` did not start, or outran ``timeout``), so
+    a caller that removes on an empty answer can tell "none" from "unread"."""
+    if pids is not None:
+        pids = pids[:CWD_PID_CAP]
+        if not pids:
+            return {}
+    if os.name != "posix":
+        return {}
+    if (_PROC_ROOT / "self" / "cwd").exists():
+        if pids is None:
+            try:
+                pids = [int(name) for name in os.listdir(_PROC_ROOT) if name.isascii() and name.isdigit()]
+            except OSError:  # fail-open: ok deliberate -- a /proc that cannot be listed is a reader that could not answer, and the caller is told so
+                return None
+        found: dict[int, str] = {}
+        for pid in pids:
+            try:
+                found[pid] = os.readlink(_PROC_ROOT / str(pid) / "cwd")
+            except OSError:  # fail-open: ok deliberate -- a link that cannot be read (gone, another user's) leaves that pid unread
+                continue
+        return found
+    lsof = lsof_path()
+    if lsof is None:
+        return {}
+    named = ["-p", ",".join(str(pid) for pid in pids)] if pids is not None else []
+    # From the filesystem root: lsof's own cwd is in the table it prints, and
+    # the caller's folder may be the very one being asked about.
+    result = run([lsof, "-w", "-a", "-d", "cwd", *named, "-Fn"], cwd=Path(os.path.abspath("/")), timeout=timeout)
+    if result is None:
+        return None
+    found = parse_lsof_cwds(result.stdout or "")
+    # An lsof that read nothing could not answer: a failed run prints nothing,
+    # and a read of every process lists one at least (lsof itself).
+    if not found and (result.returncode != 0 or pids is None):
+        return None
+    return found
+
+
+def cwd_checkout(cwd: str, checkouts: list[Path]) -> Path | None:
+    """The checkout of ``checkouts`` holding a process's working directory
+    (the deepest, :func:`checkout_of`), or None: outside them all, or a folder
+    since removed. Linux marks a removed folder's link ``(deleted)``; macOS
+    `lsof` prints its old path unmarked (measured), which would read as the
+    checkout around it, so a cwd that is no folder now is in none."""
+    if cwd.endswith(" (deleted)") or not os.path.isdir(cwd):
+        return None
+    return checkout_of(cwd, checkouts)
+
+
+def checkout_name(checkout: Path, checkouts: list[Path]) -> str:
+    """A checkout spelled as the board spells one: the main checkout, a
+    worktree's path under the main checkout's folder, or its own path."""
+    main = next((c for c in checkouts if (c / ".git").is_dir()), None)
+    if main is not None and (checkout / ".git").is_dir():
+        return "the main checkout"
+    try:
+        return checkout.resolve().relative_to(main.resolve()).as_posix() if main is not None else checkout.as_posix()
+    except (OSError, ValueError):   # a worktree outside the main checkout's folder: its own path
+        return checkout.as_posix()
+
+
+def pid_checkout(cwd: str, root: Path, checkouts: list[Path] | None = None) -> tuple[str, bool]:
+    """The clause a process's working directory earns, and whether it is in
+    ANOTHER checkout of this clone than ``root``: the deepest of
+    ``checkouts`` (default :func:`registered_checkouts`) holding it, named by
+    :func:`checkout_name` -- for ``root`` too, so a line naming it still reads
+    right copied into another window."""
+    if cwd.endswith(" (deleted)") or not os.path.isdir(cwd):
+        return "cwd deleted", False
+    places = list(checkouts) if checkouts is not None else (registered_checkouts(root) or [])
+    if not any(_norm(c) == _norm(root) for c in places):
+        places.append(root)
+    home = cwd_checkout(cwd, places)
+    if home is None:
+        return "cwd outside this clone's checkouts", False
+    where = checkout_name(home, places)
+    if _norm(home) == _norm(root):
+        return f"cwd in this checkout, {where}", False
+    return f"cwd in {where}, another checkout of this clone", True
 
 
 def claude_config_dirs() -> list[Path]:
@@ -900,9 +1047,16 @@ def lock_holder_dead(reason: str) -> bool:
     return held is not None and pid_alive(int(held.group(1))) is False
 
 
-def plan_in_progress(tree: Path) -> bool:
+def plan_in_progress(tree: Path, merged_and_clean: bool = False) -> bool:
     """``cc/execution_plan.json`` in ``tree`` reads ``in_progress``; an
-    unreadable one counts as in progress (keep, never guess)."""
+    unreadable one counts as in progress (keep, never guess). With
+    ``merged_and_clean`` (the reaper's reading of a worktree: nothing
+    uncommitted, no operation running, its HEAD in the default branch) no plan
+    is in progress: the lane merged, so a plan still open there was never
+    closed, and the work is finished whatever it says (DEF-4047: one kept the
+    work worktree for six days)."""
+    if merged_and_clean:
+        return False
     path = tree.joinpath(*_PLAN_REL)
     if not path.is_file():
         return False
@@ -1244,14 +1398,29 @@ def save_cc_state(root: Path, worktree: Path, files: list[str]) -> list[str]:
     return written
 
 
-def held_open(path: Path) -> str:
-    """'' when no process holds the folder; else why it stays. Windows only:
-    a folder that is some process's cwd (a terminal, an editor's watcher)
-    cannot be renamed, so a rename there and back is the probe; elsewhere a
-    rename succeeds under an open cwd and proves nothing, so '' (the registry
-    and markers are the only liveness there)."""
+def held_open(path: Path, cwds: Callable[[], dict[int, str] | None] | None = None) -> str:
+    """'' when no process holds the folder; else why it stays. On Windows a
+    folder that is some process's cwd (a terminal, an editor's watcher)
+    cannot be renamed, so a rename there and back is the probe. Elsewhere a
+    rename succeeds under an open cwd and proves nothing, so the process table
+    is read instead (``cwds``, the caller's one read, else
+    :func:`process_cwds`): a process other than this one whose working
+    directory is in the folder keeps it, named by pid -- a nohup'd run whose
+    session ended is no Claude session and leaves no marker (DEF-4079). A
+    table the reader could not read keeps it too; a host with no reader at
+    all (neither `/proc` cwd links nor `lsof`) reads nothing and keeps
+    nothing, as before."""
     if os.name != "nt":
-        return ""
+        table = cwds() if cwds is not None else process_cwds(None)
+        if table is None:
+            return "the process table could not be read, so a run in it cannot be ruled out"
+        mine = os.getpid()   # its own cwd is the caller's, judged by own_cwd
+        held = sorted(pid for pid, cwd in table.items() if pid != mine and within(cwd, path))
+        if not held:
+            return ""
+        if len(held) == 1:
+            return f"a process works in it (pid {held[0]})"
+        return f"{len(held)} processes work in it (pids {_names([str(pid) for pid in held])})"
     probe = path.with_name(path.name + ".in-use-probe")
     try:
         os.rename(path, probe)
@@ -1316,6 +1485,16 @@ def reap_worktrees(root: Path, *, deadline: float | None = None,
     base = default_branch(git, remote)
     upstream = f"{remote}/{base}" if base else None
     outside_prunable = any("prunable" in b for b in blocks if b not in ours)
+    read: list[dict[int, str] | None] = []
+
+    def table_once() -> dict[int, str] | None:
+        # The process table, read at the first worktree that reaches its
+        # removal and kept for the rest (held_open; never on Windows, whose
+        # rename probe reads no table).
+        if not read:
+            read.append(process_cwds(None, timeout=max(MIN_SPAWN_S, _left(deadline, CWD_READ_S))))
+        return read[0]
+
     prune_these: list[str] = []
     for block in ours:
         path = Path(block["worktree"])
@@ -1335,13 +1514,22 @@ def reap_worktrees(root: Path, *, deadline: float | None = None,
         if reason:
             report.keep(path, reason)
             continue
+        # Named, since the banner said "a plan in it is still in progress" until now (DEF-4047).
+        named = path.name + (" (its plan was never closed; the lane merged)" if plan_in_progress(path) else "")
         if dry_run:
-            report.would_remove.append(path.name)
+            # Off Windows reading the table changes nothing, so a dry run reads
+            # it too (seat.py's list and retire show this verdict); Windows's
+            # probe renames the folder, which a dry run must not.
+            busy = held_open(path, table_once) if os.name != "nt" else ""
+            if busy:
+                report.keep(path, busy)
+            else:
+                report.would_remove.append(named)
             continue
         if _left(deadline, REMOVE_FLOOR_S) < REMOVE_FLOOR_S:
             report.deferred.append(path.name)
             continue
-        busy = held_open(path)
+        busy = held_open(path, table_once)
         if busy:
             report.keep(path, busy)
             continue
@@ -1374,7 +1562,7 @@ def reap_worktrees(root: Path, *, deadline: float | None = None,
             # process with the folder as its cwd holds it open.
             report.keep(path, "unregistered, but the folder could not be deleted (a process may have it open)")
             continue
-        report.removed.append(path.name)
+        report.removed.append(named)
         branch = block.get("branch", "")
         if branch.startswith("refs/heads/") and upstream:
             short = branch[len("refs/heads/"):]
@@ -1413,18 +1601,21 @@ def _why_kept(git: _Git, block: dict[str, str], path: Path, upstream: str | None
         return "its .git link is missing (`git worktree repair`, or remove the folder by hand)"
     if upstream is None:
         return "no default branch on origin to compare with"
-    if plan_in_progress(path):
-        return "a plan in it is still in progress"
     here = _Git(path, git.deadline, git.runner, git.spawner)
     status = here.out("status", "--porcelain")
+    mid = _mid_operation(here) if status == "" else None
+    head = block.get("HEAD", "")
+    merged = git.yes("merge-base", "--is-ancestor", head, upstream) if head and status == "" and not mid else None
+    # The plan is read beside the lane (DEF-4047): an open plan keeps a tree
+    # with work in it, never a merged, clean one, whose plan was never closed.
+    if plan_in_progress(path, merged_and_clean=bool(merged)):
+        return "a plan in it is still in progress"
     if status is None:
         return "git could not read it"
     if status:
         return _plural(len(status.splitlines()), "uncommitted change")
-    if _mid_operation(here):
+    if mid:
         return "an operation is in progress in it"
-    head = block.get("HEAD", "")
-    merged = git.yes("merge-base", "--is-ancestor", head, upstream) if head else None
     if merged is None:
         return "git could not compare it with " + upstream
     if not merged:

@@ -50,6 +50,8 @@ from __future__ import annotations
 import contextlib
 import functools
 import hashlib
+import json
+import os
 import re
 import subprocess
 import time
@@ -79,6 +81,12 @@ spawn_timeout: Callable[[float], float] = (
 # The bounded spawn, read the same way: a kept helper that predates it leaves
 # the checkpoints' git reads on subprocess.run, unbounded on Windows as before.
 run_bounded: Callable[..., Any] = getattr(_hook_utils, "run_bounded", None) or subprocess.run
+# CP-KILL's reader, the one-module loader and the checkout list, read the same
+# way: a kept helper that predates them leaves CP-KILL reading no pid's owner
+# (every kill passes, as before it), never the guard refusing to start.
+load_checkout_sync: Callable[[], Any] = getattr(_hook_utils, "load_checkout_sync", None) or (lambda: None)
+load_beside_hooks: Callable[..., Any] = getattr(_hook_utils, "_load_beside_hooks", None) or (lambda *_a: None)
+sibling_checkouts: Callable[[Path], Any] = getattr(_hook_utils, "sibling_checkouts", None) or (lambda _root: ())
 import _bash_patterns
 # The CP-GATEWEAKEN body names the maintenance-mode relaunch; pin the env-var to
 # the SoT (_maintenance_mode.ENV_VAR) via an f-string rather than a literal, per
@@ -1814,9 +1822,326 @@ CP_MCP_SIDEEFFECT = SpeedBump(
 )
 
 
+# ── CP-KILL: a kill of another seat's run (DEF-4078) ──────────────────────────
+#
+# Seats on one box share one process table, and a kill by pid is the harness's
+# own idiom: root CLAUDE.md step 0 says kill by PID, and the banner's Loose:
+# line names an orphan by PID. On 2026-10-31 the dispatcher's window ended
+# air-work's parallel tier leg by pid, read as a stray; nothing asked whose
+# process it was. This checkpoint asks once, for a pid that `kill`, `pkill -P`,
+# `taskkill /PID` or `Stop-Process -Id` names (the PowerShell tool's `kill` and
+# `spps` are Stop-Process):
+#
+# - whose NEAREST process with its working directory in a checkout of this
+#   clone -- the pid itself, then its parents -- is in another checkout. The
+#   nearest, never any: a seat's own child has among its parents the
+#   `seat.py launch` and the terminal that started the seat, whose cwd is the
+#   root checkout (driven 2026-11-02, air's c8e05b), so "any parent" would
+#   nudge every kill of one's own run;
+# - or that is, or runs under, the box lock's holder (the record the file
+#   `$ESPALIER_BOX_LOCK` names, never a default path, which moves) when the
+#   record's seat or lane is not this checkout's. A seat's own fresh-clone gate
+#   writes seat `?` (its clone has no local config) and is nudged once, declared.
+#
+# The reader is checkout_sync's (`process_cwds`, `cwd_checkout`,
+# `ancestors_of`), the one the Loose: line and the reaper read. A pid no table
+# answers passes, and so does a host with no cwd reader: on Windows only the
+# box-lock arm reads (Toolhelp32 names pid, parent and exe, no cwd). A kill by
+# name (`pkill <pattern>`, `Stop-Process -Name`), a process group (`kill --
+# -<pgid>`), `kill -0` (a liveness probe) and a `-WhatIf` read no pid. The one
+# checkpoint that spawns (`ps`, `lsof`, and `git config` for the box lock's
+# arm), and only when a kill names a pid, each spawn bound by the judgment
+# budget's `spawn_timeout`; the reading is made once per command, for the
+# predicate, the body and the flag key alike.
+_KILL_HEAD_RE = re.compile(
+    _bash_patterns._CMD_POS + r"(?P<kill_verb>p?kill|taskkill" + _bash_patterns._EXE_SUFFIX + r")(?=[ \t])"
+)
+_PS_KILL_HEAD_RE = re.compile(
+    _bash_patterns._PS_CMD_POS + r"(?P<kill_verb>Stop-Process|spps|kill|taskkill(?:\.exe)?)(?=[ \t])",
+    re.IGNORECASE,
+)
+_KILL_READ_S = 1.0      # each spawn, before the budget's spawn_timeout shortens it
+_KILL_PID_CAP = 4       # pids judged per command
+_KILL_WHERE_CAP = 120   # a checkout's spelling in the reminder, which is held to 512 bytes
+_BOX_LOCK_ENV = "ESPALIER_BOX_LOCK"
+_KILL_BODY = (
+    "this kills a process another checkout of this clone is running, or one under "
+    "the box lock's holder for another seat -- that is another seat's run: ask the "
+    "session working there, or the dispatcher, before you end it"
+)
+
+
+def _pid_list(word: str) -> list[int]:
+    return [int(part) for part in word.split(",") if part.isascii() and part.isdigit() and int(part) > 0]
+
+
+#: Stop-Process options that take a value (its own and the common ones, with
+#: their aliases): the value is never the positional -Id.
+_PS_VALUED_OPTIONS = frozenset({
+    "-erroraction", "-warningaction", "-informationaction", "-progressaction", "-errorvariable",
+    "-warningvariable", "-informationvariable", "-outvariable", "-outbuffer", "-pipelinevariable",
+    "-ea", "-wa", "-ia", "-ev", "-wv", "-iv", "-ov", "-ob", "-pv",
+})
+
+
+def _kill_targets(verb: str, words: list[str | None], *, bash: bool) -> list[tuple[int, bool]]:
+    """``(pid, named as a parent)`` for each pid one kill names, from its own
+    words (`_statement`): ``kill``'s operands past its signal, ``pkill``'s
+    ``-P`` list (parents: the kill ends their children), ``taskkill``'s
+    ``/PID`` values, ``Stop-Process``'s ``-Id`` list or first operand. None
+    for a liveness probe (``kill -0``, ``-s 0``), a listing (``kill -l``), a
+    rehearsal (``-WhatIf``), a kill by name, and ``kill -1`` (every process
+    this user owns: no pid to read, declared)."""
+    verb = verb.lower()
+    verb = verb[:-4] if verb.endswith(".exe") else verb
+    if verb == "spps" or (verb == "kill" and not bash):
+        verb = "stop-process"
+    found: list[tuple[int, bool]] = []
+    expect = ""   # what the next word is: "pid" (a pid list), "parent", "signal", or "skip" (an option's value)
+    positional = True   # Stop-Process takes its first number as -Id
+    for word in words:
+        if word is None or word == ">":
+            expect = "skip" if word == ">" else ""
+            continue
+        low = word.lower()
+        if expect in ("pid", "parent"):
+            found += [(pid, expect == "parent") for pid in _pid_list(word)]
+            expect = expect if word.endswith(",") else ""
+            continue
+        if expect == "signal" and low in ("0", "sig0"):
+            return []
+        if expect:
+            expect = ""
+            continue
+        if verb == "kill":
+            if low in ("-0", "-l", "-s0"):
+                return []
+            if low in ("-s", "-n"):
+                expect = "signal"
+            elif low.isascii() and low.isdigit():
+                found += [(pid, False) for pid in _pid_list(low)]
+        elif verb == "pkill":
+            if word == "-P":
+                expect = "parent"
+            elif word.startswith("-P"):
+                found += [(pid, True) for pid in _pid_list(word[2:])]
+        elif verb == "taskkill":
+            if low in ("/pid", "//pid", "-pid"):
+                expect = "pid"
+            elif low in ("/fi", "//fi", "/im", "//im"):
+                expect = "skip"
+        elif verb == "stop-process":
+            if low.startswith("-whatif"):
+                return []
+            if low == "-id":
+                expect, positional = "pid", False
+            elif low.startswith("-id:"):
+                found += [(pid, False) for pid in _pid_list(low[4:])]
+                positional = False
+            elif low in ("-name", "-inputobject"):
+                expect, positional = "skip", False
+            elif low in _PS_VALUED_OPTIONS:
+                expect = "skip"
+            elif not low.startswith("-") and positional and _pid_list(word):
+                found += [(pid, False) for pid in _pid_list(word)]
+                positional = False
+                expect = "pid" if word.endswith(",") else ""
+    return found
+
+
+def _named_kill_targets(tool_name: str, tool_input: dict) -> list[tuple[int, bool]]:
+    """Every ``(pid, named as a parent)`` a kill in the command names, first
+    `_KILL_PID_CAP`, read from the texts the git checkpoints read
+    (`_git_checkpoint_readings`: the masked Bash command and the programs it
+    hands to a shell, or the PowerShell scan text), so a quoted or commented
+    MENTION is data."""
+    found: list[tuple[int, bool]] = []
+    for text, is_bash in _git_checkpoint_readings(tool_name, tool_input):
+        head = _KILL_HEAD_RE if is_bash else _PS_KILL_HEAD_RE
+        for m in head.finditer(text):
+            words, _end = _statement(text, m.end(), bash=is_bash)
+            named = {pid for pid, _parent in found}
+            found += [t for t in _kill_targets(m.group("kill_verb"), words, bash=is_bash) if t[0] not in named]
+    return found[:_KILL_PID_CAP]
+
+
+def _named_kill_pids(tool_name: str, tool_input: dict) -> list[int]:
+    return [pid for pid, _parent in _named_kill_targets(tool_name, tool_input)]
+
+
+def _git_word(sync: Any, cwd: Path, *args: str) -> str:
+    """One `git` answer read in ``cwd`` (``checkout_sync.run``: output to
+    files, killed at its bound), or '' when it gives none."""
+    done = sync.run(["git", *args], cwd=cwd, timeout=spawn_timeout(_KILL_READ_S))
+    return done.stdout.strip() if done is not None and done.returncode == 0 else ""
+
+
+def _seat_name(checkout: Path) -> str:
+    """The seat name a checkout answers, through the one reader
+    (``mail.machine_setting``): '' where none is named, ``?`` where the read
+    failed or the reader is not deployed -- a failed read is never no name,
+    and ``?`` never matches this checkout's own."""
+    mail = load_beside_hooks("mail.py", "_speedbump_mail")
+    if mail is None:
+        return "?"
+    machine, how = mail.machine_setting(checkout, timeout=spawn_timeout(_KILL_READ_S))
+    if how.startswith(mail.MACHINE_UNREAD):
+        return "?"
+    return machine or ""
+
+
+def _box_lock_holder() -> dict[str, Any] | None:
+    """The box lock's holder (seat, lane, pid) from the record in the file
+    `$ESPALIER_BOX_LOCK` names, or None: unset, unreadable, half-written, or
+    no positive pid. Seat and lane read ``?`` where the record has no string,
+    as its writer spells a failed read (``tests/_box_lock.py::build_record``)."""
+    path = os.environ.get(_BOX_LOCK_ENV, "")
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8") as handle:
+            record = json.loads(handle.read(8192))
+    except (OSError, ValueError):  # fail-open: ok deliberate -- a lock record that cannot be read names no holder; the cwd arm still reads
+        return None
+    pid = record.get("pid") if isinstance(record, dict) else None
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return None
+    seat, lane = record.get("seat"), record.get("lane")
+    return {"pid": pid, "seat": seat if isinstance(seat, str) else "?", "lane": lane if isinstance(lane, str) else "?"}
+
+
+def _kill_reading(tool_name: str, tool_input: dict, root: Path) -> tuple[tuple[int, ...], str] | None:
+    """``(every pid CP-KILL nudges for, whose run the first is, in words)``,
+    or None (the block above has the rule)."""
+    targets = _named_kill_targets(tool_name, tool_input)
+    if not targets:
+        return None
+    holder = _box_lock_holder()
+    checkouts = [root, *sibling_checkouts(root)]
+    if len(checkouts) < 2 and holder is None:
+        return None   # one checkout and no lock held: no other seat's run to read, so nothing spawns
+    sync = load_checkout_sync()
+    if sync is None:
+        return None
+    if holder is not None and sync.pid_alive(holder["pid"]) is False:
+        holder = None   # the record a holder killed hard left behind names nobody
+    table = sync._parent_map(spawn_timeout(_KILL_READ_S))
+    pids: list[int] = []
+    for pid, parent in targets:
+        # A parent `pkill -P` names ends its children: they are what is judged.
+        children = [child for child, up in table.items() if up == pid] if parent else [pid]
+        if parent and (pid == 1 or len(children) > _KILL_PID_CAP):
+            return (pid,), (f"pkill -P {pid} ends {len(children) or 'its'} processes, more than this reads one by "
+                            "one, and a run another checkout of this clone is working may be among them: read each "
+                            "one's working directory and parents first")
+        pids += [p for p in children if p not in pids]
+    pids = pids[:_KILL_PID_CAP]
+    if not pids:
+        return None
+    depth = max(1, sync.CWD_PID_CAP // len(pids) - 1)   # every chain fits the one read
+    chains = {pid: [pid, *sync.ancestors_of(pid, table, depth)] for pid in pids}
+    cwds = sync.process_cwds(list(dict.fromkeys(p for c in chains.values() for p in c)),
+                             timeout=spawn_timeout(_KILL_READ_S)) or {}
+    hits: list[int] = []
+    first: tuple[int, int, Path | None] | None = None   # (pid, the process that names its owner, its checkout)
+    mine = lane = ""   # this checkout's seat and lane, read only where the box lock decides
+    for pid, chain in chains.items():
+        owner, home = pid, None
+        for owner in chain:
+            cwd = cwds.get(owner)
+            home = sync.cwd_checkout(cwd, checkouts) if cwd else None
+            if home is not None:
+                break
+        if home is not None:
+            if sync.within(home, root) and sync.within(root, home):
+                continue   # the nearest is this checkout: its own run
+            hits.append(pid)
+            first = first or (pid, owner, home)
+            continue
+        # No checkout holds a process of the chain (Windows reads no cwd, and a
+        # fresh-clone gate's clone is no checkout): the box lock decides.
+        if holder is not None and holder["pid"] in chain:
+            lane = _git_word(sync, root, "rev-parse", "--abbrev-ref", "HEAD")
+            mine = _seat_name(root)
+            if holder["seat"] == mine and holder["lane"] == lane and mine not in ("", "?") and lane not in ("", "?", "HEAD"):
+                continue   # this checkout's own run holds the lock
+            hits.append(pid)
+            first = first or (pid, holder["pid"], None)
+    if first is None:
+        return None
+    pid, owner, home = first
+    more = f" (and {len(hits) - 1} more named here)" if len(hits) > 1 else ""
+    if home is None:
+        assert holder is not None   # a hit with no checkout came from the box lock's arm
+        who = f"pid {pid}{more} is" if owner == pid else f"pid {pid}{more} runs under"
+        # '' is a checkout that names no seat; '?' (or no lane at all) is a read that failed.
+        unread = "; this checkout's seat or lane unread" if mine == "?" or lane in ("", "?") else ""
+        return tuple(hits), (f"{who} the box lock's holder (pid {owner}, seat {holder['seat'][:40]}, lane "
+                             f"{holder['lane'][:80]}{unread}), another seat's tier: ask that seat, or the dispatcher, "
+                             "before you end it")
+    where = sync.checkout_name(home, checkouts)[:_KILL_WHERE_CAP]
+    seat = _seat_name(home)
+    named = "seat unread" if seat == "?" else f"seat {seat[:40]}" if seat else "no seat name"
+    live = sync.sessions_in(home, checkouts=checkouts)
+    there = ("a live Claude session is there" if live else
+             "no live Claude session there: read its parents first" if live is not None else "its sessions unread")
+    who = f"pid {pid}{more}" if owner == pid else f"pid {pid}{more} runs under pid {owner}, which"
+    return tuple(hits), (f"{who} works in {where}, another checkout of this clone ({named}; {there}) -- that is "
+                         "its run: ask the session working there, or the dispatcher, before you end it")
+
+
+#: The last command's reading: the predicate, the body and the flag key each
+#: ask, and the reading spawns, so it is made once (a hook run judges one call).
+_last_kill: tuple[tuple[str, str, str], tuple[tuple[int, ...], str] | None] | None = None
+
+
+def _kill_hit(tool_name: str, tool_input: dict, root: Path | None) -> tuple[tuple[int, ...], str] | None:
+    global _last_kill
+    command = str(tool_input.get("command", ""))
+    if root is None:   # the flag key is handed no root: the reading just made is this call's
+        return _last_kill[1] if _last_kill is not None and _last_kill[0][:2] == (tool_name, command) else None
+    key = (tool_name, command, str(root))
+    if _last_kill is None or _last_kill[0] != key:
+        _last_kill = (key, _kill_reading(tool_name, tool_input, root))
+    return _last_kill[1]
+
+
+def _pred_kill(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = None) -> bool:
+    return tool_name in ("Bash", "PowerShell") and _kill_hit(tool_name, tool_input, root) is not None
+
+
+def _kill_body(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = None) -> str:
+    hit = _kill_hit(tool_name, tool_input, root)
+    return _ascii_text(hit[1]) if hit is not None else _KILL_BODY
+
+
+def _kill_key(tool_name: str, tool_input: dict) -> str:
+    # Per pid, never id-only: one fire would retire the bump for the session and
+    # a second seat's pid would pass with no word (air's c8e05b). A re-issue of
+    # the same command names the same pids, and passes; a kill naming another
+    # seat's pid this session has not been told about is nudged again.
+    hit = _kill_hit(tool_name, tool_input, None)
+    return "pid" + "-".join(str(pid) for pid in hit[0]) if hit is not None else _discard_key(tool_name, tool_input)
+
+
+def _ascii_text(text: str) -> str:
+    return text.encode("ascii", "replace").decode("ascii")
+
+
+CP_KILL = SpeedBump(
+    id="CP-KILL",
+    predicate=_pred_kill,
+    body=_KILL_BODY,
+    body_for=_kill_body,        # names the pid, the checkout and its seat for this fire
+    cap_exempt=True,            # an ended run cannot be resumed: never budget-suppressed
+    flag_key=_kill_key,         # per pid
+)
+
+
 # Registry consumed by `check()` (default arg) + write_guard's dispatch.
 SPEEDBUMPS: tuple[SpeedBump, ...] = (
     CP_FORCEPUSH, CP_RELEASE, CP_DISCARD, CP_GITCLEAN, CP_RMRF, CP_FETCHEXEC,   # irreversible-external
+    CP_KILL,                                          # another seat's run (DEF-4078)
     CP_GATEWEAKEN, CP_COMPACT,                        # meta-cognitive
     CP_MCP_SIDEEFFECT,                               # v1.1 rescued (MCP side-effect)
 )
