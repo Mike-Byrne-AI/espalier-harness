@@ -1069,7 +1069,7 @@ first; the dangerous-command catch is a secondary slip-catcher):
    (`S=/tmp/fx; cd "$S"`) only when that binding, run in this shell
    whatever happened before it, is the one way the command names the
    variable: a binding after `&&` or `||`, inside an `if`, loop, group or
-   subshell, in a pipeline stage or as one command's prefix (`S=x cmd`) is
+   subshell, in a pipeline stage or as a command's prefix (`S=x cmd`) is
    not read, and neither is a name the command mentions anywhere else,
    before or after (`read S`, `unset S`, `declare -i S`, a trap or a
    nameref naming it, or the value `printf -v "$N"` reads), one `eval`,
