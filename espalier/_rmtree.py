@@ -24,11 +24,10 @@ directory inside the tree refuses the unlink of every child on POSIX, which is
 the shape this host can produce, and the tree's own root is part of the ask:
 ledger ``DEF-3023``); the tree's own parent is not ours and is never touched,
 so a tree under a read-only directory reports rather than reaches outside
-itself. For a
-single file the file is what was asked for; its directory is not. On Windows
-the attribute lives on the file, so the file's own bit is the fix there. A
-link is what was asked for and what it names is not: its bits are read and
-set on the link itself, never through it (``_add_owner_bits``).
+itself. For a single file the file is what was asked for; its directory is
+not. On Windows the attribute lives on the file, so the file's own bit is the
+fix there. A link is what was asked for and what it names is not: its bits
+are read and set on the link itself, never through it (``_add_owner_bits``).
 
 A directory the walk cannot enter is the one refusal a retry cannot answer.
 ``rmtree`` opens a directory before it deletes inside it (``os.open`` on its
@@ -251,9 +250,10 @@ def remove_tree(path: Path | str, *, best_effort: bool = False) -> None:
 
     A file or directory inside the tree whose bits refuse the delete is
     chmod'ed writable (itself, and its parent when the parent is inside the
-    tree or is the tree) and the delete retried once; a directory the walk cannot enter
-    gets its owner bits back and is walked again, once. A second refusal raises, unless
-    ``best_effort`` is set, in which case the tree is left as far as it got
+    tree or is the tree) and the delete retried once; a directory the walk
+    cannot enter gets its owner bits back and is walked again, once. A second
+    refusal raises, unless ``best_effort`` is set, in which case the tree is
+    left as far as it got
     -- the ``ignore_errors=True`` contract for callers that must not raise a
     second exception over the one they are already handling.
 

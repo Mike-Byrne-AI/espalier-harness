@@ -775,13 +775,17 @@ def test_both_twins_remove_a_locked_build_holding_a_subdirectory(tmp_path, monke
 
 
 @pytest.mark.skipif(os.name == "nt", reason="the POSIX arm: a directory's write bit refuses its children's unlink")
-def test_both_twins_leave_a_locked_repository_root_and_report(tmp_path):
+@pytest.mark.parametrize("walk", ["fd", "scandir"])
+def test_both_twins_leave_a_locked_repository_root_and_report(tmp_path, monkeypatch, walk):
     """The tree's parent is not ours, in both deleters alike: with the
     repository root at 0o500 each empties ``build/`` (inside the ask), is
     refused the final ``rmdir`` and raises ``PermissionError``, and the root's
     bits are as set. RED while the twin reads that refusal's path as a str:
     ``rmtree`` hands the tree's own root back as the ``Path`` it was given
     (``AttributeError``, DEF-3023)."""
+    from tests.test_rmtree import force_walk
+
+    force_walk(walk, monkeypatch)
     for name, clear in (("twin", wheel_smoke._clear_stale_packaging_state),
                         ("engine", clear_stale_packaging_state)):
         root = tmp_path / name
@@ -793,6 +797,29 @@ def test_both_twins_leave_a_locked_repository_root_and_report(tmp_path):
                 clear(root)
             assert stat.S_IMODE(os.stat(root).st_mode) == stat.S_IRUSR | stat.S_IXUSR, name
             assert os.listdir(root / "build") == [], name
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the Windows arm: a directory's read-only attribute refuses its own removal")
+def test_both_twins_remove_a_read_only_build_on_windows(tmp_path):
+    """The twin's ``Path`` read on the host that runs the smoke by hand: a
+    ``build/`` carrying the read-only attribute refuses its own final
+    removal, ``rmtree`` hands that refusal back as the ``Path`` it was given,
+    and each deleter clears the attribute on the root and removes it. RED
+    while the twin reads the refused path as a str (``AttributeError``,
+    DEF-3023)."""
+    for name, clear in (("twin", wheel_smoke._clear_stale_packaging_state),
+                        ("engine", clear_stale_packaging_state)):
+        root = tmp_path / name
+        lib = root / "build" / "lib"
+        lib.mkdir(parents=True)
+        (lib / "x.py").write_text("x = 1\n", encoding="utf-8")
+        os.chmod(root / "build", stat.S_IREAD)
+        try:
+            assert clear(root) == [root / "build"], name
+            assert sorted(os.listdir(root)) == [], name
+        finally:
+            if os.path.isdir(root / "build"):
+                os.chmod(root / "build", stat.S_IREAD | stat.S_IWRITE)
 
 
 @pytest.mark.parametrize("no_follow,bare_is_the_links,link_calls,file_calls", [
