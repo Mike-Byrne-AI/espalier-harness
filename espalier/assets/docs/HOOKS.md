@@ -2196,7 +2196,7 @@ gate is opt-in.
 | **1. Pytest** | Runs core test suite | Yes, on failure | **Off** (opt-in via env var) |
 | **2. Docs refresh** | ≥10 writes and no `docs-maintainer` subagent run that changed docs during its own run (`.espalier-state/docs_refreshed`)? | Yes, the first Stop of each turn until one has | On |
 | **3. Code review** | ≥10 writes and no `code-reviewer` subagent run (`.espalier-state/code_reviewed`)? | Yes, the first Stop of each turn until one has | On |
-| **5. Handoff** | Nothing in flight (no plan in progress, no tracked edit) and the branch holds commits its upstream does not (its own upstream, else `origin/HEAD`, else `origin/main` or `origin/master`), made this session, on a repository whose `espalier.toml` sets `handoff_push = true`; and, where the push would open a pull request, that this seat has no other one open (one open pull request per seat: one bounded `gh pr list` read, attributed by the ship driver's `seat_open_prs`) | Yes, once per commit (`.espalier-state/handoff_gate_said` holds the HEAD it judged, seeded at SessionStart); while another of this seat's pull requests is open the lane is held instead (`.espalier-state/handoff_gate_hold`, re-checked every five minutes), and the block returns once none is | On where the handoff pushes |
+| **5. Handoff** | Nothing in flight (no plan in progress, no tracked edit) and the branch holds commits its upstream does not (its own remote branch where origin holds one, pushed with `-u` or without, else its upstream, else `origin/HEAD`, else `origin/main` or `origin/master`), made this session, on a repository whose `espalier.toml` sets `handoff_push = true`; and, where the push would open a pull request, that this seat has no other one open (one open pull request per seat: one bounded `gh pr list` read, attributed by the ship driver's `seat_open_prs`) | Yes, once per commit (`.espalier-state/handoff_gate_said` holds the HEAD it judged, seeded at SessionStart); while another of this seat's pull requests is open the lane is held instead (`.espalier-state/handoff_gate_hold`, re-checked every five minutes), and the block returns once none is | On where the handoff pushes |
 | **4. Blueprint finalize** | Auto-finalizes the active blueprint | Never blocks | On |
 
 Gates 2 and 3 only fire on sessions with 10+ source writes. Short
@@ -2220,9 +2220,11 @@ of the lane's work is still to come this session -- and a fourth, listed only
 where the read could not be made: a read made in this turn that names one of
 this seat's pull requests open, by number (a pull request remembered from
 earlier in the session is not that read). One open pull request per seat is
-the gate's own rule where the push would OPEN a pull request (the branch has no
-upstream of its own, `origin/<branch>`; a branch created from `origin/main`
-tracks it and is not its own): at its decision point it reads the seat's name
+the gate's own rule where the push would OPEN a pull request (origin holds no
+branch of the lane's own, `origin/<branch>`, read from its remote-tracking ref
+whether the lane was pushed with `-u` or without, by `_hook_utils.lane_upstream`,
+the reader the ship driver shares; a branch created from `origin/main` tracks
+it and is not its own until a push lands it): at its decision point it reads the seat's name
 through the ship driver (`seat_name`: the mail channel's `espalier.machine`; an
 unnamed checkout or a tree without the channel reads nothing and blocks as
 before), makes one bounded `gh pr list` read in the driver's field set
@@ -2251,7 +2253,7 @@ hold that names its HEAD (SessionStart's seed stands aside for it, so the gate
 judges the lane again) and clears a stale one. A read that cannot be made at
 the decision point (no `gh`, a timeout, not signed in, no GitHub remote, the
 seat's name unread) blocks as before and names the wait as the fourth
-carve-out; a lane with an upstream of its own (the push lands on its own pull
+carve-out; a lane with a remote branch of its own (the push lands on its own pull
 request) reads nothing. A seat renamed since it claimed the other pull request
 (a worktree given a name of its own) reads that one as another seat's and is
 asked for the handoff as before. The

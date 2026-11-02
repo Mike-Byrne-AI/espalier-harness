@@ -498,6 +498,18 @@ class TestTheByHandArm:
         assert "/handoff" in str(stop.value) and "ship.py open" in str(stop.value)
         assert not (repo / ".espalier-state" / "own_clear.json").exists()
 
+    def test_a_push_state_that_cannot_be_read_is_refused_and_names_the_repair(self, ship, repo, monkeypatch):
+        """No shared reading beside the driver (DEF-4081): `arm` keeps no copy
+        of the rule and refuses, naming why. Dies to: a private fallback."""
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        _with_origin(repo)
+        monkeypatch.setattr(ship._paths, "hooks_module", lambda name: None)
+        with pytest.raises(ship.Refused, match="push state could not be read") as stop:
+            ship.arm()
+        assert "espalier upgrade --execute ." in str(stop.value)
+        assert not (repo / ".espalier-state" / "own_clear.json").exists()
+
     def test_a_marker_already_armed_for_this_session_is_kept(self, ship, repo, monkeypatch):
         monkeypatch.chdir(repo)
         _in_a_mod_window(monkeypatch)

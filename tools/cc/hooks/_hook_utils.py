@@ -948,6 +948,38 @@ def handoff_push_on(root: Path) -> bool:
         return read_toml_scalar(root, "handoff_push") is True
 
 
+def lane_upstream(ask: Callable[..., str | None], branch: str) -> tuple[str | None, bool]:
+    """``(upstream, own)`` for the lane ``branch``: the ref its unpushed
+    commits are counted against, and whether that ref is the lane's own remote
+    branch (a lane already pushed, whose next push lands on its open pull
+    request rather than opening one). The one reading of the own-upstream rule:
+    the Stop hook's handoff gate (``stop_gate._unpushed_commits``) and the ship
+    driver (``ship._has_own_upstream``, ``ship._lane_not_on_origin``) each call
+    it, so the two cannot disagree on whether a lane is a seat's second
+    (DEF-4081; DEF-5038 was the two out of step).
+
+    Own is origin holding the lane's ref as this clone last saw it: the
+    remote-tracking ref ``refs/remotes/origin/<branch>``, listed by its exact
+    name (a case-insensitive filesystem resolves a loose ref spelled in
+    another case), whatever ``@{u}`` says: a lane pushed without ``-u`` keeps
+    the upstream it was started from (``origin/main``, by git's default
+    autoSetupMerge), and the push wrote that ref all the same (DEF-4086). A
+    local read, never ``ls-remote`` and never a fetch, so the gate's deadline
+    holds; so it is the clone's last sight of origin: a remote branch deleted
+    since and not yet pruned (SessionStart's catch-up prunes) still reads as
+    own, one pruned reads as never pushed, as its ``@{u}`` does, and a
+    single-branch clone, whose push writes no such ref, reads by ``@{u}``
+    alone. Otherwise ``@{u}``, an upstream not the lane's own, or None where
+    there is none (no upstream, a detached HEAD). ``ask(*args)`` runs ``git
+    <args>`` and answers its stdout stripped on exit 0 and None on any other
+    exit; its faults are the caller's to raise."""
+    if branch and branch != "HEAD":
+        own = f"refs/remotes/origin/{branch}"
+        if own in (ask("for-each-ref", "--format=%(refname)", own) or "").splitlines():
+            return f"origin/{branch}", True
+    return ask("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}") or None, False
+
+
 ADOPTER_ZONE_KEYS: tuple[tuple[str, str], ...] = (
     ("protected_paths", "protected"),
     ("generated_paths", "generated"),
