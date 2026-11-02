@@ -577,7 +577,8 @@ const persistResult = persistRaw || { total: findings.length, appended: 0, persi
 // =============================================================================
 // Phase 7 — CONVERGENCE-CRITIC (terminal, mandatory). Stateless: reads the durable
 // convergence ledger (prior rows) + the structured per-run ledger cc/finding_ledger.jsonl
-// (via espalier.finding_ledger.read_ledger — so yield/recurrence are COMPUTED, not
+// (via espalier.finding_ledger.read_ledger_trend, which leaves out a partial or
+// counts-unknown round and counts it — so yield/recurrence are COMPUTED, not
 // recalled) + this round's summary; computes the cross-round view; and APPENDS one
 // new row to LEDGER_PATH (append-only — never rewrites a prior row). See
 // memory/convergence-review-protocol.md "The convergence-critic".
@@ -615,9 +616,11 @@ const criticRaw = criticSkip ? null : await agent(
   `  and its correction reads "up ~44%". A "file:NN" in a row is a PRE-FIX line number.\n` +
   `STEP 2 — Read the structured per-run substrate (yield/recurrence are computed, not recalled):\n` +
   `  python -c 'import json; from espalier.finding_ledger import read_ledger_trend; print(json.dumps(read_ledger_trend(last=6)))'\n` +
-  `  It returns the newest whole rounds and, under left_out, how many it left out: a partial\n` +
-  `  round (a finder or scope-breaker lane did not run) and a round with no run counts (an older\n` +
-  `  row) are no evidence of convergence, so never read a gap in the trend as a quiet round.\n` +
+  `  It returns the newest whole rounds and, under left_out, how many of the ledger's rows it left\n` +
+  `  out: a partial round (a finder or scope-breaker lane did not run) and a round with no run\n` +
+  `  counts (an older row) are no evidence of convergence, so never read a gap in the trend as a\n` +
+  `  quiet round. A round that persisted no row at all (its persist lane died) is in neither the\n` +
+  `  trend nor left_out, so a short trend is not a count of every round that ran.\n` +
   `STEP 3 — Compute, using STEP 1 + STEP 2 + THIS ROUND (below): (a) yield trend vs prior rows;\n` +
   `  (b) refutation-recurrences (a finding refuted 2+ times); (c) confirmed-after-refuted; (d) cross-\n` +
   `  round classes (N isolated same-shape nits); (e) the cumulative never-covered coverage map;\n` +

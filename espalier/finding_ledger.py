@@ -134,10 +134,13 @@ def _clean_run_counts(raw: object) -> dict[str, int | None] | None:
 
 def _round_state(counts: dict[str, int | None] | None) -> str:
     """``complete`` when every finder and scope-breaker lane ran, ``partial``
-    when one did not, ``counts-unknown`` when the counts cannot say."""
+    when one did not, ``counts-unknown`` when the counts cannot say. A round
+    that launched no finder looked at nothing, so it is ``partial`` too: a
+    whole round of nothing is no evidence of a quiet tree."""
     if counts is None:
         return "counts-unknown"
-    if counts["lanes_not_run"] == 0 and counts["finders_run"] == counts["finders_launched"]:
+    if (counts["finders_launched"] > 0 and counts["lanes_not_run"] == 0
+            and counts["finders_run"] == counts["finders_launched"]):
         return "complete"
     return "partial"
 

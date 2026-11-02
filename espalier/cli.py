@@ -7358,13 +7358,17 @@ def _print_init_summary(
           "the lane only when espalier.toml sets handoff_push = true (off by "
           "default: push a lane yourself with /ship).")
     # DEF-1105: the reasoning /handoff records lives on this disk alone, and the
-    # adopter is told so here rather than after a re-clone. The homes are read
-    # back from REQUIRED_GITIGNORE, so one a later release stops ignoring drops
-    # out of the sentence instead of being called per-machine while committed;
-    # only where init wrote the block (--no-write-gitignore ignores nothing).
-    if write_gitignore:
+    # adopter is told so here rather than after a re-clone. The homes named are
+    # the ones git ignores in this tree now, asked index-aware: a home the
+    # adopter commits (init withholds its entry) is not per-machine and is left
+    # out, and so is every home on a --no-write-gitignore tree whose own rules
+    # do not cover it. Where git cannot answer, nothing is claimed.
+    ignored = _git_ignored(
+        repo_root, [rel for rel in ("cc/blueprints/", _GOAL_REL, "cc/_working_summary.md")
+                    if rel in REQUIRED_GITIGNORE])
+    if ignored:
         homes = [rel for rel in ("cc/blueprints/", _GOAL_REL, "cc/_working_summary.md")
-                 if rel in REQUIRED_GITIGNORE]
+                 if rel in ignored]
         if homes:
             print(f"  - {', '.join(homes)} stay on this machine (gitignored): the "
                   "blueprint chain /handoff records into reaches the next session "

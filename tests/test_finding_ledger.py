@@ -252,6 +252,17 @@ class TestRunCounts:
         assert rec.get("complete") is False and rec.get("round") == "partial", rec
         assert rec.get("run_counts") == counts, rec
 
+    def test_a_round_that_launched_no_finder_is_never_complete(self, tmp_path):
+        """Zero launched, zero run, no lane lost: nothing was looked at, so the
+        round is no evidence of a quiet tree. No shipped caller writes it today
+        (the fan-out audit returns before persist on no finders); a hand-built
+        or broken caller would otherwise record a whole round of nothing."""
+        summ = aggregate_findings([], known_categories=["bug"])
+        counts = {"finders_launched": 0, "finders_run": 0, "lanes_not_run": 0, "refuters_not_run": 0}
+        assert _append_counted(summ, tmp_path, counts) == 1
+        (rec,) = fl.read_ledger(tmp_path)
+        assert rec.get("complete") is False and rec.get("round") == "partial", rec
+
     def test_a_dead_refuter_is_recorded_but_does_not_make_the_round_partial(self, tmp_path):
         """A refuter that did not run leaves its finding ``unattempted``, which the
         survivors carry; the convergence template's own gate leaves refuters out

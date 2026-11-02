@@ -322,11 +322,9 @@ const allFindings = findings.concat(criticFindings)
 
 // --- PERSIST (two-hop bridge) ------------------------------------------------
 phase('Persist')
-if (!allFindings.length) {
-  // persistError is null, not a message: nothing failed because the persist step never ran.
-  // The lanes that did not run still go back: an empty round with a dead lane is not clean.
-  return { findersRun, findersLaunched: FINDERS.length, lanesNotRun: notRunByPhase(), refutersNotRun, candidates: 0, summary: { total: 0 }, appended: 0, persistError: null, persistWarnings: [], corpusPath: CORPUS_PATH, survivors: [] }
-}
+// A round with zero findings persists too, as the fan-out audit's does: a whole
+// round that found nothing is the convergence evidence the per-run ledger keeps,
+// and one whose lanes died is the partial round its trend must count as left out.
 // The round's own count of its lanes rides to the per-run ledger row, so a round that
 // lost lanes is recorded as partial, never as a quiet round the trend would read.
 const runCounts = {

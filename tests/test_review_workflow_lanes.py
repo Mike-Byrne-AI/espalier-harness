@@ -259,7 +259,10 @@ class TestLayeredReviewLanes:
     def test_an_empty_round_still_reports_its_dead_lanes(self):
         out = _drive(LAYERED, behaviours=[_does("^find:", "null"), _does("^critic:completeness$", "null")])
         result = _ran(out)
-        assert "persist:corpus" not in _labels(out), _labels(out)
+        # The empty round persists (a partial row the trend counts as left out),
+        # and its dead lanes still go back with the result.
+        assert "persist:corpus" in _labels(out), _labels(out)
+        assert _persist_payload(out)["run_counts"]["finders_run"] == 0, _persist_payload(out)
         assert result.get("findersRun") == 0, result
         assert result.get("lanesNotRun") == {"Find": self.FIND_LANES, "Refute": ["critic:completeness"]}, result
 
@@ -394,6 +397,27 @@ class TestTheRoundsRunCountsReachTheLedger:
         assert counts == expected, (name, counts)
         assert self._row_state(tmp_path, counts) == state, (name, counts)
 
+    @pytest.mark.parametrize("behaviours,expected,state", [
+        ([], {"finders_launched": 5, "finders_run": 5, "lanes_not_run": 0, "refuters_not_run": 0},
+         "complete"),
+        ([_does("^find:", "null")],
+         {"finders_launched": 5, "finders_run": 0, "lanes_not_run": 5, "refuters_not_run": 0},
+         "partial"),
+    ], ids=["layered-whole-zero", "layered-all-dead-zero"])
+    def test_a_layered_round_that_found_nothing_still_reaches_the_ledger(
+            self, behaviours, expected, state, tmp_path):
+        """A whole round that finds nothing is the convergence evidence the trend
+        keeps, and one whose every finder died is the partial round it must count
+        as left out: the layered review used to return before Persist on zero
+        findings, so neither reached the ledger (the fan-out audit's did)."""
+        out = _drive(LAYERED, behaviours=behaviours)
+        _ran(out)
+        labels = [c["label"] for c in out["calls"]]
+        assert "persist:corpus" in labels, ("no persist step ran on a zero-finding round", labels)
+        counts = _persist_payload(out).get("run_counts")
+        assert counts == expected, counts
+        assert self._row_state(tmp_path, counts) == state, counts
+
     def test_the_critic_reads_the_trend_that_leaves_a_partial_round_out(self):
         out = _drive(CONVERGENCE, args=TestConvergenceTemplateLanes.ARGS,
                      behaviours=[TestConvergenceTemplateLanes.SEED])
@@ -401,3 +425,13 @@ class TestTheRoundsRunCountsReachTheLedger:
         critic = next(c["prompt"] for c in out["calls"] if c["label"] == "convergence-critic")
         assert "read_ledger_trend(" in critic and "read_ledger()" not in critic, critic[-1200:]
         assert "no evidence" in critic and "left_out" in critic, critic[-1200:]
+
+    def test_the_critic_is_told_a_round_that_persisted_no_row_is_not_counted(self):
+        """left_out counts the rows the trend left out; a round whose persist lane
+        died (or that never reached Persist) wrote no row, so it is in neither the
+        trend nor the count, and the critic must not read the count as complete."""
+        out = _drive(CONVERGENCE, args=TestConvergenceTemplateLanes.ARGS,
+                     behaviours=[TestConvergenceTemplateLanes.SEED])
+        _ran(out)
+        critic = next(c["prompt"] for c in out["calls"] if c["label"] == "convergence-critic")
+        assert "persisted no row" in critic, critic[-1500:]

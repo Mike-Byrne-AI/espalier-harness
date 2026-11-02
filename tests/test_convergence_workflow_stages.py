@@ -47,7 +47,9 @@ BEHAVIORAL_MARKERS = {
     "actionable-critic phase": "phase('Actionable-critic')",
     "delta-attacker phase": "phase('Delta-attacker')",
     "convergence-critic phase": "phase('Convergence-critic')",
-    "critic reads the per-run ledger": "read_ledger",
+    # the trend reader, which leaves a partial round out; the bare
+    # read_ledger() reads every row whole, a dead-lane round included
+    "critic reads the per-run ledger": "read_ledger_trend(",
     "critic appends to the convergence ledger": "LEDGER_PATH",
 }
 # LABEL markers are section-label sentinels that live legitimately in comments, so
@@ -128,7 +130,7 @@ class TestConvergenceWorkflowStages:
                 "phase('Actionable-critic')",
                 "phase('Delta-attacker')",
                 "phase('Convergence-critic')",
-                "read_ledger",
+                "read_ledger_trend(last=6)",
                 "const LEDGER_PATH = '...'",
                 "// SCOPE-BREAKER 1",
                 "// SCOPE-BREAKER 2",
@@ -154,6 +156,21 @@ class TestConvergenceWorkflowStages:
             label for label, marker in LABEL_MARKERS.items() if marker not in fake
         ]
         assert not label_missing, label_missing
+
+
+    def test_a_critic_reading_every_row_whole_is_caught(self):
+        """A scaffold whose critic reads the per-run ledger through the bare
+        ``read_ledger()`` reads a round that lost lanes as an ordinary one; the
+        marker names the trend reader, so the bare read is the stage missing."""
+        code = _code_lines("from espalier.finding_ledger import read_ledger; read_ledger()[-6:]")
+        marker = BEHAVIORAL_MARKERS["critic reads the per-run ledger"]
+        assert marker not in code, f"the bare read_ledger() satisfied the trend marker {marker!r}"
+
+    def test_the_seeded_convergence_ledger_names_the_trend_reader(self):
+        """The ledger header init seeds tells the adopter how its numbers are read;
+        it named the bare reader after the critic moved to the trend reader."""
+        seed = (REPO_ROOT / "espalier" / "assets" / "seed" / "CONVERGENCE_LEDGER.md").read_text(encoding="utf-8")
+        assert "read_ledger_trend" in seed, "the seeded ledger header still names the bare read_ledger"
 
 
 class TestWorkflowBodiesResolveTheInterpreterOnTheHost:

@@ -156,3 +156,28 @@ def test_the_summary_names_the_per_machine_homes_git_really_ignores(tmp_path):
         assert require_is_gitignored(tmp_path, probe), (
             f"{rel} is named per-machine but git does not ignore it: {line}"
         )
+
+
+@pytest.mark.integration
+def test_a_home_the_adopter_commits_is_never_called_per_machine(tmp_path):
+    """An adopter who already commits ``cc/GOAL.md`` has init withhold that
+    entry (it would protect nothing), so the epilogue's per-machine line must
+    not name it: the line reads what git ignores in the tree, not the constant
+    (a reviewer drove the old line naming a committed GOAL.md gitignored)."""
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+    (tmp_path / "cc").mkdir()
+    (tmp_path / "cc" / "GOAL.md").write_text("# our goal, committed\n", encoding="utf-8")
+    subprocess.run(["git", "add", "cc/GOAL.md"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+         "commit", "-q", "-m", "goal"], cwd=tmp_path, check=True)
+    result = subprocess.run(
+        [sys.executable, "-m", "espalier.cli", "init", str(tmp_path)],
+        capture_output=True, text=True, check=True, cwd=REPO_ROOT, encoding="utf-8",
+    )
+    line = next((ln for ln in result.stdout.splitlines()
+                 if "cc/blueprints/" in ln and "this machine" in ln), "")
+    assert line, "the per-machine line went missing for the homes git does ignore"
+    assert "cc/GOAL.md" not in line, (
+        f"a committed cc/GOAL.md is named as staying on this machine: {line}"
+    )
