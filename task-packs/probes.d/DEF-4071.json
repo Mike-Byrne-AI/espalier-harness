@@ -1,13 +1,14 @@
 {
  "id": "DEF-4071",
  "subject": "espalier/cli.py",
- "cmd": "python3 -c \"import json,tempfile,pathlib;import espalier.cli as c;from espalier._venv import statusline_shim_called as k;c._render_host_is_posix=lambda:False;q=chr(34);p=pathlib.Path(tempfile.mkdtemp())/'settings.json';p.write_text(json.dumps({'statusLine':{'type':'command','command':'& '+q+chr(36)+'{CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd'+q+' python3'}}),encoding='utf-8');c.rewire_interpreter_in_settings(p);print(k(json.loads(p.read_text(encoding='utf-8'))['statusLine']['command']))\"",
+ "cmd": "python3 -c \"import json,tempfile,pathlib;import espalier.cli as c;from espalier._venv import statusline_shim_called as k;c._render_host_is_posix=lambda:False;q=chr(34);d=pathlib.Path(tempfile.mkdtemp())/'.claude';d.mkdir();p=d/'settings.json';p.write_text(json.dumps({'statusLine':{'type':'command','command':'& '+q+chr(36)+'{CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd'+q+' python3'}}),encoding='utf-8');c._report_interpreter_rewire(p);print(k(json.loads(p.read_text(encoding='utf-8'))['statusLine']['command']))\"",
  "open_value": "True",
  "why_not": null,
  "inputs": [
   "espalier/_venv.py"
  ],
- "row_sha": "516be2bd3b53",
- "text_sha": "bae0d2bf7490",
- "verified_2026_10_31": "OPEN (filed 2026-10-31; probe driven at filing)"
+ "row_sha": "eb3f128ffe6b",
+ "text_sha": "da57729a292b",
+ "verified_2026_10_31": "OPEN (filed 2026-10-31; probe driven at filing)",
+ "verified_2026_11_01": "STILL_OPEN (re-pinned value unchanged on 2026-11-01: re-pinned to the operator's ruling (air's ack 04a16e on f5a890): the if-ruled text now states the ruling, and the probe drives _report_interpreter_rewire, the verb's own path where the head step lands, in place of the floor rewire alone, whose only-argv[0] contract stands; it still reads True: no verb moves the head yet) [changed: probe, text]"
 }
