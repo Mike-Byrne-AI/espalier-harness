@@ -1737,7 +1737,7 @@ class TestTheHandoffGateHoldsForAnOpenPullRequest:
         later Stop before the hold was read (the failure-mode review)."""
         root, mod = self._arm(tmp_path, monkeypatch, ahead=1)
         head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True,
-                              check=True).stdout.strip()
+                              encoding="utf-8", check=True).stdout.strip()
         mod._remember_head(root / ".espalier-state" / mod.HANDOFF_GATE_FLAG, head)
         mod._hold_write(root, "b" * 40, "lane/the-fixture", "air-work", ["#41 (lane/first)"], 1)
         assert mod._gate_handoff(root) == 0
