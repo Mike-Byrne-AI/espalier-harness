@@ -1839,6 +1839,78 @@ class TestTheHandoffGateHoldsForAnOpenPullRequest:
         assert flag.read_text(encoding="utf-8").strip() == _head(root), "and the seed proceeds"
 
 
+class TestTheOwnUpstreamRuleHasOneReading:
+    """DEF-4081, DEF-4086: whether a lane is on origin as its own is read once
+    (``_hook_utils.lane_upstream``), by the handoff gate's
+    ``_unpushed_commits`` and by the ship driver's ``_has_own_upstream`` and
+    ``_lane_not_on_origin``, so the gate and the driver cannot disagree on
+    whether a lane is a seat's second (DEF-5038 was the two out of step). A
+    lane pushed without ``-u`` keeps origin/main as its upstream, and both read
+    it as pushed and as its own. One real lane, every reader at each step.
+    Dies to: either caller keeping a private ``@{u}`` reading, or a pushed
+    lane's ahead count taken against origin/main."""
+
+    @staticmethod
+    def _driver(monkeypatch):
+        import importlib.util
+
+        name = "ship_own_upstream_under_test"
+        spec = importlib.util.spec_from_file_location(name, str(HOOKS_DIR.parent / "ship.py"))
+        ship = importlib.util.module_from_spec(spec)
+        monkeypatch.setitem(sys.modules, name, ship)
+        spec.loader.exec_module(ship)
+        return ship
+
+    @staticmethod
+    def _read(mod, ship, root: Path) -> tuple:
+        """The gate's ``(ahead, upstream, own)``, then the driver's own reading
+        and its reason the lane is not on origin."""
+        found = mod._unpushed_commits(root, time.monotonic() + 30)
+        assert found is not None
+        ahead, branch, upstream, own = found
+        return ahead, upstream, own, ship._has_own_upstream(root, branch), ship._lane_not_on_origin(root)
+
+    def test_the_gate_and_the_driver_read_one_answer_as_the_lane_is_pushed(self, tmp_path, monkeypatch):
+        root = _lane_repo(tmp_path, ahead=1)
+        _git(root, "branch", "--set-upstream-to=origin/main", "lane/the-fixture")
+        mod = TestTheHandoffGate._load()
+        ship = self._driver(monkeypatch)
+        # Started from origin/main and never pushed: an upstream, not its own.
+        assert self._read(mod, ship, root) == (
+            1, "origin/main", False, False, "HEAD holds 1 commit that origin/main does not")
+        # Pushed without -u: origin holds the lane, and @{u} still names origin/main.
+        _git(root, "push", "-q", "origin", "HEAD")
+        assert _git(root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}") == "origin/main"
+        assert self._read(mod, ship, root) == (0, "origin/lane/the-fixture", True, True, None)
+        # A commit past that push: one ahead of its own ref, never two of origin/main.
+        _commit(root, "after-the-push")
+        assert self._read(mod, ship, root) == (
+            1, "origin/lane/the-fixture", True, True, "HEAD holds 1 commit that origin/lane/the-fixture does not")
+        # Pushed with -u: the same reading.
+        _git(root, "push", "-q", "-u", "origin", "HEAD")
+        assert self._read(mod, ship, root) == (0, "origin/lane/the-fixture", True, True, None)
+
+    @pytest.mark.parametrize(("listed", "upstream", "expected"), [
+        ("refs/remotes/origin/lane/w", "origin/main", ("origin/lane/w", True)),
+        ("", "origin/feature/lane/w", ("origin/feature/lane/w", False)),
+        ("", "fork/lane/w", ("fork/lane/w", False)),
+        ("refs/remotes/origin/lane/w/sub", "origin/main", ("origin/main", False)),
+        ("refs/remotes/origin/Lane/W", "origin/main", ("origin/main", False)),
+        ("", None, (None, False)),
+    ], ids=["own-ref", "a-longer-name-ending-in-it", "another-remote", "a-ref-under-it", "another-case", "none"])
+    def test_own_is_origin_listing_the_lanes_exact_name(self, listed, upstream, expected):
+        """The rule alone, over a stub git: own only where origin's ref is
+        listed under the lane's exact name. The old suffix test read a branch
+        tracking origin/feature/lane/w, or a fork's lane/w, as its own; a ref
+        under it or a loose ref in another case (an NTFS resolve) never is."""
+        mod = TestTheHandoffGate._load()
+
+        def ask(*args):
+            return listed if args[0] == "for-each-ref" else upstream
+
+        assert mod._hook_utils.lane_upstream(ask, "lane/w") == expected
+
+
 @pytest.mark.contract
 class TestTheGateCountHasOneOwner:
     """The docs say how many gates the Stop hook runs ("a five-gate sequence",

@@ -1857,17 +1857,48 @@ def arm_own_clear_here(root: Path, *, held: Held | None = None, by_hand: str | N
     return line
 
 
+#: Why the lane's push state is unread where the shared reading is not beside
+#: this script (:func:`_lane_upstream`).
+_LANE_UPSTREAM_UNREAD = ("tools/cc/hooks/_hook_utils.py is not beside this script, does not load, or is an "
+                         "older one without lane_upstream; espalier upgrade --execute . brings it level")
+
+
+def _lane_upstream(root: Path, branch: str) -> tuple[str | None, bool] | None:
+    """``_hook_utils.lane_upstream`` at ``root``: ``(upstream, own)``, the ref
+    the lane's unpushed commits are counted against and whether it is the
+    lane's own remote branch, read where the Stop hook's handoff gate reads it,
+    so the two cannot disagree on whether a lane is a seat's second (DEF-4081).
+    None where that reader is not beside this script (a kept, older
+    ``_hook_utils.py``, a fixture copying a subset of tools/cc): each caller
+    says so (``_LANE_UPSTREAM_UNREAD``), and no copy of the rule stands in."""
+    loader = getattr(_paths, "hooks_module", None)   # a kept, older _paths.py: unread
+    reading = getattr(loader("_hook_utils"), "lane_upstream", None) if loader else None
+    if reading is None:
+        return None
+
+    def ask(*args: str) -> str | None:
+        rc, out, _ = _git(*args, cwd=str(root))
+        return out.strip() if rc == 0 else None
+
+    return reading(ask, branch)
+
+
 def _lane_not_on_origin(root: Path) -> str | None:
     """Why HEAD is not on origin, or None when it is: no upstream (the lane was
-    never pushed), commits the upstream lacks, or a push state git could not
-    read. The by-hand arm clears a window only over a lane that is on origin:
+    never pushed), commits the upstream lacks, or a push state that could not
+    be read. The upstream is the lane's own remote branch wherever origin holds
+    one, a push without ``-u`` included (:func:`_lane_upstream`, DEF-4086).
+    The by-hand arm clears a window only over a lane that is on origin:
     a handoff refused for a reason the window must fix first (a lane behind
     its remote, a rejected push) could otherwise be cleared past with the
     plain role brief, the lane left unpushed and unmentioned (the failure-mode
     review, 2026-10-30)."""
-    rc, upstream, _ = _git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}", cwd=str(root))
-    upstream = upstream.strip()
-    if rc != 0 or not upstream:
+    rc, branch, _ = _git("branch", "--show-current", cwd=str(root))
+    reading = _lane_upstream(root, branch.strip() if rc == 0 else "")
+    if reading is None:
+        return f"the push state could not be read ({_LANE_UPSTREAM_UNREAD})"
+    upstream = reading[0]
+    if not upstream:
         return "HEAD has no upstream: the lane was never pushed"
     rc, count, _ = _git("rev-list", "--count", f"{upstream}..HEAD", cwd=str(root))
     if rc != 0 or not count.strip().isdigit():
@@ -2431,14 +2462,16 @@ def _hold_for_the_gate(root: Path, base: str, branch: str, seat: str, mine: list
     writer(root, head_sha(), branch, seat, list(mine), ahead)
 
 
-def _has_own_upstream(root: Path, branch: str) -> bool:
-    """Whether ``branch`` tracks its own remote branch (``origin/<branch>``: a
-    lane already pushed), the rule the Stop hook's handoff gate reads
-    (``stop_gate._unpushed_commits``). A branch started from ``origin/main``
-    tracks origin/main by git's default autoSetupMerge, an upstream that is not
-    its own; no upstream at all, or one git cannot name, reads False."""
-    rc, upstream, _ = _git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}", cwd=str(root))
-    return rc == 0 and upstream.strip().endswith("/" + branch)
+def _has_own_upstream(root: Path, branch: str) -> bool | None:
+    """Whether origin holds ``branch`` as its own remote branch
+    (``origin/<branch>``: a lane already pushed, with ``-u`` or without), read
+    by :func:`_lane_upstream`, the one reading the Stop hook's handoff gate
+    shares (``stop_gate._unpushed_commits``). A branch started from
+    ``origin/main`` tracks origin/main by git's default autoSetupMerge, an
+    upstream that is not its own, and reads False until a push lands it; None
+    where the shared reading is not beside this script."""
+    reading = _lane_upstream(root, branch)
+    return None if reading is None else reading[1]
 
 
 def _remote_has_commits_we_lack(branch: str, cwd: str) -> int:
@@ -2502,7 +2535,8 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
     others = f"this seat ({seat}) already has an open pull request: {', '.join(mine)}"
     # A red base's clearing (a revert, the ruled fix) lands first, Core Rule 15.
     clearing = branch.startswith("revert/") or bool(ruling)
-    if mine and not clearing and not _has_own_upstream(root, branch):
+    own = _has_own_upstream(root, branch) if mine and not clearing else None
+    if own is False:
         # One open pull request per seat, as the Stop hook holds it (DEF-5038).
         numbers = ", ".join(entry.split(" ", 1)[0] for entry in mine)
         waits = numbers + (" merges or closes" if len(mine) == 1 else " merge or close")
@@ -2518,6 +2552,10 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
     elif mine and clearing:
         first = "a revert/ lane" if branch.startswith("revert/") else "the fix the ruling names"
         _note(f"{others}. This lane opens beside it: {first} lands first")
+    elif mine and own is None:
+        # Never a hold on a guess, as for an unread list above.
+        _note(f"{others}. Whether this lane was pushed could not be read ({_LANE_UPSTREAM_UNREAD}), so the one "
+              "open pull request per seat hold was not judged; the lane opens beside it")
     elif mine:
         _note(f"{others}. This lane's push already landed once, so it opens beside it; one open pull "
               "request per seat keeps a seat's lanes off each other's base")

@@ -3790,15 +3790,20 @@ class TestOneOpenPullRequestPerSeat:
 
     _OTHERS = json.dumps([{"number": 41, "headRefName": "lane/y", "autoMergeRequest": {"x": 1}},
                           {"number": 42, "headRefName": "lane/z", "autoMergeRequest": {"x": 1}}])
-    #: The lane's upstream, as the Stop hook's handoff gate reads it.
+    #: The lane's upstream and its own remote-tracking ref, as the Stop hook's
+    #: handoff gate reads them (``_hook_utils.lane_upstream``).
     _UPSTREAM = ("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
     _NO_UPSTREAM = (128, "", "fatal: no upstream configured for branch 'lane/x'\n")
+    _OWN_REF = ("git", "for-each-ref", "--format=%(refname)")
 
-    def _held_answers(self, ship, tmp_path, monkeypatch, upstream=_NO_UPSTREAM, branch="lane/x") -> dict:
+    def _held_answers(self, ship, tmp_path, monkeypatch, upstream=_NO_UPSTREAM, branch="lane/x",
+                      on_origin=False) -> dict:
         _write_guard(tmp_path)
         monkeypatch.setattr(ship, "_MAIL", self._channel("win", {"lane/y": "win", "lane/z": "air", branch: "win"}))
         answers = _open_answers(tmp_path, open_prs=self._OTHERS, branch=branch)
         answers[self._UPSTREAM] = upstream
+        own = f"refs/remotes/origin/{branch}"
+        answers[self._OWN_REF + (own,)] = (0, own + "\n" if on_origin else "", "")
         return answers
 
     def test_open_holds_a_lane_never_pushed_while_this_seats_other_one_is_open(
@@ -3885,12 +3890,41 @@ class TestOneOpenPullRequestPerSeat:
             self, ship, tmp_path, forget_guard, monkeypatch, capsys):
         """Its push already landed once (a create that refused after it): the
         row's shape holds only a lane that was never pushed."""
-        spawns = _arm(ship, self._held_answers(ship, tmp_path, monkeypatch, upstream=(0, "origin/lane/x\n", "")))
+        spawns = _arm(ship, self._held_answers(ship, tmp_path, monkeypatch, upstream=(0, "origin/lane/x\n", ""),
+                                               on_origin=True))
         assert ship.open_pr() == 0
         out = capsys.readouterr().out
         assert "this seat (win) already has an open pull request: #41 (lane/y)" in out
         assert "#42" not in out
         assert spawns.count(("gh", "pr", "create")) == 1
+
+    def test_a_lane_pushed_without_u_is_its_own_and_opens_beside_with_the_note(
+            self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        """DEF-4086: `git push origin HEAD`, the habit past a hold naming
+        another seat's pull request, leaves origin/main as the upstream; origin
+        holds the lane all the same. Dies to: the own-upstream rule read from
+        @{u} alone (held again, as a second lane)."""
+        spawns = _arm(ship, self._held_answers(ship, tmp_path, monkeypatch, upstream=(0, "origin/main\n", ""),
+                                               on_origin=True))
+        assert ship.open_pr() == 0
+        assert "This lane's push already landed once" in capsys.readouterr().out
+        assert spawns.count(("gh", "pr", "create")) == 1
+
+    @pytest.mark.parametrize("helper", [None, types.SimpleNamespace()], ids=["not-beside", "kept-older"])
+    def test_an_unread_push_state_is_said_and_the_lane_opens(
+            self, ship, tmp_path, forget_guard, monkeypatch, capsys, helper):
+        """No _hook_utils.py beside the driver, or a kept, older one without
+        the shared reading: the driver keeps no copy of the rule, says the hold
+        was not judged and names the repair, and opens. Never a hold on a
+        guess. Dies to: a private fallback spelling."""
+        monkeypatch.setattr(ship._paths, "hooks_module", lambda name: helper)
+        spawns = _arm(ship, self._held_answers(ship, tmp_path, monkeypatch))
+        assert ship.open_pr() == 0
+        out = capsys.readouterr().out
+        assert "Whether this lane was pushed could not be read" in out and "lane_upstream" in out
+        assert "espalier upgrade --execute ." in out
+        assert spawns.count(("gh", "pr", "create")) == 1
+        assert spawns.count(self._UPSTREAM) == 0
 
     def test_a_revert_lane_is_never_held(self, ship, tmp_path, forget_guard, monkeypatch, capsys):
         """Core Rule 15: the revert lands first. Dies to: the hold read before
