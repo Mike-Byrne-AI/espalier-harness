@@ -1134,6 +1134,10 @@ def _mail_line(root: Path, deadline: float | None = None, mail: Any = None, read
             return ""
         return (f"{', '.join(_ascii(m) for m in others)} write(s) on the mail channel and this clone names "
                 "no machine: `git config espalier.machine <name>` turns it on here, then /inbox reads it")
+    if read is not None:
+        # The name before any return the budget forces below: the box lock's
+        # off-note reads it, however little of the mail is read (DEF-4054).
+        read["machine"] = machine
     note = ""
     timeout = _seconds_left(deadline, _MAIL_FETCH_CAP_SECONDS)
     if timeout > 0.2:
@@ -1206,6 +1210,20 @@ def _box_lock_note(root: Path, machine: str | None, seat: Any = None) -> str:
     default = getattr(seat, "box_lock_default", None)
     path = default() if callable(default) else "<path>"
     return _ascii(f"box lock: off (relaunch through seat.py launch, or export ESPALIER_BOX_LOCK={path} before claude)")
+
+
+def _box_lock_info(root: Path, read: dict, carried: tuple[str, ...]) -> None:
+    """The off-note for a named clone whose `Mail:` and `Orders:` lines did
+    not carry it, as one ``[INFO]`` line, which reads under the Warnings
+    block's NOTES header and moves no ruled banner line: the folds reach the
+    dispatcher and a worker holding an assign, so a worker between assigns,
+    a plain ``claude`` in a second named clone, or a seat relaunched by hand
+    with no assign ran its tier unlocked and was never told (DEF-4054).
+    ``read`` is what the mail line read (its ``machine``: no name read, no
+    note); ``carried`` the lines already built. Reporter only, no spawn."""
+    note = _box_lock_note(root, read.get("machine"))
+    if note and not any(note in line for line in carried):
+        _hook_utils.advise(f"[INFO] {note}")
 
 
 def _asks_count(root: Path, mail: Any, machine: str, by_machine: dict) -> str:
@@ -5237,6 +5255,13 @@ def _run_main(wall_start: float | None = None) -> int:
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
         _late_load_failed("session_start: orders read failed", e)
         orders_line = ""
+    # The box lock's off-note on a named clone neither line above carried it
+    # on: one [INFO] note, from what the mail line read. No spawn.
+    _phase("box lock note", Orders=orders_line)
+    try:
+        _box_lock_info(root, mail_read, (mail_line, orders_line))
+    except Exception as e:  # noqa: BLE001 -- bounded warn, never block session
+        _late_load_failed("session_start: box lock note failed", e)
 
     # The operator's pull requests, read here for the same reason: two bounded
     # `gh` reads under what the mail left of the deadline, and a host without

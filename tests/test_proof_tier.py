@@ -2544,6 +2544,23 @@ class TestRun:
         exit_lines = [line for line in out.splitlines() if line.startswith("exit ")]
         assert len(exit_lines) == 4 and "4 of 4 command(s) ran" in out and "FAIL (worst exit 3)" in out
 
+    def test_a_box_lock_did_not_run_is_its_own_verdict_and_never_hides_a_red(self, pt, monkeypatch, capsys):
+        """DEF-4056: a waiter past ESPALIER_BOX_LOCK_WAIT_S exits 75 before any
+        test. The receipt says DID NOT RUN, the later pytest line is named and
+        not run (it would wait the bound out again), and a red on another
+        line outranks it. Mutation: 75 read as FAIL, max() over 75 and 1, the
+        second line run anyway."""
+        assert pt.DID_NOT_RUN_EXIT == 75
+        assert "DID_NOT_RUN_EXIT = 75" in (REPO_ROOT / "tests" / "_box_lock.py").read_text(encoding="utf-8")
+        calls = self._fake_run(monkeypatch, pt, [0, 0, 75])
+        assert pt.run_commands(pt._TIER_ARGVS["full"], REPO_ROOT) == 75
+        assert calls == [list(argv) for argv in pt._TIER_ARGVS["full"][:3]]
+        out = capsys.readouterr().out
+        assert "DID NOT RUN (worst exit 75) -- 3 of 4 command(s) ran" in out and "not run: pytest" in out, out
+        self._fake_run(monkeypatch, pt, [1, 0, 75])
+        assert pt.run_commands(pt._TIER_ARGVS["full"], REPO_ROOT) == 1
+        assert "FAIL (worst exit 1) -- 3 of 4 command(s) ran" in capsys.readouterr().out
+
     def test_run_spawns_the_head_it_prints(self, pt, monkeypatch, capsys):
         """The receipt line and the spawned binary are the same token: a mypy
         entry spawns mypy, a pytest entry spawns pytest."""

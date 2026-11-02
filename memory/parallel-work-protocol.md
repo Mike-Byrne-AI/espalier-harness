@@ -512,7 +512,10 @@ recorded), `census` (a count, with the command that reproduces it), `mutants`
 (a kill table for mutations the seat itself named, run on a snapshot clone,
 dispatched before the lane's tier and never beside it: an agent's run that
 waits on the box lock behind a tier outlives a Bash call's cap, and a timed-out
-mutant would read as a survivor). A kind word anywhere else in an assign is the
+mutant would read as a survivor). A `drive` or `mutants` dispatch whose runs
+take `-n` sets `ESPALIER_BOX_LOCK_WAIT_S` under the call's cap, so a run that
+cannot take the lock ends before any test with exit 75: neither a kill nor a
+survivor, nor an answer, but a run to repeat once the lock is free. A kind word anywhere else in an assign is the
 job's text: the four words are ordinary assign vocabulary (54 of the
 dispatcher's first 129 assigns carried one as plain instruction, "drive the
 probe" above all, read from the mail ref 2026-10-25), which is why the marker

@@ -300,6 +300,11 @@ _PYTEST: tuple[str, ...] = ("pytest", "-q")
 #: budgets, timeout-near gates and the nested runs, kept off parallel load); every other line
 #: runs at ``-n auto``.
 _PARALLEL: tuple[str, ...] = ("-n", "auto")
+#: A pytest line's status when the box lock's waiter passed its own bound
+#: (``ESPALIER_BOX_LOCK_WAIT_S``) before any test: ``tests/_box_lock.py``'s
+#: ``DID_NOT_RUN_EXIT``, held equal by a test. The receipt calls it its own
+#: verdict, never a FAIL, and a red on another line outranks it.
+DID_NOT_RUN_EXIT = 75
 _ONE_WORKER: tuple[str, ...] = ("-n", "1")
 #: ``own_tests`` leaves a contract-classified file off the own line because
 #: the contract lines run every row of it (DEF-4089): a ``-k`` or a narrower
@@ -980,7 +985,10 @@ def run_commands(argvs, root: Path) -> int:
     """Run every command in order, one receipt line each, return the worst exit.
 
     Every command runs even after a failure, so the receipt always names all
-    of them; the summary line says how many ran. Each argv leads with one of
+    of them; the summary line says how many ran. The one exception: after a
+    pytest line exits ``DID_NOT_RUN_EXIT`` (the box lock's waiter passed its
+    bound), the later pytest lines are named as not run, and the verdict is
+    ``DID NOT RUN`` unless another line is red. Each argv leads with one of
     ``_RUNNERS`` (OS binaries the subprocess-contract scanner skips), and the
     dispatch below is one literal call per runner. A runner that is not
     installed is exit 127 with the install hint, never a silently skipped
@@ -996,8 +1004,15 @@ def run_commands(argvs, root: Path) -> int:
         print("no commands on this run -- the receipt below proves nothing", flush=True)
     for line in version_lines(argvs, root):
         print(line, flush=True)
+    rcs: list[int] = []
+    lock_gave_up = False
     for argv in argvs:
         head, *rest = argv
+        if lock_gave_up and head == "pytest":
+            # A later pytest line would wait out the same bound again behind
+            # the same holder, doubling a capped caller's wait for no test.
+            print(f"not run: {shlex.join(argv)} -- a pytest line above did not run", flush=True)
+            continue
         try:
             if head == "mypy":
                 rc = subprocess.run(["mypy"] + rest, cwd=root).returncode
@@ -1015,10 +1030,23 @@ def run_commands(argvs, root: Path) -> int:
             # it does not know, and every tier's pytest lines carry it.
             print(f"pytest: exit 4 is a usage error; an unrecognized `-n` means pytest-xdist "
                   f"is missing -- {INSTALL_HINT}", flush=True)
+        if head == "pytest" and rc == DID_NOT_RUN_EXIT:
+            print(f"pytest: exit {DID_NOT_RUN_EXIT} is the box lock's did-not-run: the wait passed "
+                  "ESPALIER_BOX_LOCK_WAIT_S and no test ran", flush=True)
+            lock_gave_up = True
         print(f"exit {rc}: {shlex.join(argv)}", flush=True)
-        worst = max(worst, rc)
-    verdict = "PASS" if worst == 0 else f"FAIL (worst exit {worst})"
-    print(f"proof: {verdict} -- {len(argvs)} of {len(argvs)} command(s) ran", flush=True)
+        rcs.append(rc)
+    # A red outranks a run that never started: a 75 must never hide a 1.
+    reds = [rc for rc in rcs if rc not in (0, DID_NOT_RUN_EXIT)]
+    if reds:
+        worst = max(reds)
+        verdict = f"FAIL (worst exit {worst})"
+    elif DID_NOT_RUN_EXIT in rcs:
+        worst = DID_NOT_RUN_EXIT
+        verdict = f"DID NOT RUN (worst exit {worst})"
+    else:
+        verdict = "PASS"
+    print(f"proof: {verdict} -- {len(rcs)} of {len(argvs)} command(s) ran", flush=True)
     return worst
 
 
