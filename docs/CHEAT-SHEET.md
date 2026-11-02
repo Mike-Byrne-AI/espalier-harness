@@ -137,7 +137,7 @@ espalier merge-settings <repo>    # wire hooks into an existing .claude/settings
 espalier merge-settings <repo> --add-allows   # also append the profile's allow rules your file lacks (append-only; reported without the flag)
 espalier merge-settings <repo> --repair       # also rewrite espalier's OWN hook entries doctor finds dead (no interpreter, missing from its event, wrong event, narrowed matcher, shell form); entries that do not name espalier's scripts are untouched and every removal is listed; keeps a .bak of the file
 espalier init <repo> --wire-hooks # one-shot: arm hooks even when a settings.json already exists (opt-in; same flag on `fuse`)
-espalier init . --rewire-interpreter # swap a below-floor Python (needs 3.10+) in an existing settings.json; changes only the interpreter name, keeps a .bak of the file
+espalier init . --rewire-interpreter # swap a below-floor Python (needs 3.10+) in an existing settings.json; changes only the interpreter name, and on Windows puts a bare or & statusLine head behind a dot; keeps a .bak of the file
 espalier upgrade .                # re-deploy a stale harness in place (dry-run by default; --execute to apply)
 espalier doctor <repo>            # pre-flight health check; works on uninitialized repos
 espalier ignore-snippet <repo> --format prettier   # the ignore lines for what init wrote; paste into .prettierignore

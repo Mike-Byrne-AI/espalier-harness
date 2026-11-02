@@ -2541,7 +2541,8 @@ sources the shim, whose first line is written for it, and PowerShell
 runs it as a batch file, so installing or removing Git for Windows after
 `init` changes nothing. An older install can carry the shim bare (Git
 Bash only) or behind `&` (PowerShell only); `espalier doctor .` names
-one written for the other shell.
+one written for the other shell, and `espalier init . --rewire-interpreter`
+puts either behind the dot, on request, writing a backup first.
 
 Install a Python 3.10+ (or put it on PATH), then run
 `espalier doctor .` — it names the wired interpreter and the exact

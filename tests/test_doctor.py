@@ -3789,10 +3789,11 @@ class TestStatuslineFallbackNotes:
         reads it as an expression; a called head with Git Bash present runs
         under bash, where a leading `&` is a syntax error. Either way the
         statusline is blank and so is its missing-interpreter line (both
-        driven, 2026-10-31), so the note names the edit and the fresh render,
-        which runs in either shell (DEF-3017); Git Bash installed or removed
-        after `init`, or a file carried in from another box, is how a tree
-        gets here."""
+        driven, 2026-10-31), so the note names the verb that puts the head
+        behind the dot, which runs in either shell (DEF-3017), on request
+        (DEF-4071), and the edit by hand; Git Bash installed or removed after
+        `init`, or a file carried in from another box, is how a tree gets
+        here."""
         from espalier import doctor as doctor_module
 
         monkeypatch.setattr(doctor_module, "_host_is_windows", lambda: True)
@@ -3800,7 +3801,7 @@ class TestStatuslineFallbackNotes:
         notes = doctor_module._statusline_fallback_notes(self._settings(tmp_path, command), tmp_path)
         assert len(notes) == 1, notes
         assert notes[0].isascii(), notes
-        assert "settings.json.new" in notes[0] and "-m espalier init ." in notes[0], notes
+        assert "-m espalier init . --rewire-interpreter`" in notes[0], notes
         assert "either shell" in notes[0], notes
         # The hand edit is the dot, never the other one-shell form: `& ` on a
         # bare line was DEF-3017's trap the day Git for Windows arrived.

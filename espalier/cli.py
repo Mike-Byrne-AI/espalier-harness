@@ -57,6 +57,7 @@ from espalier._venv import (
     names_a_python,
     path_without,
     shell_cut_path,
+    statusline_shim_dotted,
     statusline_shim_end,
 )
 from espalier.analyze import HARNESS_OUTPUT_PREFIXES, fingerprint_repo
@@ -1972,7 +1973,9 @@ def _statusline_command(python_cmd: str, *, posix: bool | None = None) -> str:
     ``statusLine`` only when the key is absent and the rewire swaps only the
     interpreter the line names -- DEF-798, DEF-810 -- so an older string is
     kept, and a fresh ``init``'s ``settings.json.new`` is where the current
-    render can be read).
+    render can be read). The one older string a verb moves is a bare or
+    called Windows head, which ``init --rewire-interpreter`` puts behind the
+    dot when asked (:func:`move_statusline_head_in_settings`, DEF-4071).
     """
     script = f'{python_cmd} "${{CLAUDE_PROJECT_DIR}}/{STATUSLINE_SCRIPT}"'
     if posix is None:
@@ -8115,10 +8118,11 @@ def _back_up_settings(settings_path: Path) -> Path:
     the copy (under ``.espalier/settings-backups/``; the legacy ``.bak`` rungs
     beside the file are read for the dedup below and never written again).
 
-    Shared by the three paths that mutate an operator-owned ``settings.json``:
+    Shared by the paths that mutate an operator-owned ``settings.json``:
     :func:`repair_hook_wiring_in_settings`,
-    :func:`merge_hooks_into_settings` and
-    :func:`rewire_interpreter_in_settings`. Climbs the ladder from ``.bak``:
+    :func:`merge_hooks_into_settings`, and
+    :func:`rewire_interpreter_in_settings` with the statusLine head step
+    beside it (:func:`_write_rewritten_settings`). Climbs the ladder from ``.bak``:
     an existing rung that already holds these exact bytes IS the copy, and is
     returned without a write; otherwise the first free rung is written. Never
     clobbers an existing backup -- both ``settings.json`` and its ``.bak`` are
@@ -8692,9 +8696,24 @@ def _report_interpreter_rewire(settings_path: Path) -> str:
     Every status gets a sentence naming what the operator should do next --
     a repair verb that reports only "done" or nothing is how ``DEF-620``'s
     no-op survived: the operator re-ran it, saw success, and re-ran ``doctor``
-    to find the identical failure. Returns the status for callers/tests.
+    to find the identical failure. Returns the status for callers/tests:
+    ``REWIRE_DONE`` when either step wrote the file.
+
+    The statusLine head step (:func:`move_statusline_head_in_settings`,
+    DEF-4071) runs after the floor rewire on every outcome that read the file,
+    because the head and the interpreter are independent: a line can need
+    either, both or neither. Each step that writes keeps its own backup rung.
     """
     result = rewire_interpreter_in_settings(settings_path)
+    head = RewireResult(REWIRE_NOTHING)
+    if result.status in (REWIRE_DONE, REWIRE_NOTHING, REWIRE_NO_TARGET):
+        head = move_statusline_head_in_settings(
+            settings_path,
+            shim_sources_under_bash=lambda: _deployed_shim_sources_under_bash(
+                Path(settings_path).parent.parent),
+        )
+    head_wrote = head.status == REWIRE_DONE
+    unwritten = "" if head_wrote else " No file was written."
     if result.status == REWIRE_DONE:
         print(
             f"--rewire-interpreter: rewired "
@@ -8707,13 +8726,14 @@ def _report_interpreter_rewire(settings_path: Path) -> str:
             print(f"    {where}: `{old_command}` -> `{new_command}`", file=sys.stderr)
     elif result.status == REWIRE_NOTHING and result.unconfirmed:
         # Not "already starts": the WARN below says what was left (DEF-5014).
-        print("--rewire-interpreter: nothing to rewire to. No file was written.",
-              file=sys.stderr)
+        print(f"--rewire-interpreter: nothing to rewire to.{unwritten}", file=sys.stderr)
     elif result.status == REWIRE_NOTHING:
         print(
-            f"--rewire-interpreter: nothing to rewire -- every interpreter this "
-            f"command can read already starts and meets Python {floor_text()}+. "
-            f"No file was written.",
+            f"--rewire-interpreter: "
+            f"{'no interpreter needed rewiring' if head_wrote else 'nothing to rewire'} "
+            f"-- every interpreter this "
+            f"command can read already starts and meets Python {floor_text()}+."
+            f"{unwritten}",
             file=sys.stderr,
         )
     if result.unconfirmed:
@@ -8768,7 +8788,7 @@ def _report_interpreter_rewire(settings_path: Path) -> str:
         print(
             f"WARN: --rewire-interpreter found no interpreter on PATH that was "
             f"seen to start and meet Python {floor_text()}+ (best candidate: "
-            f"`{result.detail}`), but {unheard}. Nothing was changed. Run "
+            f"`{result.detail}`), but {unheard}. No interpreter was changed. Run "
             f"`{_remedy_py()} -m espalier doctor .` when the host is less loaded "
             f"before installing another Python.",
             file=sys.stderr,
@@ -8777,7 +8797,7 @@ def _report_interpreter_rewire(settings_path: Path) -> str:
         print(
             f"WARN: --rewire-interpreter found no interpreter on PATH that "
             f"starts and meets Python {floor_text()}+ (best candidate: "
-            f"`{result.detail}`), so nothing was changed. Rewiring to an "
+            f"`{result.detail}`), so no interpreter was changed. Rewiring to an "
             f"interpreter that fails the same test would report success and fix "
             f"nothing. Install Python {floor_text()} or newer first.",
             file=sys.stderr,
@@ -8802,10 +8822,29 @@ def _report_interpreter_rewire(settings_path: Path) -> str:
             f"Fix the JSON by hand, then re-run.",
             file=sys.stderr,
         )
-    return result.status
+    for where, old_command, new_command in head.changes:
+        print(
+            f"--rewire-interpreter: put the {where} head behind a dot, the one "
+            f"form both of Claude Code's Windows shells run (backup at "
+            f"{head.detail}); the rest of the line is unchanged.\n"
+            f"    {where}: `{old_command}` -> `{new_command}`",
+            file=sys.stderr,
+        )
+    for where, command in head.declined:
+        print(
+            f"WARN: --rewire-interpreter left the {where} head as it is: the "
+            f"dot form runs {STATUSLINE_SHIM} under Git Bash through the shim's "
+            f"first line, and the copy init leaves here does not open with that "
+            f"line (a copy kept as yours, one init cannot write, or one it could "
+            f"not read), so under Git Bash the dot form would not run either. "
+            f"Take the packaged shim's first line into that copy (or make it "
+            f"writable), then re-run.\n    {where}: `{command}`",
+            file=sys.stderr,
+        )
+    return REWIRE_DONE if REWIRE_DONE in (result.status, head.status) else result.status
 
 
-REWIRE_DONE = "rewired"            # interpreter swapped; detail = .bak filename
+REWIRE_DONE = "rewired"            # interpreter swapped, or the statusLine head moved; detail = .bak filename
 REWIRE_NOTHING = "nothing"         # every wired interpreter already clears the floor
 REWIRE_NO_FILE = "no_file"         # no settings.json to rewire
 REWIRE_UNREADABLE = "unreadable"   # a parent of settings.json denies traversal; detail = OS message
@@ -8817,7 +8856,8 @@ REWIRE_DUPLICATE_KEYS = "duplicate_keys"  # settings.json has a repeated key
 
 @dataclass
 class RewireResult:
-    """Result of :func:`rewire_interpreter_in_settings`."""
+    """Result of :func:`rewire_interpreter_in_settings`, and of
+    :func:`move_statusline_head_in_settings`, which reports in the same shape."""
 
     status: str
     detail: str = ""
@@ -9016,6 +9056,65 @@ def _is_rewirable_interpreter(
     return not any(ch.isspace() for ch in token)
 
 
+def _load_settings_to_rewrite(settings_path: Path) -> tuple[dict, RewireResult | None]:
+    """``settings.json`` as an object for a rewrite of the operator's file,
+    or the refusal that says why it cannot be one: absent, unreadable, not
+    JSON, a repeated key, or not an object. The one read the floor rewire
+    and the statusLine head step share, so they refuse a file alike."""
+    settings_path = Path(settings_path)
+    presence, unreadable_detail = surface_contract.path_presence(settings_path)
+    if presence == surface_contract.PRESENCE_ABSENT:
+        return {}, RewireResult(REWIRE_NO_FILE)
+    if presence == surface_contract.PRESENCE_UNREADABLE:
+        return {}, RewireResult(REWIRE_UNREADABLE, detail=unreadable_detail)
+    def _reject_duplicates(pairs):
+        # `json.loads` keeps the LAST duplicate key, and re-serialising then
+        # PERSISTS the loss -- driven: a settings.json with two `PreToolUse`
+        # blocks came back with the operator's own `node` hook silently gone.
+        # Refusing is the only safe answer; this function may not quietly
+        # delete a block the operator wrote.
+        seen = set()
+        for key, _ in pairs:
+            if key in seen:
+                raise ValueError(f"duplicate key {key!r}")
+            seen.add(key)
+        return dict(pairs)
+
+    try:
+        existing = json.loads(
+            surface_contract.decode_bom(settings_path.read_bytes()),
+            object_pairs_hook=_reject_duplicates,
+        )
+    except ValueError as exc:
+        # ValueError covers JSONDecodeError AND the duplicate-key raise above.
+        if "duplicate key" in str(exc):
+            return {}, RewireResult(REWIRE_DUPLICATE_KEYS, detail=str(exc))
+        return {}, RewireResult(REWIRE_PARSE_ERROR, detail=str(exc))
+    except OSError as exc:
+        # The file itself could not be read (a mode-000 settings.json): not a
+        # parse failure, and the merge's own split says the same (DEF-763).
+        return {}, RewireResult(REWIRE_UNREADABLE, detail=os_error_text(exc))
+    except UnicodeDecodeError as exc:
+        return {}, RewireResult(REWIRE_PARSE_ERROR, detail=str(exc))
+    if not isinstance(existing, dict):
+        return {}, RewireResult(REWIRE_NOT_OBJECT, detail=type(existing).__name__)
+    return existing, None
+
+
+def _write_rewritten_settings(settings_path: Path, existing: dict) -> str:
+    """Back up the pre-write bytes, then write ``existing`` back; the backup
+    detail for the report. ``ensure_ascii=False``: escaping the operator's own
+    non-ASCII paths back to \\uXXXX is a gratuitous rewrite of content this
+    does not own."""
+    backup_path = _back_up_settings(settings_path)
+    atomic_write_text(
+        settings_path,
+        json.dumps(existing, indent=2, ensure_ascii=False) + "\n",
+        follow_symlinks=True,
+    )
+    return _backup_detail(backup_path)
+
+
 def rewire_interpreter_in_settings(
     settings_path: Path, *, new_interpreter: str | None = None,
 ) -> RewireResult:
@@ -9050,45 +9149,14 @@ def rewire_interpreter_in_settings(
 
     Covers all 13 interpreter sites: the 12 ``hooks[*].hooks[*].command``
     entries plus ``statusLine.command``, which lives outside ``hooks`` and is
-    a shell string.
+    a shell string. The statusLine's Windows head is not an interpreter and
+    is never this function's: :func:`move_statusline_head_in_settings` is the
+    step beside it that moves one, on the same request (DEF-4071).
     """
     settings_path = Path(settings_path)
-    presence, unreadable_detail = surface_contract.path_presence(settings_path)
-    if presence == surface_contract.PRESENCE_ABSENT:
-        return RewireResult(REWIRE_NO_FILE)
-    if presence == surface_contract.PRESENCE_UNREADABLE:
-        return RewireResult(REWIRE_UNREADABLE, detail=unreadable_detail)
-    def _reject_duplicates(pairs):
-        # `json.loads` keeps the LAST duplicate key, and re-serialising then
-        # PERSISTS the loss -- driven: a settings.json with two `PreToolUse`
-        # blocks came back with the operator's own `node` hook silently gone.
-        # Refusing is the only safe answer; this function may not quietly
-        # delete a block the operator wrote.
-        seen = set()
-        for key, _ in pairs:
-            if key in seen:
-                raise ValueError(f"duplicate key {key!r}")
-            seen.add(key)
-        return dict(pairs)
-
-    try:
-        existing = json.loads(
-            surface_contract.decode_bom(settings_path.read_bytes()),
-            object_pairs_hook=_reject_duplicates,
-        )
-    except ValueError as exc:
-        # ValueError covers JSONDecodeError AND the duplicate-key raise above.
-        if "duplicate key" in str(exc):
-            return RewireResult(REWIRE_DUPLICATE_KEYS, detail=str(exc))
-        return RewireResult(REWIRE_PARSE_ERROR, detail=str(exc))
-    except OSError as exc:
-        # The file itself could not be read (a mode-000 settings.json): not a
-        # parse failure, and the merge's own split says the same (DEF-763).
-        return RewireResult(REWIRE_UNREADABLE, detail=os_error_text(exc))
-    except UnicodeDecodeError as exc:
-        return RewireResult(REWIRE_PARSE_ERROR, detail=str(exc))
-    if not isinstance(existing, dict):
-        return RewireResult(REWIRE_NOT_OBJECT, detail=type(existing).__name__)
+    existing, refusal = _load_settings_to_rewrite(settings_path)
+    if refusal is not None:
+        return refusal
 
     # Every (container, key, json_path) holding an interpreter command.
     sites: list[tuple[dict, str, str]] = []
@@ -9210,16 +9278,105 @@ def rewire_interpreter_in_settings(
     if not changes:
         return RewireResult(REWIRE_NOTHING, declined=declined, unconfirmed=left)
 
-    backup_path = _back_up_settings(settings_path)
-    # ensure_ascii=False: escaping the operator's own non-ASCII paths back to
-    # \uXXXX is a gratuitous rewrite of content this function does not own.
-    atomic_write_text(
-        settings_path,
-        json.dumps(existing, indent=2, ensure_ascii=False) + "\n",
-        follow_symlinks=True,
-    )
-    return RewireResult(REWIRE_DONE, detail=_backup_detail(backup_path),
+    return RewireResult(REWIRE_DONE, detail=_write_rewritten_settings(settings_path, existing),
                         changes=changes, declined=declined, unconfirmed=left)
+
+
+def _statusline_head_is_dotted(settings_path: Path) -> bool:
+    """Does ``settings_path``'s statusLine run the Windows shim behind the
+    dot? ``upgrade`` keys its remedy on it: the head step moves a bare or
+    called head and has nothing to move behind a dot. A file that cannot be
+    read, or has no string command, reads False."""
+    try:
+        settings = json.loads(surface_contract.decode_bom(Path(settings_path).read_bytes()))
+    except (OSError, ValueError):
+        return False
+    status_line = settings.get("statusLine") if isinstance(settings, dict) else None
+    command = status_line.get("command") if isinstance(status_line, dict) else None
+    return isinstance(command, str) and statusline_shim_dotted(command)
+
+
+def _dotted_statusline_head(command: str) -> str:
+    """``command`` with its bare or called Windows statusline shim head put
+    behind the dot, DEF-3017's one form (DEF-4071): PowerShell's ``&`` goes,
+    and the shim, the interpreter after it and anything the operator added
+    are kept byte for byte, leading whitespace included. Asked of a command
+    :func:`~espalier._venv.statusline_shim_end` reads as shim-headed and
+    :func:`~espalier._venv.statusline_shim_dotted` does not."""
+    body = command.lstrip()
+    lead = command[: len(command) - len(body)]
+    if body[:1] == "&":
+        body = body[1:].lstrip()
+    return f"{lead}. {body}"
+
+
+def _deployed_shim_sources_under_bash(repo_root: Path) -> bool:
+    """Will the statusline shim ``init``'s deploy leaves at ``repo_root`` run
+    under Git Bash when a dotted head sources it? The rewire runs before the
+    deploy, which writes the packaged copy over a missing one or one carrying
+    the managed marker and keeps any other as the operator's
+    (:func:`_deploy_managed_py`, asked here without writing), so the copy
+    read is the packaged one or the kept one, by doctor's own first-line
+    test. An old install's managed shim is the common case, and it is about
+    to be replaced, so it never holds the move -- unless the deploy cannot
+    write it (a read-only copy, as a read-only checkout leaves it): the head
+    would then be moved over a shim that stays old, blank under Git Bash
+    (failure-mode review). A read that fails answers False: the safe side
+    is the head left where it works."""
+    try:
+        source = _deploy_source_path(STATUSLINE_SHIM)
+        dest = repo_root / STATUSLINE_SHIM
+        action = _deploy_managed_py(source, dest, dry_run=True)
+        replaced = action in ("created", "skipped_no_drift") or (
+            action == "updated_managed" and os.access(dest, os.W_OK))
+        return _doctor._shim_runs_under_bash(source if replaced else dest)
+    except OSError:
+        return False
+
+
+def move_statusline_head_in_settings(
+    settings_path: Path, *, shim_sources_under_bash: Callable[[], bool],
+) -> RewireResult:
+    """Put a bare or called Windows statusline shim head behind the dot.
+
+    DEF-4071, in the shape the operator ruled (air's ack 04a16e): an install
+    rendered before DEF-3017 carries the shim bare, which only Git Bash runs,
+    or behind PowerShell's ``&``, which only PowerShell runs (DEF-929), and
+    Claude Code picks the shell by whether it finds Git Bash, so the line is
+    blank in the other one. The dot runs in both. Moved only when asked --
+    ``init --rewire-interpreter`` is the one caller -- because the standing
+    word is that no unflagged path migrates a working line; and only:
+
+    * **on a Windows render host** (``_render_host_is_posix``, the key the
+      render itself uses): a shim head on a POSIX host was carried in, and
+      a dot there runs only the shim's first line, so that line is doctor's
+      to name, never this step's to move;
+    * **over espalier's own shim, bare or called**: a statusLine of the
+      operator's own and a dotted head are left as they are;
+    * **where the shim the deploy leaves can be sourced by Git Bash**
+      (``shim_sources_under_bash``, a required judge with no default, asked
+      only once a head is there to move): over a copy that cannot, the dot
+      would turn a working bare line blank under Git Bash, so the head is
+      left and returned as declined, for the report to say why.
+
+    Writes as the floor rewire does, a backup first, and returns its result
+    shape: ``REWIRE_DONE`` with the one ``statusLine`` change, or
+    ``REWIRE_NOTHING``, or the read's refusal."""
+    settings_path = Path(settings_path)
+    existing, refusal = _load_settings_to_rewrite(settings_path)
+    if refusal is not None:
+        return refusal
+    status_line = existing.get("statusLine")
+    command = status_line.get("command") if isinstance(status_line, dict) else None
+    if (not isinstance(command, str) or _render_host_is_posix()
+            or statusline_shim_end(command) < 0 or statusline_shim_dotted(command)):
+        return RewireResult(REWIRE_NOTHING)
+    if not shim_sources_under_bash():
+        return RewireResult(REWIRE_NOTHING, declined=[("statusLine", command)])
+    moved = _dotted_statusline_head(command)
+    status_line["command"] = moved
+    return RewireResult(REWIRE_DONE, detail=_write_rewritten_settings(settings_path, existing),
+                        changes=[("statusLine", command, moved)])
 
 
 #: Paths Espalier itself deploys under ``tools/cc/``. Derived from the deploy
@@ -10240,7 +10397,8 @@ def _disarmed_diagnosis_shape(repo_root: Path) -> tuple[str, list[str], bool]:
             rewire = f"`{py} -m espalier init . --rewire-interpreter`"
             if resolver_clears_floor:
                 remedy = (f"Rewire the hook commands to one that does: {rewire} "
-                          f"(changes only the interpreter name; keeps a .bak of the file).")
+                          f"(changes only the interpreter name, and on Windows a bare or "
+                          f"`&` statusLine head; keeps a .bak of the file).")
             elif (unheard := _unheard_on_path()) is not None:
                 # A candidate never answered `--version` (DEF-5015): no proof
                 # that none is installed, so not "put a Python on PATH".
@@ -11259,10 +11417,19 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                     remedy = (f" -- `{_remedy_py()} -m espalier merge-settings .` adds "
                               "espalier's statusLine, on request, and never touches one "
                               "of yours (set the key to null to keep the statusline off)")
+                elif shell_mismatch and _statusline_head_is_dotted(settings_path):
+                    # A dotted head is named only over a shim Git Bash cannot
+                    # source, and on this version-current branch that shim is
+                    # one kept as the operator's (an old managed copy reads as
+                    # drift above): no verb moves anything, so naming one would
+                    # send them round again (failure-mode review, DEF-620's loop).
+                    remedy = (" -- the shim it sources is kept as yours and its first line "
+                              "is not the one Git Bash runs: take the packaged shim's first "
+                              "line into it (`doctor` names it)")
                 elif shell_mismatch:
-                    remedy = (f" -- `{_remedy_py()} -m espalier init .` renders "
-                              ".claude/settings.json.new beside it with the statusLine "
-                              "line to take")
+                    # DEF-4071: the verb that moves a bare or called head, on request.
+                    remedy = (f" -- `{_remedy_py()} -m espalier init . --rewire-interpreter` "
+                              "puts its bare or `&` head behind a dot, on request")
                 else:
                     remedy = ""
                 print(f"[upgrade] harness is current ({__version__}); "
@@ -15163,7 +15330,10 @@ def build_parser() -> argparse.ArgumentParser:
              "This changes ONLY the interpreter name at the front of each hook "
              "command -- your args, permissions and every other key are "
              "preserved -- and keeps a .bak of the file first. Interpreters that already "
-             "meet the floor are left alone, so it is idempotent. A malformed "
+             "meet the floor are left alone, so it is idempotent. On a Windows "
+             "host it also puts a statusLine that runs espalier's shim bare or "
+             "behind PowerShell's & behind a dot, the one form both of Claude "
+             "Code's Windows shells run. A malformed "
              "settings.json is refused, never overwritten.",
     )
     p_init.add_argument(

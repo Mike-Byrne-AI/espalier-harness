@@ -113,8 +113,8 @@ tell why, so the line names no cause. In order of likelihood:
 If the statusline goes **blank** instead, your `settings.json` predates
 the fallback (installs rendered before it keep their statusline:
 `merge-settings` adds espalier's `statusLine` only when the key is
-absent, and `--rewire-interpreter` swaps only the interpreter the line
-names), or it was rendered on the other kind of host and carried in by a
+absent, and `--rewire-interpreter` swaps the interpreter the line names
+and never adds the fallback), or it was rendered on the other kind of host and carried in by a
 tracked `settings.json` — a `||` clause cannot parse under Windows
 PowerShell 5.1, and a POSIX shell cannot run the `.cmd` shim's batch body. On Windows
 an older install can also carry a line written for the other shell:
@@ -125,7 +125,11 @@ parse, so installing or removing Git for Windows afterwards left the line
 in the wrong form. The line `init` writes now starts with a dot
 (`. "<shim>" python`), which both shells run over a current shim; a
 shim older than that line blanks it under Git Bash. `espalier
-doctor .` says which, and a fresh `espalier init .` renders
+doctor .` says which. `espalier init . --rewire-interpreter` refreshes
+the shim and puts a bare or `&` head behind the dot, on request, writing
+a backup of your file first (a shim you keep as your own, whose first
+line is not the one Git Bash runs, holds the head where it is, and the
+command says so); otherwise a fresh `espalier init .` renders
 `settings.json.new` beside your file when the render differs — take its
 `statusLine` line. If there is **no statusline at all** on a wired
 install, the file was wired before the merge learned to add the key:
