@@ -117,7 +117,7 @@ try:
         "ONCE_FLAG_PREFIX",
         "OPERATOR_RELIEF_AGENT",
         "OPERATOR_RELIEF_NOTE_MIN_CHARS", "RELIEF_FLAGS", "STATE_DIR", "SpawnFailure", "_toml_parser",
-        "atomic_write_text", "floor_text", "has_active_plan", "lock_file", "plan_completion",
+        "atomic_write_text", "floor_text", "has_active_plan", "lane_upstream", "lock_file", "plan_completion",
         "python_command_hint", "read_stdin_safely", "read_toml_table",
         "relief_agents_line", "relief_flags", "resolve_project_root", "say_bad_stdin", "say_once", "spawn_checked",
         "split_command", "stop_gate_test_cmd", "unlock_file", "warn", "warn_exc",
@@ -1355,7 +1355,7 @@ HANDOFF_GATE_HOLD = _hook_utils.HANDOFF_GATE_HOLD
 #: read the gate makes: paid at the decision point of a new HEAD on an
 #: unpushed lane of a NAMED seat, then at most once per re-check interval
 #: while the hold stands; never on a judged HEAD, an unnamed checkout, a tree
-#: without the mail channel, or a lane with an upstream of its own.
+#: without the mail channel, or a lane with a remote branch of its own.
 HANDOFF_GATE_GH_CAP_S = 5.0
 #: Each git read the driver's attribution makes (the box's name; the local
 #: mail refs: one `for-each-ref`, then one `show` per seat) is bounded by this.
@@ -1444,25 +1444,26 @@ def _tracked_edits(root: Path, deadline: float) -> bool | None:
 
 
 def _unpushed_commits(root: Path, deadline: float) -> tuple[int, str, str, bool] | None:
-    """``(ahead, branch, upstream, own)``: the commits HEAD holds that its
-    upstream does not, and whether that upstream is the branch's own (a lane
-    already pushed) or the remote's default branch, which a lane never pushed
-    is measured against as the ship driver's push will measure it:
-    ``origin/HEAD``, else ``origin/main``, else ``origin/master``. ``None``
-    when there is nothing to compare: a detached HEAD, no upstream and no
-    remote default branch, no commits, not a git tree. Raises ``_GitFault``
-    when git could not be asked."""
+    """``(ahead, branch, upstream, own)``: the commits HEAD holds that the
+    lane's own remote branch does not where origin holds one (a lane already
+    pushed, ``own``), else that its upstream does not, else the remote's
+    default branch, which a lane never pushed is measured against as the ship
+    driver's push will measure it: ``origin/HEAD``, else ``origin/main``, else
+    ``origin/master``. ``None`` when there is nothing to compare: a detached
+    HEAD, no upstream and no remote default branch, no commits, not a git
+    tree. Raises ``_GitFault`` when git could not be asked."""
     branch = _git_answer(root, deadline, "rev-parse", "--abbrev-ref", "HEAD")
     if not branch or branch == "HEAD":
         return None
-    upstream = _git_answer(root, deadline, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
     # A lane's OWN upstream is its own remote branch (`origin/<branch>`: a lane
-    # already pushed, whose next push lands on its open pull request). A branch
-    # created from `origin/main` tracks origin/main by git's default
+    # already pushed, whose next push lands on its open pull request), read
+    # where the ship driver reads it (`_hook_utils.lane_upstream`, DEF-4081).
+    # A branch created from `origin/main` tracks origin/main by git's default
     # autoSetupMerge: an upstream, but not its own, so the push would OPEN a
     # pull request (the failure-mode review of 2026-10-31 reproduced the hold
-    # skipped on exactly the lane the protocol tells a seat to start).
-    own = bool(upstream) and str(upstream).endswith("/" + branch)
+    # skipped on exactly the lane the protocol tells a seat to start) -- until
+    # a push lands it on origin, with `-u` or without (DEF-4086).
+    upstream, own = _hook_utils.lane_upstream(lambda *args: _git_answer(root, deadline, *args), branch)
     if not upstream:
         upstream = _git_answer(root, deadline, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD")
     for name in ("origin/main", "origin/master"):
@@ -1823,7 +1824,7 @@ def _gate_handoff(root: Path) -> int:
     (``stop_failed_open_handoff_git``).
 
     One open pull request per seat (DEF-4058): where the push would OPEN a
-    pull request (the branch has no upstream of its own) and this seat has
+    pull request (the branch has no remote branch of its own) and this seat has
     another one open, the lane is held instead -- the Stop passes, one record
     per held HEAD, the hold file names HEAD and is re-checked past its
     interval -- and the block returns once none is open; the block's text

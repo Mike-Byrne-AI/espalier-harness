@@ -1209,3 +1209,28 @@ class TestRequiredContentFloor:
         at_root = [f"espalier-harness-0.0.0/{r}" for r in required]
         assert release_check.missing_required_members(at_root) == []
         assert release_check.missing_required_members(required) == []  # no root at all
+
+
+def test_the_archive_check_locks_its_out_dir_while_it_builds(tmp_path, monkeypatch):
+    """A killed release check leaves its out dir locked, so the suite's next
+    session start removes it (``tests/_temp_sweep.py``); the check removes it
+    on every exit it lives through."""
+    import tempfile
+
+    from tests import _temp_sweep
+
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    seen: dict = {}
+
+    def build(repo_root, *, output_dir):
+        seen["out"], seen["ours"] = output_dir, _temp_sweep.lock_is_ours(output_dir)
+        raise SystemExit(3)
+
+    from types import SimpleNamespace
+
+    # The check imports the builder by name inside the call.
+    monkeypatch.setitem(sys.modules, "build_release_archive", SimpleNamespace(build_release_archive=build))
+    builds, _clean = release_check.check_release_archive_builds_and_clean(tmp_path / "root")
+    assert builds.status == "FAIL" and seen["ours"], "the out dir had no pid lock during the build"
+    assert seen["out"].name.startswith(_temp_sweep.OWNED_PREFIXES) and not seen["out"].exists()
+    assert release_check.LOCK_NAME == _temp_sweep.LOCK_NAME

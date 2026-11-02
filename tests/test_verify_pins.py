@@ -1746,3 +1746,32 @@ class TestTheWideningLadderIsDriven:
         narrow, _ = select_tests(REPO_ROOT, changes, roots, full=False)
         wide, _ = select_tests(REPO_ROOT, changes, roots, full=True)
         assert narrow != wide, (narrow, wide)
+
+
+class TestTheWorkDirsLock:
+    """The root a verify makes carries its pid lock while the clone is built
+    and run, so a killed verify's clone goes at the suite's next session
+    start (``tests/_temp_sweep.py``); ``--keep`` writes no lock, so a kept
+    clone stays even when its run is killed."""
+
+    @pytest.mark.parametrize("keep", [False, True])
+    def test_the_root_is_locked_while_it_runs_unless_kept(self, tmp_path, monkeypatch, keep):
+        import tempfile
+        from types import SimpleNamespace
+
+        from tests import _temp_sweep
+
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        monkeypatch.setattr(verify_pins, "worktree_changes", lambda repo: [SimpleNamespace(path="espalier/cli.py")])
+        seen: dict = {}
+
+        def clone(repo, dest):
+            seen["root"], seen["ours"] = dest.parent, _temp_sweep.lock_is_ours(dest.parent)
+            raise OSError("stopped once the lock was read")
+
+        monkeypatch.setattr(verify_pins, "make_clone", clone)
+        rep = verify_pins.verify(REPO_ROOT, keep=keep)
+        root = seen["root"]
+        assert rep["verdict"] == verify_pins.ERROR and seen["ours"] is not keep, (keep, seen)
+        assert root.name.startswith(_temp_sweep.OWNED_PREFIXES) and verify_pins.LOCK_NAME == _temp_sweep.LOCK_NAME
+        assert root.is_dir() is keep and _temp_sweep.lock_pid(root) is None

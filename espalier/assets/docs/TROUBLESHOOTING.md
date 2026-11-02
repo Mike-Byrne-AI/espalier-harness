@@ -137,6 +137,14 @@ install, the file was wired before the merge learned to add the key:
 touched; set the key to `null` to keep the statusline off, since a present
 key is never rewritten), and `doctor` names this state too.
 
+If you keep a **statusline of your own**, Espalier's indicators do not show
+in it: `MAINT` (maintenance mode is on), `STOP=full|light`, `bp=` and the
+freshness counts. `doctor`, `merge-settings` and `upgrade` say so. To show
+them, have your command also run `tools/cc/statusline.py --segments` from the
+project root with the Python your hooks use (`doctor` prints the exact
+command), which prints only the indicators that are on and nothing when none
+is; once your `statusLine` command names that script, the note stops.
+
 ---
 
 ## "write_guard blocked something it shouldn't have"

@@ -224,6 +224,42 @@ class TestStatuslineOutput:
             f"got {out!r}"
         )
 
+    def test_segments_prints_only_the_indicators_that_are_on(self, tmp_path):
+        """DEF-1116: an operator who keeps a statusLine of their own composes
+        espalier's indicators into it with ``--segments``: no ``espalier``
+        label, and no output at all when no indicator is on, so a composed
+        line gains nothing on a quiet tree. Mutation: drop the flag's branch
+        and the quiet run prints ``espalier``."""
+        def segments(env: dict) -> str:
+            proc_env = {**os.environ}
+            for var in ("ESPALIER_MAINTENANCE_MODE", "ESPALIER_STOP_GATE",
+                        "ESPALIER_AUDIT_DIR", "CLAUDE_PROJECT_DIR"):
+                proc_env.pop(var, None)
+            proc_env.update({"CLAUDE_PROJECT_DIR": str(tmp_path), **env})
+            result = run_hook_through([sys.executable, str(STATUSLINE), "--segments"],
+                                      env=proc_env, cwd=str(tmp_path), statusline=True)
+            assert result.returncode == 0, result.stderr
+            return result.stdout
+
+        assert segments({}) == ""
+        assert segments({"ESPALIER_MAINTENANCE_MODE": "1",
+                         "ESPALIER_STOP_GATE": "full"}).strip() == "MAINT | STOP=full"
+
+    def test_segments_leaves_stdin_for_the_operators_own_command(self, tmp_path):
+        """Composed beside the operator's own command, a reader that drained
+        stdin left their script nothing (driven by the failure-mode review):
+        ``--segments`` reads none, so the payload's context segments are
+        theirs to show. Mutation: read the payload and ctx= appears."""
+        proc_env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)}
+        for var in ("ESPALIER_MAINTENANCE_MODE", "ESPALIER_STOP_GATE", "ESPALIER_AUDIT_DIR"):
+            proc_env.pop(var, None)
+        result = run_hook_through([sys.executable, str(STATUSLINE), "--segments"],
+                                  env=proc_env, input=_DOCS_SAMPLE, cwd=str(tmp_path),
+                                  statusline=True)
+        assert result.returncode == 0, result.stderr
+        assert "ctx=" not in result.stdout and "limits=" not in result.stdout, result.stdout
+        assert "ctx=" in _run_payload(_DOCS_SAMPLE, tmp_path), "the control: the full line reads it"
+
 
 class TestStatuslineHardening:
     """TP-55: statusline resolves CLAUDE_PROJECT_DIR to absolute path

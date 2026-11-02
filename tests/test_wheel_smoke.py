@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -25,6 +27,7 @@ import pytest
 
 from espalier.artifact_parity import clear_stale_packaging_state
 from tests._live_tree import checkout_glob
+from tests._locked import locked
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -649,7 +652,7 @@ class TestBuildFailureCleanup:
 
         monkeypatch.setattr(wheel_smoke, "build_wheel", boom)
 
-        args = argparse.Namespace(wheel=None, skip_build=False)
+        args = argparse.Namespace(wheel=None, skip_build=False, keep_temp=False)
         with pytest.raises(wheel_smoke.SmokeFailure):
             wheel_smoke.run_smoke(args)
 
@@ -712,6 +715,65 @@ def test_clear_stale_packaging_state_parity_with_artifact_parity(tmp_path):
     ]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="the POSIX arm: a locked directory refuses the unlink; tests/test_rmtree.py holds the Windows link")
+def test_neither_twin_lends_a_refused_links_target_the_write_bit(tmp_path):
+    """DEF-5060 in both deleters, driven alike: a link inside a locked
+    directory of ``build/`` names ``keep.txt``, which nothing was asked to
+    delete. Each clears the directory (it is inside the tree), removes the
+    link and the tree, and leaves ``keep.txt`` at 0o400. RED while either
+    reads or sets the mode through the link."""
+    modes = {}
+    for name, clear in (("twin", wheel_smoke._clear_stale_packaging_state),
+                        ("engine", clear_stale_packaging_state)):
+        root = tmp_path / name
+        locked_dir = root / "build" / "lib" / "locked"
+        locked_dir.mkdir(parents=True)
+        keep = root / "keep.txt"
+        keep.write_text("keep\n", encoding="utf-8")
+        os.chmod(keep, stat.S_IRUSR)
+        (locked_dir / "link").symlink_to(keep)
+        with locked(locked_dir, stat.S_IRUSR | stat.S_IXUSR):
+            assert clear(root) == [root / "build"]
+            assert not os.path.lexists(root / "build")
+            locked_dir.mkdir(parents=True)  # for ``locked`` to restore onto
+        modes[name] = stat.S_IMODE(os.stat(keep).st_mode)
+    assert modes == {"twin": stat.S_IRUSR, "engine": stat.S_IRUSR}
+
+
+@pytest.mark.parametrize("no_follow,bare_is_the_links,link_calls,file_calls", [
+    (True, False, [{"follow_symlinks": False}], [{"follow_symlinks": False}]),
+    (False, True, [{}], [{}]),
+    (False, False, [], [{}]),
+], ids=["follow_symlinks_false", "windows_bare", "linux_link_left_alone"])
+def test_both_twins_take_the_same_chmod_arm(tmp_path, monkeypatch, no_follow, bare_is_the_links,
+                                            link_calls, file_calls):
+    """The parity row above drives one arm, this host's; this one drives all
+    three in both deleters through a fake ``os.chmod`` that records and
+    changes nothing, so the twin cannot drop an arm the engine keeps (or the
+    reverse) on a host that never takes it."""
+    from espalier import _rmtree
+    f = tmp_path / "f"
+    f.write_text("x", encoding="utf-8")
+    link = tmp_path / "link"
+    try:
+        link.symlink_to(f)
+    except OSError as exc:
+        pytest.skip(f"this host cannot make a symlink: {exc}")
+    seen = {}
+    for name, module in (("twin", wheel_smoke), ("engine", _rmtree)):
+        calls: list[tuple[str, dict]] = []
+        monkeypatch.setattr(os, "chmod", lambda p, m, **k: calls.append((str(p), k)))
+        monkeypatch.setattr(module, "_CHMOD_NO_FOLLOW", no_follow)
+        monkeypatch.setattr(module, "_BARE_CHMOD_IS_THE_LINKS", bare_is_the_links)
+        module._add_write_bit(str(link))
+        module._add_write_bit(str(f))
+        seen[name] = (
+            [k for p, k in calls if p == str(link)],
+            [k for p, k in calls if p == str(f)],
+        )
+    assert seen == {"twin": (link_calls, file_calls), "engine": (link_calls, file_calls)}
+
+
 def test_build_wheel_clears_stale_state_before_the_builder(tmp_path, monkeypatch):
     """The twin's order row: RED with the call removed from ``build_wheel``."""
     calls: list[str] = []
@@ -756,3 +818,50 @@ def test_the_local_hidden_name_twin_matches_the_engine_s(tmp_path):
     (base / ".DS_Store").write_bytes(b"\x00")
     assert wheel_smoke._visible(base.rglob("*"), base) == visible(base.rglob("*"), base)
     assert wheel_smoke._visible(base.rglob("*"), base) == [base / "real", base / "real" / "SKILL.md"]
+
+
+class TestTheWorkDirsLock:
+    """Both dirs the smoke makes (the built wheel's and the venv's) carry its
+    pid lock while it runs, so a killed smoke's venv goes at the suite's next
+    session start (``tests/_temp_sweep.py``); ``--keep-temp`` writes no lock,
+    so a kept dir stays even when its run is killed."""
+
+    def _drive(self, tmp_path, monkeypatch, keep_temp: bool) -> list:
+        import argparse
+        import tempfile
+
+        from tests import _temp_sweep
+
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        seen: list = []
+
+        def build(repo_root, dest_dir):
+            seen.append((dest_dir, _temp_sweep.lock_is_ours(dest_dir)))
+            wheel = dest_dir / "espalier-0-py3-none-any.whl"
+            wheel.write_bytes(b"")
+            return wheel
+
+        def install(wheel, venv_dir):
+            seen.append((venv_dir.parent, _temp_sweep.lock_is_ours(venv_dir.parent)))
+            raise wheel_smoke.SmokeFailure("stopped once the locks were read")
+
+        monkeypatch.setattr(wheel_smoke, "build_wheel", build)
+        monkeypatch.setattr(wheel_smoke, "install_wheel", install)
+        with pytest.raises(wheel_smoke.SmokeFailure):
+            wheel_smoke.run_smoke(argparse.Namespace(wheel=None, skip_build=False, keep_temp=keep_temp))
+        return seen
+
+    def test_both_dirs_are_locked_while_it_runs_and_go_after(self, tmp_path, monkeypatch):
+        from tests import _temp_sweep
+
+        seen = self._drive(tmp_path, monkeypatch, keep_temp=False)
+        assert [ours for _d, ours in seen] == [True, True], "a dir the smoke made had no pid lock"
+        assert all(d.name.startswith(_temp_sweep.OWNED_PREFIXES) and not d.exists() for d, _ours in seen)
+        assert wheel_smoke.LOCK_NAME == _temp_sweep.LOCK_NAME
+
+    def test_keep_temp_never_locks_so_a_killed_kept_run_keeps_both(self, tmp_path, monkeypatch):
+        from tests import _temp_sweep
+
+        seen = self._drive(tmp_path, monkeypatch, keep_temp=True)
+        assert [ours for _d, ours in seen] == [False, False], "a --keep-temp run locked a dir it keeps"
+        assert all(d.is_dir() and _temp_sweep.lock_pid(d) is None for d, _ours in seen), seen

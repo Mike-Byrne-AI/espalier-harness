@@ -711,6 +711,57 @@ class TestAbsentStatusLineTopUp:
         assert "Enforcement was already active." in result.stdout, result.stdout
         assert "wired 0" not in result.stdout and "now active" not in result.stdout, result.stdout
 
+    def test_the_merge_says_the_statusline_of_your_own_it_stepped_aside_from(self, tmp_path):
+        """DEF-1116: the merge keeps a present statusLine by design, and kept it
+        in silence, so an operator with a line of their own never learned that
+        MAINT and the other indicators were not showing. ``merge-settings`` and
+        ``upgrade`` say so through the reporter every merge narrator calls, the
+        predicate doctor reads. Mutation: drop the reporter's statusLine arm and
+        neither line appears."""
+        target = tmp_path / "adopter"
+        target.mkdir()
+        subprocess.check_call(["git", "init", "--quiet"], cwd=str(target))
+        subprocess.run(
+            [sys.executable, "-m", "espalier.cli", "init", str(target)],
+            check=True, capture_output=True, timeout=45, encoding="utf-8",
+        )
+        settings = target / ".claude" / "settings.json"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        data["statusLine"] = {"type": "command", "command": "my-prompt --short"}
+        settings.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        result = _merge(target)
+        assert result.returncode == 0, result.stderr
+        said = [ln for ln in result.stdout.splitlines() if "a command of your own" in ln]
+        assert len(said) == 1 and said[0].startswith("merge-settings: "), result.stdout
+        assert "MAINT" in said[0] and "statusline.py --segments" in said[0], said
+        upgrade = subprocess.run(
+            [sys.executable, "-m", "espalier.cli", "upgrade", str(target)],
+            capture_output=True, timeout=45, encoding="utf-8",
+        )
+        assert upgrade.returncode == 0, upgrade.stderr
+        assert sum("[upgrade] statusLine runs a command of your own" in ln
+                   for ln in upgrade.stdout.splitlines()) == 1, upgrade.stdout
+        # The other two narrators (code review): --wire-hooks on stderr, and
+        # upgrade --execute on a stale tree, through the merge's own reporter.
+        wire = subprocess.run(
+            [sys.executable, "-m", "espalier.cli", "init", str(target), "--wire-hooks"],
+            capture_output=True, timeout=45, encoding="utf-8",
+        )
+        assert wire.returncode == 0, wire.stderr
+        assert "--wire-hooks: statusLine runs a command of your own" in wire.stderr, wire.stderr
+        manifest = target / "cc" / "PACK_MANIFEST.txt"
+        manifest.write_text("".join(
+            "# espalier-version: 0.0.1\n" if ln.startswith("# espalier-version:") else ln
+            for ln in manifest.read_text(encoding="utf-8").splitlines(keepends=True)
+        ), encoding="utf-8")
+        execute = subprocess.run(
+            [sys.executable, "-m", "espalier.cli", "upgrade", str(target), "--execute"],
+            capture_output=True, timeout=45, encoding="utf-8",
+        )
+        assert execute.returncode == 0, execute.stderr
+        assert sum("[upgrade] statusLine runs a command of your own" in ln
+                   for ln in execute.stdout.splitlines()) == 1, execute.stdout
+
     def test_the_read_only_twin_agrees_with_the_merge_on_the_key(self, tmp_path):
         """`_statusline_key_absent` (the stale-install `upgrade` preview's
         "would add") and the merge decide "add the key?" through one

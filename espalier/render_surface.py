@@ -7,10 +7,13 @@ templates.
 """
 from __future__ import annotations
 
+import functools
+import hashlib
 import json
 import re
 from collections.abc import Callable, Iterable
 from pathlib import Path
+from typing import Any
 
 from espalier import __version__  # deploy-time version stamp
 from espalier import surface_contract
@@ -807,6 +810,44 @@ def render_commands_doc(repo_root: Path) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _surface_digest(files: "Iterable[tuple[str, Any]]") -> str:
+    """sha256 over ``(rel, source)`` pairs, in ``rel`` order, each source read
+    as its canonical text -- a leading BOM stripped, CRLF and bare CR folded to
+    LF, the integrity manifest's rule (``_integrity.canonical_text_bytes``, its
+    one owner) -- so a Windows checkout's line endings are the same build (the
+    content-hash CRLF edge in docs/SHARP_EDGES.md) while a changed byte or a
+    moved file is another. A source that cannot be read counts as missing,
+    never as a crash of the render that stamps the digest."""
+    from espalier._integrity_bridge import load_integrity_module
+
+    canon = load_integrity_module().canonical_text_bytes
+    digest = hashlib.sha256()
+    for rel, source in sorted(files, key=lambda item: item[0]):
+        digest.update(f"{rel}\0".encode("utf-8"))
+        try:
+            digest.update(canon(source.read_bytes()))
+        except OSError:
+            digest.update(b"\0missing")
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+@functools.lru_cache(maxsize=1)
+def engine_build() -> str:
+    """This engine's build, stamped as ``# espalier-build:`` under the version
+    (DEF-1104): a pre-release string does not move between merges, so two
+    builds shared one stamp, and an older build's rewrite of a newer one's
+    tree read as repairing drift. Twelve hex digits of :func:`_surface_digest`
+    over ``cli._deploy_sources``, the files the writing verbs copy, so two
+    installs that deploy the same bytes are one build (neither can roll the
+    other back) and a file nothing deploys moves nothing. The digest alone is
+    stamped: install provenance, a commit included, would make one set of
+    bytes read as drift between two machines. Read once a process."""
+    from espalier.cli import _deploy_sources  # lazy: cli imports this module
+
+    return _surface_digest(_deploy_sources())[:12]
+
+
 def render_pack_manifest(repo_root: Path) -> str:
     """Render cc/PACK_MANIFEST.txt listing the files ``espalier init`` manages in this repository.
 
@@ -833,6 +874,14 @@ def render_pack_manifest(repo_root: Path) -> str:
         # __version__ by construction (f-string ref, no literal).
         f"# espalier-version: {__version__}",
     ]
+    if not surface_contract.is_self_host_repo(repo_root):
+        # The build beside the version (DEF-1104), read by
+        # cli._read_deployed_build. Not here on the self-host tree: its
+        # committed manifest is pinned to this render
+        # (tests/test_manifest_truth.py) and its deploy source is its own
+        # tools/cc/, so a build line would be one tracked line every lane
+        # touching tools/cc/ recomputes.
+        lines.append(f"# espalier-build: {engine_build()}")
     lines.extend(unique)
     return "\n".join(lines) + "\n"
 

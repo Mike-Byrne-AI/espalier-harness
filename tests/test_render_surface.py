@@ -14,6 +14,7 @@ slash command's 10-line report.
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -737,6 +738,83 @@ class TestRenderPackManifest:
         assert f"# espalier-version: {__version__}" in result
         stamp = [l for l in result.splitlines() if l.startswith("# espalier-version:")]
         assert len(stamp) == 1  # exactly one stamp; it is a #-comment, not a path entry
+
+    def test_a_build_identity_is_stamped_beside_the_version(self, tmp_path):
+        """DEF-1104's remainder: a pre-release string does not move between
+        merges, so two builds shared one stamp and an older one's rewrite read
+        as repairing drift. The build line sits under the version line; it is
+        a #-comment, so every reader that skips comments skips it."""
+        from espalier.render_surface import engine_build
+
+        lines = render_pack_manifest(tmp_path).splitlines()
+        version = next(i for i, ln in enumerate(lines) if ln.startswith("# espalier-version:"))
+        assert lines[version + 1] == f"# espalier-build: {engine_build()}"
+        assert sum(ln.startswith("# espalier-build:") for ln in lines) == 1
+        # The digest alone: install provenance in a tracked line would make one
+        # set of bytes read as drift between two machines (both reviewers).
+        assert re.fullmatch(r"[0-9a-f]{12}", engine_build()), engine_build()
+
+    def test_the_build_digests_what_the_deploy_copies_and_nothing_else(self):
+        """A walk of the package folders counted espalier/assets/CLAUDE.md, a
+        self-host guide no package-data glob ships and nothing deploys, so a
+        source checkout and the wheel of one commit read as two builds and the
+        tracked manifest flipped on every --execute between them (driven by the
+        failure-mode review). The digest reads the deploy's own list."""
+        from espalier.cli import (
+            INIT_HOOK_SCRIPTS,
+            INIT_TOOL_SCRIPTS,
+            _deploy_source_path,
+            _deploy_sources,
+            _espalier_root,
+            _packaged_md_assets,
+        )
+
+        sources = _deploy_sources()
+        rels = {rel for rel, _ in sources}
+        assert set(INIT_HOOK_SCRIPTS + INIT_TOOL_SCRIPTS) <= rels
+        assert {rel for rel, _ in _packaged_md_assets(_espalier_root())} <= rels
+        assert len(rels) == len(sources), "one source per deployed path"
+        assert all(src.is_file() for _, src in sources), [r for r, s in sources if not s.is_file()]
+        assert not any(str(src).replace("\\", "/").endswith("espalier/assets/CLAUDE.md")
+                       for _, src in sources)
+        hook = INIT_HOOK_SCRIPTS[0]
+        assert dict(sources)[hook] == _deploy_source_path(hook), (
+            "a source checkout deploys its own tools/cc/, so the digest reads it there")
+
+    def test_the_self_host_manifest_carries_no_build_line(self):
+        """The committed cc/PACK_MANIFEST.txt here is pinned to the render
+        (tests/test_manifest_truth.py), and the deploy source is this tree's
+        own tools/cc/: a build line would be one tracked line every lane that
+        touches tools/cc/ recomputes (Core Rule 15)."""
+        from pathlib import Path
+
+        repo = Path(__file__).resolve().parent.parent
+        assert not any(ln.startswith("# espalier-build:")
+                       for ln in render_pack_manifest(repo).splitlines())
+
+    def test_the_build_digest_reads_the_canonical_text_of_the_deploy_source(self, tmp_path):
+        """One build is one set of deployed bytes, whatever line endings a
+        checkout gave them (the content-hash CRLF edge in docs/SHARP_EDGES.md):
+        a CRLF or BOM resave keeps the digest, a changed byte or a renamed file
+        moves it, the order of the list does not, and a source that cannot be
+        read is counted as missing rather than raised."""
+        from espalier.render_surface import _surface_digest
+
+        src = tmp_path / "guard.py"
+        src.write_bytes(b"x = 1\ny = 2\n")
+        other = tmp_path / "other.md"
+        other.write_bytes(b"# body\n")
+        pairs = [("tools/cc/hooks/guard.py", src), (".claude/agents/a.md", other)]
+        first = _surface_digest(pairs)
+        assert _surface_digest(list(reversed(pairs))) == first
+        src.write_bytes(b"\xef\xbb\xbfx = 1\r\ny = 2\r\n")
+        assert _surface_digest(pairs) == first
+        src.write_bytes(b"x = 1\ny = 3\n")
+        assert _surface_digest(pairs) != first
+        src.write_bytes(b"x = 1\ny = 2\n")
+        assert _surface_digest([("tools/cc/hooks/moved.py", src), pairs[1]]) != first
+        missing = _surface_digest([("tools/cc/hooks/guard.py", tmp_path / "absent.py"), pairs[1]])
+        assert missing != first
 
     def test_always_includes_required_cc_docs(self, tmp_path):
         result = render_pack_manifest(tmp_path)

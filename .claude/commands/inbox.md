@@ -328,7 +328,11 @@ is read on its own, and one that cannot be read says so on its own line:
   banner's `Mail:` line.
 - **jobs:** the dispatcher's live assignments, one row per job with its seat,
   its lane, classes and ids, its stamp and the assign's id (the one a release
-  names). The section ends with `under two: <seat> (<n>, last mail <age>),
+  names). A job the third closing rule closed at a push, while that lane's
+  pull request is still open, gets a line under the rows (`closed at a push,
+  its pull request still open: <n>: ...`, with that pull request's state, so a
+  lane in CI reads apart from a red one; unread where the pull requests are),
+  so a shelved lane's job is re-sent from what is read. The section ends with `under two: <seat> (<n>, last mail <age>),
   ...`: each seat holding fewer than two live jobs with its count and its last
   mail's age (`no mail` for a seat a job alone names; a live job keeps a dark
   seat on the line, so read the age before giving it a job), over the seats
@@ -531,3 +535,10 @@ python tools/cc/mail.py send --type release --ack <claim id>
 A claim nobody releases stays live, and the other box's every plan that
 touches its paths warns forever; `claims` lists your own beside theirs, so
 read it when a lane ends without a push.
+
+A lane release typed by hand (`send --type release` naming a lane) prints a
+note for each job given to this seat that it closes as a push would: on
+`--dry-run`, the releases by id that drop the same claims and leave the job
+alone; after a real send, the re-send to ask the dispatcher for. It fetches the
+other machines' mail first and says so when it reads them as last fetched. The
+ship driver's own release, and a dispatcher's, print none.

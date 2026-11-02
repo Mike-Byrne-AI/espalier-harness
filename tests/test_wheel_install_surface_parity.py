@@ -182,7 +182,9 @@ def test_source_and_wheel_init_deploy_same_managed_surface(tmp_path):
     """
     _require_build_or_skip()
 
-    scratch = Path(tempfile.mkdtemp(prefix="wheel-surface-parity-"))
+    # Inside this test's own basetemp, never the system temp dir: a wheel, a
+    # venv and two init targets, which a killed run left where no sweep reads.
+    scratch = Path(tempfile.mkdtemp(prefix="wheel-surface-parity-", dir=tmp_path))
     try:
         # 1. Build the wheel once and reuse it.
         wheel = build_wheel(REPO_ROOT, scratch / "dist")

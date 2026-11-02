@@ -1263,9 +1263,13 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "per-row verdicts differ within this file; see the ledger row for DEF-600",
     ),
     "tests/test_render_surface.py": (
-        1, "d2b70da55c03eee145cebeba90c602f0808c471030f32003ca4546aa873430cf",
-        "PRIOR_PASS_UNRECORDED",
-        "adjudicated in the parametrize/for-assert pass; per-row reason not preserved",
+        2, "b2f3033ca4c364a1a7245f4431b9d42eed4f41f5d8b145ff7f0670532e2bab4d",
+        "MIXED_WITH_PRIOR_PASS",
+        "CORE_FLOW_COMMANDS: adjudicated in the parametrize/for-assert pass, per-row "
+        "reason not preserved. NEW 2026-11-02 (DEF-1104): the _packaged_md_assets "
+        "comprehension is a property, the build digest's list containing the deploy's "
+        "own .claude enumeration; a shrink narrows both sides together and is the "
+        "packaged-surface count pins' to catch, not this test's",
     ),
     "tests/test_repo_mode.py": (
         2, "f32366b16c4b1865c1f018fe881c21048d2bd5b2e20f0fc833d504e6e25ddc9a",

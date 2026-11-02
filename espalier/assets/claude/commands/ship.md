@@ -160,9 +160,10 @@ id the ack must name.
 
 Holds the lane, unpushed, while this seat already has another open pull request
 (by the seat whose latest claim or release names its lane: every seat may push
-as one GitHub account) and the lane has no upstream of its own (never pushed,
-or tracking the base it was started from -- the Stop hook's handoff gate reads
-it the same way): one open pull request per seat. Nothing is pushed; the hold
+as one GitHub account) and origin does not hold the lane under its own name
+(never pushed: a push with `-u` or without lands it, whatever the branch
+tracks -- the Stop hook's handoff gate reads it with the same reader): one open
+pull request per seat. Nothing is pushed; the hold
 names the pull request, and `open` run again once it merges or closes opens
 the lane (nothing runs it for you). The Stop hook's hold for the lane is
 written with it, and a `handoff` held here arms the own-clear with the hold, as

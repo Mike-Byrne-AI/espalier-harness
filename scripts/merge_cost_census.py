@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import sys
@@ -69,6 +70,10 @@ from typing import Callable
 ROOT = Path(__file__).resolve().parents[1]
 CATCH_UP = re.compile(r"^Merge (remote-tracking )?branch '(origin/)?main'")
 LEDGER = "task-packs/FORWARD_LEDGER.md"
+#: The suite's temp sweep reads this file in the clone's holder: this
+#: process's pid, so a census killed mid-clone leaves a dir the next session
+#: start removes (``tests/_temp_sweep.py``).
+LOCK_NAME = ".lock"
 PROBES = "task-packs/LEDGER_PROBES.json"
 RECORD_FILES = ("ESPALIER_MEMORY.md", LEDGER, PROBES)
 #: The same records written one file per change (the Session Log and the
@@ -151,7 +156,9 @@ def driver_overrides(gitattributes: str) -> list[str]:
 def scratch_clone(root: Path, runner: Runner) -> Path:
     """A ``--shared`` clone with every merge driver overridden in its OWN
     ``info/attributes``; the caller removes it."""
-    dest = Path(tempfile.mkdtemp(prefix="merge-cost-census-")) / "clone"
+    holder = Path(tempfile.mkdtemp(prefix="merge-cost-census-"))
+    (holder / LOCK_NAME).write_text(str(os.getpid()), encoding="utf-8")
+    dest = holder / "clone"
     rc, _out, err = runner(["git", "clone", "-q", "--no-checkout", "--shared", str(root), str(dest)])
     if rc != 0:
         raise SystemExit(f"merge_cost_census: scratch clone failed: {err.strip()}")

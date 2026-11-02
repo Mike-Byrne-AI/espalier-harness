@@ -325,6 +325,131 @@ class TestRemoveFileOnTheHost:
         assert len(calls) == 2, "one attempt per call, never a retry"
 
 
+def _link_to(link: Path, target: Path) -> Path:
+    """``link`` pointing at ``target``, or a skip where this host cannot make
+    one (Windows without the symlink privilege)."""
+    try:
+        link.symlink_to(target)
+    except OSError as exc:
+        pytest.skip(f"this host cannot make a symlink: {exc}")
+    return link
+
+
+def _outside_file(root: Path) -> Path:
+    """A 0o400 file that no delete in the test is asked for."""
+    outside = root / "outside"
+    outside.write_text("x", encoding="utf-8")
+    os.chmod(outside, stat.S_IRUSR)
+    return outside
+
+
+class TestALinkIsDeletedNeverFollowed:
+    """DEF-5060: the bit edit read the mode by ``os.stat`` and set it by
+    ``os.chmod``, both of which follow a link, so a refused unlink of a link
+    gave the link's TARGET the owner write bit, outside the tree included.
+    The link is what was asked for; its target is not."""
+
+    @pytest.mark.skipif(os.name == "nt", reason="the POSIX arm: a locked directory refuses the unlink; Windows is the read-only link below")
+    @pytest.mark.parametrize("best_effort", [False, True], ids=["strict", "best_effort"])
+    def test_a_refused_link_in_the_tree_never_lends_its_target_the_write_bit(self, tmp_path, best_effort):
+        """The row's own drive: a 0o500 directory inside the tree holding a
+        link to a 0o400 file outside it. The directory is cleared (it is
+        inside the tree) and the tree goes; the file outside stays 0o400."""
+        outside = _outside_file(tmp_path)
+        locked_dir = tmp_path / "tree" / "d"
+        locked_dir.mkdir(parents=True)
+        _link_to(locked_dir / "link", outside)
+        with locked(locked_dir, _RX):
+            _rmtree.remove_tree(tmp_path / "tree", best_effort=best_effort)
+            assert not os.path.lexists(tmp_path / "tree")
+            locked_dir.mkdir(parents=True)  # for ``locked`` to restore onto
+        assert _mode(outside) == stat.S_IRUSR, "the link's target outside the tree was chmod'ed"
+
+    @pytest.mark.skipif(os.name == "nt", reason="the POSIX arm: a locked directory refuses the unlink; Windows is the read-only link below")
+    def test_a_refused_link_file_never_lends_its_target_the_write_bit(self, tmp_path):
+        """The file arm: the link's directory is not ours, so the delete
+        reports (strict) or stays (best effort), and the file it names is
+        left exactly as it was."""
+        outside = _outside_file(tmp_path)
+        d = tmp_path / "hooks"
+        d.mkdir()
+        link = _link_to(d / "write_guard.py", outside)
+        with locked(d, _RX):
+            with pytest.raises(PermissionError):
+                _rmtree.remove_file(link)
+            assert _mode(outside) == stat.S_IRUSR, "the link's target was chmod'ed"
+            _rmtree.remove_file(link, best_effort=True)
+            assert os.path.lexists(link)
+            assert _mode(d) == _RX, "the link's directory was chmod'ed"
+        assert _mode(outside) == stat.S_IRUSR
+
+    @pytest.mark.skipif(os.name != "nt", reason="the Windows arm: the read-only attribute of the link itself")
+    def test_a_read_only_link_goes_and_its_read_only_target_stays(self, tmp_path, monkeypatch):
+        """A behaviour pin, not a regression pin: a bare ``os.chmod`` on
+        Windows never followed a link (to 3.12 its only body sets the path's
+        own attribute; from 3.13 ``follow_symlinks`` defaults to false
+        there), so DEF-5060 never reached Windows. The premise is asserted
+        first: the link's own read-only attribute refuses a bare unlink. Then
+        the helper clears that attribute on the link itself, the link goes,
+        and the read-only file it names stays read-only. Runs only where
+        ``portability.yml`` dispatches windows-latest (its interpreter's arm);
+        the other Windows arm is driven through the fake below."""
+        target = tmp_path / "target"
+        target.write_text("x", encoding="utf-8")
+        link = _link_to(tmp_path / "link", target)
+        os.chmod(target, stat.S_IREAD)
+        os.chmod(link, stat.S_IREAD)  # the link's own attribute: a bare chmod never follows on Windows
+        real_chmod = os.chmod
+        chmods: list[str] = []
+        monkeypatch.setattr(os, "chmod", lambda p, m, **k: (chmods.append(str(p)), real_chmod(p, m, **k)))
+        try:
+            with pytest.raises(PermissionError):
+                os.unlink(link)
+            _rmtree.remove_file(link)
+            assert not os.path.lexists(link)
+            assert chmods == [str(link)], "the helper set something other than the link's own bit"
+            assert not os.stat(target).st_mode & stat.S_IWRITE, "the link's target lost its read-only attribute"
+        finally:
+            real_chmod(target, stat.S_IWRITE | stat.S_IREAD)
+
+    @pytest.mark.parametrize("no_follow,bare_is_the_links,expected", [
+        (True, False, [{"follow_symlinks": False}]),
+        (False, True, [{}]),
+        (False, False, []),
+    ], ids=["follow_symlinks_false", "windows_to_3_12_bare", "linux_left_alone"])
+    def test_a_links_own_bits_are_set_without_following_or_not_at_all(
+        self, tmp_path, monkeypatch, no_follow, bare_is_the_links, expected
+    ):
+        """Each arm on any host, through a fake ``os.chmod`` that records and
+        changes nothing: where the call can stop at the link it does; where it
+        cannot, the link is left alone (a link's own mode never refuses an
+        unlink on POSIX, so nothing is lost)."""
+        link = _link_to(tmp_path / "link", _outside_file(tmp_path))
+        calls: list[tuple[str, int, dict]] = []
+        monkeypatch.setattr(os, "chmod", lambda p, m, **k: calls.append((str(p), m, k)))
+        monkeypatch.setattr(_rmtree, "_CHMOD_NO_FOLLOW", no_follow)
+        monkeypatch.setattr(_rmtree, "_BARE_CHMOD_IS_THE_LINKS", bare_is_the_links)
+
+        _rmtree._add_write_bit(str(link))
+
+        assert [k for _p, _m, k in calls] == expected, calls
+        assert all(p == str(link) and m & stat.S_IWUSR for p, m, _k in calls), calls
+
+    @pytest.mark.parametrize("no_follow,bare_is_the_links", [
+        (True, False), (False, True), (False, False),
+    ], ids=["follow_symlinks_false", "windows_to_3_12_bare", "linux"])
+    def test_a_file_that_is_not_a_link_is_set_on_every_arm(self, tmp_path, monkeypatch, no_follow,
+                                                         bare_is_the_links):
+        f = tmp_path / "f"
+        f.write_text("x", encoding="utf-8")
+        calls: list[dict] = []
+        monkeypatch.setattr(os, "chmod", lambda p, m, **k: calls.append(k))
+        monkeypatch.setattr(_rmtree, "_CHMOD_NO_FOLLOW", no_follow)
+        monkeypatch.setattr(_rmtree, "_BARE_CHMOD_IS_THE_LINKS", bare_is_the_links)
+        _rmtree._add_write_bit(str(f))
+        assert calls == [{"follow_symlinks": False} if no_follow else {}]
+
+
 class TestTheHandler:
     """The tree handler's retry logic on any host, through the ``onexc`` shape."""
 
@@ -350,7 +475,7 @@ class TestTheHandler:
         target.write_text("x", encoding="utf-8")
         chmods: list[tuple[str, int]] = []
         real_chmod = os.chmod
-        monkeypatch.setattr(os, "chmod", lambda p, m: (chmods.append((str(p), m)), real_chmod(p, m)))
+        monkeypatch.setattr(os, "chmod", lambda p, m, **k: (chmods.append((str(p), m)), real_chmod(p, m, **k)))
         calls: list = []
         handler = _rmtree._make_handler(False, str(root))
 
@@ -368,7 +493,7 @@ class TestTheHandler:
         root.mkdir()
         chmods: list[str] = []
         real_chmod = os.chmod
-        monkeypatch.setattr(os, "chmod", lambda p, m: (chmods.append(str(p)), real_chmod(p, m)))
+        monkeypatch.setattr(os, "chmod", lambda p, m, **k: (chmods.append(str(p)), real_chmod(p, m, **k)))
         handler = _rmtree._make_handler(True, str(root))
         handler(self._retry_func([]), str(root), PermissionError(errno.EACCES, "refused", str(root)))
         assert chmods == [str(root)], chmods

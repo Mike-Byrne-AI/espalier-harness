@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5065",
+ "subject": "tests/test_test_suite_contract.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the hazard is the next fake written: every os.chmod patch in the tree takes **kwargs today, so the oracle is the contract test the fix adds",
+ "row_sha": "2b11a0c1142a",
+ "text_sha": "4b83ce4f9a31",
+ "verified_2026_11_02": "OPEN (filed 2026-11-02; probe driven at filing)"
+}

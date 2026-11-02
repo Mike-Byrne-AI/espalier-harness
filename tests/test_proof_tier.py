@@ -1801,7 +1801,7 @@ _NAMED_LAUNCHERS = frozenset({"run_bounded"})
 #: The launches the scan finds at the pin, the serial files' included; the
 #: floor the scan must clear before its verdict is read, as the wall-clock
 #: rule's (a scan that finds a handful is broken, not looking at clean files).
-_NESTED_LAUNCHES_AT_PIN = 18  # 2026-11-01: 12 enrolled below, the cited-pin run, the axis registry's two,
+_NESTED_LAUNCHES_AT_PIN = 20  # 2026-11-02: 14 enrolled below, the cited-pin run, the axis registry's two,
 #                               and verify_pins's three through the script hop (DEF-2036)
 _NESTED_LAUNCH_FLOOR = _NESTED_LAUNCHES_AT_PIN // 2
 #: The launches whose child rides the parallel leg, EXACT: ``file::qualname``
@@ -1960,14 +1960,21 @@ def nested_pytest_launches(text: str, hops: frozenset[str] = frozenset()) -> set
     qualified name (``Class::function``; ``<module>`` for a launch at module
     level). ``hops`` are the ``scripts/<name>.py`` paths whose own launches
     read as one, so a launch of one of them reads as one too."""
-    tree = ast.parse(text)
+    return {qual for qual, _call in nested_pytest_launch_calls(text, hops)}
+
+
+def nested_pytest_launch_calls(text: str | ast.Module,
+                               hops: frozenset[str] = frozenset()) -> list[tuple[str, ast.Call]]:
+    """:func:`nested_pytest_launches`'s launches, each with its call (a tree
+    passed in is read as it is, so its calls are the caller's nodes)."""
+    tree = text if isinstance(text, ast.Module) else ast.parse(text)
     modules, bare = {"subprocess"}, set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             modules.update(a.asname or a.name for a in node.names if a.name == "subprocess")
         elif isinstance(node, ast.ImportFrom) and node.module == "subprocess":
             bare.update(a.asname or a.name for a in node.names if a.name in _LAUNCHERS)
-    found: set[str] = set()
+    found: list[tuple[str, ast.Call]] = []
 
     def launches(call: ast.Call) -> bool:
         f = call.func
@@ -1989,7 +1996,7 @@ def nested_pytest_launches(text: str, hops: frozenset[str] = frozenset()) -> set
                 argv = child.args[0] if child.args else next(
                     (k.value for k in child.keywords if k.arg == "args"), None)
                 if _is_pytest_argv(argv, names, hops=hops):
-                    found.add("::".join(qual) or "<module>")
+                    found.append(("::".join(qual) or "<module>", child))
             visit(child, qual, names)
 
     visit(tree, (), _module_bindings(tree))
@@ -2174,6 +2181,271 @@ class TestTheNestedRunRule:
         assert spelled - self._hops() == set(_SCRIPTS_THE_HOP_CANNOT_READ), (
             sorted(spelled - self._hops()), sorted(_SCRIPTS_THE_HOP_CANNOT_READ))
         assert all(why.strip() for why in _SCRIPTS_THE_HOP_CANNOT_READ.values())
+
+
+#: The temp dir roots a child can be given; one moves both its pytest root and
+#: the system temp dir the session-start sweep reads.
+_TEMP_ROOT_KEYS = ("TMPDIR", "TEMP", "TMP")
+
+
+def _child_keeps() -> dict[str, tuple[frozenset[str], str | None]]:
+    """Each variable a launched pytest child must keep, with the names whose
+    store keeps its run right without it and the argument that does. Without
+    the parent's basetemp, a child given no ``--basetemp`` and no temp root
+    of its own takes a numbered dir on pytest's shared root, and its session
+    end deletes the finished sessions' dirs inside the launching test's clock
+    (``tests/_nested_temp.py``). Without ``PYTEST_CURRENT_TEST``, a child
+    that moves no temp dir runs the session-start sweep inside it
+    (``tests/_temp_sweep.py``), which ``--basetemp`` does not stop, nor does
+    the sweep's switch at ``1`` (it means on)."""
+    from tests._nested_temp import KEY
+
+    return {KEY: (frozenset({KEY, "PYTEST_DEBUG_TEMPROOT", *_TEMP_ROOT_KEYS}), "--basetemp"),
+            "PYTEST_CURRENT_TEST": (frozenset({"PYTEST_CURRENT_TEST", *_TEMP_ROOT_KEYS}), None)}
+
+
+#: A launching file that drops one of those variables, EXACT, ``file`` ->
+#: ``{variable: why}``; an entry whose file no longer drops it is struck (a
+#: ``--collect-only`` child, which makes no basetemp, is the shape it is for).
+_LAUNCH_ENV_DROPS_DECLARED: dict[str, dict[str, str]] = {}
+#: The files the launch census reads at the pin; under half is a broken scan.
+_LAUNCH_FILES_AT_PIN = 20  # 2026-11-02: 14 test files, 5 hop scripts, tools/cc/ledger_row.py
+
+
+def _stored_names(scope: ast.AST) -> frozenset[str]:
+    """The constant names ``scope`` stores in a mapping: a subscript store, a
+    dict key or a keyword (``env.update(TMPDIR=...)``)."""
+    names = set()
+    for node in ast.walk(scope):
+        if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Store) \
+                and isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str):
+            names.add(node.slice.value)
+        elif isinstance(node, ast.Dict):
+            names.update(k.value for k in node.keys if isinstance(k, ast.Constant) and isinstance(k.value, str))
+        elif isinstance(node, ast.keyword) and node.arg:
+            names.add(node.arg)
+    return frozenset(names)
+
+
+def _iterates_the_environment(comp: ast.DictComp) -> bool:
+    """Whether a comprehension reads ``os.environ`` whole (its filter is then
+    :func:`tests._env_census.drops`'s to read)."""
+    it = comp.generators[0].iter if comp.generators else None
+    if isinstance(it, ast.Call) and isinstance(it.func, ast.Attribute) and it.func.attr in {"items", "keys", "copy"}:
+        it = it.func.value
+    return isinstance(it, ast.Attribute) and it.attr == "environ"
+
+
+def _fresh_env_keys(call: ast.Call, scope: ast.AST) -> frozenset[str] | None:
+    """The names a launch call's ``env=`` keeps when it is built fresh (a
+    literal with no ``**`` unpack, ``dict()`` of keywords alone, or a
+    comprehension over an allow-list rather than ``os.environ``; a name bound
+    to one in the launching function is followed), with each name ``scope``
+    stores; None when the env is not built fresh, or not read."""
+    value = next((k.value for k in call.keywords if k.arg == "env"), None)
+    if isinstance(value, ast.Name):
+        bound = [n.value for n in ast.walk(scope) if isinstance(n, ast.Assign) and n.lineno < call.lineno
+                 and any(isinstance(t, ast.Name) and t.id == value.id for t in n.targets)]
+        value = max(bound, key=lambda v: v.lineno) if bound else None
+    fresh = ((isinstance(value, ast.Dict) and all(key is not None for key in value.keys))
+             or (isinstance(value, ast.Call) and getattr(value.func, "id", None) == "dict" and not value.args
+                 and all(k.arg is not None for k in value.keywords))
+             or (isinstance(value, ast.DictComp) and not _iterates_the_environment(value)))
+    return _stored_names(scope) if fresh else None
+
+
+def _passes_argument(scope: ast.AST, argument: str) -> bool:
+    """Whether ``scope`` puts ``argument`` in an argv: the option alone, or its
+    ``=`` form, an f-string's included, as an element of a list or tuple (a
+    message naming the option, or a ``startswith`` test of one, is not)."""
+    for node in ast.walk(scope):
+        for elt in node.elts if isinstance(node, (ast.List, ast.Tuple)) else ():
+            head = elt.values[0] if isinstance(elt, ast.JoinedStr) and elt.values else elt
+            if isinstance(head, ast.Constant) and isinstance(head.value, str) and (
+                    head.value == argument or head.value.startswith(argument + "=")):
+                return True
+    return False
+
+
+def launch_env_drops(text: str, hops: frozenset[str] = frozenset()) -> dict[str, list[int]]:
+    """``{variable: lines}`` for each variable :func:`_child_keeps` names that
+    ``text`` drops from an environment it builds while one of its pytest
+    launches is not given the variable's keeping argument in its own
+    function: the file's env builders read by :func:`tests._env_census.drops`,
+    plus each such launch whose own ``env=`` is built fresh keeping none of
+    the variable's names. The file is the unit of the builders, as
+    ``tests/_box_lock.py::pair_asymmetry``'s; an env built in another module
+    for this file's launch is not seen."""
+    from tests._env_census import drops
+
+    tree = ast.parse(text)
+    parent = {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+
+    def scope_of(node: ast.AST) -> ast.AST:
+        while id(node) in parent:
+            node = parent[id(node)]
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return node
+        return tree
+
+    launches = [(call, scope_of(call)) for _qual, call in nested_pytest_launch_calls(tree, hops)]
+    found: dict[str, list[int]] = {}
+    for key, (keeping, argument) in _child_keeps().items():
+        bare = [(call, scope) for call, scope in launches
+                if argument is None or not _passes_argument(scope, argument)]
+        if not bare:
+            continue
+        lines = set(drops(text, key, keeping))
+        lines |= {call.lineno for call, scope in bare
+                  if (keys := _fresh_env_keys(call, scope)) is not None and not keys & keeping}
+        if lines:
+            found[key] = sorted(lines)
+    return found
+
+
+class TestALaunchedChildKeepsItsTempRules:
+    """DEF-5057 and DEF-5055: a pytest child a test launches keeps the two
+    variables the suite's temp rules read, or is given what does their work.
+    Its population is :class:`TestTheNestedRunRule`'s, the hop scripts'
+    own launches included, so a new launch is read the day it lands."""
+
+    @staticmethod
+    def _population() -> dict[str, str]:
+        """``{file: its text}`` for every file the nested-run rule reads as
+        launching a pytest child, and each hop script."""
+        files = set(TestTheNestedRunRule._live()) | set(TestTheNestedRunRule._hops())
+        for path in checkout_glob(REPO_ROOT / "tools" / "cc", "**/*.py"):
+            text = path.read_text(encoding="utf-8")
+            if TestTheNestedRunRule._PREFILTER.search(text) and nested_pytest_launches(text):
+                files.add(path.relative_to(REPO_ROOT).as_posix())
+        return {rel: (REPO_ROOT / rel).read_text(encoding="utf-8") for rel in sorted(files)}
+
+    @classmethod
+    def _dropping(cls) -> dict[str, dict[str, list[int]]]:
+        hops = TestTheNestedRunRule._hops()
+        out = {}
+        for rel, text in cls._population().items():
+            found = launch_env_drops(text, hops if rel.startswith("tests/") else frozenset())
+            if found:
+                out[rel] = found
+        return out
+
+    def test_the_population_is_the_nested_run_rules(self):
+        """Asserted first: the launchers this was written for are read, so a
+        clean verdict below is not an empty scan."""
+        population = self._population()
+        assert {"tests/test_box_lock.py", "tests/test_temp_sweep.py", "scripts/verify_pins.py",
+                "tools/cc/ledger_row.py"} <= set(population), sorted(population)
+        assert _LAUNCH_FILES_AT_PIN // 2 <= len(population) <= 2 * _LAUNCH_FILES_AT_PIN, (
+            f"{len(population)} files against a pin of {_LAUNCH_FILES_AT_PIN}: re-pin it with the date")
+
+    def test_no_launch_drops_a_variable_its_child_needs(self):
+        """The guard: a launching file that drops one of the variables and
+        gives its child nothing in its place reds until it does, or is
+        declared with why."""
+        found = {rel: {key: lines for key, lines in keys.items()
+                       if key not in _LAUNCH_ENV_DROPS_DECLARED.get(rel, {})}
+                 for rel, keys in self._dropping().items()}
+        found = {rel: keys for rel, keys in found.items() if keys}
+        assert not found, (
+            "these build a launched pytest child's environment without a variable a temp rule reads: keep it "
+            "(an `or k == ...` in the filter, or set it), give the child --basetemp or a temp root of its own "
+            f"(TMPDIR, TEMP and TMP), or declare it in _LAUNCH_ENV_DROPS_DECLARED with why: {found}")
+
+    def test_every_declared_drop_still_drops(self):
+        dropping = self._dropping()
+        stale = sorted(f"{rel}::{key}" for rel, keys in _LAUNCH_ENV_DROPS_DECLARED.items()
+                       for key in keys if key not in dropping.get(rel, {}))
+        assert not stale, stale
+        assert all(why.strip() for keys in _LAUNCH_ENV_DROPS_DECLARED.values() for why in keys.values())
+
+    def test_the_sweep_tests_child_reads_as_dropping_without_its_temp_root(self):
+        """A live builder the rule reads: the temp sweep's nested session
+        strips every ``PYTEST_`` and ``ESPALIER_`` name and keeps its child off
+        the real temp dirs only by giving it a temp root of its own (its
+        message naming ``--basetemp`` is no argument)."""
+        text = (REPO_ROOT / "tests" / "test_temp_sweep.py").read_text(encoding="utf-8")
+        moved = "    env.update(TMPDIR=str(temp), TEMP=str(temp), TMP=str(temp))\n"
+        assert moved in text and launch_env_drops(text) == {}
+        assert "ESPALIER_PARENT_BASETEMP" in launch_env_drops(text.replace(moved, "")), launch_env_drops(text)
+
+    _HEAD = "import os, subprocess, sys\n"
+    _RUN = "    subprocess.run([sys.executable, '-m', 'pytest'], env=env)\n"
+
+    @pytest.mark.parametrize("label, source, expect", [
+        ("a strip of every ESPALIER_ name",
+         _HEAD + "def f():\n    env = {k: v for k, v in os.environ.items() if not k.startswith('ESPALIER_')}\n" + _RUN,
+         {"ESPALIER_PARENT_BASETEMP"}),
+        ("a strip of every PYTEST_ name",
+         _HEAD + "def f():\n    env = {k: v for k, v in os.environ.items() if not k.startswith('PYTEST_')}\n" + _RUN,
+         {"PYTEST_CURRENT_TEST"}),
+        ("a tuple strip of both",
+         _HEAD + "def f():\n    env = {k: v for k, v in os.environ.items()\n"
+         "           if not k.startswith(('ESPALIER', 'PYTEST'))}\n" + _RUN,
+         {"ESPALIER_PARENT_BASETEMP", "PYTEST_CURRENT_TEST"}),
+        ("a pop of the export",
+         _HEAD + "def f():\n    env = os.environ.copy()\n    env.pop('ESPALIER_PARENT_BASETEMP', None)\n" + _RUN,
+         {"ESPALIER_PARENT_BASETEMP"}),
+        ("a del of the test's name",
+         _HEAD + "def f():\n    env = dict(os.environ)\n    del env['PYTEST_CURRENT_TEST']\n" + _RUN,
+         {"PYTEST_CURRENT_TEST"}),
+        ("a fresh dict on the launch",
+         _HEAD + "def f():\n    subprocess.run([sys.executable, '-m', 'pytest'], env={'PATH': os.environ['PATH']})\n",
+         {"ESPALIER_PARENT_BASETEMP", "PYTEST_CURRENT_TEST"}),
+        ("a dict() of keywords on the launch",
+         _HEAD + "def f():\n    subprocess.run([sys.executable, '-m', 'pytest'], env=dict(PATH='/usr/bin'))\n",
+         {"ESPALIER_PARENT_BASETEMP", "PYTEST_CURRENT_TEST"}),
+        ("a message that names --basetemp is no argument",
+         _HEAD + "def f():\n    env = {k: v for k, v in os.environ.items() if not k.startswith('ESPALIER_')}\n" + _RUN
+         + "    raise SystemExit('a --basetemp given at the top level')\n",
+         {"ESPALIER_PARENT_BASETEMP"}),
+        ("an allow-list builder, followed through its name",
+         _HEAD + "KEEP = ('PATH', 'HOME')\ndef f():\n    env = {k: os.environ[k] for k in KEEP if k in os.environ}\n" + _RUN,
+         {"ESPALIER_PARENT_BASETEMP", "PYTEST_CURRENT_TEST"}),
+        ("a --basetemp in another function is not this launch's",
+         _HEAD + "def g(tmp_path):\n    return ['--basetemp', str(tmp_path)]\n"
+         "def f():\n    env = {k: v for k, v in os.environ.items() if not k.startswith('ESPALIER_')}\n" + _RUN,
+         {"ESPALIER_PARENT_BASETEMP"}),
+        ("a startswith read of --basetemp= is no argument",
+         _HEAD + "def f(argv):\n    env = {k: v for k, v in os.environ.items() if not k.startswith('ESPALIER_')}\n"
+         "    if any(a.startswith('--basetemp=') for a in argv):\n        return\n" + _RUN,
+         {"ESPALIER_PARENT_BASETEMP"}),
+        ("the sweep's switch at 1 keeps it on",
+         _HEAD + "def f():\n    env = {k: v for k, v in os.environ.items() if not k.startswith('PYTEST_')}\n"
+         "    env['ESPALIER_TEMP_SWEEP'] = '1'\n" + _RUN,
+         {"PYTEST_CURRENT_TEST"}),
+        ("a --basetemp the file passes keeps the export, never the test's name",
+         _HEAD + "def f(tmp_path):\n    env = {k: v for k, v in os.environ.items() if not k.startswith('PYTEST_')}\n"
+         "    subprocess.run([sys.executable, '-m', 'pytest', '--basetemp', str(tmp_path)], env=env)\n",
+         {"PYTEST_CURRENT_TEST"}),
+    ])
+    def test_the_census_reads(self, label, source, expect):
+        assert set(launch_env_drops(source)) == expect, label
+
+    @pytest.mark.parametrize("label, source", [
+        ("a strip with a keep clause for the export",
+         _HEAD + "def f():\n    env = {k: v for k, v in os.environ.items()\n"
+         "           if not k.startswith('ESPALIER_') or k == 'ESPALIER_PARENT_BASETEMP'}\n" + _RUN),
+        ("a strip whose child is given --basetemp",
+         _HEAD + "def f(tmp_path):\n    env = {k: v for k, v in os.environ.items() if not k.startswith('ESPALIER_')}\n"
+         "    subprocess.run([sys.executable, '-m', 'pytest', f'--basetemp={tmp_path}'], env=env)\n"),
+        ("a strip whose child is given a temp root of its own",
+         _HEAD + "def f(tmp_path):\n    env = {k: v for k, v in os.environ.items() if not k.startswith(('ESPALIER', 'PYTEST'))}\n"
+         "    env.update(TMPDIR=str(tmp_path), TEMP=str(tmp_path), TMP=str(tmp_path))\n" + _RUN),
+        ("an allow-list builder that gives its child a temp root",
+         _HEAD + "def f(tmp):\n    env = {k: os.environ[k] for k in ('PATH',) if k in os.environ}\n"
+         "    env.update(TMPDIR=str(tmp), TEMP=str(tmp), TMP=str(tmp))\n" + _RUN),
+        ("os.environ unpacked into the launch's env",
+         _HEAD + "def f():\n    subprocess.run([sys.executable, '-m', 'pytest'], env={**os.environ, 'PYTEST_ADDOPTS': ''})\n"),
+        ("a filter that names one other variable",
+         _HEAD + "def f():\n    env = {k: v for k, v in os.environ.items() if k != 'PYTEST_ADDOPTS'}\n" + _RUN),
+        ("a strip of a longer prefix the variables do not start with",
+         _HEAD + "def f():\n    env = {k: v for k, v in os.environ.items() if not k.startswith('ESPALIER_BOX_LOCK')}\n" + _RUN),
+        ("a fresh dict on a launch of another program",
+         _HEAD + "def f():\n    subprocess.run([sys.executable, '-m', 'pip', 'list'], env={'PATH': '/usr/bin'})\n"),
+    ])
+    def test_the_census_stays_quiet_on(self, label, source):
+        assert launch_env_drops(source) == {}, label
 
 
 class TestRun:

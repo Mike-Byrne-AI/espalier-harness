@@ -12,8 +12,7 @@ from typing import Any
 from espalier import _stack_table
 from espalier._report_io import safe_text
 from espalier._safe_walk import DEPENDENCY_TREE_DIRS, dependency_dirs_for, safe_rglob
-from espalier.managed_inventory import get_local_runtime_prefixes
-from espalier.managed_markers import path_has_seed_stamp
+from espalier.managed_inventory import get_local_runtime_prefixes, seed_is_harness_content
 from espalier.managed_paths import HARNESS_OWNED_ROOTS
 from espalier.models import HarnessConfig, LargeFile, RepoFingerprint, Signal
 from espalier.profiles import classify_repo
@@ -106,7 +105,9 @@ VENDORED_PARTS: frozenset[str] = frozenset({"vendor", "third_party"})
 # (`docs/FAILURE_MODES.md`, 464 KB when DEF-686 was driven on 2026-09-05 and
 # growing) and are adopter-OWNED after init, so the
 # same path unstamped IS the adopter's doc. Those are excluded by CONTENT --
-# `managed_markers.path_has_seed_stamp` on the first line -- in `_iter_files`
+# `managed_inventory.seed_is_harness_content`: the first-line stamp, and for
+# the near-empty stub-backed seeds a body still the shipped one, since a
+# grounded stub is the adopter's text (DEF-1112) -- in `_iter_files`
 # and in `detect_docs_surface`, whose `docs` cue needs one adopter-owned file
 # in the tree, not the directory the seeds made (DEF-686 closed the file leg
 # on 2026-09-05: `Large files detected` naming a seed, a `docs_heavy` profile
@@ -258,9 +259,10 @@ def _iter_files(repo_root: Path, config: HarnessConfig | None = None, prune: fro
         if not _path_allowed(path, repo_root, config):
             continue
         # An init-seeded doc is harness provenance at an adopter path; the
-        # first-line seed stamp is the only honest key (see the HOP note).
-        # Seeds are Markdown, so the 256-byte peek is paid for `.md` only.
-        if path.suffix.lower() == ".md" and path_has_seed_stamp(path):
+        # first-line seed stamp is the only honest key (see the HOP note), and
+        # a grounded stub is the adopter's (DEF-1112). Seeds are Markdown, so
+        # the 256-byte peek is paid for `.md` only.
+        if path.suffix.lower() == ".md" and seed_is_harness_content(repo_root, rel):
             continue
         yield path
 
@@ -608,7 +610,7 @@ def detect_docs_surface(repo_root: Path) -> list[str]:
             if any(part in DEFAULT_SKIP_PARTS for part in p.relative_to(docs_dir).parts):
                 continue
             if p.suffix.lower() == ".md":
-                if not path_has_seed_stamp(p):
+                if not seed_is_harness_content(repo_root, _rel(p, repo_root)):
                     owned_md.append(_rel(p, repo_root))
             elif p.name.lower() not in _DOCS_PLACEHOLDER_FILES:
                 owned_other = True

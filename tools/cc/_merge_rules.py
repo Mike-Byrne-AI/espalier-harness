@@ -269,6 +269,39 @@ def _imports(root: Path, rev: str, side: set[str], targets: set[str], tree: set[
     return found
 
 
+def _tree(root: Path, run_: Runner, rev: str) -> dict[str, str] | None:
+    """``{path: "<mode> <type> <object>"}`` for every file at ``rev``, from one
+    ``ls-tree -r --full-tree`` (its paths from the top and quoted as ``diff
+    --name-only`` gives them, from any directory, so the two compare); None
+    when git could not list it."""
+    lines = _git_lines(root, run_, "ls-tree", "-r", "--full-tree", rev)
+    if lines is None:
+        return None
+    entries: dict[str, str] = {}
+    for line in lines:
+        meta, sep, path = line.partition("\t")
+        if sep:
+            entries[path] = meta
+    return entries
+
+
+def _alike(root: Path, run_: Runner, paths: set[str], *, tested: str, pr_rev: str,
+           entries_now: dict[str, str] | None, entries_pr: dict[str, str] | None) -> set[str]:
+    """The ``paths`` both sides changed that leave no meeting: the head and the
+    base now hold the same entry (the same mode and blob, or none on either),
+    and the base had not touched the path between the fork and ``tested``, so
+    the CI merged the head's copy of it too and the landing holds what the CI
+    tested. Empty wherever a read fails: a failed read keeps the meeting."""
+    if not paths or entries_now is None or entries_pr is None:
+        return set()
+    same = {p for p in paths if entries_now.get(p) == entries_pr.get(p)}
+    if not same:
+        return set()
+    fork = _git_lines(root, run_, "merge-base", tested, pr_rev)
+    before = _git_lines(root, run_, "diff", "--name-only", "--no-renames", fork[0], tested) if fork else None
+    return same - set(before) if before is not None else set()
+
+
 def stale_base(root: Path, *, base_ref: str, tested_when: str, pr_paths: list[str], pr_rev: str,
                run_: Runner) -> dict:
     """Has ``base_ref`` moved near this pull request since its CI fixed the
@@ -280,7 +313,10 @@ def stale_base(root: Path, *, base_ref: str, tested_when: str, pr_paths: list[st
     changed, or an import between a file each changed; a Python path both
     changed says in which function, from ``_symbol_clauses``), and ``unread``
     says what could not be read -- a read that failed is said, never a
-    silent "fresh"."""
+    silent "fresh". A path both changed that the head and the base now hold
+    alike (the same mode and blob, or absent on both) is no meeting where the
+    head is here and the base left the path alone until the CI ran
+    (``_alike``)."""
     out: dict = {"tested": "", "now": "", "moved": 0, "near": [], "unread": ""}
     now = _git_lines(root, run_, "rev-parse", "--verify", "-q", f"{base_ref}^{{commit}}")
     if not now:
@@ -303,21 +339,39 @@ def stale_base(root: Path, *, base_ref: str, tested_when: str, pr_paths: list[st
     if changed is None:
         out["unread"] = f"git diff {tested[0][:7]} {now[0][:7]} failed"
         return out
-    mine, theirs = set(pr_paths), set(changed)
+    # The head is here when pr_rev names a commit other than the base's: the
+    # base read against itself agrees on every path and is no comparison.
+    head = _git_lines(root, run_, "rev-parse", "--verify", "-q", f"{pr_rev}^{{commit}}")
+    head_here = bool(head) and head[0] != now[0]
+    entries_now = _tree(root, run_, now[0])
+    entries_pr = _tree(root, run_, pr_rev) if head_here else entries_now
+    # A path both changed that each side holds alike (one parked row folded, or
+    # one old row pruned, on each) leaves both sides' paths, so it is neither a
+    # meeting nor an end of an import hop.
+    alike = _alike(root, run_, set(pr_paths) & set(changed), tested=tested[0], pr_rev=pr_rev,
+                   entries_now=entries_now, entries_pr=entries_pr) if head_here else set()
+    mine, theirs = set(pr_paths) - alike, set(changed) - alike
     both = sorted(mine & theirs)
     clauses = _symbol_clauses(root, both, base_ref=base_ref, tested=tested[0], now=now[0], pr_rev=pr_rev,
-                              run_=run_)
+                              head_here=head_here, run_=run_)
     near = [f"{p} {clauses.get(p, '(both changed)')}" for p in both]
-    tree_now = set(_git_lines(root, run_, "ls-tree", "-r", "--name-only", now[0]) or [])
-    tree_pr = tree_now if pr_rev == now[0] else set(
-        _git_lines(root, run_, "ls-tree", "-r", "--name-only", pr_rev) or []) | tree_now
+    tree_now = set(entries_now or {})
+    tree_pr = (set(entries_pr or {}) | tree_now) if head_here else tree_now
     pr_imports = _imports(root, pr_rev, mine, theirs - mine, tree_pr, run_)
     base_imports = _imports(root, now[0], theirs - mine, mine, tree_now, run_)
     unread = [side for side, got in (("the pull request's", pr_imports), (f"{base_ref}'s", base_imports))
               if got is None]
+    notes: list[str] = []
     if unread:
-        out["unread"] = (f"the import hop into {' and '.join(unread)} files was not read (their module names "
-                         f"outgrow the {PATTERN_CAP}-character pattern, or git grep failed): paths only")
+        notes.append(f"the import hop into {' and '.join(unread)} files was not read (their module names "
+                     f"outgrow the {PATTERN_CAP}-character pattern, or git grep failed)")
+    unlisted = [rev[:7] for rev, got in ((now[0], entries_now), (pr_rev, entries_pr if head_here else {}))
+                if got is None]
+    if unlisted:
+        notes.append(f"git ls-tree failed at {' and '.join(unlisted)}, so the import hop may have missed "
+                     "files there")
+    if notes:
+        out["unread"] = "; ".join(notes) + ": paths only"
     for path, targets in sorted((pr_imports or {}).items()):
         near += [f"{path} imports {t} (changed on {base_ref})" for t in sorted(targets)]
     for path, targets in sorted((base_imports or {}).items()):
@@ -356,16 +410,17 @@ def _changed_in(root: Path, run_: Runner, mapper: Any, a: str, b: str, path: str
 
 
 def _symbol_clauses(root: Path, paths: list[str], *, base_ref: str, tested: str, now: str, pr_rev: str,
-                    run_: Runner) -> dict[str, str]:
+                    head_here: bool, run_: Runner) -> dict[str, str]:
     """For each Python path both changed, what the catch-up will meet: the
     pull request's own diff (from its merge base with the base) against the
     base's moves since ``tested``, read by ``pair_verdict``: meeting at a
     symbol both change or one next to the other's change, different functions
-    with none shared or next to the other's, or lines no node holds. Where
-    ``pr_rev`` is the base because the head is not here, no function verdict:
-    the base compared with itself is no comparison. A path that is not Python
-    keeps its bare clause; a mapper that cannot be read, or a read that fails,
-    costs this clause alone, never the verdict it decorates."""
+    with none shared or next to the other's, or lines no node holds. Where the
+    head is not here (``head_here``, ``stale_base``'s one reading of it), no
+    function verdict: the base compared with itself is no comparison. A path
+    that is not Python keeps its bare clause; a mapper that cannot be read, or
+    a read that fails, costs this clause alone, never the verdict it
+    decorates."""
     py = [p for p in paths if p.endswith(".py")]
     if not py:
         return {}
@@ -373,7 +428,7 @@ def _symbol_clauses(root: Path, paths: list[str], *, base_ref: str, tested: str,
     def not_read(why: str) -> dict[str, str]:
         return {p: f"(both changed; symbols not read: {why})" for p in py}
 
-    if pr_rev in (base_ref, now):
+    if not head_here:
         return not_read("head not here")
     out: dict[str, str] = {}
     try:

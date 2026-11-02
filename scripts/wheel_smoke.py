@@ -40,6 +40,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+#: The file the suite's temp sweep reads in a work dir this script makes:
+#: this process's pid, so a run killed mid-way leaves a dir the next session
+#: start removes (``tests/_temp_sweep.py``); a run asked to keep its dir never
+#: writes it, so a kept dir stays even when its run is killed.
+LOCK_NAME = ".lock"
 
 # ── Expected deployed surface — single source of truth for the assertions ────
 #
@@ -199,12 +204,40 @@ def locate_wheel(dist_dir: Path) -> Path:
     return wheels[-1]
 
 
+#: The twins of ``espalier._rmtree``'s two constants: ``os.chmod`` takes
+#: ``follow_symlinks=False`` (macOS, Windows from 3.13; not Linux), and
+#: Windows, whose bare ``os.chmod`` never follows a link.
+_CHMOD_NO_FOLLOW = os.chmod in os.supports_follow_symlinks
+_BARE_CHMOD_IS_THE_LINKS = os.name == "nt"
+
+
+def _add_write_bit(path: str) -> None:
+    """``chmod u+w`` on ``path`` itself, never through a link to a file
+    outside the tree (DEF-5060): read by ``lstat``, set without following
+    where ``os.chmod`` can, and a link left as it is where it cannot (Linux).
+    The twin of ``espalier._rmtree._add_owner_bits``, driven over the same
+    three arms beside it in ``tests/test_wheel_smoke.py``."""
+    try:
+        mode = os.lstat(path).st_mode
+    except OSError:
+        return
+    wanted = stat.S_IMODE(mode) | stat.S_IWUSR
+    try:
+        if _CHMOD_NO_FOLLOW:
+            os.chmod(path, wanted, follow_symlinks=False)
+        elif _BARE_CHMOD_IS_THE_LINKS or not stat.S_ISLNK(mode):
+            os.chmod(path, wanted)
+    except OSError:
+        pass
+
+
 def _remove_tree_clearing_bits(path: Path) -> None:
     """``shutil.rmtree`` that answers a permission refusal by adding the owner
     write bit to the entry and to its parent inside the tree, then retrying
     once -- the discipline of ``espalier._rmtree.remove_tree``, stdlib only
     (a read-only entry, or a locked directory inside the tree, refuses a bare
-    rmtree; a second refusal raises).
+    rmtree; a second refusal raises). The bit goes on the entry itself, never
+    through a link (``_add_write_bit``).
     """
     root = str(path)
 
@@ -213,10 +246,7 @@ def _remove_tree_clearing_bits(path: Path) -> None:
             raise exc
         for target in (failed, os.path.dirname(failed)):
             if target == root or target.startswith(root + os.sep):
-                try:
-                    os.chmod(target, os.stat(target).st_mode | stat.S_IWUSR)
-                except OSError:
-                    pass
+                _add_write_bit(target)
         func(failed)
 
     if sys.version_info >= (3, 12):
@@ -627,6 +657,8 @@ def run_smoke(args: argparse.Namespace) -> SmokeReport:
                 "either pass --wheel to point at an existing wheel or drop --skip-build",
             ))
         scratch_dist = Path(tempfile.mkdtemp(prefix="wheel-smoke-dist-"))
+        if not args.keep_temp:
+            (scratch_dist / LOCK_NAME).write_text(str(os.getpid()), encoding="utf-8")
         try:
             wheel = build_wheel(REPO_ROOT, scratch_dist)
             report.add(StepResult("build_wheel", "PASS", wheel.name))
@@ -639,6 +671,8 @@ def run_smoke(args: argparse.Namespace) -> SmokeReport:
     report.wheel_path = str(wheel)
 
     scratch = Path(tempfile.mkdtemp(prefix="wheel-smoke-"))
+    if not args.keep_temp:
+        (scratch / LOCK_NAME).write_text(str(os.getpid()), encoding="utf-8")
     venv_dir = scratch / "venv"
     target = scratch / "target"
     report.target = str(target)

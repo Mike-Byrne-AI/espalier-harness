@@ -43,7 +43,20 @@ def _load_integrity_module():
     return _integrity
 
 
-def test_audit_dir_returns_unique_tempdir_when_home_raises(monkeypatch):
+@pytest.fixture
+def fallback_in_tmp(monkeypatch, tmp_path):
+    """The HOME-unset fallback made inside this test's ``tmp_path``: the real
+    one is never removed (one a process, by design), so three rows a run left
+    141 ``.espalier-audit-*`` dirs in one seat's system temp dir (DEF-5055).
+    Asserted after the test: the row's fallback was made here."""
+    import tempfile
+
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    yield tmp_path
+    assert list(tmp_path.glob(".espalier-audit-*")), "the row's fallback store was not made in its tmp_path"
+
+
+def test_audit_dir_returns_unique_tempdir_when_home_raises(monkeypatch, fallback_in_tmp):
     integ = _load_integrity_module()
     monkeypatch.delenv("ESPALIER_AUDIT_DIR", raising=False)
     # Force the RuntimeError branch deterministically.
@@ -75,7 +88,7 @@ def test_audit_dir_returns_unique_tempdir_when_home_raises(monkeypatch):
         assert mode == 0o700, f"fallback dir has mode {oct(mode)} (expected 0o700)"
 
 
-def test_audit_dir_caches_fallback_within_process(monkeypatch):
+def test_audit_dir_caches_fallback_within_process(monkeypatch, fallback_in_tmp):
     """Two calls within one process must return the same Path — caching
     ensures ``audit_path`` and ``append_audit`` land in the same dir.
     """
@@ -110,7 +123,7 @@ def test_audit_dir_returns_home_path_when_home_is_set(monkeypatch):
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX-only attack class")
-def test_append_audit_does_not_crash_with_simulated_home_unset(monkeypatch, tmp_path):
+def test_append_audit_does_not_crash_with_simulated_home_unset(monkeypatch, tmp_path, fallback_in_tmp):
     """End-to-end: ``append_audit`` must not raise even when the home
     branch fails. The hook's outer except already absorbs failures, but
     we want the happy path to write the log to the fallback dir."""
@@ -490,93 +503,11 @@ _STORE_KEYS = frozenset({"ESPALIER_AUDIT_DIR", "HOME", "USERPROFILE"})
 
 def _audit_store_drops(text: str) -> list[int]:
     """The lines where ``text`` builds a child's env without the suite's audit
-    store and stores none of its own: a comprehension whose ``startswith``
-    filter names a prefix of ``ESPALIER_AUDIT_DIR`` (a string or a tuple, any
-    quoting), or a ``pop``/``del`` of the name. A dict comprehension inside a
-    function keeps the store when its filter, run on the name itself, selects
-    it; one at module level never does, since it is built at import, before
-    conftest's per-test value exists. Any site passes whose function (the
-    module, for a module-level one) stores one of ``_STORE_KEYS`` as a
-    subscript, a dict key or a keyword. A filter that reads another name is
-    not run, and its site counts as dropping. Not read: a loop of ``if``
-    statements popping by prefix, a prefix held in a named constant, and a
-    child script inside a string."""
-    import ast
+    store and stores none of its own: :func:`tests._env_census.drops` read for
+    ``ESPALIER_AUDIT_DIR``, with ``_STORE_KEYS`` as the stores that keep it."""
+    from tests._env_census import drops
 
-    tree = ast.parse(text)
-    parent: dict[int, ast.AST] = {}
-    for node in ast.walk(tree):
-        for child in ast.iter_child_nodes(node):
-            parent[id(child)] = node
-
-    def ancestors(node):
-        while id(node) in parent:
-            node = parent[id(node)]
-            yield node
-
-    def scope(node):
-        return next((a for a in ancestors(node)
-                     if isinstance(a, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))), tree)
-
-    def stores(where) -> bool:
-        for n in ast.walk(where):
-            if isinstance(n, ast.Subscript) and isinstance(n.ctx, ast.Store) \
-                    and isinstance(n.slice, ast.Constant) and n.slice.value in _STORE_KEYS:
-                return True
-            if isinstance(n, ast.Dict) and any(isinstance(k, ast.Constant) and k.value in _STORE_KEYS
-                                               for k in n.keys):
-                return True
-            if isinstance(n, ast.keyword) and n.arg in _STORE_KEYS:
-                return True
-        return False
-
-    def names_the_store(call) -> bool:
-        if getattr(call.func, "attr", None) != "startswith" or not call.args:
-            return False
-        arg = call.args[0]
-        # A prefix of the store's name at least as long as ESPALIER (spelled
-        # so: a startswith call here would be a site this census reads).
-        return any(isinstance(p, ast.Constant) and isinstance(p.value, str) and len(p.value) >= len("ESPALIER")
-                   and "ESPALIER_AUDIT_DIR".startswith(p.value)
-                   for p in (arg.elts if isinstance(arg, ast.Tuple) else [arg]))
-
-    def filter_keeps(comp) -> bool:
-        if len(comp.generators) != 1:
-            return False
-        gen = comp.generators[0]
-        name = ast.Constant("ESPALIER_AUDIT_DIR")
-        items = isinstance(gen.iter, ast.Call) and getattr(gen.iter.func, "attr", None) == "items"
-        item = ast.Tuple([name, ast.Constant("x")], ast.Load()) if items else name
-        run = ast.Expression(ast.ListComp(ast.Constant(1), [
-            ast.comprehension(gen.target, ast.List([item], ast.Load()), gen.ifs, 0)]))
-        try:
-            return bool(eval(compile(ast.fix_missing_locations(run), "<filter>", "eval"), {"__builtins__": {}}))
-        except Exception:  # a filter that reads another name is not run: the site counts as dropping
-            return False
-
-    comps = (ast.DictComp, ast.ListComp, ast.SetComp, ast.GeneratorExp)
-    found = set()
-    for node in ast.walk(tree):
-        if any(isinstance(a, ast.Assert) for a in ancestors(node)):
-            continue
-        if isinstance(node, ast.Call) and names_the_store(node):
-            comp = next((a for a in ancestors(node) if isinstance(a, comps)), None)
-            if comp is None:
-                continue  # one name tested, not an env built by a filter
-            where = scope(comp)
-            if isinstance(comp, ast.DictComp) and where is not tree and filter_keeps(comp):
-                continue
-            if not stores(where):
-                found.add(comp.lineno)
-        elif isinstance(node, ast.Call) and getattr(node.func, "attr", None) == "pop" and node.args \
-                and isinstance(node.args[0], ast.Constant) and node.args[0].value == "ESPALIER_AUDIT_DIR":
-            if not stores(scope(node)):
-                found.add(node.lineno)
-        elif isinstance(node, ast.Delete):
-            if any(isinstance(t, ast.Subscript) and isinstance(t.slice, ast.Constant)
-                   and t.slice.value == "ESPALIER_AUDIT_DIR" for t in node.targets) and not stores(scope(node)):
-                found.add(node.lineno)
-    return sorted(found)
+    return drops(text, "ESPALIER_AUDIT_DIR", _STORE_KEYS)
 
 
 @pytest.mark.parametrize("shape, drops", [

@@ -513,3 +513,66 @@ class TestTheHeavyLeg:
                         "--python", "first", "--python", "second"])
         assert rc == 0
         assert seen == [("first", True), ("second", False)]
+
+
+class TestTheScratchLock:
+    """A scratch the gate makes carries the gate's pid lock while it runs, so
+    a killed or crashed gate's clones and venvs go at the suite's next session
+    start (``tests/_temp_sweep.py``). What the gate leaves on purpose (a
+    failed leg's scratch) is unlocked at the end, ``--keep`` never locks, and
+    a ``--scratch`` the operator named is never locked and loses any lock a
+    killed run left in it, so no sweep takes it mid-run."""
+
+    def _drive(self, gate, tmp_path, monkeypatch, rc, *argv: str) -> dict:
+        import tempfile
+
+        from tests import _temp_sweep
+
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        monkeypatch.setattr(gate, "head_sha", lambda root: "abc1234")
+        monkeypatch.setattr(gate, "dirty_paths", lambda root: [])
+        monkeypatch.setattr(gate, "resolve_all", lambda specs, **kw: [(s, Path(sys.executable), s) for s in specs])
+        seen: dict = {}
+
+        def leg(spec, exe, tag, *, scratch, **kw):
+            seen["scratch"], seen["ours"] = scratch, _temp_sweep.lock_is_ours(scratch)
+            seen["locked"] = _temp_sweep.lock_pid(scratch) is not None
+            if isinstance(rc, BaseException):
+                raise rc
+            return gate.Leg(spec=spec, tag=tag, rc=rc)
+
+        monkeypatch.setattr(gate, "run_leg", leg)
+        seen["rc"] = gate.main(["--root", str(tmp_path / "root"), "--python", "x", *argv])
+        return seen
+
+    def test_a_failed_gates_scratch_was_locked_and_is_kept_unlocked(self, gate, tmp_path, monkeypatch):
+        from tests import _temp_sweep
+
+        seen = self._drive(gate, tmp_path, monkeypatch, 1)
+        scratch = seen["scratch"]
+        assert seen["rc"] != 0 and seen["ours"], "the gate ran with no pid lock on its scratch"
+        assert scratch.parent == tmp_path and scratch.name.startswith(_temp_sweep.OWNED_PREFIXES)
+        assert scratch.is_dir() and _temp_sweep.lock_pid(scratch) is None, "a kept scratch kept its lock"
+
+    def test_a_passing_gates_scratch_goes(self, gate, tmp_path, monkeypatch):
+        seen = self._drive(gate, tmp_path, monkeypatch, 0)
+        assert seen["rc"] == 0 and seen["ours"] and not seen["scratch"].exists()
+
+    def test_keep_never_locks_so_a_killed_kept_run_keeps_its_scratch(self, gate, tmp_path, monkeypatch):
+        seen = self._drive(gate, tmp_path, monkeypatch, 0, "--keep")
+        assert not seen["locked"] and seen["scratch"].is_dir(), seen
+
+    def test_a_crashed_gate_leaves_its_scratch_locked_for_the_sweep(self, gate, tmp_path, monkeypatch):
+        from tests import _temp_sweep
+
+        seen = self._drive(gate, tmp_path, monkeypatch, OSError("No space left on device"))
+        assert seen["rc"] != 0 and _temp_sweep.lock_is_ours(seen["scratch"]), seen
+
+    def test_a_named_scratch_is_never_locked_and_loses_a_killed_runs_lock(self, gate, tmp_path, monkeypatch):
+        from tests import _temp_sweep
+
+        named = tmp_path / "espalier-gate-killed"
+        named.mkdir()
+        (named / _temp_sweep.LOCK_NAME).write_text("999999999", encoding="utf-8")
+        seen = self._drive(gate, tmp_path, monkeypatch, 1, "--scratch", str(named), "--keep")
+        assert seen["scratch"] == named and not seen["locked"] and _temp_sweep.lock_pid(named) is None

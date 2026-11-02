@@ -35,6 +35,12 @@ Per seat per UTC day in ``[since, until)``, one row:
   ``claim`` (the seat's own claim on the shipped lane named the job's ids). A
   job counts on the day of the release that closed it, so a day's closures can
   include jobs given on an earlier day.
+* **claim closures to re-read**: of the jobs the claim rule closed, each whose
+  ids its seat claimed again after the close (a row fixed across lanes closes
+  at the first), and each closed on a lane the seat had begun before the job
+  (a push emptied it and the next claim began it again, so a follow-up push
+  closed a job queued behind it), named on the seat's row for the day of the
+  close. The fold stays; the dispatcher re-sends what it reads here.
 * **re-assigned after a close**: for each job the claim rule closed, the
   first later assign of the same job (its lane, classes and ids), counted on
   that assign's day for the seat it names, each job named and split in two: a
@@ -321,7 +327,11 @@ def _new_row(seat: str, day: str) -> dict:
             "reassigned_packs": [], "hand_releases": 0, "hand_releases_closing": 0, "requests": 0,
             "answered": 0, "median_minutes": None, "session_log_rows": 0, **dict.fromkeys(WORDS, 0),
             # The rulings' own ids, so the day row names what the operator can reverse.
-            "gridlock_ids": []}
+            "gridlock_ids": [],
+            # The claim closures the dispatcher may re-send, by the job's name:
+            # its ids claimed again by its seat after the close, and a close on
+            # a lane the seat began before the job (emptied by a push, begun again).
+            "claimed_again": [], "lane_begun_before": []}
 
 
 #: What the dispatcher sent on a day, by the census's own counts.
@@ -411,6 +421,10 @@ def census(src: dict, since: datetime, until: datetime, now: datetime | None = N
                 r[k] += 1
                 if k == "gridlock":
                     r["gridlock_ids"].append(str(m.get("id")))
+    claims_of: dict[str, list[dict]] = {}
+    for m in flat:
+        if m.get("type") == "claim":
+            claims_of.setdefault(str(m.get("from") or ""), []).append(m)
     for assign, release, rule in closed:
         d = day_of(release.get("at"))
         seat = (assign.get("re") or {}).get("seat")
@@ -423,6 +437,22 @@ def census(src: dict, since: datetime, until: datetime, now: datetime | None = N
         key = mail._job_key(assign.get("re") or {})
         again = next((a for a in assigns if str(a.get("at") or "") > str(release.get("at") or "")
                       and mail._job_key(a.get("re") or {}) == key), None)
+        if d is not None and seat and again is None:
+            # A job re-sent since was read already; a pack given by its id is
+            # re-sent per wave by design, so only a job naming a row counts as
+            # claimed again. Stamps compare strictly, as text: a claim in the
+            # release's own second is not read as after it.
+            r = row(str(seat), d)
+            ids = set(mail._str_list((assign.get("re") or {}).get("ids")))
+            lane = str((release.get("re") or {}).get("lane") or "")
+            mine = claims_of.get(str(seat), [])
+            if _names_a_row(assign) and any(str(c.get("at") or "") > str(release.get("at") or "")
+                                            and ids & set(mail._str_list((c.get("re") or {}).get("ids")))
+                                            for c in mine):
+                r["claimed_again"].append(_job_name(mail, assign))
+            if any(str(c.get("at") or "") < str(assign.get("at") or "")
+                   and str((c.get("re") or {}).get("lane") or "") == lane for c in mine):
+                r["lane_begun_before"].append(_job_name(mail, assign))
         dd = day_of(again.get("at")) if again else None
         if dd is not None and (again.get("re") or {}).get("seat"):
             r = row(str(again["re"]["seat"]), dd)
@@ -547,6 +577,8 @@ def census(src: dict, since: datetime, until: datetime, now: datetime | None = N
     totals = {**{k: sum(s[k] for s in sends.values()) for k in SENDS},
               "assigns_received": sum(r["assigns_received"] for r in ordered),
               "closed": {rule: sum(r["closed"][rule] for r in ordered) for rule in RULES},
+              "claimed_again": sum(len(r["claimed_again"]) for r in ordered),
+              "lane_begun_before": sum(len(r["lane_begun_before"]) for r in ordered),
               "reassigned_after_close": sum(r["reassigned_after_close"] for r in ordered),
               "reassigned_rows": sum(len(r["reassigned_rows"]) for r in ordered),
               "reassigned_packs": sum(len(r["reassigned_packs"]) for r in ordered),
@@ -579,6 +611,18 @@ def _again(r: dict) -> str:
              f"packs: {', '.join(r['reassigned_packs'])}" if r["reassigned_packs"] else ""]
     named = "; ".join(part for part in parts if part)
     return f" ({named})" if named else ""
+
+
+def _reread(r: dict) -> str:
+    """The claim closures a dispatcher may re-send, named; nothing when none.
+    The third closing rule reads a claim's ids as what its lane touches, so a
+    row fixed across lanes closes at the first, and a lane a push emptied
+    begins again at the next claim, so a follow-up push can close a job queued
+    behind it: the fold stays, and the census names each such close."""
+    parts = [f"ids claimed again after the close: {', '.join(r['claimed_again'])}" if r["claimed_again"] else "",
+             f"on a lane begun before the job: {', '.join(r['lane_begun_before'])}" if r["lane_begun_before"] else ""]
+    named = "; ".join(part for part in parts if part)
+    return f", claim closures to re-read ({named})" if named else ""
 
 
 def _hand(r: dict) -> str:
@@ -640,8 +684,8 @@ def as_row(data: dict, seat: str, day: str, extra: dict | None = None) -> str:
         u = (data.get("under_two") or {}).get(day, {}).get(seat) or {"under_two": 0, "ticks": 0}
         body = (f"{merged}; assigns received {r['assigns_received']}; jobs closed that day, by their release, "
                 f"{sum(c.values())} ({c['claim']} by its own claim on the shipped lane, {c['lane']} by the "
-                f"assign's lane, {c['ack']} by a release naming the assign), re-assigned after a close "
-                f"{r['reassigned_after_close']}{_again(r)}; jobs live at {data['live_at']} {live}; "
+                f"assign's lane, {c['ack']} by a release naming the assign){_reread(r)}, re-assigned after a "
+                f"close {r['reassigned_after_close']}{_again(r)}; jobs live at {data['live_at']} {live}; "
                 f"under two at {u['under_two']} of {u['ticks']} tick slots; {hand}; "
                 f"requests {r['requests']}, {r['answered']} answered{median}; {logs}; {words}.")
     return f"| {day} | **{seat}: the day's figures (seat-day census, {head})** | {body} |"
@@ -669,7 +713,7 @@ def render(data: dict, extra: dict) -> str:
         median = f", median {r['median_minutes']} min" if r["median_minutes"] is not None else ""
         merged = "unread" if r["lanes_merged"] is None else len(r["lanes_merged"])
         lines.append(f"{r['day']} {r['seat']}: merged {merged}, assigns {r['assigns_received']}, "
-                     f"closed {sum(c.values())} (claim {c['claim']}, lane {c['lane']}, ack {c['ack']}), "
+                     f"closed {sum(c.values())} (claim {c['claim']}, lane {c['lane']}, ack {c['ack']}){_reread(r)}, "
                      f"re-assigned after a close {r['reassigned_after_close']}{_again(r)}, {_hand(r)}, requests "
                      f"{r['requests']} ({r['answered']} answered{median}), Session Log rows {r['session_log_rows']}, "
                      f"{_words_line(r)}")
@@ -687,7 +731,8 @@ def render(data: dict, extra: dict) -> str:
                  f"releases naming an assign {t['hand_releases']} (the dispatcher's {t['hand_releases_by_dispatcher']}; "
                  f"{t['hand_releases_closing']} closed a live job, {t['hand_releases_of_closed_jobs']} named a job "
                  f"already closed), closed claim {t['closed']['claim']} lane "
-                 f"{t['closed']['lane']} ack {t['closed']['ack']}, re-assigned after a close "
+                 f"{t['closed']['lane']} ack {t['closed']['ack']} (of the claim closures, ids claimed again "
+                 f"{t['claimed_again']}, on a lane begun before the job {t['lane_begun_before']}), re-assigned after a close "
                  f"{t['reassigned_after_close']} (rows {t['reassigned_rows']}, packs {t['reassigned_packs']}), "
                  f"live {t['live']}, merged {merged_total}, requests {t['requests']} ({t['answered']} answered), "
                  f"Session Log rows {t['session_log_rows']}")

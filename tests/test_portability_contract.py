@@ -1565,6 +1565,10 @@ class TestRemediesSpellTheRemedyInterpreter:
             "carry, in strings of their own (the `written` local); their commands "
             "spell `_remedy_hint()`, a started interpreter where the target's start "
             "was never seen (DEF-5014)",
+        ("espalier/doctor.py", "foreign_statusline_note", "_resolver_hint"):
+            "the command it names goes into the operator's own statusLine, a "
+            "settings value the hooks' interpreter runs (the `written` local; "
+            "DEF-1116, the failure-mode review drove a worktree venv path)",
     }
 
     @staticmethod
