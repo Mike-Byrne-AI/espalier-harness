@@ -885,7 +885,9 @@ class TestReapWorktrees:
         reads: list = []
         monkeypatch.setattr(cs, "process_cwds", lambda pids=None, **kw: reads.append(pids) or {})
         report = cs.reap_worktrees(work, sessions=[])
-        assert sorted(report.removed) == ["one", "two"] and reads == [None], (report, reads)
+        # Windows proves an open cwd by its rename probe and reads no table.
+        once = [None] if os.name != "nt" else []
+        assert sorted(report.removed) == ["one", "two"] and reads == once, (report, reads)
         reads.clear()
         cs.reap_worktrees(work, sessions=[])
         assert reads == [], "a worktree kept before the removal stage reads no table"
