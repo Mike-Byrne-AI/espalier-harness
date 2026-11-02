@@ -190,7 +190,7 @@ Path: src/utils.py
   live state : maintenance mode off; plan none active
   unmodelled : other PreToolUse hooks and permissions.deny Edit/Write rules: none in .claude/settings.json or .claude/settings.local.json; user-level, plugin and managed hooks are not listed
 
-  => Espalier's hooks: writes allowed (unprotected); edits require an active plan; none is active.
+  => Espalier's hooks: writes allowed (outside their zones); edits require an active plan; none is active.
 
 $ python3 tools/cc/session_resume.py --explain tools/cc/hooks/session_start.py
 Path: tools/cc/hooks/session_start.py

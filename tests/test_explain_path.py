@@ -475,7 +475,8 @@ class TestExplainPathSaysWhatItDoesNotModel:
     def test_the_net_line_names_whose_verdict_it_is(self, tmp_path):
         ep, _, _ = _load_modules()
         verdict = ep.explain("src/app.py", tmp_path).verdict
-        assert verdict.startswith("Espalier's hooks: writes allowed (unprotected)"), verdict
+        assert verdict.startswith("Espalier's hooks: writes allowed (outside their zones)"), verdict
+        assert "(unprotected)" not in verdict, verdict
 
     def test_a_foreign_hook_and_the_deny_rules_are_named(self, tmp_path):
         ep, _, _ = _load_modules()

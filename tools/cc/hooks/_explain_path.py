@@ -352,7 +352,9 @@ def _net_verdict(
     elif protected and allowed:
         parts.append(f"writes allowed (allowlisted within {write_zone})")
     else:
-        parts.append("writes allowed (unprotected)")
+        # Outside Espalier's zones, never "unprotected": the unmodelled line
+        # names what else can deny the write (DEF-1113).
+        parts.append("writes allowed (outside their zones)")
     if plan_required:
         # State the POSITIVE case too. The read-out was already fail-safe in this
         # direction -- with a plan active it simply omitted the clause, so it
