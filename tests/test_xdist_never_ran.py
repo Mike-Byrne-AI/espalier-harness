@@ -21,6 +21,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import warnings
 from pathlib import Path
 from types import SimpleNamespace
@@ -59,9 +60,13 @@ def _drive(tmp_path: Path, body: str, *args: str, workers: tuple[str, ...] = ("-
                         "PROBE_CONTROLLER_RAISES")
            and not k.startswith("PYTEST_XDIST_")}
     env.update(extra_env or {})
+    # A basetemp of its own: the planted tree loads no suite conftest, and its
+    # xdist controller would mint a numbered dir on pytest's shared root and
+    # delete the finished ones there at its end (DEF-5056).
+    basetemp = tempfile.mkdtemp(prefix="basetemp-", dir=tmp_path)
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *workers, *args,
-         "test_probe.py"],
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", f"--basetemp={basetemp}",
+         *workers, *args, "test_probe.py"],
         cwd=tmp_path, env=env, capture_output=True, text=True, encoding="utf-8",
         errors="replace", timeout=45,
     )
