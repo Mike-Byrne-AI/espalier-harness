@@ -185,8 +185,19 @@ def _blueprint_summary(repo_root: Path) -> "dict[str, Any]":
             capture_output=True, text=True, encoding="utf-8", check=False, timeout=10,
             cwd=str(repo_root), env=env,
         )
-        if proc.returncode != 0 or not proc.stdout.strip():
+        # The engine's empty-chain answer is exit 2 with `No blueprint found.`
+        # on stderr (cognitive_blueprint.cmd_load); that alone means no chain is
+        # on this machine. Any other failure -- a crash, another exit code, an
+        # exit 0 that printed nothing -- is the engine failing, said as such,
+        # never read as an empty chain the code did not check (DEF-1105).
+        if proc.returncode == 2 and "No blueprint found." in (proc.stderr or ""):
             return {"status": "missing", "session_id": "", "accumulated_depth": None}
+        if proc.returncode != 0:
+            return {"status": "error", "session_id": "", "accumulated_depth": None,
+                    "warning": f"exit {proc.returncode}"}
+        if not proc.stdout.strip():
+            return {"status": "error", "session_id": "", "accumulated_depth": None,
+                    "warning": "no output"}
         data = json.loads(proc.stdout)
         if not isinstance(data, dict):
             return {"status": "invalid", "session_id": "", "accumulated_depth": None}
@@ -501,7 +512,15 @@ def render_context_report(report: "dict[str, Any]") -> str:
         if depth is not None:
             last_session += f" (depth={depth})"
     elif bp.get("status") == "missing":
-        last_session = "no prior blueprint -- starting fresh"
+        # Not "starting fresh": the chain is gitignored, so a re-clone or a
+        # second machine reads this line too, and the reasoning it lacks lives
+        # on the other disk (DEF-1105).
+        last_session = ("no blueprint chain on this machine "
+                        "(cc/blueprints/ is gitignored: each machine keeps its own)")
+    elif bp.get("status") == "error":
+        why = bp.get("warning") or "it failed"
+        last_session = (f"the blueprint engine failed ({why}): check "
+                        "tools/cc/cognitive_blueprint.py; the chain on disk was not read")
     else:
         last_session = f"blueprint {bp.get('status','?')}"
 

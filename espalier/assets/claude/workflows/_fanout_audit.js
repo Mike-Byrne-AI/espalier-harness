@@ -357,10 +357,17 @@ if (findersRun === 0) {
 // containing a quote / apostrophe ("won't-fix") can't break the  python -c '...'
 // quoting or inject (the adversarial review lane). The ONLY value interpolated into the
 // -c is INPUT_PATH, a hardcoded constant with no shell-special chars.
+// The round's own count of its lanes rides to the per-run ledger row, so a round that
+// lost finders is recorded as partial, never as a quiet round the trend would read.
+const runCounts = {
+  finders_launched: finders.length, finders_run: findersRun,
+  lanes_not_run: lanesNotRun.length, refuters_not_run: refutersNotRun.length,
+}
 const persistPayload = JSON.stringify({
   findings,
   known_categories: KNOWN_CATEGORIES,
   corpus_path: CORPUS_PATH,
+  run_counts: runCounts,
 })
 // ONE DESTINATION plus the summary ledger. The per-round report (CORPUS_PATH, under
 // reports/) is this round's record, immutable and cited by the convergence ledger;
@@ -383,7 +390,7 @@ const persistCmd =
   `with warnings.catch_warnings(record=True) as _w:\n` +
   `    warnings.simplefilter("always")\n` +
   `    appended = append_findings_to_corpus(corpus, survivors)\n` +
-  `    ledger = append_summary(summ, root=".")\n` +
+  `    ledger = append_summary(summ, root=".", run_counts=data.get("run_counts"))\n` +
   `for _x in _w:\n` +
   `    print("WARNING: " + str(_x.message), file=sys.stderr)\n` +
   `print(json.dumps({\n` +

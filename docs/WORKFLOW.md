@@ -340,8 +340,12 @@ whether to proceed.
 
 The clean shutdown sequence:
 
-1. Records durable reasoning (decisions, rejected alternatives,
-   discovered patterns) into the cognitive blueprint.
+1. Records the session's reasoning (decisions, rejected alternatives,
+   discovered patterns) into the cognitive blueprint, which carries it to
+   the next session on this machine: `init` gitignores `cc/blueprints/`, so
+   a fresh clone or a second machine starts without it. A decision that
+   must outlive the machine goes in ESPALIER_MEMORY.md or your repository's
+   own record as well.
 2. Records the session's row in the Session Log, with session-relevant
    operating knowledge: a file of its own under `memory/session-log.d/` where
    the loader is deployed, else a row of the table in ESPALIER_MEMORY.md.

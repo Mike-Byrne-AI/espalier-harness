@@ -20,7 +20,8 @@ Three stores, three altitudes; the convergence-critic reads all three:
 | **`memory/CONVERGENCE_LEDGER.md`** (this) | per **round** | convergence-critic | yes | curated narrative: coverage map, open leads, convergence read |
 
 This file is the interpretive layer; it does NOT duplicate the other two. It **references**
-the corpus and reads the per-run JSONL (`espalier.finding_ledger.read_ledger`) for the
+the corpus and reads the per-run JSONL (`espalier.finding_ledger.read_ledger_trend`,
+which leaves out a round that lost lanes and counts it) for the
 yield/recurrence numbers so those are *computed*, not recalled.
 
 ## Rules

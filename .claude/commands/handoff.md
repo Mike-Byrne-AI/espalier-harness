@@ -31,6 +31,11 @@ End the session cleanly and leave the next Claude Code session with usable conti
 
 Record only durable facts: decisions, rejected alternatives, discovered patterns, unresolved risks, and next-step constraints. Do not record noise.
 
+**The blueprint is per-machine.** `init` gitignores `cc/blueprints/`, so what you record here reaches the next session on this machine and no other: a re-clone, a second machine or a lost disk starts an empty chain. A decision that must outlive the machine goes in `ESPALIER_MEMORY.md` (step 2) or your repository's own record (a decision log, the pull request's description) as well, so it is committed with the work.
+<!-- espalier:self-host-only -->
+On this repository step 7b also folds the chain into the record branch, so it outlives the disk here.
+<!-- /espalier:self-host-only -->
+
 **Write each entry for the next session's COLD read** — it is reinjected at orientation. Lead with the conclusion/decision/owed, then the supporting detail (inverted pyramid), so the load-bearing line lands first and an over-long entry gets rewritten tighter rather than silently cut (the `record` command prints a write-time advisory past the soft target; the reinjection selection drops *whole* entries, newest/pinned first, never slicing one mid-thought). **Pin the one to three most load-bearing entries** so they reach the next session over pure recency:
 
 ```bash

@@ -5220,3 +5220,76 @@ class TestDoctorNamesReadDenyRules:
         result = self._doctor_with_denies(tmp_path, [])
         assert not any("Read(" in line for line in result["info"] + result["warnings"]), (
             result["info"], result["warnings"])
+
+
+class TestDoctorRecommendsTheFrontmatterLineEndingRule:
+    """An agent, command or skill body whose frontmatter Claude Code reads only
+    with LF line endings (a value strict YAML rejects: measured on 2.1.314, it
+    loads with LF and fails with CRLF) is named on one info row, with the
+    `.gitattributes` rule that keeps it LF, only where git does not already pin
+    the body to LF. A body already holding CRLF is the audit's to name."""
+
+    COLON = "name: probe\ndescription: Reviews code: bugs and style\ntools: Read\n"
+
+    def _notes(self, tree: Path) -> list[str]:
+        from espalier import doctor
+        fn = getattr(doctor, "_check_frontmatter_line_endings", None)
+        assert fn is not None, "doctor._check_frontmatter_line_endings is missing"
+        return fn(tree)
+
+    def _tree(self, tree: Path, block: str, *, git: bool = True) -> Path:
+        path = tree / ".claude" / "agents" / "probe.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(("---\n" + block + "---\n\nBody.\n").encode("utf-8"))
+        if git:
+            subprocess.run(["git", "init", "-q"], cwd=tree, check=True, capture_output=True,
+                           stdin=subprocess.DEVNULL)
+        return tree
+
+    def test_an_lf_body_that_would_not_load_with_crlf_is_named(self, tmp_path):
+        got = self._notes(self._tree(tmp_path, self.COLON))
+        assert len(got) == 1, got
+        assert ".claude/agents/probe.md (`description`)" in got[0], got
+        assert ".claude/** text eol=lf" in got[0] and ".gitattributes" in got[0], got
+
+    def test_the_row_rides_the_doctor_report(self, tmp_path):
+        (tmp_path / "README.md").write_text("# app\n", encoding="utf-8")
+        (tmp_path / "pyproject.toml").write_text('[project]\nname = "app"\n', encoding="utf-8")
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, capture_output=True,
+                       stdin=subprocess.DEVNULL)
+        assert cmd_init(argparse.Namespace(repo=str(tmp_path), config=None)) == 0
+        self._tree(tmp_path, self.COLON, git=False)
+        result = run_doctor_check(tmp_path, skip_self_host=True)
+        assert any(".claude/** text eol=lf" in line for line in result["info"]), result["info"]
+
+    def test_a_rule_that_pins_lf_already_says_nothing(self, tmp_path):
+        tree = self._tree(tmp_path, self.COLON)
+        (tree / ".gitattributes").write_text(".claude/** text eol=lf\n", encoding="utf-8")
+        assert self._notes(tree) == []
+
+    def test_a_strict_body_or_a_tree_outside_git_says_nothing(self, tmp_path):
+        assert self._notes(self._tree(tmp_path / "strict", 'name: probe\ndescription: "Reviews: code"\n')) == []
+        assert self._notes(self._tree(tmp_path / "loose", self.COLON, git=False)) == []
+
+    def test_a_nested_body_is_named(self, tmp_path):
+        """A namespaced command in a subfolder is a body Claude Code reads too."""
+        tree = tmp_path
+        path = tree / ".claude" / "commands" / "ns" / "probe.md"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"---\ndescription: Reviews code: bugs\n---\n\nBody.\n")
+        subprocess.run(["git", "init", "-q"], cwd=tree, check=True, capture_output=True,
+                       stdin=subprocess.DEVNULL)
+        got = self._notes(tree)
+        assert len(got) == 1 and ".claude/commands/ns/probe.md (`description`)" in got[0], got
+
+    def test_a_non_ascii_body_already_pinned_says_nothing(self, tmp_path):
+        """git quotes a non-ASCII path in its answer by default; a body the
+        rule already pins to LF is not named because its name came back quoted."""
+        tree = tmp_path
+        path = tree / ".claude" / "agents" / "caf\u00e9.md"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(("---\n" + self.COLON + "---\n\nBody.\n").encode("utf-8"))
+        subprocess.run(["git", "init", "-q"], cwd=tree, check=True, capture_output=True,
+                       stdin=subprocess.DEVNULL)
+        (tree / ".gitattributes").write_text(".claude/** text eol=lf\n", encoding="utf-8")
+        assert self._notes(tree) == []
