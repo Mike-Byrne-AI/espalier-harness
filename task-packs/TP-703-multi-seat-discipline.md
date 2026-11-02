@@ -309,7 +309,10 @@ names, never this roadmap's state.
 3. **Box messages and waits** (`TP-703c`): worker messages mentioning `START` per day, 87 on
    10-18 to 0 (a secondary figure: it falls as soon as the sentence changes, lock or no lock);
    seat-on-seat wait minutes per day, the primary figure, read from the wait log `TP-703c`'s
-   plugin appends beside the lock file (one line per wait with the holder and the waiter);
+   plugin appends beside the lock file (one line per wait with the holder and the waiter;
+   since 2026-11-02 one line per gated run, at `~/.espalier/espalier-box.lock.log`: the wait
+   minutes are the sum of `waited_s` over the lines whose `outcome` is `waited`, the run under
+   `run`, and lines from before that date sit at the temp directory's log under `waiter`);
    foreign-hold minutes per day reported apart from the seats' notes (the lock cannot move them).
 4. **Rows per active seat per day** (`TP-703d`): 4 of 4 on every day a seat merges; the debt the
    board names per seat never past the cap the child sets. Read: `ls memory/session-log.d` against

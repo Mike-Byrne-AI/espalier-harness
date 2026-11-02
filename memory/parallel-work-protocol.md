@@ -229,7 +229,10 @@ launcher did not start the handoff arms nothing and says the window needs a
      live, and only that name can release them. `retire` sends the releases
      from inside the worktree under its own name before it removes the
      worktree, and refuses to remove one whose claims it cannot release
-     (printing the by-hand release for a worktree already gone). The
+     (printing the by-hand release for a worktree already gone). A mail
+     fetch that fails, at the first read or at the one confirming the
+     releases, refuses too, since the refs as last fetched miss a job given
+     since; `--no-fetch` retires on them (2026-11-02). The
      SessionStart clean-up releases nothing: it keeps a worktree whose seat
      still holds a live claim.
 6. **Change a record's format by expand, then contract.** Readers learn the new
