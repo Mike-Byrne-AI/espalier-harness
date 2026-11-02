@@ -28,8 +28,10 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import os
 import re
 import sys
+import tempfile
 import time
 import types
 import zipfile
@@ -352,6 +354,38 @@ class TestCleanWork:
         (work / "venv").mkdir(parents=True)
         probe._clean_work(work, made_work=True)
         assert not work.exists()
+
+
+class TestTheWorkDirsLock:
+    """A work dir the probe makes carries the probe's pid lock while it runs,
+    so a killed probe's dir goes at the suite's next session start
+    (tests/_temp_sweep.py, DEF-5053); every exit the probe lives through
+    drops the lock, so a dir kept for reading stays."""
+
+    def test_the_work_dir_is_locked_while_the_probe_runs_and_unlocked_after(self, probe, tmp_path, monkeypatch):
+        from tests import _temp_sweep
+
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        seen: dict = {}
+
+        def refusing_build(root, out):
+            seen["work"], seen["pid"] = out.parent, _temp_sweep.lock_pid(out.parent)
+            raise probe.ProbeRefusal("stopped once the lock was read")
+
+        monkeypatch.setattr(probe, "build_archive", refusing_build)
+        with pytest.raises(probe.ProbeRefusal):
+            probe._main(probe.parse_args([]), ["tests/test_x.py"])
+        work = seen["work"]
+        assert seen["pid"] == os.getpid(), "the probe ran with no pid lock on the work dir it made"
+        assert work.parent == tmp_path and work.name.startswith(probe.WORK_PREFIX)
+        assert not (work / _temp_sweep.LOCK_NAME).exists(), "a probe that refused kept its lock"
+        assert (work / "probe.log").is_file()
+
+    def test_the_sweep_reads_the_probes_prefix_and_lock(self, probe):
+        from tests import _temp_sweep
+
+        assert probe.WORK_PREFIX in _temp_sweep.OWNED_PREFIXES
+        assert probe.LOCK_NAME == _temp_sweep.LOCK_NAME
 
 
 # ── the refusals, in order ─────────────────────────────────────────────────

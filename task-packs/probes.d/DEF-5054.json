@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5054",
+ "subject": "espalier/_rmtree.py",
+ "cmd": "python -c 'import pathlib,subprocess,sys,tempfile;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=pathlib.Path(T.name);d=t/\"tree\"/\"locked\";d.mkdir(parents=True);(d/\"f\").write_text(\"x\");d.chmod(0);p=subprocess.run([sys.executable,\"-c\",\"import sys;sys.path.insert(0,sys.argv[2]);from espalier._rmtree import remove_tree;remove_tree(sys.argv[1],best_effort=True)\",str(t/\"tree\"),str(pathlib.Path.cwd())],capture_output=True,text=True);d.chmod(0o700) if d.exists() else None;print(\"raises=\"+(p.stderr.strip().splitlines()[-1].split(\":\")[0] if p.returncode else \"nothing\"))'",
+ "open_value": "raises=TypeError",
+ "why_not": null,
+ "row_sha": "8910358e77a5",
+ "text_sha": "ceca711fad7e",
+ "verified_2026_11_01": "OPEN (filed 2026-11-01; probe driven at filing here and in the export of HEAD e4ab1328a6ac)"
+}

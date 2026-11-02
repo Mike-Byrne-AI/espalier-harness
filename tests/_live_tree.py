@@ -536,19 +536,25 @@ _COPIES: dict[tuple[str, tuple[str, ...]], Any] = {}
 def checkout_copy(patterns: Iterable[str], *, src: Path = REPO_ROOT) -> Path:
     """A copy of the files git's view of ``src`` holds under ``patterns``
     (``Path.glob`` patterns, ``**`` for any depth), at the same places in a
-    temporary directory: made once per process, removed at a clean exit (a
-    killed run leaves its ``checkout-copy-*`` folder in the system temp
-    directory). For a walker
+    temporary directory: made once per process, removed at a clean exit. The
+    ``checkout-copy-*`` folder holding it carries this process's pid lock, so
+    the folder a killed run leaves in the system temp directory goes at the
+    next session's start (``tests/_temp_sweep.py``); the copy sits one level
+    down, in ``tree``, where a walker over it never meets the lock. For a walker
     that raises on what it reads before a filter could run (the freshness
     scanner on a duplicate fragment id), so ``keep_in_checkout`` cannot cut its
     result; derive ``patterns`` from the walker's own roster, so a pattern it
     gains is copied too."""
     import tempfile
 
+    from tests._temp_sweep import write_lock
+
     key = (os.path.normcase(str(Path(src).resolve())), tuple(patterns))
     if key not in _COPIES:
         holder = tempfile.TemporaryDirectory(prefix="checkout-copy-")
-        dst = Path(holder.name)
+        write_lock(Path(holder.name))
+        dst = Path(holder.name) / "tree"
+        dst.mkdir()
         for pattern in key[1]:
             for path in checkout_glob(Path(src), pattern):
                 if path.is_file():
@@ -556,7 +562,7 @@ def checkout_copy(patterns: Iterable[str], *, src: Path = REPO_ROOT) -> Path:
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(path, target)
         _COPIES[key] = holder
-    return Path(_COPIES[key].name)
+    return Path(_COPIES[key].name) / "tree"
 
 
 def copy_checkout(src: Path, dst: Path, *, ignore: Callable[[str, list[str]], Iterable[str]] | None = None,
