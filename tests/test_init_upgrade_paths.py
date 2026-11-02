@@ -734,7 +734,10 @@ class TestWireHooksFlag:
         result = self._run_init_wire(target)
         data = json.loads((target / ".claude" / "settings.json").read_text(encoding="utf-8"))
         assert data["statusLine"] == own
-        assert "statusLine" not in result.stderr, result.stderr
+        # Kept and never claimed as espalier's; DEF-1116's note says which
+        # indicators that line will not show, and how to add them.
+        assert "added espalier's statusLine" not in result.stderr, result.stderr
+        assert "statusLine runs a command of your own" in result.stderr, result.stderr
 
 
 class TestEmptySettingsJsonIsAbsent:

@@ -743,14 +743,15 @@ class TestUpgradeSaysOlderNotUnreadable:
 
 class TestUpgradeRefusesADowngrade:
     """DEF-1104: the ``99.0.0`` dry run names the deployed side as newer and
-    would overwrite nothing."""
+    would overwrite nothing. The version lines are said on stderr (every
+    verb's, since ``fingerprint`` prints its JSON on stdout), and the dry
+    run's preview on stdout names nothing it would write."""
 
     def test_the_dry_run_names_the_newer_deployed_side_and_overwrites_nothing(self, walked):
-        assert walked.upgrade_dry_99.returncode == 2, (walked.upgrade_dry_99.stdout, walked.upgrade_dry_99.stderr)
-        out = walked.upgrade_dry_99.stdout
-        assert "99.0.0" in out, out
-        assert "newer" in out, out
-        assert "would re-deploy" not in out and "would update" not in out, out
+        result = walked.upgrade_dry_99
+        assert result.returncode == 2, (result.stdout, result.stderr)
+        assert "99.0.0" in result.stderr and "newer" in result.stderr, result.stderr
+        assert "would re-deploy" not in result.stdout and "would update" not in result.stdout, result.stdout
 
 
 class TestUpgradeRefusesWithoutTheSavedPlan:
