@@ -1371,7 +1371,7 @@ class TestTheProcessReader:
         argv, cwd, timeout = seen[0]
         assert argv == ["/usr/sbin/lsof", "-w", "-a", "-d", "cwd", "-p", "71609,72404,1", "-Fn"]
         assert timeout == 1.5
-        assert cwd == Path(os.path.abspath(os.sep)), "lsof runs from the root, never from the folder asked about"
+        assert cwd == Path(os.path.abspath("/")), "lsof runs from the root, never from the folder asked about"
         seen.clear()
         assert cs.process_cwds([]) == {} and seen == [], "no pid: no spawn"
         cs.process_cwds(list(range(100, 100 + cs.CWD_PID_CAP + 8)))

@@ -411,7 +411,7 @@ def _parent_map(timeout: float = GIT_CAP_S) -> dict[int, int]:
     elsewhere: one ``ps``, killed at ``timeout``."""
     if os.name == "nt":
         return _parent_map_windows()
-    r = run(["ps", "-A", "-o", "pid=,ppid="], cwd=Path(os.path.abspath(os.sep)), timeout=timeout)
+    r = run(["ps", "-A", "-o", "pid=,ppid="], cwd=Path(os.path.abspath("/")), timeout=timeout)
     table: dict[int, int] = {}
     if r is None or r.returncode != 0:
         return table
@@ -569,7 +569,7 @@ def process_cwds(pids: list[int] | None = None, *, timeout: float = CWD_READ_S) 
     named = ["-p", ",".join(str(pid) for pid in pids)] if pids is not None else []
     # From the filesystem root: lsof's own cwd is in the table it prints, and
     # the caller's folder may be the very one being asked about.
-    result = run([lsof, "-w", "-a", "-d", "cwd", *named, "-Fn"], cwd=Path(os.path.abspath(os.sep)), timeout=timeout)
+    result = run([lsof, "-w", "-a", "-d", "cwd", *named, "-Fn"], cwd=Path(os.path.abspath("/")), timeout=timeout)
     if result is None:
         return None
     found = parse_lsof_cwds(result.stdout or "")

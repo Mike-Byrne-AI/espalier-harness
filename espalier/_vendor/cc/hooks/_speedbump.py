@@ -81,6 +81,12 @@ spawn_timeout: Callable[[float], float] = (
 # The bounded spawn, read the same way: a kept helper that predates it leaves
 # the checkpoints' git reads on subprocess.run, unbounded on Windows as before.
 run_bounded: Callable[..., Any] = getattr(_hook_utils, "run_bounded", None) or subprocess.run
+# CP-KILL's reader, the one-module loader and the checkout list, read the same
+# way: a kept helper that predates them leaves CP-KILL reading no pid's owner
+# (every kill passes, as before it), never the guard refusing to start.
+load_checkout_sync: Callable[[], Any] = getattr(_hook_utils, "load_checkout_sync", None) or (lambda: None)
+load_beside_hooks: Callable[..., Any] = getattr(_hook_utils, "_load_beside_hooks", None) or (lambda *_a: None)
+sibling_checkouts: Callable[[Path], Any] = getattr(_hook_utils, "sibling_checkouts", None) or (lambda _root: ())
 import _bash_patterns
 # The CP-GATEWEAKEN body names the maintenance-mode relaunch; pin the env-var to
 # the SoT (_maintenance_mode.ENV_VAR) via an f-string rather than a literal, per
@@ -1975,7 +1981,7 @@ def _seat_name(checkout: Path) -> str:
     (``mail.machine_setting``): '' where none is named, ``?`` where the read
     failed or the reader is not deployed -- a failed read is never no name,
     and ``?`` never matches this checkout's own."""
-    mail = _hook_utils._load_beside_hooks("mail.py", "_speedbump_mail")
+    mail = load_beside_hooks("mail.py", "_speedbump_mail")
     if mail is None:
         return "?"
     machine, how = mail.machine_setting(checkout, timeout=spawn_timeout(_KILL_READ_S))
@@ -2011,10 +2017,10 @@ def _kill_reading(tool_name: str, tool_input: dict, root: Path) -> tuple[tuple[i
     if not targets:
         return None
     holder = _box_lock_holder()
-    checkouts = [root, *_hook_utils.sibling_checkouts(root)]
+    checkouts = [root, *sibling_checkouts(root)]
     if len(checkouts) < 2 and holder is None:
         return None   # one checkout and no lock held: no other seat's run to read, so nothing spawns
-    sync = _hook_utils.load_checkout_sync()
+    sync = load_checkout_sync()
     if sync is None:
         return None
     if holder is not None and sync.pid_alive(holder["pid"]) is False:

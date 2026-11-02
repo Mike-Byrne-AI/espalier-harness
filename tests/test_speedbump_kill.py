@@ -75,7 +75,7 @@ def children():
         # rows share the box's process table with other seats, and a sleeping
         # orphan at PPID 1 is the shape the reap recipe hunts.
         proc = subprocess.Popen([sys.executable, "-c", code], cwd=str(cwd), stdout=subprocess.PIPE, text=True,
-                                start_new_session=True)
+                                encoding="utf-8", start_new_session=True)
         started.append(proc)
         return proc
 
