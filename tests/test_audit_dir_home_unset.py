@@ -250,10 +250,12 @@ class TestThePruneIsBoundedInsideTheWall:
         that says nothing of the old logs it left. The bound is a count, not a
         clock: each read sleeps at least 10 ms, so a scan that stops at a
         0.3 s deadline has read at most 31 logs on any host, however slow
-        (a wall-clock ceiling would false-fail a loaded parallel run)."""
+        (a wall-clock ceiling would false-fail a loaded parallel run). The
+        names carry no date, so each is read (a dated one is demoted by its
+        name, unread: DEF-2029)."""
         import inspect
         import time
-        integ, audit_dir = self._store(monkeypatch, tmp_path, [f"s{n:03d}-{self._OLD}.log" for n in range(300)])
+        integ, audit_dir = self._store(monkeypatch, tmp_path, [f"s{n:03d}.log" for n in range(300)])
         assert "deadline" in inspect.signature(integ._prune_old_audit_logs).parameters
         self._slow_reads(monkeypatch, integ, 0.01)
         left: list[tuple[int, int]] = []
@@ -263,30 +265,42 @@ class TestThePruneIsBoundedInsideTheWall:
         assert left == [(300 - demoted, 30)], (demoted, left)
         assert len(list((audit_dir / "_cold").glob("*.log"))) == demoted
 
-    def test_the_oldest_name_date_is_read_first(self, monkeypatch, tmp_path):
+    def test_the_oldest_name_date_is_demoted_though_a_young_slug_sorts_first(self, monkeypatch, tmp_path):
         """A sort by name orders by repository slug, so a time bound on it
         reads the same first slugs every start and never reaches an old log
-        late in the alphabet. Dies to: the scan's order left by name."""
-        names = ["a-20261031.log", "m-20250101.log", "z-20240101.log", "nodate.log"]
-        integ, _ = self._store(monkeypatch, tmp_path, names)
-        order: list[str] = []
-        self._slow_reads(monkeypatch, integ, 0, order)
+        late in the alphabet; and the scan stops at its first young name
+        (DEF-2029), so a young log first by slug would hide every old one.
+        Dies to: the scan's order left by name."""
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).strftime("%Y%m%d")
+        integ, audit_dir = self._store(monkeypatch, tmp_path, ["m-20250101.log", "z-20240101.log", "nodate.log"])
+        self._store(monkeypatch, tmp_path, [f"a-{today}.log"], age_days=0)
         integ._prune_old_audit_logs(max_age_days=30)
-        assert order == ["nodate.log", "z-20240101.log", "m-20250101.log", "a-20261031.log"], order
+        assert sorted(p.name for p in (audit_dir / "_cold").glob("*.log")) == [
+            "m-20250101.log", "nodate.log", "z-20240101.log"]
+        assert (audit_dir / f"a-{today}.log").exists()
 
-    def test_logs_dated_inside_the_window_left_unread_say_nothing(self, monkeypatch, tmp_path):
+    def test_a_stops_count_leaves_out_the_logs_named_inside_the_window(self, monkeypatch, tmp_path):
         """Logs named inside the window hold nothing to demote unless renamed,
-        so a stop among them is silent: else a store of recent logs past the
-        bound would say so on every start. Dies to: every stop reported."""
+        so a stop counts only the old ones it left, and a stop with none left
+        is silent: else a store of recent logs would say so on every start.
+        Dies to: every unread log counted, or every stop reported."""
         import time
         from datetime import datetime, timezone
         today = datetime.now(timezone.utc).strftime("%Y%m%d")
-        integ, _ = self._store(monkeypatch, tmp_path, [f"s{n:03d}-{today}.log" for n in range(100)], age_days=0)
+        young = [f"y{n:03d}-{today}.log" for n in range(100)]
+        integ, _ = self._store(monkeypatch, tmp_path, [f"s{n:03d}.log" for n in range(60)])
+        self._store(monkeypatch, tmp_path, young, age_days=0)
         self._slow_reads(monkeypatch, integ, 0.01)
         left: list[tuple[int, int]] = []
-        assert integ._prune_old_audit_logs(max_age_days=30, deadline=time.monotonic() + 0.1,
+        demoted = integ._prune_old_audit_logs(max_age_days=30, deadline=time.monotonic() + 0.3,
+                                              on_stop=lambda n, days: left.append((n, days)))
+        assert demoted <= 31 and left == [(60 - demoted, 30)], (demoted, left)
+        (tmp_path / "young").mkdir()
+        integ, _ = self._store(monkeypatch, tmp_path / "young", young, age_days=0)
+        assert integ._prune_old_audit_logs(max_age_days=30, deadline=time.monotonic() - 1,
                                            on_stop=lambda n, days: left.append((n, days))) == 0
-        assert left == [], left
+        assert left == [(60 - demoted, 30)], left
 
     def test_a_stop_counts_the_old_logs_past_the_cap_and_a_raising_notice_costs_only_itself(self, monkeypatch,
                                                                                             tmp_path):
@@ -351,6 +365,92 @@ class TestThePruneIsBoundedInsideTheWall:
         assert "at its 1 s bound" in said[-1], said
         ss._prune_audit_logs_inside_the_wall(now, 0.25)
         assert seen["deadline"] <= now + 0.25, seen
+
+
+class TestThePruneDatesALogByItsName:
+    """DEF-2029: every SessionStart opened the logs named inside the 30-day
+    window to date them, though ``audit_path`` names each log for the day its
+    records are written, and opened them again at the next start: up to the
+    one-second bound a start once young logs passed a few hundred. The scan
+    dates a log by its name: it stops at the first name inside the window
+    (every later one is younger, the scan's order), demotes a name dated
+    before it unopened, and reads the first line only for a name with no
+    date."""
+
+    @staticmethod
+    def _counted(monkeypatch, tmp_path, logs):
+        """A store of ``logs`` (each name to its first record's age in days),
+        and the list each first-line read appends its log's name to."""
+        import time
+        from datetime import datetime, timezone
+        integ = _load_integrity_module()
+        audit_dir = tmp_path / "audit"
+        audit_dir.mkdir(exist_ok=True)
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(audit_dir))
+        for name, age_days in logs.items():
+            stamp = datetime.fromtimestamp(time.time() - age_days * 86400, timezone.utc).isoformat()
+            (audit_dir / name).write_bytes((json.dumps({"timestamp": stamp}) + "\n").encode("utf-8"))
+        read: list[str] = []
+        real = integ._parse_first_log_timestamp
+
+        def counted(f):
+            read.append(f.name)
+            return real(f)
+        monkeypatch.setattr(integ, "_parse_first_log_timestamp", counted)
+        return integ, audit_dir, read
+
+    @staticmethod
+    def _day(days_ago: int) -> str:
+        from datetime import datetime, timedelta, timezone
+        return (datetime.now(timezone.utc) - timedelta(days=days_ago)).strftime("%Y%m%d")
+
+    def test_no_log_named_inside_the_window_is_opened_at_any_start(self, monkeypatch, tmp_path):
+        """The row's probe as a test: 20 logs named today, the scan capped at
+        10, two starts' prunes. Dies to: the names inside the window read
+        (20 reads, the cap's 10 at each start)."""
+        integ, audit_dir, read = self._counted(monkeypatch, tmp_path,
+                                               {f"r{n}-{self._day(0)}.log": 0 for n in range(20)})
+        monkeypatch.setattr(integ, "_MAX_PRUNE_SCAN", 10)
+        assert integ._prune_old_audit_logs(max_age_days=30) + integ._prune_old_audit_logs(max_age_days=30) == 0
+        assert read == [] and len(list(audit_dir.glob("*.log"))) == 20, read
+
+    def test_a_name_dated_before_the_window_is_demoted_unopened_and_a_dateless_one_is_read(self, monkeypatch,
+                                                                                          tmp_path):
+        """The name is the authority where it carries a date, the first line
+        where it carries none. Dies to: an old name opened (this one's young
+        first record, a rename's, would keep it), or a dateless name judged
+        without its read."""
+        old_named = f"o-{self._day(40)}.log"
+        integ, audit_dir, read = self._counted(monkeypatch, tmp_path, {
+            old_named: 0, "nodate-old.log": 40, "nodate-young.log": 0, f"y-{self._day(0)}.log": 0})
+        assert integ._prune_old_audit_logs(max_age_days=30) == 2
+        assert sorted(read) == ["nodate-old.log", "nodate-young.log"], read
+        assert sorted(p.name for p in (audit_dir / "_cold").glob("*.log")) == ["nodate-old.log", old_named]
+
+    def test_a_log_named_inside_the_window_is_kept_whatever_its_first_record_says(self, monkeypatch, tmp_path):
+        """The declared limit: a log renamed into the window keeps its old
+        records out of the prune, since its name is not opened to check.
+        Dies to: the names inside the window opened again."""
+        integ, _, read = self._counted(monkeypatch, tmp_path, {f"r-{self._day(0)}.log": 40})
+        assert integ._prune_old_audit_logs(max_age_days=30) == 0 and read == [], read
+
+    def test_the_cutoff_days_log_is_kept_until_its_whole_day_leaves_the_window(self, monkeypatch, tmp_path):
+        """A log holds the records of its name's day, so the one named on the
+        cutoff's day holds records on both sides of it: it is kept, unread,
+        until that whole day is past the window, and the day before goes.
+        Dies to: a name dated before the window by its day's start."""
+        before = f"b-{self._day(31)}.log"
+        integ, audit_dir, read = self._counted(monkeypatch, tmp_path, {f"c-{self._day(30)}.log": 30, before: 31})
+        assert integ._prune_old_audit_logs(max_age_days=30) == 1 and read == [], read
+        assert [p.name for p in (audit_dir / "_cold").glob("*.log")] == [before]
+
+    def test_a_name_date_that_is_no_day_is_read_with_the_dateless_names(self, monkeypatch, tmp_path):
+        """Eight digits that are no day sort after every real date as text,
+        past the stop at the first young name, so the scan files them with
+        the names that carry none, whose first line is read. Dies to: the
+        stop with the order left on the digits."""
+        integ, _, read = self._counted(monkeypatch, tmp_path, {"x-99999999.log": 40, f"y-{self._day(0)}.log": 0})
+        assert integ._prune_old_audit_logs(max_age_days=30) == 1 and read == ["x-99999999.log"], read
 
 
 def test_every_prune_call_outside_its_module_is_bounded():
