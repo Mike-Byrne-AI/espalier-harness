@@ -3109,8 +3109,8 @@ class TestOrdersLine:
                 f"{head}, then start the worker loop (/loop 10m)"), source
         for source, said in (("clear", "a /clear"), ("compact", "a compaction")):
             assert mod._orders_line(tmp_path, read, mail=mail, python="", source=source) == (
-                f"{head}; if the worker loop (/loop 10m) was started in this window it survives {said}: start no "
-                "second one"), source
+                f"{head}; the worker loop (/loop 10m) survives {said}: where CronList lists it, start no second "
+                "one"), source
         older = types.SimpleNamespace(brief_line=lambda role, seat, python="": "the older short form")
         assert mod._orders_line(tmp_path, read, mail=mail, seat=older, python="", source="clear") == (
             "w: 1 job from hub, first lane/a; 0 unread; the older short form")
@@ -3201,14 +3201,13 @@ class TestOrdersLine:
             assert res.returncode == 0, res.stderr
             return json.loads(res.stdout)["hookSpecificOutput"]["additionalContext"]
 
-        orders = "Orders:    w: 1 job from hub, first lane/a; 1 unread; run /inbox, then /inbox board"
-        started = banner("startup", "o-1")
-        assert f"{orders}, then start the worker loop (/loop 10m)" in started, started
-        # DEF-4052: main hands the payload's source to the line, so the window
-        # a /clear left its loop is told to start no second one.
-        cleared = banner("clear", "o-2")
-        assert (f"{orders}; if the worker loop (/loop 10m) was started in this window it survives a /clear: "
-                "start no second one") in cleared, cleared
+        # One run, on a clear (DEF-4052): main passes the line at all, and hands
+        # it the payload's source, so the window a /clear left its loop is told
+        # to start no second one; the startup wording is the unit case's. One
+        # hook run keeps the case under the 60 s ceiling (code review).
+        cleared = banner("clear", "o-1")
+        assert ("Orders:    w: 1 job from hub, first lane/a; 1 unread; run /inbox, then /inbox board; the worker "
+                "loop (/loop 10m) survives a /clear: where CronList lists it, start no second one") in cleared, cleared
 
 
 class TestEngineLine:

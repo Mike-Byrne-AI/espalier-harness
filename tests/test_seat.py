@@ -1238,8 +1238,8 @@ class TestBrief:
                     f"run /inbox, then /inbox board, then start the {what} loop (/loop {every}); "), (role, source)
             for source, said in (("clear", "a /clear"), ("compact", "a compaction")):
                 line = seat.brief_line(role, seat_name, "py -3", source=source)
-                assert line == (f"run /inbox, then /inbox board; if the {what} loop (/loop {every}) was started in "
-                                f"this window it survives {said}: start no second one; py -3 tools/cc/seat.py brief "
+                assert line == (f"run /inbox, then /inbox board; the {what} loop (/loop {every}) survives {said}: "
+                                f"where CronList lists it, start no second one; py -3 tools/cc/seat.py brief "
                                 f"{seat_name} prints the first message"), line
                 assert "then start" not in line and line.isascii() and '"' not in line
 
@@ -1372,6 +1372,33 @@ class TestRetire:
         by_machine, _ = seat.mail.read_mail(clone)
         assert [c["id"] for c in seat.mail.live_claims(by_machine)] == [], claim
         assert [j["id"] for j in seat.mail.live_assignments(by_machine)] == [job["id"]]
+
+    def test_an_unread_channel_at_the_confirming_read_keeps_the_worktree(self, seat, clone, registry, monkeypatch):
+        """The sibling of DEF-4036's second read (code review): the confirm
+        read the channel after the releases and an unreadable one came back
+        empty, which read as nothing left, so the worktree went unconfirmed.
+        Dies to: the confirming read's note thrown away."""
+        feat = _worktree(clone, "feat", name="box-feat")
+        _send(seat, feat, "box-feat", "claim", "the feature", lane="lane/feat")
+        real_read, real_send, sent, failed = seat.mail.read_mail, seat.mail.send, [], []
+
+        def send(root, message, **kw):
+            sent.append(message["type"])
+            return real_send(root, message, **kw)
+
+        def read(root, **kw):
+            if sent and not failed:   # the first read after a release went out: the confirming one
+                failed.append(root)
+                raise seat.mail.Unresolvable("git for-each-ref timed out")
+            return real_read(root, **kw)
+
+        monkeypatch.setattr(seat.mail, "send", send)
+        monkeypatch.setattr(seat.mail, "read_mail", read)
+        with pytest.raises(seat.Refused, match=r"the releases were sent, and the mail channel could not be read "
+                                               r"\(git for-each-ref timed out\), so they cannot be confirmed: the "
+                                               r"worktree is kept"):
+            seat.cmd_retire(clone, "box-feat", dry_run=False, fetch=True)
+        assert sent == ["release"] and len(failed) == 1 and feat.is_dir()
 
     def test_no_fetch_retires_on_the_refs_here_and_never_fetches(self, seat, clone, registry, monkeypatch):
         """``--no-fetch`` is the explicit way to retire on what is here, at
@@ -1518,6 +1545,11 @@ class TestTheLauncherSetsTheBoxLock:
         monkeypatch.setattr(seat.Path, "home", staticmethod(no_home))
         assert seat.box_lock_default() == os.path.join(tempfile.gettempdir(), "espalier-box.lock")
         monkeypatch.setattr(seat.Path, "home", staticmethod(lambda: Path("~")))
+        assert seat.box_lock_default() == os.path.join(tempfile.gettempdir(), "espalier-box.lock")
+        # A container's or a service user's home of "/" (code review): no
+        # user can make the folder there, so the temp directory's file stands.
+        root = Path(Path.cwd().anchor)
+        monkeypatch.setattr(seat.Path, "home", staticmethod(lambda: root))
         assert seat.box_lock_default() == os.path.join(tempfile.gettempdir(), "espalier-box.lock")
 
     def test_the_posix_line_spells_the_mod_directory_as_the_shell_reads_it(self, seat, tmp_path):

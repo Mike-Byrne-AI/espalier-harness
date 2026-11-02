@@ -527,6 +527,38 @@ class TestTheSummaryNamesAnUnguardedRun:
         assert lines[0]["run"]["pid"] == _said_pid(tmp_path / "g.pid") and lines[0]["why"].split(":")[0] in err, (lines, err)
 
 
+class TestTheLaunchersOldDefaultIsReadAsItsNewOne:
+    def test_the_old_temp_path_alone_is_read_as_the_home_default_and_said(self, tmp_path, monkeypatch):
+        """DEF-4053's failure-mode review: a seat launched before the move
+        keeps the temp directory's path in its environment for days (a /clear
+        keeps the process), while a relaunched sibling locks the home file,
+        two files on one box. The plugin reads that one path as the new
+        default and says so; any other path is the operator's own. Mutation:
+        no alias, or an alias of every path with the lock's name."""
+        bl = _box_lock()
+        monkeypatch.setattr(bl.tempfile, "gettempdir", lambda: str(tmp_path / "temp"))
+        monkeypatch.setattr(bl.Path, "home", staticmethod(lambda: tmp_path / "home"))
+        new = str(tmp_path / "home" / ".espalier" / "espalier-box.lock")
+        said: list[str] = []
+        stream = types.SimpleNamespace(write=said.append, flush=lambda: None)
+        assert bl.current_path(str(tmp_path / "temp" / "espalier-box.lock"), stream=stream) == new
+        assert "is the launcher's old default; this run locks" in "".join(said), said
+        said.clear()
+        own = str(tmp_path / "shared" / "espalier-box.lock")
+        assert bl.current_path(own, stream=stream) == own and said == []
+
+    def test_the_plugins_home_default_is_the_launchers(self):
+        """The plugin mirrors ``seat.box_lock_default``'s rule (it cannot load
+        the driver, whose imports reach the mail channel). Dies to: one rule
+        changed without the other."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_seat_for_box_lock", REPO_ROOT / "tools" / "cc" / "seat.py")
+        seat = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = seat
+        spec.loader.exec_module(seat)
+        assert _box_lock().home_default() == seat.box_lock_default()
+
+
 class TestTheSummaryHooksHonourNoSummary:
     def test_neither_the_locks_line_nor_the_unguarded_line_is_written_where_none_was_asked_for(self, tmp_path):
         """pytest 9.2.0 calls every plugin's terminal-summary hook under

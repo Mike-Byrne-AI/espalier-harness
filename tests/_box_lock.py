@@ -20,11 +20,14 @@ before any worker is spawned, through the primitive's non-blocking
 ``try_lock_file``. While another run holds it, this one polls, says who holds
 it (seat, lane, pid, how long) on stderr at once and then once per report
 interval, with an inspect command and the stop command once the holder itself
-is past a ceiling. Every gated run appends one JSON line to ``<lock path>.log``
-saying what the lock did -- taken at once, waited (how long, behind whom),
-passed through inside its holder, or unguarded (why) -- so the record the
-roadmap's re-measure reads is empty only where no gated run came, never
-merely where none waited (DEF-4053). The run's terminal summary says
+is past a ceiling. Every gated run appends one JSON line to
+``<lock path>.log`` saying what the lock did -- taken at once, waited (how
+long, behind whom), passed through inside its holder, or unguarded (why) --
+so the record the roadmap's re-measure reads is empty only where no gated
+run came, never merely where none waited (DEF-4053). The launcher's old
+default (the temp directory's file) is read as its new one, said on stderr,
+so a seat launched before the move locks what its relaunched sibling locks.
+The run's terminal summary says
 what the lock did: waited, passed through, or unguarded. Once held it writes its own record into the file and exports
 ``ESPALIER_BOX_LOCK_HOLDER=<pid>`` to every child, so a nested run (xdist's
 workers, the stage-one smoke) that inherits the pair and finds the record's pid
@@ -49,6 +52,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -256,14 +260,40 @@ def build_record(config: Any, primitive: Any) -> dict:
             "argv": [os.path.basename(str(sys.argv[0])), *[str(a) for a in sys.argv[1:9]]] if sys.argv else []}
 
 
-#: What a gated run's line in ``<lock path>.log`` says the lock did.
-OUTCOMES = ("taken", "waited", "inside", "unguarded")
+def home_default() -> str | None:
+    """The launcher's default lock path (``tools/cc/seat.py::box_lock_default``,
+    whose rule this mirrors and a test pins equal): ``~/.espalier/espalier-box.lock``,
+    or None where no usable home can be told."""
+    try:
+        home = Path.home()
+    except RuntimeError:
+        return None
+    if not home.is_absolute() or home.parent == home:
+        return None
+    return str(home / ".espalier" / "espalier-box.lock")
+
+
+def current_path(path: str, *, stream: TextIO | None = None) -> str:
+    """``path``, unless it is the launcher's default from before it moved to
+    the home directory (``espalier-box.lock`` under the temp directory): a
+    seat launched then keeps that path in its environment until it is
+    relaunched, and a ``/clear`` keeps the process, so for days one seat would
+    lock the old file and its relaunched sibling the new one, the split the
+    move closed (DEF-4053's failure-mode review). That one path is read as the
+    home default, said on stderr; any other path is the operator's own."""
+    old = os.path.join(tempfile.gettempdir(), "espalier-box.lock")
+    new = home_default()
+    if new is None or os.path.normcase(os.path.abspath(path)) != os.path.normcase(os.path.abspath(old)):
+        return path
+    print(f"box lock: {path} is the launcher's old default; this run locks {new} (a relaunched seat drops this line)",
+          file=stream if stream is not None else sys.stderr, flush=True)
+    return new
 
 
 def log_outcome(lock: Path, outcome: str, run: dict | None, holder: dict | None = None, waited_s: float = 0.0,
                 *, why: str = "", stream: TextIO | None = None) -> None:
     """One JSON line in ``<lock path>.log`` for every gated run, whatever the
-    lock did (:data:`OUTCOMES`): ``taken`` at once, ``waited`` behind a holder
+    lock did: ``taken`` at once, ``waited`` behind a holder
     (the wait's start, end and length), ``inside`` its holder (passed
     through), or ``unguarded`` (not taken, and ``why``). The log held waits
     alone, so an empty one could not say whether no run waited or no run was
@@ -281,7 +311,7 @@ def log_outcome(lock: Path, outcome: str, run: dict | None, holder: dict | None 
     try:
         with open(f"{lock}.log", "a", encoding="utf-8") as log:
             log.write(json.dumps(line) + "\n")
-    except OSError as exc:
+    except (OSError, ValueError) as exc:  # a ValueError: a path open() refuses outright (an embedded NUL)
         print(f"box lock: the log could not be written ({exc.__class__.__name__})",
               file=stream if stream is not None else sys.stderr, flush=True)
 
@@ -413,6 +443,7 @@ def pytest_configure(config: Any) -> None:
     try:
         if not gated(config):
             return
+        path = current_path(path)
         primitive = _primitive()
         record = build_record(config, primitive)
         lock = BoxLock(Path(path), record, primitive)
