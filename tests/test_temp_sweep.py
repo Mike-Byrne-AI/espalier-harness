@@ -3,9 +3,13 @@
 ``tests/_temp_sweep.py`` removes, at the controller's configure, each dir under
 pytest's root (``pytest-*``, ``garbage-*``) and each work dir of the two makers
 that lock theirs (``espalier-archive-probe-*``, ``checkout-copy-*``) whose
-``.lock`` names a dead pid. The unit rows drive ``sweep`` on scratch roots with
-the liveness answer injected; the end-to-end rows start a real nested session
-from this checkout with its temp dir moved into ``tmp_path``.
+``.lock`` names a dead pid. These rows pin that sweep because pytest keeps such
+a dir for 72 h by its lock's age alone, and 13 of them held 32 GB on one seat's
+machine; they guard what it must keep (a live or unknown pid, an unlocked dir,
+a link, ``pytest-current``) and that pytest still writes the lock it reads. The
+unit rows drive ``sweep`` on scratch roots with the liveness answer injected;
+the end-to-end rows start a real nested session from this checkout with its
+temp dir moved into ``tmp_path``.
 """
 from __future__ import annotations
 
@@ -48,7 +52,7 @@ def _plant(root: Path, name: str, pid: int | None, *, extra: str = "left.txt") -
     (d / "sub").mkdir(parents=True)
     (d / "sub" / extra).write_text("x", encoding="utf-8")
     if pid is not None:
-        (d / ts.LOCK_NAME).write_text(str(pid), encoding="ascii")
+        (d / ts.LOCK_NAME).write_text(str(pid), encoding="utf-8")
     return d
 
 
@@ -70,8 +74,8 @@ class TestTheSweepRemovesWhatADeadRunLeft:
         kept = [_plant(tmp_path, "pytest-1", 11), _plant(tmp_path, "pytest-2", 12),
                 _plant(tmp_path, "pytest-3", None), _plant(tmp_path, "pytest-4", None),
                 _plant(tmp_path, "pytest-5", None)]
-        (kept[3] / ts.LOCK_NAME).write_text("not a pid", encoding="ascii")
-        (kept[4] / ts.LOCK_NAME).write_text("0", encoding="ascii")
+        (kept[3] / ts.LOCK_NAME).write_text("not a pid", encoding="utf-8")
+        (kept[4] / ts.LOCK_NAME).write_text("0", encoding="utf-8")
         removed, stuck = ts.sweep(tmp_path, ts.PYTEST_PREFIXES, alive=_alive({11: True, 12: None}),
                                   rm=ts.deleter())
         assert (removed, stuck) == ([], [])

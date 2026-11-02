@@ -103,7 +103,7 @@ def lock_pid(directory: Path) -> int | None:
     """The pid in ``directory``'s lock, or None: no lock, an unreadable one,
     or one that does not hold a positive number."""
     try:
-        text = (directory / LOCK_NAME).read_text(encoding="ascii").strip()
+        text = (directory / LOCK_NAME).read_text(encoding="utf-8").strip()
     except (OSError, UnicodeDecodeError):
         return None
     return int(text) if text.isdigit() and int(text) > 0 else None
@@ -111,7 +111,7 @@ def lock_pid(directory: Path) -> int | None:
 
 def write_lock(directory: Path) -> None:
     """Mark ``directory`` as this process's, in pytest's lock shape."""
-    (directory / LOCK_NAME).write_text(str(os.getpid()), encoding="ascii")
+    (directory / LOCK_NAME).write_text(str(os.getpid()), encoding="utf-8")
 
 
 def release_own_lock(root: Path | None = None) -> list[str]:

@@ -150,12 +150,12 @@ class TestTheBackstopEndsATestThatBlocksAgain:
         mine, theirs = root / "pytest-5", root / "pytest-6"
         for d, pid in ((mine, os.getpid()), (theirs, 4242)):
             d.mkdir(parents=True)
-            (d / ".lock").write_text(str(pid), encoding="ascii")
+            (d / ".lock").write_text(str(pid), encoding="utf-8")
         ended: list[int] = []
         backstop.dropping_the_lock(ended.append)(3)
         assert ended == [3]
         assert not (mine / ".lock").exists() and mine.is_dir()
-        assert (theirs / ".lock").read_text(encoding="ascii") == "4242"
+        assert (theirs / ".lock").read_text(encoding="utf-8") == "4242"
 
 
 def test_the_plugin_internals_the_backstop_calls_exist():

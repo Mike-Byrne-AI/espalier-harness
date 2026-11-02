@@ -407,7 +407,7 @@ def _clean_work(work: Path, made_work: bool) -> None:
 def make_work_dir() -> Path:
     """A fresh work dir in the system temp dir, locked with this process's pid."""
     work = Path(tempfile.mkdtemp(prefix=WORK_PREFIX))
-    (work / LOCK_NAME).write_text(str(os.getpid()), encoding="ascii")
+    (work / LOCK_NAME).write_text(str(os.getpid()), encoding="utf-8")
     return work
 
 
