@@ -81,6 +81,22 @@ def test_update_canonical_refuses_write_on_regression(monkeypatch, tmp_path):
     assert after == before, "canonical RESULTS.md must be untouched on a regression"
 
 
+def test_update_canonical_refuses_a_shaped_root(monkeypatch, tmp_path):
+    """DEF-811: the canonical scoreboard is the plain root's run, so a run
+    under another root shape refuses to write it, before any baseline runs,
+    and the module's shape is plain again for the next caller."""
+    import bench.run_benchmark as rb
+
+    monkeypatch.setattr(rb, "RESULTS_DIR", tmp_path / "results")
+    ran: list[str] = []
+    monkeypatch.setattr(rb, "run_baseline", lambda name, corpus: ran.append(name) or [])
+    results_path = rb.BENCH_DIR / "RESULTS.md"
+    before = results_path.read_bytes()
+    assert rb.main(["--update-canonical", "--quiet", "--root-shape", "paren"]) == 1
+    assert ran == [] and results_path.read_bytes() == before
+    assert rb.ROOT_SHAPE == "plain"
+
+
 def test_invoker_strips_ambient_maintenance_mode(tmp_path, monkeypatch):
     """TP-169 §13 #6: the real-write_guard invoker must NOT inherit
     ESPALIER_MAINTENANCE_MODE from the launching shell.

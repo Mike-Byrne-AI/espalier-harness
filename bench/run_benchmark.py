@@ -32,6 +32,7 @@ Run:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as _dt
 import fnmatch
 import json
@@ -42,6 +43,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +71,38 @@ BASELINE_DIR = BENCH_DIR / "baselines"
 RESULTS_DIR = BENCH_DIR / "results"
 HOOK_SCRIPT = REPO_ROOT / "tools" / "cc" / "hooks" / "write_guard.py"
 BASELINES = ["no-governance", "settings-deny-only", "minimal-hooks", "espalier"]
+
+#: The root shape ``run_baseline`` builds each project under: plain unless
+#: ``--root-shape`` names another of the rehearsal's ROOT_SHAPES (DEF-811), so
+#: a run costs one shape's time; running the release gate under every shape is
+#: the operator's call. ``main`` sets it for its run and puts plain back.
+ROOT_SHAPE = "plain"
+
+
+def _rehearsal_shapes():
+    """The rehearsal's ``ROOT_SHAPES`` and ``shaped_root``, imported only for a
+    shaped run: the rehearsal is a source-tree bench file the sdist and a fused
+    install do not ship, and the plain run this script publishes must start
+    there. Same directory, imported by its bare name, as the other benches
+    import it."""
+    sys.path.insert(0, str(BENCH_DIR))
+    from powershell_guard_rehearsal import ROOT_SHAPES, shaped_root
+    return ROOT_SHAPES, shaped_root
+
+
+@contextlib.contextmanager
+def _baseline_root(name: str) -> Iterator[Path]:
+    """The throwaway project one baseline runs in: tempfile's own plain name
+    (the shape the published numbers are measured under), or under a
+    ``ROOT_SHAPE`` other than plain the rehearsal's ``shaped_root``. The
+    baseline's setup builds the rest; no protected tree is laid over it."""
+    if ROOT_SHAPE == "plain":
+        with tempfile.TemporaryDirectory(prefix=f"bench-{name}-") as td:
+            yield Path(td)
+        return
+    _shapes, shaped_root = _rehearsal_shapes()
+    with shaped_root(ROOT_SHAPE, prefix=f"bench-{name}-") as root:
+        yield root
 
 
 # ---------------------------------------------------------------------------
@@ -2008,11 +2042,12 @@ def setup_baseline(name: str, tmp_project: Path) -> None:
 
 
 def run_baseline(name: str, corpus: list[dict]) -> list[dict]:
-    """Run all corpus attempts against one baseline; return result records."""
+    """Run all corpus attempts against one baseline; return result records.
+
+    The project is ``_baseline_root``'s, a root of ``ROOT_SHAPE``."""
     invokers = BASELINE_INVOKERS[name]
     results: list[dict] = []
-    with tempfile.TemporaryDirectory(prefix=f"bench-{name}-") as tmp:
-        tmp_project = Path(tmp)
+    with _baseline_root(name) as tmp_project:
         setup_baseline(name, tmp_project)
         for entry in corpus:
             for attempt in entry["canonical_attempts"]:
@@ -2279,8 +2314,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--baseline", action="append", help="Run only specified baseline(s); default = all")
     parser.add_argument("--update-canonical", action="store_true", help="Rewrite bench/RESULTS.md with this run's report")
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--root-shape", default="plain",
+                        help="the project root's shape, one of bench/powershell_guard_rehearsal.py's "
+                             "ROOT_SHAPES (a source-tree file); default plain")
     args = parser.parse_args(argv)
 
+    if args.root_shape != "plain":
+        try:
+            shapes, _shaped_root = _rehearsal_shapes()
+        except ImportError as exc:
+            print(f"error: --root-shape needs bench/powershell_guard_rehearsal.py, which this "
+                  f"tree does not have ({exc}); the plain run needs nothing more", file=sys.stderr)
+            return 1
+        if args.root_shape not in shapes:
+            print(f"error: unknown root shape {args.root_shape!r} (known: {list(shapes)})",
+                  file=sys.stderr)
+            return 1
     corpus = load_corpus()
     if not corpus:
         print("error: no corpus files found in", CORPUS_DIR, file=sys.stderr)
@@ -2299,6 +2348,13 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
+    if args.update_canonical and args.root_shape != "plain":
+        print(
+            "error: --update-canonical records the plain root shape's run "
+            "(remove --root-shape)",
+            file=sys.stderr,
+        )
+        return 1
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -2306,10 +2362,15 @@ def main(argv: list[str] | None = None) -> int:
     report_path = RESULTS_DIR / f"{timestamp}-report.md"
 
     all_results: list[dict] = []
-    for b in baselines:
-        if not args.quiet:
-            print(f"[bench] running baseline: {b}")
-        all_results.extend(run_baseline(b, corpus))
+    global ROOT_SHAPE
+    ROOT_SHAPE = args.root_shape
+    try:
+        for b in baselines:
+            if not args.quiet:
+                print(f"[bench] running baseline: {b} (root shape: {args.root_shape})")
+            all_results.extend(run_baseline(b, corpus))
+    finally:
+        ROOT_SHAPE = "plain"
 
     with jsonl_path.open("w", encoding="utf-8") as f:
         for rec in all_results:
