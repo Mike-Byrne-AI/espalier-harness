@@ -127,6 +127,20 @@ def spelling(request, monkeypatch):
     return request.param
 
 
+def force_walk(name: str, monkeypatch) -> str:
+    """Put ``rmtree`` on the walk ``name`` names, or skip where this host has
+    none: the fixture below, and ``tests/test_wheel_smoke.py``'s twin parity
+    row, which drives both deleters over both walks."""
+    if name == "fd":
+        if not getattr(shutil, "_use_fd_functions", False):
+            pytest.skip("this host's rmtree has no fd walk")
+    elif hasattr(shutil, "_rmtree_impl"):
+        monkeypatch.setattr(shutil, "_rmtree_impl", shutil._rmtree_unsafe)
+    else:
+        monkeypatch.setattr(shutil, "_use_fd_functions", False)
+    return name
+
+
 @pytest.fixture(params=["fd", "scandir"])
 def walk(request, monkeypatch):
     """``rmtree``'s walk: the fd walk opens a directory (``os.open``) before
@@ -134,14 +148,7 @@ def walk(request, monkeypatch):
     forced here through the stdlib's own switch so a host that can shut a
     directory drives it (3.14 picks the walk at import, 3.10 to 3.13 at
     each call)."""
-    if request.param == "fd":
-        if not getattr(shutil, "_use_fd_functions", False):
-            pytest.skip("this host's rmtree has no fd walk")
-    elif hasattr(shutil, "_rmtree_impl"):
-        monkeypatch.setattr(shutil, "_rmtree_impl", shutil._rmtree_unsafe)
-    else:
-        monkeypatch.setattr(shutil, "_use_fd_functions", False)
-    return request.param
+    return force_walk(request.param, monkeypatch)
 
 
 class TestADirectoryTheWalkCannotEnter:
@@ -391,9 +398,11 @@ class TestALinkIsDeletedNeverFollowed:
         there), so DEF-5060 never reached Windows. The premise is asserted
         first: the link's own read-only attribute refuses a bare unlink. Then
         the helper clears that attribute on the link itself, the link goes,
-        and the read-only file it names stays read-only. Runs only where
-        ``portability.yml`` dispatches windows-latest (its interpreter's arm);
-        the other Windows arm is driven through the fake below."""
+        and the read-only file it names stays read-only. Runs only on
+        Windows: ``portability.yml``'s windows-latest cell takes the bare arm
+        (3.12), and a run dispatched there with a newer ``python`` input takes
+        the ``follow_symlinks=False`` arm (DEF-5064); each arm is also driven
+        on every host through the fake below."""
         target = tmp_path / "target"
         target.write_text("x", encoding="utf-8")
         link = _link_to(tmp_path / "link", target)

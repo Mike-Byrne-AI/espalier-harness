@@ -8,7 +8,8 @@ name: Portability
 # ubuntu in test.yml on every pull request and catch the KNOWN cross-OS classes; this
 # workflow is the empirical belt-and-suspenders for the residual no static rule
 # encodes. The `os` and `select` inputs narrow a dispatched run to one runner
-# and a selection -- the loop that closed the Windows reds on 2026-09-23.
+# and a selection -- the loop that closed the Windows reds on 2026-09-23 --
+# and `python` runs it on a newer interpreter than the cells' 3.12.
 # Pull requests and dispatch only: main never re-runs it and it is not a
 # required check, so its legs finish after auto-merge has landed the lane and
 # the verdict is read AFTER the merge -- by the board's checks: line, the
@@ -32,6 +33,11 @@ on:
         description: "Extra pytest arguments -- e.g. `@.github/windows-reds.txt` (an argument file of node ids, one per line) or `-k <expr>`; empty runs the whole not-heavy_e2e suite. windows-latest runs at PYTEST_TIMEOUT=180: add `--timeout=60` to reproduce the suite's own ceiling there"
         type: string
         default: ""
+      python:
+        description: "The interpreter for a dispatched run: 3.12, the push and pull-request cells' own, or a newer one for an arm only it takes (os.chmod's follow_symlinks=False on Windows from 3.13, which the delete helper passes there)"
+        type: choice
+        default: "3.12"
+        options: ["3.12", "3.13", "3.14"]
 
 # Read-only token; this job never pushes.
 permissions:
@@ -70,10 +76,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
-      - name: Set up Python 3.12
+      # 3.12 on push and pull request (the inputs are empty there); a dispatched
+      # run may name a newer one through the `python` input, so a Windows arm
+      # that only a newer interpreter takes is run without a second cell on
+      # every pull request.
+      - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: ${{ github.event.inputs.python || '3.12' }}
 
       - name: Install
         run: pip install -e .[dev]
