@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5058",
+ "subject": "espalier/assets/seed/convergence-review-protocol.md",
+ "cmd": "grep -c read_ledger_trend espalier/assets/seed/convergence-review-protocol.md",
+ "open_value": "0",
+ "why_not": null,
+ "row_sha": "ad96b327e835",
+ "text_sha": "bce71f35e40f",
+ "verified_2026_11_02": "OPEN (filed 2026-11-02; probe driven at filing here and in the export of HEAD af12a87c9504)"
+}
