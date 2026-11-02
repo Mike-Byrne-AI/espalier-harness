@@ -921,10 +921,12 @@ def test_the_two_gates_newly_allow_nothing_in_the_bypass_corpus(monkeypatch, tmp
     import json
     from pathlib import Path
 
+    from tests._live_tree import checkout_glob
+
     corpus = Path(__file__).resolve().parent.parent / "bench" / "corpus"
     attempts = []
     for name in ("BC-028-", "BC-028b-", "BC-053-", "BC-054-"):
-        (path,) = corpus.glob(f"{name}*.json")
+        (path,) = checkout_glob(corpus, f"{name}*.json")
         doc = json.loads(path.read_text(encoding="utf-8"))
         attempts += [a for a in doc["canonical_attempts"]
                      if a.get("tool_name") in ("Bash", "PowerShell")]
