@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5057",
+ "subject": "tests/test_proof_tier.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "The fix is a census not yet written: whether a launch keeps the export is read from how it builds its child's environment, which a grep cannot answer without the census's own AST walk; the oracle is that census, written with the fix.",
+ "row_sha": "7ae001618b4e",
+ "text_sha": "9db262d0f7be",
+ "verified_2026_11_01": "OPEN (filed 2026-11-01; probe driven at filing)"
+}
