@@ -1811,6 +1811,9 @@ _NESTED_LAUNCH_FLOOR = _NESTED_LAUNCHES_AT_PIN // 2
 _PARALLEL_NESTED_RUNS: dict[str, str] = {
     "tests/test_benchmark_release_hygiene.py::TestResultsMdCitationsResolve::test_every_cited_node_id_collects":
         "a --collect-only child per node id the bench results cite; 1.2 s",
+    "tests/test_temp_sweep.py::_start_a_session":
+        "a nested session from this checkout that selects no test, its temp dir moved into tmp_path, "
+        "so only its configure's sweep runs; under 1 s",
     "tests/test_box_lock.py::_spawn":
         "a planted one-file suite under the box lock's plugin; up to 6.0 s a row",
     "tests/test_demo_end_to_end.py::test_demo_beat3_release_check_runs":

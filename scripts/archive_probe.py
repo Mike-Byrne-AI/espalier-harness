@@ -100,6 +100,12 @@ EXIT_TIMEOUT = 124
 WORK_PREFIX = "espalier-archive-probe-"
 #: What the probe writes under the work dir, and all ``--clean`` removes.
 WORK_ENTRIES = ("archive_out", "extracted", "venv", "probe.log")
+#: The lock a work dir the probe makes carries while the probe runs: its pid,
+#: in pytest's lock shape. The probe drops it on every exit it lives through,
+#: so a dir kept for reading stays; a probe killed mid-run leaves it naming a
+#: dead pid, and the suite's next session start removes the dir
+#: (``tests/_temp_sweep.py``, DEF-5053).
+LOCK_NAME = ".lock"
 
 
 class ProbeRefusal(Exception):
@@ -398,6 +404,13 @@ def _clean_work(work: Path, made_work: bool) -> None:
         shutil.rmtree(work, ignore_errors=True)
 
 
+def make_work_dir() -> Path:
+    """A fresh work dir in the system temp dir, locked with this process's pid."""
+    work = Path(tempfile.mkdtemp(prefix=WORK_PREFIX))
+    (work / LOCK_NAME).write_text(str(os.getpid()), encoding="ascii")
+    return work
+
+
 def _main(ns: argparse.Namespace, pytest_args: list[str]) -> int:
     if not pytest_args:
         raise ProbeRefusal(
@@ -407,7 +420,7 @@ def _main(ns: argparse.Namespace, pytest_args: list[str]) -> int:
     root = Path(ns.root).resolve()
     made_work = ns.work_dir is None
     if made_work:
-        work = Path(tempfile.mkdtemp(prefix=WORK_PREFIX))
+        work = make_work_dir()
     else:
         work = Path(ns.work_dir).resolve()
         if work.exists() and any(work.iterdir()):
@@ -469,7 +482,13 @@ def _main(ns: argparse.Namespace, pytest_args: list[str]) -> int:
         log_parts.append(f"=== REFUSED: {exc} ===")
         raise
     finally:
-        log_path.write_text("\n".join(log_parts) + "\n", encoding="utf-8")
+        try:
+            log_path.write_text("\n".join(log_parts) + "\n", encoding="utf-8")
+        finally:
+            # A log that cannot be written (a full disk) still drops the lock,
+            # or the next session start sweeps the dir this probe kept.
+            if made_work:
+                (work / LOCK_NAME).unlink(missing_ok=True)
     if rc == 0 and ns.clean:
         _clean_work(work, made_work)
         say(f"probe: --clean removed what the probe wrote under {work}"

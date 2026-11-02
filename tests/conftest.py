@@ -21,9 +21,10 @@ from tests._report_os_name_guard import pytest_runtest_makereport  # noqa: F401
 # pytest-timeout (where the per-test ceiling is a signal alarm, a pass past it
 # is a failure and a test that blocks again after it still ends), and the count
 # of the selected tests that never ran, in a line -q keeps (past xdist's
-# restart cap the run stops scheduling without a word under -q). Each module
-# says why.
-from tests import _box_lock, _never_ran, _timeout_backstop
+# restart cap the run stops scheduling without a word under -q), and the sweep
+# of the temp dirs a killed run left (pytest keeps a dead pid's dir for 72 h).
+# Each module says why.
+from tests import _box_lock, _never_ran, _temp_sweep, _timeout_backstop
 # Stops a session whose interpreter imports another tree's engine before any
 # test runs: every CLI-spawning test would otherwise pass about the wrong code.
 from tests._engine_check import pytest_sessionstart  # noqa: F401
@@ -41,11 +42,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def pytest_configure(config):
-    """Register the timeout backstop and the never-ran count (the imports above
-    say what each is for)."""
+    """Register the timeout backstop and the never-ran count, take the box
+    lock, then sweep (the imports above say what each is for)."""
     _timeout_backstop.pytest_configure(config)
     _never_ran.pytest_configure(config)
     _box_lock.pytest_configure(config)
+    _temp_sweep.pytest_configure(config)
 
 
 #: Where the modules the restore below keeps live: a ``tools/cc`` module held in
@@ -1418,6 +1420,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # ends its test is a fact about a real pytest child under the
             # signal method.
             "test_timeout_backstop",
+            # The temp sweep: what a session start leaves of a dead run's dirs
+            # is a fact about a real nested pytest session's configure.
+            "test_temp_sweep",
             # Moved from the unit grandfather 2026-10-12: whether a linked
             # worktree (its .git a gitlink file) reads as a checkout of its own
             # is a fact about real `git init` and `git worktree add` output.
