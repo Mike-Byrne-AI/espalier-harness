@@ -311,6 +311,327 @@ def _read_description(path: Path) -> str:
     return _read_body_description(path)
 
 
+# --- Frontmatter Claude Code will not load --------------------------------------
+#
+# Claude Code parses a body's frontmatter as strict YAML and, when that fails,
+# retries after quoting each value with a pattern a trailing carriage return
+# defeats. Measured on Claude Code 2.1.314 (2026-11-02): a value strict YAML
+# rejects (an unquoted ``: `` inside it, a value opening on ``[``) loads with LF
+# line endings and fails with CRLF, so the agent does not register and a skill
+# or command loads with its frontmatter dropped; a `` #`` loads under both, the
+# rest read as a comment. The two readers above are lenient line splitters and
+# see neither. ``frontmatter_hazards`` names both shapes per top-level key; its
+# hook twin is ``post_write_check._frontmatter_hazards`` (a hook cannot import
+# the engine), held to the same verdicts by
+# tests/test_frontmatter_will_not_load.py, whose oracle is PyYAML.
+
+FRONTMATTER_FRAGILE = "fragile"
+FRONTMATTER_CUT = "cut"
+
+# YAML forbids these at the start of a plain scalar; '-', '?' and ':' open one
+# only when a non-space follows.
+_PLAIN_FORBIDDEN_FIRST = "]},%@`"
+_DQ_SIMPLE_ESCAPES = frozenset("0abt\tnvfre \"/\\N_LP")
+_DQ_HEX_ESCAPES = {"x": 2, "u": 4, "U": 8}
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+
+
+def _frontmatter_lines(text: str) -> list[str] | None:
+    """The raw lines between the opening and closing ``---``, carriage returns
+    kept, or ``None`` when the body opens no closed block."""
+    lines = text.split("\n")
+    if lines[0].rstrip("\r") != "---":
+        return None
+    for i in range(1, len(lines)):
+        if lines[i].rstrip("\r") == "---":
+            return lines[: i + 1]
+    return None
+
+
+def frontmatter_has_crlf(text: str) -> bool:
+    """True when the frontmatter block holds CRLF line endings on disk."""
+    lines = _frontmatter_lines(text)
+    return lines is not None and any(line.endswith("\r") for line in lines)
+
+
+def _top_level_key(line: str) -> tuple[str | None, str]:
+    """``(key, value)`` for a ``key: value`` line at column 0, else ``(None, "")``."""
+    if not line or line[0] in " \t#-":
+        return None, ""
+    pos = line.find(":")
+    while pos != -1 and line[pos + 1:pos + 2] not in ("", " "):
+        pos = line.find(":", pos + 1)
+    if pos <= 0:
+        return None, ""
+    key = line[:pos]
+    if not all(ch.isalnum() or ch in "_-." for ch in key):
+        return None, ""
+    return key, line[pos + 1:]
+
+
+def _scan_quoted(value: str) -> tuple[str, int | str]:
+    """Where a value opening on a quote closes: ``("closed", index)``,
+    ``("unclosed", "")`` or ``("escape", char)`` for an escape YAML refuses."""
+    quote = value[0]
+    i = 1
+    while i < len(value):
+        ch = value[i]
+        if quote == '"' and ch == "\\":
+            nxt = value[i + 1:i + 2]
+            if not nxt:
+                return "unclosed", ""
+            if nxt in _DQ_HEX_ESCAPES:
+                width = _DQ_HEX_ESCAPES[nxt]
+                digits = value[i + 2:i + 2 + width]
+                if len(digits) != width or not set(digits) <= _HEX_DIGITS:
+                    return "escape", nxt
+                i += 2 + width
+                continue
+            if nxt not in _DQ_SIMPLE_ESCAPES:
+                return "escape", nxt
+            i += 2
+            continue
+        if ch == quote:
+            if quote == "'" and value[i + 1:i + 2] == "'":
+                i += 2
+                continue
+            return "closed", i
+        i += 1
+    return "unclosed", ""
+
+
+def _scan_flow(value: str) -> int | None:
+    """The index closing a flow collection that opens the value, or ``None``."""
+    depth, quote, i = 0, "", 0
+    while i < len(value):
+        ch = value[i]
+        if quote:
+            if quote == '"' and ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+        elif ch in "\"'":
+            quote = ch
+        elif ch in "[{":
+            depth += 1
+        elif ch in "]}":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return None
+
+
+def _tail_is_clean(tail: str) -> bool:
+    """Nothing, or a comment, after a closed quote or bracket."""
+    rest = tail.lstrip(" ")
+    return not rest or (rest.startswith("#") and len(rest) < len(tail))
+
+
+def _block_header_is_valid(value: str) -> bool:
+    """``|`` or ``>`` with at most one chomping and one indentation indicator,
+    then nothing or a comment."""
+    head = value[1:]
+    cut = head.find(" #")
+    if cut != -1:
+        head = head[:cut]
+    head = head.rstrip(" ")
+    chomp = sum(1 for ch in head if ch in "+-")
+    indent = sum(1 for ch in head if ch in "123456789")
+    return chomp + indent == len(head) and chomp <= 1 and indent <= 1
+
+
+def _judge_frontmatter_value(value: str, cont: list[str]) -> tuple[str, str, str] | None:
+    """``(verdict, why, kept)`` for one top-level value and the continuation
+    lines under it, or ``None`` for a value strict YAML reads as written (or
+    one outside this check: a nested node, a multi-line quote or flow, a tab,
+    an anchor or a standard tag)."""
+    value = value.strip(" ")
+    if "\t" in value or any("\t" in line for line in cont):
+        return None
+    more = [line.strip(" ") for line in cont if line.strip(" ")]
+    if not value:
+        return None
+    first = value[0]
+    if first == "#":
+        return None if more else (FRONTMATTER_CUT, "a value opening on '#'", "")
+    if first in "|>":
+        if _block_header_is_valid(value):
+            return None
+        return FRONTMATTER_FRAGILE, f"a block-scalar marker '{first}' followed by text", ""
+    if first in "\"'":
+        state, where = _scan_quoted(value)
+        if state == "escape":
+            return FRONTMATTER_FRAGILE, f"an unknown escape '\\{where}' inside double quotes", ""
+        if state == "unclosed":
+            return None if more else (FRONTMATTER_FRAGILE, "an unclosed quote", "")
+        if more:
+            return None
+        if _tail_is_clean(value[int(where) + 1:]):
+            return None
+        return FRONTMATTER_FRAGILE, "text after the closing quote", ""
+    if first in "[{":
+        end = _scan_flow(value)
+        if end is None:
+            return None if more else (FRONTMATTER_FRAGILE, "an unclosed bracket", "")
+        if more or _tail_is_clean(value[end + 1:]):
+            return None
+        return FRONTMATTER_FRAGILE, f"text after the closing '{value[end]}'", ""
+    if first in _PLAIN_FORBIDDEN_FIRST or first == "*":
+        return FRONTMATTER_FRAGILE, f"an unquoted value opening on '{first}'", ""
+    if first == "&" or value.startswith(("!!", "! ")) or value == "!":
+        return None
+    if first == "!":
+        return FRONTMATTER_FRAGILE, "an unquoted value opening on '!'", ""
+    if first in "-?:" and value[1:2] in ("", " "):
+        return FRONTMATTER_FRAGILE, f"an unquoted value opening on '{first}'", ""
+    segments = [value] + more
+    for n, seg in enumerate(segments):
+        if n and seg.startswith("#"):
+            if any(not s.startswith("#") for s in segments[n + 1:]):
+                return FRONTMATTER_FRAGILE, "text continuing after a ' #' comment", ""
+            return None
+        colon = seg.find(":")
+        while colon != -1 and seg[colon + 1:colon + 2] not in ("", " "):
+            colon = seg.find(":", colon + 1)
+        hash_at = seg.find(" #")
+        if colon != -1 and (hash_at == -1 or colon < hash_at):
+            if colon == len(seg) - 1:
+                return FRONTMATTER_FRAGILE, "an unquoted value ending in ':'", ""
+            return FRONTMATTER_FRAGILE, "': ' inside an unquoted value", ""
+        if hash_at != -1:
+            if any(not s.startswith("#") for s in segments[n + 1:]):
+                return FRONTMATTER_FRAGILE, "text continuing after a ' #' comment", ""
+            kept = " ".join(segments[:n] + [seg[:hash_at].rstrip(" ")])
+            return FRONTMATTER_CUT, "' #' inside an unquoted value", kept
+    return None
+
+
+def frontmatter_hazards(text: str) -> list[tuple[str, str, str, str]]:
+    """``(key, verdict, why, kept)`` for each top-level frontmatter key strict
+    YAML reads otherwise than written: :data:`FRONTMATTER_FRAGILE` where it
+    rejects the value (Claude Code then loads the body only through a fallback
+    that CRLF line endings defeat), :data:`FRONTMATTER_CUT` where it reads the
+    value shorter (``kept`` is what it reads). Empty for a body with no closed
+    frontmatter block."""
+    block = _frontmatter_lines(text)
+    if block is None:
+        return []
+    lines = [line.rstrip("\r") for line in block[1:-1]]
+    out: list[tuple[str, str, str, str]] = []
+    i = 0
+    while i < len(lines):
+        key, value = _top_level_key(lines[i])
+        i += 1
+        if key is None:
+            continue
+        cont: list[str] = []
+        while i < len(lines) and (not lines[i].strip() or lines[i][0] in " \t"):
+            cont.append(lines[i])
+            i += 1
+        verdict = _judge_frontmatter_value(value, cont)
+        if verdict is not None:
+            out.append((key, *verdict))
+    return out
+
+
+def frontmatter_body_kind(rel_path: str) -> str | None:
+    """``agent``, ``command`` or ``skill`` for a ``.claude`` body Claude Code
+    reads frontmatter from, else ``None``."""
+    rel = rel_path.replace("\\", "/").lower()
+    if rel.startswith(".claude/agents/") and rel.endswith(".md"):
+        return "agent"
+    if rel.startswith(".claude/commands/") and rel.endswith(".md"):
+        return "command"
+    if rel.startswith(".claude/skills/") and rel.endswith("/skill.md"):
+        return "skill"
+    return None
+
+
+def frontmatter_fragile_sentence(rel_path: str, kind: str, key: str, why: str, crlf: bool) -> str:
+    """What a FRAGILE key does to the body, by the line endings on disk."""
+    if crlf and kind == "agent":
+        return (
+            f"{rel_path}: this agent does not register: its frontmatter has CRLF line "
+            f"endings and `{key}` is not strict YAML ({why}), which Claude Code cannot "
+            "read past; quote the value"
+        )
+    if crlf:
+        return (
+            f"{rel_path}: Claude Code drops this {kind}'s frontmatter (its description "
+            f"and allowed tools): the file has CRLF line endings and `{key}` is not "
+            f"strict YAML ({why}); quote the value"
+        )
+    effect = (
+        "this agent will not register" if kind == "agent"
+        else f"this {kind}'s frontmatter will be dropped"
+    )
+    return (
+        f"{rel_path}: `{key}` is not strict YAML ({why}); Claude Code reads it with "
+        f"LF line endings, but {effect} once checked out with CRLF line endings "
+        "(core.autocrlf on Windows); quote the value"
+    )
+
+
+def frontmatter_cut_sentence(rel_path: str, why: str, kept: str) -> str:
+    """What a CUT description reads as."""
+    shown = f'"{kept}"' if kept else "no description"
+    at = '"#"' if why.startswith("a value opening") else '" #"'
+    return (
+        f"{rel_path}: the description is cut at {at} (YAML reads the rest as a "
+        f"comment), so Claude Code shows {shown}; quote the value to keep it whole"
+    )
+
+
+def frontmatter_notes(rel_path: str, text: str) -> list[tuple[str, str]]:
+    """``(kind_of_note, sentence)`` for what the audit and the roster say of a
+    body: ``drop`` for a FRAGILE key with CRLF on disk (the body does not load
+    whole now), ``cut`` for a cut description. A FRAGILE key with LF on disk
+    loads, so it is said only at the write and by ``doctor``."""
+    kind = frontmatter_body_kind(rel_path)
+    if kind is None:
+        return []
+    crlf = frontmatter_has_crlf(text)
+    notes: list[tuple[str, str]] = []
+    for key, verdict, why, kept in frontmatter_hazards(text):
+        if verdict == FRONTMATTER_FRAGILE and crlf:
+            notes.append(("drop", frontmatter_fragile_sentence(rel_path, kind, key, why, True)))
+        elif verdict == FRONTMATTER_CUT and key == "description":
+            notes.append(("cut", frontmatter_cut_sentence(rel_path, why, kept)))
+    return notes
+
+
+def _read_body_bytes(path: Path) -> str:
+    """A body's text with its line endings as on disk (``read_text`` would
+    turn CRLF into LF), or ``""`` when it cannot be read."""
+    try:
+        return path.read_bytes().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _roster_entry(repo_root: Path, rel_path: str, label: str) -> str:
+    """One roster line: the body as Claude Code loads it, marked where its
+    frontmatter is dropped or its description cut."""
+    text = _read_body_bytes(repo_root / rel_path)
+    kind = frontmatter_body_kind(rel_path)
+    hazards = frontmatter_hazards(text) if kind else []
+    crlf = bool(hazards) and frontmatter_has_crlf(text)
+    for key, verdict, why, _kept in hazards:
+        if verdict == FRONTMATTER_FRAGILE and crlf:
+            mark = "NOT REGISTERED" if kind == "agent" else "FRONTMATTER DROPPED"
+            return (
+                f"- `{label}` -- {mark}: CRLF line endings and `{key}` is not strict "
+                f"YAML ({why}); quote the value"
+            )
+    for key, verdict, _why, kept in hazards:
+        if verdict == FRONTMATTER_CUT and key == "description":
+            return f"- `{label}` -- {kept or '--'} (description cut at \"#\"; quote the value)"
+    desc = _read_description(repo_root / rel_path)
+    return f"- `{label}` -- {desc}" if desc else f"- `{label}`"
+
+
 def _load_stable_actions(repo_root: Path) -> dict[str, list[str]]:
     """Read stable_actions from the saved harness_config.json, if present."""
     path = repo_root / "reports" / "harness_config.json"
@@ -376,32 +697,17 @@ def render_live_surface(repo_root: Path) -> str:
     lines.append("")
     lines.append(f"## Agent roster ({len(agents)} agents)")
     for agent_path in agents:
-        name = _agent_name(agent_path)
-        desc = _read_description(repo_root / agent_path)
-        if desc:
-            lines.append(f"- `{name}` -- {desc}")
-        else:
-            lines.append(f"- `{name}`")
+        lines.append(_roster_entry(repo_root, agent_path, _agent_name(agent_path)))
 
     lines.append("")
     lines.append(f"## Commands ({len(commands)} commands)")
     for cmd_path in commands:
-        name = _command_name(cmd_path)
-        desc = _read_description(repo_root / cmd_path)
-        if desc:
-            lines.append(f"- `/{name}` -- {desc}")
-        else:
-            lines.append(f"- `/{name}`")
+        lines.append(_roster_entry(repo_root, cmd_path, f"/{_command_name(cmd_path)}"))
 
     lines.append("")
     lines.append(f"## Skills ({len(skills)} skills)")
     for skill_path in skills:
-        name = _skill_name(skill_path)
-        desc = _read_description(repo_root / skill_path)
-        if desc:
-            lines.append(f"- `/{name}` -- {desc}")
-        else:
-            lines.append(f"- `/{name}`")
+        lines.append(_roster_entry(repo_root, skill_path, f"/{_skill_name(skill_path)}"))
 
     lines.append("")
     lines.append(f"## Workflows ({len(workflows)} workflows)")

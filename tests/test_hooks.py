@@ -1357,6 +1357,53 @@ class TestPostWriteCheck:
         assert "syntax error" in result.stderr.lower()
 
 
+class TestPostWriteCheckReadsTheFrontmatter:
+    """At the write of an agent, command or skill body, the hook says what
+    Claude Code makes of its frontmatter under each line ending, in the
+    additionalContext channel (measured on 2.1.314: a value strict YAML rejects
+    loads with LF and fails with CRLF; a ' #' cuts the description under both).
+    The predicate's own rows are tests/test_frontmatter_will_not_load.py's."""
+
+    COLON = "name: probe\ndescription: Reviews code: bugs and style\ntools: Read\n"
+
+    def _said(self, tmp_path: Path, rel: str, block: str, eol: str = "\n") -> str:
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        body = eol.join(["---", *block.rstrip("\n").split("\n"), "---", "", "Body.", ""])
+        path.write_bytes(body.encode("utf-8"))
+        result = run_hook(
+            "post_write_check.py",
+            {"tool_name": "Write", "tool_input": {"file_path": str(path)}},
+            {"CLAUDE_PROJECT_DIR": str(tmp_path), "ESPALIER_MAINTENANCE_MODE": None},
+        )
+        assert result.returncode == 0, result.stderr
+        if not result.stdout.strip():
+            return ""
+        payload = json.loads(result.stdout.strip().splitlines()[-1])
+        return payload.get("hookSpecificOutput", {}).get("additionalContext", "")
+
+    def test_an_lf_agent_will_not_register_once_checked_out_with_crlf(self, tmp_path):
+        said = self._said(tmp_path, ".claude/agents/probe.md", self.COLON)
+        assert "will not register once checked out with CRLF line endings" in said, said
+        assert "`description`" in said and "quote the value" in said, said
+
+    def test_a_crlf_agent_does_not_register(self, tmp_path):
+        said = self._said(tmp_path, ".claude/agents/probe.md", self.COLON, "\r\n")
+        assert "this agent does not register" in said, said
+
+    def test_an_lf_skill_will_have_its_frontmatter_dropped(self, tmp_path):
+        said = self._said(tmp_path, ".claude/skills/probe/SKILL.md",
+                          "name: probe\ndescription: Reviews code: bugs\n")
+        assert "frontmatter will be dropped once checked out with CRLF line endings" in said, said
+
+    def test_a_cut_description_and_a_strict_body(self, tmp_path):
+        said = self._said(tmp_path, ".claude/agents/cut.md",
+                          "name: cut\ndescription: Reviews code #bugs and style\n")
+        assert 'the description is cut at " #"' in said and '"Reviews code"' in said, said
+        said = self._said(tmp_path, ".claude/agents/ok.md", 'name: ok\ndescription: "Reviews: code"\n')
+        assert "strict YAML" not in said and "description is cut" not in said, said
+
+
 # ─── session_start.py ───────────────────────────────────────────────────────
 
 
