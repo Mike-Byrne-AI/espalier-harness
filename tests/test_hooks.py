@@ -1366,14 +1366,17 @@ class TestPostWriteCheckReadsTheFrontmatter:
 
     COLON = "name: probe\ndescription: Reviews code: bugs and style\ntools: Read\n"
 
-    def _said(self, tmp_path: Path, rel: str, block: str, eol: str = "\n") -> str:
+    def _said(self, tmp_path: Path, rel: str, block: str, eol: str = "\n", sid: str | None = None) -> str:
         path = tmp_path / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         body = eol.join(["---", *block.rstrip("\n").split("\n"), "---", "", "Body.", ""])
         path.write_bytes(body.encode("utf-8"))
+        payload = {"tool_name": "Write", "tool_input": {"file_path": str(path)}}
+        if sid is not None:
+            payload["session_id"] = sid
         result = run_hook(
             "post_write_check.py",
-            {"tool_name": "Write", "tool_input": {"file_path": str(path)}},
+            payload,
             {"CLAUDE_PROJECT_DIR": str(tmp_path), "ESPALIER_MAINTENANCE_MODE": None},
         )
         assert result.returncode == 0, result.stderr
@@ -1402,6 +1405,24 @@ class TestPostWriteCheckReadsTheFrontmatter:
         assert 'the description is cut at " #"' in said and '"Reviews code"' in said, said
         said = self._said(tmp_path, ".claude/agents/ok.md", 'name: ok\ndescription: "Reviews: code"\n')
         assert "strict YAML" not in said and "description is cut" not in said, said
+
+    def test_the_same_verdict_is_said_once_a_session(self, tmp_path):
+        """Each Edit of a body re-runs the check; the same key with the same
+        verdict on the same file is said the first time in a session only."""
+        rel = ".claude/agents/probe.md"
+        first = self._said(tmp_path, rel, self.COLON, sid="s-once")
+        assert "will not register once checked out" in first, first
+        again = self._said(tmp_path, rel, self.COLON, sid="s-once")
+        assert "strict YAML" not in again, again
+        other_session = self._said(tmp_path, rel, self.COLON, sid="s-other")
+        assert "will not register once checked out" in other_session, other_session
+
+    def test_a_changed_verdict_on_the_same_file_is_said_again(self, tmp_path):
+        rel = ".claude/agents/probe.md"
+        lf = self._said(tmp_path, rel, self.COLON, sid="s-change")
+        assert "will not register once checked out" in lf, lf
+        crlf = self._said(tmp_path, rel, self.COLON, "\r\n", sid="s-change")
+        assert "this agent does not register" in crlf, crlf
 
 
 # ─── session_start.py ───────────────────────────────────────────────────────

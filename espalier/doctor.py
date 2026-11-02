@@ -1707,22 +1707,23 @@ def _check_frontmatter_line_endings(repo_root: Path) -> list[str]:
     from espalier import render_surface
 
     at_risk: dict[str, str] = {}
-    for kind in ("agents", "commands", "skills"):
-        for rel in surface_contract.discover_claude_kind(repo_root, kind):
-            text = render_surface._read_body_bytes(repo_root / rel)
-            if render_surface.frontmatter_has_crlf(text):
-                continue
-            keys = [
-                key for key, verdict, _why, _kept in render_surface.frontmatter_hazards(text)
-                if verdict == render_surface.FRONTMATTER_FRAGILE
-            ]
-            if keys:
-                at_risk[rel] = keys[0]
+    for rel in render_surface.frontmatter_body_paths(repo_root):
+        text = render_surface._read_body_bytes(repo_root / rel)
+        if render_surface.frontmatter_has_crlf(text):
+            continue
+        keys = [
+            key for key, verdict, _why, _kept in render_surface.frontmatter_hazards(text)
+            if verdict == render_surface.FRONTMATTER_FRAGILE
+        ]
+        if keys:
+            at_risk[rel] = keys[0]
     if not at_risk:
         return []
     try:
+        # -z: NUL-separated path, attribute, value triples, so a path git
+        # would otherwise quote (a non-ASCII name) comes back as written.
         proc = run_no_stdin(  # a read-only attribute query
-            ["git", "check-attr", "eol", "--", *sorted(at_risk)],
+            ["git", "check-attr", "-z", "eol", "--", *sorted(at_risk)],
             cwd=str(repo_root), capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=10,
         )
@@ -1730,8 +1731,10 @@ def _check_frontmatter_line_endings(repo_root: Path) -> list[str]:
         return []
     if proc.returncode != 0:
         return []
+    fields = proc.stdout.split("\0")
     pinned = {
-        line[: -len(": eol: lf")] for line in proc.stdout.splitlines() if line.endswith(": eol: lf")
+        fields[i] for i in range(0, len(fields) - 2, 3)
+        if fields[i + 1] == "eol" and fields[i + 2] == "lf"
     }
     named = [f"{rel} (`{key}`)" for rel, key in sorted(at_risk.items()) if rel not in pinned]
     if not named:

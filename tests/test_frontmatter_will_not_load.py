@@ -92,6 +92,15 @@ SINGLE_LINE_VALUES = (
     "}x",
     "a: b: c",
     "trailing space ",
+    # Escapes inside double quotes YAML accepts, and one it refuses: the two
+    # copies' escape tables are held equal here (a dropped `U` or `N` in one
+    # copy parts them on these alone).
+    '"\\x41 ok"',
+    '"\\U0001F600 ok"',
+    '"\\N ok"',
+    '"\\L ok"',
+    '"\\P ok"',
+    '"\\xZZ"',
 )
 
 #: Whole frontmatter blocks: the cases a one-line value cannot show, and two the
@@ -108,6 +117,12 @@ MULTI_LINE_BLOCKS = (
     "name: n\ntools:\n- Read\n- Grep\n",
     "name: n\nmodel: sonnet: fast\n",
     "name: n\ntools: [Read, Grep] extra\n",
+    # A quote opens a quoted item only at an item's start; inside a plain flow
+    # item it is a character (YAML reads these four as written).
+    "name: n\ntools: [don't, b]\n",
+    "name: n\ntools: {k: don't}\n",
+    "name: n\ntools: [a 'b' c]\n",
+    "name: n\ntools: [a, 'b c']\n",
 )
 
 
@@ -115,12 +130,16 @@ def _engine():
     return getattr(render_surface, "frontmatter_hazards", None)
 
 
-def _hook():
+def _hook_module():
     spec = importlib.util.spec_from_file_location(
         "_post_write_check_frontmatter", HOOKS_DIR / "post_write_check.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    return getattr(mod, "_frontmatter_hazards", None)
+    return mod
+
+
+def _hook():
+    return getattr(_hook_module(), "_frontmatter_hazards", None)
 
 
 def _doc(block: str, eol: str = "\n") -> str:
@@ -170,6 +189,8 @@ class TestThePredicateReadsWhatStrictYamlRejects:
             data, err = _yaml_or_error(_single(value))
             if err is not None or isinstance(data.get("description"), (list, dict)):
                 continue
+            if value.startswith('"') and "\\" in value:
+                continue  # an escape YAML expands and the lenient reader keeps: no cut either way
             lenient = render_surface._unquote_frontmatter_value(value)
             if render_surface._is_block_scalar_header(value.strip()):
                 lenient = ""
@@ -203,6 +224,57 @@ class TestThePredicateReadsWhatStrictYamlRejects:
         for eol in ("\n", "\r\n"):
             differ = [b for b in blocks if engine(_doc(b, eol)) != hook(_doc(b, eol))]
             assert differ == [], differ
+
+    def test_a_leading_bom_is_read_past(self):
+        """A byte-order mark before the opening ``---`` hid every hazard from
+        both copies. Whether Claude Code reads a BOM'd body's frontmatter at
+        all is unmeasured; the check judges what follows the mark."""
+        engine, hook = _engine(), _hook()
+        assert engine is not None and hook is not None
+        text = "\ufeff" + _doc(_single("Reviews code: bugs"), "\r\n")
+        assert _verdicts(engine, text) == {"description": "fragile"}, engine(text)
+        assert _verdicts(hook, text) == {"description": "fragile"}, hook(text)
+        assert render_surface.frontmatter_has_crlf(text) is True
+
+    def test_the_hook_twin_reads_the_same_bodies(self):
+        """The two copies agree on which paths are bodies Claude Code reads
+        frontmatter from: nested, case-varied and non-body paths."""
+        mod = _hook_module()
+        hook_kind = getattr(mod, "_frontmatter_kind", None)
+        assert hook_kind is not None, "post_write_check._frontmatter_kind is missing"
+        paths = (
+            ".claude/agents/a.md", ".claude/agents/team/a.md", ".CLAUDE/Agents/A.MD",
+            ".claude/commands/c.md", ".claude/commands/ns/deep/c.md",
+            ".claude/skills/s/SKILL.md", ".claude/skills/s/skill.md",
+            ".claude/skills/group/s/SKILL.md", ".claude/skills/SKILL.md",
+            ".claude/skills/s/other.md", ".claude/workflows/w.js", ".claude/settings.json",
+            "docs/agents/a.md", ".claude\\agents\\win.md",
+        )
+        differ = [p for p in paths if hook_kind(p) != render_surface.frontmatter_body_kind(p)]
+        assert differ == [], differ
+
+    def test_the_hook_twin_says_the_same_sentences(self):
+        """What the write-time advisory says of a key is the engine's sentence,
+        word for word, for every kind, ending and verdict."""
+        mod = _hook_module()
+        hook_sentence = getattr(mod, "_fm_sentence", None)
+        assert hook_sentence is not None, "post_write_check._fm_sentence is missing"
+        rel = ".claude/agents/p.md"
+        wrong = []
+        for kind in ("agent", "command", "skill"):
+            for crlf in (False, True):
+                want = render_surface.frontmatter_fragile_sentence(rel, kind, "tools", "a why", crlf)
+                got = hook_sentence(rel, kind, "tools", "fragile", "a why", "", crlf)
+                if got != want:
+                    wrong.append((kind, crlf, got, want))
+            for why, kept in (("' #' inside an unquoted value", "Reviews"), ("a value opening on '#'", "")):
+                want = render_surface.frontmatter_cut_sentence(rel, why, kept)
+                got = hook_sentence(rel, kind, "description", "cut", why, kept, False)
+                if got != want:
+                    wrong.append((kind, why, got, want))
+            if hook_sentence(rel, kind, "model", "cut", "' #' inside an unquoted value", "x", False) is not None:
+                wrong.append((kind, "a cut on a key other than description is said"))
+        assert wrong == [], wrong
 
 
 @pytest.mark.contract
@@ -300,6 +372,21 @@ class TestTheAuditNamesABodyByTheLineEndingsOnDisk:
         _body(tree, ".claude/agents/probe.md",
               'name: probe\ndescription: "Reviews code: bugs"\n', "\r\n")
         assert _frontmatter_findings(tree) == []
+
+    def test_a_nested_crlf_command_and_agent_are_named(self, tmp_path):
+        """A body in a subfolder (a namespaced command, an agent grouped by
+        team, a skill under a group) is judged as the write-time check judges
+        it, not only the top level the roster's discovery lists."""
+        tree = _scaffold(tmp_path)
+        _body(tree, ".claude/commands/ns/probe.md", "description: Reviews code: bugs\n", "\r\n")
+        _body(tree, ".claude/agents/team/probe.md", COLON_AGENT, "\r\n")
+        _body(tree, ".claude/skills/group/probe/SKILL.md", COLON_SKILL, "\r\n")
+        details = sorted(f["detail"] for f in _frontmatter_findings(tree))
+        assert [d.split(":", 1)[0] for d in details] == [
+            ".claude/agents/team/probe.md",
+            ".claude/commands/ns/probe.md",
+            ".claude/skills/group/probe/SKILL.md",
+        ], details
 
 
 class TestTheRosterMarksABodyThatDoesNotRegister:

@@ -5231,3 +5231,26 @@ class TestDoctorRecommendsTheFrontmatterLineEndingRule:
     def test_a_strict_body_or_a_tree_outside_git_says_nothing(self, tmp_path):
         assert self._notes(self._tree(tmp_path / "strict", 'name: probe\ndescription: "Reviews: code"\n')) == []
         assert self._notes(self._tree(tmp_path / "loose", self.COLON, git=False)) == []
+
+    def test_a_nested_body_is_named(self, tmp_path):
+        """A namespaced command in a subfolder is a body Claude Code reads too."""
+        tree = tmp_path
+        path = tree / ".claude" / "commands" / "ns" / "probe.md"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"---\ndescription: Reviews code: bugs\n---\n\nBody.\n")
+        subprocess.run(["git", "init", "-q"], cwd=tree, check=True, capture_output=True,
+                       stdin=subprocess.DEVNULL)
+        got = self._notes(tree)
+        assert len(got) == 1 and ".claude/commands/ns/probe.md (`description`)" in got[0], got
+
+    def test_a_non_ascii_body_already_pinned_says_nothing(self, tmp_path):
+        """git quotes a non-ASCII path in its answer by default; a body the
+        rule already pins to LF is not named because its name came back quoted."""
+        tree = tmp_path
+        path = tree / ".claude" / "agents" / "caf\u00e9.md"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(("---\n" + self.COLON + "---\n\nBody.\n").encode("utf-8"))
+        subprocess.run(["git", "init", "-q"], cwd=tree, check=True, capture_output=True,
+                       stdin=subprocess.DEVNULL)
+        (tree / ".gitattributes").write_text(".claude/** text eol=lf\n", encoding="utf-8")
+        assert self._notes(tree) == []

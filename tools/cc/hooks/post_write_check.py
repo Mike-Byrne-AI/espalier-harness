@@ -397,7 +397,10 @@ def check_python_syntax(content: str, rel_path: str) -> None:
 # fallback a trailing carriage return defeats: measured on 2.1.314, a value
 # strict YAML rejects loads with LF line endings and fails with CRLF (the agent
 # does not register, a skill or command loses its frontmatter), and a ' #'
-# cuts the value under both. String scanning only, no pattern.
+# cuts the value under both. String scanning only, no pattern. Measured shapes:
+# an unquoted ': ' inside a value and a value opening on '[', and a ' #'; every
+# other FRAGILE shape is the PyYAML oracle's, not a drive's (probable, not
+# measured, that Claude Code's strict parse rejects it the same way).
 
 _FM_FRAGILE = "fragile"
 _FM_CUT = "cut"
@@ -408,8 +411,10 @@ _FM_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
 
 
 def _fm_lines(text: str) -> list[str] | None:
-    """The raw lines from the opening to the closing ``---``, or ``None``."""
-    lines = text.split("\n")
+    """The raw lines from the opening to the closing ``---``, or ``None``; one
+    leading byte-order mark is read past (whether Claude Code reads a BOM'd
+    body's frontmatter at all is unmeasured)."""
+    lines = text.removeprefix("\ufeff").split("\n")
     if lines[0].rstrip("\r") != "---":
         return None
     for i in range(1, len(lines)):
@@ -468,7 +473,9 @@ def _fm_scan_quoted(value: str) -> tuple[str, int | str]:
 
 
 def _fm_scan_flow(value: str) -> int | None:
-    depth, quote, i = 0, "", 0
+    """A quote opens a quoted item only at an item's start; inside a plain
+    item (``[don't, b]``) it is a character."""
+    depth, quote, i, item_start = 0, "", 0, True
     while i < len(value):
         ch = value[i]
         if quote:
@@ -477,14 +484,23 @@ def _fm_scan_flow(value: str) -> int | None:
                 continue
             if ch == quote:
                 quote = ""
-        elif ch in "\"'":
+        elif ch == " ":
+            pass
+        elif ch in "\"'" and item_start:
             quote = ch
+            item_start = False
         elif ch in "[{":
             depth += 1
+            item_start = True
+        elif ch == "," or (ch == ":" and value[i + 1:i + 2] in ("", " ")):
+            item_start = True
         elif ch in "]}":
             depth -= 1
             if depth == 0:
                 return i
+            item_start = False
+        else:
+            item_start = False
         i += 1
     return None
 
@@ -602,10 +618,53 @@ def _frontmatter_kind(rel_path: str) -> str | None:
     return None
 
 
-def check_frontmatter(full_path: Path, rel_path: str) -> None:
+def _fm_sentence(rel_path: str, kind: str, key: str, verdict: str, why: str, kept: str,
+                 crlf: bool) -> str | None:
+    """What one key does to the body, by the line endings on disk: the engine's
+    frontmatter_fragile_sentence / frontmatter_cut_sentence word for word. A CUT
+    is said for the description alone: a ' #' after another key's value
+    (``model: sonnet  # cheaper``) is idiomatic commenting, and the description
+    is the one value Claude Code shows."""
+    if verdict == _FM_FRAGILE and crlf and kind == "agent":
+        return (
+            f"{rel_path}: this agent does not register: its frontmatter has CRLF line "
+            f"endings and `{key}` is not strict YAML ({why}), which Claude Code cannot "
+            "read past; quote the value"
+        )
+    if verdict == _FM_FRAGILE and crlf:
+        return (
+            f"{rel_path}: Claude Code drops this {kind}'s frontmatter (its description "
+            f"and allowed tools): the file has CRLF line endings and `{key}` is not "
+            f"strict YAML ({why}); quote the value"
+        )
+    if verdict == _FM_FRAGILE:
+        effect = (
+            "this agent will not register" if kind == "agent"
+            else f"this {kind}'s frontmatter will be dropped"
+        )
+        return (
+            f"{rel_path}: `{key}` is not strict YAML ({why}); Claude Code reads it with "
+            f"LF line endings, but {effect} once checked out with CRLF line endings "
+            "(core.autocrlf on Windows); quote the value"
+        )
+    if key != "description":
+        return None
+    shown = f'"{kept}"' if kept else "no description"
+    at = '"#"' if why.startswith("a value opening") else '" #"'
+    return (
+        f"{rel_path}: the description is cut at {at} (YAML reads the rest as a "
+        f"comment), so Claude Code shows {shown}; quote the value to keep it whole"
+    )
+
+
+def check_frontmatter(full_path: Path, rel_path: str, root: Path | None = None,
+                      sid: object = None) -> None:
     """Say, at the write, what a body's frontmatter does under each line ending:
     a value strict YAML rejects does not load with CRLF on disk now, and will
-    not once a checkout writes CRLF; a description YAML cuts at a comment."""
+    not once a checkout writes CRLF; a description YAML cuts at a comment.
+    With a ``root``, each (file, key, verdict, line ending) is said once a
+    session: every Edit of a body re-runs this, and the same sentence on each
+    is noise; a changed verdict is a new key, so it is said again."""
     kind = _frontmatter_kind(rel_path)
     if kind is None:
         return
@@ -615,35 +674,16 @@ def check_frontmatter(full_path: Path, rel_path: str) -> None:
         return
     crlf = _frontmatter_has_crlf(text)
     for key, verdict, why, kept in _frontmatter_hazards(text):
-        if verdict == _FM_FRAGILE and crlf and kind == "agent":
-            _hook_utils.advise_warn(
-                f"{rel_path}: this agent does not register: its frontmatter has CRLF line "
-                f"endings and `{key}` is not strict YAML ({why}), which Claude Code cannot "
-                "read past; quote the value"
-            )
-        elif verdict == _FM_FRAGILE and crlf:
-            _hook_utils.advise_warn(
-                f"{rel_path}: Claude Code drops this {kind}'s frontmatter (its description "
-                f"and allowed tools): the file has CRLF line endings and `{key}` is not "
-                f"strict YAML ({why}); quote the value"
-            )
-        elif verdict == _FM_FRAGILE:
-            effect = (
-                "this agent will not register" if kind == "agent"
-                else f"this {kind}'s frontmatter will be dropped"
-            )
-            _hook_utils.advise_warn(
-                f"{rel_path}: `{key}` is not strict YAML ({why}); Claude Code reads it with "
-                f"LF line endings, but {effect} once checked out with CRLF line endings "
-                "(core.autocrlf on Windows); quote the value"
-            )
-        elif key == "description":
-            shown = f'"{kept}"' if kept else "no description"
-            at = '"#"' if why.startswith("a value opening") else '" #"'
-            _hook_utils.advise_warn(
-                f"{rel_path}: the description is cut at {at} (YAML reads the rest as a "
-                f"comment), so Claude Code shows {shown}; quote the value to keep it whole"
-            )
+        line = _fm_sentence(rel_path, kind, key, verdict, why, kept, crlf)
+        if line is None:
+            continue
+        if root is None:
+            _hook_utils.advise_warn(line)
+            continue
+        ident = "\0".join((rel_path.lower(), key, verdict, why, "crlf" if crlf else "lf"))
+        digest = hashlib.sha256(ident.encode("utf-8")).hexdigest()[:16]
+        _say_once_to_claude(root, sid, f"frontmatter-{digest}",
+                            "posttooluse_frontmatter_not_strict", line)
 
 
 def _is_write_tool(tool_name: str) -> bool:
@@ -1292,7 +1332,7 @@ def _check(data: dict, payloads: list[str], operator: "list[str] | None" = None)
     # an agent, command or skill body → what Claude Code reads of its frontmatter
     if _is_claude_body(rel_path):
         check_placeholders(content, rel_path)
-        check_frontmatter(full_path, rel_path)
+        check_frontmatter(full_path, rel_path, root, data.get("session_id"))
 
     # tools/cc/**/*.py → Python syntax check
     if rel_path.startswith("tools/cc/") and rel_path.endswith(".py"):

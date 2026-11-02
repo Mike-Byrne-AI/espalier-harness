@@ -15,6 +15,7 @@ from pathlib import Path
 from espalier import __version__  # deploy-time version stamp
 from espalier import surface_contract
 from espalier._atomic_io import atomic_write_text
+from espalier._safe_walk import safe_rglob, visible
 from espalier.harness_config import CANONICAL_HOOK_WIRING
 from espalier.managed_markers import MANAGED_MARKER
 
@@ -325,6 +326,14 @@ def _read_description(path: Path) -> str:
 # the engine), held to the same verdicts by
 # tests/test_frontmatter_will_not_load.py, whose oracle is PyYAML.
 
+# What was measured, and what was not. On Claude Code 2.1.314, one headless run
+# per shape: an unquoted ``: `` inside a value and a value opening on ``[`` (each
+# loads with LF; with CRLF the agent does not register and a skill or command
+# loads with its frontmatter dropped, its description the body's first line),
+# and a `` #`` (loads under both, the description cut). Every other shape below
+# is FRAGILE by the PyYAML oracle, not by a drive: that Claude Code's strict
+# parse rejects it as PyYAML does, and so loses it under CRLF the same way, is
+# probable, not measured.
 FRONTMATTER_FRAGILE = "fragile"
 FRONTMATTER_CUT = "cut"
 
@@ -338,8 +347,10 @@ _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
 
 def _frontmatter_lines(text: str) -> list[str] | None:
     """The raw lines between the opening and closing ``---``, carriage returns
-    kept, or ``None`` when the body opens no closed block."""
-    lines = text.split("\n")
+    kept, or ``None`` when the body opens no closed block. One leading
+    byte-order mark is read past: whether Claude Code reads a BOM'd body's
+    frontmatter at all is unmeasured, so the check judges what follows it."""
+    lines = text.removeprefix("\ufeff").split("\n")
     if lines[0].rstrip("\r") != "---":
         return None
     for i in range(1, len(lines)):
@@ -401,8 +412,11 @@ def _scan_quoted(value: str) -> tuple[str, int | str]:
 
 
 def _scan_flow(value: str) -> int | None:
-    """The index closing a flow collection that opens the value, or ``None``."""
-    depth, quote, i = 0, "", 0
+    """The index closing a flow collection that opens the value, or ``None``.
+    A quote opens a quoted item only at an item's start (after ``[``, ``{``,
+    ``,`` or ``: ``, spaces skipped); inside a plain item it is a character,
+    as in ``[don't, b]``."""
+    depth, quote, i, item_start = 0, "", 0, True
     while i < len(value):
         ch = value[i]
         if quote:
@@ -411,14 +425,23 @@ def _scan_flow(value: str) -> int | None:
                 continue
             if ch == quote:
                 quote = ""
-        elif ch in "\"'":
+        elif ch == " ":
+            pass
+        elif ch in "\"'" and item_start:
             quote = ch
+            item_start = False
         elif ch in "[{":
             depth += 1
+            item_start = True
+        elif ch == "," or (ch == ":" and value[i + 1:i + 2] in ("", " ")):
+            item_start = True
         elif ch in "]}":
             depth -= 1
             if depth == 0:
                 return i
+            item_start = False
+        else:
+            item_start = False
         i += 1
     return None
 
@@ -598,8 +621,30 @@ def frontmatter_notes(rel_path: str, text: str) -> list[tuple[str, str]]:
         if verdict == FRONTMATTER_FRAGILE and crlf:
             notes.append(("drop", frontmatter_fragile_sentence(rel_path, kind, key, why, True)))
         elif verdict == FRONTMATTER_CUT and key == "description":
+            # A CUT is said for the description alone: a ` #` after another
+            # key's value (`model: sonnet  # cheaper`) is idiomatic commenting,
+            # and the description is the one value Claude Code shows.
             notes.append(("cut", frontmatter_cut_sentence(rel_path, why, kept)))
     return notes
+
+
+def frontmatter_body_paths(repo_root: Path) -> list[str]:
+    """Repo-relative paths of every agent, command and skill body under
+    ``.claude``, nested ones included (a namespaced command, an agent in a
+    team folder, a skill under a group): the bodies the write-time check
+    judges, where discovery lists the top level the roster renders."""
+    out: list[str] = []
+    for kind, pattern in (("agents", "*.md"), ("commands", "*.md"), ("skills", "SKILL.md")):
+        base = repo_root / ".claude" / kind
+        if not base.is_dir():
+            continue
+        for path in visible(safe_rglob(base, pattern), base):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(repo_root).as_posix()
+            if frontmatter_body_kind(rel) is not None:
+                out.append(rel)
+    return sorted(out)
 
 
 def _read_body_bytes(path: Path) -> str:

@@ -219,12 +219,12 @@ def _walk_surface_findings(repo_root: Path, findings: list[dict[str, str]]) -> N
     # strict YAML rejects, in a file with CRLF line endings (the agent does not
     # register, a skill or command loads without its frontmatter), and a
     # description YAML cuts at a comment. The same value with LF line endings
-    # loads, so it is said at the write and by `doctor`, not here.
-    for kind in ("agents", "commands", "skills"):
-        for rel_body in surface_contract.discover_claude_kind(repo_root, kind):
-            body_text = render_surface._read_body_bytes(repo_root / rel_body)
-            for _note, sentence in render_surface.frontmatter_notes(rel_body, body_text):
-                findings.append({"level": "warning", "check": "frontmatter", "detail": sentence})
+    # loads, so it is said at the write and by `doctor`, not here. Nested bodies
+    # (a namespaced command, an agent in a team folder) are read too.
+    for rel_body in render_surface.frontmatter_body_paths(repo_root):
+        body_text = render_surface._read_body_bytes(repo_root / rel_body)
+        for _note, sentence in render_surface.frontmatter_notes(rel_body, body_text):
+            findings.append({"level": "warning", "check": "frontmatter", "detail": sentence})
 
     # post_write_check.py legitimately defines PLACEHOLDERS as a
     # constant for matching downstream templates; the placeholder-scan
