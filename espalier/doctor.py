@@ -402,23 +402,27 @@ _LOAD_BEARING_EXTERNAL_TOOLS: dict[str, str] = {
 
 
 def _adopter_ruff_relevance(repo_root: Path) -> bool:
-    """Lazy seam over ``analyze.ruff_is_declared`` (the reading that makes
-    /preflight's inferred lint step run ruff)."""
-    from espalier.analyze import ruff_is_declared
+    """Whether /preflight's lint step on this tree runs ruff from PATH: a
+    command it would run (``harness_config.declared_action``, the one the body
+    calls) whose first word is ``ruff``. A tree that configures ruff but lints
+    through a Makefile, a package.json script or ``uv run ruff`` is not told
+    to install a ruff it never runs."""
+    from espalier.harness_config import declared_action
 
-    return ruff_is_declared(repo_root)
+    source, commands = declared_action(repo_root, "lint")
+    return source != "suppressed" and any(c.split()[:1] == ["ruff"] for c in commands)
 
 
 # DEF-1122: on an adopter's tree, whether the tree makes a load-bearing tool
 # load-bearing, and the hint that fits that tree. A tool with no row here is
 # checked on the source tree only. Twin of session_start's
-# _ADOPTER_TOOL_RELEVANCE, whose predicate tests/test_session_start_ruff_gate.py
-# pins equal to analyze.ruff_is_declared.
+# _ADOPTER_TOOL_RELEVANCE: tests/test_session_start_ruff_gate.py pins the two
+# tables' keys equal and the hook's predicate to this one over a table of trees.
 _ADOPTER_TOOL_RELEVANCE: dict[str, tuple[Any, str]] = {
     "ruff": (
         _adopter_ruff_relevance,
         "install it the way this project pins it (its dev dependencies), or: pip install ruff "
-        "(the project configures ruff, which /preflight's lint step runs where no other lint is declared)",
+        "(this project's /preflight lint step runs ruff)",
     ),
 }
 

@@ -402,6 +402,33 @@ class TestAnAdoptersRootDocumentsAreWalked:
         standalone = [f for f in json.loads(proc.stdout)["findings"] if "README.md" in f["description"]]
         assert [f["kind"] for f in standalone] == ["gap"], standalone
 
+    def test_a_link_that_leaves_the_repository_is_not_a_gap(self, adopter_root_repo):
+        """A README badge links ../../actions/..., which the hosting site
+        resolves and no checkout holds; both twins read it as out of tree
+        (failure-mode review), while the in-tree broken link still fires."""
+        (adopter_root_repo / "README.md").write_text(
+            "# App\n\n[![ci](../../actions/workflows/ci.yml/badge.svg)](../../actions)\n"
+            "See [setup](docs/RENAMED-AWAY.md).\n", encoding="utf-8")
+        for links in (_engine_links(adopter_root_repo), _standalone_links(adopter_root_repo)):
+            assert not [d for d in links if "actions" in d], links
+            assert any("docs/RENAMED-AWAY.md" in d for d in links), links
+
+    def test_correct_readme_link_forms_are_not_gaps(self, adopter_root_repo):
+        """A percent-escaped name, a titled link, a protocol-relative URL and a
+        tel: link are all correct and read as broken (code review); the escaped
+        name's doc read as an orphan too."""
+        (adopter_root_repo / "docs" / "my guide.md").write_text("# Guide two\n", encoding="utf-8")
+        (adopter_root_repo / "README.md").write_text(
+            "# App\n\n[two](docs/my%20guide.md) [arch](docs/GUIDE.md \"Architecture\") "
+            "[cdn](//example.com/x) [call](tel:+15550100)\nSee [setup](docs/RENAMED-AWAY.md).\n",
+            encoding="utf-8")
+        for links in (_engine_links(adopter_root_repo), _standalone_links(adopter_root_repo)):
+            assert [d for d in links if "README.md" in d] == [
+                d for d in links if "RENAMED-AWAY" in d], links
+            assert any("RENAMED-AWAY" in d for d in links), links
+        orphans = [f.files for f in run_reflect_pass(adopter_root_repo, 1).findings if f.kind == "orphan"]
+        assert ["docs/my guide.md"] not in orphans, orphans
+
     def test_standalone_reads_a_tracked_root_document(self, adopter_root_repo):
         links = _standalone_links(adopter_root_repo)
         assert any("docs/RENAMED-AWAY.md" in d for d in links), links

@@ -497,6 +497,31 @@ class TestExplainPathSaysWhatItDoesNotModel:
         line = getattr(ep.explain("src/app.py", tmp_path), "unmodelled", "")
         assert "none in .claude/settings.json or .claude/settings.local.json" in line, line
 
+    def test_a_hook_that_runs_no_command_is_named_by_its_type(self, tmp_path):
+        """An http or prompt hook can deny a write and has no command to show;
+        it read as "none" (failure-mode review)."""
+        ep, _, _ = _load_modules()
+        self._settings(tmp_path, "settings.json", {"hooks": {"PreToolUse": [
+            {"matcher": "Edit|Write", "hooks": [
+                {"type": "http", "url": "https://guard.example/check"},
+                {"type": "prompt", "prompt": "Refuse writes under vendor/."}]},
+        ]}})
+        line = getattr(ep.explain("src/app.py", tmp_path), "unmodelled", "")
+        assert "http hook https://guard.example/check" in line, line
+        assert "prompt hook" in line, line
+        assert "none in" not in line, line
+
+    def test_a_hooks_value_that_is_not_a_list_is_read_as_none(self, tmp_path):
+        """`"hooks": 5` raised TypeError and the read-out tracebacked (code review)."""
+        ep, _, _ = _load_modules()
+        self._settings(tmp_path, "settings.json", {"hooks": {"PreToolUse": [{"matcher": "*", "hooks": 5}]}})
+        try:
+            exp = ep.explain("src/app.py", tmp_path)
+        except TypeError as exc:
+            raise AssertionError(f"the read-out raised on a malformed hooks value: {exc}") from exc
+        line = getattr(exp, "unmodelled", "")
+        assert "user-level, plugin and managed hooks are not listed" in line, line
+
     def test_an_unreadable_settings_file_is_named_not_skipped(self, tmp_path):
         ep, _, _ = _load_modules()
         (tmp_path / ".claude").mkdir()

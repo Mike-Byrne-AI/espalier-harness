@@ -2378,8 +2378,9 @@ declare under `docs_refresh_agents`), it also keeps a snapshot of the
 markdown files with uncommitted changes at the agent's start, under
 `.espalier-state/docs_snapshots/<agent id>.json`. The agent's stop compares
 against it, so the `docs_refreshed` record lists only the files the agent
-itself created or changed: markdown you edited before dispatching it no
-longer counts as its work. The stop removes the snapshot, and a start sweeps
+itself created or changed, plus an earlier docs run's files this session that
+are still uncommitted: markdown you edited before dispatching it no longer
+counts as its work. The stop removes the snapshot, and a start sweeps
 any left more than a day old. Where a settings file does not wire this hook
 (an install from before it took the snapshot), the record lists every dirty
 markdown file as before, says so with `"evidence_scope": "tree"`, and a

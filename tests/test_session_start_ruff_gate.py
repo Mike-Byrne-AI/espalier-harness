@@ -95,7 +95,17 @@ _DECLARATIONS = {
     "none": {"pyproject.toml": "[project]\nname = \"app\"\n"},
     "no_python_at_all": {"package.json": "{\"name\": \"app\"}\n"},
     "a_directory_named_ruff_toml": {"ruff.toml/keep": ""},
+    # Declared, yet /preflight lints another way (the failure-mode review).
+    "makefile_lint": {"ruff.toml": "line-length = 100\n", "Makefile": "lint:\n\tuv run ruff check .\n"},
+    "package_lint": {"ruff.toml": "line-length = 100\n", "package.json": "{\"scripts\": {\"lint\": \"eslint .\"}}\n"},
+    "declared_uv_ruff": {"ruff.toml": "", "espalier.toml": "[extra_actions]\nlint = [\"uv run ruff check .\"]\n"},
+    "lint_suppressed": {"ruff.toml": "", "espalier.toml": "suppress_actions = [\"lint\"]\n"},
+    # Declared in espalier.toml, with no ruff configuration at all.
+    "declared_ruff": {"espalier.toml": "[extra_actions]\nlint = [\"ruff check src\"]\n"},
 }
+
+# Whether /preflight runs ruff from PATH on each tree above.
+_RUNS_RUFF = {"tool_table", "dev_requirement", "ruff_toml", "dot_ruff_toml", "declared_ruff"}
 
 
 def _tree(tmp_path: Path, files: dict) -> Path:
@@ -112,13 +122,13 @@ class TestAnAdopterThatDeclaresRuffIsWarned:
     ruff (/preflight runs it where the tree declares it) lost the binary with
     no word from either surface."""
 
-    @pytest.mark.parametrize("name", ["tool_table", "dev_requirement", "ruff_toml", "dot_ruff_toml"])
+    @pytest.mark.parametrize("name", sorted(_RUNS_RUFF))
     def test_the_banner_warns_an_adopter_that_declares_ruff(self, tmp_path, monkeypatch, name):
         out = _warn_for(_tree(tmp_path, _DECLARATIONS[name]), monkeypatch)
         assert "[WARN] ruff not on PATH" in out, out
         assert "pip install -e" not in out, f"the source repo's dev-extra hint reached an adopter: {out!r}"
 
-    @pytest.mark.parametrize("name", ["none", "no_python_at_all", "a_directory_named_ruff_toml"])
+    @pytest.mark.parametrize("name", sorted(set(_DECLARATIONS) - _RUNS_RUFF))
     def test_the_banner_stays_quiet_for_an_adopter_that_declares_none(self, tmp_path, monkeypatch, name):
         assert _warn_for(_tree(tmp_path, _DECLARATIONS[name]), monkeypatch) == ""
 
@@ -143,3 +153,24 @@ class TestAnAdopterThatDeclaresRuffIsWarned:
         assert twin is not None, "session_start has no reading of a ruff declaration"
         root = _tree(tmp_path, _DECLARATIONS[name])
         assert twin(root) == analyze.ruff_is_declared(root), name
+
+    @pytest.mark.parametrize("name", sorted(_DECLARATIONS))
+    def test_the_hook_reads_what_preflight_runs_as_doctor_does(self, tmp_path, name):
+        """The hook's twin of /preflight's lint resolution against the engine's
+        own (``harness_config.declared_action``, which doctor reads)."""
+        from espalier import doctor
+
+        ss = _import_session_start()
+        root = _tree(tmp_path, _DECLARATIONS[name])
+        engine = doctor._adopter_ruff_relevance(root)
+        assert engine == (name in _RUNS_RUFF), name
+        assert ss._preflight_runs_ruff(root) == engine, name
+
+    def test_the_two_relevance_tables_name_the_same_tools(self):
+        """A tool given an adopter row on one surface only would be warned
+        about by doctor and never by the banner, or the reverse."""
+        from espalier import doctor
+
+        ss = _import_session_start()
+        assert set(ss._ADOPTER_TOOL_RELEVANCE) == set(doctor._ADOPTER_TOOL_RELEVANCE)
+        assert set(doctor._ADOPTER_TOOL_RELEVANCE) <= set(doctor._LOAD_BEARING_EXTERNAL_TOOLS)

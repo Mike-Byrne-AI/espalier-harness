@@ -80,14 +80,14 @@ class TestDoctorPass:
         warning.
 
         DEF-1122 narrowed the gate from the tree to the tool: an adopter whose
-        tree declares ruff (a pyproject mention, ruff.toml or .ruff.toml) has
-        /preflight run it, so for them the warning is signal, with a hint that
-        is not the source repo's dev extra. Both sides are driven here.
+        /preflight lint step runs ruff from PATH is told it is missing, with a
+        hint that is not the source repo's dev extra. Both sides are driven
+        here, with the relevance row stubbed.
 
         Simulates ruff-absent by stubbing the tool probe, and controls the
         repo classification and the declaration directly so the test does not
         depend on whether the temp fixture happens to read as either."""
-        from espalier import analyze
+        from espalier import doctor as _doctor
 
         sentinel = "load-bearing external tool 'ruff' not found"
         hints: list[str] = []
@@ -98,7 +98,8 @@ class TestDoctorPass:
 
         # Adopter (non-self-host) that declares no ruff: no warning.
         monkeypatch.setattr(surface_contract, "is_self_host_repo", lambda p: False)
-        monkeypatch.setattr(analyze, "ruff_is_declared", lambda root: False)
+        hint = _doctor._ADOPTER_TOOL_RELEVANCE["ruff"][1]
+        monkeypatch.setitem(_doctor._ADOPTER_TOOL_RELEVANCE, "ruff", (lambda root: False, hint))
         adopter = run_doctor_check(harness_repo, skip_self_host=True)
         assert not any(sentinel in w for w in adopter["warnings"]), (
             f"ruff-absent warning leaked to a non-self-host adopter: "
@@ -106,7 +107,7 @@ class TestDoctorPass:
         )
 
         # Adopter that declares ruff: the warning is theirs, with their hint.
-        monkeypatch.setattr(analyze, "ruff_is_declared", lambda root: True)
+        monkeypatch.setitem(_doctor._ADOPTER_TOOL_RELEVANCE, "ruff", (lambda root: True, hint))
         declares = run_doctor_check(harness_repo, skip_self_host=True)
         assert any(sentinel in w for w in declares["warnings"]), declares["warnings"]
         assert hints and "pip install -e" not in hints[-1], hints

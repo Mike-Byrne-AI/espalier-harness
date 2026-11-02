@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _hook_utils import (  # noqa: E402
     host_orientation_line,
     read_stdin_safely,
+    resolve_project_root,
     say_crash,
     say_once,
     stop_gate_mode,
@@ -91,8 +92,14 @@ def _keep_docs_snapshot(data: dict) -> None:
 
         subagent_stop.snapshot_docs_at_start(subagent_stop._resolve_project_root(), data)
     except Exception as exc:  # noqa: BLE001 -- fail-open: ok reporter; the stop names a run with no snapshot
+        # The project root, as the snapshot and the audit log key on it; the
+        # working directory only where the root itself could not be resolved.
+        try:
+            root = resolve_project_root()
+        except Exception:  # noqa: BLE001 -- fail-open: ok reporter; the cwd is the last place left to say it
+            root = Path.cwd()
         say_once(
-            Path.cwd(), f"docs-snapshot-{type(exc).__name__}", "subagent_start",
+            root, f"docs-snapshot-{type(exc).__name__}", "subagent_start",
             "subagentstart_failed_open_docs_snapshot",
             f"could not keep the docs agent's start snapshot ({type(exc).__name__}); "
             "its docs record will list every dirty markdown file",

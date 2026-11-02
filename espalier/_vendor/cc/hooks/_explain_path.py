@@ -250,7 +250,13 @@ def _matcher_reaches_a_write(matcher: object) -> bool:
 def _entry_text(entry: dict) -> str:
     """A hook entry as the line it runs: the inline ``command``, or the
     exec form's ``command`` and its ``args`` joined (``session_start._entry_argv``
-    reads the same two forms)."""
+    reads the same two forms). A hook of another type (an ``http`` hook, a
+    ``prompt`` hook) runs no command and can deny all the same, so it is named
+    by its type and, for ``http``, its URL."""
+    kind = entry.get("type")
+    if isinstance(kind, str) and kind and kind != "command":
+        url = entry.get("url")
+        return f"{kind} hook" + (f" {url.strip()}" if isinstance(url, str) and url.strip() else "")
     command = entry.get("command")
     args = entry.get("args")
     words = [command] if isinstance(command, str) else []
@@ -276,7 +282,8 @@ def _settings_findings(root: Path, rel: str) -> "tuple[list[str], int, str]":
     for group in groups if isinstance(groups, list) else []:
         if not isinstance(group, dict) or not _matcher_reaches_a_write(group.get("matcher")):
             continue
-        for entry in group.get("hooks") or []:
+        entries = group.get("hooks")
+        for entry in entries if isinstance(entries, list) else []:
             if not isinstance(entry, dict):
                 continue
             text = _entry_text(entry)

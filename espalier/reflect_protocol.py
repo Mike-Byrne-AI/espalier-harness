@@ -27,6 +27,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 from espalier._report_io import safe_text
 from espalier import _stack_table
@@ -315,12 +316,34 @@ def _iter_surface_files(repo_root: Path) -> list[Path]:
     return list(dict.fromkeys(hits))
 
 
+_LINK_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+_LINK_TITLE_RE = re.compile(r"""^(\S+)\s+(?:"[^"]*"|'[^']*')$""")
+
+
+def _local_link_path(raw: str) -> str:
+    """The local path a markdown link target names, or ``""`` for one that
+    names none: a trailing title (``"..."`` or ``'...'``) is dropped, a
+    ``//host`` or scheme target (``tel:``, ``ftp:``) is not a local path, the
+    fragment is cut, and ``%`` escapes are decoded (``docs/my%20guide.md`` is
+    ``docs/my guide.md``). Each was a high "broken link" on a correct README
+    link once root documents joined the walk (code review, 2026-11-02).
+    Forced twin of the hook side's."""
+    target = raw.strip()
+    titled = _LINK_TITLE_RE.match(target)
+    if titled:
+        target = titled.group(1)
+    target = target.split("#")[0].strip()
+    if target.startswith("//") or _LINK_SCHEME_RE.match(target):
+        return ""
+    return unquote(target)
+
+
 def _extract_local_links(text: str) -> list[str]:
     """Extract local (non-URL) link targets from markdown text."""
     clean = _text_without_fences(text)
     targets: list[str] = []
     for m in LOCAL_LINK_RE.finditer(clean):
-        target = m.group(1).split("#")[0].strip()
+        target = _local_link_path(m.group(1))
         if target:
             targets.append(target)
     return targets
@@ -543,6 +566,15 @@ def find_orphans(matrix: dict[str, list[str]], *, root: Path | None) -> list[str
     return sorted(orphans)
 
 
+def _inside_tree(candidate: Path, repo_root: Path) -> bool:
+    """Whether a resolved link target lies inside the repository."""
+    try:
+        candidate.resolve().relative_to(repo_root.resolve())
+    except (ValueError, OSError):
+        return False
+    return True
+
+
 def _is_adopter_root_doc(rel: str) -> bool:
     """A root document the walk reads for its links alone (DEF-1114): every
     root ``*.md`` but CLAUDE.md and the memory file, which are the harness's
@@ -700,7 +732,7 @@ def run_reflect_pass(repo_root: Path, pass_number: int = 1) -> ReflectPass:
         record = rel in AGING_RECORD_SURFACES
         text = _text_without_fences(_safe_text(path))
         for m in LOCAL_LINK_RE.finditer(text):
-            target = m.group(1).split("#")[0].strip()
+            target = _local_link_path(m.group(1))
             if not target:
                 continue
             # Parity with reflection.py — skip trailing-slash directory links
@@ -713,6 +745,12 @@ def run_reflect_pass(repo_root: Path, pass_number: int = 1) -> ReflectPass:
             candidate = (path.parent / target).resolve() if not target.startswith("/") \
                 else (repo_root / target.lstrip("/"))
             if not candidate.exists():
+                # A link that leaves the repository (a README badge's
+                # ../../actions/..., which the hosting site resolves) cannot be
+                # checked on disk: out of tree, never a gap. Forced twin of the
+                # hook side's check.
+                if not _inside_tree(candidate, repo_root):
+                    continue
                 if record:
                     findings.append(ReflectFinding(
                         kind="aging",

@@ -30,9 +30,22 @@ Usage:
     python tools/cc/reflect_protocol.py [--pass N] [--json]
 """
 from __future__ import annotations
-import hashlib, json, os, re, sys
+import hashlib, json, os, re, subprocess, sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
+from urllib.parse import unquote
+
+try:  # the bounded spawn beside this file; it is also loaded where that sibling is not importable
+    from _json_safe import run_bounded
+except ImportError:  # fail-open: ok deliberate -- tools/cc is not on sys.path (copied alone, or loaded by path): subprocess.run, a bound everywhere but Windows
+    def run_bounded(
+        args: Any, *, timeout: float | None = None, input: Any = None,
+        capture_output: bool = False, check: bool = False, **kwargs: Any,
+    ) -> "subprocess.CompletedProcess[Any]":
+        """``subprocess.run``, read when called, so a replaced one is honoured as ``run_bounded`` honours it."""
+        return subprocess.run(  # spawn: ok the bounded spawn's fallback where _json_safe.py is not importable
+            args, timeout=timeout, input=input, capture_output=capture_output, check=check, **kwargs)
 
 LOCAL_LINK_RE = re.compile(r"\[[^\]]+\]\((?!https?://|mailto:|#)([^)]+)\)")
 # Forced twin of espalier/reflect_protocol.PLACEHOLDER_PATTERNS across the
@@ -374,9 +387,8 @@ def _tracked_root_markdown(root):
     ones on disk where git cannot answer (no git, not a repository). Forced twin
     of the engine's ``espalier/reflect_protocol.py::_tracked_root_markdown``
     (tests/test_reflect_link_guards.py drives both on one tree)."""
-    import subprocess
     try:
-        r = subprocess.run(
+        r = run_bounded(
             ["git", "-C", str(root), "ls-files", "-z", "--", ":(glob)*.md"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=20, check=False, stdin=subprocess.DEVNULL,
@@ -462,6 +474,25 @@ def _mentions_path(text, suffix):
     return re.search(r"(?<![\w/.-])" + re.escape(suffix), text) is not None
 
 
+_LINK_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+_LINK_TITLE_RE = re.compile(r"""^(\S+)\s+(?:"[^"]*"|'[^']*')$""")
+
+
+def _local_link_path(raw):
+    """The local path a markdown link target names, or ``""`` for one that
+    names none (a trailing title dropped, a ``//host`` or scheme target not
+    local, the fragment cut, ``%`` escapes decoded). Forced twin of the
+    engine's."""
+    target = raw.strip()
+    titled = _LINK_TITLE_RE.match(target)
+    if titled:
+        target = titled.group(1)
+    target = target.split("#")[0].strip()
+    if target.startswith("//") or _LINK_SCHEME_RE.match(target):
+        return ""
+    return unquote(target)
+
+
 def _link_target(path, root, target):
     """The file a markdown link reaches, or None: a ``/``-prefixed target
     resolves against the repo root (as the broken-link loop reads it), any
@@ -499,7 +530,7 @@ def build_matrix(root, surface=None):
         text = _safe(path)
         refs = []
         for m in LOCAL_LINK_RE.finditer(_strip_fences(text)):
-            t = m.group(1).split("#")[0].strip()
+            t = _local_link_path(m.group(1))
             if t:
                 c = _link_target(path, root, t)
                 if c is not None:
@@ -534,6 +565,16 @@ def find_orphans(matrix, *, root):
     return sorted(f for f in set(matrix.keys()) - referenced
                   if f.endswith(".md") and not _is_discovery_loaded(f) and not _is_adopter_root_doc(f)
                   and not (root is not None and _is_init_seed(Path(root) / f)))
+
+
+def _inside_tree(candidate, root):
+    """Whether a resolved link target lies inside the repository. Forced twin
+    of the engine's."""
+    try:
+        Path(candidate).resolve().relative_to(Path(root).resolve())
+    except (ValueError, OSError):
+        return False
+    return True
 
 
 def _is_adopter_root_doc(rel):
@@ -1437,7 +1478,7 @@ def main() -> int:
         record = rel in AGING_RECORD_SURFACES
         text = _strip_fences(_safe(path))
         for m in LOCAL_LINK_RE.finditer(text):
-            t = m.group(1).split("#")[0].strip()
+            t = _local_link_path(m.group(1))
             if not t: continue
             # Parity with espalier/reflection.py (inlined — tools/cc has zero
             # espalier imports): skip dir-links / <placeholder>-in-target /
@@ -1446,6 +1487,10 @@ def main() -> int:
             if t.rstrip().endswith("/") or "<" in t or t == "...": continue
             c = (path.parent / t).resolve() if not t.startswith("/") else (root / t.lstrip("/"))
             if not c.exists():
+                # A link that leaves the repository (a README badge's
+                # ../../actions/..., which the hosting site resolves): out of
+                # tree, never a gap. Forced twin of the engine's check.
+                if not _inside_tree(c, root): continue
                 if record:
                     findings.append({"kind": "aging", "severity": "low",
                                      "description": f"Aging pointer on a record surface {rel}: {t}"})
