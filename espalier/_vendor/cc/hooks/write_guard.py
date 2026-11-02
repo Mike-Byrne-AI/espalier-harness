@@ -442,7 +442,7 @@ def _statement_launches_claude(segment: str) -> bool:
     test file. So the relief is a positive gate instead of a reader of
     carriers: `_a_test_run_holds_no_launch` re-reads a statement this scan
     refuses only where it is a test run, the one kind of command whose
-    quoted operands are never run.
+    quoted operands the test runner does not run as a command.
     """
     for raw in _TOKEN_SPLIT_RE.split(segment):
         if _normalise_target_token(raw) == _CLAUDE_BASENAME:
@@ -458,7 +458,11 @@ def _statement_launches_claude(segment: str) -> bool:
 #: launch let through. The interpreters reach a test run as `-m pytest`
 #: (`py` after a version switch), and an interpreter's script path is read
 #: whole too -- the hook a maintenance loop runs -- its later operands as
-#: before, since a script may run what it is handed.
+#: before, since a script may run what it is handed. A program joins only
+#: when it never runs an operand as a command: `uv run`, `poetry run`,
+#: `hatch run`, `tox` and `npx` each do, so each stays out, and both lists
+#: are pinned with that rule (tests/test_write_guard_env_prefix_polarity.py::
+#: test_the_test_run_lists_hold_only_programs_that_run_no_operand).
 _TEST_RUN_PROGRAMS = ("pytest", "py.test")
 _TEST_RUN_INTERPRETERS = ("python", "python3", "py")
 #: Outside quotes, these could hand a quoted word to something other than
@@ -487,6 +491,31 @@ def _blank_quoted_spans(text: str) -> "str | None":
     if runs_something or '"' in out or "'" in out:
         return None
     return out
+
+
+#: The quote characters PowerShell pairs with a straight quote, U+2018 to
+#: U+201E, which `_QUOTED_SPAN`'s Bash grammar does not read at all.
+_PS_TYPOGRAPHIC_QUOTES = "‘’‚‛“”„"
+
+
+def _ps_blank_quoted_spans(text: str) -> "str | None":
+    """`_blank_quoted_spans` for the two PowerShell gates, or None wherever
+    PowerShell can end a string somewhere the Bash grammar the blanking
+    borrows does not: a typographic quote, which closes a straight one
+    there; a `#` left outside the spans, which may open a comment whose
+    apostrophe opens nothing there (both driven on PowerShell 5.1,
+    2026-10-31); the stop-parsing token `--%`, after which PowerShell reads
+    no quote on its line; and a braced variable name `${...}`, which may
+    hold a quote. The backtick and the here-string are opaque to both gates
+    before this is read. Each way the gate gives no relief and the
+    quote-blind deny stands, so a plain `# note` after a test run is a
+    declared false deny."""
+    if any(q in text for q in _PS_TYPOGRAPHIC_QUOTES) or "--%" in text:
+        return None
+    blank = _blank_quoted_spans(text)
+    if blank is None or "#" in blank or "${" in blank:
+        return None
+    return blank
 
 
 def _test_run_operands(words: list[tuple[str, str]]) -> "set[int] | None":
@@ -737,13 +766,19 @@ def _ps_statements_hold_no_launch(tail: str, reads: dict[str, bool]) -> bool:
     statement: True when the tail's first statement (the value) holds no
     launch and each later one the quote-blind scan refuses is a test run the
     gate reads clean (`_a_test_run_holds_no_launch`). Statements are cut at
-    `;` and line ends outside quotes; an opaque character or a quote that
-    never closes keeps the deny. ``reads`` keeps each statement's verdict, so
-    a chain of `$env:` prefixes reads each statement once, not once per
-    prefix."""
+    `;` and line ends outside the spans the Bash quote grammar pairs, which
+    is PowerShell's pairing wherever `_ps_blank_quoted_spans` reads the
+    tail at all; an opaque character, a quote that never closes, a
+    substitution or a mark where the two pairings can differ keeps the
+    deny. ``reads`` keeps each statement's verdict, so a chain of `$env:`
+    prefixes judges each statement once, not once per prefix; the blanking
+    and the cut still run once per prefix over its tail, so the leg stays
+    quadratic in the prefix count (1600 prefixes, 51 KB, took 3.08 s
+    against the 3.5 s budget, measured 2026-10-31), and a judgment past the
+    budget is a deny."""
     if any(o in tail for o in _PS_OPAQUE):
         return False
-    blank = _blank_quoted_spans(tail)
+    blank = _ps_blank_quoted_spans(tail)
     if blank is None:
         return False
     pieces = blank.replace("\r", ";").replace("\n", ";").split(";")
@@ -1462,18 +1497,25 @@ def _ps_quoted_mentions(command: str) -> frozenset[int]:
       command with no pipe, call operator, group or script block -- nothing
       after it can run the string, and nothing before it can hold it;
     - the one literal in `Write-Host (...)`, a statement of its own with
-      nothing after the parentheses: Write-Host writes to the host, which
-      no later command reads, and a redirect or pipe after it is excluded.
+      nothing after the parentheses, in a command made of Write-Host
+      statements alone, with no pipe, call operator, script block or
+      redirect anywhere and no parenthesis but each such literal's own: a
+      block's merged information stream piped on hands the string to a
+      re-parser, and any other statement could rebind the name, so either
+      keeps the old split. A rebinding made by an earlier call is outside
+      the command, and outside this gate.
 
     Empty wherever the command cannot be read plainly: an opaque character,
-    a quote that never closes, or a double-quoted span holding a
-    substitution, which runs."""
+    a quote that never closes, a double-quoted span holding a substitution,
+    which runs, or a mark where PowerShell pairs quotes otherwise than the
+    Bash grammar the blanking borrows (`_ps_blank_quoted_spans`)."""
     if any(o in command for o in _PS_OPAQUE):
         return frozenset()
-    blank = _blank_quoted_spans(command)
+    blank = _ps_blank_quoted_spans(command)
     if blank is None:
         return frozenset()
     plain = not any(c in blank for c in "|&(){}")
+    quiet = not any(c in blank for c in "|&{}<>")
     pieces = blank.replace("\r", ";").replace("\n", ";").split(";")
     begins = [0]
     for piece in pieces:
@@ -1481,6 +1523,8 @@ def _ps_quoted_mentions(command: str) -> frozenset[int]:
     last = max((i for i in range(len(pieces))
                 if command[begins[i]:begins[i] + len(pieces[i])].strip()), default=-1)
     found: set[int] = set()
+    hosts: set[int] = set()
+    only_hosts = True
     start = 0
     for index, piece in enumerate(pieces):
         # Stripped on the raw piece: a blanked span at either end is blanks.
@@ -1489,14 +1533,17 @@ def _ps_quoted_mentions(command: str) -> frozenset[int]:
         raw = raw_piece.strip()
         body = blank[at:at + len(raw)]
         start += len(piece) + 1
-        if body[:10].lower() == "write-host" and body[10:11] in (" ", "\t", "("):
+        if not raw:
+            continue
+        if body[:10].lower() == "write-host" and body[10:11] in ("", " ", "\t", "("):
             opener, closer = body.find("("), len(body) - 1
             if (opener != -1 and body[closer] == ")" and not body[10:opener].strip()
                     and not body[opener + 1:closer].strip()):
                 inner = raw[opener + 1:closer]
                 if _QUOTED_SPAN_RE.fullmatch(inner.strip()):
-                    found.add(at + opener + 1 + len(inner) - len(inner.lstrip()))
+                    hosts.add(at + opener + 1 + len(inner) - len(inner.lstrip()))
             continue
+        only_hosts = False
         equals = body.find("=")
         if not (plain and index == last and body[:1] == "$" and equals > 1
                 and body[equals + 1:equals + 2] != "="):
@@ -1507,6 +1554,8 @@ def _ps_quoted_mentions(command: str) -> frozenset[int]:
         rhs = raw[equals + 1:]
         if _QUOTED_SPAN_RE.fullmatch(rhs.strip()) and _names_once(command, name):
             found.add(at + equals + 1 + len(rhs) - len(rhs.lstrip()))
+    if quiet and only_hosts and blank.count("(") == blank.count(")") == len(hosts):
+        found |= hosts
     return frozenset(found)
 
 
@@ -1545,7 +1594,10 @@ def _ps_secret_read_targets(command: str, _depth: int = 0) -> list[str]:
     aware = not _a_boundary_sits_in_a_quote(scan, _PS_STATEMENT_BOUNDARY_RE)
     # The scan keeps the command's offsets wherever no backtick joined a
     # line, and a backtick is opaque to the gate, which then reads nothing.
-    mentions = _ps_quoted_mentions(command) if len(scan) == len(command) else frozenset()
+    # The outer command alone: a carrier body runs in its caller's scope, so
+    # the variable it binds reaches later statements the body cannot see.
+    mentions = (_ps_quoted_mentions(command)
+                if _depth == 0 and len(scan) == len(command) else frozenset())
     starts = [0] + [m.end() for m in _PS_STATEMENT_BOUNDARY_RE.finditer(scan)]
     for start, statement in zip(starts, _PS_STATEMENT_BOUNDARY_RE.split(scan)):
         text = statement.strip()

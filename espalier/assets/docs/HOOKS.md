@@ -1619,9 +1619,17 @@ bound to a variable earlier in the same command (`$c = 'gc .env';
 iex $c`). A carrier named inside quotes is data. Not read as a program: a
 `Start-Process` argument list, the colon-bound `-Command:'...'`, a glued
 `cmd /c"..."`, and the words after a quoted program (`cmd /c "type" .env`).
-A PowerShell statement that opens with a quoted string is still read as
-the command its first word names (`$hint = 'gc .env'` is refused), which is
-also what refuses a string piped into `iex`. A grep-shaped search of the
+A PowerShell statement that opens with a quoted string is read as the
+command its first word names, which is what refuses a string piped into
+`iex`, unless nothing in the command can run the string: the right-hand
+side of a last-statement assignment to a variable the command names
+nowhere else, with no pipe, call operator, group or script block anywhere
+(`$hint = 'gc .env'` alone is a mention, and the same with a later
+`iex $hint` is refused), or the one literal in `Write-Host (...)` in a
+command made of Write-Host statements alone. A typographic quote, a `#`
+outside the strings, the stop-parsing token `--%` or a braced variable
+name keeps the first-word reading, since PowerShell can end a string there
+where this reading does not. A grep-shaped search of the
 file is not a read verb on either shell, and a mention inside a string or
 comment is inert.
 This is the hook-layer replacement for the `Read()` deny rules `init` no

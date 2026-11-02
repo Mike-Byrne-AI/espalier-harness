@@ -10016,10 +10016,35 @@ class TestSecretPathAccess:
         '$x = Write-Host ("type .env")',
         'Write-Output ("type .env")',
         "$c = 'gc .env'; " + "x" * 33_000 + "; iex $c",
+        # PowerShell's quoting where the Bash grammar the gate borrows reads it
+        # differently: a typographic quote closes the straight one early, so
+        # the read after it runs (driven on PowerShell 5.1, 2026-10-31), and a
+        # `#` outside the spans ends the relief, since a comment's apostrophe
+        # opens nothing there (a declared false deny for a plain note)
+        "$v = 'gc .env ’; gc .env; $w = ‘x'",
+        "$hint = 'gc .env' # a note",
+        # Write-Host in a block whose information stream is merged and piped
+        # on, and Write-Host rebound by an alias before the line
+        "& {\nWrite-Host ('gc .env')\n} 6>&1 | iex",
+        "Set-Alias Write-Host iex; Write-Host ('gc .env')",
+        # a carrier body runs in the caller's scope, so the variable it binds
+        # reaches a later statement of the outer command
+        "iex '$h = ''gc .env'''; iex $h",
     ])
     def test_a_quoted_opener_something_could_run_keeps_the_old_split(self, command, tmp_path):
         assert_hook_denied(run_guard_tool("PowerShell", {"command": command}, tmp_path),
                            contains_reason="Secret-path access blocked")
+
+    def test_a_carrier_bodys_quoted_opener_keeps_the_old_split(self):
+        """The gate reads the command it is handed, and a carrier body is not
+        the whole command: the variable it binds reaches the caller's later
+        statements, which the body cannot see. So only the outer command's
+        mentions are read, and a body's quoted opener keeps the old split."""
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "cc" / "hooks"))
+        import write_guard as wg
+        targets = wg._ps_secret_read_targets("$h = 'gc .env'", 1)
+        assert any(wg._secret_pattern_for(t) for t in targets), targets
 
     @pytest.mark.parametrize("text, expected", [
         # separators cut outside quotes; a quoted span glues to its neighbours

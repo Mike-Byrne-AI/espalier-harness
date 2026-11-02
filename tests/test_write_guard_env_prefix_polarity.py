@@ -801,8 +801,12 @@ def test_powershell_the_relief_covers_the_maintenance_loops_other_shapes(command
 # the launcher read whole, it sits past the run's first pipe or redirect, a
 # substitution or subshell could run it, an escape character makes the quoting
 # unreadable, it follows a python script's path, or the program is not a test
-# run at all (the last two are declared false denies, kept on purpose).
+# run at all (the last two are declared false denies, kept on purpose). The
+# runner rows are the ones a runner joining the gate's lists would turn: each
+# runs its operands as a command, so a shell body it carries runs.
+_RUNNERS = ("uv run", "poetry run", "hatch run")
 _NOT_A_PLAIN_OPERAND = (
+    *(f'{runner} sh -c "claude -p x"' for runner in _RUNNERS),
     'pytest "claude"',
     'pytest "work/bin/claude.exe"',
     f'pytest "{_SPACED_TESTS}" | sh -c "claude -p x"',
@@ -815,8 +819,10 @@ _NOT_A_PLAIN_OPERAND = (
     'python -c "claude"',
     'python -m runner "claude -p x"',
     # `-c` ends python's options, so the `-m pytest` after it is an argument
-    # (the dispatcher's ruling on the gate, 2026-10-31)
-    'python3 -c "import os; os.system(\'claude -p x\')" -m pytest',
+    # (the dispatcher's ruling on the gate, 2026-10-31); no `;` in the program,
+    # which the prefix's quote-blind statement cut would end it at, so the row
+    # reaches the gate
+    'python3 -c "__import__(\'os\').system(\'claude -p x\')" -m pytest',
     f'X="$(claude -p x)" pytest "{_SPACED_TESTS}"',
     f'ls "{_SPACED_TESTS}"',
 )
@@ -825,10 +831,23 @@ _NOT_A_PLAIN_OPERAND = (
 @pytest.mark.parametrize("tail", _NOT_A_PLAIN_OPERAND)
 def test_bash_the_relief_is_a_positive_gate(tail):
     command = f"{STOP}=full {tail}"
+    assert not wg._harness_env_prefix_is_benign(command), command
     assert _denies(wg.check_bash_dangerous_patterns, command), command
 
 
+def test_the_test_run_lists_hold_only_programs_that_run_no_operand():
+    """A program joins the gate's lists only when it never runs an operand
+    as a command: the gate reads such a program's quoted operands whole, so
+    a runner that runs its operands (`uv run`, `poetry run`, `hatch run`,
+    `tox`, `npx`) would carry a quoted launch past it. The runner rows above
+    go red the day one joins; this pin states the rule first."""
+    rule = "only a program that never runs an operand as a command may join"
+    assert wg._TEST_RUN_PROGRAMS == ("pytest", "py.test"), rule
+    assert wg._TEST_RUN_INTERPRETERS == ("python", "python3", "py"), rule
+
+
 _PS_NOT_A_PLAIN_OPERAND = (
+    *(f'{runner} pwsh -Command "claude -p x"' for runner in _RUNNERS),
     'pytest "claude"',
     f'pytest "{_SPACED_TESTS}" | Invoke-Expression "claude -p x"',
     f'pytest "{_SPACED_TESTS}"; claude -p x',
@@ -840,13 +859,32 @@ _PS_NOT_A_PLAIN_OPERAND = (
     f'pytest "a`" b" "{_SPACED_TESTS}"',
     "python run.py 'claude -p x'",
     f'ls "{_SPACED_TESTS}"',
+    # PowerShell's quoting, which the Bash grammar the gate borrows reads
+    # differently: an apostrophe inside a `#` comment opens nothing there, and
+    # a typographic quote closes a straight one, so each pairs two quotes
+    # PowerShell does not and hides the line between them (both reviewers of
+    # the lane drove these on PowerShell 5.1, 2026-10-31). The first row is a
+    # declared false deny: any `#` outside the spans ends the relief.
+    f'pytest "{_SPACED_TESTS}" # a note',
+    f"pytest '{_SPACED_TESTS}' # the run's note\nclaude -p x # that's all",
+    f'pytest "{_SPACED_TESTS}”; claude -p x; “"',
 )
 
 
 @pytest.mark.parametrize("tail", _PS_NOT_A_PLAIN_OPERAND)
 def test_powershell_the_relief_is_a_positive_gate(tail):
     command = f'$env:{STOP}="full"; {tail}'
+    assert not wg._ps_harness_env_prefix_is_benign(command), command
     assert _denies(wg.check_powershell, command), command
+
+
+@pytest.mark.parametrize("quote", "‘’‚‛“”„")
+def test_powershell_gates_give_no_relief_where_a_typographic_quote_appears(quote):
+    """PowerShell pairs each of these with a straight quote and the Bash
+    grammar both PowerShell gates borrow pairs none, so wherever one appears
+    the two can disagree on where a string ends: no relief, either gate."""
+    assert not wg._ps_statements_hold_no_launch(f'"full"; pytest "{_SPACED_TESTS}{quote}"', {})
+    assert not wg._ps_quoted_mentions(f"$hint = 'gc .env{quote}'")
 
 
 def test_powershell_a_launch_in_the_value_keeps_the_deny():
@@ -899,26 +937,31 @@ def test_the_two_gates_newly_allow_nothing_in_the_bypass_corpus(monkeypatch, tmp
     assert not newly_allowed, f"the gates newly allow: {newly_allowed}"
 
 
-def _quote_aware_reads(monkeypatch, fn, command):
+def _gate_reads(monkeypatch, fn, command):
     calls = []
-    real = wg._quote_aware_words
+    real = wg._a_test_run_holds_no_launch
 
     def counting(*args, **kwargs):
         calls.append(1)
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(wg, "_quote_aware_words", counting)
+    monkeypatch.setattr(wg, "_a_test_run_holds_no_launch", counting)
     assert not _denies(fn, command), command[:80]
     return len(calls)
 
 
-def test_the_relief_reads_a_statement_once_however_many_prefixes_head_it(monkeypatch):
-    """A repeated prefix reads the test run once, not once per prefix: the
-    first cut re-read each prefix's whole tail, and 200 of them (10 KB) took
-    3.55 s against 0.11 s, past the hook's budget (measured 2026-10-31)."""
-    bash = lambda n: " ".join([f"{STOP}=full"] * n) + f' pytest "{_SPACED_TESTS}"'
-    assert (_quote_aware_reads(monkeypatch, wg.check_bash_dangerous_patterns, bash(200))
-            == _quote_aware_reads(monkeypatch, wg.check_bash_dangerous_patterns, bash(2)))
-    ps = lambda n: f'$env:{STOP}="full"; ' * n + f'pytest "{_SPACED_TESTS}"'
-    assert (_quote_aware_reads(monkeypatch, wg.check_powershell, ps(200))
-            == _quote_aware_reads(monkeypatch, wg.check_powershell, ps(2)))
+@pytest.mark.parametrize("prefixes", [2, 200])
+def test_the_relief_reads_a_statement_once_however_many_prefixes_head_it(monkeypatch, prefixes):
+    """A repeated prefix hands the test run to the gate once, not once per
+    prefix: the first cut re-read each prefix's whole tail, and 200 of them
+    (10 KB) took 3.55 s against 0.11 s, past the hook's budget (measured
+    2026-10-31). Counted at the gate itself, so a refactor that reaches the
+    words some other way cannot pass with the memo gone. On Bash a run of
+    prefixes is one match (the prefix anchors at a command position), so
+    that half pins the count by construction; on PowerShell each `$env:`
+    statement is a match of its own, and with the memo removed that half
+    reads 200 (driven in-process, 2026-11-02)."""
+    bash = " ".join([f"{STOP}=full"] * prefixes) + f' pytest "{_SPACED_TESTS}"'
+    assert _gate_reads(monkeypatch, wg.check_bash_dangerous_patterns, bash) == 1
+    ps = f'$env:{STOP}="full"; ' * prefixes + f'pytest "{_SPACED_TESTS}"'
+    assert _gate_reads(monkeypatch, wg.check_powershell, ps) == 1

@@ -18,7 +18,12 @@
   side of an assignment that is the command's last statement, to a plain
   variable the command names nowhere else, in a command with no pipe, call
   operator, group or script block, or the one literal in `Write-Host (...)`
-  with nothing after it. Everything else keeps the old reading, so a launch
+  with nothing after it, in a command made of Write-Host statements alone
+  with no pipe, call operator, block or redirect. On PowerShell neither
+  relief applies where its quoting differs from the grammar the gates read
+  with (a typographic quote, a `#` outside the strings, the stop-parsing
+  token `--%` or a braced variable name), since PowerShell can end a string
+  there where the gate does not. Everything else keeps the old reading, so a launch
   or a read handed to any carrier inside a quoted string stays refused
   without a roster of the carriers, and a form outside the gates costs a
   refusal, as before, never a launch or read let through. A chain of inline
