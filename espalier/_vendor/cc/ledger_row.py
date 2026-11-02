@@ -76,6 +76,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import traceback
 from collections import Counter
 from datetime import date
 from pathlib import Path
@@ -1888,6 +1889,9 @@ def strike(rid: str, *, ledger: Path, probes: Path, text_file: Path, day: str,
     retired = retired_in_roster + _retire_probe_files(probes, ids, pending)
     index_note = (f"index row {index_state[rid]}" if len(ids) == 1
                   else "index rows: " + ", ".join(f"{i} {s}" for i, s in index_state.items()))
+    if _content_rules_refuse(root or ledger.resolve().parent.parent, pending, ledger=ledger, legacy=new_line,
+                             probe=None, dry_run=dry_run):
+        return 2
     if dry_run:
         print(new_line)
         print(f"({index_note}; {retired} probe(s) would retire"
@@ -2229,6 +2233,9 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str |
              **({"inputs": inputs} if inputs is not None else {}),
              **_pins(new_line),
              f"verified_{day.replace('-', '_')}": f"OPEN (filed {day}; probe driven at filing{driven})"}
+    if _content_rules_refuse(root, pending, ledger=ledger, legacy=f"{new_line}\n{new_index}", probe=entry,
+                             dry_run=dry_run):
+        return 2
     if dry_run:
         if finishing:
             print(f"(finishing {rid}: its row is there, so only its probe would be written)")
@@ -2523,6 +2530,9 @@ def repin(rid: str, *, ledger: Path, probes: Path, open_value: str | None, reaso
     )
     sibling_note = (f" (shares its row with {', '.join(siblings)}, whose probe(s) this verb did "
                     f"not drive -- repin each if the claim moved)") if siblings else ""
+    if _content_rules_refuse(root, pending, ledger=ledger, legacy=new_line,
+                             probe=entry if (probe_cmd or subject) else None, dry_run=dry_run):
+        return 2
     if dry_run:
         print(new_line)
         if sibling_note:
@@ -2733,20 +2743,6 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         for line in refusals:
             print(f"ledger_row: {'dry run' if args.dry_run else 'override'} -- {line}", file=sys.stderr)
-    # The ledger's content rules over the drafted text, before anything is
-    # written and in the dry run alike (DEF-1121): a break refuses the write
-    # by the test that owns the rule, and the dry run names it as the claims'
-    # refusals are named above. --override is the claims' alone: a break reds
-    # the contract tier whatever this verb writes.
-    if drafted := _drafted_row(args, probes=probes):
-        breaks, notes = _content_rule_breaks(root, *drafted)
-        for note in notes:
-            print(f"ledger_row: note -- {note}", file=sys.stderr)
-        for line in breaks:
-            print(f"ledger_row: {'dry run' if args.dry_run else 'refused'} -- the drafted row breaks a ledger "
-                  f"content rule, {line}", file=sys.stderr)
-        if breaks and not args.dry_run:
-            return 2
     if args.dry_run:
         return _dispatch(ap, args, ledger=ledger, probes=probes, root=root)
     # Every writing verb holds the lock beside the ledger for its whole
@@ -2792,52 +2788,53 @@ def _content_rule_breaks(root: Path, rel: str, text: str,
         if spec is None or spec.loader is None:
             return [], [f"the ledger content rules in {_RULES_REL} could not be loaded"]
         mod = importlib.util.module_from_spec(spec)
+        # Registered while it runs: a path-loaded module missing from
+        # sys.modules cannot hold a dataclass under postponed annotations.
+        sys.modules[spec.name] = mod
         spec.loader.exec_module(mod)
         found = mod.breaks(rel, text, probe, notes=notes)
     except Exception as exc:  # noqa: BLE001 -- a rule that cannot run is a note, never a refusal
+        frames = traceback.extract_tb(exc.__traceback__)
+        where = f" at {Path(frames[-1].filename).name}:{frames[-1].lineno}" if frames else ""
         return [], [f"the ledger content rules in {_RULES_REL} could not be run "
-                    f"({type(exc).__name__}: {_load('_json_safe').os_error_text(exc)})"]
+                    f"({type(exc).__name__}{where}: {_load('_json_safe').os_error_text(exc)})"]
     finally:
+        sys.modules.pop("_espalier_ledger_rules", None)
         if added and str(root) in sys.path:
             sys.path.remove(str(root))
     return [f"{node}: {what}" for node, what in found], notes
 
 
-def _drafted_row(args: argparse.Namespace, *, probes: Path) -> tuple[str, str, dict | None] | None:
-    """``(rel, line, probe)``: the text a writing verb is about to put on a
-    row, as one table row (its id cell, struck for a strike, and its anchor
-    beside it where one is given; empty where no text is given), the row
-    file's path, and the probe entry a ``file`` or ``repin`` is about to
-    write (its ``id``, ``subject`` and ``cmd``; a repin's unchanged half read
-    from the row's probe), else None; None where the verb writes neither, or
-    the text file cannot be read (the verb's own read says so)."""
-    if args.verb not in ("file", "repin", "strike"):
-        return None
-    rid = args.rid or "NEW"
-    line = ""
-    if text_file := getattr(args, "text_file", None):
+def _content_rules_refuse(root: Path, pending: _Pending, *, ledger: Path, legacy: str,
+                          probe: dict | None, dry_run: bool) -> bool:
+    """Run the ledger's content rules over what this write will leave, before
+    anything is written and in the dry run alike (DEF-1121): each row file
+    the verb is about to write, whole (its class line, member row and index
+    rows, a strike's closing and prior text among them), or ``legacy`` (the
+    row lines a tree that keeps rows in the ledger file gets), and the probe
+    entry it is about to write. A break is printed by the test that owns the
+    rule; True when it refuses the write (never in a dry run). --override is
+    the claims' alone: a break reds the contract tier whatever this verb
+    writes."""
+    rows = [(path, text) for path, text in pending.rows.items() if text is not None]
+    if not rows:
+        rows = [(ledger, legacy)]
+    breaks: list[str] = []
+    notes: list[str] = []
+    for i, (path, text) in enumerate(rows):
         try:
-            text = Path(text_file).read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            return None
-        id_cell = f"~~`{rid}`~~" if args.verb == "strike" else f"`{rid}`"
-        cells = [c for c in (id_cell, getattr(args, "anchor", None), text.strip().replace("\n", " ")) if c]
-        line = "| " + " | ".join(cells) + " |"
-    probe = None
-    cmd, subject = getattr(args, "probe_cmd", None), getattr(args, "subject", None)
-    if args.verb == "file" and cmd:
-        probe = {"id": rid, "subject": subject or "", "cmd": cmd}
-    elif args.verb == "repin" and (cmd or subject):
-        try:
-            held = _probe_entry(rid, probes=probes, data={"probes": []}) or next(
-                (p for p in _FRAG.probe_roster_at(probes).data.get("probes", [])
-                 if isinstance(p, dict) and p.get("id") == rid), {})
-        except (OSError, ValueError):
-            held = {}
-        probe = {"id": rid, "subject": subject or held.get("subject") or "", "cmd": cmd or held.get("cmd") or ""}
-    if not line and probe is None:
-        return None
-    return f"task-packs/ledger.d/{rid}.md", line, probe
+            rel = path.resolve().relative_to(root.resolve()).as_posix()
+        except ValueError:
+            rel = path.name
+        found, said = _content_rule_breaks(root, rel, text, probe if i == 0 else None)
+        breaks += found
+        notes += [n for n in said if n not in notes]
+    for note in notes:
+        print(f"ledger_row: note -- {note}", file=sys.stderr)
+    for line in breaks:
+        print(f"ledger_row: {'dry run' if dry_run else 'refused'} -- the drafted row breaks a ledger content "
+              f"rule, {line}", file=sys.stderr)
+    return bool(breaks) and not dry_run
 
 
 def _mint(kind: str, *, ledger: Path, probes: Path, root: Path, dry_run: bool) -> tuple[str, str] | None:

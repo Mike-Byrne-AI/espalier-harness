@@ -1489,7 +1489,7 @@ class TestProbeShapesAreRatcheted:
             f"`sys.executable` there.\n  {new}"
         )
         gone = sorted(SPAWNS_A_LITERAL_INTERPRETER - spawning)
-        assert not gone, f"re-pinned or struck; shrink the baseline: {gone}"
+        assert not gone, f"re-pinned or struck; shrink SPAWNS_A_LITERAL_INTERPRETER in tests/_ledger_rules.py: {gone}"
 
     def test_the_literal_spawn_detector_reads_the_argv_not_the_name_as_data(self):
         """DEF-651 and DEF-929 carry `'python'` as DATA (a settings command under

@@ -733,7 +733,7 @@ def run_probe(probe: dict) -> tuple[str, str]:
 @contextlib.contextmanager
 def rooted(root: "str | os.PathLike[str]", *, pristine: bool = False,
            importable: bool = False) -> Iterator[Path]:
-    """Root the runner at ``root`` for the block and restore its four module
+    """Root the runner at ``root`` for the block and restore its five module
     globals after it, whatever the block did.
 
     The one home of that swap: ``main``'s ``--root`` is this, and the strike

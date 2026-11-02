@@ -5971,7 +5971,7 @@ spelled as authored and grades on every host. A probe that spawns an interpreter
 program must spell `sys.executable` there: `DEF-751` was re-pinned that way, and `DEF-411a`
 and `DEF-412h` still carry the literal because the verb can only re-pin them on a tree that
 holds `task-packs/Done/`; a ratchet beside the paperwork one
-(`TestProbeShapesAreRatcheted::_SPAWNS_A_LITERAL_INTERPRETER`) refuses a third. A shipped
+(`TestProbeShapesAreRatcheted`, its baseline `SPAWNS_A_LITERAL_INTERPRETER` in `tests/_ledger_rules.py`) refuses a third. A shipped
 workflow body cannot resolve at an executor, because its executor is an agent told to run
 the command exactly as written, so its persist command opens with the resolver line the
 command bodies' shell blocks share (`PY=; for c in 'python3' python 'py -3'; do ...`, then

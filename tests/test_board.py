@@ -1148,6 +1148,18 @@ class TestClosedAtAPush:
                                                   "released": release["at"]}]
         assert "merged" not in collected["records"], "the merged read is the section's, never the JSON's"
 
+    def test_an_unnamed_clone_reads_the_line_as_unread(self, board, monkeypatch, tmp_path):
+        """An unnamed clone's records section reads no merges, so the line is
+        unread, never none, as its docstring says. Dies to: the unnamed
+        section left with no verdict (the line silent)."""
+        _job, _release, by_machine = self._pushed(board)
+        _stub_channel(monkeypatch, board, by_machine)
+        monkeypatch.setattr(board, "read_records_section", lambda *a, **k: {
+            "window": board.ROW_DEBT_WINDOW, "read": 0, "unclaimed": 0, "entries": [], "unread": "", "unnamed": True})
+        collected = board.collect(tmp_path, run_=_gh({"pr list": [], "pr list merged": [], "run list": _GREEN_RUNS}),
+                                  now=_NOW)
+        assert collected["closed_with_no_pr"] == {"unread": "this clone names no seat, so its merges were not read"}
+
     def test_a_merge_of_the_name_before_the_release_is_an_earlier_lane(self, board, monkeypatch, tmp_path):
         """A lane that used the branch name before merged a day earlier; this
         push's pull request was never created. Dies to: the merged lanes

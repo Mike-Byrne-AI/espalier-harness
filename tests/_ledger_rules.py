@@ -90,7 +90,7 @@ def maintenance_bypass_callers(hooks_dir: Path = HOOKS_DIR,
     return callers
 
 
-def roster_units(text: str):
+def roster_units(text: str) -> Iterable[str]:
     """Roster-claim units: each markdown table row on its own, otherwise a
     blank-line-separated paragraph (a table is one paragraph, but each row scopes
     one thing)."""
@@ -364,42 +364,74 @@ def cited_path_phantoms(rel: str, text: str) -> list[tuple[str, str]]:
     return [(cite, kind) for _rel, _line, cite, kind in _find_source_phantoms(rel, text.splitlines(), tracked)]
 
 
+def _roster_breaks(rel: str, text: str, hooks_dir: Path) -> list[str]:
+    from tests._live_tree import checkout_glob
+
+    return [f"names the maintenance switch beside some of its bypass hooks but omits {sorted(omitted)}: "
+            "name them all, or none"
+            for _unit, omitted, excl in partial_rosters(rel, text, maintenance_bypass_callers(hooks_dir, checkout_glob))
+            if excl is None]
+
+
+def _cap_breaks(rel: str, text: str) -> list[str]:
+    """A statement of the cap anywhere but a census site breaks the rule; a
+    census site (``EXPECTED_MEMORY_CAP_SITES``, two ledger rows among them)
+    must state it exactly as often as the census says, as its test asks."""
+    from tests._surface_expected import EXPECTED_MEMORY_CAP_SITES
+
+    said = cap_restatements(text)
+    if rel in EXPECTED_MEMORY_CAP_SITES:
+        want = EXPECTED_MEMORY_CAP_SITES[rel]
+        return [] if len(said) == want else [
+            f"states the memory line cap {len(said)} time(s) where the census holds it to {want} "
+            "(EXPECTED_MEMORY_CAP_SITES in tests/_surface_expected.py)"]
+    return [f"restates the memory line cap ({s!r}); name ESPALIER_MEMORY.md's cap without its number" for s in said]
+
+
+def _cited_path_breaks(rel: str, text: str) -> list[str]:
+    return [f"cites {cite}, a file git does not track (a new file: git add it first)" if kind == "file" else
+            f"cites {cite}, a symbol its file does not define" for cite, kind in cited_path_phantoms(rel, text)]
+
+
+def _paperwork_breaks(probe: dict) -> list[str]:
+    if not is_trap_shaped(probe) or (probe.get("id") or "") in TEXT_OVER_OWN_SUBJECT:
+        return []
+    return [f"the probe reads text out of its own subject ({probe.get('subject')}), so a comment or a "
+            "changelog line closes it while the defect stands; ask a structural question (an ast.parse "
+            "predicate) or read another file, or, where the deliverable is the text itself, mint the id, "
+            "add it to TEXT_OVER_OWN_SUBJECT in tests/_ledger_rules.py with its reason, and file with that id"]
+
+
+def _spawn_breaks(probe: dict) -> list[str]:
+    if not LITERAL_SPAWN_RE.search(probe["cmd"]) or (probe.get("id") or "") in SPAWNS_A_LITERAL_INTERPRETER:
+        return []
+    return ["the probe's program spawns a bare python or python3, which the runner's interpreter resolution "
+            "cannot reach; spell sys.executable there"]
+
+
 def breaks(rel: str, text: str, probe: dict | None = None, *, notes: list[str] | None = None,
            hooks_dir: Path = HOOKS_DIR) -> list[tuple[str, str]]:
-    """``(owning test, what)`` for each content rule the drafted ``text`` at
-    ``rel``, or the drafted ``probe`` entry (its ``id``, ``subject`` and
-    ``cmd``), breaks, else ``[]``: the verb's one entry point. Where the
-    cited-path rule cannot run, it is said in ``notes`` and the others still
-    run; with no ``notes`` the error is raised."""
-    found: list[tuple[str, str]] = []
+    """``(owning test, what)`` for each content rule the row file's ``text``
+    at ``rel`` (as the verb is about to write it; empty where only the probe
+    is judged), or the ``probe`` entry it is about to write (its ``id``,
+    ``subject`` and ``cmd``), breaks, else ``[]``: the verb's one entry point.
+    Each rule runs on its own: one that cannot run here is said in ``notes``,
+    naming it, and the others still run; with no ``notes`` its error is
+    raised."""
+    rules: list[tuple[str, Callable[[], list[str]]]] = []
     if text:
-        for unit, omitted, excl in partial_rosters(rel, text, maintenance_bypass_callers(hooks_dir)):
-            if excl is None:
-                found.append((BYPASS_ROSTER_RULE, f"names the maintenance switch beside some of its bypass hooks "
-                                                  f"but omits {sorted(omitted)}: name them all, or none"))
-        for said in cap_restatements(text):
-            found.append((MEMORY_CAP_RULE, f"restates the memory line cap ({said!r}); name ESPALIER_MEMORY.md's "
-                                           "cap without its number"))
+        rules += [(BYPASS_ROSTER_RULE, lambda: _roster_breaks(rel, text, hooks_dir)),
+                  (MEMORY_CAP_RULE, lambda: _cap_breaks(rel, text)),
+                  (CITED_PATH_RULE, lambda: _cited_path_breaks(rel, text))]
+    if probe and probe.get("cmd"):
+        rules += [(PAPERWORK_PROBE_RULE, lambda: _paperwork_breaks(probe)),
+                  (LITERAL_SPAWN_RULE, lambda: _spawn_breaks(probe))]
+    found: list[tuple[str, str]] = []
+    for rule, run in rules:
         try:
-            phantoms = cited_path_phantoms(rel, text)
+            found += [(rule, what) for what in run()]
         except Exception as exc:  # noqa: BLE001 -- a rule that cannot run here is said, never a refusal
             if notes is None:
                 raise
-            notes.append(f"{CITED_PATH_RULE} was not run ({type(exc).__name__}: {exc})")
-            phantoms = []
-        for cite, kind in phantoms:
-            found.append((CITED_PATH_RULE, f"cites {cite}, a file git does not track (a new file: git add it "
-                                           "first)" if kind == "file" else
-                                           f"cites {cite}, a symbol its file does not define"))
-    if probe and probe.get("cmd"):
-        rid, cmd = probe.get("id") or "", probe["cmd"]
-        if is_trap_shaped(probe) and rid not in TEXT_OVER_OWN_SUBJECT:
-            found.append((PAPERWORK_PROBE_RULE, f"the probe reads text out of its own subject "
-                                                f"({probe.get('subject')}), so a comment or a changelog line "
-                                                "closes it while the defect stands; ask a structural question "
-                                                "(an ast.parse predicate) or read another file"))
-        if LITERAL_SPAWN_RE.search(cmd) and rid not in SPAWNS_A_LITERAL_INTERPRETER:
-            found.append((LITERAL_SPAWN_RULE, "the probe's program spawns a bare python or python3, which the "
-                                              "runner's interpreter resolution cannot reach; spell "
-                                              "sys.executable there"))
+            notes.append(f"{rule} was not run ({type(exc).__name__}: {exc})")
     return found

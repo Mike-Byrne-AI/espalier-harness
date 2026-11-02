@@ -1386,6 +1386,10 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run, now: datetime
             board["closed_with_no_pr"] = closed_with_no_pr(closed, counted, board["open_prs"], merged)
         elif isinstance(records, dict) and records.get("unread"):
             board["closed_with_no_pr"] = {"unread": str(records["unread"])}
+        elif isinstance(records, dict) and records.get("unnamed"):
+            # An unnamed clone's records section reads no merges, so the
+            # line is unread, never none.
+            board["closed_with_no_pr"] = {"unread": "this clone names no seat, so its merges were not read"}
     try:
         board["post_merge"] = read_post_merge(root, base, run_=run_)
     except Unresolvable as exc:

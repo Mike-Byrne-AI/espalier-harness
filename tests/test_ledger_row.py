@@ -2847,11 +2847,17 @@ def breaks(rel, text, probe=None, notes=None):
     found = []
     if "FORBIDDEN" in text:
         found.append(("tests/test_x.py::TestRule", "says the forbidden word in " + rel))
-    if probe and "MARK" in probe["cmd"]:
+    if probe and "MARK" in (probe["cmd"] or ""):
         found.append(("tests/test_x.py::TestProbe", "probe " + probe["id"] + " over " + probe["subject"]))
     if "NOTE" in text:
         notes.append("a rule did not run here")
     return found
+'''
+
+
+_ECHO_RULES = '''\
+def breaks(rel, text, probe=None, notes=None):
+    return [("tests/test_x.py::TestEcho", rel + " <<" + text.replace(chr(10), " / ") + ">> " + repr(probe))]
 '''
 
 
@@ -2885,7 +2891,7 @@ class TestTheContentRulesRunBeforeTheWrite:
         assert self._file(lr, tree) == 2
         err = capsys.readouterr().err
         assert ("refused -- the drafted row breaks a ledger content rule, tests/test_x.py::TestRule: says the "
-                "forbidden word in task-packs/ledger.d/DEF-4.md") in err, err
+                "forbidden word in task-packs/FORWARD_LEDGER.md") in err, err  # a tree keeping rows in the ledger
         assert (tree["ledger"].read_text(encoding="utf-8"), tree["probes"].read_text(encoding="utf-8")) == before
         assert not (tree["ledger"].parent / "ledger.d" / "DEF-4.md").exists()
 
@@ -2909,13 +2915,14 @@ class TestTheContentRulesRunBeforeTheWrite:
                              "--section", "C1", "--after", "DEF-4", "--anchor", "a",
                              "--text-file", str(tree["body"]), "--severity", "nit", "--subject", "a",
                              "--why-not", "no local oracle")) == 0
-        assert "could not be run (RuntimeError: the rule broke)" in capsys.readouterr().err
+        assert "could not be run (RuntimeError at _ledger_rules.py:2: the rule broke)" in capsys.readouterr().err
 
     def test_a_drafted_probe_reaches_the_rules_and_is_refused_by_the_owning_test(self, lr, tree, capsys):
         """The probe-shape rules read the probe a filing is about to write,
         its id and subject beside its command. Mutation: the drafted probe
         not handed to the rules (the filing goes on to drive it)."""
         self._rules(tree)
+        (tree["ledger"].parents[1] / "s.py").write_text("", encoding="utf-8")  # the probe is driven first
         assert lr.main(_args(tree, "--root", str(tree["ledger"].parents[1]), "file", "DEF-4",
                              "--section", "C1", "--after", "DEF-2", "--anchor", "a",
                              "--text-file", str(tree["body"]), "--severity", "nit", "--subject", "s.py",
@@ -2940,29 +2947,35 @@ class TestTheContentRulesRunBeforeTheWrite:
         assert ("note -- the ledger content rules were not run: this tree holds no tests/_ledger_rules.py"
                 in capsys.readouterr().err)
 
-    def test_the_drafted_row_is_the_row_each_verb_writes(self, lr, tree):
-        """A strike's row is drafted struck, so the cited-path rule reads it
-        as the record the test exempts; a repin's probe takes its unchanged
-        half from the row's probe. Mutation: the id cell left out or never
-        struck; a repin's subject or command left empty."""
-        import argparse
-        ns = argparse.Namespace
-        strike = lr._drafted_row(ns(verb="strike", rid="DEF-1", text_file=str(tree["closing"]), anchor=None),
-                                 probes=tree["probes"])
-        assert strike[1].startswith("| ~~`DEF-1`~~ | landed in abc123") and strike[2] is None, strike
-        filed = lr._drafted_row(ns(verb="file", rid="DEF-4", text_file=str(tree["body"]), anchor="a",
-                                   probe_cmd=None, subject="s.py"), probes=tree["probes"])
-        assert filed == ("task-packs/ledger.d/DEF-4.md", "| `DEF-4` | a | **A new defect.** Who: an adopter. |",
-                         None), filed
-        moved = lr._drafted_row(ns(verb="repin", rid="DEF-1", text_file=None, anchor=None, probe_cmd=None,
-                                   subject="other.py"), probes=tree["probes"])
-        assert moved == ("task-packs/ledger.d/DEF-1.md", "", {"id": "DEF-1", "subject": "other.py",
-                                                               "cmd": "echo a"}), moved
-        recut = lr._drafted_row(ns(verb="repin", rid="DEF-2", text_file=None, anchor=None, probe_cmd="echo c",
-                                   subject=None), probes=tree["probes"])
-        assert recut[2] == {"id": "DEF-2", "subject": "site", "cmd": "echo c"}, recut
-        assert lr._drafted_row(ns(verb="repin", rid="DEF-2", text_file=None, anchor=None, probe_cmd=None,
-                                  subject=None), probes=tree["probes"]) is None
+    def test_the_rules_read_the_row_each_verb_writes(self, lr, tree, capsys):
+        """The rules read what each verb is about to write, whole: a strike's
+        closing and prior text beside the anchor it keeps, a repin's kept text
+        beside its new anchor, and the probe entry a filing writes, which
+        carries no command beside --why-not. Mutation: the rules handed a
+        one-line draft (a repin's kept text or a strike's prior text unseen),
+        or the probe command a row declared unmeasurable never writes."""
+        self._rules(tree, _ECHO_RULES)
+        root = ("--root", str(tree["ledger"].parents[1]))
+        assert lr.main(_args(tree, *root, "--dry-run", "strike", "DEF-1", "--text-file", str(tree["closing"]))) == 0
+        err = capsys.readouterr().err
+        assert "~~`DEF-1`~~ | site | " in err and "PRIOR TEXT: what" in err and "landed in abc123" in err, err
+        (tree["ledger"].parents[1] / "site").write_text("", encoding="utf-8")  # the probe's subject, driven first
+        assert lr.main(_args(tree, *root, "--dry-run", "repin", "DEF-1", "--reason", "r", "--anchor", "moved")) == 0
+        err = capsys.readouterr().err
+        assert "| `DEF-1` | moved | what |" in err, err
+        assert lr.main(_args(tree, *root, "file", "DEF-4", "--section", "C1", "--after", "DEF-2", "--anchor", "a",
+                             "--text-file", str(tree["body"]), "--severity", "nit", "--subject", "s.py",
+                             "--why-not", "no local oracle", "--probe-cmd", "echo MARK")) == 2
+        err = capsys.readouterr().err
+        assert "'cmd': None" in err and "**A new defect.** Who: an adopter." in err, err
+        # A tree that keeps rows as files: the rules read the row file whole,
+        # its class line and index row with the member row, as the tests do.
+        (tree["ledger"].parents[1] / "espalier.toml").write_text("ledger_fragments = true\n", encoding="utf-8")
+        assert lr.main(_args(tree, *root, "--dry-run", "file", "DEF-4", "--section", "C1", "--after", "DEF-2",
+                             "--anchor", "a", "--text-file", str(tree["body"]), "--severity", "nit",
+                             "--subject", "s.py", "--why-not", "no local oracle")) == 0
+        err = capsys.readouterr().err
+        assert "task-packs/ledger.d/DEF-4.md <<<!-- class:" in err and "| `DEF-4` | §C1 | a |" in err, err
 
     def test_the_real_rules_name_a_partial_roster_and_a_restated_cap(self):
         """The predicates the owning tests run, read over drafted row text:
@@ -3006,3 +3019,77 @@ class TestTheContentRulesRunBeforeTheWrite:
         spawns = {"id": "DEF-9", "subject": "a.py", "cmd": "python3 -c \"import subprocess;subprocess.run(['python3','a.py'])\""}
         assert [r for r, _ in breaks(rel, "", spawns)] == [LITERAL_SPAWN_RULE]
         assert breaks(rel, "", {**spawns, "id": sorted(SPAWNS_A_LITERAL_INTERPRETER)[0]}) == []
+
+    def test_a_census_site_states_the_cap_as_often_as_the_census_says(self):
+        """A ledger row the cap census holds to one statement of the cap is
+        judged by its count, as its test judges it: its own text passes (a
+        re-pin of it is not refused), the same text in a row the census does
+        not name breaks, and the cap stated twice there breaks. Mutation: the
+        census not read (every cap statement a break)."""
+        from tests._ledger_rules import MEMORY_CAP_RULE, breaks
+        from tests._surface_expected import EXPECTED_MEMORY_CAP_SITES
+        site = next(r for r in sorted(EXPECTED_MEMORY_CAP_SITES)
+                    if r.startswith("task-packs/ledger.d/") and EXPECTED_MEMORY_CAP_SITES[r] == 1)
+        if not (REPO_ROOT / site).is_file():
+            pytest.skip(f"{site} is not in this tree")
+        text = (REPO_ROOT / site).read_text(encoding="utf-8")
+        assert [r for r, _ in breaks(site, text, notes=[])] == []
+        assert MEMORY_CAP_RULE in [r for r, _ in breaks("task-packs/ledger.d/DEF-9.md", text, notes=[])]
+        assert [r for r, _ in breaks(site, text + text, notes=[])] == [MEMORY_CAP_RULE]
+
+    def test_each_rule_a_break_names_is_a_test_that_exists(self):
+        """The verb names a break by its owning test's node id; a renamed or
+        moved test would leave it naming nothing. Mutation: a rule constant
+        spelled off its test."""
+        import tests._ledger_rules as rules
+        from tests.test_doc_test_citations import _symbol_phantom
+        names = [v for k, v in vars(rules).items() if k.endswith("_RULE") and isinstance(v, str)]
+        assert len(names) == 5, names
+        for node in names:
+            path, _, sym = node.partition("::")
+            assert (REPO_ROOT / path).is_file() and not _symbol_phantom(path, sym), node
+
+    def test_one_rule_that_cannot_run_leaves_the_others_running(self, monkeypatch):
+        """Each rule runs on its own: one that raises is a note naming it,
+        and the rest still report. Mutation: one try around all five."""
+        import tests._ledger_rules as rules
+        monkeypatch.setattr(rules, "_cap_breaks", lambda rel, text: 1 / 0)
+        notes: list[str] = []
+        found = rules.breaks("task-packs/ledger.d/DEF-9.md", "| `DEF-9` | a | `tools/cc/no_such_tool.py` |",
+                             notes=notes)
+        assert [r for r, _ in found] == [rules.CITED_PATH_RULE], found
+        assert notes == [f"{rules.MEMORY_CAP_RULE} was not run (ZeroDivisionError: division by zero)"], notes
+
+
+@pytest.mark.contract
+class TestTheShippedVerbRunsTheRealRules:
+    """The seam the stubs stand in for, driven as a maintainer runs it: the
+    verb as a subprocess over this tree, from another folder, with nothing
+    added to its import path, so a rule that cannot import or run there reds
+    here instead of turning into a note the filing scrolls past. Pins every
+    rule reaching the verb, because each break is named by its test."""
+
+    def test_a_dry_run_filing_names_all_five_rules_and_runs_every_one(self, tmp_path):
+        if not (REPO_ROOT / ".git").exists() or not (REPO_ROOT / "tests" / "_ledger_rules.py").is_file():
+            pytest.skip("needs this repository's own checkout: its rules, and git's list of tracked files")
+        from tests._ledger_rules import (BYPASS_ROSTER_RULE, CITED_PATH_RULE, LITERAL_SPAWN_RULE,
+                                         MEMORY_CAP_RULE, PAPERWORK_PROBE_RULE, maintenance_bypass_callers)
+        from tests._surface_expected import EXPECTED_MEMORY_MD_CAP
+        hooks = sorted(maintenance_bypass_callers())[:2]
+        body = tmp_path / "row.md"
+        body.write_text(f"**A drafted row.** `ESPALIER_MAINTENANCE_MODE` lifts {hooks[0]} and {hooks[1]}; the "
+                        f"memory file is capped at {EXPECTED_MEMORY_MD_CAP} lines; see `tools/cc/no_such_tool.py`.",
+                        encoding="utf-8")
+        probe = ("python3 -c \"import subprocess;subprocess.run(['python3','-c','0']);"
+                 "print(open('README.md').read().count('Espalier')>0)\"")
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+        proc = subprocess.run(
+            [sys.executable, str(REPO_ROOT / "tools" / "cc" / "ledger_row.py"), "--root", str(REPO_ROOT),
+             "--dry-run", "file", "DEF-999999", "--section", "C0", "--anchor", "a", "--text-file", str(body),
+             "--severity", "nit", "--subject", "README.md", "--probe-cmd", probe, "--open-value", "True",
+             "--population", "HYGIENE", "--audience", "MAINTAINER"],
+            cwd=tmp_path, env=env, capture_output=True, text=True, encoding="utf-8", timeout=120)
+        named = {rule for rule in (BYPASS_ROSTER_RULE, MEMORY_CAP_RULE, CITED_PATH_RULE, PAPERWORK_PROBE_RULE,
+                                   LITERAL_SPAWN_RULE) if f"content rule, {rule}:" in proc.stderr}
+        assert len(named) == 5, proc.stderr
+        assert "not run" not in proc.stderr and "could not be" not in proc.stderr, proc.stderr
