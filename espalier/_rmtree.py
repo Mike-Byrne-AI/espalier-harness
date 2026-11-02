@@ -19,10 +19,12 @@ so the next site cannot regrow the class one call at a time.
 The rule the handler follows: **clear bits only on what you were asked to
 delete.** A refusal is answered by adding the owner write bit to the path that
 refused and retrying once. For a tree, the refusing path's PARENT is cleared
-too when that parent is inside the tree (a locked directory inside the tree
-refuses the unlink of every child on POSIX, which is the shape this host can
-produce); the tree's own parent is not ours and is never touched, so a tree
-under a read-only directory reports rather than reaches outside itself. For a
+too when that parent is inside the tree or is the tree itself (a locked
+directory inside the tree refuses the unlink of every child on POSIX, which is
+the shape this host can produce, and the tree's own root is part of the ask:
+ledger ``DEF-3023``); the tree's own parent is not ours and is never touched,
+so a tree under a read-only directory reports rather than reaches outside
+itself. For a
 single file the file is what was asked for; its directory is not. On Windows
 the attribute lives on the file, so the file's own bit is the fix there. A
 link is what was asked for and what it names is not: its bits are read and
@@ -195,9 +197,10 @@ def _make_handler(
             return
         _add_write_bit(path)
         parent = os.path.dirname(path) or os.curdir
-        if _is_inside(root, parent):
-            # A locked directory INSIDE the tree refuses every child's
-            # unlink on POSIX; the tree's own parent is not ours to touch.
+        if _key(parent) == _key(root) or _is_inside(root, parent):
+            # A locked directory inside the tree, or the tree itself, refuses
+            # every child's unlink on POSIX; the tree's own parent is not ours
+            # to touch.
             _add_write_bit(parent)
         try:
             func(path)
@@ -248,7 +251,7 @@ def remove_tree(path: Path | str, *, best_effort: bool = False) -> None:
 
     A file or directory inside the tree whose bits refuse the delete is
     chmod'ed writable (itself, and its parent when the parent is inside the
-    tree) and the delete retried once; a directory the walk cannot enter
+    tree or is the tree) and the delete retried once; a directory the walk cannot enter
     gets its owner bits back and is walked again, once. A second refusal raises, unless
     ``best_effort`` is set, in which case the tree is left as far as it got
     -- the ``ignore_errors=True`` contract for callers that must not raise a

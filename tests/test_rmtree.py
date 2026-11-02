@@ -511,6 +511,25 @@ class TestTheHandler:
         handler(self._retry_func([]), str(root), PermissionError(errno.EACCES, "refused", str(root)))
         assert chmods == [str(root)], chmods
 
+    @pytest.mark.parametrize("spelling", ["native", "forward_slashes"])
+    def test_the_root_is_cleared_as_a_refusing_childs_parent(self, tmp_path, monkeypatch, spelling):
+        """The tree's own root is part of the ask (DEF-3023). A ``build/`` at
+        0o500 holding a subdirectory refuses that subdirectory's ``rmdir`` on
+        POSIX, since the root's write bit governs it, so the root gets the
+        bit as a directory inside the tree does, however the root was
+        spelled; the root's own parent never does (the row above)."""
+        root = tmp_path / "tree"
+        (root / "sub").mkdir(parents=True)
+        chmods: list[str] = []
+        real_chmod = os.chmod
+        monkeypatch.setattr(os, "chmod", lambda p, m, **k: (chmods.append(str(p)), real_chmod(p, m, **k)))
+        calls: list = []
+        child = str(root / "sub")
+        handler = _rmtree._make_handler(False, root.as_posix() if spelling == "forward_slashes" else str(root))
+        handler(self._retry_func(calls), child, PermissionError(errno.EACCES, "refused", child))
+        assert calls == [child], "retried exactly once"
+        assert chmods == [child, str(root)], chmods
+
     def test_a_second_refusal_raises_strict(self, tmp_path):
         target = tmp_path / "f"
         target.write_text("x", encoding="utf-8")

@@ -747,6 +747,54 @@ def test_neither_twin_lends_a_refused_links_target_the_write_bit(tmp_path):
     assert modes == {"twin": stat.S_IRUSR, "engine": stat.S_IRUSR}
 
 
+@pytest.mark.skipif(os.name == "nt", reason="the POSIX arm: a directory's write bit refuses its children's unlink")
+@pytest.mark.parametrize("walk", ["fd", "scandir"])
+def test_both_twins_remove_a_locked_build_holding_a_subdirectory(tmp_path, monkeypatch, walk):
+    """DEF-3023 in both deleters, driven alike: ``build/`` at 0o500 holding
+    ``lib/``. Its write bit refuses ``lib``'s ``rmdir``, and ``build`` is the
+    tree's own root, which is part of the ask, so each gives it the bit and
+    removes the tree; ``keep.txt`` stays. RED while the engine reads the root
+    as outside the tree (a ``PermissionError`` on ``build/lib``). A root
+    holding only files is no oracle from 3.12.4, whose fd walk hands the
+    refused unlink back as a failure to enter the root, which the walk-again
+    arm answers on every version."""
+    from tests.test_rmtree import force_walk
+
+    force_walk(walk, monkeypatch)
+    for name, clear in (("twin", wheel_smoke._clear_stale_packaging_state),
+                        ("engine", clear_stale_packaging_state)):
+        root = tmp_path / name
+        lib = root / "build" / "lib"
+        lib.mkdir(parents=True)
+        (lib / "x.py").write_text("x = 1\n", encoding="utf-8")
+        (root / "keep.txt").write_text("keep\n", encoding="utf-8")
+        with locked(root / "build", stat.S_IRUSR | stat.S_IXUSR):
+            assert clear(root) == [root / "build"], name
+            assert sorted(os.listdir(root)) == ["keep.txt"], name
+            (root / "build").mkdir()  # for ``locked`` to restore onto
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the POSIX arm: a directory's write bit refuses its children's unlink")
+def test_both_twins_leave_a_locked_repository_root_and_report(tmp_path):
+    """The tree's parent is not ours, in both deleters alike: with the
+    repository root at 0o500 each empties ``build/`` (inside the ask), is
+    refused the final ``rmdir`` and raises ``PermissionError``, and the root's
+    bits are as set. RED while the twin reads that refusal's path as a str:
+    ``rmtree`` hands the tree's own root back as the ``Path`` it was given
+    (``AttributeError``, DEF-3023)."""
+    for name, clear in (("twin", wheel_smoke._clear_stale_packaging_state),
+                        ("engine", clear_stale_packaging_state)):
+        root = tmp_path / name
+        lib = root / "build" / "lib"
+        lib.mkdir(parents=True)
+        (lib / "x.py").write_text("x = 1\n", encoding="utf-8")
+        with locked(root, stat.S_IRUSR | stat.S_IXUSR):
+            with pytest.raises(PermissionError):
+                clear(root)
+            assert stat.S_IMODE(os.stat(root).st_mode) == stat.S_IRUSR | stat.S_IXUSR, name
+            assert os.listdir(root / "build") == [], name
+
+
 @pytest.mark.parametrize("no_follow,bare_is_the_links,link_calls,file_calls", [
     (True, False, [{"follow_symlinks": False}], [{"follow_symlinks": False}]),
     (False, True, [{}], [{}]),

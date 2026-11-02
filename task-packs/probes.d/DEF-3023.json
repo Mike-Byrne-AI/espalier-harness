@@ -4,7 +4,7 @@
  "cmd": null,
  "open_value": null,
  "why_not": "a root without its write bit needs POSIX, which this Windows host cannot make; the locked-root case the fix adds to the parity tree is the oracle",
- "row_sha": "7c0545063297",
- "text_sha": "f93c509191f4",
- "verified_2026_11_02": "OPEN (filed 2026-11-02; probe driven at filing)"
+ "row_sha": "9cfb0a325a44",
+ "text_sha": "e8fd4b9b2bd6",
+ "verified_2026_11_02": "STILL_OPEN (re-pinned value unchanged on 2026-11-02: the text's 3.12.3 drive covers the recursive walk alone; the subdirectory shape is the oracle on 3.10 to 3.14 and the fix shape is ruled (note 1b32ca)) [changed: text]"
 }
