@@ -10,11 +10,22 @@ drafted row before it writes, and in its dry run, naming the rule by the test
 that owns it. A tree without this file (an adopter's) runs no rule, since the
 rules are this repository's own.
 
-Stdlib and the suite's light helpers only, never pytest: the verb imports it
-outside a test session. Two rules run, the two the row's anchor names: the
-maintenance switch named beside two or more of its bypass hooks but not all
-(``TestBypassRosterCarriers``), and a restated memory line cap
-(``TestMemoryCapPopulation``).
+Stdlib and the suite's light helpers only, never pytest at import: the verb
+imports it outside a test session. Five rules run. Over the drafted row's text:
+the maintenance switch named beside two or more of its bypass hooks but not all
+(``TestBypassRosterCarriers``), a restated memory line cap
+(``TestMemoryCapPopulation``), and a cited production-source path or symbol
+the tree does not hold (``TestDocSourceCitations``). Over the drafted probe:
+the probe-shape ratchet's two rules (``TestProbeShapesAreRatcheted``), a probe
+that reads text out of its own subject and one whose program spawns a bare
+interpreter, each with its per-id baseline, which lives here. The cited-path
+rule calls its finder where it lives, in a test module that imports pytest,
+and only when that rule runs: its resolver's caches and root are globals the
+sibling module's own tests patch, so moving it would leave those patches
+patching nothing. Where it cannot run, the others still do and it says so.
+Not run here: a pack id the tree cannot resolve and a relative link the
+release archive does not hold, whose baselines are locals of their tests'
+bodies or whose presence is an extracted archive's (DEF-1121's successor row).
 """
 from __future__ import annotations
 
@@ -29,6 +40,11 @@ HOOKS_DIR = _ROOT / "tools" / "cc" / "hooks"
 #: The owning test of each rule, the name a break is reported under.
 BYPASS_ROSTER_RULE = "tests/test_maintenance_mode.py::TestBypassRosterCarriers"
 MEMORY_CAP_RULE = "tests/test_documented_claims.py::TestMemoryCapPopulation"
+CITED_PATH_RULE = "tests/test_doc_source_citations.py::TestDocSourceCitations::test_every_source_citation_resolves"
+PAPERWORK_PROBE_RULE = ("tests/test_check_ledger_probes.py::TestProbeShapesAreRatcheted::"
+                        "test_no_new_probe_is_satisfiable_by_its_own_fixs_paperwork")
+LITERAL_SPAWN_RULE = ("tests/test_check_ledger_probes.py::TestProbeShapesAreRatcheted::"
+                      "test_no_new_probe_spawns_a_literal_interpreter_inside_its_program")
 
 
 def maintenance_bypass_callers(hooks_dir: Path = HOOKS_DIR,
@@ -151,15 +167,239 @@ def cap_restatements(text: str) -> list[str]:
     return [m.group(0) for line in text.splitlines() for m in matcher.finditer(line)]
 
 
-def breaks(rel: str, text: str, *, hooks_dir: Path = HOOKS_DIR) -> list[tuple[str, str]]:
+# The probe-shape ratchet (``tests/test_check_ledger_probes.py``,
+# ``TestProbeShapesAreRatcheted``): its baselines and detectors, read by the
+# ratchet over the live roster and by the verb over a drafted probe. The
+# strike verb finds an id here by parsing this file, as it does the probe
+# test's own tables (DEF-1172), so each table stays a literal set.
+
+#: Probes reading their own subject's TEXT, measured 2026-09-02 over 222.
+#: Shrink this set freely; every addition needs a reason in the diff.
+#:
+#: DEF-672 is the one deliberate addition since. Its row's DELIVERABLE is
+#: text -- four items dropped from a runbook have to be written back -- so a
+#: text predicate is the honest oracle rather than a shortcut. It is keyed on
+#: the stray-tag sweep's COMMAND (`for-each-ref` + `refs/tags`), not on the
+#: topic, so prose about lightweight tags does not close it; only restoring
+#: the command does. That narrowing is what earns the baseline slot.
+#:
+#: Shrunk 2026-09-20 by the third rebuild's live write (TP-452 1-D): seven
+#: ids left with their rows -- DEF-451, DEF-529, DEF-581, DEF-6, DEF-666 and
+#: LG-8 struck by the rebuild's adjudication, TP-332 re-keyed to DEF-864 by
+#: the structural cut (same probe, same slot, carried below, not added) --
+#: and the five text probes 1-C had filed (DEF-857, 858, 859, 861, 862) were
+#: re-pointed at `ast` predicates by `ledger_row.py repin --probe-cmd`
+#: instead of being baselined, so the set did not grow.
+# DEF-625 left this set on 2026-09-26 with its row (struck by TP-457 4-A when the
+# dated review scaffolds stayed in the archive).
+# DEF-487 left this set on 2026-10-04 with its row (struck: the wheel-metadata
+# licence test it asked for had landed with v0.8.0b2).
+# DEF-479, DEF-489 and DEF-663 left this set on 2026-10-06 with their rows
+# (struck by lane c28-test-tree-enumeration: the hidden-name predicate and
+# the churn roster; their probes keyed on a spelling of the fix).
+# DEF-343a left this set on 2026-10-08 with its row (struck by lane
+# ledger-oldest-a: the actionability checks tightened; its probe keyed on the
+# old regex's spelling).
+# DEF-4065 and DEF-4066 left this set on 2026-10-31 with their rows (struck by
+# lane the-deployed-censuses-read-the-adopters-own-files: the code-reviewer's
+# census reads the adopter's modules, and the census walk prunes what the
+# harness wrote on the tree; each struck on a guard red at the base).
+# DEF-4070 left this set on 2026-10-31 with its row (struck by lane
+# the-reap-reads-a-pids-checkout-before-a-kill: the reap recipe reads a
+# pid's cwd and parents before a kill, and the Loose: line names the
+# checkout; struck on a guard red at the base).
+TEXT_OVER_OWN_SUBJECT = {
+    "CONV-3", "DEC-29", "DEF-20",
+    # DEF-378a and DEF-661 left on 2026-10-09 with their rows (struck by lane
+    # ledger-decisions on the operator's calls: a check that a pack-led row
+    # names a pack in flight; the census's declared limit).
+    "DEF-346c",
+    # DEF-383b left on 2026-10-16 with its row (struck by lane
+    # wired-interpreter-argv: doctor asks the remedy once per call; its
+    # probe counted the call's spelling in the function's text).
+    "DEF-392c", "DEF-392d",
+    "DEF-393a", "DEF-400b", "DEF-413a", "DEF-415b",
+    "DEF-415f", "DEF-415h", "DEF-416b",
+    "DEF-417h", "DEF-418b", "DEF-419c",
+    "DEF-419e", "DEF-424b", "DEF-424g", "DEF-437",
+    "DEF-438", "DEF-439", "DEF-449",
+    # DEF-486 and DEF-561 left on 2026-10-30 with their rows (struck by lane
+    # gate-populations-derive-from-the-live-source, the C37 class-fix: the
+    # README's skip list is a generated region; the status guard reads the
+    # gate_details spelling; their probes keyed on the old text's spelling).
+    "DEF-450", "DEF-476", "DEF-477", "DEF-483", "DEF-485", "DEF-488",
+    # DEF-519 and DEF-593 left on 2026-10-08 with their rows (struck by lane
+    # ledger-oldest-c: contract rule 2 names the live gate; the index parser
+    # names the rows it cannot read).
+    "DEF-516",
+    "DEF-523", "DEF-543",
+    "DEF-564",
+    "DEF-576", "DEF-579", "DEF-588", "DEF-590", "DEF-623", "DEF-629",
+    "DEF-644",  # DEF-631 struck 2026-10-09 (the landing-gate lane); its probe retired with it
+    "DEF-645", "DEF-649", "DEF-660",
+    # DEF-662 left on 2026-10-08 with its row (struck by lane
+    # ledger-oldest-b: the doc-to-probe direction landed).
+    "DEF-864",  # TP-332's slot, re-keyed 2026-09-20 (see above)
+    #: DEF-874 (filed 2026-09-21 at the corpus fold): the row's deliverable is the
+    #: wording of a release-checklist headline itself, so the probe quotes the exact
+    #: bulk-push promise the fix must delete (the only occurrence in the file) and no
+    #: enforcer exists to key on instead -- none of the contract test's functions reads
+    #: that headline. DEF-672's shape: same subject file, same reason, earns the slot.
+    #: DEF-885 (filed 2026-09-21 at the corpus fold): the deliverable is the operator
+    #: procedure text of the release checklist's tag-count gate; the contract test pins
+    #: push FORMS only, so no enforcer subject can flip for a doc-only fix. The probe keys
+    #: on the measurement stage line and the code line after it inside the fenced block,
+    #: comments skipped, holding no status guard -- driven: a guard inserted after the
+    #: measurement flips it, a comment inside the block or prose outside it does not.
+    "DEF-885",
+    #: DEF-889 (filed 2026-09-21 at the corpus fold): the deliverable IS a markdown link
+    #: in docs/README.md; the probe reads it through the engine's own link extractor
+    #: (reflect_protocol._extract_local_links), keyed on a link whose target resolves to
+    #: the orphaned doc -- driven: a Reference-table row with that link flips it, a prose
+    #: sentence naming the path does not, so no comment or pointer can satisfy it.
+    "DEF-889",
+    #: DEF-896 and DEF-878 left this set on 2026-09-22: both struck (the link form
+    #: deleted and the archive gate gained an absolute-link arm; the staging check
+    #: re-based on `git diff --name-only` and pinned by the checklist contract), so
+    #: their probes retired and a baseline slot for a retired probe is dead.
+    #: DEF-628, DEF-633, PR-3 and PR-5 left this set on 2026-09-26: struck by the
+    #: first post-cut ledger pack (the 2026-09-25 retiering restated the carve's
+    #: clause and retired the five cost-gate comments; the fold landed with the
+    #: seed), so their probes retired and their slots here were dead.
+    #: SUP-2 left this set on 2026-09-26: struck by TP-457 4-A (the goalie scaffold
+    #: stayed in the archive at the seed), so its probe retired with it.
+    #: DEF-931 (filed 2026-09-26 at the walk-4 fold, TP-458): the row sits in §C20, whose
+    #: rule is "run the verb, then make the sentence match", so the deliverable may be the
+    #: three doc sentences themselves rather than the doctor slice. The probe reads the
+    #: claim out of its own subject beside the engine's slice, and no enforcer keys on
+    #: those sentences. Driven: rewriting one copy leaves the others and the probe stays
+    #: open; it closes only when every copy is gone or doctor's `lacking[:3]` slice is
+    #: widened (read from espalier/doctor.py, a declared input, not from the allow list).
+    "DEF-931",
+    #: DEF-933 (filed 2026-09-26 at the walk-4 fold, TP-458): the deliverable IS the
+    #: 8.3 sentence of known-limit 3 in docs/sharp-edges/protected-zone-path-equivalence.md,
+    #: so the probe quotes its mechanism clause (the only occurrence in the file) and no
+    #: enforcer keys on it. The DEF-672 shape: same reason, earns the slot.
+    "DEF-933",
+    #: DEF-944 (re-keyed 2026-09-29 when its staging half landed): what stays open
+    #: is the commit body prescribing a fixed type list whatever the repository's
+    #: history uses, and the deliverable is that body's text, instructions an agent
+    #: reads, with no code behind them to parse. The probe keys on the type-list
+    #: line itself together with the absence of the `freeform` branch, so a pointer
+    #: or a changelog line does not move it; writing the branch into the body does,
+    #: which is the fix. The DEF-672 shape: same reason, earns the slot. The body
+    #: contract the fix brings (beside the staging one) is what will hold it after.
+    "DEF-944",
+    #: DEF-1002 and DEF-1003 (filed 2026-10-01 from the post-flip review) left this
+    #: set on 2026-10-31: struck by lane first-contact-diagnostics-read-the-adopters-tree
+    #: (their fenced commands, the /analyze coverage loop and the dead-config pass,
+    #: now census the adopter's tree), so their probes retired with them.
+    "LG-12",
+    #: DEF-5058 (filed 2026-11-02 by lane c75-wave-3, re-keyed the same day when this
+    #: ratchet caught its first probe, which counted the NEW reader's name and so
+    #: closed on a "see read_ledger_trend" pointer): the deliverable IS the seed
+    #: protocol's two sentences naming the critic's reader, prose with no code to
+    #: parse. The probe counts the bare `read_ledger` name those sentences carry,
+    #: so a pointer or a changelog line leaves it open; rewording them closes it,
+    #: which is the fix. The DEF-933 shape: same reason, earns the slot.
+    "DEF-5058",
+}
+
+#: Ways a probe reads text rather than asking a structural question. The
+#: first three were the whole shipped detector; the rest are what it missed.
+TEXT_READS = ("findall", "count(", "grep", ".read()", "read_text",
+               "in open(", "splitlines")
+
+#: ⚠ A predicate built on `ast.parse` is STRUCTURAL even though it reads the
+#: file, and exempting it is not a loosening. The trap is that the paperwork
+#: of a fix -- a comment, a changelog line, a "see X" pointer -- satisfies the
+#: predicate while the defect stands. Comments do not survive parsing: they
+#: produce no AST node at all, so no amount of prose moves an assertion about
+#: `ast.Call` or `ast.FunctionDef`. Satisfying one of these takes writing the
+#: code it names, which is the fix.
+#:
+#: The exemption is deliberately narrow -- the command must actually call
+#: `ast.parse(`, not merely mention the module -- and
+#: `test_reading_a_file_to_parse_it_is_not_the_trap` pins both directions, so
+#: a probe that parses AND separately counts vocabulary is still caught.
+STRUCTURAL_READS = ("ast.parse(",)
+
+
+def is_trap_shaped(probe: dict) -> bool:
+    """True when the predicate reads text out of the file its fix edits."""
+    cmd = probe.get("cmd") or ""
+    subject = (probe.get("subject") or "").strip()
+    if not cmd or not subject or subject not in cmd:
+        return False
+    if any(marker in cmd for marker in STRUCTURAL_READS):
+        return False
+    return any(marker in cmd for marker in TEXT_READS)
+
+
+#: Probes whose PROGRAM spawns an interpreter by its bare name -- a
+#: `['python3', ...]` argv inside the -c payload -- which the runner's own
+#: resolution cannot reach (`_under_this_interpreter` rewrites argv[0], not
+#: the program). Both read UNRESOLVED on a python-only host (the inner spawn
+#: raises, rc 1) and can only be re-pinned by the verb on a tree that carries
+#: `task-packs/Done/`, their declared input. Shrink freely; an addition is a
+#: new probe spelling a literal interpreter, and the fix is `sys.executable`
+#: (DEF-751 was re-pinned that way on 2026-09-28).
+SPAWNS_A_LITERAL_INTERPRETER = frozenset({"DEF-411a", "DEF-412h"})
+LITERAL_SPAWN_RE = re.compile(r"""\[\s*['"]python3?['"]\s*,""")
+
+
+def cited_path_phantoms(rel: str, text: str) -> list[tuple[str, str]]:
+    """``(citation, kind)`` for each backtick production-source citation in
+    ``text`` (the row at ``rel``) that the tree does not resolve, through the
+    citation test's own finder and git's list of tracked files, as that test
+    reads a tracked doc: ``kind`` is ``file`` (not tracked) or ``symbol`` (a
+    ``.py`` target that does not define it); a struck row cites the paths of
+    its day and is read as nothing. Raises where the finder cannot be
+    imported, and ``LookupError`` where git lists nothing."""
+    from tests.test_doc_source_citations import _find_source_phantoms, _tracked_files
+
+    tracked = _tracked_files()
+    if not tracked:
+        raise LookupError("`git ls-files` listed nothing in the tree")
+    return [(cite, kind) for _rel, _line, cite, kind in _find_source_phantoms(rel, text.splitlines(), tracked)]
+
+
+def breaks(rel: str, text: str, probe: dict | None = None, *, notes: list[str] | None = None,
+           hooks_dir: Path = HOOKS_DIR) -> list[tuple[str, str]]:
     """``(owning test, what)`` for each content rule the drafted ``text`` at
-    ``rel`` breaks, else ``[]``: the verb's one entry point."""
+    ``rel``, or the drafted ``probe`` entry (its ``id``, ``subject`` and
+    ``cmd``), breaks, else ``[]``: the verb's one entry point. Where the
+    cited-path rule cannot run, it is said in ``notes`` and the others still
+    run; with no ``notes`` the error is raised."""
     found: list[tuple[str, str]] = []
-    for unit, omitted, excl in partial_rosters(rel, text, maintenance_bypass_callers(hooks_dir)):
-        if excl is None:
-            found.append((BYPASS_ROSTER_RULE, f"names the maintenance switch beside some of its bypass hooks but "
-                                              f"omits {sorted(omitted)}: name them all, or none"))
-    for said in cap_restatements(text):
-        found.append((MEMORY_CAP_RULE, f"restates the memory line cap ({said!r}); name ESPALIER_MEMORY.md's cap "
-                                       "without its number"))
+    if text:
+        for unit, omitted, excl in partial_rosters(rel, text, maintenance_bypass_callers(hooks_dir)):
+            if excl is None:
+                found.append((BYPASS_ROSTER_RULE, f"names the maintenance switch beside some of its bypass hooks "
+                                                  f"but omits {sorted(omitted)}: name them all, or none"))
+        for said in cap_restatements(text):
+            found.append((MEMORY_CAP_RULE, f"restates the memory line cap ({said!r}); name ESPALIER_MEMORY.md's "
+                                           "cap without its number"))
+        try:
+            phantoms = cited_path_phantoms(rel, text)
+        except Exception as exc:  # noqa: BLE001 -- a rule that cannot run here is said, never a refusal
+            if notes is None:
+                raise
+            notes.append(f"{CITED_PATH_RULE} was not run ({type(exc).__name__}: {exc})")
+            phantoms = []
+        for cite, kind in phantoms:
+            found.append((CITED_PATH_RULE, f"cites {cite}, a file git does not track (a new file: git add it "
+                                           "first)" if kind == "file" else
+                                           f"cites {cite}, a symbol its file does not define"))
+    if probe and probe.get("cmd"):
+        rid, cmd = probe.get("id") or "", probe["cmd"]
+        if is_trap_shaped(probe) and rid not in TEXT_OVER_OWN_SUBJECT:
+            found.append((PAPERWORK_PROBE_RULE, f"the probe reads text out of its own subject "
+                                                f"({probe.get('subject')}), so a comment or a changelog line "
+                                                "closes it while the defect stands; ask a structural question "
+                                                "(an ast.parse predicate) or read another file"))
+        if LITERAL_SPAWN_RE.search(cmd) and rid not in SPAWNS_A_LITERAL_INTERPRETER:
+            found.append((LITERAL_SPAWN_RULE, "the probe's program spawns a bare python or python3, which the "
+                                              "runner's interpreter resolution cannot reach; spell "
+                                              "sys.executable there"))
     return found

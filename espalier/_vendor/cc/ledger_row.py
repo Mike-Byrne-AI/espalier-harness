@@ -1122,43 +1122,54 @@ def _deferrals_into(ledger: Path, ids: list[str]) -> list[str]:
     return hits
 
 
-#: The probe test's hand-kept per-id tables over the live probes: all three
-#: (`_NAMED_NOT_READ`, `_TEXT_OVER_OWN_SUBJECT`, `_SPAWNS_A_LITERAL_INTERPRETER`)
-#: sit in this one file, and the other id-holding constants under tests/ are
-#: fixtures over scratch ledgers (measured 2026-10-18, DEF-1172).
-_PROBE_BASELINES = Path("tests") / "test_check_ledger_probes.py"
+#: The hand-kept per-id tables over the live probes: `_NAMED_NOT_READ` in the
+#: probe test, and the probe-shape ratchet's two baselines
+#: (`TEXT_OVER_OWN_SUBJECT`, `SPAWNS_A_LITERAL_INTERPRETER`) in the ledger
+#: content rules the test and this verb share since DEF-1121; the other
+#: id-holding constants under tests/ are fixtures over scratch ledgers
+#: (measured 2026-10-18, DEF-1172).
+_PROBE_BASELINES = (Path("tests") / "test_check_ledger_probes.py", Path("tests") / "_ledger_rules.py")
 
 
 def _baselined_in_tests(root: Path, ids: list[str]) -> list[str]:
-    """Where the probe test's per-id tables still hold an id of ``ids`` (the ids
-    whose probe this strike retires), as ``path:line: TABLE holds ID``.
+    """Where the per-id tables over the live probes still hold an id of
+    ``ids`` (the ids whose probe this strike retires), as ``path:line: TABLE
+    holds ID``.
 
     ``DEF-1172``: the strike retired the probe and read nothing under
     ``tests/``, so the id stayed in a baseline over the live probes, and that
     table's dead-entry check went red on a later run, in a lane that never
     touched the file (``DEF-940`` on 2026-09-29, ``DEF-884`` on 2026-10-07).
-    The tables are found by parsing the file, never by name: every upper-case
+    The tables are found by parsing each file of ``_PROBE_BASELINES``, never by
+    name: every upper-case
     constant assigned directly in the module body or in a class body (any class,
     nested ones too) whose value is a dict (its keys) or a set of strings
     (``{...}``, ``set(...)``, ``frozenset(...)``). A bare list or tuple is an
     argument vector or a word list, not a table, and is not read; nor is a table
     built under an ``if`` or ``try``, by a comprehension or by a set operation,
-    shapes none of the three uses (pinned against the live file by
+    shapes none of the three uses (pinned against the live files by
     ``tests/test_check_ledger_probes.py``). Each hit names the line of the id
-    itself, since one line can hold several. No file (an adopter's tree, a
-    release export) reads nothing; a file that does not parse is named and read
-    as nothing, since the suite reds on it louder than this could."""
-    path = root / _PROBE_BASELINES
-    if not ids or not path.is_file():
+    itself, since one line can hold several. A file that is not there (an
+    adopter's tree, a release export) reads nothing; one that does not parse is
+    named and read as nothing, since the suite reds on it louder than this
+    could."""
+    if not ids:
         return []
-    rel = _PROBE_BASELINES.as_posix()
+    hits: list[str] = []
+    for rel_path in _PROBE_BASELINES:
+        if (root / rel_path).is_file():
+            hits += _baselined_in(root / rel_path, rel_path.as_posix(), set(ids))
+    return hits
+
+
+def _baselined_in(path: Path, rel: str, wanted: set[str]) -> list[str]:
+    """``_baselined_in_tests``'s read of one file."""
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel)
     except (SyntaxError, ValueError, UnicodeDecodeError) as exc:
         print(f"ledger_row: note: {rel} does not parse ({exc}), so its per-id baselines were not read",
               file=sys.stderr)
         return []
-    wanted = set(ids)
     hits: list[str] = []
     for body in (tree.body, *(n.body for n in ast.walk(tree) if isinstance(n, ast.ClassDef))):
         for st in body:
@@ -2727,9 +2738,9 @@ def main(argv: list[str] | None = None) -> int:
     # by the test that owns the rule, and the dry run names it as the claims'
     # refusals are named above. --override is the claims' alone: a break reds
     # the contract tier whatever this verb writes.
-    if drafted := _drafted_row(args):
-        breaks, note = _content_rule_breaks(root, *drafted)
-        if note:
+    if drafted := _drafted_row(args, probes=probes):
+        breaks, notes = _content_rule_breaks(root, *drafted)
+        for note in notes:
             print(f"ledger_row: note -- {note}", file=sys.stderr)
         for line in breaks:
             print(f"ledger_row: {'dry run' if args.dry_run else 'refused'} -- the drafted row breaks a ledger "
@@ -2753,51 +2764,80 @@ def main(argv: list[str] | None = None) -> int:
 _RULES_REL = "tests/_ledger_rules.py"
 
 
-def _content_rule_breaks(root: Path, rel: str, text: str) -> tuple[list[str], str]:
-    """``(breaks, note)``: each ledger content rule the drafted ``text`` (the
-    row at ``rel``) breaks, as ``<owning test>: <what>``, from the predicates
+def _content_rule_breaks(root: Path, rel: str, text: str,
+                         probe: dict | None = None) -> tuple[list[str], list[str]]:
+    """``(breaks, notes)``: each ledger content rule the drafted ``text`` (the
+    row at ``rel``, empty where only the probe changes) or the drafted
+    ``probe`` entry breaks, as ``<owning test>: <what>``, from the predicates
     the tests own (``tests/_ledger_rules.py`` in ``root``, loaded by path with
-    ``root`` first on the import path), and a note where that file is there
-    and could not be run. A tree without it runs none and says nothing: the
-    rules are about Espalier's own docs. Until DEF-1121 they lived in test
-    methods alone, so a row that broke one was written, converged and redded
-    only in the contract tier, each red a repin and another tier run."""
-    path = root / _RULES_REL
-    if not path.is_file():
-        return [], ""
+    ``root`` first on the import path), and a note for each rule that is there
+    and could not be run. A tree without that file (an adopter's: the rules
+    are about Espalier's own docs) runs none, and a note says so. Until
+    DEF-1121 they lived in test methods alone, so a row that broke one was
+    written, converged and redded only in the contract tier, each red a repin
+    and another tier run."""
+    if not (root / _RULES_REL).is_file():
+        return [], [f"the ledger content rules were not run: this tree holds no {_RULES_REL} "
+                    "(they are Espalier's own rules about its docs)"]
     added = str(root) not in sys.path
     if added:
         sys.path.insert(0, str(root))
+    notes: list[str] = []
     try:
-        spec = importlib.util.spec_from_file_location("_espalier_ledger_rules", path)
+        # The path spelled whole in the call: the contract that no shipped
+        # root imports tests/ reads this load by its literal and declares it
+        # (tests/test_contracts.py::TestShippedRootsDoNotImportTests._SANCTIONED).
+        spec = importlib.util.spec_from_file_location("_espalier_ledger_rules",
+                                                      root / "tests" / "_ledger_rules.py")
         if spec is None or spec.loader is None:
-            return [], f"the ledger content rules in {_RULES_REL} could not be loaded"
+            return [], [f"the ledger content rules in {_RULES_REL} could not be loaded"]
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        found = mod.breaks(rel, text)
+        found = mod.breaks(rel, text, probe, notes=notes)
     except Exception as exc:  # noqa: BLE001 -- a rule that cannot run is a note, never a refusal
-        return [], (f"the ledger content rules in {_RULES_REL} could not be run "
-                    f"({type(exc).__name__}: {_load('_json_safe').os_error_text(exc)})")
+        return [], [f"the ledger content rules in {_RULES_REL} could not be run "
+                    f"({type(exc).__name__}: {_load('_json_safe').os_error_text(exc)})"]
     finally:
         if added and str(root) in sys.path:
             sys.path.remove(str(root))
-    return [f"{node}: {what}" for node, what in found], ""
+    return [f"{node}: {what}" for node, what in found], notes
 
 
-def _drafted_row(args: argparse.Namespace) -> tuple[str, str] | None:
-    """``(rel, line)``: the text a writing verb is about to put on a row, as
-    one table row (its anchor beside it where one is given), and the row
-    file's path; None where the verb writes no text or the file cannot be
-    read (the verb's own read says so)."""
-    text_file = getattr(args, "text_file", None)
-    if args.verb not in ("file", "repin", "strike") or not text_file:
+def _drafted_row(args: argparse.Namespace, *, probes: Path) -> tuple[str, str, dict | None] | None:
+    """``(rel, line, probe)``: the text a writing verb is about to put on a
+    row, as one table row (its id cell, struck for a strike, and its anchor
+    beside it where one is given; empty where no text is given), the row
+    file's path, and the probe entry a ``file`` or ``repin`` is about to
+    write (its ``id``, ``subject`` and ``cmd``; a repin's unchanged half read
+    from the row's probe), else None; None where the verb writes neither, or
+    the text file cannot be read (the verb's own read says so)."""
+    if args.verb not in ("file", "repin", "strike"):
         return None
-    try:
-        text = Path(text_file).read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+    rid = args.rid or "NEW"
+    line = ""
+    if text_file := getattr(args, "text_file", None):
+        try:
+            text = Path(text_file).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return None
+        id_cell = f"~~`{rid}`~~" if args.verb == "strike" else f"`{rid}`"
+        cells = [c for c in (id_cell, getattr(args, "anchor", None), text.strip().replace("\n", " ")) if c]
+        line = "| " + " | ".join(cells) + " |"
+    probe = None
+    cmd, subject = getattr(args, "probe_cmd", None), getattr(args, "subject", None)
+    if args.verb == "file" and cmd:
+        probe = {"id": rid, "subject": subject or "", "cmd": cmd}
+    elif args.verb == "repin" and (cmd or subject):
+        try:
+            held = _probe_entry(rid, probes=probes, data={"probes": []}) or next(
+                (p for p in _FRAG.probe_roster_at(probes).data.get("probes", [])
+                 if isinstance(p, dict) and p.get("id") == rid), {})
+        except (OSError, ValueError):
+            held = {}
+        probe = {"id": rid, "subject": subject or held.get("subject") or "", "cmd": cmd or held.get("cmd") or ""}
+    if not line and probe is None:
         return None
-    cells = [c for c in (getattr(args, "anchor", None), text.strip().replace("\n", " ")) if c]
-    return f"task-packs/ledger.d/{args.rid or 'NEW'}.md", "| " + " | ".join(cells) + " |"
+    return f"task-packs/ledger.d/{rid}.md", line, probe
 
 
 def _mint(kind: str, *, ledger: Path, probes: Path, root: Path, dry_run: bool) -> tuple[str, str] | None:

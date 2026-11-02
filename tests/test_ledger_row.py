@@ -2843,10 +2843,15 @@ class TestAFilingDrivesTheProbeWhereAStrikeWill:
 
 
 _STUB_RULES = '''\
-def breaks(rel, text):
+def breaks(rel, text, probe=None, notes=None):
+    found = []
     if "FORBIDDEN" in text:
-        return [("tests/test_x.py::TestRule", "says the forbidden word in " + rel)]
-    return []
+        found.append(("tests/test_x.py::TestRule", "says the forbidden word in " + rel))
+    if probe and "MARK" in probe["cmd"]:
+        found.append(("tests/test_x.py::TestProbe", "probe " + probe["id"] + " over " + probe["subject"]))
+    if "NOTE" in text:
+        notes.append("a rule did not run here")
+    return found
 '''
 
 
@@ -2899,12 +2904,65 @@ class TestTheContentRulesRunBeforeTheWrite:
         refuses the filing."""
         self._rules(tree)
         assert self._file(lr, tree) == 0
-        self._rules(tree, "def breaks(rel, text):\n    raise RuntimeError('the rule broke')\n")
+        self._rules(tree, "def breaks(rel, text, probe=None, notes=None):\n    raise RuntimeError('the rule broke')\n")
         assert lr.main(_args(tree, "--root", str(tree["ledger"].parents[1]), "file", "DEF-5",
                              "--section", "C1", "--after", "DEF-4", "--anchor", "a",
                              "--text-file", str(tree["body"]), "--severity", "nit", "--subject", "a",
                              "--why-not", "no local oracle")) == 0
         assert "could not be run (RuntimeError: the rule broke)" in capsys.readouterr().err
+
+    def test_a_drafted_probe_reaches_the_rules_and_is_refused_by_the_owning_test(self, lr, tree, capsys):
+        """The probe-shape rules read the probe a filing is about to write,
+        its id and subject beside its command. Mutation: the drafted probe
+        not handed to the rules (the filing goes on to drive it)."""
+        self._rules(tree)
+        assert lr.main(_args(tree, "--root", str(tree["ledger"].parents[1]), "file", "DEF-4",
+                             "--section", "C1", "--after", "DEF-2", "--anchor", "a",
+                             "--text-file", str(tree["body"]), "--severity", "nit", "--subject", "s.py",
+                             "--probe-cmd", "echo MARK", "--open-value", "MARK")) == 2
+        assert ("refused -- the drafted row breaks a ledger content rule, tests/test_x.py::TestProbe: probe "
+                "DEF-4 over s.py") in capsys.readouterr().err
+        assert not (tree["ledger"].parent / "ledger.d" / "DEF-4.md").exists()
+
+    def test_a_rules_note_is_printed_and_the_row_still_files(self, lr, tree, capsys):
+        """A rule that cannot run in this tree says so through ``notes``
+        while the others run. Mutation: the notes dropped."""
+        self._rules(tree)
+        tree["body"].write_text("**A defect.** NOTE.", encoding="utf-8")
+        assert self._file(lr, tree) == 0
+        assert "ledger_row: note -- a rule did not run here" in capsys.readouterr().err
+
+    def test_a_tree_without_the_rules_says_none_ran(self, lr, tree, capsys):
+        """An adopter's tree holds no rules file: the row files, and one line
+        says the content rules were not run and why, so a skip is never
+        silence. Mutation: the note dropped (the dry run printed nothing)."""
+        assert self._file(lr, tree, "--dry-run") == 0
+        assert ("note -- the ledger content rules were not run: this tree holds no tests/_ledger_rules.py"
+                in capsys.readouterr().err)
+
+    def test_the_drafted_row_is_the_row_each_verb_writes(self, lr, tree):
+        """A strike's row is drafted struck, so the cited-path rule reads it
+        as the record the test exempts; a repin's probe takes its unchanged
+        half from the row's probe. Mutation: the id cell left out or never
+        struck; a repin's subject or command left empty."""
+        import argparse
+        ns = argparse.Namespace
+        strike = lr._drafted_row(ns(verb="strike", rid="DEF-1", text_file=str(tree["closing"]), anchor=None),
+                                 probes=tree["probes"])
+        assert strike[1].startswith("| ~~`DEF-1`~~ | landed in abc123") and strike[2] is None, strike
+        filed = lr._drafted_row(ns(verb="file", rid="DEF-4", text_file=str(tree["body"]), anchor="a",
+                                   probe_cmd=None, subject="s.py"), probes=tree["probes"])
+        assert filed == ("task-packs/ledger.d/DEF-4.md", "| `DEF-4` | a | **A new defect.** Who: an adopter. |",
+                         None), filed
+        moved = lr._drafted_row(ns(verb="repin", rid="DEF-1", text_file=None, anchor=None, probe_cmd=None,
+                                   subject="other.py"), probes=tree["probes"])
+        assert moved == ("task-packs/ledger.d/DEF-1.md", "", {"id": "DEF-1", "subject": "other.py",
+                                                               "cmd": "echo a"}), moved
+        recut = lr._drafted_row(ns(verb="repin", rid="DEF-2", text_file=None, anchor=None, probe_cmd="echo c",
+                                   subject=None), probes=tree["probes"])
+        assert recut[2] == {"id": "DEF-2", "subject": "site", "cmd": "echo c"}, recut
+        assert lr._drafted_row(ns(verb="repin", rid="DEF-2", text_file=None, anchor=None, probe_cmd=None,
+                                  subject=None), probes=tree["probes"]) is None
 
     def test_the_real_rules_name_a_partial_roster_and_a_restated_cap(self):
         """The predicates the owning tests run, read over drafted row text:
@@ -2923,3 +2981,28 @@ class TestTheContentRulesRunBeforeTheWrite:
         capped = f"| the memory file is capped at {EXPECTED_MEMORY_MD_CAP} lines |"
         assert [r for r, _ in breaks(rel, capped)] == [MEMORY_CAP_RULE]
         assert breaks(rel, "| the memory file stays under its line cap |") == []
+
+    def test_the_real_rules_name_a_phantom_citation_and_both_probe_shapes(self):
+        """The cited-path rule reads a drafted row as its test reads a doc
+        (a file git does not track, a symbol its file does not define, a
+        struck row read as the record it is), and the probe-shape ratchet
+        reads a drafted probe with its baselines (a text read of its own
+        subject, a bare interpreter spawned inside the program, each let
+        through for an id its baseline holds). Mutation: any of the three
+        dropped from ``breaks``, or a baseline not consulted."""
+        from tests._ledger_rules import (CITED_PATH_RULE, LITERAL_SPAWN_RULE, PAPERWORK_PROBE_RULE,
+                                         SPAWNS_A_LITERAL_INTERPRETER, TEXT_OVER_OWN_SUBJECT, breaks)
+        rel = "task-packs/ledger.d/DEF-9.md"
+        cites = "| `DEF-9` | a | `tools/cc/no_such_tool.py` and `tools/cc/ledger_row.py::no_such_verb` |"
+        assert [(r, w.split(",")[0]) for r, w in breaks(rel, cites)] == [
+            (CITED_PATH_RULE, "cites `tools/cc/no_such_tool.py`"),
+            (CITED_PATH_RULE, "cites `tools/cc/ledger_row.py::no_such_verb`")]
+        assert breaks(rel, "| `DEF-9` | a | `tools/cc/ledger_row.py::main` |") == []
+        assert breaks(rel, "| ~~`DEF-9`~~ | a | `tools/cc/no_such_tool.py` |") == []
+        reads = {"id": "DEF-9", "subject": "docs/X.md", "cmd": "grep -c x docs/X.md"}
+        assert [r for r, _ in breaks(rel, "", reads)] == [PAPERWORK_PROBE_RULE]
+        assert breaks(rel, "", {**reads, "id": sorted(TEXT_OVER_OWN_SUBJECT)[0]}) == []
+        assert breaks(rel, "", {**reads, "cmd": "python3 -c \"import ast;ast.parse(open('docs/X.md').read())\""}) == []
+        spawns = {"id": "DEF-9", "subject": "a.py", "cmd": "python3 -c \"import subprocess;subprocess.run(['python3','a.py'])\""}
+        assert [r for r, _ in breaks(rel, "", spawns)] == [LITERAL_SPAWN_RULE]
+        assert breaks(rel, "", {**spawns, "id": sorted(SPAWNS_A_LITERAL_INTERPRETER)[0]}) == []
