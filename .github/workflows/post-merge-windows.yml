@@ -25,8 +25,10 @@ name: Post-merge Windows leg
 # 2026-10-26 and 10-29). As this job, which adds proof_tier.py's receipt, the
 # leg grows with SERIAL_FILES: 2.25 to 4.2 minutes over its first 34 push runs
 # (from 2026-10-31 08:16Z), 4.1 to 6.3 over the 12 after the cited-pin run
-# joined the list (#404), and 7.8 on the first after the axis registry's run
-# did (#416, run 41343705282); 1 of the 46 consecutive pairs overlapped. The
+# joined the list (#404), 7.8 on the first after the axis registry's run did
+# (#416, run 41343705282), and 4.7 to 7.6 over the 4 after
+# tests/test_verify_pins.py did (#419, to 2026-11-02 00:40Z, run 41367861575);
+# 1 of the first 46 consecutive pairs overlapped. The
 # required cells' queue (a `test (3.x)` job's start less its test.yml run's
 # creation) was a median of 0.2 minutes and a worst of 1.7 over 240 jobs
 # (2026-10-18 to 10-29). Over the leg's first day it was 0.25 and 6.87 over
@@ -35,8 +37,9 @@ name: Post-merge Windows leg
 # leg going, and the leg's one self-overlap (11-01 03:18 to 03:23Z) met no
 # test.yml run within ten minutes, so a group would have moved neither. The
 # leg's own queue (run created to job started) read a median of 0.03 minutes
-# and a worst of 0.25 over its 47 push runs. Read both queues again when
-# SERIAL_FILES next grows.
+# and a worst of 0.25 over its first 47 push runs. Read both queues again
+# when SERIAL_FILES grows after #419, or when a run of this job passes 10
+# minutes.
 on:
   push:
     branches: [main]
