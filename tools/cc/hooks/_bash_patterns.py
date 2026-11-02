@@ -6893,6 +6893,124 @@ def _step_one(
     return new
 
 
+#: A shell name, as a word the binding walk scans a statement for: a bound
+#: name that appears in a statement other than its own literal binding may
+#: be rebound there (`read`, `unset`, `for`, `printf -v`, an arithmetic
+#: assignment, a flagged declaration), so the walk forgets it.
+_SHELL_NAME_WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _inline_bound_operand(
+    operand: str | None, quote: str | None, bound: "dict[str, str]",
+) -> str | None:
+    """``operand`` (a `cd` or `mkdir` operand, its quotes off; ``quote`` the
+    one it was written in, ``None`` for a bare word) with each `$NAME` /
+    `${NAME}` reference to a name the directory walk holds bound replaced by
+    its literal (DEF-1016), where the shell spells the same directory; else
+    ``operand`` as it came, so `_step_one` reads the `$` as the indirection
+    class, as it always did. Refused, each keeping that reading: a
+    single-quoted operand (the `$` is a character); a reference to a name not
+    bound; a bare reference whose value holds a blank or a pattern character
+    (the shell splits and globs it, so `cd` gets other words); a value that
+    would lead the operand with `~` (bash does not tilde-expand an
+    expansion's result, where `_step_one` reads a leading `~` as the home)
+    or with `-` (an option to `cd`); and an operand left blank."""
+    if not operand or "$" not in operand or quote == "'" or not bound:
+        return operand
+    try:
+        inlined, _grown = _substitute_bash_refs(operand, bound)
+    except _ExpansionTooLarge:
+        return operand
+    if inlined == operand or "$" in inlined or "`" in inlined or not inlined.strip():
+        return operand
+    if inlined[0] in "~-" and operand[0] != inlined[0]:
+        return operand
+    if quote is None and (_GLOB_CHARS_RE.search(inlined) or any(c.isspace() for c in inlined)):
+        return operand
+    return inlined
+
+
+def _inline_bound_word(word: str, bound: "dict[str, str]") -> str:
+    """One operand token as `_OPERAND_TOKEN_RE` cut it, quotes off, its bound
+    references inlined by `_inline_bound_operand` when it is a bare word or
+    one double-quoted word; any other quoting keeps the reference as it is
+    (the indirection class)."""
+    inner = word.strip("'\"")
+    if not bound or "$" not in word:
+        return inner
+    if len(word) > 1 and word[0] == word[-1] == '"' and '"' not in word[1:-1] and "'" not in word:
+        return _inline_bound_operand(inner, '"', bound) or inner
+    if "'" in word or '"' in word:
+        return inner
+    return _inline_bound_operand(inner, None, bound) or inner
+
+
+def _mkdir_makes_parents(flags: str) -> bool:
+    """Do ``flags`` (the words between `mkdir` and its first operand) ask for
+    the parents, `-p` or `--parents`? A short cluster is read up to an `m`,
+    whose value the rest of it is (`-mp` is the mode `p`, which `mkdir`
+    rejects)."""
+    for word in flags.split():
+        if word == "--parents":
+            return True
+        if word.startswith("-") and not word.startswith("--"):
+            for letter in word[1:]:
+                if letter == "m":
+                    break
+                if letter == "p":
+                    return True
+    return False
+
+
+def _settle_bindings(
+    bound: "dict[str, str]", seg: str, stmt_raw: str, at: int, *, in_this_shell: bool,
+    quote_at: "Callable[[int], str | None]", heredoc_at: "Callable[[int], bool]",
+) -> None:
+    """Update the directory walk's literal bindings for one statement that is
+    not a directory verb (DEF-1016). ``seg`` is the statement's masked text,
+    ``stmt_raw`` its raw twin, ``at`` its offset in the walk's text, and
+    ``in_this_shell`` says it runs unconditionally in the walk's own shell:
+    no frame open (a subshell, a substitution, a group, a function body), no
+    keyword conditional open, not a pipeline stage or backgrounded, not after
+    `&&` or `||`. A statement that is ONE literal binding (`_VAR_ASSIGN_RE`,
+    nothing after its literal, no declaration flag), at a live site in this
+    shell, binds the name; any other mention of a bound name, as a word that
+    is not a `$` reference, forgets it.
+
+    Stricter than the write extractor's pre-pass
+    (`_expand_simple_var_assignments`) on purpose, though it reads the same
+    literal: a stale binding there names a write target, but here it MOVES
+    the directory every later relative write is judged in, so a binding that
+    may not have run (after `&&`, in an `if` body, in a subshell), a
+    prefix assignment (`S=x cmd` binds only for `cmd`), a pipeline stage's,
+    and one a later statement may have changed all leave the name unbound:
+    in each the shell's `cd` stays where it was and the write lands in the
+    checkout, where the pre-pass's reading would place it in the bound
+    directory (the must-deny rows of `tests/test_guard_false_positives.py`
+    and `tests/test_write_guard.py::TestTheDirectoryAWriteRunsIn`)."""
+    site = _VAR_ANY_ASSIGN_RE.match(seg)
+    if site is not None:
+        lit = _VAR_ASSIGN_RE.match(stmt_raw)
+        if (
+            in_this_shell and lit is not None and lit.start(1) == site.start(1)
+            and not stmt_raw[lit.end():].strip() and "-" not in stmt_raw[:lit.start(1)]
+            and quote_at(at + site.start(1)) is None and not heredoc_at(at + site.start(1))
+        ):
+            value = _bound_value(lit, stmt_raw, False)
+            if value is None or not value.strip():
+                bound.pop(lit.group(1), None)
+            else:
+                bound[lit.group(1)] = value
+            return
+    if not bound:
+        return
+    for word in _SHELL_NAME_WORD_RE.finditer(stmt_raw):
+        name, start = word.group(0), word.start()
+        if name in bound and stmt_raw[max(0, start - 1):start] != "$" \
+                and stmt_raw[max(0, start - 2):start] != "${":
+            del bound[name]
+
+
 def _self_and_ancestors(spelled: str) -> Iterator[str]:
     """``a``, ``a/b``, ``a/b/c`` for ``a/b/c`` (an absolute spelling keeps its
     leading slash): every directory a `cd` to ``spelled`` passes through, so
@@ -7022,6 +7140,7 @@ def _directory_chain(
     gone_patterns: list[str] = []               # ... by a pattern, capped (`_WALK_SET_CAP`)
     gone_unread = False                         # a removal operand the walk cannot spell
     functions: set[str] = set()                 # names this command defines (condition 3)
+    bound: dict[str, str] = {}                  # literals bound in this shell (DEF-1016)
     pending: list[tuple[str, list[str | None]]] = []   # statements whose removals are unread
     depth = 0                                   # keyword conditionals open
     ps_blocks: list[bool] = []                  # PowerShell braces open: conditional?
@@ -7098,6 +7217,21 @@ def _directory_chain(
                     seg_raw = raw[pos:pos + len(seg)]
                     target = (raw_span(seg_raw, m, group) if group == 3 else
                               raw_operand(seg_raw, m, group, word=bash, powershell=not bash))
+                if bash and bound and target and "$" in target:
+                    # DEF-1016: a reference to a literal bound earlier in
+                    # this shell names a directory the walk can read. The
+                    # quote is read from the raw twin where there is one (a
+                    # single quote keeps the `$` a character). Rejected: the
+                    # whole text inlined by the write extractor's pre-pass --
+                    # it changes the text's length, and the speed bump's
+                    # discard arm, the rm hard tier and post_write_check index
+                    # this walk's statements by offset into their own text;
+                    # and that pre-pass's bindings as they are, which count a
+                    # binding that may not have run (`_settle_bindings`).
+                    quote = m.group(2) if group == 3 else None
+                    if group == 3 and raw is not None and len(raw) == len(text):
+                        quote = raw[pos + m.start(2)]
+                    target = _inline_bound_operand(target, quote, bound)
                 if bash and (tok in ("|", "&") or prev_tok == "|"):
                     pass                        # a child shell moved, not this one
                 else:
@@ -7149,24 +7283,41 @@ def _directory_chain(
                                 if raw is not None and len(raw) == len(text) else seg)
                     if pending:
                         read_removals()         # an earlier removal, then this make
+                    # `-p` makes every missing parent too, so a later `cd`
+                    # into one is entered (DEF-1016); without it a missing
+                    # parent fails the make, so only the operand is credited
+                    flags = made_seg[mk.start():mk.start(1)]
+                    verb_at = flags.rfind("mkdir")
+                    parents = verb_at >= 0 and _mkdir_makes_parents(flags[verb_at + 5:])
                     for operand in _OPERAND_TOKEN_RE.findall(made_seg[mk.start(1):mk.end(1)]):
+                        word = _inline_bound_word(operand, bound)
                         for cwd in cwds:
-                            spelled = _step_one(operand.strip("'\""), cwd, None)
-                            if spelled is not None and len(made) < _WALK_SET_CAP:
-                                # past the cap a make goes unrecorded: a later
-                                # cd into it then reads as failed -- more
-                                # walls, never fewer
-                                made.add(spelled)
+                            spelled = _step_one(word, cwd, None)
+                            if spelled is None:
+                                continue
+                            for d in (_self_and_ancestors(spelled) if parents else (spelled,)):
+                                if len(made) < _WALK_SET_CAP:
+                                    # past the cap a make goes unrecorded: a
+                                    # later cd into it then reads as failed --
+                                    # more walls, never fewer
+                                    made.add(d)
+                            if spelled in made:
                                 # made again undoes the removal of that exact
-                                # spelling only: a make under a removed ancestor
-                                # fails without `-p`, and the walk does not read
-                                # the flag, so the ancestor stays gone (walls)
+                                # spelling only, never of a parent `-p` made
+                                # again: what else lived under the removed
+                                # parent stays gone (walls)
                                 gone.discard(spelled)
                 stmt_raw = stmt_src[pos:pos + len(seg)]
                 pending.append((stmt_raw, list(cwds)))
                 child = bash and (tok in ("|", "&") or prev_tok == "|")
                 if not child and _changes_directory_unseen(stmt_raw, bash=bash, functions=functions):
                     cwds = _merge_candidates(cwds, [None])      # blocker condition 3
+                    bound.clear()       # ... and may rebind any name (DEF-1016)
+                elif bash:
+                    _settle_bindings(
+                        bound, seg, stmt_raw, pos, quote_at=quote_at, heredoc_at=heredoc_at,
+                        in_this_shell=(not child and not frames and depth == 0
+                                       and prev_tok not in ("&&", "||")))
             if head in _CONDITIONAL_CLOSERS and depth:
                 depth -= 1
         if b is None:

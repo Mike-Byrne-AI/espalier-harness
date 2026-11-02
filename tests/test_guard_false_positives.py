@@ -318,6 +318,19 @@ INERT_BASH = [
      f"MSG='docs: tee -a {_SETTINGS} is refused'; git commit -m \"$MSG\""),
     ("message-variable-beside-a-build",
      f"MSG='fix: a; {_RM_RF} / now walls'; make test"),
+    # DEF-1016: a scratch project with its own `.claude/`, entered by a `cd`
+    # through a literal bound earlier in the same command, or into the parent
+    # of a directory a `mkdir -p` made. The write lands in the fixture, never
+    # in the checkout, and the walk read the `cd` as unknown (the root) or as
+    # failed, so each was walled.
+    ("cd-into-a-bound-scratch-fixture",
+     f'S=/tmp/espalier-scratch-fx; mkdir -p "$S/.claude" && cd "$S" && printf x > {_SETTINGS}'),
+    ("cd-into-a-bound-relative-fixture",
+     f'S=scratch/fx; mkdir -p $S/.claude; cd "$S" && printf x > {_SETTINGS}'),
+    ("cd-into-the-parent-a-mkdir-p-made",
+     f"mkdir -p /tmp/espalier-scratch-zz/.claude && cd /tmp/espalier-scratch-zz && printf x > {_SETTINGS}"),
+    ("cd-into-the-parent-a-mkdir-p-made-by-lines",
+     f"mkdir -vp scratch/zz/.claude\ncd scratch/zz\nprintf x > {_SETTINGS}"),
 ]
 
 INERT_POWERSHELL = [
@@ -695,6 +708,36 @@ GENUINE_BASH = [
     # delete after it is at a command position
     ("quoted-blank-prefix-before-the-delete", f"A='a b' {_RM_RF} /"),
     ("quoted-separator-prefix-before-the-delete", f"A='a; b' {_RM_RF} /"),
+    # DEF-1016's must-deny twins: the walk reads a `cd` through a literal the
+    # shell really holds when the `cd` runs, and nothing else. A bound
+    # literal that IS the zone (allowed until the walk read bindings); an
+    # unbound name; a binding that may not have run in this shell (after
+    # `&&`, in a subshell, in a pipeline stage, as one command's prefix); one
+    # undone before the `cd` (rebound, unset, rebound by `eval`); a
+    # single-quoted reference (the literal `$`); a quoted tilde (a file
+    # named `~`, never the home); a flagged declaration (`-i` evaluates the
+    # value, and `/tmp` is no number); a binding in another shell's program
+    # (a `-c` string, a heredoc fed to a shell); and a `mkdir` that makes no parents
+    # (without `-p`, or `-mp`, whose `p` is the mode). In each the `cd`
+    # stays or fails and the write lands in the checkout's `.claude/`.
+    ("cd-through-a-bound-zone", 'S=.claude; cd "$S" && printf x > settings.json'),
+    ("cd-through-an-unbound-name", f'cd "$UNBOUND_ZZ" && printf x > {_SETTINGS}'),
+    ("cd-through-a-conditional-binding", f'false && S=/tmp; cd "$S" && printf x > {_SETTINGS}'),
+    ("cd-through-a-subshell-binding", f'(S=/tmp); cd "$S" && printf x > {_SETTINGS}'),
+    ("cd-through-a-pipeline-binding", f'S=/tmp | cat; cd "$S" && printf x > {_SETTINGS}'),
+    ("cd-through-a-prefix-assignment", f'S=/tmp true; cd "$S" && printf x > {_SETTINGS}'),
+    ("cd-through-a-rebound-name", 'S=/tmp; S=.claude; cd "$S" && printf x > settings.json'),
+    ("cd-through-an-unset-name", f'S=/tmp; unset S; cd "$S" && printf x > {_SETTINGS}'),
+    ("cd-through-a-name-eval-rebinds", f'S=/tmp; eval "S=."; cd "$S" && printf x > {_SETTINGS}'),
+    ("cd-through-a-single-quoted-reference", f"S=/tmp; cd '$S'; printf x > {_SETTINGS}"),
+    ("cd-through-a-quoted-tilde", f'S="~"; cd "$S"; printf x > {_SETTINGS}'),
+    ("cd-through-an-integer-declaration", f'declare -i S=/tmp; cd "$S"; printf x > {_SETTINGS}'),
+    ("cd-through-a-child-shells-binding", f"bash -c 'true; S=/tmp\n'; cd \"$S\"; printf x > {_SETTINGS}"),
+    ("cd-through-a-heredoc-shells-binding", f"bash <<'EOF'\nS=/tmp\nEOF\ncd \"$S\"; printf x > {_SETTINGS}"),
+    ("cd-to-a-parent-mkdir-did-not-make",
+     f"mkdir /tmp/espalier-nx-zz/sub; cd /tmp/espalier-nx-zz; printf x > {_SETTINGS}"),
+    ("cd-to-a-parent-of-a-mode-cluster",
+     f"mkdir -mp /tmp/espalier-nx-zz/sub; cd /tmp/espalier-nx-zz; printf x > {_SETTINGS}"),
 ]
 
 # ── The tier itself, on PowerShell. ────────────────────────────────────────

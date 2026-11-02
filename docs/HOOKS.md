@@ -1058,10 +1058,20 @@ first; the dangerous-command catch is a secondary slip-catcher):
    the root and both verdicts were wrong. A `cd` the shell would not perform
    moves nothing: one whose directory is not there (the walk asks the disk,
    and credits a directory an earlier statement of the same command makes,
-   so `mkdir -p sandbox && cd sandbox` reads as entered), one in a pipeline
+   with `-p` its parents too, so `mkdir -p sandbox/.claude && cd sandbox`
+   reads as entered), one in a pipeline
    stage or backgrounded with `&`, one inside a function body; a `cd` after
    `&&` or `||`, or inside an `if`, `case` or loop body, is conditional and
-   the statements after it are judged in both directories. A target the walk cannot read -- a
+   the statements after it are judged in both directories. A variable bound
+   to a literal earlier in the same command is read as that literal
+   (`S=/tmp/fx; cd "$S"`) when the binding ran in this shell whatever
+   happened before it and nothing since may have changed it: a binding
+   after `&&` or `||`, inside an `if`, loop, group or subshell, in a
+   pipeline stage or as one command's prefix (`S=x cmd`), and a name a
+   later statement mentions (`read S`, `unset S`) or that `eval`, `source`
+   or a call to the command's own function may rebind, are not read; nor
+   is a single-quoted reference, or an unquoted one whose value the shell
+   would split or glob. A target the walk cannot read -- such a
    variable, a substitution, `cd -` -- leaves the directory unknown, and an
    unknown directory resolves against the root as before (the indirection
    class, declared; pinned by

@@ -2689,6 +2689,11 @@ class TestCommandPositionClassClose:
             "SYNTAX TOKEN -- the PowerShell twin (`;`, newline, `&&`, `||`, `|`, "
             "braces) for `Set-Location` and its aliases; same anchored verb match "
             "per statement.",
+        "_bash_patterns._SHELL_NAME_WORD_RE":
+            "TARGET EXTRACTOR -- a shell name as a word, scanned over one statement "
+            "the directory chain already cut so a name it holds bound is forgotten "
+            "where another statement may rebind it (DEF-1016); it only ever unbinds, "
+            "and never decides whether a command is being invoked.",
         # ── DEF-822 / DEF-824, 2026-09-16: the PowerShell sweep tier's three
         # helpers, none a command matcher: a gate, a flag matcher, a token
         # classifier. Each runs over text an anchored reader already selected

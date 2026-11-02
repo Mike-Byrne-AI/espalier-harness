@@ -990,6 +990,19 @@ class TestTheDirectoryAWriteRunsIn:
         # the indirection class: the root, as before (declared limit)
         ("cd $D && echo x > tools/cc/hooks/f.py", None, "deny"),
         ("cd $(pwd)/tools && echo x > hooks/f.py", None, "allow"),
+        # DEF-1016: a literal bound earlier in the same command -- in this
+        # shell, unconditionally, and not undone before the `cd` -- is read as
+        # the shell reads it, the most recent binding before the `cd`, quoted
+        # or not; anything else stays the indirection class above
+        ('S="{tmp}"; cd "$S" && echo x > tools/cc/hooks/f.py', None, "allow"),
+        ('S="{tmp}"\ncd $S\necho x > tools/cc/hooks/f.py', None, "allow"),
+        ('S=tools/cc; cd "$S" && echo x > hooks/f.py', None, "deny"),            # bound INTO the tree
+        ('S="{tmp}"; S=tools/cc; cd "${S}" && echo x > hooks/f.py', None, "deny"),  # the later one wins
+        ('cd "$S"; S="{tmp}"; echo x > tools/cc/hooks/f.py', None, "deny"),         # bound after the cd
+        ('if false; then\nS="{tmp}"\nfi\ncd "$S"; echo x > tools/cc/hooks/f.py', None, "deny"),
+        ('f(){ S=.; }; S="{tmp}"; f; cd "$S"; echo x > tools/cc/hooks/f.py', None, "deny"),  # a call rebinds
+        ('S="{tmp}"; read -r S < /dev/null; cd "$S"; echo x > tools/cc/hooks/f.py', None, "deny"),
+        ("mkdir -p nd/sub && cd nd && echo x > tools/cc/hooks/f.py", None, "allow"),  # a made parent
         # a cd the shell never performs (failure-mode review, each driven
         # against /bin/bash: all five wrote into the protected tree past the
         # first cut, which credited every cd it could read)
@@ -1041,6 +1054,18 @@ class TestTheDirectoryAWriteRunsIn:
               else (Path(cwd) if cwd.startswith("/") else tmp_path / cwd))
         result = run_guard_from("Bash", cmd, tmp_path, at)
         (assert_hook_denied if expect == "deny" else assert_hook_allowed)(result)
+
+    def test_bash_a_bound_value_is_split_as_the_shell_splits_it(self, tmp_path):
+        """DEF-1016: an unquoted reference is split at a blank, so `cd $S`
+        with `S="fx dir"` hands `cd` two words and it does not enter the
+        directory (the write lands in the tree); the quoted reference is one
+        word and enters it."""
+        (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True)
+        (tmp_path / "fx dir").mkdir()
+        split = 'S="fx dir"; cd $S; echo x > tools/cc/hooks/f.py'
+        whole = 'S="fx dir"; cd "$S"; echo x > tools/cc/hooks/f.py'
+        assert_hook_denied(run_guard_from("Bash", split, tmp_path, None))
+        assert_hook_allowed(run_guard_from("Bash", whole, tmp_path, None))
 
     @pytest.mark.parametrize("cmd, cwd, expect", [
         ("Set-Location tools/cc; Set-Content hooks/f.py x", None, "deny"),
