@@ -113,7 +113,8 @@ try:
     from _json_safe import decode_text_or_problem, load_json_dict_safe  # noqa: E402
     # Every helper name this hook's import graph takes (write_guard.py says why).
     _STOP_GATE_HELPER_NAMES = (
-        "CODE_REVIEWED", "DOCS_REFRESHED", "HANDOFF_GATE_FLAG", "HANDOFF_GATE_HOLD", "ONCE_FLAG_PREFIX",
+        "CODE_REVIEWED", "DOCS_REFRESHED", "HANDOFF_GATE_FLAG", "HANDOFF_GATE_HOLD", "HANDOFF_GATE_HOLD_RECHECK_S",
+        "ONCE_FLAG_PREFIX",
         "OPERATOR_RELIEF_AGENT",
         "OPERATOR_RELIEF_NOTE_MIN_CHARS", "RELIEF_FLAGS", "STATE_DIR", "SpawnFailure", "_toml_parser",
         "atomic_write_text", "floor_text", "has_active_plan", "lock_file", "plan_completion",
@@ -1359,8 +1360,9 @@ HANDOFF_GATE_GH_CAP_S = 5.0
 #: Each git read the driver's attribution makes (the box's name; the local
 #: mail refs: one `for-each-ref`, then one `show` per seat) is bounded by this.
 HANDOFF_GATE_DRIVER_CAP_S = 5.0
-#: While the hold names HEAD, gh is asked again no more often than this.
-HANDOFF_GATE_HOLD_RECHECK_S = 300.0
+#: While the hold names HEAD, gh is asked again no more often than this
+#: (``_hook_utils``'s, which the prompt router reads to call a hold stale).
+HANDOFF_GATE_HOLD_RECHECK_S = _hook_utils.HANDOFF_GATE_HOLD_RECHECK_S
 #: The hold's clock (its ``checked`` and ``since`` stamps): one name, so a
 #: test pins the interval by moving it, never by sleeping.
 HOLD_CLOCK: Callable[[], float] = time.time
@@ -1581,12 +1583,14 @@ def _hold_read(root: Path) -> dict | None:
 
 
 def _hold_write(root: Path, head: str, branch: str, seat: str, prs: list[str], ahead: int,
-                since: object = None) -> None:
+                since: object = None, fault: str = "") -> None:
     """The hold for ``head``: this seat's other open pull requests as the
     driver names them, the lane's commit count, ``since`` (the first hold on
-    this HEAD, carried across re-stamps so a reader can say how long) and
-    ``checked`` (now). Through the roster writer, so a symlinked path is
-    replaced, never followed."""
+    this HEAD, carried across re-stamps so a reader can say how long),
+    ``checked`` (now) and, on a re-check that could not read gh, ``fault``:
+    the stamp still bounds the next read, and the prompt router says the
+    fault rather than a fresh read (DEF-4083). Through the roster writer, so
+    a symlinked path is replaced, never followed."""
     path = root / STATE_DIR / HANDOFF_GATE_HOLD
     now = HOLD_CLOCK()
     record = {
@@ -1594,6 +1598,8 @@ def _hold_write(root: Path, head: str, branch: str, seat: str, prs: list[str], a
         "since": since if isinstance(since, (int, float)) and not isinstance(since, bool) else now,
         "seat": seat, "prs": list(prs), "ahead": ahead,
     }
+    if fault:
+        record["fault"] = fault
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         _hook_utils.atomic_write_text(path, json.dumps(record))
@@ -1723,7 +1729,7 @@ def _hold_recheck(root: Path, hold: dict) -> tuple[bool, _SeatPrs | None]:
         )
         prs = hold.get("prs")
         _hold_write(root, head, branch, seat, [str(p) for p in prs] if isinstance(prs, list) else [], ahead,
-                    since=since)
+                    since=since, fault=found.fault)
         return True, None
     if found.mine:
         _hold_write(root, head, branch, found.seat, list(found.mine), ahead, since=since)
@@ -1829,12 +1835,21 @@ def _gate_handoff(root: Path) -> int:
     lifted: tuple[str, _SeatPrs] | None = None   # the lifted hold's branch and its one read
     try:
         head = _git_answer(root, deadline, "rev-parse", "HEAD")
-        if not head or _flag_text(flag) == head:
+        if not head:
+            return 0
+        hold = _hold_read(root)
+        if hold is not None and hold.get("head") != head:
+            # Another head's hold is no hold, and the prompt router says a hold
+            # on every prompt until a Stop removes it: removed before the
+            # remembered HEAD returns (DEF-4083: a lane handed off past its hold
+            # was told held for the rest of the session).
+            _hold_clear(root)
+            hold = None
+        if _flag_text(flag) == head:
             return 0
         if _tracked_edits(root, deadline) is not False:
             return 0
-        hold = _hold_read(root)
-        if hold is not None and hold.get("head") == head:
+        if hold is not None:  # it names HEAD
             # A hold is the lane's, not the commit's: another branch on this
             # same commit is judged afresh.
             if hold.get("branch") != _git_answer(root, deadline, "rev-parse", "--abbrev-ref", "HEAD"):
