@@ -1067,6 +1067,20 @@ class TestTheDirectoryAWriteRunsIn:
         assert_hook_denied(run_guard_from("Bash", split, tmp_path, None))
         assert_hook_allowed(run_guard_from("Bash", whole, tmp_path, None))
 
+    @pytest.mark.parametrize("flags, parents", [
+        ("-p", True), ("-vp", True), ("-pv", True), ("-m 755 -p", True),
+        ("-mp", False),                 # the mode is `p`
+        ("-m -p", False),               # the mode is `-p`
+        ("-vm -p", False),              # the cluster's `m` takes the next word
+        ("--mode -p", False),
+        ("--parents", False),           # BSD mkdir has no long options
+        ("-v", False), ("", False),
+    ])
+    def test_bash_mkdir_parents_are_read_from_the_flags(self, flags, parents):
+        """DEF-1016's review: `-p` is read where `mkdir` reads it, never in
+        a mode's value, and a long option is not read at all."""
+        assert _bash_patterns_module()._mkdir_makes_parents(flags) is parents
+
     @pytest.mark.parametrize("cmd, cwd, expect", [
         ("Set-Location tools/cc; Set-Content hooks/f.py x", None, "deny"),
         ("Push-Location -Path 'tools/cc'; Set-Content hooks/f.py x", None, "deny"),

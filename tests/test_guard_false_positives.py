@@ -328,11 +328,9 @@ INERT_BASH = [
     ("cd-into-a-bound-scratch-fixture",
      f'S=/tmp/espalier-scratch-fx; mkdir -p "$S/.claude" && cd "$S" && printf x > {_SETTINGS}'),
     ("cd-into-a-bound-relative-fixture",
-     f'S=scratch/fx; mkdir -p $S/.claude; cd "$S" && printf x > {_SETTINGS}'),
+     f'S=scratch/fx; mkdir -p $S/.claude && cd "$S" && printf x > {_SETTINGS}'),
     ("cd-into-the-parent-a-mkdir-p-made",
      f"mkdir -p /tmp/espalier-scratch-zz/.claude && cd /tmp/espalier-scratch-zz && printf x > {_SETTINGS}"),
-    ("cd-into-the-parent-a-mkdir-p-made-by-lines",
-     f"mkdir -vp scratch/zz/.claude\ncd scratch/zz\nprintf x > {_SETTINGS}"),
     # DEF-1014: a pull request or issue body that describes a move into a
     # zone, through gh's text flags on the pr, issue and api verbs -- each
     # spelling of the flag, a heredoc on the body-file stdin, and the door
@@ -882,6 +880,36 @@ GENUINE_BASH = [
      f"mkdir /tmp/espalier-nx-zz/sub; cd /tmp/espalier-nx-zz; printf x > {_SETTINGS}"),
     ("cd-to-a-parent-of-a-mode-cluster",
      f"mkdir -mp /tmp/espalier-nx-zz/sub; cd /tmp/espalier-nx-zz; printf x > {_SETTINGS}"),
+    # The lane review's twins of the same walk (each read ALLOW before its
+    # fix). A literal holds only where nothing else sets the name: a name the
+    # shell maintains (`cd` sets `OLDPWD`, every command `_`, `read`
+    # `REPLY`); a name set through another (`printf -v` and `unset` by a
+    # name held in a variable, a nameref), changed by an earlier `declare -i`
+    # or a trap; and a bare reference once the command sets `IFS`. A
+    # `select` body may not run, like any other loop's. A parent a `mkdir -p`
+    # names is there only if the make ran and succeeded before the `cd`, so
+    # only `&&` joins them: a make that fails, one in the background, one on
+    # the line before, `-m`'s mode word read as `-p`.
+    ("cd-through-oldpwd", f'OLDPWD=/tmp; cd .claude; cd "$OLDPWD"; printf x > {_SETTINGS}'),
+    ("cd-through-the-last-argument", f'_=/tmp; true; cd "$_"; printf x > {_SETTINGS}'),
+    ("cd-through-reply-a-read-sets", f'REPLY=/tmp; read <<< .; cd "$REPLY"; printf x > {_SETTINGS}'),
+    ("cd-through-a-name-printf-v-sets", f'X=/tmp; N=X; printf -v "$N" %s .; cd "$X"; printf x > {_SETTINGS}'),
+    ("cd-through-a-name-unset-by-another", f'X=/tmp; N=X; unset "$N"; cd "$X"; printf x > {_SETTINGS}'),
+    ("cd-through-a-nameref-target", f'declare -n R=X; X=/tmp; R=.; cd "$X"; printf x > {_SETTINGS}'),
+    ("cd-through-a-name-declared-integer-earlier", f'declare -i X; X=/tmp; cd "$X"; printf x > {_SETTINGS}'),
+    ("cd-through-a-name-a-trap-sets", f"trap 'X=.' DEBUG; X=/tmp; cd \"$X\"; printf x > {_SETTINGS}"),
+    ("cd-through-a-value-ifs-splits", f'IFS=/; X=/tmp; cd $X; printf x > {_SETTINGS}'),
+    ("cd-after-a-select-body-binding", f'select v in a\ndo\nS=/tmp\nbreak\ndone\ncd "$S"; printf x > {_SETTINGS}'),
+    ("cd-after-a-select-inside-a-loop",
+     f'while false\ndo\nselect v in a; do break; done\nS=/tmp\ndone\ncd "$S"; printf x > {_SETTINGS}'),
+    ("cd-to-a-parent-a-failed-mkdir-p-names", f"mkdir -p /dev/null/zz/sub; cd /dev/null/zz; printf x > {_SETTINGS}"),
+    ("cd-to-a-parent-past-the-and-run",
+     f"mkdir -p /dev/null/zz/sub && true; cd /dev/null/zz; printf x > {_SETTINGS}"),
+    ("cd-to-a-parent-a-backgrounded-mkdir-p-names",
+     f"mkdir -p /tmp/espalier-nx-zz/sub & cd /tmp/espalier-nx-zz; printf x > {_SETTINGS}"),
+    ("cd-into-the-parent-a-mkdir-p-made-by-lines",
+     f"mkdir -vp scratch/zz/.claude\ncd scratch/zz\nprintf x > {_SETTINGS}"),
+    ("cd-to-a-parent-of-a-mode-word", "cd .claude; mkdir -m -p ../sub/zz/q; cd ../sub/zz; printf x > settings.json"),
     # DEF-1014's must-deny twins: the gh door relieves the text flags of the
     # pr, issue and api verbs and nothing else. A write after a separator --
     # semicolon, and-and, newline -- a substitution inside the body that the

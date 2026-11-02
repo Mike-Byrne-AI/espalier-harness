@@ -7338,12 +7338,14 @@ _MKDIR_RE = re.compile(
     + r"((?:[ \t]+(?:'[^'\n]{0,512}'|\"[^\"\n]{0,512}\"|[^\s'\"<>-][^\s'\"<>]{0,511})){1,32})"
 )
 #: The keyword conditionals: a `cd` between `if` / `case` / `while` / `until`
-#: / `for` and its `fi` / `esac` / `done` may not run (`if false; then cd
-#: /tmp; fi` -- driven: the shell wrote in the old directory), so it is
-#: conditional exactly as a `cd` after `||` is. Statement-leading words on
-#: the masked text; nesting counted.
-_CONDITIONAL_OPENERS = ("if", "case", "while", "until", "for")
-_CONDITIONAL_CLOSERS = ("fi", "esac", "done")
+#: / `for` / `select` and its `fi` / `esac` / `done` may not run (`if false;
+#: then cd /tmp; fi` -- driven: the shell wrote in the old directory), so it
+#: is conditional exactly as a `cd` after `||` is, and so is a binding there.
+#: Statement-leading words on the masked text; nesting counted. Derived from
+#: the walker's own compound table, never a second hand-kept list: this one
+#: lacked `select`, whose `done` then closed the loop around it.
+_CONDITIONAL_OPENERS = tuple(_COMPOUND_CLOSERS)
+_CONDITIONAL_CLOSERS = tuple(dict.fromkeys(_COMPOUND_CLOSERS.values()))
 #: The PowerShell twin, turned around: the operators that run a script block
 #: HERE, now -- the call operator and dot-sourcing, as the text before the
 #: block's `{` ends. A location change inside any other block is one the
@@ -7462,10 +7464,55 @@ def _step_one(
 #: be rebound there (`read`, `unset`, `for`, `printf -v`, an arithmetic
 #: assignment, a flagged declaration), so the walk forgets it.
 _SHELL_NAME_WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+#: Names the shell itself sets or reads specially, bash's and zsh's (the Bash
+#: tool runs either): `cd` sets `PWD` and `OLDPWD`, every command `_`, `read`
+#: and `select` `REPLY`, `getopts` `OPTARG` and `OPTIND`; `IFS` and `CDPATH`
+#: change how a `cd` operand is read; the rest are dynamic, read-only, or
+#: tied to another name. A literal bound to one is never read by the walk.
+_SHELL_MAINTAINED_NAMES = frozenset({
+    "PWD", "OLDPWD", "_", "REPLY", "OPTARG", "OPTIND", "IFS", "CDPATH", "DIRSTACK",
+    "RANDOM", "SRANDOM", "SECONDS", "LINENO", "EPOCHSECONDS", "EPOCHREALTIME", "HISTCMD",
+    "PPID", "UID", "EUID", "GID", "EGID", "GROUPS", "FUNCNAME", "PIPESTATUS", "SHELLOPTS",
+    "SHLVL", "MAPFILE", "COPROC", "COLUMNS", "LINES",
+    "status", "pipestatus", "argv", "path", "cdpath", "fpath", "manpath", "mailpath",
+    "psvar", "reply", "match", "mbegin", "mend", "MATCH", "MBEGIN", "MEND", "ERRNO",
+    "TTY", "TTYIDLE", "USERNAME",
+})
+_SHELL_MAINTAINED_PREFIXES = ("BASH", "COMP_", "READLINE_", "ZSH_")
+
+
+def _shell_maintains(name: str) -> bool:
+    """Is ``name`` one the shell sets or reads specially
+    (`_SHELL_MAINTAINED_NAMES`), so a literal bound to it may not hold?"""
+    return name in _SHELL_MAINTAINED_NAMES or name.startswith(_SHELL_MAINTAINED_PREFIXES)
+
+
+def _names_set_only_by_literals(raw: str, live: str) -> frozenset[str]:
+    """The names whose every bare-word mention in ``raw`` (its masked twin
+    ``live``) is its own plain literal binding: a `NAME=` at a live binding
+    site with a literal value and no declaration flag. A name mentioned any
+    other way, before or after -- `read X`, `unset X`, `declare -i X`, a
+    trap's program, the value of a nameref or of another name a later
+    `printf -v "$N"` or `unset "$N"` reads -- may hold something else when a
+    `cd` reads it, so the walk never binds it. A `$X` or `${X}` reference is
+    not a mention."""
+    sites: set[int] = set()
+    for site in _VAR_ANY_ASSIGN_RE.finditer(live):
+        lit = _VAR_ASSIGN_RE.match(raw, site.start())
+        if lit is not None and lit.start(1) == site.start(1) and "-" not in raw[site.start():lit.start(1)]:
+            sites.add(site.start(1))
+    plain: set[str] = set()
+    other: set[str] = set()
+    for word in _SHELL_NAME_WORD_RE.finditer(raw):
+        start = word.start()
+        if raw[max(0, start - 1):start] == "$" or raw[max(0, start - 2):start] == "${":
+            continue
+        (plain if start in sites else other).add(word.group(0))
+    return frozenset(plain - other)
 
 
 def _inline_bound_operand(
-    operand: str | None, quote: str | None, bound: "dict[str, str]",
+    operand: str | None, quote: str | None, bound: "dict[str, str]", *, bare: bool = True,
 ) -> str | None:
     """``operand`` (a `cd` or `mkdir` operand, its quotes off; ``quote`` the
     one it was written in, ``None`` for a bare word) with each `$NAME` /
@@ -7478,7 +7525,9 @@ def _inline_bound_operand(
     (the shell splits and globs it, so `cd` gets other words); a value that
     would lead the operand with `~` (bash does not tilde-expand an
     expansion's result, where `_step_one` reads a leading `~` as the home)
-    or with `-` (an option to `cd`); and an operand left blank."""
+    or with `-` (an option to `cd`); and an operand left blank. ``bare``
+    false refuses every bare reference: the command mentions `IFS`, so how
+    the shell splits it is not known."""
     if not operand or "$" not in operand or quote == "'" or not bound:
         return operand
     try:
@@ -7489,12 +7538,13 @@ def _inline_bound_operand(
         return operand
     if inlined[0] in "~-" and operand[0] != inlined[0]:
         return operand
-    if quote is None and (_GLOB_CHARS_RE.search(inlined) or any(c.isspace() for c in inlined)):
+    if quote is None and (not bare or _GLOB_CHARS_RE.search(inlined)
+                          or any(c.isspace() for c in inlined)):
         return operand
     return inlined
 
 
-def _inline_bound_word(word: str, bound: "dict[str, str]") -> str:
+def _inline_bound_word(word: str, bound: "dict[str, str]", *, bare: bool = True) -> str:
     """One operand token as `_OPERAND_TOKEN_RE` cut it, quotes off, its bound
     references inlined by `_inline_bound_operand` when it is a bare word or
     one double-quoted word; any other quoting keeps the reference as it is
@@ -7506,20 +7556,27 @@ def _inline_bound_word(word: str, bound: "dict[str, str]") -> str:
         return _inline_bound_operand(inner, '"', bound) or inner
     if "'" in word or '"' in word:
         return inner
-    return _inline_bound_operand(inner, None, bound) or inner
+    return _inline_bound_operand(inner, None, bound, bare=bare) or inner
 
 
 def _mkdir_makes_parents(flags: str) -> bool:
     """Do ``flags`` (the words between `mkdir` and its first operand) ask for
-    the parents, `-p` or `--parents`? A short cluster is read up to an `m`,
-    whose value the rest of it is (`-mp` is the mode `p`, which `mkdir`
-    rejects)."""
+    the parents with `-p`? A short cluster is read up to an `m`: the rest of
+    it is the mode (`-mp` is the mode `p`, which `mkdir` rejects), and an `m`
+    ending the cluster takes the next word (`-m -p` is the mode `-p`), as
+    `--mode` does. `--parents` is not read: BSD `mkdir` (macOS) has no long
+    options, so there the make fails and a `cd` into a parent with it."""
+    mode_word = False
     for word in flags.split():
-        if word == "--parents":
-            return True
-        if word.startswith("-") and not word.startswith("--"):
-            for letter in word[1:]:
+        if mode_word:
+            mode_word = False
+            continue
+        if word == "--mode":
+            mode_word = True
+        elif word.startswith("-") and not word.startswith("--"):
+            for at, letter in enumerate(word[1:], 1):
                 if letter == "m":
+                    mode_word = at == len(word) - 1
                     break
                 if letter == "p":
                     return True
@@ -7529,6 +7586,7 @@ def _mkdir_makes_parents(flags: str) -> bool:
 def _settle_bindings(
     bound: "dict[str, str]", seg: str, stmt_raw: str, at: int, *, in_this_shell: bool,
     quote_at: "Callable[[int], str | None]", heredoc_at: "Callable[[int], bool]",
+    set_only_by_literals: "Callable[[], frozenset[str]]",
 ) -> None:
     """Update the directory walk's literal bindings for one statement that is
     not a directory verb (DEF-1016). ``seg`` is the statement's masked text,
@@ -7538,8 +7596,13 @@ def _settle_bindings(
     keyword conditional open, not a pipeline stage or backgrounded, not after
     `&&` or `||`. A statement that is ONE literal binding (`_VAR_ASSIGN_RE`,
     nothing after its literal, no declaration flag), at a live site in this
-    shell, binds the name; any other mention of a bound name, as a word that
-    is not a `$` reference, forgets it.
+    shell, binds the name -- unless the shell maintains it
+    (`_SHELL_MAINTAINED_NAMES`) or the command mentions it anywhere, before
+    or after, other than by such a binding (``set_only_by_literals``, read
+    once per walk, `_names_set_only_by_literals`): a nameref, a trap, an
+    earlier `declare -i`, a `printf -v` or `unset` through another name each
+    change it where no statement spells its binding. Any other mention of a
+    bound name, as a word that is not a `$` reference, forgets it.
 
     Stricter than the write extractor's pre-pass
     (`_expand_simple_var_assignments`) on purpose, though it reads the same
@@ -7560,11 +7623,13 @@ def _settle_bindings(
             and not stmt_raw[lit.end():].strip() and "-" not in stmt_raw[:lit.start(1)]
             and quote_at(at + site.start(1)) is None and not heredoc_at(at + site.start(1))
         ):
+            name = lit.group(1)
             value = _bound_value(lit, stmt_raw, False)
-            if value is None or not value.strip():
-                bound.pop(lit.group(1), None)
+            if (value is None or not value.strip() or _shell_maintains(name)
+                    or name not in set_only_by_literals()):
+                bound.pop(name, None)
             else:
-                bound[lit.group(1)] = value
+                bound[name] = value
             return
     if not bound:
         return
@@ -7719,9 +7784,22 @@ def _directory_chain(
     quote_at = _quote_cursor(text)              # asked in increasing order (condition 2)
     ps_string_at = _ps_quote_cursor(stmt_src)   # its PowerShell twin, over the raw twin
     heredoc_at = _heredoc_cursor(text)          # a body the masker left live: another shell's
+    # DEF-1016: the parents a `mkdir -p` made, credited only to a `cd` joined
+    # to the make by `&&` -- a make can fail (`mkdir -p /dev/null/x/y`), and
+    # then only `&&` keeps the `cd` from running; a bare reference is read
+    # only where the command never mentions `IFS`; and the names the walk may
+    # bind, read once, when a binding first asks
+    chained: set[str] = set()
+    bare_ok = "IFS" not in stmt_src
+    sole: list[frozenset[str]] = []
+
+    def set_only_by_literals() -> frozenset[str]:
+        if not sole:
+            sole.append(_names_set_only_by_literals(stmt_src, text))
+        return sole[0]
 
     def known(spelled: str) -> bool:
-        return spelled in made or exists is None or exists(spelled)
+        return spelled in made or spelled in chained or exists is None or exists(spelled)
 
     def read_removals() -> None:
         nonlocal gone_unread
@@ -7740,9 +7818,10 @@ def _directory_chain(
                         gone_patterns.append(spelled)
                     else:
                         gone_unread = True      # past the cap: every later cd unknown
-                    if made:
-                        made.difference_update(
-                            [d for d in made if d == spelled or d.startswith(spelled + "/")])
+                    for credited in (made, chained):
+                        if credited:
+                            credited.difference_update(
+                                [d for d in credited if d == spelled or d.startswith(spelled + "/")])
         pending.clear()
 
     def is_gone(spelled: str) -> bool:
@@ -7795,7 +7874,7 @@ def _directory_chain(
                     quote = m.group(2) if group == 3 else None
                     if group == 3 and raw is not None and len(raw) == len(text):
                         quote = raw[pos + m.start(2)]
-                    target = _inline_bound_operand(target, quote, bound)
+                    target = _inline_bound_operand(target, quote, bound, bare=bare_ok)
                 if bash and (tok in ("|", "&") or prev_tok == "|"):
                     pass                        # a child shell moved, not this one
                 else:
@@ -7847,30 +7926,38 @@ def _directory_chain(
                                 if raw is not None and len(raw) == len(text) else seg)
                     if pending:
                         read_removals()         # an earlier removal, then this make
-                    # `-p` makes every missing parent too, so a later `cd`
-                    # into one is entered (DEF-1016); without it a missing
-                    # parent fails the make, so only the operand is credited
+                    # `-p` makes every missing parent too, so a `cd` into one
+                    # is entered (DEF-1016) -- when it is joined to the make
+                    # by `&&`: the parents go to `chained`, which every other
+                    # boundary clears, this make's own included. A make that
+                    # fails (`/dev/null/x/y`) or runs in the background leaves
+                    # the parent missing, and a `cd` after `;`, a newline or
+                    # `&` runs anyway and fails. Without `-p` a missing parent
+                    # fails the make, so only the operand is credited, as it
+                    # always was
                     flags = made_seg[mk.start():mk.start(1)]
                     verb_at = flags.rfind("mkdir")
                     parents = verb_at >= 0 and _mkdir_makes_parents(flags[verb_at + 5:])
                     for operand in _OPERAND_TOKEN_RE.findall(made_seg[mk.start(1):mk.end(1)]):
-                        word = _inline_bound_word(operand, bound)
+                        word = _inline_bound_word(operand, bound, bare=bare_ok)
                         for cwd in cwds:
                             spelled = _step_one(word, cwd, None)
                             if spelled is None:
                                 continue
-                            for d in (_self_and_ancestors(spelled) if parents else (spelled,)):
-                                if len(made) < _WALK_SET_CAP:
-                                    # past the cap a make goes unrecorded: a
-                                    # later cd into it then reads as failed --
-                                    # more walls, never fewer
-                                    made.add(d)
-                            if spelled in made:
+                            if len(made) < _WALK_SET_CAP:
+                                # past the cap a make goes unrecorded: a later
+                                # cd into it then reads as failed -- more
+                                # walls, never fewer
+                                made.add(spelled)
                                 # made again undoes the removal of that exact
                                 # spelling only, never of a parent `-p` made
                                 # again: what else lived under the removed
                                 # parent stays gone (walls)
                                 gone.discard(spelled)
+                            if parents:
+                                for d in _self_and_ancestors(spelled):
+                                    if len(chained) < _WALK_SET_CAP:
+                                        chained.add(d)
                 stmt_raw = stmt_src[pos:pos + len(seg)]
                 pending.append((stmt_raw, list(cwds)))
                 child = bash and (tok in ("|", "&") or prev_tok == "|")
@@ -7880,6 +7967,7 @@ def _directory_chain(
                 elif bash:
                     _settle_bindings(
                         bound, seg, stmt_raw, pos, quote_at=quote_at, heredoc_at=heredoc_at,
+                        set_only_by_literals=set_only_by_literals,
                         in_this_shell=(not child and not frames and depth == 0
                                        and prev_tok not in ("&&", "||")))
             if head in _CONDITIONAL_CLOSERS and depth:
@@ -7929,6 +8017,8 @@ def _directory_chain(
             ps_blocks.append(not seg.rstrip().endswith(_PS_IN_PLACE_BLOCK_INVOKERS))
         elif tok == "}" and ps_blocks:
             ps_blocks.pop()
+        if tok != "&&":
+            chained.clear()     # the `&&` run a `mkdir -p` began has ended
         prev_tok = tok
         pos = b.end()
     return statements
