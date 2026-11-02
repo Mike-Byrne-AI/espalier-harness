@@ -332,7 +332,13 @@ is read on its own, and one that cannot be read says so on its own line:
   pull request is still open, gets a line under the rows (`closed at a push,
   its pull request still open: <n>: ...`, with that pull request's state, so a
   lane in CI reads apart from a red one; unread where the pull requests are),
-  so a shelved lane's job is re-sent from what is read. The section ends with `under two: <seat> (<n>, last mail <age>),
+  so a shelved lane's job is re-sent from what is read. One whose lane has no
+  pull request open, and none merged at or after the release among the
+  records section's merges, gets a line of its own (`closed at a push, no pull
+  request open or merged: <n>: ...`, with the release's stamp): the push sent
+  its release and `gh pr create` then failed, or a seat dropped a lane it
+  never pushed; a release older than the oldest merge read, where that read
+  filled its window, is left out, and the line is unread where the merges are. The section ends with `under two: <seat> (<n>, last mail <age>),
   ...`: each seat holding fewer than two live jobs with its count and its last
   mail's age (`no mail` for a seat a job alone names; a live job keeps a dark
   seat on the line, so read the age before giving it a job), over the seats

@@ -1677,10 +1677,13 @@ def _drive_both_sides(ids: list[str], *, root: Path, probes: Path, data: dict, b
 def _drive_in_export(tree: Path, probes: dict[str, dict]) -> dict[str, tuple[str, str]]:
     """Each probe's ``(verdict, detail)`` in ``tree``, an export ``_base_tree``
     built: the runner rooted there, pristine (the tree holds no generated
-    duplicate, so the contamination memo is empty). The one way a probe is read
-    where a strike reads its base, for the strike and the filing alike, so a
-    change to how that tree is driven reaches both."""
-    with _CHK.rooted(tree, pristine=True):
+    duplicate, so the contamination memo is empty) and importable (the tree's
+    root first on each probe's ``PYTHONPATH``: no interpreter has installed it,
+    so a pytest-collecting probe met the suite's engine-location check there
+    and read UNRESOLVED, DEF-5047). The one way a probe is read where a strike
+    reads its base, for the strike and the filing alike, so a change to how
+    that tree is driven reaches both."""
+    with _CHK.rooted(tree, pristine=True, importable=True):
         return {key: _CHK.run_probe(probe) for key, probe in probes.items()}
 
 
@@ -2249,8 +2252,18 @@ def repin(rid: str, *, ledger: Path, probes: Path, open_value: str | None, reaso
           dry_run: bool, root: Path,
           population: str | None = None, audience: str | None = None,
           severity: str | None = None, subject: str | None = None,
-          inputs: list[str] | None = None, no_base: bool = False) -> int:
+          inputs: list[str] | None = None, no_base: bool = False,
+          why_not: str | None = None) -> int:
     """Re-pin a LIVE row whose measured value moved off its ``open_value``.
+
+    ``why_not`` replaces the reason a row declared unmeasurable gives, the one
+    cell of its probe entry a verb could not move until DEF-4080: the roster
+    says never hand-edit, so a widened row kept a reason naming the old scope.
+    Refused on a row with a probe command (it is measured, and its command is
+    the oracle); ``cmd`` and ``open_value`` stay None, and the stamp lists
+    ``why not``, spaced as the other field names are, so the two readers of
+    the list (the same-day carry below and the engine's onboarding refresh)
+    read it.
 
     The hand pass a STRIKE_CANDIDATE verdict asks for ends one of two ways:
     the row is struck, or it is still open and the number moved. This is the
@@ -2299,6 +2312,17 @@ def repin(rid: str, *, ledger: Path, probes: Path, open_value: str | None, reaso
     if entry is None:
         print(f"ledger_row: {rid} carries no probe to re-pin", file=sys.stderr)
         return 2
+    if why_not is not None:
+        why_not = why_not.strip()
+        if not why_not:
+            print(f"ledger_row: --why-not is empty; give the reason {rid} cannot be measured", file=sys.stderr)
+            return 2
+        if entry.get("cmd"):
+            print(f"ledger_row: {rid} carries a probe command, so it is measured and its command is the oracle; "
+                  "--why-not replaces the reason of a row declared unmeasurable, never a probe (strike the "
+                  "row, or re-pin its probe)", file=sys.stderr)
+            return 2
+    old_why_not = entry.get("why_not")
     cmd = probe_cmd or entry.get("cmd")
     new_value = open_value if open_value is not None else entry.get("open_value")
     if (subject or inputs) and not cmd:
@@ -2448,6 +2472,8 @@ def repin(rid: str, *, ledger: Path, probes: Path, open_value: str | None, reaso
         entry["subject"] = subject
     if probe_cmd:
         entry["why_not"] = None
+    if why_not is not None:
+        entry["why_not"] = why_not
     entry.update(_pins(new_line))
     moved = f"{old_value!r} -> {new_value!r}" if new_value != old_value else "value unchanged"
     if severity and severity != old_severity:
@@ -2479,6 +2505,7 @@ def repin(rid: str, *, ledger: Path, probes: Path, open_value: str | None, reaso
         ("classes", cells[4:] != old_cells[4:]),
         ("subject", bool(subject) and subject != old_subject),
         ("inputs", inputs is not None and inputs != old_inputs),
+        ("why not", why_not is not None and why_not != old_why_not),
     ) if moved_field or name in carried_names]
     entry[key] = (
         f"STILL_OPEN (re-pinned {moved} on {day}: {reason}) [changed: {', '.join(changed) or 'none'}]"
@@ -2617,6 +2644,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="re-grade the row's severity (default: keep). Every member "
                          "row carries this cell, so no MIXED class is needed; --reason "
                          "is required on this verb and carries the grade's rationale")
+    rp.add_argument("--why-not", help="replace the reason a row declared unmeasurable gives (default: keep); "
+                                      "refused beside --probe-cmd or --open-value and on a row with a probe "
+                                      "command, since a row is measured or declared, never both; the stamp "
+                                      "lists `why not` among the fields it changed")
     rp.add_argument("--no-base", action="store_true",
                     help="where the repin changes the command, subject, inputs or open value, skip the "
                          "second drive, in the export of HEAD with no .git (the tree a strike's base "
@@ -2691,6 +2722,20 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         for line in refusals:
             print(f"ledger_row: {'dry run' if args.dry_run else 'override'} -- {line}", file=sys.stderr)
+    # The ledger's content rules over the drafted text, before anything is
+    # written and in the dry run alike (DEF-1121): a break refuses the write
+    # by the test that owns the rule, and the dry run names it as the claims'
+    # refusals are named above. --override is the claims' alone: a break reds
+    # the contract tier whatever this verb writes.
+    if drafted := _drafted_row(args):
+        breaks, note = _content_rule_breaks(root, *drafted)
+        if note:
+            print(f"ledger_row: note -- {note}", file=sys.stderr)
+        for line in breaks:
+            print(f"ledger_row: {'dry run' if args.dry_run else 'refused'} -- the drafted row breaks a ledger "
+                  f"content rule, {line}", file=sys.stderr)
+        if breaks and not args.dry_run:
+            return 2
     if args.dry_run:
         return _dispatch(ap, args, ledger=ledger, probes=probes, root=root)
     # Every writing verb holds the lock beside the ledger for its whole
@@ -2702,6 +2747,57 @@ def main(argv: list[str] | None = None) -> int:
     except _GEN.LedgerBusy as exc:
         print(f"ledger_row: {exc}", file=sys.stderr)
         return 2
+
+
+#: The ledger's content rules, kept beside the tests that own them (DEF-1121).
+_RULES_REL = "tests/_ledger_rules.py"
+
+
+def _content_rule_breaks(root: Path, rel: str, text: str) -> tuple[list[str], str]:
+    """``(breaks, note)``: each ledger content rule the drafted ``text`` (the
+    row at ``rel``) breaks, as ``<owning test>: <what>``, from the predicates
+    the tests own (``tests/_ledger_rules.py`` in ``root``, loaded by path with
+    ``root`` first on the import path), and a note where that file is there
+    and could not be run. A tree without it runs none and says nothing: the
+    rules are about Espalier's own docs. Until DEF-1121 they lived in test
+    methods alone, so a row that broke one was written, converged and redded
+    only in the contract tier, each red a repin and another tier run."""
+    path = root / _RULES_REL
+    if not path.is_file():
+        return [], ""
+    added = str(root) not in sys.path
+    if added:
+        sys.path.insert(0, str(root))
+    try:
+        spec = importlib.util.spec_from_file_location("_espalier_ledger_rules", path)
+        if spec is None or spec.loader is None:
+            return [], f"the ledger content rules in {_RULES_REL} could not be loaded"
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        found = mod.breaks(rel, text)
+    except Exception as exc:  # noqa: BLE001 -- a rule that cannot run is a note, never a refusal
+        return [], (f"the ledger content rules in {_RULES_REL} could not be run "
+                    f"({type(exc).__name__}: {_load('_json_safe').os_error_text(exc)})")
+    finally:
+        if added and str(root) in sys.path:
+            sys.path.remove(str(root))
+    return [f"{node}: {what}" for node, what in found], ""
+
+
+def _drafted_row(args: argparse.Namespace) -> tuple[str, str] | None:
+    """``(rel, line)``: the text a writing verb is about to put on a row, as
+    one table row (its anchor beside it where one is given), and the row
+    file's path; None where the verb writes no text or the file cannot be
+    read (the verb's own read says so)."""
+    text_file = getattr(args, "text_file", None)
+    if args.verb not in ("file", "repin", "strike") or not text_file:
+        return None
+    try:
+        text = Path(text_file).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    cells = [c for c in (getattr(args, "anchor", None), text.strip().replace("\n", " ")) if c]
+    return f"task-packs/ledger.d/{args.rid or 'NEW'}.md", "| " + " | ".join(cells) + " |"
 
 
 def _mint(kind: str, *, ledger: Path, probes: Path, root: Path, dry_run: bool) -> tuple[str, str] | None:
@@ -2734,7 +2830,14 @@ def _dispatch(ap: argparse.ArgumentParser, args: argparse.Namespace, *, ledger: 
                          population=args.population, audience=args.audience,
                          effort=args.effort, dry_run=args.dry_run)
     if args.verb == "repin":
+        if args.why_not is not None and (args.probe_cmd or args.open_value is not None):
+            # A row is measured or declared, never both: a reason beside a new
+            # command would be written over by the command's drive (DEF-4080).
+            ap.error("repin: --why-not declares the row unmeasurable; drop --probe-cmd and --open-value")
+        if args.why_not is not None and args.no_base:
+            ap.error("repin: --no-base skips a drive that a row declared --why-not never makes; drop one")
         return repin(args.rid, ledger=ledger, probes=probes, open_value=args.open_value,
+                     why_not=args.why_not,
                      reason=args.reason,
                      text_file=Path(args.text_file) if args.text_file else None,
                      anchor=args.anchor, probe_cmd=args.probe_cmd, subject=args.subject, day=args.date,

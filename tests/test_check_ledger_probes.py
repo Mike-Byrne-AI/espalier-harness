@@ -1920,6 +1920,26 @@ class TestTheRunnerIsRootedForABlock:
         with mod.rooted(tmp_path, pristine=True):
             assert run_probe(probe) == (STILL_OPEN, "")
 
+    def test_an_importable_root_goes_first_on_the_probe_path_for_the_block_alone(self, tmp_path, monkeypatch):
+        """DEF-5047: an export no interpreter installed puts its root first on
+        each probe's ``PYTHONPATH``, ahead of what the caller had, so a child
+        the probe starts elsewhere imports the tree's package; a plain root
+        and the runner after the block leave the path alone. Mutation: the
+        flag ignored in the environment, or not restored after the block."""
+        mod = check_ledger_probes
+        (tmp_path / "pkg").mkdir()
+        (tmp_path / "pkg" / "a.py").write_text("", encoding="utf-8")
+        monkeypatch.setenv("PYTHONPATH", "elsewhere")
+        probe = {"id": "T", "subject": "pkg/a.py", "open_value": "x",
+                 "cmd": "python3 -c \"import os;print(os.environ.get('PYTHONPATH','').split(os.pathsep)[0])\""}
+        with mod.rooted(tmp_path, pristine=True, importable=True) as root:
+            verdict, detail = run_probe(probe)
+        assert verdict == STRIKE_CANDIDATE and f"prints {str(root)!r}" in detail, detail
+        assert mod._IMPORTABLE is False, "the flag outlived its block"
+        with mod.rooted(tmp_path, pristine=True):
+            verdict, detail = run_probe(probe)
+        assert "prints 'elsewhere'" in detail, detail
+
     def test_main_root_goes_through_the_same_swap(self, tmp_path, monkeypatch, capsys):
         """Mutation: ``main`` keeps a copy of the swap, which then drifts from
         ``rooted`` (the memo reset, the ``finally``)."""
