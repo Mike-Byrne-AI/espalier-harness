@@ -25,6 +25,13 @@ Stdlib-only, zero espalier imports. Never raises on missing state;
 prints ``espalier`` alone when nothing is observable. Reads stdin only
 when it is not a terminal, and writes nothing: the prompt router reads
 the context from the transcript, not from here.
+
+``--segments`` prints the indicators alone, without the ``espalier`` label,
+and nothing at all when none is on: for an operator who keeps a statusLine
+of their own and composes these into it, since the settings merge never
+rewrites a present key (DEF-1116; ``espalier doctor`` names the state). It
+reads no stdin, so the payload stays for the operator's own command, and the
+two context segments, which come from that payload, are left to their line.
 """
 from __future__ import annotations
 
@@ -259,7 +266,8 @@ def _context_segments(payload: dict) -> list[str]:
     return out
 
 
-def main() -> int:
+def main(argv: "list[str] | None" = None) -> int:
+    segments = "--segments" in (sys.argv[1:] if argv is None else argv)
     # Resolve to absolute path so the statusline does not silently
     # degrade to a cwd-relative read when CLAUDE_PROJECT_DIR is unset
     # (multi-repo workspaces, IDE integrations, spawned subshells).
@@ -268,8 +276,8 @@ def main() -> int:
     # way. A raw Path.cwd() here misreports when launched from a subdirectory
     # even with the env var set.
     root = Path(os.environ.get("CLAUDE_PROJECT_DIR", ".")).resolve()
-    payload = _read_statusline_payload()
-    parts = ["espalier"]
+    payload = {} if segments else _read_statusline_payload()
+    parts = [] if segments else ["espalier"]
     # Compute each indicator independently so one failing segment
     # (e.g. a malformed freshness cache) degrades only ITSELF, not the healthy
     # MAINT/STOP/blueprint segments — and log the masked error to stderr (safe;
@@ -290,7 +298,8 @@ def main() -> int:
             continue
         if piece:
             parts.append(piece)
-    print(" | ".join(parts))
+    if parts:
+        print(" | ".join(parts))
     return 0
 
 

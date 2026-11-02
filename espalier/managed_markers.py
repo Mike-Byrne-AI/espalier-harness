@@ -599,9 +599,12 @@ def seed_is_untouched(content: str) -> bool:
 def path_has_seed_stamp(path: Path) -> bool:
     """True if the regular file at ``path`` opens with a seed-version stamp.
 
-    PRESENCE, not hash, on purpose: a seed the adopter has edited is still
-    harness-provenance for fingerprint purposes (their edits do not make the
-    other 460 KB theirs). The one way to reclaim a seed as adopter content is
+    PRESENCE, not hash, on purpose: a carried seed the adopter has edited is
+    still harness-provenance for fingerprint purposes (their edits do not make
+    the other 460 KB theirs). The near-empty stub-backed seeds are the
+    exception, read by hash: ``managed_inventory.seed_is_harness_content``,
+    the fingerprint's predicate, counts a grounded stub as the adopter's
+    (DEF-1112). The one way to reclaim a carried seed as adopter content is
     to delete the stamp line; ``cli._count_unstamped_seed_docs`` sees that
     state and ``upgrade`` reports it. ``seed_is_untouched`` is the hash-keyed
     sibling for the question doctor asks (has anyone grounded this yet?).

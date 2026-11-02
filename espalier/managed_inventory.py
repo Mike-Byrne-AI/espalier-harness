@@ -34,7 +34,7 @@ from espalier import __version__, fusion_manifest, surface_contract
 from espalier._safe_walk import safe_rglob, visible
 from espalier.asset_inventory import get_packaged_surface
 from espalier.assets import assets_root
-from espalier.managed_markers import SEED_STAMP_TOKEN, path_has_seed_stamp
+from espalier.managed_markers import SEED_STAMP_TOKEN, path_has_seed_stamp, seed_is_untouched
 from espalier.managed_paths import (
     HARNESS_OWNED_ROOTS,
     STANDARD_MANAGED_CC_DOCS,
@@ -371,6 +371,39 @@ def get_seed_asset_source(dest_relpath: str) -> str:
     return _SEED_ASSET_SOURCES.get(dest_relpath, dest_relpath)
 
 
+#: Stub-backed seeds the deploy writes into after stamping them
+#: (``cli._file_onboarding_rows`` files the onboarding classes into the
+#: forward ledger), so a hash never reads them untouched.
+_SEEDS_THE_DEPLOY_FILLS: frozenset[str] = frozenset({"task-packs/FORWARD_LEDGER.md"})
+
+
+def seed_is_harness_content(repo_root: Path, rel: str) -> bool:
+    """Whether the Markdown file at ``rel`` is a seed the fingerprint leaves
+    out as harness provenance: it opens with the seed stamp
+    (``path_has_seed_stamp``, the 256-byte peek) and, for a stub-backed seed
+    (the ones ``get_seed_asset_source`` redirects to a near-empty stub), its
+    body is still the shipped one (``seed_is_untouched``, DEF-1112). A carried
+    catalog stays harness content once edited -- an edit does not make the
+    other 460 KB the adopter's -- but a grounded stub is entirely the
+    adopter's text. The whole file is read for those few paths alone; one that
+    cannot be read is not proven untouched and counts as the adopter's, as an
+    unreadable stamp does. The forward ledger keeps the presence rule: the
+    deploy files its onboarding rows into the stub after stamping it, so it is
+    never untouched, and a fresh ``init`` would put the harness's own rows in
+    the fingerprint (the failure-mode review drove it)."""
+    rel = rel.replace("\\", "/")
+    path = Path(repo_root) / rel
+    if not path_has_seed_stamp(path):
+        return False
+    if get_seed_asset_source(rel) == rel or rel in _SEEDS_THE_DEPLOY_FILLS:
+        return True
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return seed_is_untouched(text)
+
+
 SEED_ADAPT_HEADER = (
     "<!-- espalier:seed-doc — Illustrative reference from Espalier-Harness.\n"
     "     The examples below describe the harness's OWN conventions; adapt them\n"
@@ -606,8 +639,10 @@ def census_prune_paths(repo_root: Path, *, fused: bool | None = None) -> tuple[s
     - ``fuse``'s paths only on a fused tree (``fused``, else its marker
       ``fusion_manifest.FUSION_MARKER`` on disk), so a plain tree's own
       ``tools/__init__.py``, ``bench/`` or ``docs/external/`` stay counted;
-    - a seed only where it is absent (``init`` is about to write it) or opens
-      with the seed stamp (``init`` wrote it): ``init`` keeps an adopter's own
+    - a seed only where it is absent (``init`` is about to write it) or is
+      still harness content by the fingerprint's own predicate,
+      :func:`seed_is_harness_content` (``init`` wrote it, and a stub-backed
+      one is not yet grounded, DEF-1112): ``init`` keeps an adopter's own
       ``docs/HOOKS.md``, and so does the census. On a fused tree a path the
       overlay brings is the harness's whatever its stamp, since ``fuse``
       refuses a host file at a harness path;
@@ -637,7 +672,9 @@ def census_prune_paths(repo_root: Path, *, fused: bool | None = None) -> tuple[s
         else:
             if rel in seeds and rel not in fuse_paths:
                 path = repo_root / rel
-                if path.exists() and not path_has_seed_stamp(path):
+                # The fingerprint's own predicate: a grounded stub is the
+                # adopter's doc in the censuses too (DEF-1112).
+                if path.exists() and not seed_is_harness_content(repo_root, rel):
                     continue
             candidates = (rel,)
         for cand in candidates:
@@ -938,9 +975,11 @@ def unstamped_seed_docs(repo_root: Path) -> list[str]:
     until 2026-09-05 only ``upgrade`` counted the state (DEF-691). Hoisted here
     from ``cli`` because ``doctor`` must not import ``cli``.
 
-    The predicate is ``path_has_seed_stamp`` -- the fingerprint's OWN (a
-    256-byte peek, replacement decoding, BOM and CRLF folded) -- so this list
-    and the fingerprint's exclusion cannot disagree: the first cut read the
+    The predicate is ``path_has_seed_stamp`` -- the stamp test inside the
+    fingerprint's own (:func:`seed_is_harness_content`, which also counts a
+    grounded stub-backed seed as the adopter's, stamped or not: DEF-1112;
+    a 256-byte peek, replacement decoding, BOM and CRLF folded) -- so this
+    list and the fingerprint's exclusion cannot disagree: the first cut read the
     whole file strictly and skipped a seed a Windows editor had resaved as
     cp1252, under-counting exactly the doc that had re-entered the fingerprint
     (failure-mode pass, driven). A seed that is gone is not listed: a deleted

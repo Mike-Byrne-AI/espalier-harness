@@ -139,6 +139,7 @@ espalier merge-settings <repo> --repair       # also rewrite espalier's OWN hook
 espalier init <repo> --wire-hooks # one-shot: arm hooks even when a settings.json already exists (opt-in; same flag on `fuse`)
 espalier init . --rewire-interpreter # swap a below-floor Python (needs 3.10+) in an existing settings.json; changes only the interpreter name, and on Windows puts a bare or & statusLine head behind a dot; keeps a .bak of the file
 espalier upgrade .                # re-deploy a stale harness in place (dry-run by default; --execute to apply)
+espalier upgrade . --execute --allow-rollback   # write this engine's bytes over a tree a later release deployed (refused without the flag; init, install-ci and fingerprint take it too)
 espalier doctor <repo>            # pre-flight health check; works on uninitialized repos
 espalier ignore-snippet <repo> --format prettier   # the ignore lines for what init wrote; paste into .prettierignore
 espalier ignore-snippet <repo> --format ruff       # the [tool.ruff] extend-exclude line that leaves the vendored tools/cc out of your ruff

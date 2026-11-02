@@ -1355,6 +1355,23 @@ class TestSettingsUnwireFinishesTheJob:
             "type": "command", "command": "~/bin/my-status.sh",
         }
 
+    def test_a_line_composed_with_segments_is_the_adopters_and_survives(self, harness_repo):
+        """DEF-1116: an operator who keeps their own statusLine adds espalier's
+        indicators to it with ``statusline.py --segments``; the line names the
+        script, and the unwire took it for espalier's and deleted the whole
+        key, the operator's command with it (air's note on the lane). The
+        composed line is kept as found. Mutation: drop the token check and the
+        key is gone."""
+        composed = "~/bin/my-status.sh; python tools/cc/statusline.py --segments"
+        self._wire(harness_repo, composed)
+
+        report = clean_generated_surface(harness_repo, dry_run=False)
+
+        assert self._settings(harness_repo)["statusLine"] == {
+            "type": "command", "command": composed,
+        }
+        assert not any(label.startswith("statusLine:") for label in report["unwired_hooks"])
+
     def test_the_sentinel_and_an_emptied_hooks_key_are_dropped(self, harness_repo):
         self._wire(harness_repo, "x")
 

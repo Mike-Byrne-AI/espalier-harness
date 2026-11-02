@@ -131,7 +131,8 @@ ORPHAN_EXEMPT_PREFIXES = ("memory/", ".claude/rules/", ".claude/output-styles/")
 # init's own seed docs open with this stamp, and linking them is init's business,
 # not the adopter's: an unlinked seed is not an orphan the adopter made (six on
 # every fresh init). Presence, not the hash: an edited seed is still init's
-# until its stamp line is deleted, the rule the fingerprint uses. Forced twin of
+# until its stamp line is deleted, the fingerprint's rule for its carried seeds
+# (it reads a grounded stub-backed seed as the adopter's). Forced twin of
 # espalier/managed_markers.SEED_STAMP_RE + SEED_STAMP_SCAN_BYTES (no import
 # across the boundary); pinned by tests/test_reflect_protocol.py::TestReflectTwinParity.
 _SEED_STAMP_RE = re.compile(r"^<!-- espalier:seed-version v\S+ sha256:([0-9a-f]{64}) -->\n")

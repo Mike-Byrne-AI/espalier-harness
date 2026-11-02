@@ -548,8 +548,10 @@ def find_orphans(matrix: dict[str, list[str]], *, root: Path | None) -> list[str
     omission; ``root=None`` is a bare matrix), init's own stamped seeds are
     skipped too: linking a
     seed is init's business, not the adopter's (six unlinked on every fresh
-    init), and presence of the stamp, not its hash, is the test, as for the
-    fingerprint (``managed_markers.path_has_seed_stamp``).
+    init), and presence of the stamp, not its hash, is the test
+    (``managed_markers.path_has_seed_stamp``), as for the fingerprint's
+    carried seeds; the fingerprint reads a grounded stub-backed seed as the
+    adopter's doc (DEF-1112), and linking it stays init's business here.
     """
     all_files = set(matrix.keys())
     referenced = set()

@@ -1225,6 +1225,64 @@ class TestSeedStampedDocsExcluded:
             assert f"docs/{name}.md" not in dumped, name
 
 
+class TestGroundedStubSeedIsTheAdoptersDoc:
+    """DEF-1112: the five stub-backed seeds (``get_seed_asset_source``
+    redirects them to a near-empty stub) carry nothing of the harness's once
+    grounded, so the fingerprint keys them on the stamp's hash, where a
+    carried catalog stays keyed on the stamp's presence: an edit there does
+    not make the other 460 KB the adopter's. Mutation: read the stamp's
+    presence at either site and its assertion fails."""
+
+    def test_a_grounded_conventions_stub_earns_the_docs_cue(self, tmp_path):
+        docs = tmp_path / "docs"
+        docs.mkdir()
+        stub = _seed_stamped("# Conventions\n\n<!-- fill in -->\n")
+        (docs / "CONVENTIONS.md").write_text(stub, encoding="utf-8")
+        assert detect_docs_surface(tmp_path) == []
+        (docs / "CONVENTIONS.md").write_text(
+            stub + "## Naming\nModules are snake_case.\n", encoding="utf-8")
+        assert detect_docs_surface(tmp_path) == ["docs", "docs/CONVENTIONS.md"]
+
+    def test_an_edited_carried_catalog_stays_harness_content(self, tmp_path):
+        docs = tmp_path / "docs"
+        docs.mkdir()
+        (docs / "FAILURE_MODES.md").write_text(
+            _seed_stamped("# Failure modes\n") + "Our own note.\n", encoding="utf-8")
+        assert detect_docs_surface(tmp_path) == []
+
+    def test_the_file_walk_reads_a_grounded_stub_as_theirs(self, tmp_path):
+        """The second site, ``_iter_files``: the large-file list and every
+        detector that walks the tree."""
+        docs = tmp_path / "docs"
+        docs.mkdir()
+        body = "line\n" * 60_000  # ~300 KB, over the 200 KB threshold
+        (docs / "SHARP_EDGES.md").write_text(_seed_stamped(body), encoding="utf-8")
+        assert detect_large_files(tmp_path) == []
+        (docs / "SHARP_EDGES.md").write_text(_seed_stamped(body) + "## Ours\n", encoding="utf-8")
+        assert [lf.path for lf in detect_large_files(tmp_path)] == ["docs/SHARP_EDGES.md"]
+
+    def test_the_analysts_censuses_count_a_grounded_stub_as_theirs_too(self, tmp_path):
+        """The sister site (the code review and air's note on the lane):
+        ``census_prune_paths`` kept a stub-backed seed out of the analysts'
+        censuses on the stamp's presence while the fingerprint counted it."""
+        from espalier.managed_inventory import census_prune_paths
+
+        docs = tmp_path / "docs"
+        docs.mkdir()
+        stub = _seed_stamped("# Conventions\n")
+        (docs / "CONVENTIONS.md").write_text(stub, encoding="utf-8")
+        assert "docs/CONVENTIONS.md" in census_prune_paths(tmp_path)
+        (docs / "CONVENTIONS.md").write_text(stub + "## Ours\n", encoding="utf-8")
+        assert "docs/CONVENTIONS.md" not in census_prune_paths(tmp_path)
+
+    def test_a_crlf_resaved_untouched_stub_is_still_harness_content(self, tmp_path):
+        docs = tmp_path / "docs"
+        docs.mkdir()
+        (docs / "CONVENTIONS.md").write_bytes(
+            _seed_stamped("# Conventions\n").replace("\n", "\r\n").encode("utf-8"))
+        assert detect_docs_surface(tmp_path) == []
+
+
 # ─── DEF-410f: one harness-output predicate; init leaves the fingerprint alone ─
 
 ANALYZE_PATH = Path(analyze_module.__file__)

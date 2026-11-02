@@ -192,7 +192,8 @@ def _unwire_espalier_hooks(repo_root: Path, dry_run: bool, *, live_session: bool
     ``_espalier_managed`` sentinel (the file is the adopter's plain settings
     once nothing in it is ours), and a ``hooks`` key emptied by the strip. An
     adopter's own ``statusLine`` -- any command that does not name the
-    harness's script -- is left exactly as found. A symlinked
+    harness's script, or composes it with ``--segments`` -- is left exactly
+    as found. A symlinked
     ``settings.json`` (a dotfiles-managed one) is edited behind the link,
     which stays (``follow_symlinks=True``: the adopter's own file, the same
     keyword init's settings merge and rewire pass).
@@ -282,7 +283,9 @@ def _unwire_espalier_hooks(repo_root: Path, dry_run: bool, *, live_session: bool
     )
     # The shim head first: a shim-headed command names statusline.py nowhere,
     # and the label should say which file the wiring ran.
-    dropped_statusline = next(
+    # A line composed with `statusline.py --segments` is the operator's own,
+    # their command with espalier's indicators added (DEF-1116): kept whole.
+    dropped_statusline = None if "--segments" in status_cmd else next(
         (rel for rel in (_STATUSLINE_SHIM, _STATUSLINE_SCRIPT) if rel in status_cmd),
         None,
     )

@@ -20,6 +20,7 @@ Pins three TP-54 sub-task contracts landing in the deploy helpers:
 from __future__ import annotations
 
 import ast
+import json
 import os
 import re
 import subprocess
@@ -2361,10 +2362,12 @@ class TestUpgradeAgainstTheStampAndTheSavedPlan:
         for verb, named, run in runs:
             assert run() == 2, verb
             out, err = capsys.readouterr()
-            assert "99.0.0" in out and "newer" in out, (verb, out)
+            # stderr since the build lane: fingerprint's stdout is its JSON.
+            assert "99.0.0" in err and "newer" in err, (verb, err)
             assert "would re-deploy" not in out, (verb, out)
             assert "REFUSED" in err and named in err, (verb, err)
-            assert "To roll back on purpose" in err, (verb, err)
+            assert "To roll back on purpose" in err and "--allow-rollback" in err, (verb, err)
+            assert "still reads as an unstamped tree" in err, (verb, err)
             assert _tree_digest(tmp_path) == before, verb
 
         # The control: the same tree at the engine's own stamp is not refused.
@@ -2379,6 +2382,155 @@ class TestUpgradeAgainstTheStampAndTheSavedPlan:
                                     if not ln.startswith("# espalier-version:")),
                             encoding="utf-8")
         assert _upgrade(tmp_path, execute=False) == 0
+
+    def test_allow_rollback_lets_every_writing_verb_past_a_newer_stamp_and_says_so(
+        self, tmp_path, capsys,
+    ):
+        """DEF-1104's named override: the way past the ordering refusal was a
+        stamp line deleted by hand; ``--allow-rollback`` is the flag on each
+        verb the refusal stops, and the run says it is rolling back and names
+        what. Mutation: ignore the flag and each verb exits 2."""
+        import argparse
+        from espalier.cli import cmd_fingerprint, cmd_init, cmd_install_ci, cmd_upgrade
+
+        _initialized_tree(tmp_path)
+        assert cmd_install_ci(argparse.Namespace(repo=str(tmp_path))) == 0
+
+        def upgrade(*, execute: bool) -> int:
+            return cmd_upgrade(argparse.Namespace(repo=str(tmp_path), execute=execute,
+                                                  config=None, allow_rollback=True))
+
+        runs = [
+            ("upgrade", lambda: upgrade(execute=False)),
+            ("install-ci", lambda: cmd_install_ci(argparse.Namespace(
+                repo=str(tmp_path), allow_rollback=True))),
+            ("fingerprint", lambda: cmd_fingerprint(argparse.Namespace(
+                repo=str(tmp_path), config=None, allow_rollback=True))),
+            ("init", lambda: cmd_init(argparse.Namespace(
+                repo=str(tmp_path), config=None, write_gitignore=True, allow_rollback=True))),
+            ("upgrade", lambda: upgrade(execute=True)),
+        ]
+        manifest = tmp_path / "cc" / "PACK_MANIFEST.txt"
+        for verb, run in runs:
+            # A dry run leaves the stamp it was let past; a write re-stamps it.
+            if "# espalier-version: 99.0.0" not in manifest.read_text(encoding="utf-8"):
+                _stamp(tmp_path, "99.0.0")
+            capsys.readouterr()
+            assert run() == 0, verb
+            out, err = capsys.readouterr()
+            assert "--allow-rollback" in err and "99.0.0" in err, (verb, err)
+            assert "REFUSED" not in err, (verb, err)
+            if verb == "fingerprint":
+                json.loads(out)  # its stdout stays the JSON (code review)
+
+    @pytest.mark.contract
+    def test_the_verbs_the_stamp_check_stops_all_take_the_flag(self):
+        """The refusal tells the operator to re-run with --allow-rollback, so
+        every verb whose command runs the stamp check must accept the flag
+        through the real parser, and the set is derived from the parser rather
+        than typed (the failure-mode review's census found four; a fifth verb
+        joins it by calling the check). Mutation: drop one parser's flag and
+        its parse fails."""
+        import inspect
+
+        from espalier.cli import build_parser
+
+        parser = build_parser()
+        sub = next(a for a in parser._actions if getattr(a, "choices", None)
+                   and isinstance(a.choices, dict))
+        checked = sorted(
+            name for name, p in sub.choices.items()
+            if (func := p.get_default("func")) is not None
+            and "_check_deployed_stamp(" in inspect.getsource(func)
+        )
+        assert checked == ["fingerprint", "init", "install-ci", "upgrade"], checked
+        for verb in checked:
+            assert parser.parse_args([verb, ".", "--allow-rollback"]).allow_rollback is True, verb
+        assert not hasattr(parser.parse_args(["doctor", "."]), "allow_rollback")
+
+    def test_another_build_of_the_same_version_is_said_with_what_it_rewrites(
+        self, tmp_path, capsys,
+    ):
+        """DEF-1104's remainder: two builds of one pre-release string shared a
+        stamp, so an older build's rewrite read as "the deployed surface is not
+        current". The build line under the version says which build deployed
+        the tree; a different one is said, naming both and the files the run
+        rewrites, and the run goes on: builds have no order, and a refusal
+        would stop every forward upgrade inside a pre-release. A tree stamped
+        before builds were is said too. Mutation: drop the build read and no
+        line names the other build."""
+        import argparse
+        from espalier.cli import cmd_init
+        from espalier.render_surface import engine_build
+
+        _initialized_tree(tmp_path)
+        rel = "tools/cc/hooks/post_write_check.py"
+        hook = tmp_path / rel
+        manifest = tmp_path / "cc" / "PACK_MANIFEST.txt"
+
+        def rebuild(line: "str | None") -> None:
+            kept = [ln for ln in manifest.read_text(encoding="utf-8").splitlines()
+                    if not ln.startswith("# espalier-build:")]
+            if line is not None:
+                at = next(i for i, ln in enumerate(kept) if ln.startswith("# espalier-version:"))
+                kept.insert(at + 1, line)
+            manifest.write_text("\n".join(kept) + "\n", encoding="utf-8")
+
+        # The control: this build's own stamp over a drifted hook says drift, not a build.
+        hook.write_text(hook.read_text(encoding="utf-8") + "# from-the-other-build\n",
+                        encoding="utf-8")
+        capsys.readouterr()
+        assert _upgrade(tmp_path, execute=False) == 0
+        out = capsys.readouterr().out
+        assert "another build" not in out and "names no build" not in out, out
+        assert "deployed surface is not current" in out, out
+
+        rebuild("# espalier-build: 000000000000")
+        assert _upgrade(tmp_path, execute=False) == 0
+        out, err = capsys.readouterr()
+        said = [ln for ln in err.splitlines() if "another build" in ln]
+        assert said, err
+        assert "000000000000" in said[0] and engine_build() in said[0], said
+        assert rel in said[0] and "cc/PACK_MANIFEST.txt" not in said[0], said
+        assert "deployed surface is not current" not in out, out
+
+        # The two verbs that write a fixed set say another build too, on
+        # stderr, and fingerprint's stdout stays its JSON (code review).
+        from espalier.cli import cmd_fingerprint, cmd_install_ci
+        assert cmd_fingerprint(argparse.Namespace(repo=str(tmp_path), config=None)) == 0
+        out, err = capsys.readouterr()
+        json.loads(out)
+        assert "another build" in err, err
+        # The first run finds no gate on this tree, so nothing is at stake.
+        assert cmd_install_ci(argparse.Namespace(repo=str(tmp_path))) == 0
+        assert "another build" not in capsys.readouterr().err
+        assert cmd_install_ci(argparse.Namespace(repo=str(tmp_path))) == 0
+        assert "another build" in capsys.readouterr().err
+
+        rebuild(None)
+        assert _upgrade(tmp_path, execute=False) == 0
+        said = [ln for ln in capsys.readouterr().err.splitlines() if "names no build" in ln]
+        assert said and rel in said[0], said
+        # ... but not from the two verbs that never restamp: they would say it
+        # on every run (failure-mode review).
+        assert cmd_fingerprint(argparse.Namespace(repo=str(tmp_path), config=None)) == 0
+        assert "names no build" not in capsys.readouterr().err
+
+        rebuild("# espalier-build: 000000000000")
+        assert cmd_init(argparse.Namespace(repo=str(tmp_path), config=None,
+                                           write_gitignore=True)) == 0
+        err = capsys.readouterr().err
+        assert any("another build" in ln and rel in ln for ln in err.splitlines()), err
+        assert "# from-the-other-build" not in hook.read_text(encoding="utf-8")
+        assert f"# espalier-build: {engine_build()}" in manifest.read_text(encoding="utf-8")
+
+        # Only the stamp differs (a tree stamped before builds were, or by
+        # another build, whose files match): nothing is said, since the
+        # manifest is the line being rewritten (code review).
+        rebuild(None)
+        assert _upgrade(tmp_path, execute=False) == 0
+        err = capsys.readouterr().err
+        assert "names no build" not in err and "another build" not in err, err
 
     def test_execute_without_the_saved_plan_refuses_and_the_preview_says_so(
         self, tmp_path, capsys,
