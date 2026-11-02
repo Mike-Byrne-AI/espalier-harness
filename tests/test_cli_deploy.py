@@ -2423,6 +2423,7 @@ class TestUpgradeAgainstTheStampAndTheSavedPlan:
             if verb == "fingerprint":
                 json.loads(out)  # its stdout stays the JSON (code review)
 
+    @pytest.mark.contract
     def test_the_verbs_the_stamp_check_stops_all_take_the_flag(self):
         """The refusal tells the operator to re-run with --allow-rollback, so
         every verb whose command runs the stamp check must accept the flag
