@@ -5324,6 +5324,7 @@ def _run_main(wall_start: float | None = None) -> int:
         orders_line = ""
     # The box lock's off-note on a named clone neither line above carried it
     # on: one [INFO] note, from what the mail line read. No spawn.
+    _phase("box lock note", Orders=orders_line)
     try:
         _box_lock_info(root, mail_read, (mail_line, orders_line))
     except Exception as e:  # noqa: BLE001 -- bounded warn, never block session

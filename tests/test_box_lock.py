@@ -535,7 +535,8 @@ class TestTheWaitingLine:
         handed the stop command, as the line's old text did."""
         from datetime import datetime, timedelta, timezone
         bl = _box_lock()
-        child = subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"], capture_output=True, text=True)
+        child = subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"], capture_output=True, text=True,
+                               encoding="utf-8")
         dead = int(child.stdout.strip())
         assert not bl.holder_alive(dead)
         old = (datetime.now(timezone.utc) - timedelta(minutes=bl.WAIT_CEILING_MIN + 1)).isoformat(timespec="seconds")
@@ -771,6 +772,7 @@ class TestTheCensusOfPytestSpawners:
         assert bl.pair_asymmetry("env = {k: v for k, v in env.items() if not k.startswith(HOLDER_KEY)}") == bl.HOLDER_KEY
         assert bl.pair_asymmetry('env["ESPALIER_BOX_LOCK_WAIT_S"] = "60"') is None
 
+    @pytest.mark.contract
     def test_the_census_reads_every_root_of_the_checkout_and_the_key_by_its_constant(self, tmp_path):
         """DEF-2034: a spawner under a root no typed list names, and one that
         names the key by its constant, are each flagged; the walk's own leave-
