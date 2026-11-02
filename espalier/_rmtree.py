@@ -24,7 +24,9 @@ refuses the unlink of every child on POSIX, which is the shape this host can
 produce); the tree's own parent is not ours and is never touched, so a tree
 under a read-only directory reports rather than reaches outside itself. For a
 single file the file is what was asked for; its directory is not. On Windows
-the attribute lives on the file, so the file's own bit is the fix there.
+the attribute lives on the file, so the file's own bit is the fix there. A
+link is what was asked for and what it names is not: its bits are read and
+set on the link itself, never through it (``_add_owner_bits``).
 
 A directory the walk cannot enter is the one refusal a retry cannot answer.
 ``rmtree`` opens a directory before it deletes inside it (``os.open`` on its
@@ -78,6 +80,18 @@ _PERMISSION_ERRNOS = frozenset({errno.EACCES, errno.EPERM})
 #: ``rmtree`` uses the ``onexc`` spelling where the interpreter has it (3.12+).
 _HAS_ONEXC = sys.version_info >= (3, 12)
 
+#: ``os.chmod`` takes ``follow_symlinks=False``: macOS (``lchmod``) and
+#: Windows from 3.13. Not Linux, which has no ``lchmod``. Computed at import
+#: and looked up at each call, so a test drives every arm by setting it.
+_CHMOD_NO_FOLLOW = os.chmod in os.supports_follow_symlinks
+
+#: Windows, where a bare ``os.chmod`` sets the attribute of a link itself on
+#: every version: to 3.12 it is the only body (``SetFileAttributesW`` on the
+#: path), and from 3.13 ``follow_symlinks`` defaults to false there
+#: (``CHMOD_DEFAULT_FOLLOW_SYMLINKS`` in CPython's ``Modules/posixmodule.c``,
+#: read for 3.12 and 3.13). So DEF-5060 was a POSIX defect alone.
+_BARE_CHMOD_IS_THE_LINKS = os.name == "nt"
+
 
 def _is_permission_refusal(exc: BaseException) -> bool:
     return isinstance(exc, OSError) and exc.errno in _PERMISSION_ERRNOS
@@ -92,7 +106,19 @@ def _enters_a_directory(func: Callable[..., object]) -> bool:
 
 
 def _add_owner_bits(path: str, bits: int) -> None:
-    """Add ``bits`` for the owner, keeping every other bit.
+    """Add ``bits`` for the owner on ``path`` itself, keeping every other bit.
+
+    Never through a link: a link is what was asked to be deleted and its
+    target is not, and may lie outside the tree (ledger ``DEF-5060``: a
+    refused unlink of a link in a locked directory gave the file it named,
+    outside the tree, the write bit). So the mode is read by ``lstat`` and
+    set without following where ``os.chmod`` can do that; where it cannot
+    (Linux), a link is left as it is, which loses nothing, since on POSIX a
+    link's own mode never refuses an unlink (its directory's write bit does).
+    On Windows the link's own read-only attribute is what refuses, and both
+    arms there reach it. Off Linux the set does not follow a path swapped
+    for a link after the read either; on Linux a path that is not a link is
+    set by the bare call, which would.
 
     On Windows ``os.chmod`` knows one bit -- ``S_IWRITE`` clears the read-only
     attribute -- and every other bit is ignored, so the union below is exact
@@ -100,11 +126,15 @@ def _add_owner_bits(path: str, bits: int) -> None:
     an error: the retry will report it.
     """
     try:
-        mode = os.stat(path).st_mode
+        mode = os.lstat(path).st_mode
     except OSError:
         return
+    wanted = stat.S_IMODE(mode) | bits
     try:
-        os.chmod(path, stat.S_IMODE(mode) | bits)
+        if _CHMOD_NO_FOLLOW:
+            os.chmod(path, wanted, follow_symlinks=False)
+        elif _BARE_CHMOD_IS_THE_LINKS or not stat.S_ISLNK(mode):
+            os.chmod(path, wanted)
     except OSError:
         pass
 
