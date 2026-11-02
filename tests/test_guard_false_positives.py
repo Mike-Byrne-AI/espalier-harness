@@ -331,6 +331,26 @@ INERT_BASH = [
      f"mkdir -p /tmp/espalier-scratch-zz/.claude && cd /tmp/espalier-scratch-zz && printf x > {_SETTINGS}"),
     ("cd-into-the-parent-a-mkdir-p-made-by-lines",
      f"mkdir -vp scratch/zz/.claude\ncd scratch/zz\nprintf x > {_SETTINGS}"),
+    # DEF-1014: a pull request or issue body that describes a move into a
+    # zone, through gh's text flags on the pr, issue and api verbs -- each
+    # spelling of the flag, a heredoc on the body-file stdin, and the door
+    # behind an on-roster prefix. gh hands none of these to a shell.
+    ("gh-pr-create-body-arrow", f"gh pr create --title t --body 'moved -> {_HOOK}'"),
+    ("gh-pr-edit-body-redirect-mention", f"gh pr edit 5 --body 'out > {_HOOK}'"),
+    ("gh-issue-comment-body-arrow", f"gh issue comment 5 --body 'moved -> {_HOOK}'"),
+    ("gh-api-field-body-arrow",
+     f"gh api repos/o/r/issues/5/comments -f body='moved -> {_HOOK}'"),
+    ("gh-pr-create-body-file-stdin-heredoc",
+     f"gh pr create --title t --body-file - <<'EOF'\n- moved -> {_HOOK}\nEOF"),
+    ("gh-pr-comment-short-flag", f"gh pr comment 5 -b 'see > {_HOOK}'"),
+    ("gh-pr-create-body-equals-spelling", f"gh pr create --title t --body='moved -> {_HOOK}'"),
+    ("gh-issue-create-title-arrow", f"gh issue create --title 'cp a -> {_SETTINGS}' --body x"),
+    ("mkdir-then-gh-pr-body-arrow",
+     f"mkdir -p out && gh pr create --title t --body 'moved -> {_HOOK}'"),
+    # the door's text is its own statement's data beside a head on no roster
+    ("gh-pr-body-beside-a-build", f"gh pr create --title t --body 'moved -> {_HOOK}' && make test"),
+    ("gh-body-file-heredoc-beside-a-build",
+     f"gh pr create --title t --body-file - <<'EOF' && make test\n- moved -> {_HOOK}\nEOF"),
 ]
 
 INERT_POWERSHELL = [
@@ -738,6 +758,34 @@ GENUINE_BASH = [
      f"mkdir /tmp/espalier-nx-zz/sub; cd /tmp/espalier-nx-zz; printf x > {_SETTINGS}"),
     ("cd-to-a-parent-of-a-mode-cluster",
      f"mkdir -mp /tmp/espalier-nx-zz/sub; cd /tmp/espalier-nx-zz; printf x > {_SETTINGS}"),
+    # DEF-1014's must-deny twins: the gh door relieves the text flags of the
+    # pr, issue and api verbs and nothing else. A write after a separator --
+    # semicolon, and-and, newline -- a substitution inside the body that the
+    # shell runs first, an unquoted heredoc on the body-file stdin, gh's own
+    # stdout redirected into the zone, and the doors that store a command gh
+    # runs later (a shell alias, a bang alias, the editor setting), and an
+    # editor handed to the door verb by an assignment prefix.
+    ("gh-body-then-semicolon-write", f"gh pr create --title t --body x; echo x > {_HOOK}"),
+    ("gh-body-then-andand-write", f"gh pr create --title t --body 'x' && printf x > {_HOOK}"),
+    ("gh-body-then-newline-write", f"gh pr comment 5 -b 'x'\nprintf x > {_HOOK}"),
+    ("gh-body-substitution-runs-a-write", f'gh pr create --title t --body "$(echo x > {_HOOK})"'),
+    ("gh-unquoted-heredoc-body-file-runs-a-write",
+     f"gh pr create --title t --body-file - <<EOF\n$(echo x > {_HOOK})\nEOF"),
+    ("gh-stdout-redirected-into-the-zone", f"gh pr view 5 --json body > {_HOOK}"),
+    ("gh-shell-alias-stores-a-write", f"gh alias set --shell zz 'echo x > {_HOOK}'"),
+    ("gh-bang-alias-stores-a-write", f"gh alias set zz '!echo x > {_HOOK}'"),
+    ("gh-editor-setting-stores-a-write", f"gh config set editor 'echo x > {_HOOK}'"),
+    ("gh-editor-prefix-on-the-door-verb",
+     f"GH_EDITOR='sh -c \"echo x > {_HOOK}\"' gh pr create --title t --editor"),
+    # and each way the door's verb test refuses: a quote glued to the verb
+    # makes another word (an alias may answer it), an expanded verb, a path
+    # spelling that may be a local script, and a real release after a door
+    # statement keeps its speed bump
+    ("gh-glued-verb-is-no-door", f"gh pr'oxy' 'echo x > {_HOOK}'"),
+    ("gh-expanded-verb-is-no-door",
+     f"V=alias; gh $V set --shell zz 'echo x > {_HOOK}' && gh zz"),
+    ("gh-path-spelling-is-no-door", f"./gh pr create --title t --body 'echo x > {_HOOK}'"),
+    ("gh-door-then-a-release", "gh pr create --title t --body x && gh release create v1.2.3"),
 ]
 
 # ── The tier itself, on PowerShell. ────────────────────────────────────────

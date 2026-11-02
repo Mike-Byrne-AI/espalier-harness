@@ -2859,6 +2859,84 @@ _MAX_ROSTERED_HEAD_LEN = max(
 #: replaces, and never a real command name (a NUL cannot appear in one).
 _UNROSTERED_HEAD = "\x00unrostered"
 
+#: DEF-1014: the one gh door whose quoted text is data. Stands in, inside
+#: `heads` and a pipeline's owner set, for a `gh` head whose verb is one of
+#: `_GH_TEXT_DOOR_VERBS` (`_gh_text_door`). None of those verbs hands an
+#: argument, a flag value or its body-file stdin to a shell: their text flags
+#: (`--body`, `-b`, `--title`, `-t`, api's `-f`/`-F` fields, `--body-file -`)
+#: are sent to GitHub, `--jq` and `--template` are evaluated inside gh, and
+#: the editor, pager and browser they can open come from the environment or
+#: gh's config, never from the command's arguments. A NUL cannot appear in a
+#: command name, so no real head word is this string.
+#:
+#: REJECTED, and each would be the obvious next step:
+#:   * `gh` on `_NON_REPARSING_HEADS` whole. `gh alias set --shell`, an alias
+#:     expansion opening with `!`, `gh alias import`, and `gh config set
+#:     editor|pager|browser` each STORE a command gh runs later, so their
+#:     quoted text is a program, not data (gh 2.96.0 help).
+#:   * `gh` as a reader head on the `git` precedent (`_reader_family`). The
+#:     enrolment contract over `_BODY_READER_FAMILIES` needs a reader and an
+#:     executing row for every door, and these doors store a program in gh's
+#:     config where no reader of the command can see it run.
+#:   * the door inside `_head_hands_nothing_to_a_shell`. That predicate also
+#:     decides the glob relief's plain-command gate (`_bash_is_plain`), whose
+#:     head set is the operator's strict call, and the whole-command branch
+#:     of `mask_inert_syntax`. The door is read in ONE place, the per-statement
+#:     settle (`_head_hands_its_text_to_no_shell` in `_settle_statement_spans`):
+#:     a command holding a door takes the per-statement branch, where only
+#:     the door statement's own quoted spans and heredoc bodies come back
+#:     masked. Reading it in the whole-command branch too relieved no row
+#:     the settle does not (mutation-checked) and widened what is masked.
+_GH_TEXT_DOOR = "\x00gh-text-door"
+_GH_TEXT_DOOR_VERBS = frozenset({"pr", "issue", "api"})
+#: What may sit between the start of the statement and a door's `gh`: blanks
+#: and the separators a statement start can keep (the second bar of `||`).
+_GH_DOOR_PREFIX_CHARS = frozenset(" \t\n\r;&|")
+#: What may follow the verb: the end, a blank or a separator.
+_GH_DOOR_VERB_END_CHARS = frozenset(" \t\n\r;&|<>()")
+
+
+def _gh_text_door(s: str, head_start: int, head_end: int, stmt_start: int) -> bool:
+    """True when the bare `gh` at ``s[head_start:head_end]`` opens one of the
+    text doors: nothing but blanks and separators before it in its statement,
+    and its first word after it a plain door verb.
+
+    Narrower than gh's grammar on purpose; every miss keeps the raw reading,
+    which is friction, never a fail-open:
+      * an ASSIGNMENT PREFIX voids the door: `GH_EDITOR`, `GH_PAGER`,
+        `GH_BROWSER`, their generic twins, and git's own (`GIT_SSH_COMMAND`,
+        for the git a `pr checkout` runs) each hand gh a command it runs, and
+        a prefix value is judged by its statement's owners (DEF-848), so the
+        door would mask it. So do a wrapper word (`command`, `nice`) and an
+        upstream pipe (`x | gh ...`), which the same prefix test reads;
+      * the verb must be the first word, plain lower-case letters: a flag
+        before it, a quoted or expanded verb, or an alias name is no door
+        (gh refuses an alias that shadows a core command, so `pr`, `issue`
+        and `api` always mean the core verbs);
+      * the caller passes only a bare `gh`: a path spelling (`./gh`) may be a
+        local script of that name."""
+    for k in range(stmt_start, head_start):
+        if s[k] not in _GH_DOOR_PREFIX_CHARS:
+            return False
+    n = len(s)
+    k = head_end
+    while k < n and s[k] in " \t":
+        k += 1
+    j = k
+    while j < n and "a" <= s[j] <= "z":
+        j += 1
+    if j < n and s[j] not in _GH_DOOR_VERB_END_CHARS:
+        return False
+    return s[k:j] in _GH_TEXT_DOOR_VERBS
+
+
+def _head_hands_its_text_to_no_shell(head: str) -> bool:
+    """The per-statement settle's rule (2), per owner head:
+    `_head_hands_nothing_to_a_shell`, or the gh text door (DEF-1014), whose
+    quoted text and heredoc bodies are data though gh as a whole is on no
+    roster."""
+    return head == _GH_TEXT_DOOR or _head_hands_nothing_to_a_shell(head)
+
 
 def mask_inert_syntax(command: str) -> str:
     """Return `command` with literal-by-position syntax characters spaced out.
@@ -3144,6 +3222,10 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                         pipe_pending = False
                         i = span_after
                         continue
+                    # DEF-1014: no gh text door here, on purpose. A suffix read
+                    # is a word glued behind a grouping character (`(gh`,
+                    # `${X}gh`), and `${X}` can make it a path spelling, which
+                    # the door refuses; it keeps the raw reading, a friction.
                     heads.add(rec)
                     current_pipeline.add(rec)
                     expect_head = False
@@ -3178,6 +3260,11 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                 # the allowlist, and lost comment masking entirely.
                 pass
             elif word:
+                # DEF-1014: a bare `gh` whose verb opens a text door is
+                # recorded as the door, so its quoted text is data and gh's
+                # other verbs keep the raw reading (`_gh_text_door`).
+                if span_buf == "gh" and _gh_text_door(s, i, after, statements[-1][0]):
+                    word = _GH_TEXT_DOOR
                 heads.add(word)
                 current_pipeline.add(word)
                 expect_head = False
@@ -3567,7 +3654,7 @@ def _settle_statement_spans(
             key = id(c.owners)
             if key not in rostered:
                 rostered[key] = bool(c.owners) and all(
-                    _head_hands_nothing_to_a_shell(h) for h in c.owners)
+                    _head_hands_its_text_to_no_shell(h) for h in c.owners)
             if not rostered[key]:
                 continue
         si = c.statement

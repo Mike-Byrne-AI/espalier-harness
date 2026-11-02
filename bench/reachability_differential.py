@@ -372,6 +372,22 @@ WRAPPERS: list[tuple[str, str]] = [
     ("interpreter_newline_eval_dq", "python3 -c pass\neval \"%s\""),
     ("echo_dq_pipe_newline_to_shell", "echo \"%s\" |\nsh"),
     ("heredoc_pipe_newline_then_shell", "cat <<'EOF' |\n%s\nEOF\nbash"),
+    # DEF-1014: the gh text door. The mention rows hold the body in a text
+    # flag and on the body-file stdin of a door verb, which gh sends to
+    # GitHub and never to a shell; the executing rows are the same heads
+    # with the body where bash itself runs it -- after a separator, spelled
+    # `;` and newline, inside a substitution in the flag's value, and in a
+    # substitution inside an UNQUOTED heredoc on the stdin. The host's gh
+    # runs with no login (`_sandbox_env`) and stops at its sign-in check, so
+    # a row measures only bash. The substitution is spaced (`$( %s )`) so a
+    # parenthesised body does not open an arithmetic expansion.
+    ("gh_pr_body_sq", "gh pr create --title t --body '%s'"),
+    ("gh_body_file_heredoc", "gh issue comment 5 --body-file - <<'EOF'\n%s\nEOF"),
+    ("gh_pr_body_then_semicolon", "gh pr create --title t --body x; %s"),
+    ("gh_pr_body_newline", "gh pr comment 5 -b x\n%s"),
+    ("gh_pr_body_cmdsub", "gh pr create --title t --body \"$( %s )\""),
+    ("gh_body_file_unquoted_heredoc_cmdsub",
+     "gh issue comment 5 --body-file - <<EOF\n$( %s )\nEOF"),
 ]
 
 #: Executables a wrapper needs beyond `/bin/bash` and the POSIX tools, one per
@@ -419,6 +435,12 @@ WRAPPER_NEEDS: dict[str, str] = {
     "git_config_alias_then_run": "git",
     "printf_piped_to_python": "python3",
     "git_rebase_exec": "git",
+    "gh_pr_body_sq": "gh",
+    "gh_body_file_heredoc": "gh",
+    "gh_pr_body_then_semicolon": "gh",
+    "gh_pr_body_newline": "gh",
+    "gh_pr_body_cmdsub": "gh",
+    "gh_body_file_unquoted_heredoc_cmdsub": "gh",
 }
 
 #: A wrapper whose SPELLING needs a newer bash than a host may ship, with the
@@ -747,6 +769,11 @@ def run_bash_group(argv: list[str], *, cwd: Path | str | None = None,
     return proc.returncode, False
 
 
+#: The token variables gh reads that do not start with `GH_` (gh's own
+#: `GH_TOKEN` and `GH_ENTERPRISE_TOKEN` go with every `GH_` name).
+_GH_TOKEN_NAMES = frozenset({"GITHUB_TOKEN", "GITHUB_ENTERPRISE_TOKEN"})
+
+
 def _sandbox_env(sandbox: Path) -> dict[str, str]:
     """The environment a row's shell runs in.
 
@@ -760,7 +787,17 @@ def _sandbox_env(sandbox: Path) -> dict[str, str]:
     confinement in `assert_safe_to_execute` is about delete operands and has
     nothing to say about a commit -- this is the belt for the git rows.
     """
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith(("GIT_", "GH_")) and k not in _GH_TOKEN_NAMES}
+    # The gh rows (DEF-1014) run the host's real gh, which must never act as
+    # the operator: no token from the environment, and a config directory of
+    # the sandbox's own, so no stored login, alias or editor setting reaches
+    # in. gh then stops at its sign-in check before any network call (driven
+    # on gh 2.101.0: exit 4), and the row measures only what bash runs.
+    env["GH_CONFIG_DIR"] = str(sandbox.resolve() / "gh-config")
+    env["GH_NO_UPDATE_NOTIFIER"] = "1"
+    env["GH_NO_EXTENSION_UPDATE_NOTIFIER"] = "1"
+    env["GH_PROMPT_DISABLED"] = "1"
     # the loop-carrier bodies' variable, bound BY CONSTRUCTION to a path
     # inside the sandbox that does not exist: a wrapper whose outer shell
     # expands it before the loop's `read` binds it removes nothing (DEF-830)

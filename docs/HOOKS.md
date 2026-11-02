@@ -1464,6 +1464,20 @@ stream to a sed program that does not execute it -- mentions, not
 invocations -- so `python`, `perl`, `node`, `ruby`, `awk`, `sed` and `git`
 sit on the non-re-parsing side of the mask.
 
+`gh` sits there by verb, never whole. A statement that opens with a bare `gh`
+whose first word is `pr`, `issue` or `api` hands its quoted text and its
+quoted heredoc to GitHub, not to a shell, so a pull request or issue body
+that describes a move into a protected path (`--body`, `-b`, `--title`, an
+api field, `--body-file -` fed a quoted heredoc) is data. Every other verb
+keeps the raw reading, because `gh alias set --shell`, an alias opening with
+`!`, `gh alias import` and `gh config set editor` (or `pager`, `browser`)
+store a command gh runs later. So does a door statement that starts with an
+assignment prefix (`GH_EDITOR=...`, `GH_PAGER=...`, `GIT_SSH_COMMAND=...`
+hand gh a command it runs), sits behind a wrapper word or an upstream pipe,
+spells its verb quoted, expanded or glued to more text, or spells `gh` as a
+path. A substitution inside the body, an unquoted heredoc and a write after a
+separator stay live, as they are for every head.
+
 Declared limits, pinned by
 `tests/test_write_guard.py::TestShellOutReader::test_the_declared_limits_of_the_shell_out_reader_are_pinned`:
 a shell-out whose argument is not a literal (a variable, an argv element;

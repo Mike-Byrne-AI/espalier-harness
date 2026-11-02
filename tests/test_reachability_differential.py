@@ -202,6 +202,24 @@ class TestRefusesToExecuteAnythingUnconfined:
             f"rm -rf {rd._TARGET}") is True
 
     @_NEEDS_REAL_BASH_DEFERRED
+    def test_an_inherited_gh_login_does_not_reach_the_row(self, rd, monkeypatch):
+        """The gh rows run the host's real gh (DEF-1014's door): a token in
+        the environment, or the operator's config directory with its stored
+        login and aliases, would let a row act on the operator's account. The
+        row's shell sees no token and a config directory inside the sandbox;
+        the `-z` tests reach only if every token is absent in the child."""
+        monkeypatch.setenv("GH_TOKEN", "not-a-token")
+        monkeypatch.setenv("GITHUB_TOKEN", "not-a-token")
+        monkeypatch.setenv("GH_ENTERPRISE_TOKEN", "not-a-token")
+        monkeypatch.setenv("GITHUB_ENTERPRISE_TOKEN", "not-a-token")
+        monkeypatch.setenv("GH_CONFIG_DIR", "/nonexistent-gh-config")
+        assert rd.bash_reaches(
+            '[ -z "$GH_TOKEN" ] && [ -z "$GITHUB_TOKEN" ] && '
+            '[ -z "$GH_ENTERPRISE_TOKEN" ] && [ -z "$GITHUB_ENTERPRISE_TOKEN" ] && '
+            '[ "$GH_CONFIG_DIR" = "$(pwd -P)/gh-config" ] && '
+            f"rm -rf {rd._TARGET}") is True
+
+    @_NEEDS_REAL_BASH_DEFERRED
     def test_git_discovery_stops_at_the_sandbox(self, rd):
         assert rd.bash_reaches(
             '[ "$GIT_CEILING_DIRECTORIES" = "$(cd .. && pwd -P)" ] && '
@@ -544,6 +562,9 @@ class TestTheInterpreterRowsAreLive:
         # DEF-832: the program operand as one bash word -- a body handed to
         # `sh -c` inside a spliced single-quoted literal
         "py_c_sq_spliced_list_sh_c",
+        # DEF-1014: the gh door's heads with the body where bash runs it
+        "gh_pr_body_then_semicolon", "gh_pr_body_newline", "gh_pr_body_cmdsub",
+        "gh_body_file_unquoted_heredoc_cmdsub",
     )
     #: The same interpreters and containers holding the body as DATA -- a
     #: string literal, a commit body or message, a stream to `sed`, a file
@@ -556,6 +577,7 @@ class TestTheInterpreterRowsAreLive:
         "echo_dq_then_interpreter", "interpreter_then_echo_dq",
         "echo_dq_newline_then_interpreter",
         "py_c_sq_spliced_print",          # DEF-832: the spliced literal held as data
+        "gh_pr_body_sq", "gh_body_file_heredoc",  # DEF-1014: the gh door's text
     )
 
     @staticmethod
