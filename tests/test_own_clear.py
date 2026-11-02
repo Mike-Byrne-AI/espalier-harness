@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -69,12 +70,15 @@ def module_text(seat) -> str:
 
 
 @pytest.fixture(autouse=True)
-def _outside_a_mod_window(monkeypatch):
+def _outside_a_mod_window(monkeypatch, tmp_path):
     """The suite may run inside a Claude session, which exports its id to the
     shell, and inside a seat the launcher started, which exports the mod's
-    flag; each case sets what it means."""
-    for name in ("CLAUDE_CODE_SESSION_ID", "ESPALIER_OWN_CLEAR"):
+    flag; each case sets what it means. Claude Code's session registry is an
+    empty one of the test's own, so the live session's entry never places a
+    case's marker (``_session_registry`` writes one where a case needs it)."""
+    for name in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "ESPALIER_OWN_CLEAR", "ESPALIER_OWN_CLEAR_ROOT"):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "no-claude-registry"))
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -263,6 +267,187 @@ class TestArmOwnClearHere:
         brief = _marker(repo)["brief"]
         assert brief is not None and brief.startswith(ship.GENERIC_BRIEF)
         assert "start no second one" in brief and "THE HANDOFF DID NOT LAND THIS LANE" in brief
+
+
+def _worktree_of(repo: Path, name: str = "wt") -> Path:
+    """A linked worktree of ``repo`` on a lane of its own, one commit ahead:
+    a lane's checkout, whose HEAD is not the main checkout's."""
+    wt = repo / ".claude" / "worktrees" / name
+    _git(repo, "worktree", "add", "--quiet", "-b", f"lane/{name}", str(wt))
+    (wt / "lane.txt").write_bytes(b"the lane\n")
+    _git(wt, "add", "-A")
+    _git(wt, "commit", "--quiet", "-m", "the lane")
+    return wt
+
+
+def _session_registry(tmp_path: Path, monkeypatch, session_id: str, started_in: Path) -> None:
+    """Claude Code's session registry holding one live entry, this process's,
+    for ``session_id`` started in ``started_in``; the home directory moved so
+    the real ``~/.claude`` is never read."""
+    config = tmp_path / "claude-config"
+    (config / "sessions").mkdir(parents=True)
+    entry = {"pid": os.getpid(), "sessionId": session_id, "cwd": str(started_in)}
+    (config / "sessions" / f"{os.getpid()}.json").write_text(json.dumps(entry), encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))
+    for name in ("HOME", "USERPROFILE"):
+        monkeypatch.setenv(name, str(tmp_path / "home"))
+
+
+class TestTheMarkerIsArmedWhereTheSessionsModReadsIt:
+    """DEF-5046: the mod reads the marker in the checkout the session was
+    started in (``register.ts::repoRoot``: ESPALIER_OWN_CLEAR_ROOT, else the
+    top of the session's directory) and holds the clear while that checkout's
+    HEAD is not the marker's ``head``. A handoff the dispatcher's window ran
+    from a linked worktree (#402, 2026-11-01) armed the worktree's marker at
+    the worktree's HEAD, and the window never cleared. Dies to: the marker or
+    its head read where the verb runs, the brief composed for that checkout's
+    seat, a re-arm after a move in the lane's worktree, or a session the
+    registry cannot place armed without a word."""
+
+    def test_a_handoff_from_a_linked_worktree_arms_the_sessions_checkout_at_its_head(
+            self, ship, repo, tmp_path, monkeypatch):
+        wt = _worktree_of(repo)
+        _with_origin(repo)
+        _in_a_mod_window(monkeypatch)
+        _session_registry(tmp_path, monkeypatch, "s-here", repo)
+        monkeypatch.chdir(wt)
+        line = ship.arm_own_clear_here(wt)
+        assert (repo / ".espalier-state" / "own_clear.json").is_file(), (
+            f"armed where the verb ran, not where the session's mod reads it: {line}")
+        marker = _marker(repo)
+        assert marker["session_id"] == "s-here" and marker["head"] == _git(repo, "rev-parse", "HEAD")
+        assert marker["head"] != _git(wt, "rev-parse", "HEAD")
+        assert not (wt / ".espalier-state" / "own_clear.json").exists()
+        assert "where this session's mod reads it" in line and str(wt) in line
+
+    def test_the_brief_is_the_seat_of_the_checkout_the_session_was_started_in(
+            self, ship, seat, repo, tmp_path, monkeypatch):
+        wt = _worktree_of(repo)
+        _with_origin(repo)
+        _git(repo, "config", "extensions.worktreeConfig", "true")
+        _git(wt, "config", "--worktree", "espalier.machine", "box-wt")   # the worktree's own seat, a worker
+        _in_a_mod_window(monkeypatch)
+        _session_registry(tmp_path, monkeypatch, "s-here", repo)
+        monkeypatch.chdir(wt)
+        ship.arm_own_clear_here(wt)
+        marker = _marker(repo)
+        assert marker["seat"] == "box" and marker["role"] == "dispatcher"
+        assert marker["brief"] == seat.reprime_text(seat.compose_brief(repo, "box", repo))
+
+    def test_a_held_handoff_names_the_lanes_checkout_in_the_brief(self, ship, repo, tmp_path, monkeypatch):
+        wt = _worktree_of(repo)
+        _with_origin(repo)
+        _in_a_mod_window(monkeypatch)
+        _session_registry(tmp_path, monkeypatch, "s-here", repo)
+        monkeypatch.chdir(wt)
+        ship.arm_own_clear_here(wt, held=ship.Held("main red after merge", landed=False))
+        brief = _marker(repo)["brief"]
+        assert ship.LAND_FIRST in brief and "lane/wt" in brief
+        assert f"committed in {wt} and unpushed (run the verbs below there)" in brief
+
+    def test_a_catch_up_in_the_lanes_worktree_re_arms_nothing(self, ship, repo, tmp_path, monkeypatch):
+        wt = _worktree_of(repo)
+        _with_origin(repo)
+        _in_a_mod_window(monkeypatch)
+        _session_registry(tmp_path, monkeypatch, "s-here", repo)
+        monkeypatch.chdir(wt)
+        ship.arm_own_clear_here(wt)
+        before, moved_from = _marker(repo), _git(wt, "rev-parse", "HEAD")
+        (wt / "lane.txt").write_bytes(b"the lane, caught up\n")
+        _git(wt, "commit", "--quiet", "-am", "a pull's merge")
+        assert ship.rearm_own_clear_after_move(wt, by="catch-up", moved_from=moved_from) is None
+        assert _marker(repo) == before
+
+    def test_the_override_names_the_checkout_the_mod_reads(self, ship, repo, tmp_path, monkeypatch):
+        wt = _worktree_of(repo)
+        _with_origin(repo)
+        _git(wt, "push", "--quiet", "-u", "origin", "lane/wt")
+        _in_a_mod_window(monkeypatch)
+        _session_registry(tmp_path, monkeypatch, "s-here", repo)
+        monkeypatch.setenv("ESPALIER_OWN_CLEAR_ROOT", str(wt))   # a drive points the mod there
+        monkeypatch.chdir(repo)
+        ship.arm_own_clear_here(repo)
+        assert _marker(wt)["head"] == _git(wt, "rev-parse", "HEAD")
+        assert not (repo / ".espalier-state" / "own_clear.json").exists()
+
+    def test_a_session_the_registry_does_not_list_is_armed_here_and_said(self, ship, repo, tmp_path, monkeypatch):
+        wt = _worktree_of(repo)
+        _in_a_mod_window(monkeypatch)
+        _session_registry(tmp_path, monkeypatch, "s-another", repo)
+        monkeypatch.chdir(wt)
+        line = ship.arm_own_clear_here(wt)
+        assert _marker(wt)["head"] == _git(wt, "rev-parse", "HEAD")
+        assert "does not list this session" in line and "/clear by hand" in line
+
+    def test_a_session_started_in_another_clone_is_armed_here_and_said(self, ship, repo, tmp_path, monkeypatch):
+        other = tmp_path / "other"
+        _git(tmp_path, "clone", "--quiet", str(repo), str(other))
+        _in_a_mod_window(monkeypatch)
+        _session_registry(tmp_path, monkeypatch, "s-here", other)
+        monkeypatch.chdir(repo)
+        line = ship.arm_own_clear_here(repo)
+        assert _marker(repo)["session_id"] == "s-here"
+        assert not (other / ".espalier-state").exists()
+        assert "not a checkout of this clone" in line
+
+    def test_the_by_hand_arm_refuses_a_tracked_edit_in_the_sessions_checkout(
+            self, ship, repo, tmp_path, monkeypatch, capsys):
+        wt = _worktree_of(repo)
+        _with_origin(repo)
+        _git(wt, "push", "--quiet", "-u", "origin", "lane/wt")
+        _in_a_mod_window(monkeypatch)
+        _session_registry(tmp_path, monkeypatch, "s-here", repo)
+        monkeypatch.chdir(wt)
+        (repo / "README.md").write_bytes(b"an edit in the window's checkout\n")
+        with pytest.raises(ship.Refused, match="has a tracked edit"):
+            ship.arm(why="lane opened by hand")
+        assert not (repo / ".espalier-state" / "own_clear.json").exists()
+        _git(repo, "checkout", "--", "README.md")
+        assert ship.arm(why="lane opened by hand") == 0
+        assert _marker(repo)["head"] == _git(repo, "rev-parse", "HEAD")
+        assert "where this session's mod reads it" in capsys.readouterr().out
+
+    def test_a_session_checkout_holding_an_unpushed_lane_is_not_armed_from_another(
+            self, ship, repo, tmp_path, monkeypatch):
+        """The failure-mode review's case: a marker armed at the session
+        checkout's HEAD reads to the Stop hook's handoff gate as that
+        checkout's own unpushed lane handed off, and the mod, which counts no
+        unpushed commits, would clear past it."""
+        wt = _worktree_of(repo)
+        _with_origin(repo)
+        (repo / "README.md").write_bytes(b"a lane of the window's own\n")
+        _git(repo, "commit", "--quiet", "-am", "unpushed")
+        _in_a_mod_window(monkeypatch)
+        _session_registry(tmp_path, monkeypatch, "s-here", repo)
+        monkeypatch.chdir(wt)
+        line = ship.arm_own_clear_here(wt)
+        assert line.startswith("own-clear not armed") and "1 commit no remote has" in line
+        assert not (repo / ".espalier-state" / "own_clear.json").exists()
+        assert not (wt / ".espalier-state" / "own_clear.json").exists()
+
+    def test_a_registry_entry_still_carrying_the_old_id_places_the_window_by_its_pid(
+            self, ship, repo, tmp_path, monkeypatch):
+        wt = _worktree_of(repo)
+        _with_origin(repo)
+        _in_a_mod_window(monkeypatch)
+        _session_registry(tmp_path, monkeypatch, "s-before-the-clear", repo)
+        monkeypatch.setenv("CLAUDE_PID", str(os.getpid()))   # the window pid Claude Code exports
+        monkeypatch.chdir(wt)
+        ship.arm_own_clear_here(wt)
+        assert _marker(repo)["session_id"] == "s-here"
+
+    def test_a_held_brief_for_a_lane_in_another_checkout_promises_no_stop_hook_hold(
+            self, ship, repo, tmp_path, monkeypatch):
+        """The hold is written in the lane's checkout, and the cleared
+        window's hooks read their own, so the brief is the one reminder."""
+        wt = _worktree_of(repo)
+        _with_origin(repo)
+        _in_a_mod_window(monkeypatch)
+        _session_registry(tmp_path, monkeypatch, "s-here", repo)
+        monkeypatch.chdir(wt)
+        ship.arm_own_clear_here(wt, held=ship.Held("this seat's #41 is open", landed=False, waits_for="#41 merges"))
+        brief = _marker(repo)["brief"]
+        assert f"no hook in this window watches {wt}" in brief and "Stop hook's hold" not in brief
 
 
 def _with_origin(repo: Path) -> None:
@@ -623,7 +808,8 @@ class TestTheRecordTheModWritesIsWhatTheHooksRead:
 
     #: What the mod writes beyond the arm's own fields; the readers below read a subset.
     FIELDS = ("clear_asked_at", "clear_refused", "clear_refusals", "clear_refused_at", "clear_resolved_at",
-              "turns_since_ask", "previous_session_id", "stale_because")
+              "turns_since_ask", "previous_session_id", "stale_because",
+              "clear_held", "clear_held_since", "clear_held_turns")
 
     def test_every_field_the_hooks_read_is_one_the_mod_writes(self, module_text):
         banner = (TOOLS_CC / "hooks" / "session_start.py").read_text(encoding="utf-8")
@@ -631,9 +817,10 @@ class TestTheRecordTheModWritesIsWhatTheHooksRead:
         for field in self.FIELDS:
             assert field in module_text, f"the mod no longer writes {field}"
         for name in ("clear_refusals", "clear_refused", "clear_asked_at", "clear_resolved_at", "turns_since_ask",
-                     "stale_because"):
+                     "stale_because", "clear_held", "clear_held_since", "clear_held_turns"):
             assert f'"{name}"' in banner, f"the banner no longer reads {name}"
-        for name in ("clear_refusals", "clear_refused", "clear_asked_at", "clear_refused_at"):
+        for name in ("clear_refusals", "clear_refused", "clear_asked_at", "clear_refused_at",
+                     "clear_held", "clear_held_since", "clear_held_turns"):
             assert f'"{name}"' in router, f"the router no longer reads {name}"
         assert 'OWN_CLEAR_MARKER = "own_clear.json"' in banner
         assert '_OWN_CLEAR_MARKER = "own_clear.json"' in router
@@ -649,8 +836,58 @@ class TestTheRecordTheModWritesIsWhatTheHooksRead:
         start = module_text.index("}, async err => {")
         rejected = module_text[start:module_text.index("return next(e)", start)]
         assert "clear_refusals: count" in rejected and "clear_refused_at" in rejected
+        # A hold the ask's own write failed to take off is older than this
+        # refusal (DEF-2039's review drove it): the refusal takes it off.
+        assert "clear_held: undefined, clear_held_since: undefined, clear_held_turns: undefined" in rejected
         assert "state:" not in rejected
         assert ".catch(" not in module_text[module_text.rindex("$.command", 0, start):start]
+
+    def test_a_hold_is_recorded_through_the_re_reading_writer_and_ends_at_the_ask(self, module_text):
+        """DEF-2039's guard, by text since no CI cell installs ``claude`` (the
+        kit drives it): a held turn's end writes the hold through ``record``,
+        which reads the marker again and writes only while it is armed for this
+        session (a write from the handler's older copy would arm again a marker
+        the clear consumed meanwhile), and the ask takes the three fields off."""
+        start = module_text.index("    if (why) {\n      $.ui.status(`own-clear: armed, waiting:")
+        held = module_text[start:module_text.index("return next(e)", start)]
+        assert "await record($, id, { clear_held: why, clear_held_since: since, clear_held_turns: turns }" in held
+        assert "writeMarker(" not in held, "the hold is written from the handler's older copy of the marker"
+        assert "clear_held: undefined, clear_held_since: undefined, clear_held_turns: undefined" in module_text
+
+    def test_every_hold_the_mod_names_has_a_verb_in_the_router(self, module_text):
+        """DEF-2039: the router tells the held window the verb that resolves
+        its hold, keyed by the opening words of each ``inFlight`` return (the
+        mod's text names no verb: it rides the clear's re-prime brief, where a
+        verb would run in the new window over a consumed marker). Read from
+        both sources, comments stripped: every return has a key, and every key
+        a return. Dies to: a new cause in ``inFlight`` with no verb (said with
+        the fallback alone), and a cause reworded on one side."""
+        import ast
+        code = re.sub(r"/\*.*?\*/", "", module_text, flags=re.S)
+        code = "\n".join(line.split("//", 1)[0] for line in code.splitlines())
+        start = code.index("async function inFlight(")
+        body = code[start:code.index("\n}\n", start)]
+        literals = [m.group(2).split("${", 1)[0].replace("\\'", "'")
+                    for m in re.finditer(r"return ([`'])((?:\\.|(?!\1).)*)\1", body)]
+        # Every return is a string literal this pin reads, and only `return ''`
+        # has no words of its own (the failure-mode review drove a new cause
+        # from a helper, a double-quoted string and a `${...}` opening: each
+        # passed the first cut of this pin unread).
+        assert len(re.findall(r"\breturn\b", body)) == len(literals), "an inFlight return this pin cannot read"
+        assert literals.count("") == 1, f"a return whose words this pin cannot read: {literals}"
+        causes = [c.split(" (", 1)[0].strip() for c in literals if c]
+        assert len(causes) >= 4, f"inFlight's returns were not read: {causes}"
+        router = ast.parse((TOOLS_CC / "hooks" / "task_router.py").read_text(encoding="utf-8"))
+        table = next((node.value for node in router.body if isinstance(node, (ast.Assign, ast.AnnAssign))
+                      and "_OWN_CLEAR_HOLD_VERBS" in ast.unparse(node.targets[0] if isinstance(node, ast.Assign)
+                                                                 else node.target)), None)
+        assert table is not None, "task_router.py no longer keeps _OWN_CLEAR_HOLD_VERBS"
+        keys = [key for key, _verb in ast.literal_eval(table)]
+        # Matched as the router matches: exactly, on the words before " (".
+        for cause in causes:
+            assert cause in keys, f"no verb in the router for the hold {cause!r}"
+        for key in keys:
+            assert key in causes, f"the router's key {key!r} names no hold"
 
     def test_a_pending_clear_holds_the_last_session(self, module_text):
         """DEF-5032's guard: a turn's end writes ``lastId`` only outside a

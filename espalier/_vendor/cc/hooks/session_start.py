@@ -751,14 +751,15 @@ def _sessions_line(
 # PRs, then the recent merges -- separate reads, because one recency window
 # shared by every state let ten merges evict the one open PR the line exists
 # to name) and a read-only git question per merged row, all under one
-# eight-second budget. The whole hook runs under settings.json's 15 s
+# eight-second budget, which the mail block below takes its share of first
+# (DEF-5051). The whole hook runs under settings.json's 15 s
 # ceiling, and blowing THAT loses the whole banner, so when the budget is
 # spent the block returns what it has. Measured 1.3 s for one read with every
 # field (2026-09-27). Any failure -- no `gh`, no sign-in, no GitHub remote, a
 # timeout, a foreign JSON shape -- costs the lines, never the banner. Read
 # once in main and threaded in, like the process table, so the builders never
 # spawn `gh` on a scratch tree.
-_PR_BLOCK_BUDGET_SECONDS = 8.0   # the two list reads, the git questions, and the required-check reads together
+_PR_BLOCK_BUDGET_SECONDS = 8.0   # the mail's share first, then the two list reads, the git questions and the required-check reads
 _PR_READ_CAP_SECONDS = 5.0       # one gh list read, never more
 _PR_CHECKS_CAP_SECONDS = 2.0     # one required-check read (a rendered row with a red), never more
 _PR_GIT_CAP_SECONDS = 2.0        # one git question, never more
@@ -977,14 +978,23 @@ def _render_rows(rows: list[str]) -> str:
 # messages, claims as a fold). Read here so a claim or a request the other
 # box left is in front of the session before it commits anything. Off, and
 # spawning nothing, where `git config espalier.machine` names no machine.
-# Reporter only, and bounded under the pull-request block's deadline (one
-# eight-second budget for both blocks, under settings.json's 15 s ceiling):
-# one fetch, then local reads, each taking what is left of the budget, so a
-# slow `gh` costs the mail line and never the banner (the review that found
-# the two budgets summing to twelve of fifteen, 2026-10-05). Read once in main
-# and threaded in, like the process table, so the builders never spawn for it.
+# Reporter only, and bounded inside the pull-request block's eight seconds
+# (one budget for both blocks under settings.json's 15 s ceiling: the review
+# that found two budgets summing to twelve of fifteen, 2026-10-05), read FIRST
+# under a share of its own: one fetch, then local reads, each taking what is
+# left of the share, and the pull-request block takes what the mail left. Read
+# last, on what two slow `gh` reads left, the mail and the `Orders:` line that
+# reads its refs were the first lines a slow box lost (DEF-5051), while the
+# pull-request lines are also on `/inbox board`. Read once in main and
+# threaded in, like the process table, so the builders never spawn for it.
 _MAIL_FETCH_CAP_SECONDS = 3.0   # the one network call, never more
 _MAIL_READ_CAP_SECONDS = 2.0    # one local git read (the config, the refs, a file), never more
+# The share: a fetch at its cap, then one read at its cap. The worktree naming
+# and the config read before them come out of it too, so after a fetch that
+# hangs the refs read gets its cap less what those took. Measured on the Air,
+# 2026-11-01, 12 runs at load 1.2: the whole block 0.48 s median, 0.68 s max;
+# the naming alone 0.04 s; the refs read 0.09 s.
+_MAIL_SHARE_SECONDS = _MAIL_FETCH_CAP_SECONDS + _MAIL_READ_CAP_SECONDS
 _MAIL_TAIL = "(the other machine's text, unverified; orient with it; bodies: /inbox)"
 
 
@@ -1165,8 +1175,9 @@ def _mail_line(root: Path, deadline: float | None = None, mail: Any = None, read
     but already holds another machine's mail ref (a plain ``git fetch
     origin`` brings them in), the line says how to opt in; with no ref either,
     no name means no line and no spawn past the config read. ``deadline`` is
-    the pull-request block's: every read here takes what is left of it, and
-    a budget already spent costs the line. ``mail`` is the channel module,
+    the mail's share of the network budget (``_MAIL_SHARE_SECONDS``, taken
+    before the pull-request block): every read here takes what is left of
+    it, and a budget already spent costs the line. ``mail`` is the channel module,
     injectable for tests. ``read``, when given, is filled with what was read
     (``machine``, ``by_machine``, ``unread``) for the `Orders:` line, which
     reads no ref of its own."""
@@ -3352,18 +3363,23 @@ CATCH_UP_ENV = "ESPALIER_SESSION_CATCH_UP"
 # read (0.06 s warm, measured) and the host's own lag (cancels recorded at 15.2
 # to 15.5 s); `espalier.harness_config`'s wired timeout is pinned against it.
 _WALL_SECONDS = 13.0
-# The work after the last network read -- the orders, the engine probe (its own
-# cap) and the banner build (1.2 s cold, measured on the Windows box) -- which
+# The work after the last network read -- the engine probe (its own cap) and
+# the banner build (1.2 s cold, measured on the Windows box) -- which
 # the catch-up's and the network reads' deadline leaves inside the wall, so an
 # ordinary slow start finishes before it.
 _BANNER_BUILD_SECONDS = 1.2
 _TAIL_RESERVE_SECONDS = 2.5
 # The catch-up's own budget (a fetch capped at 3 s, the git questions, the move
 # and the removals, each started only with time left and never killed), so the
-# pull-request block keeps its eight seconds; and the whole hook's network
+# network reads keep their eight seconds; and the whole hook's network
 # budget, the wall less the tail, which both the catch-up's deadline and the
 # pull-request deadline are clipped to when the start has spent the room.
 _CATCH_UP_BUDGET_SECONDS = 6.0
+# The audit store's prune: at most this long at a start, and never past the
+# hook's own budget below, so the network reads after it keep their room. It
+# reads the oldest name date first, so each start goes on where the old logs
+# are (5,000 first-line reads took 11.7 s on the Windows box: DEF-3022).
+_PRUNE_BUDGET_SECONDS = 1.0
 _HOOK_BUDGET_SECONDS = _WALL_SECONDS - _TAIL_RESERVE_SECONDS
 # A cut's record gets this long to land, and the cut as long again for the
 # state-write lock, before the process ends without either. Its type is in the
@@ -3979,6 +3995,26 @@ def _warn_if_stop_gate_override_unresolved(root: Path) -> None:
     )
 
 
+def _prune_audit_logs_inside_the_wall(hook_start: float, budget: float = _HOOK_BUDGET_SECONDS) -> None:
+    """The boot table's prune, bounded: `_integrity._prune_old_audit_logs`
+    with a deadline `_PRUNE_BUDGET_SECONDS` from now, clipped to the hook's
+    budget (``budget`` after ``hook_start``: `_handoff_budget`'s, the smaller
+    one on a handed-off fresh start), and a NOTES line naming the bound that
+    stopped it when it stopped with logs named before the window still
+    unread. A stop among logs named inside the window is silent: they hold
+    nothing to demote unless renamed."""
+    own = time.monotonic() + _PRUNE_BUDGET_SECONDS
+    clip = hook_start + budget
+    bound = f"its {_PRUNE_BUDGET_SECONDS:g} s bound" if own <= clip else "the hook's budget for the reads after it"
+
+    def stopped(left: int, days: int) -> None:
+        _hook_utils.advise(
+            f"[INFO] the audit log prune stopped at {bound} with {left} "
+            f"log{'s' if left != 1 else ''} named before its {days}-day window unread; the next start goes on"
+        )
+    _integrity._prune_old_audit_logs(deadline=min(own, clip), on_stop=stopped)
+
+
 def _warn_if_maintenance_mode_active() -> None:
     """Surface persistent maintenance-mode usage.
 
@@ -4511,9 +4547,10 @@ def _plain_line(text: object, cap: int) -> str:
 
 def _own_clear_line(root: Path, sid: str, source: str = "") -> str:
     """The ``Own-clear:`` line: the marker's record, when it holds one a reader
-    should see -- armed for a session other than this one (a window waiting on
-    a clear the engine refused, took and never ran, or was never asked for; or
-    a window since closed), consumed into this session after refusals, or
+    should see -- armed for a session other than this one (a window whose
+    clear the mod holds on something in flight, named with since when and the
+    turn ends, DEF-2039; or one waiting on a clear the engine refused, took and
+    never ran, or was never asked for; or a window since closed), consumed into this session after refusals, or
     marked stale at the clear into this session (cleared, not re-primed: the
     brief was never submitted). Empty for a clean consume, this window's own
     pending clear (the mod's status line has it), the clear's own SessionStart
@@ -4539,13 +4576,25 @@ def _own_clear_line(root: Path, sid: str, source: str = "") -> str:
     taken = str(marker.get("clear_resolved_at") or "")[:16]
     turns = marker.get("turns_since_ask")
     turns = turns if isinstance(turns, int) else 0
+    # The hold (DEF-2039): what the mod's in-flight read named at the latest
+    # held turn end; the mod takes it off at the ask, so beside a refusal it is
+    # the newer of the two.
+    held = _plain_line(marker.get("clear_held") or "", 160)
+    held_turns = marker.get("clear_held_turns")
+    held_turns = held_turns if isinstance(held_turns, int) and held_turns > 0 else "?"
+    held_since = str(marker.get("clear_held_since") or "?")[:16]
     new = str(marker.get("new_session_id") or "")
     if state == "armed":
         if marker.get("session_id") == sid or source == "clear":
             return ""
         head = (f"marker armed for session {owner} (not this one), written "
                 f"{str(marker.get('written_at') or '?')[:16]}Z")
-        if refused and refusals:
+        if held:
+            earlier = f" (the engine refused an earlier ask {refusals} time(s))" if refusals else ""
+            tail = (f"; its clear has been held since {held_since}Z over "
+                    f"{held_turns} turn end(s): {held}{earlier}; the prompt router tells that window what "
+                    "resolves it, and /clear by hand there ends it too")
+        elif refused and refusals:
             tail = (f"; its clear, asked {asked}Z, was refused {refusals} time(s) by the engine (latest: {refused}); "
                     "that window needs /clear by hand")
         elif taken:
@@ -5009,7 +5058,7 @@ def _run_main(wall_start: float | None = None) -> int:
     # Catch the checkout up and reap the leftover worktrees FIRST, so every read
     # below (integrity, memory, blueprint, branch, the merged-PR question) sees
     # the tree the session will work in. It has its own budget, so the
-    # pull-request block below keeps its eight seconds; the two together stay
+    # network reads below keep their eight seconds; the two together stay
     # under _HOOK_BUDGET_SECONDS of the hook's 15 s ceiling.
     _phase("checkout catch-up")
     if handoff is not None:
@@ -5079,7 +5128,8 @@ def _run_main(wall_start: float | None = None) -> int:
 
     _boot_warnings = [
         (lambda: _report_freshness(root), "session_start: freshness banner failed"),
-        (_integrity._prune_old_audit_logs, "session_start: audit log pruning failed"),
+        (lambda: _prune_audit_logs_inside_the_wall(hook_start, _handoff_budget(handoff)),
+         "session_start: audit log pruning failed"),
         (_warn_if_maintenance_mode_active, "session_start: maintenance-mode banner failed"),
         (lambda: _warn_if_load_bearing_tool_missing(self_host), "session_start: external-tool banner failed"),
         (lambda: _warn_if_hook_interpreter_unresolved(root), "session_start: hook-interpreter banner failed"),
@@ -5140,14 +5190,51 @@ def _run_main(wall_start: float | None = None) -> int:
         _late_load_failed("session_start: own-clear marker read failed", e)
         own_clear_line = ""
 
-    # The operator's pull requests, read here for the same reason: two bounded
-    # `gh` reads under one deadline, and a host without `gh`, a sign-in or a
-    # GitHub remote costs the lines, never the banner. Two handlers, so the
-    # merged question (the one that shells out to git per row) cannot take
-    # the already-computed open line down with it. The deadline is clipped to
-    # the hook's budget, which only a slow catch-up above ever reaches.
-    _phase("pull-request reads", **{"Own-clear": own_clear_line})
+    # The network reads share one deadline, clipped to the hook's budget,
+    # which a slow catch-up above reaches, and a fresh start's child, whose
+    # budget the parent shrank, always does. The worktree naming, the
+    # mail and the orders read first, under the mail's share of it, and the
+    # pull-request block and the merge rules take what they leave, never a
+    # deadline of their own: read last, the mail got what two slow `gh` reads
+    # left, and a slow box lost its `Mail:` and `Orders:` lines (DEF-5051).
     pr_deadline = min(_pr_deadline(), hook_start + _handoff_budget(handoff))
+    mail_deadline = min(time.monotonic() + _MAIL_SHARE_SECONDS, pr_deadline)
+
+    # A linked worktree still answering its clone's machine name gets its own
+    # before the mail is read, so the mail line, the claims and the ids are
+    # this seat's from the first prompt. Local git only.
+    _phase("worktree naming", **{"Own-clear": own_clear_line})
+    try:
+        seat_line = _seat_line(root, source=source, deadline=mail_deadline)
+    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
+        _late_load_failed("session_start: worktree naming failed", e)
+        seat_line = ""
+
+    # The other machine's mail: one bounded fetch, then local reads, each
+    # taking what is left of the mail's share; a box that names no machine
+    # gets at most the opt-in line.
+    _phase("mail scan", Seat=seat_line)
+    mail_read: dict = {}
+    try:
+        mail_line = _mail_line(root, mail_deadline, read=mail_read)
+    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
+        _late_load_failed("session_start: mail scan failed", e)
+        mail_line = ""
+    # A worker seat's orders, from the refs the mail line just read: its jobs,
+    # and the seat driver's short form of its first message. No read of its own.
+    _phase("orders read", Mail=mail_line)
+    try:
+        orders_line = _orders_line(root, mail_read)
+    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
+        _late_load_failed("session_start: orders read failed", e)
+        orders_line = ""
+
+    # The operator's pull requests, read here for the same reason: two bounded
+    # `gh` reads under what the mail left of the deadline, and a host without
+    # `gh`, a sign-in or a GitHub remote costs the lines, never the banner.
+    # Two handlers, so the merged question (the one that shells out to git per
+    # row) cannot take the already-computed open line down with it.
+    _phase("pull-request reads", Orders=orders_line)
     try:
         post_merge_present = _load_post_merge() is not None
     except Exception as e:  # noqa: BLE001 -- bounded warn, never block session
@@ -5172,42 +5259,13 @@ def _run_main(wall_start: float | None = None) -> int:
             _late_load_failed("session_start: merged pull-request scan failed", e)
             merged_prs_line = ""
 
-    # A linked worktree still answering its clone's machine name gets its own
-    # before the mail is read, so the mail line, the claims and the ids are
-    # this seat's from the first prompt. Local git only.
-    _phase("worktree naming", **{"Open PRs": open_prs_line, "Merged": merged_prs_line})
-    try:
-        seat_line = _seat_line(root, source=source, deadline=pr_deadline)
-    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-        _late_load_failed("session_start: worktree naming failed", e)
-        seat_line = ""
-
-    # The other machine's mail, read here under the SAME deadline for the same
-    # reason: one bounded fetch, then local reads, each taking what the
-    # pull-request block left; a box that names no machine gets at most the
-    # opt-in line.
-    _phase("mail scan", Seat=seat_line)
-    mail_read: dict = {}
-    try:
-        mail_line = _mail_line(root, pr_deadline, read=mail_read)
-    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-        _late_load_failed("session_start: mail scan failed", e)
-        mail_line = ""
-    # A worker seat's orders, from the refs the mail line just read: its jobs,
-    # and the seat driver's short form of its first message. No read of its own.
-    _phase("orders read", Mail=mail_line)
-    try:
-        orders_line = _orders_line(root, mail_read)
-    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-        _late_load_failed("session_start: orders read failed", e)
-        orders_line = ""
-
     # The base branch's merge rules, one more bounded read under the same
-    # deadline, AFTER the mail: the mail is the line other seats depend on, so
-    # it takes the budget first and this read takes what is left. A written
-    # rule once said the up-to-date setting was on for a day after it went off,
-    # so the banner prints what GitHub says and the docs point here.
-    _phase("merge-rules read", Orders=orders_line)
+    # deadline, AFTER the mail and the pull requests: the mail is the line
+    # other seats depend on, so it takes the budget first and this read takes
+    # what is left. A written rule once said the up-to-date setting was on for
+    # a day after it went off, so the banner prints what GitHub says and the
+    # docs point here.
+    _phase("merge-rules read", **{"Open PRs": open_prs_line, "Merged": merged_prs_line})
     try:
         merge_rules_line = _merge_rules_line(*_read_merge_rules(root, pr_deadline))
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session

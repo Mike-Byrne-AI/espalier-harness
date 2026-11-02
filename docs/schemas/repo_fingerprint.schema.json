@@ -12,6 +12,7 @@
   "properties": {
     "repo_name": { "type": "string" },
     "repo_root": { "type": "string" },
+    "head_sha": { "type": "string" },
     "language_counts": {
       "type": "object",
       "additionalProperties": { "type": "integer" }

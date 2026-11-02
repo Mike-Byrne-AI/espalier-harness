@@ -298,6 +298,11 @@ and the operator authors host-specific workflows from it. The shipped `/adversar
 skill documents the return *contract* generically (engine-only references), with
 the espalier-internal scaffold path kept here.
 
-Run it with no args for the task-packs landing audit (the earn-the-red), or pass
-`{ finders, targets, knownCategories, corpusPath, refute, model }` for a different
-fan-out.
+Run it with no args for a dry run of the task-packs landing audit (the earn-the-red):
+it counts the targets and the agent budget, launches the discover lane alone, and
+runs the audit only with `confirm: true`. Pass
+`{ finders, targets, knownCategories, corpusPath, refute, model, maxFinders, confirm }`
+for a different fan-out. An args value it cannot use (a string that is not JSON,
+such as a bare pack path; a non-object; an unknown key) launches nothing and says
+why; an object of options alone is the dry run; a run past `maxFinders` (default
+25) refuses until it is raised.

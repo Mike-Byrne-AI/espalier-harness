@@ -183,9 +183,20 @@ def _isolate_claude_code_session():
     ``_isolate_forced_colour`` gives: ``test_adopter_lifecycle_diagnostics.walked``
     is module-scoped and spawns its uninstall before any function-scoped
     fixture runs (the failure-mode review of the DEF-1060 lane found the
-    function-scoped first draft missed it)."""
+    function-scoped first draft missed it). The window's identity and its
+    own-clear mod go with it: a seat's window exports the session id, its
+    pid and ``ESPALIER_OWN_CLEAR=1``, and the ship driver's own-clear verbs
+    stand down without the mod, so a test modelling a mod window that left
+    the variable to the launching shell passed in a seat's tier and failed
+    on CI (#414's ``test (3.11)`` cell, 2026-11-01); a test of either sets
+    what it models."""
     with pytest.MonkeyPatch.context() as mp:
+        # Spelled alone: tests/test_check_ledger_probes.py pins this literal
+        # against the ledger probe runner's strip, its twin.
         mp.delenv("CLAUDECODE", raising=False)
+        for name in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "ESPALIER_OWN_CLEAR",
+                     "ESPALIER_OWN_CLEAR_ROOT", "ESPALIER_OWN_CLEAR_LOG"):
+            mp.delenv(name, raising=False)
         yield
 
 
@@ -985,6 +996,10 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # TP-287 — scope-breaker + convergence-critic stage-presence contract
             # over committed .claude/workflows/*.js scaffolds (also full_tree below).
             "test_convergence_workflow_stages",
+            # Drives the three review workflows under node with stubbed agent,
+            # parallel and pipeline: which lanes count as not run is the
+            # scaffold's own return value.
+            "test_review_workflow_lanes",
             # the launch conventions every committed scaffold shares: one model per
             # run (args.model through opts()), the finder-time refuter-field strip,
             # the lane-identity stamp (sibling of the stage-presence contract above).
@@ -1394,6 +1409,11 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # repo-analyst) under a real bash: what a census prints is a
             # subprocess fact.
             "test_first_contact_diagnostics",
+            # The same init'd adopter tree, then the deployed bodies that stand
+            # down or skip a check (the advisor's hook programs among them) run
+            # verbatim on it and on scratch wirings: what a body says when its
+            # input is missing is a subprocess fact.
+            "test_adopter_stand_downs_say_so",
             # The timeout backstop: whether a swallowed or re-blocked ceiling
             # ends its test is a fact about a real pytest child under the
             # signal method.
@@ -1743,6 +1763,9 @@ _SLOW_FILES: set[str] = {
     # `init` on the Python adopter tree, then four deployed fences under a real
     # bash on it and on this checkout (a whole-tree find, twice).
     "test_first_contact_diagnostics",
+    # `init` on the Python adopter tree, then the deployed stand-down programs
+    # on it and on scratch trees, an interpreter start each.
+    "test_adopter_stand_downs_say_so",
     # Spawns real `git` against short-lived repos under tmp_path to prove the
     # bare-`checkout <path>` arm and the pre-discard snapshot round-trip.
     "test_speedbump_discard_snapshot",

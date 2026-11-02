@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import ast
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Callable
@@ -3974,13 +3975,17 @@ def test_a_plan_writer_re_renders_the_docs_that_read_the_plan(tmp_path, capsys, 
 def test_a_re_baseline_re_renders_the_runner_agents_it_derived(tmp_path, capsys):
     """The reviewer's and the test-writer's tools lines are rendered from the
     fingerprint's test commands at deploy, so they follow a re-baseline the
-    way the plan's readers do (the DEF-806 shape, one artifact over): a tree
-    init'd with no test command that gains one is re-rendered by
-    `fingerprint .`, and `upgrade` then names no drift the tool made. An
-    adopter's own body (no managed marker) is never rewritten."""
+    way the plan's readers do (the DEF-806 shape, one artifact over). The
+    packaged lines grant plain `Bash`, which already covers a runner the tree
+    gains (a command pattern on a tools line narrows nothing, DEF-1107), so a
+    tree init'd with no test command that gains one keeps the packaged body:
+    `fingerprint .` re-renders it byte for byte and names no rewrite, and
+    `upgrade` then names no drift. An adopter's own body (no managed marker)
+    is never rewritten."""
     tree = _initialized_tree(tmp_path)
     agents = tree / ".claude" / "agents"
-    assert "Bash(npm test" not in (agents / "code-reviewer.md").read_text(encoding="utf-8")
+    before = (agents / "code-reviewer.md").read_text(encoding="utf-8")
+    assert re.search(r"^tools:.*\bBash\b(?!\()", before, re.M), before[:600]
     (agents / "test-writer.md").write_text("---\nname: test-writer\ntools: Read\n---\nmine\n", encoding="utf-8")
     (tree / "package.json").write_text('{"name": "x", "scripts": {"test": "node --test"}}\n', encoding="utf-8")
 
@@ -3988,8 +3993,8 @@ def test_a_re_baseline_re_renders_the_runner_agents_it_derived(tmp_path, capsys)
     assert _run_fingerprint(tree) == 0
     narrated = "".join(capsys.readouterr())
     reviewer = (agents / "code-reviewer.md").read_text(encoding="utf-8")
-    assert "Bash(npm test)" in reviewer and "Bash(npm test *)" in reviewer, reviewer[:600]
-    assert ".claude/agents/code-reviewer.md" in narrated, narrated[-800:]
+    assert reviewer == before and "Bash(npm test" not in reviewer, reviewer[:600]
+    assert ".claude/agents/code-reviewer.md" not in narrated, narrated[-800:]
     assert (agents / "test-writer.md").read_text(encoding="utf-8").endswith("mine\n"), "the adopter's body is theirs"
     assert _upgrade(tree, execute=False) == 0
     out = capsys.readouterr().out

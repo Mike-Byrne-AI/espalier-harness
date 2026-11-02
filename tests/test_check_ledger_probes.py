@@ -1162,6 +1162,39 @@ class TestAProbeRunsOutsideTheLaunchingSession:
         env = self._captured_env(monkeypatch)
         assert env is not None and env["ESPALIER_PROBE_CANARY"] == "kept"
 
+    def test_a_probe_writes_its_audit_records_to_a_store_of_the_run(self, monkeypatch, tmp_path):
+        """DEF-3022 (air's 4bc9a5): a probe that drives a hook site in process
+        wrote its record into the operator's home audit store under its temp
+        tree's slug. Dies to: the launcher's store, or none, passed through,
+        or a store made fresh for every probe."""
+        import tempfile
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "launcher"))
+        env = self._captured_env(monkeypatch)
+        store = Path(env["ESPALIER_AUDIT_DIR"]).resolve()
+        assert store.name.startswith("espalier-probe-audit-") and store.is_dir(), store
+        assert Path(tempfile.gettempdir()).resolve() in store.parents, store
+        assert self._captured_env(monkeypatch)["ESPALIER_AUDIT_DIR"] == env["ESPALIER_AUDIT_DIR"]
+
+    def test_the_runs_audit_store_is_removed_when_the_run_exits(self, monkeypatch, tmp_path):
+        """Dies to: a store left behind by every checker run (22 empty
+        ``espalier-probe-audit-*`` folders sat in the temp root on
+        2026-11-01, the failure-mode review's count)."""
+        import atexit
+        import tempfile
+        registered: list[tuple] = []
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        monkeypatch.setattr(atexit, "register", lambda fn, *a, **kw: registered.append((fn, a, kw)))
+        check_ledger_probes._probe_audit_dir.cache_clear()
+        try:
+            store = Path(check_ledger_probes._probe_audit_dir())
+        finally:
+            check_ledger_probes._probe_audit_dir.cache_clear()
+        assert store.parent == tmp_path and store.is_dir(), store
+        assert len(registered) == 1, registered
+        fn, args, kwargs = registered[0]
+        fn(*args, **kwargs)
+        assert not store.exists(), store
+
     def test_a_probe_reading_the_variable_sees_what_a_terminal_would(self, monkeypatch):
         """The live sentinel, driven through the real spawn: reds without the
         strip from inside a session and from this suite alike."""

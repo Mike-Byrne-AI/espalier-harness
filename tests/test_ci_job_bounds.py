@@ -117,6 +117,17 @@ class TestEveryJobThatRunsTheSuiteIsBounded:
         bound = _suite_jobs()[("test.yml", "test-serial")]["timeout-minutes"]
         assert bound * 60 >= worst + 600, (bound, worst)
 
+    @pytest.mark.parametrize("workflow, job_id", [("test.yml", "test-serial"), ("post-merge.yml", "full-tier")])
+    def test_the_jobs_that_run_verify_pins_on_full_history_keep_it(self, workflow, job_id):
+        """tests/test_verify_pins.py is a serial file (DEF-2036) whose control
+        rows skip on a shallow tree by design, so a checkout cut to the default
+        depth would read green with none of them run. Dies to: the
+        `fetch-depth: 0` dropped from either job's checkout."""
+        assert "tests/test_verify_pins.py" in _serial_files()
+        job = _suite_jobs()[(workflow, job_id)]
+        (checkout,) = [s for s in job["steps"] if str(s.get("uses", "")).startswith("actions/checkout@")]
+        assert (checkout.get("with") or {}).get("fetch-depth") == 0, checkout
+
 
 class TestThePortabilityCellRunsTheLocalTiersLegs:
     @staticmethod
@@ -267,7 +278,8 @@ class TestThePostMergeWindowsLegKeepsItsContracts:
         """The test-serial cell's rule, applied to this job: a bound at or under
         a serial file's own mark kills the job with no test named where the
         mark would have failed it by name. Dies to: the bound cut back to twice
-        the measured run (ten), under the PowerShell gate's 900 s mark."""
+        the measured run (ten), under the serial files' worst mark (1800 s,
+        tests/test_verify_pins.py's, since DEF-2036)."""
         from tests.test_test_suite_contract import _declared_timeout_sites
 
         _workflow, job = self._leg()

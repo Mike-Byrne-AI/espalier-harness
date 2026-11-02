@@ -2924,12 +2924,21 @@ stderr names the per-process directory so the operator can find it.
    iteration. An attacker spamming `~/.espalier/audit/` with empty
    `.log` files (cheap: a `for` loop) could otherwise slow
    `session_start` linearly with the file count. Above the cap, the
-   sorted-first-N is processed and a stderr warning fires so the
-   operator sees the flood.
+   oldest-named 5,000 are read (by the date in each name,
+   `_audit_log_order`) and a stderr warning fires; that reaches the
+   debug log only, since an exit-0 hook's stderr reaches no transcript.
 
-**Receipt:** Coverage: `tests/test_audit_dir_home_unset.py` (17
-tests including `TestAuditDirOverrideValidation`,
-`TestPruneTimestampSemantics`, `TestPruneIterationCap`).
+4. **Time bound.** The cap alone did not bound a start: on the Windows
+   box 5,000 first-line reads took 11.7 s, and the banner was cut at its
+   13 s wall inside the prune (DEF-3022). SessionStart now passes the
+   prune a deadline one second away, clipped to the hook's own budget;
+   the scan stops there, and when it leaves logs named before the
+   window unread the banner's NOTES says how many and which bound
+   stopped it. The next start goes on from the oldest name date.
+
+**Receipt:** Coverage: `tests/test_audit_dir_home_unset.py`
+(`TestAuditDirOverrideValidation`, `TestPruneTimestampSemantics`,
+`TestPruneIterationCap`, `TestThePruneIsBoundedInsideTheWall`).
 
 ## Atomic Write Is Not Atomic Update
 
@@ -4939,7 +4948,8 @@ verified-green suite can go red minutes later with no visible cause (a real
 2026-06-23 instance flipped 25 `fuse` tests via an A/B stash experiment that
 left staged deletions un-staged). Rule: spawn mutate-capable or concurrent
 agents with `isolation: worktree`; keep review/audit agents read-only
-(Explore, or Bash scoped to status/diff/log/show); re-verify `git status`
+(Explore, or an agent whose tools line names no Bash: a command pattern on a
+tools line narrows nothing); re-verify `git status`
 and re-run gates after any git-capable agent returns. See
 `docs/FAILURE_MODES.md` §16.1.
 

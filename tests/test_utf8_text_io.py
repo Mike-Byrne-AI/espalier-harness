@@ -708,6 +708,28 @@ class TestShippedBodiesPinTheirText:
         assert ".claude/commands/real.md" in texts, sorted(texts)
         assert not [rel for rel in texts if "worktrees" in rel], sorted(texts)
 
+    def test_every_command_line_body_is_ascii(self):
+        """A ``-c`` body rides the command line, which a host whose locale is
+        not UTF-8 decodes before Python runs: one non-ASCII character and the
+        interpreter exits before the first statement, and a body behind
+        ``2>/dev/null`` prints nothing. CI's 3.12 cell found it on #418, where
+        macOS had passed, since macOS decodes the command line as UTF-8
+        whatever the locale; this static check reds on every host. A heredoc or
+        a here-string reaches Python on stdin, read as UTF-8 source, so it is
+        left out."""
+        def stray(found):
+            return [(kind, sorted({c for c in body if not c.isascii()}))
+                    for kind, body in found if kind == "-c" and not body.isascii()]
+        planted, _ = _markdown_bodies(
+            "```bash\npython -c \"print('a \u2014 b')\"\n"
+            "python - <<'EOF'\nprint('a \u2014 b')\nEOF\n```\n")
+        assert stray(planted) == [("-c", ["\u2014"])], planted
+        found = [f"{rel} {s}" for rel, (bodies, _) in _shipped_bodies().items() for s in stray(bodies)]
+        assert not found, (
+            "these shipped -c bodies hold non-ASCII; spell it in ASCII (a host whose "
+            f"locale is not UTF-8 cannot decode it from the command line): {found}"
+        )
+
     def test_the_checks_fire_on_planted_bodies(self):
         planted = (
             "~~~bash\n"
