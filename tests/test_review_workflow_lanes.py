@@ -128,6 +128,12 @@ def _persisted(out: dict) -> list[dict]:
     return json.loads(body)["findings"]
 
 
+def _persist_payload(out: dict) -> dict:
+    """The whole JSON payload the workflow handed its persist agent."""
+    prompt = next(c["prompt"] for c in out["calls"] if c["label"] == "persist:corpus")
+    return json.loads(prompt.split("<<<FINDINGS_JSON\n", 1)[1].split("\nFINDINGS_JSON", 1)[0])
+
+
 def _finding(n: int, category: str = "correctness") -> dict:
     return {
         "id": f"T:{n}", "title": f"title {n}", "rule_or_scanner": "stub",
@@ -341,3 +347,57 @@ class TestConvergenceTemplateLanes:
         result = _ran(out)
         assert result.get("lanesNotRun") == {"Convergence-critic": ["convergence-critic"]}, result
         assert (result.get("convergence") or {}).get("rowAppended") is False, result
+
+
+class TestTheRoundsRunCountsReachTheLedger:
+    """A round that lost lanes reaches the per-run finding ledger as a partial
+    round, not an ordinary one: each workflow hands its persist step the counts
+    it computed (finders launched and run, lanes not run, refuters not run), and
+    the ledger row those counts make is the oracle. 20 dead finders of 25 once
+    appended a row that read like a quiet round, and the convergence critic
+    reads that file for its trend."""
+
+    @staticmethod
+    def _row_state(tmp_path: Path, counts) -> str:
+        from espalier import finding_ledger as fl
+        from espalier.fan_out_findings import aggregate_findings
+        fl.append_summary(aggregate_findings([], known_categories=["bug"]), run_id="r", ts="t",
+                          root=tmp_path, run_counts=counts)
+        return fl.read_ledger(tmp_path)[-1].get("round")
+
+    @pytest.mark.parametrize("name,scenario,expected,state", [
+        (FANOUT, {"args": {"finders": TestFanoutAuditLanes.FINDERS[:3]},
+                  "behaviours": [_does("^find:F1$", "null"), _value("^find:F2$", {"findings": [_finding(2)]})]},
+         {"finders_launched": 3, "finders_run": 2, "lanes_not_run": 1, "refuters_not_run": 0}, "partial"),
+        (FANOUT, {"args": {"finders": TestFanoutAuditLanes.FINDERS[:3]},
+                  "behaviours": [_value("^find:F2$", {"findings": [_finding(2)]})]},
+         {"finders_launched": 3, "finders_run": 3, "lanes_not_run": 0, "refuters_not_run": 0}, "complete"),
+        (LAYERED, {"behaviours": [_does("^find:correctness$", "null"),
+                                  _value("^find:failure-modes$", {"findings": [_finding(1, "failure-mode")]})]},
+         {"finders_launched": 5, "finders_run": 4, "lanes_not_run": 1, "refuters_not_run": 0}, "partial"),
+        (LAYERED, {"behaviours": [_value("^find:failure-modes$", {"findings": [_finding(1, "failure-mode")]})]},
+         {"finders_launched": 5, "finders_run": 5, "lanes_not_run": 0, "refuters_not_run": 0}, "complete"),
+        (CONVERGENCE, {"args": TestConvergenceTemplateLanes.ARGS,
+                       "behaviours": [TestConvergenceTemplateLanes.SEED, _does("^find:corpus-blind$", "null")]},
+         {"finders_launched": 2, "finders_run": 1, "lanes_not_run": 1, "refuters_not_run": 0}, "partial"),
+        (CONVERGENCE, {"args": TestConvergenceTemplateLanes.ARGS,
+                       "behaviours": [TestConvergenceTemplateLanes.SEED, _does("^delta-attacker$", "null")]},
+         {"finders_launched": 2, "finders_run": 2, "lanes_not_run": 1, "refuters_not_run": 0}, "partial"),
+        (CONVERGENCE, {"args": TestConvergenceTemplateLanes.ARGS, "behaviours": [TestConvergenceTemplateLanes.SEED]},
+         {"finders_launched": 2, "finders_run": 2, "lanes_not_run": 0, "refuters_not_run": 0}, "complete"),
+    ], ids=["fanout-dead-finder", "fanout-whole", "layered-dead-finder", "layered-whole",
+            "convergence-dead-corpus-blind", "convergence-dead-scope-breaker", "convergence-whole"])
+    def test_the_persist_step_carries_the_rounds_counts(self, name, scenario, expected, state, tmp_path):
+        out = _drive(name, **scenario)
+        _ran(out)
+        counts = _persist_payload(out).get("run_counts")
+        assert counts == expected, (name, counts)
+        assert self._row_state(tmp_path, counts) == state, (name, counts)
+
+    def test_the_critic_reads_the_trend_that_leaves_a_partial_round_out(self):
+        out = _drive(CONVERGENCE, args=TestConvergenceTemplateLanes.ARGS,
+                     behaviours=[TestConvergenceTemplateLanes.SEED])
+        _ran(out)
+        critic = next(c["prompt"] for c in out["calls"] if c["label"] == "convergence-critic")
+        assert "read_ledger_trend(" in critic and "read_ledger()" not in critic, critic[-1200:]
+        assert "no evidence" in critic and "left_out" in critic, critic[-1200:]

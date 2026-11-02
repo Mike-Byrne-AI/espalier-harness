@@ -488,8 +488,16 @@ log(`convergence-review: ${survivorCount} survivor(s) of ${findings.length} afte
 // persister (TestStandingCallerLedgerWiring).
 // =============================================================================
 phase('Persist')
+// The round's own count of its lanes rides to the per-run ledger row, so a round that
+// lost a finder or a scope-breaker is recorded as partial, and the critic's trend read
+// below leaves it out instead of reading its quiet as convergence.
+const findersRun = finderLanes.length - lanesNotRun.filter(x => x.phase === 'Find').length
+const runCounts = {
+  finders_launched: finderLanes.length, finders_run: findersRun,
+  lanes_not_run: lanesNotRun.length, refuters_not_run: refutersNotRun.length,
+}
 const persistPayload = JSON.stringify({
-  findings, known_categories: KNOWN_CATEGORIES, corpus_path: CORPUS_PATH,
+  findings, known_categories: KNOWN_CATEGORIES, corpus_path: CORPUS_PATH, run_counts: runCounts,
 })
 // ONE DESTINATION plus the summary ledger. The per-round report (CORPUS_PATH, under
 // reports/) is this round's record, immutable and cited by the convergence ledger;
@@ -512,7 +520,7 @@ const persistCmd =
   `with warnings.catch_warnings(record=True) as _w:\n` +
   `    warnings.simplefilter("always")\n` +
   `    appended = append_findings_to_corpus(corpus, survivors)\n` +
-  `    ledger = append_summary(summ, root=".")\n` +
+  `    ledger = append_summary(summ, root=".", run_counts=data.get("run_counts"))\n` +
   `for _x in _w:\n` +
   `    print("WARNING: " + str(_x.message), file=sys.stderr)\n` +
   `print(json.dumps({\n` +
@@ -606,7 +614,10 @@ const criticRaw = criticSkip ? null : await agent(
   `  corrected row without reading the correction — one prior row's per-lane yield reads "down 35%"\n` +
   `  and its correction reads "up ~44%". A "file:NN" in a row is a PRE-FIX line number.\n` +
   `STEP 2 — Read the structured per-run substrate (yield/recurrence are computed, not recalled):\n` +
-  `  python -c 'import json; from espalier.finding_ledger import read_ledger; print(json.dumps(read_ledger()[-6:]))'\n` +
+  `  python -c 'import json; from espalier.finding_ledger import read_ledger_trend; print(json.dumps(read_ledger_trend(last=6)))'\n` +
+  `  It returns the newest whole rounds and, under left_out, how many it left out: a partial\n` +
+  `  round (a finder or scope-breaker lane did not run) and a round with no run counts (an older\n` +
+  `  row) are no evidence of convergence, so never read a gap in the trend as a quiet round.\n` +
   `STEP 3 — Compute, using STEP 1 + STEP 2 + THIS ROUND (below): (a) yield trend vs prior rows;\n` +
   `  (b) refutation-recurrences (a finding refuted 2+ times); (c) confirmed-after-refuted; (d) cross-\n` +
   `  round classes (N isolated same-shape nits); (e) the cumulative never-covered coverage map;\n` +

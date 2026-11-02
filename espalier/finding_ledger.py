@@ -21,8 +21,17 @@ run-boundaried** ledger. ``append_summary`` writes exactly one JSON line per
 fan-out run::
 
     {run_id, ts, finder_identities: [...rule_or_scanner...],
+     run_counts: {finders_launched, finders_run, lanes_not_run, refuters_not_run} | null,
+     round: "complete" | "partial" | "counts-unknown", complete: bool,
      summary: {total, by_category, by_refutation_outcome, survival_rate, corroborated},
      findings: [<deduped survivor dicts, raw — verification + corroboration_count intact>]}
+
+``run_counts`` are the review's own: a finder or scope-breaker lane that returned
+nothing or threw is a lane that did not run, and a round that lost one is
+``partial``, so 20 dead finders of 25 are never recorded as a quiet round. A
+row whose counts are absent or unreadable is ``counts-unknown``, never
+``complete``. :func:`read_ledger_trend` is the read a trend takes: it leaves
+both kinds out and says how many.
 
 ``run_id`` and the producer identity live on the **wrapper**, never on a finding
 — so the finding wire shape (``FINDING_SCHEMA``, ``additionalProperties: false``,
@@ -90,7 +99,52 @@ def _clean_findings(raw: object) -> list[dict]:
     return clean
 
 
-def _build_record(summary: "FindingsSummary", *, run_id: str | None, ts: str | None) -> dict:
+#: The counts a round must carry to be read as complete, as the review workflows
+#: compute them. ``refuters_not_run`` is recorded beside them and is optional: a
+#: refuter that did not run leaves its finding ``unattempted``, which the
+#: survivors carry, so (as in the convergence template's own gate) it does not
+#: make the round partial.
+_REQUIRED_COUNTS: tuple[str, ...] = ("finders_launched", "finders_run", "lanes_not_run")
+
+
+def _count(value: object) -> int | None:
+    """A non-negative integer count, or None (a bool is not a count)."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _clean_run_counts(raw: object) -> dict[str, int | None] | None:
+    """The run counts as recorded, or None when any required one is unreadable.
+
+    None is ``counts-unknown``: a missing key, a non-integer, a negative, or
+    more finders run than launched cannot say whether the round ran whole, so
+    it never reads as complete.
+    """
+    if not isinstance(raw, dict):
+        return None
+    required = {key: _count(raw.get(key)) for key in _REQUIRED_COUNTS}
+    launched, ran = required["finders_launched"], required["finders_run"]
+    if None in required.values() or launched is None or ran is None or ran > launched:
+        return None
+    counts: dict[str, int | None] = dict(required)
+    counts["refuters_not_run"] = _count(raw.get("refuters_not_run"))
+    return counts
+
+
+def _round_state(counts: dict[str, int | None] | None) -> str:
+    """``complete`` when every finder and scope-breaker lane ran, ``partial``
+    when one did not, ``counts-unknown`` when the counts cannot say."""
+    if counts is None:
+        return "counts-unknown"
+    if counts["lanes_not_run"] == 0 and counts["finders_run"] == counts["finders_launched"]:
+        return "complete"
+    return "partial"
+
+
+def _build_record(
+    summary: "FindingsSummary", *, run_id: str | None, ts: str | None, run_counts: object = None,
+) -> dict:
     """Assemble the per-run wrapper record. Duck-types ``summary`` via getattr."""
     findings = _clean_findings(getattr(summary, "findings", None))
     finder_identities: list[str] = []
@@ -98,10 +152,15 @@ def _build_record(summary: "FindingsSummary", *, run_id: str | None, ts: str | N
         producer = finding.get("rule_or_scanner")
         if isinstance(producer, str) and producer and producer not in finder_identities:
             finder_identities.append(producer)
+    counts = _clean_run_counts(run_counts)
+    state = _round_state(counts)
     return {
         "run_id": run_id or uuid.uuid4().hex[:12],
         "ts": ts or datetime.now(timezone.utc).isoformat(),
         "finder_identities": finder_identities,
+        "run_counts": counts,
+        "round": state,
+        "complete": state == "complete",
         "summary": {
             "total": getattr(summary, "total", None),
             # by_category keys may be None (a null/unbucketed category); json
@@ -122,15 +181,20 @@ def append_summary(
     run_id: str | None = None,
     ts: str | None = None,
     root: Path | str = ".",
+    run_counts: object = None,
 ) -> int:
     """Append one run-boundaried ledger record for a fan-out's ``summary``.
 
     ``summary`` is a :class:`~espalier.fan_out_findings.FindingsSummary` (or any
     object exposing the same attributes). ``run_id`` defaults to a fresh random
     handle and ``ts`` to the current UTC time when omitted — each fan-out run is
-    a distinct ledger row by design. Returns ``1`` when a record was written,
-    ``0`` on any failure (fail-open — never raises; a logging error must never
-    affect a review).
+    a distinct ledger row by design. ``run_counts`` is the round's own account
+    of its lanes (``finders_launched``, ``finders_run``, ``lanes_not_run``, and
+    optionally ``refuters_not_run``); the row records them and whether the round
+    ran whole, and a call that passes none, or counts it cannot read, writes a
+    ``counts-unknown`` row that never reads as complete. Returns ``1`` when a
+    record was written, ``0`` on any failure (fail-open — never raises; a
+    logging error must never affect a review).
     """
     try:
         # No sort_keys: by_category may carry a None key (a null/unbucketed
@@ -139,7 +203,7 @@ def append_summary(
         # swallow — dropping the ENTIRE run's record. json's default coerces a
         # None key to the string "null" (lossless), so plain dumps is correct;
         # JSONL rows are appended, never byte-compared, so ordering buys nothing.
-        line = json.dumps(_build_record(summary, run_id=run_id, ts=ts))
+        line = json.dumps(_build_record(summary, run_id=run_id, ts=ts, run_counts=run_counts))
         path = ledger_path(root)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as fh:
@@ -176,3 +240,32 @@ def read_ledger(root: Path | str = ".") -> list[dict]:
         if isinstance(obj, dict):
             records.append(obj)
     return records
+
+
+def read_ledger_trend(root: Path | str = ".", *, last: int | None = None) -> dict:
+    """The rounds a trend may read, and how many it left out.
+
+    A round that lost a finder or scope-breaker lane is no evidence of
+    convergence: its quiet is the dead lanes', not the code's. So the trend
+    keeps only the rounds that ran whole and counts the rest under
+    ``left_out``: ``partial`` (a lane did not run) and ``counts_unknown`` (no
+    readable counts, which every row an older engine wrote is). The state is
+    re-derived from each row's counts, never taken from its stored flag.
+    ``last`` keeps the newest that many whole rounds; the counts cover the
+    whole ledger. Returns ``{"rounds": [...], "left_out": {"partial": n,
+    "counts_unknown": m}}``, newest-last, and an empty trend when the file is
+    absent.
+    """
+    rounds: list[dict] = []
+    left_out = {"partial": 0, "counts_unknown": 0}
+    for record in read_ledger(root):
+        state = _round_state(_clean_run_counts(record.get("run_counts")))
+        if state == "complete":
+            rounds.append(record)
+        elif state == "partial":
+            left_out["partial"] += 1
+        else:
+            left_out["counts_unknown"] += 1
+    if last is not None:
+        rounds = rounds[-last:] if last > 0 else []
+    return {"rounds": rounds, "left_out": left_out}
