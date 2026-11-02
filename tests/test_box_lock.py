@@ -482,22 +482,177 @@ class TestTheWaitingLine:
         before the ceiling; the pid interpolated without coercion."""
         from datetime import datetime, timedelta, timezone
         bl = _box_lock()
+        pid = os.getpid()  # a live holder: a dead pid gets no command at all (below)
         recent = (datetime.now(timezone.utc) - timedelta(seconds=90)).isoformat(timespec="seconds")
-        record = {"pid": 4242, "seat": "win-2", "lane": "lane/x", "started": recent, "argv": ["/v/bin/pytest", "-n", "4"]}
-        short = bl.waiting_line(record, waited_s=bl.WAIT_CEILING_MIN * 60 + 1)
-        assert short.startswith("box lock: waiting on win-2 lane/x (pid 4242, held ") and ": pytest -n 4" in short, short
+        record = {"pid": pid, "seat": "win-2", "lane": "lane/x", "started": recent, "argv": ["/v/bin/pytest", "-n", "4"]}
+
+        def unread(_record):
+            raise AssertionError("the seat is read before the ceiling")
+
+        short = bl.waiting_line(record, waited_s=bl.WAIT_CEILING_MIN * 60 + 1, read_seat=unread)
+        assert short.startswith(f"box lock: waiting on win-2 lane/x (pid {pid}, held ") and ": pytest -n 4" in short, short
         assert "ends with" not in short, "a long wait behind a young holder must not name the stop command"
         old = (datetime.now(timezone.utc) - timedelta(minutes=bl.WAIT_CEILING_MIN + 1)).isoformat(timespec="seconds")
-        long = bl.waiting_line({**record, "started": old}, waited_s=5.0)
-        assert "4242" in long and ("kill -9 4242" in long or "taskkill /T /F /PID 4242" in long), long
-        assert "inspect it with" in long and long.isascii()
-        forged = bl.waiting_line({**record, "pid": "4242; rm", "started": old}, waited_s=5.0)
+        long = bl.waiting_line({**record, "started": old}, waited_s=5.0, read_seat=lambda _r: False)
+        assert f"kill -9 {pid}" in long or f"taskkill /T /F /PID {pid}" in long, long
+        assert "inspect it with" in long and "no live Claude Code session" in long and long.isascii()
+        forged = bl.waiting_line({**record, "pid": f"{pid}; rm", "started": old}, waited_s=5.0, read_seat=lambda _r: False)
         assert "ends with" not in forged and "pid ?" in forged
+
+    def test_past_the_ceiling_a_seat_with_a_session_or_an_unread_one_is_asked_never_handed_the_kill(self):
+        """DEF-4077: past sixty minutes is the ordinary case for a seat's tier
+        on a loaded box, and a window once ended a live seat's leg by pid. The
+        stop command goes only to a checkout with no live session; a live one,
+        an unread one and a line built with no reader (the row's probe) name
+        the mail instead. Mutation: the kill printed whatever the seat's
+        answer, or for an unread one."""
+        from datetime import datetime, timedelta, timezone
+        bl = _box_lock()
+        old = (datetime.now(timezone.utc) - timedelta(minutes=bl.WAIT_CEILING_MIN + 1)).isoformat(timespec="seconds")
+        record = {"pid": os.getpid(), "seat": "air-work", "lane": "lane/x", "started": old}
+        asked = []
+        for read_seat, why in ((lambda r: asked.append(r) or True, "its seat has a live session"),
+                               (lambda r: None, "could not be read"), (None, "could not be read")):
+            line = bl.waiting_line(record, waited_s=5.0, read_seat=read_seat)
+            assert why in line and "ask air-work on the mail" in line and "mail.py send --type request" in line, line
+            assert "kill -9" not in line and "taskkill" not in line and "ends with" not in line, line
+        assert asked == [record], "the reader is handed the holder's record"
+
+        def unread(_record):
+            raise AssertionError("an unnamed seat's checkout is read")
+
+        for seat in ("?", "", None):
+            # A fresh-clone gate leg or a scratch clone's run names no seat,
+            # and its checkout holds no session of its own (both reviews).
+            line = bl.waiting_line({**record, "seat": seat}, waited_s=5.0, read_seat=unread)
+            assert "names no seat" in line and "read its parents" in line, line
+            assert "kill -9" not in line and "taskkill" not in line, line
+
+    def test_a_dead_holders_pid_gets_no_command_and_its_seat_is_never_read(self):
+        """A record whose pid has exited does not name the lock's holder (the
+        lock goes with the process that took it): there is nothing to end by
+        it, and a pid reused since would be a stranger. Mutation: the dead pid
+        handed the stop command, as the line's old text did."""
+        from datetime import datetime, timedelta, timezone
+        bl = _box_lock()
+        child = subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"], capture_output=True, text=True)
+        dead = int(child.stdout.strip())
+        assert not bl.holder_alive(dead)
+        old = (datetime.now(timezone.utc) - timedelta(minutes=bl.WAIT_CEILING_MIN + 1)).isoformat(timespec="seconds")
+
+        def unread(_record):
+            raise AssertionError("a dead pid's seat is read")
+
+        line = bl.waiting_line({"pid": dead, "seat": "win-2", "started": old}, waited_s=5.0, read_seat=unread)
+        assert f"pid {dead} has exited" in line and "find the real one" in line, line
+        assert "kill -9" not in line and "taskkill" not in line, line
 
     def test_the_line_is_ascii_and_names_an_unreadable_record(self):
         bl = _box_lock()
         line = bl.waiting_line({}, waited_s=5.0)
         assert "no holder record" in line and line.isascii()
+
+
+class TestTheHoldersSeat:
+    def test_the_reader_counts_the_sessions_in_the_holders_checkout(self, tmp_path):
+        """DEF-4077's one reader: ``checkout_sync.sessions_in`` over Claude
+        Code's registry (planted here, its entry's pid this live process), run
+        in a child so ``tools/cc`` never joins this run's path. A session
+        inside the checkout is live; one in another folder is not. Mutation:
+        the checkout ignored (every session counted), the count read as live
+        at zero."""
+        bl = _box_lock()
+        checkout, elsewhere = tmp_path / "seat", tmp_path / "other"
+        (checkout / "sub").mkdir(parents=True)
+        elsewhere.mkdir()
+        config = tmp_path / "claude"
+        (config / "sessions").mkdir(parents=True)
+        entry = config / "sessions" / f"{os.getpid()}.json"
+        entry.write_text(json.dumps({"pid": os.getpid(), "sessionId": "s1", "cwd": str(checkout / "sub")}), encoding="utf-8")
+        path_before, modules_before = list(sys.path), set(sys.modules)
+        assert bl.holder_seat_live({"checkout": str(checkout)}, config_dir=config) is True
+        bare = {name for name in set(sys.modules) - modules_before
+                if "/tools/cc/" in (getattr(sys.modules[name], "__file__", None) or "").replace("\\", "/")}
+        assert sys.path == path_before and bare <= {"_temp_sweep_checkout_sync"}, bare
+        entry.write_text(json.dumps({"pid": os.getpid(), "sessionId": "s1", "cwd": str(elsewhere)}), encoding="utf-8")
+        assert bl.holder_seat_live({"checkout": str(checkout)}, config_dir=config) is False
+
+    def test_a_record_with_no_checkout_or_a_registry_it_cannot_read_cannot_tell(self, tmp_path):
+        """None, never False: an older plugin's record names no checkout, and a
+        registry that is not there cannot say no session runs. Mutation: either
+        read as False, which would hand a live seat's holder the kill."""
+        bl = _box_lock()
+        assert bl.holder_seat_live({}) is None
+        assert bl.holder_seat_live({"checkout": "?"}) is None
+        missing = tmp_path / "no-claude"
+        assert bl.holder_seat_live({"checkout": str(tmp_path)}, config_dir=missing) is None
+
+
+class TestTheWaitersBound:
+    def test_past_its_bound_a_waiter_ends_before_any_test_with_its_own_status(self, tmp_path):
+        """DEF-4056: under a caller's cap (an agent's Bash call) a waiter
+        killed at the cap read as the run's verdict. With the bound set it ends
+        itself before any test: ``DID_NOT_RUN_EXIT``, a did-not-run line, a
+        ``gave_up`` log line. Mutation: the bound not read; the exit swallowed
+        by configure's ``except Exception`` (the run proceeds unguarded and its
+        test runs)."""
+        bl = _box_lock()
+        tree, lock = _scratch(tmp_path), tmp_path / "box.lock"
+        first = _holding(tmp_path, tree, lock)
+        env = _child_env(tmp_path, lock, stamp="b")
+        env[bl.WAIT_KEY] = "1"
+        out, err = _finish(_spawn(tmp_path, tree, env), rc=bl.DID_NOT_RUN_EXIT)
+        _release(tmp_path, "a")
+        _finish(first)
+        holder_pid = _said_pid(tmp_path / "a.pid")
+        assert "box lock: did not run: waited" in err and f"pid {holder_pid}" in err and "no test ran" in err, err
+        assert not (tmp_path / "b").exists() and "passed" not in out, out
+        lines = [json.loads(ln) for ln in (tmp_path / "box.lock.log").read_text(encoding="utf-8").splitlines() if ln.strip()]
+        gave_up = [ln for ln in lines if ln["outcome"] == "gave_up"]
+        assert len(gave_up) == 1 and gave_up[0]["run"]["pid"] == _said_pid(tmp_path / "b.pid"), lines
+        assert gave_up[0]["holder"]["pid"] == holder_pid and gave_up[0]["waited_s"] >= 1, gave_up
+        assert gave_up[0]["why"] == f"{bl.WAIT_KEY}=1"
+
+    def test_the_bound_reads_seconds_and_a_value_that_is_not_one_is_said_and_unbounded(self):
+        """Unset or blank is unbounded, as before the bound; a finite number at
+        or above 0 is the bound; anything else is said, never a run that ends
+        at once on a typo. Mutation: a bad value read as 0, or read silently."""
+        import io
+        bl = _box_lock()
+        for raw, want in ((None, None), ("", None), ("  ", None), ("0", 0.0), ("90", 90.0), ("2.5", 2.5)):
+            stream = io.StringIO()
+            assert bl.wait_bound(raw, stream=stream) == want and stream.getvalue() == "", raw
+        for raw in ("ten", "-1", "nan", "inf"):
+            stream = io.StringIO()
+            assert bl.wait_bound(raw, stream=stream) is None, raw
+            assert f"{bl.WAIT_KEY}={raw} is not a number of seconds" in stream.getvalue(), raw
+
+
+class TestTheHoldersStart:
+    def test_a_run_that_queued_is_stamped_at_the_lock_and_names_its_checkout(self, tmp_path):
+        """DEF-4077: stamped at configure, a run that queued behind another
+        seat's tier read as that much older, and past the ceiling sooner. The
+        waiter here queues past two seconds after its waiting line; the record
+        it writes once it holds is stamped no earlier than the second its
+        holder let go. Mutation: the start kept from configure."""
+        from datetime import datetime, timezone
+        tree, lock = _scratch(tmp_path), tmp_path / "box.lock"
+        first = _holding(tmp_path, tree, lock)
+        second = _Waiter(tmp_path, tree, _child_env(tmp_path, lock, stamp="b", hold=True, slow=True))
+        assert second.at_the_lock(), second.stderr
+        time.sleep(2.5)  # lengthens the queue only: the holder keeps the lock all along
+        _release(tmp_path, "a")
+        _finish(first)
+        assert _wait_for(tmp_path / "b"), second.stderr
+        record = json.loads(lock.read_text(encoding="utf-8"))
+        _release(tmp_path, "b")
+        second.finish()
+        # The holder's own stamp, written once it was let go and before its
+        # lock went: the waiter's hold began after it.
+        let_go = int(_stamp(tmp_path, "a.done"))
+        started = datetime.fromisoformat(record["started"].replace("Z", "+00:00"))
+        assert started >= datetime.fromtimestamp(let_go, tz=timezone.utc), (record, let_go)
+        assert record["pid"] == _said_pid(tmp_path / "b.pid") and "checkout" in record, record
 
 
 class TestTheSummaryNamesAnUnguardedRun:
@@ -600,20 +755,76 @@ class TestTheCensusOfPytestSpawners:
         assert bl.pair_asymmetry('env = dict(os.environ)') is None
         assert bl.pair_asymmetry('WHITELIST = ("ESPALIER_BOX_LOCK", "ESPALIER_BOX_LOCK_HOLDER")') is None
 
+    def test_the_rule_reads_the_pair_by_the_plugins_and_the_launchers_constants(self):
+        """DEF-2034's second half: a builder that names the key through its
+        constant (``LOCK_KEY`` here, ``seat.py``'s ``BOX_LOCK_KEY``) is read as
+        naming it, and the wait bound, a third name sharing the prefix, is
+        neither of the pair. Mutation: the constants left out of the rule's
+        words or its prefix strip."""
+        bl = _box_lock()
+        assert bl.pair_asymmetry("env[LOCK_KEY] = path") == bl.LOCK_KEY
+        assert bl.pair_asymmetry("env[seat.BOX_LOCK_KEY] = path") == bl.LOCK_KEY
+        assert bl.pair_asymmetry("env.pop(_box_lock.HOLDER_KEY, None)") == bl.HOLDER_KEY
+        assert bl.pair_asymmetry("env[seat.BOX_LOCK_KEY] = path\nenv.pop(HOLDER_KEY, None)") is None
+        assert bl.pair_asymmetry("env = {k: v for k, v in os.environ.items() if not k.startswith(bl.LOCK_KEY)}") is None
+        assert bl.pair_asymmetry("env = {k: v for k, v in env.items() if not k.startswith(seat.BOX_LOCK_KEY)}") is None
+        assert bl.pair_asymmetry("env = {k: v for k, v in env.items() if not k.startswith(HOLDER_KEY)}") == bl.HOLDER_KEY
+        assert bl.pair_asymmetry('env["ESPALIER_BOX_LOCK_WAIT_S"] = "60"') is None
+
+    def test_the_census_reads_every_root_of_the_checkout_and_the_key_by_its_constant(self, tmp_path):
+        """DEF-2034: a spawner under a root no typed list names, and one that
+        names the key by its constant, are each flagged; the walk's own leave-
+        outs (the vendored mirror, this file and the plugin) stay out. Planted
+        with no ``.git``, so git's view is the plain walk of the planted tree.
+        Mutation: the walk narrowed to typed roots; a file skipped unless it
+        spells the key's literal."""
+        spawn = '\nsubprocess.run([sys.executable, "-m", "pytest", "-q"], env=env)\n'
+        planted = {
+            # The root half: a typed root list never reached examples/.
+            "examples/demo/run_suite.py": 'env = dict(os.environ)\nenv.pop("ESPALIER_BOX_LOCK_HOLDER", None)' + spawn,
+            # The key half: under a typed root, but naming the key by constant.
+            "tests/drive_by_constant.py": "env = dict(os.environ)\nenv[LOCK_KEY] = scratch_lock" + spawn,
+            "tests/keeps_both.py": "env = dict(os.environ)" + spawn,
+            "espalier/_vendor/cc/copied.py": 'env.pop("ESPALIER_BOX_LOCK_HOLDER", None)' + spawn,
+            "tests/test_box_lock.py": 'env.pop("ESPALIER_BOX_LOCK_HOLDER", None)' + spawn,
+            # Left out by its path, never its name: a namesake elsewhere is read.
+            "examples/tests/test_box_lock.py": 'env.pop("ESPALIER_BOX_LOCK_HOLDER", None)' + spawn,
+        }
+        for rel, text in planted.items():
+            target = tmp_path / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text, encoding="utf-8")
+        assert [line.split(":", 1)[0] for line in _spawner_census(tmp_path)] == [
+            "examples/demo/run_suite.py", "examples/tests/test_box_lock.py", "tests/drive_by_constant.py"]
+
     @pytest.mark.contract
     def test_no_spawner_in_the_tree_names_one_of_the_pair_and_drops_the_other(self):
-        from tests._live_tree import checkout_rglob
-        bl = _box_lock()
-        spawns = re.compile(r'"-m", "pytest"|"pytest",')
-        flagged = []
-        for sub in ("tests", "scripts", "tools/cc", "espalier", "bench"):
-            for py in checkout_rglob(REPO_ROOT / sub, "*.py"):
-                if py.name in ("_box_lock.py", "test_box_lock.py") or "/_vendor/" in py.as_posix():
-                    continue
-                text = py.read_text(encoding="utf-8")
-                if "ESPALIER_BOX_LOCK" not in text or not spawns.search(text):
-                    continue
-                dropped = bl.pair_asymmetry(text)
-                if dropped:
-                    flagged.append(f"{py.relative_to(REPO_ROOT).as_posix()}: names one of the pair ({dropped}) and not the other")
+        flagged = _spawner_census(REPO_ROOT)
         assert not flagged, flagged
+
+
+#: A file that spawns pytest, as the census reads one: the module form or a
+#: bare argv head.
+_SPAWNS = re.compile(r'"-m", "pytest"|"pytest",')
+
+
+def _spawner_census(root: Path) -> list[str]:
+    """The census over git's view of ``root``, the whole checkout (a typed list
+    of roots missed a spawner under any other, DEF-2034): each ``.py`` file that
+    spawns pytest and names one of the pair without the other, by its literal
+    or its constant (the rule's own reading), the vendored mirror and the
+    plugin's own two files left out."""
+    from tests._live_tree import checkout_rglob
+    bl = _box_lock()
+    flagged = []
+    for py in checkout_rglob(root, "*.py", root=root):
+        rel = py.relative_to(root).as_posix()
+        if rel in ("tests/_box_lock.py", "tests/test_box_lock.py") or rel.startswith("espalier/_vendor/"):
+            continue
+        text = py.read_text(encoding="utf-8")
+        if not _SPAWNS.search(text):
+            continue
+        dropped = bl.pair_asymmetry(text)
+        if dropped:
+            flagged.append(f"{rel}: names one of the pair ({dropped}) and not the other")
+    return flagged
