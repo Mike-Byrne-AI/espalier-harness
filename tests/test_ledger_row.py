@@ -3088,7 +3088,7 @@ class TestTheShippedVerbRunsTheRealRules:
              "--dry-run", "file", "DEF-999999", "--section", "C0", "--anchor", "a", "--text-file", str(body),
              "--severity", "nit", "--subject", "README.md", "--probe-cmd", probe, "--open-value", "True",
              "--population", "HYGIENE", "--audience", "MAINTAINER"],
-            cwd=tmp_path, env=env, capture_output=True, text=True, encoding="utf-8", timeout=120)
+            cwd=tmp_path, env=env, capture_output=True, text=True, encoding="utf-8", timeout=50)
         named = {rule for rule in (BYPASS_ROSTER_RULE, MEMORY_CAP_RULE, CITED_PATH_RULE, PAPERWORK_PROBE_RULE,
                                    LITERAL_SPAWN_RULE) if f"content rule, {rule}:" in proc.stderr}
         assert len(named) == 5, proc.stderr

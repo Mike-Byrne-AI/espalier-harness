@@ -57,10 +57,13 @@ def maintenance_bypass_callers(hooks_dir: Path = HOOKS_DIR,
     name does not count. Readers of the raw predicate or of ``ENV_VAR`` (the
     session-start warning, ``_explain_path``'s explanation) are not bypasses: a
     hook that early-returned on those would be a bypass that never logs, which
-    the helper's own contract forbids. ``listing`` lists the hook files (the
-    tests pass git's view of the checkout; the default is the folder's)."""
+    the helper's own contract forbids. ``listing`` lists the hook files; the
+    default is git's view of the checkout (``tests/_live_tree.py``), so an
+    untracked scratch hook is never read."""
+    if listing is None:
+        from tests._live_tree import checkout_glob as listing
     callers: set[str] = set()
-    paths = listing(hooks_dir, "*.py") if listing is not None else hooks_dir.glob("*.py")
+    paths = listing(hooks_dir, "*.py")
     for path in sorted(paths):
         if path.name == "_maintenance_mode.py":
             continue
@@ -365,11 +368,9 @@ def cited_path_phantoms(rel: str, text: str) -> list[tuple[str, str]]:
 
 
 def _roster_breaks(rel: str, text: str, hooks_dir: Path) -> list[str]:
-    from tests._live_tree import checkout_glob
-
     return [f"names the maintenance switch beside some of its bypass hooks but omits {sorted(omitted)}: "
             "name them all, or none"
-            for _unit, omitted, excl in partial_rosters(rel, text, maintenance_bypass_callers(hooks_dir, checkout_glob))
+            for _unit, omitted, excl in partial_rosters(rel, text, maintenance_bypass_callers(hooks_dir))
             if excl is None]
 
 
