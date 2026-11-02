@@ -64,6 +64,8 @@ _NI_SYM = "New-Item -ItemType SymbolicLink"
 #: file through a Bash heredoc would otherwise put a literal protected-write
 #: mention in the tool call, and the very defect under test refuses it.
 _SETTINGS = ".claude/" + "settings.json"
+#: A path in the session-state zone, assembled for the same reason.
+_CC_REPORT = "cc/" + "charge.py"
 
 
 def _decide(tool: str, command: str, project: Path) -> bool:
@@ -370,6 +372,14 @@ INERT_BASH = [
      f"if command -v gh >/dev/null; then echo 'moved -> {_HOOK}'; fi"),
     ("group-heredoc-quoted-arrow",
      f"{{ cat > notes.md <<'EOF'\nmoved -> {_HOOK}\nEOF\n}}"),
+    # DEF-1012: a quoted heredoc body naming a protected path after an arrow,
+    # behind a value captured in an EARLIER statement -- the substitution is
+    # closed and hands the body nowhere. Walled at ce61737: the capture scan
+    # ran from the whole command's start. Twins in GENUINE_BASH.
+    ("heredoc-after-a-closed-capture",
+     f"V=$(date -u); cat > n.md <<'EOF'\nx > {_CC_REPORT}\nEOF"),
+    ("heredoc-after-a-closed-capture-of-a-file",
+     f"L=$(cat p.txt); cat > notes.json <<'EOF'\nhooks -> {_HOOK}\nEOF"),
 ]
 
 INERT_POWERSHELL = [
@@ -623,6 +633,20 @@ GENUINE_BASH = [
      f"x=$( (echo 'echo x > {_HOOK}') ); eval \"$x\""),
     ("group-inside-a-substitution-after-a-separator",
      f"eval $(true; {{ echo 'echo x > {_HOOK}'; }})"),
+    # DEF-1012's must-deny twins: a quoted heredoc body a substitution
+    # captures, or a process substitution beside its operator hands to a
+    # shell -- before it, after it, and with a separator after it -- each
+    # running the write in real bash.
+    ("heredoc-in-an-assigned-capture-evaled",
+     f"x=$(cat <<'EOF'\necho x > {_HOOK}\nEOF\n); eval \"$x\""),
+    ("heredoc-in-a-capture-after-a-separator-evaled",
+     f"x=$(true; cat <<'EOF'\necho x > {_HOOK}\nEOF\n); eval \"$x\""),
+    ("heredoc-into-a-process-substitution-then-a-separator",
+     f"cat <<'EOF' > >(bash); ls\necho x > {_HOOK}\nEOF"),
+    ("process-substitution-before-the-heredoc-head",
+     f"> >(bash) cat <<'EOF'\necho x > {_HOOK}\nEOF"),
+    ("heredoc-in-a-backtick-capture-cut-by-a-separator",
+     f"x=`true; cat <<'EOF'\necho x > {_HOOK}\nEOF\n`; eval \"$x\""),
     # DEF-967's must-deny twins: a substitution that itself runs the guarded
     # command, and an exec-quote body holding the nested construct before it.
     ("nested-sub-that-runs-the-catastrophic-delete", f'echo "n: $(printf "x"; {_RM_RF} /)"'),

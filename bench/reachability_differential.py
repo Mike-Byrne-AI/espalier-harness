@@ -411,6 +411,21 @@ WRAPPERS: list[tuple[str, str]] = [
     ("if_echo_sq", "if true; then echo '%s'; fi"),
     ("group_echo_sq_to_file", "{ echo '%s'; } > qs_doc.md"),
     ("while_read_echo_sq", "while read l; do echo '%s'; done < /dev/null"),
+    # ⚠ THE HEREDOC'S CAPTURE SCAN IS SCOPED TO ITS OWN COMMAND (DEF-1012).
+    # A substitution captures a quoted body only when it is open at the
+    # operator or attached to the operator's command: the assigned capture,
+    # the process substitution before the head (the after-the-operator twin
+    # is `heredoc_procsub_shell` above), and a backtick capture a separator
+    # cuts. The last two rows are the relief: a capture CLOSED in an earlier
+    # statement, and an earlier quoted body holding a backtick.
+    # the blank before `;` keeps `)` a token of its own, so the safety gate's
+    # operand reader stops there and never reads `$x` as a delete operand
+    ("assigned_cmdsub_heredoc_evaled", "x=$(cat <<'EOF'\n%s\nEOF\n) ; eval \"$x\""),
+    ("procsub_before_heredoc_head", "> >(sh) cat <<'EOF'\n%s\nEOF"),
+    ("backtick_heredoc_cut_by_separator_evaled", "eval `true; cat <<'EOF'\n%s\nEOF\ntrue `"),
+    ("closed_capture_then_heredoc_to_file", "V=$(date -u); cat > qs_doc.md <<'EOF'\n%s\nEOF"),
+    ("earlier_backtick_body_then_heredoc_to_file",
+     "cat > qs_a.md <<'EOF'\n`\nEOF\ncat > qs_doc.md <<'EOF'\n%s\nEOF"),
 ]
 
 #: Executables a wrapper needs beyond `/bin/bash` and the POSIX tools, one per
@@ -498,6 +513,7 @@ POSIX_ASSUMED = frozenset({
     "find", "xargs", "nice", "env", "command", "grep", "sed", "awk",
     # the compound reserved words the DEF-1015 rows open and close with
     "if", "then", "fi", "for", "do", "done", "while", "case", "esac",
+    "date",
 })
 
 #: What is being said or done. Multi-statement bodies are the discriminator that

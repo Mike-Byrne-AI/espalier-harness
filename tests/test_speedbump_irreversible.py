@@ -1658,6 +1658,11 @@ class TestReleaseSubstringArmIsAnchored:
         "echo 'never run gh release create by hand'",
         'git commit -m "docs: explain gh release create"',
         "cat docs/RELEASE_CHECKLIST.md | grep 'gh release create'",
+        # DEF-1012: a release named in a quoted heredoc body after an EARLIER
+        # quoted body holding a backtick, behind a head on no roster. The
+        # earlier body's backtick withheld the later one from the mask, and
+        # the bump read the prose as a command (fired at ce61737).
+        "cat > a <<'EOF'\n`\nEOF\ncat > b <<'EOF'\n`gh release create v1.2.3`\nEOF\na",
     ])
     def test_read_only_mention_is_silent(self, tmp_path, cmd):
         assert not _fires(_speedbump._pred_release, cmd, tmp_path)
@@ -1667,6 +1672,9 @@ class TestReleaseSubstringArmIsAnchored:
         "nohup gh release create v0.8.0b1",
         "gh -R owner/repo release create v0.8.0b1",
         "echo hi; gh release create v1.0.0",
+        # the twin of the DEF-1012 mention: the same earlier body, then a real
+        # release on its own line
+        "cat > a <<'EOF'\n`\nEOF\ngh release create v1.2.3",
         "git push origin v0.8.0b1",          # the tag-push arm, unchanged
         "git push --tags",
     ])

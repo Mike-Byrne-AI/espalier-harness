@@ -512,6 +512,9 @@ class TestTheRosterIsWellFormed:
         assert _command_words("cd /tmp && deno eval '%s'") == {"cd", "deno"}
         assert _command_words("sh<<<'%s'") == {"sh"}
         assert _command_words("echo \"%s\" $(true) | sh") == {"echo", "sh"}
+        assert _command_words("x=$(cat <<'EOF'\n%s\nEOF\n); eval \"$x\"") == {"cat", "eval"}
+        assert _command_words("V=$(date -u); cat > f <<'EOF'\n%s\nEOF") == {"date", "cat"}
+        assert _command_words("A=1 B=2 ls") == {"ls"}
 
     @_NEEDS_REAL_BASH
     def test_no_declared_need_is_a_shell_builtin(self, rd):
@@ -642,7 +645,9 @@ def _command_words(template: str) -> set[str]:
 
     A small walk that reads shell the way the roster writes it: the first
     word of the template and of every segment after an UNQUOTED `;`, `|`, `&`
-    or newline, with grouping characters stripped; a heredoc body is skipped up
+    or newline, with grouping characters stripped and a leading assignment
+    stepped over (the word inside its substitution counts, where it opens
+    one); a heredoc body is skipped up
     to its terminator; a backslash escapes the next character; the body slot
     and a comment line are not words. Pinned by
     `test_the_command_word_walk_reads_shell_the_way_the_templates_use_it`.
@@ -688,6 +693,14 @@ def _command_words(template: str) -> set[str]:
         segments.append("".join(cur))
         for seg in segments:
             tokens = seg.strip().lstrip("(){} \t").split()
+            # a leading assignment is no command word: the word after it is,
+            # or, where its value opens a substitution, the word inside it
+            while tokens and re.match(r"[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
+                inner = re.split(r"\$\(|`", tokens[0], maxsplit=1)
+                if len(inner) == 2 and inner[1]:
+                    tokens[0] = inner[1]
+                    break
+                tokens.pop(0)
             if not tokens:
                 continue
             # a redirect glued to the head (`sh<<<'...'`, `cat<<EOF`) is not

@@ -3169,6 +3169,11 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
     #: An empty `()` was met: the command defines a function, whose body runs
     #: at a call no owner set can see, so no framed span is data.
     defines_function = False
+    #: Where the command a heredoc operator belongs to starts: past the last
+    #: `;`, `&`, `&&`, `||` or rebinding newline, and never moved by a paren,
+    #: so a substitution beside the operator stays in the heredoc's rule-(4)
+    #: slice (DEF-1012; see the consume site).
+    cmd_start = 0
 
     def push_frame(kind: str, closer: str, at: int) -> None:
         """Open a frame at ``at`` for the pipeline current here. The list
@@ -3514,7 +3519,7 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                 # `nesting` and the prefix scan close the two routes that reach
                 # a shell without ever being a pipeline head -- see the consume
                 # site below.
-                pending.append((*spec, current_pipeline, nesting, top_frame()))
+                pending.append((*spec, current_pipeline, nesting, top_frame(), cmd_start))
             continue
 
         if c == "\n":
@@ -3527,7 +3532,8 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                 out[i] = " "
             i += 1
             while pending:
-                delim, expands, strip_tabs, owners, op_depth, op_frame = pending.pop(0)
+                (delim, expands, strip_tabs, owners, op_depth, op_frame,
+                 op_cmd_start) = pending.pop(0)
                 body_start = i
                 i, body_end = _consume_heredoc_body(
                     s, out, i, delim, expands, strip_tabs, neutralise,
@@ -3571,10 +3577,33 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                     # delivers it to a capture buffer the ENCLOSING eval
                     # re-parses, and `cat <<'EOF' > >(bash) ; ls` delivers it to
                     # a redirect target that is a shell. Neither consumer is ever
-                    # a head, so the roster cannot see either one. Scoped to the
-                    # statement prefix, not the whole command, so a doc heredoc
-                    # whose BODY quotes a backtick stays relieved.
-                    and not _CAPTURING_PREFIX_RE.search(s[:body_start])
+                    # a head, so the roster cannot see either one.
+                    #
+                    # ⚠ THE SLICE IS THE HEREDOC'S OWN COMMAND, READ MASKED
+                    # (DEF-1012). It was the raw text from the COMMAND's start,
+                    # though this comment said statement prefix: a closed
+                    # `V=$(date -u)` in an earlier statement, or a backtick in
+                    # an EARLIER quoted heredoc's inert body, withheld every
+                    # later body, and the speed bumps then read prose there as
+                    # a command. It runs now from the start of the command the
+                    # operator belongs to (`cmd_start`, moved only by `;`,
+                    # `&`, `&&`, `||` and a rebinding newline) to the body,
+                    # over the masked text so far, where a quoted or inert
+                    # span is already blank and a live substitution still
+                    # shows. What this slice no longer covers is covered at
+                    # the settle: a substitution OPEN at the operator puts the
+                    # body at a depth no frame explains, and an open backtick
+                    # is read by parity.
+                    #
+                    # REJECTED: the walker's own statement start. It moves at
+                    # every `;`, paren and brace, so a substitution's paren
+                    # rebinds it: `cat <<'EOF' > >(bash); ls` and `> >(bash)
+                    # cat <<'EOF'` lost their process substitution, and a
+                    # backtick's separator cut ``x=`true; cat <<'EOF'`` out of
+                    # its capture -- re-driven on a scratch copy, it relieved
+                    # both prose shapes and reopened three of the four twins.
+                    and not _CAPTURING_PREFIX_RE.search(
+                        "".join(out[op_cmd_start:body_start]))
                 ):
                     # Reach back over the ONE newline that opens the body. It
                     # ends the heredoc's own opening statement, so nothing live
@@ -3623,6 +3652,7 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                 continue
             current_pipeline = set()
             closed_frame = None
+            cmd_start = i
             # `i` is past any heredoc body the newline opened, so the bodies
             # belong to the statement that opened them.
             statements[-1][1] = i
@@ -3690,6 +3720,8 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                 closed_frame = None
                 statements[-1][1] = i + 1
                 statements.append([i + 1, n])
+            if c in ";&" or (c == "|" and not pipe_pending):
+                cmd_start = i + 1
             if closes is not None:
                 pop_frame(i + 1)
             elif c == ")":
