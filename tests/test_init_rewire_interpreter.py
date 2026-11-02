@@ -528,3 +528,156 @@ class TestRewireReportDoesNotContradictItself:
         assert "nothing to rewire" in err, err
         assert "refused" not in err, err
 
+
+class TestTheRewireMovesAWindowsHeadWhenAsked:
+    """DEF-4071, as the operator ruled it (air's ack 04a16e): an install
+    rendered before the dot form (DEF-3017) carries the statusline shim bare,
+    which only Git Bash runs, or behind PowerShell's `&`, which only
+    PowerShell runs (DEF-929), and the line is blank in the other shell.
+    `init --rewire-interpreter` puts that head behind the dot, on request,
+    keyed on the render host, printing what it wrote. A step of its own: the
+    floor rewire beside it still changes only an interpreter word. Every
+    other path leaves a working line alone (the standing word of 2cde27).
+    Driven through the verb's report path on the stubbed-PATH host of
+    `tests/_interpreter_hosts.py` whose `python` starts, so the floor rewire
+    has nothing to do and the head step is all that can move."""
+
+    _SHIM = '"${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd"'
+
+    @staticmethod
+    def _host(tmp_path, monkeypatch, *, posix=False):
+        from tests import _interpreter_hosts as hosts
+
+        monkeypatch.setenv("PATH", str(hosts.build_host(tmp_path / "hosts", hosts.STORE_PYTHON3)))
+        monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", True, raising=False)
+        monkeypatch.setattr(cli, "_render_host_is_posix", lambda: posix)
+
+    @staticmethod
+    def _write(tmp_path, command):
+        path = tmp_path / "repo" / ".claude" / "settings.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"statusLine": {"type": "command", "command": command}}),
+                        encoding="utf-8")
+        return path
+
+    @staticmethod
+    def _command(path):
+        return json.loads(path.read_text(encoding="utf-8"))["statusLine"]["command"]
+
+    @pytest.mark.parametrize("lead", ["", "& ", "&"], ids=["bare", "called", "called-unspaced"])
+    def test_a_bare_or_called_head_is_put_behind_the_dot(self, tmp_path, monkeypatch, capsys, lead):
+        self._host(tmp_path, monkeypatch)
+        legacy = f"{lead}{self._SHIM} python"
+        path = self._write(tmp_path, legacy)
+        status = cli._report_interpreter_rewire(path)
+        err = capsys.readouterr().err
+        after = self._command(path)
+        assert after == f". {self._SHIM} python", (after, err)
+        assert after == cli._statusline_command("python", posix=False), "not the form init renders"
+        assert status == cli.REWIRE_DONE, (status, err)
+        assert f"`{legacy}` -> `{after}`" in err, err
+        assert "No file was written" not in err, err
+        backups = list((tmp_path / "repo" / ".espalier" / "settings-backups").iterdir())
+        assert backups, "the head moved with no backup on the ladder"
+
+    @pytest.mark.parametrize("command", [
+        '. "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" python',
+        'node "${CLAUDE_PROJECT_DIR}/my_statusline.js"',
+        'python "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.py" || echo x',
+    ], ids=["dot-head", "not-espalier", "posix-render"])
+    def test_a_line_with_no_legacy_shim_head_is_never_touched(self, tmp_path, monkeypatch, capsys, command):
+        self._host(tmp_path, monkeypatch)
+        path = self._write(tmp_path, command)
+        before = path.read_bytes()
+        status = cli._report_interpreter_rewire(path)
+        err = capsys.readouterr().err
+        assert path.read_bytes() == before, err
+        assert status == cli.REWIRE_NOTHING, (status, err)
+
+    @pytest.mark.parametrize("lead", ["", "& "], ids=["bare", "called"])
+    def test_a_posix_render_host_is_never_given_a_dot_head(self, tmp_path, monkeypatch, capsys, lead):
+        """A shim head on a POSIX host was carried in from Windows; the dot
+        would run only the shim's first line there, so the line is doctor's
+        to name (take the POSIX render), never this step's to move."""
+        self._host(tmp_path, monkeypatch, posix=True)
+        path = self._write(tmp_path, f"{lead}{self._SHIM} python")
+        before = path.read_bytes()
+        status = cli._report_interpreter_rewire(path)
+        err = capsys.readouterr().err
+        assert path.read_bytes() == before, err
+        assert status == cli.REWIRE_NOTHING, (status, err)
+
+    def test_a_kept_shim_git_bash_cannot_source_keeps_the_head_and_says_why(
+        self, tmp_path, monkeypatch, capsys,
+    ):
+        """The dot sources the shim under Git Bash through its first line; a
+        copy the deploy keeps as the operator's (no managed marker) that does
+        not open with it would turn a working bare line blank there."""
+        self._host(tmp_path, monkeypatch)
+        legacy = f"{self._SHIM} python"
+        path = self._write(tmp_path, legacy)
+        shim = tmp_path / "repo" / "tools" / "cc" / "statusline.cmd"
+        shim.parent.mkdir(parents=True)
+        shim.write_bytes(b"@echo off\r\nrem the operator's own copy\r\n")
+        before = path.read_bytes()
+        status = cli._report_interpreter_rewire(path)
+        err = capsys.readouterr().err
+        assert path.read_bytes() == before, err
+        assert status == cli.REWIRE_NOTHING, (status, err)
+        assert "first line" in err and f"`{legacy}`" in err, err
+
+    def test_an_old_managed_shim_the_deploy_refreshes_does_not_hold_the_move(
+        self, tmp_path, monkeypatch, capsys,
+    ):
+        """The rewire runs before init's deploy, which replaces a copy that
+        carries the managed marker with the packaged one, first line and all,
+        so an install old enough to need the move is not refused for the shim
+        it is about to get."""
+        from espalier.managed_markers import MARKER_BATCH_COMMENT
+
+        self._host(tmp_path, monkeypatch)
+        path = self._write(tmp_path, f"& {self._SHIM} python")
+        shim = tmp_path / "repo" / "tools" / "cc" / "statusline.cmd"
+        shim.parent.mkdir(parents=True)
+        shim.write_bytes(f"@echo off\r\n{MARKER_BATCH_COMMENT}\r\nrem an older shim\r\n".encode())
+        assert cli._report_interpreter_rewire(path) == cli.REWIRE_DONE, capsys.readouterr().err
+        assert self._command(path) == f". {self._SHIM} python"
+
+    def test_init_moves_the_head_only_when_asked(self, tmp_path, monkeypatch, capsys):
+        """The flag absent, a working line stays as it is: `init` keeps an
+        existing settings.json and renders `.new` beside it. With the flag it
+        moves, and the file reaches init's list of what it wrote."""
+        import argparse
+        import subprocess
+
+        from tests._quiet_git import NO_BACKGROUND_GIT
+
+        monkeypatch.setattr(cli, "_render_host_is_posix", lambda: False)
+        monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", True, raising=False)
+        tree = tmp_path / "repo"
+        tree.mkdir()
+        (tree / "README.md").write_text("# t\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(tree), "init", "-q"], check=True, capture_output=True)
+        for key, value in NO_BACKGROUND_GIT:
+            subprocess.run(["git", "-C", str(tree), "config", key, value],
+                           check=True, capture_output=True)
+        monkeypatch.chdir(tree)
+        rendered = cli._statusline_command(cli._detect_python_command(), posix=False)
+        legacy = "& " + rendered[len(". "):]
+        path = tree / ".claude" / "settings.json"
+        path.parent.mkdir()
+        path.write_text(json.dumps({"statusLine": {"type": "command", "command": legacy}}),
+                        encoding="utf-8")
+
+        def init(**flags):
+            return cli.cmd_init(argparse.Namespace(repo=str(tree), config=None,
+                                                   write_gitignore=True, **flags))
+
+        assert init() == 0
+        assert self._command(path) == legacy, "init without the flag moved a working line"
+        capsys.readouterr()
+        assert init(rewire_interpreter=True) == 0
+        err = capsys.readouterr().err
+        assert self._command(path) == rendered, err
+        assert f"`{legacy}` -> `{rendered}`" in err, err
+

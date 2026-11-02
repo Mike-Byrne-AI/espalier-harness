@@ -901,7 +901,8 @@ class TestSymlinkedTarget:
     def test_only_the_adopter_file_sites_pass_the_keyword(self):
         """The keyword is for the adopter's own files and nothing else; the
         sites that pass it are the retire, the settings merge, the hook-wiring
-        repair, the interpreter rewire, the unwire and the .gitignore migration
+        repair, the interpreter rewire and the statusLine head step beside it
+        (one writer for both, ``_write_rewritten_settings``), the unwire and the .gitignore migration
         (which, like the retire, edits the adopter's .gitignore where it lives). A new site that follows a link is a decision, not a
         side effect -- confirm the target is the adopter's, then add it."""
         sites: set[tuple[str, str]] = set()
@@ -922,7 +923,7 @@ class TestSymlinkedTarget:
         assert sites == {
             ("espalier/cli.py", "merge_hooks_into_settings"),
             ("espalier/cli.py", "repair_hook_wiring_in_settings"),
-            ("espalier/cli.py", "rewire_interpreter_in_settings"),
+            ("espalier/cli.py", "_write_rewritten_settings"),
             ("espalier/cli.py", "_repair_task_packs_rule"),
             ("espalier/cleanup.py", "_retire_gitignore_block"),
             ("espalier/cleanup.py", "_unwire_espalier_hooks"),

@@ -125,7 +125,11 @@ parse, so installing or removing Git for Windows afterwards left the line
 in the wrong form. The line `init` writes now starts with a dot
 (`. "<shim>" python`), which both shells run over a current shim; a
 shim older than that line blanks it under Git Bash. `espalier
-doctor .` says which, and a fresh `espalier init .` renders
+doctor .` says which. `espalier init . --rewire-interpreter` refreshes
+the shim and puts a bare or `&` head behind the dot, on request, writing
+a backup of your file first (a shim you keep as your own, whose first
+line is not the one Git Bash runs, holds the head where it is, and the
+command says so); otherwise a fresh `espalier init .` renders
 `settings.json.new` beside your file when the render differs — take its
 `statusLine` line. If there is **no statusline at all** on a wired
 install, the file was wired before the merge learned to add the key:

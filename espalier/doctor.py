@@ -637,9 +637,10 @@ def _statusline_fallback_notes(settings_path: Path, repo_root: Path) -> list[str
     found Git Bash and behind PowerShell's call operator (``& "<shim>"
     <interp>``) where it found none (DEF-929), and an install keeps either.
     The merge adds the key only when it is absent and the rewire swaps the
-    interpreter the string names (DEF-798, DEF-810), so the string an install
-    carries can disagree with the host it runs on in four ways, and a fifth
-    state has no string at all:
+    interpreter the string names (DEF-798, DEF-810), moving a Windows head
+    only when asked (DEF-4071), so the string an install carries can disagree
+    with the host it runs on in four ways, and a fifth state has no string at
+    all:
 
     * Either host, neither the clause nor the shim -- rendered before the
       fallback existed: when the wired interpreter stops resolving the
@@ -661,9 +662,10 @@ def _statusline_fallback_notes(settings_path: Path, repo_root: Path) -> list[str
       a leading ``&`` as a syntax error): Git Bash installed or removed
       since ``init``, or a file carried in from another box. The statusline
       is blank and so is its missing-interpreter line, driven in both
-      shells. A fresh ``init`` renders the dotted head, which runs in
-      either, and the hand edit is that dot. A dotted head is this case
-      only over a shim whose first line is not the one Git Bash runs.
+      shells. ``init --rewire-interpreter`` puts the head behind the dot,
+      which runs in either, on request (DEF-4071), and the hand edit is that
+      dot. A dotted head is this case only over a shim whose first line is
+      not the one Git Bash runs, which a fresh ``init`` refreshes.
     * Either host, no ``statusLine`` key while ``tools/cc/statusline.py`` is
       deployed -- wired by ``--wire-hooks`` or ``merge-settings`` before the
       merge learned to add the key (DEF-798), or a hand-kept file: the harness
@@ -800,15 +802,21 @@ def statusline_shell_mismatch(command: str, repo_root: Path | None) -> str | Non
         )
     called = statusline_shim_called(command)
     git_bash = git_bash_path(repo_root) is not None
-    hand_edit = "with the shim current, {}, the form both shells run."
+    # The verb that moves a bare or called head, on request (DEF-4071); over a
+    # kept shim Git Bash cannot source it declines and says what to take.
+    move = (
+        f"`{_remedy_py()} -m espalier init . --rewire-interpreter` refreshes the "
+        "shim and puts the head behind a dot, the form either shell runs, keeping "
+        "a backup of your file; or, with the shim current, {} by hand."
+    )
     if called and git_bash:
         return (
             "statusLine.command calls the Windows shim through PowerShell's `&`, "
             "the form for a host where Claude Code finds no Git Bash, but Git "
             "Bash is on this host and Claude Code runs the statusline under it, "
             "where a leading `&` is a syntax error: the statusline goes blank, "
-            f"and so does the line that reports a missing interpreter. {remedy}; or, "
-            + hand_edit.format("replace the leading `&` with a `.`")
+            "and so does the line that reports a missing interpreter. "
+            + move.format("replace the leading `&` with a `.`")
         )
     if not called and not git_bash:
         return (
@@ -821,8 +829,7 @@ def statusline_shell_mismatch(command: str, repo_root: Path | None) -> str | Non
             "at its bin\\bash.exe), so Claude Code runs the statusline under "
             "PowerShell, which reads a quoted head as an expression: the "
             "statusline goes blank, and so does the line that reports a missing "
-            f"interpreter. {remedy}; or, "
-            + hand_edit.format("put `. ` before the command")
+            "interpreter. " + move.format("put `. ` before the command")
         )
     return None
 
