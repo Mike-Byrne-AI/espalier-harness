@@ -177,6 +177,184 @@ class TestStaleBase:
         assert result["near"] == [] and "tested anything yet" in result["unread"]
 
 
+def _both_sides(repo: _Repo, lane: dict[str, str | None], main: dict[str, str | None]) -> str:
+    """Base at 05:00 holds ``_BASE_FILES``; the lane applies ``lane`` at 05:10,
+    CI ran at 05:30, then main applies ``main`` at 06:00. A None text deletes
+    the file. Returns the lane's head."""
+
+    def apply(changes: dict[str, str | None], date: str, message: str) -> str:
+        for rel, text in changes.items():
+            if text is None:
+                (repo.root / rel).unlink()
+        return repo.commit({rel: text for rel, text in changes.items() if text is not None}, date, message)
+
+    repo.commit(_BASE_FILES, "2026-10-10T05:00:00Z", "base")
+    repo.git("switch", "-q", "-c", "lane")
+    head = apply(lane, "2026-10-10T05:10:00Z", "lane")
+    repo.git("switch", "-q", "main")
+    apply(main, "2026-10-10T06:00:00Z", "main moves")
+    return head
+
+
+def _judge_lane(rules, repo: _Repo, head: str, *, pr_rev: str | None = None, run_=_run,
+                root: Path | None = None) -> dict:
+    """``stale_base`` over the lane's own paths (its diff from the merge base,
+    as ship.py reads them), its imports read at ``pr_rev`` (the head unless
+    given), run from ``root`` (the repository's top unless given)."""
+    paths = repo.git("diff", "--name-only", "--no-renames", f"main...{head}").splitlines()
+    return rules.stale_base(root or repo.root, base_ref="main", tested_when=CI_RAN, pr_paths=paths,
+                            pr_rev=head if pr_rev is None else pr_rev, run_=run_)
+
+
+_ROW = "| a parked row |\n"
+
+
+class TestAPathBothSidesHoldAlike:
+    """A path both sides changed the same way -- one parked row folded, or one
+    old row pruned, on each -- is no meeting: merging the base in changes
+    nothing there. Read where the head is here, from the two trees' entries."""
+
+    def test_the_same_file_added_on_both_sides_is_silent(self, rules, tmp_path):
+        """Dies to: a path both changed read by its name alone (the board told a
+        seat to catch up a green pull request over a byte-identical row)."""
+        repo = _Repo(tmp_path)
+        head = _both_sides(repo, {"memory/row.md": _ROW}, {"memory/row.md": _ROW})
+        result = _judge_lane(rules, repo, head)
+        assert result["moved"] == 1 and result["near"] == [] and not result["unread"], result
+        assert rules.stale_line(result, "main", 7) == ""
+
+    def test_the_same_file_deleted_on_both_sides_is_silent(self, rules, tmp_path):
+        """Dies to: an absence on both sides read as a difference (the prune
+        every handoff runs)."""
+        repo = _Repo(tmp_path)
+        head = _both_sides(repo, {"notes.txt": None}, {"notes.txt": None})
+        result = _judge_lane(rules, repo, head)
+        assert result["near"] == [] and not result["unread"], result
+
+    def test_only_the_path_held_alike_is_dropped(self, rules, tmp_path):
+        """Dies to: one agreeing path silencing the whole line."""
+        repo = _Repo(tmp_path)
+        head = _both_sides(repo, {"memory/row.md": _ROW, "notes.txt": "the lane's note\n"},
+                           {"memory/row.md": _ROW, "notes.txt": "main's note\n"})
+        assert _judge_lane(rules, repo, head)["near"] == ["notes.txt (both changed)"]
+
+    def test_the_same_blob_under_another_mode_keeps_the_meeting(self, rules, tmp_path):
+        """Dies to: the blob compared without its mode (the two trees differ
+        there, and the merge has to choose)."""
+        repo = _Repo(tmp_path)
+        repo.commit(_BASE_FILES, "2026-10-10T05:00:00Z", "base")
+        repo.git("switch", "-q", "-c", "lane")
+        (repo.root / "run.sh").write_bytes(b"echo hi\n")
+        os.chmod(repo.root / "run.sh", 0o755)   # the tree matches the index where the mode is kept
+        repo.git("add", "run.sh")
+        repo.git("update-index", "--chmod=+x", "run.sh")   # and the index says it where it is not
+        repo.git("commit", "-q", "-m", "lane", date="2026-10-10T05:10:00Z")
+        head = repo.git("rev-parse", "HEAD")
+        repo.git("switch", "-q", "main")
+        repo.commit({"run.sh": "echo hi\n"}, "2026-10-10T06:00:00Z", "main moves")
+        assert _judge_lane(rules, repo, head)["near"] == ["run.sh (both changed)"]
+
+    def test_a_python_file_held_alike_feeds_no_import_hop(self, rules, tmp_path, mapper):
+        """Both sides made the same edit to tools/b.py, and the lane's tools/a.py
+        imports it. Dies to: the agreeing path dropped from the lane's side
+        alone (it would turn into the base's change and read as 'tools/a.py
+        imports tools/b.py'), or kept on both (a meeting at tools/b.py)."""
+        repo = _Repo(tmp_path)
+        head = _both_sides(repo, {"tools/a.py": _BASE_FILES["tools/a.py"] + "EXTRA = 3\n", "tools/b.py": "VALUE = 2\n"},
+                           {"tools/b.py": "VALUE = 2\n"})
+        result = _judge_lane(rules, repo, head)
+        assert result["near"] == [] and not result["unread"], result
+
+    def test_the_base_passed_as_the_head_keeps_the_meeting(self, rules, tmp_path):
+        """The board passes the base when a head is not here. Dies to: the
+        agreement read without the head (the base read against itself agrees on
+        every path, which would silence the line wherever a head fetch failed)."""
+        repo = _Repo(tmp_path)
+        head = _both_sides(repo, {"memory/row.md": _ROW}, {"memory/row.md": _ROW})
+        assert _judge_lane(rules, repo, head, pr_rev="main")["near"] == ["memory/row.md (both changed)"]
+
+    def test_a_head_tree_that_cannot_be_listed_keeps_the_meeting(self, rules, tmp_path):
+        """Dies to: a failed listing read as an empty tree (every path the base
+        deleted would then agree with the head)."""
+        repo = _Repo(tmp_path)
+        head = _both_sides(repo, {"notes.txt": None}, {"notes.txt": None})
+
+        def no_head_tree(argv, **kw):
+            if argv[1:3] == ["ls-tree", "-r"] and argv[-1] == head:
+                return 128, "", f"fatal: not a tree object: {head}"
+            return _run(argv, **kw)
+
+        result = _judge_lane(rules, repo, head, run_=no_head_tree)
+        assert result["near"] == ["notes.txt (both changed)"]
+        assert f"git ls-tree failed at {head[:7]}" in result["unread"], result
+
+    def test_a_python_file_held_alike_is_no_end_of_the_lanes_import_hop(self, rules, tmp_path, mapper):
+        """The lane and main made the same edit to tools/b.py, which now imports
+        tools/c.py; main also changed tools/c.py and added tools/d.py importing
+        tools/b.py. Dies to: the agreeing path kept on the lane's side (it would
+        read as 'tools/b.py imports tools/c.py' and 'tools/d.py imports
+        tools/b.py', a landing that equals main's own tree)."""
+        repo = _Repo(tmp_path)
+        b = "import c\nVALUE = 2\n"
+        head = _both_sides(repo, {"tools/b.py": b},
+                           {"tools/b.py": b, "tools/c.py": "OTHER = 5\n", "tools/d.py": "import b\n"})
+        result = _judge_lane(rules, repo, head)
+        assert result["near"] == [] and not result["unread"], result
+
+    def test_a_base_that_touched_the_path_before_the_ci_keeps_the_meeting(self, rules, tmp_path):
+        """Main changed p.txt before the CI ran, then reached the lane's exact
+        bytes after it: the CI merged a p.txt holding main's first edit, and the
+        landing holds one without it. Dies to: the agreement read from the head
+        and the base now alone (both reviewers' finding, driven)."""
+        lines = [f"{n}\n" for n in range(1, 10)]
+        lane_text = "".join(["LANE 1\n", *lines[1:8], "LANE 9\n"])
+        repo = _Repo(tmp_path)
+        repo.commit({**_BASE_FILES, "p.txt": "".join(lines)}, "2026-10-10T05:00:00Z", "base")
+        repo.git("switch", "-q", "-c", "lane")
+        head = repo.commit({"p.txt": lane_text, "notes.txt": "the lane's note\n"}, "2026-10-10T05:10:00Z", "lane")
+        repo.git("switch", "-q", "main")
+        repo.commit({"p.txt": "".join([*lines[:4], "MAIN 5\n", *lines[5:]])}, "2026-10-10T05:20:00Z", "before")
+        repo.commit({"p.txt": lane_text}, "2026-10-10T06:00:00Z", "after")
+        assert _judge_lane(rules, repo, head)["near"] == ["p.txt (both changed)"]
+
+    def test_a_root_below_the_top_reads_the_trees_from_the_top(self, rules, tmp_path):
+        """Dies to: the trees listed from the root's own directory (their paths
+        then never match the diff's, and every path both changed reads as
+        absent on both)."""
+        repo = _Repo(tmp_path)
+        head = _both_sides(repo, {"sub/row.md": _ROW, "sub/note.txt": "the lane's\n"},
+                           {"sub/row.md": _ROW, "sub/note.txt": "main's\n"})
+        assert _judge_lane(rules, repo, head, root=repo.root / "sub")["near"] == ["sub/note.txt (both changed)"]
+
+    @pytest.mark.parametrize("spelling", ["sha", "short sha", "refs/heads/main"])
+    def test_the_base_under_another_spelling_keeps_the_meeting(self, rules, tmp_path, spelling):
+        """Dies to: the head told from the base by comparing strings (any other
+        name of the base's commit would agree with it on every path)."""
+        repo = _Repo(tmp_path)
+        head = _both_sides(repo, {"memory/row.md": _ROW}, {"memory/row.md": _ROW})
+        now = repo.git("rev-parse", "main")
+        pr_rev = {"sha": now, "short sha": now[:12], "refs/heads/main": "refs/heads/main"}[spelling]
+        assert _judge_lane(rules, repo, head, pr_rev=pr_rev)["near"] == ["memory/row.md (both changed)"]
+
+    def test_a_base_tree_that_cannot_be_listed_is_said(self, rules, tmp_path):
+        """Main added a module importing the lane's file, and the base's tree
+        cannot be listed. Dies to: the failed listing read as an empty tree
+        with nothing said (the import hop found nothing, and the line read as
+        fresh)."""
+        repo = _Repo(tmp_path)
+        head, now = _lane(repo, {"tools/d.py": "from tools import a\n", "tools/__init__.py": ""})
+
+        def no_base_tree(argv, **kw):
+            if argv[1:3] == ["ls-tree", "-r"] and argv[-1] == now:
+                return 128, "", f"fatal: not a tree object: {now}"
+            return _run(argv, **kw)
+
+        result = rules.stale_base(repo.root, base_ref="main", tested_when=CI_RAN, pr_paths=["tools/a.py"],
+                                  pr_rev=head, run_=no_base_tree)
+        assert result["near"] == [] and f"git ls-tree failed at {now[:7]}" in result["unread"], result
+        assert "stale-base check not read for #7's CI" in rules.stale_line(result, "main", 7)
+
+
 #: A module of two functions, for the symbol clauses (TP-702 Wave 2, 2-B).
 _FUNCS = "import sys\n\n\ndef f():\n    return 1\n\n\ndef g():\n    return 2\n"
 
