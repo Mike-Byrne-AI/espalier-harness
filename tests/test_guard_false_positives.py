@@ -34,8 +34,10 @@ must-deny rows caught it.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -938,6 +940,17 @@ GENUINE_BASH = [
      f"V=alias; gh $V set --shell zz 'echo x > {_HOOK}' && gh zz"),
     ("gh-path-spelling-is-no-door", f"./gh pr create --title t --body 'echo x > {_HOOK}'"),
     ("gh-door-then-a-release", "gh pr create --title t --body x && gh release create v1.2.3"),
+    # one must-deny row per door verb (pinned below by the door's own
+    # roster): the issue verb's separator write, and the api verb's -- a
+    # capture in a field value whose command is a shell running a heredoc
+    # write, a separator write, and a pager handed to it by a prefix
+    ("gh-issue-body-then-semicolon-write", f"gh issue comment 5 --body x; echo x > {_HOOK}"),
+    ("gh-api-field-capture-runs-a-shell-heredoc",
+     f"gh api repos/o/r/issues/5/comments -f body=\"$(bash <<'EOF'\necho x > {_HOOK}\nEOF\n)\""),
+    ("gh-api-field-then-semicolon-write",
+     f"gh api repos/o/r/issues/5/comments -f body=x; echo x > {_HOOK}"),
+    ("gh-api-pager-prefix-on-the-door-verb",
+     f"GH_PAGER='sh -c \"echo x > {_HOOK}\"' gh api repos/o/r"),
 ]
 
 # ── The tier itself, on PowerShell. ────────────────────────────────────────
@@ -1244,3 +1257,25 @@ def test_the_corpus_is_not_empty():
         "the tier corpus must exercise all three rungs -- a corpus missing one "
         "cannot see that rung collapse into its neighbour"
     )
+
+
+#: A `gh` door verb as a statement spells it: `gh`, blanks, then the verb as a
+#: whole word (a glued `pr'oxy'` is another word, and no door).
+_GH_VERB_RE = re.compile(r"(?:^|[\s;&|(])gh[ \t]+([a-z]+)(?=[\s;&|<>()]|$)")
+
+
+def test_every_gh_door_verb_has_a_must_deny_row():
+    """DEF-1014: the gh text door relieves the verbs in
+    `_bash_patterns._GH_TEXT_DOOR_VERBS` and is paid per verb, so each verb
+    carries a must-deny row here (the bench's executing wrapper is pinned
+    beside the differential). Read from the module, never a copy: a verb
+    added to the set without a row -- `repo`, whose `clone -- <git flags>`
+    hands git a command -- reds here."""
+    spec = importlib.util.spec_from_file_location(
+        "_bash_patterns_gh_door_rows", HOOK.parent / "_bash_patterns.py")
+    bp = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bp)
+    verbs = set(bp._GH_TEXT_DOOR_VERBS)
+    assert verbs, "the door names no verb: the roster read is broken"
+    covered = {v for _, cmd in GENUINE_BASH for v in _GH_VERB_RE.findall(cmd)}
+    assert verbs <= covered, f"door verbs with no must-deny row: {sorted(verbs - covered)}"

@@ -388,6 +388,9 @@ WRAPPERS: list[tuple[str, str]] = [
     ("gh_pr_body_cmdsub", "gh pr create --title t --body \"$( %s )\""),
     ("gh_body_file_unquoted_heredoc_cmdsub",
      "gh issue comment 5 --body-file - <<EOF\n$( %s )\nEOF"),
+    # the api verb's executing row: one per door verb, as the door's roster
+    # is paid (`tests/test_reachability_differential.py` derives the set)
+    ("gh_api_field_cmdsub", "gh api repos/o/r/issues/5/comments -f body=\"$( %s )\""),
     # ⚠ A COMPOUND'S OUTPUT HANDED TO A SHELL AFTER ITS CLOSER (DEF-1015).
     # A quoted span inside an if, for, while or case body, a group or a
     # subshell is data only while the compound hands its output to nobody;
@@ -493,6 +496,7 @@ WRAPPER_NEEDS: dict[str, str] = {
     "gh_pr_body_newline": "gh",
     "gh_pr_body_cmdsub": "gh",
     "gh_body_file_unquoted_heredoc_cmdsub": "gh",
+    "gh_api_field_cmdsub": "gh",
 }
 
 #: A wrapper whose SPELLING needs a newer bash than a host may ship, with the

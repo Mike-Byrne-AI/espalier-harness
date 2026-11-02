@@ -568,7 +568,7 @@ class TestTheInterpreterRowsAreLive:
         "py_c_sq_spliced_list_sh_c",
         # DEF-1014: the gh door's heads with the body where bash runs it
         "gh_pr_body_then_semicolon", "gh_pr_body_newline", "gh_pr_body_cmdsub",
-        "gh_body_file_unquoted_heredoc_cmdsub",
+        "gh_body_file_unquoted_heredoc_cmdsub", "gh_api_field_cmdsub",
     )
     #: The same interpreters and containers holding the body as DATA -- a
     #: string literal, a commit body or message, a stream to `sed`, a file
@@ -616,6 +616,29 @@ class TestTheInterpreterRowsAreLive:
         assert set(rd.WRAPPER_NEEDS) <= pinned, set(rd.WRAPPER_NEEDS) - pinned
         assert set(rd.WRAPPER_SYNTAX) <= pinned, set(rd.WRAPPER_SYNTAX) - pinned
         assert set(rd.WRAPPER_FEATURE) <= pinned, set(rd.WRAPPER_FEATURE) - pinned
+
+    def test_every_gh_door_verb_has_an_executing_wrapper(self, rd):
+        """DEF-1014: the head-word pairing below sees one `gh`, but the gh
+        text door relieves per VERB, so each verb in
+        `_bash_patterns._GH_TEXT_DOOR_VERBS` carries an executing wrapper of
+        its own (the must-deny row is pinned in
+        `tests/test_guard_false_positives.py`). Read from the module, never a
+        copy: a verb added to the set without a wrapper reds here."""
+        spec = importlib.util.spec_from_file_location(
+            "_bash_patterns_gh_door_wrappers",
+            REPO_ROOT / "tools" / "cc" / "hooks" / "_bash_patterns.py")
+        bp = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bp)
+        verbs = set(bp._GH_TEXT_DOOR_VERBS)
+        assert verbs, "the door names no verb: the roster read is broken"
+        templates = dict(rd.WRAPPERS)
+        covered = set()
+        for wrapper in self.SHELL_OUT:
+            m = re.match(r"gh[ \t]+([a-z]+)(?=[ \t])", templates[wrapper])
+            if m and rd.WRAPPER_NEEDS.get(wrapper) == "gh":
+                covered.add(m.group(1))
+        assert verbs <= covered, (
+            f"door verbs with no executing wrapper: {sorted(verbs - covered)}")
 
     def test_each_mention_row_has_an_executing_twin_on_the_same_head(self, rd):
         """The relief/fail-open discipline (memory:

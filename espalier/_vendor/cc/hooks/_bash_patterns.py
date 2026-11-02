@@ -2874,6 +2874,14 @@ _UNROSTERED_HEAD = "\x00unrostered"
 #:     expansion opening with `!`, `gh alias import`, and `gh config set
 #:     editor|pager|browser` each STORE a command gh runs later, so their
 #:     quoted text is a program, not data (gh 2.96.0 help).
+#:   * `repo` or `extension` as a door verb. `gh repo clone <repo> -- <git
+#:     flags>` (and `gh repo fork --clone -- ...`) hands every word after
+#:     `--` to git, where `--upload-pack=<cmd>` or `-c core.sshCommand=<cmd>`
+#:     is a command git runs; `gh extension install` fetches a program and
+#:     `gh extension exec` (or the extension's own name) runs it. A verb joins
+#:     the set only with a must-deny row in `tests/test_guard_false_positives.py`
+#:     and an executing wrapper in `bench/reachability_differential.py`, which
+#:     two contract tests derive from this set.
 #:   * `gh` as a reader head on the `git` precedent (`_reader_family`). The
 #:     enrolment contract over `_BODY_READER_FAMILIES` needs a reader and an
 #:     executing row for every door, and these doors store a program in gh's
