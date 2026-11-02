@@ -712,9 +712,18 @@ def run_pytest(clone: Path, selection: list[str], timeout: int) -> RunResult:
     # never terminated. The depth counter is read by that test module, which
     # skips its cloning controls (and ONLY those) at depth >= 1.
     env[DEPTH_ENV] = str(int(os.environ.get(DEPTH_ENV, "0")) + 1)
+    # The child's basetemp sits in this run's own work dir, beside the clone,
+    # and goes with it. On pytest's shared root the child's session end
+    # deletes every finished session's numbered dir there, inside the calling
+    # test's clock (DEF-5056); the clone's conftest cannot be the fix, since
+    # it may be a revision that predates tests/_nested_temp.py. A fresh one
+    # each call: pytest empties a given basetemp at its first use, so a second
+    # run on the first's would pay that delete in a test, and a file that
+    # would not go errors every test into a false PINNED.
+    basetemp = tempfile.mkdtemp(prefix="basetemp-", dir=clone.parent)
     proc = run_bounded(
         [sys.executable, "-m", "pytest", *selection, "-q", "--tb=no", "-rfE",
-         "-p", "no:cacheprovider", "--continue-on-collection-errors"],
+         "-p", "no:cacheprovider", "--continue-on-collection-errors", f"--basetemp={basetemp}"],
         cwd=str(clone), capture_output=True, text=True,
         encoding="utf-8", errors="replace", env=env, timeout=timeout,
     )

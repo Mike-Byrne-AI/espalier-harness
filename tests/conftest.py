@@ -21,9 +21,9 @@ from tests._report_os_name_guard import pytest_runtest_makereport  # noqa: F401
 # pytest-timeout (where the per-test ceiling is a signal alarm, a pass past it
 # is a failure and a test that blocks again after it still ends), and the count
 # of the selected tests that never ran, in a line -q keeps (past xdist's
-# restart cap the run stops scheduling without a word under -q). Each module
-# says why.
-from tests import _box_lock, _never_ran, _timeout_backstop
+# restart cap the run stops scheduling without a word under -q), and a
+# launched session's basetemp inside its parent's. Each module says why.
+from tests import _box_lock, _nested_temp, _never_ran, _timeout_backstop
 # Stops a session whose interpreter imports another tree's engine before any
 # test runs: every CLI-spawning test would otherwise pass about the wrong code.
 from tests._engine_check import pytest_sessionstart  # noqa: F401
@@ -41,11 +41,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def pytest_configure(config):
-    """Register the timeout backstop and the never-ran count (the imports above
-    say what each is for)."""
+    """Register the timeout backstop and the never-ran count, and nest a
+    launched session's basetemp (the imports above say what each is for)."""
     _timeout_backstop.pytest_configure(config)
     _never_ran.pytest_configure(config)
     _box_lock.pytest_configure(config)
+    _nested_temp.pytest_configure(config)
 
 
 #: Where the modules the restore below keeps live: a ``tools/cc`` module held in
@@ -219,6 +220,19 @@ def _isolate_forced_colour():
     with pytest.MonkeyPatch.context() as mp:
         for name in ("FORCE_COLOR", "CLICOLOR_FORCE", "PY_COLORS"):
             mp.delenv(name, raising=False)
+        yield
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _export_the_basetemp(tmp_path_factory):
+    """The pytest children this session's tests launch take their basetemp
+    inside this session's (``tests/_nested_temp.py`` says why: a child on
+    the shared root deleted the last big run's dir inside its test's
+    clock, DEF-5056). Session-scoped for the reason
+    ``_isolate_forced_colour`` gives: a module-scoped fixture can launch
+    its child before any function-scoped fixture runs."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv(_nested_temp.KEY, str(tmp_path_factory.getbasetemp()))
         yield
 
 @pytest.fixture(autouse=True)
@@ -1456,6 +1470,10 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # the committed form each mirror is judged against is git's
             # answer, so no mock stands in for it (the 2026-10-25 ceiling red).
             "test_sync_asset_docs",
+            # Runs its own reporting row in pytest children under a temp root
+            # it plants: whether a child deletes another session's dir is the
+            # child's own session end, so no in-process stand-in reaches it.
+            "test_nested_temp",
         ),
         "integration",
     ),
@@ -1537,6 +1555,9 @@ def _primary_marker(stem: str) -> str:
 # slow is additive: any test that calls subprocess, builds a wheel, or runs
 # git-heavy operations should also be marked slow on top of the primary marker.
 _SLOW_FILES: set[str] = {
+    # Three pytest children, each loading the suite's conftest (0.25 s
+    # apiece on the self-host box, 2026-11-01).
+    "test_nested_temp",
     # Drives SessionStart, the PostToolUse hooks, the Stop gate, post_compact
     # and subagent_stop as real children in scratch trees: the advisory has to
     # be found in the process's own stdout JSON or audit record.

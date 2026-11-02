@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5056",
+ "subject": "tests/conftest.py",
+ "cmd": "python -c 'import getpass,os,pathlib,subprocess,sys,tempfile;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=pathlib.Path(T.name);r=t/(\"pytest-of-\"+getpass.getuser());[(r/(\"pytest-%d\"%k)).mkdir(parents=True) for k in range(4)];(r/\"pytest-0\"/\"keep\").write_text(\"x\");e=dict(os.environ,TMPDIR=str(t),TEMP=str(t),TMP=str(t),PYTEST_CURRENT_TEST=\"tests/test_x.py::test_y (call)\",ESPALIER_PARENT_BASETEMP=str(r/\"pytest-3\"),PYTHONPATH=str(pathlib.Path.cwd()),PYTHONDONTWRITEBYTECODE=\"1\");e.pop(\"PYTEST_DEBUG_TEMPROOT\",None);p=subprocess.run([sys.executable,\"-m\",\"pytest\",\"-q\",\"-p\",\"no:cacheprovider\",\"tests/test_write_guard.py::TestPowerShellInterpreterProgram::test_the_documented_limits_are_pinned\"],env=e,capture_output=True,text=True);sys.exit(\"the child ran no test: \"+p.stdout[-300:]) if \" passed\" not in p.stdout else print(\"kept=\"+str((r/\"pytest-0\"/\"keep\").exists()))'",
+ "open_value": "kept=False",
+ "why_not": null,
+ "row_sha": "53eabd89f055",
+ "text_sha": "06d8a0a508c2",
+ "verified_2026_11_01": "STILL_OPEN (re-pinned value unchanged on 2026-11-01: the text's two bare line anchors into pytest become symbol cites (the tree retires path:NN anchors); the claim, the open value and the probe are unchanged) [changed: text]"
+}

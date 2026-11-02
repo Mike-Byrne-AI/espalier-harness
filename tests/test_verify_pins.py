@@ -1273,6 +1273,30 @@ class TestTheRecursionFuse:
             f"reads it to stop unbounded self-recursion."
         )
 
+    def test_the_child_takes_its_basetemp_in_the_runs_own_work_dir(self, monkeypatch, tmp_path):
+        """DEF-5056: on pytest's shared root the child's session end deletes
+        every finished session's numbered dir there, inside the calling
+        test's clock, and the clone's conftest may predate the suite's own
+        rule, so the runner gives the child its basetemp beside the clone."""
+        captured: list[list[str]] = []
+
+        class _Completed:
+            returncode = 0
+            stdout = ""
+
+        def _fake_run(cmd, **kwargs):
+            captured.append(list(cmd))
+            return _Completed()
+
+        monkeypatch.setattr(verify_pins.subprocess, "run", _fake_run)
+        run_pytest(tmp_path / "clone", ["tests"], 60)
+        run_pytest(tmp_path / "clone", ["tests"], 60)   # the baseline, then the run after the revert
+        given = [arg.split("=", 1)[1] for cmd in captured for arg in cmd if arg.startswith("--basetemp=")]
+        assert len(given) == 2 and all(Path(g).parent == tmp_path for g in given), captured
+        # A fresh one each run: pytest empties a given basetemp at its first
+        # use, so the second run would pay the first's delete inside a test.
+        assert given[0] != given[1], given
+
     def test_this_module_reads_the_same_variable_the_tool_writes(self):
         """One name, two sides. A rename on either side silently disarms the
         fuse, and the failure mode is a hang rather than a red."""
