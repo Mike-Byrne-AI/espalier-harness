@@ -1,10 +1,14 @@
 {
  "id": "DEF-5067",
  "subject": "tests/test_checkout_sync.py",
- "cmd": "python3 -c \"import ast,pathlib;t=ast.parse(pathlib.Path('tests/test_checkout_sync.py').read_text(encoding='utf-8'));fn={n.name:n for n in ast.walk(t) if isinstance(n,ast.FunctionDef)};calls=[c for c in ast.walk(fn['_seeded_with_tools_cc']) if isinstance(c,ast.Call)];whole=any(getattr(c.func,'id','')=='copy_checkout' and c.args and isinstance(c.args[0],ast.BinOp) and isinstance(c.args[0].right,ast.Constant) and c.args[0].right.value=='cc' for c in calls);add=[c for c in calls if getattr(c.func,'id','')=='_git' and [a.value for a in c.args[1:] if isinstance(a,ast.Constant)]==['add','-A']];own=any(k.arg=='timeout' for c in add for k in c.keywords);base=[k.value.value for c in ast.walk(fn['_git']) if isinstance(c,ast.Call) for k in c.keywords if k.arg=='timeout' and isinstance(k.value,ast.Constant)];print(int(whole and bool(add) and not own and base==[45]))\"",
- "open_value": "1",
+ "cmd": "python3 -c \"import ast,pathlib;S=lambda v:isinstance(v,ast.Call) and getattr(v.func,'id','')=='scaled';G=[c for f in ('tests/test_checkout_sync.py','tests/_git_oracle.py','tests/_live_tree.py') for c in ast.walk(ast.parse(pathlib.Path(f).read_text(encoding='utf-8'))) if isinstance(c,ast.Call) and c.args and isinstance(c.args[0],ast.List) and c.args[0].elts and getattr(c.args[0].elts[0],'value',None)=='git'];print(sum(not any(k.arg=='timeout' and S(k.value) for k in c.keywords) for c in G) if len(G)>=10 else -1)\"",
+ "open_value": "10",
  "why_not": null,
- "row_sha": "b6552b977d94",
- "text_sha": "e9d5c4fce5fc",
- "verified_2026_11_02": "STILL_OPEN (re-pinned value unchanged on 2026-11-02: the probe reads the seed's copy argument and the bound its staging runs under through ast.parse, never the file's text, so a comment cannot close it (the paperwork ratchet)) [changed: probe]"
+ "row_sha": "0bfe4663fd8d",
+ "text_sha": "d7667e27e134",
+ "verified_2026_11_02": "STILL_OPEN (re-pinned '1' -> '10'; inputs None -> ['tests/_git_oracle.py', 'tests/_live_tree.py'] on 2026-11-02: air's 7b1ae5 names the class, not the seed: the row moves from the seed's staging to every literal git bound in the wedge's path (ten spawns in three files), on air's ruling 6136e3; the claim stands, wider) [changed: probe, open value, anchor, text, inputs]",
+ "inputs": [
+  "tests/_git_oracle.py",
+  "tests/_live_tree.py"
+ ]
 }
