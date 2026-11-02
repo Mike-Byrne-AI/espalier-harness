@@ -256,9 +256,12 @@ class TestTwoRunsOnOneBox:
         out, err = _finish(_spawn(tmp_path, tree, _child_env(tmp_path, lock, stamp="b")))
         assert "box lock" not in err and "box lock" not in out
 
-    def test_every_wait_leaves_one_log_line_and_a_run_that_did_not_wait_leaves_none(self, tmp_path):
-        """Mutation: the wait log unwritten, or written for a run that never
-        waited."""
+    def test_every_gated_run_leaves_one_log_line_naming_what_the_lock_did(self, tmp_path):
+        """DEF-4053: the log held waits alone, so an empty one could not tell
+        no waits from no gated runs. Now the holder that took the lock at once
+        leaves a ``taken`` line and the run behind it a ``waited`` line naming
+        its holder and its wait. Mutation: a line written for waits alone, or
+        a wait's line without its holder or its length."""
         tree, lock = _scratch(tmp_path), tmp_path / "box.lock"
         first = _holding(tmp_path, tree, lock)
         second = _Waiter(tmp_path, tree, _child_env(tmp_path, lock, stamp="b", slow=True))
@@ -267,10 +270,27 @@ class TestTwoRunsOnOneBox:
         second.finish()
         _finish(first)
         lines = [json.loads(ln) for ln in (tmp_path / "box.lock.log").read_text(encoding="utf-8").splitlines() if ln.strip()]
-        assert len(lines) == 1, lines
-        assert lines[0]["holder"]["pid"] == _said_pid(tmp_path / "a.pid")
-        assert lines[0]["waiter"]["pid"] == _said_pid(tmp_path / "b.pid")
-        assert lines[0]["waited_s"] > 0
+        holder_pid, waiter_pid = _said_pid(tmp_path / "a.pid"), _said_pid(tmp_path / "b.pid")
+        assert [(ln["outcome"], ln["run"]["pid"]) for ln in lines] == [("taken", holder_pid), ("waited", waiter_pid)], lines
+        assert lines[0]["waited_s"] == 0 and lines[0]["holder"]["pid"] is None
+        assert lines[1]["holder"]["pid"] == holder_pid and lines[1]["waited_s"] > 0
+
+    def test_the_locks_own_missing_folder_is_made_and_a_deeper_one_is_not(self, tmp_path):
+        """DEF-4053: the launcher's default lives in ``~/.espalier``, which
+        no run has made on a fresh home; the plugin makes the lock's own
+        folder, one level, so the first gated run takes the lock. Mutation:
+        no folder made (that run goes unguarded), or a chain of folders made
+        (a mistyped path builds directories instead of saying so)."""
+        tree = _scratch(tmp_path)
+        (tmp_path / "home").mkdir()
+        lock = tmp_path / "home" / ".espalier" / "box.lock"
+        out, err = _finish(_spawn(tmp_path, tree, _child_env(tmp_path, lock, stamp="m")))
+        assert "box lock" not in err and "unguarded" not in out, (out, err)
+        line = json.loads((lock.parent / "box.lock.log").read_text(encoding="utf-8").splitlines()[0])
+        assert line["outcome"] == "taken" and line["run"]["pid"] == _said_pid(tmp_path / "m.pid")
+        deep = tmp_path / "home" / "no" / "such" / "box.lock"
+        out, err = _finish(_spawn(tmp_path, tree, _child_env(tmp_path, deep, stamp="n")))
+        assert "box lock: not taken (FileNotFoundError" in err and not (tmp_path / "home" / "no").exists(), err
 
 
 class TestWhichRunsTheLockGates:
@@ -397,6 +417,9 @@ class TestTheInheritedPair:
         assert "box lock: waiting" not in err and "box lock: inside the holder" in out, out
         _release(tmp_path, "h")
         holder.wait(timeout=_CHILD_DEADLINE_S)
+        # DEF-4053: the run that passed through leaves its line, naming the holder.
+        lines = [json.loads(ln) for ln in (tmp_path / "box.lock.log").read_text(encoding="utf-8").splitlines() if ln.strip()]
+        assert [(ln["outcome"], ln["holder"]["pid"]) for ln in lines] == [("inside", _said_pid(tmp_path / "h.ready"))], lines
 
     def test_a_dead_holders_pid_in_the_pair_is_no_pass(self, tmp_path):
         """Mutation: the pass-through taken on the variable alone (a forged or
@@ -489,6 +512,19 @@ class TestTheSummaryNamesAnUnguardedRun:
         assert "box lock: not taken (FileNotFoundError" in err, err
         assert "box lock: unguarded (FileNotFoundError" in out, out
         assert (tmp_path / "u.done").exists()
+
+    def test_an_unguarded_run_leaves_its_line_with_the_reason(self, tmp_path):
+        """DEF-4053: a gated run the lock could not be taken for is in the
+        log too, with why, so an empty log means no gated run came. Here the
+        lock's path is a folder, which opens for no one. Mutation: the
+        unguarded run left out of the log."""
+        tree, lock = _scratch(tmp_path), tmp_path / "box.lock"
+        lock.mkdir()
+        out, err = _finish(_spawn(tmp_path, tree, _child_env(tmp_path, lock, stamp="g")))
+        assert "box lock: unguarded (" in out, out
+        lines = [json.loads(ln) for ln in (tmp_path / "box.lock.log").read_text(encoding="utf-8").splitlines() if ln.strip()]
+        assert [ln["outcome"] for ln in lines] == ["unguarded"], lines
+        assert lines[0]["run"]["pid"] == _said_pid(tmp_path / "g.pid") and lines[0]["why"].split(":")[0] in err, (lines, err)
 
 
 class TestTheSummaryHooksHonourNoSummary:

@@ -3043,7 +3043,6 @@ class TestOrdersLine:
         with the host's default path, and says nothing once the variable is
         set. Mutation: the note printed while the variable is set, or on a
         clone with no name."""
-        import tempfile
         mod, mail = _load(), _real_mail()
         (tmp_path / "espalier.toml").write_text('dispatcher = "hub"\n', encoding="utf-8")
         by = {"hub": [self._assign(mail, "w", lane="lane/a")]}
@@ -3054,7 +3053,7 @@ class TestOrdersLine:
         (tmp_path / "tests").mkdir()
         (tmp_path / "tests" / "_box_lock.py").write_text("", encoding="utf-8")
         line = mod._orders_line(tmp_path, read, mail=mail, python="py -3")
-        default = os.path.join(tempfile.gettempdir(), "espalier-box.lock")
+        default = str(Path.home() / ".espalier" / "espalier-box.lock")   # the launcher's default (DEF-4053)
         assert line.endswith(f"; box lock: off (relaunch through seat.py launch, or export "
                              f"ESPALIER_BOX_LOCK={default} before claude)"), line
         assert line.isascii()
@@ -3092,6 +3091,29 @@ class TestOrdersLine:
         release = mail.new_message("hub", "release", "", lane="lane/a")
         assert mod._orders_line(tmp_path, {**read, "by_machine": {"hub": [*by["hub"], release]}}, mail=mail,
                                 python="") == ""                                                # released
+
+    def test_a_cleared_or_compacted_window_is_not_told_to_start_a_second_loop(self, tmp_path):
+        """DEF-4052: the seat's interval loop lives as long as the process, so
+        it survives a /clear and a compaction, and the line beneath the
+        own-clear's re-prime still said "then start the worker loop" beside
+        the loop already ticking (measured on win, 2026-11-02). Dies to: the
+        source not handed to the seat driver. A kept older driver whose
+        short form takes no source still gets the call it knows."""
+        import types
+        mod, mail = _load(), _real_mail()
+        (tmp_path / "espalier.toml").write_text('dispatcher = "hub"\n', encoding="utf-8")
+        read = {"machine": "w", "by_machine": {"hub": [self._assign(mail, "w", lane="lane/a")]}, "unread": 0}
+        head = "w: 1 job from hub, first lane/a; 0 unread; run /inbox, then /inbox board"
+        for source in ("startup", "resume", ""):
+            assert mod._orders_line(tmp_path, read, mail=mail, python="", source=source) == (
+                f"{head}, then start the worker loop (/loop 10m)"), source
+        for source, said in (("clear", "a /clear"), ("compact", "a compaction")):
+            assert mod._orders_line(tmp_path, read, mail=mail, python="", source=source) == (
+                f"{head}; if the worker loop (/loop 10m) was started in this window it survives {said}: start no "
+                "second one"), source
+        older = types.SimpleNamespace(brief_line=lambda role, seat, python="": "the older short form")
+        assert mod._orders_line(tmp_path, read, mail=mail, seat=older, python="", source="clear") == (
+            "w: 1 job from hub, first lane/a; 0 unread; the older short form")
 
     def test_without_the_seat_driver_the_line_still_names_the_two_reads(self, tmp_path):
         import types
@@ -3168,16 +3190,25 @@ class TestOrdersLine:
             clones[name] = path
         mail = _real_mail()
         mail.send(clones["hub"], self._assign(mail, "w", lane="lane/a"), say=lambda _s: None)
-        res = subprocess.run(
-            [HOOK_PYTHON, str(HOOKS_DIR / "session_start.py")],
-            input=json.dumps({"source": "startup", "session_id": "o-1"}), capture_output=True, text=True,
-            timeout=45, cwd=str(clones["w"]), check=False, encoding="utf-8",   # the hook's own ceiling is 15 s
-            env={**os.environ, "CLAUDE_PROJECT_DIR": str(clones["w"])},
-        )
-        assert res.returncode == 0, res.stderr
-        banner = json.loads(res.stdout)["hookSpecificOutput"]["additionalContext"]
-        assert ("Orders:    w: 1 job from hub, first lane/a; 1 unread; run /inbox, then /inbox board, then start "
-                "the worker loop (/loop 10m)") in banner, banner
+
+        def banner(source: str, session: str) -> str:
+            res = subprocess.run(
+                [HOOK_PYTHON, str(HOOKS_DIR / "session_start.py")],
+                input=json.dumps({"source": source, "session_id": session}), capture_output=True, text=True,
+                timeout=45, cwd=str(clones["w"]), check=False, encoding="utf-8",   # the hook's own ceiling is 15 s
+                env={**os.environ, "CLAUDE_PROJECT_DIR": str(clones["w"])},
+            )
+            assert res.returncode == 0, res.stderr
+            return json.loads(res.stdout)["hookSpecificOutput"]["additionalContext"]
+
+        orders = "Orders:    w: 1 job from hub, first lane/a; 1 unread; run /inbox, then /inbox board"
+        started = banner("startup", "o-1")
+        assert f"{orders}, then start the worker loop (/loop 10m)" in started, started
+        # DEF-4052: main hands the payload's source to the line, so the window
+        # a /clear left its loop is told to start no second one.
+        cleared = banner("clear", "o-2")
+        assert (f"{orders}; if the worker loop (/loop 10m) was started in this window it survives a /clear: "
+                "start no second one") in cleared, cleared
 
 
 class TestEngineLine:
@@ -3394,10 +3425,9 @@ class TestMailLine:
         dispatcher clause carries the off-note; a worker's `Mail:` line never
         does (its `Orders:` line has it), and a set variable silences it.
         Mutation: the note on every seat's `Mail:` line, or on none."""
-        import tempfile
         mod = _load()
         monkeypatch.delenv("ESPALIER_BOX_LOCK", raising=False)
-        default = os.path.join(tempfile.gettempdir(), "espalier-box.lock")
+        default = str(Path.home() / ".espalier" / "espalier-box.lock")   # the launcher's default (DEF-4053)
         dispatcher = _mail_stub(dispatcher_setting=lambda root: ("mac", "espalier.toml names mac"),
                                 live_requests=lambda by: [])
         assert mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=dispatcher) == "", "no plugin, no note"

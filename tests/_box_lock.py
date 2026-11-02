@@ -20,8 +20,11 @@ before any worker is spawned, through the primitive's non-blocking
 ``try_lock_file``. While another run holds it, this one polls, says who holds
 it (seat, lane, pid, how long) on stderr at once and then once per report
 interval, with an inspect command and the stop command once the holder itself
-is past a ceiling, and appends one JSON line per wait to ``<lock path>.log``
-(the record the roadmap's re-measure reads). The run's terminal summary says
+is past a ceiling. Every gated run appends one JSON line to ``<lock path>.log``
+saying what the lock did -- taken at once, waited (how long, behind whom),
+passed through inside its holder, or unguarded (why) -- so the record the
+roadmap's re-measure reads is empty only where no gated run came, never
+merely where none waited (DEF-4053). The run's terminal summary says
 what the lock did: waited, passed through, or unguarded. Once held it writes its own record into the file and exports
 ``ESPALIER_BOX_LOCK_HOLDER=<pid>`` to every child, so a nested run (xdist's
 workers, the stage-one smoke) that inherits the pair and finds the record's pid
@@ -253,6 +256,36 @@ def build_record(config: Any, primitive: Any) -> dict:
             "argv": [os.path.basename(str(sys.argv[0])), *[str(a) for a in sys.argv[1:9]]] if sys.argv else []}
 
 
+#: What a gated run's line in ``<lock path>.log`` says the lock did.
+OUTCOMES = ("taken", "waited", "inside", "unguarded")
+
+
+def log_outcome(lock: Path, outcome: str, run: dict | None, holder: dict | None = None, waited_s: float = 0.0,
+                *, why: str = "", stream: TextIO | None = None) -> None:
+    """One JSON line in ``<lock path>.log`` for every gated run, whatever the
+    lock did (:data:`OUTCOMES`): ``taken`` at once, ``waited`` behind a holder
+    (the wait's start, end and length), ``inside`` its holder (passed
+    through), or ``unguarded`` (not taken, and ``why``). The log held waits
+    alone, so an empty one could not say whether no run waited or no run was
+    gated (DEF-4053); now it is empty only where no gated run came. A log that
+    cannot be written is one stderr line, never the run's cost."""
+    end = datetime.now(timezone.utc)
+    start = datetime.fromtimestamp(end.timestamp() - waited_s, tz=timezone.utc)
+    line: dict = {"outcome": outcome,
+                  "run": {k: (run or {}).get(k) for k in ("seat", "lane", "pid")},
+                  "holder": {k: (holder or {}).get(k) for k in ("seat", "lane", "pid")},
+                  "start": start.isoformat(timespec="seconds"), "end": end.isoformat(timespec="seconds"),
+                  "waited_s": round(waited_s, 3)}
+    if why:
+        line["why"] = why
+    try:
+        with open(f"{lock}.log", "a", encoding="utf-8") as log:
+            log.write(json.dumps(line) + "\n")
+    except OSError as exc:
+        print(f"box lock: the log could not be written ({exc.__class__.__name__})",
+              file=stream if stream is not None else sys.stderr, flush=True)
+
+
 class BoxLock:
     """The hold: taken at configure on the controller, released at unconfigure."""
 
@@ -268,7 +301,12 @@ class BoxLock:
     def acquire(self) -> None:
         """Take the lock, or pass through on the inherited pair. A failure
         after the handle is open releases or closes it before it is re-raised,
-        so a run that goes unguarded never keeps the box."""
+        so a run that goes unguarded never keeps the box. The lock's own
+        folder is made where it is missing (the launcher's default,
+        ``~/.espalier``, is not there until a first run makes it: DEF-4053),
+        one level and never a chain, so a mistyped path still goes unguarded
+        and says so rather than building folders."""
+        self.path.parent.mkdir(exist_ok=True)
         self.fh = open(self.path, "a+", encoding="utf-8")
         try:
             self._acquire()
@@ -294,7 +332,8 @@ class BoxLock:
                 os.environ[HOLDER_KEY] = str(os.getpid())
                 if last_report is not None:
                     self.waited_s = time.monotonic() - started
-                    self._log_wait(self.holder_seen, self.waited_s)
+                log_outcome(self.path, "waited" if last_report is not None else "taken", self.record,
+                            self.holder_seen, self.waited_s, stream=self.stream)
                 return
             record = read_record(self.path)
             if inside_holder(record):
@@ -302,6 +341,7 @@ class BoxLock:
                 self.holder_seen = record
                 self.fh.close()
                 self.fh = None
+                log_outcome(self.path, "inside", self.record, record, stream=self.stream)
                 return
             self.holder_seen = record or self.holder_seen
             now = time.monotonic()
@@ -323,19 +363,6 @@ class BoxLock:
             terminalreporter.write_line(_ascii(f"box lock: inside the holder {who}"))
         elif self.waited_s:
             terminalreporter.write_line(_ascii(f"box lock: waited {self.waited_s:.0f} s behind {who}"))
-
-    def _log_wait(self, holder: dict | None, waited_s: float) -> None:
-        end = datetime.now(timezone.utc)
-        line = {"waiter": {k: self.record.get(k) for k in ("seat", "lane", "pid")},
-                "holder": {k: (holder or {}).get(k) for k in ("seat", "lane", "pid")},
-                "start": (end.timestamp() - waited_s), "end": end.isoformat(timespec="seconds"),
-                "waited_s": round(waited_s, 3)}
-        line["start"] = datetime.fromtimestamp(line["start"], tz=timezone.utc).isoformat(timespec="seconds")
-        try:
-            with open(f"{self.path}.log", "a", encoding="utf-8") as log:
-                log.write(json.dumps(line) + "\n")
-        except OSError as exc:
-            print(f"box lock: the wait log could not be written ({exc.__class__.__name__})", file=self.stream, flush=True)
 
     def release(self) -> None:
         if self.fh is None or not self.held:
@@ -382,15 +409,18 @@ def pytest_configure(config: Any) -> None:
     manager = getattr(config, "pluginmanager", None)
     if manager is None or manager.hasplugin(PLUGIN_NAME):
         return
+    record: dict | None = None
     try:
         if not gated(config):
             return
         primitive = _primitive()
-        lock = BoxLock(Path(path), build_record(config, primitive), primitive)
+        record = build_record(config, primitive)
+        lock = BoxLock(Path(path), record, primitive)
         lock.acquire()
     except Exception as exc:  # noqa: BLE001 -- a lock that cannot be taken must not cost a seat its tier
         why = f"{type(exc).__name__}: {_ascii(str(exc))}"
         print(f"box lock: not taken ({why}); this run is unguarded", file=sys.stderr, flush=True)
+        log_outcome(Path(path), "unguarded", record or {"pid": os.getpid()}, why=why)
         manager.register(_Unguarded(why), PLUGIN_NAME)
         return
     manager.register(lock, PLUGIN_NAME)

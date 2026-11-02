@@ -152,6 +152,17 @@ def _send(mod, path: Path, machine: str, type_: str, text: str, **kw) -> dict:
     return message
 
 
+def _other_box(work: Path, machine: str) -> Path:
+    """Another box's clone of the same origin, named ``machine``: what it
+    sends lands on origin and reaches ``work`` only through a fetch."""
+    other = work.parent / machine
+    _git(work.parent, "clone", "--quiet", str(work.parent / "origin.git"), str(other))
+    for key, value in (("user.name", "t"), ("user.email", "t@example.invalid"), ("commit.gpgsign", "false"),
+                       ("espalier.machine", machine)):
+        _git(other, "config", key, value)
+    return other
+
+
 def _live_claims_from(seat, root: Path, machine: str) -> list[dict]:
     seat.mail.fetch_mail(root)
     by_machine, _ = seat.mail.read_mail(root)
@@ -1212,6 +1223,26 @@ class TestBrief:
             "run /inbox, then /inbox board, then start the board loop (/loop 15m)")
         assert dispatcher.loop.startswith("/loop 15m ")
 
+    def test_the_banner_line_invites_no_second_loop_where_the_window_kept_its_own(self, seat, clone):
+        """DEF-4052: a seat's interval loop is a session-only job that lives
+        as long as the process, so a /clear and a compaction keep it, and the
+        line that still said "then start the worker loop" after the own-clear
+        invited a second one beside it (measured on win, 2026-11-02, with the
+        running loop listed). A start and a resume, a new process, keep the
+        invitation. Dies to: the source ignored, or the invitation kept on a
+        clear or a compaction."""
+        _dispatcher(clone, '"box"')
+        for role, seat_name, what, every in (("worker", "box-feat", "worker", "10m"), ("dispatcher", "box", "board", "15m")):
+            for source in ("startup", "resume", ""):
+                assert seat.brief_line(role, seat_name, "py -3", source=source).startswith(
+                    f"run /inbox, then /inbox board, then start the {what} loop (/loop {every}); "), (role, source)
+            for source, said in (("clear", "a /clear"), ("compact", "a compaction")):
+                line = seat.brief_line(role, seat_name, "py -3", source=source)
+                assert line == (f"run /inbox, then /inbox board; if the {what} loop (/loop {every}) was started in "
+                                f"this window it survives {said}: start no second one; py -3 tools/cc/seat.py brief "
+                                f"{seat_name} prints the first message"), line
+                assert "then start" not in line and line.isascii() and '"' not in line
+
 
 # -- retire --------------------------------------------------------------------------
 
@@ -1293,6 +1324,64 @@ class TestRetire:
         with pytest.raises(seat.Refused, match="the mail channel could not be read .* nothing is released or removed"):
             seat.cmd_retire(clone, "box-feat", dry_run=False, fetch=False)
         assert feat.is_dir()
+
+    def test_a_failed_fetch_at_the_first_read_retires_nothing(self, seat, clone, registry):
+        """DEF-4036, the first read: a fetch that failed was a note, and the
+        retire went on from the refs as last fetched, so a job the dispatcher
+        gave the seat since was never seen and the seat went with the job
+        still live. ``--no-fetch`` stays the way to retire on what is here.
+        Dies to: the failed fetch read as a note and the retire carried on."""
+        feat = _worktree(clone, "feat", name="box-feat")
+        job = _send(seat, _other_box(clone, "air"), "air", "assign", "given after the last fetch", ids=["DEF-9"],
+                    seat="box-feat")
+        origin = _out(clone, "remote", "get-url", "origin")
+        _git(clone, "remote", "set-url", "origin", str(clone.parent / "gone.git"))
+        with pytest.raises(seat.Refused, match=r"the mail fetch failed \(.*\), so a job given to box-feat since the "
+                                               r"last fetch would not be seen: nothing is released or removed"):
+            seat.cmd_retire(clone, "box-feat", dry_run=False, fetch=True)
+        assert feat.is_dir()
+        _git(clone, "remote", "set-url", "origin", origin)
+        seat.mail.fetch_mail(clone)
+        by_machine, _ = seat.mail.read_mail(clone)
+        assert [j["id"] for j in seat.mail.live_assignments(by_machine)] == [job["id"]]
+
+    def test_a_failed_fetch_at_the_confirming_read_keeps_the_worktree(self, seat, clone, registry, monkeypatch):
+        """DEF-4036, the second read: after its releases retire fetched again
+        without reading the answer and confirmed against the refs as last
+        fetched, so a job given between the two reads was never seen and the
+        worktree went. Dies to: the confirming fetch's answer left unread."""
+        feat = _worktree(clone, "feat", name="box-feat")
+        claim = _send(seat, feat, "box-feat", "claim", "the feature", lane="lane/feat")
+        air, origin = _other_box(clone, "air"), _out(clone, "remote", "get-url", "origin")
+        real, calls, job = seat.mail.fetch_mail, [], {}
+
+        def fetch(root, **kw):
+            calls.append(root)
+            if len(calls) == 2:   # the confirming read: a job lands on origin, then origin stops answering
+                job.update(_send(seat, air, "air", "assign", "given between the reads", ids=["DEF-9"], seat="box-feat"))
+                _git(clone, "remote", "set-url", "origin", str(clone.parent / "gone.git"))
+            return real(root, **kw)
+
+        monkeypatch.setattr(seat.mail, "fetch_mail", fetch)
+        with pytest.raises(seat.Refused, match=r"the releases were sent, and the fetch that confirms them failed "
+                                               r"\(.*\): the worktree is kept"):
+            seat.cmd_retire(clone, "box-feat", dry_run=False, fetch=True)
+        assert len(calls) == 2 and feat.is_dir()
+        _git(clone, "remote", "set-url", "origin", origin)
+        real(clone)
+        by_machine, _ = seat.mail.read_mail(clone)
+        assert [c["id"] for c in seat.mail.live_claims(by_machine)] == [], claim
+        assert [j["id"] for j in seat.mail.live_assignments(by_machine)] == [job["id"]]
+
+    def test_no_fetch_retires_on_the_refs_here_and_never_fetches(self, seat, clone, registry, monkeypatch):
+        """``--no-fetch`` is the explicit way to retire on what is here, at
+        both reads. Dies to: the confirming read fetching under it."""
+        feat = _worktree(clone, "feat", name="box-feat")
+        _send(seat, feat, "box-feat", "claim", "the feature", lane="lane/feat")
+        calls: list = []
+        monkeypatch.setattr(seat.mail, "fetch_mail", lambda root, **kw: calls.append(root) or (False, "not asked"))
+        assert seat.cmd_retire(clone, "box-feat", dry_run=False, fetch=False) == 0
+        assert calls == [] and not feat.exists()
 
     def test_an_unread_name_in_the_seat_is_named_as_unread(self, seat, tmp_path, monkeypatch):
         """A name read that failed in the seat's worktree (a timeout, a config
@@ -1380,22 +1469,56 @@ class TestRetire:
 
 class TestTheLauncherSetsTheBoxLock:
     """A seat launched by the tool, or by its printed line, runs under the box
-    lock: ``ESPALIER_BOX_LOCK`` names one path per host under the temp
+    lock: ``ESPALIER_BOX_LOCK`` names one path per user under the home
     directory unless the parent already named one, so two seats on one box
     take the same lock and CI, which never runs the launcher, never sees it.
     Mutations: the key dropped from the child's environment; an inherited path
     overwritten with the default; the key left out of either shell's line; the
     printed line taking the default over the terminal's own path (code review,
-    2026-10-26: two seats would then lock two files)."""
+    2026-10-26: two seats would then lock two files); the default read from
+    the temp directory (DEF-4053: two launch contexts whose ``TMPDIR`` differ
+    would lock two files)."""
 
     def test_the_child_gets_the_hosts_default_path_unless_the_parent_named_one(self, seat, tmp_path):
-        import tempfile
         target = seat.Target("box-x", tmp_path, True, False)
         env = seat.child_env(target, maintenance=False, base={"PATH": "/bin"})
-        assert env["ESPALIER_BOX_LOCK"] == os.path.join(tempfile.gettempdir(), "espalier-box.lock")
+        assert env["ESPALIER_BOX_LOCK"] == str(Path.home() / ".espalier" / "espalier-box.lock")
         env = seat.child_env(target, maintenance=False, base={"PATH": "/bin", "ESPALIER_BOX_LOCK": "/elsewhere/box.lock"})
         assert env["ESPALIER_BOX_LOCK"] == "/elsewhere/box.lock"
         assert seat.BOX_LOCK_KEY == "ESPALIER_BOX_LOCK" and seat.BOX_LOCK_NAME == "espalier-box.lock"
+
+    def test_two_launch_contexts_whose_temp_directories_differ_lock_one_file(self, seat, tmp_path):
+        """DEF-4053, the row's probe as a test: the default resolved in two
+        child interpreters whose ``TMPDIR`` (and ``TMP``/``TEMP``) differ, as
+        a terminal and an app can, is one path. Dies to: the default read
+        from ``tempfile.gettempdir()``."""
+        code = (f"import sys; sys.path.insert(0, {str(MODULE.parent)!r}); import seat; "
+                "print(seat.box_lock_default())")
+        seen = set()
+        for name in ("one", "two"):
+            temp = tmp_path / name
+            temp.mkdir()
+            out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, encoding="utf-8",
+                                 env={**os.environ, "TMPDIR": str(temp), "TMP": str(temp), "TEMP": str(temp)},
+                                 timeout=25, check=True).stdout.strip()   # two under the 60 s ceiling
+            assert out and str(temp) not in out, out
+            seen.add(out)
+        assert len(seen) == 1, seen
+
+    def test_where_no_home_can_be_told_the_default_is_the_temp_directorys(self, seat, monkeypatch):
+        """``Path.home`` raises on POSIX with neither ``HOME`` nor a passwd
+        entry, and a home that does not expand is no folder: the launcher
+        still sets a path, the temp directory's, as before. Dies to: the
+        raise escaping into ``launch``, or a relative path set."""
+        import tempfile
+
+        def no_home():
+            raise RuntimeError("Could not determine home directory.")
+
+        monkeypatch.setattr(seat.Path, "home", staticmethod(no_home))
+        assert seat.box_lock_default() == os.path.join(tempfile.gettempdir(), "espalier-box.lock")
+        monkeypatch.setattr(seat.Path, "home", staticmethod(lambda: Path("~")))
+        assert seat.box_lock_default() == os.path.join(tempfile.gettempdir(), "espalier-box.lock")
 
     def test_the_posix_line_spells_the_mod_directory_as_the_shell_reads_it(self, seat, tmp_path):
         """A mod directory the shell must quote -- a Windows seat's ``D:\\...``
@@ -1416,9 +1539,8 @@ class TestTheLauncherSetsTheBoxLock:
 
     def test_both_shells_lines_carry_the_path_before_claude(self, seat, tmp_path):
         import shlex
-        import tempfile
         target = seat.Target("box-x", tmp_path, True, False)
-        default = os.path.join(tempfile.gettempdir(), "espalier-box.lock")
+        default = str(Path.home() / ".espalier" / "espalier-box.lock")
         sh = seat.command_line(target, ["--model", "o p"], maintenance=False, shell="posix")
         assert f"export ESPALIER_BOX_LOCK=${{ESPALIER_BOX_LOCK:-{shlex.quote(default)}}} && " in sh, sh
         assert sh.index("ESPALIER_BOX_LOCK") < sh.index("claude")
