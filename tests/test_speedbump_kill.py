@@ -80,9 +80,13 @@ def children():
         return proc
 
     yield start
+    # os.killpg and SIGKILL are POSIX names; the box lock's rows run on Windows too.
+    killpg = getattr(os, "killpg", None)
     for proc in started:
         try:
-            os.killpg(proc.pid, signal.SIGKILL)
+            if killpg is None:
+                raise OSError("no process groups here")
+            killpg(proc.pid, signal.SIGKILL)
         except OSError:
             proc.kill()
         proc.wait(timeout=10)
