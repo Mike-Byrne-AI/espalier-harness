@@ -56,15 +56,24 @@ concurrency:
   # an in-flight push run. `github.event_name` cannot drift out of step with a
   # sibling condition because there is no second copy to maintain.
   #
-  # The `os` and `python` inputs are in the key too: two dispatches on one ref
-  # that name another runner or another interpreter are two runs, not one
-  # superseding the other, so a 3.13 and a 3.14 dispatch run side by side. A
-  # pull request carries no inputs, so its key is the event's alone.
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ github.event.inputs.os }}-${{ github.event.inputs.python }}
+  # A dispatched run is keyed on its own run id, so no dispatch cancels
+  # another: two on one ref that name another runner, interpreter or
+  # selection are two runs (a 3.13 and a 3.14 dispatch run side by side), and
+  # a dispatch is typed on purpose. A pull request's key is the event's alone.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}${{ github.event_name == 'workflow_dispatch' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 jobs:
   portability:
+    # A pull request's legs keep the name the board, the banner and the ship
+    # preflight read (`portability (<os>)`); a dispatched run's carries its
+    # interpreter, so a two-file dispatch on a lane's head is never read as
+    # that head's full leg (the readers keep the latest run of a name).
+    name: ${{ github.event_name == 'workflow_dispatch' && format('portability ({0}, dispatched, python {1})', matrix.os, github.event.inputs.python) || format('portability ({0})', matrix.os) }}
+    # The one spelling of the interpreter: the `python` input on a dispatch,
+    # else the pull-request cells' own, which is that input's default.
+    env:
+      PYTHON_VERSION: ${{ github.event.inputs.python || '3.12' }}
     strategy:
       fail-fast: false
       # All three OSes on a pull request (the inputs are empty there).
@@ -85,10 +94,10 @@ jobs:
       # may name a newer one through the `python` input, so a Windows arm that
       # only a newer interpreter takes is run without a second cell on every
       # pull request.
-      - name: Set up Python ${{ github.event.inputs.python || '3.12' }}
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
-          python-version: ${{ github.event.inputs.python || '3.12' }}
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install
         run: pip install -e .[dev]

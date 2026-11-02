@@ -408,15 +408,19 @@ class TestALinkIsDeletedNeverFollowed:
         link = _link_to(tmp_path / "link", target)
         os.chmod(target, stat.S_IREAD)
         os.chmod(link, stat.S_IREAD)  # the link's own attribute: a bare chmod never follows on Windows
+        # The arm this interpreter takes, stated so a run names it: the
+        # keyword from 3.13 (DEF-5064's dispatched runs read this), bare before.
+        assert _rmtree._CHMOD_NO_FOLLOW == (sys.version_info >= (3, 13))
+        arm = {"follow_symlinks": False} if _rmtree._CHMOD_NO_FOLLOW else {}
         real_chmod = os.chmod
-        chmods: list[str] = []
-        monkeypatch.setattr(os, "chmod", lambda p, m, **k: (chmods.append(str(p)), real_chmod(p, m, **k)))
+        chmods: list[tuple[str, dict]] = []
+        monkeypatch.setattr(os, "chmod", lambda p, m, **k: (chmods.append((str(p), k)), real_chmod(p, m, **k)))
         try:
             with pytest.raises(PermissionError):
                 os.unlink(link)
             _rmtree.remove_file(link)
             assert not os.path.lexists(link)
-            assert chmods == [str(link)], "the helper set something other than the link's own bit"
+            assert chmods == [(str(link), arm)], "the helper set something other than the link's own bit, or by another arm"
             assert not os.stat(target).st_mode & stat.S_IWRITE, "the link's target lost its read-only attribute"
         finally:
             real_chmod(target, stat.S_IWRITE | stat.S_IREAD)

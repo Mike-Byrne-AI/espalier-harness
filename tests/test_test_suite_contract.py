@@ -3592,12 +3592,16 @@ def test_the_denial_block_detector_still_engages_the_live_corpus():
 # it -- macOS, and Windows from 3.13 -- and bare elsewhere, so a two-argument
 # fake splits by host: on those hosts it raises `TypeError` out of a delete
 # (no `OSError`, so `best_effort=True` does not swallow it), and on the ubuntu
-# cells it passes. The spellings read are the ones the suite patches with:
-# `<monkeypatch>.setattr(os, "chmod", fake)`, a bare `setattr(os, "chmod",
-# fake)`, and pytest's string target `<monkeypatch>.setattr("os.chmod", fake)`.
-# A fake is read where it is written: a lambda, or a name bound in the module to
-# a `def` or a lambda. A replacement built by a call (a `Mock`, a `partial`) or
-# a name bound to anything else is not judged: an accepted limit, recorded
+# cells it passes. The spellings read: `<monkeypatch>.setattr(<os>, "chmod",
+# fake)` and a bare `setattr(<os>, "chmod", fake)` (the value positional or
+# `value=`), pytest's string target `<monkeypatch>.setattr("os.chmod", fake)`,
+# and `patch.object(<os>, "chmod", fake)` / `patch("os.chmod", fake)` (the fake
+# positional, `new=` or `side_effect=`), where `<os>` is a name the module
+# binds by `import os` or any `<module>.os`. A fake is read where it is
+# written: a lambda, or a name bound to a `def` or a lambda in the innermost
+# function around the patch, else at module level. A replacement built by a
+# call (a `Mock`, a `partial`), a name bound to anything else, and a fake
+# imported from another module are not judged: an accepted limit, recorded
 # rather than papered over (every live fake is a lambda or a `def`).
 
 
@@ -3609,22 +3613,48 @@ def _takes_follow_symlinks(fn: ast.Lambda | ast.FunctionDef | ast.AsyncFunctionD
     return a.kwarg is not None or any(p.arg == "follow_symlinks" for p in (*a.args, *a.kwonlyargs))
 
 
-def _os_chmod_replacement(node: ast.AST) -> ast.expr | None:
+def _os_chmod_replacement(node: ast.AST, os_names: frozenset[str]) -> ast.expr | None:
     """The value a call installs over ``os.chmod``, or ``None`` when the call
-    patches something else."""
+    patches something else (``os_names``: what the module binds ``os`` as)."""
     if not isinstance(node, ast.Call):
         return None
     func = node.func
-    if not ((isinstance(func, ast.Attribute) and func.attr == "setattr")
-            or (isinstance(func, ast.Name) and func.id == "setattr")):
-        return None
-    args = node.args
-    if (len(args) >= 3 and isinstance(args[0], ast.Name) and args[0].id == "os"
-            and isinstance(args[1], ast.Constant) and args[1].value == "chmod"):
-        return args[2]
-    if len(args) >= 2 and isinstance(args[0], ast.Constant) and args[0].value == "os.chmod":
-        return args[1]
+    name = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else ""
+    args, kw = node.args, {k.arg: k.value for k in node.keywords if k.arg}
+
+    def is_os(e: ast.expr) -> bool:
+        return (isinstance(e, ast.Name) and e.id in os_names) or (isinstance(e, ast.Attribute) and e.attr == "os")
+
+    def is_str(e: ast.expr, s: str) -> bool:
+        return isinstance(e, ast.Constant) and e.value == s
+
+    if name == "setattr":
+        if len(args) >= 2 and is_os(args[0]) and is_str(args[1], "chmod"):
+            return args[2] if len(args) >= 3 else kw.get("value")
+        if args and is_str(args[0], "os.chmod"):
+            return args[1] if len(args) >= 2 else kw.get("value")
+    elif name == "object":   # patch.object(<os>, "chmod", new)
+        if len(args) >= 2 and is_os(args[0]) and is_str(args[1], "chmod"):
+            return args[2] if len(args) >= 3 else kw.get("new", kw.get("side_effect"))
+    elif name == "patch":    # patch("os.chmod", new)
+        if args and is_str(args[0], "os.chmod"):
+            return args[1] if len(args) >= 2 else kw.get("new", kw.get("side_effect"))
     return None
+
+
+def _fakes_bound_in(scope: ast.AST) -> dict[str, list[ast.Lambda | ast.FunctionDef | ast.AsyncFunctionDef]]:
+    """Each name ``scope`` binds to a ``def`` or a lambda, its own body's
+    statements alone at module level, every nesting inside a function."""
+    nodes = ast.walk(scope) if not isinstance(scope, ast.Module) else iter(scope.body)
+    bound: dict[str, list[ast.Lambda | ast.FunctionDef | ast.AsyncFunctionDef]] = {}
+    for node in nodes:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node is not scope:
+            bound.setdefault(node.name, []).append(node)
+        elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Lambda):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    bound.setdefault(target.id, []).append(node.value)
+    return bound
 
 
 def _os_chmod_fakes(text: str) -> tuple[list[int], int, int]:
@@ -3632,25 +3662,31 @@ def _os_chmod_fakes(text: str) -> tuple[list[int], int, int]:
     take ``follow_symlinks``, how many ``os.chmod`` patches were read, and how
     many of them named a fake that resolved to a ``def`` or a lambda."""
     tree = ast.parse(text)
-    bound: dict[str, list[ast.Lambda | ast.FunctionDef | ast.AsyncFunctionDef]] = {}
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            bound.setdefault(node.name, []).append(node)
-        elif isinstance(node, ast.Assign) and isinstance(node.value, ast.Lambda):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    bound.setdefault(target.id, []).append(node.value)
+    os_names = frozenset(
+        alias.asname or alias.name
+        for node in ast.walk(tree) if isinstance(node, ast.Import)
+        for alias in node.names if alias.name == "os"
+    ) or frozenset({"os"})
+    functions = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    module_bound = _fakes_bound_in(tree)
     offending: list[int] = []
     patches = resolved = 0
     for node in ast.walk(tree):
-        value = _os_chmod_replacement(node)
+        value = _os_chmod_replacement(node, os_names)
         if value is None:
             continue
         patches += 1
         if isinstance(value, ast.Lambda):
             fakes = [value]
-        elif isinstance(value, ast.Name) and value.id in bound:
-            fakes = bound[value.id]
+        elif isinstance(value, ast.Name):
+            around = sorted(
+                (f for f in functions if f.lineno <= node.lineno <= (f.end_lineno or f.lineno)),
+                key=lambda f: f.lineno, reverse=True,
+            )
+            fakes = next((b for f in around if (b := _fakes_bound_in(f).get(value.id))), None)
+            fakes = fakes or module_bound.get(value.id)
+            if not fakes:
+                continue
             resolved += 1
         else:
             continue
@@ -3689,25 +3725,43 @@ def test_the_os_chmod_fake_rule_reds_on_a_two_argument_fake():
     ``**kwargs`` or names ``follow_symlinks`` is not."""
     source = (
         "import os\n"
+        "import os as _os\n"
+        "from unittest import mock\n"
         "def two(path, mode):\n"
         "    pass\n"
         "def kw(path, mode, **k):\n"
         "    pass\n"
         "one = lambda p, m: None\n"
-        "def t(monkeypatch, m):\n"
-        "    monkeypatch.setattr(os, 'chmod', lambda p, m: None)\n"            # line 8
-        "    m.setattr(os, 'chmod', two)\n"                                    # line 9
-        "    setattr(os, 'chmod', one)\n"                                      # line 10
-        "    monkeypatch.setattr('os.chmod', lambda p, m: None)\n"             # line 11
+        "def t(monkeypatch, m, wheel_smoke):\n"
+        "    monkeypatch.setattr(os, 'chmod', lambda p, m: None)  # BAD\n"
+        "    m.setattr(os, 'chmod', two)  # BAD\n"
+        "    setattr(os, 'chmod', one)  # BAD\n"
+        "    monkeypatch.setattr('os.chmod', lambda p, m: None)  # BAD\n"
+        "    monkeypatch.setattr(wheel_smoke.os, 'chmod', two)  # BAD\n"
+        "    setattr(_os, 'chmod', value=two)  # BAD\n"
+        "    mock.patch('os.chmod', side_effect=lambda p, m: None)  # BAD\n"
+        "    mock.patch.object(os, 'chmod', two)  # BAD\n"
         "    monkeypatch.setattr(os, 'chmod', lambda p, m, **k: None)\n"
         "    monkeypatch.setattr(os, 'chmod', kw)\n"
         "    monkeypatch.setattr(os, 'chmod', lambda p, m, *, follow_symlinks=True: None)\n"
         "    monkeypatch.setattr(os, 'chmod', lambda p, m, /, follow_symlinks=True: None)\n"
         "    monkeypatch.setattr(os, 'chown', lambda p, u, g: None)\n"
+        "def u(monkeypatch):\n"
+        "    def fake(path):\n"
+        "        pass\n"
+        "    monkeypatch.setattr(os, 'unlink', fake)\n"
+        "def v(monkeypatch):\n"
+        "    def fake(path, mode, *a, **k):\n"
+        "        pass\n"
+        "    def inner():\n"
+        "        monkeypatch.setattr(os, 'chmod', fake)\n"
+        "    inner()\n"
     )
     offending, patches, resolved = _os_chmod_fakes(source)
-    assert offending == [8, 9, 10, 11]
-    assert (patches, resolved) == (8, 3)
+    # A fake named alike in another function (`u`'s, of another call) is not
+    # the one `v`'s patch installs: the innermost function that binds it is.
+    assert offending == [i for i, line in enumerate(source.splitlines(), 1) if "# BAD" in line]
+    assert (patches, resolved) == (13, 7)
 
 
 def test_the_os_chmod_fake_census_still_engages_the_live_corpus():

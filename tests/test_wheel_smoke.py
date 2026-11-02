@@ -781,17 +781,21 @@ def test_both_twins_take_the_same_chmod_arm(tmp_path, monkeypatch, no_follow, ba
     assert seen == {"twin": (link_calls, file_calls), "engine": (link_calls, file_calls)}
 
 
+@pytest.mark.parametrize("refusal", ["once", "always"])
 @pytest.mark.parametrize("walk", ["fd", "scandir"])
-def test_both_twins_walk_a_directory_they_could_not_enter_again(tmp_path, monkeypatch, walk):
-    """DEF-5062 in both deleters, driven alike on every host: the call that
-    enters ``build/lib/shut`` refuses once, as ``rmtree``'s ``os.open`` (the
-    fd walk) or ``os.scandir`` (the walk Windows uses) refuses a directory
-    with no read bit, a shape a Windows host cannot make with a mode. Each
-    gives the directory its owner bits back and walks it again, so the tree
-    goes and the bystander stays. RED while the twin retries the refused call
-    bare: ``os.open`` without its flags raises ``TypeError``, and a bare
-    ``os.scandir`` lists nothing, so the walk has skipped the subtree and the
-    directory's ``rmdir`` refuses it as not empty."""
+def test_both_twins_walk_a_directory_they_could_not_enter_again(tmp_path, monkeypatch, walk, refusal):
+    """DEF-5062 in both deleters, driven alike: the call that enters
+    ``build/lib/shut`` refuses, as ``rmtree``'s ``os.open`` (the fd walk, on
+    POSIX) or ``os.scandir`` (the walk Windows uses, on every host) refuses a
+    directory with no read bit, a shape a Windows host cannot make with a
+    mode. Refused ``once``, each gives the directory its owner bits back and
+    walks it again, so the tree goes and the bystander stays: RED while the
+    twin retries the refused call bare (``os.open`` without its flags raises
+    ``TypeError``; a bare ``os.scandir`` of the fake lists nothing, so the
+    directory's ``rmdir`` refuses it as not empty). Refused ``always`` (a
+    directory whose bits are not ours to give back), each walks it again once
+    and then raises the refusal: RED as a ``RecursionError`` while the twin
+    walks again without remembering it already did."""
     from tests.test_rmtree import force_walk
 
     force_walk(walk, monkeypatch)
@@ -808,21 +812,28 @@ def test_both_twins_walk_a_directory_they_could_not_enter_again(tmp_path, monkey
         (root / "keep.txt").write_text("keep\n", encoding="utf-8")
         refused: list[str] = []
 
-        def refuse_once(path, *a, _refused=refused, **k):
-            if (isinstance(path, (str, bytes, os.PathLike)) and not _refused
+        def refuse(path, *a, _refused=refused, **k):
+            if (isinstance(path, (str, bytes, os.PathLike))
+                    and (refusal == "always" or not _refused)
                     and os.path.basename(os.fsdecode(path)) == "shut"):
                 _refused.append(os.fsdecode(path))
                 raise PermissionError(errno.EACCES, "Permission denied", os.fsdecode(path))
             return real_enter(path, *a, **k)
 
         with monkeypatch.context() as m:
-            m.setattr(os, enter, refuse_once)
+            m.setattr(os, enter, refuse)
             try:
                 removed = [p.relative_to(root).as_posix() for p in clear(root)]
-            except (OSError, TypeError) as exc:
+            except (OSError, TypeError, RecursionError) as exc:
                 removed = [f"raised {type(exc).__name__}"]
         outcome[name] = (removed, len(refused), _listing(root))
-    expected = (["build"], 1, ["keep.txt"])
+    if refusal == "once":
+        expected = (["build"], 1, ["keep.txt"])
+    else:
+        expected = (["raised PermissionError"], 2, [
+            "build", "build/lib", "build/lib/shut", "build/lib/shut/b.py",
+            "build/lib/shut/inner", "build/lib/shut/inner/c.py", "keep.txt",
+        ])
     assert outcome == {"twin": expected, "engine": expected}
 
 
