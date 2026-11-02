@@ -24,9 +24,11 @@ directory that declares itself generated (its own ``.gitignore`` one bare
 plugin loader write into what they generate; read below a watched top, never
 at it, never over a file the session's baseline already holds, so a
 declaration that lands mid-session retires nothing and is reported as the
-added file it is, and at a fresh baseline never over a file git tracks, so
-one already there when the session starts retires nothing git holds), and
-editor and OS clutter is skipped by name.
+added file it is, and at a fresh baseline, or under a top the baseline was
+taken without, never over a file git tracks -- the root's index or, in an
+adopter's zone, a nested checkout's own, matched to the directory whatever
+the index's spelling -- so one already there when the session starts retires
+nothing git holds), and editor and OS clutter is skipped by name.
 
 Shared helper: it returns data and speaks to no one. post_write_check renders
 what it finds (a shared helper never collects advisories; tests/test_failopen_voice.py).
@@ -173,11 +175,12 @@ def is_clutter(name: str) -> bool:
 #: Code writes one into the type declarations beside a mod it loads
 #: (``.claude-plugin/types/``, rewritten at a launch). Such a directory is
 #: pruned wherever it sits below a watched top, unless the session's baseline
-#: already holds a file under it, or at a fresh baseline git tracks one: a
-#: declaration retires nothing the session watches, so one that lands
-#: mid-session (a venv made inside a source directory) is reported as the
-#: added file it is and the directory stays watched, and one that was there
-#: before the session over committed files is too (DEF-4073). The top itself
+#: already holds a file under it, or at a fresh baseline or under a top the
+#: baseline was taken without git tracks one (its checkout's git: DEF-4085,
+#: DEF-4087): a declaration retires nothing the session watches, so one that
+#: lands mid-session (a venv made inside a source directory) is reported as
+#: the added file it is and the directory stays watched, and one that was
+#: there before the session over committed files is too (DEF-4073). The top itself
 #: is never read this way, since a zone is watched whatever sits at its root.
 #: Twin of ``espalier.zone_writes.SELF_IGNORE_FILE``.
 SELF_IGNORE_FILE = ".gitignore"
@@ -228,33 +231,57 @@ def _holds_under(files: dict[str, Entry], base: str) -> bool:
     return any(rel.startswith(head) for rel in files)
 
 
-#: How long a fresh walk's one ``git ls-files`` may take; past it the
-#: declared directories prune as they would with no git, and the walk says so.
+#: How long one walk's ``git ls-files`` reads may take together (one for
+#: each checkout it asks); past it the declared directories prune as they
+#: would with no git, and the walk says so.
 TRACKED_READ_TIMEOUT_S = 2.0
 
 
-def tracked_dirs(root: Path, prefixes: list[str], why: list[str] | None = None) -> frozenset[str] | None:
+def _pathspecs(checkout: str, prefixes: list[str]) -> list[str] | None:
+    """``prefixes`` as the checkout at ``checkout`` (repo-relative, ``""``
+    for the root) names them: each unchanged at the root; for a nested
+    checkout, none at all (its whole index) where a prefix holds it, else
+    each prefix inside it read from it; None where no prefix meets it."""
+    if not checkout:
+        return list(prefixes)
+    head = checkout + "/"
+    if any(head.startswith(p) for p in prefixes):
+        return []
+    inside = [p[len(head):] for p in prefixes if p.startswith(head)]
+    return inside or None
+
+
+def tracked_dirs(root: Path, prefixes: list[str], why: list[str] | None = None, *,
+                 checkout: str = "", timeout: float | None = None) -> frozenset[str] | None:
     """Every directory that holds a path git tracks under ``prefixes`` (for
     ``a/b/c.py``, ``a/b`` and ``a``), from one ``git ls-files -z`` run at a
-    root holding a ``.git`` of its own, its pathspecs read literally. A
-    directory's own ``.gitignore`` does not hold it (a placeholder
+    root holding a ``.git`` of its own, its pathspecs read literally; with
+    ``checkout`` (a nested checkout's repo-relative directory), from that
+    checkout's own index over the part of ``prefixes`` it holds, each name
+    read from ``root`` (the checkout's own directory among them, DEF-4085).
+    A directory's own ``.gitignore`` does not hold it (a placeholder
     declaration committed with ``git add -f`` keeps its directory generated),
     and a name git prints in bytes the filesystem spells otherwise is kept
-    undecoded, holding nothing the walk meets. Empty where the root has no
-    ``.git`` (nothing is tracked); None where git cannot answer (past
-    TRACKED_READ_TIMEOUT_S, not started, a non-zero exit), the cause appended
-    to ``why`` when one is given: the declared directories then prune as
-    before and the caller says so (docs/HOOKS.md names it). Twin of
-    ``espalier.zone_writes._tracked_dirs``, which answers a fault with the
-    empty set: a writer's run failing to read is the loud side."""
+    undecoded, holding nothing the walk meets. Empty where the checkout has
+    no ``.git`` (nothing is tracked); None where git cannot answer (past
+    ``timeout``, by default TRACKED_READ_TIMEOUT_S, not started, a non-zero
+    exit), the cause appended to ``why`` when one is given: the declared
+    directories then prune as before and the caller says so (docs/HOOKS.md
+    names it). Twin of ``espalier.zone_writes._tracked_dirs``, which answers
+    a fault with the empty set: a writer's run failing to read is the loud
+    side."""
     import subprocess
 
-    if _hook_utils._git_dir_of(root) is None:
+    where = root / checkout if checkout else root
+    specs = _pathspecs(checkout, prefixes)
+    if specs is None or _hook_utils._git_dir_of(where) is None:
         return frozenset()
     try:
         result = _hook_utils.spawn_checked(
-            ["git", "--literal-pathspecs", "ls-files", "-z", "--", *prefixes], root=root,
-            stdin=subprocess.DEVNULL, capture_output=True, timeout=TRACKED_READ_TIMEOUT_S, cwd=str(root),
+            ["git", "--literal-pathspecs", "ls-files", "-z", "--", *specs], root=root,
+            stdin=subprocess.DEVNULL, capture_output=True,
+            timeout=TRACKED_READ_TIMEOUT_S if timeout is None else timeout,
+            cwd=str(where), env=_nested_env(where if checkout else None),
         )
     except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- None makes the walk prune as before git was asked and say so once
         if why is not None:
@@ -272,9 +299,12 @@ def tracked_dirs(root: Path, prefixes: list[str], why: list[str] | None = None) 
         if why is not None:
             why.append(f"exited {result.returncode}")
         return None
+    head = checkout + "/" if checkout else ""
     dirs: set[str] = set()
     for raw in result.stdout.split(b"\0"):
-        rel = raw.decode("utf-8", "surrogateescape")
+        if not raw:
+            continue
+        rel = head + raw.decode("utf-8", "surrogateescape")
         if rel.rsplit("/", 1)[-1] == SELF_IGNORE_FILE:
             rel = rel.rsplit("/", 1)[0] if "/" in rel else ""  # its directory's ancestors only
         while "/" in rel:
@@ -283,6 +313,48 @@ def tracked_dirs(root: Path, prefixes: list[str], why: list[str] | None = None) 
                 break  # its ancestors are in already
             dirs.add(rel)
     return frozenset(dirs)
+
+
+def _fold(name: str) -> str:
+    """``name`` with its case and Unicode form folded: the spellings a
+    filesystem may answer to as one."""
+    import unicodedata
+
+    return unicodedata.normalize("NFC", name).casefold()
+
+
+def _is_tracked_dir(root: Path, base: str, tracked: frozenset[str]) -> bool:
+    """Whether ``tracked`` names the walked directory ``base``: by its
+    spelling, or by a name that folds to it and that the filesystem resolves
+    to the same directory. The index keeps the spelling a directory was added
+    under, which a case-only rename on a filesystem that folds case, or git's
+    composed name over a decomposed one on one that normalizes, leaves unlike
+    the walk's (DEF-4088); two directories the filesystem keeps apart stay
+    apart. Twin of ``espalier.zone_writes._is_tracked_dir``."""
+    if base in tracked:
+        return True
+    key = _fold(base)
+    for name in tracked:
+        if _fold(name) != key:
+            continue
+        try:
+            if os.path.samefile(root / name, root / base):
+                return True
+        except (OSError, ValueError):  # fail-open: ok deliberate -- a name that resolves to nothing here is not this directory, which prunes as its declaration asks
+            continue
+    return False
+
+
+def _tracking_checkout(root: Path, base: str, scope: NestScope) -> str:
+    """The checkout whose index says whether the declared directory ``base``
+    is git's: the nearest of it and its ancestors holding a ``.git`` of its
+    own, where a nested git may answer (``_nestable``: in an adopter's zone,
+    in none of the harness's, path 2's rule), else ``""``, the root."""
+    if _nestable(base + "/", scope):
+        for top in _ancestors(base + "/"):
+            if _hook_utils._git_dir_of(root / top) is not None:
+                return top
+    return ""
 
 
 #: The lines a fresh walk said this session, for the hook that ran the walk to
@@ -352,7 +424,8 @@ def content_digest(path: Path, st: os.stat_result | None = None) -> str | None:
 
 
 def snapshot(root: Path, prior: dict[str, Entry] | None = None,
-             prior_taken_ns: int | None = None) -> dict[str, Entry]:
+             prior_taken_ns: int | None = None, *, prior_watched: Iterable[str] | None = None,
+             read_s: list[float] | None = None) -> dict[str, Entry]:
     """``{rel: [size, mtime_ns, digest]}`` for every watched file under ``root``.
 
     A file whose size and modification time equal ``prior``'s keeps the prior
@@ -360,21 +433,54 @@ def snapshot(root: Path, prior: dict[str, Entry] | None = None,
     a file whose prior modification time fell within RACY_WINDOW_NS of
     ``prior_taken_ns`` is hashed again regardless. A file that vanishes
     between the listing and the stat is absent, as it is on disk. With no
-    ``prior`` (a fresh baseline) a declared directory holding a path git
-    tracks is walked, never pruned: git's index is read once, at the first
-    declaration the walk meets, and its time is not the walk's; a read git
-    cannot answer prunes as before and is said once a session
+    ``prior`` (a fresh baseline), and under a top ``prior_watched`` (the tops
+    the baseline was taken over) does not name (DEF-4087; a ``prior`` with no
+    ``prior_watched`` reads every top so, the loud side), a declared
+    directory holding a path git tracks is walked, never pruned: each
+    checkout's index is read once a walk, at the first declaration the walk
+    meets in it -- the root's, or in an adopter's zone a nested checkout's own
+    (DEF-4085) -- over those tops, the reads sharing TRACKED_READ_TIMEOUT_S,
+    their time not the walk's and added to ``read_s`` when one is given; a
+    name is matched to the directory it is (DEF-4088). A read git cannot
+    answer prunes as before and is said once a session
     (``zone_watch_failed_open_tracked_read``). Raises
     WatchSetTooLarge past WALK_FILE_BUDGET files or WALK_TIME_BUDGET_S."""
-    fresh = prior is None
+    prefixes = watched_prefixes(root)
+    if prior is None or prior_watched is None:
+        asking = list(prefixes)
+    else:
+        known = set(prior_watched)
+        asking = [p for p in prefixes if p not in known]
     prior = prior or {}
     racy_from = None if prior_taken_ns is None else prior_taken_ns - RACY_WINDOW_NS
     deadline = time.monotonic() + WALK_TIME_BUDGET_S
     pruned = pruned_dir_names(root)
-    prefixes = watched_prefixes(root)
-    tracked: frozenset[str] | None = None
-    asked = False
+    reads: dict[str, frozenset[str] | None] = {}
+    scope: NestScope | None = None
+    spent = 0.0
     out: dict[str, Entry] = {}
+
+    def tracked_by(base: str) -> frozenset[str] | None:
+        """The tracked set of the checkout ``base`` sits in, read once a walk."""
+        nonlocal scope, spent, deadline
+        if scope is None:
+            scope = _nest_scope(root)
+        checkout = _tracking_checkout(root, base, scope)
+        if checkout not in reads:
+            began = time.monotonic()
+            why: list[str] = []
+            left = TRACKED_READ_TIMEOUT_S - spent
+            if left > 0:
+                reads[checkout] = tracked_dirs(root, asking, why, checkout=checkout, timeout=left)
+            else:
+                why.append(f"timed out past {TRACKED_READ_TIMEOUT_S:g} s")  # the walk's reads used it up
+                reads[checkout] = None
+            took = time.monotonic() - began
+            spent += took
+            deadline += took
+            if reads[checkout] is None:
+                _say_tracked_read_failed(root, why[0] if why else "could not answer", base)
+        return reads[checkout]
 
     def take(rel: str, full: str) -> None:
         try:
@@ -400,21 +506,15 @@ def snapshot(root: Path, prior: dict[str, Entry] | None = None,
         for dirpath, dirnames, filenames in os.walk(top):
             base = Path(dirpath).relative_to(root).as_posix()
             if not at_top and is_self_ignoring(Path(dirpath)) and not _holds_under(prior, base):
-                if fresh and not asked:
-                    asked = True
-                    began = time.monotonic()
-                    why: list[str] = []
-                    tracked = tracked_dirs(root, prefixes, why)
-                    deadline += time.monotonic() - began
-                    if tracked is None:
-                        _say_tracked_read_failed(root, why[0] if why else "could not answer", base)
-                if tracked is None or base not in tracked:
+                tracked = tracked_by(base) if prefix in asking else None
+                if tracked is None or not _is_tracked_dir(root, base, tracked):
                     # Generated by its own declaration, below the top, with
-                    # nothing of it in the baseline (nor, at a fresh walk, in
-                    # git's index): nothing in it is meant to be git's, so
-                    # nothing in it is a slip. Over files the baseline holds
-                    # or git tracks, the declaration is the added file it is
-                    # (the module docstring), and the directory stays walked.
+                    # nothing of it in the baseline (nor, at a fresh walk or
+                    # a new top, in its checkout's index): nothing in it is
+                    # meant to be git's, so nothing in it is a slip. Over
+                    # files the baseline holds or git tracks, the declaration
+                    # is the added file it is (the module docstring), and the
+                    # directory stays walked.
                     dirnames[:] = []
                     continue
             at_top = False
@@ -425,6 +525,8 @@ def snapshot(root: Path, prior: dict[str, Entry] | None = None,
     for rel in watched_files():
         if rel not in out:
             take(rel, str(root / rel))
+    if read_s is not None:
+        read_s.append(spent)
     return out
 
 
@@ -570,7 +672,8 @@ NESTED_ASK_BUDGET_S = 2.0
 #: How long path 2's git spawns may take in one call, every checkout's
 #: together: each spawn's timeout is what is left of it, and a hash with
 #: nothing left is not started (its files are named and report), so path 2
-#: never costs the hook its own timeout (10 s, beside a walk of up to 3 s).
+#: never costs the hook its own timeout (10 s, beside a walk of up to 3 s);
+#: a walk's tracked read over a top new to the baseline comes out of it.
 GIT_ASK_BUDGET_S = 5.0
 #: The git variables that would point a nested ``cat-file`` at a repository
 #: other than the checkout it runs in.
@@ -1607,11 +1710,15 @@ def after_shell_call(root: Path, sid: object, duration_ms: object = None) -> dic
             # call's removals (one directory read per watched one under an
             # adopter prefix; nothing without one). And each checkout's stash,
             # so a stash made, dropped or popped with no file moving is the one
-            # the next call asks (a few file reads).
-            snap = snapshot(root, peek["files"], peek["taken_ns"])
-            unmoved = (snap == peek["files"] and head == peek["head"] and watched_prefixes(root) == peek["watched"]
-                       and nested_heads(root, snap) == peek["nested"]
-                       and stash_tops(root, peek["nested"]) == peek["stash"])
+            # the next call asks (a few file reads). A watched set that moved
+            # is never unmoved: the peek walks nothing, and the locked pass
+            # alone asks git over a new top (DEF-4087).
+            unmoved = watched_prefixes(root) == peek["watched"]
+            if unmoved:
+                snap = snapshot(root, peek["files"], peek["taken_ns"], prior_watched=peek["watched"])
+                unmoved = (snap == peek["files"] and head == peek["head"]
+                           and nested_heads(root, snap) == peek["nested"]
+                           and stash_tops(root, peek["nested"]) == peek["stash"])
         except WatchSetTooLarge:  # fail-open: ok deliberate -- too large to peek: the locked pass below turns the check off and says so
             unmoved = False
         if unmoved:
@@ -1643,8 +1750,9 @@ def after_shell_call(root: Path, sid: object, duration_ms: object = None) -> dic
         # checkout's paths alone: their entries and its head stay as they were,
         # judged once git is done there, and everything else is judged now.
         held = tuple(t + "/" for t in sorted(record["nested"]) if mid_operation(root / t))
+        read_s: list[float] = []
         try:
-            after = snapshot(root, before, record["taken_ns"])
+            after = snapshot(root, before, record["taken_ns"], prior_watched=record["watched"], read_s=read_s)
         except WatchSetTooLarge as exc:
             with contextlib.suppress(OSError):
                 write_baseline(path, new_baseline(root, {}, taken, disabled=str(exc)))
@@ -1675,11 +1783,12 @@ def after_shell_call(root: Path, sid: object, duration_ms: object = None) -> dic
         else:
             compare_after = after
         moved = diff(before, compare_after)
-        # Every git spawn below shares one budget (GIT_ASK_BUDGET_S). A stash
-        # this checkout made since the previous check is checked in this call
-        # even when nothing moved (a change written and stashed in one call
-        # leaves the tree as it was); a held checkout's stash waits with it.
-        deadline = time.monotonic() + GIT_ASK_BUDGET_S
+        # Every git spawn below shares one budget (GIT_ASK_BUDGET_S), less what
+        # the walk's tracked read over a new top took. A stash this checkout
+        # made since the previous check is checked in this call even when
+        # nothing moved (a change written and stashed in one call leaves the
+        # tree as it was); a held checkout's stash waits with it.
+        deadline = time.monotonic() + GIT_ASK_BUDGET_S - sum(read_s)
         made = {t: s for t, s in stashes_made_since(stashes, record["stash"], record["stash_at"],
                                                     record["taken_ns"]).items()
                 if t + "/" not in held}

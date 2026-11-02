@@ -1908,13 +1908,19 @@ new state as the next one to compare with.
   retires nothing the session's snapshot already holds, so it is reported as
   the added file it is; and one already there when the session starts
   retires nothing git tracks, since the session's first snapshot asks git's
-  index once and walks a declared directory holding a tracked file other
-  than its own `.gitignore`: where the checkout has no git of its own, such
-  a directory prunes as before, and so does one holding files that only a
-  nested checkout's own git tracks, or one under a protected path added to
-  `espalier.toml` during the session, until the next session's snapshot;
-  where git cannot answer (past 2 s, a git that cannot start, a refusal
-  such as `safe.directory`'s exit 128) it prunes as before too, and the
+  index and walks a declared directory holding a tracked file other than its
+  own `.gitignore`, matched to the directory whatever spelling the index
+  keeps (a case-only rename, or a composed name over the decomposed one on
+  disk): it asks each checkout once, the outer one's index and, under a
+  `protected_paths` entry, a nested checkout's own (a clone or a submodule
+  there, never one inside the harness's own protected directories), and the
+  first shell call after a protected path is added to `espalier.toml` asks
+  the same over the new path; where the checkout has no git of its own, such
+  a directory prunes as before, and so does one holding only a file git
+  starts tracking during the session, under a declared directory the
+  snapshot held nothing under, until the next session's snapshot; where git
+  cannot answer (past 2 s, one walk's reads together, a git that cannot
+  start, a refusal such as `safe.directory`'s exit 128) it prunes as before too, and the
   walk says so once for each cause until the next startup or clear (a
   resumed session is not told again), as a
   `zone_watch_failed_open_tracked_read` record `/status --log` counts, the

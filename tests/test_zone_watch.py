@@ -22,6 +22,7 @@ import subprocess
 import sys
 import time
 import types
+import unicodedata
 from pathlib import Path
 
 import pytest
@@ -352,8 +353,9 @@ class TestADeclarationOlderThanTheSession:
         untracked one beside them: one `git ls-files` for the fresh walk
         (SessionStart cuts at 13 s), none for a walk that meets no
         declaration, none for a walk over a baseline (every shell call's),
-        which still meets the untracked one. Mutations: one read per
-        directory; a read on every walk."""
+        which still meets the untracked one, handed the tops the baseline was
+        taken over as every shell call's walk is (DEF-4087). Mutations: one
+        read per directory; a read on every walk."""
         hooks = repo / "tools" / "cc" / "hooks"
         (hooks / "sub").mkdir()
         (hooks / "sub" / "a.py").write_bytes(b"a\n")
@@ -379,7 +381,7 @@ class TestADeclarationOlderThanTheSession:
         assert {_HOOK, "tools/cc/hooks/sub/a.py", "vault/gen/k.txt"} <= set(fresh), sorted(fresh)
         assert "tools/cc/gen/out.json" not in fresh
         assert len(calls) == 1 and "ls-files" in calls[0], calls  # one read for both tops
-        assert "tools/cc/gen/out.json" not in zw.snapshot(repo, fresh)
+        assert "tools/cc/gen/out.json" not in zw.snapshot(repo, fresh, prior_watched=zw.watched_prefixes(repo))
         assert len(calls) == 1, calls
 
     def test_a_placeholder_declaration_alone_keeps_the_directory_generated(self, repo: Path) -> None:
@@ -513,6 +515,267 @@ class TestADeclarationOlderThanTheSession:
         assert zw.tracked_dirs(repo, ["vault/"]) == {"vault", "vault/x", "vault/x/deep"}
         assert {"tools", "tools/cc", "tools/cc/hooks"} <= zw.tracked_dirs(repo, ["tools/cc/"])
         assert zw.tracked_dirs(repo, [":!tools/"]) == frozenset()
+
+
+def _declared(directory: Path) -> None:
+    """A directory that ignores itself (its own bare `*`), holding keep.txt."""
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / ".gitignore").write_bytes(b"*\n")
+    (directory / "keep.txt").write_bytes(b"k\n")
+
+
+def _nested(repo: Path, where: str, *force: str) -> Path:
+    """A checkout of its own at ``where``, with ``force`` committed by `git add -f`."""
+    top = repo / where
+    top.mkdir(parents=True, exist_ok=True)
+    _gx(top, "init", "-q")
+    _gx(top, "add", "-f", *force)
+    _gx(top, "commit", "-q", "-m", "nested")
+    return top
+
+
+def _tracked_reads(monkeypatch) -> list[tuple[Path, float]]:
+    """Every tracked read from here on, as (where git ran, its timeout), each run for real."""
+    calls: list[tuple[Path, float]] = []
+    real = zw._hook_utils.spawn_checked
+
+    def counting(argv, **kw):
+        if "ls-files" in [str(a) for a in argv]:
+            calls.append((Path(kw["cwd"]).resolve(), kw["timeout"]))
+        return real(argv, **kw)
+
+    monkeypatch.setattr(zw._hook_utils, "spawn_checked", counting)
+    return calls
+
+
+#: Two spellings of one name: a case-only pair, and the composed and decomposed forms of one word.
+_CASE_PAIR = ("Gen", "gen")
+_FORM_PAIR = (unicodedata.normalize("NFC", "café"), unicodedata.normalize("NFD", "café"))
+
+
+def _filesystem_joins(tmp_path_factory, first: str, second: str) -> bool:
+    """Whether the filesystem the tests write to answers to ``second`` for a directory made as ``first``."""
+    made = tmp_path_factory.mktemp("joins") / first
+    made.mkdir()
+    return (made.parent / second).is_dir()
+
+
+class TestATrackedDeclarationWhereverItsGitIs:
+    """DEF-4085, DEF-4087, DEF-4088: the tracked read DEF-4073 gave the fresh
+    walk asked the root's own index, at a fresh walk only, and matched its
+    names byte for byte, so a declared directory git tracks still pruned
+    where a nested checkout's git tracks it, under a protected path declared
+    mid-session, and where the filesystem spells it otherwise than the index.
+    The walk now asks each checkout it enters once (in the adopter's zones,
+    path 2's scope), at a fresh walk and at a top the baseline was taken
+    without, and joins a name to the directory it is."""
+
+    @staticmethod
+    def _zone(repo: Path, *protected: str) -> None:
+        tops = ", ".join(f'"{p}"' for p in protected or ("zone/",))
+        (repo / "espalier.toml").write_bytes(f"protected_paths = [{tops}]\n".encode())
+
+    def test_a_directory_only_a_nested_checkout_tracks_is_walked(self, repo: Path) -> None:
+        """DEF-4085's probe shape: ``zone/gen`` tracked by the root (DEF-4073's
+        case) and ``zone/sub/gen`` by a checkout of its own at ``zone/sub``;
+        the fresh walk keeps both, and an edit under the nested one reports.
+        Mutation: ask the root's index alone."""
+        self._zone(repo)
+        _declared(repo / "zone" / "gen")
+        _declared(repo / "zone" / "sub" / "gen")
+        _gx(repo, "add", "-f", "zone/gen")
+        _gx(repo, "commit", "-q", "-m", "zone")
+        _nested(repo, "zone/sub", "gen")
+        snap = zw.snapshot(repo)
+        assert {"zone/gen/keep.txt", "zone/sub/gen/keep.txt"} <= set(snap), sorted(snap)
+        assert zw.take_baseline(repo, "s-1")
+        _bump(repo / "zone" / "sub" / "gen" / "keep.txt", "edited under a nested declaration\n")
+        assert "changed zone/sub/gen/keep.txt" in _context(_post(repo, "Bash", _FORMATTER))
+
+    def test_a_checkout_above_the_top_answers_for_it(self, repo: Path) -> None:
+        """A protected top inside a checkout of its own (``zone/sub/inner/``,
+        the checkout at ``zone/sub``): the read names the top as the checkout
+        spells it. Mutation: hand the nested read the outer spelling."""
+        self._zone(repo, "zone/sub/inner/")
+        _declared(repo / "zone" / "sub" / "inner" / "gen")
+        _nested(repo, "zone/sub", "inner/gen")
+        snap = zw.snapshot(repo)
+        assert "zone/sub/inner/gen/keep.txt" in snap, sorted(snap)
+
+    def test_each_checkout_is_asked_once_a_walk_and_a_harness_zone_never(self, repo: Path, monkeypatch) -> None:
+        """Two tracked declared directories in a nested checkout, an untracked
+        one beside them and one in the root: one read in the root and one in
+        the checkout. A checkout planted under tools/cc/ is never asked (path
+        2's rule: a nested git answers for nothing in the harness's own zones),
+        so its declaration prunes as the root's index reads it. Mutations: a
+        read per declaration; ask every checkout the walk enters."""
+        self._zone(repo)
+        for rel in ("zone/sub/a", "zone/sub/b", "zone/sub/tmp", "zone/tmp", "tools/cc/vend/gen"):
+            _declared(repo / rel)
+        _nested(repo, "zone/sub", "a", "b")
+        _nested(repo, "tools/cc/vend", "gen")
+        calls = _tracked_reads(monkeypatch)
+        snap = zw.snapshot(repo)
+        assert {"zone/sub/a/keep.txt", "zone/sub/b/keep.txt"} <= set(snap), sorted(snap)
+        assert not [r for r in snap if "/tmp/" in r or r.startswith("tools/cc/vend/gen/")], sorted(snap)
+        assert sorted(where for where, _t in calls) == sorted([repo.resolve(), (repo / "zone" / "sub").resolve()]), calls
+
+    def test_a_nested_read_git_refuses_prunes_and_is_said(self, repo: Path, monkeypatch) -> None:
+        """The nested checkout's git refuses (exit 128, safe.directory's
+        dubious ownership): its declarations prune as before, the root's read
+        stands, and the walk says so once. Mutation: a nested failure unsaid."""
+        self._zone(repo)
+        _declared(repo / "zone" / "gen")
+        _declared(repo / "zone" / "sub" / "gen")
+        _gx(repo, "add", "-f", "zone/gen")
+        _gx(repo, "commit", "-q", "-m", "zone")
+        _nested(repo, "zone/sub", "gen")
+        real = zw._hook_utils.spawn_checked
+
+        def refuses_nested(argv, **kw):
+            if Path(kw["cwd"]).resolve() != repo.resolve():
+                return subprocess.CompletedProcess(argv, 128, b"", b"fatal: detected dubious ownership\n")
+            return real(argv, **kw)
+
+        monkeypatch.setattr(zw._hook_utils, "spawn_checked", refuses_nested)
+        snap = zw.snapshot(repo)
+        assert "zone/gen/keep.txt" in snap and "zone/sub/gen/keep.txt" not in snap, sorted(snap)
+        assert [r["details"]["cause"] for r in _said_tracked_read()] == ["exited 128"]
+
+    def test_the_reads_of_one_walk_share_one_budget(self, repo: Path, monkeypatch) -> None:
+        """The root's read and a nested checkout's: each is given what is left
+        of TRACKED_READ_TIMEOUT_S, so a fresh walk's reads together cost what
+        one did (SessionStart cuts at 13 s), and with nothing left a read is
+        not started and the walk says the timeout. Mutation: each read given
+        the whole bound."""
+        self._zone(repo)
+        _declared(repo / "zone" / "gen")
+        _declared(repo / "zone" / "sub" / "gen")
+        _nested(repo, "zone/sub", "gen")
+        timeouts: list[float] = []
+        real = zw._hook_utils.spawn_checked
+
+        def first_slow(argv, **kw):
+            timeouts.append(kw["timeout"])
+            if len(timeouts) == 1:
+                time.sleep(1.0)
+            return real(argv, **kw)
+
+        monkeypatch.setattr(zw._hook_utils, "spawn_checked", first_slow)
+        monkeypatch.setattr(zw, "TRACKED_READ_TIMEOUT_S", 5.0)
+        assert "zone/sub/gen/keep.txt" in zw.snapshot(repo)
+        assert len(timeouts) == 2 and timeouts[0] == 5.0 and timeouts[1] <= 4.0, timeouts
+        timeouts.clear()
+        monkeypatch.setattr(zw, "TRACKED_READ_TIMEOUT_S", 0.5)
+        assert "zone/sub/gen/keep.txt" not in zw.snapshot(repo)
+        assert timeouts == [0.5], timeouts
+        assert [r["details"]["cause"] for r in _said_tracked_read()] == ["timed out past 0.5 s"]
+
+    def test_a_protected_path_declared_mid_session_is_asked_at_the_next_call(self, repo: Path) -> None:
+        """DEF-4087: the baseline taken before ``zone/`` was declared; the
+        shell call after the declaration asks git over the new top, the
+        tracked declared directory joins the baseline, and an edit to it then
+        reports. Mutation: ask at a fresh walk only."""
+        _declared(repo / "zone" / "gen")
+        _gx(repo, "add", "-f", "zone/gen")
+        _gx(repo, "commit", "-q", "-m", "zone")
+        assert zw.take_baseline(repo, "s-1")
+        self._zone(repo)
+        _post(repo, "Bash", _NO_OP)
+        files = zw.read_baseline(zw.baseline_path(repo, "s-1"))["files"]
+        assert "zone/gen/keep.txt" in files, sorted(files)
+        _bump(repo / "zone" / "gen" / "keep.txt", "edited under a path declared this session\n")
+        assert "changed zone/gen/keep.txt" in _context(_post(repo, "Bash", _FORMATTER))
+
+    def test_a_shell_call_asks_once_for_a_new_top_and_never_over_known_ones(self, repo: Path, monkeypatch) -> None:
+        """Every shell call walks over its baseline (the peek, then the locked
+        pass): none asks git while the watched tops are the baseline's, even
+        under a top it holds nothing under, and the call that meets a top the
+        baseline lacks asks once, in the locked pass, never again. Mutations:
+        ask wherever the baseline holds nothing under a top; ask in the peek
+        too."""
+        self._zone(repo)
+        _declared(repo / "zone" / "tmp")  # untracked: the baseline holds nothing under zone/
+        assert zw.take_baseline(repo, "s-1")
+        calls = _tracked_reads(monkeypatch)
+        zw.after_shell_call(repo, "s-1")
+        zw.after_shell_call(repo, "s-1")
+        assert calls == [], calls
+        self._zone(repo, "zone/", "more/")
+        _declared(repo / "more" / "tmp")
+        zw.after_shell_call(repo, "s-1")
+        zw.after_shell_call(repo, "s-1")
+        assert [where for where, _t in calls] == [repo.resolve()], calls
+
+    def test_a_new_tops_read_comes_out_of_path_twos_budget(self, repo: Path, monkeypatch) -> None:
+        """The call that meets a new top and a moved file: path 2's git asks
+        get what is left of GIT_ASK_BUDGET_S after the read, so the call stays
+        inside the hook's 10 s. Mutation: path 2's budget set beside the read."""
+        _declared(repo / "zone" / "gen")
+        _gx(repo, "add", "-f", "zone/gen")
+        _gx(repo, "commit", "-q", "-m", "zone")
+        assert zw.take_baseline(repo, "s-1")
+        self._zone(repo)
+        _bump(repo / _HOOK, "print('moved in the same call')\n")
+        real_read, real_account = zw.tracked_dirs, zw.account
+        left: list[float] = []
+
+        def slow(*args, **kwargs):
+            time.sleep(1.0)
+            return real_read(*args, **kwargs)
+
+        def account(*args, **kwargs):
+            left.append(kwargs["deadline"] - time.monotonic())
+            return real_account(*args, **kwargs)
+
+        monkeypatch.setattr(zw, "tracked_dirs", slow)
+        monkeypatch.setattr(zw, "account", account)
+        zw.after_shell_call(repo, "s-1")
+        assert left and left[0] <= zw.GIT_ASK_BUDGET_S - 1.0, left
+
+    @pytest.mark.parametrize("pair", [_CASE_PAIR, _FORM_PAIR], ids=["case", "unicode-form"])
+    def test_a_name_the_filesystem_joins_to_the_index_spelling_stays_watched(
+            self, repo: Path, tmp_path_factory, pair: tuple[str, str]) -> None:
+        """DEF-4088: the index keeps the spelling a directory was added under,
+        the disk holds the other (a case-only rename; a decomposed name where
+        git precomposes), git status is clean, and the walk joins the two by
+        the directory they both name. Skipped where the filesystem keeps the
+        spellings apart, or renames nothing. Mutation: compare by spelling
+        alone."""
+        indexed, on_disk = pair
+        if not _filesystem_joins(tmp_path_factory, indexed, on_disk):
+            pytest.skip("the filesystem keeps the two spellings apart")
+        self._zone(repo)
+        _declared(repo / "zone" / indexed)
+        _gx(repo, "add", "-f", "zone")
+        _gx(repo, "commit", "-q", "-m", "zone")
+        (repo / "zone" / indexed).rename(repo / "zone" / "renaming")
+        (repo / "zone" / "renaming").rename(repo / "zone" / on_disk)
+        if os.listdir(repo / "zone") != [on_disk]:
+            pytest.skip("the filesystem kept its own spelling through the rename")
+        listed = _gx(repo, "-c", "core.quotepath=false", "ls-files", "zone").stdout
+        assert f"zone/{indexed}/keep.txt" in listed, listed
+        snap = zw.snapshot(repo)
+        assert f"zone/{on_disk}/keep.txt" in snap, sorted(snap)
+
+    @pytest.mark.parametrize("pair", [_CASE_PAIR, _FORM_PAIR], ids=["case", "unicode-form"])
+    def test_two_directories_the_filesystem_keeps_apart_stay_apart(
+            self, repo: Path, tmp_path_factory, pair: tuple[str, str]) -> None:
+        """Where the filesystem holds both spellings as two directories, the
+        tracked one is walked and the untracked declared one beside it prunes:
+        a fold alone would join what the disk keeps apart. Skipped where the
+        filesystem joins them. Mutation: fold the spellings without asking the
+        filesystem."""
+        tracked, other = pair
+        if _filesystem_joins(tmp_path_factory, tracked, other):
+            pytest.skip("the filesystem joins the two spellings")
+        self._zone(repo)
+        _declared(repo / "zone" / tracked)
+        _gx(repo, "add", "-f", "zone")
+        _gx(repo, "commit", "-q", "-m", "zone")
+        _declared(repo / "zone" / other)
+        snap = zw.snapshot(repo)
+        assert f"zone/{tracked}/keep.txt" in snap and f"zone/{other}/keep.txt" not in snap, sorted(snap)
 
 
 class TestTheSnapshotAndDiff:

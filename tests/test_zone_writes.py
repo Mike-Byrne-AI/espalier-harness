@@ -286,6 +286,41 @@ class TestTheTwinsAgree:
         assert len([c for c in calls if "ls-files" in c]) == 1, calls
         assert _HOOK in _record(tree, "espalier upgrade")["files"]
 
+    def test_a_nested_checkouts_declaration_and_a_joined_spelling_read_alike(self, tree: Path) -> None:
+        """DEF-4085 and DEF-4088 on the engine's side: the before-stats walk a
+        declared directory that a checkout of its own in an adopter zone tracks
+        (at the top and above it), prune one a checkout under tools/cc/ tracks
+        (a nested git answers for nothing in the harness's zones), and join a
+        case-only rename where the filesystem folds case, as the hook's fresh
+        walk does, so a writer's change there is recorded. Mutations: the
+        engine asks the root's index alone; asks every checkout; compares by
+        spelling alone."""
+        (tree / "espalier.toml").write_bytes(b'protected_paths = ["zone/", "deep/sub/inner/"]\n')
+        for rel in ("zone/sub/gen", "deep/sub/inner/gen", "tools/cc/vend/gen", "zone/Gen"):
+            (tree / rel).mkdir(parents=True)
+            (tree / rel / ".gitignore").write_bytes(b"*\n")
+            (tree / rel / "keep.txt").write_bytes(b"k\n")
+        _commit(tree)
+        _git(tree, "add", "-f", "zone/Gen")
+        _git(tree, "commit", "-q", "-m", "gen")
+        for top, force in (("zone/sub", "gen"), ("deep/sub", "inner/gen"), ("tools/cc/vend", "gen")):
+            for args in (["init", "-q"], ["add", "-f", force], ["commit", "-q", "-m", "nested"]):
+                _git(tree / top, *args)
+        (tree / "zone" / "Gen").rename(tree / "zone" / "renaming")
+        (tree / "zone" / "renaming").rename(tree / "zone" / "gen")
+        folds = "Gen" in _git(tree, "ls-files", "zone").decode() and (tree / "zone" / "GEN").is_dir()
+        engine, hook = ze._stats(tree), zw.snapshot(tree)
+        for side in (engine, hook):
+            assert {"zone/sub/gen/keep.txt", "deep/sub/inner/gen/keep.txt"} <= set(side), sorted(side)
+            assert not [r for r in side if r.startswith("tools/cc/vend/")], sorted(side)
+            assert ("zone/gen/keep.txt" in side) is folds, sorted(side)
+        zones = ("zone/", "deep/", "tools/cc/vend/")
+        assert {r for r in engine if r.startswith(zones)} == {r for r in hook if r.startswith(zones)}
+        assert zw.take_baseline(tree, "s-1")
+        with ze.recorded(tree, "espalier upgrade"):
+            _bump(tree / "zone" / "sub" / "gen" / "keep.txt", b"rewritten by a writer\n")
+        assert "zone/sub/gen/keep.txt" in _record(tree, "espalier upgrade")["files"]
+
     def test_a_large_file_has_the_same_identity_on_both_sides(self, tmp_path: Path) -> None:
         big = tmp_path / "weights.bin"
         with big.open("wb") as fh:
