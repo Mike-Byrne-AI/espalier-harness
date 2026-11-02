@@ -1303,6 +1303,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             "test_reinject_pins",
             "test_session_start_freshness_banner",
             "test_speedbump_discard_snapshot",
+            # CP-KILL (DEF-4078): real children in a temp clone with a second
+            # worktree, and git for the box lock record, behind check_fired.
+            "test_speedbump_kill",
             "test_speedbump_metacognitive",
             "test_speedbump_v1_1",
             "test_statusline",
@@ -1797,6 +1800,8 @@ _SLOW_FILES: set[str] = {
     # Spawns real `git` against short-lived repos under tmp_path to prove the
     # bare-`checkout <path>` arm and the pre-discard snapshot round-trip.
     "test_speedbump_discard_snapshot",
+    # A temp clone and a worktree per row, children read through ps and lsof.
+    "test_speedbump_kill",
     "test_speedbump_metacognitive",
     "test_speedbump_v1_1",
     "test_statusline",
