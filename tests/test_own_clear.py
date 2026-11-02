@@ -421,7 +421,7 @@ class TestTheMarkerIsArmedWhereTheSessionsModReadsIt:
         _session_registry(tmp_path, monkeypatch, "s-here", repo)
         monkeypatch.chdir(wt)
         line = ship.arm_own_clear_here(wt)
-        assert line.startswith("own-clear not armed") and "1 commit no remote has" in line
+        assert line.startswith("own-clear not armed") and "1 commit origin does not have" in line
         assert not (repo / ".espalier-state" / "own_clear.json").exists()
         assert not (wt / ".espalier-state" / "own_clear.json").exists()
 

@@ -1621,9 +1621,17 @@ def _gh_open_prs(root: Path, fields: str) -> list[dict] | str:
     apart), or the fault as a word: ``Unresolved`` (no gh), ``TimeoutExpired``,
     ``rc=<n>`` (gh ran and refused: not signed in, no GitHub remote),
     ``NotJSON``. Through the gate's chokepoint, under its own cap."""
+    rows = _gh_rows(root, ["pr", "list", "--state", "open", "--limit", "50", "--json", fields])
+    return rows if isinstance(rows, str) else [row for row in rows if isinstance(row.get("number"), int)]
+
+
+def _gh_rows(root: Path, args: list[str]) -> list[dict] | str:
+    """The rows ``gh <args> --json ...`` lists, each a dict, or the fault as
+    a word, as :func:`_gh_open_prs` names them. Through the gate's
+    chokepoint, under its own cap: the gate's every gh read."""
     try:
         result = _hook_utils.spawn_checked(
-            ["gh", "pr", "list", "--state", "open", "--limit", "50", "--json", fields],
+            ["gh", *args],
             root=root, capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=HANDOFF_GATE_GH_CAP_S, cwd=str(root),
         )
@@ -1639,7 +1647,7 @@ def _gh_open_prs(root: Path, fields: str) -> list[dict] | str:
         return "NotJSON"
     if not isinstance(rows, list):
         return "NotJSON"
-    return [row for row in rows if isinstance(row, dict) and isinstance(row.get("number"), int)]
+    return [row for row in rows if isinstance(row, dict)]
 
 
 @dataclass(frozen=True)
@@ -1648,13 +1656,17 @@ class _SeatPrs:
     name, the listing or the attribution could not be made; ``read`` (gh was
     asked: False for an unnamed box or a tree without the mail channel, where
     nothing is read); ``others`` (another pull request is open at all);
-    ``seat``; and ``mine`` (this seat's, as the driver names them: ``#n (lane)``)."""
+    ``seat``; ``mine`` (this seat's, as the driver names them: ``#n (lane)``);
+    and ``clearing``, the block a hold's re-check already read for a lane a
+    red base lands first (:func:`_clearing_clause`), handed on so the
+    decision point asks gh no second time."""
 
     fault: str = ""
     read: bool = False
     others: bool = False
     seat: str = ""
     mine: tuple[str, ...] = ()
+    clearing: tuple[str, bool] | None = None
 
 
 def _seat_other_open_prs(root: Path, branch: str) -> _SeatPrs:
@@ -1733,10 +1745,88 @@ def _hold_recheck(root: Path, hold: dict) -> tuple[bool, _SeatPrs | None]:
                     since=since, fault=found.fault)
         return True, None
     if found.mine:
+        clearing = _clearing_clause(root, branch, found)
+        if clearing is not None:
+            # A ruling usually arrives after the hold (the seat asks because it
+            # is held): the hold is lifted and the lane judged at this same
+            # Stop, the clause handed on (DEF-4076).
+            _hold_clear(root)
+            return False, _SeatPrs(read=found.read, others=found.others, seat=found.seat, mine=found.mine,
+                                   clearing=clearing)
         _hold_write(root, head, branch, found.seat, list(found.mine), ahead, since=since)
         return True, None
     _hold_clear(root)
     return False, found
+
+
+def _clearing_clause(root: Path, branch: str, found: _SeatPrs) -> tuple[str, bool] | None:
+    """The block's sentence for a lane this seat's other open pull request
+    would hold where a red base lands it first (Core Rule 15), else None, the
+    hold as before: a revert/ lane by its name, or a lane the dispatcher's
+    fix-forward ruling names on the base's newest red post-merge run. The
+    driver's own predicate and readers (``ship.is_revert_lane``;
+    ``ship.lane_fix_forward_rulings``, the mail channel's local refs with no
+    fetch, so a lane no ruling names costs no gh call;
+    ``ship.newest_red_verdict``), then one gh read of the base's post-merge
+    runs under the gate's cap (DEF-4076, as the dispatcher ruled it). A gh
+    read that cannot be made once a ruling names the lane blocks, naming the
+    ruling and the read to make, never a silent hold; a channel that cannot
+    be read holds as before and says so once
+    (``stop_failed_open_handoff_rulings``): a ruling reaches the gate only
+    after the seat's next fetch in any case."""
+    ship = _vetted_driver(root)
+    is_revert = getattr(ship, "is_revert_lane", None) if ship is not None else None
+    if is_revert is None:
+        return None
+    held_by = ", ".join(found.mine)
+    if is_revert(branch):
+        return (f"This is a revert/ lane, which a red base lands first (Core Rule 15), so this seat's other "
+                f"open pull request ({held_by}) does not hold it.", False)
+    rulings_of = getattr(ship, "lane_fix_forward_rulings", None)
+    verdict_of = getattr(ship, "newest_red_verdict", None)
+    if rulings_of is None or verdict_of is None:
+        return None
+    sink = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(sink):
+            ruled = rulings_of(root, branch, timeout=HANDOFF_GATE_DRIVER_CAP_S)
+    except Exception as exc:  # noqa: BLE001 -- the channel's faults (Unresolvable, TimedOut, OSError) hold as before, said once below
+        _hook_utils.say_once(
+            root, f"handoff-gate-rulings-{type(exc).__name__}", "stop_gate", "stop_failed_open_handoff_rulings",
+            f"the handoff gate could not read the dispatcher's fix-forward rulings for {branch} "
+            f"({type(exc).__name__}), so it holds the lane as before",
+            fault=type(exc).__name__,
+        )
+        return None
+    if not ruled:
+        return None
+    acks = ", ".join(sorted(set(ruled.values())))
+    deadline = time.monotonic() + HANDOFF_GATE_DRIVER_CAP_S
+    try:
+        base_ref = _hook_utils.origin_default_ref(lambda *args: _git_answer(root, deadline, *args)) or ""
+    except _GitFault:  # fail-open: ok deliberate -- no base name means no gh read can be made: the block below names it (NoDefaultBranch), never a silent hold
+        base_ref = ""
+    base = base_ref.removeprefix("refs/remotes/origin/") if base_ref.startswith("refs/remotes/origin/") else ""
+    workflow = str(getattr(ship, "POST_MERGE_WORKFLOW", "post-merge.yml"))
+    rows = _gh_rows(root, ["run", "list", "--workflow", workflow, "--branch", base, "--event", "push", "--limit",
+                           str(getattr(ship, "POST_MERGE_RUN_WINDOW", 20)), "--json",
+                           "databaseId,status,conclusion"]) if base else "NoDefaultBranch"
+    if isinstance(rows, str):
+        return (f"This seat's other open pull request ({held_by}) would hold this lane, but the dispatcher's "
+                f"fix-forward ruling ({acks}) names it, and whether the base's newest post-merge verdict is the "
+                f"run that ruling names could not be read ({rows}): read it in this turn (gh run list --workflow "
+                f"{workflow} --branch {base or '<base>'} --event push); where that verdict is red on the run the "
+                "ruling names, run /handoff with its push given --base-red-ruled <that ack id>; otherwise the "
+                "lane is held, said in one line.", False)
+    red = verdict_of(rows)
+    run_id = str(red.get("databaseId") or "") if isinstance(red, dict) else ""
+    ack = ruled.get(run_id) if run_id else None
+    if not ack:
+        return None
+    return (f"The dispatcher's ruling {ack} names this lane the fix forward for {base}'s red post-merge run "
+            f"{run_id}, which a red base lands first (Core Rule 15), so this seat's other open pull request "
+            f"({held_by}) does not hold it; the handoff's push needs --base-red-ruled {ack} (python "
+            f"tools/cc/ship.py handoff --base-red-ruled {ack}).", False)
 
 
 def _say_held(root: Path, head: str, branch: str, ahead: int, found: _SeatPrs) -> None:
@@ -1798,6 +1888,9 @@ def _hold_or_clause(
     if not found.others:
         return "No other pull request is open.", False
     if found.mine:
+        clearing = found.clearing or _clearing_clause(root, branch, found)
+        if clearing is not None:
+            return clearing
         _say_held(root, head, branch, ahead, found)
         _hold_write(root, head, branch, found.seat, list(found.mine), ahead)
         return None

@@ -3804,6 +3804,11 @@ class TestOneOpenPullRequestPerSeat:
         answers[self._UPSTREAM] = upstream
         own = f"refs/remotes/origin/{branch}"
         answers[self._OWN_REF + (own,)] = (0, own + "\n" if on_origin else "", "")
+        # A live lane: the default branch does not reach its ref's tip (exit 1),
+        # which a merged lane's would (DEF-2041; TestTheOwnUpstreamRuleHasOneReading
+        # drives both over real git).
+        answers[("git", "symbolic-ref", "-q", "refs/remotes/origin/HEAD")] = (0, "refs/remotes/origin/main\n", "")
+        answers[("git", "merge-base", "--is-ancestor")] = (1, "", "")
         return answers
 
     def test_open_holds_a_lane_never_pushed_while_this_seats_other_one_is_open(

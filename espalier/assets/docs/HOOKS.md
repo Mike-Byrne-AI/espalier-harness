@@ -2246,7 +2246,14 @@ the seat, the rows, the commit count, the first hold's stamp and the read's;
 while it names HEAD the gate asks gh again no more than every five minutes, and
 once none is open the hold clears and the block returns, which makes the gate
 the reminder that the first lane merged (a re-check that cannot be made keeps
-the hold one more interval and says so once, `stop_failed_open_handoff_prs`). A
+the hold one more interval and says so once, `stop_failed_open_handoff_prs`).
+A lane a red base lands first is never held: a `revert/` lane by its name, or a
+lane the dispatcher's fix-forward ruling names (read from the mail channel's
+local refs, no fetch) on the base's newest red post-merge run, which only then
+costs one more gh read under the same cap; the block names the ruling's
+`--base-red-ruled` id. The re-check reads the same exemption, and a channel
+that cannot be read holds as before and says so once
+(`stop_failed_open_handoff_rulings`). A
 Stop that passes has no channel to Claude, so the prompt router
 (`task_router.py`) names the hold on every prompt while it stands, with the
 branch, the count, the pull request, the age and when the record was last read;

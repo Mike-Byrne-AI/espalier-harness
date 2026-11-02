@@ -935,7 +935,9 @@ def _lane_repo(tmp_path: Path, *, ahead: int = 1, handoff_push: str | None = "tr
     """A checkout with a bare origin beside it: ``main`` pushed with an
     upstream and ``origin/HEAD`` set, then ``branch`` holding ``ahead``
     commits origin does not. ``push_lane`` pushes the lane with an upstream
-    before those commits, so the lane's own upstream is what the gate reads.
+    before those commits, holding one commit of its own (a branch pushed with
+    none is at main's tip, which reads as a merged lane's ref, never the
+    lane's own, DEF-2041), so the lane's own upstream is what the gate reads.
     ``plan_status`` None writes no plan."""
     from tests._git_oracle import _git_env
     from tests._quiet_git import NO_BACKGROUND_GIT
@@ -960,6 +962,7 @@ def _lane_repo(tmp_path: Path, *, ahead: int = 1, handoff_push: str | None = "tr
     if branch != "main":
         _git(root, "checkout", "-q", "-b", branch)
     if push_lane:
+        _commit(root, "pushed")
         _git(root, "push", "-q", "-u", "origin", branch)
     for i in range(ahead):
         _commit(root, f"c{i}")
@@ -1839,6 +1842,114 @@ class TestTheHandoffGateHoldsForAnOpenPullRequest:
         assert flag.read_text(encoding="utf-8").strip() == _head(root), "and the seed proceeds"
 
 
+class TestARedBasesClearingIsNotHeld:
+    """DEF-4076: the one-per-seat hold read ``found.mine`` alone, so the lane a
+    red ``main`` waits for -- a revert/ lane, or the fix forward the
+    dispatcher ruled -- was held behind the seat's other open pull request
+    with no block, while the ship driver opens it beside. The gate now asks
+    the driver's own predicate and readers (``is_revert_lane``,
+    ``lane_fix_forward_rulings``, ``newest_red_verdict``) and makes one gh
+    read of the base's post-merge runs only where a ruling names the lane;
+    the hold's re-check reads the same exemption. One ``found``, three lanes."""
+
+    _MINE = ("#41 (lane/first)",)
+
+    @staticmethod
+    def _gate(tmp_path, monkeypatch, *, rulings=None, runs=None, raises=None):
+        """The gate over a real lane repository, its driver the real one with
+        the rulings reader stood in (``rulings``: run id to ack id, or
+        ``raises``), and gh answering ``runs`` (rows, a fault word, or
+        ``"timeout"``) for ``run list``; returns the module, the root and
+        the gh argvs asked."""
+        import importlib.util
+
+        root, mod = TestTheHandoffGateHoldsForAnOpenPullRequest._arm(tmp_path, monkeypatch, ahead=1)
+        spec = importlib.util.spec_from_file_location("ship", str(HOOKS_DIR.parent / "ship.py"))
+        ship = importlib.util.module_from_spec(spec)
+        monkeypatch.setitem(sys.modules, "ship", ship)
+        spec.loader.exec_module(ship)
+
+        def rulings_of(root_, branch, **kw):
+            if raises is not None:
+                raise raises
+            return dict((rulings or {}).get(branch, {}))
+
+        ship.lane_fix_forward_rulings = rulings_of
+        asked: list = []
+        real = mod._hook_utils.spawn_checked
+
+        def fake(argv, **kw):
+            if not argv or argv[0] != "gh":
+                return real(argv, **kw)
+            asked.append(tuple(argv))
+            if runs == "timeout":
+                raise subprocess.TimeoutExpired(list(argv), kw.get("timeout", 0))
+            if isinstance(runs, str):
+                return mod._hook_utils.SpawnFailure(tuple(argv), runs, None)
+            return subprocess.CompletedProcess(list(argv), 0, stdout=json.dumps(runs or []), stderr="")
+
+        monkeypatch.setattr(mod._hook_utils, "spawn_checked", fake)
+        held: list = []
+        monkeypatch.setattr(mod, "_hold_write", lambda *a, **k: held.append(a))
+        monkeypatch.setattr(mod, "_say_held", lambda *a, **k: None)
+        return mod, root, asked, held
+
+    _RED_77 = [{"databaseId": 78, "status": "in_progress", "conclusion": ""},
+               {"databaseId": 77, "status": "completed", "conclusion": "failure"}]
+
+    def _found(self, mod):
+        return mod._SeatPrs(read=True, others=True, seat="win", mine=self._MINE)
+
+    @pytest.mark.parametrize(("branch", "held_expected", "words"), [
+        ("revert/x", False, "revert/ lane"),
+        ("lane/ruled", False, "--base-red-ruled 20261102T120000Z-air-abcdef"),
+        ("lane/x", True, ""),
+    ], ids=["a-revert-lane", "a-lane-the-ruling-names", "any-other-lane"])
+    def test_one_found_three_lanes(self, tmp_path, monkeypatch, branch, held_expected, words):
+        mod, root, asked, held = self._gate(
+            tmp_path, monkeypatch, rulings={"lane/ruled": {"77": "20261102T120000Z-air-abcdef"}}, runs=self._RED_77)
+        verdict = mod._hold_or_clause(root, _head(root), branch, 1, found=self._found(mod))
+        assert (verdict is None) is held_expected and bool(held) is held_expected
+        if not held_expected:
+            assert words in verdict[0] and verdict[1] is False and "#41 (lane/first)" in verdict[0]
+        # gh is asked only for the lane a ruling names, and once.
+        assert len(asked) == (1 if branch == "lane/ruled" else 0)
+
+    def test_a_ruling_on_another_run_holds(self, tmp_path, monkeypatch):
+        mod, root, asked, held = self._gate(
+            tmp_path, monkeypatch, rulings={"lane/ruled": {"76": "20261102T120000Z-air-abcdef"}}, runs=self._RED_77)
+        assert mod._hold_or_clause(root, _head(root), "lane/ruled", 1, found=self._found(mod)) is None
+        assert held and len(asked) == 1
+
+    @pytest.mark.parametrize("runs", ["timeout", "Unresolved"], ids=["gh-times-out", "no-gh"])
+    def test_a_gh_read_that_cannot_be_made_after_a_ruling_blocks_naming_it(self, tmp_path, monkeypatch, runs):
+        mod, root, asked, held = self._gate(
+            tmp_path, monkeypatch, rulings={"lane/ruled": {"77": "20261102T120000Z-air-abcdef"}}, runs=runs)
+        verdict = mod._hold_or_clause(root, _head(root), "lane/ruled", 1, found=self._found(mod))
+        assert verdict is not None and not held
+        assert "20261102T120000Z-air-abcdef" in verdict[0] and "could not be read" in verdict[0]
+
+    def test_a_channel_that_cannot_be_read_holds_and_says_so_once(self, tmp_path, monkeypatch):
+        mod, root, asked, held = self._gate(tmp_path, monkeypatch, raises=OSError("refs unreadable"))
+        assert mod._hold_or_clause(root, _head(root), "lane/ruled", 1, found=self._found(mod)) is None
+        assert held and not asked
+        assert _audit_rows(tmp_path / "audit", "stop_failed_open_handoff_rulings")
+
+    def test_the_holds_re_check_reads_the_same_exemption_and_asks_gh_once(self, tmp_path, monkeypatch):
+        """The ruling arrives after the hold: the re-check lifts it and hands
+        the clause on, so the decision point blocks with no second gh read."""
+        mod, root, asked, held = self._gate(
+            tmp_path, monkeypatch, rulings={"lane/ruled": {"77": "20261102T120000Z-air-abcdef"}}, runs=self._RED_77)
+        monkeypatch.setattr(mod, "_seat_other_open_prs", lambda root_, branch: self._found(mod))
+        cleared: list = []
+        monkeypatch.setattr(mod, "_hold_clear", lambda root_: cleared.append(True))
+        hold = {"head": _head(root), "branch": "lane/ruled", "seat": "win", "ahead": 1, "checked": -1e9}
+        stands, found = mod._hold_recheck(root, hold)
+        assert not stands and cleared and not held and found.clearing is not None
+        verdict = mod._hold_or_clause(root, _head(root), "lane/ruled", 1, found=found)
+        assert verdict == found.clearing and len(asked) == 1
+
+
 class TestTheOwnUpstreamRuleHasOneReading:
     """DEF-4081, DEF-4086: whether a lane is on origin as its own is read once
     (``_hook_utils.lane_upstream``), by the handoff gate's
@@ -1890,6 +2001,55 @@ class TestTheOwnUpstreamRuleHasOneReading:
         _git(root, "push", "-q", "-u", "origin", "HEAD")
         assert self._read(mod, ship, root) == (0, "origin/lane/the-fixture", True, True, None)
 
+    def test_a_lane_started_again_under_a_merged_lanes_name_was_never_pushed(self, tmp_path, monkeypatch):
+        """DEF-2041: the lane pushed by hand, merged with a merge commit, its
+        branch deleted on origin and the ref kept by a fetch without --prune;
+        a lane started again under that name from origin/main with a commit of
+        its own was read as pushed and its own by the gate and the driver
+        alike, so its push would land beside the seat's other pull request
+        with no hold. The ref's tip is on the default branch: a merged lane's,
+        never this one's."""
+        root = _lane_repo(tmp_path, ahead=1)
+        _git(root, "push", "-q", "origin", "HEAD")
+        _git(root, "checkout", "-q", "main")
+        _git(root, "merge", "-q", "--no-ff", "lane/the-fixture", "-m", "merge the lane")
+        _git(root, "push", "-q", "origin", "main")
+        _git(tmp_path / "origin.git", "branch", "-D", "lane/the-fixture")
+        _git(root, "fetch", "-q", "origin")
+        _git(root, "branch", "-q", "-D", "lane/the-fixture")
+        _git(root, "checkout", "-q", "-b", "lane/the-fixture", "--track", "origin/main")
+        _commit(root, "started-again")
+        assert _git(root, "for-each-ref", "--format=%(refname)", "refs/remotes/origin/lane/the-fixture")
+        mod = TestTheHandoffGate._load()
+        ship = self._driver(monkeypatch)
+        ahead, upstream, own, driver_own, _why = self._read(mod, ship, root)
+        assert (ahead, upstream, own, driver_own) == (1, "origin/main", False, False)
+
+    @pytest.mark.parametrize(("ancestor", "base", "expected"), [
+        (None, "refs/remotes/origin/main", ("origin/lane/w", True)),
+        ("", "refs/remotes/origin/main", ("origin/main", False)),
+        ("", None, ("origin/lane/w", True)),
+    ], ids=["a-live-lane", "a-merged-lanes-ref", "no-default-branch-listed"])
+    def test_a_ref_the_default_branch_reaches_is_not_the_lanes_own(self, ancestor, base, expected):
+        """DEF-2041, the rule alone over a stub git: the own ref reads as the
+        lane's own unless the default branch already reaches its tip
+        (``merge-base --is-ancestor`` exits 0, answered ''); with no default
+        branch listed it reads as before."""
+        mod = TestTheHandoffGate._load()
+
+        def ask(*args):
+            if args[0] == "for-each-ref":
+                return "refs/remotes/origin/lane/w"
+            if args[0] == "symbolic-ref":
+                return base
+            if args[0] == "rev-parse" and "--verify" in args:
+                return None
+            if args[0] == "merge-base":
+                return ancestor
+            return "origin/main"
+
+        assert mod._hook_utils.lane_upstream(ask, "lane/w") == expected
+
     @pytest.mark.parametrize(("listed", "upstream", "expected"), [
         ("refs/remotes/origin/lane/w", "origin/main", ("origin/lane/w", True)),
         ("", "origin/feature/lane/w", ("origin/feature/lane/w", False)),
@@ -1902,13 +2062,61 @@ class TestTheOwnUpstreamRuleHasOneReading:
         """The rule alone, over a stub git: own only where origin's ref is
         listed under the lane's exact name. The old suffix test read a branch
         tracking origin/feature/lane/w, or a fork's lane/w, as its own; a ref
-        under it or a loose ref in another case (an NTFS resolve) never is."""
+        under it or a loose ref in another case (an NTFS resolve) never is.
+        The default branch never reaches the own ref's tip here (a live lane)."""
         mod = TestTheHandoffGate._load()
 
         def ask(*args):
+            if args[0] == "merge-base":
+                return None
             return listed if args[0] == "for-each-ref" else upstream
 
         assert mod._hook_utils.lane_upstream(ask, "lane/w") == expected
+
+
+class TestWhetherALanesWorkIsOnOriginIsReadFromOriginsRefs:
+    """DEF-2042: whether a lane's work is on origin is read from origin's refs
+    (``_hook_utils.commits_off_origin``: ``rev-list --count HEAD --not
+    --remotes=origin``), never from ``@{u}``, which names what the branch
+    tracks. Over the probe's fixture -- two lanes merged with a merge commit
+    and their branches deleted on origin and pruned, one pushed with ``-u``
+    (git reads its upstream as gone) and one without (its upstream is
+    origin/main) -- every reader of the question is read, since the probe
+    could close on half a fix. Dies to: the by-hand arm answering ``never
+    pushed`` from a gone ``@{u}``, or the window check counting another
+    remote's refs as origin's."""
+
+    @staticmethod
+    def _merged_lane(root: Path, name: str, *push: str) -> None:
+        _git(root, "switch", "-q", "-c", name, "--track", "origin/main")
+        _commit(root, name.replace("/", "-"))
+        _git(root, "push", "-q", *push, "origin", "HEAD")
+        _git(root, "switch", "-q", "main")
+        _git(root, "merge", "-q", "--no-ff", name, "-m", f"merge {name}")
+        _git(root, "push", "-q", "origin", "main")
+        _git(root, "push", "-q", "origin", "--delete", name)
+        _git(root, "switch", "-q", name)
+
+    @pytest.mark.parametrize("push", [("-u",), ()], ids=["pushed-with-u", "pushed-without-u"])
+    def test_a_merged_lane_reads_as_on_origin(self, tmp_path, monkeypatch, push):
+        root = _lane_repo(tmp_path, ahead=0, branch="main", plan_status=None)
+        self._merged_lane(root, "lane/n", *push)
+        assert _git(root, "rev-list", "--count", "HEAD", "--not", "--remotes=origin") == "0"
+        ship = TestTheOwnUpstreamRuleHasOneReading._driver(monkeypatch)
+        assert ship._lane_not_on_origin(root) is None
+        assert ship._window_checkout_holds(root) is None
+        assert ship._commits_off_origin(root) == 0
+
+    def test_a_commit_on_another_remote_alone_is_off_origin(self, tmp_path, monkeypatch):
+        root = _lane_repo(tmp_path, ahead=1, plan_status=None)
+        other = tmp_path / "other.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(other)], check=True, capture_output=True)
+        _git(root, "remote", "add", "fork", str(other))
+        _git(root, "push", "-q", "fork", "HEAD")
+        ship = TestTheOwnUpstreamRuleHasOneReading._driver(monkeypatch)
+        assert "1 commit origin does not have" in (ship._window_checkout_holds(root) or "")
+        assert ship._lane_not_on_origin(root) == "HEAD has no upstream: the lane was never pushed"
+        assert ship._commits_off_origin(root) == 1
 
 
 @pytest.mark.contract
