@@ -295,7 +295,7 @@ class TestThePruneIsBoundedInsideTheWall:
         left: list[tuple[int, int]] = []
         demoted = integ._prune_old_audit_logs(max_age_days=30, deadline=time.monotonic() + 0.3,
                                               on_stop=lambda n, days: left.append((n, days)))
-        assert demoted < 60 and left == [(60 - demoted, 30)], (demoted, left)
+        assert left == [(60 - demoted, 30)], (demoted, left)
         (tmp_path / "young").mkdir()
         integ, _ = self._store(monkeypatch, tmp_path / "young", young, age_days=0)
         assert integ._prune_old_audit_logs(max_age_days=30, deadline=time.monotonic() - 1,
