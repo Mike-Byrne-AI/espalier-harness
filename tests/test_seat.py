@@ -426,13 +426,13 @@ class TestLaunch:
         with pytest.raises(seat.Refused, match="Windows PowerShell 5.1 splits"):
             seat.command_line(target, ['say "hi"'], maintenance=False, shell="powershell")
         sh = seat.command_line(target, ["--model", "o p"], maintenance=False, shell="posix")
-        assert sh.endswith(f"&& env -u ESPALIER_MAINTENANCE_MODE {_own_clear_unsets(seat)} -u VIRTUAL_ENV claude --model 'o p'")
+        assert sh.endswith(f"&& env -u ESPALIER_MAINTENANCE_MODE {_own_clear_unsets(seat)} -u ESPALIER_BOX_LOCK_WAIT_S -u VIRTUAL_ENV claude --model 'o p'")
         bindir = target.path / ".venv" / ("Scripts" if os.name == "nt" else "bin")
         bindir.mkdir(parents=True)
         with_venv = seat.command_line(target, [], maintenance=False, shell="powershell")
         assert f"$env:PATH = '{str(bindir).replace(chr(39), chr(39) * 2)};' + $env:PATH" in with_venv
         posix_venv = seat.command_line(target, [], maintenance=True, shell="posix")
-        assert f"env {_own_clear_unsets(seat)} ESPALIER_MAINTENANCE_MODE=1 VIRTUAL_ENV=" in posix_venv and ':"$PATH" claude' in posix_venv
+        assert f"env {_own_clear_unsets(seat)} -u ESPALIER_BOX_LOCK_WAIT_S ESPALIER_MAINTENANCE_MODE=1 VIRTUAL_ENV=" in posix_venv and ':"$PATH" claude' in posix_venv
 
     def test_the_posix_line_puts_every_unset_before_the_first_assignment(self, seat, tmp_path):
         """Driven 2026-10-26 on macOS 25.6: BSD env stops reading options at the
@@ -445,7 +445,7 @@ class TestLaunch:
         Dies to: the maintenance assignment rendered before the venv unset."""
         target = seat.Target("box-x", tmp_path, True, False)
         sh = seat.command_line(target, [], maintenance=True, shell="posix")
-        assert sh.endswith(f"&& env {_own_clear_unsets(seat)} -u VIRTUAL_ENV ESPALIER_MAINTENANCE_MODE=1 claude"), sh
+        assert sh.endswith(f"&& env {_own_clear_unsets(seat)} -u ESPALIER_BOX_LOCK_WAIT_S -u VIRTUAL_ENV ESPALIER_MAINTENANCE_MODE=1 claude"), sh
         for venv in (False, True):
             if venv:
                 (target.path / ".venv" / ("Scripts" if os.name == "nt" else "bin")).mkdir(parents=True)
@@ -478,6 +478,20 @@ class TestLaunch:
         bindir.mkdir(parents=True)
         env = seat.child_env(target, maintenance=True, base=base)
         assert env["VIRTUAL_ENV"] == str(tmp_path / ".venv") and env["PATH"].split(os.pathsep)[0] == str(bindir)
+
+    def test_a_seat_never_inherits_a_box_lock_wait_bound(self, seat, tmp_path):
+        """DEF-4056: the bound is for one capped run. Exported once in a
+        terminal and inherited, it would end every tier the seat ran at it,
+        the Stop hook's pytest gate included. Mutation: the name left in the
+        environment, or off either printed launch line."""
+        target = seat.Target("box-x", tmp_path, True, False)
+        assert seat.BOX_LOCK_WAIT_KEY == "ESPALIER_BOX_LOCK_WAIT_S"
+        env = seat.child_env(target, maintenance=False, base={"PATH": "/bin", seat.BOX_LOCK_WAIT_KEY: "60"})
+        assert seat.BOX_LOCK_WAIT_KEY not in env
+        posix = seat.command_line(target, [], maintenance=False, shell="posix")
+        assert f"-u {seat.BOX_LOCK_WAIT_KEY}" in posix, posix
+        ps = seat.command_line(target, [], maintenance=False, shell="powershell")
+        assert f"Remove-Item Env:{seat.BOX_LOCK_WAIT_KEY} -ErrorAction SilentlyContinue" in ps, ps
 
     def test_from_inside_a_session_nothing_is_created_or_started(self, seat, clone, registry, monkeypatch):
         """Dies to: a launch an AI collaborator types under its Bash tool,
@@ -1576,7 +1590,7 @@ class TestTheLauncherSetsTheBoxLock:
         sh = seat.command_line(target, ["--model", "o p"], maintenance=False, shell="posix")
         assert f"export ESPALIER_BOX_LOCK=${{ESPALIER_BOX_LOCK:-{shlex.quote(default)}}} && " in sh, sh
         assert sh.index("ESPALIER_BOX_LOCK") < sh.index("claude")
-        assert sh.endswith(f"&& env -u ESPALIER_MAINTENANCE_MODE {_own_clear_unsets(seat)} -u VIRTUAL_ENV claude --model 'o p'")
+        assert sh.endswith(f"&& env -u ESPALIER_MAINTENANCE_MODE {_own_clear_unsets(seat)} -u ESPALIER_BOX_LOCK_WAIT_S -u VIRTUAL_ENV claude --model 'o p'")
         ps = seat.command_line(target, [], maintenance=False, shell="powershell")
         assert f"if (-not $env:ESPALIER_BOX_LOCK) {{ $env:ESPALIER_BOX_LOCK = '{default}' }}" in ps, ps
         assert ps.index("ESPALIER_BOX_LOCK") < ps.index("claude")

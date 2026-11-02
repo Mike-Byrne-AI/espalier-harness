@@ -2993,6 +2993,60 @@ class TestOrdersLine:
         monkeypatch.setenv("ESPALIER_BOX_LOCK", "/t/espalier-box.lock")
         assert "box lock" not in mod._orders_line(tmp_path, read, mail=mail, python="py -3")
 
+    def test_a_named_clone_neither_line_told_gets_the_off_note_once_as_a_note(self, tmp_path, monkeypatch):
+        """DEF-4054: the two folds reach the dispatcher and a worker holding
+        an assign, so a worker between assigns, or a plain `claude` in a
+        second named clone, ran its tier unlocked and was never told. Such a
+        session gets the note as one [INFO] line (the NOTES block, never a
+        ruled banner line); a session whose `Orders:` line carried it gets no
+        second copy, and no name read or the variable set gets none.
+        Mutation: the note left to the folds alone, or printed beside one."""
+        mod, mail = _load(), _real_mail()
+        (tmp_path / "espalier.toml").write_text('dispatcher = "hub"\n', encoding="utf-8")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "_box_lock.py").write_text("", encoding="utf-8")
+        monkeypatch.delenv("ESPALIER_BOX_LOCK", raising=False)
+        default = str(Path.home() / ".espalier" / "espalier-box.lock")
+        note = f"box lock: off (relaunch through seat.py launch, or export ESPALIER_BOX_LOCK={default} before claude)"
+        mod._hook_utils.take_advisories()
+        idle = {"machine": "w", "by_machine": {"hub": []}, "unread": 0}
+        orders = mod._orders_line(tmp_path, idle, mail=mail, python="py -3")
+        assert orders == "", "a worker between assigns has no `Orders:` line to carry the note"
+        mod._box_lock_info(tmp_path, idle, ("", orders))
+        assert mod._hook_utils.take_advisories() == [f"[INFO] {note}"]
+        busy = {**idle, "by_machine": {"hub": [self._assign(mail, "w", lane="lane/a")]}}
+        orders = mod._orders_line(tmp_path, busy, mail=mail, python="py -3")
+        mod._box_lock_info(tmp_path, busy, ("", orders))
+        assert orders.endswith(f"; {note}") and mod._hook_utils.take_advisories() == []
+        mod._box_lock_info(tmp_path, {}, ("", ""))
+        monkeypatch.setenv("ESPALIER_BOX_LOCK", "/t/espalier-box.lock")
+        mod._box_lock_info(tmp_path, idle, ("", ""))
+        assert mod._hook_utils.take_advisories() == []
+
+    def test_the_hook_hands_the_off_note_the_read_and_both_lines_it_built(self):
+        """The wiring in ``_run_main`` is DEF-4054's fix, and the case above
+        calls the helper alone, so deleting the call left every case green
+        (code review, 2026-11-02). Mutation: the call removed, or handed
+        something other than what the mail and orders reads built."""
+        import ast
+        tree = ast.parse((HOOKS_DIR / "session_start.py").read_text(encoding="utf-8"))
+        run_main = next(f for f in ast.walk(tree) if isinstance(f, ast.FunctionDef) and f.name == "_run_main")
+        calls = [c for c in ast.walk(run_main)
+                 if isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == "_box_lock_info"]
+        assert len(calls) == 1, "the hook's main no longer offers the off-note"
+        assert ast.unparse(calls[0]) == "_box_lock_info(root, mail_read, (mail_line, orders_line))"
+
+    def test_the_name_is_read_for_the_off_note_before_the_budget_cuts_the_mail(self, tmp_path):
+        """A start whose fetch spends the mail's share returns early, and the
+        name read before it must still reach the off-note (both reviews,
+        2026-11-02). Mutation: the name recorded only beside the refs."""
+        mod = _load()
+        stub = _mail_stub(machine_setting=lambda root, timeout=None: ("w", "git config espalier.machine = w"),
+                          fetch_mail=lambda root, timeout: (time.sleep(0.4), (True, ""))[1])
+        read: dict = {}
+        line = mod._mail_line(tmp_path, deadline=time.monotonic() + 0.5, mail=stub, read=read)
+        assert "no time left" in line and read.get("machine") == "w", (line, read)
+
     def test_a_worker_with_live_jobs_is_given_its_orders(self, tmp_path):
         """Dies to: counting another seat's jobs (3), or a worker's own
         assign counting where a dispatcher is named."""

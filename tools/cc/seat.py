@@ -107,6 +107,9 @@ MAINTENANCE_KEY = "ESPALIER_MAINTENANCE_MODE"
 #: its own children, and makes the lock's folder where it is missing; the
 #: launcher sets the path alone.
 BOX_LOCK_KEY = "ESPALIER_BOX_LOCK"
+#: A waiter's bound for one capped run (an agent's Bash call); a seat never
+#: inherits it, or every tier the seat runs would end at it (DEF-4056).
+BOX_LOCK_WAIT_KEY = "ESPALIER_BOX_LOCK_WAIT_S"
 BOX_LOCK_NAME = "espalier-box.lock"
 BOX_LOCK_HOME = ".espalier"
 
@@ -599,7 +602,7 @@ def child_env(target: Target, *, maintenance: bool, base: dict[str, str] | None 
     names another checkout's (read 2026-10-15: a worktree session's named the
     main checkout's, where a ``uv pip install`` would land)."""
     env = {k: v for k, v in (os.environ if base is None else base).items()
-           if k not in SESSION_ENV and k not in OWN_CLEAR_ENV}
+           if k not in SESSION_ENV and k not in OWN_CLEAR_ENV and k != BOX_LOCK_WAIT_KEY}
     if maintenance:
         env[MAINTENANCE_KEY] = "1"
     else:
@@ -644,7 +647,8 @@ def command_line(target: Target, args: list[str], *, maintenance: bool, shell: s
         parts = [f"Set-Location -LiteralPath {q(str(target.path))}"]
         parts.append(f"$env:{MAINTENANCE_KEY} = '1'" if maintenance
                      else f"Remove-Item Env:{MAINTENANCE_KEY} -ErrorAction SilentlyContinue")
-        parts += [f"Remove-Item Env:{name} -ErrorAction SilentlyContinue" for name in own_clear_unsets]
+        parts += [f"Remove-Item Env:{name} -ErrorAction SilentlyContinue"
+                  for name in [*own_clear_unsets, BOX_LOCK_WAIT_KEY]]
         if own_clear:
             parts.append(f"$env:{OWN_CLEAR_KEY} = '1'")
             if log:
@@ -662,7 +666,7 @@ def command_line(target: Target, args: list[str], *, maintenance: bool, shell: s
     # Every `-u` before the first assignment: BSD `env` (macOS) stops reading
     # options at the first assignment and runs `-u` as the program (exit 127,
     # driven 2026-10-26); GNU `env` permutes its arguments and takes either order.
-    unsets = ([] if maintenance else [MAINTENANCE_KEY]) + own_clear_unsets
+    unsets = ([] if maintenance else [MAINTENANCE_KEY]) + own_clear_unsets + [BOX_LOCK_WAIT_KEY]
     assigns = (([f"{MAINTENANCE_KEY}=1"] if maintenance else []) + ([f"{OWN_CLEAR_KEY}=1"] if own_clear else [])
                + ([f"{OWN_CLEAR_LOG_KEY}={shlex.quote(log)}"] if log else []))
     if bindir is not None:

@@ -18,11 +18,15 @@ take and release the lock, so two tiers interleave line by line; a run without
 never waits past a Bash call's cap), the controller takes a lock on that file
 before any worker is spawned, through the primitive's non-blocking
 ``try_lock_file``. While another run holds it, this one polls, says who holds
-it (seat, lane, pid, how long) on stderr at once and then once per report
-interval, with an inspect command and the stop command once the holder itself
-is past a ceiling. Every gated run appends one JSON line to
+it (seat, lane, pid, how long it has held since it took the lock) on stderr at
+once and then once per report interval; once the holder itself is past a
+ceiling, an inspect command, and the stop command only where the holder's
+checkout holds no live Claude Code session (else: ask its seat on the mail).
+``ESPALIER_BOX_LOCK_WAIT_S`` bounds the wait: past it the run ends before any
+test, with its own exit status. Every gated run appends one JSON line to
 ``<lock path>.log`` saying what the lock did -- taken at once, waited (how
-long, behind whom), passed through inside its holder, or unguarded (why) --
+long, behind whom), passed through inside its holder, gave up past the
+waiter's bound, or unguarded (why) --
 so the record the roadmap's re-measure reads is empty only where no gated
 run came, never merely where none waited (DEF-4053). The launcher's old
 default (the temp directory's file) is read as its new one, said on stderr,
@@ -48,6 +52,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import math
 import os
 import re
 import subprocess
@@ -56,17 +61,31 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, Callable, NoReturn, TextIO
+
+import pytest
 
 try:
     from tests._never_ran import NO_TEST_RUNS
+    from tests._temp_sweep import _load as _load_restoring
 except ImportError:  # the suite's conftest imports its helpers bare, with tests/ on sys.path
     from _never_ran import NO_TEST_RUNS  # type: ignore[no-redef]
+    from _temp_sweep import _load as _load_restoring  # type: ignore[no-redef]
 
 #: The name the plugin object is registered under.
 PLUGIN_NAME = "espalier-box-lock"
 LOCK_KEY = "ESPALIER_BOX_LOCK"
 HOLDER_KEY = "ESPALIER_BOX_LOCK_HOLDER"
+#: The waiter's own bound, in seconds; unset, a run waits for as long as the
+#: holder runs (DEF-4056). An agent's run under a Bash call's cap sets it, so
+#: the cap never reads a run that never started as a verdict.
+WAIT_KEY = "ESPALIER_BOX_LOCK_WAIT_S"
+#: The status of a run that gave up past ``WAIT_KEY``: sysexits' EX_TEMPFAIL
+#: (a resource busy, try later). pytest's own statuses are 0 to 5, so a reader
+#: of the status tells a run that never started from a red.
+DID_NOT_RUN_EXIT = 75
+#: How long the read of the holder's checkout's sessions may take.
+SESSIONS_READ_S = 5.0
 #: How often a waiter tries the lock, and how often it repeats the holder line.
 POLL_S = 0.25
 REPORT_S = 30.0
@@ -81,9 +100,13 @@ WAIT_CEILING_MIN = 60
 _NO_TEST_OPTIONS = (*NO_TEST_RUNS, "help", "markers")
 
 _TOOLS_CC = Path(__file__).resolve().parent.parent / "tools" / "cc"
-_LOCK_WORD = re.compile(r"\bESPALIER_BOX_LOCK\b")
-_HOLDER_WORD = re.compile(r"\bESPALIER_BOX_LOCK_HOLDER\b")
-_PREFIX_STRIP = re.compile(r"""startswith\(\s*\(?\s*['"]ESPALIER_BOX_LOCK['"]""")
+#: The pair as a builder names it: the literal, or the constant this plugin
+#: (``LOCK_KEY``, ``HOLDER_KEY``) or the launcher (``tools/cc/seat.py``'s
+#: ``BOX_LOCK_KEY``) spells it with (DEF-2034). A word boundary keeps the
+#: holder and the wait bound, which share the lock's prefix, out of the lock.
+_LOCK_WORD = re.compile(r"\bESPALIER_BOX_LOCK\b|\bLOCK_KEY\b|\bBOX_LOCK_KEY\b")
+_HOLDER_WORD = re.compile(r"\bESPALIER_BOX_LOCK_HOLDER\b|\bHOLDER_KEY\b")
+_PREFIX_STRIP = re.compile(r"""startswith\(\s*\(?\s*(?:['"]ESPALIER_BOX_LOCK['"]|(?:\w+\.)*(?:BOX_)?LOCK_KEY\b)""")
 
 
 def _primitive() -> Any:
@@ -178,11 +201,13 @@ def inside_holder(record: dict | None) -> bool:
     return str(record.get("pid")) == env_pid and holder_alive(pid)
 
 
-def waiting_line(record: dict | None, *, waited_s: float) -> str:
+def waiting_line(record: dict | None, *, waited_s: float,
+                 read_seat: Callable[[dict], bool | None] | None = None) -> str:
     """The line a waiter prints: the holder's seat, lane and pid, how long it
     has held (from its record's start, else this waiter's wait), the head of
-    its argv, and past the ceiling the command that kills it by pid; ``no
-    holder record`` where the file is empty or unreadable. ASCII only."""
+    its argv, and past the ceiling what to do about it (:func:`_past_ceiling`,
+    which alone calls ``read_seat``); ``no holder record`` where the file is
+    empty or unreadable. ASCII only."""
     held_min = int(waited_s // 60)
     pid: int | None = None
     if record and "pid" in record:
@@ -206,13 +231,66 @@ def waiting_line(record: dict | None, *, waited_s: float) -> str:
         who = "no holder record"
     head = _argv_head((record or {}).get("argv") or [])
     line = f"box lock: waiting on {who}" + (f": {head}" if head else "")
-    if pid is not None and held_min >= WAIT_CEILING_MIN:
-        if sys.platform == "win32":
-            look, stop = f"tasklist /FI \"PID eq {pid}\"", f"taskkill /T /F /PID {pid}"
-        else:
-            look, stop = f"ps -p {pid} -o etime,command", f"kill -9 {pid}"
-        line += f" -- the holder is past {WAIT_CEILING_MIN} min: inspect it with `{look}`; a stuck one ends with `{stop}`"
+    if record and pid is not None and held_min >= WAIT_CEILING_MIN:
+        line += " -- " + _past_ceiling(record, pid, read_seat)
     return _ascii(line)
+
+
+def _past_ceiling(record: dict, pid: int, read_seat: Callable[[dict], bool | None] | None) -> str:
+    """What a waiter is told about a holder past the ceiling. Past it is the
+    ordinary case for a seat's tier on a loaded box (a full-tier leg runs 25 to
+    50 minutes, with two seats' tiers queued), and on 2026-10-31 a window ended
+    a live seat's leg by pid as a stray, so the stop command goes only to a
+    live pid whose checkout holds no live Claude Code session (``read_seat``
+    False: DEF-4077). A seat with a session, or one ``read_seat`` cannot read
+    (None, or no reader), is asked on the mail. A dead pid gets no command: there
+    is nothing to end by it, and a pid reused since would be a stranger."""
+    if sys.platform == "win32":
+        look, stop = f"tasklist /FI \"PID eq {pid}\"", f"taskkill /T /F /PID {pid}"
+    else:
+        look, stop = f"ps -p {pid} -o etime,command", f"kill -9 {pid}"
+    past = f"the holder is past {WAIT_CEILING_MIN} min"
+    if not holder_alive(pid):
+        # The lock goes with the process that took it, so the holder is a
+        # descendant that outlived it, or this read raced the release.
+        return (f"{past}, but pid {pid} has exited, so this record does not name the lock's holder: "
+                "find the real one among the box's pytest processes and their parents")
+    seat = record.get("seat")
+    if not isinstance(seat, str) or seat in ("", "?"):
+        # A run in a checkout that answers no seat name (a fresh-clone gate
+        # leg, a scratch clone's run) is a seat's run all the same, and its
+        # checkout holds no session of its own (both reviews, 2026-11-02).
+        return (f"{past} and it names no seat, so whose run it is could not be read: inspect it with `{look}` "
+                "and read its parents before anything ends it")
+    live = read_seat(record) if read_seat is not None else None
+    if live is False:
+        return f"{past} and its checkout holds no live Claude Code session: inspect it with `{look}`; a stuck one ends with `{stop}`"
+    why = "its seat has a live session" if live else "whether its seat has a live session could not be read"
+    return (f"{past}; {why}: inspect it with `{look}` and ask {seat} on the mail "
+            "(`python tools/cc/mail.py send --type request`) rather than end it")
+
+
+def holder_seat_live(record: dict, *, config_dir: Path | None = None) -> bool | None:
+    """Whether the holder's checkout (its record's ``checkout``) holds a live
+    Claude Code session: ``tools/cc/checkout_sync.py::sessions_in`` over
+    Claude Code's registry (``config_dir`` in place of its own, for tests),
+    its git read bounded at ``SESSIONS_READ_S``. Loaded the temp sweep's way,
+    under the sweep's own alias: ``sys.path`` and the bare ``tools/cc`` names
+    its imports add are put back, so a load while this run waits, before
+    collection, changes nothing a test resolves. None, cannot tell, for a
+    record with no checkout (an older plugin's), a reader that does not load
+    or raises, and a registry it cannot read whole."""
+    checkout = record.get("checkout")
+    if not isinstance(checkout, str) or checkout in ("", "?"):
+        return None
+    try:
+        sync = _load_restoring(_TOOLS_CC / "checkout_sync.py", "_temp_sweep_checkout_sync")
+        sessions = sync.live_sessions(config_dir)
+        found = None if sessions is None else sync.sessions_in(
+            Path(checkout), sessions=sessions, deadline=time.monotonic() + SESSIONS_READ_S)
+    except Exception:  # noqa: BLE001 -- a reader that cannot answer is "cannot tell", never "no session"
+        return None
+    return None if found is None else bool(found)
 
 
 def _argv_head(argv: list) -> str:
@@ -243,8 +321,10 @@ def pair_asymmetry(text: str) -> str | None:
 
 
 def build_record(config: Any, primitive: Any) -> dict:
-    """This run's holder record, built before the try: seat and lane from git
-    (two seconds each, ``?`` on failure), pid, the start in UTC, the argv head."""
+    """This run's holder record, built before the try: seat, lane and checkout
+    (the folder a waiter reads the seat's sessions in) from git, two seconds
+    each, ``?`` on failure; pid; the start in UTC, stamped again when the lock
+    is taken (:meth:`BoxLock._acquire`); the argv head."""
     cwd = str(getattr(config, "rootpath", None) or Path.cwd())
 
     def git(*args: str) -> str:
@@ -256,8 +336,30 @@ def build_record(config: Any, primitive: Any) -> dict:
         return (proc.stdout.strip() or "?") if proc.returncode == 0 else "?"
 
     return {"seat": git("config", "espalier.machine"), "lane": git("rev-parse", "--abbrev-ref", "HEAD"),
-            "pid": os.getpid(), "started": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "checkout": git("rev-parse", "--show-toplevel"), "pid": os.getpid(), "started": _now_stamp(),
             "argv": [os.path.basename(str(sys.argv[0])), *[str(a) for a in sys.argv[1:9]]] if sys.argv else []}
+
+
+def _now_stamp() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def wait_bound(raw: str | None, *, stream: TextIO | None = None) -> float | None:
+    """``ESPALIER_BOX_LOCK_WAIT_S`` as a bound in seconds: None, wait for as
+    long as the holder runs, where it is unset or blank; otherwise a finite
+    number at or above 0. Any other value is said on stderr and read as unset:
+    a typo must not end a run that would have waited."""
+    if raw is None or not raw.strip():
+        return None
+    try:
+        bound = float(raw)
+    except ValueError:
+        bound = math.nan
+    if math.isfinite(bound) and bound >= 0:
+        return bound
+    print(f"box lock: {WAIT_KEY}={_ascii(raw)[:40]} is not a number of seconds at or above 0; this run waits unbounded",
+          file=stream if stream is not None else sys.stderr, flush=True)
+    return None
 
 
 def home_default() -> str | None:
@@ -295,7 +397,8 @@ def log_outcome(lock: Path, outcome: str, run: dict | None, holder: dict | None 
     """One JSON line in ``<lock path>.log`` for every gated run, whatever the
     lock did: ``taken`` at once, ``waited`` behind a holder
     (the wait's start, end and length), ``inside`` its holder (passed
-    through), or ``unguarded`` (not taken, and ``why``). The log held waits
+    through), ``gave_up`` past the waiter's own bound (``why`` names it), or
+    ``unguarded`` (not taken, and ``why``). The log held waits
     alone, so an empty one could not say whether no run waited or no run was
     gated (DEF-4053); now it is empty only where no gated run came. A log that
     cannot be written is one stderr line, never the run's cost."""
@@ -351,10 +454,15 @@ class BoxLock:
     def _acquire(self) -> None:
         assert self.fh is not None
         started = time.monotonic()
+        bound = wait_bound(os.environ.get(WAIT_KEY), stream=self.stream)
         last_report: float | None = None
         while True:
             if self.primitive.try_lock_file(self.fh):
                 self.held = True
+                # The hold's age, never the queue's: stamped at configure, a
+                # run that queued forty minutes read forty minutes older than
+                # it was, and past the ceiling sooner (DEF-4077).
+                self.record["started"] = _now_stamp()
                 self.fh.seek(0)
                 self.fh.truncate()
                 self.fh.write(json.dumps(self.record))
@@ -376,9 +484,28 @@ class BoxLock:
             self.holder_seen = record or self.holder_seen
             now = time.monotonic()
             if last_report is None or now - last_report >= REPORT_S:
-                print(waiting_line(record, waited_s=now - started), file=self.stream, flush=True)
+                print(waiting_line(record, waited_s=now - started, read_seat=holder_seat_live),
+                      file=self.stream, flush=True)
                 last_report = now
+            # The bound reads the clock after the line, whose seat read past
+            # the ceiling takes time of its own.
+            if bound is not None and time.monotonic() - started >= bound:
+                self._give_up(time.monotonic() - started, bound)
             time.sleep(POLL_S)
+
+    def _give_up(self, waited_s: float, bound: float) -> NoReturn:
+        """Past the waiter's bound the run ends before any test, distinctly: a
+        log line, then ``pytest.exit`` with ``DID_NOT_RUN_EXIT``, which pytest
+        writes on stderr at configure; ``pytest_configure`` lets it through
+        (DEF-4056)."""
+        self.waited_s = waited_s
+        log_outcome(self.path, "gave_up", self.record, self.holder_seen, waited_s,
+                    why=f"{WAIT_KEY}={bound:g}", stream=self.stream)
+        holder = self.holder_seen
+        who = (f"{holder.get('seat') or '?'} {holder.get('lane') or '?'} (pid {holder.get('pid')})"
+               if holder else "a holder that left no record")
+        pytest.exit(_ascii(f"box lock: did not run: waited {waited_s:.0f} s behind {who}, past "
+                           f"{WAIT_KEY}={bound:g}; no test ran"), returncode=DID_NOT_RUN_EXIT)
 
     def pytest_terminal_summary(self, terminalreporter: Any) -> None:
         """What the lock did, in the line ``-q`` keeps (the never-ran count's
@@ -448,6 +575,10 @@ def pytest_configure(config: Any) -> None:
         record = build_record(config, primitive)
         lock = BoxLock(Path(path), record, primitive)
         lock.acquire()
+    except pytest.exit.Exception:
+        # The bounded wait's end (DEF-4056). pytest's Exit subclasses
+        # Exception, so the clause below would swallow it and run unguarded.
+        raise
     except Exception as exc:  # noqa: BLE001 -- a lock that cannot be taken must not cost a seat its tier
         why = f"{type(exc).__name__}: {_ascii(str(exc))}"
         print(f"box lock: not taken ({why}); this run is unguarded", file=sys.stderr, flush=True)

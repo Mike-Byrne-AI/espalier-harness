@@ -109,10 +109,12 @@ LOCK_NAME = ".lock"
 
 #: The tier's receipt, matched by its TAIL. Both real spellings:
 #: ``proof: PASS -- N of N command(s) ran`` and
-#: ``proof: FAIL (worst exit 1) -- N of N command(s) ran``. Pinned against the
-#: producer by running it (tests/test_fresh_clone_gate.py).
+#: ``proof: FAIL (worst exit 1) -- N of N command(s) ran``, and the box lock's
+#: ``proof: DID NOT RUN (worst exit 75) -- K of N command(s) ran``, which no
+#: gate leg should see (the whitelist drops the bound) and which reads as no
+#: pass. Pinned against the producer by running it (tests/test_fresh_clone_gate.py).
 RECEIPT_RE = re.compile(
-    r"^proof: (?P<verdict>PASS|FAIL \(worst exit (?P<worst>\d+)\)) -- "
+    r"^proof: (?P<verdict>PASS|(?:FAIL|DID NOT RUN) \(worst exit (?P<worst>\d+)\)) -- "
     r"(?P<ran>\d+) of (?P<total>\d+) command\(s\) ran\s*$",
     re.MULTILINE,
 )
@@ -216,7 +218,7 @@ def read_receipt(log_text: str) -> tuple[str, int, int, int] | None:
     if not matches:
         return None
     m = matches[-1]
-    verdict = "PASS" if m.group("verdict") == "PASS" else "FAIL"
+    verdict = m.group("verdict").split(" (", 1)[0]
     worst = int(m.group("worst") or 0)
     return verdict, worst, int(m.group("ran")), int(m.group("total"))
 

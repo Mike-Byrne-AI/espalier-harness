@@ -139,6 +139,12 @@ class TestReceipt:
         out = capsys.readouterr().out
         assert rc == 3
         assert gate.read_receipt(out) == ("FAIL", 3, 2, 2), out
+        # and the box lock's did-not-run, whose later pytest line is not run
+        monkeypatch.setattr(pt.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 75))
+        rc = pt.run_commands([("pytest", "a"), ("pytest", "b")], REPO_ROOT)
+        out = capsys.readouterr().out
+        assert rc == 75
+        assert gate.read_receipt(out) == ("DID NOT RUN", 75, 1, 2), out
 
     def test_the_counts_are_consumed(self, gate, tmp_path):
         log = tmp_path / "leg.log"
