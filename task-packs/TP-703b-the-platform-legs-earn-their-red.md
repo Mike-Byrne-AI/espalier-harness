@@ -953,4 +953,13 @@ read these as the author's guess, not a schedule.
     meanwhile.
   - Reach: `DEF-5024` struck (`--despite-deferrals`, for `TP-703a`'s Scope (out) line);
     `DEF-4034` and `DEF-4035` filed, both probes driven open at filing.
+- W2 prose, #422 (win-2, merged 2026-11-02T02:17Z at 977ee24b; assign 6cbec1): the serial
+  set's prose names the serial-files tuple in place of a count across the four workflow
+  files and pyproject.toml; the leg re-read in the pull request's body: job length 4.7 to
+  7.6 min over the four runs after #419; the required cells' queue, first attempts over
+  the leg's first day, median 0.25 min and worst 6.87 (43 runs, 215 jobs), the worst with
+  no leg run going, and the leg's one self-overlap met no test run within ten minutes, so
+  W2-0 item 4's refuting test holds and no concurrency group is added; the re-read
+  trigger is a growth of the serial set or a leg run past ten minutes. Dispatcher's
+  Landing line from the merged body, 2026-11-01 local.
 - Date: 2026-10-18 (authored, local)

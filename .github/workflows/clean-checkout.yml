@@ -27,8 +27,9 @@ jobs:
   # earns the contract slice (minutes); a recall-corpus change earns that slice
   # plus the recall engine's own files; a runtime or workflow change earns the
   # full tier -- the parallel recipe the local `proof_tier.py --run` uses, with
-  # the three wall-clock-budget files serial. The rule has one home (the script,
-  # pinned by tests/test_proof_tier.py); this job only asks it.
+  # the files scripts/proof_tier.py::SERIAL_FILES names kept off its pool and
+  # run at one worker after it. The rule has one home (the script, pinned by
+  # tests/test_proof_tier.py); this job only asks it.
   #
   # This job NEVER fails and never answers cheaper than the truth: a script
   # error, a shallow history, a dispatch with no PR base -- every one of those

@@ -2231,7 +2231,13 @@ the reminder that the first lane merged (a re-check that cannot be made keeps
 the hold one more interval and says so once, `stop_failed_open_handoff_prs`). A
 Stop that passes has no channel to Claude, so the prompt router
 (`task_router.py`) names the hold on every prompt while it stands, with the
-branch, the count, the pull request and the age; and a new session keeps a
+branch, the count, the pull request, the age and when the record was last read;
+past the re-check interval, or after a re-check that could not read gh (the
+record then carries its `fault`), it says the record is stale, since only a
+Stop reads gh again, and that the next Stop with nothing in flight, or
+`/handoff` (or `python tools/cc/ship.py open` once the lane carries its row),
+reads it again (the router makes no gh read of its own); a Stop that finds a
+hold naming another HEAD removes it; and a new session keeps a
 hold that names its HEAD (SessionStart's seed stands aside for it, so the gate
 judges the lane again) and clears a stale one. A read that cannot be made at
 the decision point (no `gh`, a timeout, not signed in, no GitHub remote, the

@@ -7,6 +7,7 @@ Claude sees alongside the user prompt. Empty stdout = no injection.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import sys
@@ -14,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hook_utils import has_active_plan, hook_cwd, say_crash, say_once, read_stdin_safely, resolve_project_root, safe_session_id, touch_session_marker, window_key, atomic_write_text, HANDOFF_GATE_HOLD, handoff_context_threshold, handoff_push_on, read_context_from_transcript, sessions_dir, STATE_DIR, COLD_OPEN_FLAG, HANDOFF_ASKED_SUFFIX, OWN_CLEAR_TOLD_SUFFIX, ONCE_FLAG_PREFIX, TRANSCRIPT_TAIL_BYTES  # noqa: E402
+from _hook_utils import has_active_plan, hook_cwd, say_crash, say_once, read_stdin_safely, resolve_project_root, safe_session_id, touch_session_marker, window_key, atomic_write_text, HANDOFF_GATE_HOLD, HANDOFF_GATE_HOLD_RECHECK_S, handoff_context_threshold, handoff_push_on, read_context_from_transcript, sessions_dir, STATE_DIR, COLD_OPEN_FLAG, HANDOFF_ASKED_SUFFIX, OWN_CLEAR_TOLD_SUFFIX, ONCE_FLAG_PREFIX, TRANSCRIPT_TAIL_BYTES  # noqa: E402
 import _reinject  # noqa: E402  -- the UserPromptSubmit generative recall dispatch
 
 # Keywords that suggest a multi-step task
@@ -376,18 +377,45 @@ def _own_clear_told_once(root: Path, sid: str) -> str | None:
 #: The Stop hook's handoff hold (``_hook_utils.HANDOFF_GATE_HOLD``, DEF-4058):
 #: a Stop that passes has no channel to Claude, so the hold the gate took is
 #: said here, on every prompt while the file stands -- the one line the model
-#: reads in the operator's own window and on every worker tick.
+#: reads in the operator's own window and on every worker tick. Only a Stop
+#: reads gh again, so the line says when the record was last read, and past
+#: the gate's re-check interval that it is stale (DEF-4083: prompts with no
+#: Stop between them were told a merged pull request still held the lane).
 _HANDOFF_HOLD = (
     "[HARNESS] The Stop hook's handoff gate holds {branch} ({ahead} unpushed) behind {prs}: one open "
-    "pull request per seat, so it asks for the handoff once that one merges (held {age}; gh re-read at a "
-    "Stop every 5 min). Nothing to do for it now; the record is .espalier-state/handoff_gate_hold."
+    "pull request per seat, so it asks for the handoff once that one merges (held {age}, last read {read}; "
+    "a Stop reads gh again past {interval}). Nothing to do for it now; the record is "
+    ".espalier-state/handoff_gate_hold."
 )
+_HANDOFF_HOLD_STALE = (
+    "[HARNESS] The Stop hook's handoff gate held {branch} ({ahead} unpushed) behind {prs} (held {age}), "
+    "and the record is stale: {why}, so what it waits on may have merged since. The next Stop with "
+    "nothing in flight reads gh again; /handoff reads the open pull requests now (it writes the lane's "
+    "row, then opens the lane where none of this seat's is open and holds it again where one is), and so "
+    "does python tools/cc/ship.py open once the lane carries its row. The record is "
+    ".espalier-state/handoff_gate_hold."
+)
+
+
+def _hold_minutes(seconds: float) -> str:
+    minutes = int(seconds // 60)
+    return f"{minutes // 60} h {minutes % 60} min" if minutes >= 60 else f"{minutes} min"
+
+
+def _hold_stamp(value: object) -> float | None:
+    """A stamp as the gate writes it (a finite number, never a bool), or None."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    return float(value)
 
 
 def _handoff_hold_line(root: Path) -> str | None:
     """The hold as the gate wrote it, or None: no hold, a torn one, or one
     naming no branch (the fields are the gate's; tests/test_stop_gate.py pins
-    them across the two readers)."""
+    them across the two readers). Stale by the gate's own re-check rule
+    (``stop_gate._hold_recheck``): a ``checked`` stamp that is missing, ahead
+    of this clock, or the interval old or older; and a re-check that could
+    not read gh (``fault``), whose stamp only bounds the next read."""
     import time  # lazy: the one caller that needs a clock
 
     try:
@@ -402,12 +430,24 @@ def _handoff_hold_line(root: Path) -> str | None:
     ahead = hold.get("ahead")
     commits = (f"{ahead} commit{'s' if ahead != 1 else ''}"
                if isinstance(ahead, int) and not isinstance(ahead, bool) else "commits")
-    since = hold.get("since")
-    age = "for a while"
-    if isinstance(since, (int, float)) and not isinstance(since, bool):
-        minutes = max(0, int((time.time() - since) // 60))
-        age = f"{minutes // 60} h {minutes % 60} min" if minutes >= 60 else f"{minutes} min"
-    return _HANDOFF_HOLD.format(branch=_plain(hold.get("branch"), 120), ahead=commits, prs=named, age=age)
+    now = time.time()
+    since = _hold_stamp(hold.get("since"))
+    age = _hold_minutes(max(0.0, now - since)) if since is not None else "for a while"
+    checked = _hold_stamp(hold.get("checked"))
+    read_ago = now - checked if checked is not None and now >= checked else None
+    fault = _plain(hold.get("fault") or "", 60)
+    interval = f"{int(HANDOFF_GATE_HOLD_RECHECK_S // 60)} min"
+    fields = {"branch": _plain(hold.get("branch"), 120), "ahead": commits, "prs": named, "age": age}
+    if not fault and read_ago is not None and read_ago < HANDOFF_GATE_HOLD_RECHECK_S:
+        return _HANDOFF_HOLD.format(read=f"{_hold_minutes(read_ago)} ago", interval=interval, **fields)
+    if fault:
+        when = f", {_hold_minutes(read_ago)} ago," if read_ago is not None else ""
+        why = f"the gate's last re-check{when} could not read gh ({fault})"
+    elif read_ago is not None:
+        why = f"last read {_hold_minutes(read_ago)} ago, past the gate's {interval} re-check"
+    else:
+        why = "it carries no usable last-read stamp"
+    return _HANDOFF_HOLD_STALE.format(why=why, **fields)
 
 
 # Decision-shape patterns. The advisory is `print()`-ed to the

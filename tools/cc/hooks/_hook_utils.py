@@ -324,6 +324,10 @@ HANDOFF_GATE_FLAG = "handoff_gate_said"
 #: (stop_gate); session_start clears it with the flag on a new session and
 #: keeps it across a compaction (tests/test_state_file_flag_parity.py lists it).
 HANDOFF_GATE_HOLD = "handoff_gate_hold"
+#: While the hold names HEAD, the gate asks gh again no more often than this;
+#: the router says a hold whose ``checked`` is older than this is stale
+#: (DEF-4083). One owner, two readers.
+HANDOFF_GATE_HOLD_RECHECK_S = 300.0
 
 
 # Canonical noqa annotation for governance-hook
