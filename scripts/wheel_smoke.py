@@ -250,11 +250,14 @@ def _rmtree_with_handler(path: Path, handler) -> None:
 
 def _remove_tree_clearing_bits(path: Path) -> None:
     """``shutil.rmtree`` that answers a permission refusal by adding the owner
-    write bit to the entry and to its parent inside the tree, then retrying
-    once -- the discipline of ``espalier._rmtree.remove_tree``, stdlib only
-    (a read-only entry, or a locked directory inside the tree, refuses a bare
-    rmtree; a second refusal raises). The bit goes on the entry itself, never
-    through a link (``_add_write_bit``).
+    write bit to the entry and to its parent inside the tree (the tree's own
+    root included, never the root's parent), then retrying once -- the
+    discipline of ``espalier._rmtree.remove_tree``, stdlib only (a read-only
+    entry, or a locked directory inside the tree, refuses a bare rmtree; a
+    second refusal raises). The bit goes on the entry itself, never through a
+    link (``_add_write_bit``). ``rmtree`` hands a refusal of the root itself
+    back as the ``Path`` it was given, so the refused path is read through
+    ``os.fspath`` (DEF-3023).
 
     A directory the walk cannot enter (``os.open`` on the fd walk,
     ``os.scandir`` on the walk Windows uses) is not retried bare: ``os.open``
@@ -287,7 +290,8 @@ def _remove_tree_clearing_bits(path: Path) -> None:
             _add_owner_bits(failed, stat.S_IRWXU)
             _rmtree_with_handler(Path(failed), _on_failure)
             return
-        for target in (failed, os.path.dirname(failed)):
+        refused = os.fspath(failed)  # ``rmtree`` hands the root back as it was given, a Path
+        for target in (refused, os.path.dirname(refused)):
             if target == root or target.startswith(root + os.sep):
                 _add_write_bit(target)
         func(failed)

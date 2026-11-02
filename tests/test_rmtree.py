@@ -73,6 +73,20 @@ class TestRemoveTreeOnTheHost:
             # gone, so give it something to restore onto.
             (pack / "deep").mkdir(parents=True)
 
+    def test_a_locked_root_holding_a_directory_is_cleared_and_the_tree_goes(self, tmp_path, walk):
+        """The tree's own root is part of the ask (DEF-3023): ``pack`` without
+        its write bit, holding only ``deep/``, refuses ``deep``'s ``rmdir``, so
+        ``remove_tree`` gives the root the bit and finishes, on both walks. A
+        root holding files is no oracle from 3.12.4, whose fd walk hands the
+        refused unlink back as a failure to enter the root."""
+        pack = tmp_path / "pack"
+        (pack / "deep").mkdir(parents=True)
+        (pack / "deep" / "b.idx").write_bytes(b"idx")
+        with locked(pack, _RX):
+            _rmtree.remove_tree(pack)
+            assert not os.path.exists(pack)
+            pack.mkdir()  # for ``locked`` to restore onto
+
     def test_best_effort_on_a_locked_directory_inside_the_tree_still_finishes(self, tmp_path):
         pack = _tree(tmp_path)
         with locked(pack / "deep", _RX):
@@ -510,6 +524,27 @@ class TestTheHandler:
         handler = _rmtree._make_handler(True, str(root))
         handler(self._retry_func([]), str(root), PermissionError(errno.EACCES, "refused", str(root)))
         assert chmods == [str(root)], chmods
+
+    @pytest.mark.parametrize("root_spelling", ["native", "forward_slashes", "trailing_separator"])
+    def test_the_root_is_cleared_as_a_refusing_childs_parent(self, tmp_path, monkeypatch, root_spelling):
+        """The tree's own root is part of the ask (DEF-3023). A ``build/`` at
+        0o500 holding a subdirectory refuses that subdirectory's ``rmdir`` on
+        POSIX, since the root's write bit governs it, so the root gets the
+        bit as a directory inside the tree does, however the root was
+        spelled; the root's own parent never does (the row above)."""
+        root = tmp_path / "tree"
+        (root / "sub").mkdir(parents=True)
+        chmods: list[str] = []
+        real_chmod = os.chmod
+        monkeypatch.setattr(os, "chmod", lambda p, m, **k: (chmods.append(str(p)), real_chmod(p, m, **k)))
+        calls: list = []
+        child = str(root / "sub")
+        spelled = {"native": str(root), "forward_slashes": root.as_posix(),
+                   "trailing_separator": os.path.join(str(root), "")}[root_spelling]
+        handler = _rmtree._make_handler(False, spelled)
+        handler(self._retry_func(calls), child, PermissionError(errno.EACCES, "refused", child))
+        assert calls == [child], "retried exactly once"
+        assert chmods == [child, str(root)], chmods
 
     def test_a_second_refusal_raises_strict(self, tmp_path):
         target = tmp_path / "f"
