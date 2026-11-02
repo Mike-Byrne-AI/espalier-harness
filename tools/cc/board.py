@@ -1425,7 +1425,7 @@ def _pr_meaning(pr: dict) -> str:
             if required.get("red"):
                 # A red cell is a test's verdict or a lost runner's; only the
                 # driver's read on the lane tells them apart (the banner says so too).
-                meaning += "; its seat's `python tools/cc/ship.py status` tells a test red from a lost runner"
+                meaning += "; its seat's `tools/cc/ship.py status` tells a test red from a lost runner"
     if pr.get("isDraft"):
         meaning = "draft"
     return meaning

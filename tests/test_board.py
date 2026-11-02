@@ -251,7 +251,7 @@ class TestOpenPullRequests:
         run = _gh({"pr list": [self._blocked()], "run list": _GREEN_RUNS, "pr checks": {"7": checks}})
         text = board.render(board.collect(tmp_path, run_=run, now=_NOW))
         assert ("#7 lane/7 [no seat's claim names this branch]: blocked: required checks red "
-                "(test (3.12), test-serial (3.10)); its seat's `python tools/cc/ship.py status` tells a test red "
+                "(test (3.12), test-serial (3.10)); its seat's `tools/cc/ship.py status` tells a test red "
                 "from a lost runner; auto-merge armed") in text, text
         assert [c for c in run.calls if c[1:3] == ["pr", "checks"]] == [self._REQUIRED_ARGV]
 
