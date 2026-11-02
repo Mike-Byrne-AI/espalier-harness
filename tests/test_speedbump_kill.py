@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -70,13 +71,20 @@ def children():
     started: list[subprocess.Popen] = []
 
     def start(cwd: Path, code: str = _SLEEP) -> subprocess.Popen:
-        proc = subprocess.Popen([sys.executable, "-c", code], cwd=str(cwd), stdout=subprocess.PIPE, text=True)
+        # A group of its own, so a parent's child goes with it at the end: the
+        # rows share the box's process table with other seats, and a sleeping
+        # orphan at PPID 1 is the shape the reap recipe hunts.
+        proc = subprocess.Popen([sys.executable, "-c", code], cwd=str(cwd), stdout=subprocess.PIPE, text=True,
+                                start_new_session=True)
         started.append(proc)
         return proc
 
     yield start
     for proc in started:
-        proc.kill()
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            proc.kill()
         proc.wait(timeout=10)
         if proc.stdout is not None:
             proc.stdout.close()
@@ -184,6 +192,69 @@ class TestAnotherCheckoutsRun:
         assert fired is not None and fired[0] == "CP-KILL", fired
         assert _fire(main, f"Stop-Process -Id {theirs.pid} -WhatIf", tool="PowerShell") is None
 
+    def test_another_signal_to_a_pid_already_nudged_passes(self, tmp_path, children):
+        """Keyed per pid, not per spelling: the nudge was about the pid."""
+        main, other = _clone(tmp_path)
+        theirs = children(other)
+        time.sleep(0.3)
+        assert _fire(main, f"kill -9 {theirs.pid}") is not None
+        assert _fire(main, f"kill -TERM {theirs.pid}") is None
+
+    def test_one_check_reads_the_process_table_once(self, tmp_path, children, monkeypatch):
+        """The predicate, the reminder and the flag key all ask: one reading."""
+        import _hook_utils
+        sync = _hook_utils.load_checkout_sync()
+        reads: list = []
+        real = sync.process_cwds
+        monkeypatch.setattr(sync, "process_cwds", lambda *a, **k: reads.append(a) or real(*a, **k))
+        main, other = _clone(tmp_path)
+        theirs = children(other)
+        time.sleep(0.3)
+        assert _fire(main, f"kill {theirs.pid}") is not None and len(reads) == 1, reads
+
+    def test_every_foreign_pid_of_one_kill_is_named_and_keyed(self, tmp_path, children):
+        main, other = _clone(tmp_path)
+        first, second = children(other), children(other)
+        time.sleep(0.3)
+        fired = _fire(main, f"kill {first.pid} {second.pid}")
+        assert fired is not None and f"pid {first.pid} (and 1 more named here) works in" in fired[1], fired
+        assert _fire(main, f"kill {first.pid} {second.pid}") is None, "the re-issue proceeds"
+
+    def test_a_parent_filtered_kill_is_judged_by_the_children(self, tmp_path, children):
+        main, other = _clone(tmp_path)
+        parent = children(main, "import subprocess, sys, time; "
+                                f"subprocess.Popen([sys.executable, '-c', {_SLEEP!r}], cwd={str(other)!r}); "
+                                "print('up', flush=True); time.sleep(60)")
+        assert parent.stdout is not None and parent.stdout.readline().strip() == "up"
+        time.sleep(0.3)
+        fired = _fire(main, f"pkill -P {parent.pid}")
+        assert fired is not None and "works in .claude/worktrees/other" in fired[1], fired
+
+    def test_a_parent_kill_wider_than_the_reading_is_nudged(self, tmp_path):
+        main, _other = _clone(tmp_path)
+        fired = _fire(main, "pkill -P 1")
+        assert fired is not None and "pkill -P 1 ends" in fired[1] and "read each one's working directory" in fired[1]
+
+    def test_this_checkouts_run_under_another_seats_lock_is_its_own(self, tmp_path, children, monkeypatch):
+        """The nearest checkout decides first; the lock decides only a chain no
+        checkout holds (a killed seat's tier recorded on another lane, say)."""
+        main, other = _clone(tmp_path)
+        lock = tmp_path / "box.lock"
+        lock.write_text(json.dumps(_record(other)), encoding="utf-8")
+        monkeypatch.setenv("ESPALIER_BOX_LOCK", str(lock))
+        mine = children(main)
+        time.sleep(0.3)
+        assert _fire(main, f"kill {mine.pid}") is None
+
+    def test_one_checkout_with_no_lock_spawns_nothing(self, tmp_path, monkeypatch):
+        import _hook_utils
+        sync = _hook_utils.load_checkout_sync()
+        monkeypatch.setattr(sync, "_parent_map", lambda *a, **k: pytest.fail("read the table with no other checkout"))
+        lone = tmp_path / "lone"
+        lone.mkdir()
+        _git(lone, "init", "-q")
+        assert _fire(lone, f"kill {os.getpid()}") is None
+
     def test_a_long_checkout_path_stays_under_the_reason_cap(self, tmp_path, children):
         main, other = _clone(tmp_path, worktree="/".join(["a-long-folder-name-for-the-cap"] * 8))
         theirs = children(other)
@@ -245,6 +316,19 @@ class TestTheBoxLocksHolder:
         time.sleep(0.3)
         assert _fire(main, f"kill {child.pid}") is not None
 
+    def test_a_dead_holders_record_names_nobody(self, tmp_path, children, monkeypatch):
+        main, _other = _clone(tmp_path)
+        gone = subprocess.Popen([sys.executable, "-c", "pass"])
+        gone.wait(timeout=30)
+        lock = tmp_path / "box.lock"
+        lock.write_text(json.dumps({**_record(tmp_path), "pid": gone.pid}), encoding="utf-8")
+        monkeypatch.setenv("ESPALIER_BOX_LOCK", str(lock))
+        scratch = tmp_path / "scratch"
+        scratch.mkdir()
+        child = children(scratch)
+        time.sleep(0.3)
+        assert _fire(main, f"kill {child.pid}") is None
+
     def test_an_unreadable_record_names_no_holder(self, tmp_path, monkeypatch):
         for body in ("", "{not json", json.dumps({"pid": True}), json.dumps({"pid": -3}), json.dumps([1])):
             lock = tmp_path / "box.lock"
@@ -290,6 +374,7 @@ class TestTheKillWords:
         ("spps -Id:205", [205]),
         ("kill 206", [206]),
         ("Stop-Process -Name python", []),
+        ("Stop-Process -ErrorAction SilentlyContinue 210", [210]),
         ("Stop-Process -Id 207 -WhatIf", []),
         ("taskkill.exe /PID 208", [208]),
         ("Write-Output 'Stop-Process -Id 209'", []),

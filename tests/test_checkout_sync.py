@@ -862,6 +862,20 @@ class TestReapWorktrees:
         assert f"running [a process works in it (pid {child.pid})]" in cs.worktrees_line(report)
 
     @pytest.mark.skipif(os.name != "posix", reason="the cwd reader is the POSIX arm (Windows has its rename probe)")
+    @pytest.mark.skipif(os.name != "posix", reason="the cwd reader is the POSIX arm (Windows has its rename probe)")
+    def test_a_dry_run_names_a_held_worktree_as_kept(self, cs, repos):
+        """seat.py's list and retire read the dry run: it says what the real run does."""
+        work = repos["work"]
+        wt = _worktree(repos, "busy")
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], cwd=str(wt))
+        try:
+            time.sleep(0.5)
+            report = cs.reap_worktrees(work, sessions=[], dry_run=True)
+        finally:
+            child.kill()
+            child.wait(timeout=10)
+        assert report.would_remove == [] and report.kept == [("busy", f"a process works in it (pid {child.pid})")]
+
     def test_the_process_table_is_read_once_and_only_at_a_removal(self, cs, repos, monkeypatch):
         work = repos["work"]
         _worktree(repos, "one")
@@ -1377,6 +1391,20 @@ class TestTheProcessReader:
         monkeypatch.setattr(cs.shutil, "which", lambda name, path=None: None)
         monkeypatch.setattr(cs, "run", lambda *a, **k: pytest.fail("spawned with no lsof"))
         assert cs.process_cwds([4242]) == {} and cs.process_cwds(None) == {}
+
+    def test_an_lsof_that_read_nothing_is_unread(self, cs, monkeypatch, tmp_path):
+        """A failed run prints nothing, and a read of every process lists lsof
+        itself at least: either empty answer is no answer, so held_open keeps."""
+        monkeypatch.setattr(cs, "_PROC_ROOT", tmp_path / "no-proc")
+        monkeypatch.setattr(cs.shutil, "which", lambda name, path=None: "/usr/sbin/lsof")
+        for code in (1, 0):
+            monkeypatch.setattr(cs, "run", lambda argv, *, cwd, timeout, code=code: subprocess.CompletedProcess(
+                argv, code, "", ""))
+            assert cs.process_cwds(None) is None, code
+            assert cs.held_open(tmp_path) == "the process table could not be read, so a run in it cannot be ruled out"
+        assert cs.process_cwds([4242]) == {}, "gone pids named by number read as none, an answer"
+        monkeypatch.setattr(cs, "run", lambda argv, *, cwd, timeout: subprocess.CompletedProcess(argv, 1, "", ""))
+        assert cs.process_cwds([4242]) is None, "a failed run is unread"
 
     def test_lsof_is_never_taken_from_the_checkout(self, cs, monkeypatch, tmp_path):
         """An empty or relative PATH entry is the hook's cwd, the checkout: a

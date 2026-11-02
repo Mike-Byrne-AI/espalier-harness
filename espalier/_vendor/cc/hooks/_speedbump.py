@@ -1869,27 +1869,38 @@ def _pid_list(word: str) -> list[int]:
     return [int(part) for part in word.split(",") if part.isascii() and part.isdigit() and int(part) > 0]
 
 
-def _kill_pids(verb: str, words: list[str | None], *, bash: bool) -> list[int]:
-    """The pids one kill names, from its own words (`_statement`): ``kill``'s
-    operands past its signal, ``pkill``'s ``-P`` parent list, ``taskkill``'s
-    ``/PID`` values, ``Stop-Process``'s ``-Id`` list or first operand. None for
-    a liveness probe (``kill -0``, ``-s 0``), a listing (``kill -l``), a
-    rehearsal (``-WhatIf``) and a kill by name."""
+#: Stop-Process options that take a value (its own and the common ones, with
+#: their aliases): the value is never the positional -Id.
+_PS_VALUED_OPTIONS = frozenset({
+    "-erroraction", "-warningaction", "-informationaction", "-progressaction", "-errorvariable",
+    "-warningvariable", "-informationvariable", "-outvariable", "-outbuffer", "-pipelinevariable",
+    "-ea", "-wa", "-ia", "-ev", "-wv", "-iv", "-ov", "-ob", "-pv",
+})
+
+
+def _kill_targets(verb: str, words: list[str | None], *, bash: bool) -> list[tuple[int, bool]]:
+    """``(pid, named as a parent)`` for each pid one kill names, from its own
+    words (`_statement`): ``kill``'s operands past its signal, ``pkill``'s
+    ``-P`` list (parents: the kill ends their children), ``taskkill``'s
+    ``/PID`` values, ``Stop-Process``'s ``-Id`` list or first operand. None
+    for a liveness probe (``kill -0``, ``-s 0``), a listing (``kill -l``), a
+    rehearsal (``-WhatIf``), a kill by name, and ``kill -1`` (every process
+    this user owns: no pid to read, declared)."""
     verb = verb.lower()
     verb = verb[:-4] if verb.endswith(".exe") else verb
     if verb == "spps" or (verb == "kill" and not bash):
         verb = "stop-process"
-    pids: list[int] = []
-    expect = ""   # what the next word is: "pid" (a pid list), "signal", or "skip" (an option's value)
-    positional = True   # Stop-Process takes its first operand as -Id
+    found: list[tuple[int, bool]] = []
+    expect = ""   # what the next word is: "pid" (a pid list), "parent", "signal", or "skip" (an option's value)
+    positional = True   # Stop-Process takes its first number as -Id
     for word in words:
         if word is None or word == ">":
             expect = "skip" if word == ">" else ""
             continue
         low = word.lower()
-        if expect == "pid":
-            pids += _pid_list(word)
-            expect = "pid" if word.endswith(",") else ""
+        if expect in ("pid", "parent"):
+            found += [(pid, expect == "parent") for pid in _pid_list(word)]
+            expect = expect if word.endswith(",") else ""
             continue
         if expect == "signal" and low in ("0", "sig0"):
             return []
@@ -1902,12 +1913,12 @@ def _kill_pids(verb: str, words: list[str | None], *, bash: bool) -> list[int]:
             if low in ("-s", "-n"):
                 expect = "signal"
             elif low.isascii() and low.isdigit():
-                pids += _pid_list(low)
+                found += [(pid, False) for pid in _pid_list(low)]
         elif verb == "pkill":
             if word == "-P":
-                expect = "pid"
+                expect = "parent"
             elif word.startswith("-P"):
-                pids += _pid_list(word[2:])
+                found += [(pid, True) for pid in _pid_list(word[2:])]
         elif verb == "taskkill":
             if low in ("/pid", "//pid", "-pid"):
                 expect = "pid"
@@ -1919,29 +1930,37 @@ def _kill_pids(verb: str, words: list[str | None], *, bash: bool) -> list[int]:
             if low == "-id":
                 expect, positional = "pid", False
             elif low.startswith("-id:"):
-                pids += _pid_list(low[4:])
+                found += [(pid, False) for pid in _pid_list(low[4:])]
                 positional = False
             elif low in ("-name", "-inputobject"):
                 expect, positional = "skip", False
-            elif not low.startswith("-") and positional:
-                pids += _pid_list(word)
+            elif low in _PS_VALUED_OPTIONS:
+                expect = "skip"
+            elif not low.startswith("-") and positional and _pid_list(word):
+                found += [(pid, False) for pid in _pid_list(word)]
                 positional = False
                 expect = "pid" if word.endswith(",") else ""
-    return pids
+    return found
 
 
-def _named_kill_pids(tool_name: str, tool_input: dict) -> list[int]:
-    """Every pid a kill in the command names, first `_KILL_PID_CAP`, read
-    from the texts the git checkpoints read (`_git_checkpoint_readings`: the
-    masked Bash command and the programs it hands to a shell, or the
-    PowerShell scan text), so a quoted or commented MENTION is data."""
-    found: list[int] = []
+def _named_kill_targets(tool_name: str, tool_input: dict) -> list[tuple[int, bool]]:
+    """Every ``(pid, named as a parent)`` a kill in the command names, first
+    `_KILL_PID_CAP`, read from the texts the git checkpoints read
+    (`_git_checkpoint_readings`: the masked Bash command and the programs it
+    hands to a shell, or the PowerShell scan text), so a quoted or commented
+    MENTION is data."""
+    found: list[tuple[int, bool]] = []
     for text, is_bash in _git_checkpoint_readings(tool_name, tool_input):
         head = _KILL_HEAD_RE if is_bash else _PS_KILL_HEAD_RE
         for m in head.finditer(text):
             words, _end = _statement(text, m.end(), bash=is_bash)
-            found += [pid for pid in _kill_pids(m.group("kill_verb"), words, bash=is_bash) if pid not in found]
+            named = {pid for pid, _parent in found}
+            found += [t for t in _kill_targets(m.group("kill_verb"), words, bash=is_bash) if t[0] not in named]
     return found[:_KILL_PID_CAP]
+
+
+def _named_kill_pids(tool_name: str, tool_input: dict) -> list[int]:
+    return [pid for pid, _parent in _named_kill_targets(tool_name, tool_input)]
 
 
 def _git_word(sync: Any, cwd: Path, *args: str) -> str:
@@ -1985,57 +2004,92 @@ def _box_lock_holder() -> dict[str, Any] | None:
     return {"pid": pid, "seat": seat if isinstance(seat, str) else "?", "lane": lane if isinstance(lane, str) else "?"}
 
 
-def _kill_reading(tool_name: str, tool_input: dict, root: Path) -> tuple[int, str] | None:
-    """``(pid, whose run it is, in words)`` for the first named pid CP-KILL
-    nudges for, or None (the block above has the rule)."""
-    pids = _named_kill_pids(tool_name, tool_input)
-    if not pids:
+def _kill_reading(tool_name: str, tool_input: dict, root: Path) -> tuple[tuple[int, ...], str] | None:
+    """``(every pid CP-KILL nudges for, whose run the first is, in words)``,
+    or None (the block above has the rule)."""
+    targets = _named_kill_targets(tool_name, tool_input)
+    if not targets:
         return None
+    holder = _box_lock_holder()
+    checkouts = [root, *_hook_utils.sibling_checkouts(root)]
+    if len(checkouts) < 2 and holder is None:
+        return None   # one checkout and no lock held: no other seat's run to read, so nothing spawns
     sync = _hook_utils.load_checkout_sync()
     if sync is None:
         return None
+    if holder is not None and sync.pid_alive(holder["pid"]) is False:
+        holder = None   # the record a holder killed hard left behind names nobody
     table = sync._parent_map(spawn_timeout(_KILL_READ_S))
-    chains = {pid: [pid, *sync.ancestors_of(pid, table)] for pid in pids}
-    asked = list(dict.fromkeys(p for chain in chains.values() for p in chain))
-    cwds = sync.process_cwds(asked, timeout=spawn_timeout(_KILL_READ_S)) or {}
-    checkouts = [root, *_hook_utils.sibling_checkouts(root)]
-    holder = _box_lock_holder()
+    pids: list[int] = []
+    for pid, parent in targets:
+        # A parent `pkill -P` names ends its children: they are what is judged.
+        children = [child for child, up in table.items() if up == pid] if parent else [pid]
+        if parent and (pid == 1 or len(children) > _KILL_PID_CAP):
+            return (pid,), (f"pkill -P {pid} ends {len(children) or 'its'} processes, more than this reads one by "
+                            "one, and a run another checkout of this clone is working may be among them: read each "
+                            "one's working directory and parents first")
+        pids += [p for p in children if p not in pids]
+    pids = pids[:_KILL_PID_CAP]
+    if not pids:
+        return None
+    depth = max(1, sync.CWD_PID_CAP // len(pids) - 1)   # every chain fits the one read
+    chains = {pid: [pid, *sync.ancestors_of(pid, table, depth)] for pid in pids}
+    cwds = sync.process_cwds(list(dict.fromkeys(p for c in chains.values() for p in c)),
+                             timeout=spawn_timeout(_KILL_READ_S)) or {}
+    hits: list[int] = []
+    first: tuple[int, int, Path | None] | None = None   # (pid, the process that names its owner, its checkout)
+    mine = lane = ""   # this checkout's seat and lane, read only where the box lock decides
     for pid, chain in chains.items():
+        owner, home = pid, None
         for owner in chain:
             cwd = cwds.get(owner)
             home = sync.cwd_checkout(cwd, checkouts) if cwd else None
-            if home is None:
-                continue
+            if home is not None:
+                break
+        if home is not None:
             if sync.within(home, root) and sync.within(root, home):
-                break   # the nearest is this checkout: its own run
-            where = sync.checkout_name(home, checkouts)[:_KILL_WHERE_CAP]
-            seat = _seat_name(home)
-            named = "seat unread" if seat == "?" else f"seat {seat[:40]}" if seat else "no seat name"
-            live = sync.sessions_in(home, checkouts=checkouts)
-            there = ("a live Claude session is there" if live else
-                     "no live Claude session there: read its parents first" if live is not None else
-                     "its sessions unread")
-            who = f"pid {pid}" if owner == pid else f"pid {pid} runs under pid {owner}, which"
-            return pid, (f"{who} works in {where}, another checkout of this clone ({named}; {there}) -- "
-                         "that is its run: ask the session working there, or the dispatcher, before you end it")
+                continue   # the nearest is this checkout: its own run
+            hits.append(pid)
+            first = first or (pid, owner, home)
+            continue
+        # No checkout holds a process of the chain (Windows reads no cwd, and a
+        # fresh-clone gate's clone is no checkout): the box lock decides.
         if holder is not None and holder["pid"] in chain:
             lane = _git_word(sync, root, "rev-parse", "--abbrev-ref", "HEAD")
             mine = _seat_name(root)
             if holder["seat"] == mine and holder["lane"] == lane and mine not in ("", "?") and lane not in ("", "?", "HEAD"):
                 continue   # this checkout's own run holds the lock
-            who = f"pid {pid} is" if holder["pid"] == pid else f"pid {pid} runs under"
-            return pid, (f"{who} the box lock's holder (pid {holder['pid']}, seat {holder['seat'][:40]}, lane "
-                         f"{holder['lane'][:80]}), another seat's tier: ask that seat, or the dispatcher, before "
-                         "you end it")
-    return None
+            hits.append(pid)
+            first = first or (pid, holder["pid"], None)
+    if first is None:
+        return None
+    pid, owner, home = first
+    more = f" (and {len(hits) - 1} more named here)" if len(hits) > 1 else ""
+    if home is None:
+        assert holder is not None   # a hit with no checkout came from the box lock's arm
+        who = f"pid {pid}{more} is" if owner == pid else f"pid {pid}{more} runs under"
+        # '' is a checkout that names no seat; '?' (or no lane at all) is a read that failed.
+        unread = "; this checkout's seat or lane unread" if mine == "?" or lane in ("", "?") else ""
+        return tuple(hits), (f"{who} the box lock's holder (pid {owner}, seat {holder['seat'][:40]}, lane "
+                             f"{holder['lane'][:80]}{unread}), another seat's tier: ask that seat, or the dispatcher, "
+                             "before you end it")
+    where = sync.checkout_name(home, checkouts)[:_KILL_WHERE_CAP]
+    seat = _seat_name(home)
+    named = "seat unread" if seat == "?" else f"seat {seat[:40]}" if seat else "no seat name"
+    live = sync.sessions_in(home, checkouts=checkouts)
+    there = ("a live Claude session is there" if live else
+             "no live Claude session there: read its parents first" if live is not None else "its sessions unread")
+    who = f"pid {pid}{more}" if owner == pid else f"pid {pid}{more} runs under pid {owner}, which"
+    return tuple(hits), (f"{who} works in {where}, another checkout of this clone ({named}; {there}) -- that is "
+                         "its run: ask the session working there, or the dispatcher, before you end it")
 
 
 #: The last command's reading: the predicate, the body and the flag key each
 #: ask, and the reading spawns, so it is made once (a hook run judges one call).
-_last_kill: tuple[tuple[str, str, str], tuple[int, str] | None] | None = None
+_last_kill: tuple[tuple[str, str, str], tuple[tuple[int, ...], str] | None] | None = None
 
 
-def _kill_hit(tool_name: str, tool_input: dict, root: Path | None) -> tuple[int, str] | None:
+def _kill_hit(tool_name: str, tool_input: dict, root: Path | None) -> tuple[tuple[int, ...], str] | None:
     global _last_kill
     command = str(tool_input.get("command", ""))
     if root is None:   # the flag key is handed no root: the reading just made is this call's
@@ -2058,9 +2112,10 @@ def _kill_body(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = 
 def _kill_key(tool_name: str, tool_input: dict) -> str:
     # Per pid, never id-only: one fire would retire the bump for the session and
     # a second seat's pid would pass with no word (air's c8e05b). A re-issue of
-    # the same command names the same pid, and passes.
+    # the same command names the same pids, and passes; a kill naming another
+    # seat's pid this session has not been told about is nudged again.
     hit = _kill_hit(tool_name, tool_input, None)
-    return f"pid{hit[0]}" if hit is not None else _discard_key(tool_name, tool_input)
+    return "pid" + "-".join(str(pid) for pid in hit[0]) if hit is not None else _discard_key(tool_name, tool_input)
 
 
 def _ascii_text(text: str) -> str:

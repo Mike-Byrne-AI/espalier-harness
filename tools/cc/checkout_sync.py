@@ -572,7 +572,12 @@ def process_cwds(pids: list[int] | None = None, *, timeout: float = CWD_READ_S) 
     result = run([lsof, "-w", "-a", "-d", "cwd", *named, "-Fn"], cwd=Path(os.path.abspath(os.sep)), timeout=timeout)
     if result is None:
         return None
-    return parse_lsof_cwds(result.stdout or "")
+    found = parse_lsof_cwds(result.stdout or "")
+    # An lsof that read nothing could not answer: a failed run prints nothing,
+    # and a read of every process lists one at least (lsof itself).
+    if not found and (result.returncode != 0 or pids is None):
+        return None
+    return found
 
 
 def cwd_checkout(cwd: str, checkouts: list[Path]) -> Path | None:
@@ -1512,7 +1517,14 @@ def reap_worktrees(root: Path, *, deadline: float | None = None,
         # Named, since the banner said "a plan in it is still in progress" until now (DEF-4047).
         named = path.name + (" (its plan was never closed; the lane merged)" if plan_in_progress(path) else "")
         if dry_run:
-            report.would_remove.append(named)
+            # Off Windows reading the table changes nothing, so a dry run reads
+            # it too (seat.py's list and retire show this verdict); Windows's
+            # probe renames the folder, which a dry run must not.
+            busy = held_open(path, table_once) if os.name != "nt" else ""
+            if busy:
+                report.keep(path, busy)
+            else:
+                report.would_remove.append(named)
             continue
         if _left(deadline, REMOVE_FLOOR_S) < REMOVE_FLOOR_S:
             report.deferred.append(path.name)
