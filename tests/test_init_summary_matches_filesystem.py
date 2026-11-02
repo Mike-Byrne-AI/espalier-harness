@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._git_oracle import require_is_gitignored
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -135,3 +137,47 @@ def test_a_recommendation_without_a_packaged_body_is_named(tmp_path):
 def test_a_plain_repo_prints_no_bodiless_line(tmp_path):
     out = _run_init(tmp_path)
     assert "Suggested agents" not in out, out
+
+
+@pytest.mark.integration
+def test_the_summary_names_the_per_machine_homes_git_really_ignores(tmp_path):
+    """The epilogue names the homes init keeps on this machine (DEF-1105): the
+    blueprint chain /handoff records into, and where a kept decision goes. Each
+    `cc/` path the line names is one git ignores in the init'd tree, so the line
+    never calls a committed path per-machine."""
+    out = _run_init(tmp_path)
+    line = next((ln for ln in out.splitlines() if "cc/blueprints/" in ln and "this machine" in ln), "")
+    assert line, "no epilogue line names cc/blueprints/ as this machine's"
+    assert "ESPALIER_MEMORY.md" in line, line
+    named = re.findall(r"cc/[A-Za-z0-9_.]+/?", line)
+    assert "cc/blueprints/" in named, line
+    for rel in named:
+        probe = rel + ("probe" if rel.endswith("/") else "")
+        assert require_is_gitignored(tmp_path, probe), (
+            f"{rel} is named per-machine but git does not ignore it: {line}"
+        )
+
+
+@pytest.mark.integration
+def test_a_home_the_adopter_commits_is_never_called_per_machine(tmp_path):
+    """An adopter who already commits ``cc/GOAL.md`` has init withhold that
+    entry (it would protect nothing), so the epilogue's per-machine line must
+    not name it: the line reads what git ignores in the tree, not the constant
+    (a reviewer drove the old line naming a committed GOAL.md gitignored)."""
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+    (tmp_path / "cc").mkdir()
+    (tmp_path / "cc" / "GOAL.md").write_text("# our goal, committed\n", encoding="utf-8")
+    subprocess.run(["git", "add", "cc/GOAL.md"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+         "commit", "-q", "-m", "goal"], cwd=tmp_path, check=True)
+    result = subprocess.run(
+        [sys.executable, "-m", "espalier.cli", "init", str(tmp_path)],
+        capture_output=True, text=True, check=True, cwd=REPO_ROOT, encoding="utf-8",
+    )
+    line = next((ln for ln in result.stdout.splitlines()
+                 if "cc/blueprints/" in ln and "this machine" in ln), "")
+    assert line, "the per-machine line went missing for the homes git does ignore"
+    assert "cc/GOAL.md" not in line, (
+        f"a committed cc/GOAL.md is named as staying on this machine: {line}"
+    )

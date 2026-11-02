@@ -10,6 +10,7 @@ stays a stdlib leaf so the offline/in-loop split is physical.
 from __future__ import annotations
 
 import ast
+import inspect
 import json
 import re
 import shutil
@@ -205,6 +206,138 @@ class TestReadLedger:
             fh.write('{"run_id": "good-2", "ts": "t2"}\n')
         recs = fl.read_ledger(tmp_path)
         assert {r["run_id"] for r in recs} == {"good-1", "good-2"}
+
+
+def _append_counted(summ, root, counts, run_id="r"):
+    """``append_summary`` with run counts, reached so a writer that takes none
+    fails this row by assertion rather than by a TypeError at the call."""
+    assert "run_counts" in inspect.signature(fl.append_summary).parameters, (
+        "append_summary takes no run counts, so a round that lost lanes is recorded "
+        "as an ordinary one"
+    )
+    return fl.append_summary(summ, run_id=run_id, ts="t", root=root, run_counts=counts)
+
+
+def _trend_reader():
+    reader = getattr(fl, "read_ledger_trend", None)
+    assert reader is not None, "no reader leaves a partial round out of the trend"
+    return reader
+
+
+_WHOLE = {"finders_launched": 5, "finders_run": 5, "lanes_not_run": 0, "refuters_not_run": 0}
+
+
+class TestRunCounts:
+    """A review round that lost lanes (a finder or scope-breaker that returned
+    nothing or threw) is recorded with its counts and read as no evidence, never
+    as an ordinary round: 20 dead finders of 25 used to append a row that looked
+    like a quiet round, and the convergence critic reads that trend."""
+
+    def test_a_whole_round_records_its_counts_and_reads_complete(self, tmp_path):
+        summ = aggregate_findings([_finding(1)], known_categories=["bug"])
+        assert _append_counted(summ, tmp_path, dict(_WHOLE)) == 1
+        (rec,) = fl.read_ledger(tmp_path)
+        assert rec.get("run_counts") == _WHOLE, rec
+        assert rec.get("complete") is True and rec.get("round") == "complete", rec
+
+    @pytest.mark.parametrize("counts", [
+        {"finders_launched": 25, "finders_run": 5, "lanes_not_run": 20, "refuters_not_run": 0},
+        {"finders_launched": 5, "finders_run": 5, "lanes_not_run": 1, "refuters_not_run": 0},
+        {"finders_launched": 5, "finders_run": 4, "lanes_not_run": 0, "refuters_not_run": 0},
+    ], ids=["dead-finders", "dead-scope-breaker", "run-short-of-launched"])
+    def test_a_round_that_lost_a_lane_reads_partial(self, tmp_path, counts):
+        summ = aggregate_findings([], known_categories=["bug"])
+        assert _append_counted(summ, tmp_path, counts) == 1
+        (rec,) = fl.read_ledger(tmp_path)
+        assert rec.get("complete") is False and rec.get("round") == "partial", rec
+        assert rec.get("run_counts") == counts, rec
+
+    def test_a_round_that_launched_no_finder_is_never_complete(self, tmp_path):
+        """Zero launched, zero run, no lane lost: nothing was looked at, so the
+        round is no evidence of a quiet tree. No shipped caller writes it today
+        (the fan-out audit returns before persist on no finders); a hand-built
+        or broken caller would otherwise record a whole round of nothing."""
+        summ = aggregate_findings([], known_categories=["bug"])
+        counts = {"finders_launched": 0, "finders_run": 0, "lanes_not_run": 0, "refuters_not_run": 0}
+        assert _append_counted(summ, tmp_path, counts) == 1
+        (rec,) = fl.read_ledger(tmp_path)
+        assert rec.get("complete") is False and rec.get("round") == "partial", rec
+
+    def test_a_dead_refuter_is_recorded_but_does_not_make_the_round_partial(self, tmp_path):
+        """A refuter that did not run leaves its finding ``unattempted``, which the
+        survivors carry; the convergence template's own gate leaves refuters out
+        of a complete round for that reason, and the ledger agrees with it."""
+        summ = aggregate_findings([_finding(1)], known_categories=["bug"])
+        counts = dict(_WHOLE, refuters_not_run=2)
+        _append_counted(summ, tmp_path, counts)
+        (rec,) = fl.read_ledger(tmp_path)
+        assert rec.get("round") == "complete" and rec["run_counts"]["refuters_not_run"] == 2, rec
+
+    @pytest.mark.parametrize("counts", [
+        None,
+        {},
+        {"finders_launched": 5, "finders_run": 5},
+        {"finders_launched": "5", "finders_run": 5, "lanes_not_run": 0},
+        {"finders_launched": True, "finders_run": True, "lanes_not_run": 0},
+        {"finders_launched": 5, "finders_run": 6, "lanes_not_run": 0},
+        {"finders_launched": -1, "finders_run": -1, "lanes_not_run": 0},
+        "five of five",
+    ], ids=["none", "empty", "missing-key", "string-count", "bool-count",
+            "run-over-launched", "negative", "not-a-mapping"])
+    def test_counts_it_cannot_read_are_counts_unknown_never_complete(self, tmp_path, counts):
+        summ = aggregate_findings([_finding(1)], known_categories=["bug"])
+        assert _append_counted(summ, tmp_path, counts) == 1, "fail-open: the row still lands"
+        (rec,) = fl.read_ledger(tmp_path)
+        assert rec.get("complete") is False and rec.get("round") == "counts-unknown", rec
+        assert rec.get("run_counts") is None, rec
+
+    def test_a_call_that_passes_no_counts_is_counts_unknown(self, tmp_path):
+        """The writer's older callers (an adopter's own copy of a scaffold) pass
+        nothing; their rows never read as complete."""
+        _append_counted(aggregate_findings([], known_categories=["bug"]), tmp_path, None)
+        summ = aggregate_findings([_finding(1)], known_categories=["bug"])
+        fl.append_summary(summ, run_id="bare", ts="t", root=tmp_path)
+        rows = fl.read_ledger(tmp_path)
+        assert [r.get("round") for r in rows] == ["counts-unknown", "counts-unknown"], rows
+
+    def test_the_trend_leaves_partial_and_unknown_rounds_out_and_counts_them(self, tmp_path):
+        reader = _trend_reader()
+        summ = aggregate_findings([_finding(1)], known_categories=["bug"])
+        _append_counted(summ, tmp_path, dict(_WHOLE), run_id="whole-1")
+        _append_counted(summ, tmp_path, dict(_WHOLE, finders_run=1, lanes_not_run=4), run_id="partial")
+        _append_counted(summ, tmp_path, None, run_id="unknown")
+        _append_counted(summ, tmp_path, dict(_WHOLE), run_id="whole-2")
+        # a row written before the counts were recorded, as an older engine wrote it
+        with open(fl.ledger_path(tmp_path), "a", encoding="utf-8") as fh:
+            fh.write('{"run_id": "old", "ts": "t0", "summary": {"total": 0}, "findings": []}\n')
+        trend = reader(tmp_path)
+        assert [r["run_id"] for r in trend["rounds"]] == ["whole-1", "whole-2"], trend
+        assert trend["left_out"] == {"partial": 1, "counts_unknown": 2}, trend
+
+    def test_the_trend_re_derives_the_state_from_the_counts_not_the_stored_flag(self, tmp_path):
+        """A hand-edited ``complete: true`` over counts that say a lane died is
+        still a partial round: the reader trusts the counts."""
+        reader = _trend_reader()
+        path = fl.ledger_path(tmp_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        row = {"run_id": "forged", "ts": "t", "complete": True, "round": "complete",
+               "run_counts": dict(_WHOLE, lanes_not_run=3), "summary": {}, "findings": []}
+        path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+        trend = reader(tmp_path)
+        assert trend["rounds"] == [] and trend["left_out"] == {"partial": 1, "counts_unknown": 0}, trend
+
+    def test_the_trend_keeps_the_newest_whole_rounds_when_asked_for_the_last_few(self, tmp_path):
+        reader = _trend_reader()
+        summ = aggregate_findings([_finding(1)], known_categories=["bug"])
+        for n in range(4):
+            _append_counted(summ, tmp_path, dict(_WHOLE), run_id=f"whole-{n}")
+            _append_counted(summ, tmp_path, dict(_WHOLE, lanes_not_run=1), run_id=f"partial-{n}")
+        trend = reader(tmp_path, last=2)
+        assert [r["run_id"] for r in trend["rounds"]] == ["whole-2", "whole-3"], trend
+        assert trend["left_out"] == {"partial": 4, "counts_unknown": 0}, trend
+
+    def test_an_absent_ledger_is_an_empty_trend(self, tmp_path):
+        assert _trend_reader()(tmp_path) == {"rounds": [], "left_out": {"partial": 0, "counts_unknown": 0}}
 
 
 class TestLocalOnlyClassification:
@@ -941,6 +1074,36 @@ class TestPersistProgramExecutes:
             read = frozenset(_PROGRAM_DATA_KEY_RE.findall(program))
             assert written == read, (js.name, sorted(written), sorted(read))
 
+    @pytest.mark.parametrize("counts,state", [
+        (dict(_WHOLE), "complete"),
+        (dict(_WHOLE, finders_run=2, lanes_not_run=3), "partial"),
+    ], ids=["whole-round", "lanes-lost"])
+    @pytest.mark.parametrize("name", _STANDING)
+    def test_the_persist_program_writes_the_rounds_counts_on_its_row(self, name, counts, state, adopter_tree, tmp_path):
+        """The counts the workflow hands its persist agent reach the ledger row,
+        so a round that lost lanes is recorded as partial (the row the program
+        writes is the oracle; the program's exit code says nothing, since the
+        writer is fail-open)."""
+        src = (self._WORKFLOWS / name).read_text(encoding="utf-8")
+        program, input_path = _extract_persist_program(src, name)
+        assert "run_counts" in _persist_payload_keys(src, name), (name, "the payload carries no run counts")
+        tree = tmp_path / "tree"
+        shutil.copytree(adopter_tree, tree, symlinks=True)  # one writer: never the shared fixture
+        payload = {
+            "findings": [_finding(1)], "known_categories": ["bug"],
+            "corpus_path": "reports/persist-test-findings.md", "run_counts": counts,
+        }
+        target = tree / input_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(payload), encoding="utf-8")
+        r = subprocess.run(
+            [sys.executable, "-c", program.replace("${INPUT_PATH}", input_path)],
+            cwd=tree, capture_output=True, text=True, encoding="utf-8", timeout=30,
+        )
+        assert r.returncode == 0, (name, r.stdout[-800:], r.stderr[-800:])
+        row = fl.read_ledger(root=tree)[-1]
+        assert row.get("run_counts") == counts and row.get("round") == state, (name, row)
+
     @pytest.mark.parametrize("name", _STANDING)
     def test_a_standing_persist_program_runs_end_to_end(self, name, adopter_tree, tmp_path):
         src = (self._WORKFLOWS / name).read_text(encoding="utf-8")
@@ -952,6 +1115,7 @@ class TestPersistProgramExecutes:
             "findings": [_finding(1), _finding(2, outcome="refuted")],
             "known_categories": ["bug"],
             "corpus_path": corpus_path,
+            "run_counts": dict(_WHOLE),
         }
         assert frozenset(payload) == _persist_payload_keys(src, name), name
         target = tree / input_path

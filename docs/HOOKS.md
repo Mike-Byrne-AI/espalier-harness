@@ -1847,6 +1847,7 @@ validates the result:
   → scans for placeholder values (`<repo>`, `<fill>`, `INSERT HERE`,
   `TEMPLATE_ONLY`); all three kinds are harness files, so a write to any
   of them also runs the integrity spot-check below
+- The same three kinds → reads the frontmatter as Claude Code does: a value strict YAML rejects (an unquoted `: ` inside it, a value opening on `[`) is said to unregister the agent, or drop a skill's or command's frontmatter, with CRLF line endings (now, or once a checkout writes them), and a description cut at ` #` is said with what Claude Code shows; `espalier audit` names such a body holding CRLF, and `doctor` recommends `.claude/** text eol=lf`
 - `tools/cc/**/*.py` → runs `compile()` to catch syntax errors
 - Root governance docs (`CLAUDE.md`, `ESPALIER_MEMORY.md`, etc.) → placeholder scan
 - A Session Log fragment (`memory/session-log.d/<YYYY-MM-DD>-<HHMMSS>-<seat>.md`)

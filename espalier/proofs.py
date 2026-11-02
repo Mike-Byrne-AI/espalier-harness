@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from espalier import surface_contract
+from espalier import render_surface, surface_contract
 from espalier._atomic_io import atomic_write_text
 from espalier._compat import tomllib
 from espalier._report_io import load_report_json, report_is_json_object, safe_text
@@ -213,6 +213,18 @@ def _walk_surface_findings(repo_root: Path, findings: list[dict[str, str]]) -> N
             except tomllib.TOMLDecodeError as exc:
                 rel = str(path.relative_to(repo_root)).replace("\\", "/")
                 findings.append({"level": "error", "check": "toml", "detail": f"{rel}: {exc}"})
+
+    # Every agent, command and skill body, the adopter's own included, whose
+    # frontmatter Claude Code will not read whole as it sits on disk: a value
+    # strict YAML rejects, in a file with CRLF line endings (the agent does not
+    # register, a skill or command loads without its frontmatter), and a
+    # description YAML cuts at a comment. The same value with LF line endings
+    # loads, so it is said at the write and by `doctor`, not here. Nested bodies
+    # (a namespaced command, an agent in a team folder) are read too.
+    for rel_body in render_surface.frontmatter_body_paths(repo_root):
+        body_text = render_surface._read_body_bytes(repo_root / rel_body)
+        for _note, sentence in render_surface.frontmatter_notes(rel_body, body_text):
+            findings.append({"level": "warning", "check": "frontmatter", "detail": sentence})
 
     # post_write_check.py legitimately defines PLACEHOLDERS as a
     # constant for matching downstream templates; the placeholder-scan

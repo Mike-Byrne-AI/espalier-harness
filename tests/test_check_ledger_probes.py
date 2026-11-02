@@ -1560,6 +1560,14 @@ class TestProbeShapesAreRatcheted:
         #: (their fenced commands, the /analyze coverage loop and the dead-config pass,
         #: now census the adopter's tree), so their probes retired with them.
         "LG-12",
+        #: DEF-5058 (filed 2026-11-02 by lane c75-wave-3, re-keyed the same day when this
+        #: ratchet caught its first probe, which counted the NEW reader's name and so
+        #: closed on a "see read_ledger_trend" pointer): the deliverable IS the seed
+        #: protocol's two sentences naming the critic's reader, prose with no code to
+        #: parse. The probe counts the bare `read_ledger` name those sentences carry,
+        #: so a pointer or a changelog line leaves it open; rewording them closes it,
+        #: which is the fix. The DEF-933 shape: same reason, earns the slot.
+        "DEF-5058",
     }
 
     #: Ways a probe reads text rather than asking a structural question. The

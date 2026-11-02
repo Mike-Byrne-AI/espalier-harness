@@ -1689,6 +1689,67 @@ def _check_wired_hooks_start(repo_root: Path, warnings: list[str]) -> list[str]:
     ]
 
 
+#: How many bodies the line-ending row names before it counts the rest.
+_FRONTMATTER_ROW_NAMES = 5
+
+
+def _check_frontmatter_line_endings(repo_root: Path) -> list[str]:
+    """One info row naming the agent, command and skill bodies whose frontmatter
+    Claude Code reads only while the file has LF line endings (a value strict
+    YAML rejects, which the loader's fallback rescues only without a carriage
+    return), where git does not already pin their line endings to LF. A checkout
+    with ``core.autocrlf`` on Windows writes CRLF: the agent no longer registers
+    and a skill or command loses its frontmatter. Nothing when there is no such
+    body, no git answer, or git pins them all; a body already holding CRLF is the
+    audit's to name."""
+    import subprocess
+
+    from espalier import render_surface
+
+    at_risk: dict[str, str] = {}
+    for rel in render_surface.frontmatter_body_paths(repo_root):
+        text = render_surface._read_body_bytes(repo_root / rel)
+        if render_surface.frontmatter_has_crlf(text):
+            continue
+        keys = [
+            key for key, verdict, _why, _kept in render_surface.frontmatter_hazards(text)
+            if verdict == render_surface.FRONTMATTER_FRAGILE
+        ]
+        if keys:
+            at_risk[rel] = keys[0]
+    if not at_risk:
+        return []
+    try:
+        # -z: NUL-separated path, attribute, value triples, so a path git
+        # would otherwise quote (a non-ASCII name) comes back as written.
+        proc = run_no_stdin(  # a read-only attribute query
+            ["git", "check-attr", "-z", "eol", "--", *sorted(at_risk)],
+            cwd=str(repo_root), capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return []
+    if proc.returncode != 0:
+        return []
+    fields = proc.stdout.split("\0")
+    pinned = {
+        fields[i] for i in range(0, len(fields) - 2, 3)
+        if fields[i + 1] == "eol" and fields[i + 2] == "lf"
+    }
+    named = [f"{rel} (`{key}`)" for rel, key in sorted(at_risk.items()) if rel not in pinned]
+    if not named:
+        return []
+    shown = ", ".join(named[:_FRONTMATTER_ROW_NAMES])
+    if len(named) > _FRONTMATTER_ROW_NAMES:
+        shown += f" and {len(named) - _FRONTMATTER_ROW_NAMES} more"
+    return [
+        f"frontmatter Claude Code reads only with LF line endings: {shown}; a checkout "
+        "with CRLF line endings (core.autocrlf on Windows) unregisters such an agent and "
+        "drops a skill's or command's frontmatter: add `.claude/** text eol=lf` to "
+        ".gitattributes, or quote the value named"
+    ]
+
+
 def _check_recall_corpus(repo_root: Path) -> list[str]:
     """One info row on what ``/recall`` reaches on this tree, from the deployed
     hook (DEF-1087): the corpus size, how many documents are the adopter's own
@@ -3545,6 +3606,7 @@ def run_doctor_check(
     warnings.extend(posture_warnings)
     # What /recall reaches here, from the deployed hook (DEF-1087): an info row.
     info.extend(_check_recall_corpus(repo_root))
+    info.extend(_check_frontmatter_line_endings(repo_root))
     # Every wired hook starts: one FAIL per hook that
     # cannot, with the repair; a hook that dies at import judges nothing. Hooks
     # a slow host kept the probe from reaching are a warning (DEF-2019).
