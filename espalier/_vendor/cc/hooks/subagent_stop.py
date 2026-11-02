@@ -44,6 +44,12 @@ import _hook_utils  # noqa: E402
 import _maintenance_mode  # noqa: E402
 from _hook_utils import os_error_text  # noqa: E402
 
+# tools/cc, for `_earlier_evidence`'s `_json_safe` import. `_hook_utils` makes
+# the same insert as it loads; made here too, after it, so this file's reach
+# does not rest on that side effect and the path order is unchanged
+# (tests/test_deploy_set_import_closure.py).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 
 _resolve_project_root = _hook_utils.resolve_project_root
 
