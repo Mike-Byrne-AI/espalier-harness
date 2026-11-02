@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5055",
+ "subject": "tests/_temp_sweep.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "The fix is a census test not yet written: a grep count of unlocked prefixes moves with every new maker or rename and would read closed on a rename alone; the oracle is that census, written with the fix.",
+ "row_sha": "5950bcf427db",
+ "text_sha": "91f2b4eb278f",
+ "verified_2026_11_01": "OPEN (filed 2026-11-01; probe driven at filing)"
+}

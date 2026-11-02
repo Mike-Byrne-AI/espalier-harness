@@ -300,6 +300,14 @@ When you add a new test file:
   signal alarm, `tests/_timeout_backstop.py` fails a phase that passes after
   the alarm fired in it (its `Failed` was caught) and ends a test that blocks
   again, in its body or a fixture's teardown, a grace period later.
+- A session's start removes the temp dirs a dead run left: pytest's numbered
+  dirs, and the archive probe's and `checkout_copy`'s work dirs, whose `.lock`
+  names a pid that is gone (`tests/_temp_sweep.py`, `DEF-5053`; pytest itself
+  keeps them 72 h). A stderr line names what goes before the delete, which
+  stops at 60 s and leaves the rest for the next start. `ESPALIER_TEMP_SWEEP`
+  set to anything but `1` turns it off, and the summary says so; it keeps
+  nothing from another seat's start on the same box, so copy a killed run's dir
+  out to read it later.
 
 ## Anti-patterns this suite explicitly avoids
 
