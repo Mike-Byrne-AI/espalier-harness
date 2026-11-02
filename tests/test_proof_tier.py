@@ -1822,6 +1822,9 @@ _PARALLEL_NESTED_RUNS: dict[str, str] = {
         "three runs beside another seat's tier",
     "tests/test_golden_examples.py::test_golden_examples_pass_under_bare_pytest":
         "the golden examples under a bare pytest, a few one-assert files; under 0.5 s",
+    "tests/test_nested_temp.py::_run_child":
+        "the file's own one-line reporting row under a temp root the test plants, three rows; 0.25 s a "
+        "child on the self-host box (2026-11-01), not yet timed on the Windows seat",
     "tests/test_marker_parity.py::TestFullTreeFragmentsResolve::test_every_fragment_collects_at_least_one_real_nodeid":
         "one --collect-only of the whole tests/ tree, no row run; 29 s, under its own 300 s bound; the one "
         "enrolled row marked past the 60 s ceiling (360 s), kept here because no test body runs",

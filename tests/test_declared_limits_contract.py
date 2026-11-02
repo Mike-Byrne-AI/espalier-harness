@@ -331,7 +331,12 @@ def test_the_nested_run_has_the_runner_to_itself():
 # the `timeout_method = "thread"` pyproject then forced ended the WHOLE session
 # (CI run 35917451001, the first after the 2026-09-10 switch-off; since
 # 2026-10-07 only Windows keeps that method). Above the child's own 300 s bound
-# so its message, not this one, is what a reader sees.
+# so its message, not this one, is what a reader sees. That bound on
+# windows-latest, measured: the child alone 66 to 72 s (run 41375665954), the
+# test 88 to 203 s beside the parallel leg's load (130 runs). It held until the
+# child, first to end after the parallel leg, paid pytest's delete of that
+# leg's whole basetemp inside it (DEF-5056); its temp dirs now nest in this
+# session's (tests/_nested_temp.py), so no other session's dir is its cost.
 @pytest.mark.timeout(360)
 def test_every_cited_pin_runs_and_passes_on_this_host():
     """One pytest subprocess over every cited id: a pin that resolves but
