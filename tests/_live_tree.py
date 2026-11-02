@@ -170,10 +170,11 @@ _IGNORED_BASE: dict[tuple[str, str], bool] = {}
 
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
     from tests._git_oracle import GitAnswerUnavailable, _git_env
+    from tests._wait_budget import scaled
 
     try:
         return subprocess.run(["git", "-c", "core.quotePath=false", *args], cwd=root, env=_git_env(),
-                              capture_output=True, timeout=30)
+                              capture_output=True, timeout=scaled(30))
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         raise GitAnswerUnavailable(f"git could not answer about {root}: {exc}") from exc
 

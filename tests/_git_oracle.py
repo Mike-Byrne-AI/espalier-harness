@@ -44,6 +44,8 @@ import os
 import subprocess
 from pathlib import Path
 
+from tests._wait_budget import scaled
+
 _TIMEOUT = 30
 
 # git reads its target repository from the environment before it reads the cwd.
@@ -98,7 +100,7 @@ def owns_its_worktree(repo_root: Path) -> bool:
     try:
         proc = subprocess.run(
             ["git", "-C", str(repo_root), "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=_TIMEOUT, env=_git_env(), encoding="utf-8", errors="replace",
+            capture_output=True, text=True, timeout=scaled(_TIMEOUT), env=_git_env(), encoding="utf-8", errors="replace",
         )
     except (OSError, ValueError, subprocess.TimeoutExpired):
         return False
@@ -156,7 +158,7 @@ def require_tracked_paths(
     try:
         proc = subprocess.run(
             ["git", "-C", str(repo_root), "ls-files", "-z", *patterns],
-            capture_output=True, text=True, timeout=_TIMEOUT, env=_git_env(), encoding="utf-8", errors="replace",
+            capture_output=True, text=True, timeout=scaled(_TIMEOUT), env=_git_env(), encoding="utf-8", errors="replace",
         )
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         raise GitAnswerUnavailable(f"git ls-files failed at {repo_root}: {exc}") from exc
@@ -184,7 +186,7 @@ def require_tracked_paths(
     try:
         gone = subprocess.run(
             ["git", "-C", str(repo_root), "ls-files", "-z", "-d", *patterns],
-            capture_output=True, text=True, timeout=_TIMEOUT, env=_git_env(), encoding="utf-8", errors="replace",
+            capture_output=True, text=True, timeout=scaled(_TIMEOUT), env=_git_env(), encoding="utf-8", errors="replace",
         )
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         raise GitAnswerUnavailable(f"git ls-files -d failed at {repo_root}: {exc}") from exc
@@ -229,7 +231,7 @@ def require_head_tree_paths(
     try:
         proc = subprocess.run(
             ["git", "-C", str(repo_root), "ls-tree", "-r", "-z", "HEAD", "--name-only"],
-            capture_output=True, text=True, timeout=_TIMEOUT, env=_git_env(), encoding="utf-8", errors="replace",
+            capture_output=True, text=True, timeout=scaled(_TIMEOUT), env=_git_env(), encoding="utf-8", errors="replace",
         )
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         raise GitAnswerUnavailable(f"git ls-tree failed at {repo_root}: {exc}") from exc
@@ -287,7 +289,7 @@ def require_is_gitignored(repo_root: Path, rel: str) -> bool:
     try:
         proc = subprocess.run(
             ["git", "-C", str(repo_root), "check-ignore", "-q", "--", rel],
-            capture_output=True, timeout=_TIMEOUT, env=_git_env(),
+            capture_output=True, timeout=scaled(_TIMEOUT), env=_git_env(),
         )
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         raise GitAnswerUnavailable(

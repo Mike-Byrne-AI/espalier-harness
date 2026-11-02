@@ -38,6 +38,9 @@ pytest keeps a dir whose lock names a dead pid for 72 h (DEF-5053); it drops
 that lock first (:func:`dropping_the_lock`). The second comes after
 unconfigure, by when pytest has dropped it.
 
+On every method it stashes the ceiling it armed and names the running test
+(:func:`armed`), which tests/_wait_budget.py::scaled reads (DEF-5067).
+
 Inert where pytest-timeout is absent or lacks an internal this plugin calls
 (``missing_internals``; one named row reds then), where the method is ``thread`` (Windows,
 and the modules that arm SIGALRM themselves), off the main thread (where the
@@ -79,8 +82,12 @@ _BACKSTOP = pytest.StashKey[threading.Timer]()
 #: Set when pytest-timeout's alarm handler fails the test in the current phase.
 _FIRED = pytest.StashKey[bool]()
 
-#: The ceiling the test was armed with, in seconds (for the verdict's wording).
+#: The ceiling the test was armed with, in seconds, on either method (for the
+#: verdict's wording, and for tests/_wait_budget.py::scaled).
 _CEILING = pytest.StashKey[float]()
+
+#: The test whose ceiling is armed now; None between tests' protocols.
+_ARMED: Any = None
 
 #: Set on a session's config once any of its tests' ceilings fired.
 _SESSION_FIRED = pytest.StashKey[bool]()
@@ -200,14 +207,18 @@ class TimeoutBackstop:
     def pytest_timeout_set_timer(self, item: Any, settings: Any) -> bool:
         import pytest_timeout
 
+        global _ARMED
         # The plugin's own arming, unchanged; this hook is firstresult, so ours
         # runs instead of the plugin's and calls it.
         pytest_timeout.pytest_timeout_set_timer(item=item, settings=settings)
+        # Every method's ceiling, before the backstop's own stand-downs: a wait
+        # budget scales with it on the thread method too (DEF-5067).
+        item.stash[_CEILING] = float(settings.timeout)
+        _ARMED = item
         if (settings.method != "signal" or getattr(settings, "func_only", False)
                 or threading.current_thread() is not threading.main_thread()
                 or _BACKSTOP in item.stash):
             return True
-        item.stash[_CEILING] = float(settings.timeout)
         item.stash[_BACKSTOP] = start_backstop(
             item.nodeid, float(settings.timeout),
             dropping_the_lock(lambda: pytest_timeout.timeout_timer(item, settings)))
@@ -215,7 +226,9 @@ class TimeoutBackstop:
 
     @pytest.hookimpl(hookwrapper=True)
     def pytest_runtest_protocol(self, item: Any, nextitem: Any):
+        global _ARMED
         yield
+        _ARMED = None
         timer = item.stash.get(_BACKSTOP, None)
         if timer is not None:
             timer.cancel()
@@ -239,6 +252,17 @@ class TimeoutBackstop:
             pytest_timeout.timeout_sigalrm = wrapped
         if config.stash.get(_SESSION_FIRED, False):
             arm_exit_bound(self.exitstatus)
+
+
+def armed() -> tuple[Any, float] | None:
+    """The running test and the ceiling pytest-timeout armed it with, on either
+    method; None outside every test's protocol and where no ceiling is armed
+    (no plugin, a ``--timeout=0`` run, a ``func_only`` mark before its call)."""
+    item = _ARMED
+    if item is None:
+        return None
+    ceiling = item.stash.get(_CEILING, None)
+    return None if ceiling is None else (item, ceiling)
 
 
 def timeout_hooks_present(config: Any) -> bool:
