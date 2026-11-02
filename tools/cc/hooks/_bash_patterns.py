@@ -3152,9 +3152,88 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                 continue
             candidates.append(_SpanCandidate(lo, j, current_pipeline, nesting,
                                              len(statements) - 1,
-                                             is_comment=False, is_value=True))
+                                             is_comment=False, is_value=True,
+                                             frame=frames[-1] if frames else None))
             k = j + 1
         return k
+
+    #: The compound frames open here, innermost last, and every frame ever
+    #: pushed in creation order (the settle judges a parent before its
+    #: children). See `_Frame` (DEF-1015).
+    frames: list[_Frame] = []
+    created: list[_Frame] = []
+    #: The frame whose closer ended the compound the current statement is
+    #: still in -- a heredoc or here-string after `done` feeds the loop's
+    #: stdin. None once a separator rebinds the pipeline.
+    closed_frame: _Frame | None = None
+    #: An empty `()` was met: the command defines a function, whose body runs
+    #: at a call no owner set can see, so no framed span is data.
+    defines_function = False
+
+    def push_frame(kind: str, closer: str, at: int) -> None:
+        """Open a frame at ``at`` for the pipeline current here. The list
+        inside the compound gets pipelines of its own."""
+        nonlocal current_pipeline, pipe_pending
+        f = _Frame(kind, closer, nesting, current_pipeline,
+                   frames[-1] if frames else None,
+                   piped=pipe_pending or bool(current_pipeline),
+                   pre=(statements[-1][0], at))
+        frames.append(f)
+        created.append(f)
+        current_pipeline = set()
+        pipe_pending = False
+
+    def pop_frame(post_from: int) -> None:
+        """Close the frame on top; the pipeline after the closer is the one
+        the compound is an element of, so `| bash` after it joins ``outer``."""
+        nonlocal current_pipeline, expect_head, closed_frame
+        f = frames.pop()
+        f.closed = True
+        f.post_si, f.post_from = len(statements) - 1, post_from
+        if f.parent is not None and not f.inner_ok:
+            f.parent.inner_ok = False
+        if f.piped and not f.inner_ok:
+            # piped into: the compound's heads read the upstream stream
+            f.outer.add(_UNROSTERED_HEAD)
+        current_pipeline = f.outer
+        closed_frame = f
+        expect_head = False
+
+    def take_reserved(word: str, after: int) -> bool:
+        """Read ``word``, an unquoted compound reserved word at a command
+        position ending at ``after``: an opener pushes a frame, a middle word
+        of the frame on top is stepped over, that frame's closer pops it.
+        False leaves the word to be recorded as a head, as it was before
+        frames: a closer or a middle word with no frame of its own to match
+        (a mis-paired or backtick-hidden compound) keeps the command raw."""
+        nonlocal expect_head
+        closer = _COMPOUND_CLOSERS.get(word)
+        if closer is not None:
+            push_frame(word, closer, after - len(word))
+            # `if`/`while`/`until` take a head next; `for`/`select`/`case` take
+            # a name and words, re-armed by the separator before `do`/`in`'s arm
+            expect_head = word in _BASH_HEAD_PREFIX_WORDS
+            return True
+        top = frames[-1] if frames else None
+        if top is None or top.level != nesting or top.kind not in _COMPOUND_CLOSERS:
+            return False
+        if word in _COMPOUND_MIDDLES[top.kind]:
+            return True
+        if word == top.closer:
+            pop_frame(after)
+            return True
+        return False
+
+    def top_frame() -> _Frame | None:
+        return frames[-1] if frames else None
+
+    def record_head(word: str) -> None:
+        heads.add(word)
+        current_pipeline.add(word)
+        if frames and frames[-1].inner_ok:
+            # the settle's own per-owner rule: the gh text door (DEF-1014)
+            # takes its text and its stdin as data
+            frames[-1].inner_ok = _head_hands_its_text_to_no_shell(word)
 
     while i < n:
         c = s[i]
@@ -3212,7 +3291,9 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                     pipe_pending = False
                     i = span_after
                     continue
-                if span_buf[base] == "#":
+                if span_buf[base] == "#" or c in "()" or (c in "{}" and span_after == i + 1):
+                    # a comment, or a grouping operator or standalone brace the
+                    # grouping branch below reads as a frame -- never a head
                     pass
                 else:
                     rec = (span_buf[base:] if len(span_buf) - base <= _MAX_ROSTERED_HEAD_LEN
@@ -3222,12 +3303,15 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                         pipe_pending = False
                         i = span_after
                         continue
+                    if (rec in _COMPOUND_RESERVED and s[i:span_after] == rec
+                            and take_reserved(rec, span_after)):
+                        i = span_after
+                        continue
                     # DEF-1014: no gh text door here, on purpose. A suffix read
                     # is a word glued behind a grouping character (`(gh`,
                     # `${X}gh`), and `${X}` can make it a path spelling, which
                     # the door refuses; it keeps the raw reading, a friction.
-                    heads.add(rec)
-                    current_pipeline.add(rec)
+                    record_head(rec)
                     expect_head = False
                     pipe_pending = False
         elif expect_head and c not in " \t":
@@ -3248,6 +3332,35 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                 # TimeoutExpired rows. Leave `expect_head` armed and let the
                 # branches below advance `i` normally.
                 pass
+            elif c in "()" or (c in "{}" and after == i + 1):
+                # ⚠ A GROUPING OPERATOR OR A STANDALONE BRACE IS NOT A HEAD
+                # (DEF-1015). Recorded as one (`{`, `}`, a glued `(echo`), it was
+                # on no roster, so every compound read raw and a quoted span
+                # inside one was refused wherever it stood. The grouping branch
+                # below opens or closes the frame; a word glued after the paren
+                # is captured from the next position.
+                pass
+            elif (word in _COMPOUND_RESERVED and s[i:after] == word
+                  and take_reserved(word, after)):
+                # ⚠ A COMPOUND RESERVED WORD IS A FRAME, NOT A HEAD (DEF-1015).
+                # `if`, `then`, `do`, `fi` and the rest were recorded as heads on
+                # no roster, and the real head after `then` or `do` never was,
+                # so a quoted span in the body had a keyword for its owner.
+                #
+                # REJECTED: adding the words to `_HEAD_SKIP_WORDS` alone. That
+                # relieves the body and loses what attaches after the closer:
+                # in `if …; fi | bash` the `fi` stepped over, `| bash` extended
+                # a fresh pipeline, and the span inside kept `{echo}` for its
+                # owner -- masked into the shell that runs it (re-driven on an
+                # in-memory patch: no zone candidate left). A frame holds the
+                # pipeline it is an element of by reference, and the closer
+                # rebinds to it, so `bash` joins the set every span inside
+                # reads at the settle.
+                #
+                # Unquoted only (`s[i:after] == word`): a quoted `'if'` is a
+                # command named if to bash, not a keyword.
+                i = after
+                continue
             elif word in _HEAD_SKIP_WORDS:
                 nesting = _depth_after_step_over(s, i, after, nesting)
                 pipe_pending = False
@@ -3265,8 +3378,9 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                 # other verbs keep the raw reading (`_gh_text_door`).
                 if span_buf == "gh" and _gh_text_door(s, i, after, statements[-1][0]):
                     word = _GH_TEXT_DOOR
-                heads.add(word)
-                current_pipeline.add(word)
+                record_head(word)
+                if word == "function":
+                    defines_function = True
                 expect_head = False
                 pipe_pending = False
             else:
@@ -3325,7 +3439,7 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
             neutralise(i + 1, j)
             candidates.append(_SpanCandidate(i + 1, j, current_pipeline, nesting,
                                              len(statements) - 1,
-                                             is_comment=False, is_value=False))
+                                             is_comment=False, is_value=False, frame=top_frame()))
             i = j + 1
             continue
 
@@ -3334,7 +3448,7 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
             _neutralise_expanding_span(s, out, i + 1, j)
             candidates.append(_SpanCandidate(i + 1, j, current_pipeline, nesting,
                                              len(statements) - 1,
-                                             is_comment=False, is_value=False))
+                                             is_comment=False, is_value=False, frame=top_frame()))
             i = j + 1
             continue
 
@@ -3343,7 +3457,7 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
             neutralise(i + 2, j)
             candidates.append(_SpanCandidate(i + 2, j, current_pipeline, nesting,
                                              len(statements) - 1,
-                                             is_comment=False, is_value=False))
+                                             is_comment=False, is_value=False, frame=top_frame()))
             i = j + 1
             continue
 
@@ -3364,11 +3478,19 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
             neutralise(i + 1, j, keep_newline=True)
             candidates.append(_SpanCandidate(i + 1, j, current_pipeline, nesting,
                                              len(statements) - 1,
-                                             is_comment=True, is_value=False))
+                                             is_comment=True, is_value=False, frame=top_frame()))
             i = j
             continue
 
         if c == "<" and i + 1 < n and s[i + 1] == "<":
+            if (closed_frame is not None and current_pipeline is closed_frame.outer
+                    and not closed_frame.inner_ok):
+                # ⚠ A HEREDOC OR HERE-STRING AFTER A CLOSER FEEDS THE COMPOUND'S
+                # STDIN (DEF-1015): in `while read l; do eval "$l"; done <<'EOF'`
+                # the loop's own heads read the body, and `| cat` after it would
+                # otherwise vouch for a body eval runs. A head inside on no
+                # roster joins the owner set the body is recorded with.
+                current_pipeline.add(_UNROSTERED_HEAD)
             i, spec = _read_heredoc_operator(s, i)
             if spec is not None:
                 # ⚠ CAPTURE THE OWNER SET BY REFERENCE, AND NEITHER BY VALUE NOR
@@ -3392,7 +3514,7 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                 # `nesting` and the prefix scan close the two routes that reach
                 # a shell without ever being a pipeline head -- see the consume
                 # site below.
-                pending.append((*spec, current_pipeline, nesting))
+                pending.append((*spec, current_pipeline, nesting, top_frame()))
             continue
 
         if c == "\n":
@@ -3405,7 +3527,7 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                 out[i] = " "
             i += 1
             while pending:
-                delim, expands, strip_tabs, owners, op_depth = pending.pop(0)
+                delim, expands, strip_tabs, owners, op_depth, op_frame = pending.pop(0)
                 body_start = i
                 i, body_end = _consume_heredoc_body(
                     s, out, i, delim, expands, strip_tabs, neutralise,
@@ -3435,8 +3557,15 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                     # `{ cat <<'EOF' ; } | bash` was already denied, and that
                     # asymmetry is the tell -- same mistake, displaced past the
                     # terminator instead of past the pipe.
-                    and op_depth == 0
-                    and nesting == 0
+                    #
+                    # THE SAME DEPTH AND THE SAME FRAME AT BOTH ENDS (DEF-1015).
+                    # Inside a frame the consumer that attaches after the closer
+                    # joins the frame's outer pipeline, which the settle reads
+                    # with every span inside, so a frame's own heredoc is judged
+                    # rather than refused; a frame closed between the operator
+                    # and the body (`{ cat <<'EOF' ; } | bash`) records nothing.
+                    and op_depth == nesting
+                    and op_frame is top_frame()
                     # ⚠ AND THE BODY MUST NOT BE CAPTURED BY A SUBSTITUTION OR
                     # HANDED TO A PROCESS SUBSTITUTION. `eval $(cat <<'EOF' …)`
                     # delivers it to a capture buffer the ENCLOSING eval
@@ -3456,8 +3585,8 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                     if body_span_start > 0 and s[body_span_start - 1] in "\n\r":
                         body_span_start -= 1
                     candidates.append(_SpanCandidate(
-                        body_span_start, body_end, owners, 0, len(statements) - 1,
-                        is_comment=False, is_value=False))
+                        body_span_start, body_end, owners, op_depth, len(statements) - 1,
+                        is_comment=False, is_value=False, frame=op_frame))
             # ⚠ A NEWLINE IS A STATEMENT SEPARATOR AND MUST RE-ARM HEAD CAPTURE.
             # It did not, so in a multi-line command only the FIRST statement's
             # head was ever collected -- and `mask_inert_syntax` masks whenever
@@ -3493,6 +3622,7 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                 # the masked text: the target is at a command position.
                 continue
             current_pipeline = set()
+            closed_frame = None
             # `i` is past any heredoc body the newline opened, so the bodies
             # belong to the statement that opened them.
             statements[-1][1] = i
@@ -3515,10 +3645,30 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
             continue
 
         if c in ";|&(){}":
+            at_head = expect_head
             expect_head = True
+            closes: _Frame | None = None
             if c in "({":
                 nesting += 1
+                # ⚠ A FRAME ONLY AT A COMMAND POSITION (DEF-1015): a `(` there
+                # opens a subshell, and a `{` standing alone opens a group. A
+                # `$(`, `<(` or `>(` is a substitution and an argument's `{` is
+                # text; each still counts in `nesting`, so a span inside one
+                # sits at a depth no frame explains and stays raw.
+                if at_head and (
+                    (c == "(" and not (i > 0 and s[i - 1] in "$<>"))
+                    or (c == "{" and (i + 1 >= n or s[i + 1] in " \t\n\r"))
+                ):
+                    push_frame(c, ")" if c == "(" else "}", i)
             elif c in ")}":
+                top = top_frame()
+                # `)` closes its subshell wherever it stands; `}` is a reserved
+                # word and closes its group only at a command position (an
+                # argument `}` leaves the group open in bash, and its frame
+                # then never closes, which withholds every span inside it).
+                if (top is not None and top.kind == ("(" if c == ")" else "{")
+                        and top.level == nesting and (c == ")" or at_head)):
+                    closes = top
                 nesting = max(0, nesting - 1)
             # ⚠ A SINGLE `|` DOES NOT END THE PIPELINE, AND THAT DISTINCTION IS
             # A FAIL-OPEN. `cat <<'EOF' | bash` opens the heredoc under `cat`,
@@ -3537,13 +3687,25 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                             and not (i > 0 and s[i - 1] == "|"))
             if c != "|" or (i + 1 < n and s[i + 1] == "|"):
                 current_pipeline = set()
+                closed_frame = None
                 statements[-1][1] = i + 1
                 statements.append([i + 1, n])
+            if closes is not None:
+                pop_frame(i + 1)
+            elif c == ")":
+                k = i - 1
+                while k >= 0 and s[k] in " \t":
+                    k -= 1
+                if k >= 0 and s[k] == "(":
+                    # an empty `()`: a function definition (or an empty
+                    # substitution, which costs only the frames' relief)
+                    defines_function = True
 
         i += 1
 
     masked = "".join(out)
-    _settle_statement_spans(masked, candidates, statements, safe_spans)
+    _settle_statement_spans(masked, candidates, statements, safe_spans,
+                            frames=created, defines_function=defines_function)
     return masked, heads, safe_spans
 
 
@@ -3616,6 +3778,114 @@ class _SpanCandidate(NamedTuple):
     statement: int
     is_comment: bool
     is_value: bool
+    #: The innermost compound frame open where the span was met (DEF-1015),
+    #: or None at the top level. Its parents are reached through
+    #: `_Frame.parent`; the settle judges each frame once.
+    frame: "_Frame | None" = None
+
+
+#: The compound commands the walker reads as FRAMES rather than heads
+#: (DEF-1015), each opener with the word that closes it. A frame's spans are
+#: data only when its own statement hands the compound's output to nobody:
+#: `if …; fi | bash` re-parses every quoted span inside, while `if …; fi` and
+#: `{ …; } > notes.md` hand them to nobody.
+#: `TestCompoundFramesShareTheReservedWordRosters` in
+#: `tests/test_bash_inert_syntax_mask.py` pins every word here against
+#: `_BASH_COMPOUND_WORDS`, and the openers a head follows (`if`, `while`,
+#: `until`) and the middle words against `_BASH_HEAD_PREFIX_WORDS`, so the
+#: three rosters cannot drift apart.
+_COMPOUND_CLOSERS = {
+    "if": "fi", "while": "done", "until": "done", "for": "done",
+    "select": "done", "case": "esac",
+}
+#: The words inside an opener's frame after which a head follows. Stepped over
+#: only while that opener's frame is on top: `then` with no `if` open was a
+#: head on no roster before this table and stays one (a backtick-glued
+#: `` `if `` opens no frame, and its `then` keeps the command raw).
+_COMPOUND_MIDDLES = {
+    "if": frozenset({"then", "elif", "else"}),
+    "while": frozenset({"do"}), "until": frozenset({"do"}),
+    "for": frozenset({"do"}), "select": frozenset({"do"}),
+    "case": frozenset(),
+}
+_COMPOUND_RESERVED = (frozenset(_COMPOUND_CLOSERS) | frozenset(_COMPOUND_CLOSERS.values())
+                      | frozenset().union(*_COMPOUND_MIDDLES.values()))
+
+
+class _Frame:
+    """One compound command the walker is inside: a `{ }` group, a `( )`
+    subshell, or an `if`/`while`/`until`/`for`/`select`/`case` body.
+
+    ``outer`` is the owner set of the pipeline the compound is an element of,
+    held BY REFERENCE: the closer rebinds the walker's current pipeline to it,
+    so a `| bash` after `fi` joins it and every span inside reads it at the
+    settle. ``inner_ok`` is False once any head inside (nested frames
+    included) is on no roster; a compound whose stdin is fed -- piped into, or
+    given a heredoc or here-string after its closer -- then puts a head on no
+    roster into ``outer``, so neither the upstream span nor the fed body is
+    read as data. ``pre`` and the post statement bound the compound's own
+    statement outside its body, where a capture (`` x=` `` before, `> >(sh)`
+    after) would hand the output to a consumer that is never a head.
+    ``paren_count`` and ``consistent`` say whether every group and subshell
+    level on the chain is accounted for by a frame: a span at a depth no frame
+    explains sits in a substitution or a mis-paired brace, and stays raw."""
+
+    __slots__ = ("kind", "closer", "level", "outer", "parent", "piped", "pre",
+                 "post_si", "post_from", "closed", "inner_ok", "paren_count",
+                 "consistent")
+    kind: str
+    closer: str
+    level: int
+    outer: set[str]
+    parent: "_Frame | None"
+    piped: bool
+    pre: tuple[int, int]
+    post_si: int
+    post_from: int
+    closed: bool
+    inner_ok: bool
+    paren_count: int
+    consistent: bool
+
+    def __init__(self, kind: str, closer: str, level: int, outer: set[str],
+                 parent: "_Frame | None", piped: bool, pre: tuple[int, int]) -> None:
+        self.kind, self.closer, self.level = kind, closer, level
+        self.outer, self.parent, self.piped, self.pre = outer, parent, piped, pre
+        self.post_si, self.post_from = -1, -1
+        self.closed = False
+        self.inner_ok = True
+        paren = kind in ("(", "{")
+        self.paren_count = (parent.paren_count if parent else 0) + int(paren)
+        self.consistent = (parent.consistent if parent else True) and (
+            not paren or level == self.paren_count)
+
+
+def _settle_frames(
+    masked: str, frames: list[_Frame], statements: list[list[int]],
+) -> dict[int, bool]:
+    """Whether each frame, with every frame enclosing it, hands its compound's
+    output to nobody (rule (2) b in `mask_inert_syntax`, DEF-1015): closed,
+    its outer pipeline on the roster or empty, and no capture in its own
+    statement before the opener or after the closer. ``frames`` is in
+    creation order, so a parent is judged before its children and each frame
+    once: a command of nested groups stays linear (the DEF-754 discipline)."""
+    rostered: dict[int, bool] = {}
+    ok: dict[int, bool] = {}
+    for f in frames:
+        good = f.closed and (f.parent is None or ok[id(f.parent)])
+        if good:
+            key = id(f.outer)
+            if key not in rostered:
+                rostered[key] = all(_head_hands_its_text_to_no_shell(h) for h in f.outer)
+            good = rostered[key]
+        if good:
+            good = _CAPTURING_PREFIX_RE.search(masked, f.pre[0], f.pre[1]) is None
+        if good:
+            start, stop = statements[f.post_si]
+            good = _CAPTURING_PREFIX_RE.search(
+                masked, max(start, f.post_from), stop) is None
+        ok[id(f)] = good
+    return ok
 
 
 def _settle_statement_spans(
@@ -3623,6 +3893,8 @@ def _settle_statement_spans(
     candidates: list[_SpanCandidate],
     statements: list[list[int]],
     safe_spans: list[tuple[int, int]],
+    frames: "list[_Frame] | None" = None,
+    defines_function: bool = False,
 ) -> None:
     """Append to `safe_spans` every recorded quoted span or comment that is
     inert data of a statement handing it to nobody -- the rule-(2) contract
@@ -3641,14 +3913,41 @@ def _settle_statement_spans(
     extends to one, is judged by its owners like any quoted argument; (b)
     and (c) hold for every kind. A value the shell later RUNS (`eval
     "$MSG"`, `bash -c "$msg"`, `$CMD`) is read where it runs: the binding
-    pre-pass substitutes it at the use."""
+    pre-pass substitutes it at the use.
+
+    A span inside compound frames (DEF-1015) is judged by (b) frame by frame
+    instead of refused outright: every group and subshell level must be a
+    frame, every frame on its chain must have closed, its outer pipeline's
+    heads must all be on the roster (none at all is a compound handing its
+    output to nobody), and its own statement must hold no capture before the
+    opener or after the closer. A function definition anywhere in the command
+    withholds every framed span: its body runs where it is called, and no
+    owner set sees the call's pipeline.
+
+    A span that starts inside an open BACKTICK substitution is never data:
+    the walker reads a backtick as an ordinary character, so a separator
+    inside one opened a statement of its own and (c) read a statement the
+    substitution's text had been cut into -- ``x=`true; echo '…'; true`;
+    eval "$x"`` was masked while eval re-parsed it. The masked text keeps
+    only LIVE backticks (a quoted, escaped or commented one is blank, and a
+    double-quoted span's live pair is balanced inside it), so the parity of
+    the backticks before a span is whether one is open there."""
     # Keyed by `id(owners)`: sound only because `candidates` holds a strong
     # reference to every owner set for the whole settle, so no id is reused.
     # A refactor that stores an index or a copy instead must key differently.
     rostered: dict[int, bool] = {}
     capturing: dict[int, bool] = {}
+    frame_ok = _settle_frames(masked, frames or [], statements)
+    ticks = [k for k, ch in enumerate(masked) if ch == "`"]
     for c in candidates:
-        if c.depth != 0:
+        f = c.frame
+        if f is None:
+            if c.depth != 0:
+                continue
+        elif (defines_function or not f.consistent or f.paren_count != c.depth
+              or not frame_ok[id(f)]):
+            continue
+        if ticks and bisect.bisect_left(ticks, c.start) % 2:
             continue
         if not c.is_comment and not (c.is_value and not c.owners):
             key = id(c.owners)

@@ -489,9 +489,12 @@ class TestHeadCaptureInsideAScannedWord:
     grouping character inside a head word)."""
 
     def test_the_suffix_after_a_glued_opener_is_recorded_like_the_read_did(self):
+        """The word glued after a subshell's paren is the head; the paren
+        itself opens a frame and is no head (DEF-1015: `(cd` was recorded
+        before frames, on no roster)."""
         bp = _load_bash_patterns()
         _, heads, _ = bp._walk_shell_roles(f"(cd /tmp; {RM_RF} x)")
-        assert heads == {"(cd", "cd", "rm"}
+        assert heads == {"cd", "rm"}
 
     def test_a_grouping_character_before_the_last_slash_keeps_the_basename(self):
         """`_read_head_word` records the basename, so `(/bin/echo` IS the
@@ -506,19 +509,58 @@ class TestHeadCaptureInsideAScannedWord:
         assert heads == {"a}b", "b", "cat"}
 
     def test_a_suffix_longer_than_any_rostered_word_is_the_sentinel(self):
+        """A word holding forty glued openers re-arms the capture at each one.
+        Each suffix that starts at a paren is an opener, no head (DEF-1015),
+        so the run that once fed this test (`((((…cmd`) now records `cmd`
+        alone; a letter before each paren keeps a long suffix to read."""
         bp = _load_bash_patterns()
-        _, heads, _ = bp._walk_shell_roles("(" * 40 + "cmd")
+        _, heads, _ = bp._walk_shell_roles("x(" * 40 + "cmd")
         assert bp._UNROSTERED_HEAD in heads
-        assert "(" * 40 + "cmd" in heads
-        real = heads - {"(" * 40 + "cmd", bp._UNROSTERED_HEAD}
+        assert "x(" * 40 + "cmd" in heads
+        real = heads - {"x(" * 40 + "cmd", bp._UNROSTERED_HEAD}
         assert real and all(len(h) <= bp._MAX_ROSTERED_HEAD_LEN for h in real)
         assert bp._UNROSTERED_HEAD not in bp._NON_REPARSING_HEADS
+        _, heads, _ = bp._walk_shell_roles("(" * 40 + "cmd")
+        assert heads == {"cmd"}
 
     def test_no_rostered_word_holds_a_grouping_character(self):
         """The property the derivation leans on: a suffix that still holds a
         grouping character can never be on the roster."""
         bp = _load_bash_patterns()
         assert not any(set(h) & set("(){}") for h in bp._NON_REPARSING_HEADS | bp._HEAD_SKIP_WORDS)
+
+
+class TestCompoundFramesShareTheReservedWordRosters:
+    """DEF-1015: the walker reads `if`/`while`/`until`/`for`/`select`/`case`
+    and their middle and closing words as frames. The words are kept in the
+    frame tables beside the walker, and two other rosters name the same
+    words: `_BASH_COMPOUND_WORDS` (the plain-command relief's) and
+    `_BASH_HEAD_PREFIX_WORDS` (the directory walk's head skip). These pin the
+    three together, so a word added to one cannot silently mean something
+    else to the walker."""
+
+    def test_every_frame_word_is_a_bash_compound_word(self):
+        bp = _load_bash_patterns()
+        assert bp._COMPOUND_RESERVED <= bp._BASH_COMPOUND_WORDS, (
+            bp._COMPOUND_RESERVED - bp._BASH_COMPOUND_WORDS)
+
+    def test_the_openers_a_head_follows_are_the_head_prefix_words(self):
+        """The walker re-arms the head capture after an opener exactly when
+        the opener is a head prefix: after `if`, `while` and `until` the next
+        word is a command; after `for`, `select` and `case` it is a name."""
+        bp = _load_bash_patterns()
+        openers = set(bp._COMPOUND_CLOSERS)
+        assert openers & bp._BASH_HEAD_PREFIX_WORDS == {"if", "while", "until"}
+        middles = set().union(*bp._COMPOUND_MIDDLES.values())
+        assert middles <= bp._BASH_HEAD_PREFIX_WORDS, middles - bp._BASH_HEAD_PREFIX_WORDS
+        assert set(bp._COMPOUND_MIDDLES) == openers
+
+    def test_no_frame_word_is_on_a_head_roster(self):
+        """A frame word that were also a rostered head would vouch for the
+        span it owns when a frame cannot be matched and it falls back to
+        being recorded."""
+        bp = _load_bash_patterns()
+        assert not bp._COMPOUND_RESERVED & (bp._NON_REPARSING_HEADS | bp._HEAD_SKIP_WORDS)
 
 
 class TestStatementExtents:
@@ -534,9 +576,9 @@ class TestStatementExtents:
         seen: dict = {}
         real = bp._settle_statement_spans
 
-        def spy(masked, candidates, statements, safe_spans):
+        def spy(masked, candidates, statements, safe_spans, **frames):
             seen["statements"] = [tuple(r) for r in statements]
-            real(masked, candidates, statements, safe_spans)
+            real(masked, candidates, statements, safe_spans, **frames)
 
         bp._settle_statement_spans = spy
         try:

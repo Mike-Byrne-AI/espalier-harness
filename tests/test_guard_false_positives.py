@@ -351,6 +351,25 @@ INERT_BASH = [
     ("gh-pr-body-beside-a-build", f"gh pr create --title t --body 'moved -> {_HOOK}' && make test"),
     ("gh-body-file-heredoc-beside-a-build",
      f"gh pr create --title t --body-file - <<'EOF' && make test\n- moved -> {_HOOK}\nEOF"),
+    # DEF-1015: a quoted arrow before a protected path inside a compound body
+    # -- an if, while or for body, a group, a subshell -- names a move, and the
+    # compound hands its output to nobody. Each was walled at ce61737 (the
+    # keyword was the span's owner, on no roster); the commit inside an if
+    # guard is the named user's shape. The must-deny twins, the same bodies
+    # handed to a shell after the closer, are in GENUINE_BASH and, as real
+    # deletes, in the reachability differential.
+    ("if-body-quoted-arrow", f"if true; then echo 'moved -> {_HOOK}'; fi"),
+    ("while-body-quoted-arrow",
+     f"while read -r l; do echo 'x > {_HOOK}'; done < list.txt"),
+    ("for-body-quoted-arrow", f"for i in 1 2; do echo 'copy > {_HOOK}'; done"),
+    ("group-quoted-arrow-redirected", f"{{ echo 'x > {_HOOK}'; }} > notes.md"),
+    ("subshell-quoted-arrow", f"(echo 'x > {_HOOK}')"),
+    ("if-guard-around-a-commit",
+     f"if git diff --quiet; then echo clean; else git commit -m 'move -> {_HOOK}'; fi"),
+    ("if-off-roster-condition-quoted-arrow",
+     f"if command -v gh >/dev/null; then echo 'moved -> {_HOOK}'; fi"),
+    ("group-heredoc-quoted-arrow",
+     f"{{ cat > notes.md <<'EOF'\nmoved -> {_HOOK}\nEOF\n}}"),
 ]
 
 INERT_POWERSHELL = [
@@ -576,6 +595,34 @@ GENUINE_POWERSHELL = [
 
 # ── Bash: a safe first statement must not vouch for the ones after it. ─────
 GENUINE_BASH = [
+    # DEF-1015's must-deny twins: the compound's output handed to a shell
+    # after its closer, or its body fed to one -- each re-parses the quoted
+    # write inside. The case arm, the group an argument brace leaves open and
+    # the backtick capture across a separator were ALLOWED at ce61737 too: a
+    # case pattern's paren and an argument brace each read as a closer, and a
+    # separator inside a backtick cut the capture out of the span's statement.
+    ("if-body-piped-into-a-shell", f"if true; then echo 'echo x > {_HOOK}'; fi | bash"),
+    ("group-body-piped-into-a-shell", f"{{ echo 'echo x > {_HOOK}'; }} | sh"),
+    ("subshell-body-piped-into-a-shell", f"(echo 'echo x > {_HOOK}') |\nsh"),
+    ("loop-body-into-a-process-substitution",
+     f"for i in 1; do echo 'echo x > {_HOOK}'; done > >(bash)"),
+    ("case-arm-piped-into-a-shell",
+     f"case x in x) echo 'echo x > {_HOOK}';; esac | bash"),
+    ("group-left-open-by-an-argument-brace",
+     f"{{ echo }} >/dev/null; echo 'echo x > {_HOOK}'; }} | bash"),
+    ("group-left-open-after-the-span",
+     f"{{ echo 'echo x > {_HOOK}'; echo }} ; }} | bash"),
+    ("backtick-capture-across-a-separator",
+     f"x=`true; echo 'echo x > {_HOOK}'; true`; eval \"$x\""),
+    ("echo-piped-into-a-group-shell", f"echo 'echo x > {_HOOK}' | {{ bash; }}"),
+    ("loop-fed-a-heredoc-it-evals",
+     f"while read l; do eval \"$l\"; done <<'EOF' | cat\necho x > {_HOOK}\nEOF"),
+    ("function-body-called-into-a-shell",
+     f"f() {{ echo 'echo x > {_HOOK}'; }}; f | bash"),
+    ("subshell-inside-a-substitution-evaled",
+     f"x=$( (echo 'echo x > {_HOOK}') ); eval \"$x\""),
+    ("group-inside-a-substitution-after-a-separator",
+     f"eval $(true; {{ echo 'echo x > {_HOOK}'; }})"),
     # DEF-967's must-deny twins: a substitution that itself runs the guarded
     # command, and an exec-quote body holding the nested construct before it.
     ("nested-sub-that-runs-the-catastrophic-delete", f'echo "n: $(printf "x"; {_RM_RF} /)"'),

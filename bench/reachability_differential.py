@@ -388,6 +388,29 @@ WRAPPERS: list[tuple[str, str]] = [
     ("gh_pr_body_cmdsub", "gh pr create --title t --body \"$( %s )\""),
     ("gh_body_file_unquoted_heredoc_cmdsub",
      "gh issue comment 5 --body-file - <<EOF\n$( %s )\nEOF"),
+    # ⚠ A COMPOUND'S OUTPUT HANDED TO A SHELL AFTER ITS CLOSER (DEF-1015).
+    # A quoted span inside an if, for, while or case body, a group or a
+    # subshell is data only while the compound hands its output to nobody;
+    # these hand it to a shell by every attachment a closer takes -- a pipe,
+    # a pipe whose target is on the next line, a process substitution -- and
+    # by every closer, nested, fed through the group's stdin, captured by a
+    # backtick a separator cuts, and in a group an argument brace leaves
+    # open (the last three ALLOWED before frames, with the case arm). The
+    # first three rows after them are the relief the frames earn.
+    ("if_echo_piped_to_shell", "if true; then echo '%s'; fi | bash"),
+    ("for_echo_newline_piped_to_shell", "for i in 1\ndo echo '%s'\ndone | sh"),
+    ("for_echo_procsub_shell", "for i in 1; do echo '%s'; done > >(sh) ; ls"),
+    ("group_echo_piped_to_shell", "{ echo '%s'; } | bash"),
+    ("subshell_echo_pipe_newline_to_shell", "( echo '%s' ) |\nsh"),
+    ("case_echo_piped_to_shell", "case x in x) echo '%s';; esac | bash"),
+    ("if_in_group_piped_to_shell", "{ if true; then echo '%s'; fi; } | sh"),
+    ("echo_piped_into_group_shell", "echo '%s' | { bash; }"),
+    ("loop_fed_heredoc_evaled", "while read l; do eval \"$l\"; done <<'EOF' | cat\n%s\nEOF"),
+    ("backtick_echo_across_separator_evaled", "eval `true; echo '%s'; true `"),
+    ("group_arg_brace_echo_piped_to_shell", "{ echo } >/dev/null; echo '%s'; } | bash"),
+    ("if_echo_sq", "if true; then echo '%s'; fi"),
+    ("group_echo_sq_to_file", "{ echo '%s'; } > qs_doc.md"),
+    ("while_read_echo_sq", "while read l; do echo '%s'; done < /dev/null"),
 ]
 
 #: Executables a wrapper needs beyond `/bin/bash` and the POSIX tools, one per
@@ -473,6 +496,8 @@ WRAPPER_FEATURE: dict[str, str] = {
 POSIX_ASSUMED = frozenset({
     "sh", "bash", "cat", "echo", "printf", "eval", "cd", "mkdir", "ls", "true",
     "find", "xargs", "nice", "env", "command", "grep", "sed", "awk",
+    # the compound reserved words the DEF-1015 rows open and close with
+    "if", "then", "fi", "for", "do", "done", "while", "case", "esac",
 })
 
 #: What is being said or done. Multi-statement bodies are the discriminator that
