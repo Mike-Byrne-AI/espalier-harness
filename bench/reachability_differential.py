@@ -372,6 +372,76 @@ WRAPPERS: list[tuple[str, str]] = [
     ("interpreter_newline_eval_dq", "python3 -c pass\neval \"%s\""),
     ("echo_dq_pipe_newline_to_shell", "echo \"%s\" |\nsh"),
     ("heredoc_pipe_newline_then_shell", "cat <<'EOF' |\n%s\nEOF\nbash"),
+    # DEF-1014: the gh text door. The mention rows hold the body in a text
+    # flag and on the body-file stdin of a door verb, which gh sends to
+    # GitHub and never to a shell; the executing rows are the same heads
+    # with the body where bash itself runs it -- after a separator, spelled
+    # `;` and newline, inside a substitution in the flag's value, and in a
+    # substitution inside an UNQUOTED heredoc on the stdin. The host's gh
+    # runs with no login (`_sandbox_env`) and stops at its sign-in check, so
+    # a row measures only bash. The substitution is spaced (`$( %s )`) so a
+    # parenthesised body does not open an arithmetic expansion.
+    ("gh_pr_body_sq", "gh pr create --title t --body '%s'"),
+    ("gh_body_file_heredoc", "gh issue comment 5 --body-file - <<'EOF'\n%s\nEOF"),
+    ("gh_pr_body_then_semicolon", "gh pr create --title t --body x; %s"),
+    ("gh_pr_body_newline", "gh pr comment 5 -b x\n%s"),
+    ("gh_pr_body_cmdsub", "gh pr create --title t --body \"$( %s )\""),
+    ("gh_body_file_unquoted_heredoc_cmdsub",
+     "gh issue comment 5 --body-file - <<EOF\n$( %s )\nEOF"),
+    # the api verb's executing row: one per door verb, as the door's roster
+    # is paid (`tests/test_reachability_differential.py` derives the set)
+    ("gh_api_field_cmdsub", "gh api repos/o/r/issues/5/comments -f body=\"$( %s )\""),
+    # ⚠ A COMPOUND'S OUTPUT HANDED TO A SHELL AFTER ITS CLOSER (DEF-1015).
+    # A quoted span inside an if, for, while or case body, a group or a
+    # subshell is data only while the compound hands its output to nobody;
+    # these hand it to a shell by every attachment a closer takes -- a pipe,
+    # a pipe whose target is on the next line, a process substitution -- and
+    # by every closer, nested, fed through the group's stdin, captured by a
+    # backtick a separator cuts, and in a group an argument brace leaves
+    # open (the last three ALLOWED before frames, with the case arm). The
+    # first three rows after them are the relief the frames earn.
+    ("if_echo_piped_to_shell", "if true; then echo '%s'; fi | bash"),
+    ("for_echo_newline_piped_to_shell", "for i in 1\ndo echo '%s'\ndone | sh"),
+    ("for_echo_procsub_shell", "for i in 1; do echo '%s'; done > >(sh) ; ls"),
+    ("group_echo_piped_to_shell", "{ echo '%s'; } | bash"),
+    ("subshell_echo_pipe_newline_to_shell", "( echo '%s' ) |\nsh"),
+    ("case_echo_piped_to_shell", "case x in x) echo '%s';; esac | bash"),
+    ("if_in_group_piped_to_shell", "{ if true; then echo '%s'; fi; } | sh"),
+    ("echo_piped_into_group_shell", "echo '%s' | { bash; }"),
+    ("loop_fed_heredoc_evaled", "while read l; do eval \"$l\"; done <<'EOF' | cat\n%s\nEOF"),
+    ("backtick_echo_across_separator_evaled", "eval `true; echo '%s'; true `"),
+    ("group_arg_brace_echo_piped_to_shell", "{ echo } >/dev/null; echo '%s'; } | bash"),
+    ("if_echo_sq", "if true; then echo '%s'; fi"),
+    ("group_echo_sq_to_file", "{ echo '%s'; } > qs_doc.md"),
+    ("while_read_echo_sq", "while read l; do echo '%s'; done < /dev/null"),
+    # ⚠ THE HEREDOC'S CAPTURE SCAN IS SCOPED TO ITS OWN COMMAND (DEF-1012).
+    # A substitution captures a quoted body only when it is open at the
+    # operator or attached to the operator's command: the assigned capture,
+    # the process substitution before the head (the after-the-operator twin
+    # is `heredoc_procsub_shell` above), and a backtick capture a separator
+    # cuts. The last two rows are the relief: a capture CLOSED in an earlier
+    # statement, and an earlier quoted body holding a backtick.
+    # the blank before `;` keeps `)` a token of its own, so the safety gate's
+    # operand reader stops there and never reads `$x` as a delete operand
+    ("assigned_cmdsub_heredoc_evaled", "x=$(cat <<'EOF'\n%s\nEOF\n) ; eval \"$x\""),
+    ("procsub_before_heredoc_head", "> >(sh) cat <<'EOF'\n%s\nEOF"),
+    ("backtick_heredoc_cut_by_separator_evaled", "eval `true; cat <<'EOF'\n%s\nEOF\ntrue `"),
+    ("closed_capture_then_heredoc_to_file", "V=$(date -u); cat > qs_doc.md <<'EOF'\n%s\nEOF"),
+    ("earlier_backtick_body_then_heredoc_to_file",
+     "cat > qs_a.md <<'EOF'\n`\nEOF\ncat > qs_doc.md <<'EOF'\n%s\nEOF"),
+    # ⚠ A HEREDOC CAPTURED INSIDE A DOUBLE-QUOTED ARGUMENT (DEF-1013), the
+    # commit form's shape. Its body is the argument's data only while every
+    # head hands nothing to a shell; these hand it to one -- eval, `bash -c`,
+    # stored and evaluated, piped into a shell, and a shell inside the
+    # capture. The last two rows are the relief: the capture behind `echo`,
+    # and the commit form itself.
+    ("eval_dq_cmdsub_heredoc", "eval \"$(cat <<'EOF'\n%s\nEOF\n)\""),
+    ("bash_c_dq_cmdsub_heredoc", "bash -c \"$(cat <<'EOF'\n%s\nEOF\n)\""),
+    ("assign_dq_cmdsub_heredoc_evaled", "x=\"$(cat <<'EOF'\n%s\nEOF\n)\"\neval \"$x\""),
+    ("echo_dq_cmdsub_heredoc_piped_to_shell", "echo \"$(cat <<'EOF'\n%s\nEOF\n)\" | sh"),
+    ("echo_dq_cmdsub_shell_heredoc", "echo \"$(bash <<'EOF'\n%s\nEOF\n)\""),
+    ("echo_dq_cmdsub_heredoc", "echo \"$(cat <<'EOF'\n%s\nEOF\n)\""),
+    ("commit_message_heredoc_form", "git commit -m \"$(cat <<'EOF'\n%s\nEOF\n)\""),
 ]
 
 #: Executables a wrapper needs beyond `/bin/bash` and the POSIX tools, one per
@@ -388,6 +458,7 @@ WRAPPER_NEEDS: dict[str, str] = {
     "zsh_c_sq": "zsh",
     "heredoc_to_file_then_run": "python3",
     "commit_message": "git",
+    "commit_message_heredoc_form": "git",
     "py_c_sq_os_system": "python3",
     "py_c_dq_os_system": "python3",
     "py_c_sq_subprocess_shell": "python3",
@@ -419,6 +490,13 @@ WRAPPER_NEEDS: dict[str, str] = {
     "git_config_alias_then_run": "git",
     "printf_piped_to_python": "python3",
     "git_rebase_exec": "git",
+    "gh_pr_body_sq": "gh",
+    "gh_body_file_heredoc": "gh",
+    "gh_pr_body_then_semicolon": "gh",
+    "gh_pr_body_newline": "gh",
+    "gh_pr_body_cmdsub": "gh",
+    "gh_body_file_unquoted_heredoc_cmdsub": "gh",
+    "gh_api_field_cmdsub": "gh",
 }
 
 #: A wrapper whose SPELLING needs a newer bash than a host may ship, with the
@@ -451,6 +529,9 @@ WRAPPER_FEATURE: dict[str, str] = {
 POSIX_ASSUMED = frozenset({
     "sh", "bash", "cat", "echo", "printf", "eval", "cd", "mkdir", "ls", "true",
     "find", "xargs", "nice", "env", "command", "grep", "sed", "awk",
+    # the compound reserved words the DEF-1015 rows open and close with
+    "if", "then", "fi", "for", "do", "done", "while", "case", "esac",
+    "date",
 })
 
 #: What is being said or done. Multi-statement bodies are the discriminator that
@@ -747,6 +828,11 @@ def run_bash_group(argv: list[str], *, cwd: Path | str | None = None,
     return proc.returncode, False
 
 
+#: The token variables gh reads that do not start with `GH_` (gh's own
+#: `GH_TOKEN` and `GH_ENTERPRISE_TOKEN` go with every `GH_` name).
+_GH_TOKEN_NAMES = frozenset({"GITHUB_TOKEN", "GITHUB_ENTERPRISE_TOKEN"})
+
+
 def _sandbox_env(sandbox: Path) -> dict[str, str]:
     """The environment a row's shell runs in.
 
@@ -760,7 +846,17 @@ def _sandbox_env(sandbox: Path) -> dict[str, str]:
     confinement in `assert_safe_to_execute` is about delete operands and has
     nothing to say about a commit -- this is the belt for the git rows.
     """
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith(("GIT_", "GH_")) and k not in _GH_TOKEN_NAMES}
+    # The gh rows (DEF-1014) run the host's real gh, which must never act as
+    # the operator: no token from the environment, and a config directory of
+    # the sandbox's own, so no stored login, alias or editor setting reaches
+    # in. gh then stops at its sign-in check before any network call (driven
+    # on gh 2.101.0: exit 4), and the row measures only what bash runs.
+    env["GH_CONFIG_DIR"] = str(sandbox.resolve() / "gh-config")
+    env["GH_NO_UPDATE_NOTIFIER"] = "1"
+    env["GH_NO_EXTENSION_UPDATE_NOTIFIER"] = "1"
+    env["GH_PROMPT_DISABLED"] = "1"
     # the loop-carrier bodies' variable, bound BY CONSTRUCTION to a path
     # inside the sandbox that does not exist: a wrapper whose outer shell
     # expands it before the loop's `read` binds it removes nothing (DEF-830)

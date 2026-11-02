@@ -34,8 +34,10 @@ must-deny rows caught it.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -64,6 +66,8 @@ _NI_SYM = "New-Item -ItemType SymbolicLink"
 #: file through a Bash heredoc would otherwise put a literal protected-write
 #: mention in the tool call, and the very defect under test refuses it.
 _SETTINGS = ".claude/" + "settings.json"
+#: A path in the session-state zone, assembled for the same reason.
+_CC_REPORT = "cc/" + "charge.py"
 
 
 def _decide(tool: str, command: str, project: Path) -> bool:
@@ -318,6 +322,75 @@ INERT_BASH = [
      f"MSG='docs: tee -a {_SETTINGS} is refused'; git commit -m \"$MSG\""),
     ("message-variable-beside-a-build",
      f"MSG='fix: a; {_RM_RF} / now walls'; make test"),
+    # DEF-1016: a scratch project with its own `.claude/`, entered by a `cd`
+    # through a literal bound earlier in the same command, or into the parent
+    # of a directory a `mkdir -p` made. The write lands in the fixture, never
+    # in the checkout, and the walk read the `cd` as unknown (the root) or as
+    # failed, so each was walled.
+    ("cd-into-a-bound-scratch-fixture",
+     f'S=/tmp/espalier-scratch-fx; mkdir -p "$S/.claude" && cd "$S" && printf x > {_SETTINGS}'),
+    ("cd-into-a-bound-relative-fixture",
+     f'S=scratch/fx; mkdir -p $S/.claude && cd "$S" && printf x > {_SETTINGS}'),
+    ("cd-into-the-parent-a-mkdir-p-made",
+     f"mkdir -p /tmp/espalier-scratch-zz/.claude && cd /tmp/espalier-scratch-zz && printf x > {_SETTINGS}"),
+    # DEF-1014: a pull request or issue body that describes a move into a
+    # zone, through gh's text flags on the pr, issue and api verbs -- each
+    # spelling of the flag, a heredoc on the body-file stdin, and the door
+    # behind an on-roster prefix. gh hands none of these to a shell.
+    ("gh-pr-create-body-arrow", f"gh pr create --title t --body 'moved -> {_HOOK}'"),
+    ("gh-pr-edit-body-redirect-mention", f"gh pr edit 5 --body 'out > {_HOOK}'"),
+    ("gh-issue-comment-body-arrow", f"gh issue comment 5 --body 'moved -> {_HOOK}'"),
+    ("gh-api-field-body-arrow",
+     f"gh api repos/o/r/issues/5/comments -f body='moved -> {_HOOK}'"),
+    ("gh-pr-create-body-file-stdin-heredoc",
+     f"gh pr create --title t --body-file - <<'EOF'\n- moved -> {_HOOK}\nEOF"),
+    ("gh-pr-comment-short-flag", f"gh pr comment 5 -b 'see > {_HOOK}'"),
+    ("gh-pr-create-body-equals-spelling", f"gh pr create --title t --body='moved -> {_HOOK}'"),
+    ("gh-issue-create-title-arrow", f"gh issue create --title 'cp a -> {_SETTINGS}' --body x"),
+    ("mkdir-then-gh-pr-body-arrow",
+     f"mkdir -p out && gh pr create --title t --body 'moved -> {_HOOK}'"),
+    # the door's text is its own statement's data beside a head on no roster
+    ("gh-pr-body-beside-a-build", f"gh pr create --title t --body 'moved -> {_HOOK}' && make test"),
+    ("gh-body-file-heredoc-beside-a-build",
+     f"gh pr create --title t --body-file - <<'EOF' && make test\n- moved -> {_HOOK}\nEOF"),
+    # DEF-1015: a quoted arrow before a protected path inside a compound body
+    # -- an if, while or for body, a group, a subshell -- names a move, and the
+    # compound hands its output to nobody. Each was walled at ce61737 (the
+    # keyword was the span's owner, on no roster); the commit inside an if
+    # guard is the named user's shape. The must-deny twins, the same bodies
+    # handed to a shell after the closer, are in GENUINE_BASH and, as real
+    # deletes, in the reachability differential.
+    ("if-body-quoted-arrow", f"if true; then echo 'moved -> {_HOOK}'; fi"),
+    ("while-body-quoted-arrow",
+     f"while read -r l; do echo 'x > {_HOOK}'; done < list.txt"),
+    ("for-body-quoted-arrow", f"for i in 1 2; do echo 'copy > {_HOOK}'; done"),
+    ("group-quoted-arrow-redirected", f"{{ echo 'x > {_HOOK}'; }} > notes.md"),
+    ("subshell-quoted-arrow", f"(echo 'x > {_HOOK}')"),
+    ("if-guard-around-a-commit",
+     f"if git diff --quiet; then echo clean; else git commit -m 'move -> {_HOOK}'; fi"),
+    ("if-off-roster-condition-quoted-arrow",
+     f"if command -v gh >/dev/null; then echo 'moved -> {_HOOK}'; fi"),
+    ("group-heredoc-quoted-arrow",
+     f"{{ cat > notes.md <<'EOF'\nmoved -> {_HOOK}\nEOF\n}}"),
+    # DEF-1012: a quoted heredoc body naming a protected path after an arrow,
+    # behind a value captured in an EARLIER statement -- the substitution is
+    # closed and hands the body nowhere. Walled at ce61737: the capture scan
+    # ran from the whole command's start. Twins in GENUINE_BASH.
+    ("heredoc-after-a-closed-capture",
+     f"V=$(date -u); cat > n.md <<'EOF'\nx > {_CC_REPORT}\nEOF"),
+    ("heredoc-after-a-closed-capture-of-a-file",
+     f"L=$(cat p.txt); cat > notes.json <<'EOF'\nhooks -> {_HOOK}\nEOF"),
+    # DEF-1013: Claude Code's own commit form -- a message captured from a
+    # quoted heredoc inside a double-quoted argument -- naming a protected
+    # path after an arrow, and the same capture behind `echo` and before a
+    # push. Walled at ce61737: the capture was never walked. Twins in
+    # GENUINE_BASH.
+    ("commit-form-heredoc-message-with-an-arrow",
+     f"git commit -m \"$(cat <<'EOF'\nfix: out -> {_CC_REPORT}\nEOF\n)\""),
+    ("echo-of-a-captured-heredoc-with-an-arrow",
+     f"echo \"$(cat <<'EOF'\nhooks -> {_HOOK}\nEOF\n)\""),
+    ("commit-form-then-a-push",
+     f"git commit -m \"$(cat <<'EOF'\nfix: out -> {_CC_REPORT}\nEOF\n)\" && git push"),
 ]
 
 INERT_POWERSHELL = [
@@ -543,6 +616,94 @@ GENUINE_POWERSHELL = [
 
 # ── Bash: a safe first statement must not vouch for the ones after it. ─────
 GENUINE_BASH = [
+    # DEF-1015's must-deny twins: the compound's output handed to a shell
+    # after its closer, or its body fed to one -- each re-parses the quoted
+    # write inside. The case arm, the group an argument brace leaves open and
+    # the backtick capture across a separator were ALLOWED at ce61737 too: a
+    # case pattern's paren and an argument brace each read as a closer, and a
+    # separator inside a backtick cut the capture out of the span's statement.
+    ("if-body-piped-into-a-shell", f"if true; then echo 'echo x > {_HOOK}'; fi | bash"),
+    ("group-body-piped-into-a-shell", f"{{ echo 'echo x > {_HOOK}'; }} | sh"),
+    ("subshell-body-piped-into-a-shell", f"(echo 'echo x > {_HOOK}') |\nsh"),
+    ("loop-body-into-a-process-substitution",
+     f"for i in 1; do echo 'echo x > {_HOOK}'; done > >(bash)"),
+    ("case-arm-piped-into-a-shell",
+     f"case x in x) echo 'echo x > {_HOOK}';; esac | bash"),
+    ("group-left-open-by-an-argument-brace",
+     f"{{ echo }} >/dev/null; echo 'echo x > {_HOOK}'; }} | bash"),
+    ("group-left-open-after-the-span",
+     f"{{ echo 'echo x > {_HOOK}'; echo }} ; }} | bash"),
+    ("backtick-capture-across-a-separator",
+     f"x=`true; echo 'echo x > {_HOOK}'; true`; eval \"$x\""),
+    ("echo-piped-into-a-group-shell", f"echo 'echo x > {_HOOK}' | {{ bash; }}"),
+    ("loop-fed-a-heredoc-it-evals",
+     f"while read l; do eval \"$l\"; done <<'EOF' | cat\necho x > {_HOOK}\nEOF"),
+    ("function-body-called-into-a-shell",
+     f"f() {{ echo 'echo x > {_HOOK}'; }}; f | bash"),
+    ("subshell-inside-a-substitution-evaled",
+     f"x=$( (echo 'echo x > {_HOOK}') ); eval \"$x\""),
+    ("group-inside-a-substitution-after-a-separator",
+     f"eval $(true; {{ echo 'echo x > {_HOOK}'; }})"),
+    # DEF-1012's must-deny twins: a quoted heredoc body a substitution
+    # captures, or a process substitution beside its operator hands to a
+    # shell -- before it, after it, and with a separator after it -- each
+    # running the write in real bash.
+    ("heredoc-in-an-assigned-capture-evaled",
+     f"x=$(cat <<'EOF'\necho x > {_HOOK}\nEOF\n); eval \"$x\""),
+    ("heredoc-in-a-capture-after-a-separator-evaled",
+     f"x=$(true; cat <<'EOF'\necho x > {_HOOK}\nEOF\n); eval \"$x\""),
+    ("heredoc-into-a-process-substitution-then-a-separator",
+     f"cat <<'EOF' > >(bash); ls\necho x > {_HOOK}\nEOF"),
+    ("process-substitution-before-the-heredoc-head",
+     f"> >(bash) cat <<'EOF'\necho x > {_HOOK}\nEOF"),
+    ("heredoc-in-a-backtick-capture-cut-by-a-separator",
+     f"x=`true; cat <<'EOF'\necho x > {_HOOK}\nEOF\n`; eval \"$x\""),
+    # DEF-1013's must-deny twins: the captured heredoc handed to a shell --
+    # by eval, by `bash -c`, stored headless and evaluated, piped into a
+    # shell, run by a shell inside the capture -- and a write the captured
+    # command itself makes.
+    ("eval-of-a-captured-heredoc",
+     f"eval \"$(cat <<'EOF'\necho x > {_HOOK}\nEOF\n)\""),
+    ("bash-c-over-a-captured-heredoc",
+     f"bash -c \"$(cat <<'EOF'\necho x > {_HOOK}\nEOF\n)\""),
+    ("headless-capture-of-a-heredoc-evaled",
+     f"x=\"$(cat <<'EOF'\necho x > {_HOOK}\nEOF\n)\"; eval \"$x\""),
+    ("captured-heredoc-piped-into-a-shell",
+     f"echo \"$(cat <<'EOF'\necho x > {_HOOK}\nEOF\n)\" | sh"),
+    ("capture-that-runs-a-shell-on-its-heredoc",
+     f"echo \"$(bash <<'EOF'\necho x > {_HOOK}\nEOF\n)\""),
+    ("capture-whose-inner-command-writes", f"echo \"$(echo x > {_HOOK})\""),
+    # DEF-1013 lane review F1/F2/F4: the quoted-substitution splice must not
+    # fire under a head that RE-PARSES or RUNS its argument, or the program it
+    # stores or runs loses the write inside. A reader (perl, sed) runs the
+    # captured text; git's config and -c doors store a program its own reader
+    # scans; rg runs the --pre capture. Each was DENY at ce61737 and must stay
+    # DENY -- the outer-head gate (`_splices_quoted_capture`) is what keeps them
+    # raw for those readers.
+    ("git-config-alias-captures-a-heredoc",
+     f"git config alias.z \"$(cat <<'EOF'\n!echo y > {_HOOK}\nEOF\n)\"; git z"),
+    ("git-c-alias-captures-an-echo",
+     f"git -c alias.z=\"$(echo '!echo y > {_HOOK}')\" z"),
+    ("git-config-credential-helper-captures",
+     f"git config credential.helper \"$(echo '!echo y > {_HOOK}')\""),
+    ("perl-e-captures-a-heredoc-write",
+     f"perl -e \"$(cat <<'EOF'\nopen(F,\">{_HOOK}\")\nEOF\n)\""),
+    ("perl-e-captures-an-echoed-system",
+     f"perl -e \"$(echo 'system(\\\"echo y > {_HOOK}\\\")')\""),
+    ("sed-captures-a-heredoc-e-command",
+     f"sed -n \"$(cat <<'EOF'\n1e echo x > {_HOOK}\nEOF\n)\" /etc/hosts"),
+    ("rg-pre-captures-a-heredoc-write",
+     f"rg --pre \"$(cat <<'EOF'\necho x > {_HOOK}\nEOF\n)\" ."),
+    # the INNER command a reader that runs its own program: an echo capture
+    # of a sed `e` command writes the hook (the lane review's c11 shape)
+    ("echo-captures-a-sed-e-command",
+     f"echo \"$(sed -n '1e echo x > {_HOOK}' /etc/hosts)\""),
+    # F3: an exec'd descriptor into a process substitution running a shell, a
+    # later `>&3` sends there -- both the braced group and the braceless form.
+    ("exec-fd-procsub-then-group-write",
+     f"exec 3> >(bash); {{ echo 'echo x > {_HOOK}'; }} >&3"),
+    ("exec-fd-procsub-then-toplevel-write",
+     f"exec 3> >(bash); echo 'echo x > {_HOOK}' >&3"),
     # DEF-967's must-deny twins: a substitution that itself runs the guarded
     # command, and an exec-quote body holding the nested construct before it.
     ("nested-sub-that-runs-the-catastrophic-delete", f'echo "n: $(printf "x"; {_RM_RF} /)"'),
@@ -695,6 +856,105 @@ GENUINE_BASH = [
     # delete after it is at a command position
     ("quoted-blank-prefix-before-the-delete", f"A='a b' {_RM_RF} /"),
     ("quoted-separator-prefix-before-the-delete", f"A='a; b' {_RM_RF} /"),
+    # DEF-1016's must-deny twins: the walk reads a `cd` through a literal the
+    # shell really holds when the `cd` runs, and nothing else. A bound
+    # literal that IS the zone (allowed until the walk read bindings); an
+    # unbound name; a binding that may not have run in this shell (after
+    # `&&`, in a subshell, in a pipeline stage, as one command's prefix); one
+    # undone before the `cd` (rebound, unset, rebound by `eval`); a
+    # single-quoted reference (the literal `$`); a quoted tilde (a file
+    # named `~`, never the home); a flagged declaration (`-i` evaluates the
+    # value, and `/tmp` is no number); a binding in another shell's program
+    # (a `-c` string, a heredoc fed to a shell); and a `mkdir` that makes no parents
+    # (without `-p`, or `-mp`, whose `p` is the mode). In each the `cd`
+    # stays or fails and the write lands in the checkout's `.claude/`.
+    ("cd-through-a-bound-zone", 'S=.claude; cd "$S" && printf x > settings.json'),
+    ("cd-through-an-unbound-name", f'cd "$UNBOUND_ZZ" && printf x > {_SETTINGS}'),
+    ("cd-through-a-conditional-binding", f'false && S=/tmp; cd "$S" && printf x > {_SETTINGS}'),
+    ("cd-through-a-subshell-binding", f'(S=/tmp); cd "$S" && printf x > {_SETTINGS}'),
+    ("cd-through-a-pipeline-binding", f'S=/tmp | cat; cd "$S" && printf x > {_SETTINGS}'),
+    ("cd-through-a-prefix-assignment", f'S=/tmp true; cd "$S" && printf x > {_SETTINGS}'),
+    ("cd-through-a-rebound-name", 'S=/tmp; S=.claude; cd "$S" && printf x > settings.json'),
+    ("cd-through-an-unset-name", f'S=/tmp; unset S; cd "$S" && printf x > {_SETTINGS}'),
+    ("cd-through-a-name-eval-rebinds", f'S=/tmp; eval "S=."; cd "$S" && printf x > {_SETTINGS}'),
+    ("cd-through-a-single-quoted-reference", f"S=/tmp; cd '$S'; printf x > {_SETTINGS}"),
+    ("cd-through-a-quoted-tilde", f'S="~"; cd "$S"; printf x > {_SETTINGS}'),
+    ("cd-through-an-integer-declaration", f'declare -i S=/tmp; cd "$S"; printf x > {_SETTINGS}'),
+    ("cd-through-a-child-shells-binding", f"bash -c 'true; S=/tmp\n'; cd \"$S\"; printf x > {_SETTINGS}"),
+    ("cd-through-a-heredoc-shells-binding", f"bash <<'EOF'\nS=/tmp\nEOF\ncd \"$S\"; printf x > {_SETTINGS}"),
+    ("cd-to-a-parent-mkdir-did-not-make",
+     f"mkdir /tmp/espalier-nx-zz/sub; cd /tmp/espalier-nx-zz; printf x > {_SETTINGS}"),
+    ("cd-to-a-parent-of-a-mode-cluster",
+     f"mkdir -mp /tmp/espalier-nx-zz/sub; cd /tmp/espalier-nx-zz; printf x > {_SETTINGS}"),
+    # The lane review's twins of the same walk (each read ALLOW before its
+    # fix). A literal holds only where nothing else sets the name: a name the
+    # shell maintains (`cd` sets `OLDPWD`, every command `_`, `read`
+    # `REPLY`); a name set through another (`printf -v` and `unset` by a
+    # name held in a variable, a nameref), changed by an earlier `declare -i`
+    # or a trap; and a bare reference once the command sets `IFS`. A
+    # `select` body may not run, like any other loop's. A parent a `mkdir -p`
+    # names is there only if the make ran and succeeded before the `cd`, so
+    # only `&&` joins them: a make that fails, one in the background, one on
+    # the line before, `-m`'s mode word read as `-p`.
+    ("cd-through-oldpwd", f'OLDPWD=/tmp; cd .claude; cd "$OLDPWD"; printf x > {_SETTINGS}'),
+    ("cd-through-the-last-argument", f'_=/tmp; true; cd "$_"; printf x > {_SETTINGS}'),
+    ("cd-through-reply-a-read-sets", f'REPLY=/tmp; read <<< .; cd "$REPLY"; printf x > {_SETTINGS}'),
+    ("cd-through-a-name-printf-v-sets", f'X=/tmp; N=X; printf -v "$N" %s .; cd "$X"; printf x > {_SETTINGS}'),
+    ("cd-through-a-name-unset-by-another", f'X=/tmp; N=X; unset "$N"; cd "$X"; printf x > {_SETTINGS}'),
+    ("cd-through-a-nameref-target", f'declare -n R=X; X=/tmp; R=.; cd "$X"; printf x > {_SETTINGS}'),
+    ("cd-through-a-name-declared-integer-earlier", f'declare -i X; X=/tmp; cd "$X"; printf x > {_SETTINGS}'),
+    ("cd-through-a-name-a-trap-sets", f"trap 'X=.' DEBUG; X=/tmp; cd \"$X\"; printf x > {_SETTINGS}"),
+    ("cd-through-a-value-ifs-splits", f'IFS=/; X=/tmp; cd $X; printf x > {_SETTINGS}'),
+    ("cd-after-a-select-body-binding", f'select v in a\ndo\nS=/tmp\nbreak\ndone\ncd "$S"; printf x > {_SETTINGS}'),
+    ("cd-after-a-select-inside-a-loop",
+     f'while false\ndo\nselect v in a; do break; done\nS=/tmp\ndone\ncd "$S"; printf x > {_SETTINGS}'),
+    ("cd-to-a-parent-a-failed-mkdir-p-names", f"mkdir -p /dev/null/zz/sub; cd /dev/null/zz; printf x > {_SETTINGS}"),
+    ("cd-to-a-parent-past-the-and-run",
+     f"mkdir -p /dev/null/zz/sub && true; cd /dev/null/zz; printf x > {_SETTINGS}"),
+    ("cd-to-a-parent-a-backgrounded-mkdir-p-names",
+     f"mkdir -p /tmp/espalier-nx-zz/sub & cd /tmp/espalier-nx-zz; printf x > {_SETTINGS}"),
+    ("cd-into-the-parent-a-mkdir-p-made-by-lines",
+     f"mkdir -vp scratch/zz/.claude\ncd scratch/zz\nprintf x > {_SETTINGS}"),
+    ("cd-to-a-parent-of-a-mode-word", "cd .claude; mkdir -m -p ../sub/zz/q; cd ../sub/zz; printf x > settings.json"),
+    # DEF-1014's must-deny twins: the gh door relieves the text flags of the
+    # pr, issue and api verbs and nothing else. A write after a separator --
+    # semicolon, and-and, newline -- a substitution inside the body that the
+    # shell runs first, an unquoted heredoc on the body-file stdin, gh's own
+    # stdout redirected into the zone, and the doors that store a command gh
+    # runs later (a shell alias, a bang alias, the editor setting), and an
+    # editor handed to the door verb by an assignment prefix.
+    ("gh-body-then-semicolon-write", f"gh pr create --title t --body x; echo x > {_HOOK}"),
+    ("gh-body-then-andand-write", f"gh pr create --title t --body 'x' && printf x > {_HOOK}"),
+    ("gh-body-then-newline-write", f"gh pr comment 5 -b 'x'\nprintf x > {_HOOK}"),
+    ("gh-body-substitution-runs-a-write", f'gh pr create --title t --body "$(echo x > {_HOOK})"'),
+    ("gh-unquoted-heredoc-body-file-runs-a-write",
+     f"gh pr create --title t --body-file - <<EOF\n$(echo x > {_HOOK})\nEOF"),
+    ("gh-stdout-redirected-into-the-zone", f"gh pr view 5 --json body > {_HOOK}"),
+    ("gh-shell-alias-stores-a-write", f"gh alias set --shell zz 'echo x > {_HOOK}'"),
+    ("gh-bang-alias-stores-a-write", f"gh alias set zz '!echo x > {_HOOK}'"),
+    ("gh-editor-setting-stores-a-write", f"gh config set editor 'echo x > {_HOOK}'"),
+    ("gh-editor-prefix-on-the-door-verb",
+     f"GH_EDITOR='sh -c \"echo x > {_HOOK}\"' gh pr create --title t --editor"),
+    # and each way the door's verb test refuses: a quote glued to the verb
+    # makes another word (an alias may answer it), an expanded verb, a path
+    # spelling that may be a local script, and a real release after a door
+    # statement keeps its speed bump
+    ("gh-glued-verb-is-no-door", f"gh pr'oxy' 'echo x > {_HOOK}'"),
+    ("gh-expanded-verb-is-no-door",
+     f"V=alias; gh $V set --shell zz 'echo x > {_HOOK}' && gh zz"),
+    ("gh-path-spelling-is-no-door", f"./gh pr create --title t --body 'echo x > {_HOOK}'"),
+    ("gh-door-then-a-release", "gh pr create --title t --body x && gh release create v1.2.3"),
+    # one must-deny row per door verb (pinned below by the door's own
+    # roster): the issue verb's separator write, and the api verb's -- a
+    # capture in a field value whose command is a shell running a heredoc
+    # write, a separator write, and a pager handed to it by a prefix
+    ("gh-issue-body-then-semicolon-write", f"gh issue comment 5 --body x; echo x > {_HOOK}"),
+    ("gh-api-field-capture-runs-a-shell-heredoc",
+     f"gh api repos/o/r/issues/5/comments -f body=\"$(bash <<'EOF'\necho x > {_HOOK}\nEOF\n)\""),
+    ("gh-api-field-then-semicolon-write",
+     f"gh api repos/o/r/issues/5/comments -f body=x; echo x > {_HOOK}"),
+    ("gh-api-pager-prefix-on-the-door-verb",
+     f"GH_PAGER='sh -c \"echo x > {_HOOK}\"' gh api repos/o/r"),
 ]
 
 # ── The tier itself, on PowerShell. ────────────────────────────────────────
@@ -1001,3 +1261,25 @@ def test_the_corpus_is_not_empty():
         "the tier corpus must exercise all three rungs -- a corpus missing one "
         "cannot see that rung collapse into its neighbour"
     )
+
+
+#: A `gh` door verb as a statement spells it: `gh`, blanks, then the verb as a
+#: whole word (a glued `pr'oxy'` is another word, and no door).
+_GH_VERB_RE = re.compile(r"(?:^|[\s;&|(])gh[ \t]+([a-z]+)(?=[\s;&|<>()]|$)")
+
+
+def test_every_gh_door_verb_has_a_must_deny_row():
+    """DEF-1014: the gh text door relieves the verbs in
+    `_bash_patterns._GH_TEXT_DOOR_VERBS` and is paid per verb, so each verb
+    carries a must-deny row here (the bench's executing wrapper is pinned
+    beside the differential). Read from the module, never a copy: a verb
+    added to the set without a row -- `repo`, whose `clone -- <git flags>`
+    hands git a command -- reds here."""
+    spec = importlib.util.spec_from_file_location(
+        "_bash_patterns_gh_door_rows", HOOK.parent / "_bash_patterns.py")
+    bp = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bp)
+    verbs = set(bp._GH_TEXT_DOOR_VERBS)
+    assert verbs, "the door names no verb: the roster read is broken"
+    covered = {v for _, cmd in GENUINE_BASH for v in _GH_VERB_RE.findall(cmd)}
+    assert verbs <= covered, f"door verbs with no must-deny row: {sorted(verbs - covered)}"

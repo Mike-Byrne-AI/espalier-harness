@@ -1067,10 +1067,26 @@ first; the dangerous-command catch is a secondary slip-catcher):
    the root and both verdicts were wrong. A `cd` the shell would not perform
    moves nothing: one whose directory is not there (the walk asks the disk,
    and credits a directory an earlier statement of the same command makes,
-   so `mkdir -p sandbox && cd sandbox` reads as entered), one in a pipeline
+   and with `-p` its parents too for a `cd` joined to the make by `&&`, so
+   `mkdir -p sandbox/.claude && cd sandbox` reads as entered; after `;`, a
+   newline or `&` the make may have failed and the `cd` runs anyway), one
+   in a pipeline
    stage or backgrounded with `&`, one inside a function body; a `cd` after
    `&&` or `||`, or inside an `if`, `case` or loop body, is conditional and
-   the statements after it are judged in both directories. A target the walk cannot read -- a
+   the statements after it are judged in both directories. A variable bound
+   to a literal earlier in the same command is read as that literal
+   (`S=/tmp/fx; cd "$S"`) only when that binding, run in this shell
+   whatever happened before it, is the one way the command names the
+   variable: a binding after `&&` or `||`, inside an `if`, loop, group or
+   subshell, in a pipeline stage or as a command's prefix (`S=x cmd`) is
+   not read, and neither is a name the command mentions anywhere else,
+   before or after (`read S`, `unset S`, `declare -i S`, a trap or a
+   nameref naming it, or the value `printf -v "$N"` reads), one `eval`,
+   `source` or a call to the command's own function may rebind, or one the
+   shell maintains itself (`PWD`, `OLDPWD`, `_`, `REPLY`, `IFS` and the
+   like); nor is a single-quoted reference, or an unquoted one whose value
+   the shell would split or glob or in a command that sets `IFS`. A target
+   the walk cannot read -- such a
    variable, a substitution, `cd -` -- leaves the directory unknown, and an
    unknown directory resolves against the root as before (the indirection
    class, declared; pinned by
@@ -1462,6 +1478,20 @@ string that only quotes a command, a commit message, a `git grep` pattern, a
 stream to a sed program that does not execute it -- mentions, not
 invocations -- so `python`, `perl`, `node`, `ruby`, `awk`, `sed` and `git`
 sit on the non-re-parsing side of the mask.
+
+`gh` sits there by verb, never whole. A statement that opens with a bare `gh`
+whose first word is `pr`, `issue` or `api` hands its quoted text and its
+quoted heredoc to GitHub, not to a shell, so a pull request or issue body
+that describes a move into a protected path (`--body`, `-b`, `--title`, an
+api field, `--body-file -` fed a quoted heredoc) is data. Every other verb
+keeps the raw reading, because `gh alias set --shell`, an alias opening with
+`!`, `gh alias import` and `gh config set editor` (or `pager`, `browser`)
+store a command gh runs later. So does a door statement that starts with an
+assignment prefix (`GH_EDITOR=...`, `GH_PAGER=...`, `GIT_SSH_COMMAND=...`
+hand gh a command it runs), sits behind a wrapper word or an upstream pipe,
+spells its verb quoted, expanded or glued to more text, or spells `gh` as a
+path. A substitution inside the body, an unquoted heredoc and a write after a
+separator stay live, as they are for every head.
 
 Declared limits, pinned by
 `tests/test_write_guard.py::TestShellOutReader::test_the_declared_limits_of_the_shell_out_reader_are_pinned`:

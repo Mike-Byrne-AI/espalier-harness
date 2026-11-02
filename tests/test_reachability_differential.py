@@ -202,6 +202,24 @@ class TestRefusesToExecuteAnythingUnconfined:
             f"rm -rf {rd._TARGET}") is True
 
     @_NEEDS_REAL_BASH_DEFERRED
+    def test_an_inherited_gh_login_does_not_reach_the_row(self, rd, monkeypatch):
+        """The gh rows run the host's real gh (DEF-1014's door): a token in
+        the environment, or the operator's config directory with its stored
+        login and aliases, would let a row act on the operator's account. The
+        row's shell sees no token and a config directory inside the sandbox;
+        the `-z` tests reach only if every token is absent in the child."""
+        monkeypatch.setenv("GH_TOKEN", "not-a-token")
+        monkeypatch.setenv("GITHUB_TOKEN", "not-a-token")
+        monkeypatch.setenv("GH_ENTERPRISE_TOKEN", "not-a-token")
+        monkeypatch.setenv("GITHUB_ENTERPRISE_TOKEN", "not-a-token")
+        monkeypatch.setenv("GH_CONFIG_DIR", "/nonexistent-gh-config")
+        assert rd.bash_reaches(
+            '[ -z "$GH_TOKEN" ] && [ -z "$GITHUB_TOKEN" ] && '
+            '[ -z "$GH_ENTERPRISE_TOKEN" ] && [ -z "$GITHUB_ENTERPRISE_TOKEN" ] && '
+            '[ "$GH_CONFIG_DIR" = "$(pwd -P)/gh-config" ] && '
+            f"rm -rf {rd._TARGET}") is True
+
+    @_NEEDS_REAL_BASH_DEFERRED
     def test_git_discovery_stops_at_the_sandbox(self, rd):
         assert rd.bash_reaches(
             '[ "$GIT_CEILING_DIRECTORIES" = "$(cd .. && pwd -P)" ] && '
@@ -494,6 +512,10 @@ class TestTheRosterIsWellFormed:
         assert _command_words("cd /tmp && deno eval '%s'") == {"cd", "deno"}
         assert _command_words("sh<<<'%s'") == {"sh"}
         assert _command_words("echo \"%s\" $(true) | sh") == {"echo", "sh"}
+        assert _command_words("x=$(cat <<'EOF'\n%s\nEOF\n); eval \"$x\"") == {"cat", "eval"}
+        assert _command_words("V=$(date -u); cat > f <<'EOF'\n%s\nEOF") == {"date", "cat"}
+        assert _command_words("A=1 B=2 ls") == {"ls"}
+        assert _command_words("bash -c \"$(cat <<'EOF'\n%s\nEOF\n)\"") == {"bash"}
 
     @_NEEDS_REAL_BASH
     def test_no_declared_need_is_a_shell_builtin(self, rd):
@@ -544,6 +566,9 @@ class TestTheInterpreterRowsAreLive:
         # DEF-832: the program operand as one bash word -- a body handed to
         # `sh -c` inside a spliced single-quoted literal
         "py_c_sq_spliced_list_sh_c",
+        # DEF-1014: the gh door's heads with the body where bash runs it
+        "gh_pr_body_then_semicolon", "gh_pr_body_newline", "gh_pr_body_cmdsub",
+        "gh_body_file_unquoted_heredoc_cmdsub", "gh_api_field_cmdsub",
     )
     #: The same interpreters and containers holding the body as DATA -- a
     #: string literal, a commit body or message, a stream to `sed`, a file
@@ -556,6 +581,8 @@ class TestTheInterpreterRowsAreLive:
         "echo_dq_then_interpreter", "interpreter_then_echo_dq",
         "echo_dq_newline_then_interpreter",
         "py_c_sq_spliced_print",          # DEF-832: the spliced literal held as data
+        "gh_pr_body_sq", "gh_body_file_heredoc",  # DEF-1014: the gh door's text
+        "commit_message_heredoc_form",    # DEF-1013: the commit form's captured heredoc
     )
 
     @staticmethod
@@ -590,6 +617,29 @@ class TestTheInterpreterRowsAreLive:
         assert set(rd.WRAPPER_SYNTAX) <= pinned, set(rd.WRAPPER_SYNTAX) - pinned
         assert set(rd.WRAPPER_FEATURE) <= pinned, set(rd.WRAPPER_FEATURE) - pinned
 
+    def test_every_gh_door_verb_has_an_executing_wrapper(self, rd):
+        """DEF-1014: the head-word pairing below sees one `gh`, but the gh
+        text door relieves per VERB, so each verb in
+        `_bash_patterns._GH_TEXT_DOOR_VERBS` carries an executing wrapper of
+        its own (the must-deny row is pinned in
+        `tests/test_guard_false_positives.py`). Read from the module, never a
+        copy: a verb added to the set without a wrapper reds here."""
+        spec = importlib.util.spec_from_file_location(
+            "_bash_patterns_gh_door_wrappers",
+            REPO_ROOT / "tools" / "cc" / "hooks" / "_bash_patterns.py")
+        bp = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bp)
+        verbs = set(bp._GH_TEXT_DOOR_VERBS)
+        assert verbs, "the door names no verb: the roster read is broken"
+        templates = dict(rd.WRAPPERS)
+        covered = set()
+        for wrapper in self.SHELL_OUT:
+            m = re.match(r"gh[ \t]+([a-z]+)(?=[ \t])", templates[wrapper])
+            if m and rd.WRAPPER_NEEDS.get(wrapper) == "gh":
+                covered.add(m.group(1))
+        assert verbs <= covered, (
+            f"door verbs with no executing wrapper: {sorted(verbs - covered)}")
+
     def test_each_mention_row_has_an_executing_twin_on_the_same_head(self, rd):
         """The relief/fail-open discipline (memory:
         a-friction-fix-and-a-fail-open-are-one-edit): for every inert row's
@@ -620,7 +670,9 @@ def _command_words(template: str) -> set[str]:
 
     A small walk that reads shell the way the roster writes it: the first
     word of the template and of every segment after an UNQUOTED `;`, `|`, `&`
-    or newline, with grouping characters stripped; a heredoc body is skipped up
+    or newline, with grouping characters stripped and a leading assignment
+    stepped over (the word inside its substitution counts, where it opens
+    one); a heredoc body is skipped up
     to its terminator; a backslash escapes the next character; the body slot
     and a comment line are not words. Pinned by
     `test_the_command_word_walk_reads_shell_the_way_the_templates_use_it`.
@@ -666,6 +718,14 @@ def _command_words(template: str) -> set[str]:
         segments.append("".join(cur))
         for seg in segments:
             tokens = seg.strip().lstrip("(){} \t").split()
+            # a leading assignment is no command word: the word after it is,
+            # or, where its value opens a substitution, the word inside it
+            while tokens and re.match(r"[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
+                inner = re.split(r"\$\(|`", tokens[0], maxsplit=1)
+                if len(inner) == 2 and inner[1]:
+                    tokens[0] = inner[1]
+                    break
+                tokens.pop(0)
             if not tokens:
                 continue
             # a redirect glued to the head (`sh<<<'...'`, `cat<<EOF`) is not
@@ -673,6 +733,8 @@ def _command_words(template: str) -> set[str]:
             word = tokens[0].split("<", 1)[0].split(">", 1)[0]
             if not word or word in ("%s", ")", "}") or word.startswith("#"):
                 continue
+            if not word.strip("\"')"):
+                continue  # the `)"` closing a quoted substitution's last line
             words.add(word)
     return words
 

@@ -2859,6 +2859,136 @@ _MAX_ROSTERED_HEAD_LEN = max(
 #: replaces, and never a real command name (a NUL cannot appear in one).
 _UNROSTERED_HEAD = "\x00unrostered"
 
+#: DEF-1014: the one gh door whose quoted text is data. Stands in, inside
+#: `heads` and a pipeline's owner set, for a `gh` head whose verb is one of
+#: `_GH_TEXT_DOOR_VERBS` (`_gh_text_door`). None of those verbs hands an
+#: argument, a flag value or its body-file stdin to a shell: their text flags
+#: (`--body`, `-b`, `--title`, `-t`, api's `-f`/`-F` fields, `--body-file -`)
+#: are sent to GitHub, `--jq` and `--template` are evaluated inside gh, and
+#: the editor, pager and browser they can open come from the environment or
+#: gh's config, never from the command's arguments. A NUL cannot appear in a
+#: command name, so no real head word is this string.
+#:
+#: REJECTED, and each would be the obvious next step:
+#:   * `gh` on `_NON_REPARSING_HEADS` whole. `gh alias set --shell`, an alias
+#:     expansion opening with `!`, `gh alias import`, and `gh config set
+#:     editor|pager|browser` each STORE a command gh runs later, so their
+#:     quoted text is a program, not data (gh 2.96.0 help).
+#:   * `repo` or `extension` as a door verb. `gh repo clone <repo> -- <git
+#:     flags>` (and `gh repo fork --clone -- ...`) hands every word after
+#:     `--` to git, where `--upload-pack=<cmd>` or `-c core.sshCommand=<cmd>`
+#:     is a command git runs; `gh extension install` fetches a program and
+#:     `gh extension exec` (or the extension's own name) runs it. A verb joins
+#:     the set only with a must-deny row in `tests/test_guard_false_positives.py`
+#:     and an executing wrapper in `bench/reachability_differential.py`, which
+#:     two contract tests derive from this set.
+#:   * `gh` as a reader head on the `git` precedent (`_reader_family`). The
+#:     enrolment contract over `_BODY_READER_FAMILIES` needs a reader and an
+#:     executing row for every door, and these doors store a program in gh's
+#:     config where no reader of the command can see it run.
+#:   * the door inside `_head_hands_nothing_to_a_shell`. That predicate also
+#:     decides the glob relief's plain-command gate (`_bash_is_plain`), whose
+#:     head set is the operator's strict call, and the whole-command branch
+#:     of `mask_inert_syntax`. The door is read in ONE place, the per-statement
+#:     settle (`_head_hands_its_text_to_no_shell` in `_settle_statement_spans`):
+#:     a command holding a door takes the per-statement branch, where only
+#:     the door statement's own quoted spans and heredoc bodies come back
+#:     masked. Reading it in the whole-command branch too relieved no row
+#:     the settle does not (mutation-checked) and widened what is masked.
+_GH_TEXT_DOOR = "\x00gh-text-door"
+_GH_TEXT_DOOR_VERBS = frozenset({"pr", "issue", "api"})
+#: What may sit between the start of the statement and a door's `gh`: blanks
+#: and the separators a statement start can keep (the second bar of `||`).
+_GH_DOOR_PREFIX_CHARS = frozenset(" \t\n\r;&|")
+#: What may follow the verb: the end, a blank or a separator.
+_GH_DOOR_VERB_END_CHARS = frozenset(" \t\n\r;&|<>()")
+
+
+def _gh_text_door(s: str, head_start: int, head_end: int, stmt_start: int) -> bool:
+    """True when the bare `gh` at ``s[head_start:head_end]`` opens one of the
+    text doors: nothing but blanks and separators before it in its statement,
+    and its first word after it a plain door verb.
+
+    Narrower than gh's grammar on purpose; every miss keeps the raw reading,
+    which is friction, never a fail-open:
+      * an ASSIGNMENT PREFIX voids the door: `GH_EDITOR`, `GH_PAGER`,
+        `GH_BROWSER`, their generic twins, and git's own (`GIT_SSH_COMMAND`,
+        for the git a `pr checkout` runs) each hand gh a command it runs, and
+        a prefix value is judged by its statement's owners (DEF-848), so the
+        door would mask it. So do a wrapper word (`command`, `nice`) and an
+        upstream pipe (`x | gh ...`), which the same prefix test reads;
+      * the verb must be the first word, plain lower-case letters: a flag
+        before it, a quoted or expanded verb, or an alias name is no door
+        (gh refuses an alias that shadows a core command, so `pr`, `issue`
+        and `api` always mean the core verbs);
+      * the caller passes only a bare `gh`: a path spelling (`./gh`) may be a
+        local script of that name."""
+    for k in range(stmt_start, head_start):
+        if s[k] not in _GH_DOOR_PREFIX_CHARS:
+            return False
+    n = len(s)
+    k = head_end
+    while k < n and s[k] in " \t":
+        k += 1
+    j = k
+    while j < n and "a" <= s[j] <= "z":
+        j += 1
+    if j < n and s[j] not in _GH_DOOR_VERB_END_CHARS:
+        return False
+    return s[k:j] in _GH_TEXT_DOOR_VERBS
+
+
+def _head_hands_its_text_to_no_shell(head: str) -> bool:
+    """The per-statement settle's rule (2), per owner head:
+    `_head_hands_nothing_to_a_shell`, or the gh text door (DEF-1014), whose
+    quoted text and heredoc bodies are data though gh as a whole is on no
+    roster."""
+    return head == _GH_TEXT_DOOR or _head_hands_nothing_to_a_shell(head)
+
+
+#: The git verbs whose `-m`/`--message` value git stores as text and never
+#: runs or re-parses (DEF-1013). `revert`/`cherry-pick` are deliberately ABSENT:
+#: their `-m` names a mainline parent number, not a message. The quoted-
+#: substitution splice reads a captured heredoc as THIS verb's message data;
+#: every other git verb -- `config`, `-c`, the exec doors -- stores or runs a
+#: program its own readers must still see raw.
+_GIT_MESSAGE_VERBS = frozenset({"commit", "tag", "merge", "notes", "stash"})
+
+
+def _splices_quoted_capture(head: str, stmt: str) -> bool:
+    """Does the command whose head is ``head`` (statement text ``stmt``) take
+    a double-quoted argument as pure data, so a command substitution inside it
+    may be masked as the data-producing command it is (DEF-1013)?
+
+    True only for a head on `_NON_REPARSING_HEADS` (echo, printf, cat, …), and
+    for git under a message verb. A READER family re-parses its argument --
+    `perl -e`, `sed -n`, `awk`, `python -c`, and git's `config`/`-c` and exec
+    doors all run or re-parse what the capture produced -- so none of them
+    splices, and the capture stays raw for their own readers to scan (F1/F2/F4
+    of the lane review: splicing on a rostered INNER head alone lost the git
+    program-setting door and masked a perl/sed program)."""
+    if head in _NON_REPARSING_HEADS:
+        # ⚠ A DATA HEAD WITH AN EXEC DOOR DOES NOT SPLICE. `rg`/`ag` run the
+        # command given to `--pre`/`--preprocessor`, so a capture there is a
+        # program they execute, not data they print (the lane review listed
+        # `rg --pre "$(…)"`). The flag check over-excludes `--pre-glob`, which
+        # is friction, never a fail-open.
+        if head in ("rg", "ag") and any(
+                w.startswith(("--pre", "--preprocessor")) for w in stmt.split()):
+            return False
+        return True
+    if head == "git":
+        words = stmt.split()
+        i = 1 if words[:1] == ["git"] else 0
+        while i < len(words) and words[i].startswith("-"):
+            # the global options that take a separate-word value (the set
+            # `_git_program_bodies` skips) consume it; the rest are flags
+            i += 2 if words[i] in (
+                "-C", "-c", "--git-dir", "--work-tree", "--namespace",
+                "--exec-path") and "=" not in words[i] else 1
+        return i < len(words) and words[i] in _GIT_MESSAGE_VERBS
+    return False
+
 
 def mask_inert_syntax(command: str) -> str:
     """Return `command` with literal-by-position syntax characters spaced out.
@@ -2973,10 +3103,17 @@ def mask_inert_syntax(command: str) -> str:
     return _EXEC_OPENER_RE.sub(lambda m: " " * len(m.group(0)), masked)
 
 
-def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
+def _walk_shell_roles(
+    s: str, *, walk_substitutions: bool = True,
+) -> tuple[str, set[str], list[tuple[int, int]]]:
     """Return (masked_string, head_words_of_every_top_level_command,
     safe_spans) -- the third is every [start, end) range whose masking
-    survives rule (2) of `mask_inert_syntax`."""
+    survives rule (2) of `mask_inert_syntax`.
+
+    ``walk_substitutions`` reads a command substitution inside a top-level
+    double-quoted argument as a command of its own (DEF-1013); the walk of
+    that inner command passes False, so nothing is walked twice and a nest
+    of quoted substitutions stays linear."""
     out = list(s)
     i, n = 0, len(s)
     heads: set[str] = set()
@@ -3074,9 +3211,177 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                 continue
             candidates.append(_SpanCandidate(lo, j, current_pipeline, nesting,
                                              len(statements) - 1,
-                                             is_comment=False, is_value=True))
+                                             is_comment=False, is_value=True,
+                                             frame=frames[-1] if frames else None))
             k = j + 1
         return k
+
+    #: The compound frames open here, innermost last, and every frame ever
+    #: pushed in creation order (the settle judges a parent before its
+    #: children). See `_Frame` (DEF-1015).
+    frames: list[_Frame] = []
+    created: list[_Frame] = []
+    #: The frame whose closer ended the compound the current statement is
+    #: still in -- a heredoc or here-string after `done` feeds the loop's
+    #: stdin. None once a separator rebinds the pipeline.
+    closed_frame: _Frame | None = None
+    #: An empty `()` was met: the command defines a function, whose body runs
+    #: at a call no owner set can see, so no framed span is data.
+    defines_function = False
+    #: Where the command a heredoc operator belongs to starts: past the last
+    #: `;`, `&`, `&&`, `||` or rebinding newline, and never moved by a paren,
+    #: so a substitution beside the operator stays in the heredoc's rule-(4)
+    #: slice (DEF-1012; see the consume site).
+    cmd_start = 0
+    #: The head word of the simple command the walk is inside, or None at a
+    #: command position, reset at every separator. Whether a `$( )` inside a
+    #: double-quoted argument may be masked turns on it: only a data head
+    #: splices (DEF-1013; `_splices_quoted_capture`).
+    simple_head: str | None = None
+    #: An `exec` redirects a file descriptor into a process substitution
+    #: running a shell (`exec 3> >(bash)`), so a later `>&3` anywhere in the
+    #: command hands its output to that shell; every span is then captured
+    #: (DEF-1013 F3, the lane review).
+    exec_fd_procsub = False
+    in_exec_stmt = False
+
+    def push_frame(kind: str, closer: str, at: int) -> None:
+        """Open a frame at ``at`` for the pipeline current here. The list
+        inside the compound gets pipelines of its own."""
+        nonlocal current_pipeline, pipe_pending
+        f = _Frame(kind, closer, nesting, current_pipeline,
+                   frames[-1] if frames else None,
+                   piped=pipe_pending or bool(current_pipeline),
+                   pre=(statements[-1][0], at))
+        frames.append(f)
+        created.append(f)
+        current_pipeline = set()
+        pipe_pending = False
+
+    def pop_frame(post_from: int) -> None:
+        """Close the frame on top; the pipeline after the closer is the one
+        the compound is an element of, so `| bash` after it joins ``outer``."""
+        nonlocal current_pipeline, expect_head, closed_frame
+        f = frames.pop()
+        f.closed = True
+        f.post_si, f.post_from = len(statements) - 1, post_from
+        if f.parent is not None and not f.inner_ok:
+            f.parent.inner_ok = False
+        if f.piped and not f.inner_ok:
+            # piped into: the compound's heads read the upstream stream
+            f.outer.add(_UNROSTERED_HEAD)
+        current_pipeline = f.outer
+        closed_frame = f
+        expect_head = False
+
+    def take_reserved(word: str, after: int) -> bool:
+        """Read ``word``, an unquoted compound reserved word at a command
+        position ending at ``after``: an opener pushes a frame, a middle word
+        of the frame on top is stepped over, that frame's closer pops it.
+        False leaves the word to be recorded as a head, as it was before
+        frames: a closer or a middle word with no frame of its own to match
+        (a mis-paired or backtick-hidden compound) keeps the command raw."""
+        nonlocal expect_head
+        closer = _COMPOUND_CLOSERS.get(word)
+        if closer is not None:
+            push_frame(word, closer, after - len(word))
+            # `if`/`while`/`until` take a head next; `for`/`select`/`case` take
+            # a name and words, re-armed by the separator before `do`/`in`'s arm
+            expect_head = word in _BASH_HEAD_PREFIX_WORDS
+            return True
+        top = frames[-1] if frames else None
+        if top is None or top.level != nesting or top.kind not in _COMPOUND_CLOSERS:
+            return False
+        if word in _COMPOUND_MIDDLES[top.kind]:
+            return True
+        if word == top.closer:
+            pop_frame(after)
+            return True
+        return False
+
+    def top_frame() -> _Frame | None:
+        return frames[-1] if frames else None
+
+    def mask_quoted_substitutions(a: int, b: int) -> None:
+        """Mask the command inside each `$( )` of the double-quoted span
+        ``[a, b)`` as that command's own walk masks it, when every head it
+        holds hands nothing to a shell (DEF-1013). The caller gates this on
+        the outer head taking the argument as data (`_splices_quoted_capture`).
+
+        ⚠ CLAUDE CODE'S OWN COMMIT FORM, `git commit -m "$(cat <<'EOF' …
+        EOF)"`, WAS READ RAW. `_neutralise_expanding_span` steps over a live
+        substitution whole, so its heredoc was never consumed; every head
+        was on the roster, so the masker handed back the walker's text with
+        the message unmasked, and an arrow in it read as a redirect. Walked
+        here as a command of its own, the heredoc body is the captured text
+        -- an argument of the outer head. The splice is made only when the
+        inner command's heads are all on the roster AND the outer head takes
+        the argument as pure data (`_splices_quoted_capture`, checked at the
+        call), and it changes only what this span's masked text says: the
+        `$( )` itself stays visible to every reader, so the capture still
+        marks the statement. An assignment's value is not walked here
+        (`step_over_assignment`): a headless value is handed to nobody only
+        while it stays raw, since the binding pre-pass reads it where it runs
+        (DEF-848). A live redirect inside the substitution is code, and stays
+        live in the inner walk's masked text.
+
+        ⚠ REJECTED: splicing on the inner heads alone, whatever the outer
+        head (the first cut of DEF-1013). A reader re-parses its argument, so
+        `perl -e "$(…)"` and `sed -n "$(…)"` run the captured text as a
+        program and masking it hid the write inside; and git counts as
+        rostered through `_reader_family`, so `git config alias.x "$(…)"` and
+        `git -c x="$(…)"` lost the program-setting door that reads the stored
+        alias. The outer head must take the argument as DATA -- a
+        `_NON_REPARSING_HEADS` head, or git under a message verb -- and every
+        reader keeps its capture raw for its own reader to scan (the lane
+        review's F1/F2/F4)."""
+        k = a
+        while k < b:
+            ch = s[k]
+            if ch == "\\":
+                k += 2
+                continue
+            if ch == "`":
+                close = s.find("`", k + 1)
+                if close < 0 or close >= b:
+                    return
+                k = close + 1
+                continue
+            if ch == "$" and k + 1 < b and s[k + 1] == "{":
+                k = _match_delimiter(s, k + 1, b, "{", "}") + 1
+                continue
+            if ch == "$" and k + 1 < b and s[k + 1] == "(":
+                close = _match_delimiter(s, k + 1, b, "(", ")")
+                if not (k + 2 < close and s[k + 2] == "("):   # `$((` is arithmetic
+                    try:
+                        inner, inner_heads, _ = _walk_shell_roles(
+                            s[k + 2:close], walk_substitutions=False)
+                    except (_UnresolvedShellSyntax, IndexError):
+                        inner, inner_heads = "", set()
+                    # ⚠ EVERY INNER HEAD STRICTLY ON THE ROSTER, NO READER. A
+                    # reader as the INNER command runs its own program -- sed's
+                    # `e`, perl's `system`, awk's `system()` -- and its output
+                    # is what the capture yields; `_head_hands_nothing_to_a_shell`
+                    # admits a reader because ITS readers scan that program, but
+                    # a splice masks it before they can (the lane review's c11
+                    # shape: an echo capture of a sed `e` command).
+                    if inner_heads and all(
+                            h in _NON_REPARSING_HEADS for h in inner_heads):
+                        out[k + 2:close] = inner
+                k = close + 1
+                continue
+            k += 1
+
+    def record_head(word: str) -> None:
+        nonlocal simple_head, in_exec_stmt
+        heads.add(word)
+        current_pipeline.add(word)
+        simple_head = word
+        in_exec_stmt = word == "exec"
+        if frames and frames[-1].inner_ok:
+            # the settle's own per-owner rule: the gh text door (DEF-1014)
+            # takes its text and its stdin as data
+            frames[-1].inner_ok = _head_hands_its_text_to_no_shell(word)
 
     while i < n:
         c = s[i]
@@ -3134,7 +3439,9 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                     pipe_pending = False
                     i = span_after
                     continue
-                if span_buf[base] == "#":
+                if span_buf[base] == "#" or c in "()" or (c in "{}" and span_after == i + 1):
+                    # a comment, or a grouping operator or standalone brace the
+                    # grouping branch below reads as a frame -- never a head
                     pass
                 else:
                     rec = (span_buf[base:] if len(span_buf) - base <= _MAX_ROSTERED_HEAD_LEN
@@ -3144,8 +3451,15 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                         pipe_pending = False
                         i = span_after
                         continue
-                    heads.add(rec)
-                    current_pipeline.add(rec)
+                    if (rec in _COMPOUND_RESERVED and s[i:span_after] == rec
+                            and take_reserved(rec, span_after)):
+                        i = span_after
+                        continue
+                    # DEF-1014: no gh text door here, on purpose. A suffix read
+                    # is a word glued behind a grouping character (`(gh`,
+                    # `${X}gh`), and `${X}` can make it a path spelling, which
+                    # the door refuses; it keeps the raw reading, a friction.
+                    record_head(rec)
                     expect_head = False
                     pipe_pending = False
         elif expect_head and c not in " \t":
@@ -3166,6 +3480,35 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                 # TimeoutExpired rows. Leave `expect_head` armed and let the
                 # branches below advance `i` normally.
                 pass
+            elif c in "()" or (c in "{}" and after == i + 1):
+                # ⚠ A GROUPING OPERATOR OR A STANDALONE BRACE IS NOT A HEAD
+                # (DEF-1015). Recorded as one (`{`, `}`, a glued `(echo`), it was
+                # on no roster, so every compound read raw and a quoted span
+                # inside one was refused wherever it stood. The grouping branch
+                # below opens or closes the frame; a word glued after the paren
+                # is captured from the next position.
+                pass
+            elif (word in _COMPOUND_RESERVED and s[i:after] == word
+                  and take_reserved(word, after)):
+                # ⚠ A COMPOUND RESERVED WORD IS A FRAME, NOT A HEAD (DEF-1015).
+                # `if`, `then`, `do`, `fi` and the rest were recorded as heads on
+                # no roster, and the real head after `then` or `do` never was,
+                # so a quoted span in the body had a keyword for its owner.
+                #
+                # REJECTED: adding the words to `_HEAD_SKIP_WORDS` alone. That
+                # relieves the body and loses what attaches after the closer:
+                # in `if …; fi | bash` the `fi` stepped over, `| bash` extended
+                # a fresh pipeline, and the span inside kept `{echo}` for its
+                # owner -- masked into the shell that runs it (re-driven on an
+                # in-memory patch: no zone candidate left). A frame holds the
+                # pipeline it is an element of by reference, and the closer
+                # rebinds to it, so `bash` joins the set every span inside
+                # reads at the settle.
+                #
+                # Unquoted only (`s[i:after] == word`): a quoted `'if'` is a
+                # command named if to bash, not a keyword.
+                i = after
+                continue
             elif word in _HEAD_SKIP_WORDS:
                 nesting = _depth_after_step_over(s, i, after, nesting)
                 pipe_pending = False
@@ -3178,8 +3521,14 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                 # the allowlist, and lost comment masking entirely.
                 pass
             elif word:
-                heads.add(word)
-                current_pipeline.add(word)
+                # DEF-1014: a bare `gh` whose verb opens a text door is
+                # recorded as the door, so its quoted text is data and gh's
+                # other verbs keep the raw reading (`_gh_text_door`).
+                if span_buf == "gh" and _gh_text_door(s, i, after, statements[-1][0]):
+                    word = _GH_TEXT_DOOR
+                record_head(word)
+                if word == "function":
+                    defines_function = True
                 expect_head = False
                 pipe_pending = False
             else:
@@ -3238,16 +3587,19 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
             neutralise(i + 1, j)
             candidates.append(_SpanCandidate(i + 1, j, current_pipeline, nesting,
                                              len(statements) - 1,
-                                             is_comment=False, is_value=False))
+                                             is_comment=False, is_value=False, frame=top_frame()))
             i = j + 1
             continue
 
         if c == '"':
             j = _close_double_quote(s, i)
             _neutralise_expanding_span(s, out, i + 1, j)
+            if (walk_substitutions and simple_head is not None
+                    and _splices_quoted_capture(simple_head, s[cmd_start:j])):
+                mask_quoted_substitutions(i + 1, j)
             candidates.append(_SpanCandidate(i + 1, j, current_pipeline, nesting,
                                              len(statements) - 1,
-                                             is_comment=False, is_value=False))
+                                             is_comment=False, is_value=False, frame=top_frame()))
             i = j + 1
             continue
 
@@ -3256,7 +3608,7 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
             neutralise(i + 2, j)
             candidates.append(_SpanCandidate(i + 2, j, current_pipeline, nesting,
                                              len(statements) - 1,
-                                             is_comment=False, is_value=False))
+                                             is_comment=False, is_value=False, frame=top_frame()))
             i = j + 1
             continue
 
@@ -3277,11 +3629,19 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
             neutralise(i + 1, j, keep_newline=True)
             candidates.append(_SpanCandidate(i + 1, j, current_pipeline, nesting,
                                              len(statements) - 1,
-                                             is_comment=True, is_value=False))
+                                             is_comment=True, is_value=False, frame=top_frame()))
             i = j
             continue
 
         if c == "<" and i + 1 < n and s[i + 1] == "<":
+            if (closed_frame is not None and current_pipeline is closed_frame.outer
+                    and not closed_frame.inner_ok):
+                # ⚠ A HEREDOC OR HERE-STRING AFTER A CLOSER FEEDS THE COMPOUND'S
+                # STDIN (DEF-1015): in `while read l; do eval "$l"; done <<'EOF'`
+                # the loop's own heads read the body, and `| cat` after it would
+                # otherwise vouch for a body eval runs. A head inside on no
+                # roster joins the owner set the body is recorded with.
+                current_pipeline.add(_UNROSTERED_HEAD)
             i, spec = _read_heredoc_operator(s, i)
             if spec is not None:
                 # ⚠ CAPTURE THE OWNER SET BY REFERENCE, AND NEITHER BY VALUE NOR
@@ -3305,7 +3665,7 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                 # `nesting` and the prefix scan close the two routes that reach
                 # a shell without ever being a pipeline head -- see the consume
                 # site below.
-                pending.append((*spec, current_pipeline, nesting))
+                pending.append((*spec, current_pipeline, nesting, top_frame(), cmd_start))
             continue
 
         if c == "\n":
@@ -3318,7 +3678,8 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                 out[i] = " "
             i += 1
             while pending:
-                delim, expands, strip_tabs, owners, op_depth = pending.pop(0)
+                (delim, expands, strip_tabs, owners, op_depth, op_frame,
+                 op_cmd_start) = pending.pop(0)
                 body_start = i
                 i, body_end = _consume_heredoc_body(
                     s, out, i, delim, expands, strip_tabs, neutralise,
@@ -3348,17 +3709,47 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                     # `{ cat <<'EOF' ; } | bash` was already denied, and that
                     # asymmetry is the tell -- same mistake, displaced past the
                     # terminator instead of past the pipe.
-                    and op_depth == 0
-                    and nesting == 0
+                    #
+                    # THE SAME DEPTH AND THE SAME FRAME AT BOTH ENDS (DEF-1015).
+                    # Inside a frame the consumer that attaches after the closer
+                    # joins the frame's outer pipeline, which the settle reads
+                    # with every span inside, so a frame's own heredoc is judged
+                    # rather than refused; a frame closed between the operator
+                    # and the body (`{ cat <<'EOF' ; } | bash`) records nothing.
+                    and op_depth == nesting
+                    and op_frame is top_frame()
                     # ⚠ AND THE BODY MUST NOT BE CAPTURED BY A SUBSTITUTION OR
                     # HANDED TO A PROCESS SUBSTITUTION. `eval $(cat <<'EOF' …)`
                     # delivers it to a capture buffer the ENCLOSING eval
                     # re-parses, and `cat <<'EOF' > >(bash) ; ls` delivers it to
                     # a redirect target that is a shell. Neither consumer is ever
-                    # a head, so the roster cannot see either one. Scoped to the
-                    # statement prefix, not the whole command, so a doc heredoc
-                    # whose BODY quotes a backtick stays relieved.
-                    and not _CAPTURING_PREFIX_RE.search(s[:body_start])
+                    # a head, so the roster cannot see either one.
+                    #
+                    # ⚠ THE SLICE IS THE HEREDOC'S OWN COMMAND, READ MASKED
+                    # (DEF-1012). It was the raw text from the COMMAND's start,
+                    # though this comment said statement prefix: a closed
+                    # `V=$(date -u)` in an earlier statement, or a backtick in
+                    # an EARLIER quoted heredoc's inert body, withheld every
+                    # later body, and the speed bumps then read prose there as
+                    # a command. It runs now from the start of the command the
+                    # operator belongs to (`cmd_start`, moved only by `;`,
+                    # `&`, `&&`, `||` and a rebinding newline) to the body,
+                    # over the masked text so far, where a quoted or inert
+                    # span is already blank and a live substitution still
+                    # shows. What this slice no longer covers is covered at
+                    # the settle: a substitution OPEN at the operator puts the
+                    # body at a depth no frame explains, and an open backtick
+                    # is read by parity.
+                    #
+                    # REJECTED: the walker's own statement start. It moves at
+                    # every `;`, paren and brace, so a substitution's paren
+                    # rebinds it: `cat <<'EOF' > >(bash); ls` and `> >(bash)
+                    # cat <<'EOF'` lost their process substitution, and a
+                    # backtick's separator cut ``x=`true; cat <<'EOF'`` out of
+                    # its capture -- re-driven on a scratch copy, it relieved
+                    # both prose shapes and reopened three of the four twins.
+                    and not _CAPTURING_PREFIX_RE.search(
+                        "".join(out[op_cmd_start:body_start]))
                 ):
                     # Reach back over the ONE newline that opens the body. It
                     # ends the heredoc's own opening statement, so nothing live
@@ -3369,8 +3760,8 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                     if body_span_start > 0 and s[body_span_start - 1] in "\n\r":
                         body_span_start -= 1
                     candidates.append(_SpanCandidate(
-                        body_span_start, body_end, owners, 0, len(statements) - 1,
-                        is_comment=False, is_value=False))
+                        body_span_start, body_end, owners, op_depth, len(statements) - 1,
+                        is_comment=False, is_value=False, frame=op_frame))
             # ⚠ A NEWLINE IS A STATEMENT SEPARATOR AND MUST RE-ARM HEAD CAPTURE.
             # It did not, so in a multi-line command only the FIRST statement's
             # head was ever collected -- and `mask_inert_syntax` masks whenever
@@ -3406,6 +3797,10 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                 # the masked text: the target is at a command position.
                 continue
             current_pipeline = set()
+            closed_frame = None
+            cmd_start = i
+            simple_head = None
+            in_exec_stmt = False
             # `i` is past any heredoc body the newline opened, so the bodies
             # belong to the statement that opened them.
             statements[-1][1] = i
@@ -3428,10 +3823,35 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
             continue
 
         if c in ";|&(){}":
+            at_head = expect_head
             expect_head = True
+            simple_head = None
+            closes: _Frame | None = None
             if c in "({":
                 nesting += 1
+                if (c == "(" and i > 0 and s[i - 1] in "<>" and in_exec_stmt):
+                    # `exec N> >( shell )`: the descriptor now reaches a shell,
+                    # so a later `>&N` captures every span (DEF-1013 F3)
+                    exec_fd_procsub = True
+                # ⚠ A FRAME ONLY AT A COMMAND POSITION (DEF-1015): a `(` there
+                # opens a subshell, and a `{` standing alone opens a group. A
+                # `$(`, `<(` or `>(` is a substitution and an argument's `{` is
+                # text; each still counts in `nesting`, so a span inside one
+                # sits at a depth no frame explains and stays raw.
+                if at_head and (
+                    (c == "(" and not (i > 0 and s[i - 1] in "$<>"))
+                    or (c == "{" and (i + 1 >= n or s[i + 1] in " \t\n\r"))
+                ):
+                    push_frame(c, ")" if c == "(" else "}", i)
             elif c in ")}":
+                top = top_frame()
+                # `)` closes its subshell wherever it stands; `}` is a reserved
+                # word and closes its group only at a command position (an
+                # argument `}` leaves the group open in bash, and its frame
+                # then never closes, which withholds every span inside it).
+                if (top is not None and top.kind == ("(" if c == ")" else "{")
+                        and top.level == nesting and (c == ")" or at_head)):
+                    closes = top
                 nesting = max(0, nesting - 1)
             # ⚠ A SINGLE `|` DOES NOT END THE PIPELINE, AND THAT DISTINCTION IS
             # A FAIL-OPEN. `cat <<'EOF' | bash` opens the heredoc under `cat`,
@@ -3450,13 +3870,30 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
                             and not (i > 0 and s[i - 1] == "|"))
             if c != "|" or (i + 1 < n and s[i + 1] == "|"):
                 current_pipeline = set()
+                closed_frame = None
                 statements[-1][1] = i + 1
                 statements.append([i + 1, n])
+            if c in ";&" or (c == "|" and not pipe_pending):
+                cmd_start = i + 1
+            if c != "|" or (i + 1 < n and s[i + 1] == "|"):
+                in_exec_stmt = False
+            if closes is not None:
+                pop_frame(i + 1)
+            elif c == ")":
+                k = i - 1
+                while k >= 0 and s[k] in " \t":
+                    k -= 1
+                if k >= 0 and s[k] == "(":
+                    # an empty `()`: a function definition (or an empty
+                    # substitution, which costs only the frames' relief)
+                    defines_function = True
 
         i += 1
 
     masked = "".join(out)
-    _settle_statement_spans(masked, candidates, statements, safe_spans)
+    _settle_statement_spans(masked, candidates, statements, safe_spans,
+                            frames=created, defines_function=defines_function,
+                            no_relief=exec_fd_procsub)
     return masked, heads, safe_spans
 
 
@@ -3529,6 +3966,114 @@ class _SpanCandidate(NamedTuple):
     statement: int
     is_comment: bool
     is_value: bool
+    #: The innermost compound frame open where the span was met (DEF-1015),
+    #: or None at the top level. Its parents are reached through
+    #: `_Frame.parent`; the settle judges each frame once.
+    frame: "_Frame | None" = None
+
+
+#: The compound commands the walker reads as FRAMES rather than heads
+#: (DEF-1015), each opener with the word that closes it. A frame's spans are
+#: data only when its own statement hands the compound's output to nobody:
+#: `if …; fi | bash` re-parses every quoted span inside, while `if …; fi` and
+#: `{ …; } > notes.md` hand them to nobody.
+#: `TestCompoundFramesShareTheReservedWordRosters` in
+#: `tests/test_bash_inert_syntax_mask.py` pins every word here against
+#: `_BASH_COMPOUND_WORDS`, and the openers a head follows (`if`, `while`,
+#: `until`) and the middle words against `_BASH_HEAD_PREFIX_WORDS`, so the
+#: three rosters cannot drift apart.
+_COMPOUND_CLOSERS = {
+    "if": "fi", "while": "done", "until": "done", "for": "done",
+    "select": "done", "case": "esac",
+}
+#: The words inside an opener's frame after which a head follows. Stepped over
+#: only while that opener's frame is on top: `then` with no `if` open was a
+#: head on no roster before this table and stays one (a backtick-glued
+#: `` `if `` opens no frame, and its `then` keeps the command raw).
+_COMPOUND_MIDDLES = {
+    "if": frozenset({"then", "elif", "else"}),
+    "while": frozenset({"do"}), "until": frozenset({"do"}),
+    "for": frozenset({"do"}), "select": frozenset({"do"}),
+    "case": frozenset(),
+}
+_COMPOUND_RESERVED = (frozenset(_COMPOUND_CLOSERS) | frozenset(_COMPOUND_CLOSERS.values())
+                      | frozenset().union(*_COMPOUND_MIDDLES.values()))
+
+
+class _Frame:
+    """One compound command the walker is inside: a `{ }` group, a `( )`
+    subshell, or an `if`/`while`/`until`/`for`/`select`/`case` body.
+
+    ``outer`` is the owner set of the pipeline the compound is an element of,
+    held BY REFERENCE: the closer rebinds the walker's current pipeline to it,
+    so a `| bash` after `fi` joins it and every span inside reads it at the
+    settle. ``inner_ok`` is False once any head inside (nested frames
+    included) is on no roster; a compound whose stdin is fed -- piped into, or
+    given a heredoc or here-string after its closer -- then puts a head on no
+    roster into ``outer``, so neither the upstream span nor the fed body is
+    read as data. ``pre`` and the post statement bound the compound's own
+    statement outside its body, where a capture (`` x=` `` before, `> >(sh)`
+    after) would hand the output to a consumer that is never a head.
+    ``paren_count`` and ``consistent`` say whether every group and subshell
+    level on the chain is accounted for by a frame: a span at a depth no frame
+    explains sits in a substitution or a mis-paired brace, and stays raw."""
+
+    __slots__ = ("kind", "closer", "level", "outer", "parent", "piped", "pre",
+                 "post_si", "post_from", "closed", "inner_ok", "paren_count",
+                 "consistent")
+    kind: str
+    closer: str
+    level: int
+    outer: set[str]
+    parent: "_Frame | None"
+    piped: bool
+    pre: tuple[int, int]
+    post_si: int
+    post_from: int
+    closed: bool
+    inner_ok: bool
+    paren_count: int
+    consistent: bool
+
+    def __init__(self, kind: str, closer: str, level: int, outer: set[str],
+                 parent: "_Frame | None", piped: bool, pre: tuple[int, int]) -> None:
+        self.kind, self.closer, self.level = kind, closer, level
+        self.outer, self.parent, self.piped, self.pre = outer, parent, piped, pre
+        self.post_si, self.post_from = -1, -1
+        self.closed = False
+        self.inner_ok = True
+        paren = kind in ("(", "{")
+        self.paren_count = (parent.paren_count if parent else 0) + int(paren)
+        self.consistent = (parent.consistent if parent else True) and (
+            not paren or level == self.paren_count)
+
+
+def _settle_frames(
+    masked: str, frames: list[_Frame], statements: list[list[int]],
+) -> dict[int, bool]:
+    """Whether each frame, with every frame enclosing it, hands its compound's
+    output to nobody (rule (2) b in `mask_inert_syntax`, DEF-1015): closed,
+    its outer pipeline on the roster or empty, and no capture in its own
+    statement before the opener or after the closer. ``frames`` is in
+    creation order, so a parent is judged before its children and each frame
+    once: a command of nested groups stays linear (the DEF-754 discipline)."""
+    rostered: dict[int, bool] = {}
+    ok: dict[int, bool] = {}
+    for f in frames:
+        good = f.closed and (f.parent is None or ok[id(f.parent)])
+        if good:
+            key = id(f.outer)
+            if key not in rostered:
+                rostered[key] = all(_head_hands_its_text_to_no_shell(h) for h in f.outer)
+            good = rostered[key]
+        if good:
+            good = _CAPTURING_PREFIX_RE.search(masked, f.pre[0], f.pre[1]) is None
+        if good:
+            start, stop = statements[f.post_si]
+            good = _CAPTURING_PREFIX_RE.search(
+                masked, max(start, f.post_from), stop) is None
+        ok[id(f)] = good
+    return ok
 
 
 def _settle_statement_spans(
@@ -3536,6 +4081,9 @@ def _settle_statement_spans(
     candidates: list[_SpanCandidate],
     statements: list[list[int]],
     safe_spans: list[tuple[int, int]],
+    frames: "list[_Frame] | None" = None,
+    defines_function: bool = False,
+    no_relief: bool = False,
 ) -> None:
     """Append to `safe_spans` every recorded quoted span or comment that is
     inert data of a statement handing it to nobody -- the rule-(2) contract
@@ -3554,20 +4102,51 @@ def _settle_statement_spans(
     extends to one, is judged by its owners like any quoted argument; (b)
     and (c) hold for every kind. A value the shell later RUNS (`eval
     "$MSG"`, `bash -c "$msg"`, `$CMD`) is read where it runs: the binding
-    pre-pass substitutes it at the use."""
+    pre-pass substitutes it at the use.
+
+    A span inside compound frames (DEF-1015) is judged by (b) frame by frame
+    instead of refused outright: every group and subshell level must be a
+    frame, every frame on its chain must have closed, its outer pipeline's
+    heads must all be on the roster (none at all is a compound handing its
+    output to nobody), and its own statement must hold no capture before the
+    opener or after the closer. A function definition anywhere in the command
+    withholds every framed span: its body runs where it is called, and no
+    owner set sees the call's pipeline.
+
+    A span that starts inside an open BACKTICK substitution is never data:
+    the walker reads a backtick as an ordinary character, so a separator
+    inside one opened a statement of its own and (c) read a statement the
+    substitution's text had been cut into -- ``x=`true; echo '…'; true`;
+    eval "$x"`` was masked while eval re-parsed it. The masked text keeps
+    only LIVE backticks (a quoted, escaped or commented one is blank, and a
+    double-quoted span's live pair is balanced inside it), so the parity of
+    the backticks before a span is whether one is open there."""
     # Keyed by `id(owners)`: sound only because `candidates` holds a strong
     # reference to every owner set for the whole settle, so no id is reused.
     # A refactor that stores an index or a copy instead must key differently.
+    if no_relief:
+        # an `exec N> >(shell)` reaches a descriptor a later `>&N` writes to,
+        # so no span in the command is safe to relieve (DEF-1013 F3)
+        return
     rostered: dict[int, bool] = {}
     capturing: dict[int, bool] = {}
+    frame_ok = _settle_frames(masked, frames or [], statements)
+    ticks = [k for k, ch in enumerate(masked) if ch == "`"]
     for c in candidates:
-        if c.depth != 0:
+        f = c.frame
+        if f is None:
+            if c.depth != 0:
+                continue
+        elif (defines_function or not f.consistent or f.paren_count != c.depth
+              or not frame_ok[id(f)]):
+            continue
+        if ticks and bisect.bisect_left(ticks, c.start) % 2:
             continue
         if not c.is_comment and not (c.is_value and not c.owners):
             key = id(c.owners)
             if key not in rostered:
                 rostered[key] = bool(c.owners) and all(
-                    _head_hands_nothing_to_a_shell(h) for h in c.owners)
+                    _head_hands_its_text_to_no_shell(h) for h in c.owners)
             if not rostered[key]:
                 continue
         si = c.statement
@@ -6774,12 +7353,14 @@ _MKDIR_RE = re.compile(
     + r"((?:[ \t]+(?:'[^'\n]{0,512}'|\"[^\"\n]{0,512}\"|[^\s'\"<>-][^\s'\"<>]{0,511})){1,32})"
 )
 #: The keyword conditionals: a `cd` between `if` / `case` / `while` / `until`
-#: / `for` and its `fi` / `esac` / `done` may not run (`if false; then cd
-#: /tmp; fi` -- driven: the shell wrote in the old directory), so it is
-#: conditional exactly as a `cd` after `||` is. Statement-leading words on
-#: the masked text; nesting counted.
-_CONDITIONAL_OPENERS = ("if", "case", "while", "until", "for")
-_CONDITIONAL_CLOSERS = ("fi", "esac", "done")
+#: / `for` / `select` and its `fi` / `esac` / `done` may not run (`if false;
+#: then cd /tmp; fi` -- driven: the shell wrote in the old directory), so it
+#: is conditional exactly as a `cd` after `||` is, and so is a binding there.
+#: Statement-leading words on the masked text; nesting counted. Derived from
+#: the walker's own compound table, never a second hand-kept list: this one
+#: lacked `select`, whose `done` then closed the loop around it.
+_CONDITIONAL_OPENERS = tuple(_COMPOUND_CLOSERS)
+_CONDITIONAL_CLOSERS = tuple(dict.fromkeys(_COMPOUND_CLOSERS.values()))
 #: The PowerShell twin, turned around: the operators that run a script block
 #: HERE, now -- the call operator and dot-sourcing, as the text before the
 #: block's `{` ends. A location change inside any other block is one the
@@ -6891,6 +7472,187 @@ def _step_one(
     if new is not None and exists is not None and not exists(probe or new):
         return cwd                              # the shell stays put
     return new
+
+
+#: A shell name, as a word the binding walk scans a statement for: a bound
+#: name that appears in a statement other than its own literal binding may
+#: be rebound there (`read`, `unset`, `for`, `printf -v`, an arithmetic
+#: assignment, a flagged declaration), so the walk forgets it.
+_SHELL_NAME_WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+#: Names the shell itself sets or reads specially, bash's and zsh's (the Bash
+#: tool runs either): `cd` sets `PWD` and `OLDPWD`, every command `_`, `read`
+#: and `select` `REPLY`, `getopts` `OPTARG` and `OPTIND`; `IFS` and `CDPATH`
+#: change how a `cd` operand is read; the rest are dynamic, read-only, or
+#: tied to another name. A literal bound to one is never read by the walk.
+_SHELL_MAINTAINED_NAMES = frozenset({
+    "PWD", "OLDPWD", "_", "REPLY", "OPTARG", "OPTIND", "IFS", "CDPATH", "DIRSTACK",
+    "RANDOM", "SRANDOM", "SECONDS", "LINENO", "EPOCHSECONDS", "EPOCHREALTIME", "HISTCMD",
+    "PPID", "UID", "EUID", "GID", "EGID", "GROUPS", "FUNCNAME", "PIPESTATUS", "SHELLOPTS",
+    "SHLVL", "MAPFILE", "COPROC", "COLUMNS", "LINES",
+    "status", "pipestatus", "argv", "path", "cdpath", "fpath", "manpath", "mailpath",
+    "psvar", "reply", "match", "mbegin", "mend", "MATCH", "MBEGIN", "MEND", "ERRNO",
+    "TTY", "TTYIDLE", "USERNAME",
+})
+_SHELL_MAINTAINED_PREFIXES = ("BASH", "COMP_", "READLINE_", "ZSH_")
+
+
+def _shell_maintains(name: str) -> bool:
+    """Is ``name`` one the shell sets or reads specially
+    (`_SHELL_MAINTAINED_NAMES`), so a literal bound to it may not hold?"""
+    return name in _SHELL_MAINTAINED_NAMES or name.startswith(_SHELL_MAINTAINED_PREFIXES)
+
+
+def _names_set_only_by_literals(raw: str, live: str) -> frozenset[str]:
+    """The names whose every bare-word mention in ``raw`` (its masked twin
+    ``live``) is its own plain literal binding: a `NAME=` at a live binding
+    site with a literal value and no declaration flag. A name mentioned any
+    other way, before or after -- `read X`, `unset X`, `declare -i X`, a
+    trap's program, the value of a nameref or of another name a later
+    `printf -v "$N"` or `unset "$N"` reads -- may hold something else when a
+    `cd` reads it, so the walk never binds it. A `$X` or `${X}` reference is
+    not a mention."""
+    sites: set[int] = set()
+    for site in _VAR_ANY_ASSIGN_RE.finditer(live):
+        lit = _VAR_ASSIGN_RE.match(raw, site.start())
+        if lit is not None and lit.start(1) == site.start(1) and "-" not in raw[site.start():lit.start(1)]:
+            sites.add(site.start(1))
+    plain: set[str] = set()
+    other: set[str] = set()
+    for word in _SHELL_NAME_WORD_RE.finditer(raw):
+        start = word.start()
+        if raw[max(0, start - 1):start] == "$" or raw[max(0, start - 2):start] == "${":
+            continue
+        (plain if start in sites else other).add(word.group(0))
+    return frozenset(plain - other)
+
+
+def _inline_bound_operand(
+    operand: str | None, quote: str | None, bound: "dict[str, str]", *, bare: bool = True,
+) -> str | None:
+    """``operand`` (a `cd` or `mkdir` operand, its quotes off; ``quote`` the
+    one it was written in, ``None`` for a bare word) with each `$NAME` /
+    `${NAME}` reference to a name the directory walk holds bound replaced by
+    its literal (DEF-1016), where the shell spells the same directory; else
+    ``operand`` as it came, so `_step_one` reads the `$` as the indirection
+    class, as it always did. Refused, each keeping that reading: a
+    single-quoted operand (the `$` is a character); a reference to a name not
+    bound; a bare reference whose value holds a blank or a pattern character
+    (the shell splits and globs it, so `cd` gets other words); a value that
+    would lead the operand with `~` (bash does not tilde-expand an
+    expansion's result, where `_step_one` reads a leading `~` as the home)
+    or with `-` (an option to `cd`); and an operand left blank. ``bare``
+    false refuses every bare reference: the command mentions `IFS`, so how
+    the shell splits it is not known."""
+    if not operand or "$" not in operand or quote == "'" or not bound:
+        return operand
+    try:
+        inlined, _grown = _substitute_bash_refs(operand, bound)
+    except _ExpansionTooLarge:
+        return operand
+    if inlined == operand or "$" in inlined or "`" in inlined or not inlined.strip():
+        return operand
+    if inlined[0] in "~-" and operand[0] != inlined[0]:
+        return operand
+    if quote is None and (not bare or _GLOB_CHARS_RE.search(inlined)
+                          or any(c.isspace() for c in inlined)):
+        return operand
+    return inlined
+
+
+def _inline_bound_word(word: str, bound: "dict[str, str]", *, bare: bool = True) -> str:
+    """One operand token as `_OPERAND_TOKEN_RE` cut it, quotes off, its bound
+    references inlined by `_inline_bound_operand` when it is a bare word or
+    one double-quoted word; any other quoting keeps the reference as it is
+    (the indirection class)."""
+    inner = word.strip("'\"")
+    if not bound or "$" not in word:
+        return inner
+    if len(word) > 1 and word[0] == word[-1] == '"' and '"' not in word[1:-1] and "'" not in word:
+        return _inline_bound_operand(inner, '"', bound) or inner
+    if "'" in word or '"' in word:
+        return inner
+    return _inline_bound_operand(inner, None, bound, bare=bare) or inner
+
+
+def _mkdir_makes_parents(flags: str) -> bool:
+    """Do ``flags`` (the words between `mkdir` and its first operand) ask for
+    the parents with `-p`? A short cluster is read up to an `m`: the rest of
+    it is the mode (`-mp` is the mode `p`, which `mkdir` rejects), and an `m`
+    ending the cluster takes the next word (`-m -p` is the mode `-p`), as
+    `--mode` does. `--parents` is not read: BSD `mkdir` (macOS) has no long
+    options, so there the make fails and a `cd` into a parent with it."""
+    mode_word = False
+    for word in flags.split():
+        if mode_word:
+            mode_word = False
+            continue
+        if word == "--mode":
+            mode_word = True
+        elif word.startswith("-") and not word.startswith("--"):
+            for at, letter in enumerate(word[1:], 1):
+                if letter == "m":
+                    mode_word = at == len(word) - 1
+                    break
+                if letter == "p":
+                    return True
+    return False
+
+
+def _settle_bindings(
+    bound: "dict[str, str]", seg: str, stmt_raw: str, at: int, *, in_this_shell: bool,
+    quote_at: "Callable[[int], str | None]", heredoc_at: "Callable[[int], bool]",
+    set_only_by_literals: "Callable[[], frozenset[str]]",
+) -> None:
+    """Update the directory walk's literal bindings for one statement that is
+    not a directory verb (DEF-1016). ``seg`` is the statement's masked text,
+    ``stmt_raw`` its raw twin, ``at`` its offset in the walk's text, and
+    ``in_this_shell`` says it runs unconditionally in the walk's own shell:
+    no frame open (a subshell, a substitution, a group, a function body), no
+    keyword conditional open, not a pipeline stage or backgrounded, not after
+    `&&` or `||`. A statement that is ONE literal binding (`_VAR_ASSIGN_RE`,
+    nothing after its literal, no declaration flag), at a live site in this
+    shell, binds the name -- unless the shell maintains it
+    (`_SHELL_MAINTAINED_NAMES`) or the command mentions it anywhere, before
+    or after, other than by such a binding (``set_only_by_literals``, read
+    once per walk, `_names_set_only_by_literals`): a nameref, a trap, an
+    earlier `declare -i`, a `printf -v` or `unset` through another name each
+    change it where no statement spells its binding. Any other mention of a
+    bound name, as a word that is not a `$` reference, forgets it.
+
+    Stricter than the write extractor's pre-pass
+    (`_expand_simple_var_assignments`) on purpose, though it reads the same
+    literal: a stale binding there names a write target, but here it MOVES
+    the directory every later relative write is judged in, so a binding that
+    may not have run (after `&&`, in an `if` body, in a subshell), a
+    prefix assignment (`S=x cmd` binds only for `cmd`), a pipeline stage's,
+    and one a later statement may have changed all leave the name unbound:
+    in each the shell's `cd` stays where it was and the write lands in the
+    checkout, where the pre-pass's reading would place it in the bound
+    directory (the must-deny rows of `tests/test_guard_false_positives.py`
+    and `tests/test_write_guard.py::TestTheDirectoryAWriteRunsIn`)."""
+    site = _VAR_ANY_ASSIGN_RE.match(seg)
+    if site is not None:
+        lit = _VAR_ASSIGN_RE.match(stmt_raw)
+        if (
+            in_this_shell and lit is not None and lit.start(1) == site.start(1)
+            and not stmt_raw[lit.end():].strip() and "-" not in stmt_raw[:lit.start(1)]
+            and quote_at(at + site.start(1)) is None and not heredoc_at(at + site.start(1))
+        ):
+            name = lit.group(1)
+            value = _bound_value(lit, stmt_raw, False)
+            if (value is None or not value.strip() or _shell_maintains(name)
+                    or name not in set_only_by_literals()):
+                bound.pop(name, None)
+            else:
+                bound[name] = value
+            return
+    if not bound:
+        return
+    for word in _SHELL_NAME_WORD_RE.finditer(stmt_raw):
+        name, start = word.group(0), word.start()
+        if name in bound and stmt_raw[max(0, start - 1):start] != "$" \
+                and stmt_raw[max(0, start - 2):start] != "${":
+            del bound[name]
 
 
 def _self_and_ancestors(spelled: str) -> Iterator[str]:
@@ -7022,6 +7784,7 @@ def _directory_chain(
     gone_patterns: list[str] = []               # ... by a pattern, capped (`_WALK_SET_CAP`)
     gone_unread = False                         # a removal operand the walk cannot spell
     functions: set[str] = set()                 # names this command defines (condition 3)
+    bound: dict[str, str] = {}                  # literals bound in this shell (DEF-1016)
     pending: list[tuple[str, list[str | None]]] = []   # statements whose removals are unread
     depth = 0                                   # keyword conditionals open
     ps_blocks: list[bool] = []                  # PowerShell braces open: conditional?
@@ -7036,9 +7799,22 @@ def _directory_chain(
     quote_at = _quote_cursor(text)              # asked in increasing order (condition 2)
     ps_string_at = _ps_quote_cursor(stmt_src)   # its PowerShell twin, over the raw twin
     heredoc_at = _heredoc_cursor(text)          # a body the masker left live: another shell's
+    # DEF-1016: the parents a `mkdir -p` made, credited only to a `cd` joined
+    # to the make by `&&` -- a make can fail (`mkdir -p /dev/null/x/y`), and
+    # then only `&&` keeps the `cd` from running; a bare reference is read
+    # only where the command never mentions `IFS`; and the names the walk may
+    # bind, read once, when a binding first asks
+    chained: set[str] = set()
+    bare_ok = "IFS" not in stmt_src
+    sole: list[frozenset[str]] = []
+
+    def set_only_by_literals() -> frozenset[str]:
+        if not sole:
+            sole.append(_names_set_only_by_literals(stmt_src, text))
+        return sole[0]
 
     def known(spelled: str) -> bool:
-        return spelled in made or exists is None or exists(spelled)
+        return spelled in made or spelled in chained or exists is None or exists(spelled)
 
     def read_removals() -> None:
         nonlocal gone_unread
@@ -7057,9 +7833,10 @@ def _directory_chain(
                         gone_patterns.append(spelled)
                     else:
                         gone_unread = True      # past the cap: every later cd unknown
-                    if made:
-                        made.difference_update(
-                            [d for d in made if d == spelled or d.startswith(spelled + "/")])
+                    for credited in (made, chained):
+                        if credited:
+                            credited.difference_update(
+                                [d for d in credited if d == spelled or d.startswith(spelled + "/")])
         pending.clear()
 
     def is_gone(spelled: str) -> bool:
@@ -7098,6 +7875,21 @@ def _directory_chain(
                     seg_raw = raw[pos:pos + len(seg)]
                     target = (raw_span(seg_raw, m, group) if group == 3 else
                               raw_operand(seg_raw, m, group, word=bash, powershell=not bash))
+                if bash and bound and target and "$" in target:
+                    # DEF-1016: a reference to a literal bound earlier in
+                    # this shell names a directory the walk can read. The
+                    # quote is read from the raw twin where there is one (a
+                    # single quote keeps the `$` a character). Rejected: the
+                    # whole text inlined by the write extractor's pre-pass --
+                    # it changes the text's length, and the speed bump's
+                    # discard arm, the rm hard tier and post_write_check index
+                    # this walk's statements by offset into their own text;
+                    # and that pre-pass's bindings as they are, which count a
+                    # binding that may not have run (`_settle_bindings`).
+                    quote = m.group(2) if group == 3 else None
+                    if group == 3 and raw is not None and len(raw) == len(text):
+                        quote = raw[pos + m.start(2)]
+                    target = _inline_bound_operand(target, quote, bound, bare=bare_ok)
                 if bash and (tok in ("|", "&") or prev_tok == "|"):
                     pass                        # a child shell moved, not this one
                 else:
@@ -7149,24 +7941,50 @@ def _directory_chain(
                                 if raw is not None and len(raw) == len(text) else seg)
                     if pending:
                         read_removals()         # an earlier removal, then this make
+                    # `-p` makes every missing parent too, so a `cd` into one
+                    # is entered (DEF-1016) -- when it is joined to the make
+                    # by `&&`: the parents go to `chained`, which every other
+                    # boundary clears, this make's own included. A make that
+                    # fails (`/dev/null/x/y`) or runs in the background leaves
+                    # the parent missing, and a `cd` after `;`, a newline or
+                    # `&` runs anyway and fails. Without `-p` a missing parent
+                    # fails the make, so only the operand is credited, as it
+                    # always was
+                    flags = made_seg[mk.start():mk.start(1)]
+                    verb_at = flags.rfind("mkdir")
+                    parents = verb_at >= 0 and _mkdir_makes_parents(flags[verb_at + 5:])
                     for operand in _OPERAND_TOKEN_RE.findall(made_seg[mk.start(1):mk.end(1)]):
+                        word = _inline_bound_word(operand, bound, bare=bare_ok)
                         for cwd in cwds:
-                            spelled = _step_one(operand.strip("'\""), cwd, None)
-                            if spelled is not None and len(made) < _WALK_SET_CAP:
+                            spelled = _step_one(word, cwd, None)
+                            if spelled is None:
+                                continue
+                            if len(made) < _WALK_SET_CAP:
                                 # past the cap a make goes unrecorded: a later
                                 # cd into it then reads as failed -- more
                                 # walls, never fewer
                                 made.add(spelled)
                                 # made again undoes the removal of that exact
-                                # spelling only: a make under a removed ancestor
-                                # fails without `-p`, and the walk does not read
-                                # the flag, so the ancestor stays gone (walls)
+                                # spelling only, never of a parent `-p` made
+                                # again: what else lived under the removed
+                                # parent stays gone (walls)
                                 gone.discard(spelled)
+                            if parents:
+                                for d in _self_and_ancestors(spelled):
+                                    if len(chained) < _WALK_SET_CAP:
+                                        chained.add(d)
                 stmt_raw = stmt_src[pos:pos + len(seg)]
                 pending.append((stmt_raw, list(cwds)))
                 child = bash and (tok in ("|", "&") or prev_tok == "|")
                 if not child and _changes_directory_unseen(stmt_raw, bash=bash, functions=functions):
                     cwds = _merge_candidates(cwds, [None])      # blocker condition 3
+                    bound.clear()       # ... and may rebind any name (DEF-1016)
+                elif bash:
+                    _settle_bindings(
+                        bound, seg, stmt_raw, pos, quote_at=quote_at, heredoc_at=heredoc_at,
+                        set_only_by_literals=set_only_by_literals,
+                        in_this_shell=(not child and not frames and depth == 0
+                                       and prev_tok not in ("&&", "||")))
             if head in _CONDITIONAL_CLOSERS and depth:
                 depth -= 1
         if b is None:
@@ -7214,6 +8032,8 @@ def _directory_chain(
             ps_blocks.append(not seg.rstrip().endswith(_PS_IN_PLACE_BLOCK_INVOKERS))
         elif tok == "}" and ps_blocks:
             ps_blocks.pop()
+        if tok != "&&":
+            chained.clear()     # the `&&` run a `mkdir -p` began has ended
         prev_tok = tok
         pos = b.end()
     return statements
