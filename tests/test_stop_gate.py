@@ -1519,6 +1519,34 @@ class TestTheHandoffGateHoldsForAnOpenPullRequest:
         assert mod._gate_handoff(root) == 0            # judged: once per commit, as before
         assert capsys.readouterr() == ("", "")
 
+    @pytest.mark.parametrize(("opened", "expected"), [(False, 1), (True, 0)],
+                             ids=["pushed-by-hand-never-opened", "opened-by-hand"])
+    def test_a_held_lane_pushed_by_hand_is_asked_for_once_the_hold_lifts(
+            self, tmp_path, monkeypatch, capsys, opened, expected):
+        """DEF-2041's second face: the hold's text names a push by hand as the
+        way past it; once the seat's other pull request merges, the lane read
+        as its own with nothing past its ref and the gate passed, so the
+        hold's promise to ask went quiet with the lane on origin unopened. The
+        re-check's own listing (no second gh read) says whether a pull
+        request names the lane. Dies to: the own path passing unread."""
+        root, mod, path = self._held(tmp_path, monkeypatch, capsys)
+        _git(root, "push", "-q", "origin", "HEAD")
+        monkeypatch.setitem(sys.modules, "ship", self._driver("air-work", []))
+        rows = [{"number": 41, "headRefName": "lane/first", "labels": []}]
+        if opened:
+            rows.append({"number": 43, "headRefName": "lane/the-fixture", "labels": []})
+        spawns: list = []
+        self._gh(monkeypatch, mod, json.dumps(rows), spawns)
+        assert mod._gate_handoff(root) == expected
+        out = capsys.readouterr().out
+        assert len(spawns) == 1
+        if expected:
+            reason = json.loads(out)["reason"]
+            assert "pushed by hand" in reason and "python tools/cc/ship.py open" in reason
+            assert "lane/the-fixture holds 1 commit that origin/main does not" in reason
+        else:
+            assert out == ""
+
     def test_a_re_check_that_cannot_ask_gh_keeps_the_hold_and_says_so_once(self, tmp_path, monkeypatch, capsys):
         root, mod, path = self._held(tmp_path, monkeypatch, capsys)
         before = json.loads(path.read_text(encoding="utf-8"))

@@ -1659,7 +1659,9 @@ class _SeatPrs:
     ``seat``; ``mine`` (this seat's, as the driver names them: ``#n (lane)``);
     and ``clearing``, the block a hold's re-check already read for a lane a
     red base lands first (:func:`_clearing_clause`), handed on so the
-    decision point asks gh no second time."""
+    decision point asks gh no second time; ``heads``, the head branch of
+    every open pull request the listing named, so a lifted hold can tell a
+    lane pushed by hand and opened from one pushed and never opened."""
 
     fault: str = ""
     read: bool = False
@@ -1667,6 +1669,7 @@ class _SeatPrs:
     seat: str = ""
     mine: tuple[str, ...] = ()
     clearing: tuple[str, bool] | None = None
+    heads: tuple[str, ...] = ()
 
 
 def _seat_other_open_prs(root: Path, branch: str) -> _SeatPrs:
@@ -1700,8 +1703,9 @@ def _seat_other_open_prs(root: Path, branch: str) -> _SeatPrs:
     rows = _gh_open_prs(root, str(getattr(ship, "OPEN_PR_FIELDS", "") or _OPEN_PR_FIELDS))
     if isinstance(rows, str):
         return _SeatPrs(fault=rows, seat=seat)
-    if not any(str(row.get("headRefName") or "") != branch for row in rows):
-        return _SeatPrs(read=True, seat=seat)
+    heads = tuple(str(row.get("headRefName") or "") for row in rows)
+    if not any(head != branch for head in heads):
+        return _SeatPrs(read=True, seat=seat, heads=heads)
     try:
         with contextlib.redirect_stdout(sink):
             found_seat, mine = reader(root, branch, rows, timeout=HANDOFF_GATE_DRIVER_CAP_S)
@@ -1710,7 +1714,7 @@ def _seat_other_open_prs(root: Path, branch: str) -> _SeatPrs:
     if sink.getvalue().strip():
         return _SeatPrs(fault="DriverNote", read=True, seat=seat)
     return _SeatPrs(read=True, others=True, seat=str(found_seat or seat),
-                    mine=tuple(str(m) for m in (mine or ())))
+                    mine=tuple(str(m) for m in (mine or ())), heads=heads)
 
 
 def _recheck_words() -> str:
@@ -1897,6 +1901,32 @@ def _hold_or_clause(
     return f"This seat ({found.seat}) has no other open pull request.", False
 
 
+def _pushed_never_opened(root: Path, deadline: float, found: tuple[int, str, str, bool] | None,
+                         lifted: tuple[str, _SeatPrs] | None) -> tuple[int, str] | None:
+    """DEF-2041's second face: ``(ahead, base)`` for a lane this Stop lifted a
+    hold on that reads as its own with nothing past its own ref -- pushed by
+    hand while held, the way past the hold's text names -- where the
+    re-check's own listing (no second gh read) names no open pull request
+    whose head is the branch: the commits HEAD holds that the remote's
+    default branch does not, and that branch's name (``origin/main``). None
+    otherwise: no hold lifted on this branch here, a lane opened by hand, no
+    default branch listed. Raises ``_GitFault`` as the gate's git reads do."""
+    if found is None or lifted is None:
+        return None
+    ahead, branch, _upstream, own = found
+    listing = lifted[1]
+    if not own or ahead > 0 or lifted[0] != branch or not listing.read or branch in listing.heads:
+        return None
+    ref = _hook_utils.origin_default_ref(lambda *args: _git_answer(root, deadline, *args)) or ""
+    if not ref.startswith("refs/remotes/origin/"):
+        return None
+    base = "origin/" + ref.removeprefix("refs/remotes/origin/")
+    count = _git_answer(root, deadline, "rev-list", "--count", f"{base}..HEAD")
+    if not count or not count.isdigit() or int(count) <= 0:
+        return None
+    return int(count), base
+
+
 def _gate_handoff(root: Path) -> int:
     """Gate 5: BLOCK once per commit when nothing is in flight -- no plan in
     progress, no tracked edit -- and the branch holds commits its upstream
@@ -1964,6 +1994,7 @@ def _gate_handoff(root: Path) -> int:
             _remember_head(flag, head)
             return 0
         found = _unpushed_commits(root, deadline)
+        unopened = _pushed_never_opened(root, deadline, found, lifted)
     except _GitFault as fault:
         _hook_utils.say_once(
             root, "handoff-gate-git", "stop_gate", "stop_failed_open_handoff_git",
@@ -1975,6 +2006,17 @@ def _gate_handoff(root: Path) -> int:
     if found is None:
         return 0
     ahead, branch, upstream, own = found
+    unopened_prs = ""
+    if unopened is not None:
+        # Held, then pushed by hand (the way past the hold's text names), and
+        # no pull request opened: the hold promised to ask once the seat's
+        # other one merged, so the lane is judged as one whose push opens it
+        # (DEF-2041's second face).
+        ahead, upstream = unopened
+        own = False
+        unopened_prs = (f"It was held behind this seat's other pull request and pushed by hand since "
+                        f"(origin/{branch}), and no open pull request names it, so the handoff opens one "
+                        "(python tools/cc/ship.py open).")
     if ahead <= 0 or _own_clear_armed_at(root, head):
         # Nothing owed at this HEAD; or the handoff ran to its end for it and
         # its push was held (the base red, this seat's other pull request open,
@@ -1987,7 +2029,9 @@ def _gate_handoff(root: Path) -> int:
         _remember_head(flag, head)
         return 0
     failed_read = False
-    if own:
+    if unopened_prs:
+        prs = unopened_prs
+    elif own:
         prs = f"The push lands on {branch}'s own pull request, so no second one opens."
     else:
         reuse = lifted[1] if lifted is not None and lifted[0] == branch else None
