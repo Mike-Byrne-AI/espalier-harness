@@ -92,10 +92,14 @@ auto-merge has landed the lane and reports to nobody otherwise (the SessionStart
 banner's `Merged:` rule, the same states) -- so read that log
 (`gh run view <id> --log-failed`) before arming another lane on top of it.
 Then forecasts, as `` `open` will refuse this lane: `` and `open`'s own words,
-every state refusal `open` makes before its push: the one list `open` runs
-(`PRE_PUSH_CHECKS` in `tools/cc/ship.py`, read for the lane `lane` would make
-when HEAD is the base), so a refusal added there is forecast here with no
-second copy. Two of them name their way through: a red post-merge base (a
+every refusal in `PRE_PUSH_CHECKS` (`tools/cc/ship.py`), the one list of state
+checks `open` runs before its push, so a check added there is forecast here
+with no second copy. The refusals inside the steps `open` takes after that
+list -- the merge-first step, the deletion check after it (forecast above from
+the shape before the merge), the marker's diff -- are said where they happen.
+When HEAD is the base, a plain line says `lane` (Step 1) moves the commits to
+`lane/<name>` first, the next step and not a refusal, and the checks read that
+lane. Two of the list's refusals name their way through: a red post-merge base (a
 `revert/` lane excepted) is cleared by the revert, or by `open --base-red-ruled
 <ack id>` where the dispatcher ruled the red a fix-forward, with the run id
 the ack must name; and where `handoff_push` is on, a lane whose commits carry

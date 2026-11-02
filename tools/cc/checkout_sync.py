@@ -1132,13 +1132,18 @@ def _upstream_gone(git: _Git, branch: str, remote: str, upstream: str) -> bool:
     ``upstream``'s first-parent chain, where only a merge's second parent
     sits (pushed without ``-u``: its upstream is ``upstream`` itself, never
     gone, so the lane stayed behind main told its remote branch still
-    existed, DEF-2042). A lane started from ``upstream`` with nothing of its
-    own has its tip on that chain and stays; a chain git cannot read keeps
-    the lane in place."""
+    existed, DEF-2042). The chain is read only for a branch that tracks
+    ``upstream``, the shape such a lane keeps: a branch with no upstream at
+    all, cut from a merged lane's tip before its first commit, is someone's
+    choice and stays, as a lane started from ``upstream`` with nothing of its
+    own does (its tip on the chain); a chain git cannot read keeps the lane
+    in place."""
     if _own_ref_listed(git, remote, branch):
         return False
     if git.out("for-each-ref", "--format=%(upstream:track)", f"refs/heads/{branch}") == "[gone]":
         return True
+    if git.out("rev-parse", "--abbrev-ref", "--symbolic-full-name", f"{branch}@{{upstream}}") != upstream:
+        return False
     tip = git.out("rev-parse", f"refs/heads/{branch}")
     chain = git.out("rev-list", "--first-parent", upstream)
     return bool(tip) and chain is not None and tip not in chain.splitlines()

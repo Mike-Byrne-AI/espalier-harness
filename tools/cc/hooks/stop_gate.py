@@ -117,7 +117,8 @@ try:
         "ONCE_FLAG_PREFIX",
         "OPERATOR_RELIEF_AGENT",
         "OPERATOR_RELIEF_NOTE_MIN_CHARS", "RELIEF_FLAGS", "STATE_DIR", "SpawnFailure", "_toml_parser",
-        "atomic_write_text", "floor_text", "has_active_plan", "lane_upstream", "lock_file", "plan_completion",
+        "atomic_write_text", "floor_text", "has_active_plan", "lane_upstream", "lock_file", "origin_default_ref",
+        "plan_completion",
         "python_command_hint", "read_stdin_safely", "read_toml_table",
         "relief_agents_line", "relief_flags", "resolve_project_root", "say_bad_stdin", "say_once", "spawn_checked",
         "split_command", "stop_gate_test_cmd", "unlock_file", "warn", "warn_exc",
@@ -1334,8 +1335,9 @@ def _gate_code_review(root: Path, write_count: int) -> int:
 #: new commit speaks again and the same HEAD does not
 #: (tests/test_state_file_flag_parity.py lists the file).
 HANDOFF_GATE_FLAG = _hook_utils.HANDOFF_GATE_FLAG
-#: One deadline for every git question the gate asks (at most seven reads of
-#: local refs and the index, no network), inside STOP_SAFETY_MARGIN.
+#: One deadline for every git question the gate asks (about a dozen reads of
+#: local refs and the index at most, on a lifted hold's path; no network),
+#: inside STOP_SAFETY_MARGIN.
 HANDOFF_GATE_DEADLINE_S = 5.0
 #: The hold under STATE_DIR (``_hook_utils.HANDOFF_GATE_HOLD``, DEF-4058): JSON
 #: ``{"head", "branch", "checked", "seat", "prs"}``, written at the decision
@@ -1351,8 +1353,10 @@ HANDOFF_GATE_DEADLINE_S = 5.0
 #: flag on a new session (tests/test_state_file_flag_parity.py lists the file).
 HANDOFF_GATE_HOLD = _hook_utils.HANDOFF_GATE_HOLD
 #: One `gh pr list` read, on its own clock beside the git deadline (the
-#: banner's cap for the same read; measured 0.5 to 1.3 s), the one network
-#: read the gate makes: paid at the decision point of a new HEAD on an
+#: banner's cap for the same read; measured 0.5 to 1.3 s), the gate's first
+#: network read (the second, a `gh run list` under the same cap, is paid only
+#: where a dispatcher's ruling names the held lane, DEF-4076): paid at the
+#: decision point of a new HEAD on an
 #: unpushed lane of a NAMED seat, then at most once per re-check interval
 #: while the hold stands; never on a judged HEAD, an unnamed checkout, a tree
 #: without the mail channel, or a lane with a remote branch of its own.
@@ -1756,7 +1760,7 @@ def _hold_recheck(root: Path, hold: dict) -> tuple[bool, _SeatPrs | None]:
             # Stop, the clause handed on (DEF-4076).
             _hold_clear(root)
             return False, _SeatPrs(read=found.read, others=found.others, seat=found.seat, mine=found.mine,
-                                   clearing=clearing)
+                                   clearing=clearing, heads=found.heads)
         _hold_write(root, head, branch, found.seat, list(found.mine), ahead, since=since)
         return True, None
     _hold_clear(root)
@@ -2017,6 +2021,10 @@ def _gate_handoff(root: Path) -> int:
         unopened_prs = (f"It was held behind this seat's other pull request and pushed by hand since "
                         f"(origin/{branch}), and no open pull request names it, so the handoff opens one "
                         "(python tools/cc/ship.py open).")
+        # A hold the re-check lifted on a red base's clearing keeps that
+        # clause, so a ruled lane's block still names its --base-red-ruled id.
+        if lifted is not None and lifted[1].clearing is not None:
+            unopened_prs += " " + lifted[1].clearing[0]
     if ahead <= 0 or _own_clear_armed_at(root, head):
         # Nothing owed at this HEAD; or the handoff ran to its end for it and
         # its push was held (the base red, this seat's other pull request open,

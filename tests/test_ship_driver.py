@@ -3333,6 +3333,7 @@ def _ruling_channel(by_machine: dict, *, dispatcher, how: str, unusable: str, re
         fetch_records=lambda root, **kw: (True, ""),
         fix_forward_ruling=real.fix_forward_ruling,
         fix_forward_rulings=real.fix_forward_rulings,
+        ruling_run=real.ruling_run,
         MESSAGE_ID_RE=real.MESSAGE_ID_RE)
 
 
@@ -3391,6 +3392,45 @@ class TestARedBaseRuledByTheDispatcher:
                     and node.func.attr in ("compile", "match", "search", "fullmatch")):
                 text = segment(lines, node) or ""
                 assert "RULING" not in text.upper(), f"the driver reads the ruling's words with a regex of its own: {text}"
+
+    def test_the_lanes_rulings_are_the_newest_dispatcher_ack_per_run(self, ship, tmp_path, monkeypatch):
+        """``lane_fix_forward_rulings``, the Stop hook's handoff gate's read
+        before its one gh call (DEF-4076), driven for real over the channel's
+        own rule (``fix_forward_rulings``, ``ruling_run``): ``{run id: ack
+        id}`` for the rulings naming this lane, the newest by time where two
+        rule one run (listed oldest last here, so the list's order would pick
+        the wrong one), another lane's left out, another run's kept under its
+        own id, and an ack on a seat's ref that is not the dispatcher's left
+        out. The timeout reaches the channel's read. Dies to: the ack the
+        list held last taken over the newest, a ruling for another lane or
+        from another seat counted, or one run's ruling folded into another."""
+        older = dict(_ruling_ack("900", ack_id="20261030T120000Z-air-aaaaaa"), at="2026-10-30T12:00:00Z")
+        newer = dict(_ruling_ack("900", ack_id="20261030T130000Z-air-bbbbbb"), at="2026-10-30T13:00:00Z")
+        other_lane = dict(_ruling_ack("900", ack_id="20261030T140000Z-air-cccccc", lane="lane/y"),
+                          at="2026-10-30T14:00:00Z")
+        other_run = _ruling_ack("950", ack_id="20261030T120000Z-air-dddddd")
+        a_seats = _ruling_ack("960", machine="win", ack_id="20261030T150000Z-win-eeeeee")
+        by_machine = {"air": [newer, older, other_lane, other_run], "win": [a_seats]}
+        self._stand_in(ship, monkeypatch, by_machine)
+        timeouts = []
+        read = ship._MAIL.read_mail
+
+        def reading(root, **kw):
+            timeouts.append(kw.get("timeout"))
+            return read(root, **kw)
+
+        monkeypatch.setattr(ship._MAIL, "read_mail", reading)
+        assert ship.lane_fix_forward_rulings(tmp_path, "lane/x", timeout=5.0) == {
+            "900": "20261030T130000Z-air-bbbbbb", "950": "20261030T120000Z-air-dddddd"}
+        assert timeouts == [5.0]
+        assert ship.lane_fix_forward_rulings(tmp_path, "lane/y", timeout=5.0) == {
+            "900": "20261030T140000Z-air-cccccc"}
+        # The seat's ack is left out for its ref alone: with no dispatcher set, every ref rules.
+        self._stand_in(ship, monkeypatch, by_machine, dispatcher=None, how="no dispatcher is set")
+        assert ship.lane_fix_forward_rulings(tmp_path, "lane/x") == {
+            "900": "20261030T130000Z-air-bbbbbb", "950": "20261030T120000Z-air-dddddd",
+            "960": "20261030T150000Z-win-eeeeee"}
+        assert ship.lane_fix_forward_rulings(tmp_path, "") == {}
 
     def test_a_mistyped_id_is_told_the_shape_before_the_channel_is_read(self, ship, tmp_path, monkeypatch):
         """The shape check runs before any read, as it did when the driver held
@@ -3816,6 +3856,7 @@ class TestOneOpenPullRequestPerSeat:
         # which a merged lane's would (DEF-2041; TestTheOwnUpstreamRuleHasOneReading
         # drives both over real git).
         answers[("git", "symbolic-ref", "-q", "refs/remotes/origin/HEAD")] = (0, "refs/remotes/origin/main\n", "")
+        answers[("git", "rev-parse", "--verify", "-q", "refs/remotes/origin/main")] = (0, f"{HEAD}\n", "")
         answers[("git", "merge-base", "--is-ancestor")] = (1, "", "")
         return answers
 
@@ -4676,8 +4717,12 @@ def _no_row_on_a_handoff_push_tree(ship, tmp_path, monkeypatch) -> tuple[dict, d
 #: order: ``(keywords both verbs' answer tables take, answers set on both)``,
 #: after any stand-in it needs. A check added to the list with no way here to
 #: make it refuse reds test_every_check_in_the_list_has_a_way_here_to_refuse.
+#: HEAD on the base refuses where `open` would really be run there: a head
+#: subject that names no lane (no letter or digit in it), which `lane` cannot
+#: move; with a lane name, preflight reads that lane and says `lane` as the
+#: next step instead.
 _MAKE_IT_REFUSE = {
-    "head-is-base": lambda ship, root, mp: ({"branch": "main"}, {}),
+    "head-is-base": lambda ship, root, mp: ({"branch": "main"}, {("git", "log", "-1"): (0, "...\n", "")}),
     "open-pull-request": lambda ship, root, mp: ({}, {_list_key(): _rows(_pr())}),
     "origin-ahead": lambda ship, root, mp: ({}, {("git", "rev-list", "--count"): (0, "2\n", "")}),
     "marked-record": _a_marked_record,
@@ -4688,34 +4733,90 @@ _MAKE_IT_REFUSE = {
     "no-title": lambda ship, root, mp: ({}, {("git", "log", "-1"): (0, "\n", "")}),
 }
 
-#: The refusals `open` raises before its push outside the list, by the
-#: message's literal head, each with the reason it stays outside.
+#: The refusals open_pr's own body raises before its push outside the list,
+#: by the message's literal head, each with the reason it stays outside.
 _RAISED_OUTSIDE_THE_LIST = {
     "could not read --body-file": "an argument the operator passed, not the lane's state",
     "--body-file": "an argument the operator passed (its encoding), not the lane's state",
 }
-#: The refusing callees `open_pr` calls before its push outside the list.
+#: The refusals raised before open_pr's push outside the list by ship.py's own
+#: functions it calls there, followed down every call: by ``(the function
+#: whose body raises, the opening of the message's literal head)``, each with
+#: the reason it stays outside. Keyed by the raise, not the callee, so a new
+#: refusal in a function already named here reds too.
 _CALLED_OUTSIDE_THE_LIST = {
-    "refuse_unmade_deletions": "reads the shape after the merge-first step and the fold move the head "
-                               "(DEF-4064); preflight forecasts it from the shape before them",
+    ("repo_root", "not inside a git checkout"):
+        "the checkout, read before the lane is; preflight makes the same read first and stops on it",
+    ("default_branch", "gh could not name the default branch"):
+        "the base, read before the lane is; preflight makes the same read first and stops on it",
+    ("current_branch", "detached HEAD"):
+        "no branch to read the checks for; preflight makes the same read and says it as `open`'s refusal",
+    ("_refuse_a_dirty_tree", "a merge is in progress"):
+        "the merge-first step's tree check, where it merges; preflight refuses this tree before anything",
+    ("_refuse_a_dirty_tree", "git status failed"):
+        "the same tree check's read failing; preflight makes it first and stops on it",
+    ("_refuse_a_dirty_tree", "the tracked tree is dirty"):
+        "the same tree check; preflight refuses a dirty tracked tree first",
+    ("lane_shape", "git diff --name-status against origin/"):
+        "the shape's read after the merge-first step; preflight reads the shape and says this refusal",
+    ("refuse_unmade_deletions", "_deletions_refusal(shape, base)"):
+        "reads the shape after the merge-first step and the fold move the head (DEF-4064); preflight "
+        "forecasts it from the shape before them",
+    ("head_sha", "git could not name HEAD"):
+        "the head the merge-first step left, unreadable: a broken checkout, not a state the lane is in",
+    ("marker_needed", "git diff against origin/"):
+        "the marker's diff after the merge-first step, failing: git's fault, not a state the lane is in",
+    ("marker_needed", "the diff against origin/"):
+        "an empty diff after the merge-first step; preflight refuses an empty range first (a range whose "
+        "commits net to no change is not forecast)",
 }
 
 
-def _message_head(call: ast.Call) -> str:
-    """The literal words a refusal's message opens with (an f-string up to its
-    first field), or the argument's source where it opens with none."""
-    arg = call.args[0] if call.args else None
+def _literal_head(arg: ast.expr | None) -> str:
+    """The literal words an expression's text opens with: a string, an
+    f-string up to its first field, the left side of a ``+``; '' for none."""
     if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-        return arg.value.strip()
+        return arg.value
     if isinstance(arg, ast.JoinedStr):
         head = ""
         for part in arg.values:
             if not (isinstance(part, ast.Constant) and isinstance(part.value, str)):
                 break
             head += part.value
-        if head.strip():
-            return head.strip()
+        return head
+    if isinstance(arg, ast.BinOp) and isinstance(arg.op, ast.Add):
+        return _literal_head(arg.left)
+    return ""
+
+
+def _message_head(call: ast.Call) -> str:
+    """The literal words a refusal's message opens with (an f-string up to its
+    first field), or the argument's source where it opens with none."""
+    arg = call.args[0] if call.args else None
+    head = _literal_head(arg).strip()
+    if head:
+        return head
     return ast.unparse(arg) if arg is not None else ""
+
+
+def _refusal_classes(tree: ast.Module) -> set[str]:
+    """``Refused`` and every class in the module that derives from it (``Held``)."""
+    names = {"Refused"}
+    classes = [n for n in tree.body if isinstance(n, ast.ClassDef)]
+    grew = True
+    while grew:
+        grew = False
+        for cls in classes:
+            if cls.name not in names and any(isinstance(b, ast.Name) and b.id in names for b in cls.bases):
+                names.add(cls.name)
+                grew = True
+    return names
+
+
+def _direct_calls(nodes, functions: dict) -> set[str]:
+    """The module's own functions ``nodes`` call by name."""
+    return {n.func.id for n in nodes
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in functions}
 
 
 def _callee(call: ast.Call) -> str:
@@ -4735,31 +4836,64 @@ class TestPreflightForecastsEveryRefusalOpenMakesBeforeItsPush:
     (``ship.PRE_PUSH_CHECKS``) that `open` runs and `preflight` forecasts in
     `open`'s words; these rows derive from the list both ways."""
 
-    def test_every_refusal_open_raises_before_its_push_is_the_lists_or_named(self):
-        """Closed world, read from the source: every ``raise`` in open_pr
-        before its push, and every refusing callee it calls there, is the
-        list's loop or one of the few named outside it. Dies to: a refusal
-        added to `open` beside the list (the forecast would never know)."""
+    def test_every_refusal_open_reaches_before_its_push_is_the_lists_or_named(self):
+        """Closed world, read from the source: every ``raise`` of a refusal
+        open_pr reaches before its push outside the list's loop -- in its own
+        body, or in any of ship.py's functions it calls there, followed down
+        every call -- is one named outside the list with its reason. The walk
+        is by raise, not by callee name: the first version of this row read
+        only callees named refuse*, and a refusal added in the merge-first
+        step or the marker's diff passed it while preflight read clean (the
+        review, 2026-11-02). Not followed: the list's loop (its refusals are
+        the forecast's), the state's methods (after the loop they answer from
+        the reads its checks made), and calls through a name bound at run
+        time (RUN, a shared reader). A named entry no raise answers any more
+        reds too, so the names cannot outlive what they excuse. Dies to: a
+        refusal added to `open`, or to a helper it reaches, beside the list
+        (the forecast would never know)."""
         tree = ast.parse(SHIP.read_text(encoding="utf-8"))
-        verb = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "open_pr")
+        functions = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+        refusals = _refusal_classes(tree)
+        assert {"Refused", "Held"} <= refusals, refusals
+        verb = functions["open_pr"]
         push = next(n.lineno for n in ast.walk(verb) if isinstance(n, ast.Assign)
                     and any(isinstance(t, ast.Name) and t.id == "push" for t in n.targets))
         loops = [n for n in ast.walk(verb) if isinstance(n, ast.For)
                  and isinstance(n.iter, ast.Name) and n.iter.id == "PRE_PUSH_CHECKS"]
         in_loop = {id(n) for loop in loops for n in ast.walk(loop)}
+        before = [n for n in ast.walk(verb) if getattr(n, "lineno", push) < push and id(n) not in in_loop]
         outside = []
-        for node in ast.walk(verb):
-            if getattr(node, "lineno", push) >= push or id(node) in in_loop:
-                continue
+        for node in before:
             if isinstance(node, ast.Raise):
                 head = _message_head(node.exc) if isinstance(node.exc, ast.Call) else ast.unparse(node.exc or node)
                 if head not in _RAISED_OUTSIDE_THE_LIST:
-                    outside.append(f"line {node.lineno}: raise {head[:70]!r}")
-            elif isinstance(node, ast.Call) and _callee(node).lstrip("_").startswith("refuse"):
-                if _callee(node) not in _CALLED_OUTSIDE_THE_LIST:
-                    outside.append(f"line {node.lineno}: {_callee(node)}(...)")
+                    outside.append(f"open_pr line {node.lineno}: raise {head[:70]!r}")
+        # Every function open_pr reaches before its push, with the call path to it.
+        reached: dict[str, str] = {}
+        todo = [(name, name) for name in sorted(_direct_calls(before, functions))]
+        while todo:
+            name, path = todo.pop(0)
+            if name in reached:
+                continue
+            reached[name] = path
+            todo += [(c, f"{path} > {c}") for c in sorted(_direct_calls(ast.walk(functions[name]), functions))]
+        assert {"_merge_base_first", "marker_needed", "lane_shape", "head_sha"} <= set(reached), sorted(reached)
+        answered = set()
+        for name, path in sorted(reached.items()):
+            for node in ast.walk(functions[name]):
+                if not (isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)
+                        and _callee(node.exc) in refusals):
+                    continue
+                head = _message_head(node.exc)
+                named = [key for key in _CALLED_OUTSIDE_THE_LIST if key[0] == name and head.startswith(key[1])]
+                answered.update(named)
+                if not named:
+                    outside.append(f"{path} (line {node.lineno}): raise {head[:70]!r}")
         assert outside == [], ("open_pr refuses before its push outside PRE_PUSH_CHECKS, so preflight cannot "
-                               "forecast it: " + "; ".join(outside))
+                               "forecast it (make it a check in the list, or name it in _CALLED_OUTSIDE_THE_LIST "
+                               "with the reason it stays outside): " + "; ".join(outside))
+        stale = sorted(set(_CALLED_OUTSIDE_THE_LIST) - answered)
+        assert stale == [], f"named outside the list, but no raise open_pr reaches answers them: {stale}"
         assert len(loops) == 1, "open_pr does not run PRE_PUSH_CHECKS (or runs it twice)"
         raised = {_callee(n.exc) for n in ast.walk(loops[0]) if isinstance(n, ast.Raise) and isinstance(n.exc, ast.Call)}
         assert raised == {"Refused", "Held"}, raised
@@ -4809,9 +4943,14 @@ class TestPreflightForecastsEveryRefusalOpenMakesBeforeItsPush:
         """/ship runs preflight before `lane`, so HEAD is often the default
         branch, which origin holds as its own: read for it, the hold was never
         forecast, and the lane `lane` makes is the one `open` pushes, never
-        pushed. The forecast says HEAD's own refusal and reads the rest for
-        that lane; it writes no hold record (`open`'s alone, past a dry run).
-        Dies to: the checks read for the default branch."""
+        pushed. The forecast reads every check for that lane, and says `lane`
+        as the next step, never as `open`'s refusal: that line printed on every
+        /ship run from the default branch, the usual path, and a "will refuse"
+        line that is always there teaches a reader to skip them (the review,
+        2026-11-02). It writes no hold record (`open`'s alone, past a dry
+        run). HEAD's refusal is still forecast where the subject names no lane
+        (_MAKE_IT_REFUSE's head-is-base row). Dies to: the checks read for the
+        default branch, or the next step said as a refusal."""
         keywords, answers = _seat_holds(ship, tmp_path, monkeypatch, branch="lane/feat-a-thing")
         forecasting = _preflight_answers(tmp_path, branch="main", **keywords)
         forecasting.update(answers)
@@ -4824,7 +4963,8 @@ class TestPreflightForecastsEveryRefusalOpenMakesBeforeItsPush:
                 "#41 (lane/y). One open pull request per seat") in out, out
         assert "git push -u origin HEAD" in out   # the by-hand way past a wrong attribution
         assert "HEAD is main: `lane` moves the commits to lane/feat-a-thing first" in out
-        assert "note: `open` will refuse this lane: HEAD is main: run `lane` first" in out
+        assert "will refuse this lane: HEAD is main" not in out, out
+        assert out.count("will refuse this lane") == 1, out   # the seat's hold alone
         assert ship._paths.hooks_module("stop_gate")._hold_read(tmp_path) is None
 
     def test_reads_the_hold_cannot_make_are_said_and_preflight_goes_on(

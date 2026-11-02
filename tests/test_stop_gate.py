@@ -1547,6 +1547,41 @@ class TestTheHandoffGateHoldsForAnOpenPullRequest:
         else:
             assert out == ""
 
+    @pytest.mark.parametrize(("opened", "expected"), [(False, 1), (True, 0)],
+                             ids=["ruled-never-opened", "ruled-opened-by-hand"])
+    def test_a_ruled_lane_lifted_by_the_re_check_keeps_its_listing_and_its_ruling(
+            self, tmp_path, monkeypatch, capsys, opened, expected):
+        """Both reviews of the lane: the re-check lifts a hold through the
+        clearing clause, and the record it hands on kept no heads, so a ruled
+        lane opened by hand was told no pull request names it; one never
+        opened lost its --base-red-ruled id. One record, both kept."""
+        root, mod, path = self._held(tmp_path, monkeypatch, capsys)
+        _git(root, "push", "-q", "-u", "origin", "HEAD")
+        drv = self._driver("air-work", ["#41 (lane/first)"])
+        drv.is_revert_lane = lambda branch: branch.startswith("revert/")
+        drv.lane_fix_forward_rulings = lambda root_, branch, **kw: {"77": "20261102T120000Z-air-abcdef"}
+        drv.newest_red_verdict = lambda rows: rows[0] if rows else None
+        monkeypatch.setitem(sys.modules, "ship", drv)
+        rows = [{"number": 41, "headRefName": "lane/first", "labels": []}]
+        if opened:
+            rows.append({"number": 43, "headRefName": "lane/the-fixture", "labels": []})
+        real = mod._hook_utils.spawn_checked
+
+        def fake(argv, **kw):
+            if not argv or argv[0] != "gh":
+                return real(argv, **kw)
+            out = ([{"databaseId": 77, "status": "completed", "conclusion": "failure"}] if argv[1] == "run"
+                   else rows)
+            return subprocess.CompletedProcess(list(argv), 0, stdout=json.dumps(out), stderr="")
+
+        monkeypatch.setattr(mod._hook_utils, "spawn_checked", fake)
+        assert mod._gate_handoff(root) == expected
+        out = capsys.readouterr().out
+        if expected:
+            assert "--base-red-ruled 20261102T120000Z-air-abcdef" in json.loads(out)["reason"]
+        else:
+            assert out == ""
+
     def test_a_re_check_that_cannot_ask_gh_keeps_the_hold_and_says_so_once(self, tmp_path, monkeypatch, capsys):
         root, mod, path = self._held(tmp_path, monkeypatch, capsys)
         before = json.loads(path.read_text(encoding="utf-8"))
@@ -2071,7 +2106,7 @@ class TestTheOwnUpstreamRuleHasOneReading:
             if args[0] == "symbolic-ref":
                 return base
             if args[0] == "rev-parse" and "--verify" in args:
-                return None
+                return "0" * 40 if base and args[-1] == base else None   # origin/HEAD's target is there
             if args[0] == "merge-base":
                 return ancestor
             return "origin/main"
@@ -2147,6 +2182,30 @@ class TestWhetherALanesWorkIsOnOriginIsReadFromOriginsRefs:
         assert ship._lane_not_on_origin(root) is None
         assert ship._window_checkout_holds(root) is None
         assert ship._commits_off_origin(root) == 0
+
+    def test_a_branch_with_no_upstream_cut_from_a_merged_lanes_tip_stays(self, tmp_path, monkeypatch):
+        """The failure-mode review: a seat cuts its next lane from the merged
+        one's tip and a session starts before its first commit; the tip is a
+        merge's second parent, off main's chain, yet the branch tracks nothing,
+        so it is someone's choice and stays, as before the lane."""
+        root = _lane_repo(tmp_path, ahead=0, branch="main", plan_status=None)
+        self._merged_lane(root, "lane/prev")
+        _git(root, "switch", "-q", "-c", "lane/next")
+        result = self._sync(monkeypatch).catch_up(root, dry_run=True)
+        assert (result.state, result.reason) == ("lane", "nothing of its own yet")
+
+    def test_a_dangling_origin_head_falls_through_to_main(self, tmp_path):
+        """The code review: an origin/HEAD naming a ref that is gone made every
+        check against the base quietly answer nothing; it is passed over."""
+        root = _lane_repo(tmp_path, ahead=0, branch="main", plan_status=None)
+        _git(root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/lane/old")
+        mod = TestTheHandoffGate._load()
+
+        def ask(*args):
+            result = subprocess.run(["git", *args], cwd=str(root), capture_output=True, text=True, encoding="utf-8")
+            return result.stdout.strip() if result.returncode == 0 else None
+
+        assert mod._hook_utils.origin_default_ref(ask) == "refs/remotes/origin/main"
 
     def test_a_lane_fresh_from_main_with_nothing_of_its_own_stays(self, tmp_path, monkeypatch):
         """Read alike on both counts (nothing off origin, no ref of its name),

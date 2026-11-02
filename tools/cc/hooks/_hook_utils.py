@@ -994,9 +994,12 @@ def origin_default_ref(ask: Callable[..., str | None]) -> str | None:
     ref name: ``refs/remotes/origin/HEAD``'s target, else ``origin/main``,
     else ``origin/master``, the order the Stop hook's handoff gate measures a
     lane never pushed against; None where none is listed. ``ask`` as
-    :func:`lane_upstream` takes it."""
+    :func:`lane_upstream` takes it. An ``origin/HEAD`` naming a ref that is
+    gone (a default branch renamed, a fetch that pruned it) is passed over, as
+    ``checkout_sync.default_branch`` passes it over: read as the base it made
+    every check against it quietly answer nothing."""
     head = ask("symbolic-ref", "-q", "refs/remotes/origin/HEAD")
-    if head:
+    if head and ask("rev-parse", "--verify", "-q", head) is not None:
         return head
     for name in ("main", "master"):
         ref = f"refs/remotes/origin/{name}"
@@ -1011,9 +1014,11 @@ def commits_off_origin(ask: Callable[..., str | None], rev: str = "HEAD") -> int
     saw them): 0 where all of its work is on origin, whatever ``@{u}`` names
     and whether or not the lane's own branch is still listed there (a lane
     pushed without ``-u``, or merged and pruned). None where git could not
-    say. The one reading the session catch-up's reason line, the ship
-    driver's by-hand arm and its window check share (DEF-2042: each read
-    ``@{u}``, which names what the branch tracks, not what origin holds).
+    say. The one reading the ship driver's by-hand arm and its window check
+    share (DEF-2042: each read ``@{u}``, which names what the branch tracks,
+    not what origin holds); the session catch-up asks the narrower question
+    of its own count against ``origin/<base>`` and origin's list of the
+    lane's name.
     ``ask`` as :func:`lane_upstream` takes it."""
     out = ask("rev-list", "--count", rev, "--not", "--remotes=origin")
     return int(out) if out is not None and out.isdigit() else None

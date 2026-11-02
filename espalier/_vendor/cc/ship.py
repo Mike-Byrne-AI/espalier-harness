@@ -12,11 +12,11 @@ on, and every spawn goes through one runner the tests replace.
 Verbs (each stands alone and derives what it needs from git and gh):
 
     preflight            the tree is clean, the range is non-empty, the last
-                         merges' post-merge reds, and every refusal `open`
-                         would make before its push, in `open`'s words, read
-                         from the one list `open` runs (PRE_PUSH_CHECKS: a
-                         red base, a missing handoff row where handoff_push
-                         is on, this seat's other open pull request, ...)
+                         merges' post-merge reds, and every refusal in the
+                         one list of state checks `open` runs before its
+                         push, in `open`'s words (PRE_PUSH_CHECKS: a red
+                         base, a missing handoff row where handoff_push is
+                         on, this seat's other open pull request, ...)
     lane                 on the default branch: move the unmerged commits to a
                          lane named from the head subject (a no-op elsewhere)
     open                 push once; open the pull request WITH the approval
@@ -1943,9 +1943,11 @@ def _lane_upstream(root: Path, branch: str) -> tuple[str | None, bool] | None:
 
 def _commits_off_origin(root: Path) -> int | str:
     """The commits HEAD holds that no ref of origin does, by
-    ``_hook_utils.commits_off_origin`` at ``root``, the one reading the
-    session catch-up shares (DEF-2042: ``@{u}`` names what the branch tracks,
-    not what origin holds); where it cannot be read, a word saying why."""
+    ``_hook_utils.commits_off_origin`` at ``root`` (DEF-2042: ``@{u}`` names
+    what the branch tracks, not what origin holds), the one reading the
+    by-hand arm (:func:`_lane_not_on_origin`) and the window check
+    (:func:`_window_checkout_holds`) share; where it cannot be read, a word
+    saying why."""
     reading = _shared_reader("commits_off_origin")
     if reading is None:
         return _OFF_ORIGIN_UNREAD
@@ -2426,11 +2428,14 @@ def preflight() -> int:
     """What /ship's first step reads before anything moves: refuses a dirty
     tracked tree and an empty range, and says the rest -- the untracked files,
     the commits, the lane's shape, the merge with the base, the last merges'
-    post-merge reds -- and every refusal `open` would make before its push,
-    each in `open`'s own words, read from the one list `open` runs
+    post-merge reds -- and every refusal in the one list of state checks
+    `open` runs before its push, each in `open`'s own words
     (:data:`PRE_PUSH_CHECKS`, DEF-4082: a hand-kept copy of the forecasts
-    missed the last-added refusal). On the default branch the checks read
-    the lane ``lane`` would make, the branch `open` then pushes."""
+    missed the last-added refusal). The steps `open` takes after the list
+    refuse where they happen; of theirs, only the deletion check is
+    forecast, from the shape before the merge-first step. On the default
+    branch ``lane`` is said as the next step, and the checks read the lane
+    it would make, the branch `open` then pushes."""
     root = repo_root()
     base = default_branch()
     _git("fetch", "origin", "--quiet", cwd=str(root))
@@ -2506,10 +2511,14 @@ def _forecast_pre_push(root: Path, base: str, branch: str) -> None:
     and each that refuses noted as "`open` will refuse this lane: <its
     text>". A read that raises is one `open` makes the same way and stops on,
     said once. The gate's hold record is `open`'s alone to write, so no
-    check's ``record`` runs here. On the default branch, HEAD's own refusal
-    is said and the other checks read the lane ``lane`` would name from the
-    head subject: /ship runs this before ``lane``, and the branch `open`
-    pushes is that lane, never pushed (DEF-4082's second-lane seat)."""
+    check's ``record`` runs here. On the default branch the checks read the
+    lane ``lane`` would name from the head subject, as `open` will after
+    it: /ship runs this before ``lane``, and the branch `open` pushes is
+    that lane, never pushed (DEF-4082's second-lane seat). ``lane`` is said
+    as the next step there, never as `open`'s refusal: /ship's usual path
+    runs from the default branch, and a "will refuse" line on every run
+    teaches a reader to skip them. Where the subject names no lane,
+    ``lane`` cannot move the commits, and HEAD's refusal is forecast."""
     lane_branch = branch
     if branch == base:
         rc, subject, _ = _git("log", "-1", "--format=%s", cwd=str(root))
@@ -2517,7 +2526,7 @@ def _forecast_pre_push(root: Path, base: str, branch: str) -> None:
         if lane_branch != branch:
             _say(f"HEAD is {base}: `lane` moves the commits to {lane_branch} first, and `open`'s checks below "
                  "read that lane")
-    state = PrePushState(root, base, lane_branch, head=branch)
+    state = PrePushState(root, base, lane_branch)
     said: set[str] = set()
     for check in PRE_PUSH_CHECKS:
         try:
@@ -2633,10 +2642,10 @@ def _origin_ahead_refusal(branch: str, cwd: str) -> str | None:
 
 class PrePushState:
     """What `open`'s refusals before its push read, for one run: the checkout,
-    the base, the lane `open` pushes (``branch``) and the branch HEAD is on
-    now (``head``: the same in `open`; the default branch where `preflight`
-    reads ahead of ``lane``), and the arguments a check judges (the title,
-    the ruling's ack id, the --early reason; preflight passes none). The
+    the base, the lane `open` pushes (``branch``: HEAD's branch in `open`;
+    the lane ``lane`` would make where `preflight` reads ahead of it on the
+    default branch), and the arguments a check judges (the title, the
+    ruling's ack id, the --early reason; preflight passes none). The
     three reads more than one check needs -- the open pull requests
     (:func:`_open_prs`), the red base's verdict (:func:`red_base_verdict`)
     and this seat's share of them (:func:`seat_open_prs`) -- are each made
@@ -2646,12 +2655,11 @@ class PrePushState:
     has an upstream of its own (``own``), whether the one-per-seat hold was
     judged, and what a held lane waits for."""
 
-    def __init__(self, root: Path, base: str, branch: str, *, head: str | None = None,
-                 title: str | None = None, ruled: str | None = None, early: str | None = None) -> None:
+    def __init__(self, root: Path, base: str, branch: str, *, title: str | None = None,
+                 ruled: str | None = None, early: str | None = None) -> None:
         self.root = root
         self.base = base
         self.branch = branch
-        self.head = branch if head is None else head
         self.title_given = title
         self.ruled = ruled
         self.early = early
@@ -2693,7 +2701,10 @@ class PrePushState:
 
 
 def _head_is_base_refusal(st: PrePushState) -> str | None:
-    if st.head != st.base:
+    """`open` run on the default branch. `preflight` there reads the lane
+    ``lane`` would make, so it forecasts this only where the head subject
+    names no lane (``lane`` refuses that subject too)."""
+    if st.branch != st.base:
         return None
     return f"HEAD is {st.base}: run `lane` first (a protected default branch takes no push)"
 
@@ -2796,15 +2807,20 @@ class PrePushCheck(NamedTuple):
 #: the same text. The forecasts were a hand-kept copy of `open`'s checks, and
 #: the last-added refusal slipped through it (DEF-4082: five forecast, five
 #: not, the one-open-pull-request hold among them). tests/test_ship_driver.py
-#: derives from this list both ways: every refusal raised in `open` before its
-#: push is this list's or a named one outside it, and every entry made to
-#: refuse is forecast in `open`'s words. Outside it, on purpose: the
-#: --body-file refusals (an argument, not the lane's state), and a deletion the
-#: lane never made (:func:`refuse_unmade_deletions`), read from the shape
-#: AFTER the merge-first step and the fold move the head; preflight forecasts
-#: that one from the shape before them (DEF-4064). A callee that refuses by
-#: itself (the --early debt, the merge-first step's dirty tree, the guard's
-#: diff) stays where it is.
+#: derives from this list both ways: every refusal `open` raises before its
+#: push, in its own body or in any of this module's functions it calls there
+#: (followed down every call), is this list's or one named outside it with
+#: its reason, and every entry made to refuse is forecast in `open`'s words.
+#: Outside it, on purpose: the --body-file refusals (an argument, not the
+#: lane's state); the reads before the lane is known (the checkout, the base,
+#: a detached HEAD), which preflight makes first; and the steps after the
+#: list, which refuse where they happen -- the merge-first step's tree check,
+#: a deletion the lane never made (:func:`refuse_unmade_deletions`), read from
+#: the shape AFTER the merge-first step and the fold move the head (preflight
+#: forecasts it from the shape before them, DEF-4064), and the marker's diff.
+#: A check's own callee that refuses (the --early debt) refuses inside the
+#: list, raised from the check's read; preflight takes no --early, so that one
+#: is never forecast.
 PRE_PUSH_CHECKS: tuple[PrePushCheck, ...] = (
     PrePushCheck("head-is-base", _head_is_base_refusal),
     PrePushCheck("open-pull-request", _open_pull_request_refusal),

@@ -19,9 +19,11 @@
   one capped `gh run list` only where a ruling names the lane), blocks with
   the ruling's `--base-red-ruled` id, and its hold's re-check reads the same
   exemption.
-- **`ship.py preflight` forecasts every refusal `open` makes before its
-  push.** Its forecasts were a hand-kept copy of `open`'s checks and missed
-  five, the one-pull-request-per-seat hold among them. `open`'s state
-  refusals are now one list, `PRE_PUSH_CHECKS`, which `open` runs and
-  `preflight` forecasts in `open`'s own words; a test reads `open_pr`'s
-  source so a refusal added beside the list fails.
+- **`ship.py preflight` forecasts every state refusal in the list `open`
+  runs before its push.** Its forecasts were a hand-kept copy of `open`'s
+  checks and missed five, the one-pull-request-per-seat hold among them.
+  `open`'s state refusals are now one list, `PRE_PUSH_CHECKS`, which `open`
+  runs and `preflight` forecasts in `open`'s own words; the refusals of the
+  steps after it (the merge-first step, the deletion check, the marker) are
+  said where they happen. A test follows `open_pr`'s calls down to its push,
+  so a refusal added outside the list and its named allowlist fails.
