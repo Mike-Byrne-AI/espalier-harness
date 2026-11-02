@@ -340,6 +340,20 @@ class TestEveryBlockHasAPhase:
                     kept |= {k.value for k in kw.value.keys if isinstance(k, ast.Constant)}
         assert kept == rendered, (sorted(rendered - kept), sorted(kept - rendered))
 
+    def test_every_deadline_in_run_main_is_clipped(self):
+        """DEF-5051's failure-mode review: a block given a fresh deadline of its
+        own (`time.monotonic() + X`) beside the network budget passes the sum
+        pin, which reads the module's constants. Every such deadline in
+        ``_run_main`` sits inside a ``min(...)`` with the budget it is part of."""
+        def fresh(n):
+            return (isinstance(n, ast.BinOp) and isinstance(n.op, ast.Add) and isinstance(n.left, ast.Call)
+                    and getattr(n.left.func, "attr", "") == "monotonic")
+        func = self._func("_run_main")
+        every = {id(n) for n in ast.walk(func) if fresh(n)}
+        clipped = {id(n) for c in ast.walk(func) if isinstance(c, ast.Call) and getattr(c.func, "id", "") == "min"
+                   for a in c.args for n in ast.walk(a) if fresh(n)}
+        assert every and every == clipped, len(every - clipped)
+
     def test_every_handler_in_run_main_is_inside_a_named_phase(self):
         phases = {c.args[0].value for c in self._phase_calls() if c.args and isinstance(c.args[0], ast.Constant)}
         labels = {n.args[0].value.removeprefix("session_start: ").removesuffix(" failed")
@@ -347,3 +361,143 @@ class TestEveryBlockHasAPhase:
                   and getattr(n.func, "id", "") == "_late_load_failed"
                   and n.args and isinstance(n.args[0], ast.Constant)}
         assert labels and not labels - phases - self._ONE_PHASE, sorted(labels - phases - self._ONE_PHASE)
+
+
+class TestTheMailIsReadBeforeThePullRequests:
+    """DEF-5051: the seat naming, the mail and the orders read first, under a
+    share of the one network budget of their own, and the pull-request block
+    takes what they leave. They read last, on what the two `gh pr list` reads
+    left, so a slow `gh` cost a worker seat its `Mail:` and `Orders:` lines
+    first (win's banner, 2026-10-31), while the pull-request lines it kept are
+    the ones `/inbox board` reads anyway. In-process starts with the network
+    budget shrunk, so a row costs about as long as that budget."""
+
+    _BUDGET_SECONDS = 1.5
+
+    def _start(self, tmp_path, monkeypatch, *, read_prs, fetch_mail, share=None, spent=None):
+        """One in-process start; ``share`` patches the mail's share, ``spent``
+        starts the hook's clock that many seconds ago (kept as ``self.hook_start``)."""
+        import time
+
+        repo = _tree(tmp_path)
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+        monkeypatch.setenv("ESPALIER_SESSION_CATCH_UP", "0")
+        monkeypatch.syspath_prepend(str(HOOKS_DIR.parent))
+        monkeypatch.syspath_prepend(str(HOOKS_DIR))
+        import types
+
+        import session_start as ss
+
+        win = {"id": "20261101T000000Z-win-aaaaaa", "from": "win", "type": "note", "text": "the fixture hang", "re": {}}
+        job = {"id": "20261101T000000Z-air-bbbbbb", "from": "air", "type": "assign", "text": "",
+               "re": {"lane": "lane/the-job-the-banner-names", "seat": "mac"}}
+        mail = types.SimpleNamespace(
+            machine_setting=lambda root, timeout=None: ("mac", "git config espalier.machine = mac"),
+            fetch_mail=fetch_mail,
+            read_mail=lambda root, timeout=None: ({"win": [win], "air": [job]}, {}),
+            local_mail_machines=lambda root, timeout=None: [],
+            read_cursor=lambda root: {},
+            unread=lambda by, cursor, exclude_machine: [win],
+            headline=lambda m: f"{m['from']}: {m['type']} -- \"{m['text']}\"",
+            dispatcher_setting=lambda root: ("air", "espalier.toml dispatcher = air"),
+            live_assignments=lambda by, dispatcher: [job],
+        )
+        monkeypatch.setattr(ss, "_PR_BLOCK_BUDGET_SECONDS", self._BUDGET_SECONDS)
+        monkeypatch.setattr(ss, "_load_mail", lambda: mail)
+        monkeypatch.setattr(ss, "_read_open_prs", read_prs)
+        monkeypatch.setattr(ss, "_read_merged_prs", read_prs)
+        monkeypatch.setattr(ss, "_read_merge_rules", lambda *args, **kwargs: ("", -1, ""))
+        monkeypatch.setattr(ss, "_engine_line", lambda *args, **kwargs: "")
+        if share is not None:
+            monkeypatch.setattr(ss, "_MAIL_SHARE_SECONDS", share)
+        monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"source": "resume", "session_id": "t-def5051"})))
+        self.hook_start = None if spent is None else time.monotonic() - spent
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            assert ss.main(self.hook_start) == 0
+        banners = _banners(buf.getvalue())
+        assert len(banners) == 1, buf.getvalue()[:800]
+        return banners[0]
+
+    def test_a_slow_gh_costs_the_pull_request_lines_and_never_the_mail_or_the_orders(self, tmp_path, monkeypatch):
+        """Must-deny: a `gh` that takes every second it is given. Dies to: the
+        mail read after the pull-request block, on what it left."""
+        import time
+
+        def slow_gh(root, deadline=None):
+            time.sleep(max(0.0, deadline - time.monotonic()))
+            return ""
+
+        banner = self._start(tmp_path, monkeypatch, read_prs=slow_gh, fetch_mail=lambda root, timeout: (True, ""))
+        assert 'Mail:      win: note -- "the fixture hang"' in banner, banner[:1500]
+        assert "Orders:    mac: 1 job from air, first lane/the-job-the-banner-names; 1 unread" in banner, banner[:1500]
+
+    def test_the_pull_request_block_takes_what_the_mail_left_and_no_more(self, tmp_path, monkeypatch):
+        """Must-not: the mail's share comes out of the one budget, never beside
+        it, so the hook's network time stays the budget the sum pin counts.
+        Dies to: a fresh pull-request deadline taken after the mail."""
+        import time
+
+        entered: list[float] = []
+        deadlines: list[float] = []
+
+        def fast_gh(root, deadline=None):
+            entered.append(time.monotonic())
+            deadlines.append(deadline)
+            return ""
+
+        def slow_fetch(root, timeout):
+            entered.append(time.monotonic())
+            time.sleep(0.5)
+            return True, ""
+
+        self._start(tmp_path, monkeypatch, read_prs=fast_gh, fetch_mail=slow_fetch)
+        assert deadlines, "the pull-request block read nothing"
+        assert max(deadlines) <= min(entered) + self._BUDGET_SECONDS + 0.2, (min(entered), deadlines)
+
+    def test_the_mail_stops_at_its_share_and_the_pull_requests_get_the_rest(self, tmp_path, monkeypatch):
+        """Must-deny: with the share under the budget, a fetch that hangs is
+        given the share and no more, and the pull-request reads start once it
+        is spent. Dies to: the mail read under the whole deadline (a hung
+        config read, fetch and refs read could take seven of the eight seconds)."""
+        import time
+
+        seen: dict = {}
+
+        def hung_fetch(root, timeout):
+            seen["fetch"] = (time.monotonic(), timeout)
+            time.sleep(timeout)
+            return False, "timed out"
+
+        def gh(root, deadline=None):
+            seen.setdefault("gh", time.monotonic())
+            return ""
+
+        self._start(tmp_path, monkeypatch, read_prs=gh, fetch_mail=hung_fetch, share=0.5)
+        start, timeout = seen["fetch"]
+        assert timeout <= 0.5, timeout
+        assert seen["gh"] - start <= 0.5 + 0.3, (start, seen["gh"])
+
+    def test_both_deadlines_stop_at_the_hooks_budget(self, tmp_path, monkeypatch):
+        """Must-deny: a start that has already spent most of the hook's budget
+        (a slow catch-up, or a fresh start's child) gives the mail and the pull
+        requests only what is left of it. Dies to: either deadline unclipped."""
+        import time
+
+        seen: dict = {}
+
+        def fetch(root, timeout):
+            seen["fetch_ends"] = time.monotonic() + timeout
+            return True, ""
+
+        def gh(root, deadline=None):
+            seen.setdefault("pr", deadline)
+            return ""
+
+        import session_start as ss
+
+        budget = ss._HOOK_BUDGET_SECONDS
+        self._start(tmp_path, monkeypatch, read_prs=gh, fetch_mail=fetch, spent=budget - 1.0)
+        limit = self.hook_start + budget + 0.05
+        assert seen["fetch_ends"] <= limit, (seen, limit)
+        assert seen["pr"] <= limit, (seen, limit)
