@@ -42,7 +42,12 @@ from pathlib import Path
 
 from espalier._atomic_io import atomic_write_text, lock_file, unlock_file
 from espalier._text import os_error_text
-from espalier.surface_contract import get_protected_mutation_paths, get_protected_mutation_prefixes
+from espalier.surface_contract import (
+    get_protected_mutation_paths,
+    get_protected_mutation_prefixes,
+    get_runtime_protected_prefixes,
+    is_self_host_repo,
+)
 
 STATE_DIR = ".espalier-state"
 RECORD_DIR = "zone_writes"
@@ -153,7 +158,9 @@ def _watched(root: Path) -> tuple[list[str], list[str], frozenset[str]]:
     try:
         for entry in load_config(root).protected_paths:
             prefix = entry.strip().replace("\\", "/").rstrip("/") + "/"
-            if prefix != "/" and not prefix.startswith(("/", "../")) and prefix not in prefixes:
+            while prefix.startswith("./"):
+                prefix = prefix[2:]  # the hook's spelling of the same top
+            if prefix and prefix != "/" and not prefix.startswith(("/", "../")) and prefix not in prefixes:
                 prefixes.append(prefix)
     except (OSError, ValueError):
         pass  # an unreadable config adds no prefix; a write there reports rather than hides
@@ -168,33 +175,81 @@ def _watched(root: Path) -> tuple[list[str], list[str], frozenset[str]]:
 TRACKED_READ_TIMEOUT_S = 30
 
 
-def _tracked_dirs(root: Path, prefixes: list[str]) -> frozenset[str]:
+#: The git variables that would point a nested checkout's ``ls-files`` at
+#: another repository (``_zone_watch._GIT_LOCATION_VARS``).
+_GIT_LOCATION_VARS = frozenset({"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+                                "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"})
+
+
+#: ``_zone_watch._LITERAL_ICASE``: each pathspec read as written, in any case.
+_LITERAL_ICASE = ":(literal,icase)"
+
+
+def _is_checkout(path: Path) -> bool:
+    """``_hook_utils._git_dir_of`` answers one: a ``.git`` directory, or a
+    ``.git`` file whose first line is a ``gitdir:`` naming one. A ``.git``
+    file that is neither is no checkout, on both twins."""
+    marker = path / ".git"
+    try:
+        if marker.is_dir():
+            return True
+        if not marker.is_file():
+            return False
+        lines = marker.read_text(encoding="utf-8", errors="replace").splitlines()
+    except (OSError, ValueError):
+        return False
+    line = lines[0].strip() if lines else ""
+    return line.startswith("gitdir:") and bool(line[len("gitdir:"):].strip())
+
+
+def _pathspecs(checkout: str, prefixes: list[str]) -> list[str] | None:
+    """``_zone_watch._pathspecs``: ``prefixes`` as the checkout at
+    ``checkout`` names them (none at all where a prefix holds it, else each
+    prefix inside it read from it; None where no prefix meets it)."""
+    if not checkout:
+        return list(prefixes)
+    head = checkout + "/"
+    if any(head.startswith(p) for p in prefixes):
+        return []
+    inside = [p[len(head):] for p in prefixes if p.startswith(head)]
+    return inside or None
+
+
+def _tracked_dirs(root: Path, prefixes: list[str], checkout: str = "") -> frozenset[str]:
     """``_zone_watch.tracked_dirs``: every directory holding a path git
     tracks under ``prefixes``, from one ``git ls-files -z`` run at a root
-    holding a ``.git`` of its own, its pathspecs read literally; a
-    directory's own ``.gitignore`` does not hold it, and a name in bytes the
-    filesystem spells otherwise is kept undecoded; empty where the root has no
+    holding a ``.git`` of its own, its pathspecs read literally and in any
+    case; with ``checkout``, from that nested checkout's own index over the part of
+    ``prefixes`` it holds, each name read from ``root``; a directory's own
+    ``.gitignore`` does not hold it, and a name in bytes the filesystem
+    spells otherwise is kept undecoded; empty where the checkout has no
     ``.git`` or git cannot answer, so the declared directories prune as before.
     The hook's read answers a fault with None and its walk says so; this one
-    keeps the empty set, the loud side (above), and ``_stats`` reads None as
-    a read not yet made, so a None here would re-read at every declaration."""
+    keeps the empty set, the loud side (above), and ``_stats`` reads each
+    checkout once, so a None here would re-read at every declaration."""
     import subprocess
 
-    from espalier._safe_walk import is_own_git_repo
     from espalier._spawn import run_no_stdin
 
-    if not is_own_git_repo(root):
+    where = root / checkout if checkout else root
+    specs = _pathspecs(checkout, prefixes)
+    if specs is None or not _is_checkout(where):
         return frozenset()
+    env = {k: v for k, v in os.environ.items() if k not in _GIT_LOCATION_VARS} if checkout else None
     try:
-        result = run_no_stdin(["git", "--literal-pathspecs", "ls-files", "-z", "--", *prefixes],
-                              cwd=str(root), capture_output=True, timeout=TRACKED_READ_TIMEOUT_S, check=False)
+        result = run_no_stdin(["git", "ls-files", "-z", "--", *(_LITERAL_ICASE + s for s in specs)],
+                              cwd=str(where), env=env, capture_output=True, timeout=TRACKED_READ_TIMEOUT_S,
+                              check=False)
     except (OSError, subprocess.SubprocessError):
         return frozenset()  # no tracked set: the walk prunes as it did before git was asked
     if result.returncode != 0:
         return frozenset()
+    head = checkout + "/" if checkout else ""
     dirs: set[str] = set()
     for raw in result.stdout.split(b"\0"):
-        rel = raw.decode("utf-8", "surrogateescape")
+        if not raw:
+            continue
+        rel = head + raw.decode("utf-8", "surrogateescape")
         if rel.rsplit("/", 1)[-1] == SELF_IGNORE_FILE:
             rel = rel.rsplit("/", 1)[0] if "/" in rel else ""  # its directory's ancestors only
         while "/" in rel:
@@ -205,14 +260,64 @@ def _tracked_dirs(root: Path, prefixes: list[str]) -> frozenset[str]:
     return frozenset(dirs)
 
 
+def _fold(name: str) -> str:
+    """``_zone_watch._fold``: ``name`` with its case and Unicode form folded."""
+    import unicodedata
+
+    return unicodedata.normalize("NFC", name).casefold()
+
+
+@functools.lru_cache(maxsize=8)
+def _fold_index(tracked: frozenset[str]) -> dict[str, tuple[str, ...]]:
+    """``_zone_watch._fold_index``: ``tracked`` by folded name, built once a set."""
+    index: dict[str, list[str]] = {}
+    for name in tracked:
+        index.setdefault(_fold(name), []).append(name)
+    return {key: tuple(names) for key, names in index.items()}
+
+
+def _is_tracked_dir(root: Path, base: str, tracked: frozenset[str]) -> bool:
+    """``_zone_watch._is_tracked_dir``: ``tracked`` names the walked
+    directory ``base`` by its spelling, or by a name that folds to it and
+    that the filesystem resolves to the same directory (a case-only rename,
+    git's composed name over a decomposed one); two directories the
+    filesystem keeps apart stay apart."""
+    if base in tracked:
+        return True
+    for name in _fold_index(tracked).get(_fold(base), ()):
+        try:
+            if os.path.samefile(root / name, root / base):
+                return True
+        except (OSError, ValueError):
+            continue  # a name that resolves to nothing here is not this directory
+    return False
+
+
+def _tracking_checkout(root: Path, base: str, tops: tuple[str, ...], harness: tuple[str, ...]) -> str:
+    """``_zone_watch._tracking_checkout``: the nearest of ``base`` and its
+    ancestors holding a ``.git`` of its own, where a nested git may answer
+    (under an adopter's protected top ``tops`` and in none of the harness's
+    zones ``harness``), else ``""``, the root."""
+    rel = base + "/"
+    if tops and rel.startswith(tops) and not rel.startswith(harness):
+        parts = base.split("/")
+        for depth in range(len(parts), 0, -1):
+            top = "/".join(parts[:depth])
+            if _is_checkout(root / top):
+                return top
+    return ""
+
+
 def _stats(root: Path, prior: dict[str, tuple[int, int]] | None = None) -> dict[str, tuple[int, int]]:
     """The watched files' stats; ``prior`` (the run's before-stats) keeps a
     directory that declared itself generated during the run walked, as the
     hook's walk keeps one the baseline holds files under, and with no
     ``prior`` a declared directory holding a path git tracks is walked, as the
-    hook's fresh baseline walks it (one index read, at the first declaration)."""
+    hook's fresh baseline walks it: one index read for each checkout, at the
+    first declaration in it, the root's or, in an adopter's zone, a nested
+    checkout's own, and a name matched to the directory it is."""
     out: dict[str, tuple[int, int]] = {}
-    tracked: frozenset[str] | None = None
+    reads: dict[str, frozenset[str]] = {}
 
     def take(rel: str, full: str) -> None:
         try:
@@ -223,6 +328,10 @@ def _stats(root: Path, prior: dict[str, tuple[int, int]] | None = None) -> dict[
             out[rel] = (st.st_size, st.st_mtime_ns)
 
     prefixes, files, pruned = _watched(root)
+    # The hook's scope (_zone_watch._nest_scope): the adopter's tops, and the
+    # harness's prefixes as write_guard applies them to this kind of tree.
+    tops = tuple(p for p in prefixes if p not in get_protected_mutation_prefixes())
+    harness = get_runtime_protected_prefixes(is_self_host_repo(root))
     for prefix in prefixes:
         at_top = True
         # nested-repo-ok the recorder must walk exactly the hook's set (_zone_watch.snapshot), which enters a nested checkout under a protected path
@@ -230,9 +339,13 @@ def _stats(root: Path, prior: dict[str, tuple[int, int]] | None = None) -> dict[
             base = Path(dirpath).relative_to(root).as_posix()
             if (not at_top and is_self_ignoring(Path(dirpath))
                     and not any(rel.startswith(base + "/") for rel in (prior or {}))):
-                if prior is None and tracked is None:
-                    tracked = _tracked_dirs(root, prefixes)
-                if tracked is None or base not in tracked:
+                tracked: frozenset[str] | None = None
+                if prior is None:
+                    checkout = _tracking_checkout(root, base, tops, harness)
+                    if checkout not in reads:
+                        reads[checkout] = _tracked_dirs(root, prefixes, checkout)
+                    tracked = reads[checkout]
+                if tracked is None or not _is_tracked_dir(root, base, tracked):
                     dirnames[:] = []  # generated by its own declaration and never recorded: as the hook's walk reads it
                     continue
             at_top = False
