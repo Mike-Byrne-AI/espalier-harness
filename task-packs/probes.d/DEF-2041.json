@@ -1,10 +1,13 @@
 {
  "id": "DEF-2041",
  "subject": "tools/cc/hooks/_hook_utils.py",
- "cmd": null,
- "open_value": null,
- "why_not": "each site's wrong decision is taken after a gh read a local probe cannot make: `ship.py open` reads own after its open pull request listing (ship.py 2511, 2534-2538) and the gate's hold and re-check read gh's listing (stop_gate.py 1626); the local reading the fix confirms is correct as the clone's last sight of origin and stays so, so a probe of it never closes; the fixtures the row names reproduce it, and the strike's proof is the tests its fix shape names, gh stubbed",
- "row_sha": "5a0534133c64",
- "text_sha": "b8397ddd900b",
- "verified_2026_11_02": "OPEN (filed 2026-11-02; probe driven at filing)"
+ "cmd": "python3 -c \"import os,sys,io,json,types,subprocess,tempfile,pathlib as P;t=P.Path(tempfile.mkdtemp());os.environ['ESPALIER_AUDIT_DIR']=str(t/'audit');sys.path.insert(0,'tools/cc/hooks');import stop_gate as s;h=s._hook_utils;o=t/'o.git';c=t/'c';G=lambda *a,cwd=c:subprocess.run(['git','-c','user.name=p','-c','user.email=p@p','-c','init.defaultBranch=main',*a],cwd=str(cwd),check=True,capture_output=True,text=True).stdout.strip();A=lambda *a:(lambda r:r.stdout.strip() if r.returncode==0 else None)(subprocess.run(['git',*a],cwd=str(c),capture_output=True,text=True));N=lambda n:(G('switch','-q','-c',n,'--track','origin/main'),G('commit','-q','--allow-empty','-m',n),G('push','-q','origin','HEAD'));G('init','-q','--bare',str(o),cwd=t);G('init','-q',str(c),cwd=t);G('commit','-q','--allow-empty','-m','a');G('remote','add','origin',str(o));G('push','-q','-u','origin','main');N('lane/x');G('switch','-q','main');G('merge','-q','--no-ff','lane/x','-m','merge x');G('push','-q','origin','main');G('branch','-D','lane/x',cwd=o);G('fetch','-q','origin');G('branch','-D','lane/x');G('switch','-q','-c','lane/x','--track','origin/main');G('commit','-q','--allow-empty','-m','x2');A('for-each-ref','refs/remotes/origin/lane/x') or sys.exit('control: no stale ref of the lane name');f1=h.lane_upstream(A,'lane/x')[1];N('lane/h');(c/'espalier.toml').write_text('handoff_push = true\\n');s._hold_write(c,A('rev-parse','HEAD'),'lane/h','win',['#41 (lane/first)'],1);s.HOLD_CLOCK=lambda:1e12;d=types.ModuleType('ship');d.__file__=str(P.Path(s.__file__).resolve().parents[1]/'ship.py');d.handoff_push_setting=lambda r:(True,'');d.OPEN_PR_FIELDS='number,headRefName,labels';d.seat_name=lambda r,**k:('win','');d.seat_open_prs=lambda r,b,p,**k:('win',[]);sys.modules['ship']=d;R=h.spawn_checked;h.spawn_checked=lambda a,**k:subprocess.CompletedProcess(a,0,json.dumps([{'number':41,'headRefName':'lane/first','labels':[]}]),'') if a and a[0]=='gh' else R(a,**k);w=sys.stdout;sys.stdout=io.StringIO();rc=s._gate_handoff(c);sys.stdout=w;print('face1_own=%s face2_gate_rc=%s'%(f1,rc))\"",
+ "open_value": "face1_own=True face2_gate_rc=0",
+ "why_not": null,
+ "row_sha": "da1908438c48",
+ "text_sha": "fe230657fb27",
+ "verified_2026_11_02": "STILL_OPEN (re-pinned None -> 'face1_own=True face2_gate_rc=0'; inputs None -> ['tools/cc/hooks/_hook_utils.py'] on 2026-11-02: the dispatcher's notes 63cf3d and a6e450 corrected the fix shape: face 1 is a merged check inside lane_upstream with no new gh read, face 2 is this row's and blocks from the re-check's own listing; the why-not probe becomes one that lays both faces, and the lines are 8d61a600's) [changed: probe, open value, text, inputs]",
+ "inputs": [
+  "tools/cc/hooks/_hook_utils.py"
+ ]
 }
