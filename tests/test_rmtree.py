@@ -19,6 +19,7 @@ import errno
 import os
 import shutil
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -27,6 +28,7 @@ from espalier import _rmtree
 from tests._locked import locked
 
 _RX = stat.S_IRUSR | stat.S_IXUSR  # a directory that lists and traverses but refuses a delete
+_SHUT = 0  # a directory the walk cannot even enter: no read, no search, no write
 
 
 def _tree(root: Path) -> Path:
@@ -99,6 +101,148 @@ class TestRemoveTreeOnTheHost:
         with pytest.raises(FileNotFoundError):
             _rmtree.remove_tree(tmp_path / "absent")
         _rmtree.remove_tree(tmp_path / "absent", best_effort=True)
+
+
+def _shut_tree(root: Path) -> Path:
+    """``root/pack/`` holding a file and ``shut/``, which holds a file and a
+    nested dir with a file: the walk has to go deep after it gets back in."""
+    pack = root / "pack"
+    (pack / "shut" / "inner").mkdir(parents=True)
+    (pack / "a.pack").write_bytes(b"pack")
+    (pack / "shut" / "b.idx").write_bytes(b"idx")
+    (pack / "shut" / "inner" / "c.rev").write_bytes(b"rev")
+    return pack
+
+
+@pytest.fixture(params=["onexc", "onerror"])
+def spelling(request, monkeypatch):
+    """``rmtree``'s callback spelling. The interpreter's own is left alone, so
+    a row reds on an unfixed deleter by what the deleter does; the other is
+    forced through the seam (3.12+ still takes the deprecated ``onerror``)."""
+    native = "onexc" if sys.version_info >= (3, 12) else "onerror"
+    if request.param == "onexc" and native == "onerror":
+        pytest.skip("rmtree grew onexc in 3.12")
+    if request.param != native:
+        monkeypatch.setattr(_rmtree, "_HAS_ONEXC", request.param == "onexc")
+    return request.param
+
+
+@pytest.fixture(params=["fd", "scandir"])
+def walk(request, monkeypatch):
+    """``rmtree``'s walk: the fd walk opens a directory (``os.open``) before
+    it deletes inside it; the walk Windows uses lists it (``os.scandir``),
+    forced here through the stdlib's own switch so a host that can shut a
+    directory drives it (3.14 picks the walk at import, 3.10 to 3.13 at
+    each call)."""
+    if request.param == "fd":
+        if not getattr(shutil, "_use_fd_functions", False):
+            pytest.skip("this host's rmtree has no fd walk")
+    elif hasattr(shutil, "_rmtree_impl"):
+        monkeypatch.setattr(shutil, "_rmtree_impl", shutil._rmtree_unsafe)
+    else:
+        monkeypatch.setattr(shutil, "_use_fd_functions", False)
+    return request.param
+
+
+class TestADirectoryTheWalkCannotEnter:
+    """DEF-5054: a directory with no read bit refuses the call that enters
+    it, and the handler once retried that call bare -- ``os.open(path)``,
+    which needs its flags, so the delete escaped every ``except OSError``
+    (best effort included) as a ``TypeError``. The directory is inside what
+    was asked for: its owner bits come back and it is walked again, once."""
+
+    @pytest.mark.parametrize("best_effort", [False, True], ids=["strict", "best_effort"])
+    def test_a_shut_directory_inside_the_tree_is_cleared_and_the_tree_goes(
+        self, tmp_path, walk, spelling, best_effort
+    ):
+        pack = _shut_tree(tmp_path)
+        parent_mode = _mode(tmp_path)
+        with locked(pack / "shut", _SHUT):
+            _rmtree.remove_tree(pack, best_effort=best_effort)
+            assert not os.path.exists(pack), "the shut directory kept the tree"
+            # ``locked`` restores the bits in its ``finally``: give it a target.
+            (pack / "shut").mkdir(parents=True)
+        assert _mode(tmp_path) == parent_mode, "the tree's own parent was chmod'ed"
+
+    def test_a_directory_whose_bits_cannot_come_back_is_reported(
+        self, tmp_path, monkeypatch, walk, spelling
+    ):
+        """Someone else's directory: the chmod refuses, so the second walk
+        meets the same refusal. Strict raises it, chained to the first, and
+        walks no third time; best effort is quiet and leaves the tree."""
+        pack = _shut_tree(tmp_path)
+        tried: list[str] = []
+
+        def not_the_owner(path, mode, *a, **k):
+            tried.append(os.fspath(path))
+            raise PermissionError(errno.EPERM, "not the owner", str(path))
+
+        with locked(pack / "shut", _SHUT):
+            with monkeypatch.context() as m:
+                m.setattr(os, "chmod", not_the_owner)
+                with pytest.raises(PermissionError) as info:
+                    _rmtree.remove_tree(pack)
+                assert tried.count(str(pack / "shut")) == 1, f"walked again more than once: {tried}"
+                _rmtree.remove_tree(pack, best_effort=True)
+            assert isinstance(info.value.__cause__, PermissionError), "the first refusal is chained"
+            assert os.path.isdir(pack / "shut"), "a directory it could not open was deleted"
+
+    def test_a_directory_that_lists_but_cannot_be_searched_is_cleared_or_reported(
+        self, tmp_path, walk, spelling
+    ):
+        """No search bit: the walk opens and lists it, then every entry
+        refuses. Some walks hand that refusal back as the directory's own
+        entry call and it is walked again; strict then ends cleared or with a
+        ``PermissionError``, never the ``FileNotFoundError`` of an entry the
+        walk had queued inside it (3.12's fd walk did, before the skip
+        covered a re-walked directory's insides)."""
+        pack = _shut_tree(tmp_path)
+        with locked(pack / "shut", stat.S_IRUSR | stat.S_IWUSR):
+            try:
+                _rmtree.remove_tree(pack)
+            except PermissionError:
+                assert os.path.isdir(pack / "shut"), "reported, so the directory is still there"
+            else:
+                assert not os.path.exists(pack), "no error, so the tree must be gone"
+                (pack / "shut").mkdir(parents=True)
+
+    def test_a_deeper_refusal_keeps_its_own_cause(self, tmp_path, monkeypatch, walk, spelling):
+        """A shut directory inside a shut directory, the inner one's bits not
+        ours to change: the raise names the inner directory and is chained
+        to the inner directory's first refusal, not the outer one's."""
+        inner = tmp_path / "pack" / "outer" / "inner"
+        inner.mkdir(parents=True)
+        (inner / "f").write_bytes(b"x")
+        real_chmod = os.chmod
+
+        def not_the_inner_owner(path, mode, *a, **k):
+            if os.path.normpath(os.fspath(path)) == os.path.normpath(str(inner)):
+                raise PermissionError(errno.EPERM, "not the owner", os.fspath(path))
+            return real_chmod(path, mode, *a, **k)
+
+        with locked(inner, _SHUT), locked(inner.parent, _SHUT):
+            with monkeypatch.context() as m:
+                m.setattr(os, "chmod", not_the_inner_owner)
+                with pytest.raises(PermissionError) as info:
+                    _rmtree.remove_tree(tmp_path / "pack")
+        # 3.10 and 3.11's fd walk stamp the entry's own name, relative to its dir_fd.
+        assert os.path.basename(os.fspath(info.value.filename)) == "inner"
+        cause = info.value.__cause__
+        assert isinstance(cause, PermissionError), cause
+        assert os.path.basename(os.fspath(cause.filename)) == "inner", "chained to the outer directory's refusal"
+
+    def test_best_effort_swallows_a_walk_nested_too_deep_and_strict_raises_it(self, tmp_path, monkeypatch):
+        """A chain of shut directories nests one walk per level; past the
+        interpreter's depth that is a ``RecursionError``, which best effort
+        must not let escape over a fault it is already handling."""
+
+        def too_deep(path, **kwargs):
+            raise RecursionError("maximum recursion depth exceeded")
+
+        monkeypatch.setattr(shutil, "rmtree", too_deep)
+        with pytest.raises(RecursionError):
+            _rmtree.remove_tree(tmp_path / "pack")
+        _rmtree.remove_tree(tmp_path / "pack", best_effort=True)
 
 
 class TestRemoveFileOnTheHost:
@@ -268,6 +412,43 @@ class TestTheHandler:
         _rmtree._make_handler(True, str(tmp_path))(func, str(tmp_path / "f"), exc)
         assert calls == [], "never retried"
 
+    @pytest.mark.parametrize("enter", [os.open, os.scandir], ids=["open", "scandir"])
+    @pytest.mark.parametrize("best_effort", [False, True], ids=["strict", "best_effort"])
+    def test_a_refused_entry_walks_the_directory_again_never_retries_it_bare(
+        self, tmp_path, enter, best_effort
+    ):
+        """``func(path)`` is not the call that refused when ``func`` enters a
+        directory (``os.open`` needs its flags): the directory is walked
+        again instead, and the walk's own later ``rmdir`` of it (3.10 to
+        3.12 make one) finds nothing and is not a fault, strict included."""
+        root = tmp_path / "tree"
+        (root / "shut" / "inner").mkdir(parents=True)
+        (root / "shut" / "inner" / "f").write_text("x", encoding="utf-8")
+        handler = _rmtree._make_handler(best_effort, str(root))
+
+        handler(enter, str(root / "shut"), PermissionError(errno.EACCES, "refused", str(root / "shut")))
+
+        assert not os.path.exists(root / "shut")
+        assert os.path.isdir(root), "only the refused directory was walked"
+        handler(os.rmdir, str(root / "shut"), FileNotFoundError(errno.ENOENT, "gone", str(root / "shut")))
+
+    def test_a_refused_entry_of_something_not_a_directory_is_reported_untouched(self, tmp_path):
+        target = tmp_path / "f"
+        target.write_text("x", encoding="utf-8")
+        os.chmod(target, stat.S_IRUSR)
+        before = _mode(target)  # 0o400 on POSIX; the read-only attribute reads 0o444 on Windows
+        refused = PermissionError(errno.EACCES, "refused", str(target))
+        with pytest.raises(PermissionError) as info:
+            _rmtree._make_handler(False, str(tmp_path))(os.open, str(target), refused)
+        assert info.value is refused
+        _rmtree._make_handler(True, str(tmp_path))(os.open, str(target), refused)
+        assert os.path.exists(target) and _mode(target) == before, "its bits were changed"
+
+    def test_a_file_not_found_on_a_directory_never_walked_again_still_raises_strict(self, tmp_path):
+        gone = FileNotFoundError(errno.ENOENT, "gone", str(tmp_path / "d"))
+        with pytest.raises(FileNotFoundError):
+            _rmtree._make_handler(False, str(tmp_path))(os.rmdir, str(tmp_path / "d"), gone)
+
     def test_the_write_bit_is_added_and_the_other_bits_kept(self, tmp_path):
         target = tmp_path / "f"
         target.write_text("x", encoding="utf-8")
@@ -296,6 +477,32 @@ class TestBothSpellingsOfTheStdlibSeam:
     """3.12 grew ``onexc``; the floor is 3.10, where only ``onerror`` exists.
     Whichever this interpreter has, the handler must be reached with the
     ``(func, path, exception)`` shape."""
+
+    @pytest.mark.parametrize("has_onexc", [True, False], ids=["onexc", "onerror"])
+    def test_the_seam_picks_the_spelling_and_the_handler_gets_an_exception(
+        self, tmp_path, monkeypatch, has_onexc
+    ):
+        """The seam the walk rows force a spelling through: each one reaches
+        the handler with the exception, never the ``exc_info`` tuple."""
+        seen: list = []
+        used: list = []
+
+        def fake_rmtree(path, onexc=None, onerror=None):
+            used.append("onexc" if onexc is not None else "onerror")
+            err = PermissionError(errno.EACCES, "refused", str(path))
+            if onexc is not None:
+                onexc(os.unlink, str(path), err)
+                return
+            try:
+                raise err
+            except PermissionError:
+                onerror(os.unlink, str(path), sys.exc_info())
+
+        monkeypatch.setattr(_rmtree, "_HAS_ONEXC", has_onexc)
+        monkeypatch.setattr(shutil, "rmtree", fake_rmtree)
+        _rmtree._rmtree_with_handler(tmp_path, lambda func, path, exc: seen.append(exc))
+        assert used == ["onexc" if has_onexc else "onerror"]
+        assert len(seen) == 1 and isinstance(seen[0], PermissionError)
 
     def test_the_handler_receives_an_exception_not_a_tuple(self, tmp_path, monkeypatch):
         seen: list = []

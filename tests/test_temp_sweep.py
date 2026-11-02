@@ -1,9 +1,9 @@
 """The session-start sweep of the temp dirs a killed test run left (DEF-5053).
 
 ``tests/_temp_sweep.py`` removes, at the controller's configure, each dir under
-pytest's root (``pytest-*``, ``garbage-*``) and each work dir of the two makers
-that lock theirs (``espalier-archive-probe-*``, ``checkout-copy-*``) whose
-``.lock`` names a dead pid. These rows pin that sweep because pytest keeps such
+pytest's root (``pytest-*``, ``garbage-*``) and each work dir of the makers
+that lock theirs (the prefixes on ``OWNED_PREFIXES``) whose ``.lock`` names
+a dead pid, and a census holds every other temp-dir maker to a reason. These rows pin that sweep because pytest keeps such
 a dir for 72 h by its lock's age alone, and 13 of them held 32 GB on one seat's
 machine; they guard what it must keep (a live or unknown pid, an unlocked dir,
 a link, ``pytest-current``) and that pytest still writes the lock it reads. The
@@ -24,6 +24,7 @@ import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from typing import NamedTuple
 
 import pytest
 
@@ -213,14 +214,15 @@ class TestWhenItStandsDown:
 
     def test_loading_checkout_sync_leaves_the_import_path_and_the_bare_names_alone(self):
         """In a fresh interpreter, where neither ``tools/cc`` on the path nor
-        ``_json_safe`` was there before the load."""
+        ``_json_safe`` was there before the load. The census folds case as the
+        prefix does (``normcase`` lowercases on Windows, DEF-5059)."""
         program = (
-            "import json, sys\n"
+            "import json, os, sys\n"
             f"sys.path.insert(0, {str(REPO_ROOT)!r})\n"
             "from tests import _temp_sweep as ts\n"
             "path, names = list(sys.path), set(sys.modules)\n"
             "alive = ts.pid_alive()\n"
-            "cc = lambda m: (getattr(m, '__file__', None) or '').replace(chr(92), '/').startswith(ts._TOOLS_CC_PREFIX)\n"
+            "cc = lambda m: os.path.normcase(getattr(m, '__file__', None) or '').replace(chr(92), '/').startswith(ts._TOOLS_CC_PREFIX)\n"
             "added = sorted(n for n in set(sys.modules) - names if cc(sys.modules[n]))\n"
             "print(json.dumps({'path_kept': sys.path == path, 'added_from_tools_cc': added,"
             " 'self_alive': alive(__import__('os').getpid())}))\n"
@@ -246,6 +248,242 @@ class TestTheMakersLockTheirWorkDirs:
         assert ts.lock_pid(holder) == os.getpid()
         assert (copy / "pyproject.toml").is_file()
         assert list(copy.rglob(ts.LOCK_NAME)) == []
+
+
+#: The calls that make a temp dir (a temp file is not read).
+_DIR_MAKERS = frozenset({"mkdtemp", "TemporaryDirectory"})
+#: Where the census reads: the trees whose runs leave work dirs on a seat's box.
+_MAKER_TREES = ("tests", "scripts", "bench", "tools/cc")
+#: The makers the census finds at the pin; under half is a broken scan, over
+#: twice a population the pin no longer describes.
+_MAKERS_AT_PIN = 49  # 2026-11-02, aliases included
+#: Each maker that writes no lock, EXACT, ``file::function`` -> why its dir
+#: needs none. An unlocked maker missing here reds, and so does an entry whose
+#: function no longer makes an unlocked dir.
+_CM_SMALL = "a context manager, removed at exit; a kill leaves "
+_IN_BASETEMP = "made inside the test's tmp_path, removed with the session's basetemp"
+_UNLOCKED_MAKERS: dict[str, str] = {
+    "bench/end_to_end/runner.py::run_scenario":
+        "removed in its own finally unless --keep-work-dir; a paid, hand-run bench, so a kill is the operator's",
+    "bench/guard_metamorphic.py::_spelling_rc": _CM_SMALL + "an empty dir or one probe file",
+    "bench/guard_metamorphic.py::guard_tier": _CM_SMALL + ".claude/ and a few speed-bump state files",
+    "bench/powershell_guard_rehearsal.py::_tier": _CM_SMALL + "empty fixture dirs and a few speed-bump state files",
+    "bench/powershell_reachability_differential.py::_run_pwsh": _CM_SMALL + "a one-byte victim file",
+    "bench/powershell_reachability_differential.py::guard_tier": _CM_SMALL + ".claude/ and a few state files",
+    "bench/powershell_reachability_differential.py::main": _CM_SMALL + "pwsh's small startup cache",
+    "bench/reachability_differential.py::bash_run": _CM_SMALL + "a one-byte victim file",
+    "bench/reachability_differential.py::main": _CM_SMALL + "a ~4 MB export of tools/ and a few guard state files",
+    "bench/run_benchmark.py::run_baseline": _CM_SMALL + "one baseline's setup, an espalier init deploy at most",
+    "bench/sandbox_read_drive/drive.py::main":
+        "never removed on purpose: the hand-run drive's output folder; the suite returns before making it",
+    "bench/sandbox_read_drive/drive.py::run_case": "made inside the drive's own runs folder, kept with it as the record",
+    "scripts/host_check.py::publish": _CM_SMALL + "one temporary git index",
+    "scripts/verify_pins.py::run_pytest": "made inside verify's own locked verify-pins- dir, removed or swept with it",
+    "tests/_engine_check.py::foreign_engine": _CM_SMALL + "an empty dir",
+    "tests/_nested_temp.py::nested_basetemp": "made inside the launching session's basetemp, removed with it",
+    "tests/_symlink_support.py::symlinks_supported": _CM_SMALL + "a one-byte file and a link",
+    "tests/test_box_lock.py::_spawn": _IN_BASETEMP,
+    "tests/test_guard_false_positives.py::_tier": _CM_SMALL + ".claude/ and a few speed-bump state files",
+    "tests/test_scanner_filesystem_contracts.py::test_overlaid_script_in_scanner_scope": _CM_SMALL + "one small .py",
+    "tests/test_wheel_install_surface_parity.py::test_source_and_wheel_init_deploy_same_managed_surface": _IN_BASETEMP,
+    "tests/test_wheel_smoke.py::TestBuildFailureCleanup::test_run_smoke_cleans_scratch_dist_on_build_failure::recording_mkdtemp":
+        "a recording passthrough of the wheel smoke's own locked maker, whose dir the test asserts is removed",
+    # By file: another lane renames this file's classes, and each of its six makers is a
+    # class fixture's context manager.
+    "tests/test_write_guard.py":
+        "class-fixture context managers, removed at teardown; a kill leaves empty fixture dirs and audit logs",
+    "tests/test_xdist_never_ran.py::_drive": _IN_BASETEMP,
+    "tools/cc/board.py::read_ledger_at_base": _CM_SMALL + "a ~7 MB base tar and its extracted tools/cc modules",
+    "tools/cc/check_ledger_probes.py::_probe_audit_dir": "removed at exit by atexit; a kill leaves a few small audit logs",
+    "tools/cc/ci_guard.py::_ci_base_is_self_host": _CM_SMALL + "two files under 200 KB",
+    "tools/cc/hooks/_integrity.py::_make_fallback_dir":
+        "the HOME-unset audit store, never removed by design (one a process); the suite makes it in tmp_path",
+    "tools/cc/hooks/session_start.py::_probe_engine": _CM_SMALL + "an empty dir",
+    "tools/cc/record_merge.py::_three_way": _CM_SMALL + "three small text files",
+}
+
+
+class Maker(NamedTuple):
+    """One temp-dir maker as :func:`temp_dir_makers` reads it."""
+
+    qual: str
+    line: int
+    prefix: str | None
+    locks: bool
+    inside: bool
+
+
+def temp_dir_makers(text: str) -> list[Maker]:
+    """Each call in ``text`` that makes a temp dir, by name or through an
+    alias (``from tempfile import mkdtemp as m``, ``real = tempfile.mkdtemp``):
+    its function's qualified name (``Class::function``; ``<module>`` at module
+    level), its line, its prefix as far as it is a constant (a literal, a
+    module constant's value or an f-string's leading text; None otherwise),
+    whether its function writes the sweep's lock (a ``write_lock`` call, or a
+    ``write_text`` on a path naming ``LOCK_NAME`` or ``.lock``; a module-level
+    maker's own statement), and whether it is given a ``dir``."""
+    import ast
+
+    tree = ast.parse(text)
+    constants = {target.id: node.value.value for node in tree.body if isinstance(node, ast.Assign)
+                 and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)
+                 for target in node.targets if isinstance(target, ast.Name)}
+    aliases = set(_DIR_MAKERS)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "tempfile":
+            aliases.update(a.asname or a.name for a in node.names if a.name in _DIR_MAKERS)
+        elif isinstance(node, ast.Assign) and getattr(node.value, "attr", getattr(node.value, "id", None)) in _DIR_MAKERS:
+            aliases.update(t.id for t in node.targets if isinstance(t, ast.Name))
+
+    def argument(call: ast.Call, name: str, position: int) -> ast.expr | None:
+        return next((k.value for k in call.keywords if k.arg == name),
+                    call.args[position] if len(call.args) > position else None)
+
+    def prefix(call: ast.Call) -> str | None:
+        node = argument(call, "prefix", 1)
+        if isinstance(node, ast.Name):
+            return constants.get(node.id)
+        if isinstance(node, ast.JoinedStr) and node.values and isinstance(node.values[0], ast.Constant):
+            return str(node.values[0].value)
+        return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+
+    def names_the_lock(node: ast.AST) -> bool:
+        return any((isinstance(n, (ast.Name, ast.Attribute)) and (getattr(n, "id", None) or getattr(n, "attr", None))
+                    == "LOCK_NAME") or (isinstance(n, ast.Constant) and n.value == ".lock") for n in ast.walk(node))
+
+    def locks(scope: ast.AST) -> bool:
+        for node in ast.walk(scope):
+            if isinstance(node, ast.Call):
+                name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+                if name == "write_lock" or (name == "write_text" and isinstance(node.func, ast.Attribute)
+                                            and names_the_lock(node.func.value)):
+                    return True
+        return False
+
+    found: list[Maker] = []
+
+    def visit(node: ast.AST, qual: tuple[str, ...], scope: ast.AST | None) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                visit(child, qual + (child.name,), child)
+                continue
+            if isinstance(child, ast.ClassDef):
+                visit(child, qual + (child.name,), scope)
+                continue
+            own = scope if scope is not None else child  # a module-level maker: its own statement
+            if isinstance(child, ast.Call) and (getattr(child.func, "attr", None) in _DIR_MAKERS
+                                                 or getattr(child.func, "id", None) in aliases):
+                found.append(Maker("::".join(qual) or "<module>", child.lineno, prefix(child), locks(own),
+                                   argument(child, "dir", 2) is not None))
+            visit(child, qual, own)
+
+    visit(tree, (), None)
+    return found
+
+
+@pytest.mark.contract
+class TestEveryTempDirMakerIsSweptOrSaysWhy:
+    """DEF-5055: the sweep removes only the work dirs whose makers lock them,
+    so a maker added without a lock leaves its dir behind each time its run is
+    killed, unsaid. This census guards both ways over the Python makers under
+    the four trees in ``_MAKER_TREES``: every ``mkdtemp`` and
+    ``TemporaryDirectory`` call either writes the lock under a prefix on
+    ``OWNED_PREFIXES`` (the one roster) or is enrolled with why it needs none
+    (by its function, or by its file where another lane renames its
+    functions), and every roster prefix and enrolment names a live maker. The
+    function is the unit: a second maker in a function that writes one lock
+    reads as locked, so each locked maker's own test file drives its dirs
+    (``TestTheWorkDirsLock`` and its kin)."""
+
+    @staticmethod
+    def _makers() -> list[tuple[str, Maker]]:
+        from tests._live_tree import checkout_glob
+
+        out = []
+        for top in _MAKER_TREES:
+            for path in checkout_glob(REPO_ROOT / top, "**/*.py"):
+                text = path.read_text(encoding="utf-8")
+                if any(name in text for name in _DIR_MAKERS):
+                    rel = path.relative_to(REPO_ROOT).as_posix()
+                    out += [(f"{rel}::{maker.qual}", maker) for maker in temp_dir_makers(text)]
+        return out
+
+    @staticmethod
+    def _enrolment(site: str) -> str | None:
+        return _UNLOCKED_MAKERS.get(site, _UNLOCKED_MAKERS.get(site.split("::", 1)[0]))
+
+    def test_the_scan_clears_its_floor_and_reads_the_two_it_was_written_for(self):
+        """Asserted first, so a clean verdict below is not an empty scan."""
+        makers = self._makers()
+        assert _MAKERS_AT_PIN // 2 <= len(makers) <= 2 * _MAKERS_AT_PIN, (
+            f"{len(makers)} makers against a pin of {_MAKERS_AT_PIN}: re-pin it with the date")
+        locked = {site for site, maker in makers if maker.locks}
+        assert {"scripts/archive_probe.py::make_work_dir", "tests/_live_tree.py::checkout_copy"} <= locked, locked
+
+    def test_a_maker_writes_the_lock_exactly_when_its_prefix_is_on_the_roster(self):
+        """A roster prefix whose maker writes no lock is a dir the sweep never
+        removes; a lock under a prefix off the roster is one it never reads."""
+        wrong = [f"{site}:{maker.line} (prefix {maker.prefix!r}, "
+                 f"{'writes the lock' if maker.locks else 'writes no lock'})"
+                 for site, maker in self._makers()
+                 if maker.locks != (maker.prefix is not None and maker.prefix.startswith(ts.OWNED_PREFIXES))]
+        assert not wrong, (
+            "write the lock where the prefix is on tests/_temp_sweep.py::OWNED_PREFIXES, and put a locking "
+            f"maker's prefix there: {wrong}")
+
+    def test_every_unlocked_maker_says_why(self):
+        missing = sorted({site for site, maker in self._makers() if not maker.locks and self._enrolment(site) is None})
+        assert not missing, (
+            "these make a temp dir the session-start sweep never removes after a killed run: write the lock "
+            "(tests/_temp_sweep.py::write_lock, or the pid into LOCK_NAME) and put the prefix on OWNED_PREFIXES, "
+            f"or enrol the function in _UNLOCKED_MAKERS with why its dir needs none: {missing}")
+
+    def test_an_enrolment_that_says_inside_is_given_a_dir(self):
+        """An enrolment whose reason is that the dir is made inside another is
+        true only while the call passes ``dir``: dropped, the dir lands in the
+        system temp dir and the reason still reads."""
+        wrong = sorted(site for site, maker in self._makers() if not maker.locks and not maker.inside
+                       and "inside" in (self._enrolment(site) or ""))
+        assert not wrong, wrong
+
+    def test_every_enrolment_and_roster_prefix_names_a_live_maker(self):
+        makers = self._makers()
+        unlocked = {site for site, maker in makers if not maker.locks}
+        files = {site.split("::", 1)[0] for site in unlocked}
+        assert not {key for key in _UNLOCKED_MAKERS if key not in unlocked and key not in files}, (
+            sorted(key for key in _UNLOCKED_MAKERS if key not in unlocked and key not in files))
+        assert all(why.strip() for why in _UNLOCKED_MAKERS.values())
+        locked = [maker.prefix for _site, maker in makers if maker.locks and maker.prefix]
+        assert all(any(pre.startswith(owned) for pre in locked) for owned in ts.OWNED_PREFIXES), (
+            ts.OWNED_PREFIXES, locked)
+
+    @pytest.mark.parametrize("label, source, expect", [
+        ("a literal prefix, no lock", "import tempfile\ndef f():\n    tempfile.mkdtemp(prefix='a-')\n",
+         [("f", 3, "a-", False, False)]),
+        ("a module constant and a lock written by name",
+         "import tempfile\nP = 'b-'\nLOCK_NAME = '.lock'\ndef f():\n    d = tempfile.mkdtemp(prefix=P)\n"
+         "    (d / LOCK_NAME).write_text('1')\n", [("f", 5, "b-", True, False)]),
+        ("a context manager in a method, write_lock",
+         "import tempfile\nclass A:\n    def g(self):\n        with tempfile.TemporaryDirectory(prefix=f'c-{1}-') as d:\n"
+         "            write_lock(d)\n", [("A::g", 4, "c-", True, False)]),
+        ("a positional prefix and dir, and none at all",
+         "from tempfile import mkdtemp, TemporaryDirectory\ndef h(t):\n    mkdtemp('', 'd-', t)\n"
+         "    TemporaryDirectory()\n", [("h", 3, "d-", False, True), ("h", 4, None, False, False)]),
+        ("a lock written in another function is not this one's",
+         "import tempfile\nLOCK_NAME = '.lock'\ndef lock(d):\n    (d / LOCK_NAME).write_text('1')\n"
+         "def f():\n    lock(tempfile.mkdtemp(prefix='e-'))\n", [("f", 6, "e-", False, False)]),
+        ("a lock only removed is not written",
+         "import tempfile\nLOCK_NAME = '.lock'\ndef f():\n    d = tempfile.mkdtemp(prefix='g-')\n"
+         "    (d / LOCK_NAME).unlink(missing_ok=True)\n", [("f", 4, "g-", False, False)]),
+        ("an alias by import and by assignment",
+         "import tempfile\nfrom tempfile import mkdtemp as md\ndef f(tmp):\n    real = tempfile.mkdtemp\n"
+         "    real(dir=tmp)\n    md()\n", [("f", 5, None, False, True), ("f", 6, None, False, False)]),
+        ("a module-level maker reads its own statement, not the module's lock",
+         "import tempfile\nLOCK_NAME = '.lock'\nD = tempfile.mkdtemp(prefix='h-')\n"
+         "def f(d):\n    (d / LOCK_NAME).write_text('1')\n", [("<module>", 3, "h-", False, False)]),
+    ])
+    def test_the_census_reads(self, label, source, expect):
+        assert [tuple(m) for m in temp_dir_makers(source)] == expect, label
 
 
 def _child_env(temp: Path, *, keep_current_test: bool = False) -> dict[str, str]:

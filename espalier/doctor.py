@@ -394,13 +394,61 @@ def _check_doc_drift(repo_root: Path) -> list[str]:
 # The install hint is the one-line recovery the doctor / SessionStart
 # banner shows the operator. Keep it short and copy-pasteable.
 _LOAD_BEARING_EXTERNAL_TOOLS: dict[str, str] = {
-    # The loop that shows this runs on the source tree only (run_doctor_check
-    # gates it on is_self_host_repo), so the hint installs the dev extra, which
-    # pins ruff to the one version CI runs; a range would install a newer one.
-    # A tool adopters must see needs adopter-relevance gating and a standalone
-    # hint first (the NOTE at the loop).
+    # The source tree's hint: the dev extra pins ruff to the one version CI
+    # runs; a range would install a newer one. An adopter's tree reads the
+    # tool's row in _ADOPTER_TOOL_RELEVANCE instead, hint included (DEF-1122).
     "ruff": "pip install -e '.[dev]'  # the dev extra pins the ruff CI runs",
 }
+
+
+def _adopter_ruff_relevance(repo_root: Path) -> bool:
+    """Whether /preflight's lint step on this tree runs ruff from PATH: a
+    command it would run (``harness_config.declared_action``, the one the body
+    calls) whose first word is ``ruff``. A tree that configures ruff but lints
+    through a Makefile, a package.json script or ``uv run ruff`` is not told
+    to install a ruff it never runs."""
+    from espalier.harness_config import declared_action
+
+    source, commands = declared_action(repo_root, "lint")
+    return source != "suppressed" and any(c.split()[:1] == ["ruff"] for c in commands)
+
+
+# DEF-1122: on an adopter's tree, whether the tree makes a load-bearing tool
+# load-bearing, and the hint that fits that tree. A tool with no row here is
+# checked on the source tree only. Twin of session_start's
+# _ADOPTER_TOOL_RELEVANCE: tests/test_session_start_ruff_gate.py pins the two
+# tables' keys equal and the hook's predicate to this one over a table of trees.
+_ADOPTER_TOOL_RELEVANCE: dict[str, tuple[Any, str]] = {
+    "ruff": (
+        _adopter_ruff_relevance,
+        "install it the way this project pins it (its dev dependencies), or: pip install ruff "
+        "(this project's /preflight lint step runs ruff)",
+    ),
+}
+
+
+def _load_bearing_tool_warnings(repo_root: Path) -> tuple[list[str], list[str]]:
+    """``(warnings, next_steps)`` for the load-bearing tools this tree needs and
+    PATH lacks: every registry tool on the source tree, and on an adopter's tree
+    each one its ``_ADOPTER_TOOL_RELEVANCE`` row says the tree uses (DEF-1122;
+    the loop was the source tree's alone, so an adopter whose lint runs ruff
+    lost the binary with no word from doctor)."""
+    self_host = surface_contract.is_self_host_repo(repo_root)
+    warnings: list[str] = []
+    next_steps: list[str] = []
+    for tool_name, install_hint in _LOAD_BEARING_EXTERNAL_TOOLS.items():
+        if not self_host:
+            relevance = _ADOPTER_TOOL_RELEVANCE.get(tool_name)
+            if relevance is None or not relevance[0](repo_root):
+                continue
+            install_hint = relevance[1]
+        tool_warnings = _check_external_tool(tool_name, install_hint)
+        warnings.extend(tool_warnings)
+        if tool_warnings:
+            next_steps.append(
+                f"install the missing load-bearing tool {tool_name!r}: {install_hint}"
+            )
+    return warnings, next_steps
 
 
 def _check_external_tool(name: str, install_hint: str) -> list[str]:
@@ -3513,26 +3561,15 @@ def run_doctor_check(
     # gitleaks/codespell/etc.) so the lint-gate-as-regression-test
     # doesn't silently degrade when the binary isn't installed.
     #
-    # ruff is a load-bearing gate only on the self-host repo: its ruff-lint CI
-    # job is `if: is_source == 'true'`, and ruff ships only in espalier's own
-    # dev extras. A median `pip install` adopter has no linter and no ruff gate,
-    # so a missing-ruff warning must not degrade THEIR headline status. Gate on
-    # self-host, matching the harness-specific checks above.
-    #
-    # NOTE: this gate is WHOLE-LOOP — every tool in the registry is treated as
-    # self-host-only. That is correct only while the registry holds solely
-    # self-host-only tools (ruff today). A tool adopters MUST be warned about
-    # (e.g. a secret scanner like gitleaks) needs per-tool adopter-relevance
-    # gating added first; a new registry row ALONE would be silently suppressed
-    # for adopters here (and by the same-shape gate in session_start.py).
-    if surface_contract.is_self_host_repo(repo_root):
-        for tool_name, install_hint in _LOAD_BEARING_EXTERNAL_TOOLS.items():
-            tool_warnings = _check_external_tool(tool_name, install_hint)
-            warnings.extend(tool_warnings)
-            if tool_warnings:
-                next_steps.append(
-                    f"install the missing load-bearing tool {tool_name!r}: {install_hint}"
-                )
+    # On the source tree every registry tool is load-bearing. On an adopter's
+    # tree a tool is checked only where its _ADOPTER_TOOL_RELEVANCE row says
+    # the tree uses it (DEF-1122): a project that configures ruff has
+    # /preflight run it, while one that does not is never nagged about a ruff
+    # it never asked for. A registry row with no relevance row is checked on
+    # the source tree alone (session_start.py reads the same shape).
+    tool_warnings, tool_steps = _load_bearing_tool_warnings(repo_root)
+    warnings.extend(tool_warnings)
+    next_steps.extend(tool_steps)
 
     # A seed doc whose first-line stamp is gone is the adopter's doc as far as
     # the fingerprint is concerned, and the day-one noise (`Large files

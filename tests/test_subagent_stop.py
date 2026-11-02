@@ -667,6 +667,283 @@ class TestReliefFlagCarriesEvidence:
         assert payload["changed_docs"] == []
 
 
+def _run_start(payload: dict, env_overrides: dict | None = None) -> subprocess.CompletedProcess:
+    """Run ``subagent_start.py`` as Claude Code does, the bypass off unless
+    the overrides set it (this session's own environment may carry it)."""
+    env = os.environ.copy()
+    env.pop("ESPALIER_MAINTENANCE_MODE", None)
+    if env_overrides:
+        env.update(env_overrides)
+    return subprocess.run(
+        [sys.executable, str(HOOKS_DIR / "subagent_start.py")],
+        input=json.dumps(payload).encode("utf-8"),
+        capture_output=True,
+        timeout=15,
+        env=env,
+    )
+
+
+class TestDocsEvidenceIsTheRunsOwn:
+    """DEF-1100: Gate 2's evidence is what the docs agent changed during ITS run.
+    The record listed every dirty markdown file in the tree at the stop, so a
+    docs-maintainer that changed nothing was credited with the parent session's
+    own edits. SubagentStart now keeps a snapshot of the dirty markdown for a
+    docs-mapped agent, and the stop records only paths new or changed since.
+    """
+
+    def _git_repo(self, tmp_path: Path) -> Path:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@t.com"], check=True)
+        subprocess.run(["git", "-C", str(repo), "config", "user.name", "t"], check=True)
+        (repo / "docs").mkdir()
+        (repo / "docs" / "CONVENTIONS.md").write_text("# conventions\n", encoding="utf-8")
+        (repo / "docs" / "GUIDE.md").write_text("# guide\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-qm", "init"], check=True)
+        return repo
+
+    def _run(self, repo: Path, edit=None, *, agent_id: str = "a6e09e5300b7c1e33",
+             agent_type: str = "docs-maintainer", stop_extra: dict | None = None) -> dict:
+        env = {"CLAUDE_PROJECT_DIR": str(repo)}
+        start = _run_start({"hook_event_name": "SubagentStart", "agent_id": agent_id,
+                            "agent_type": agent_type}, env)
+        assert start.returncode == 0, start.stderr
+        if edit is not None:
+            edit()
+        stop = _run_hook({"agent_type": agent_type, "agent_id": agent_id,
+                          "stop_hook_active": False, **(stop_extra or {})}, env)
+        assert stop.returncode == 0, stop.stderr
+        return json.loads((repo / ".espalier-state" / "docs_refreshed").read_text(encoding="utf-8"))
+
+    def test_an_agent_that_changed_nothing_is_not_credited_with_the_parents_edits(self, tmp_path):
+        repo = self._git_repo(tmp_path)
+        (repo / "docs" / "CONVENTIONS.md").write_text("# conventions\nthe parent's line\n", encoding="utf-8")
+        record = self._run(repo)
+        assert record["changed_docs"] == [], record
+        assert record["changed_docs_total"] == 0, record
+
+    def test_a_file_the_agent_wrote_is_its_evidence_beside_the_parents_untouched_one(self, tmp_path):
+        repo = self._git_repo(tmp_path)
+        (repo / "docs" / "CONVENTIONS.md").write_text("# conventions\nthe parent's line\n", encoding="utf-8")
+
+        def edit():
+            (repo / "docs" / "GUIDE.md").write_text("# guide\nrefreshed\n", encoding="utf-8")
+            (repo / "docs" / "NEW.md").write_text("# new\n", encoding="utf-8")
+
+        record = self._run(repo, edit)
+        assert sorted(record["changed_docs"]) == ["docs/GUIDE.md", "docs/NEW.md"], record
+
+    def test_a_parent_dirtied_file_the_agent_changed_again_is_its_evidence(self, tmp_path):
+        repo = self._git_repo(tmp_path)
+        (repo / "docs" / "CONVENTIONS.md").write_text("# conventions\nthe parent's line\n", encoding="utf-8")
+
+        def edit():
+            (repo / "docs" / "CONVENTIONS.md").write_text(
+                "# conventions\nthe parent's line\nthe agent's line\n", encoding="utf-8")
+
+        record = self._run(repo, edit)
+        assert record["changed_docs"] == ["docs/CONVENTIONS.md"], record
+
+    def test_the_start_record_is_consumed_by_the_stop(self, tmp_path):
+        repo = self._git_repo(tmp_path)
+        self._run(repo)
+        snapshots = repo / ".espalier-state" / "docs_snapshots"
+        assert not snapshots.exists() or not list(snapshots.iterdir()), list(snapshots.iterdir())
+
+    def test_the_transcript_names_the_run_when_the_stop_payload_carries_no_id(self, tmp_path):
+        repo = self._git_repo(tmp_path)
+        (repo / "docs" / "CONVENTIONS.md").write_text("# conventions\nthe parent's line\n", encoding="utf-8")
+        env = {"CLAUDE_PROJECT_DIR": str(repo)}
+        assert _run_start({"agent_id": "a6e09e5300b7c1e33", "agent_type": "docs-maintainer"}, env).returncode == 0
+        stop = _run_hook({
+            "agent_type": "docs-maintainer", "stop_hook_active": False,
+            "agent_transcript_path": str(tmp_path / "s" / "subagents" / "agent-a6e09e5300b7c1e33.jsonl"),
+        }, env)
+        assert stop.returncode == 0, stop.stderr
+        record = json.loads((repo / ".espalier-state" / "docs_refreshed").read_text(encoding="utf-8"))
+        assert record["changed_docs"] == [], record
+
+    def test_a_prefixed_id_and_a_bare_one_name_one_run(self, tmp_path):
+        """The upstream page's example id is ``agent-abc123``; Claude Code sent
+        the bare hex on both events when driven (2026-11-02). One rule drops
+        the prefix wherever a key comes from, so either spelling at either end
+        finds the snapshot."""
+        repo = self._git_repo(tmp_path)
+        (repo / "docs" / "CONVENTIONS.md").write_text("# conventions\nthe parent's line\n", encoding="utf-8")
+        record = self._run(repo, agent_id="agent-a060f8fc0f85f8900",
+                           stop_extra={"agent_id": "a060f8fc0f85f8900"})
+        assert record.get("evidence_scope") == "run", record
+        assert record["changed_docs"] == [], record
+
+    def test_a_second_start_for_the_same_run_keeps_the_first_snapshot(self, tmp_path):
+        """Claude Code may run SubagentStart again for one subagent (after its
+        auto-compaction); a second snapshot then would absolve the agent's own
+        earlier edits."""
+        repo = self._git_repo(tmp_path)
+        env = {"CLAUDE_PROJECT_DIR": str(repo)}
+        payload = {"agent_id": "a6e09e5300b7c1e33", "agent_type": "docs-maintainer"}
+        assert _run_start(payload, env).returncode == 0
+        (repo / "docs" / "GUIDE.md").write_text("# guide\nthe agent's line\n", encoding="utf-8")
+        assert _run_start(payload, env).returncode == 0
+        stop = _run_hook({**payload, "stop_hook_active": False}, env)
+        assert stop.returncode == 0, stop.stderr
+        record = json.loads((repo / ".espalier-state" / "docs_refreshed").read_text(encoding="utf-8"))
+        assert record["changed_docs"] == ["docs/GUIDE.md"], record
+
+    def test_no_start_record_lists_the_tree_and_says_so(self, tmp_path):
+        """A settings file that wires no SubagentStart hook (an older install)
+        leaves no snapshot: the record keeps the whole tree's list, as before,
+        names its scope, and the stand-down is recorded once."""
+        repo = self._git_repo(tmp_path)
+        (repo / "docs" / "CONVENTIONS.md").write_text("# conventions\nthe parent's line\n", encoding="utf-8")
+        result = _run_hook(
+            {"agent_type": "docs-maintainer", "agent_id": "a6e09e5300b7c1e33", "stop_hook_active": False},
+            {"CLAUDE_PROJECT_DIR": str(repo)},
+        )
+        assert result.returncode == 0, result.stderr
+        record = json.loads((repo / ".espalier-state" / "docs_refreshed").read_text(encoding="utf-8"))
+        assert record["changed_docs"] == ["docs/CONVENTIONS.md"], record
+        assert record.get("evidence_scope") == "tree", record
+        said = _records("subagentstop_failed_open_docs_evidence_unscoped")
+        assert len(said) == 1, said
+        assert "SubagentStart" in result.stderr.decode("utf-8", errors="replace"), result.stderr
+
+    def test_a_scoped_record_names_its_scope(self, tmp_path):
+        repo = self._git_repo(tmp_path)
+        assert self._run(repo).get("evidence_scope") == "run"
+
+    def test_a_reviewer_start_keeps_no_snapshot(self, tmp_path):
+        repo = self._git_repo(tmp_path)
+        (repo / "docs" / "CONVENTIONS.md").write_text("# conventions\nthe parent's line\n", encoding="utf-8")
+        start = _run_start({"agent_id": "b1", "agent_type": "code-reviewer"},
+                           {"CLAUDE_PROJECT_DIR": str(repo)})
+        assert start.returncode == 0, start.stderr
+        assert not (repo / ".espalier-state" / "docs_snapshots").exists()
+
+    def test_maintenance_mode_keeps_no_snapshot(self, tmp_path):
+        """subagent_stop writes no record under the bypass, so the start keeps
+        nothing to consume."""
+        repo = self._git_repo(tmp_path)
+        start = _run_start({"agent_id": "c1", "agent_type": "docs-maintainer"},
+                           {"CLAUDE_PROJECT_DIR": str(repo), "ESPALIER_MAINTENANCE_MODE": "1"})
+        assert start.returncode == 0, start.stderr
+        assert not (repo / ".espalier-state" / "docs_snapshots").exists()
+        control = _run_start({"agent_id": "c1", "agent_type": "docs-maintainer"},
+                             {"CLAUDE_PROJECT_DIR": str(repo)})
+        assert control.returncode == 0, control.stderr
+        snapshots = repo / ".espalier-state" / "docs_snapshots"
+        assert snapshots.is_dir() and list(snapshots.iterdir()), (
+            "reachability control: without the bypass the start keeps a snapshot")
+
+    def test_a_later_run_that_changes_nothing_keeps_the_earlier_runs_evidence(self, tmp_path):
+        """The failure-mode review's regression: the record is rewritten whole
+        at every stop, so a second docs run (a read-only checker mapped beside
+        the writer) that changed nothing erased the first run's still
+        uncommitted edits and re-blocked Gate 2."""
+        repo = self._git_repo(tmp_path)
+
+        def edit():
+            (repo / "docs" / "GUIDE.md").write_text("# guide\nrefreshed\n", encoding="utf-8")
+
+        assert self._run(repo, edit, agent_id="run1")["changed_docs"] == ["docs/GUIDE.md"]
+        second = self._run(repo, agent_id="run2")
+        assert second["changed_docs"] == ["docs/GUIDE.md"], second
+        subprocess.run(["git", "-C", str(repo), "commit", "-qam", "docs"], check=True)
+        third = self._run(repo, agent_id="run3")
+        assert third["changed_docs"] == [], "a committed file is no longer carried forward"
+
+    def test_a_failed_snapshot_is_said_under_the_project_root(self, tmp_path):
+        """A start whose working directory is a subfolder said its failure
+        under that folder, where no reader looks (failure-mode review)."""
+        repo = self._git_repo(tmp_path)
+        (repo / ".espalier-state").write_text("a file where the folder goes", encoding="utf-8")
+        env = os.environ.copy()
+        env.pop("ESPALIER_MAINTENANCE_MODE", None)
+        env["CLAUDE_PROJECT_DIR"] = str(repo)
+        start = subprocess.run(
+            [sys.executable, str(HOOKS_DIR / "subagent_start.py")],
+            input=json.dumps({"agent_id": "e1", "agent_type": "docs-maintainer"}).encode("utf-8"),
+            capture_output=True, timeout=15, env=env, cwd=str(repo / "docs"),
+        )
+        assert start.returncode == 0, start.stderr
+        assert not (repo / "docs" / ".espalier-state").exists(), "the notice landed under the working directory"
+        assert len(_records("subagentstart_failed_open_docs_snapshot")) == 1
+
+    def test_the_start_reads_git_inside_its_share_of_the_timeout(self, tmp_path, monkeypatch):
+        """SubagentStart's whole budget is 10 s and the orientation shares it, so
+        the snapshot's git read is capped below it (failure-mode review)."""
+        repo = self._git_repo(tmp_path)
+        mod = _load_hook_module("subagent_stop")
+        seen: list[float] = []
+
+        def fake_run(*args, **kwargs):
+            seen.append(kwargs.get("timeout"))
+            raise subprocess.TimeoutExpired(args[0], kwargs.get("timeout"))
+
+        monkeypatch.setattr(mod._hook_utils, "run_bounded", fake_run)
+        mod.snapshot_docs_at_start(repo, {"agent_id": "f1", "agent_type": "docs-maintainer"})
+        assert seen and all(t is not None and t <= 5 for t in seen), seen
+        assert not (repo / ".espalier-state" / "docs_snapshots" / "f1.json").exists()
+
+    def test_a_snapshot_that_will_not_decode_still_leaves_the_record(self, tmp_path):
+        """A strict read raised UnicodeDecodeError past its OSError handler and
+        the relief record was never written (code review)."""
+        repo = self._git_repo(tmp_path)
+        folder = repo / ".espalier-state" / "docs_snapshots"
+        folder.mkdir(parents=True)
+        (folder / "g1.json").write_bytes(b"\xff\xfe not json")
+        stop = _run_hook({"agent_type": "docs-maintainer", "agent_id": "g1", "stop_hook_active": False},
+                         {"CLAUDE_PROJECT_DIR": str(repo)})
+        assert stop.returncode == 0, stop.stderr
+        flag = repo / ".espalier-state" / "docs_refreshed"
+        assert flag.is_file(), f"the relief record was never written: {stop.stderr!r}"
+        record = json.loads(flag.read_text(encoding="utf-8"))
+        assert record.get("evidence_scope") == "tree", record
+
+    def test_a_non_ascii_name_the_agent_changed_is_its_evidence(self, tmp_path):
+        """git quoted `docs/caf\\303\\251.md`, which matched no file, so its
+        digest read "" at both ends and the agent's edit vanished (code review)."""
+        repo = self._git_repo(tmp_path)
+        name = "docs/café.md"
+        (repo / name).write_text("# cafe\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-qm", "cafe"], check=True)
+        (repo / name).write_text("# cafe\nthe parent's line\n", encoding="utf-8")
+
+        def edit():
+            (repo / name).write_text("# cafe\nthe parent's line\nthe agent's line\n", encoding="utf-8")
+
+        record = self._run(repo, edit)
+        assert record["changed_docs"] == [name], record
+
+    def test_a_project_root_below_the_git_top_reads_its_own_changes(self, tmp_path):
+        """Porcelain paths are relative to the git top, so a project root in a
+        subfolder resolved none of them (code review)."""
+        top = self._git_repo(tmp_path)
+        app = top / "app"
+        (app / "docs").mkdir(parents=True)
+        (app / "docs" / "A.md").write_text("# a\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(top), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(top), "commit", "-qm", "app"], check=True)
+        (app / "docs" / "A.md").write_text("# a\nthe parent's line\n", encoding="utf-8")
+
+        def edit():
+            (app / "docs" / "A.md").write_text("# a\nthe parent's line\nthe agent's line\n", encoding="utf-8")
+
+        record = self._run(app, edit)
+        assert record["changed_docs"] == ["app/docs/A.md"], record
+
+    def test_the_start_still_delivers_its_orientation(self, tmp_path):
+        repo = self._git_repo(tmp_path)
+        start = _run_start({"agent_id": "d1", "agent_type": "docs-maintainer"},
+                           {"CLAUDE_PROJECT_DIR": str(repo)})
+        out = json.loads(start.stdout)
+        assert out["hookSpecificOutput"]["hookEventName"] == "SubagentStart"
+        assert out["hookSpecificOutput"]["additionalContext"]
+
+
 # ── DEF-586: the entry carries the agent's reasoning, not a fixed sentence ────
 
 def _stub_argv_cli(root: Path) -> Path:

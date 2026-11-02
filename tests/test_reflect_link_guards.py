@@ -340,3 +340,105 @@ class TestTwinParity:
             "LOCAL_ONLY_PREFIXES (the third zero-import forced twin) is "
             "undocumented in docs/CONVENTIONS.md — see 'Library / hook parity'"
         )
+
+
+# ─── an adopter's root documents (DEF-1114) ──────────────────────────────────
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+
+
+@pytest.fixture()
+def adopter_root_repo(tmp_path: Path) -> Path:
+    """An adopter tree whose README links a doc that exists and one renamed
+    away, beside an untracked scratch note with a broken link of its own."""
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "t@t.com")
+    _git(tmp_path, "config", "user.name", "t")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "CLAUDE.md").write_text("# Root\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text(
+        "# App\n\nSee [the guide](docs/GUIDE.md) and [setup](docs/RENAMED-AWAY.md).\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "docs" / "GUIDE.md").write_text("# Guide\n", encoding="utf-8")
+    (tmp_path / "docs" / "BLUEPRINT.md").write_text(
+        "# Design\n\nSee [the old plan](docs/GONE-PLAN.md).\n", encoding="utf-8",
+    )
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "SCRATCH.md").write_text("[x](not-yet-written.md)\n", encoding="utf-8")
+    return tmp_path
+
+
+class TestAnAdoptersRootDocumentsAreWalked:
+    """DEF-1114: the deep pass walked no root document but CLAUDE.md and the
+    memory file, so a broken link in an adopter's README never surfaced and the
+    doc it linked read as an orphan; the reference walk dropped an adopter's
+    docs whose names match Espalier's own internal vocabulary. On an adopter
+    tree the tracked root documents are surface, and the vocabulary filter is
+    the source repository's alone."""
+
+    def test_engine_reads_a_tracked_root_document(self, adopter_root_repo):
+        links = _engine_links(adopter_root_repo)
+        assert any("docs/RENAMED-AWAY.md" in d for d in links), links
+        orphans = [f.files for f in run_reflect_pass(adopter_root_repo, 1).findings
+                   if f.kind == "orphan"]
+        assert ["docs/GUIDE.md"] not in orphans, orphans
+
+    def test_a_root_document_is_read_for_its_links_alone(self, adopter_root_repo):
+        """A README is where a reader starts, never a link's target, and a short
+        one or a TODO in it is the adopter's own: on both twins it is neither an
+        orphan nor graded for quality, and its broken link still fires."""
+        (adopter_root_repo / "README.md").write_text(
+            "# App\n\nTODO: write more. See [setup](docs/RENAMED-AWAY.md).\n", encoding="utf-8")
+        engine = [(f.kind, f.description) for f in run_reflect_pass(adopter_root_repo, 1).findings
+                  if "README.md" in " ".join(f.files) or "README.md" in f.description]
+        assert [k for k, _ in engine] == ["gap"], engine
+        proc = subprocess.run(
+            [sys.executable, str(STANDALONE), "--pass", "1", "--json"],
+            cwd=adopter_root_repo, capture_output=True, text=True, timeout=45, encoding="utf-8",
+        )
+        standalone = [f for f in json.loads(proc.stdout)["findings"] if "README.md" in f["description"]]
+        assert [f["kind"] for f in standalone] == ["gap"], standalone
+
+    def test_a_link_that_leaves_the_repository_is_not_a_gap(self, adopter_root_repo):
+        """A README badge links ../../actions/..., which the hosting site
+        resolves and no checkout holds; both twins read it as out of tree
+        (failure-mode review), while the in-tree broken link still fires."""
+        (adopter_root_repo / "README.md").write_text(
+            "# App\n\n[![ci](../../actions/workflows/ci.yml/badge.svg)](../../actions)\n"
+            "See [setup](docs/RENAMED-AWAY.md).\n", encoding="utf-8")
+        for links in (_engine_links(adopter_root_repo), _standalone_links(adopter_root_repo)):
+            assert not [d for d in links if "actions" in d], links
+            assert any("docs/RENAMED-AWAY.md" in d for d in links), links
+
+    def test_correct_readme_link_forms_are_not_gaps(self, adopter_root_repo):
+        """A percent-escaped name, a titled link, a protocol-relative URL and a
+        tel: link are all correct and read as broken (code review); the escaped
+        name's doc read as an orphan too."""
+        (adopter_root_repo / "docs" / "my guide.md").write_text("# Guide two\n", encoding="utf-8")
+        (adopter_root_repo / "README.md").write_text(
+            "# App\n\n[two](docs/my%20guide.md) [arch](docs/GUIDE.md \"Architecture\") "
+            "[cdn](//example.com/x) [call](tel:+15550100)\nSee [setup](docs/RENAMED-AWAY.md).\n",
+            encoding="utf-8")
+        for links in (_engine_links(adopter_root_repo), _standalone_links(adopter_root_repo)):
+            assert [d for d in links if "README.md" in d] == [
+                d for d in links if "RENAMED-AWAY" in d], links
+            assert any("RENAMED-AWAY" in d for d in links), links
+        orphans = [f.files for f in run_reflect_pass(adopter_root_repo, 1).findings if f.kind == "orphan"]
+        assert ["docs/my guide.md"] not in orphans, orphans
+
+    def test_standalone_reads_a_tracked_root_document(self, adopter_root_repo):
+        links = _standalone_links(adopter_root_repo)
+        assert any("docs/RENAMED-AWAY.md" in d for d in links), links
+
+    def test_an_untracked_root_note_is_not_surface(self, adopter_root_repo):
+        assert not any("not-yet-written.md" in d for d in _engine_links(adopter_root_repo))
+        assert not any("not-yet-written.md" in d for d in _standalone_links(adopter_root_repo))
+
+    def test_the_reference_walk_keeps_an_adopter_doc_named_like_an_internal_one(
+            self, adopter_root_repo):
+        targets = " ".join(_reference_links(adopter_root_repo))
+        assert "docs/GONE-PLAN.md" in targets, targets
+        assert "docs/RENAMED-AWAY.md" in targets, targets

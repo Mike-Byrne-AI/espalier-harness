@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5061",
+ "subject": "tests/test_temp_sweep.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "The fix widens a census not yet widened: a grep for the makers moves with every rename and reads closed on one alone; the oracle is the census itself, widened with the fix.",
+ "row_sha": "907d55db924a",
+ "text_sha": "252949daa1ca",
+ "verified_2026_11_02": "OPEN (filed 2026-11-02; probe driven at filing)"
+}

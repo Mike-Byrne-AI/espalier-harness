@@ -436,3 +436,96 @@ class TestExplainPathAdopterZones:
         assert exp.protected is True and exp.write_denied is True
         assert "`protected_paths` entry `data/`" in exp.write_zone
         assert ep.explain("data2/x.csv", self._tree(tmp_path)).write_denied is False
+
+
+class TestExplainPathSaysWhatItDoesNotModel:
+    """DEF-1113: the read-out is Espalier's hooks' verdict, not the session's.
+    It ended "writes allowed (unprotected)" for any path Espalier's zones do not
+    cover, while a PreToolUse hook wired beside Espalier's or a
+    ``permissions.deny`` Edit/Write rule may deny the write. The net line now
+    says whose verdict it is, and one line names what the project settings hold
+    that it does not model."""
+
+    def _settings(self, root: Path, name: str, data: dict) -> None:
+        import json
+
+        (root / ".claude").mkdir(exist_ok=True)
+        (root / ".claude" / name).write_text(json.dumps(data), encoding="utf-8")
+
+    def _tree(self, tmp_path: Path) -> Path:
+        self._settings(tmp_path, "settings.json", {
+            "hooks": {"PreToolUse": [
+                {"matcher": "Edit|Write", "hooks": [
+                    {"type": "command", "command": "node .claude/hooks/guard.js"}]},
+                {"matcher": "*", "hooks": [
+                    {"type": "command", "command": "python",
+                     "args": ["${CLAUDE_PROJECT_DIR}/tools/cc/hooks/write_guard.py"]}]},
+            ]},
+            "permissions": {"deny": ["Edit(docs/**)", "Bash(rm *)"]},
+        })
+        self._settings(tmp_path, "settings.local.json", {
+            "hooks": {"PreToolUse": [
+                {"matcher": "Write", "hooks": [
+                    {"type": "command", "command": "node", "args": ["scripts/guard.mjs"]}]},
+            ]},
+            "permissions": {"deny": ["Write(src/**)"]},
+        })
+        return tmp_path
+
+    def test_the_net_line_names_whose_verdict_it_is(self, tmp_path):
+        ep, _, _ = _load_modules()
+        verdict = ep.explain("src/app.py", tmp_path).verdict
+        assert verdict.startswith("Espalier's hooks: writes allowed (outside their zones)"), verdict
+        assert "(unprotected)" not in verdict, verdict
+
+    def test_a_foreign_hook_and_the_deny_rules_are_named(self, tmp_path):
+        ep, _, _ = _load_modules()
+        exp = ep.explain("src/app.py", self._tree(tmp_path))
+        line = getattr(exp, "unmodelled", "")
+        assert "node .claude/hooks/guard.js" in line, line
+        assert "scripts/guard.mjs" in line, line
+        assert "2 permissions.deny Edit/Write rules" in line, line
+        assert "write_guard" not in line, line
+        assert line in ep.render(exp), ep.render(exp)
+
+    def test_hooks_outside_the_project_settings_are_said_to_be_unlisted(self, tmp_path):
+        ep, _, _ = _load_modules()
+        line = getattr(ep.explain("src/app.py", tmp_path), "unmodelled", "")
+        assert "user-level, plugin and managed hooks are not listed" in line, line
+
+    def test_a_tree_with_neither_says_none_was_found(self, tmp_path):
+        ep, _, _ = _load_modules()
+        line = getattr(ep.explain("src/app.py", tmp_path), "unmodelled", "")
+        assert "none in .claude/settings.json or .claude/settings.local.json" in line, line
+
+    def test_a_hook_that_runs_no_command_is_named_by_its_type(self, tmp_path):
+        """An http or prompt hook can deny a write and has no command to show;
+        it read as "none" (failure-mode review)."""
+        ep, _, _ = _load_modules()
+        self._settings(tmp_path, "settings.json", {"hooks": {"PreToolUse": [
+            {"matcher": "Edit|Write", "hooks": [
+                {"type": "http", "url": "https://guard.example/check"},
+                {"type": "prompt", "prompt": "Refuse writes under vendor/."}]},
+        ]}})
+        line = getattr(ep.explain("src/app.py", tmp_path), "unmodelled", "")
+        assert "http hook https://guard.example/check" in line, line
+        assert "prompt hook" in line, line
+        assert "none in" not in line, line
+
+    def test_a_hooks_value_that_is_not_a_list_is_read_as_none(self, tmp_path):
+        """`"hooks": 5` raised TypeError and the read-out tracebacked (code review)."""
+        ep, _, _ = _load_modules()
+        self._settings(tmp_path, "settings.json", {"hooks": {"PreToolUse": [{"matcher": "*", "hooks": 5}]}})
+        try:
+            exp = ep.explain("src/app.py", tmp_path)
+        except TypeError as exc:
+            raise AssertionError(f"the read-out raised on a malformed hooks value: {exc}") from exc
+        line = getattr(exp, "unmodelled", "")
+        assert "user-level, plugin and managed hooks are not listed" in line, line
+
+    def test_an_unreadable_settings_file_is_named_not_skipped(self, tmp_path):
+        ep, _, _ = _load_modules()
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_text("{not json", encoding="utf-8")
+        line = getattr(ep.explain("src/app.py", tmp_path), "unmodelled", "")
+        assert ".claude/settings.json could not be read" in line, line

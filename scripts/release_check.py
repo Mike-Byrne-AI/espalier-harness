@@ -35,6 +35,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+#: The file the suite's temp sweep reads in a work dir this script makes:
+#: this process's pid, so a run killed mid-way leaves a dir the next session
+#: start removes (``tests/_temp_sweep.py``); the run removes the dir on every
+#: exit it lives through.
+LOCK_NAME = ".lock"
 
 # Make `import espalier.*` work even if the package isn't installed (CI runs
 # `pip install -e .` first, but local invocations might not).
@@ -548,6 +553,10 @@ def check_release_archive_builds_and_clean(repo_root: Path = REPO_ROOT):
     # changed `dist/` under test_wheel_payload's packaging-litter witness, which
     # redded any pull request whose schedule overlapped them (DEF-1169).
     out_dir = Path(tempfile.mkdtemp(prefix="espalier-release-check-"))
+    # The pid lock the suite's temp sweep reads: a check killed mid-build
+    # leaves a dir its next session start removes; every exit lived through
+    # removes it below.
+    (out_dir / LOCK_NAME).write_text(str(os.getpid()), encoding="utf-8")
     # Suppress build_release_archive's progress chatter; the gate's own
     # CheckResult is the only output that should reach a caller piping
     # the parent process's stdout (e.g. `espalier pre-release`).

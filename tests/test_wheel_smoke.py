@@ -649,7 +649,7 @@ class TestBuildFailureCleanup:
 
         monkeypatch.setattr(wheel_smoke, "build_wheel", boom)
 
-        args = argparse.Namespace(wheel=None, skip_build=False)
+        args = argparse.Namespace(wheel=None, skip_build=False, keep_temp=False)
         with pytest.raises(wheel_smoke.SmokeFailure):
             wheel_smoke.run_smoke(args)
 
@@ -756,3 +756,50 @@ def test_the_local_hidden_name_twin_matches_the_engine_s(tmp_path):
     (base / ".DS_Store").write_bytes(b"\x00")
     assert wheel_smoke._visible(base.rglob("*"), base) == visible(base.rglob("*"), base)
     assert wheel_smoke._visible(base.rglob("*"), base) == [base / "real", base / "real" / "SKILL.md"]
+
+
+class TestTheWorkDirsLock:
+    """Both dirs the smoke makes (the built wheel's and the venv's) carry its
+    pid lock while it runs, so a killed smoke's venv goes at the suite's next
+    session start (``tests/_temp_sweep.py``); ``--keep-temp`` writes no lock,
+    so a kept dir stays even when its run is killed."""
+
+    def _drive(self, tmp_path, monkeypatch, keep_temp: bool) -> list:
+        import argparse
+        import tempfile
+
+        from tests import _temp_sweep
+
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        seen: list = []
+
+        def build(repo_root, dest_dir):
+            seen.append((dest_dir, _temp_sweep.lock_is_ours(dest_dir)))
+            wheel = dest_dir / "espalier-0-py3-none-any.whl"
+            wheel.write_bytes(b"")
+            return wheel
+
+        def install(wheel, venv_dir):
+            seen.append((venv_dir.parent, _temp_sweep.lock_is_ours(venv_dir.parent)))
+            raise wheel_smoke.SmokeFailure("stopped once the locks were read")
+
+        monkeypatch.setattr(wheel_smoke, "build_wheel", build)
+        monkeypatch.setattr(wheel_smoke, "install_wheel", install)
+        with pytest.raises(wheel_smoke.SmokeFailure):
+            wheel_smoke.run_smoke(argparse.Namespace(wheel=None, skip_build=False, keep_temp=keep_temp))
+        return seen
+
+    def test_both_dirs_are_locked_while_it_runs_and_go_after(self, tmp_path, monkeypatch):
+        from tests import _temp_sweep
+
+        seen = self._drive(tmp_path, monkeypatch, keep_temp=False)
+        assert [ours for _d, ours in seen] == [True, True], "a dir the smoke made had no pid lock"
+        assert all(d.name.startswith(_temp_sweep.OWNED_PREFIXES) and not d.exists() for d, _ours in seen)
+        assert wheel_smoke.LOCK_NAME == _temp_sweep.LOCK_NAME
+
+    def test_keep_temp_never_locks_so_a_killed_kept_run_keeps_both(self, tmp_path, monkeypatch):
+        from tests import _temp_sweep
+
+        seen = self._drive(tmp_path, monkeypatch, keep_temp=True)
+        assert [ours for _d, ours in seen] == [False, False], "a --keep-temp run locked a dir it keeps"
+        assert all(d.is_dir() and _temp_sweep.lock_pid(d) is None for d, _ours in seen), seen

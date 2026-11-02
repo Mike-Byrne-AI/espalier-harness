@@ -26,12 +26,24 @@ def _iter_markdown_files(repo_root: Path) -> list[Path]:
     # dist/ extracted-release trees + gitignored scratch and reported ~30 phantom
     # "broken links" — the bulk of the `espalier doctor` surface WARN. Lazy import
     # (mirrors reflect_deep) to keep reflection import-cheap and circular-safe.
-    from espalier.surface_contract import classify_release_path, is_shipped_pack
+    from espalier.surface_contract import (
+        classify_release_path,
+        is_internal_path_prefix,
+        is_self_host_repo,
+        is_shipped_pack,
+    )
 
     # The classifier answers "does this belong in THIS repository's release
     # archive", and an installed package's README classifies public under
     # that question. Whose doc it is gets decided first, by the walk: a
     # dependency tree is never entered.
+    #
+    # Its filename vocabulary (BLUEPRINT*.md, blueprint.md, TASK_PACK*.md, the
+    # atlas suffix) names Espalier's own internal documents. On an adopter's
+    # tree a doc so named is the adopter's, and dropping it hid its broken
+    # links (DEF-1114), so there only the classifier's folders decide
+    # "internal"; its transient and local-only buckets stand on every tree.
+    adopter_tree = not is_self_host_repo(repo_root)
     out: list[Path] = []
     for md in safe_rglob(repo_root, "*.md", skip_dirs=dependency_dirs_for(repo_root)):
         rel = md.relative_to(repo_root).as_posix()
@@ -52,7 +64,10 @@ def _iter_markdown_files(repo_root: Path) -> list[Path]:
         # routers, so the mirror is redundant to scan here.
         if rel.startswith("espalier/assets/"):
             continue
-        if classify_release_path(rel) == "public":
+        bucket = classify_release_path(rel)
+        if bucket == "public" or (
+            adopter_tree and bucket == "internal" and not is_internal_path_prefix(rel)
+        ):
             out.append(md)
     return sorted(out)
 

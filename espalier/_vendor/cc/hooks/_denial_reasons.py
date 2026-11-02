@@ -925,15 +925,16 @@ GATE_DOCS_REFRESH_NEEDED = (
 )
 
 GATE_DOCS_REFRESH_NO_CHANGES = (
-    "The docs-maintainer ran but changed no documentation, so the docs "
-    "refresh gate is not satisfied: the record says the subagent ran, and "
-    "the gate reads the changed docs it lists -- the agent completing is not "
-    "the same as the docs being refreshed."
+    "The docs-maintainer ran but changed no documentation during its own run, "
+    "so the docs refresh gate is not satisfied: the record says the subagent "
+    "ran, and the gate reads the docs it changed -- the agent completing is not "
+    "the same as the docs being refreshed, and doc edits made before it ran are "
+    "not its work."
     "\n  Don't: re-run the same subagent expecting a different result -- if it "
     "was denied, or found nothing to do, running it again reproduces this."
     "\n  Do: check whether its edits were blocked (see the deny messages in "
-    "this session), or make the doc changes this session's work actually "
-    "requires. If the docs are genuinely current, record that judgement -- "
+    "this session). If this session already made the doc changes its work "
+    "requires, or the docs are genuinely current, record that judgement -- "
     "write `.espalier-state/docs_refreshed` as "
     "{\"agent\": \"operator\", \"note\": \"<a sentence saying why nothing needed refreshing>\"}; "
     "that is a judgement you are recording, not a gate you are skipping, and "

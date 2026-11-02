@@ -30,9 +30,22 @@ Usage:
     python tools/cc/reflect_protocol.py [--pass N] [--json]
 """
 from __future__ import annotations
-import hashlib, json, os, re, sys
+import hashlib, json, os, re, subprocess, sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
+from urllib.parse import unquote
+
+try:  # the bounded spawn beside this file; it is also loaded where that sibling is not importable
+    from _json_safe import run_bounded
+except ImportError:  # fail-open: ok deliberate -- tools/cc is not on sys.path (copied alone, or loaded by path): subprocess.run, a bound everywhere but Windows
+    def run_bounded(
+        args: Any, *, timeout: float | None = None, input: Any = None,
+        capture_output: bool = False, check: bool = False, **kwargs: Any,
+    ) -> "subprocess.CompletedProcess[Any]":
+        """``subprocess.run``, read when called, so a replaced one is honoured as ``run_bounded`` honours it."""
+        return subprocess.run(  # spawn: ok the bounded spawn's fallback where _json_safe.py is not importable
+            args, timeout=timeout, input=input, capture_output=capture_output, check=check, **kwargs)
 
 LOCAL_LINK_RE = re.compile(r"\[[^\]]+\]\((?!https?://|mailto:|#)([^)]+)\)")
 # Forced twin of espalier/reflect_protocol.PLACEHOLDER_PATTERNS across the
@@ -370,6 +383,38 @@ def _iter_router_docs(root):
     return hits
 
 
+def _tracked_root_markdown(root):
+    """The ``*.md`` files at the root of ``root`` that git tracks, by name; the
+    ones on disk where git cannot answer (no git, not a repository). Forced twin
+    of the engine's ``espalier/reflect_protocol.py::_tracked_root_markdown``
+    (tests/test_reflect_link_guards.py drives both on one tree)."""
+    try:
+        r = run_bounded(
+            ["git", "-C", str(root), "ls-files", "-z", "--", ":(glob)*.md"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=20, check=False, stdin=subprocess.DEVNULL,
+        )
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        r = None
+    if r is not None and r.returncode == 0:
+        return sorted(n for n in r.stdout.split("\0") if n and "/" not in n)
+    try:
+        return sorted(p.name for p in Path(root).glob("*.md") if p.is_file())
+    except OSError:
+        return []
+
+
+def _root_doc_names(root):
+    """SURFACE_ROOTS, and on an adopter tree every tracked root ``*.md`` beside
+    them (DEF-1114): a README's broken link is what the deep pass exists to
+    catch. The source repository keeps its list (its other root documents are
+    release and maintainer records). Forced twin of the engine's."""
+    names = list(SURFACE_ROOTS)
+    if not _routes_as_source_repo(root):
+        names += _tracked_root_markdown(root)
+    return list(dict.fromkeys(names))
+
+
 def iter_surface(root):
     # BC-037: include all docs/**/*.md, not just the entries in
     # SURFACE_ROOTS. Drift between SURFACE_ROOTS and the actual docs/ tree
@@ -378,7 +423,7 @@ def iter_surface(root):
     # overlap with docs/**/*.md doesn't double-count.
     seen = set()
     hits = []
-    for n in SURFACE_ROOTS:
+    for n in _root_doc_names(root):
         p = root / n
         if p.exists() and p not in seen:
             hits.append(p); seen.add(p)
@@ -430,6 +475,25 @@ def _mentions_path(text, suffix):
     return re.search(r"(?<![\w/.-])" + re.escape(suffix), text) is not None
 
 
+_LINK_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+_LINK_TITLE_RE = re.compile(r"""^(\S+)\s+(?:"[^"]*"|'[^']*')$""")
+
+
+def _local_link_path(raw):
+    """The local path a markdown link target names, or ``""`` for one that
+    names none (a trailing title dropped, a ``//host`` or scheme target not
+    local, the fragment cut, ``%`` escapes decoded). Forced twin of the
+    engine's."""
+    target = raw.strip()
+    titled = _LINK_TITLE_RE.match(target)
+    if titled:
+        target = titled.group(1)
+    target = target.split("#")[0].strip()
+    if target.startswith("//") or _LINK_SCHEME_RE.match(target):
+        return ""
+    return unquote(target)
+
+
 def _link_target(path, root, target):
     """The file a markdown link reaches, or None: a ``/``-prefixed target
     resolves against the repo root (as the broken-link loop reads it), any
@@ -467,7 +531,7 @@ def build_matrix(root, surface=None):
         text = _safe(path)
         refs = []
         for m in LOCAL_LINK_RE.finditer(_strip_fences(text)):
-            t = m.group(1).split("#")[0].strip()
+            t = _local_link_path(m.group(1))
             if t:
                 c = _link_target(path, root, t)
                 if c is not None:
@@ -497,9 +561,27 @@ def find_orphans(matrix, *, root):
     referenced = set()
     for targets in matrix.values():
         referenced.update(targets)
+    # An adopter's root document is where a reader starts, never a link's
+    # target (a README, walked since DEF-1114).
     return sorted(f for f in set(matrix.keys()) - referenced
-                  if f.endswith(".md") and not _is_discovery_loaded(f)
+                  if f.endswith(".md") and not _is_discovery_loaded(f) and not _is_adopter_root_doc(f)
                   and not (root is not None and _is_init_seed(Path(root) / f)))
+
+
+def _inside_tree(candidate, root):
+    """Whether a resolved link target lies inside the repository. Forced twin
+    of the engine's."""
+    try:
+        Path(candidate).resolve().relative_to(Path(root).resolve())
+    except (ValueError, OSError):
+        return False
+    return True
+
+
+def _is_adopter_root_doc(rel):
+    """A root document the walk reads for its links alone (DEF-1114): every root
+    ``*.md`` but the ones SURFACE_ROOTS names. Forced twin of the engine's."""
+    return "/" not in rel and rel not in SURFACE_ROOTS
 
 
 def placeholder_findings(root, surface=None):
@@ -513,7 +595,8 @@ def placeholder_findings(root, surface=None):
         if path.suffix != ".md":
             continue
         rel = _rel(path, root)
-        if any(rel.startswith(d) for d in DISCOVERY_DIRS) or rel in RESIDUE_EXEMPT_SURFACES:
+        if (any(rel.startswith(d) for d in DISCOVERY_DIRS) or rel in RESIDUE_EXEMPT_SURFACES
+                or _is_adopter_root_doc(rel)):
             continue
         text = _strip_inline_code(_strip_fences(_safe(path)))
         hits = sum(len(pat.findall(text)) for pat in PLACEHOLDER_RES)
@@ -1396,7 +1479,7 @@ def main() -> int:
         record = rel in AGING_RECORD_SURFACES
         text = _strip_fences(_safe(path))
         for m in LOCAL_LINK_RE.finditer(text):
-            t = m.group(1).split("#")[0].strip()
+            t = _local_link_path(m.group(1))
             if not t: continue
             # Parity with espalier/reflection.py (inlined — tools/cc has zero
             # espalier imports): skip dir-links / <placeholder>-in-target /
@@ -1405,6 +1488,10 @@ def main() -> int:
             if t.rstrip().endswith("/") or "<" in t or t == "...": continue
             c = (path.parent / t).resolve() if not t.startswith("/") else (root / t.lstrip("/"))
             if not c.exists():
+                # A link that leaves the repository (a README badge's
+                # ../../actions/..., which the hosting site resolves): out of
+                # tree, never a gap. Forced twin of the engine's check.
+                if not _inside_tree(c, root): continue
                 if record:
                     findings.append({"kind": "aging", "severity": "low",
                                      "description": f"Aging pointer on a record surface {rel}: {t}"})

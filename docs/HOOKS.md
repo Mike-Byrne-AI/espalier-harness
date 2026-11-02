@@ -1619,9 +1619,17 @@ bound to a variable earlier in the same command (`$c = 'gc .env';
 iex $c`). A carrier named inside quotes is data. Not read as a program: a
 `Start-Process` argument list, the colon-bound `-Command:'...'`, a glued
 `cmd /c"..."`, and the words after a quoted program (`cmd /c "type" .env`).
-A PowerShell statement that opens with a quoted string is still read as
-the command its first word names (`$hint = 'gc .env'` is refused), which is
-also what refuses a string piped into `iex`. A grep-shaped search of the
+A PowerShell statement that opens with a quoted string is read as the
+command its first word names, which is what refuses a string piped into
+`iex`, unless nothing in the command can run the string: the right-hand
+side of a last-statement assignment to a variable the command names
+nowhere else, with no pipe, call operator, group or script block anywhere
+(`$hint = 'gc .env'` alone is a mention, and the same with a later
+`iex $hint` is refused), or the one literal in `Write-Host (...)` in a
+command made of Write-Host statements alone. A typographic quote, a `#`
+outside the strings, the stop-parsing token `--%` or a braced variable
+name keeps the first-word reading, since PowerShell can end a string there
+where this reading does not. A grep-shaped search of the
 file is not a read verb on either shell, and a mention inside a string or
 comment is inert.
 This is the hook-layer replacement for the `Read()` deny rules `init` no
@@ -2186,7 +2194,7 @@ gate is opt-in.
 | Gate | What it checks | Blocks? | Default |
 |------|---------------|---------|---------|
 | **1. Pytest** | Runs core test suite | Yes, on failure | **Off** (opt-in via env var) |
-| **2. Docs refresh** | ≥10 writes and no `docs-maintainer` subagent run that changed docs (`.espalier-state/docs_refreshed`)? | Yes, the first Stop of each turn until one has | On |
+| **2. Docs refresh** | ≥10 writes and no `docs-maintainer` subagent run that changed docs during its own run (`.espalier-state/docs_refreshed`)? | Yes, the first Stop of each turn until one has | On |
 | **3. Code review** | ≥10 writes and no `code-reviewer` subagent run (`.espalier-state/code_reviewed`)? | Yes, the first Stop of each turn until one has | On |
 | **5. Handoff** | Nothing in flight (no plan in progress, no tracked edit) and the branch holds commits its upstream does not (its own upstream, else `origin/HEAD`, else `origin/main` or `origin/master`), made this session, on a repository whose `espalier.toml` sets `handoff_push = true`; and, where the push would open a pull request, that this seat has no other one open (one open pull request per seat: one bounded `gh pr list` read, attributed by the ship driver's `seat_open_prs`) | Yes, once per commit (`.espalier-state/handoff_gate_said` holds the HEAD it judged, seeded at SessionStart); while another of this seat's pull requests is open the lane is held instead (`.espalier-state/handoff_gate_hold`, re-checked every five minutes), and the block returns once none is | On where the handoff pushes |
 | **4. Blueprint finalize** | Auto-finalizes the active blueprint | Never blocks | On |
@@ -2378,12 +2386,26 @@ candidate: it is a claim for you to distil, not a note.
 When a subagent starts cold (no inherited context), this hook injects a
 small orientation payload — host facts plus a pointer to the fan-out
 finding-schema — so the subagent does not re-derive the host
-environment. It is a reporter: it only injects context, never blocks.
+environment. It is a reporter: it injects context and never blocks.
+
+For an agent that relieves the docs gate (`docs-maintainer`, or one you
+declare under `docs_refresh_agents`), it also keeps a snapshot of the
+markdown files with uncommitted changes at the agent's start, under
+`.espalier-state/docs_snapshots/<agent id>.json`. The agent's stop compares
+against it, so the `docs_refreshed` record lists only the files the agent
+itself created or changed, plus an earlier docs run's files this session that
+are still uncommitted: markdown you edited before dispatching it no longer
+counts as its work. The stop removes the snapshot, and a start sweeps
+any left more than a day old. Where a settings file does not wire this hook
+(an install from before it took the snapshot), the record lists every dirty
+markdown file as before, says so with `"evidence_scope": "tree"`, and a
+`subagentstop_failed_open_docs_evidence_unscoped` record says it once a session.
 
 **What you see:** Nothing directly; the subagent begins with the
 orientation context already in hand.
 
-**Configuration:** None needed. Advisory only.
+**Configuration:** None needed. Under `ESPALIER_MAINTENANCE_MODE=1` it keeps
+no snapshot, since the stop writes no record to compare it with.
 
 ---
 
