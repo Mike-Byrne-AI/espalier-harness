@@ -501,7 +501,11 @@ def render_context_report(report: "dict[str, Any]") -> str:
         if depth is not None:
             last_session += f" (depth={depth})"
     elif bp.get("status") == "missing":
-        last_session = "no prior blueprint -- starting fresh"
+        # Not "starting fresh": the chain is gitignored, so a re-clone or a
+        # second machine reads this line too, and the reasoning it lacks lives
+        # on the other disk (DEF-1105).
+        last_session = ("no blueprint chain on this machine "
+                        "(cc/blueprints/ is gitignored: each machine keeps its own)")
     else:
         last_session = f"blueprint {bp.get('status','?')}"
 

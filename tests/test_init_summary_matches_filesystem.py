@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._git_oracle import require_is_gitignored
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -135,3 +137,22 @@ def test_a_recommendation_without_a_packaged_body_is_named(tmp_path):
 def test_a_plain_repo_prints_no_bodiless_line(tmp_path):
     out = _run_init(tmp_path)
     assert "Suggested agents" not in out, out
+
+
+@pytest.mark.integration
+def test_the_summary_names_the_per_machine_homes_git_really_ignores(tmp_path):
+    """The epilogue names the homes init keeps on this machine (DEF-1105): the
+    blueprint chain /handoff records into, and where a kept decision goes. Each
+    `cc/` path the line names is one git ignores in the init'd tree, so the line
+    never calls a committed path per-machine."""
+    out = _run_init(tmp_path)
+    line = next((ln for ln in out.splitlines() if "cc/blueprints/" in ln and "this machine" in ln), "")
+    assert line, "no epilogue line names cc/blueprints/ as this machine's"
+    assert "ESPALIER_MEMORY.md" in line, line
+    named = re.findall(r"cc/[A-Za-z0-9_.]+/?", line)
+    assert "cc/blueprints/" in named, line
+    for rel in named:
+        probe = rel + ("probe" if rel.endswith("/") else "")
+        assert require_is_gitignored(tmp_path, probe), (
+            f"{rel} is named per-machine but git does not ignore it: {line}"
+        )

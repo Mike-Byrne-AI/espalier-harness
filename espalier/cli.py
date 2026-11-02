@@ -7357,6 +7357,19 @@ def _print_init_summary(
     print("  - /handoff ends a session by committing its memory row; it pushes "
           "the lane only when espalier.toml sets handoff_push = true (off by "
           "default: push a lane yourself with /ship).")
+    # DEF-1105: the reasoning /handoff records lives on this disk alone, and the
+    # adopter is told so here rather than after a re-clone. The homes are read
+    # back from REQUIRED_GITIGNORE, so one a later release stops ignoring drops
+    # out of the sentence instead of being called per-machine while committed;
+    # only where init wrote the block (--no-write-gitignore ignores nothing).
+    if write_gitignore:
+        homes = [rel for rel in ("cc/blueprints/", _GOAL_REL, "cc/_working_summary.md")
+                 if rel in REQUIRED_GITIGNORE]
+        if homes:
+            print(f"  - {', '.join(homes)} stay on this machine (gitignored): the "
+                  "blueprint chain /handoff records into reaches the next session "
+                  "here and no other clone. Keep a decision that must outlive the "
+                  "machine in ESPALIER_MEMORY.md or your repository's own record.")
     print("  - Agents are dispatched as subagents by name "
           "(subagent_type='code-reviewer', ...).")
     print("  - Slash commands: type `/` in Claude Code to list them, or browse "
