@@ -1156,7 +1156,8 @@ def read_riding_names(root: Path, prs: list[dict], seat_of: dict[str, str], *, r
 
 
 def read_records_section(root: Path, base: str, by_machine: dict[str, list[dict]], rows: list[dict], *,
-                         machine: str = "", run_: Runner = run, prs: list[dict] | None = None) -> dict:
+                         machine: str = "", run_: Runner = run, prs: list[dict] | None = None,
+                         keep: dict | None = None) -> dict:
     """``{"window", "read", "unclaimed", "entries": [{"seat", "merges",
     "since", "parked", "where", "cut"}], "unread", "note"}``: for each seat
     with a checkout here, a live claim, a job (the ``seats`` rows that are
@@ -1190,6 +1191,10 @@ def read_records_section(root: Path, base: str, by_machine: dict[str, list[dict]
         return data
 
     merged = _post_merge.read_merged(root, ROW_DEBT_WINDOW, gh=gh, fields=_post_merge.LANE_FIELDS)
+    if keep is not None:
+        # Handed out the moment it is read, so a later step of this section
+        # that fails leaves the jobs closed with no pull request their read.
+        keep["merged"] = merged
     seat_of = mail.lane_seats(by_machine)
     lane_seats = [lane_seat(pr, seat_of) for pr in merged]
     unclaimed = sum(1 for seat in lane_seats if not seat)
@@ -1323,6 +1328,10 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run, now: datetime
         board["base_fetch"] = {"state": "ok" if ok else "failed", "problem": problem}
     overlap_claims = [] if board.get("mail_unread") else claims
     overlap_notes = ["the claims are unread (the mail could not be read)"] if board.get("mail_unread") else []
+    # Every assign the fold counts, for the two closed-at-a-push readers.
+    counted = [m for sender, ms in by_machine.items() for m in ms
+               if m.get("type") == "assign" and (not dispatcher or sender == dispatcher)]
+    kept: dict = {}   # the records section's merged read, for closed_with_no_pr
     try:
         prs = read_open_prs(root, run_=run_)
         for pr in prs:
@@ -1340,8 +1349,6 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run, now: datetime
         for pr in prs:
             pr.pop("files", None)   # read for the stale and overlap checks; the JSON carries verdicts, not the list
         board["open_prs"] = prs
-        counted = [m for machine, ms in by_machine.items() for m in ms
-                   if m.get("type") == "assign" and (not dispatcher or machine == dispatcher)]
         board["closed_at_a_push"] = closed_at_a_push(closed, counted, prs)
     except Unresolvable as exc:
         board["open_prs"] = {"unread": str(exc)}
@@ -1363,11 +1370,26 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run, now: datetime
             open_prs = board.get("open_prs")
             board["records"] = read_records_section(root, base, by_machine, board["seats"]["rows"],
                                                     machine=machine or "", run_=run_,
-                                                    prs=open_prs if isinstance(open_prs, list) else None)
+                                                    prs=open_prs if isinstance(open_prs, list) else None,
+                                                    keep=kept)
     except Unresolvable as exc:
         board["records"] = {"unread": str(exc)}
     except Exception as exc:  # noqa: BLE001 -- each section is read on its own; the records line says unread and why
         board["records"] = {"unread": f"{type(exc).__name__}: {os_error_text(exc)}"}
+    # The jobs a push closed whose lane has no pull request open or merged
+    # among the records section's merges (DEF-5063), read from what that
+    # section handed out; the JSON carries the verdict, never the merges.
+    records = board.get("records")
+    merged = kept.get("merged")
+    if isinstance(board.get("open_prs"), list) and not board.get("mail_unread"):
+        if merged is not None:
+            board["closed_with_no_pr"] = closed_with_no_pr(closed, counted, board["open_prs"], merged)
+        elif isinstance(records, dict) and records.get("unread"):
+            board["closed_with_no_pr"] = {"unread": str(records["unread"])}
+        elif isinstance(records, dict) and records.get("unnamed"):
+            # An unnamed clone's records section reads no merges, so the
+            # line is unread, never none.
+            board["closed_with_no_pr"] = {"unread": "this clone names no seat, so its merges were not read"}
     try:
         board["post_merge"] = read_post_merge(root, base, run_=run_)
     except Unresolvable as exc:
@@ -1669,19 +1691,84 @@ def closed_at_a_push(closed: list[tuple[dict, dict, str]], assigns: list[dict], 
     return found
 
 
+def _stamp(value: object) -> datetime | None:
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
+def closed_with_no_pr(closed: list[tuple[dict, dict, str]], assigns: list[dict], prs: list[dict],
+                      merged: list[dict], window: int = ROW_DEBT_WINDOW) -> list[dict]:
+    """The jobs the claim rule closed at a push whose lane has no pull request
+    open and none merged after the release, among ``merged`` (the records
+    section's one merged read, its last ``window`` merges).
+
+    The ship driver sends the lane release once the push lands, so where ``gh
+    pr create`` then fails, or a seat on an older ``mail.py`` drops a lane it
+    never pushed, the job closes with no pull request to list it under:
+    :func:`closed_at_a_push` keys on the open ones, and the jobs rows had
+    dropped it (DEF-5063, driven by the DEF-4037 lane's failure-mode review).
+    A merge of the lane's branch at or after the release is the lane landing;
+    one before it is an earlier lane that used the name. Where the read filled
+    its window, a release older than its oldest merge is left out, since that
+    lane's merge may lie beyond the merges read; a job assigned again since its
+    close is the dispatcher's answer and is left out, as above. A stamp that
+    does not read keeps the entry: listed, never hidden."""
+    open_ = {str(pr.get("headRefName") or "") for pr in prs}
+    merges: dict[str, list[datetime | None]] = {}
+    for pr in merged:
+        merges.setdefault(str(pr.get("headRefName") or ""), []).append(_stamp(pr.get("mergedAt")))
+    times = [t for ts in merges.values() for t in ts if t is not None]
+    floor = min(times) if len(merged) >= window and times else None
+    found = []
+    for assign, release, rule in closed:
+        re_ = assign.get("re") or {}
+        lane = str((release.get("re") or {}).get("lane") or "")
+        if rule != "claim" or not lane or lane in open_:
+            continue
+        key, at = mail._job_key(re_), str(assign.get("at") or "")
+        if any(mail._job_key(a.get("re") or {}) == key and str(a.get("at") or "") > at for a in assigns):
+            continue
+        sent = _stamp(release.get("at"))
+        if sent is not None and floor is not None and sent < floor:
+            continue
+        if sent is not None and any(t is not None and t >= sent for t in merges.get(lane, [])):
+            continue
+        found.append({"seat": str(re_.get(mail.ASSIGN_SEAT_KEY) or ""), "ids": mail._str_list(re_.get("ids")),
+                      "assign": str(assign.get("id") or ""), "release": str(release.get("id") or ""),
+                      "lane": lane, "released": str(release.get("at") or "")})
+    return found
+
+
 def closed_at_a_push_lines(board: dict) -> list[str]:
-    """The ``jobs:`` section's line for :func:`closed_at_a_push`, its count
-    first; nothing while none is found, and unread, never none, when the open
-    pull requests could not be read."""
-    found = board.get("closed_at_a_push")
-    if board.get("mail_unread") or not found:
+    """The ``jobs:`` section's lines for :func:`closed_at_a_push` and
+    :func:`closed_with_no_pr`, each its count first; nothing while none is
+    found, and unread, never none, when the open pull requests (or, for the
+    second, the merged ones) could not be read."""
+    if board.get("mail_unread"):
         return []
+    lines: list[str] = []
+    found = board.get("closed_at_a_push")
     if isinstance(found, dict):
-        return [f"          closed at a push: unread (the open pull requests are unread: {found.get('unread')})"]
-    head = f"          closed at a push, its pull request still open: {len(found)}: "
-    return [(head if i == 0 else "            ")
-            + f"{c['seat']}: {', '.join(c['ids'])} (assign {c['assign']}; #{c['number']} {c['lane']}: {c['state']})"
-            for i, c in enumerate(found)]
+        lines.append(f"          closed at a push: unread (the open pull requests are unread: {found.get('unread')})")
+    elif found:
+        head = f"          closed at a push, its pull request still open: {len(found)}: "
+        lines.extend((head if i == 0 else "            ")
+                     + f"{c['seat']}: {', '.join(c['ids'])} (assign {c['assign']}; #{c['number']} {c['lane']}: "
+                       f"{c['state']})"
+                     for i, c in enumerate(found))
+    none = board.get("closed_with_no_pr")
+    if isinstance(none, dict):
+        lines.append(f"          closed at a push with no pull request: unread (the merged pull requests are unread: "
+                     f"{none.get('unread')})")
+    elif none:
+        head = f"          closed at a push, no pull request open or merged: {len(none)}: "
+        lines.extend((head if i == 0 else "            ")
+                     + f"{c['seat']}: {', '.join(c['ids'])} (assign {c['assign']}; {c['lane']}, released "
+                       f"{c['released']})"
+                     for i, c in enumerate(none))
+    return lines
 
 
 def under_two(assignments: list[dict], rows: list[dict], dispatcher: str = "") -> tuple[list[tuple[str, int, str]], dict]:
