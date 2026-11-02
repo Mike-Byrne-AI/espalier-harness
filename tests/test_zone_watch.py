@@ -623,7 +623,9 @@ class TestATrackedDeclarationWhereverItsGitIs:
     def test_a_nested_read_git_refuses_prunes_and_is_said(self, repo: Path, monkeypatch) -> None:
         """The nested checkout's git refuses (exit 128, safe.directory's
         dubious ownership): its declarations prune as before, the root's read
-        stands, and the walk says so once. Mutation: a nested failure unsaid."""
+        stands, and the walk says so once, naming the checkout; the root's own
+        refusal later is said too. Mutations: a nested failure unsaid; one
+        key for every checkout (the review's row)."""
         self._zone(repo)
         _declared(repo / "zone" / "gen")
         _declared(repo / "zone" / "sub" / "gen")
@@ -640,7 +642,42 @@ class TestATrackedDeclarationWhereverItsGitIs:
         monkeypatch.setattr(zw._hook_utils, "spawn_checked", refuses_nested)
         snap = zw.snapshot(repo)
         assert "zone/gen/keep.txt" in snap and "zone/sub/gen/keep.txt" not in snap, sorted(snap)
-        assert [r["details"]["cause"] for r in _said_tracked_read()] == ["exited 128"]
+        assert [(r["details"]["cause"], r["details"].get("checkout")) for r in _said_tracked_read()] == [
+            ("exited 128", "zone/sub")]
+        monkeypatch.setattr(zw._hook_utils, "spawn_checked",
+                            lambda argv, **kw: subprocess.CompletedProcess(argv, 128, b"", b""))
+        zw.snapshot(repo)
+        assert [r["details"].get("checkout") for r in _said_tracked_read()] == ["zone/sub", None]
+
+    def test_a_failed_nested_read_names_its_checkout_where_it_is_read(self, repo: Path, monkeypatch) -> None:
+        """The line the banner or the shell call's notice carries names the
+        checkout whose git refused, so the operator runs git where it
+        failed, not at the root where it works. Mutation: the root's line."""
+        self._zone(repo)
+        _declared(repo / "zone" / "sub" / "gen")
+        _nested(repo, "zone/sub", "gen")
+        zw.take_notices()
+        monkeypatch.setattr(zw._hook_utils, "spawn_checked",
+                            lambda argv, **kw: subprocess.CompletedProcess(argv, 128, b"", b""))
+        zw.snapshot(repo)
+        notices = zw.take_notices()
+        assert len(notices) == 1 and "git ls-files of zone/sub/ exited 128" in notices[0], notices
+
+    def test_a_top_spelled_otherwise_than_the_index_still_finds_its_tracked_files(
+            self, repo: Path, tmp_path_factory) -> None:
+        """The adopter writes ``zone/`` where the index holds ``Zone/...``
+        (the top itself renamed in case alone): git matches a pathspec by
+        case even where core.ignorecase is true, so the read asks in any case
+        and the filesystem joins the names. Skipped where the filesystem
+        keeps case. Mutation: a pathspec read by case (the review's row)."""
+        if not _filesystem_joins(tmp_path_factory, "Zone", "zone"):
+            pytest.skip("the filesystem keeps case")
+        self._zone(repo, "zone/")
+        _declared(repo / "Zone" / "gen")
+        _gx(repo, "add", "-f", "Zone/gen")
+        _gx(repo, "commit", "-q", "-m", "Zone")
+        snap = zw.snapshot(repo)
+        assert "zone/gen/keep.txt" in snap, sorted(snap)
 
     def test_the_reads_of_one_walk_share_one_budget(self, repo: Path, monkeypatch) -> None:
         """The root's read and a nested checkout's: each is given what is left

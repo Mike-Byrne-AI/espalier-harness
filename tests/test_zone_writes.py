@@ -295,14 +295,15 @@ class TestTheTwinsAgree:
         walk does, so a writer's change there is recorded. Mutations: the
         engine asks the root's index alone; asks every checkout; compares by
         spelling alone."""
-        (tree / "espalier.toml").write_bytes(b'protected_paths = ["zone/", "deep/sub/inner/"]\n')
-        for rel in ("zone/sub/gen", "deep/sub/inner/gen", "tools/cc/vend/gen", "zone/Gen"):
+        (tree / "espalier.toml").write_bytes(b'protected_paths = ["zone/", "deep/sub/inner/", "top/"]\n')
+        for rel in ("zone/sub/gen", "deep/sub/inner/gen", "tools/cc/vend/gen", "zone/Gen", "Top/gen", "zone/odd/gen"):
             (tree / rel).mkdir(parents=True)
             (tree / rel / ".gitignore").write_bytes(b"*\n")
             (tree / rel / "keep.txt").write_bytes(b"k\n")
         _commit(tree)
-        _git(tree, "add", "-f", "zone/Gen")
+        _git(tree, "add", "-f", "zone/Gen", "Top/gen", "zone/odd/gen")
         _git(tree, "commit", "-q", "-m", "gen")
+        (tree / "zone" / "odd" / ".git").write_bytes(b"not a gitlink\n")  # no checkout, on both sides
         for top, force in (("zone/sub", "gen"), ("deep/sub", "inner/gen"), ("tools/cc/vend", "gen")):
             for args in (["init", "-q"], ["add", "-f", force], ["commit", "-q", "-m", "nested"]):
                 _git(tree / top, *args)
@@ -314,12 +315,41 @@ class TestTheTwinsAgree:
             assert {"zone/sub/gen/keep.txt", "deep/sub/inner/gen/keep.txt"} <= set(side), sorted(side)
             assert not [r for r in side if r.startswith("tools/cc/vend/")], sorted(side)
             assert ("zone/gen/keep.txt" in side) is folds, sorted(side)
-        zones = ("zone/", "deep/", "tools/cc/vend/")
+            assert ("top/gen/keep.txt" in side) is folds, sorted(side)  # the top spelled otherwise than the index
+            assert "zone/odd/gen/keep.txt" in side, sorted(side)       # the root's, past a .git that is no gitlink
+        zones = ("zone/", "deep/", "top/", "tools/cc/vend/")
         assert {r for r in engine if r.startswith(zones)} == {r for r in hook if r.startswith(zones)}
         assert zw.take_baseline(tree, "s-1")
         with ze.recorded(tree, "espalier upgrade"):
             _bump(tree / "zone" / "sub" / "gen" / "keep.txt", b"rewritten by a writer\n")
         assert "zone/sub/gen/keep.txt" in _record(tree, "espalier upgrade")["files"]
+
+    @pytest.mark.parametrize("side", ["engine", "hook"], ids=["engine", "hook"])
+    def test_a_folded_name_is_joined_only_where_the_filesystem_says_one_directory(self, monkeypatch,
+                                                                                    side: str) -> None:
+        """The join's rule on every cell, the filesystem's answer stubbed: the
+        rows that lay a real case-only rename or a decomposed name run only
+        where a filesystem folds or normalizes, and no required cell's does. A
+        tracked name that folds to the walked one is joined when samefile says
+        one directory and never when it says two, its own spelling is joined
+        without asking, and a name that does not fold to it is never asked.
+        Mutations: compare by spelling alone; fold without asking the
+        filesystem (the review's row)."""
+        module = ze if side == "engine" else zw
+        tracked = frozenset({"zone/Gen", "zone/other", "zone/café"})
+        for one_directory in (True, False):
+            asked: list[tuple[str, str]] = []
+
+            def same(a, b, says=one_directory):
+                asked.append((Path(a).as_posix(), Path(b).as_posix()))
+                return says
+
+            monkeypatch.setattr(os.path, "samefile", same)
+            assert module._is_tracked_dir(Path("r"), "zone/gen", tracked) is one_directory
+            assert module._is_tracked_dir(Path("r"), "zone/café", tracked) is one_directory
+            assert asked == [("r/zone/Gen", "r/zone/gen"), ("r/zone/café", "r/zone/café")], asked
+        asked.clear()
+        assert module._is_tracked_dir(Path("r"), "zone/Gen", tracked) and asked == []
 
     def test_a_large_file_has_the_same_identity_on_both_sides(self, tmp_path: Path) -> None:
         big = tmp_path / "weights.bin"

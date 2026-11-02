@@ -174,6 +174,27 @@ _GIT_LOCATION_VARS = frozenset({"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "G
                                 "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"})
 
 
+#: ``_zone_watch._LITERAL_ICASE``: each pathspec read as written, in any case.
+_LITERAL_ICASE = ":(literal,icase)"
+
+
+def _is_checkout(path: Path) -> bool:
+    """``_hook_utils._git_dir_of`` answers one: a ``.git`` directory, or a
+    ``.git`` file whose first line is a ``gitdir:`` naming one. A ``.git``
+    file that is neither is no checkout, on both twins."""
+    marker = path / ".git"
+    try:
+        if marker.is_dir():
+            return True
+        if not marker.is_file():
+            return False
+        lines = marker.read_text(encoding="utf-8", errors="replace").splitlines()
+    except (OSError, ValueError):
+        return False
+    line = lines[0].strip() if lines else ""
+    return line.startswith("gitdir:") and bool(line[len("gitdir:"):].strip())
+
+
 def _pathspecs(checkout: str, prefixes: list[str]) -> list[str] | None:
     """``_zone_watch._pathspecs``: ``prefixes`` as the checkout at
     ``checkout`` names them (none at all where a prefix holds it, else each
@@ -190,8 +211,8 @@ def _pathspecs(checkout: str, prefixes: list[str]) -> list[str] | None:
 def _tracked_dirs(root: Path, prefixes: list[str], checkout: str = "") -> frozenset[str]:
     """``_zone_watch.tracked_dirs``: every directory holding a path git
     tracks under ``prefixes``, from one ``git ls-files -z`` run at a root
-    holding a ``.git`` of its own, its pathspecs read literally; with
-    ``checkout``, from that nested checkout's own index over the part of
+    holding a ``.git`` of its own, its pathspecs read literally and in any
+    case; with ``checkout``, from that nested checkout's own index over the part of
     ``prefixes`` it holds, each name read from ``root``; a directory's own
     ``.gitignore`` does not hold it, and a name in bytes the filesystem
     spells otherwise is kept undecoded; empty where the checkout has no
@@ -201,16 +222,15 @@ def _tracked_dirs(root: Path, prefixes: list[str], checkout: str = "") -> frozen
     checkout once, so a None here would re-read at every declaration."""
     import subprocess
 
-    from espalier._safe_walk import is_own_git_repo
     from espalier._spawn import run_no_stdin
 
     where = root / checkout if checkout else root
     specs = _pathspecs(checkout, prefixes)
-    if specs is None or not is_own_git_repo(where):
+    if specs is None or not _is_checkout(where):
         return frozenset()
     env = {k: v for k, v in os.environ.items() if k not in _GIT_LOCATION_VARS} if checkout else None
     try:
-        result = run_no_stdin(["git", "--literal-pathspecs", "ls-files", "-z", "--", *specs],
+        result = run_no_stdin(["git", "ls-files", "-z", "--", *(_LITERAL_ICASE + s for s in specs)],
                               cwd=str(where), env=env, capture_output=True, timeout=TRACKED_READ_TIMEOUT_S,
                               check=False)
     except (OSError, subprocess.SubprocessError):
@@ -265,14 +285,12 @@ def _tracking_checkout(root: Path, base: str, tops: tuple[str, ...], harness: tu
     ancestors holding a ``.git`` of its own, where a nested git may answer
     (under an adopter's protected top ``tops`` and in none of the harness's
     zones ``harness``), else ``""``, the root."""
-    from espalier._safe_walk import is_own_git_repo
-
     rel = base + "/"
     if tops and rel.startswith(tops) and not rel.startswith(harness):
         parts = base.split("/")
         for depth in range(len(parts), 0, -1):
             top = "/".join(parts[:depth])
-            if is_own_git_repo(root / top):
+            if _is_checkout(root / top):
                 return top
     return ""
 

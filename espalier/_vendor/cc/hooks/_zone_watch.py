@@ -237,6 +237,11 @@ def _holds_under(files: dict[str, Entry], base: str) -> bool:
 TRACKED_READ_TIMEOUT_S = 2.0
 
 
+#: The magic each pathspec of a tracked read carries: the name as written
+#: (a top spelled like `:!x/` is a name, never an exclusion), and any case.
+_LITERAL_ICASE = ":(literal,icase)"
+
+
 def _pathspecs(checkout: str, prefixes: list[str]) -> list[str] | None:
     """``prefixes`` as the checkout at ``checkout`` (repo-relative, ``""``
     for the root) names them: each unchanged at the root; for a nested
@@ -255,7 +260,10 @@ def tracked_dirs(root: Path, prefixes: list[str], why: list[str] | None = None, 
                  checkout: str = "", timeout: float | None = None) -> frozenset[str] | None:
     """Every directory that holds a path git tracks under ``prefixes`` (for
     ``a/b/c.py``, ``a/b`` and ``a``), from one ``git ls-files -z`` run at a
-    root holding a ``.git`` of its own, its pathspecs read literally; with
+    root holding a ``.git`` of its own, its pathspecs read literally and
+    without regard to case (git matches a pathspec by case even where
+    ``core.ignorecase`` is true, so a top spelled otherwise than the index
+    would find nothing; ``_is_tracked_dir`` asks the filesystem); with
     ``checkout`` (a nested checkout's repo-relative directory), from that
     checkout's own index over the part of ``prefixes`` it holds, each name
     read from ``root`` (the checkout's own directory among them, DEF-4085).
@@ -278,7 +286,7 @@ def tracked_dirs(root: Path, prefixes: list[str], why: list[str] | None = None, 
         return frozenset()
     try:
         result = _hook_utils.spawn_checked(
-            ["git", "--literal-pathspecs", "ls-files", "-z", "--", *specs], root=root,
+            ["git", "ls-files", "-z", "--", *(_LITERAL_ICASE + s for s in specs)], root=root,
             stdin=subprocess.DEVNULL, capture_output=True,
             timeout=TRACKED_READ_TIMEOUT_S if timeout is None else timeout,
             cwd=str(where), env=_nested_env(where if checkout else None),
@@ -371,17 +379,23 @@ def take_notices() -> list[str]:
     return out
 
 
-def _say_tracked_read_failed(root: Path, cause: str, rel: str) -> None:
-    """Say once a session that a fresh walk's tracked read failed: one record
+def _say_tracked_read_failed(root: Path, cause: str, rel: str, checkout: str = "") -> None:
+    """Say once a session that a walk's tracked read failed: one record
     ``/status --log`` counts, one debug-log line (``say_once``) and, when that
     spoke, the same line queued for the hook's banner or notice (DEF-2031),
-    naming the cause and ``rel``, the directory the walk asked at. Keyed by
-    the cause, so a later, different fault is said too."""
-    key = "zone-tracked-read-" + re.sub(r"[^a-z0-9]+", "-", cause.lower()).strip("-")
-    line = (f"protected-file check: git ls-files {cause}, so a change in {rel}/ or any other directory "
-            "below a protected path's top that ignores itself (a bare `*`) goes unreported this session, "
-            "files git tracks there included")
-    if _hook_utils.say_once(root, key, "zone_watch", "zone_watch_failed_open_tracked_read", line, cause=cause):
+    naming the cause, the nested checkout whose git was asked (none for the
+    root) and ``rel``, the directory the walk asked at. Keyed by the cause
+    and the checkout, so a later, different fault is said too, and so is the
+    root's after a nested checkout's."""
+    slug = re.sub(r"[^a-z0-9]+", "-", cause.lower()).strip("-")
+    if checkout:
+        slug += "-" + re.sub(r"[^a-z0-9]+", "-", checkout.lower()).strip("-")
+    line = (f"protected-file check: git ls-files{_of_checkout(checkout)} {cause}, so a change in {rel}/ "
+            "or any other directory below a protected path's top that ignores itself (a bare `*`) goes "
+            "unreported this session, files git tracks there included")
+    details = {"cause": cause, **({"checkout": checkout} if checkout else {})}
+    if _hook_utils.say_once(root, "zone-tracked-read-" + slug, "zone_watch",
+                            "zone_watch_failed_open_tracked_read", line, **details):
         _NOTICES.append(line)
 
 
@@ -479,7 +493,7 @@ def snapshot(root: Path, prior: dict[str, Entry] | None = None,
             spent += took
             deadline += took
             if reads[checkout] is None:
-                _say_tracked_read_failed(root, why[0] if why else "could not answer", base)
+                _say_tracked_read_failed(root, why[0] if why else "could not answer", base, checkout)
         return reads[checkout]
 
     def take(rel: str, full: str) -> None:
