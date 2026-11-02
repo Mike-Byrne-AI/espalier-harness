@@ -743,14 +743,43 @@ class TestReapWorktrees:
         report = cs.reap_worktrees(work, sessions=[])
         assert (report.removed == ["wired"]) is removed
 
-    def test_a_plan_in_progress_in_it_keeps_it(self, cs, repos):
+    def test_a_plan_in_progress_in_an_unmerged_or_dirty_worktree_keeps_it(self, cs, repos):
         work = repos["work"]
         with open(work / ".git" / "info" / "exclude", "a", encoding="utf-8") as exclude:
             exclude.write("cc/\n")
-        wt = _worktree(repos, "planning")
+        ahead = _worktree(repos, "planning", "lane/planning")
+        _identity(ahead)
+        _commit(ahead, "lane.txt")
+        dirty = _worktree(repos, "dirty-plan")
+        (dirty / "README.md").write_text("changed\n", encoding="utf-8")
+        for wt in (ahead, dirty):
+            (wt / "cc").mkdir()
+            (wt / "cc" / "execution_plan.json").write_text('{"status": "in_progress"}', encoding="utf-8")
+        report = cs.reap_worktrees(work, sessions=[])
+        assert sorted(report.kept) == [("dirty-plan", "a plan in it is still in progress"),
+                                       ("planning", "a plan in it is still in progress")], report
+
+    def test_a_plan_left_open_in_a_merged_clean_worktree_is_named_and_removed(self, cs, repos):
+        """DEF-4047: the work worktree's lane merged as #322 with its plan's
+        last step still running, and every banner for six days kept it as a
+        plan in progress. A merged lane with a clean tree is finished work
+        whatever its plan says; the plan is saved with the cc/ state and the
+        removal names it."""
+        work = repos["work"]
+        with open(work / ".git" / "info" / "exclude", "a", encoding="utf-8") as exclude:
+            exclude.write("cc/\n")
+        wt = _worktree(repos, "finished", "lane/finished")
         (wt / "cc").mkdir()
-        (wt / "cc" / "execution_plan.json").write_text('{"status": "in_progress"}', encoding="utf-8")
-        assert cs.reap_worktrees(work, sessions=[]).kept == [("planning", "a plan in it is still in progress")]
+        plan = '{"status": "in_progress", "steps": [{"status": "running"}]}'
+        (wt / "cc" / "execution_plan.json").write_text(plan, encoding="utf-8")
+        dry = cs.reap_worktrees(work, sessions=[], dry_run=True)
+        assert dry.would_remove == ["finished (its plan was never closed; the lane merged)"], dry
+        report = cs.reap_worktrees(work, sessions=[])
+        assert report.removed == ["finished (its plan was never closed; the lane merged)"], report
+        assert not wt.exists() and not _registered(work, wt)
+        assert report.saved == ["cc/blueprints/from-worktrees/finished/execution_plan.json"], report.saved
+        assert (work / report.saved[0]).read_text(encoding="utf-8") == plan
+        assert "finished (its plan was never closed; the lane merged)" in cs.worktrees_line(report)
 
     def test_another_live_session_in_the_root_removes_nothing(self, cs, repos):
         """A session that entered a worktree mid-session may still read as
@@ -813,6 +842,48 @@ class TestReapWorktrees:
             child.wait(timeout=10)
         assert report.kept == [("held", "a process has it open (Windows refused to rename it)")]
         assert wt.is_dir() and _registered(work, wt)
+
+    @pytest.mark.skipif(os.name != "posix", reason="the cwd reader is the POSIX arm (Windows has its rename probe)")
+    def test_a_folder_a_process_works_in_is_kept_and_its_pid_named(self, cs, repos):
+        """DEF-4079: a nohup'd run whose session ended is no Claude session and
+        leaves no marker, and a rename succeeds under it off Windows; its
+        working directory in a merged, clean worktree is what keeps it."""
+        work = repos["work"]
+        wt = _worktree(repos, "running")
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], cwd=str(wt))
+        try:
+            time.sleep(0.5)
+            report = cs.reap_worktrees(work, sessions=[])
+        finally:
+            child.kill()
+            child.wait(timeout=10)
+        assert report.removed == [] and wt.is_dir() and _registered(work, wt), report
+        assert report.kept == [("running", f"a process works in it (pid {child.pid})")], report.kept
+        assert f"running [a process works in it (pid {child.pid})]" in cs.worktrees_line(report)
+
+    @pytest.mark.skipif(os.name != "posix", reason="the cwd reader is the POSIX arm (Windows has its rename probe)")
+    def test_the_process_table_is_read_once_and_only_at_a_removal(self, cs, repos, monkeypatch):
+        work = repos["work"]
+        _worktree(repos, "one")
+        _worktree(repos, "two")
+        dirty = _worktree(repos, "dirty")
+        (dirty / "README.md").write_text("changed\n", encoding="utf-8")
+        reads: list = []
+        monkeypatch.setattr(cs, "process_cwds", lambda pids=None, **kw: reads.append(pids) or {})
+        report = cs.reap_worktrees(work, sessions=[])
+        assert sorted(report.removed) == ["one", "two"] and reads == [None], (report, reads)
+        reads.clear()
+        cs.reap_worktrees(work, sessions=[])
+        assert reads == [], "a worktree kept before the removal stage reads no table"
+
+    @pytest.mark.skipif(os.name != "posix", reason="the cwd reader is the POSIX arm (Windows has its rename probe)")
+    def test_a_table_the_reader_could_not_read_keeps_it(self, cs, repos, monkeypatch):
+        work = repos["work"]
+        wt = _worktree(repos, "unread")
+        monkeypatch.setattr(cs, "process_cwds", lambda pids=None, **kw: None)
+        report = cs.reap_worktrees(work, sessions=[])
+        assert report.kept == [("unread", "the process table could not be read, so a run in it cannot be ruled out")]
+        assert wt.is_dir()
 
     def test_a_worktree_whose_folder_is_gone_is_pruned(self, cs, repos):
         work = repos["work"]
@@ -1108,6 +1179,17 @@ class TestSessionStartWiring:
 # -- the pieces --------------------------------------------------------------------
 
 class TestPieces:
+    def test_plan_in_progress_reads_the_merge_beside_the_tree(self, cs, tmp_path):
+        """DEF-4047: the keep rule takes the lane's state beside the plan."""
+        tree = tmp_path / "t"
+        assert cs.plan_in_progress(tree) is False and cs.plan_in_progress(tree, merged_and_clean=True) is False
+        (tree / "cc").mkdir(parents=True)
+        plan = tree / "cc" / "execution_plan.json"
+        for body, open_ in (('{"status": "in_progress"}', True), ("not json", True), ('{"status": "complete"}', False)):
+            plan.write_text(body, encoding="utf-8")
+            assert cs.plan_in_progress(tree) is open_, body
+            assert cs.plan_in_progress(tree, merged_and_clean=True) is False, body
+
     def test_pid_alive_answers_for_this_process_a_finished_one_and_non_pids(self, cs):
         assert cs.pid_alive(os.getpid()) is True
         assert cs.pid_alive(_dead_pid()) is False
@@ -1251,6 +1333,127 @@ class TestPieces:
 
 
 # -- the one liveness oracle (TP-701 B-1) ----------------------------------------------
+
+@pytest.mark.skipif(os.name != "posix", reason="the cwd reader is the POSIX arm; Windows reads nothing")
+class TestTheProcessReader:
+    """The one reader of where a process works (DEF-4070's, moved here from
+    session_start for DEF-4078 and DEF-4079): the SessionStart Loose: line,
+    the CP-KILL speed bump and held_open all read it."""
+
+    def test_the_lsof_arm_reads_its_output_whatever_the_exit_code(self, cs, monkeypatch, tmp_path):
+        monkeypatch.setattr(cs, "_PROC_ROOT", tmp_path / "no-proc")
+        monkeypatch.setattr(cs.shutil, "which", lambda name, path=None: "/usr/sbin/lsof")
+        seen = []
+
+        def lsof(argv, *, cwd, timeout):
+            seen.append((argv, cwd, timeout))
+            # Exit 1: one listed pid could not be read (pid 1 is root's); the
+            # rest still print, measured on macOS.
+            return subprocess.CompletedProcess(argv, 1, "p71609\nfcwd\nn/a/b c\np72404\nfcwd\nn/c\nwarning\n", "")
+
+        monkeypatch.setattr(cs, "run", lsof)
+        assert cs.process_cwds([71609, 72404, 1], timeout=1.5) == {71609: "/a/b c", 72404: "/c"}
+        assert cs.parse_lsof_cwds("p\u00b2\nn/x\np7\nn/y\n") == {7: "/y"}, "a non-ASCII digit is no pid"
+        argv, cwd, timeout = seen[0]
+        assert argv == ["/usr/sbin/lsof", "-w", "-a", "-d", "cwd", "-p", "71609,72404,1", "-Fn"]
+        assert timeout == 1.5
+        assert cwd == Path(os.path.abspath(os.sep)), "lsof runs from the root, never from the folder asked about"
+        seen.clear()
+        assert cs.process_cwds([]) == {} and seen == [], "no pid: no spawn"
+        cs.process_cwds(list(range(100, 100 + cs.CWD_PID_CAP + 8)))
+        assert seen[0][0][6].split(",") == [str(p) for p in range(100, 100 + cs.CWD_PID_CAP)]
+        seen.clear()
+        cs.process_cwds(None)
+        assert seen[0][0] == ["/usr/sbin/lsof", "-w", "-a", "-d", "cwd", "-Fn"], "every process: no -p"
+
+    def test_an_lsof_that_cannot_answer_reads_as_unread_not_as_none(self, cs, monkeypatch, tmp_path):
+        """None (the reader ran and failed) is not {} (nothing to read): a
+        caller that removes on an empty answer must be able to tell them apart."""
+        monkeypatch.setattr(cs, "_PROC_ROOT", tmp_path / "no-proc")
+        monkeypatch.setattr(cs.shutil, "which", lambda name, path=None: "/usr/sbin/lsof")
+        monkeypatch.setattr(cs, "run", lambda argv, *, cwd, timeout: None)
+        assert cs.process_cwds([4242]) is None
+        assert cs.process_cwds(None) is None
+        monkeypatch.setattr(cs.shutil, "which", lambda name, path=None: None)
+        monkeypatch.setattr(cs, "run", lambda *a, **k: pytest.fail("spawned with no lsof"))
+        assert cs.process_cwds([4242]) == {} and cs.process_cwds(None) == {}
+
+    def test_lsof_is_never_taken_from_the_checkout(self, cs, monkeypatch, tmp_path):
+        """An empty or relative PATH entry is the hook's cwd, the checkout: a
+        file named `lsof` there would run at every session start."""
+        from tests._stubs import write_stub
+        planted = write_stub(tmp_path / "lsof", "#!/bin/sh\nexit 0\n")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(cs, "_LSOF_FALLBACK_DIRS", ())
+        for path in ("", ":/nonexistent", ".", "relative/bin"):
+            monkeypatch.setenv("PATH", path)
+            assert cs.lsof_path() is None, path
+        monkeypatch.setenv("PATH", f":{tmp_path}")
+        assert cs.lsof_path() == str(planted), "an absolute entry still answers"
+
+    def test_the_proc_arm_reads_each_cwd_link_with_no_spawn(self, cs, monkeypatch, tmp_path):
+        proc = tmp_path / "proc"
+        (proc / "self").mkdir(parents=True)
+        os.symlink(str(tmp_path), proc / "self" / "cwd")
+        (proc / "4242").mkdir()
+        os.symlink("/a/b (deleted)", proc / "4242" / "cwd")
+        (proc / "4301").mkdir()   # no cwd link to read: another user's process, or gone
+        (proc / "net").mkdir()    # not a pid
+        monkeypatch.setattr(cs, "_PROC_ROOT", proc)
+        monkeypatch.setattr(cs, "run", lambda *a, **k: pytest.fail("the /proc arm spawned"))
+        assert cs.process_cwds([4242, 4301]) == {4242: "/a/b (deleted)"}
+        assert cs.process_cwds(None) == {4242: "/a/b (deleted)"}, "every process: each numbered entry"
+
+    def test_the_live_reader_finds_this_process_cwd(self, cs):
+        """The one live drive: whichever arm this host takes reads a real pid,
+        by name and in the whole table."""
+        got = cs.process_cwds([os.getpid()])
+        if not got and not (cs._PROC_ROOT / "self" / "cwd").exists() and not cs.lsof_path():
+            pytest.skip("this host has neither /proc cwd links nor lsof")
+        assert os.path.realpath(got[os.getpid()]) == os.path.realpath(os.getcwd())
+        every = cs.process_cwds(None)
+        assert every is not None and os.path.realpath(every[os.getpid()]) == os.path.realpath(os.getcwd())
+
+    def test_pid_checkout_names_this_checkout_another_and_neither(self, cs, repos, tmp_path):
+        work = repos["work"]
+        wt = _worktree(repos, "lane")
+        (wt / "sub").mkdir()
+        (tmp_path / "elsewhere").mkdir()
+        assert cs.pid_checkout(str(work), work) == ("cwd in this checkout, the main checkout", False)
+        assert cs.pid_checkout(str(wt), work) == (
+            "cwd in .claude/worktrees/lane, another checkout of this clone", True)
+        assert cs.pid_checkout(str(wt / "sub"), wt) == ("cwd in this checkout, .claude/worktrees/lane", False)
+        assert cs.pid_checkout(str(work), wt) == ("cwd in the main checkout, another checkout of this clone", True)
+        assert cs.pid_checkout(str(tmp_path / "elsewhere"), work) == ("cwd outside this clone's checkouts", False)
+        assert cs.pid_checkout(f"{wt} (deleted)", work) == ("cwd deleted", False)
+        assert cs.pid_checkout(str(tmp_path / "gone"), work) == ("cwd deleted", False)
+        given = [work, wt]
+        assert cs.pid_checkout(str(wt), work, given)[1] is True, "a given checkout list is read as given"
+        assert cs.pid_checkout(str(wt), work, [])[1] is False, "a worktree the list does not hold is not one"
+
+    def test_held_open_names_the_pids_working_in_the_folder_but_not_its_own(self, cs, tmp_path):
+        folder = tmp_path / "wt"
+        (folder / "sub").mkdir(parents=True)
+        (tmp_path / "wt-two").mkdir()
+        mine = os.getpid()
+        assert cs.held_open(folder, lambda: {}) == ""
+        assert cs.held_open(folder, lambda: {mine: str(folder)}) == "", "the caller's own cwd is judged by own_cwd"
+        assert cs.held_open(folder, lambda: {4242: str(tmp_path / "wt-two")}) == "", "a sibling folder is not inside"
+        assert cs.held_open(folder, lambda: {4242: str(folder / "sub"), mine: str(folder)}) == (
+            "a process works in it (pid 4242)")
+        many = {p: str(folder) for p in (4301, 4242, 5100, 5200, 6000)}
+        assert cs.held_open(folder, lambda: many) == "5 processes work in it (pids 4242, 4301, 5100, and 2 more)"
+        assert cs.held_open(folder, lambda: None) == (
+            "the process table could not be read, so a run in it cannot be ruled out")
+
+    def test_ancestors_of_walks_a_held_table_nearest_first(self, cs, monkeypatch):
+        monkeypatch.setattr(cs, "_parent_map", lambda *a, **k: pytest.fail("a held table is read, not re-read"))
+        assert cs.ancestors_of(10, {10: 5, 5: 1, 1: 0}) == [5, 1]
+        assert cs.ancestors_of(7, {7: 7}) == [], "a pid that is its own parent ends the walk"
+        assert cs.ancestors_of(3, {3: 4, 4: 3}) == [4], "a cycle ends the walk"
+        assert cs.ancestors_of(9, {}) == []
+        assert cs.ancestors_of(10, {10: 5, 5: 4, 4: 3}, depth=2) == [5, 4]
+
 
 def _row(cwd: object, *, pid: int | None = None, sid: str = "s") -> dict:
     return {"pid": pid or os.getpid(), "session_id": sid, "cwd": str(cwd), "kind": "", "entrypoint": "",

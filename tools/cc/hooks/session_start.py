@@ -513,96 +513,24 @@ def _read_process_table() -> str:
 # CPU like any orphan: on 2026-10-31 one seat killed another's tier, read from
 # the table as a stray of its own. So the line names the checkout of this clone
 # holding each pid's working directory and leaves another checkout's pid out of
-# the one-paste kill. One bounded read, made only when the line names a pid:
-# the `/proc/<pid>/cwd` links where the host has them (no spawn), else one
-# `lsof` for every named pid (10 ms measured on macOS; it exits 1 when any
-# listed pid cannot be read and still prints the rest, so its output is read
-# whatever the exit code).
-_PROC_ROOT = Path("/proc")
-_LOOSE_CWD_PID_CAP = 32
+# the one-paste kill. One bounded read, made only when the line names a pid,
+# through the one process reader the CP-KILL speed bump and the reaper read
+# too (`checkout_sync.process_cwds` and `pid_checkout`, DEF-4078's lane).
 _LOOSE_CWD_SECONDS = 2.0
-# `lsof` sits in an sbin directory on macOS, which a hook's PATH can leave out.
-_LSOF_FALLBACK_DIRS = ("/usr/sbin", "/usr/bin", "/sbin")
-
-
-def _lsof_path() -> str | None:
-    """`lsof` from the absolute PATH entries and the fallbacks alone: an empty
-    or relative entry is the hook's cwd, the checkout, where a file named
-    `lsof` would otherwise run."""
-    dirs = [d for d in os.environ.get("PATH", "").split(os.pathsep) if os.path.isabs(d)]
-    found = shutil.which("lsof", path=os.pathsep.join([*dirs, *_LSOF_FALLBACK_DIRS]))
-    return found if found is not None and os.path.isabs(found) else None
-
-
-def _parse_lsof_cwds(text: str) -> dict[int, str]:
-    """``{pid: cwd}`` from `lsof -Fn` output (``p<pid>``, ``fcwd``, ``n<path>``
-    lines); a line of any other shape is skipped."""
-    found: dict[int, str] = {}
-    pid: int | None = None
-    for line in text.splitlines():
-        if line[:1] == "p" and line[1:].isascii() and line[1:].isdigit():
-            pid = int(line[1:])
-        elif line[:1] == "n" and pid is not None and pid not in found:
-            found[pid] = line[1:]
-    return found
 
 
 def _read_process_cwds(pids: list[int]) -> dict[int, str]:
-    """The working directory of each of the first `_LOOSE_CWD_PID_CAP` pids
-    that can be read: its `/proc` link where the host has them, else one
-    `lsof` under `_LOOSE_CWD_SECONDS`. A pid missing from the result was not
-    read (gone, another user's, or no reader on this host); {} on Windows."""
-    pids = pids[:_LOOSE_CWD_PID_CAP]
+    """The working directory of each named pid that can be read, under
+    `_LOOSE_CWD_SECONDS` (``checkout_sync.process_cwds``). A pid missing from
+    the result was not read (gone, another user's, no reader on this host, or
+    `checkout_sync.py` not deployed beside the hooks); {} on Windows, where
+    nothing reads a cwd, without loading the reader at all."""
     if not pids or os.name != "posix":
         return {}
-    if (_PROC_ROOT / "self" / "cwd").exists():
-        found: dict[int, str] = {}
-        for pid in pids:
-            try:
-                found[pid] = os.readlink(_PROC_ROOT / str(pid) / "cwd")
-            except OSError:  # fail-open: ok deliberate -- a cwd link that cannot be read (gone, another user's) leaves that pid's cwd unread, and the Loose: line says so
-                continue
-        return found
-    lsof = _lsof_path()
-    if lsof is None:
+    sync = _hook_utils.load_checkout_sync()
+    if sync is None:
         return {}
-    try:
-        result = _hook_utils.run_bounded(  # spawn: ok a reporter: an lsof that cannot run leaves the cwds unread, and the Loose: line says so per pid
-            [lsof, "-w", "-a", "-d", "cwd", "-p", ",".join(str(pid) for pid in pids), "-Fn"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=_LOOSE_CWD_SECONDS,
-        )
-    except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- an lsof that cannot run leaves every cwd unread, and the Loose: line says so per pid
-        return {}
-    return _parse_lsof_cwds(result.stdout or "")
-
-
-def _pid_checkout(cwd: str, root: Path) -> tuple[str, bool]:
-    """The clause a pid's working directory earns on the line, and whether it
-    is in ANOTHER checkout of this clone: the deepest checkout holding it
-    (`_hook_utils.containing_checkout`, git's registry read off the disk),
-    spelled as the board spells one -- the main checkout, a worktree's path
-    under the main checkout's folder, or its own path -- and named for this
-    checkout too, so the line still reads right copied into another window."""
-    # Linux marks a removed folder's link; macOS `lsof` prints its old path
-    # unmarked (measured), which would read as the main checkout around it.
-    if cwd.endswith(" (deleted)") or not os.path.isdir(cwd):
-        return "cwd deleted", False
-    hit = _hook_utils.containing_checkout(cwd.replace("\\", "/"), root)
-    if hit is None:
-        return "cwd outside this clone's checkouts", False
-    base = Path(hit[0])
-    main = next((c for c in (root, *_hook_utils.sibling_checkouts(root)) if (c / ".git").is_dir()), None)
-    if main is not None and (base / ".git").is_dir():
-        where = "the main checkout"
-    else:
-        try:
-            where = base.resolve().relative_to(main.resolve()).as_posix() if main is not None else base.as_posix()
-        except (OSError, ValueError):   # a worktree outside the main checkout's folder: its own path
-            where = base.as_posix()
-    if not _hook_utils.is_sibling_checkout(root, base):
-        return f"cwd in this checkout, {where}", False
-    return f"cwd in {where}, another checkout of this clone", True
+    return sync.process_cwds(pids, timeout=_LOOSE_CWD_SECONDS) or {}
 
 
 def _loose_processes_line(root: Path, table: str | None = None, cwds: dict[int, str] | None = None) -> str:
@@ -621,9 +549,14 @@ def _loose_processes_line(root: Path, table: str | None = None, cwds: dict[int, 
     named: list[str] = []
     paste: list[str] = []
     left: list[str] = []
+    sync = _hook_utils.load_checkout_sync() if cwds else None
+    # git's registry read off the disk (no spawn), the way the path guards read it.
+    checkouts = [root, *_hook_utils.sibling_checkouts(root)] if sync is not None else []
     for pid, stem, cpu in rows:
         cwd = cwds.get(pid)
-        clause, elsewhere = ("cwd unread", False) if cwd is None else _pid_checkout(cwd, root)
+        clause, elsewhere = (
+            ("cwd unread", False) if cwd is None or sync is None else sync.pid_checkout(cwd, root, checkouts)
+        )
         named.append(f"PID {pid} {stem} {cpu} CPU ({clause})")
         (left if elsewhere else paste).append(str(pid))
     # ASCII-folded like the stem: a checkout's path lands in operator-facing text.

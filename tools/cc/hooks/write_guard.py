@@ -3343,8 +3343,8 @@ def _run_main(data: dict | None = None) -> int:
     # BEFORE the maintenance gate (so CP-GATEWEAKEN fires during harness
     # self-edit sessions -- the exact session class where gates get weakened).
     # deny-once-then-allow: the flag set inside check_fired() means the immediate
-    # retry falls through to proceed. The registry holds 9 live checkpoints (six
-    # irreversible + two meta-cognitive + the MCP tier).
+    # retry falls through to proceed. The registry holds 10 live checkpoints (six
+    # irreversible + another seat's run + two meta-cognitive + the MCP tier).
     # Snapshot BEFORE the speed-bump, and independently of it. The bump is
     # deny-once-then-allow, so the run that actually discards is the RE-ISSUE --
     # the one where check_fired() returns None. Snapshotting here catches both
