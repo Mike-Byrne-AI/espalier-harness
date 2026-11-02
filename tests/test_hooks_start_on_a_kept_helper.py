@@ -57,6 +57,7 @@ from pathlib import Path
 import pytest
 
 from espalier.harness_config import CANONICAL_HOOK_WIRING, GOVERNANCE_BLOCKING_HOOKS
+from tests._hook_spawn import not_a_budget_miss
 from tests._live_tree import checkout_glob, copy_checkout
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -291,12 +292,12 @@ def _copy_cc(root: Path) -> None:
 
 def _run_hook(root: Path, hook: str, event: str, timeout: int = 45) -> subprocess.CompletedProcess:
     payload = {"hook_event_name": event, "session_id": "kept-helper", "cwd": str(root), **_NOOP_INPUT.get(event, {})}
-    return subprocess.run(
+    return not_a_budget_miss(subprocess.run(
         [sys.executable, str(root / "tools" / "cc" / "hooks" / hook)], input=json.dumps(payload),
         cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
         env={**_ENV, "CLAUDE_PROJECT_DIR": str(root), "ESPALIER_AUDIT_DIR": str(root / "audit"),
              "ESPALIER_STOP_GATE": "light"},
-    )
+    ))
 
 
 def _skew(root: Path, *names: str) -> None:
@@ -668,12 +669,12 @@ def _plant(root: Path, plant: str) -> None:
 
 
 def _run_payload(root: Path, hook: str, payload: dict, audit: Path) -> subprocess.CompletedProcess:
-    return subprocess.run(
+    return not_a_budget_miss(subprocess.run(
         [sys.executable, str(root / "tools" / "cc" / "hooks" / hook)],
         input=json.dumps({"hook_event_name": "PreToolUse", "session_id": "wedged", "cwd": str(root), **payload}),
         cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45,
         env={**_ENV, "CLAUDE_PROJECT_DIR": str(root), "ESPALIER_AUDIT_DIR": str(audit)},
-    )
+    ))
 
 
 def _taker(run: subprocess.CompletedProcess) -> str:

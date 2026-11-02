@@ -1281,6 +1281,7 @@ class TestInitOnTheTwoInterpreterHosts:
         protected `tools/cc/` zone."""
         from tests import _interpreter_hosts as hosts
         from tests._hook_assertions import assert_hook_denied
+        from tests._hook_spawn import not_a_budget_miss
 
         repo, bin_dir, settings, _ = self._init(tmp_path, hosts.LAUNCHER_ONLY)
         entry = next(
@@ -1298,8 +1299,8 @@ class TestInitOnTheTwoInterpreterHosts:
             "tool_input": {"file_path": str(repo / "tools" / "cc" / "planted.py"), "content": "x"},
             "cwd": str(repo),
         }
-        result = subprocess.run(
+        result = not_a_budget_miss(subprocess.run(
             [command, *args], input=json.dumps(payload), cwd=repo, env=env,
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45,
-        )
+        ))
         assert_hook_denied(result)
