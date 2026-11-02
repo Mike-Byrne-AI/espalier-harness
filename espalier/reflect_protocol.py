@@ -217,11 +217,49 @@ def _walk_router_docs(repo_root: Path) -> list[str]:
     return sorted(rels)
 
 
+def _tracked_root_markdown(repo_root: Path) -> list[str]:
+    """The ``*.md`` files at the root of ``repo_root`` that git tracks, by name;
+    the ones on disk where git cannot answer (no git, not a repository). Tracked
+    rather than present, so a scratch note the adopter never committed is not a
+    surface whose links the pass reports. Forced twin of the hook side's
+    ``_tracked_root_markdown`` (tools/cc/reflect_protocol.py)."""
+    import subprocess
+
+    from espalier._spawn import run_no_stdin
+
+    try:
+        r = run_no_stdin(
+            ["git", "-C", str(repo_root), "ls-files", "-z", "--", ":(glob)*.md"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=20, check=False,
+        )
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        r = None
+    if r is not None and r.returncode == 0:
+        return sorted(n for n in r.stdout.split("\0") if n and "/" not in n)
+    try:
+        return sorted(p.name for p in repo_root.glob("*.md") if p.is_file())
+    except OSError:
+        return []
+
+
+def _root_doc_names(repo_root: Path) -> list[str]:
+    """The root documents the surface walks: CLAUDE.md and the memory file, and
+    on an adopter tree every tracked root ``*.md`` beside them (DEF-1114). A
+    README that links a renamed doc is what the deep pass exists to catch, and
+    the doc it links read as an orphan. The source repository keeps its two:
+    its other root documents are release and maintainer records."""
+    names = ["CLAUDE.md", _MEMORY_FILENAME]
+    if not surface_contract.is_self_host_repo(repo_root):
+        names += _tracked_root_markdown(repo_root)
+    return list(dict.fromkeys(names))
+
+
 def _iter_surface_files(repo_root: Path) -> list[Path]:
     """Enumerate all markdown files in the CC surface."""
     hits: list[Path] = []
     # Root-level docs
-    for name in ["CLAUDE.md", _MEMORY_FILENAME]:
+    for name in _root_doc_names(repo_root):
         p = repo_root / name
         if p.exists():
             hits.append(p)
@@ -494,13 +532,24 @@ def find_orphans(matrix: dict[str, list[str]], *, root: Path | None) -> list[str
     referenced = set()
     for targets in matrix.values():
         referenced.update(targets)
-    # Only flag markdown docs, not config files; skip loader-reached surfaces
+    # Only flag markdown docs, not config files; skip loader-reached surfaces,
+    # and an adopter's root document: it is where a reader starts, never a
+    # link's target (a README, walked since DEF-1114).
     orphans = [
         f for f in all_files - referenced
-        if f.endswith(".md") and not _is_discovery_loaded(f)
+        if f.endswith(".md") and not _is_discovery_loaded(f) and not _is_adopter_root_doc(f)
         and not (root is not None and path_has_seed_stamp(root / f))
     ]
     return sorted(orphans)
+
+
+def _is_adopter_root_doc(rel: str) -> bool:
+    """A root document the walk reads for its links alone (DEF-1114): every
+    root ``*.md`` but CLAUDE.md and the memory file, which are the harness's
+    own surfaces and keep every check. An adopter's README is theirs: a short
+    one or a TODO in it is not drift for the deep pass to grade. Forced twin of
+    the hook side's ``_is_adopter_root_doc``."""
+    return "/" not in rel and rel not in ("CLAUDE.md", _MEMORY_FILENAME)
 
 
 def find_expected_ref_gaps(repo_root: Path, matrix: dict[str, list[str]]) -> list[tuple[str, str]]:
@@ -537,7 +586,8 @@ def detect_quality_signals(repo_root: Path) -> list[ReflectFinding]:
         # alone drew a "high" for 24 quoted tokens. Links in a record are still
         # checked below; a dead one is aging there (AGING_RECORD_SURFACES), and
         # the hot index's a gap.
-        if any(rel.startswith(d) for d in DISCOVERY_DIRS) or rel in RESIDUE_EXEMPT_SURFACES:
+        if (any(rel.startswith(d) for d in DISCOVERY_DIRS) or rel in RESIDUE_EXEMPT_SURFACES
+                or _is_adopter_root_doc(rel)):
             continue
         text = _safe_text(path)
         # Placeholder detection

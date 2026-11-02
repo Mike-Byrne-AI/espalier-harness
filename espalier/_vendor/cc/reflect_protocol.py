@@ -369,6 +369,39 @@ def _iter_router_docs(root):
     return hits
 
 
+def _tracked_root_markdown(root):
+    """The ``*.md`` files at the root of ``root`` that git tracks, by name; the
+    ones on disk where git cannot answer (no git, not a repository). Forced twin
+    of the engine's ``espalier/reflect_protocol.py::_tracked_root_markdown``
+    (tests/test_reflect_link_guards.py drives both on one tree)."""
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z", "--", ":(glob)*.md"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=20, check=False, stdin=subprocess.DEVNULL,
+        )
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        r = None
+    if r is not None and r.returncode == 0:
+        return sorted(n for n in r.stdout.split("\0") if n and "/" not in n)
+    try:
+        return sorted(p.name for p in Path(root).glob("*.md") if p.is_file())
+    except OSError:
+        return []
+
+
+def _root_doc_names(root):
+    """SURFACE_ROOTS, and on an adopter tree every tracked root ``*.md`` beside
+    them (DEF-1114): a README's broken link is what the deep pass exists to
+    catch. The source repository keeps its list (its other root documents are
+    release and maintainer records). Forced twin of the engine's."""
+    names = list(SURFACE_ROOTS)
+    if not _routes_as_source_repo(root):
+        names += _tracked_root_markdown(root)
+    return list(dict.fromkeys(names))
+
+
 def iter_surface(root):
     # BC-037: include all docs/**/*.md, not just the entries in
     # SURFACE_ROOTS. Drift between SURFACE_ROOTS and the actual docs/ tree
@@ -377,7 +410,7 @@ def iter_surface(root):
     # overlap with docs/**/*.md doesn't double-count.
     seen = set()
     hits = []
-    for n in SURFACE_ROOTS:
+    for n in _root_doc_names(root):
         p = root / n
         if p.exists() and p not in seen:
             hits.append(p); seen.add(p)
@@ -496,9 +529,17 @@ def find_orphans(matrix, *, root):
     referenced = set()
     for targets in matrix.values():
         referenced.update(targets)
+    # An adopter's root document is where a reader starts, never a link's
+    # target (a README, walked since DEF-1114).
     return sorted(f for f in set(matrix.keys()) - referenced
-                  if f.endswith(".md") and not _is_discovery_loaded(f)
+                  if f.endswith(".md") and not _is_discovery_loaded(f) and not _is_adopter_root_doc(f)
                   and not (root is not None and _is_init_seed(Path(root) / f)))
+
+
+def _is_adopter_root_doc(rel):
+    """A root document the walk reads for its links alone (DEF-1114): every root
+    ``*.md`` but the ones SURFACE_ROOTS names. Forced twin of the engine's."""
+    return "/" not in rel and rel not in SURFACE_ROOTS
 
 
 def placeholder_findings(root, surface=None):
@@ -512,7 +553,8 @@ def placeholder_findings(root, surface=None):
         if path.suffix != ".md":
             continue
         rel = _rel(path, root)
-        if any(rel.startswith(d) for d in DISCOVERY_DIRS) or rel in RESIDUE_EXEMPT_SURFACES:
+        if (any(rel.startswith(d) for d in DISCOVERY_DIRS) or rel in RESIDUE_EXEMPT_SURFACES
+                or _is_adopter_root_doc(rel)):
             continue
         text = _strip_inline_code(_strip_fences(_safe(path)))
         hits = sum(len(pat.findall(text)) for pat in PLACEHOLDER_RES)

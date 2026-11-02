@@ -27,6 +27,15 @@ write-intent, and write_guard's hardlink-inode backstop. So ``write_denied`` can
 UNDER-report (a hardlink alias of a protected file at an unprotected path reads
 "unprotected") — the static read-out never claims to model those runtime paths.
 
+It is Espalier's hooks' verdict, never the session's (DEF-1113): a PreToolUse
+hook wired beside Espalier's, or a ``permissions.deny`` Edit/Write rule, can
+deny a write this read-out calls allowed. The net line says whose verdict it is,
+and the ``unmodelled`` line names what the project's two settings files hold
+that it does not model -- each other PreToolUse hook whose matcher can reach a
+file write, and a count of the Edit/Write deny rules, whose globs are never
+re-matched here -- and says that user-level, plugin and managed hooks are not
+listed.
+
 Stdlib-only, zero-espalier, sibling imports only — same pattern as the hooks.
 
 Note: this module deliberately does NOT ``from __future__ import annotations``.
@@ -40,7 +49,9 @@ lookup entirely, so a ``@dataclass`` here loads cleanly even under a spec-load
 that forgets to pre-register — robust to any loader, at the cost of the
 future-annotations convention the sibling hooks follow.
 """
+import json
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -74,6 +85,8 @@ class PathExplanation:
     plan_active: bool
     # net one-line synthesis
     verdict: str
+    # what the project settings hold that the verdict does not model (DEF-1113)
+    unmodelled: str = ""
 
 
 def _write_zone_label(rel: str, root: Path) -> str:
@@ -204,7 +217,112 @@ def explain(path: str, root: Path) -> PathExplanation:
         maintenance_active=maintenance_active,
         plan_active=plan_active,
         verdict=verdict,
+        unmodelled=_unmodelled_line(root),
     )
+
+
+# The file-writing tools a PreToolUse matcher can name, and the permission-rule
+# tool names that cover a file write (Claude Code's Edit rules apply to every
+# built-in file-editing tool; a Write rule is accepted beside them).
+_WRITE_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
+_SETTINGS_FILES = (".claude/settings.json", ".claude/settings.local.json")
+_HOOKS_SHOWN = 3
+_COMMAND_SHOWN = 80
+
+
+def _matcher_reaches_a_write(matcher: object) -> bool:
+    """Can this PreToolUse matcher fire on a file write? No matcher, ``""`` and
+    ``*`` match every tool; any other is read as the regex Claude Code reads it
+    as, searched, so a matcher that names a write tool anywhere counts. A
+    matcher that is not a valid pattern counts too: naming a hook that cannot
+    deny is the cheaper mistake than hiding one that can."""
+    if matcher is None or matcher == "" or matcher == "*":
+        return True
+    if not isinstance(matcher, str):
+        return True
+    try:
+        pattern = re.compile(matcher)
+    except re.error:
+        return True
+    return any(pattern.search(tool) for tool in _WRITE_TOOLS)
+
+
+def _entry_text(entry: dict) -> str:
+    """A hook entry as the line it runs: the inline ``command``, or the
+    exec form's ``command`` and its ``args`` joined (``session_start._entry_argv``
+    reads the same two forms)."""
+    command = entry.get("command")
+    args = entry.get("args")
+    words = [command] if isinstance(command, str) else []
+    if isinstance(args, list):
+        words += [a for a in args if isinstance(a, str)]
+    return " ".join(w.strip() for w in words if w.strip())
+
+
+def _settings_findings(root: Path, rel: str) -> "tuple[list[str], int, str]":
+    """``(other write hooks, Edit/Write deny rule count, why unread)`` for one
+    settings file; an absent file is ``([], 0, "")``."""
+    path = root / rel
+    if not path.is_file():
+        return [], 0, ""
+    try:
+        data = json.loads(path.read_bytes().decode("utf-8-sig"))
+    except (OSError, ValueError) as exc:  # fail-open: ok deliberate -- an unreadable settings file is named on the line, never raised
+        return [], 0, type(exc).__name__
+    if not isinstance(data, dict):
+        return [], 0, "not a JSON object"
+    hooks: list[str] = []
+    groups = data.get("hooks", {}).get("PreToolUse") if isinstance(data.get("hooks"), dict) else None
+    for group in groups if isinstance(groups, list) else []:
+        if not isinstance(group, dict) or not _matcher_reaches_a_write(group.get("matcher")):
+            continue
+        for entry in group.get("hooks") or []:
+            if not isinstance(entry, dict):
+                continue
+            text = _entry_text(entry)
+            # Espalier's own guards are what the verdict above already models.
+            if not text or "tools/cc/hooks/" in text.replace("\\", "/"):
+                continue
+            if len(text) > _COMMAND_SHOWN:
+                text = text[: _COMMAND_SHOWN - 3] + "..."
+            matcher = group.get("matcher")
+            hooks.append(f"`{text}` ({rel}" + (f", matcher `{matcher}`)" if matcher else ")"))
+    perms = data.get("permissions")
+    deny = perms.get("deny") if isinstance(perms, dict) else None
+    denies = sum(
+        1 for rule in (deny if isinstance(deny, list) else [])
+        if isinstance(rule, str) and rule.strip().split("(", 1)[0].strip() in _WRITE_TOOLS
+    )
+    return hooks, denies, ""
+
+
+def _unmodelled_line(root: Path) -> str:
+    """What the project's settings files hold that can deny a write the
+    verdict does not model, as one line (DEF-1113)."""
+    hooks: list[str] = []
+    denies = 0
+    unread: list[str] = []
+    for rel in _SETTINGS_FILES:
+        found, count, why = _settings_findings(root, rel)
+        hooks += found
+        denies += count
+        if why:
+            unread.append(f"{rel} could not be read ({why})")
+    parts: list[str] = []
+    if hooks:
+        shown = "; ".join(hooks[:_HOOKS_SHOWN])
+        more = len(hooks) - _HOOKS_SHOWN
+        noun = "hook" if len(hooks) == 1 else "hooks"
+        parts.append(f"{len(hooks)} other PreToolUse {noun} that can deny a write: {shown}"
+                     + (f"; and {more} more" if more > 0 else ""))
+    if denies:
+        parts.append(f"{denies} permissions.deny Edit/Write rule{'' if denies == 1 else 's'} (globs not matched here)")
+    parts += unread
+    if not parts:
+        parts.append("other PreToolUse hooks and permissions.deny Edit/Write rules: "
+                     "none in .claude/settings.json or .claude/settings.local.json")
+    parts.append("user-level, plugin and managed hooks are not listed")
+    return "; ".join(parts)
 
 
 def _net_verdict(
@@ -218,7 +336,9 @@ def _net_verdict(
     maintenance_active: bool,
 ) -> str:
     """One-line plain-language synthesis of the two static verdicts, qualified by
-    the live bypasses that actually decide the outcome this session."""
+    the live bypasses that actually decide the outcome this session. It opens by
+    saying whose verdict it is: Espalier's hooks', which another PreToolUse hook
+    or a permissions rule can overrule (DEF-1113; the ``unmodelled`` line)."""
     parts: list[str] = []
     if write_denied:
         parts.append(f"writes DENIED ({write_zone})")
@@ -238,7 +358,7 @@ def _net_verdict(
         )
     else:
         parts.append("no plan required")
-    base = "; ".join(parts)
+    base = "Espalier's hooks: " + "; ".join(parts)
     if maintenance_active:
         # Scope the claim precisely: maintenance mode bypasses the protected-zone
         # and plan checks, but write_guard STILL denies on a live kill-switch and
@@ -277,6 +397,7 @@ def render(exp: PathExplanation) -> str:
         f"  plan_guard : {plan_line}\n"
         f"  write_guard: {write_line}\n"
         f"  live state : maintenance mode {maint}; plan {plan_state}\n"
+        f"  unmodelled : {exp.unmodelled}\n"
         f"\n"
         f"  => {exp.verdict}"
     )

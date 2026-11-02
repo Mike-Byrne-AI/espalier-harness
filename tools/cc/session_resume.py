@@ -914,8 +914,10 @@ def main(argv: "list[str] | None" = None) -> int:
         default=None,
         metavar="PATH",
         help="Explain what the path-conditioned hooks (plan_guard, write_guard) "
-             "would do on PATH and why, then exit (read-only). Takes a required "
-             "value, so it never swallows the repo_root positional.",
+             "would do on PATH and why, and name what the project settings hold "
+             "that can deny a write beside them (other PreToolUse hooks, "
+             "permissions.deny Edit/Write rules), then exit (read-only). Takes a "
+             "required value, so it never swallows the repo_root positional.",
     )
     parser.add_argument(
         "repo_root",

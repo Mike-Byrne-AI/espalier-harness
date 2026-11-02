@@ -74,30 +74,42 @@ class TestDoctorPass:
 
     def test_load_bearing_tool_warning_is_self_host_gated(self, harness_repo, monkeypatch):
         """TP-266 Fix 5 earn-the-red: the load-bearing external-tool loop (ruff)
-        must fire only on the self-host repo. ruff ships in espalier's own dev
-        extras and its CI gate is `if: is_source == 'true'`, so a ruff-less
-        `pip install` adopter's headline doctor status must stay `pass` — a
-        missing-ruff warning on THEIR machine is friction, not signal. RED
-        before: the loop ran unconditionally, so a non-self-host repo with ruff
-        absent gained the warning. GREEN after: gated on is_self_host_repo, the
-        warning is absent for the adopter and still present for self-host.
+        must not nag an adopter who never asked for ruff: a missing-ruff warning
+        on THEIR machine is friction, not signal. RED before: the loop ran
+        unconditionally, so a non-self-host repo with ruff absent gained the
+        warning.
+
+        DEF-1122 narrowed the gate from the tree to the tool: an adopter whose
+        tree declares ruff (a pyproject mention, ruff.toml or .ruff.toml) has
+        /preflight run it, so for them the warning is signal, with a hint that
+        is not the source repo's dev extra. Both sides are driven here.
 
         Simulates ruff-absent by stubbing the tool probe, and controls the
-        repo classification directly so the test does not depend on whether
-        the temp fixture happens to read as self-host."""
+        repo classification and the declaration directly so the test does not
+        depend on whether the temp fixture happens to read as either."""
+        from espalier import analyze
+
         sentinel = "load-bearing external tool 'ruff' not found"
+        hints: list[str] = []
         monkeypatch.setattr(
             "espalier.doctor._check_external_tool",
-            lambda name, hint: [sentinel] if name == "ruff" else [],
+            lambda name, hint: (hints.append(hint), [sentinel])[1] if name == "ruff" else [],
         )
 
-        # Adopter (non-self-host): a ruff-absent warning must NOT appear.
+        # Adopter (non-self-host) that declares no ruff: no warning.
         monkeypatch.setattr(surface_contract, "is_self_host_repo", lambda p: False)
+        monkeypatch.setattr(analyze, "ruff_is_declared", lambda root: False)
         adopter = run_doctor_check(harness_repo, skip_self_host=True)
         assert not any(sentinel in w for w in adopter["warnings"]), (
             f"ruff-absent warning leaked to a non-self-host adopter: "
             f"{adopter['warnings']!r}"
         )
+
+        # Adopter that declares ruff: the warning is theirs, with their hint.
+        monkeypatch.setattr(analyze, "ruff_is_declared", lambda root: True)
+        declares = run_doctor_check(harness_repo, skip_self_host=True)
+        assert any(sentinel in w for w in declares["warnings"]), declares["warnings"]
+        assert hints and "pip install -e" not in hints[-1], hints
 
         # Self-host: the ruff-absent warning is real signal and must remain.
         monkeypatch.setattr(surface_contract, "is_self_host_repo", lambda p: True)
