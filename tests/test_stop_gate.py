@@ -2125,15 +2125,42 @@ class TestWhetherALanesWorkIsOnOriginIsReadFromOriginsRefs:
         _git(root, "push", "-q", "origin", "--delete", name)
         _git(root, "switch", "-q", name)
 
+    @staticmethod
+    def _sync(monkeypatch):
+        import importlib.util
+
+        name = "checkout_sync_origin_refs_under_test"
+        spec = importlib.util.spec_from_file_location(name, str(HOOKS_DIR.parent / "checkout_sync.py"))
+        mod = importlib.util.module_from_spec(spec)
+        monkeypatch.setitem(sys.modules, name, mod)
+        spec.loader.exec_module(mod)
+        return mod
+
     @pytest.mark.parametrize("push", [("-u",), ()], ids=["pushed-with-u", "pushed-without-u"])
     def test_a_merged_lane_reads_as_on_origin(self, tmp_path, monkeypatch, push):
         root = _lane_repo(tmp_path, ahead=0, branch="main", plan_status=None)
         self._merged_lane(root, "lane/n", *push)
         assert _git(root, "rev-list", "--count", "HEAD", "--not", "--remotes=origin") == "0"
+        result = self._sync(monkeypatch).catch_up(root, dry_run=True)
+        assert result.state == "would_catch_up", (result.state, result.reason)
         ship = TestTheOwnUpstreamRuleHasOneReading._driver(monkeypatch)
         assert ship._lane_not_on_origin(root) is None
         assert ship._window_checkout_holds(root) is None
         assert ship._commits_off_origin(root) == 0
+
+    def test_a_lane_fresh_from_main_with_nothing_of_its_own_stays(self, tmp_path, monkeypatch):
+        """Read alike on both counts (nothing off origin, no ref of its name),
+        the fresh lane and the merged one part on the first-parent chain: the
+        fresh lane's tip is on main's, so it stays, and its reason no longer
+        says a remote branch exists that nothing listed."""
+        root = _lane_repo(tmp_path, ahead=0, branch="main", plan_status=None)
+        _git(root, "switch", "-q", "-c", "lane/fresh", "--track", "origin/main")
+        _git(root, "switch", "-q", "main")
+        _commit(root, "main-moves")
+        _git(root, "push", "-q", "origin", "main")
+        _git(root, "switch", "-q", "lane/fresh")
+        result = self._sync(monkeypatch).catch_up(root, dry_run=True)
+        assert (result.state, result.reason) == ("lane", "nothing of its own yet")
 
     def test_a_commit_on_another_remote_alone_is_off_origin(self, tmp_path, monkeypatch):
         root = _lane_repo(tmp_path, ahead=1, plan_status=None)
