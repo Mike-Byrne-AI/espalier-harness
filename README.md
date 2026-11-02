@@ -91,7 +91,8 @@ workflow the hooks hold the agent to.
 
 `--explain` answers what the path-conditioned hooks *will* do for a path,
 derived from the hooks' own predicates rather than a re-implementation, so it
-cannot drift from enforcement. One allowed path, then one protected (on macOS
+cannot drift from what Espalier's hooks enforce; the `unmodelled` line names what
+else in the project settings can deny a write. One allowed path, then one protected (on macOS
 type `python3` here: the caveat under Try it covers the bare `python <script>`
 form as well as `python -m …`):
 
@@ -102,8 +103,9 @@ Path: src/utils.py
   plan_guard : REQUIRES an active plan  (plan required -- non-exempt path)
   write_guard: allowed -- unprotected
   live state : maintenance mode off; plan none active
+  unmodelled : other PreToolUse hooks and permissions.deny Edit/Write rules: none in .claude/settings.json or .claude/settings.local.json; user-level, plugin and managed hooks are not listed
 
-  => writes allowed (unprotected); edits require an active plan; none is active.
+  => Espalier's hooks: writes allowed (outside their zones); edits require an active plan; none is active.
 
 $ python tools/cc/session_resume.py --explain tools/cc/hooks/session_start.py
 Path: tools/cc/hooks/session_start.py
@@ -111,8 +113,9 @@ Path: tools/cc/hooks/session_start.py
   plan_guard : exempt  (exempt -- harness-universal prefix `tools/cc/`)
   write_guard: DENIED -- protected zone `tools/cc/`
   live state : maintenance mode off; plan none active
+  unmodelled : other PreToolUse hooks and permissions.deny Edit/Write rules: none in .claude/settings.json or .claude/settings.local.json; user-level, plugin and managed hooks are not listed
 
-  => writes DENIED (zone `tools/cc/`); no plan required.
+  => Espalier's hooks: writes DENIED (zone `tools/cc/`); no plan required.
 ```
 
 ### The protected-zone deny on a hook file

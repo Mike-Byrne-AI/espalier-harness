@@ -175,9 +175,11 @@ env -u ESPALIER_MAINTENANCE_MODE python3 tools/cc/session_resume.py --mode statu
 
 `--explain` answers what the path-conditioned hooks *will* do, derived from the
 hooks' own predicates rather than a re-implementation, so it cannot drift from
-enforcement. Two calls, one allowed path and one protected, are the hero's floor
-beat. The `live state` line is the only one that varies with the session; the
-predicate and verdict lines are the same on any tree. Driven 2026-10-02:
+what Espalier's hooks enforce; the `unmodelled` line names what else in the
+project settings can deny a write. Two calls, one allowed path and one protected,
+are the hero's floor beat. The `live state` line is the only one that varies with
+the session; the predicate and verdict lines are the same on any tree. Driven
+2026-10-02, the verdict's owner and the `unmodelled` line driven 2026-11-02:
 
 ```
 $ python3 tools/cc/session_resume.py --explain src/utils.py
@@ -186,8 +188,9 @@ Path: src/utils.py
   plan_guard : REQUIRES an active plan  (plan required -- non-exempt path)
   write_guard: allowed -- unprotected
   live state : maintenance mode off; plan none active
+  unmodelled : other PreToolUse hooks and permissions.deny Edit/Write rules: none in .claude/settings.json or .claude/settings.local.json; user-level, plugin and managed hooks are not listed
 
-  => writes allowed (unprotected); edits require an active plan; none is active.
+  => Espalier's hooks: writes allowed (outside their zones); edits require an active plan; none is active.
 
 $ python3 tools/cc/session_resume.py --explain tools/cc/hooks/session_start.py
 Path: tools/cc/hooks/session_start.py
@@ -195,8 +198,9 @@ Path: tools/cc/hooks/session_start.py
   plan_guard : exempt  (exempt -- harness-universal prefix `tools/cc/`)
   write_guard: DENIED -- protected zone `tools/cc/`
   live state : maintenance mode off; plan none active
+  unmodelled : other PreToolUse hooks and permissions.deny Edit/Write rules: none in .claude/settings.json or .claude/settings.local.json; user-level, plugin and managed hooks are not listed
 
-  => writes DENIED (zone `tools/cc/`); no plan required.
+  => Espalier's hooks: writes DENIED (zone `tools/cc/`); no plan required.
 ```
 
 This is the most deterministic beat in the hero -- it depends on the path and

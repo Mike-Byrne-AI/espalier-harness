@@ -34,15 +34,18 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _hook_utils import (  # noqa: E402
     host_orientation_line,
     read_stdin_safely,
+    resolve_project_root,
     say_crash,
+    say_once,
     stop_gate_mode,
 )
 from _maintenance_mode import ENV_VAR, _maintenance_mode_active  # noqa: E402
 
-# Read mode flags directly from the environment so this reporter has NO side
-# effects (notably: no maintenance-bypass stderr log — we import the env-var
-# NAME from _maintenance_mode, not its .is_active() which logs; the literal
-# itself must not live in a non-exempt hook, for constant-parity).
+# Read mode flags directly from the environment so this reporter logs nothing
+# about them (no maintenance-bypass stderr log — we import the env-var NAME from
+# _maintenance_mode, not its .is_active() which logs; the literal itself must
+# not live in a non-exempt hook, for constant-parity). Its one write is the docs
+# agent's start snapshot (_keep_docs_snapshot, DEF-1100).
 _STOP_GATE_ENV = "ESPALIER_STOP_GATE"
 
 
@@ -75,11 +78,40 @@ _SCHEMA_POINTER = (
 )
 
 
+def _keep_docs_snapshot(data: dict) -> None:
+    """DEF-1100: for a docs-mapped agent, keep the dirty markdown it starts
+    with, so the stop credits it with its own changes only. The one side
+    effect this reporter has, and none under maintenance mode, where
+    subagent_stop writes no record to consume it. The logic and the folder are
+    subagent_stop's (the record's one writer), imported here; a failure costs
+    the snapshot, which the stop names as its unscoped stand-down."""
+    if not data or _maintenance_mode_active(os.environ.get(ENV_VAR)):
+        return
+    try:
+        import subagent_stop  # noqa: PLC0415 -- the snapshot belongs to the record's writer
+
+        subagent_stop.snapshot_docs_at_start(subagent_stop._resolve_project_root(), data)
+    except Exception as exc:  # noqa: BLE001 -- fail-open: ok reporter; the stop names a run with no snapshot
+        # The project root, as the snapshot and the audit log key on it; the
+        # working directory only where the root itself could not be resolved.
+        try:
+            root = resolve_project_root()
+        except Exception:  # noqa: BLE001 -- fail-open: ok reporter; the cwd is the last place left to say it
+            root = Path.cwd()
+        say_once(
+            root, f"docs-snapshot-{type(exc).__name__}", "subagent_start",
+            "subagentstart_failed_open_docs_snapshot",
+            f"could not keep the docs agent's start snapshot ({type(exc).__name__}); "
+            "its docs record will list every dirty markdown file",
+            fault=type(exc).__name__,
+        )
+
+
 def _run_main() -> int:
-    # Consume stdin via the shared helper (BOM/UTF-8 safety) even though the
-    # SubagentStart payload isn't needed for orientation — the every-hook
-    # stdin-discipline contract (tests/test_hook_contracts.py) requires it.
-    read_stdin_safely()
+    # Consume stdin via the shared helper (BOM/UTF-8 safety); the payload's
+    # agent_id and agent_type key the docs snapshot below.
+    data = read_stdin_safely()
+    _keep_docs_snapshot(data if isinstance(data, dict) else {})
     context = "\n".join([_orientation_line(), _SCHEMA_POINTER])
     print(json.dumps({
         "hookSpecificOutput": {

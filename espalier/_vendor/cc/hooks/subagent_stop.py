@@ -31,16 +31,24 @@ agent completion.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import _hook_utils  # noqa: E402
 import _maintenance_mode  # noqa: E402
 from _hook_utils import os_error_text  # noqa: E402
+
+# tools/cc, for `_earlier_evidence`'s `_json_safe` import. `_hook_utils` makes
+# the same insert as it loads; made here too, after it, so this file's reach
+# does not rest on that side effect and the path order is unchanged
+# (tests/test_deploy_set_import_closure.py).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 _resolve_project_root = _hook_utils.resolve_project_root
@@ -213,29 +221,236 @@ def _changed_markdown(root: Path) -> list[str]:
     The gate reads an empty list as "no evidence", which is the correct
     conservative answer when we cannot see the tree.
     """
+    return _dirty_markdown(root) or []
+
+
+def _dirty_markdown(root: Path, timeout: float = 10) -> list[str] | None:
+    """:func:`_changed_markdown`'s list, or ``None`` when git could not be
+    read: the start snapshot (DEF-1100) must tell "nothing was dirty" from "we
+    could not look", since an empty snapshot credits the run with every file
+    dirty at its stop. ``timeout`` is shorter on the start path, which shares
+    SubagentStart's 10 s with the orientation it prints."""
     try:
+        # -z: a path is never quoted (a non-ASCII name read as `"docs/caf\303\251.md"`
+        # matched no file, so its digest compared equal at both ends).
         r = _hook_utils.run_bounded(  # spawn: ok a reporter; a git that cannot run lists no changed markdown (declared at its handler)
-            ["git", "status", "--porcelain", "--", "*.md", "*.mdx"],
+            ["git", "status", "--porcelain", "-z", "--", "*.md", "*.mdx"],
             cwd=str(root), capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=10, check=False,
+            encoding="utf-8", errors="replace", timeout=timeout, check=False,
         )
     except (OSError, subprocess.TimeoutExpired, ValueError):  # fail-open: ok deliberate -- a git that cannot answer lists no changed markdown; the append proceeds without it
-        return []
+        return None
     if r.returncode != 0:
-        return []
+        return None
     changed: list[str] = []
-    for line in r.stdout.splitlines():
-        if len(line) < 4:
+    fields = iter(r.stdout.split("\0"))
+    for entry in fields:
+        if len(entry) < 4:
             continue
-        path = line[3:].strip()
-        # Rename/copy entries render as `old -> new`; the new path is the one
-        # that exists on disk and the one worth recording as evidence.
-        if " -> " in path:
-            path = path.split(" -> ", 1)[1]
-        path = path.strip('"')
+        status, path = entry[:2], entry[3:]
+        # A rename or copy names the new path first, then the old one as a
+        # field of its own: the new path exists on disk and is the evidence.
+        if status[0] in "RC":
+            next(fields, None)
         if path.endswith((".md", ".mdx")):
             changed.append(path)
     return changed
+
+
+def _git_top(root: Path, timeout: float) -> Path:
+    """The worktree's top, which porcelain paths are relative to; ``root``
+    where git cannot say. A project root below the top (a monorepo package)
+    resolved no porcelain path, so every digest compared equal (code review)."""
+    try:
+        r = _hook_utils.run_bounded(  # spawn: ok a reporter; a git that cannot answer leaves the paths read from the root
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=str(root), capture_output=True, text=True,
+            encoding="utf-8", timeout=timeout, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired, ValueError):  # strict decode: a structured answer (DEF-821) # fail-open: ok deliberate -- the paths are read from the root, as before the top was asked
+        return root
+    top = r.stdout.strip()
+    return Path(top) if r.returncode == 0 and top else root
+
+
+# DEF-1100: the docs record's evidence is what the agent changed during ITS run.
+# The stop alone sees the tree's dirty markdown, which holds whatever the parent
+# edited before it dispatched the agent, so SubagentStart keeps a snapshot for a
+# docs-mapped agent (each dirty file's digest), and the stop records only the
+# paths new or changed since. One file per run under this folder of STATE_DIR,
+# named by the agent id, written once (Claude Code may run SubagentStart again
+# for one subagent, after its auto-compaction, and a second snapshot would
+# absolve the agent's own earlier edits) and consumed by the stop. A run whose
+# stop never comes leaves its file; the next start sweeps any older than a day.
+DOCS_SNAPSHOT_DIR = "docs_snapshots"
+_SNAPSHOT_MAX_AGE_SECONDS = 24 * 60 * 60
+_SNAPSHOT_SWEEP_CAP = 200
+# The start path's git read: SubagentStart's whole timeout is 10 s, and the
+# orientation it prints must survive a slow git (no snapshot is the stop's
+# named stand-down; a killed start loses the orientation unsaid).
+_SNAPSHOT_GIT_SECONDS = 4
+_SNAPSHOT_TOP_SECONDS = 2  # the worktree-top read after it: 6 s of git at most
+
+
+def _run_key(value: object) -> str:
+    """A file-safe name for one subagent run, from an agent id or a transcript
+    name; ``""`` when there is none. One rule for every source: a leading
+    ``agent-`` is dropped, so ``agent-abc123`` (the upstream page's example
+    id) and ``abc123`` (the id Claude Code sends) name one run."""
+    if not isinstance(value, str):
+        return ""
+    value = value.strip()
+    if value.startswith("agent-"):
+        value = value[len("agent-"):]
+    return "".join(c for c in value if c.isalnum() or c in "-_")[:80]
+
+
+def _stop_run_keys(data: dict) -> list[str]:
+    """The names a stop's snapshot may be under: the payload's ``agent_id``,
+    then the transcript's own name. Driven 2026-11-02 on this host's Claude
+    Code (a payload logger wired on both events): SubagentStart and
+    SubagentStop carried one ``agent_id`` (``a060f8fc0f85f8900``, no prefix),
+    and the stop's ``agent_transcript_path`` ended ``agent-<that id>.jsonl``.
+    The upstream page documents ``agent_id`` on both events and says nothing
+    of the two being one value, so the transcript is the second key."""
+    keys = [_run_key(data.get("agent_id"))]
+    transcript = data.get("agent_transcript_path")
+    if isinstance(transcript, str) and transcript.strip():
+        stem = transcript.replace("\\", "/").rsplit("/", 1)[-1]
+        keys.append(_run_key(stem[: -len(".jsonl")] if stem.endswith(".jsonl") else stem))
+    return [k for k in dict.fromkeys(keys) if k]
+
+
+def _digests(root: Path, paths: list[str], timeout: float = 3) -> dict[str, str]:
+    """Each path's content digest, read from the worktree's top (porcelain
+    paths are top-relative); ``""`` for one that cannot be read (a deletion is
+    dirty with no content, and stays ``""`` while it stays one)."""
+    out: dict[str, str] = {}
+    top = _git_top(root, timeout) if paths else root
+    for rel in paths:
+        try:
+            out[rel] = hashlib.sha256((top / rel).read_bytes()).hexdigest()
+        except OSError:  # fail-open: ok deliberate -- a deleted or unreadable file digests as "", the same at both ends while it stays so
+            out[rel] = ""
+    return out
+
+
+def _sweep_old_snapshots(folder: Path) -> None:
+    """Remove snapshot files older than a day (a run whose stop never came).
+    Bounded: the first ``_SNAPSHOT_SWEEP_CAP`` entries a listing yields."""
+    cutoff = time.time() - _SNAPSHOT_MAX_AGE_SECONDS
+    try:
+        entries = list(folder.iterdir())[:_SNAPSHOT_SWEEP_CAP]
+    except OSError:  # fail-open: ok deliberate -- an unlistable folder keeps its old files; the write below names a failure of its own
+        return
+    for entry in entries:
+        try:
+            if entry.suffix == ".json" and entry.stat().st_mtime < cutoff:
+                entry.unlink()
+        except OSError:  # fail-open: ok deliberate -- an old snapshot that will not go is swept by a later start
+            continue
+
+
+def snapshot_docs_at_start(root: Path, data: dict) -> None:
+    """SubagentStart's half of DEF-1100, called by ``subagent_start.py``: for
+    an agent the relief table maps to Gate 2's record, keep the dirty markdown
+    and each file's digest under the run's agent id. Nothing for any other
+    agent, and nothing when git cannot be read: no snapshot is the stop's
+    named stand-down, never a wrong empty one."""
+    agent_type = str(data.get("agent_type", ""))
+    flag = _hook_utils.relief_flags(root, hook="subagent_start").get(agent_type)
+    if flag != _hook_utils.DOCS_REFRESHED:
+        return
+    key = _run_key(data.get("agent_id"))
+    if not key:
+        return
+    folder = root / STATE_DIR / DOCS_SNAPSHOT_DIR
+    target = folder / f"{key}.json"
+    if target.exists():
+        return
+    dirty = _dirty_markdown(root, timeout=_SNAPSHOT_GIT_SECONDS)
+    if dirty is None:
+        return
+    folder.mkdir(parents=True, exist_ok=True)
+    _sweep_old_snapshots(folder)
+    _hook_utils.atomic_write_text(
+        target,
+        json.dumps({"agent": agent_type, "docs": _digests(root, dirty, _SNAPSHOT_TOP_SECONDS)},
+                   ensure_ascii=False),
+    )
+
+
+def _take_snapshot(root: Path, data: dict) -> dict[str, str] | None:
+    """The run's start snapshot (path -> digest), removed as it is read; None
+    when there is none to read."""
+    folder = root / STATE_DIR / DOCS_SNAPSHOT_DIR
+    for key in _stop_run_keys(data):
+        path = folder / f"{key}.json"
+        try:
+            # Decoded with replacement: a strict read raised a UnicodeDecodeError
+            # past this handler and lost the relief record (code review).
+            raw = path.read_bytes().decode("utf-8", errors="replace")
+        except OSError:  # fail-open: ok deliberate -- no snapshot under this name; the next name is tried, and none at all is the stop's named stand-down
+            continue
+        try:
+            path.unlink()
+        except OSError:  # fail-open: ok deliberate -- a snapshot left behind is swept by a later start after a day
+            pass
+        try:
+            parsed = json.loads(raw)
+        except ValueError:  # fail-open: ok deliberate -- a torn snapshot reads as none, the named stand-down
+            return None
+        docs = parsed.get("docs") if isinstance(parsed, dict) else None
+        if isinstance(docs, dict) and all(isinstance(v, str) for v in docs.values()):
+            return docs
+        return None
+    return None
+
+
+def _earlier_evidence(root: Path) -> list[str]:
+    """The paths an earlier docs run this session recorded (the record a new
+    session's start sweeps), so a later run that changes nothing does not
+    erase them: the failure-mode review found a second, read-only docs agent
+    re-blocking Gate 2 over the first one's still-uncommitted edits."""
+    # Bytes through decode_text_or_problem, as stop_gate reads the same record:
+    # an operator writes it by hand (the gate's own message says how), and a
+    # PowerShell or editor save carries a byte-order mark.
+    try:
+        from _json_safe import decode_text_or_problem  # noqa: PLC0415 -- tools/cc is on the path where the hooks run
+
+        text, problem = decode_text_or_problem((root / STATE_DIR / _hook_utils.DOCS_REFRESHED).read_bytes())
+        earlier = json.loads(text) if not problem else None
+    except (OSError, ValueError, ImportError):  # fail-open: ok deliberate -- no earlier record, a torn one, or no decoder carries nothing forward
+        return []
+    docs = earlier.get("changed_docs") if isinstance(earlier, dict) else None
+    return [p for p in docs if isinstance(p, str)] if isinstance(docs, list) else []
+
+
+def _docs_evidence(root: Path, data: dict) -> tuple[list[str], str]:
+    """``(changed_docs, evidence_scope)`` for the docs record: the paths new or
+    changed since the run's start snapshot (``"run"``), with an earlier run's
+    paths this session that are still uncommitted carried forward; or, with no
+    snapshot, every dirty markdown file (``"tree"``), which is said once a
+    session since it may hold the parent's own edits."""
+    changed = _changed_markdown(root)
+    start = _take_snapshot(root, data)
+    if start is None:
+        _hook_utils.say_once(
+            root, "docs-evidence-unscoped", "subagent_stop", "subagentstop_failed_open_docs_evidence_unscoped",
+            f"the {data.get('agent_type')!r} run had no start record, so its docs evidence is "
+            "every markdown file with uncommitted changes, edits made before it ran included. "
+            "SubagentStart kept no snapshot for it that could be read: a settings file that "
+            "does not wire that hook (`espalier doctor` names one), an older subagent_start.py "
+            "kept by an upgrade, a start payload with no agent_id, a git that did not answer "
+            "at the start, or a snapshot file that would not parse",
+            agent=str(data.get("agent_type", "")),
+        )
+        return changed, "tree"
+    now = _digests(root, changed)
+    own = [p for p in changed if start.get(p) != now[p]]
+    still_dirty = set(changed)
+    carried = [p for p in _earlier_evidence(root) if p in still_dirty and p not in own]
+    return own + carried, "run"
 
 
 def _relief_payload(root: Path, agent_type: str, flag_name: str, data: dict | None) -> dict:
@@ -246,9 +461,11 @@ def _relief_payload(root: Path, agent_type: str, flag_name: str, data: dict | No
     (SubagentStop's ``last_assistant_message``), so an operator who opens the
     file sees what the run concluded without opening a transcript. The docs
     record adds ``changed_docs``, the evidence Gate 2 actually reads (DEF-495),
-    plus the total before any size trimming. The review record's evidence is
-    the run itself -- a review that found nothing is still a review -- so Gate
-    3 reads the agent name (DEF-608).
+    plus the total before any size trimming, and ``evidence_scope``: ``run``
+    where the list is the run's own changes, ``tree`` where no start snapshot
+    scoped it (DEF-1100). The review record's evidence is the run itself -- a
+    review that found nothing is still a review -- so Gate 3 reads the agent
+    name (DEF-608).
     """
     data = data or {}
     message = data.get("last_assistant_message")
@@ -259,7 +476,8 @@ def _relief_payload(root: Path, agent_type: str, flag_name: str, data: dict | No
         "excerpt": message[:_EXCERPT_CHARS],
     }
     if flag_name == _hook_utils.DOCS_REFRESHED:
-        changed = _changed_markdown(root)
+        changed, scope = _docs_evidence(root, data)
+        payload["evidence_scope"] = scope
         payload["changed_docs"] = changed
         payload["changed_docs_total"] = len(changed)
     return payload

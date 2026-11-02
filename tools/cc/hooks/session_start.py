@@ -2822,43 +2822,105 @@ def _report_integrity_state(root: Path) -> str:
 # by ``tests/test_external_tool_contract.py``: adding a new tool to
 # the doctor registry without adding it here fails the contract.
 #
-# NOTE: `_warn_if_load_bearing_tool_missing` gates this WHOLE loop on self-host
-# (like the doctor twin), so every tool here is treated as self-host-only. A
-# tool adopters MUST be warned about (e.g. a secret scanner) needs per-tool
-# adopter-relevance gating first — a new row alone is silently suppressed for
-# adopters. The parity contract pins membership, NOT gating, so it won't catch it.
+# NOTE: on an adopter's tree a tool here is checked only where its row in
+# _ADOPTER_TOOL_RELEVANCE says the tree uses it (DEF-1122), so a new tool
+# needs a row there too, or adopters are never told it is missing. The parity
+# contract pins membership, NOT gating, so it won't catch a missing row.
 _SESSION_START_LOAD_BEARING_TOOLS = (
-    # Shown on the source tree only (the warn below returns on an adopter's),
-    # so the hint installs the dev extra, which pins ruff to the one version
-    # CI runs; a range here would install a newer ruff than the pin. Names
+    # The source tree's hint installs the dev extra, which pins ruff to the
+    # one version CI runs; a range here would install a newer ruff than the
+    # pin. An adopter gets the hint in _ADOPTER_TOOL_RELEVANCE instead. Names
     # must stay parallel with doctor._LOAD_BEARING_EXTERNAL_TOOLS.
     ("ruff", "pip install -e '.[dev]' (the dev extra pins the ruff CI runs)"),
 )
 
 
-def _warn_if_load_bearing_tool_missing(self_host: bool) -> None:
+def _ruff_is_declared(root: Path) -> bool:
+    """Whether the tree declares ruff: a mention in ``pyproject.toml`` (a
+    ``[tool.ruff]`` table, or ruff kept only in the dev requirements), or a
+    ``ruff.toml`` / ``.ruff.toml`` beside it. Twin of
+    ``espalier.analyze.ruff_is_declared``, the reading that makes /preflight's
+    inferred lint step run ruff; pinned equal over one table of trees by
+    ``tests/test_session_start_ruff_gate.py``. Two file reads, inside the wall."""
+    pyproject = root / "pyproject.toml"
+    if pyproject.exists():
+        try:
+            text = pyproject.read_text(encoding="utf-8", errors="replace")
+        except OSError:  # fail-open: ok deliberate -- an unreadable pyproject declares nothing, as the engine's safe_text reads it
+            text = ""
+        if "ruff" in text.lower():
+            return True
+    return any((root / name).is_file() for name in ("ruff.toml", ".ruff.toml"))
+
+
+def _preflight_runs_ruff(root: Path) -> bool:
+    """Whether /preflight's lint step on this tree runs ruff from PATH. Twin of
+    ``espalier.harness_config.declared_action(root, "lint")``'s order: a lint
+    in ``suppress_actions`` runs nothing; an ``[extra_actions] lint`` runs as
+    declared (ruff only where a command's first word is ``ruff``, so a ``uv run
+    ruff`` brings its own); else the inferred lint, a ``package.json`` lint
+    script or a Makefile ``lint`` target before a ruff declaration. Pinned to
+    the engine over one table of trees by tests/test_session_start_ruff_gate.py.
+    A handful of file reads, inside the wall."""
+    table = _hook_utils.read_toml_table(root) or {}
+    suppressed = table.get("suppress_actions")
+    if isinstance(suppressed, list) and "lint" in suppressed:
+        return False
+    extra = table.get("extra_actions")
+    declared = extra.get("lint") if isinstance(extra, dict) else None
+    if isinstance(declared, list) and declared:
+        return any(isinstance(c, str) and c.split()[:1] == ["ruff"] for c in declared)
+    try:
+        package = json.loads((root / "package.json").read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError):  # fail-open: ok deliberate -- no readable package.json declares no lint script, as the engine reads it
+        package = {}
+    scripts = package.get("scripts") if isinstance(package, dict) else None
+    if isinstance(scripts, dict) and "lint" in scripts:
+        return False
+    try:
+        makefile = (root / "Makefile").read_text(encoding="utf-8", errors="replace")
+    except OSError:  # fail-open: ok deliberate -- no readable Makefile has no lint target, as the engine reads it
+        makefile = ""
+    if re.search(r"^lint:", makefile, flags=re.MULTILINE):
+        return False
+    return _ruff_is_declared(root)
+
+
+# DEF-1122: on an adopter's tree, which tools here the tree makes load-bearing
+# (the predicate) and the hint that fits it. The doctor's twin is
+# espalier.doctor._ADOPTER_TOOL_RELEVANCE; the two tables' keys are pinned equal.
+_ADOPTER_TOOL_RELEVANCE = {
+    "ruff": (
+        _preflight_runs_ruff,
+        "this project's /preflight lint step runs ruff; install it the way the "
+        "project pins it (its dev dependencies), or: pip install ruff",
+    ),
+}
+
+
+def _warn_if_load_bearing_tool_missing(self_host: bool, root: "Path | None" = None) -> None:
     """Surface load-bearing external-tool absence at boot.
 
-    The lint-gate-as-regression-test requires ``ruff`` on PATH.
-    A missing binary degrades the gate to non-enforcement silently. The
-    SessionStart line makes the gap visible per-session.
-
-    Self-host-gated to match ``espalier.doctor.run_doctor_check``: ruff ships
-    only in espalier's own dev-extras and its CI lint gate is ``if: is_source
-    == 'true'``, so a ruff-less adopter has no ruff gate and must not be nagged
-    at every boot (adopter-friction parity with the doctor side, which gates
-    its own load-bearing-tool loop on is_self_host_repo the same way).
+    On the source tree the lint-gate-as-regression-test requires ``ruff`` on
+    PATH, and a missing binary degrades the gate to non-enforcement silently.
+    On an adopter's tree a tool is load-bearing only where the tree uses it
+    (``_ADOPTER_TOOL_RELEVANCE``, DEF-1122): a project that configures ruff
+    has /preflight run it, which fails at the lint step with the binary gone,
+    and nothing said so before; a ruff-less adopter with no ruff configuration
+    is never nagged. The doctor side (``espalier.doctor``) reads the same
+    predicate.
     """
-    if not self_host:
-        return
     import shutil as _shutil
     for tool, hint in _SESSION_START_LOAD_BEARING_TOOLS:
+        if self_host:
+            reason = f"Espalier-Harness's lint gate requires {tool}. Install via: {hint}"
+        else:
+            relevance = _ADOPTER_TOOL_RELEVANCE.get(tool)
+            if root is None or relevance is None or not relevance[0](root):
+                continue
+            reason = relevance[1]
         if _shutil.which(tool) is None:
-            _hook_utils.advise(
-                f"[WARN] {tool} not on PATH -- Espalier-Harness's "
-                f"lint gate requires {tool}. "
-                f"Install via: {hint}",
-            )
+            _hook_utils.advise(f"[WARN] {tool} not on PATH -- {reason}")
 
 
 def _entry_argv(command: object, args: object = None) -> tuple:
@@ -5131,7 +5193,7 @@ def _run_main(wall_start: float | None = None) -> int:
         (lambda: _prune_audit_logs_inside_the_wall(hook_start, _handoff_budget(handoff)),
          "session_start: audit log pruning failed"),
         (_warn_if_maintenance_mode_active, "session_start: maintenance-mode banner failed"),
-        (lambda: _warn_if_load_bearing_tool_missing(self_host), "session_start: external-tool banner failed"),
+        (lambda: _warn_if_load_bearing_tool_missing(self_host, root=root), "session_start: external-tool banner failed"),
         (lambda: _warn_if_hook_interpreter_unresolved(root), "session_start: hook-interpreter banner failed"),
         (lambda: _warn_if_stop_gate_override_unresolved(root), "session_start: stop-gate override banner failed"),
         (lambda: _warn_if_nested_repo_litter(root, cwd=_hook_cwd(payload), covered=reaper_kept),

@@ -27,6 +27,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 from espalier._report_io import safe_text
 from espalier import _stack_table
@@ -217,11 +218,49 @@ def _walk_router_docs(repo_root: Path) -> list[str]:
     return sorted(rels)
 
 
+def _tracked_root_markdown(repo_root: Path) -> list[str]:
+    """The ``*.md`` files at the root of ``repo_root`` that git tracks, by name;
+    the ones on disk where git cannot answer (no git, not a repository). Tracked
+    rather than present, so a scratch note the adopter never committed is not a
+    surface whose links the pass reports. Forced twin of the hook side's
+    ``_tracked_root_markdown`` (tools/cc/reflect_protocol.py)."""
+    import subprocess
+
+    from espalier._spawn import run_no_stdin
+
+    try:
+        r = run_no_stdin(
+            ["git", "-C", str(repo_root), "ls-files", "-z", "--", ":(glob)*.md"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=20, check=False,
+        )
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        r = None
+    if r is not None and r.returncode == 0:
+        return sorted(n for n in r.stdout.split("\0") if n and "/" not in n)
+    try:
+        return sorted(p.name for p in repo_root.glob("*.md") if p.is_file())
+    except OSError:
+        return []
+
+
+def _root_doc_names(repo_root: Path) -> list[str]:
+    """The root documents the surface walks: CLAUDE.md and the memory file, and
+    on an adopter tree every tracked root ``*.md`` beside them (DEF-1114). A
+    README that links a renamed doc is what the deep pass exists to catch, and
+    the doc it links read as an orphan. The source repository keeps its two:
+    its other root documents are release and maintainer records."""
+    names = ["CLAUDE.md", _MEMORY_FILENAME]
+    if not surface_contract.is_self_host_repo(repo_root):
+        names += _tracked_root_markdown(repo_root)
+    return list(dict.fromkeys(names))
+
+
 def _iter_surface_files(repo_root: Path) -> list[Path]:
     """Enumerate all markdown files in the CC surface."""
     hits: list[Path] = []
     # Root-level docs
-    for name in ["CLAUDE.md", _MEMORY_FILENAME]:
+    for name in _root_doc_names(repo_root):
         p = repo_root / name
         if p.exists():
             hits.append(p)
@@ -277,12 +316,34 @@ def _iter_surface_files(repo_root: Path) -> list[Path]:
     return list(dict.fromkeys(hits))
 
 
+_LINK_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+_LINK_TITLE_RE = re.compile(r"""^(\S+)\s+(?:"[^"]*"|'[^']*')$""")
+
+
+def _local_link_path(raw: str) -> str:
+    """The local path a markdown link target names, or ``""`` for one that
+    names none: a trailing title (``"..."`` or ``'...'``) is dropped, a
+    ``//host`` or scheme target (``tel:``, ``ftp:``) is not a local path, the
+    fragment is cut, and ``%`` escapes are decoded (``docs/my%20guide.md`` is
+    ``docs/my guide.md``). Each was a high "broken link" on a correct README
+    link once root documents joined the walk (code review, 2026-11-02).
+    Forced twin of the hook side's."""
+    target = raw.strip()
+    titled = _LINK_TITLE_RE.match(target)
+    if titled:
+        target = titled.group(1)
+    target = target.split("#")[0].strip()
+    if target.startswith("//") or _LINK_SCHEME_RE.match(target):
+        return ""
+    return unquote(target)
+
+
 def _extract_local_links(text: str) -> list[str]:
     """Extract local (non-URL) link targets from markdown text."""
     clean = _text_without_fences(text)
     targets: list[str] = []
     for m in LOCAL_LINK_RE.finditer(clean):
-        target = m.group(1).split("#")[0].strip()
+        target = _local_link_path(m.group(1))
         if target:
             targets.append(target)
     return targets
@@ -494,13 +555,33 @@ def find_orphans(matrix: dict[str, list[str]], *, root: Path | None) -> list[str
     referenced = set()
     for targets in matrix.values():
         referenced.update(targets)
-    # Only flag markdown docs, not config files; skip loader-reached surfaces
+    # Only flag markdown docs, not config files; skip loader-reached surfaces,
+    # and an adopter's root document: it is where a reader starts, never a
+    # link's target (a README, walked since DEF-1114).
     orphans = [
         f for f in all_files - referenced
-        if f.endswith(".md") and not _is_discovery_loaded(f)
+        if f.endswith(".md") and not _is_discovery_loaded(f) and not _is_adopter_root_doc(f)
         and not (root is not None and path_has_seed_stamp(root / f))
     ]
     return sorted(orphans)
+
+
+def _inside_tree(candidate: Path, repo_root: Path) -> bool:
+    """Whether a resolved link target lies inside the repository."""
+    try:
+        candidate.resolve().relative_to(repo_root.resolve())
+    except (ValueError, OSError):
+        return False
+    return True
+
+
+def _is_adopter_root_doc(rel: str) -> bool:
+    """A root document the walk reads for its links alone (DEF-1114): every
+    root ``*.md`` but CLAUDE.md and the memory file, which are the harness's
+    own surfaces and keep every check. An adopter's README is theirs: a short
+    one or a TODO in it is not drift for the deep pass to grade. Forced twin of
+    the hook side's ``_is_adopter_root_doc``."""
+    return "/" not in rel and rel not in ("CLAUDE.md", _MEMORY_FILENAME)
 
 
 def find_expected_ref_gaps(repo_root: Path, matrix: dict[str, list[str]]) -> list[tuple[str, str]]:
@@ -537,7 +618,8 @@ def detect_quality_signals(repo_root: Path) -> list[ReflectFinding]:
         # alone drew a "high" for 24 quoted tokens. Links in a record are still
         # checked below; a dead one is aging there (AGING_RECORD_SURFACES), and
         # the hot index's a gap.
-        if any(rel.startswith(d) for d in DISCOVERY_DIRS) or rel in RESIDUE_EXEMPT_SURFACES:
+        if (any(rel.startswith(d) for d in DISCOVERY_DIRS) or rel in RESIDUE_EXEMPT_SURFACES
+                or _is_adopter_root_doc(rel)):
             continue
         text = _safe_text(path)
         # Placeholder detection
@@ -650,7 +732,7 @@ def run_reflect_pass(repo_root: Path, pass_number: int = 1) -> ReflectPass:
         record = rel in AGING_RECORD_SURFACES
         text = _text_without_fences(_safe_text(path))
         for m in LOCAL_LINK_RE.finditer(text):
-            target = m.group(1).split("#")[0].strip()
+            target = _local_link_path(m.group(1))
             if not target:
                 continue
             # Parity with reflection.py — skip trailing-slash directory links
@@ -663,6 +745,12 @@ def run_reflect_pass(repo_root: Path, pass_number: int = 1) -> ReflectPass:
             candidate = (path.parent / target).resolve() if not target.startswith("/") \
                 else (repo_root / target.lstrip("/"))
             if not candidate.exists():
+                # A link that leaves the repository (a README badge's
+                # ../../actions/..., which the hosting site resolves) cannot be
+                # checked on disk: out of tree, never a gap. Forced twin of the
+                # hook side's check.
+                if not _inside_tree(candidate, repo_root):
+                    continue
                 if record:
                     findings.append(ReflectFinding(
                         kind="aging",
