@@ -1261,6 +1261,20 @@ class TestGroundedStubSeedIsTheAdoptersDoc:
         (docs / "SHARP_EDGES.md").write_text(_seed_stamped(body) + "## Ours\n", encoding="utf-8")
         assert [lf.path for lf in detect_large_files(tmp_path)] == ["docs/SHARP_EDGES.md"]
 
+    def test_the_analysts_censuses_count_a_grounded_stub_as_theirs_too(self, tmp_path):
+        """The sister site (the code review and air's note on the lane):
+        ``census_prune_paths`` kept a stub-backed seed out of the analysts'
+        censuses on the stamp's presence while the fingerprint counted it."""
+        from espalier.managed_inventory import census_prune_paths
+
+        docs = tmp_path / "docs"
+        docs.mkdir()
+        stub = _seed_stamped("# Conventions\n")
+        (docs / "CONVENTIONS.md").write_text(stub, encoding="utf-8")
+        assert "docs/CONVENTIONS.md" in census_prune_paths(tmp_path)
+        (docs / "CONVENTIONS.md").write_text(stub + "## Ours\n", encoding="utf-8")
+        assert "docs/CONVENTIONS.md" not in census_prune_paths(tmp_path)
+
     def test_a_crlf_resaved_untouched_stub_is_still_harness_content(self, tmp_path):
         docs = tmp_path / "docs"
         docs.mkdir()

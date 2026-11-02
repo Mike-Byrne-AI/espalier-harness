@@ -4,11 +4,12 @@
   your tree.** A pre-release version string does not move between builds, so
   an older install of the same version rewrote a newer build's hooks and
   reported it as repairing drift. `cc/PACK_MANIFEST.txt` now names the build
-  under the version (`# espalier-build:`). Where the tree was deployed by
-  another build, or before builds were stamped, `init`, `upgrade`,
-  `install-ci` and `fingerprint` name both builds and the files that differ
-  before they write. They go on rather than refuse, since the version cannot
-  say which build is newer.
+  under the version (`# espalier-build:`, a digest of the files Espalier
+  deploys). Where the tree was deployed by another build, `init`, `upgrade`,
+  `install-ci` and `fingerprint` name both builds and the files at stake
+  before they write; `init` and `upgrade` also say so on a tree stamped before
+  builds were, and stamp it. They go on rather than refuse, since the version
+  cannot say which build is newer.
 - **`--allow-rollback` is the way past the newer-release refusal.** Where
   `cc/PACK_MANIFEST.txt` was stamped by a later release, `init`, `upgrade`,
   `install-ci` and `fingerprint` still refuse before any write; the refusal

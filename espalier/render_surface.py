@@ -13,10 +13,10 @@ import json
 import re
 from collections.abc import Callable, Iterable
 from pathlib import Path
+from typing import Any
 
 from espalier import __version__  # deploy-time version stamp
 from espalier import surface_contract
-from espalier._safe_walk import safe_rglob
 from espalier._atomic_io import atomic_write_text
 from espalier._safe_walk import safe_rglob, visible
 from espalier.harness_config import CANONICAL_HOOK_WIRING
@@ -810,47 +810,26 @@ def render_commands_doc(repo_root: Path) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _surface_digest(roots: Iterable[Path]) -> str:
-    """sha256 over every file under ``roots``, each read as its canonical text
-    -- a leading BOM stripped, CRLF and bare CR folded to LF, the integrity
-    manifest's rule (``_integrity.canonical_text_bytes``, its one owner) -- and
-    keyed by its position under its root, so a Windows checkout's line endings
-    are the same build (the content-hash CRLF edge in docs/SHARP_EDGES.md)
-    while a changed byte or a moved file is another. Compiled caches are
-    never deployed and never counted."""
+def _surface_digest(files: "Iterable[tuple[str, Any]]") -> str:
+    """sha256 over ``(rel, source)`` pairs, in ``rel`` order, each source read
+    as its canonical text -- a leading BOM stripped, CRLF and bare CR folded to
+    LF, the integrity manifest's rule (``_integrity.canonical_text_bytes``, its
+    one owner) -- so a Windows checkout's line endings are the same build (the
+    content-hash CRLF edge in docs/SHARP_EDGES.md) while a changed byte or a
+    moved file is another. A source that cannot be read counts as missing,
+    never as a crash of the render that stamps the digest."""
     from espalier._integrity_bridge import load_integrity_module
 
     canon = load_integrity_module().canonical_text_bytes
     digest = hashlib.sha256()
-    for index, root in enumerate(roots):
-        files = sorted(
-            (p for p in safe_rglob(root, skip_dirs={"__pycache__"})
-             if p.is_file() and p.suffix != ".pyc"),
-            key=lambda p: p.relative_to(root).as_posix(),
-        )
-        for path in files:
-            digest.update(f"{index}/{path.relative_to(root).as_posix()}\0".encode("utf-8"))
-            digest.update(canon(path.read_bytes()))
-            digest.update(b"\0")
+    for rel, source in sorted(files, key=lambda item: item[0]):
+        digest.update(f"{rel}\0".encode("utf-8"))
+        try:
+            digest.update(canon(source.read_bytes()))
+        except OSError:
+            digest.update(b"\0missing")
+        digest.update(b"\0")
     return digest.hexdigest()
-
-
-def _install_commit() -> "str | None":
-    """The commit the installed distribution's ``direct_url.json`` records for
-    a VCS install (PEP 610), or None: a wheel from an index and an editable
-    checkout record none."""
-    from importlib import metadata
-
-    try:
-        raw = metadata.distribution("espalier-harness").read_text("direct_url.json")
-        data = json.loads(raw) if raw else None
-    except (metadata.PackageNotFoundError, OSError, ValueError):
-        return None
-    vcs = data.get("vcs_info") if isinstance(data, dict) else None
-    commit = vcs.get("commit_id") if isinstance(vcs, dict) else None
-    if isinstance(commit, str) and re.fullmatch(r"[0-9a-f]{7,64}", commit):
-        return commit
-    return None
 
 
 @functools.lru_cache(maxsize=1)
@@ -859,15 +838,14 @@ def engine_build() -> str:
     (DEF-1104): a pre-release string does not move between merges, so two
     builds shared one stamp, and an older build's rewrite of a newer one's
     tree read as repairing drift. Twelve hex digits of :func:`_surface_digest`
-    over the deploy source every writing verb copies from --
-    ``espalier/_vendor/cc/`` (the byte-mirror of ``tools/cc/``) and
-    ``espalier/assets/`` -- then the commit a VCS install records. Two builds
-    that deploy the same bytes are one build here: neither can roll the other
-    back. Read once a process (about 25 ms warm)."""
-    here = Path(__file__).resolve().parent
-    build = _surface_digest([here / "_vendor" / "cc", here / "assets"])[:12]
-    commit = _install_commit()
-    return f"{build} commit {commit[:12]}" if commit else build
+    over ``cli._deploy_sources``, the files the writing verbs copy, so two
+    installs that deploy the same bytes are one build (neither can roll the
+    other back) and a file nothing deploys moves nothing. The digest alone is
+    stamped: install provenance, a commit included, would make one set of
+    bytes read as drift between two machines. Read once a process."""
+    from espalier.cli import _deploy_sources  # lazy: cli imports this module
+
+    return _surface_digest(_deploy_sources())[:12]
 
 
 def render_pack_manifest(repo_root: Path) -> str:

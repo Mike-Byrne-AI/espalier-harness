@@ -741,6 +741,26 @@ class TestAbsentStatusLineTopUp:
         assert upgrade.returncode == 0, upgrade.stderr
         assert sum("[upgrade] statusLine runs a command of your own" in ln
                    for ln in upgrade.stdout.splitlines()) == 1, upgrade.stdout
+        # The other two narrators (code review): --wire-hooks on stderr, and
+        # upgrade --execute on a stale tree, through the merge's own reporter.
+        wire = subprocess.run(
+            [sys.executable, "-m", "espalier.cli", "init", str(target), "--wire-hooks"],
+            capture_output=True, timeout=45, encoding="utf-8",
+        )
+        assert wire.returncode == 0, wire.stderr
+        assert "--wire-hooks: statusLine runs a command of your own" in wire.stderr, wire.stderr
+        manifest = target / "cc" / "PACK_MANIFEST.txt"
+        manifest.write_text("".join(
+            "# espalier-version: 0.0.1\n" if ln.startswith("# espalier-version:") else ln
+            for ln in manifest.read_text(encoding="utf-8").splitlines(keepends=True)
+        ), encoding="utf-8")
+        execute = subprocess.run(
+            [sys.executable, "-m", "espalier.cli", "upgrade", str(target), "--execute"],
+            capture_output=True, timeout=45, encoding="utf-8",
+        )
+        assert execute.returncode == 0, execute.stderr
+        assert sum("[upgrade] statusLine runs a command of your own" in ln
+                   for ln in execute.stdout.splitlines()) == 1, execute.stdout
 
     def test_the_read_only_twin_agrees_with_the_merge_on_the_key(self, tmp_path):
         """`_statusline_key_absent` (the stale-install `upgrade` preview's

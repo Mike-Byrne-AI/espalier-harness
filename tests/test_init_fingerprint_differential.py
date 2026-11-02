@@ -69,6 +69,24 @@ class TestInitLeavesTheFingerprintAlone:
         saved = json.loads((tmp_path / "reports" / "repo_fingerprint.json").read_text(encoding="utf-8"))
         assert _differing_keys(before, saved) == {}
 
+    def test_init_adds_no_file_to_what_the_fingerprint_walks(self, tmp_path):
+        """The fields above can hold still while the walk under them grows:
+        the forward ledger's stub is filled with the onboarding rows after it
+        is stamped, so a hash-keyed seed rule read the harness's own rows as
+        the adopter's doc on every fresh init, and no field moved on this
+        three-file tree (driven by the failure-mode review, DEF-1112's lane).
+        The walk itself is the oracle. Mutation: read the ledger by hash and
+        the walk gains task-packs/FORWARD_LEDGER.md."""
+        from espalier.analyze import _iter_files
+        from espalier.managed_inventory import get_seed_docs
+
+        _three_file_repo(tmp_path)
+        before = {p.relative_to(tmp_path).as_posix() for p in _iter_files(tmp_path)}
+        _init(tmp_path)
+        after = {p.relative_to(tmp_path).as_posix() for p in _iter_files(tmp_path)}
+        assert (tmp_path / "task-packs" / "FORWARD_LEDGER.md").is_file()
+        assert not (after - before) & set(get_seed_docs()), sorted(after - before)
+
     def test_install_ci_changes_only_the_ci_fact(self, tmp_path):
         _three_file_repo(tmp_path)
         _init(tmp_path)

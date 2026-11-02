@@ -29,7 +29,9 @@ the context from the transcript, not from here.
 ``--segments`` prints the indicators alone, without the ``espalier`` label,
 and nothing at all when none is on: for an operator who keeps a statusLine
 of their own and composes these into it, since the settings merge never
-rewrites a present key (DEF-1116; ``espalier doctor`` names the state).
+rewrites a present key (DEF-1116; ``espalier doctor`` names the state). It
+reads no stdin, so the payload stays for the operator's own command, and the
+two context segments, which come from that payload, are left to their line.
 """
 from __future__ import annotations
 
@@ -274,7 +276,7 @@ def main(argv: "list[str] | None" = None) -> int:
     # way. A raw Path.cwd() here misreports when launched from a subdirectory
     # even with the env var set.
     root = Path(os.environ.get("CLAUDE_PROJECT_DIR", ".")).resolve()
-    payload = _read_statusline_payload()
+    payload = {} if segments else _read_statusline_payload()
     parts = [] if segments else ["espalier"]
     # Compute each indicator independently so one failing segment
     # (e.g. a malformed freshness cache) degrades only ITSELF, not the healthy

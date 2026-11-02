@@ -245,6 +245,21 @@ class TestStatuslineOutput:
         assert segments({"ESPALIER_MAINTENANCE_MODE": "1",
                          "ESPALIER_STOP_GATE": "full"}).strip() == "MAINT | STOP=full"
 
+    def test_segments_leaves_stdin_for_the_operators_own_command(self, tmp_path):
+        """Composed beside the operator's own command, a reader that drained
+        stdin left their script nothing (driven by the failure-mode review):
+        ``--segments`` reads none, so the payload's context segments are
+        theirs to show. Mutation: read the payload and ctx= appears."""
+        proc_env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)}
+        for var in ("ESPALIER_MAINTENANCE_MODE", "ESPALIER_STOP_GATE", "ESPALIER_AUDIT_DIR"):
+            proc_env.pop(var, None)
+        result = run_hook_through([sys.executable, str(STATUSLINE), "--segments"],
+                                  env=proc_env, input=_DOCS_SAMPLE, cwd=str(tmp_path),
+                                  statusline=True)
+        assert result.returncode == 0, result.stderr
+        assert "ctx=" not in result.stdout and "limits=" not in result.stdout, result.stdout
+        assert "ctx=" in _run_payload(_DOCS_SAMPLE, tmp_path), "the control: the full line reads it"
+
 
 class TestStatuslineHardening:
     """TP-55: statusline resolves CLAUDE_PROJECT_DIR to absolute path

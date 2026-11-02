@@ -570,6 +570,27 @@ def _packaged_md_assets(harness_root: Path) -> list[tuple[str, Path]]:
     return out
 
 
+def _deploy_sources() -> "list[tuple[str, Any]]":
+    """``(rel, source)`` for every file the writing verbs copy from this engine:
+    the hook and tool scripts and the CI gate through :func:`_deploy_source_path`
+    (a source checkout deploys its own ``tools/cc/``), the packaged ``.claude``
+    bodies, the seed docs' packaged sources and the CI workflow.
+    ``render_surface.engine_build`` digests this list and nothing else
+    (DEF-1104), so a file the deploy never copies -- a folder guide beside the
+    assets, a cache -- is never part of a build, and a source checkout and a
+    wheel of one commit are one build."""
+    from espalier.assets import assets_root
+    from espalier.managed_inventory import get_seed_asset_source, get_seed_docs
+
+    rels = [*INIT_HOOK_SCRIPTS, *INIT_TOOL_SCRIPTS, "tools/cc/ci_guard.py"]
+    out: "list[tuple[str, Any]]" = [(rel, _deploy_source_path(rel)) for rel in rels]
+    out.extend(_packaged_md_assets(_espalier_root()))
+    out.extend((rel, assets_root().joinpath(*get_seed_asset_source(rel).split("/")))
+               for rel in get_seed_docs())
+    out.append((".github/workflows/harness-guard.yml", github_workflow_asset("harness-guard.yml")))
+    return out
+
+
 def _espalier_root() -> Path:
     """Return Espalier-Harness's own install root — the dir CONTAINING ``espalier/``.
 
@@ -7770,10 +7791,13 @@ def cmd_init(args: argparse.Namespace) -> int:
     # The stamp before any write, both modes (DEF-1104): init never read it,
     # so an older engine re-running init over a newer deployment rolled every
     # marked file back and re-sealed the integrity manifest over the result.
-    refused = _check_deployed_stamp(
+    # The body check first: the stamp's build line renders every packaged body
+    # through the deploy preview, and a body that cannot render is this
+    # refusal's to name, never a traceback's (code review).
+    refused = _refuse_unstrippable_body(repo_root, "init") or _check_deployed_stamp(
         repo_root, "init", args,
         lambda: _managed_files_rewritten(repo_root, config.goal_snapshot),
-    ) or _refuse_unstrippable_body(repo_root, "init")
+    )
     if refused is not None:
         return refused
 
@@ -10752,9 +10776,9 @@ def _read_deployed_version(repo_root: Path) -> str | None:
 
 
 def _read_deployed_build(repo_root: Path) -> str | None:
-    """The build stamped under the version (``render_surface.engine_build``:
-    a digest, then the commit when the install recorded one), or None for a
-    tree stamped before builds were (DEF-1104)."""
+    """The build stamped under the version (``render_surface.engine_build``,
+    a digest of what the deploy copies; its first word is compared), or None
+    for a tree stamped before builds were (DEF-1104)."""
     return _read_manifest_stamp(repo_root, "espalier-build") or None
 
 
@@ -10797,7 +10821,7 @@ def _managed_files_rewritten(repo_root: Path, goal_snapshot: bool) -> list[str]:
 
 def _check_deployed_stamp(
     repo_root: Path, verb: str, args: argparse.Namespace,
-    rewritten: "Callable[[], list[str]]",
+    rewritten: "Callable[[], list[str]]", *, differing: bool = True,
 ) -> "int | None":
     """The stamp, read before any write by every verb that writes this
     engine's bytes over a deployment -- ``init`` and ``upgrade`` (both modes;
@@ -10808,12 +10832,14 @@ def _check_deployed_stamp(
     by the lane's failure-mode review). A later release refuses, unless
     ``--allow-rollback``; another build of this release is said. Exit 2 or
     ``None``. ``rewritten`` is called only when a line names the files, so a
-    current tree pays for no preview."""
+    current tree pays for no preview; ``differing`` says it names the files
+    that differ (``init``, ``upgrade``), not a fixed set the verb writes. Every
+    line goes to stderr: ``fingerprint`` prints its JSON on stdout."""
     deployed = _read_deployed_version(repo_root)
     if _deployed_is_newer(deployed, __version__):
         return _refuse_newer_deployment(
             deployed, verb, rewritten(), allow=bool(getattr(args, "allow_rollback", False)))
-    _say_other_build(repo_root, deployed, verb, rewritten)
+    _say_other_build(repo_root, deployed, verb, rewritten, differing=differing)
     return None
 
 
@@ -10824,27 +10850,29 @@ def _refuse_newer_deployment(
     stamp names a later release than this engine; with ``allow``
     (``--allow-rollback``, the way past the operator names on purpose) say
     what is rolled back and return ``None``. A stamp line deleted by hand
-    still reads as an unstamped tree."""
+    still reads as an unstamped tree, and the refusal says so."""
     print(f"[{verb}] deployed {deployed} -> engine {__version__}: the deployed "
-          "harness is newer than this engine.")
+          "harness is newer than this engine.", file=sys.stderr)
     named = (f" {plural(len(rolled_back), 'file')} to this engine's older bytes: "
              + _name_paths(rolled_back, limit=len(rolled_back)) + "."
              if rolled_back else "")
     if allow:
-        print(f"[{verb}] --allow-rollback: rolling back on request."
-              + (f" Rewriting{named}" if named else ""))
+        print(f"[{verb}] --allow-rollback: going ahead on request."
+              + (f" At stake:{named}" if named else ""), file=sys.stderr)
         return None
     print(f"[{verb}] REFUSED: nothing was written."
           + (f" It would rewrite{named}" if named else "")
           + f" Run the espalier release that stamped {deployed}, or a later one. "
-          "To roll back on purpose, re-run with --allow-rollback.",
+          "To roll back on purpose, re-run with --allow-rollback (deleting the "
+          "`# espalier-version:` line from cc/PACK_MANIFEST.txt still reads as an "
+          "unstamped tree, as before).",
           file=sys.stderr)
     return 2
 
 
 def _say_other_build(
     repo_root: Path, deployed: "str | None", verb: str,
-    rewritten: "Callable[[], list[str]]",
+    rewritten: "Callable[[], list[str]]", *, differing: bool = True,
 ) -> None:
     """Say, before a write, that the tree was deployed by another build of
     this engine's release, or by one that stamped no build (DEF-1104's
@@ -10854,30 +10882,33 @@ def _say_other_build(
     refused: builds have no order, and a refusal would stop every forward
     upgrade inside a pre-release. Silent when the versions differ (the
     ordering above decides), on the self-host tree (its manifest stamps no
-    build), on this build's own stamp, and when nothing differs."""
+    build), on this build's own stamp, and when nothing differs but the
+    manifest, whose stamp is the line being rewritten. An unstamped tree is
+    said only by the verbs that name what differs and restamp it (``init``,
+    ``upgrade``); ``install-ci`` and ``fingerprint`` would say it on every run."""
     if deployed != __version__ or surface_contract.is_self_host_repo(repo_root):
         return
     stamped = _read_deployed_build(repo_root)
     mine = engine_build()
-    if stamped is not None and stamped.split()[0] == mine.split()[0]:
+    if stamped is not None and stamped.split()[0] == mine:
         return
-    files = rewritten()
+    if stamped is None and not differing:
+        return
+    files = [rel for rel in rewritten() if rel != "cc/PACK_MANIFEST.txt"]
     if not files:
         return
-    # ``init`` and ``upgrade`` name the files that differ (the preview);
-    # ``install-ci`` and ``fingerprint`` the files they write.
     names = _name_paths(files, limit=len(files))
     if stamped is None:
         print(f"[{verb}] the deployed stamp names no build (written before builds "
               f"were stamped), so this engine (build {mine}) cannot tell another "
               f"build of {deployed} from drift: if that build was the later one, "
               "writing this build's bytes rolls back whichever of these differ: "
-              f"{names}.")
+              f"{names}.", file=sys.stderr)
         return
     print(f"[{verb}] deployed by another build of {deployed} (build {stamped}; this "
           f"engine is build {mine}): one version string cannot say which is newer, "
           f"so if {stamped.split()[0]} is the later build, writing this build's "
-          f"bytes rolls back whichever of these differ: {names}.")
+          f"bytes rolls back whichever of these differ: {names}.", file=sys.stderr)
 
 
 def _refuse_unstrippable_body(repo_root: Path, verb: str) -> "int | None":
@@ -11117,16 +11148,15 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     refused = _refuse_unreadable_harness_root(repo_root, "upgrade")
     if refused is not None:
         return refused
-    refused = _check_deployed_stamp(
+    # The body check before the stamp's, as in init: the build line's preview
+    # renders every packaged body.
+    refused = _refuse_unstrippable_body(repo_root, "upgrade") or _check_deployed_stamp(
         repo_root, "upgrade", args,
         lambda: _managed_files_rewritten(repo_root, _load_config(repo_root, args).goal_snapshot),
     )
     if refused is not None:
         return refused
     deployed_version = _read_deployed_version(repo_root)
-    refused = _refuse_unstrippable_body(repo_root, "upgrade")
-    if refused is not None:
-        return refused
     execute = getattr(args, "execute", False)
     # The saved plan is gitignored, so every clone of a committed install
     # lacks it, and the deploy's two plan-reading cc/ docs would re-render
@@ -11341,7 +11371,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             # call drift to repair.
             stamped_build = _read_deployed_build(repo_root)
             other = (not self_host and stamped_build is not None
-                     and stamped_build.split()[0] != engine_build().split()[0])
+                     and stamped_build.split()[0] != engine_build())
             print(f"[upgrade] engine version matches the stamp ({__version__}), "
                   + ("and the deployed surface differs from this build's:" if other
                      else "but the deployed surface is not current:"))
@@ -12090,6 +12120,7 @@ def cmd_fingerprint(args: argparse.Namespace) -> int:
     refused = _check_deployed_stamp(
         repo_root, "fingerprint", args,
         lambda: [rel for rel in PLAN_READERS if (repo_root / rel).exists()],
+        differing=False,
     )
     if refused is not None:
         return refused
@@ -13331,6 +13362,7 @@ def cmd_install_ci(args: argparse.Namespace, *, report: dict | None = None) -> i
         repo_root, "install-ci", args,
         lambda: [rel for rel in ("tools/cc/ci_guard.py", ".github/workflows/harness-guard.yml")
                  if (repo_root / rel).exists()],
+        differing=False,
     )
     if refused is not None:
         return refused

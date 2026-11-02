@@ -3962,6 +3962,9 @@ class TestStatuslineFallbackNotes:
         from espalier import doctor as doctor_module
 
         monkeypatch.setattr(doctor_module, "_host_is_windows", lambda: windows)
+        # A settings value spells the resolver's interpreter, never this
+        # process's (the failure-mode review drove a worktree venv path).
+        monkeypatch.setattr(doctor_module, "_resolver_hint", lambda: "pyX")
         script = tmp_path / "tools" / "cc" / "statusline.py"
         script.parent.mkdir(parents=True)
         script.write_text("print('espalier')\n", encoding="utf-8")
@@ -3969,15 +3972,23 @@ class TestStatuslineFallbackNotes:
         notes = doctor_module._statusline_fallback_notes(own, tmp_path)
         assert len(notes) == 1, notes
         for token in ("MAINT", "STOP=full|light", "bp=", "freshness",
-                      "tools/cc/statusline.py --segments"):
+                      "`pyX tools/cc/statusline.py --segments`"):
             assert token in notes[0], (token, notes[0])
         assert notes[0].isascii(), notes[0]
         assert doctor_module.foreign_statusline_note(own, tmp_path) == notes[0]
 
         composed = self._settings(
-            tmp_path, '~/.claude/statusline.sh; python3 "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.py" --segments'
+            tmp_path, "~/.claude/statusline.sh; python tools/cc/statusline.py --segments"
         )
         assert doctor_module._statusline_fallback_notes(composed, tmp_path) == []
+        # The line Claude Code runs: a local file's key over the project's.
+        local = tmp_path / ".claude" / "settings.local.json"
+        local.write_text(json.dumps({"statusLine": {"type": "command", "command": "mine"}}),
+                         encoding="utf-8")
+        assert doctor_module.foreign_statusline_note(composed, tmp_path) is not None
+        local.write_text(json.dumps({"statusLine": None}), encoding="utf-8")
+        assert doctor_module.foreign_statusline_note(own, tmp_path) is None
+        local.unlink()
         off = tmp_path / ".claude" / "settings.json"
         off.write_text(json.dumps({"hooks": {}, "statusLine": None}), encoding="utf-8")
         assert doctor_module._statusline_fallback_notes(off, tmp_path) == []

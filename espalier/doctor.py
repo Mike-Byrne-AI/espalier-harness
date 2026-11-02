@@ -635,14 +635,24 @@ def foreign_statusline_note(settings_path: Path, repo_root: Path) -> "str | None
     notes and every merge narrator (``cli._report_allow_gaps``) read this one
     predicate (the DEF-798 rule). A command that names the script or its shim
     is not foreign: espalier's own line, or the operator's composed with
-    ``--segments``, which quiets this note. An explicit ``null`` turns the
-    statusline off on purpose; a file that cannot be read has its own
-    reporters; without the script there is nothing to show."""
-    try:
-        settings = json.loads(surface_contract.decode_bom(settings_path.read_bytes()))
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
-        return None
-    status_line = settings.get("statusLine") if isinstance(settings, dict) else None
+    ``--segments``, which quiets this note. The line read is the one Claude
+    Code runs: ``settings.local.json``'s key, where present, over the project
+    file's (the precedence the stale-deny WARN already names). An explicit
+    ``null`` turns the statusline off on purpose; a file that cannot be read
+    has its own reporters; without the script there is nothing to show. The
+    command it names is a settings value, so it spells the resolver's
+    interpreter, never this process's (``_remedy_py``'s own rule)."""
+    status_line: object = None
+    for path in (settings_path.with_name("settings.local.json"), settings_path):
+        try:
+            settings = json.loads(surface_contract.decode_bom(path.read_bytes()))
+        except FileNotFoundError:
+            continue
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+            return None
+        if isinstance(settings, dict) and "statusLine" in settings:
+            status_line = settings["statusLine"]
+            break
     command = status_line.get("command") if isinstance(status_line, dict) else None
     if not isinstance(command, str):
         return None
@@ -651,15 +661,16 @@ def foreign_statusline_note(settings_path: Path, repo_root: Path) -> "str | None
     script = surface_contract.path_presence(repo_root / STATUSLINE_SCRIPT)[0]
     if script != surface_contract.PRESENCE_PRESENT:
         return None
+    written = _resolver_hint()
     return (
         "statusLine runs a command of your own, which the settings merge never "
         "rewrites, so espalier's indicators do not show in it: MAINT (maintenance "
         "mode is on, so the protected-zone and plan checks are off), "
-        "STOP=full|light, bp= (the blueprint chain) and the freshness counts. To "
-        f"show them, have your command also run `{_remedy_py()} "
-        "tools/cc/statusline.py --segments` from the project root: it prints the "
-        "indicators that are on and nothing when none is, and this note stops "
-        "once your statusLine command names tools/cc/statusline.py."
+        "STOP=full|light, bp= (the blueprint chain) and the freshness counts. "
+        f"`{written} tools/cc/statusline.py --segments`, run from the project "
+        "root, prints the indicators that are on and nothing when none is, for "
+        "your own line to show; this note stops once your statusLine command "
+        "names tools/cc/statusline.py."
     )
 
 

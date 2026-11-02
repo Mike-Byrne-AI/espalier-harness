@@ -371,6 +371,12 @@ def get_seed_asset_source(dest_relpath: str) -> str:
     return _SEED_ASSET_SOURCES.get(dest_relpath, dest_relpath)
 
 
+#: Stub-backed seeds the deploy writes into after stamping them
+#: (``cli._file_onboarding_rows`` files the onboarding classes into the
+#: forward ledger), so a hash never reads them untouched.
+_SEEDS_THE_DEPLOY_FILLS: frozenset[str] = frozenset({"task-packs/FORWARD_LEDGER.md"})
+
+
 def seed_is_harness_content(repo_root: Path, rel: str) -> bool:
     """Whether the Markdown file at ``rel`` is a seed the fingerprint leaves
     out as harness provenance: it opens with the seed stamp
@@ -381,11 +387,15 @@ def seed_is_harness_content(repo_root: Path, rel: str) -> bool:
     other 460 KB the adopter's -- but a grounded stub is entirely the
     adopter's text. The whole file is read for those few paths alone; one that
     cannot be read is not proven untouched and counts as the adopter's, as an
-    unreadable stamp does."""
+    unreadable stamp does. The forward ledger keeps the presence rule: the
+    deploy files its onboarding rows into the stub after stamping it, so it is
+    never untouched, and a fresh ``init`` would put the harness's own rows in
+    the fingerprint (the failure-mode review drove it)."""
+    rel = rel.replace("\\", "/")
     path = Path(repo_root) / rel
     if not path_has_seed_stamp(path):
         return False
-    if get_seed_asset_source(rel) == rel:
+    if get_seed_asset_source(rel) == rel or rel in _SEEDS_THE_DEPLOY_FILLS:
         return True
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -629,8 +639,10 @@ def census_prune_paths(repo_root: Path, *, fused: bool | None = None) -> tuple[s
     - ``fuse``'s paths only on a fused tree (``fused``, else its marker
       ``fusion_manifest.FUSION_MARKER`` on disk), so a plain tree's own
       ``tools/__init__.py``, ``bench/`` or ``docs/external/`` stay counted;
-    - a seed only where it is absent (``init`` is about to write it) or opens
-      with the seed stamp (``init`` wrote it): ``init`` keeps an adopter's own
+    - a seed only where it is absent (``init`` is about to write it) or is
+      still harness content by the fingerprint's own predicate,
+      :func:`seed_is_harness_content` (``init`` wrote it, and a stub-backed
+      one is not yet grounded, DEF-1112): ``init`` keeps an adopter's own
       ``docs/HOOKS.md``, and so does the census. On a fused tree a path the
       overlay brings is the harness's whatever its stamp, since ``fuse``
       refuses a host file at a harness path;
@@ -660,7 +672,9 @@ def census_prune_paths(repo_root: Path, *, fused: bool | None = None) -> tuple[s
         else:
             if rel in seeds and rel not in fuse_paths:
                 path = repo_root / rel
-                if path.exists() and not path_has_seed_stamp(path):
+                # The fingerprint's own predicate: a grounded stub is the
+                # adopter's doc in the censuses too (DEF-1112).
+                if path.exists() and not seed_is_harness_content(repo_root, rel):
                     continue
             candidates = (rel,)
         for cand in candidates:
