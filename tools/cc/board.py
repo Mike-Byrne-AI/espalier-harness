@@ -187,7 +187,8 @@ def _ascii(text: str) -> str:
 
 def read_open_prs(root: Path, *, run_: Runner = run) -> list[dict]:
     answer = _gh_json(root, "pr", "list", "--state", "open", "--limit", str(OPEN_PR_LIMIT), "--json",
-                      "number,headRefName,headRefOid,labels,mergeStateStatus,isDraft,autoMergeRequest,title,files",
+                      "number,headRefName,headRefOid,labels,mergeStateStatus,isDraft,autoMergeRequest,title,files,"
+                      "createdAt",
                       run_=run_)
     if not isinstance(answer, list):
         raise Unresolvable("gh pr list answered something other than a list")
@@ -1295,7 +1296,8 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run, now: datetime
     board["dispatcher"] = {"name": dispatcher or "", "how": how}
     claims = mail.live_claims(by_machine)
     board["claims"] = claims
-    board["assignments"] = mail.live_assignments(by_machine, dispatcher)
+    closed: list[tuple[dict, dict, str]] = []
+    board["assignments"] = mail.live_assignments(by_machine, dispatcher, closed=closed)
     board["asks"] = mail.live_requests(by_machine, now=now)
     try:
         local = read_sessions(root, run_=run_)
@@ -1338,8 +1340,12 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run, now: datetime
         for pr in prs:
             pr.pop("files", None)   # read for the stale and overlap checks; the JSON carries verdicts, not the list
         board["open_prs"] = prs
+        counted = [m for machine, ms in by_machine.items() for m in ms
+                   if m.get("type") == "assign" and (not dispatcher or machine == dispatcher)]
+        board["closed_at_a_push"] = closed_at_a_push(closed, counted, prs)
     except Unresolvable as exc:
         board["open_prs"] = {"unread": str(exc)}
+        board["closed_at_a_push"] = {"unread": str(exc)}
         board["overlaps"] = _overlaps_or_unread(root, base, overlap_claims, [],
                                                 [*overlap_notes, "the open pull requests are unread"], run_=run_,
                                                 fetch=False, seat=board["seat"])
@@ -1394,6 +1400,18 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run, now: datetime
 # ---------------------------------------------------------------- the render --
 
 def _pr_line(pr: dict) -> str:
+    auto = "auto-merge armed" if pr.get("autoMergeRequest") else "auto-merge not armed"
+    if pr.get("seat") is None:
+        seat = " [seat unread: the mail could not be read]"
+    else:
+        seat = f" [{pr['seat']}]" if pr.get("seat") else " [no seat's claim names this branch]"
+    return f"#{pr.get('number')} {pr.get('headRefName')}{seat}: {_pr_meaning(pr)}; {auto}"
+
+
+def _pr_meaning(pr: dict) -> str:
+    """What GitHub's merge state means for ``pr``, and what holds a blocked
+    one, from the required-check read: the open PRs row's words, which the
+    ``closed at a push`` line repeats so a lane in CI reads apart from a red one."""
     state = str(pr.get("mergeStateStatus") or "UNKNOWN").upper()
     meaning = MERGE_STATES.get(state, f"GitHub is still computing it ({state.lower()})")
     required = pr.get("required")
@@ -1407,15 +1425,10 @@ def _pr_line(pr: dict) -> str:
             if required.get("red"):
                 # A red cell is a test's verdict or a lost runner's; only the
                 # driver's read on the lane tells them apart (the banner says so too).
-                meaning += "; its seat's `python tools/cc/ship.py status` tells a test red from a lost runner"
+                meaning += "; its seat's `tools/cc/ship.py status` tells a test red from a lost runner"
     if pr.get("isDraft"):
         meaning = "draft"
-    auto = "auto-merge armed" if pr.get("autoMergeRequest") else "auto-merge not armed"
-    if pr.get("seat") is None:
-        seat = " [seat unread: the mail could not be read]"
-    else:
-        seat = f" [{pr['seat']}]" if pr.get("seat") else " [no seat's claim names this branch]"
-    return f"#{pr.get('number')} {pr.get('headRefName')}{seat}: {meaning}; {auto}"
+    return meaning
 
 
 def read_ruling(by_machine: dict, dispatcher: str | None, how: str, run_id: object, *,
@@ -1612,6 +1625,65 @@ def _job(re_: dict) -> str:
     return ", ".join(p for p in parts if p) or "?"
 
 
+#: How long before a pull request's creation its lane's closing release may be
+#: stamped and still be that pull request's push: the driver releases after the
+#: push lands, around ``gh pr create``, on the seat's clock. An older closure on
+#: the same branch name is an earlier lane's, whose work merged.
+PUSH_BEFORE_CREATE_SECONDS = 15 * 60
+
+
+def closed_at_a_push(closed: list[tuple[dict, dict, str]], assigns: list[dict], prs: list[dict]) -> list[dict]:
+    """The jobs the claim rule closed whose lane's pull request is still open.
+
+    The third closing rule closes a job given by its ids at the lane release
+    the ship driver sends when the push lands, before CI has run, so a lane
+    that then goes red and is shelved has already dropped its job from the
+    rows above. ``closed`` is the fold's own record (``mail.live_assignments``),
+    so the rule has one home. ``assigns`` is every assign the fold counts: a
+    job assigned again since its close (live or closed again) is the
+    dispatcher's answer and is left out, and so is a closure stamped more than
+    :data:`PUSH_BEFORE_CREATE_SECONDS` before the pull request was created (a
+    branch name used again). Each entry carries the pull request's state, so a
+    lane still in CI reads apart from a red one."""
+    open_ = {str(pr.get("headRefName") or ""): pr for pr in prs}
+    found = []
+    for assign, release, rule in closed:
+        re_ = assign.get("re") or {}
+        lane = str((release.get("re") or {}).get("lane") or "")
+        pr = open_.get(lane)
+        if rule != "claim" or pr is None:
+            continue
+        key, at = mail._job_key(re_), str(assign.get("at") or "")
+        if any(mail._job_key(a.get("re") or {}) == key and str(a.get("at") or "") > at for a in assigns):
+            continue
+        try:
+            made = datetime.fromisoformat(str(pr.get("createdAt")).replace("Z", "+00:00"))
+            sent = datetime.fromisoformat(str(release.get("at")).replace("Z", "+00:00"))
+            if (made - sent).total_seconds() > PUSH_BEFORE_CREATE_SECONDS:
+                continue
+        except (TypeError, ValueError):
+            pass   # a stamp that does not read keeps the entry: listed, never hidden
+        found.append({"seat": str(re_.get(mail.ASSIGN_SEAT_KEY) or ""), "ids": mail._str_list(re_.get("ids")),
+                      "assign": str(assign.get("id") or ""), "release": str(release.get("id") or ""),
+                      "lane": lane, "number": pr.get("number"), "state": _pr_meaning(pr)})
+    return found
+
+
+def closed_at_a_push_lines(board: dict) -> list[str]:
+    """The ``jobs:`` section's line for :func:`closed_at_a_push`, its count
+    first; nothing while none is found, and unread, never none, when the open
+    pull requests could not be read."""
+    found = board.get("closed_at_a_push")
+    if board.get("mail_unread") or not found:
+        return []
+    if isinstance(found, dict):
+        return [f"          closed at a push: unread (the open pull requests are unread: {found.get('unread')})"]
+    head = f"          closed at a push, its pull request still open: {len(found)}: "
+    return [(head if i == 0 else "            ")
+            + f"{c['seat']}: {', '.join(c['ids'])} (assign {c['assign']}; #{c['number']} {c['lane']}: {c['state']})"
+            for i, c in enumerate(found)]
+
+
 def under_two(assignments: list[dict], rows: list[dict], dispatcher: str = "") -> tuple[list[tuple[str, int, str]], dict]:
     """The seats holding fewer than two live jobs, each with its count and
     its last mail's age, and the population counted over: ``rows`` (the seat
@@ -1743,6 +1815,7 @@ def render(board: dict) -> str:
             re_ = a.get("re") or {}
             lines.append((head + f"{len(jobs)} live: " if i == 0 else "          ")
                          + f"{re_.get('seat')}: {_job(re_)} (since {a.get('at')}; assign {a.get('id')})")
+    lines.extend(closed_at_a_push_lines(board))
     if not board.get("mail_unread") and disp.get("name") != mail.DISPATCHER_UNUSABLE:
         # The section's tail (DEF-5034): each seat under two live jobs with its
         # count, over the seats shown above and the jobs' seats, so the short
