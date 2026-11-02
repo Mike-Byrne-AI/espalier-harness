@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5048",
+ "subject": "tools/cc/mods/own-clear/hooks/register.ts",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the reading is the mod's, a TypeScript handler driven only through claude plugin test (tools/cc/mods/own-clear/hooks/own-clear.test.ts), which no ledger probe runs; that test, given a marker naming a lane checkout with a tracked edit, is the oracle",
+ "row_sha": "5498efa09360",
+ "text_sha": "533a5896111c",
+ "verified_2026_11_01": "OPEN (filed 2026-11-01; probe driven at filing)"
+}

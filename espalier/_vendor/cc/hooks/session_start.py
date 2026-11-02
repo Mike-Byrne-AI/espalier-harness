@@ -35,10 +35,15 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+
+# The clock at module load, before the sibling imports below: a script start's
+# wall counts them (DEF-3015, `_WALL_SECONDS`).
+_LOAD_T0 = time.monotonic()
 
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -503,24 +508,142 @@ def _read_process_table() -> str:
     return result.stdout if result.returncode == 0 else ""
 
 
-def _loose_processes_line(table: str | None = None) -> str:
-    """The banner's `Loose:` value -- PIDs, stems, CPU time and the one-paste
-    kill -- or '' when nothing qualifies. ``table`` is for tests; production
-    reads the live process table."""
+# The checkout each named pid runs from (DEF-4070). Seats on one box share one
+# process table, and a run another seat detached on purpose is PPID 1 at full
+# CPU like any orphan: on 2026-10-31 one seat killed another's tier, read from
+# the table as a stray of its own. So the line names the checkout of this clone
+# holding each pid's working directory and leaves another checkout's pid out of
+# the one-paste kill. One bounded read, made only when the line names a pid:
+# the `/proc/<pid>/cwd` links where the host has them (no spawn), else one
+# `lsof` for every named pid (10 ms measured on macOS; it exits 1 when any
+# listed pid cannot be read and still prints the rest, so its output is read
+# whatever the exit code).
+_PROC_ROOT = Path("/proc")
+_LOOSE_CWD_PID_CAP = 32
+_LOOSE_CWD_SECONDS = 2.0
+# `lsof` sits in an sbin directory on macOS, which a hook's PATH can leave out.
+_LSOF_FALLBACK_DIRS = ("/usr/sbin", "/usr/bin", "/sbin")
+
+
+def _lsof_path() -> str | None:
+    """`lsof` from the absolute PATH entries and the fallbacks alone: an empty
+    or relative entry is the hook's cwd, the checkout, where a file named
+    `lsof` would otherwise run."""
+    dirs = [d for d in os.environ.get("PATH", "").split(os.pathsep) if os.path.isabs(d)]
+    found = shutil.which("lsof", path=os.pathsep.join([*dirs, *_LSOF_FALLBACK_DIRS]))
+    return found if found is not None and os.path.isabs(found) else None
+
+
+def _parse_lsof_cwds(text: str) -> dict[int, str]:
+    """``{pid: cwd}`` from `lsof -Fn` output (``p<pid>``, ``fcwd``, ``n<path>``
+    lines); a line of any other shape is skipped."""
+    found: dict[int, str] = {}
+    pid: int | None = None
+    for line in text.splitlines():
+        if line[:1] == "p" and line[1:].isascii() and line[1:].isdigit():
+            pid = int(line[1:])
+        elif line[:1] == "n" and pid is not None and pid not in found:
+            found[pid] = line[1:]
+    return found
+
+
+def _read_process_cwds(pids: list[int]) -> dict[int, str]:
+    """The working directory of each of the first `_LOOSE_CWD_PID_CAP` pids
+    that can be read: its `/proc` link where the host has them, else one
+    `lsof` under `_LOOSE_CWD_SECONDS`. A pid missing from the result was not
+    read (gone, another user's, or no reader on this host); {} on Windows."""
+    pids = pids[:_LOOSE_CWD_PID_CAP]
+    if not pids or os.name != "posix":
+        return {}
+    if (_PROC_ROOT / "self" / "cwd").exists():
+        found: dict[int, str] = {}
+        for pid in pids:
+            try:
+                found[pid] = os.readlink(_PROC_ROOT / str(pid) / "cwd")
+            except OSError:  # fail-open: ok deliberate -- a cwd link that cannot be read (gone, another user's) leaves that pid's cwd unread, and the Loose: line says so
+                continue
+        return found
+    lsof = _lsof_path()
+    if lsof is None:
+        return {}
+    try:
+        result = _hook_utils.run_bounded(  # spawn: ok a reporter: an lsof that cannot run leaves the cwds unread, and the Loose: line says so per pid
+            [lsof, "-w", "-a", "-d", "cwd", "-p", ",".join(str(pid) for pid in pids), "-Fn"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=_LOOSE_CWD_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- an lsof that cannot run leaves every cwd unread, and the Loose: line says so per pid
+        return {}
+    return _parse_lsof_cwds(result.stdout or "")
+
+
+def _pid_checkout(cwd: str, root: Path) -> tuple[str, bool]:
+    """The clause a pid's working directory earns on the line, and whether it
+    is in ANOTHER checkout of this clone: the deepest checkout holding it
+    (`_hook_utils.containing_checkout`, git's registry read off the disk),
+    spelled as the board spells one -- the main checkout, a worktree's path
+    under the main checkout's folder, or its own path -- and named for this
+    checkout too, so the line still reads right copied into another window."""
+    # Linux marks a removed folder's link; macOS `lsof` prints its old path
+    # unmarked (measured), which would read as the main checkout around it.
+    if cwd.endswith(" (deleted)") or not os.path.isdir(cwd):
+        return "cwd deleted", False
+    hit = _hook_utils.containing_checkout(cwd.replace("\\", "/"), root)
+    if hit is None:
+        return "cwd outside this clone's checkouts", False
+    base = Path(hit[0])
+    main = next((c for c in (root, *_hook_utils.sibling_checkouts(root)) if (c / ".git").is_dir()), None)
+    if main is not None and (base / ".git").is_dir():
+        where = "the main checkout"
+    else:
+        try:
+            where = base.resolve().relative_to(main.resolve()).as_posix() if main is not None else base.as_posix()
+        except (OSError, ValueError):   # a worktree outside the main checkout's folder: its own path
+            where = base.as_posix()
+    if not _hook_utils.is_sibling_checkout(root, base):
+        return f"cwd in this checkout, {where}", False
+    return f"cwd in {where}, another checkout of this clone", True
+
+
+def _loose_processes_line(root: Path, table: str | None = None, cwds: dict[int, str] | None = None) -> str:
+    """The banner's `Loose:` value -- PIDs, stems, CPU time, the checkout of
+    this clone each one's cwd is in, and the one-paste kill -- or '' when nothing
+    qualifies. ``table`` and ``cwds`` are for tests: production reads the live
+    process table and, only when a row qualifies, the named pids' working
+    directories; a call given a table reads no live cwd (a fixture's pid can
+    be a live process's)."""
+    live = table is None
     rows = _loose_processes(_read_process_table() if table is None else table)
     if not rows:
         return ""
-    named = ", ".join(f"PID {pid} {stem} {cpu} CPU" for pid, stem, cpu in rows)
-    pids = " ".join(str(pid) for pid, _, _ in rows)
+    if cwds is None:
+        cwds = _read_process_cwds([pid for pid, _, _ in rows]) if live else {}
+    named: list[str] = []
+    paste: list[str] = []
+    left: list[str] = []
+    for pid, stem, cpu in rows:
+        cwd = cwds.get(pid)
+        clause, elsewhere = ("cwd unread", False) if cwd is None else _pid_checkout(cwd, root)
+        named.append(f"PID {pid} {stem} {cpu} CPU ({clause})")
+        (left if elsewhere else paste).append(str(pid))
+    # ASCII-folded like the stem: a checkout's path lands in operator-facing text.
+    text = ", ".join(named).encode("ascii", "replace").decode("ascii")
     # PPID 1 is a fact; "orphan" is an inference. A run you detached on
     # purpose (`nohup ... & disown` -- the proof tier itself), a launchd or
     # systemd service, and every process in a container look identical here,
     # so the line names the fact and tells the reader to check before pasting.
+    # A pid in another checkout of this clone is that checkout's run, so the
+    # paste never carries it (the reader can still see it named above); the
+    # session there may be gone, so the sentence never presumes one.
+    left_out = (
+        f" Left out of the paste: {' '.join(left)} -- run in another checkout of this "
+        f"clone: ask the session working there; with none there, read its parents first."
+    ) if left else ""
+    kill = f" Check before you paste: kill {' '.join(paste)}" if paste else " Nothing to paste."
     return (
-        f"{named} -- parent is PID 1: a fan-out's orphan, a run you detached on "
+        f"{text} -- parent is PID 1: a fan-out's orphan, a run you detached on "
         f"purpose (nohup ... & disown, e.g. the proof tier), or any process in a "
-        f"container; reporter only, nothing was killed. Check before you paste: "
-        f"kill {pids}"
+        f"container; reporter only, nothing was killed.{left_out}{kill}"
     )
 
 
@@ -628,14 +751,15 @@ def _sessions_line(
 # PRs, then the recent merges -- separate reads, because one recency window
 # shared by every state let ten merges evict the one open PR the line exists
 # to name) and a read-only git question per merged row, all under one
-# eight-second budget. The whole hook runs under settings.json's 15 s
+# eight-second budget, which the mail block below takes its share of first
+# (DEF-5051). The whole hook runs under settings.json's 15 s
 # ceiling, and blowing THAT loses the whole banner, so when the budget is
 # spent the block returns what it has. Measured 1.3 s for one read with every
 # field (2026-09-27). Any failure -- no `gh`, no sign-in, no GitHub remote, a
 # timeout, a foreign JSON shape -- costs the lines, never the banner. Read
 # once in main and threaded in, like the process table, so the builders never
 # spawn `gh` on a scratch tree.
-_PR_BLOCK_BUDGET_SECONDS = 8.0   # the two list reads, the git questions, and the required-check reads together
+_PR_BLOCK_BUDGET_SECONDS = 8.0   # the mail's share first, then the two list reads, the git questions and the required-check reads
 _PR_READ_CAP_SECONDS = 5.0       # one gh list read, never more
 _PR_CHECKS_CAP_SECONDS = 2.0     # one required-check read (a rendered row with a red), never more
 _PR_GIT_CAP_SECONDS = 2.0        # one git question, never more
@@ -702,7 +826,8 @@ def _read_merged_prs(root: Path, deadline: float | None = None) -> str:
 def _gh_pr_required_reds(root: Path, number: int, deadline: float | None) -> list[str] | None:
     """The names of the REQUIRED checks that are red on pull request ``number``
     (failed or cancelled: either holds the merge),
-    from one `gh pr checks <n> --required --json name,bucket` read, made only
+    from the one `gh pr checks <n> --required` read (``read_required`` in
+    tools/cc/_post_merge.py, the board's and the ship driver's too), made only
     when the tally already has a red (the listing carries no is-required flag,
     and a pull request has merged with three advisory legs red). `gh pr
     checks` exits 1 when a check has failed and 8 while one is pending -- the
@@ -713,28 +838,27 @@ def _gh_pr_required_reds(root: Path, number: int, deadline: float | None) -> lis
     timeout = _seconds_left(deadline, _PR_CHECKS_CAP_SECONDS)
     if timeout <= 0.2:
         return None
-    try:
+    post_merge = _load_post_merge()
+    if post_merge is None:  # fail-open: ok deliberate -- the read and its buckets live in the module; without it the tail says the required reds could not be read, and the block's gate has voiced the absence
+        return None
+
+    def gh(args: list[str]) -> object:
         result = _hook_utils.run_bounded(  # spawn: ok a reporter: a gh that cannot run costs the required-red name in one tail, never the line; a missing gh is named by the load-bearing-tool warning
-            ["gh", "pr", "checks", str(number), "--required", "--json", "name,bucket"],
+            ["gh", *args],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=timeout, cwd=str(root),
         )
+        return json.loads(result.stdout or "")  # json-dict-safe: ok a LIST of rows; read_required isinstance-checks the answer and each row
+
+    try:
+        reading = post_merge.read_required(number, gh)
     except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- a reporter that cannot run gh says so in the tail (could not read which reds are required); a missing gh is named by the load-bearing-tool warning
         return None
-    try:
-        rows = json.loads(result.stdout or "")
     except ValueError:  # fail-open: ok deliberate -- unparseable output is named in the tail (could not read which reds are required), never read as no required red
         return None
-    if not isinstance(rows, list):
+    if reading is None:  # fail-open: ok deliberate -- an answer that is not a list is named in the tail (could not read which reds are required), never read as no required red
         return None
-    post_merge = _load_post_merge()
-    if post_merge is None:  # fail-open: ok deliberate -- the buckets live in the module; without it the tail says the required reds could not be read, and the block's gate has voiced the absence
-        return None
-    return sorted(
-        _ascii(str(row.get("name") or "?"))
-        for row in rows
-        if isinstance(row, dict) and str(row.get("bucket") or "").lower() in post_merge.RED_BUCKETS
-    )
+    return sorted(_ascii(str(row.get("name") or "?")) for row in reading["red"])
 
 
 # The base branch's merge rules: the read and the rendering live in
@@ -854,14 +978,23 @@ def _render_rows(rows: list[str]) -> str:
 # messages, claims as a fold). Read here so a claim or a request the other
 # box left is in front of the session before it commits anything. Off, and
 # spawning nothing, where `git config espalier.machine` names no machine.
-# Reporter only, and bounded under the pull-request block's deadline (one
-# eight-second budget for both blocks, under settings.json's 15 s ceiling):
-# one fetch, then local reads, each taking what is left of the budget, so a
-# slow `gh` costs the mail line and never the banner (the review that found
-# the two budgets summing to twelve of fifteen, 2026-10-05). Read once in main
-# and threaded in, like the process table, so the builders never spawn for it.
+# Reporter only, and bounded inside the pull-request block's eight seconds
+# (one budget for both blocks under settings.json's 15 s ceiling: the review
+# that found two budgets summing to twelve of fifteen, 2026-10-05), read FIRST
+# under a share of its own: one fetch, then local reads, each taking what is
+# left of the share, and the pull-request block takes what the mail left. Read
+# last, on what two slow `gh` reads left, the mail and the `Orders:` line that
+# reads its refs were the first lines a slow box lost (DEF-5051), while the
+# pull-request lines are also on `/inbox board`. Read once in main and
+# threaded in, like the process table, so the builders never spawn for it.
 _MAIL_FETCH_CAP_SECONDS = 3.0   # the one network call, never more
 _MAIL_READ_CAP_SECONDS = 2.0    # one local git read (the config, the refs, a file), never more
+# The share: a fetch at its cap, then one read at its cap. The worktree naming
+# and the config read before them come out of it too, so after a fetch that
+# hangs the refs read gets its cap less what those took. Measured on the Air,
+# 2026-11-01, 12 runs at load 1.2: the whole block 0.48 s median, 0.68 s max;
+# the naming alone 0.04 s; the refs read 0.09 s.
+_MAIL_SHARE_SECONDS = _MAIL_FETCH_CAP_SECONDS + _MAIL_READ_CAP_SECONDS
 _MAIL_TAIL = "(the other machine's text, unverified; orient with it; bodies: /inbox)"
 
 
@@ -1042,8 +1175,9 @@ def _mail_line(root: Path, deadline: float | None = None, mail: Any = None, read
     but already holds another machine's mail ref (a plain ``git fetch
     origin`` brings them in), the line says how to opt in; with no ref either,
     no name means no line and no spawn past the config read. ``deadline`` is
-    the pull-request block's: every read here takes what is left of it, and
-    a budget already spent costs the line. ``mail`` is the channel module,
+    the mail's share of the network budget (``_MAIL_SHARE_SECONDS``, taken
+    before the pull-request block): every read here takes what is left of
+    it, and a budget already spent costs the line. ``mail`` is the channel module,
     injectable for tests. ``read``, when given, is filled with what was read
     (``machine``, ``by_machine``, ``unread``) for the `Orders:` line, which
     reads no ref of its own."""
@@ -1315,6 +1449,9 @@ def _pr_summary(pr: dict, required_red: list[str] | None = None) -> str:
                     f"({_check_names(required_red)}); tools/cc/ship.py status tells a test red "
                     f"(fix, push, re-bind) from a lost runner (rerun)")
         elif running:
+            # _post_merge.waiting_on's words, which the board's blocked row
+            # prints (DEF-4063); kept literal here so the row renders without
+            # the module, and pinned equal in tests/test_post_merge.py.
             tail = f"auto-merge armed; waiting on {running} running"
         elif red and required_red is None:
             tail = (f"auto-merge armed but held ({merge_state.lower()}); could not "
@@ -2319,8 +2456,19 @@ def _seed_handoff_gate_flag(root: Path, state_dir: Path) -> None:
     block at the first Stop into a cold context that may also have forgotten an
     operator's hold. Not called on a compaction or a resume, which keep the
     flag with the counters. A git that cannot answer leaves no flag, and the
-    gate then speaks once about whatever HEAD holds."""
+    gate then speaks once about whatever HEAD holds.
+
+    The gate's hold (``_hook_utils.HANDOFF_GATE_HOLD``, DEF-4058) is the one
+    state the seed stands aside for: a HEAD the gate held behind another of
+    this seat's pull requests is a mechanical hold, not a forgotten
+    operator's, so a new session keeps the hold and writes no flag -- the gate
+    then judges the lane again (the hold stands inside its interval, lifts
+    once that pull request merges, and the block returns). Seeded, the gate
+    would never look at that HEAD again (the failure-mode review of
+    2026-10-31 reproduced the silence). A hold naming another HEAD is stale
+    and goes with the seed."""
     flag = state_dir / _hook_utils.HANDOFF_GATE_FLAG
+    hold = state_dir / _hook_utils.HANDOFF_GATE_HOLD
     try:
         result = _hook_utils.run_bounded(  # spawn: ok a reporter: a git that cannot answer leaves no flag, and the gate speaks once
             ["git", "rev-parse", "HEAD"], cwd=str(root), capture_output=True, text=True,
@@ -2331,12 +2479,27 @@ def _seed_handoff_gate_flag(root: Path, state_dir: Path) -> None:
     except (OSError, subprocess.TimeoutExpired, ValueError):  # strict decode: a structured answer (DEF-821)
         head = ""
     try:
-        if head:
+        if head and _hold_names(hold, head):
+            flag.unlink(missing_ok=True)
+        elif head:
+            hold.unlink(missing_ok=True)
             atomic_write_text(flag, head)
         else:
+            hold.unlink(missing_ok=True)
             flag.unlink(missing_ok=True)
     except OSError:  # fail-open: ok deliberate -- an unwritable state dir costs one block at the first Stop, never the banner
         pass
+
+
+def _hold_names(hold: Path, head: str) -> bool:
+    """Whether the gate's hold file names ``head`` (its ``head`` field: the
+    gate's own reader reads the same shape). A missing or torn file names
+    nothing."""
+    try:
+        record = json.loads(hold.read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # fail-open: ok deliberate -- no hold, or one torn mid-rewrite, names no HEAD, and the seed proceeds
+        return False
+    return isinstance(record, dict) and record.get("head") == head
 
 
 def _clean_state_flags(root: Path, source: str = "") -> None:
@@ -3187,13 +3350,49 @@ def _find_nested_repo_litter(
 # someone's branch unasked is the surprise they would resent.
 CATCH_UP_KEY = "session_catch_up"
 CATCH_UP_ENV = "ESPALIER_SESSION_CATCH_UP"
+# The hook's own wall (DEF-3015). Claude Code cancels a SessionStart hook past
+# settings.json's 15 s timeout and keeps none of its output, and the local
+# phases around the budgeted network reads have no bound of their own: on the
+# Windows box a fresh tree's zone baseline read 2.6 s against 0.07 s warm, and
+# one start ran 36 s with its phase unread (2026-10-31). A script start arms a
+# timer this many seconds after module load; at it the hook prints a short
+# banner naming the phase in flight and ends, as the host's kill at 15 s would
+# have ended it, without one. Past the wall the cut takes at most two of
+# `_CUT_RECORD_SECONDS` (its record, then the state-write lock), and the 1 s
+# left under the 15 s timeout holds the interpreter's start before the clock is
+# read (0.06 s warm, measured) and the host's own lag (cancels recorded at 15.2
+# to 15.5 s); `espalier.harness_config`'s wired timeout is pinned against it.
+_WALL_SECONDS = 13.0
+# The work after the last network read -- the engine probe (its own cap) and
+# the banner build (1.2 s cold, measured on the Windows box) -- which
+# the catch-up's and the network reads' deadline leaves inside the wall, so an
+# ordinary slow start finishes before it.
+_BANNER_BUILD_SECONDS = 1.2
+_TAIL_RESERVE_SECONDS = 2.5
 # The catch-up's own budget (a fetch capped at 3 s, the git questions, the move
 # and the removals, each started only with time left and never killed), so the
-# pull-request block keeps its eight seconds; and the whole hook's network
-# budget under settings.json's 15 s ceiling, which the pull-request deadline is
-# clipped to when a slow catch-up has spent the room.
+# network reads keep their eight seconds; and the whole hook's network
+# budget, the wall less the tail, which both the catch-up's deadline and the
+# pull-request deadline are clipped to when the start has spent the room.
 _CATCH_UP_BUDGET_SECONDS = 6.0
-_HOOK_BUDGET_SECONDS = 12.0
+# The audit store's prune: at most this long at a start, and never past the
+# hook's own budget below, so the network reads after it keep their room. It
+# reads the oldest name date first, so each start goes on where the old logs
+# are (5,000 first-line reads took 11.7 s on the Windows box: DEF-3022).
+_PRUNE_BUDGET_SECONDS = 1.0
+_HOOK_BUDGET_SECONDS = _WALL_SECONDS - _TAIL_RESERVE_SECONDS
+# A cut's record gets this long to land, and the cut as long again for the
+# state-write lock, before the process ends without either. Its type is in the
+# fail-open family (`_integrity.is_fail_open_event`), the one `/status --log`
+# counts by predicate, beside this hook's crash record.
+_CUT_RECORD_SECONDS = 0.5
+_CUT_EVENT = "sessionstart_failed_open_wall_cut"
+# What a cut in these phases leaves undone that the session must know before it
+# edits (the reviews of DEF-3015's lane).
+_CUT_CAVEATS = {
+    "checkout catch-up": "A checkout move may still be running: run `git status` before editing.",
+    "banner build": "On a startup or clear, the blueprint chain may not have advanced for this session.",
+}
 
 # ---------------------------------------------- a catch-up that moves a helper
 # This hook imports its sibling helpers at module load and only then catches
@@ -3253,14 +3452,17 @@ def _read_handoff() -> dict | None:
     return data
 
 
-def _handoff_clock(handoff: dict | None) -> float:
+def _handoff_clock(handoff: dict | None, wall_start: float | None = None) -> float:
     """The hook's start: the parent's own reading for the fresh start (the
     monotonic clock is the machine's, so the child's spawn is inside the
-    budget), now for every other start."""
+    budget), the module-load reading a script start passes (its wall counts
+    the imports), now for every other start."""
     now = time.monotonic()
     value = handoff.get("hook_start") if handoff is not None else None
     if isinstance(value, float) and 0 <= now - value < 60:
         return value
+    if wall_start is not None and 0 <= now - wall_start < 60:
+        return wall_start
     return now
 
 
@@ -3453,6 +3655,129 @@ def _short_banner(checkout_line: str, worktrees_line: str) -> dict:
         lines += ["", "--- WARNINGS ---", *warnings]
     return {"hookSpecificOutput": {
         "hookEventName": "SessionStart", "additionalContext": "\n".join(lines)}}
+
+
+# ------------------------------------------------------- the wall (DEF-3015)
+# A script start's timer (`_arm_wall`) and its main thread race to print the
+# one banner: whichever reaches `_emit` first prints, the other prints nothing.
+# The phase in flight and the lines read so far are the cut's banner, kept here
+# as each block starts, since the timer cannot see `_run_main`'s locals.
+_PHASE = "start"
+_SO_FAR: dict[str, str] = {}
+_EMIT_LOCK = threading.Lock()
+_EMITTED = False
+
+
+def _reset_wall_state() -> None:
+    """One start's wall state, empty (an in-process caller runs main twice)."""
+    global _PHASE, _EMITTED
+    _PHASE, _EMITTED = "start", False
+    _SO_FAR.clear()
+
+
+def _phase(name: str, **lines: str) -> None:
+    """The phase now in flight, with the banner lines (label: value) the blocks
+    before it read, for the cut's banner."""
+    global _PHASE
+    _SO_FAR.update(lines)
+    _PHASE = name
+
+
+def _emit(banner: dict) -> bool:
+    """Print the start's one banner, unless the other thread printed it first;
+    True when this call printed it."""
+    global _EMITTED
+    with _EMIT_LOCK:
+        if _EMITTED:
+            return False
+        _EMITTED = True
+        sys.stdout.write(json.dumps(banner) + "\n")
+        sys.stdout.flush()
+        return True
+
+
+def _cut_banner(phase: str, elapsed: float) -> dict:
+    """The banner a start cut at its wall gives: where it stopped, that the
+    hooks are loaded and the checks from that phase on did not run, what the
+    phase may have left undone, the lines read before the cut and the warnings
+    kept so far; nothing read again."""
+    lines = [f"=== Espalier-Harness === SessionStart (short: cut at {elapsed:.1f} s in the {phase}; "
+             "the rest resumes at the next start) ===",
+             f"Cut:       this start ran past its {_WALL_SECONDS:g} s wall in the {phase}, and Claude Code drops "
+             "a SessionStart banner whole at its 15 s timeout, so it stopped here: the hooks are loaded, and "
+             f"this banner is short, not missing; the checks from the {phase} on did not run. "
+             "/context-load and /inbox board read the rest."]
+    if phase in _CUT_CAVEATS:
+        lines.append(" " * 11 + _CUT_CAVEATS[phase])
+    lines += [f"{label + ':':<11}{value}" for label, value in list(_SO_FAR.items()) if value]
+    warnings = _hook_utils.take_advisories()
+    # A line the zone walk said before the cut (DEF-2031): its flag is written,
+    # so no later start or shell call says it this session.
+    zone = sys.modules.get("_zone_watch")
+    warnings += [f"[WARN] espalier: {line}" for line in getattr(zone, "take_notices", list)()]
+    if warnings:
+        lines += ["", "--- WARNINGS ---", *warnings]
+    return {"hookSpecificOutput": {
+        "hookEventName": "SessionStart", "additionalContext": "\n".join(lines)}}
+
+
+def _record_cut(phase: str, elapsed: float) -> None:
+    """The cut's audit record, which `/status --log` counts: a cut start is a
+    hook_success to the host, so the transcript no longer counts it. Written
+    directly, since a cut is once a process and a once-a-session flag would
+    drop a later start's."""
+    try:
+        root = _resolve_project_root()
+    except Exception:  # noqa: BLE001 -- fail-open: ok deliberate -- the record lands under the working directory then
+        root = Path(".")
+    _integrity.append_audit(root, {"event_type": _CUT_EVENT, "details": {
+        "hook": "session_start", "phase": phase, "elapsed": round(elapsed, 1)}})
+
+
+def _cut(hook_start: float, exit_: Callable[[int], Any]) -> None:
+    """The wall's timer: unless the main thread's banner went first, print the
+    cut's, give its record a moment, and end the process holding the
+    state-write lock, so the exit never lands inside another thread's append
+    (`_hook_utils.STATE_WRITE_LOCK`, write_guard's exit takes it the same way);
+    both waits are bounded, since an exit past 15 s loses the banner too."""
+    if _EMITTED:
+        return
+    phase, elapsed = _PHASE, time.monotonic() - hook_start
+    if not _emit(_cut_banner(phase, elapsed)):
+        return
+    recorder = threading.Thread(target=_record_cut, args=(phase, elapsed), daemon=True)
+    recorder.start()
+    recorder.join(_CUT_RECORD_SECONDS)
+    lock = getattr(_hook_utils, "STATE_WRITE_LOCK", None)
+    held = lock.acquire(timeout=_CUT_RECORD_SECONDS) if lock is not None else False
+    try:
+        exit_(0)
+    finally:
+        if held and lock is not None:
+            lock.release()
+
+
+_WALL_TIMER: threading.Timer | None = None
+
+
+def _arm_wall(hook_start: float, exit_: Callable[[int], Any] = os._exit) -> threading.Timer:
+    """Start the wall's timer, due `_WALL_SECONDS` after ``hook_start``, kept
+    so `main` can disarm it."""
+    global _WALL_TIMER
+    timer = threading.Timer(max(0.0, hook_start + _WALL_SECONDS - time.monotonic()), _cut,
+                            args=(hook_start, exit_))
+    timer.daemon = True
+    timer.start()
+    _WALL_TIMER = timer
+    return timer
+
+
+def _disarm_wall() -> None:
+    """Cancel the wall's timer, if one is armed."""
+    global _WALL_TIMER
+    if _WALL_TIMER is not None:
+        _WALL_TIMER.cancel()
+        _WALL_TIMER = None
 
 
 def _catch_up_setting(root: Path, self_host: bool) -> tuple[bool, bool]:
@@ -3668,6 +3993,26 @@ def _warn_if_stop_gate_override_unresolved(root: Path) -> None:
         "program on the PATH of the shell that launches Claude Code, or its full path, "
         "where the variable is set; it takes effect at the next launch."
     )
+
+
+def _prune_audit_logs_inside_the_wall(hook_start: float, budget: float = _HOOK_BUDGET_SECONDS) -> None:
+    """The boot table's prune, bounded: `_integrity._prune_old_audit_logs`
+    with a deadline `_PRUNE_BUDGET_SECONDS` from now, clipped to the hook's
+    budget (``budget`` after ``hook_start``: `_handoff_budget`'s, the smaller
+    one on a handed-off fresh start), and a NOTES line naming the bound that
+    stopped it when it stopped with logs named before the window still
+    unread. A stop among logs named inside the window is silent: they hold
+    nothing to demote unless renamed."""
+    own = time.monotonic() + _PRUNE_BUDGET_SECONDS
+    clip = hook_start + budget
+    bound = f"its {_PRUNE_BUDGET_SECONDS:g} s bound" if own <= clip else "the hook's budget for the reads after it"
+
+    def stopped(left: int, days: int) -> None:
+        _hook_utils.advise(
+            f"[INFO] the audit log prune stopped at {bound} with {left} "
+            f"log{'s' if left != 1 else ''} named before its {days}-day window unread; the next start goes on"
+        )
+    _integrity._prune_old_audit_logs(deadline=min(own, clip), on_stop=stopped)
 
 
 def _warn_if_maintenance_mode_active() -> None:
@@ -4202,9 +4547,10 @@ def _plain_line(text: object, cap: int) -> str:
 
 def _own_clear_line(root: Path, sid: str, source: str = "") -> str:
     """The ``Own-clear:`` line: the marker's record, when it holds one a reader
-    should see -- armed for a session other than this one (a window waiting on
-    a clear the engine refused, took and never ran, or was never asked for; or
-    a window since closed), consumed into this session after refusals, or
+    should see -- armed for a session other than this one (a window whose
+    clear the mod holds on something in flight, named with since when and the
+    turn ends, DEF-2039; or one waiting on a clear the engine refused, took and
+    never ran, or was never asked for; or a window since closed), consumed into this session after refusals, or
     marked stale at the clear into this session (cleared, not re-primed: the
     brief was never submitted). Empty for a clean consume, this window's own
     pending clear (the mod's status line has it), the clear's own SessionStart
@@ -4230,13 +4576,25 @@ def _own_clear_line(root: Path, sid: str, source: str = "") -> str:
     taken = str(marker.get("clear_resolved_at") or "")[:16]
     turns = marker.get("turns_since_ask")
     turns = turns if isinstance(turns, int) else 0
+    # The hold (DEF-2039): what the mod's in-flight read named at the latest
+    # held turn end; the mod takes it off at the ask, so beside a refusal it is
+    # the newer of the two.
+    held = _plain_line(marker.get("clear_held") or "", 160)
+    held_turns = marker.get("clear_held_turns")
+    held_turns = held_turns if isinstance(held_turns, int) and held_turns > 0 else "?"
+    held_since = str(marker.get("clear_held_since") or "?")[:16]
     new = str(marker.get("new_session_id") or "")
     if state == "armed":
         if marker.get("session_id") == sid or source == "clear":
             return ""
         head = (f"marker armed for session {owner} (not this one), written "
                 f"{str(marker.get('written_at') or '?')[:16]}Z")
-        if refused and refusals:
+        if held:
+            earlier = f" (the engine refused an earlier ask {refusals} time(s))" if refusals else ""
+            tail = (f"; its clear has been held since {held_since}Z over "
+                    f"{held_turns} turn end(s): {held}{earlier}; the prompt router tells that window what "
+                    "resolves it, and /clear by hand there ends it too")
+        elif refused and refusals:
             tail = (f"; its clear, asked {asked}Z, was refused {refusals} time(s) by the engine (latest: {refused}); "
                     "that window needs /clear by hand")
         elif taken:
@@ -4623,7 +4981,7 @@ def _build_context(
          ("standing", standing, _SOFT_BUDGETS["standing"], None), ("footguns", footgun_pointer, 0, None)])
 
 
-def _run_main() -> int:
+def _run_main(wall_start: float | None = None) -> int:
     from _hook_utils import read_stdin_safely  # noqa: E402
 
     # Every reporter and builder below keeps its warning through
@@ -4633,13 +4991,23 @@ def _run_main() -> int:
     # left is not this run's.
     _hook_utils.take_advisories()
     _reset_move_state()
+    _reset_wall_state()
     # A start this hook handed itself to after a catch-up that moved a helper
     # (DEF-2003): its parent ran the state jobs and the catch-up.
     handoff = _read_handoff()
 
     # The SessionStart payload carries `source` (startup|resume|clear|compact).
     # It decides whether to advance the blueprint chain (see _load_blueprint).
-    hook_start = _handoff_clock(handoff)
+    hook_start = _handoff_clock(handoff, wall_start)
+    # A script start arms its wall here, inside main's umbrella and after the
+    # collector is emptied, so a timer that cannot start is said; a fresh start
+    # runs under its parent's kill, well inside the parent's wall, and arms none
+    # (DEF-3015).
+    if wall_start is not None and handoff is None:
+        try:
+            _arm_wall(hook_start)
+        except Exception as e:  # noqa: BLE001 -- fail-open: ok deliberate -- a start with no timer still gives its banner, and says so
+            _hook_utils.advise_exc("session_start: the wall's timer could not start", e)
     payload = read_stdin_safely()
     src = payload.get("source") if isinstance(payload, dict) else None
     source = src if isinstance(src, str) else ""
@@ -4675,6 +5043,7 @@ def _run_main() -> int:
             raise OSError("the session marker could not be written")
 
     # The hand-off child skips them: its parent ran each once (DEF-2003).
+    _phase("state flags")
     for _flagjob, _flaglabel in (() if handoff is not None else (
         (lambda: _clean_state_flags(root, source), "session_start: state-flag cleanup failed"),
         (lambda: _set_cold_open_flag(root, source), "session_start: cold-open flag write failed"),
@@ -4689,15 +5058,17 @@ def _run_main() -> int:
     # Catch the checkout up and reap the leftover worktrees FIRST, so every read
     # below (integrity, memory, blueprint, branch, the merged-PR question) sees
     # the tree the session will work in. It has its own budget, so the
-    # pull-request block below keeps its eight seconds; the two together stay
+    # network reads below keep their eight seconds; the two together stay
     # under _HOOK_BUDGET_SECONDS of the hook's 15 s ceiling.
+    _phase("checkout catch-up")
     if handoff is not None:
         checkout_line, worktrees_line, reaper_kept = _handed_lines(handoff)
     else:
         before = _imported_helper_stamps()
         try:
             checkout_line, worktrees_line, reaper_kept = _sync_checkout(
-                root, payload, sid, source, self_host, time.monotonic() + _CATCH_UP_BUDGET_SECONDS)
+                root, payload, sid, source, self_host,
+                min(time.monotonic() + _CATCH_UP_BUDGET_SECONDS, hook_start + _HOOK_BUDGET_SECONDS))
         except Exception as e:  # noqa: BLE001 — bounded warn, never block session
             _hook_utils.advise_exc("session_start: checkout catch-up failed", e)
             checkout_line, worktrees_line, reaper_kept = "", "", []
@@ -4706,14 +5077,15 @@ def _run_main() -> int:
         moved = _moved_helpers(before)
         if moved:
             chain_before = _chain_stamp(root)
+            _phase("fresh start", Checkout=checkout_line, Worktrees=worktrees_line)
             banner, why, timed_out = _hand_off(
                 payload, (checkout_line, worktrees_line, reaper_kept), hook_start, moved, (window, window_found))
             if banner is not None:
-                print(json.dumps(banner))
+                _emit(banner)
                 return 0
             _note_move(moved, why, chain_advanced=_chain_stamp(root) != chain_before)
             if timed_out:
-                print(json.dumps(_short_banner(checkout_line, worktrees_line)))
+                _emit(_short_banner(checkout_line, worktrees_line))
                 return 0
 
     # The protected files as this session finds them, after the
@@ -4721,10 +5093,18 @@ def _run_main() -> int:
     # made while the session was closed is reported as this session's. A
     # compaction continues the same process: it keeps a usable baseline, with
     # what the session knows and what the operator was told. Imported here so
-    # a broken helper costs this line, never the banner.
+    # a broken helper costs this line, never the banner. What the walk said
+    # once this session (a git read that failed) is the banner's to render:
+    # the helper only queues it (DEF-2031).
+    _phase("zone baseline", Checkout=checkout_line, Worktrees=worktrees_line)
     try:
         import _zone_watch  # noqa: E402
-        if sid and not _zone_watch.take_baseline(root, sid, keep_valid=source == "compact"):
+        try:
+            taken = not sid or _zone_watch.take_baseline(root, sid, keep_valid=source == "compact")
+        finally:  # rendered even when the walk raised after saying it; an older kept helper has no queue
+            for line in getattr(_zone_watch, "take_notices", list)():
+                _hook_utils.advise_warn(line)
+        if not taken:
             raise OSError("the zone baseline could not be written; the first shell call is taken as it, unchecked")
     except Exception as e:  # noqa: BLE001 — best-effort; never lose the banner
         _late_load_failed("session_start: zone baseline failed", e)
@@ -4739,6 +5119,7 @@ def _run_main() -> int:
     # RESULT the banner needs — the table discards return values by design (the
     # reporters' lines reach the banner through the collector instead). Same
     # guard shape as the loop: a reporter must never take the session down.
+    _phase("integrity check")
     try:
         integrity_line = _report_integrity_state(root)
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
@@ -4747,7 +5128,8 @@ def _run_main() -> int:
 
     _boot_warnings = [
         (lambda: _report_freshness(root), "session_start: freshness banner failed"),
-        (_integrity._prune_old_audit_logs, "session_start: audit log pruning failed"),
+        (lambda: _prune_audit_logs_inside_the_wall(hook_start, _handoff_budget(handoff)),
+         "session_start: audit log pruning failed"),
         (_warn_if_maintenance_mode_active, "session_start: maintenance-mode banner failed"),
         (lambda: _warn_if_load_bearing_tool_missing(self_host), "session_start: external-tool banner failed"),
         (lambda: _warn_if_hook_interpreter_unresolved(root), "session_start: hook-interpreter banner failed"),
@@ -4756,6 +5138,7 @@ def _run_main() -> int:
          "session_start: nested-repo-litter banner failed"),
     ]
     for _job, _label in _boot_warnings:
+        _phase(_label.removeprefix("session_start: ").removesuffix(" failed"))
         try:
             _job()
         except Exception as e:  # noqa: BLE001 — bounded warn, never block session
@@ -4764,8 +5147,9 @@ def _run_main() -> int:
     # The process table, read once here (never inside the builders, which the
     # banner tests drive on scratch trees): a reporter, so a missing `ps` or a
     # failed spawn costs the line, never the banner.
+    _phase("loose-process scan", Integrity=integrity_line)
     try:
-        loose_line = _loose_processes_line()
+        loose_line = _loose_processes_line(root)
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
         _late_load_failed("session_start: loose-process scan failed", e)
         loose_line = ""
@@ -4775,6 +5159,7 @@ def _run_main() -> int:
     # with this one, and nothing else says so. The age sweep rides the same
     # read. Reporter: a state dir that cannot be read costs the line, never the
     # banner.
+    _phase("session marker scan", Loose=loose_line)
     try:
         if source == "clear":
             # The previous session in THIS window is gone; its marker records
@@ -4789,6 +5174,7 @@ def _run_main() -> int:
 
     # A bypassPermissions default, read once here like the markers: a reporter,
     # so a settings file that cannot be read costs the line, never the banner.
+    _phase("permissions read", Sessions=sessions_line)
     try:
         permissions_line = _permissions_line(root)
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
@@ -4797,19 +5183,58 @@ def _run_main() -> int:
 
     # The own-clear marker's record (DEF-5031, DEF-5032), read here like the
     # markers: a reporter, so a torn file costs the line, never the banner.
+    _phase("own-clear marker read", Permissions=permissions_line)
     try:
         own_clear_line = _own_clear_line(root, sid, source)
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
         _late_load_failed("session_start: own-clear marker read failed", e)
         own_clear_line = ""
 
-    # The operator's pull requests, read here for the same reason: two bounded
-    # `gh` reads under one deadline, and a host without `gh`, a sign-in or a
-    # GitHub remote costs the lines, never the banner. Two handlers, so the
-    # merged question (the one that shells out to git per row) cannot take
-    # the already-computed open line down with it. The deadline is clipped to
-    # the hook's budget, which only a slow catch-up above ever reaches.
+    # The network reads share one deadline, clipped to the hook's budget,
+    # which a slow catch-up above reaches, and a fresh start's child, whose
+    # budget the parent shrank, always does. The worktree naming, the
+    # mail and the orders read first, under the mail's share of it, and the
+    # pull-request block and the merge rules take what they leave, never a
+    # deadline of their own: read last, the mail got what two slow `gh` reads
+    # left, and a slow box lost its `Mail:` and `Orders:` lines (DEF-5051).
     pr_deadline = min(_pr_deadline(), hook_start + _handoff_budget(handoff))
+    mail_deadline = min(time.monotonic() + _MAIL_SHARE_SECONDS, pr_deadline)
+
+    # A linked worktree still answering its clone's machine name gets its own
+    # before the mail is read, so the mail line, the claims and the ids are
+    # this seat's from the first prompt. Local git only.
+    _phase("worktree naming", **{"Own-clear": own_clear_line})
+    try:
+        seat_line = _seat_line(root, source=source, deadline=mail_deadline)
+    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
+        _late_load_failed("session_start: worktree naming failed", e)
+        seat_line = ""
+
+    # The other machine's mail: one bounded fetch, then local reads, each
+    # taking what is left of the mail's share; a box that names no machine
+    # gets at most the opt-in line.
+    _phase("mail scan", Seat=seat_line)
+    mail_read: dict = {}
+    try:
+        mail_line = _mail_line(root, mail_deadline, read=mail_read)
+    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
+        _late_load_failed("session_start: mail scan failed", e)
+        mail_line = ""
+    # A worker seat's orders, from the refs the mail line just read: its jobs,
+    # and the seat driver's short form of its first message. No read of its own.
+    _phase("orders read", Mail=mail_line)
+    try:
+        orders_line = _orders_line(root, mail_read)
+    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
+        _late_load_failed("session_start: orders read failed", e)
+        orders_line = ""
+
+    # The operator's pull requests, read here for the same reason: two bounded
+    # `gh` reads under what the mail left of the deadline, and a host without
+    # `gh`, a sign-in or a GitHub remote costs the lines, never the banner.
+    # Two handlers, so the merged question (the one that shells out to git per
+    # row) cannot take the already-computed open line down with it.
+    _phase("pull-request reads", Orders=orders_line)
     try:
         post_merge_present = _load_post_merge() is not None
     except Exception as e:  # noqa: BLE001 -- bounded warn, never block session
@@ -4834,38 +5259,13 @@ def _run_main() -> int:
             _late_load_failed("session_start: merged pull-request scan failed", e)
             merged_prs_line = ""
 
-    # A linked worktree still answering its clone's machine name gets its own
-    # before the mail is read, so the mail line, the claims and the ids are
-    # this seat's from the first prompt. Local git only.
-    try:
-        seat_line = _seat_line(root, source=source, deadline=pr_deadline)
-    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-        _late_load_failed("session_start: worktree naming failed", e)
-        seat_line = ""
-
-    # The other machine's mail, read here under the SAME deadline for the same
-    # reason: one bounded fetch, then local reads, each taking what the
-    # pull-request block left; a box that names no machine gets at most the
-    # opt-in line.
-    mail_read: dict = {}
-    try:
-        mail_line = _mail_line(root, pr_deadline, read=mail_read)
-    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-        _late_load_failed("session_start: mail scan failed", e)
-        mail_line = ""
-    # A worker seat's orders, from the refs the mail line just read: its jobs,
-    # and the seat driver's short form of its first message. No read of its own.
-    try:
-        orders_line = _orders_line(root, mail_read)
-    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-        _late_load_failed("session_start: orders read failed", e)
-        orders_line = ""
-
     # The base branch's merge rules, one more bounded read under the same
-    # deadline, AFTER the mail: the mail is the line other seats depend on, so
-    # it takes the budget first and this read takes what is left. A written
-    # rule once said the up-to-date setting was on for a day after it went off,
-    # so the banner prints what GitHub says and the docs point here.
+    # deadline, AFTER the mail and the pull requests: the mail is the line
+    # other seats depend on, so it takes the budget first and this read takes
+    # what is left. A written rule once said the up-to-date setting was on for
+    # a day after it went off, so the banner prints what GitHub says and the
+    # docs point here.
+    _phase("merge-rules read", **{"Open PRs": open_prs_line, "Merged": merged_prs_line})
     try:
         merge_rules_line = _merge_rules_line(*_read_merge_rules(root, pr_deadline))
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
@@ -4876,12 +5276,14 @@ def _run_main() -> int:
     # 20 ms, AFTER the network reads (the mail takes the budget first) and
     # under its own cap, which _HOOK_BUDGET_SECONDS plus _ENGINE_CAP_SECONDS
     # keeps under the 15 s ceiling (pinned in tests/test_session_banner.py).
+    _phase("engine probe", Merging=merge_rules_line)
     try:
         engine_line = _engine_line(root)
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
         _late_load_failed("session_start: engine probe failed", e)
         engine_line = ""
 
+    _phase("banner build", Engine=engine_line)
     checkout_line = _with_move_cost(checkout_line)
     context = _build_context(
         root, self_host, _should_advance_chain(source) and not _CHILD_ADVANCED_CHAIN, source,
@@ -4895,16 +5297,16 @@ def _run_main() -> int:
     # Enforce size budget — truncate rather than flood context window.
     context = _fit_to_ceiling(context)
 
-    print(json.dumps({
+    _emit({
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
             "additionalContext": context,
         }
-    }))
+    })
     return 0
 
 
-def main() -> int:
+def main(wall_start: float | None = None) -> int:
     """Public entry-point. Umbrella try/except degrades any uncaught exception
     in ``_run_main`` to a quiet no-op (exit 0), matching every advisory/reporter
     sibling. (Only ``stop_gate.py`` re-raises KeyboardInterrupt/SystemExit before
@@ -4916,9 +5318,13 @@ def main() -> int:
     EVERY session and is the adopter's first-impression orientation surface, so
     a crash (read-only repo root, occupied .espalier-state, full disk) must fail
     OPEN — lose the banner quietly, never crash the session with a traceback.
+
+    ``wall_start`` is the clock read at module load, which the script's own
+    ``__main__`` block alone passes: that start arms the wall in `_run_main`
+    (DEF-3015), whose cut ends the process; an in-process caller arms none.
     """
     try:
-        return _run_main()
+        return _run_main(wall_start)
     except BaseException as exc:  # noqa: BLE001 — fail-open crash guard (reporter hook)
         # The banner is lost with the crash, and this hook exits 0, so a stderr
         # line alone reaches the debug log only (the protocol pin): the record
@@ -4928,7 +5334,9 @@ def main() -> int:
             "the orientation banner was not delivered",
         )
         return 0
+    finally:
+        _disarm_wall()
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(_LOAD_T0))

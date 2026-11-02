@@ -1,0 +1,11 @@
+{
+ "id": "DEF-4079",
+ "subject": "tools/cc/checkout_sync.py",
+ "cmd": "python3 -c \"import sys,os,types,subprocess,time,tempfile,pathlib as P;sys.path.insert(0,'tools/cc');import checkout_sync as c;d=tempfile.mkdtemp();p=subprocess.Popen([sys.executable,'-c','import time;time.sleep(15)'],cwd=d);time.sleep(0.3);c.os=types.SimpleNamespace(name='posix',rename=os.rename) if os.name=='nt' else c.os;v=c.held_open(P.Path(d));p.kill();print('blind' if v=='' else 'reads')\"",
+ "open_value": "blind",
+ "why_not": null,
+ "row_sha": "1af61f876ea3",
+ "text_sha": "0ddba9d05bfe",
+ "verified_2026_10_31": "OPEN (filed 2026-10-31; probe driven at filing)",
+ "verified_2026_11_01": "STILL_OPEN (re-pinned value unchanged on 2026-11-01: second read: the closure is read on POSIX only (the Windows arm reaches the same early return through the stub and cannot confirm a fix); one reader named with DEF-4077 and DEF-4078; dates to the local day) [changed: text]"
+}

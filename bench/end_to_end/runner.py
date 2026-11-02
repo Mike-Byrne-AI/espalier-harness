@@ -301,20 +301,23 @@ def _friction_bypass_vars() -> tuple[str, ...]:
     return found
 
 
-def _scenario_env() -> dict[str, str]:
+def _scenario_env(audit_dir: Path) -> dict[str, str]:
     """The nested CLI's environment: this process's, less what would make the
     run measure something other than the scenario's own wiring -- the friction
     bypass (the suite's own subprocess helpers drop it:
     `tests/conftest.py::_isolate_maintenance_mode`), every other `ESPALIER_*`
     knob a maintainer's shell carries (`ESPALIER_STOP_GATE=full` would change
-    the stop gate a scenario tests; `ESPALIER_AUDIT_DIR` would send its audit
-    rows to the operator's pile), and the three variables that make the child
-    a nested session (`_NESTED_SESSION_VARS`). Any other setting a parent
-    session exports (an effort level, a subagent model) still reaches the child."""
+    the stop gate a scenario tests), and the three variables that make the
+    child a nested session (`_NESTED_SESSION_VARS`) -- plus an audit store of
+    the run's own, `audit_dir`: with the variable dropped and none set, the
+    run's hooks wrote the operator's home store, the pile the drop was meant
+    to keep them out of (DEF-3022). Any other setting a parent session exports
+    (an effort level, a subagent model) still reaches the child."""
     bypass = _friction_bypass_vars()
     env = os.environ.copy()
     for name in [k for k in env if k.startswith("ESPALIER_")] + [*bypass, *_NESTED_SESSION_VARS]:
         env.pop(name, None)
+    env["ESPALIER_AUDIT_DIR"] = str(audit_dir)
     return env
 
 
@@ -427,7 +430,9 @@ def run_scenario(
                 error="tool_call trigger not supported in this runner version",
             )
 
-        env = _scenario_env()
+        # Beside the work dir, not in it: the scenario's tree is the session's
+        # repository, and an untracked folder there is a change it would see.
+        env = _scenario_env(work_dir.with_name(work_dir.name + "-audit"))
 
         try:
             proc = run_bounded(
@@ -481,6 +486,7 @@ def run_scenario(
     finally:
         if cleanup_dir is not None and not keep_work_dir:
             shutil.rmtree(cleanup_dir, ignore_errors=True)
+            shutil.rmtree(cleanup_dir.with_name(cleanup_dir.name + "-audit"), ignore_errors=True)
 
 
 def _cost_of_run(events) -> tuple[int, float]:

@@ -209,6 +209,9 @@ _PENDING_CEILING = 0
 #: never as a comment alone. The dependency-directory lane adds the
 #: purpose-scoped lists its scope-out names.
 _MARKED_SITES: frozenset[str] = frozenset({
+    # Claude Code's own step-2 skip list, copied from its 2.1.316 binary and held
+    # to the binary's set by tests/test_hook_exec_form.py (DEF-3021, 2026-11-01).
+    "espalier/_venv.py::GIT_SKIPPED_FOLDERS",
     # The package-build staging list that landed on main beside this lane: the
     # names this repository's own sdist never ships, held to MANIFEST.in and
     # .gitignore by tests/test_artifact_parity.py (2026-10-06).

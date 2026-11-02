@@ -21,9 +21,10 @@ from tests._report_os_name_guard import pytest_runtest_makereport  # noqa: F401
 # pytest-timeout (where the per-test ceiling is a signal alarm, a pass past it
 # is a failure and a test that blocks again after it still ends), and the count
 # of the selected tests that never ran, in a line -q keeps (past xdist's
-# restart cap the run stops scheduling without a word under -q). Each module
-# says why.
-from tests import _box_lock, _never_ran, _timeout_backstop
+# restart cap the run stops scheduling without a word under -q), the sweep
+# of the temp dirs a killed run left (pytest keeps a dead pid's dir for 72 h),
+# and a launched session's basetemp inside its parent's. Each module says why.
+from tests import _box_lock, _nested_temp, _never_ran, _temp_sweep, _timeout_backstop
 # Stops a session whose interpreter imports another tree's engine before any
 # test runs: every CLI-spawning test would otherwise pass about the wrong code.
 from tests._engine_check import pytest_sessionstart  # noqa: F401
@@ -41,11 +42,75 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def pytest_configure(config):
-    """Register the timeout backstop and the never-ran count (the imports above
+    """Register the timeout backstop and the never-ran count, take the box
+    lock, sweep, then nest a launched session's basetemp (the imports above
     say what each is for)."""
     _timeout_backstop.pytest_configure(config)
     _never_ran.pytest_configure(config)
     _box_lock.pytest_configure(config)
+    _temp_sweep.pytest_configure(config)
+    _nested_temp.pytest_configure(config)
+
+
+#: Where the modules the restore below keeps live: a ``tools/cc`` module held in
+#: ``sys.modules`` under its bare name, the name its siblings import it by.
+#: Case-folded, since a Windows path can reach a module in another case.
+_TOOLS_CC_PREFIX = os.path.normcase(str(REPO_ROOT / "tools" / "cc")).replace("\\", "/") + "/"
+
+
+def _is_tools_cc_bare(name: str, mod) -> bool:
+    """``mod`` is a ``tools/cc`` module held under its own bare ``name``."""
+    path = os.path.normcase(getattr(mod, "__file__", None) or "").replace("\\", "/")
+    return path.startswith(_TOOLS_CC_PREFIX) and path.endswith(os.path.normcase(f"/{name}.py").replace("\\", "/"))
+
+
+def _replaced_tools_cc_entries(before: dict) -> dict:
+    """The entries of ``before`` (a copy of ``sys.modules``) that are a
+    ``tools/cc`` module under its own bare name and that ``sys.modules`` now
+    holds as another object, or not at all."""
+    return {name: mod for name, mod in before.items()
+            if sys.modules.get(name) is not mod and _is_tools_cc_bare(name, mod)}
+
+
+def _put_back_tools_cc_entries(before: dict) -> None:
+    """Restore what ``_replaced_tools_cc_entries`` names; where it names any,
+    also drop each ``tools/cc`` module the test first imported under its bare
+    name, since it may have bound a replacement (the next import binds the
+    original)."""
+    replaced = _replaced_tools_cc_entries(before)
+    if not replaced:
+        return
+    for name, mod in list(sys.modules.items()):
+        if name not in before and _is_tools_cc_bare(name, mod):
+            del sys.modules[name]
+    sys.modules.update(replaced)
+
+
+@pytest.fixture(autouse=True)
+def _restore_replaced_tools_cc_modules():
+    """Put back, after each test, every ``tools/cc`` module the test replaced
+    or removed under its bare name (DEF-2032). A module loaded at collection
+    binds its siblings by that name (``_zone_watch`` binds ``_hook_utils``), and
+    the memo clears below reach ``sys.modules.get("_hook_utils")``; a loader
+    that registers a fresh copy at test time left every later test clearing
+    the copy while the collection-time module kept its once-set, so
+    ``test_zone_watch`` redded after ``test_state_file_flag_parity`` on one
+    worker, on the gate's serial leg and on the parallel leg alike. Compared
+    by identity; an entry the test added is left unless something was put
+    back, and a module from anywhere else is left. pytest sets a conftest's
+    autouse fixtures up in name order: the copy is taken after the
+    ``_isolate_*`` ones, and ``_no_live_once_flags`` requests this fixture, so
+    it reads the once-set of the module the test left before the original
+    goes back. A replacement made while collecting, or by a module- or
+    class-scoped fixture, is outside the copy. Censuses at 705f7dd: none while
+    collecting, and over the 28 files with a module- or class-scoped loader,
+    only the ``lr`` fixtures of ``test_ledger_row`` and
+    ``test_ledger_fragments``, where ``ledger_row`` loads
+    ``generate_ledger_regions``, ``check_ledger_probes`` and ``_pack_scope``
+    under their own names; nothing here clears a memo of those three."""
+    before = dict(sys.modules)
+    yield
+    _put_back_tools_cc_entries(before)
 
 
 @pytest.fixture(autouse=True)
@@ -122,9 +187,20 @@ def _isolate_claude_code_session():
     ``_isolate_forced_colour`` gives: ``test_adopter_lifecycle_diagnostics.walked``
     is module-scoped and spawns its uninstall before any function-scoped
     fixture runs (the failure-mode review of the DEF-1060 lane found the
-    function-scoped first draft missed it)."""
+    function-scoped first draft missed it). The window's identity and its
+    own-clear mod go with it: a seat's window exports the session id, its
+    pid and ``ESPALIER_OWN_CLEAR=1``, and the ship driver's own-clear verbs
+    stand down without the mod, so a test modelling a mod window that left
+    the variable to the launching shell passed in a seat's tier and failed
+    on CI (#414's ``test (3.11)`` cell, 2026-11-01); a test of either sets
+    what it models."""
     with pytest.MonkeyPatch.context() as mp:
+        # Spelled alone: tests/test_check_ledger_probes.py pins this literal
+        # against the ledger probe runner's strip, its twin.
         mp.delenv("CLAUDECODE", raising=False)
+        for name in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "ESPALIER_OWN_CLEAR",
+                     "ESPALIER_OWN_CLEAR_ROOT", "ESPALIER_OWN_CLEAR_LOG"):
+            mp.delenv(name, raising=False)
         yield
 
 
@@ -147,6 +223,19 @@ def _isolate_forced_colour():
     with pytest.MonkeyPatch.context() as mp:
         for name in ("FORCE_COLOR", "CLICOLOR_FORCE", "PY_COLORS"):
             mp.delenv(name, raising=False)
+        yield
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _export_the_basetemp(tmp_path_factory):
+    """The pytest children this session's tests launch take their basetemp
+    inside this session's (``tests/_nested_temp.py`` says why: a child on
+    the shared root deleted the last big run's dir inside its test's
+    clock, DEF-5056). Session-scoped for the reason
+    ``_isolate_forced_colour`` gives: a module-scoped fixture can launch
+    its child before any function-scoped fixture runs."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv(_nested_temp.KEY, str(tmp_path_factory.getbasetemp()))
         yield
 
 @pytest.fixture(autouse=True)
@@ -248,7 +337,7 @@ def _clear_hook_utils_memos(live) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _no_live_once_flags():
+def _no_live_once_flags(_restore_replaced_tools_cc_modules):
     """A test that drives a ``say_once`` site in-process with no scratch root
     -- ``CLAUDE_PROJECT_DIR`` unset, or a ``Path(".")`` root -- writes the
     ``once_<key>`` flag into THIS checkout's ``.espalier-state/``, and the live
@@ -258,8 +347,9 @@ def _no_live_once_flags():
     operator's own hooks churn it), so this one is attributed instead: a new
     flag whose key this test's process said (``_SAID_THIS_PROCESS``, read
     before the memo fixture above clears it -- autouse fixtures tear down in
-    reverse definition order) is this test's leak. It is deleted and the test
-    fails."""
+    reverse of their setup, which pytest orders by name -- and, since this
+    fixture requests the restore, before a ``_hook_utils`` the test swapped in
+    is put back) is this test's leak. It is deleted and the test fails."""
     state = REPO_ROOT / ".espalier-state"
 
     def _flags() -> set[str]:
@@ -730,6 +820,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             "test_session_start_maintenance_warn",
             # TP-177 W6-3 — SessionStart WARN on an unresolved hook interpreter
             "test_session_start_interpreter_warn",
+            # DEF-3015 — SessionStart cuts itself at its wall with a short banner
+            # inside the host's 15 s timeout; spawns the hook with a phase stalled.
+            "test_session_start_wall",
             # DEF-968 class — every reader of a wired hook's interpreter reads
             # the argv the hook runs (the warning, doctor, the rewire, the
             # enforcement claim, the gate-wiring check); spawns real launcher
@@ -920,6 +1013,10 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # TP-287 — scope-breaker + convergence-critic stage-presence contract
             # over committed .claude/workflows/*.js scaffolds (also full_tree below).
             "test_convergence_workflow_stages",
+            # Drives the three review workflows under node with stubbed agent,
+            # parallel and pipeline: which lanes count as not run is the
+            # scaffold's own return value.
+            "test_review_workflow_lanes",
             # the launch conventions every committed scaffold shares: one model per
             # run (args.model through opts()), the finder-time refuter-field strip,
             # the lane-identity stamp (sibling of the stage-presence contract above).
@@ -1323,10 +1420,24 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # stub linters and runners first on PATH: which command a fence
             # runs is a subprocess fact.
             "test_node_adopter_defaults",
+            # The init'd Python adopter tree with a TODO, a vendored TODO and
+            # two dependency trees planted, then the four deployed first-contact
+            # fences (analyze, test-writer, the advisor's dead-config pass,
+            # repo-analyst) under a real bash: what a census prints is a
+            # subprocess fact.
+            "test_first_contact_diagnostics",
+            # The same init'd adopter tree, then the deployed bodies that stand
+            # down or skip a check (the advisor's hook programs among them) run
+            # verbatim on it and on scratch wirings: what a body says when its
+            # input is missing is a subprocess fact.
+            "test_adopter_stand_downs_say_so",
             # The timeout backstop: whether a swallowed or re-blocked ceiling
             # ends its test is a fact about a real pytest child under the
             # signal method.
             "test_timeout_backstop",
+            # The temp sweep: what a session start leaves of a dead run's dirs
+            # is a fact about a real nested pytest session's configure.
+            "test_temp_sweep",
             # Moved from the unit grandfather 2026-10-12: whether a linked
             # worktree (its .git a gitlink file) reads as a checkout of its own
             # is a fact about real `git init` and `git worktree add` output.
@@ -1365,6 +1476,10 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # the committed form each mirror is judged against is git's
             # answer, so no mock stands in for it (the 2026-10-25 ceiling red).
             "test_sync_asset_docs",
+            # Runs its own reporting row in pytest children under a temp root
+            # it plants: whether a child deletes another session's dir is the
+            # child's own session end, so no in-process stand-in reaches it.
+            "test_nested_temp",
         ),
         "integration",
     ),
@@ -1446,6 +1561,9 @@ def _primary_marker(stem: str) -> str:
 # slow is additive: any test that calls subprocess, builds a wheel, or runs
 # git-heavy operations should also be marked slow on top of the primary marker.
 _SLOW_FILES: set[str] = {
+    # Three pytest children, each loading the suite's conftest (0.25 s
+    # apiece on the self-host box, 2026-11-01).
+    "test_nested_temp",
     # Drives SessionStart, the PostToolUse hooks, the Stop gate, post_compact
     # and subagent_stop as real children in scratch trees: the advisory has to
     # be found in the process's own stdout JSON or audit record.
@@ -1657,6 +1775,7 @@ _SLOW_FILES: set[str] = {
     "test_session_start_freshness_banner",
     "test_session_start_interpreter_warn",
     "test_session_start_maintenance_warn",
+    "test_session_start_wall",
     "test_settings_profiles",
     "test_sister_site_probe_regression",
     # One `git init` + `espalier init` per module, then the DEPLOYED probe as a
@@ -1668,6 +1787,12 @@ _SLOW_FILES: set[str] = {
     # `init` on a Node tree and a Python one, then the deployed /preflight
     # fences under a real bash, a few interpreter starts each.
     "test_node_adopter_defaults",
+    # `init` on the Python adopter tree, then four deployed fences under a real
+    # bash on it and on this checkout (a whole-tree find, twice).
+    "test_first_contact_diagnostics",
+    # `init` on the Python adopter tree, then the deployed stand-down programs
+    # on it and on scratch trees, an interpreter start each.
+    "test_adopter_stand_downs_say_so",
     # Spawns real `git` against short-lived repos under tmp_path to prove the
     # bare-`checkout <path>` arm and the pre-discard snapshot round-trip.
     "test_speedbump_discard_snapshot",

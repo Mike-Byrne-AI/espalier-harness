@@ -364,17 +364,17 @@ was denied; restored, it ran).
 - **Statusline.** On a Windows host `init` wires the statusline through
   `tools/cc/statusline.cmd`, a batch shim, because Windows PowerShell 5.1 has
   no `||` for the POSIX fallback. Claude Code runs the statusline under Git
-  Bash when it finds Git Bash and under PowerShell when it does not, and the
-  two shells need the line spelled differently, so `init` looks where Claude
-  Code looks (`CLAUDE_CODE_GIT_BASH_PATH`, in your environment or a settings
-  file's `env`, then `C:\Program Files\Git` and `C:\Program Files (x86)\Git`,
-  then each `git` on your `PATH`) and writes the form your shell runs: the
-  shim's quoted path wherever it finds Git Bash, `& "<shim>" python` only
-  where it finds none. Both forms are driven on Windows 11, and
-  each prints the fallback line when the interpreter is missing. Installed or
-  removed Git for Windows since `init`? `python -m espalier doctor .` names
-  the line that no longer matches and the edit; `python -m espalier init .`
-  renders `settings.json.new` beside your file with the line to take.
+  Bash when it finds Git Bash and under PowerShell when it does not, so the
+  line starts with a dot, `. "<shim>" python`, which both shells run: Git
+  Bash sources the shim, whose first line is written for it, and PowerShell
+  runs it as a batch file. Installing or removing Git for Windows after
+  `init` changes nothing. Driven on Windows 11 in both shells, the line
+  prints the statusline, and the fallback line when the interpreter is
+  missing. An install from an earlier version can carry the shim bare (Git
+  Bash only) or behind `&` (PowerShell only): `python -m espalier doctor .`
+  names a line that no longer matches your shell and the edit, and
+  `python -m espalier init .` renders `settings.json.new` beside your file
+  with the line to take.
 - **Writing a Stop-gate relief record.** PowerShell 5.1's `>` and `Out-File`
   write UTF-16 with a byte-order mark, which the gate reads; a file it cannot
   decode (UTF-16 with no mark) is refused with the encoding named.

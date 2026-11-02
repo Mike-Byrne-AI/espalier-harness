@@ -558,6 +558,57 @@ test('a clear the engine took and never ran is told apart from a queued one on t
   expect(w.marker().state).toBe('armed')
 })
 
+// A held clear on the record (DEF-2039, 2026-11-01): the dispatcher window sat
+// held on 'HEAD moved' for 9 h and 36 loop ticks with the hold on its status
+// line alone, and the consumed marker read as never asked. Each held turn's
+// end writes why, since when and how many turn ends, for the prompt router
+// (which tells the held window the verb) and the banner's Own-clear: line.
+test("a held clear is on the marker's record: why, since when, and the turn ends it has held; the ask takes it off", async ($, on) => {
+  const w = world(on)
+  w.state.dirty = true
+  w.arm({ session_id: w.id(), head: HEAD })
+  await $.turn.complete(TURN)
+  expect(w.marker().clear_held).toBe('a tracked edit is in flight')
+  expect(w.marker().clear_held_since).toBe(new Date(1793066349000).toISOString())
+  expect(w.marker().clear_held_turns).toBe(1)
+  await $.turn.complete(TURN)
+  expect(w.marker().clear_held_turns).toBe(2)
+  // the cause moves: the latest is named, the hold's start and its count kept
+  w.state.dirty = false
+  w.files.set(PLAN, JSON.stringify({ status: 'in_progress', steps: [{ n: 1 }] }))
+  await $.turn.complete(TURN)
+  expect(w.marker().clear_held).toBe('a plan is in progress')
+  expect(w.marker().clear_held_turns).toBe(3)
+  expect(w.marker().state).toBe('armed')
+  expect(w.seen.commands).toEqual([])
+  w.files.set(PLAN, JSON.stringify({ status: 'complete', steps: [{ n: 1 }] }))
+  await $.turn.complete(TURN) // nothing in flight: the ask
+  expect(w.seen.commands).toEqual(['clear'])
+  expect(w.marker().clear_held).toBeUndefined()
+  expect(w.marker().clear_held_since).toBeUndefined()
+  expect(w.marker().clear_held_turns).toBeUndefined()
+})
+
+test("a held clear's start and count are read from the marker, so a reload keeps them", async ($, on) => {
+  const since = new Date(1793066349000 - 9 * 3_600_000).toISOString()
+  const w = world(on)
+  w.arm({ session_id: w.id(), head: '0f1e2d3c4b5a69788796a5b4c3d2e1f098765432', clear_held: 'HEAD moved', clear_held_since: since, clear_held_turns: 36 })
+  await $.turn.complete(TURN)
+  expect(w.marker().clear_held).toContain('HEAD moved since the handoff')
+  expect(w.marker().clear_held_since).toBe(since)
+  expect(w.marker().clear_held_turns).toBe(37)
+})
+
+test("a held turn's record write never arms again a marker the clear consumed meanwhile", async ($, on) => {
+  const w = world(on)
+  w.state.dirty = true
+  w.arm({ session_id: w.id(), head: HEAD })
+  w.state.consumeDuringGit = true // the consume lands between this turn end's read and its write
+  await $.turn.complete(TURN)
+  expect(w.marker().state).toBe('consumed')
+  expect(w.marker().clear_held).toBeUndefined()
+})
+
 // Why a git read failed (DEF-3019, 2026-10-31): the helper kept stdout alone,
 // so win-2's 06:25Z re-prime said 'HEAD could not be read' while HEAD equalled
 // the marker's head, and nothing on the brief, the status line or the log said

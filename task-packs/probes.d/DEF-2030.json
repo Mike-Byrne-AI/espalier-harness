@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2030",
+ "subject": "tests/_hook_spawn.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the miss needs the hosted windows-latest runner's load; the census (354 rows, 425 spawns at 7b574fb) was driven with a scratch plugin, and the sightings are run 41217045122 and the 2026-09-27 entry in tests/README.md",
+ "row_sha": "c6ecb01f8e64",
+ "text_sha": "bb9944443d4c",
+ "verified_2026_11_01": "OPEN (filed 2026-11-01; probe driven at filing)"
+}

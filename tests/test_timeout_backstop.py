@@ -140,6 +140,23 @@ class TestTheBackstopEndsATestThatBlocksAgain:
         timer.join(5)
         assert ended == [1]
 
+    def test_the_end_in_a_test_drops_the_lock_this_process_holds_first(self, tmp_path, monkeypatch):
+        """``os._exit`` in a test comes before pytest's session finish, where it
+        drops the base temp lock, and pytest keeps a dir behind a dead pid's
+        lock for 72 h (DEF-5053): the end drops this process's lock and no
+        other's."""
+        monkeypatch.setenv("PYTEST_DEBUG_TEMPROOT", str(tmp_path))
+        root = backstop._temp_sweep.pytest_root()
+        mine, theirs = root / "pytest-5", root / "pytest-6"
+        for d, pid in ((mine, os.getpid()), (theirs, 4242)):
+            d.mkdir(parents=True)
+            (d / ".lock").write_text(str(pid), encoding="utf-8")
+        ended: list[int] = []
+        backstop.dropping_the_lock(ended.append)(3)
+        assert ended == [3]
+        assert not (mine / ".lock").exists() and mine.is_dir()
+        assert (theirs / ".lock").read_text(encoding="utf-8") == "4242"
+
 
 def test_the_plugin_internals_the_backstop_calls_exist():
     """The named red for an upstream rename: the backstop then stands down
@@ -198,7 +215,12 @@ def _drive(tmp_path: Path, body: str) -> tuple[subprocess.CompletedProcess, floa
     pytest.importorskip("pytest_timeout")
     (tmp_path / "conftest.py").write_text(_CONFTEST, encoding="utf-8")
     (tmp_path / "test_probe.py").write_text(body, encoding="utf-8")
-    env = {k: v for k, v in os.environ.items() if k != "PYTEST_ADDOPTS"}
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTEST_ADDOPTS", "PYTEST_DEBUG_TEMPROOT")}
+    # The child's temp dir, and so its pytest root, inside tmp_path: a child
+    # the backstop ends by os._exit once left its numbered dir in the real root.
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    env.update(TMPDIR=str(temp), TEMP=str(temp), TMP=str(temp))
     t0 = time.monotonic()
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--timeout=1",
@@ -207,6 +229,15 @@ def _drive(tmp_path: Path, body: str) -> tuple[subprocess.CompletedProcess, floa
         errors="replace", timeout=45,
     )
     return proc, time.monotonic() - t0
+
+
+def _locks_left(tmp_path: Path) -> list[str]:
+    """The base temp locks a ``_drive`` child left in its pytest root. The
+    child's test asks for ``tmp_path``, so pytest made its numbered dir and
+    lock; without one the empty answer would read nothing."""
+    numbered = list((tmp_path / "temp").glob("pytest-of-*/pytest-[0-9]*"))
+    assert numbered, "the child made no numbered base temp dir, so no lock could be left"
+    return sorted(p.parent.name for p in (tmp_path / "temp").glob("pytest-of-*/pytest-*/.lock"))
 
 
 @_NEEDS_SIGALRM
@@ -226,7 +257,7 @@ def test_a_swallowed_ceiling_fails_its_test_by_name(tmp_path):
 def test_a_test_that_blocks_again_after_the_ceiling_is_ended(tmp_path):
     proc, took = _drive(tmp_path, (
         "import time\n\n"
-        "def test_blocks_again():\n"
+        "def test_blocks_again(tmp_path):\n"
         "    while True:\n"
         "        try:\n            time.sleep(30)\n"
         "        except BaseException:\n            pass\n"
@@ -236,6 +267,7 @@ def test_a_test_that_blocks_again_after_the_ceiling_is_ended(tmp_path):
     assert "[timeout backstop] test_probe.py::test_blocks_again" in out, (
         "the backstop's exit did not name the test")
     assert took < 30, f"the child ran {took:.1f} s: the backstop (2 s here) never ended it"
+    assert _locks_left(tmp_path) == [], "the backstop's os._exit left the run's base temp lock"
 
 
 @_NEEDS_SIGALRM
@@ -245,8 +277,9 @@ def test_a_teardown_that_blocks_after_a_surfaced_ceiling_is_ended(tmp_path):
     proc, took = _drive(tmp_path, (
         "import time\nimport pytest\n\n"
         "@pytest.fixture\ndef stuck():\n    yield\n    time.sleep(30)\n\n"
-        "def test_hangs(stuck):\n    time.sleep(30)\n"
+        "def test_hangs(stuck, tmp_path):\n    time.sleep(30)\n"
     ))
     out = proc.stdout + proc.stderr
     assert proc.returncode != 0 and "Timeout" in out, out
     assert took < 30, f"the child ran {took:.1f} s: the teardown was never bounded"
+    assert _locks_left(tmp_path) == [], "the backstop's os._exit left the run's base temp lock"

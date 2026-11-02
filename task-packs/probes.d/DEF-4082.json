@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4082",
+ "subject": "tools/cc/ship.py",
+ "cmd": "python3 -c \"import sys,io,tempfile,pathlib as P,contextlib as C;sys.path.insert(0,'tools/cc');import ship as s;r=P.Path(tempfile.mkdtemp());K=lambda v:(lambda *a,**k:v);G=lambda *a,**k:(0,'abc1234 x\\n' if 'log' in a else '','');[setattr(s,n,v) for n,v in dict(repo_root=K(r),default_branch=K('main'),_git=G,_refuse_a_dirty_tree=K(None),record_file_markers=K([]),shared_checkout=K((['me'],'')),lane_shape=K({'deleted':[]}),say_lane_shape=K(None),current_branch=K('lane/x'),post_merge_reds=K([]),base_red_run=K(None),handoff_push_setting=K((False,'')),_open_prs=K([{'number':7}]),seat_open_prs=K(('s',['#7 lane/y'])),_has_own_upstream=K(False),pr_for_branch=K(None)).items()];s.record_merge.probe_conflicts=K([]);s.record_merge.attribute_merged_paths=K([]);o=io.StringIO();C.redirect_stdout(o).__enter__();C.redirect_stderr(o).__enter__();s.preflight();sys.stdout=sys.__stdout__;print('#7' in o.getvalue())\"",
+ "open_value": "False",
+ "why_not": null,
+ "row_sha": "41150ee5aa34",
+ "text_sha": "1276a8c0c512",
+ "verified_2026_11_01": "STILL_OPEN (re-pinned value unchanged on 2026-11-01: the failure-mode review's confirmation pass: the bold counted one refusal short: open also refuses before its push on a head commit with no subject and no --title (2394), which the preflight never checks; the bold now says five forecast and not at least five others, and 2394 joins the listed refusals) [changed: probe, anchor, text]"
+}

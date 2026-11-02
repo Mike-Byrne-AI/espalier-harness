@@ -44,7 +44,9 @@ this excerpt" section listing the binding tests.
 
 **Every `>` line in a pin is an upstream quote**, word for word apart from
 formatting (links, emphasis, table bars, line wrapping), with any omission
-marked `[…]`. The refresh reads a pin's drift off those lines alone, so
+marked `[…]`. A wrapped line never opens on a quoted `>` (a precedence
+chain, a redirect): Markdown reads `> > ask` as a nested quote, and so does
+the refresh, so keep such a `>` mid-line. The refresh reads a pin's drift off those lines alone, so
 espalier's own commentary, a callout or a warning included, is written as
 prose, never as a blockquote.
 
@@ -102,5 +104,6 @@ instead.
 - `cc-hook-protocol.md` — Claude Code hook protocol channel/exit-code/JSON contract, and the two worktree events (`WorktreeCreate`, `WorktreeRemove`), which espalier does not wire.
 - `cc-statusline.md` — Claude Code status line: shell string, shell per platform, update triggers, silent-blank failure, trust/kill-switch gating.
 - `cc-worktrees.md` — Claude Code worktrees: the hook input's `cwd` follows Claude into a worktree while `CLAUDE_PROJECT_DIR` stays at the project root; the `git worktree lock` Claude Code holds on a running agent's or backgrounded session's worktree, and the stale-lock window until the sweep; a `WorktreeCreate` hook replaces creation and leaves no such lock.
+- `cc-git-bash.md` — Claude Code on Windows: the order in which it looks for Git Bash (`CLAUDE_CODE_GIT_BASH_PATH`, the two default install locations, then the `git` on PATH, skipping one a project placed), the file names the variable accepts, and setting it in a settings file's `env`.
 
 (Add new pins as espalier takes on new external dependencies.)

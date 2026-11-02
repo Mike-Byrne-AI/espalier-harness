@@ -48,7 +48,7 @@ espalier release-pack . --output dist/espalier.zip # zip only (no gate)
 1. Fork and branch from `main`.
 2. Write or update tests for your change.
 3. Run the full suite: `python scripts/proof_tier.py --run --tier full` (the
-   four lines: mypy on the hooks, ruff, xdist, then the five serial files
+   four lines: mypy on the hooks, ruff, xdist, then the serial files
    serially, one receipt; `pytest -q` is the serial form of the two pytest
    lines and skips the lint and type gates; both need `pip install -e '.[dev]'`)
 

@@ -372,7 +372,8 @@ class TestBridgeThroughTheHook:
         assert len(_records("posttooluse_failed_open_plan_bridge_shape")) == 1
 
     def test_an_in_progress_plan_is_replaced_and_named(self, tmp_path):
-        env = {k: v for k, v in os.environ.items() if not k.startswith(("CLAUDE_", "ESPALIER_"))}
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith(("CLAUDE_", "ESPALIER_")) or k == "ESPALIER_AUDIT_DIR"}
         env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
         script = TOOLS_CC / "execution_plan.py"
         subprocess.run(

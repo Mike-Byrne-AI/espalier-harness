@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2038",
+ "subject": "tests/test_ci_job_bounds.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "an estimate from the bounds: its oracle is the re-measure of the serial leg the fix shape names, not a read of a file",
+ "row_sha": "76eb72c81e49",
+ "text_sha": "f1c96c5f2cff",
+ "verified_2026_11_01": "OPEN (filed 2026-11-01; probe driven at filing)"
+}

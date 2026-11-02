@@ -172,8 +172,10 @@ OPERATOR_CALL_PREFIX = "OPERATOR CALL:"
 #: worker sent nothing and the board showed no stopped seat (``DEF-5030``).
 STOPPED_PREFIX = "stopped:"
 #: What the dispatcher's ruling on a gridlock opens with (root CLAUDE.md Core
-#: Rule 15): an ``ack`` whose text opens with the marker, the one the seat-day
-#: census counts a ruling by. The marker carries no direction -- a hold, a veto
+#: Rule 15): an ``ack`` whose text opens with the marker, or a ``note`` where no
+#: request waits on the ruling (``DEF-4060``), the one the seat-day census
+#: counts a ruling by; the fix-forward head below rides an ack alone. The
+#: marker carries no direction -- a hold, a veto
 #: or a status under it is a ruling too -- so a reader that needs the way a
 #: ruling went reads the head below, never the marker alone.
 RULING_PREFIX = "gridlock:"
@@ -871,6 +873,46 @@ def is_stop(message: object) -> bool:
 def ruling_text(message: dict) -> str:
     """A message's text on one line, as a ruling's reader repeats it."""
     return " ".join(str(message.get("text") or "").split())
+
+
+def ruling_type_refusal(message: dict, dispatcher: str | None = None, how: str = "") -> str | None:
+    """Why a message whose text opens with :data:`RULING_HEAD` must not be
+    sent as it stands: the readers (``fix_forward_rulings``) count only an
+    ack on the dispatcher's ref (``dispatcher`` and ``how`` as
+    :func:`dispatcher_setting` answers: every seat's where None, none where
+    :data:`DISPATCHER_UNUSABLE`) with the red run's id in digits right after
+    the head (:func:`ruling_run`) and the fix lane named, so any other
+    message under the head would land on the channel and rule nothing while
+    the held seat waits on it (DEF-4074). The head is matched on the text
+    as the readers fold it (``ruling_text``), the head alone and not the
+    digits, so a text that opens with it and then no run id is read here
+    too. None for a ``gridlock:`` text under any other head, a ruling no
+    request waits on."""
+    if not ruling_text(message).startswith(RULING_HEAD):
+        return None
+    type_ = str(message.get("type") or "")
+    a_type = f"{'an' if type_ in ('ack', 'assign') else 'a'} {type_}"
+    if dispatcher == DISPATCHER_UNUSABLE:
+        return (f"{how}, so no ack rules a fix-forward and {a_type} that opens with `{RULING_HEAD}<run id>` would "
+                f"rule nothing; fix the {DISPATCHER_KEY} setting first")
+    sender = str(message.get("from") or "")
+    if dispatcher and sender != dispatcher:
+        return (f"only the dispatcher ({dispatcher}) rules a fix-forward, so {a_type} from {sender} that opens "
+                f"with `{RULING_HEAD}<run id>` would rule nothing; send {dispatcher} a request (--type request) "
+                "naming the red run and the fix lane, its text under another head, instead")
+    if type_ != "ack":
+        return (f"{a_type} that opens with `{RULING_HEAD}<run id>` rules nothing: only an ack under that head is "
+                "a fix-forward ruling. Send it as --type ack --ack <the held seat's last message> --lane <the fix "
+                "lane> (the message's full id, as the asks: line of /inbox board prints it), or open the text "
+                "with another head")
+    if not ruling_run(message):
+        return (f"an ack that opens with `{RULING_HEAD}` rules only with the red post-merge run's id in digits "
+                f"right after it (`{RULING_HEAD}<run id>`, the id gh run list prints), so this one would rule "
+                "nothing; put the run's id there")
+    if not _lane_of(message):
+        return (f"an ack that opens with `{RULING_HEAD}<run id>` rules for the lane it names alone, and this one "
+                "names none, so it would rule nothing; add --lane <the fix lane>")
+    return None
 
 
 def ruling_run(message: object) -> str:
@@ -1594,6 +1636,32 @@ def own_live_claims(by_machine: dict[str, list[dict]], machine: str, lane: str) 
     would close."""
     return [c for c in live_claims(by_machine)
             if c.get("from") == machine and (c.get("re") or {}).get("lane") == lane]
+
+
+def unclaimed_paths(by_machine: dict[str, list[dict]], machine: str, lane: str,
+                    paths: list[str]) -> list[str] | None:
+    """Of ``paths`` (a lane's modified files), those no claim ``machine`` sent
+    on ``lane`` names, in their order; None where it sent none. Every claim
+    counts, live or released: a push releases them, and the lane's next push
+    (a handoff's row) is read against the same intent. A claim names a path it
+    holds whole, at or over it, a file one of its symbols is in (``claim_view``'s
+    read, the vendored twin folded onto its source on both sides), and a record
+    file named for a row id it carries (the row and its probe). The ship driver
+    prints what is left: a revert the lane never made reads here (DEF-4064)."""
+    claims = [m for m in by_machine.get(machine, [])
+              if m.get("type") == "claim" and (m.get("re") or {}).get("lane") == lane]
+    if not claims:
+        return None
+    named: set[str] = set()
+    ids: set[str] = set()
+    for claim in claims:
+        re_ = claim.get("re") or {}
+        syms, _more, whole, _unplaced = claim_view(re_)
+        named |= {p.rstrip("/") for p in whole} | {s.split("::", 1)[0] for s in syms}
+        ids |= set(_str_list(re_.get("ids")))
+    fold = _symbols.canonical
+    return [p for p in paths
+            if not (any(fold(p) == n or fold(p).startswith(n + "/") for n in named) or Path(p).stem in ids)]
 
 
 def _ship_default_base(remedy: str = "name the base (--symbols-from <base>)") -> str:
@@ -2382,6 +2450,9 @@ def main(argv: list[str] | None = None) -> int:
             message = new_message(machine, args.type, text, lane=args.lane, classes=classes,
                                   paths=paths, ids=ids, ack=args.ack, seat=args.seat, symbols=symbols,
                                   symbols_rule=rule)
+            refusal = ruling_type_refusal(message, *dispatcher_setting(root))
+            if refusal:
+                raise Unresolvable(refusal)
             if args.type == "assign":
                 refusal = assign_refusal(root, machine)
                 if refusal:

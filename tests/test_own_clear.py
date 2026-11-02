@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -69,12 +70,15 @@ def module_text(seat) -> str:
 
 
 @pytest.fixture(autouse=True)
-def _outside_a_mod_window(monkeypatch):
+def _outside_a_mod_window(monkeypatch, tmp_path):
     """The suite may run inside a Claude session, which exports its id to the
     shell, and inside a seat the launcher started, which exports the mod's
-    flag; each case sets what it means."""
-    for name in ("CLAUDE_CODE_SESSION_ID", "ESPALIER_OWN_CLEAR"):
+    flag; each case sets what it means. Claude Code's session registry is an
+    empty one of the test's own, so the live session's entry never places a
+    case's marker (``_session_registry`` writes one where a case needs it)."""
+    for name in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "ESPALIER_OWN_CLEAR", "ESPALIER_OWN_CLEAR_ROOT"):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "no-claude-registry"))
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -226,6 +230,25 @@ class TestArmOwnClearHere:
         assert tail.isascii() and '"' not in tail and "%" not in tail
         assert "with the refusal in its brief" in line and "lands the lane first" in line
 
+    def test_a_lane_held_behind_the_seats_other_pull_request_says_what_it_waits_for(
+            self, ship, repo, monkeypatch):
+        """DEF-5038: the one-per-seat hold is not the red base's, so the next
+        window is told to open once that pull request merges, never once the
+        base is green. Dies to: one tail for every unlanded hold."""
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        held = ship.Held("this seat (box) already has an open pull request: #41 (lane/y)", landed=False,
+                         waits_for="#41 merges or closes")
+        ship.arm_own_clear_here(repo, held=held)
+        brief = _marker(repo)["brief"]
+        assert "The push was held" in brief and "ship.py open once #41 merges or closes" in brief
+        assert "stay on this branch" in brief   # a new branch drops the gate's hold on the lane
+        assert "once the base is green" not in brief and brief.isascii()
+        red = ship.Held("main red after merge", landed=False)
+        assert red.waits_for == ""
+        ship.arm_own_clear_here(repo, held=red)
+        assert "ship.py open once the base is green" in _marker(repo)["brief"]
+
     def test_a_push_that_landed_then_refused_says_so_in_the_brief(self, ship, repo, monkeypatch):
         monkeypatch.chdir(repo)
         _in_a_mod_window(monkeypatch)
@@ -246,6 +269,187 @@ class TestArmOwnClearHere:
         assert "start no second one" in brief and "THE HANDOFF DID NOT LAND THIS LANE" in brief
 
 
+def _worktree_of(repo: Path, name: str = "wt") -> Path:
+    """A linked worktree of ``repo`` on a lane of its own, one commit ahead:
+    a lane's checkout, whose HEAD is not the main checkout's."""
+    wt = repo / ".claude" / "worktrees" / name
+    _git(repo, "worktree", "add", "--quiet", "-b", f"lane/{name}", str(wt))
+    (wt / "lane.txt").write_bytes(b"the lane\n")
+    _git(wt, "add", "-A")
+    _git(wt, "commit", "--quiet", "-m", "the lane")
+    return wt
+
+
+def _session_registry(tmp_path: Path, monkeypatch, session_id: str, started_in: Path) -> None:
+    """Claude Code's session registry holding one live entry, this process's,
+    for ``session_id`` started in ``started_in``; the home directory moved so
+    the real ``~/.claude`` is never read."""
+    config = tmp_path / "claude-config"
+    (config / "sessions").mkdir(parents=True)
+    entry = {"pid": os.getpid(), "sessionId": session_id, "cwd": str(started_in)}
+    (config / "sessions" / f"{os.getpid()}.json").write_text(json.dumps(entry), encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))
+    for name in ("HOME", "USERPROFILE"):
+        monkeypatch.setenv(name, str(tmp_path / "home"))
+
+
+class TestTheMarkerIsArmedWhereTheSessionsModReadsIt:
+    """DEF-5046: the mod reads the marker in the checkout the session was
+    started in (``register.ts::repoRoot``: ESPALIER_OWN_CLEAR_ROOT, else the
+    top of the session's directory) and holds the clear while that checkout's
+    HEAD is not the marker's ``head``. A handoff the dispatcher's window ran
+    from a linked worktree (#402, 2026-11-01) armed the worktree's marker at
+    the worktree's HEAD, and the window never cleared. Dies to: the marker or
+    its head read where the verb runs, the brief composed for that checkout's
+    seat, a re-arm after a move in the lane's worktree, or a session the
+    registry cannot place armed without a word."""
+
+    def test_a_handoff_from_a_linked_worktree_arms_the_sessions_checkout_at_its_head(
+            self, ship, repo, tmp_path, monkeypatch):
+        wt = _worktree_of(repo)
+        _with_origin(repo)
+        _in_a_mod_window(monkeypatch)
+        _session_registry(tmp_path, monkeypatch, "s-here", repo)
+        monkeypatch.chdir(wt)
+        line = ship.arm_own_clear_here(wt)
+        assert (repo / ".espalier-state" / "own_clear.json").is_file(), (
+            f"armed where the verb ran, not where the session's mod reads it: {line}")
+        marker = _marker(repo)
+        assert marker["session_id"] == "s-here" and marker["head"] == _git(repo, "rev-parse", "HEAD")
+        assert marker["head"] != _git(wt, "rev-parse", "HEAD")
+        assert not (wt / ".espalier-state" / "own_clear.json").exists()
+        assert "where this session's mod reads it" in line and str(wt) in line
+
+    def test_the_brief_is_the_seat_of_the_checkout_the_session_was_started_in(
+            self, ship, seat, repo, tmp_path, monkeypatch):
+        wt = _worktree_of(repo)
+        _with_origin(repo)
+        _git(repo, "config", "extensions.worktreeConfig", "true")
+        _git(wt, "config", "--worktree", "espalier.machine", "box-wt")   # the worktree's own seat, a worker
+        _in_a_mod_window(monkeypatch)
+        _session_registry(tmp_path, monkeypatch, "s-here", repo)
+        monkeypatch.chdir(wt)
+        ship.arm_own_clear_here(wt)
+        marker = _marker(repo)
+        assert marker["seat"] == "box" and marker["role"] == "dispatcher"
+        assert marker["brief"] == seat.reprime_text(seat.compose_brief(repo, "box", repo))
+
+    def test_a_held_handoff_names_the_lanes_checkout_in_the_brief(self, ship, repo, tmp_path, monkeypatch):
+        wt = _worktree_of(repo)
+        _with_origin(repo)
+        _in_a_mod_window(monkeypatch)
+        _session_registry(tmp_path, monkeypatch, "s-here", repo)
+        monkeypatch.chdir(wt)
+        ship.arm_own_clear_here(wt, held=ship.Held("main red after merge", landed=False))
+        brief = _marker(repo)["brief"]
+        assert ship.LAND_FIRST in brief and "lane/wt" in brief
+        assert f"committed in {wt} and unpushed (run the verbs below there)" in brief
+
+    def test_a_catch_up_in_the_lanes_worktree_re_arms_nothing(self, ship, repo, tmp_path, monkeypatch):
+        wt = _worktree_of(repo)
+        _with_origin(repo)
+        _in_a_mod_window(monkeypatch)
+        _session_registry(tmp_path, monkeypatch, "s-here", repo)
+        monkeypatch.chdir(wt)
+        ship.arm_own_clear_here(wt)
+        before, moved_from = _marker(repo), _git(wt, "rev-parse", "HEAD")
+        (wt / "lane.txt").write_bytes(b"the lane, caught up\n")
+        _git(wt, "commit", "--quiet", "-am", "a pull's merge")
+        assert ship.rearm_own_clear_after_move(wt, by="catch-up", moved_from=moved_from) is None
+        assert _marker(repo) == before
+
+    def test_the_override_names_the_checkout_the_mod_reads(self, ship, repo, tmp_path, monkeypatch):
+        wt = _worktree_of(repo)
+        _with_origin(repo)
+        _git(wt, "push", "--quiet", "-u", "origin", "lane/wt")
+        _in_a_mod_window(monkeypatch)
+        _session_registry(tmp_path, monkeypatch, "s-here", repo)
+        monkeypatch.setenv("ESPALIER_OWN_CLEAR_ROOT", str(wt))   # a drive points the mod there
+        monkeypatch.chdir(repo)
+        ship.arm_own_clear_here(repo)
+        assert _marker(wt)["head"] == _git(wt, "rev-parse", "HEAD")
+        assert not (repo / ".espalier-state" / "own_clear.json").exists()
+
+    def test_a_session_the_registry_does_not_list_is_armed_here_and_said(self, ship, repo, tmp_path, monkeypatch):
+        wt = _worktree_of(repo)
+        _in_a_mod_window(monkeypatch)
+        _session_registry(tmp_path, monkeypatch, "s-another", repo)
+        monkeypatch.chdir(wt)
+        line = ship.arm_own_clear_here(wt)
+        assert _marker(wt)["head"] == _git(wt, "rev-parse", "HEAD")
+        assert "does not list this session" in line and "/clear by hand" in line
+
+    def test_a_session_started_in_another_clone_is_armed_here_and_said(self, ship, repo, tmp_path, monkeypatch):
+        other = tmp_path / "other"
+        _git(tmp_path, "clone", "--quiet", str(repo), str(other))
+        _in_a_mod_window(monkeypatch)
+        _session_registry(tmp_path, monkeypatch, "s-here", other)
+        monkeypatch.chdir(repo)
+        line = ship.arm_own_clear_here(repo)
+        assert _marker(repo)["session_id"] == "s-here"
+        assert not (other / ".espalier-state").exists()
+        assert "not a checkout of this clone" in line
+
+    def test_the_by_hand_arm_refuses_a_tracked_edit_in_the_sessions_checkout(
+            self, ship, repo, tmp_path, monkeypatch, capsys):
+        wt = _worktree_of(repo)
+        _with_origin(repo)
+        _git(wt, "push", "--quiet", "-u", "origin", "lane/wt")
+        _in_a_mod_window(monkeypatch)
+        _session_registry(tmp_path, monkeypatch, "s-here", repo)
+        monkeypatch.chdir(wt)
+        (repo / "README.md").write_bytes(b"an edit in the window's checkout\n")
+        with pytest.raises(ship.Refused, match="has a tracked edit"):
+            ship.arm(why="lane opened by hand")
+        assert not (repo / ".espalier-state" / "own_clear.json").exists()
+        _git(repo, "checkout", "--", "README.md")
+        assert ship.arm(why="lane opened by hand") == 0
+        assert _marker(repo)["head"] == _git(repo, "rev-parse", "HEAD")
+        assert "where this session's mod reads it" in capsys.readouterr().out
+
+    def test_a_session_checkout_holding_an_unpushed_lane_is_not_armed_from_another(
+            self, ship, repo, tmp_path, monkeypatch):
+        """The failure-mode review's case: a marker armed at the session
+        checkout's HEAD reads to the Stop hook's handoff gate as that
+        checkout's own unpushed lane handed off, and the mod, which counts no
+        unpushed commits, would clear past it."""
+        wt = _worktree_of(repo)
+        _with_origin(repo)
+        (repo / "README.md").write_bytes(b"a lane of the window's own\n")
+        _git(repo, "commit", "--quiet", "-am", "unpushed")
+        _in_a_mod_window(monkeypatch)
+        _session_registry(tmp_path, monkeypatch, "s-here", repo)
+        monkeypatch.chdir(wt)
+        line = ship.arm_own_clear_here(wt)
+        assert line.startswith("own-clear not armed") and "1 commit no remote has" in line
+        assert not (repo / ".espalier-state" / "own_clear.json").exists()
+        assert not (wt / ".espalier-state" / "own_clear.json").exists()
+
+    def test_a_registry_entry_still_carrying_the_old_id_places_the_window_by_its_pid(
+            self, ship, repo, tmp_path, monkeypatch):
+        wt = _worktree_of(repo)
+        _with_origin(repo)
+        _in_a_mod_window(monkeypatch)
+        _session_registry(tmp_path, monkeypatch, "s-before-the-clear", repo)
+        monkeypatch.setenv("CLAUDE_PID", str(os.getpid()))   # the window pid Claude Code exports
+        monkeypatch.chdir(wt)
+        ship.arm_own_clear_here(wt)
+        assert _marker(repo)["session_id"] == "s-here"
+
+    def test_a_held_brief_for_a_lane_in_another_checkout_promises_no_stop_hook_hold(
+            self, ship, repo, tmp_path, monkeypatch):
+        """The hold is written in the lane's checkout, and the cleared
+        window's hooks read their own, so the brief is the one reminder."""
+        wt = _worktree_of(repo)
+        _with_origin(repo)
+        _in_a_mod_window(monkeypatch)
+        _session_registry(tmp_path, monkeypatch, "s-here", repo)
+        monkeypatch.chdir(wt)
+        ship.arm_own_clear_here(wt, held=ship.Held("this seat's #41 is open", landed=False, waits_for="#41 merges"))
+        brief = _marker(repo)["brief"]
+        assert f"no hook in this window watches {wt}" in brief and "Stop hook's hold" not in brief
+
+
 def _with_origin(repo: Path) -> None:
     """A bare origin the lane is pushed to with an upstream set: what a
     hand-opened lane looks like to git."""
@@ -262,8 +466,11 @@ class TestTheByHandArm:
     not run. Only over a lane that is on origin (the failure-mode review: a
     handoff refused for a reason the window must fix first could otherwise be
     cleared past with the plain role brief, the lane left unpushed and
-    unmentioned), and never over a marker already armed for this session (a
-    held marker's tail would be dropped). Dies to: an arm on a dirty tracked
+    unmentioned), and over a marker already armed for this session only to
+    follow a HEAD a pull by hand moved, the brief and the mod's record kept
+    (``TestTheCatchUpReArmsTheMarker``; a commit of the lane's own keeps the
+    refusal, since the handoff it owes re-arms, and a held marker's tail is
+    never dropped). Dies to: an arm on a dirty tracked
     tree (the verb would promise a clear the mod holds), an arm outside a mod
     window that exits 0 as if it had armed, or an arm over an unpushed lane."""
 
@@ -344,6 +551,228 @@ class TestTheByHandArm:
         assert args.verb == "arm" and args.why == "x" and args.dry_run
 
 
+def _lane_behind_its_remote(repo: Path, branch: str = "lane/x", *, commit_after: bool = False) -> tuple[str, str, str]:
+    """A lane pushed to a bare origin with its upstream set, the base moved
+    by a commit on main, and the server's merge of the base into the lane
+    made and pushed THERE (a merge commit, as ``gh pr update-branch`` makes
+    it) with this checkout reset to where the catch-up's pull starts.
+    ``commit_after``: a commit of the lane's own made and pushed by hand
+    between the handoff and the catch-up (the review's case). ``(the
+    handoff's HEAD, HEAD before the catch-up, origin's tip)``."""
+    _with_origin(repo)
+    _git(repo, "switch", "--quiet", "-c", branch)
+    _git(repo, "push", "--quiet", "-u", "origin", branch)
+    armed_at = _git(repo, "rev-parse", "HEAD")
+    if commit_after:
+        (repo / "NOTES.md").write_bytes(b"a commit after the handoff\n")
+        _git(repo, "add", "NOTES.md")
+        _git(repo, "commit", "--quiet", "-m", "after the handoff")
+        _git(repo, "push", "--quiet", "origin", branch)
+    before = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "switch", "--quiet", "main")
+    (repo / "README.md").write_bytes(b"the base moved\n")
+    _git(repo, "commit", "--quiet", "-am", "the base moves")
+    _git(repo, "push", "--quiet", "origin", "main")
+    _git(repo, "switch", "--quiet", branch)
+    _git(repo, "merge", "--quiet", "--no-ff", "--no-edit", "origin/main")
+    _git(repo, "push", "--quiet", "origin", branch)
+    tip = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "reset", "--quiet", "--hard", before)
+    return armed_at, before, tip
+
+
+class _GhBehind:
+    """``ship._gh`` for one catch-up on the server path: the one pull request
+    reads BEHIND at ``head`` until ``update-branch`` ran, then at ``tip``; any
+    other gh spawn is a test that stopped describing the verb."""
+
+    def __init__(self, branch: str, head: str, tip: str) -> None:
+        self.branch, self.head, self.tip = branch, head, tip
+        self.updated = False
+        self.calls: list[tuple[str, ...]] = []
+
+    def __call__(self, *args: str, cwd=None, timeout=None):
+        self.calls.append(args)
+        if args[:2] == ("pr", "list"):
+            assert self.branch in args
+            row = {"number": 7, "title": "feat: a thing", "url": "https://example.invalid/pull/7",
+                   "state": "OPEN", "headRefOid": self.tip if self.updated else self.head,
+                   "baseRefName": "main", "mergeStateStatus": "BLOCKED" if self.updated else "BEHIND",
+                   "mergeable": "MERGEABLE", "autoMergeRequest": None, "mergeCommit": None}
+            return 0, json.dumps([row]), ""
+        if args[:2] == ("pr", "update-branch"):
+            self.updated = True
+            return 0, "", ""
+        raise AssertionError("unplanned gh spawn: " + " ".join(args))
+
+
+class TestTheCatchUpReArmsTheMarker:
+    """The handoff arms the marker at HEAD; the worker tick's ``catch-up``
+    then pulls the server's merge of the base (or merges it here and pushes),
+    HEAD moves, and the mod holds the clear on ``HEAD moved since the
+    handoff`` -- a hold whose text promised a re-arm only a handoff makes,
+    while nothing was ahead to hand off (air-work's window, 2026-10-31: armed
+    07:12Z, pulled 07:25Z, re-armed by hand 10:58Z). REAL GIT for the pull: a
+    bare origin holding the server's merge of a moved base, gh answered
+    in-process; the conflict path is driven on the spawn table in
+    ``tests/test_ship_driver.py``. Dies to: a catch-up that moves HEAD and
+    leaves the marker's head behind; a re-arm over a marker armed at an
+    older head than the one the catch-up started from (a commit after the
+    handoff, pushed by hand: its handoff is owed, and a re-arm would clear
+    the window with no row for it -- both reviews' finding); a re-arm that
+    drops the brief, how the handoff ended or any field the mod writes; a
+    re-arm over another session's marker, a consumed one or an unmoved head;
+    a refusal after the move that the cleared window never hears of; an
+    ``arm`` that still refuses over a marker a pull moved, or re-arms over a
+    commit of the lane's own."""
+
+    #: Every field the mod writes, seeded on the marker and asserted kept.
+    MOD_FIELDS = {"clear_asked_at": "2026-10-31T07:20:00+00:00", "clear_refused": "a Stop stands",
+                  "clear_refusals": 1, "clear_refused_at": "2026-10-31T07:21:00+00:00",
+                  "clear_resolved_at": "2026-10-31T07:22:00+00:00", "turns_since_ask": 2,
+                  "previous_session_id": "s-before", "stale_because": "never"}
+
+    @staticmethod
+    def _stand_in(ship, monkeypatch, gh, rebind=lambda dry_run=False: 0) -> None:
+        monkeypatch.setattr(ship, "_gh", gh)
+        monkeypatch.setattr(ship, "rebind", rebind)
+        monkeypatch.setattr(ship, "_refuse_a_shared_checkout", lambda root: None)
+        monkeypatch.setattr(ship, "_wiring_note", lambda root: None)
+
+    def _armed_with_the_mods_record(self, ship, repo: Path, head: str) -> None:
+        ship.arm_own_clear(repo, session_id="s-here", head=head, seat="box", role="worker", brief="the brief",
+                           landed=True, outcome=None)
+        path = repo / ".espalier-state" / "own_clear.json"
+        path.write_text(json.dumps({**_marker(repo), **self.MOD_FIELDS}), encoding="utf-8")
+
+    def test_the_pulled_head_re_arms_the_marker_with_its_record_kept(self, ship, repo, monkeypatch, capsys):
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        armed_at, before, tip = _lane_behind_its_remote(repo)
+        assert armed_at == before
+        self._armed_with_the_mods_record(ship, repo, armed_at)
+        self._stand_in(ship, monkeypatch, _GhBehind("lane/x", before, tip))
+        assert ship.catch_up() == 0
+        assert _git(repo, "rev-parse", "HEAD") == tip, "the pull did not move HEAD: the drive proves nothing"
+        marker = _marker(repo)
+        assert marker["head"] == tip, "the catch-up moved HEAD and left the marker armed at the old head"
+        assert marker["state"] == "armed" and marker["session_id"] == "s-here"
+        assert marker["seat"] == "box" and marker["role"] == "worker" and marker["brief"] == "the brief"
+        assert marker["landed"] is True and marker["outcome"] is None
+        for name, value in self.MOD_FIELDS.items():
+            assert marker.get(name) == value, f"the re-arm dropped {name}"
+        assert marker["rearmed_from"] == armed_at and marker["rearmed_by"] == "catch-up"
+        assert marker["rearmed_at"].endswith("+00:00") and "rearmed_why" not in marker
+        out = capsys.readouterr().out
+        assert f"own-clear re-armed at {tip[:7]}" in out and f"HEAD moved from {armed_at[:7]} (catch-up)" in out
+
+    def test_a_commit_after_the_handoff_keeps_the_marker_at_the_handoffs_head(self, ship, repo, monkeypatch, capsys):
+        """Both reviews' case: the handoff armed at H0, a commit C1 was pushed
+        by hand (its handoff owed), then the catch-up pulled the server's
+        merge. The hold on HEAD moved is the one guard left on C1's handoff:
+        the catch-up re-arms only from the head it started at."""
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        armed_at, before, tip = _lane_behind_its_remote(repo, commit_after=True)
+        assert armed_at != before
+        self._armed_with_the_mods_record(ship, repo, armed_at)
+        self._stand_in(ship, monkeypatch, _GhBehind("lane/x", before, tip))
+        assert ship.catch_up() == 0
+        assert _git(repo, "rev-parse", "HEAD") == tip
+        marker = _marker(repo)
+        assert marker["head"] == armed_at and "rearmed_by" not in marker, "a commit after the handoff was re-armed over"
+        out = capsys.readouterr().out
+        assert f"stays armed at {armed_at[:7]}" in out and "a commit after the handoff owes one" in out
+        assert "re-armed at" not in out
+
+    def test_a_refusal_after_the_move_rides_the_re_armed_markers_brief(self, ship, repo, monkeypatch):
+        """The re-bind refused after the pull landed: the marker still follows
+        HEAD (the move is made, nothing is ahead), and the window the mod
+        clears hears the refusal from its brief instead of clearing over it."""
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        armed_at, before, tip = _lane_behind_its_remote(repo)
+        self._armed_with_the_mods_record(ship, repo, armed_at)
+
+        def refused_rebind(dry_run=False):
+            raise ship.Refused("gh pr edit failed: could not update")
+
+        self._stand_in(ship, monkeypatch, _GhBehind("lane/x", before, tip), rebind=refused_rebind)
+        with pytest.raises(ship.Refused, match="gh pr edit failed"):
+            ship.catch_up()
+        marker = _marker(repo)
+        assert marker["head"] == tip and marker["rearmed_by"] == "catch-up"
+        assert marker["brief"].startswith("the brief\n\nown-clear: after the catch-up moved HEAD a step refused: "
+                                          "gh pr edit failed: could not update.")
+        assert "ship.py status" in marker["brief"] and marker["clear_refusals"] == 1
+
+    def test_nothing_is_re_armed_over_another_sessions_marker_a_consumed_one_or_an_unmoved_head(
+            self, ship, repo, monkeypatch):
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        head = _git(repo, "rev-parse", "HEAD")
+        assert ship.rearm_own_clear_after_move(repo, by="catch-up") is None, "no marker"
+        ship.arm_own_clear(repo, session_id="s-elsewhere", head="0" * 40, seat=None, role=None, brief=None)
+        assert ship.rearm_own_clear_after_move(repo, by="catch-up") is None, "another session's marker"
+        assert _marker(repo)["head"] == "0" * 40
+        # Another session's marker at the head the catch-up started from: its
+        # window alone can re-arm it, and the line says so (a terminal's
+        # catch-up in a seat's checkout, the failure-mode review).
+        ship.arm_own_clear(repo, session_id="s-elsewhere", head=head, seat=None, role=None, brief=None)
+        (repo / "README.md").write_bytes(b"moved\n")
+        _git(repo, "commit", "--quiet", "-am", "moved")
+        line = ship.rearm_own_clear_after_move(repo, by="catch-up", moved_from=head)
+        assert line is not None and "armed for session s-elsewh" in line and "run in that window" in line
+        assert _marker(repo)["head"] == head
+        head = _git(repo, "rev-parse", "HEAD")
+        ship.arm_own_clear(repo, session_id="s-here", head=head, seat=None, role=None, brief=None)
+        before = _marker(repo)
+        assert ship.rearm_own_clear_after_move(repo, by="catch-up") is None, "an unmoved head"
+        assert _marker(repo) == before
+        path = repo / ".espalier-state" / "own_clear.json"
+        path.write_text(json.dumps({**before, "state": "consumed", "head": "0" * 40}), encoding="utf-8")
+        assert ship.rearm_own_clear_after_move(repo, by="catch-up") is None, "a consumed marker"
+        assert _marker(repo)["head"] == "0" * 40
+
+    def test_the_arm_verb_re_arms_after_a_pull_by_hand_and_refuses_over_the_lanes_own_commit(
+            self, ship, repo, monkeypatch, capsys):
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        armed_at, before, tip = _lane_behind_its_remote(repo)
+        assert ship.arm(why="hand-opened") == 0
+        path = repo / ".espalier-state" / "own_clear.json"
+        path.write_text(json.dumps({**_marker(repo), **self.MOD_FIELDS}), encoding="utf-8")
+        armed = _marker(repo)
+        assert armed["head"] == armed_at
+        # A pull by hand: HEAD moves onto the server's merge, nothing ahead.
+        _git(repo, "pull", "--quiet", "--ff-only", "origin", "lane/x")
+        assert _git(repo, "rev-parse", "HEAD") == tip
+        assert ship.arm(dry_run=True) == 0
+        assert _marker(repo) == armed
+        assert f"would be re-armed at {tip[:7]}" in capsys.readouterr().out
+        assert ship.arm(why="pulled by hand") == 0
+        marker = _marker(repo)
+        assert marker["head"] == tip and marker["rearmed_from"] == armed_at and marker["rearmed_by"] == "arm"
+        assert marker["rearmed_why"] == "pulled by hand"
+        assert marker["brief"] == armed["brief"] and marker["outcome"] == "armed by hand: hand-opened"
+        for name, value in self.MOD_FIELDS.items():
+            assert marker.get(name) == value, f"the re-arm dropped {name}"
+        assert f"own-clear re-armed at {tip[:7]}" in capsys.readouterr().out
+        with pytest.raises(ship.Refused, match="already armed"):
+            ship.arm(why="again")
+        # A commit of the lane's own, pushed by hand: its handoff is owed, and
+        # the marker stays where the handoff armed it.
+        (repo / "NOTES.md").write_bytes(b"after the handoff\n")
+        _git(repo, "add", "NOTES.md")
+        _git(repo, "commit", "--quiet", "-m", "after the handoff")
+        _git(repo, "push", "--quiet", "origin", "lane/x")
+        own = _git(repo, "rev-parse", "HEAD")
+        with pytest.raises(ship.Refused, match="1 commit of this lane's own") as stop:
+            ship.arm(why="pushed by hand")
+        assert own[:7] in str(stop.value) and "/handoff" in str(stop.value)
+        assert _marker(repo) == marker
+
+
 class TestModArgs:
     """What `seat.py launch` puts first in claude's arguments: `--plugin-dir`
     for the own-clear mod beside the driver, when its manifest is there. Dies
@@ -379,7 +808,8 @@ class TestTheRecordTheModWritesIsWhatTheHooksRead:
 
     #: What the mod writes beyond the arm's own fields; the readers below read a subset.
     FIELDS = ("clear_asked_at", "clear_refused", "clear_refusals", "clear_refused_at", "clear_resolved_at",
-              "turns_since_ask", "previous_session_id", "stale_because")
+              "turns_since_ask", "previous_session_id", "stale_because",
+              "clear_held", "clear_held_since", "clear_held_turns")
 
     def test_every_field_the_hooks_read_is_one_the_mod_writes(self, module_text):
         banner = (TOOLS_CC / "hooks" / "session_start.py").read_text(encoding="utf-8")
@@ -387,9 +817,10 @@ class TestTheRecordTheModWritesIsWhatTheHooksRead:
         for field in self.FIELDS:
             assert field in module_text, f"the mod no longer writes {field}"
         for name in ("clear_refusals", "clear_refused", "clear_asked_at", "clear_resolved_at", "turns_since_ask",
-                     "stale_because"):
+                     "stale_because", "clear_held", "clear_held_since", "clear_held_turns"):
             assert f'"{name}"' in banner, f"the banner no longer reads {name}"
-        for name in ("clear_refusals", "clear_refused", "clear_asked_at", "clear_refused_at"):
+        for name in ("clear_refusals", "clear_refused", "clear_asked_at", "clear_refused_at",
+                     "clear_held", "clear_held_since", "clear_held_turns"):
             assert f'"{name}"' in router, f"the router no longer reads {name}"
         assert 'OWN_CLEAR_MARKER = "own_clear.json"' in banner
         assert '_OWN_CLEAR_MARKER = "own_clear.json"' in router
@@ -405,8 +836,58 @@ class TestTheRecordTheModWritesIsWhatTheHooksRead:
         start = module_text.index("}, async err => {")
         rejected = module_text[start:module_text.index("return next(e)", start)]
         assert "clear_refusals: count" in rejected and "clear_refused_at" in rejected
+        # A hold the ask's own write failed to take off is older than this
+        # refusal (DEF-2039's review drove it): the refusal takes it off.
+        assert "clear_held: undefined, clear_held_since: undefined, clear_held_turns: undefined" in rejected
         assert "state:" not in rejected
         assert ".catch(" not in module_text[module_text.rindex("$.command", 0, start):start]
+
+    def test_a_hold_is_recorded_through_the_re_reading_writer_and_ends_at_the_ask(self, module_text):
+        """DEF-2039's guard, by text since no CI cell installs ``claude`` (the
+        kit drives it): a held turn's end writes the hold through ``record``,
+        which reads the marker again and writes only while it is armed for this
+        session (a write from the handler's older copy would arm again a marker
+        the clear consumed meanwhile), and the ask takes the three fields off."""
+        start = module_text.index("    if (why) {\n      $.ui.status(`own-clear: armed, waiting:")
+        held = module_text[start:module_text.index("return next(e)", start)]
+        assert "await record($, id, { clear_held: why, clear_held_since: since, clear_held_turns: turns }" in held
+        assert "writeMarker(" not in held, "the hold is written from the handler's older copy of the marker"
+        assert "clear_held: undefined, clear_held_since: undefined, clear_held_turns: undefined" in module_text
+
+    def test_every_hold_the_mod_names_has_a_verb_in_the_router(self, module_text):
+        """DEF-2039: the router tells the held window the verb that resolves
+        its hold, keyed by the opening words of each ``inFlight`` return (the
+        mod's text names no verb: it rides the clear's re-prime brief, where a
+        verb would run in the new window over a consumed marker). Read from
+        both sources, comments stripped: every return has a key, and every key
+        a return. Dies to: a new cause in ``inFlight`` with no verb (said with
+        the fallback alone), and a cause reworded on one side."""
+        import ast
+        code = re.sub(r"/\*.*?\*/", "", module_text, flags=re.S)
+        code = "\n".join(line.split("//", 1)[0] for line in code.splitlines())
+        start = code.index("async function inFlight(")
+        body = code[start:code.index("\n}\n", start)]
+        literals = [m.group(2).split("${", 1)[0].replace("\\'", "'")
+                    for m in re.finditer(r"return ([`'])((?:\\.|(?!\1).)*)\1", body)]
+        # Every return is a string literal this pin reads, and only `return ''`
+        # has no words of its own (the failure-mode review drove a new cause
+        # from a helper, a double-quoted string and a `${...}` opening: each
+        # passed the first cut of this pin unread).
+        assert len(re.findall(r"\breturn\b", body)) == len(literals), "an inFlight return this pin cannot read"
+        assert literals.count("") == 1, f"a return whose words this pin cannot read: {literals}"
+        causes = [c.split(" (", 1)[0].strip() for c in literals if c]
+        assert len(causes) >= 4, f"inFlight's returns were not read: {causes}"
+        router = ast.parse((TOOLS_CC / "hooks" / "task_router.py").read_text(encoding="utf-8"))
+        table = next((node.value for node in router.body if isinstance(node, (ast.Assign, ast.AnnAssign))
+                      and "_OWN_CLEAR_HOLD_VERBS" in ast.unparse(node.targets[0] if isinstance(node, ast.Assign)
+                                                                 else node.target)), None)
+        assert table is not None, "task_router.py no longer keeps _OWN_CLEAR_HOLD_VERBS"
+        keys = [key for key, _verb in ast.literal_eval(table)]
+        # Matched as the router matches: exactly, on the words before " (".
+        for cause in causes:
+            assert cause in keys, f"no verb in the router for the hold {cause!r}"
+        for key in keys:
+            assert key in causes, f"the router's key {key!r} names no hold"
 
     def test_a_pending_clear_holds_the_last_session(self, module_text):
         """DEF-5032's guard: a turn's end writes ``lastId`` only outside a
@@ -465,6 +946,27 @@ class TestTheModReadsWhatTheDriverWrites:
         for name in ("ESPALIER_OWN_CLEAR_ROOT", "ESPALIER_OWN_CLEAR_LOG"):
             assert f"$.env.get('{name}')" in module_text
             assert name in seat.OWN_CLEAR_ENV
+
+    def test_the_hold_on_a_moved_head_names_the_catch_up_that_re_arms_it(self, ship, module_text):
+        """The hold's text promised a re-arm only a handoff makes while the
+        driver's catch-up moved HEAD with nothing to hand off (air-work's
+        window, 2026-10-31): the text names the catch-up, which re-arms at the
+        new head, and names no verb to run -- the same string rides the
+        clear's re-prime brief as what the old window left in flight, and a
+        verb named there would be run in the new window over a consumed
+        marker, arming a fresh one that clears that window at its first turn's
+        end (the failure-mode review). The driver's two verbs call the re-arm:
+        a Call in their bodies, docstrings excluded (the pin that read their
+        source text stayed green with every call deleted)."""
+        import ast
+        import inspect
+        line = next((ln for ln in module_text.splitlines() if "return 'HEAD moved since the handoff" in ln), None)
+        assert line is not None, "the hold on a moved head is gone from inFlight"
+        assert "catch-up" in line and "ship.py arm" not in line and "python " not in line, line
+        for verb in (ship.catch_up, ship.arm):
+            calls = {getattr(n.func, "attr", None) or getattr(n.func, "id", "") or ""
+                     for n in ast.walk(ast.parse(inspect.getsource(verb))) if isinstance(n, ast.Call)}
+            assert any("rearm_own_clear" in name for name in calls), f"{verb.__name__} no longer calls the re-arm"
 
     def test_the_in_flight_read_precedes_the_hand_on_of_the_clears_session_start(self, module_text):
         """The project's SessionStart hook runs inside the mod's ``next(e)`` and

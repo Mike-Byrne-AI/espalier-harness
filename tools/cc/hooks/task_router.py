@@ -7,6 +7,7 @@ Claude sees alongside the user prompt. Empty stdout = no injection.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import sys
@@ -14,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hook_utils import has_active_plan, hook_cwd, say_crash, say_once, read_stdin_safely, resolve_project_root, safe_session_id, touch_session_marker, window_key, atomic_write_text, handoff_context_threshold, handoff_push_on, read_context_from_transcript, sessions_dir, STATE_DIR, COLD_OPEN_FLAG, HANDOFF_ASKED_SUFFIX, OWN_CLEAR_TOLD_SUFFIX, ONCE_FLAG_PREFIX, TRANSCRIPT_TAIL_BYTES  # noqa: E402
+from _hook_utils import has_active_plan, hook_cwd, say_crash, say_once, read_stdin_safely, resolve_project_root, safe_session_id, touch_session_marker, window_key, atomic_write_text, HANDOFF_GATE_HOLD, HANDOFF_GATE_HOLD_RECHECK_S, handoff_context_threshold, handoff_push_on, read_context_from_transcript, sessions_dir, STATE_DIR, COLD_OPEN_FLAG, HANDOFF_ASKED_SUFFIX, OWN_CLEAR_TOLD_SUFFIX, ONCE_FLAG_PREFIX, TRANSCRIPT_TAIL_BYTES  # noqa: E402
 import _reinject  # noqa: E402  -- the UserPromptSubmit generative recall dispatch
 
 # Keywords that suggest a multi-step task
@@ -237,8 +238,45 @@ _OWN_CLEAR_REFUSED = (
     "{count} time(s) (latest: {reason}); the mod asks again at each turn's end, and no clear has "
     "run. Say so in the first line of your reply, so the operator at this terminal sees it: this "
     "window needs /clear by hand (the loop survives it; start no second one). Take no new job "
-    "meanwhile."
+    "meanwhile (your own pull request's red or conflict, and a red main's revert, are not new work)."
 )
+
+# The own-clear's held clear (DEF-2039, 2026-11-01): the mod holds the clear
+# while something is in flight (its inFlight causes) and puts the hold on its
+# marker (why, since when, the turn ends it has held); the dispatcher window
+# sat held on a moved HEAD for 9 h and 36 loop ticks with the hold on its
+# status line alone. Said in the held window on every prompt, with the verb
+# that resolves the cause: the mod's own text names none, since it rides the
+# clear's re-prime brief, where a verb would run in the new window over a
+# consumed marker. Keyed by the opening words of each inFlight return
+# (tests/test_own_clear.py pins a key for every return, and a return for every key).
+_OWN_CLEAR_HELD = (
+    "[HARNESS] own-clear: the clear this window's handoff armed has been held since {since}Z over "
+    "{turns} turn end(s): {why}{earlier}. No clear runs while it holds. {verb} A /clear by hand ends it "
+    "too (the mod re-primes the window and names what was left in flight). Say so in the first line of "
+    "your reply, so the operator at this terminal sees it, and take no new job meanwhile (your own pull "
+    "request's red or conflict, and a red main's revert, are not new work)."
+)
+#: A cause matches its key exactly on the text before its first " (" (a
+#: cause the mod adds later, say an edit in another checkout, falls to the
+#: fallback rather than to a verb written for another cause).
+_OWN_CLEAR_HOLD_VERBS = (
+    ("a tracked edit is in flight",
+     "What resolves it: if this window made the edit since the handoff, commit it and run /handoff, which "
+     "re-arms the marker; otherwise say so and leave it to the operator (git status --short "
+     "--untracked-files=no names it; git stash keeps it and lets the clear run)."),
+    ("HEAD moved since the handoff",
+     "What resolves it: after a pull with nothing to hand off, python tools/cc/ship.py arm re-arms the marker "
+     "at HEAD; after a commit of the lane's own, /handoff re-arms it (arm refuses over one and says so)."),
+    ("a plan is in progress",
+     "What resolves it: finish the plan's steps, or python tools/cc/execution_plan.py reset when none is "
+     "left to run."),
+    ("git status could not be read",
+     "What resolves it: git's own words are above; the mod reads again at each turn's end."),
+    ("HEAD could not be read",
+     "What resolves it: git's own words are above; the mod reads again at each turn's end."),
+)
+_OWN_CLEAR_HOLD_FALLBACK = "The mod reads again at each turn's end."
 
 
 #: What the mod wrote at the clear into THIS session, said once on the first
@@ -275,16 +313,29 @@ def _read_own_clear_marker(root: Path) -> dict | None:
 
 
 def _own_clear_advisory(root: Path, sid: str) -> str | None:
-    """DEF-5031: the own-clear marker armed for THIS session with the latest
-    ask refused, or ``None`` (no marker, another session's, no refusal, an ask
-    the engine took since -- the mod takes the refusal off the marker at a new
-    ask -- or a torn file). The banner's ``Own-clear:`` line is the sibling
+    """DEF-5031, DEF-2039: the own-clear marker armed for THIS session with
+    its clear held (the hold, with the verb that resolves it) or the latest
+    ask refused, or ``None`` (no marker, another session's, neither, an ask
+    the engine took since -- the mod takes the refusal and the hold off the
+    marker at a new ask -- or a torn file). A hold beside a refusal is the
+    newer: the ask takes a hold off and a refusal leaves the next turn's end
+    to hold or ask again. The banner's ``Own-clear:`` line is the sibling
     reader for every other session; this one speaks in the window whose clear
     it is."""
     marker = _read_own_clear_marker(root)
     if marker is None or marker.get("state") != "armed" or not sid or marker.get("session_id") != sid:
         return None
     count = marker.get("clear_refusals")
+    held = _plain(marker.get("clear_held") or "", 200)
+    if held:
+        cause = held.split(" (", 1)[0].strip()
+        verb = next((text for key, text in _OWN_CLEAR_HOLD_VERBS if cause == key), _OWN_CLEAR_HOLD_FALLBACK)
+        turns = marker.get("clear_held_turns")
+        earlier = (f" (the engine refused an earlier ask {count} time(s))"
+                   if isinstance(count, int) and count > 0 else "")
+        return _OWN_CLEAR_HELD.format(since=str(marker.get("clear_held_since") or "?")[:16],
+                                      turns=turns if isinstance(turns, int) and turns > 0 else "?",
+                                      why=held, earlier=earlier, verb=verb)
     reason = _plain(marker.get("clear_refused") or "", 160)
     if not isinstance(count, int) or count <= 0 or not reason:
         return None
@@ -321,6 +372,82 @@ def _own_clear_told_once(root: Path, sid: str) -> str | None:
     except OSError:  # fail-open: ok deliberate a flag that cannot be written: said on every prompt, never on none
         pass
     return text
+
+
+#: The Stop hook's handoff hold (``_hook_utils.HANDOFF_GATE_HOLD``, DEF-4058):
+#: a Stop that passes has no channel to Claude, so the hold the gate took is
+#: said here, on every prompt while the file stands -- the one line the model
+#: reads in the operator's own window and on every worker tick. Only a Stop
+#: reads gh again, so the line says when the record was last read, and past
+#: the gate's re-check interval that it is stale (DEF-4083: prompts with no
+#: Stop between them were told a merged pull request still held the lane).
+_HANDOFF_HOLD = (
+    "[HARNESS] The Stop hook's handoff gate holds {branch} ({ahead} unpushed) behind {prs}: one open "
+    "pull request per seat, so it asks for the handoff once that one merges (held {age}, last read {read}; "
+    "a Stop reads gh again past {interval}). Nothing to do for it now; the record is "
+    ".espalier-state/handoff_gate_hold."
+)
+_HANDOFF_HOLD_STALE = (
+    "[HARNESS] The Stop hook's handoff gate held {branch} ({ahead} unpushed) behind {prs} (held {age}), "
+    "and the record is stale: {why}, so what it waits on may have merged since. The next Stop with "
+    "nothing in flight reads gh again; /handoff reads the open pull requests now (it writes the lane's "
+    "row, then opens the lane where none of this seat's is open and holds it again where one is), and so "
+    "does python tools/cc/ship.py open once the lane carries its row. The record is "
+    ".espalier-state/handoff_gate_hold."
+)
+
+
+def _hold_minutes(seconds: float) -> str:
+    minutes = int(seconds // 60)
+    return f"{minutes // 60} h {minutes % 60} min" if minutes >= 60 else f"{minutes} min"
+
+
+def _hold_stamp(value: object) -> float | None:
+    """A stamp as the gate writes it (a finite number, never a bool), or None."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return None
+    return float(value)
+
+
+def _handoff_hold_line(root: Path) -> str | None:
+    """The hold as the gate wrote it, or None: no hold, a torn one, or one
+    naming no branch (the fields are the gate's; tests/test_stop_gate.py pins
+    them across the two readers). Stale by the gate's own re-check rule
+    (``stop_gate._hold_recheck``): a ``checked`` stamp that is missing, ahead
+    of this clock, or the interval old or older; and a re-check that could
+    not read gh (``fault``), whose stamp only bounds the next read."""
+    import time  # lazy: the one caller that needs a clock
+
+    try:
+        hold = json.loads((root / STATE_DIR / HANDOFF_GATE_HOLD).read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # fail-open: ok deliberate an advisory: no hold, or one torn mid-rewrite, says nothing
+        return None
+    if not isinstance(hold, dict) or not hold.get("branch"):
+        return None
+    prs = hold.get("prs")
+    named = (", ".join(_plain(p, 80) for p in prs) if isinstance(prs, list) and prs
+             else "another of this seat's pull requests")
+    ahead = hold.get("ahead")
+    commits = (f"{ahead} commit{'s' if ahead != 1 else ''}"
+               if isinstance(ahead, int) and not isinstance(ahead, bool) else "commits")
+    now = time.time()
+    since = _hold_stamp(hold.get("since"))
+    age = _hold_minutes(max(0.0, now - since)) if since is not None else "for a while"
+    checked = _hold_stamp(hold.get("checked"))
+    read_ago = now - checked if checked is not None and now >= checked else None
+    fault = _plain(hold.get("fault") or "", 60)
+    interval = f"{int(HANDOFF_GATE_HOLD_RECHECK_S // 60)} min"
+    fields = {"branch": _plain(hold.get("branch"), 120), "ahead": commits, "prs": named, "age": age}
+    if not fault and read_ago is not None and read_ago < HANDOFF_GATE_HOLD_RECHECK_S:
+        return _HANDOFF_HOLD.format(read=f"{_hold_minutes(read_ago)} ago", interval=interval, **fields)
+    if fault:
+        when = f", {_hold_minutes(read_ago)} ago," if read_ago is not None else ""
+        why = f"the gate's last re-check{when} could not read gh ({fault})"
+    elif read_ago is not None:
+        why = f"last read {_hold_minutes(read_ago)} ago, past the gate's {interval} re-check"
+    else:
+        why = "it carries no usable last-read stamp"
+    return _HANDOFF_HOLD_STALE.format(why=why, **fields)
 
 
 # Decision-shape patterns. The advisory is `print()`-ed to the
@@ -555,6 +682,16 @@ def _run_main() -> int:
         if printed_any:
             print()
         print(told)
+        printed_any = True
+
+    # The Stop hook's handoff hold (DEF-4058): said on every prompt while it
+    # stands, since the Stop that took it has no channel to Claude. Above the
+    # active-plan return: a plan open on the held lane changes nothing.
+    held = _handoff_hold_line(root)
+    if held is not None:
+        if printed_any:
+            print()
+        print(held)
         printed_any = True
 
     if _has_active_plan(root):

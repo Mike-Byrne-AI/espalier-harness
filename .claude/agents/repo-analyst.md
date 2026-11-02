@@ -6,7 +6,7 @@ description: >
   detection (fingerprint exists). Checks language, frameworks, architecture,
   test patterns, CI/CD, and workflow. The foundation for harness update
   decisions. Runs in its own context window.
-tools: Read, Grep, Glob, Bash(python *), Bash(find *), Bash(wc *)
+tools: Read, Grep, Glob, Bash
 model: opus
 ---
 
@@ -18,6 +18,16 @@ understood this, and does the harness still match reality?" You're not catalogin
 files; you're producing the structural understanding the harness configures against.
 
 **Working directory:** `.` (project root)
+
+**Bash scope.** `Bash` on the tools line above is the whole tool: Claude Code
+reads that line as tool names, so a command pattern there would narrow
+nothing. What the shell may run is bounded by the project's permission rules
+in `.claude/settings.json` (they apply to subagents too) and by the harness's
+hooks, which refuse a write into the harness's own files and the paths
+`protected_paths` names, and pause once before a discard of uncommitted work;
+nothing there stops a `git stash` or a `sed -i` on the project's own source.
+This agent reviews and changes nothing: run only the read-only commands this
+body shows.
 
 ## Analysis Protocol
 
@@ -49,9 +59,31 @@ Classify the project:
 ### 2. STACK DETECTION
 
 ```bash
+# Every census here walks the repository's own files. `walk` is find without
+# .git, the dependency trees and the build and cache directories the harness's
+# own repository walk skips (each named twice: the directory and what is under
+# it, at any depth); `own` is `walk` without what the harness wrote: the two
+# deployed layers here, and at deploy every path init, install-ci and fuse
+# wrote on this tree, rendered into that one line and anchored at the root.
+# A caller passes tests only, parenthesised around any -o, and never an
+# action: the prunes come after "$@".
+walk() {
+  find . "$@" ! -path "*/.git" ! -path "*/.git/*" ! -path "*/__pycache__" ! -path "*/__pycache__/*" \
+    ! -path "*/node_modules" ! -path "*/node_modules/*" ! -path "*/bower_components" ! -path "*/bower_components/*" \
+    ! -path "*/jspm_packages" ! -path "*/jspm_packages/*" ! -path "*/.yarn" ! -path "*/.yarn/*" ! -path "*/.pnpm-store" ! -path "*/.pnpm-store/*" \
+    ! -path "*/.venv" ! -path "*/.venv/*" ! -path "*/venv" ! -path "*/venv/*" ! -path "*/vendor" ! -path "*/vendor/*" ! -path "*/third_party" ! -path "*/third_party/*" \
+    ! -path "*/build" ! -path "*/build/*" ! -path "*/dist" ! -path "*/dist/*" ! -path "*/target" ! -path "*/target/*" \
+    ! -path "*/coverage" ! -path "*/coverage/*" ! -path "*/htmlcov" ! -path "*/htmlcov/*" ! -path "*/.next" ! -path "*/.next/*" \
+    ! -path "*/.mypy_cache" ! -path "*/.mypy_cache/*" ! -path "*/.pytest_cache" ! -path "*/.pytest_cache/*" ! -path "*/.ruff_cache" ! -path "*/.ruff_cache/*"
+}
+own() { walk "$@" ! -path "*/tools/cc" ! -path "*/tools/cc/*" ! -path "*/.claude" ! -path "*/.claude/*"; }
+# <!-- espalier:self-host-only -->
+# On this repository tools/cc/ and .claude/ are its source; init strips this block from every other tree.
+own() { walk "$@"; }
+# <!-- /espalier:self-host-only -->
+
 echo "=== Language breakdown ==="
-find . -type f ! -path "*/.git/*" ! -path "*/node_modules/*" ! -path "*/__pycache__/*" \
-  ! -path "*/vendor/*" ! -path "*/.venv/*" | sed 's/.*\.//' | sort | uniq -c | sort -rn | head -15
+own -type f | sed 's/.*\.//' | sort | uniq -c | sort -rn | head -15
 
 echo "=== Package managers ==="
 ls requirements*.txt setup.py setup.cfg pyproject.toml Pipfile poetry.lock \
@@ -59,7 +91,7 @@ ls requirements*.txt setup.py setup.cfg pyproject.toml Pipfile poetry.lock \
   Gemfile Gemfile.lock pom.xml build.gradle 2>/dev/null
 
 echo "=== Frameworks (Python) ==="
-grep -rh "^from\|^import" . --include="*.py" 2>/dev/null | \
+own -type f -name "*.py" | tr '\n' '\0' | xargs -0 grep -h "^from\|^import" 2>/dev/null | \
   grep -oE "(django|flask|fastapi|starlette|celery|sqlalchemy|alembic|pydantic|torch|tensorflow|transformers|pandas|numpy|pytest|click|typer|httpx|requests)" | \
   sort | uniq -c | sort -rn | head -15
 
@@ -73,14 +105,14 @@ try:
     for k in sorted(deps.keys()):
         print(f'  {k}: {deps[k]}')
 except json.JSONDecodeError as e:
-    print(f'JS_DEPS_PARSE_FAILED: invalid JSON — {e}')
+    print(f'JS_DEPS_PARSE_FAILED: invalid JSON -- {e}')
 except OSError as e:
-    print(f'JS_DEPS_PARSE_FAILED: file error — {e}')
+    print(f'JS_DEPS_PARSE_FAILED: file error -- {e}')
 " 2>/dev/null | head -20
 
 echo "=== Database ==="
-grep -rn --include="*.py" --include="*.js" --include="*.yaml" --include="*.env*" \
-  -iE "(postgres|mysql|sqlite|mongodb|redis|elasticsearch|dynamodb|firestore)" . 2>/dev/null | head -10
+own -type f \( -name "*.py" -o -name "*.js" -o -name "*.yaml" -o -name "*.env*" \) | tr '\n' '\0' | \
+  xargs -0 grep -Hn -iE "(postgres|mysql|sqlite|mongodb|redis|elasticsearch|dynamodb|firestore)" 2>/dev/null | head -10
 
 echo "=== Docker ==="
 ls Dockerfile docker-compose*.yml .dockerignore 2>/dev/null
@@ -89,41 +121,81 @@ ls Dockerfile docker-compose*.yml .dockerignore 2>/dev/null
 ### 3. ARCHITECTURE ANALYSIS
 
 ```bash
+# The same `walk` and `own` as STACK DETECTION (a fence is one shell, so each
+# fence defines the pair, byte for byte): the repository's files without .git,
+# the dependency trees and the build and cache directories, and then without
+# what the harness wrote (the two deployed layers here; at deploy, every path
+# init, install-ci and fuse write). Tests only in "$@".
+walk() {
+  find . "$@" ! -path "*/.git" ! -path "*/.git/*" ! -path "*/__pycache__" ! -path "*/__pycache__/*" \
+    ! -path "*/node_modules" ! -path "*/node_modules/*" ! -path "*/bower_components" ! -path "*/bower_components/*" \
+    ! -path "*/jspm_packages" ! -path "*/jspm_packages/*" ! -path "*/.yarn" ! -path "*/.yarn/*" ! -path "*/.pnpm-store" ! -path "*/.pnpm-store/*" \
+    ! -path "*/.venv" ! -path "*/.venv/*" ! -path "*/venv" ! -path "*/venv/*" ! -path "*/vendor" ! -path "*/vendor/*" ! -path "*/third_party" ! -path "*/third_party/*" \
+    ! -path "*/build" ! -path "*/build/*" ! -path "*/dist" ! -path "*/dist/*" ! -path "*/target" ! -path "*/target/*" \
+    ! -path "*/coverage" ! -path "*/coverage/*" ! -path "*/htmlcov" ! -path "*/htmlcov/*" ! -path "*/.next" ! -path "*/.next/*" \
+    ! -path "*/.mypy_cache" ! -path "*/.mypy_cache/*" ! -path "*/.pytest_cache" ! -path "*/.pytest_cache/*" ! -path "*/.ruff_cache" ! -path "*/.ruff_cache/*"
+}
+own() { walk "$@" ! -path "*/tools/cc" ! -path "*/tools/cc/*" ! -path "*/.claude" ! -path "*/.claude/*"; }
+# <!-- espalier:self-host-only -->
+# On this repository tools/cc/ and .claude/ are its source; init strips this block from every other tree.
+own() { walk "$@"; }
+# <!-- /espalier:self-host-only -->
+
 echo "=== Directory structure ==="
-find . -maxdepth 3 -type d ! -path "*/.git/*" ! -path "*/node_modules/*" \
-  ! -path "*/__pycache__/*" ! -path "*/.venv/*" | sort
+# The directories that hold the repository's own files, to depth 3, derived
+# from the files: a directory the harness alone populated is not listed.
+own -type f | sed 's#/[^/]*$##' | awk -F/ '{p = $1; print p; for (i = 2; i <= NF && i <= 4; i++) {p = p "/" $i; print p}}' | sort -u
 
 echo "=== Module structure ==="
-find . -name "__init__.py" ! -path "*/.git/*" ! -path "*/.venv/*" 2>/dev/null | sort
+own -name "__init__.py" 2>/dev/null | sort
 
 echo "=== API routes / endpoints ==="
-grep -rn "app\.\(get\|post\|put\|delete\|patch\|route\)" . --include="*.py" --include="*.js" --include="*.ts" 2>/dev/null | head -20
+own -type f \( -name "*.py" -o -name "*.js" -o -name "*.ts" \) 2>/dev/null \
+  | tr '\n' '\0' | xargs -0 grep -Hn "app\.\(get\|post\|put\|delete\|patch\|route\)" 2>/dev/null | head -20
 
 echo "=== Config files ==="
-find . -maxdepth 3 \( -name "*.yaml" -o -name "*.yml" -o -name "*.toml" \
+own -maxdepth 3 \( -name "*.yaml" -o -name "*.yml" -o -name "*.toml" \
   -o -name "*.json" -o -name "*.cfg" -o -name "*.ini" \) \
-  ! -path "*/.git/*" ! -path "*/node_modules/*" ! -name "package-lock.json" \
-  ! -name "yarn.lock" 2>/dev/null | sort
+  ! -name "package-lock.json" ! -name "yarn.lock" 2>/dev/null | sort
 
 echo "=== Size ==="
-find . -type f ! -path "*/.git/*" ! -path "*/node_modules/*" ! -path "*/__pycache__/*" | wc -l
+own -type f | wc -l
 echo "files"
-find . -type f \( -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.go" -o -name "*.rs" \) \
-  2>/dev/null | xargs wc -l 2>/dev/null | tail -1
+own -type f \( -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.go" -o -name "*.rs" \) 2>/dev/null \
+  | tr '\n' '\0' | xargs -0 cat 2>/dev/null | wc -l | awk '{print $1 " total"}'
 ```
 
 ### 4. TESTING & QUALITY
 
 ```bash
+# The same `walk` and `own` as STACK DETECTION (each fence is one shell): the
+# repository's files without .git, the dependency trees and the build and cache
+# directories, and then without what the harness wrote (the two deployed
+# layers here; at deploy, every path init, install-ci and fuse write). Tests
+# only in "$@".
+walk() {
+  find . "$@" ! -path "*/.git" ! -path "*/.git/*" ! -path "*/__pycache__" ! -path "*/__pycache__/*" \
+    ! -path "*/node_modules" ! -path "*/node_modules/*" ! -path "*/bower_components" ! -path "*/bower_components/*" \
+    ! -path "*/jspm_packages" ! -path "*/jspm_packages/*" ! -path "*/.yarn" ! -path "*/.yarn/*" ! -path "*/.pnpm-store" ! -path "*/.pnpm-store/*" \
+    ! -path "*/.venv" ! -path "*/.venv/*" ! -path "*/venv" ! -path "*/venv/*" ! -path "*/vendor" ! -path "*/vendor/*" ! -path "*/third_party" ! -path "*/third_party/*" \
+    ! -path "*/build" ! -path "*/build/*" ! -path "*/dist" ! -path "*/dist/*" ! -path "*/target" ! -path "*/target/*" \
+    ! -path "*/coverage" ! -path "*/coverage/*" ! -path "*/htmlcov" ! -path "*/htmlcov/*" ! -path "*/.next" ! -path "*/.next/*" \
+    ! -path "*/.mypy_cache" ! -path "*/.mypy_cache/*" ! -path "*/.pytest_cache" ! -path "*/.pytest_cache/*" ! -path "*/.ruff_cache" ! -path "*/.ruff_cache/*"
+}
+own() { walk "$@" ! -path "*/tools/cc" ! -path "*/tools/cc/*" ! -path "*/.claude" ! -path "*/.claude/*"; }
+# <!-- espalier:self-host-only -->
+# On this repository tools/cc/ and .claude/ are its source; init strips this block from every other tree.
+own() { walk "$@"; }
+# <!-- /espalier:self-host-only -->
+
 echo "=== Test framework ==="
 ls tests/ test/ spec/ __tests__/ 2>/dev/null
-find . -name "conftest.py" -o -name "pytest.ini" -o -name "jest.config*" \
-  -o -name ".mocharc*" -o -name "vitest.config*" 2>/dev/null
+own \( -name "conftest.py" -o -name "pytest.ini" -o -name "jest.config*" \
+  -o -name ".mocharc*" -o -name "vitest.config*" \) 2>/dev/null
 
 echo "=== Test count ==="
-find . \( -name "test_*.py" -o -name "*_test.py" -o -name "*.test.js" \
-  -o -name "*.test.ts" -o -name "*.spec.js" -o -name "*.spec.ts" \) \
-  ! -path "*/node_modules/*" 2>/dev/null | wc -l
+own -type f \( -name "test_*.py" -o -name "*_test.py" -o -name "*.test.js" \
+  -o -name "*.test.ts" -o -name "*.spec.js" -o -name "*.spec.ts" \) 2>/dev/null | wc -l
 
 echo "=== Linting/formatting ==="
 ls .flake8 .pylintrc .eslintrc* .prettierrc* pyproject.toml setup.cfg \
@@ -179,22 +251,26 @@ else
 fi
 
 echo "=== When was fingerprint last updated ==="
-git log --format="%ar %s" -- reports/repo_fingerprint.json 2>/dev/null | head -3
+# The fingerprint records the commit it was taken at (head_sha); reports/ is
+# gitignored, so the file has no history of its own to read.
+# A hex string in a JSON file: read with grep, so no interpreter is needed.
+fp_sha=$(grep -oE '"head_sha": *"[0-9a-f]{40,64}"' reports/repo_fingerprint.json 2>/dev/null | grep -oE '[0-9a-f]{40,64}')
+if [ -n "$fp_sha" ] && git cat-file -e "$fp_sha^{commit}" 2>/dev/null; then
+  git log -1 --format="  taken at $fp_sha (%ar): %s" "$fp_sha"
+else
+  fp_sha=
+  echo "  no baseline: the saved fingerprint records no commit this clone holds (taken outside git, before its first commit, or by an older release); run espalier fingerprint . to record one"
+fi
 
 echo "=== Uncommitted changes ==="
 git status --short 2>/dev/null | head -20
 
 echo "=== Changed files since fingerprint was last saved ==="
-last_fp=$(git log --format="%H" -- reports/repo_fingerprint.json 2>/dev/null | head -1)
-if [ -n "$last_fp" ]; then
-  echo "  Comparing against fingerprint commit: $last_fp"
-  git diff --name-only "$last_fp" HEAD 2>/dev/null | grep "\.py$\|\.js$\|\.ts$\|\.go$\|\.rs$" | head -20
+if [ -n "$fp_sha" ]; then
+  echo "  Comparing against the commit the fingerprint was taken at: $fp_sha"
+  git diff --name-only "$fp_sha" HEAD 2>/dev/null | grep -E '\.(py|js|ts|go|rs)$' | head -20
 else
-  echo "  No fingerprint commit found — showing recent commits instead"
-  commit_count=$(git rev-list --count HEAD 2>/dev/null || echo "0")
-  window=$([ "$commit_count" -ge 5 ] && echo "HEAD~5" || echo "$(git rev-list --max-parents=0 HEAD 2>/dev/null)")
-  git diff --name-only "$window" HEAD 2>/dev/null | grep "\.py$\|\.js$\|\.ts$" | head -20
-  echo "  [Note: window is $window — may not represent all changes since last analysis]"
+  echo "  NOT EVALUATED: no baseline commit (above), so no list of changes since the last analysis; a recent-commits window would not be one"
 fi
 
 echo "=== ESPALIER_MEMORY.md drift check ==="
@@ -273,3 +349,18 @@ SPECULATION (needs developer confirmation).
 If significant drift is detected, a fingerprint update is recommended:
 run `python -m espalier fingerprint .` to save the new baseline. Do not run this automatically
 from inside the analysis — present it as a recommendation for the developer to approve.
+
+## Adapting me to YOUR repo
+
+Every census above walks `own`: your files, minus the dependency, build and
+cache directories `walk` prunes and minus the layer the harness deployed
+(`tools/cc/` and `.claude/`), so the counts describe your code and not the
+harness's. A repository whose own source lives under one of those directories
+is undercounted: widen `own` in every fence that defines it (a fence is one
+shell, so each carries its own copy). The probes, the framework list and the
+report's fields are the generic ones; replace them with what your stack needs.
+Edit this file directly; the agent re-reads its body on each invocation. While
+the file keeps its `espalier:managed` marker line, the next `python -m espalier
+upgrade . --execute` or re-run `init` replaces your edit with the packaged
+body: delete that line to keep your edit, and the file stops receiving
+upstream fixes.

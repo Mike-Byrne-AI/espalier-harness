@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5049",
+ "subject": "tools/cc/hooks/write_guard.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "The fix is a hook policy not yet designed: no structure exists to key a probe on, and a text search of write_guard for an agent-type read would be flipped by a comment while the policy stays absent; the oracle is a driven PreToolUse payload per agent type, written with the fix.",
+ "row_sha": "76340153c433",
+ "text_sha": "f419c45b0f40",
+ "verified_2026_11_01": "OPEN (filed 2026-11-01; probe driven at filing)"
+}

@@ -91,6 +91,7 @@ def _filter_guardrails(items: list[str]) -> list[str]:
 FINGERPRINT_REDUCTIONS: tuple[str, ...] = (
     'repo_name',
     'repo_root',
+    'head_sha(the commit it was taken at; dropped)',
     'generated_zones',
     'risky_mutable_zones',
     'conventions.guardrails(ephemeral-only)',
@@ -183,6 +184,8 @@ def _normalize_fingerprint(data: dict[str, Any]) -> dict[str, Any]:
         normalized['repo_root'] = '<repo_root>'
     if 'repo_name' in normalized:
         normalized['repo_name'] = '<repo_name>'
+    # The commit it was taken at: a record of when, which every commit moves.
+    normalized.pop('head_sha', None)
     if isinstance(normalized.get('generated_zones'), list):
         normalized['generated_zones'] = _filter_zones(normalized['generated_zones'])
     if isinstance(normalized.get('risky_mutable_zones'), list):

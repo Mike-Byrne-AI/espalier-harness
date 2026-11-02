@@ -207,8 +207,10 @@ def is_statusline_shim_head(token: str) -> bool:
     """Is ``token`` (an unquoted argv[0]) the Windows statusline shim?
 
     ``init`` on Windows wires ``statusLine.command`` as
-    ``"${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" <interpreter>``
-    (DEF-729): the shim is the head so batch's or-operator can print the
+    ``. "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" <interpreter>``
+    (DEF-729, DEF-3017; the operator before it is
+    :func:`statusline_shim_end`'s to read): the shim is the head so batch's
+    or-operator can print the
     fallback line when the interpreter is gone, and the interpreter is its
     first ARGUMENT. Matched on the tail so a drive-absolute or a
     backslash spelling from a hand edit still reads as the shim.
@@ -220,12 +222,79 @@ def is_statusline_shim_head(token: str) -> bool:
     return token.replace("\\", "/").lower().endswith(STATUSLINE_SHIM)
 
 
-#: Where Claude Code looks for Git Bash before it asks PATH: the two literals
-#: in its lookup (read from the 2.1.316 binary), drive letter and all.
+#: Where Claude Code looks for Git Bash before it asks PATH: the two default
+#: install locations its troubleshoot-install page names, in its order, each
+#: with ``bin\bash.exe`` under it (the page names the roots; the suffix is its
+#: step 2's and the 2.1.316 binary's literal). ``docs/external/cc-git-bash.md``
+#: pins the page, and ``TestGitBashLookup`` reads this tuple against it.
 GIT_BASH_DEFAULT_PATHS = (
     r"C:\Program Files\Git\bin\bash.exe",
     r"C:\Program Files (x86)\Git\bin\bash.exe",
 )
+
+#: The file names Claude Code accepts in ``CLAUDE_CODE_GIT_BASH_PATH``; any
+#: other name is ignored as if the variable were unset (the same page).
+GIT_BASH_NAMES = ("bash.exe", "sh.exe", "bash", "sh")
+
+#: The folders that make a ``git`` below the launch folder one the project
+#: placed, which Claude Code's step 2 skips: ``node_modules`` and the
+#: virtual-environment folders. The page quotes three (``TestGitBashLookup``
+#: reads them against the pin); the set is the installed 2.1.316 binary's,
+#: read 2026-11-01 (DEF-3021).
+# stack-table: ok purpose-scoped -- Claude Code's own skip list, copied from its binary; deriving it from the stack table would make the copy drift from Claude Code's rule
+GIT_SKIPPED_FOLDERS = frozenset({
+    "node_modules", ".venv", "venv", "env", ".env", "virtualenv",
+    ".tox", ".nox", ".direnv", "__pypackages__",
+})
+
+
+def _placed_by_project(git: str, launch: Path) -> bool:
+    """Does Claude Code's step 2 skip ``git`` as one a project placed, with
+    ``launch`` as its launch folder (DEF-3021)? The installed 2.1.316
+    binary's predicate, which its ``where.exe`` walk applies to each answer,
+    the launch folder being its working folder when it first looks (normally
+    the one it was launched from): the folder holding ``git`` is the launch
+    folder; or is below it with one of :data:`GIT_SKIPPED_FOLDERS` anywhere
+    in its path, above the launch folder too (the page's own
+    ``C:\\dev\\env\\myproject\\Git`` example); or is in a WindowsApps alias
+    folder (``AppData\\Local\\Microsoft\\WindowsApps`` under the home folder,
+    or ``Microsoft\\WindowsApps`` under ``%LOCALAPPDATA%``) that sits at or
+    below the launch folder. Asked of the paths as spelled, then of their
+    real paths, case-insensitively, as Windows compares them; as in the
+    binary, a launch folder whose real path cannot be read skips nothing
+    more, and a ``git`` folder whose real path cannot be read is skipped."""
+    local = os.environ.get("LOCALAPPDATA", "").strip()
+    aliases = [os.path.join(str(Path.home()), "AppData", "Local", "Microsoft", "WindowsApps")]
+    if local:
+        aliases.append(os.path.join(local, "Microsoft", "WindowsApps"))
+
+    def spelled(path: str) -> str:
+        return path.replace("\\", "/").rstrip("/").lower()
+
+    def at_or_below(path: str, root: str) -> bool:
+        return path == root or path.startswith(root + "/")
+
+    def placed(folder: str, root: str, alias_dirs: list[str]) -> bool:
+        folder, root = spelled(folder), spelled(root)
+        if folder == root:
+            return True
+        if folder.startswith(root + "/") and not GIT_SKIPPED_FOLDERS.isdisjoint(folder.split("/")):
+            return True
+        return any(at_or_below(alias, root) and at_or_below(folder, alias)
+                   for alias in map(spelled, alias_dirs))
+
+    folder = os.path.dirname(os.path.abspath(git))
+    if placed(folder, os.path.abspath(str(launch)), [os.path.abspath(a) for a in aliases]):
+        return True
+    try:
+        real_root = os.path.realpath(str(launch), strict=True)
+    except OSError:
+        return False
+    try:
+        real_folder = os.path.realpath(folder, strict=True)
+    except OSError:
+        return True
+    return placed(real_folder, real_root, [os.path.realpath(a) for a in aliases])
 
 
 def _settings_git_bash_paths(repo_root: Path | None) -> list[str]:
@@ -263,17 +332,27 @@ def git_bash_path(repo_root: Path | None = None) -> str | None:
     On Windows Claude Code runs a shell-form command -- the statusLine
     among them -- under Git Bash when its lookup finds one and under
     PowerShell when it does not, and the statusLine schema has no field to
-    pin either (DEF-929). Its lookup, in order (read from the 2.1.316
-    binary): ``CLAUDE_CODE_GIT_BASH_PATH`` when its file name is ``bash``,
-    ``sh``, ``bash.exe`` or ``sh.exe`` and the path exists, else the two
+    pin either (DEF-929). Its lookup, in order (its troubleshoot-install
+    page, pinned in ``docs/external/cc-git-bash.md``; the 2.1.316 binary
+    reads the same): ``CLAUDE_CODE_GIT_BASH_PATH`` when its file name is one
+    of :data:`GIT_BASH_NAMES` and the path exists, else the two
     :data:`GIT_BASH_DEFAULT_PATHS`, else ``bin\\bash.exe`` two levels above
-    the first ``git`` ``where.exe`` names.
+    the first ``git`` ``where.exe`` names that a project did not place. That
+    skip (:func:`_placed_by_project`, DEF-3021) is judged against
+    ``repo_root``, since ``doctor`` runs from the repository root where
+    Claude Code judges against its working folder (normally the one it was
+    launched from); with no ``repo_root`` nothing is skipped. Over a bare
+    head a skip errs toward None, the cheap wrong answer below; over an
+    ``&`` head None is the silent one, reached only where Claude Code looks
+    from a folder deeper than ``repo_root``.
 
-    Followed in that order and WIDENED, because the two wrong answers cost
-    differently: a None where Claude Code finds Git Bash renders the
-    PowerShell form, which bash cannot parse, on a host whose bare line
-    worked before; a path where it finds none leaves the bare line those
-    hosts always had. So the variable is also read from the settings files
+    ``init`` no longer reads it: its render runs in both shells (DEF-3017).
+    ``doctor`` does, to name a bare or ``&`` line an older install carries
+    for the shell this host does not run. Followed in that order and
+    WIDENED, because the two wrong answers cost differently there: a None
+    where Claude Code finds Git Bash names a working bare line and asks for
+    the dot, which also works; a path where it finds none stays silent over
+    a bare line PowerShell blanks. So the variable is also read from the settings files
     Claude Code applies to its environment (``repo_root``'s and the
     user's), and every ``git`` on PATH is asked, not the first: a Git Bash
     terminal puts ``mingw64\\bin`` first, and a Claude Code launched from
@@ -282,18 +361,17 @@ def git_bash_path(repo_root: Path | None = None) -> str | None:
     healthy path (DEF-715). A variable set only in the shell that launches
     Claude Code is still unseen from any other shell.
     """
-    names = ("bash.exe", "sh.exe", "bash", "sh")
     env = os.environ.get("CLAUDE_CODE_GIT_BASH_PATH")
     for value in ([env] if env else []) + _settings_git_bash_paths(repo_root):
         name = value.replace("\\", "/").rsplit("/", 1)[-1].lower()
-        if name in names and os.path.exists(value):
+        if name in GIT_BASH_NAMES and os.path.exists(value):
             return value
     for path in GIT_BASH_DEFAULT_PATHS:
         if os.path.exists(path):
             return path
     for entry in os.environ.get("PATH", "").split(os.pathsep):
         git = shutil.which("git", path=entry) if entry else None
-        if git:
+        if git and not (repo_root is not None and _placed_by_project(git, repo_root)):
             # Lexical, as Claude Code's path.win32 join is: `<git>\..\..\bin`.
             bash = os.path.normpath(os.path.join(git, "..", "..", "bin", "bash.exe"))
             if os.path.exists(bash):
@@ -322,21 +400,31 @@ def after_head_index(command: str, head: str) -> int:
     return end
 
 
+def _dot_operator(body: str) -> bool:
+    """Does ``body`` (left-stripped) open with the dot operator: a ``.``
+    and then whitespace? Glued to what follows, bash reads one word and
+    not its builtin, and ``./x`` is a relative path."""
+    return body[:1] == "." and body[1:2].isspace()
+
+
 def statusline_shim_end(command: str) -> int:
     """The index in ``command`` (unstripped) just past its Windows statusline
-    shim head and the quote that closed it, PowerShell's call operator before
-    the head included; ``-1`` when the shim is not the head.
+    shim head and the quote that closed it, the operator before the head
+    included; ``-1`` when the shim is not the head.
 
-    ``init`` renders the shim bare where Claude Code will find Git Bash and as
-    ``& "<shim>" <interpreter>`` where it will run the line under PowerShell,
-    which reads a quoted head as an expression (DEF-929). Every reader of the
-    head asks here -- :func:`interpreter_site_token`, the rewire's swap and its
-    launcher-flag read, ``doctor``'s fallback notes -- so none reads the ``&``
-    as the interpreter, and none decides "shim-headed" by a copy of its own.
+    ``init`` renders ``. "<shim>" <interpreter>``: the dot is an operator in
+    both shells Claude Code picks between on Windows, so one line runs in
+    either (DEF-3017). An install can carry the two forms before it: the
+    bare head, which only Git Bash runs, and ``& "<shim>" <interpreter>``,
+    PowerShell's call operator, which only PowerShell runs (DEF-929). Every
+    reader of the head asks here -- :func:`interpreter_site_token`, the
+    rewire's swap and its launcher-flag read, ``doctor``'s fallback notes --
+    so none reads an operator as the interpreter, and none decides
+    "shim-headed" by a copy of its own.
     """
     text = command or ""
     body = text.lstrip()
-    if body[:1] == "&":
+    if body[:1] == "&" or _dot_operator(body):
         body = body[1:].lstrip()
     head = interpreter_token(body)
     if not is_statusline_shim_head(head):
@@ -347,19 +435,25 @@ def statusline_shim_end(command: str) -> int:
 
 def statusline_shim_called(command: str) -> bool:
     """Is ``command`` headed by the Windows statusline shim behind
-    PowerShell's call operator -- the form ``init`` renders where Claude
-    Code finds no Git Bash (DEF-929)? Read beside
-    :func:`statusline_shim_end`, so the two forms are told apart in one
-    place."""
+    PowerShell's call operator -- the form ``init`` rendered, from DEF-929
+    until DEF-3017, where Claude Code found no Git Bash? Read beside
+    :func:`statusline_shim_end`, so the forms are told apart in one place."""
     return statusline_shim_end(command) >= 0 and (command or "").lstrip()[:1] == "&"
+
+
+def statusline_shim_dotted(command: str) -> bool:
+    """Is ``command`` headed by the Windows statusline shim behind the dot,
+    the one form ``init`` renders, which runs under Git Bash and PowerShell
+    alike (DEF-3017)? Read beside :func:`statusline_shim_end`."""
+    return statusline_shim_end(command) >= 0 and _dot_operator((command or "").lstrip())
 
 
 def interpreter_site_token(command: str) -> str:
     """The interpreter a settings.json command string runs.
 
     argv[0] for every hook entry and for a POSIX statusLine; the word after
-    the Windows statusline shim when the shim is the head, bare or called
-    (:func:`statusline_shim_end`). BOTH readers of a statusLine --
+    the Windows statusline shim when the shim is the head, bare, called or
+    dotted (:func:`statusline_shim_end`). BOTH readers of a statusLine --
     ``doctor``'s resolver check and ``cli.rewire_interpreter_in_settings``
     -- take the token from here, so they cannot disagree about which word is
     the interpreter (the disagreement DEF-620 measured on the legacy shell

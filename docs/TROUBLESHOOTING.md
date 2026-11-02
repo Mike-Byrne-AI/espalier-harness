@@ -116,12 +116,15 @@ the fallback (installs rendered before it keep their statusline:
 absent, and `--rewire-interpreter` swaps only the interpreter the line
 names), or it was rendered on the other kind of host and carried in by a
 tracked `settings.json` — a `||` clause cannot parse under Windows
-PowerShell 5.1, and a POSIX shell cannot run the `.cmd` shim. On Windows
-it can also be written for the other shell: Claude Code runs the line
-under Git Bash when it finds Git Bash and under PowerShell when it does
-not, PowerShell needs the shim behind its `&` call operator and Git Bash
-cannot parse one, so installing or removing Git for Windows after `init`
-leaves the line in the wrong form. `espalier
+PowerShell 5.1, and a POSIX shell cannot run the `.cmd` shim's batch body. On Windows
+an older install can also carry a line written for the other shell:
+Claude Code runs the line under Git Bash when it finds Git Bash and under
+PowerShell when it does not, and `init` used to write the shim bare for
+Git Bash or behind PowerShell's `&` call operator, which Git Bash cannot
+parse, so installing or removing Git for Windows afterwards left the line
+in the wrong form. The line `init` writes now starts with a dot
+(`. "<shim>" python`), which both shells run over a current shim; a
+shim older than that line blanks it under Git Bash. `espalier
 doctor .` says which, and a fresh `espalier init .` renders
 `settings.json.new` beside your file when the render differs — take its
 `statusLine` line. If there is **no statusline at all** on a wired
@@ -272,7 +275,7 @@ Five gates fire in sequence:
 | 1 | Off (opt in via `ESPALIER_STOP_GATE=full`) | `pytest -m "not slow"` passes |
 | 2 | On | After 10+ writes, the `docs-maintainer` subagent has run and changed docs (`.espalier-state/docs_refreshed`) |
 | 3 | On | After 10+ writes, the `code-reviewer` subagent has run (`.espalier-state/code_reviewed`) |
-| 5 | On where `espalier.toml` sets `handoff_push = true` | Nothing is in flight (no plan in progress, no tracked edit) and the branch holds commits its upstream does not, made this session: run `/handoff` now (once per commit; `.espalier-state/handoff_gate_said` holds the HEAD it judged, seeded at SessionStart) |
+| 5 | On where `espalier.toml` sets `handoff_push = true` | Nothing is in flight (no plan in progress, no tracked edit) and the branch holds commits its upstream does not, made this session: run `/handoff` now (once per commit; `.espalier-state/handoff_gate_said` holds the HEAD it judged, seeded at SessionStart). While this seat has another pull request open the lane is held instead, not blocked (one open pull request per seat; `.espalier-state/handoff_gate_hold`, re-checked every five minutes), and the block returns once none is |
 | 4 | On (always silent) | Cognitive blueprint finalized |
 
 Most common block: **gate 3** after a long session, asking Claude to

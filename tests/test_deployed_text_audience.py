@@ -238,26 +238,32 @@ def _unallowlisted(found: dict[str, list[str]]) -> dict[str, list[str]]:
     return {rel: hits for rel, hits in found.items() if rel not in ALLOWLIST}
 
 
-def _fence_problems(text: str) -> list[str]:
+def _fence_problems(text: str, *, js: bool = False) -> list[str]:
     """Where ``text`` breaks the self-host fence grammar the strip relies on:
     each marker alone on its line (a ``//``, ``#`` or ``>`` comment prefix
     allowed), openers and closers alternating and never nested, every block
-    closed, and both ends at the same code-fence depth."""
+    closed, and both ends in one code fence or both outside every fence, placed
+    as the strip places them (``surface_hygiene.code_fences``, on the engine's
+    one fence grammar). In a body carrying a marker every code fence closes too:
+    an unclosed one moves every line below it into a fence, the ends with it.
+    A ``.js`` body (``js``) is read for its template literals as the strip
+    reads it (``surface_hygiene.template_literals``): both ends in one frame,
+    and in a body carrying a marker every literal and comment closed."""
     out: list[str] = []
+    lines = text.split("\n")
+    fences, unclosed = surface_hygiene.code_fences(lines)
+    literals, unclosed_literal = surface_hygiene.template_literals(lines) if js else (None, None)
     open_at: int | None = None
-    open_in_code = False
-    fence: str | None = None  # the run that opened the current code block
-    for n, line in enumerate(text.splitlines(), 1):
-        stripped = line.strip()
-        run = re.match(r"(`{3,}|~{3,})", stripped)
-        if run and (fence is None or (run.group(1)[0] == fence[0] and len(run.group(1)) >= len(fence)
-                                      and stripped == run.group(1))):
-            fence = run.group(1) if fence is None else None
+    open_fence: int | None = None
+    open_frames: tuple | None = None
+    marked = False
+    for n, (line, fence) in enumerate(zip(lines, fences), 1):
         has_open, has_close = OPEN in line, CLOSE in line
         if not (has_open or has_close):
             continue
+        marked = True
         rest = line.replace(OPEN, "").replace(CLOSE, "").strip()
-        if rest not in ("", "//", "#", ">"):
+        if rest not in surface_hygiene.SELF_HOST_MARKER_PREFIXES:
             out.append(f"{n}: a marker shares its line with text")
         if has_open and has_close:
             out.append(f"{n}: an opener and a closer on one line")
@@ -265,15 +271,26 @@ def _fence_problems(text: str) -> list[str]:
         if has_open:
             if open_at is not None:
                 out.append(f"{n}: an opener inside the block opened at line {open_at}")
-            open_at, open_in_code = n, fence is not None
+            open_at, open_fence = n, fence
+            open_frames = literals[n - 1] if literals is not None else None
         else:
             if open_at is None:
                 out.append(f"{n}: a closer with no opener")
-            elif open_in_code != (fence is not None):
+            elif (open_fence is None) != (fence is None):
                 out.append(f"{n}: the block opened at line {open_at} closes at another code-fence depth")
+            elif open_fence != fence:
+                out.append(f"{n}: the block opened at line {open_at} closes in another code fence")
+            elif literals is not None and open_frames != literals[n - 1]:
+                out.append(f"{n}: the block opened at line {open_at} closes in another template literal")
             open_at = None
     if open_at is not None:
         out.append(f"{open_at}: an opener never closed")
+    # Stricter than the strip, on purpose: a block below an unclosed fence sits
+    # in it at both ends and strips cleanly, but the body is broken all the same.
+    if marked and unclosed is not None:
+        out.append(f"{unclosed}: a code fence opened here never closes")
+    if marked and unclosed_literal is not None:
+        out.append(f"{unclosed_literal}: a template literal or comment opened here never closes")
     return out
 
 
@@ -348,7 +365,7 @@ class TestTheSelfHostFenceGrammar:
 
     def test_every_packaged_body_keeps_the_grammar(self):
         problems = [f"{_rel(src)}:{p}" for _rel_, src in _packaged_md_assets(REPO_ROOT)
-                    for p in _fence_problems(src.read_text(encoding="utf-8"))]
+                    for p in _fence_problems(src.read_text(encoding="utf-8"), js=_rel_.endswith(".js"))]
         assert not problems, "self-host fence grammar broken:\n  " + "\n  ".join(problems)
 
     def test_no_marker_survives_on_an_adopters_copy(self, tmp_path):
@@ -357,8 +374,12 @@ class TestTheSelfHostFenceGrammar:
         assert not left, f"a self-host marker reaches an adopter: {left}"
 
     def test_the_grammar_check_sees_each_way_a_fence_breaks(self):
-        good = f"a\n{OPEN}\nself\n{CLOSE}\nb\n```bash\n# {OPEN}\nx\n# {CLOSE}\n```\n"
-        assert _fence_problems(good) == []
+        for good in (
+            f"a\n{OPEN}\nself\n{CLOSE}\nb\n```bash\n# {OPEN}\nx\n# {CLOSE}\n```\n",
+            f"```bash\n# {OPEN}\nx\n# {CLOSE}\n```\nprose\n```bash\n# {OPEN}\ny\n# {CLOSE}\n```\n",
+            f"a\n{OPEN}\n~~~\nx\n~~~\n{CLOSE}\nb\n",
+        ):
+            assert _fence_problems(good) == [], (good, _fence_problems(good))
         for broken, why in (
             (f"a\n{OPEN}\nb\n", "never closed"),
             (f"a\n{CLOSE}\n", "no opener"),
@@ -366,8 +387,31 @@ class TestTheSelfHostFenceGrammar:
             (f"1. Run your tests. {OPEN}\nx\n{CLOSE}\n", "shares its line"),
             (f"fence with `{OPEN}` around it\n", "shares its line"),
             (f"{OPEN}\n```bash\nx\n{CLOSE}\n```\n", "another code-fence depth"),
+            (f"x\n```bash\n# {OPEN}\na\n```\nprose\n```bash\n# {CLOSE}\nb\n```\n", "another code fence"),
+            (f"a\n{OPEN}\nx\n{CLOSE}\n```bash\nb\n", "never closes"),
+            # A list item's fence sits past three spaces; the strip reads it as a fence all the same.
+            (f"1. a\n\n    ```bash\n    # {OPEN}\n    x\n    ```\n\n   prose\n\n    ```bash\n"
+             f"    # {CLOSE}\n    y\n    ```\n", "another code fence"),
+            (f"1. a\n\n   {OPEN}\n    ```bash\n    x\n    {CLOSE}\n    ```\n", "another code-fence depth"),
+            (f"> ```bash\n> # {OPEN}\n> x\n> ```\n> # {CLOSE}\n", "another code-fence depth"),
         ):
             assert any(why in p for p in _fence_problems(broken)), (broken, _fence_problems(broken))
+
+    def test_the_grammar_check_reads_a_workflows_template_literals(self):
+        """A workflow's markers ride behind ``//`` and its prompt text sits in
+        template literals: a block crossing a literal's edge strips to a body
+        that does not parse, or to two literals joined (DEF-5041)."""
+        lit = "`"
+        good = f"const p = {lit}\na\n// {OPEN}\nself\n// {CLOSE}\nb{lit};\n// {OPEN}\nconst q = 1;\n// {CLOSE}\n"
+        assert _fence_problems(good, js=True) == [], _fence_problems(good, js=True)
+        for broken, why in (
+            (f"const p = {lit}\n// {OPEN}\nx\n{lit};\n// {CLOSE}\n", "5: the block opened at line 2 closes in another template literal"),
+            (f"const p = {lit}\n// {OPEN}\na{lit};\nconst q = {lit}\n// {CLOSE}\nb{lit};\n", "closes in another template literal"),
+            (f"// {OPEN}\nx\n// {CLOSE}\nconst p = {lit}\n", "4: a template literal or comment opened here never closes"),
+        ):
+            problems = _fence_problems(broken, js=True)
+            assert any(why in p for p in problems), (broken, problems)
+            assert not any("template literal" in p for p in _fence_problems(broken)), broken
 
     def test_no_stripped_step_is_still_referenced(self, tmp_path):
         """A step fenced out of a command leaves its mentions behind: the adopter

@@ -88,9 +88,10 @@ settings file.
 The own-clear marker (`.espalier-state/own_clear.json`, written by the handoff
 and rewritten by the own-clear mod with every outcome) gets an `Own-clear:`
 line when its record is one a reader should see: armed for a session other
-than this one (a window elsewhere whose clear the engine refused, with the
-count and the engine's reason, took and never ran, or never asked; or a
-window since closed), consumed into this session after refusals, or marked
+than this one (a window elsewhere whose clear the mod holds on something in
+flight, with the hold, since when and the turn ends it has held; whose clear
+the engine refused, with the count and the engine's reason, took and never
+ran, or never asked; or a window since closed), consumed into this session after refusals, or marked
 stale at the clear into this session (cleared, not re-primed: no brief was
 submitted, and the line names the two ids the mod compared). A clean consume,
 this window's own pending clear (the mod's status line has it), no marker or
@@ -107,11 +108,21 @@ process reparented to PID 1 is a `python*` or `yes` command with ten or more
 CPU-minutes -- the orphan a fan-out or background probe leaves when its shell
 parent dies, invisible to a memory reading -- the header carries, after
 `Status:`, a `Loose:` line naming each by PID and CPU time with a one-paste
-`kill` (`Loose:     PID 4242 python 2685:01.10 CPU -- parent is PID 1: a
-fan-out's orphan, a run you detached on purpose (nohup ... & disown, e.g. the
-proof tier), or any process in a container; reporter only, nothing was killed.
-Check before you paste: kill 4242`); the sample below omits it because it is
-conditional, and Windows reports nothing. On every platform it writes this
+`kill` (`Loose:     PID 4242 python 2685:01.10 CPU (cwd in this checkout, the
+main checkout) -- parent is PID 1: a fan-out's orphan, a run you detached on
+purpose (nohup ... & disown, e.g. the proof tier), or any process in a
+container; reporter only, nothing was killed. Check before you paste: kill
+4242`). Each PID carries the checkout of this clone its working directory is
+in, read only when the line names one (the `/proc/<pid>/cwd` link on Linux, one
+`lsof` elsewhere, capped at two seconds): this checkout or another, by the
+main checkout or a worktree's path, or `cwd outside this clone's checkouts`,
+`cwd deleted` or `cwd unread`. Seats on one box share one process table, so a
+PID whose working directory is in another checkout of this clone is that
+checkout's run: the line names it and leaves it out of the paste (`Left out of
+the paste: 5100 -- run in another checkout of this clone: ask the session
+working there; with none there, read its parents first.`), and says `Nothing
+to paste.` when that leaves none. The sample below omits the line because it
+is conditional, and Windows reports nothing. On every platform it writes this
 session's marker under `.espalier-state/sessions/<session_id>.json` (the
 payload's `session_id`, sanitised to `[A-Za-z0-9_-]` before it names a file;
 `task_router.py` touches it on every prompt as a heartbeat) and, when another
@@ -203,7 +214,8 @@ lines say which before the session commits anything. Reporter only, and it fails
 without `gh`, a sign-in or a GitHub remote loses the lines, never the banner;
 the open and merged reads are separate calls (one shared recency window let
 ten merges hide the one open PR), each line shows three rows then a count,
-and the whole question is capped at eight seconds under the hook's fifteen.
+and the whole question takes what the mail below left of eight seconds under
+the hook's fifteen.
 The sample below omits both, as it omits `Loose:` and `Sessions:`, because all four are
 conditional.
 
@@ -215,9 +227,11 @@ other machines left, newest first, one headline per row (`Mail:      win:
 request re lane/x (1 path) -- "please look at the fixture hang"`), three rows
 then a count, and a tail that says whose text it is and where the bodies are
 (`/inbox`). One fetch, then local reads, every one of them taking what is
-left of the pull-request block's eight-second budget (the two blocks share one
-deadline under the hook's fifteen, so a slow `gh` costs the mail line and never
-the banner); a fetch that could not be made is said in the line beside what
+left of the mail's own share of the pull-request block's eight-second budget,
+read before the pull requests (the two blocks share one deadline under the
+hook's fifteen, and the mail goes first, so a slow `gh` costs the pull-request
+lines, which `/inbox board` also reads, and never the mail or the `Orders:`
+line below); a fetch that could not be made is said in the line beside what
 was fetched before. No name, no fetch and no line -- except that a clone which
 names no machine but already holds another machine's mail ref (a plain `git
 fetch origin` brings them in) gets one line saying how to opt in, so the box
@@ -394,7 +408,8 @@ asking and every entry in it parses with a numeric pid; otherwise nothing is
 removed and the line says so. While another session is live in this checkout,
 nothing is removed either (it may be working in one of them). The catch-up
 has its own six-second budget, so the pull-request block keeps its eight, and
-the two together stay under twelve of the hook's fifteen; a backlog of
+the two together stay inside the hook's network budget of ten and a half (the
+wall below, less two and a half seconds for the work after the reads); a backlog of
 removals clears over a few sessions. A resume or a compaction never moves the
 tree. The hook has imported its helper modules before the catch-up runs, so
 when the move changes one of them, the rest of the start runs in a fresh
@@ -410,6 +425,27 @@ default in the Espalier-Harness source repository; elsewhere off until
 moving someone's branch unasked is a surprise. `ESPALIER_SESSION_CATCH_UP=0`
 or `1` in the launching shell overrides both. `python tools/cc/checkout_sync.py`
 says what it would do; `--apply` does it now.
+
+**The wall.** Claude Code cancels a SessionStart hook that runs past the
+`timeout` in `settings.json` (fifteen seconds) and keeps none of its output,
+so a start that ran long once lost the whole banner, and the session read as
+one whose hooks had not loaded. The network reads have budgets; the local
+work around them (the zone baseline, the integrity and audit-log reads, the
+banner build) has none, and on the Windows box 13 of 95 starts ran past the
+timeout.
+So a start counts thirteen seconds from the moment the hook's module loads,
+and if it is still running then, it prints a short banner and ends. The
+banner's first line says where it stopped (`SessionStart (short: cut at 13.0 s
+in the zone baseline; ...)`), a `Cut:` line says the hooks are loaded and the
+banner is short, not missing, and the lines already read (`Checkout:`,
+`Open PRs:`, `Mail:`, `Orders:` and the rest) follow; a cut in the catch-up
+adds that a checkout move may still be running, so `git status` comes before
+any edit. The catch-up and the network reads end two and a half seconds before
+the wall, so an ordinary slow start finishes first. A cut leaves one
+`sessionstart_failed_open_wall_cut` record a session, which `/status --log`
+counts with the other fail-open records. Only
+the hook run as a script arms the wall; a test that calls its `main()` in
+process arms none.
 
 **Auto-orient block.** The context output also carries the harness's
 continuity surface -- each section gated on the artifact it describes,
@@ -642,13 +678,33 @@ it, every prompt gets one ASCII paragraph, above an active plan too:
 asks again at each turn's end, and no clear has run. Say so in the first line
 of your reply, so the operator at this terminal sees it: this window needs
 /clear by hand (the loop survives it; start no second one). Take no new job
-meanwhile.
+meanwhile (your own pull request's red or conflict, and a red main's revert,
+are not new work).
 ```
 
 Another session's marker, a clear not yet refused, an ask the engine took
 since (the mod takes the latest refusal off the marker at a new ask), a
 consumed marker and a torn one say nothing. The SessionStart banner's
 `Own-clear:` line is every other session's reader of the same record.
+
+**A held own-clear.** The mod holds the clear while something is in flight
+(a tracked edit, HEAD moved since the handoff, a plan in progress, or a git
+read that failed) and puts the hold on the marker: `clear_held` (the cause,
+the latest), `clear_held_since` and `clear_held_turns`, all three taken off at
+the ask (the dispatcher window sat held on a moved HEAD for 9 h and 36 loop
+ticks on 2026-11-01 with the hold on its status line alone). While
+the marker is armed for this session with a hold on it, every prompt gets one
+ASCII paragraph, above an active plan too, naming the hold and the verb that
+resolves its cause, matched exactly on the cause's words before any
+parenthesis (a cause with no verb gets none): commit the edit and run
+`/handoff` when this window made it, else leave it to the operator (`git
+stash` keeps it and lets the clear run); `python tools/cc/ship.py arm`
+after a pull, `/handoff` after a commit of the lane's own; finish the plan or
+`python tools/cc/execution_plan.py reset`; git's own words for a failed read.
+A `/clear` by hand ends it too. The verbs live here, never in the mod's text,
+which rides the clear's re-prime brief: a verb named there would run in the
+new window over a consumed marker. A hold beside a refusal is the newer (the
+ask takes a hold off), so the hold is said, with the refusals named after it.
 
 **What the mod wrote at the clear into this session, once.** The banner at the
 clear's own SessionStart runs beneath the mod's handler and cannot see the
@@ -1842,8 +1898,29 @@ new state as the next one to compare with.
   `.claude/settings.local.json`), and judges the ones that matter. Not
   `generated_paths`. The walk skips dependency, cache and tool directories
   (the stack's `node_modules` and its siblings, `__pycache__`, `.mypy_cache`,
-  a virtualenv, and your `dependency_dirs`) and editor and OS clutter (swap
-  and backup files, `.DS_Store`). A file of 4 MiB or more is identified by its
+  a virtualenv, and your `dependency_dirs`), a directory that ignores itself
+  (its own `.gitignore` one bare `*`, the form pytest, ruff, mypy, uv, `venv`
+  since Python 3.13 and Claude Code's plugin loader write into what they
+  generate; read below a watched directory's top only, never at it; a
+  `.gitignore` holding anything else, and a root `.gitignore` entry naming
+  the directory, skip nothing; a declaration that lands during a session
+  retires nothing the session's snapshot already holds, so it is reported as
+  the added file it is; and one already there when the session starts
+  retires nothing git tracks, since the session's first snapshot asks git's
+  index once and walks a declared directory holding a tracked file other
+  than its own `.gitignore`: where the checkout has no git of its own, such
+  a directory prunes as before, and so does one holding files that only a
+  nested checkout's own git tracks, or one under a protected path added to
+  `espalier.toml` during the session, until the next session's snapshot;
+  where git cannot answer (past 2 s, a git that cannot start, a refusal
+  such as `safe.directory`'s exit 128) it prunes as before too, and the
+  walk says so once for each cause until the next startup or clear (a
+  resumed session is not told again), as a
+  `zone_watch_failed_open_tracked_read` record `/status --log` counts, the
+  cause in its `details`, and as a warning naming the cause and the
+  directory, in the SessionStart banner or in the notice of the shell call
+  that took the baseline), and editor and OS clutter
+  (swap and backup files, `.DS_Store`). A file of 4 MiB or more is identified by its
   size and modification time and never read by the hook: when git is asked
   about it (below), git hashes it through the checkout's own filters, up to
   1 GiB of such files in one call and within the 5 s that one call's git asks
@@ -2110,7 +2187,7 @@ gate is opt-in.
 | **1. Pytest** | Runs core test suite | Yes, on failure | **Off** (opt-in via env var) |
 | **2. Docs refresh** | ≥10 writes and no `docs-maintainer` subagent run that changed docs (`.espalier-state/docs_refreshed`)? | Yes, the first Stop of each turn until one has | On |
 | **3. Code review** | ≥10 writes and no `code-reviewer` subagent run (`.espalier-state/code_reviewed`)? | Yes, the first Stop of each turn until one has | On |
-| **5. Handoff** | Nothing in flight (no plan in progress, no tracked edit) and the branch holds commits its upstream does not (its own upstream, else `origin/HEAD`, else `origin/main` or `origin/master`), made this session, on a repository whose `espalier.toml` sets `handoff_push = true` | Yes, once per commit (`.espalier-state/handoff_gate_said` holds the HEAD it judged, seeded at SessionStart) | On where the handoff pushes |
+| **5. Handoff** | Nothing in flight (no plan in progress, no tracked edit) and the branch holds commits its upstream does not (its own upstream, else `origin/HEAD`, else `origin/main` or `origin/master`), made this session, on a repository whose `espalier.toml` sets `handoff_push = true`; and, where the push would open a pull request, that this seat has no other one open (one open pull request per seat: one bounded `gh pr list` read, attributed by the ship driver's `seat_open_prs`) | Yes, once per commit (`.espalier-state/handoff_gate_said` holds the HEAD it judged, seeded at SessionStart); while another of this seat's pull requests is open the lane is held instead (`.espalier-state/handoff_gate_hold`, re-checked every five minutes), and the block returns once none is | On where the handoff pushes |
 | **4. Blueprint finalize** | Auto-finalizes the active blueprint | Never blocks | On |
 
 Gates 2 and 3 only fire on sessions with 10+ source writes. Short
@@ -2127,9 +2204,48 @@ line's to name, never a block into a cold context, and a handoff whose push
 failed (its row moved HEAD) is told again. The reason names the plan (or that
 none is in progress), the branch, the count and the upstream, says what the
 push does for this branch (open the pull request, or push onto the one already
-open), and names three carve-outs the collaborator says in one line before
-stopping again: the operator asked to hold the push, the lane ships together
-with another, or more of the lane's work is still to come this session. The
+open), says what it read of this seat's other open pull requests, and names
+three carve-outs the collaborator says in one line before stopping again: the
+operator asked to hold the push, the lane ships together with another, or more
+of the lane's work is still to come this session -- and a fourth, listed only
+where the read could not be made: a read made in this turn that names one of
+this seat's pull requests open, by number (a pull request remembered from
+earlier in the session is not that read). One open pull request per seat is
+the gate's own rule where the push would OPEN a pull request (the branch has no
+upstream of its own, `origin/<branch>`; a branch created from `origin/main`
+tracks it and is not its own): at its decision point it reads the seat's name
+through the ship driver (`seat_name`: the mail channel's `espalier.machine`; an
+unnamed checkout or a tree without the channel reads nothing and blocks as
+before), makes one bounded `gh pr list` read in the driver's field set
+(`OPEN_PR_FIELDS`; its one network read, five seconds at most) and hands the
+rows to the driver's `seat_open_prs` (the seat whose latest claim or release
+names each lane, else its `seat:` label; each git read bounded by the gate's
+cap; the driver's own notes kept off the hook's decision channel). Another of
+this seat's pull requests open: the Stop passes without a block, one advisory
+record per held HEAD (`stop_held_handoff`, with the counts and never the
+branch), and `.espalier-state/handoff_gate_hold` names the HEAD, the branch,
+the seat, the rows, the commit count, the first hold's stamp and the read's;
+while it names HEAD the gate asks gh again no more than every five minutes, and
+once none is open the hold clears and the block returns, which makes the gate
+the reminder that the first lane merged (a re-check that cannot be made keeps
+the hold one more interval and says so once, `stop_failed_open_handoff_prs`). A
+Stop that passes has no channel to Claude, so the prompt router
+(`task_router.py`) names the hold on every prompt while it stands, with the
+branch, the count, the pull request, the age and when the record was last read;
+past the re-check interval, or after a re-check that could not read gh (the
+record then carries its `fault`), it says the record is stale, since only a
+Stop reads gh again, and that the next Stop with nothing in flight, or
+`/handoff` (or `python tools/cc/ship.py open` once the lane carries its row),
+reads it again (the router makes no gh read of its own); a Stop that finds a
+hold naming another HEAD removes it; and a new session keeps a
+hold that names its HEAD (SessionStart's seed stands aside for it, so the gate
+judges the lane again) and clears a stale one. A read that cannot be made at
+the decision point (no `gh`, a timeout, not signed in, no GitHub remote, the
+seat's name unread) blocks as before and names the wait as the fourth
+carve-out; a lane with an upstream of its own (the push lands on its own pull
+request) reads nothing. A seat renamed since it claimed the other pull request
+(a worktree given a name of its own) reads that one as another seat's and is
+asked for the handoff as before. The
 gate also runs alone on the continuation Stop that follows a Gate 2 or Gate 3
 block, so a lane held by the hygiene gates is told in the same turn. A plan in
 progress or an edit in flight passes and writes nothing; nothing unpushed, a
@@ -2418,11 +2534,13 @@ switch into a drive path), so `init` wires the statusline through a
 deployed batch shim, `tools/cc/statusline.cmd`, which runs the script
 with the wired interpreter and prints the same line when that
 interpreter is gone. Claude Code runs that line under Git Bash when it
-finds one and under PowerShell when it does not, and each shell blanks
-the other's spelling, so `init` writes the form the host will run: the
-shim's quoted path where it finds Git Bash as Claude Code does, and
-`& "<shim>" <interpreter>` (PowerShell's call operator) where it finds
-none; `espalier doctor .` names a line written for the other shell.
+finds one and under PowerShell when it does not, and the line starts
+with a dot, `. "<shim>" <interpreter>`, an operator in both: Git Bash
+sources the shim, whose first line is written for it, and PowerShell
+runs it as a batch file, so installing or removing Git for Windows after
+`init` changes nothing. An older install can carry the shim bare (Git
+Bash only) or behind `&` (PowerShell only); `espalier doctor .` names
+one written for the other shell.
 
 Install a Python 3.10+ (or put it on PATH), then run
 `espalier doctor .` — it names the wired interpreter and the exact
@@ -2550,7 +2668,9 @@ line per event, serialized under a file lock.
 ```
 
 Override the directory with `ESPALIER_AUDIT_DIR`; logs older than 30 days are
-pruned automatically. The log is a **visibility layer, not a security
+moved into its `_cold/` folder at SessionStart, the oldest date in a log's name
+first, for at most a second of each start (a NOTES line says how many old logs
+a stop left; the next start goes on). The log is a **visibility layer, not a security
 boundary** — a write failure is swallowed so it can never make a hook raise,
 and nothing downstream depends on it. The **denial** records below carry
 `details` that are metadata-only — the tool/channel, the repo-relative path,
@@ -2591,6 +2711,7 @@ inside a window of twenty.
 | `stop_blocked_docs_refresh` | pause | Gate 2 blocked the Stop: ten or more source writes and no docs refresh recorded (or a relief record that is not one); `details.rule` names the case, `details.write_count` the count |
 | `stop_blocked_code_review` | pause | Gate 3 blocked the Stop: ten or more source writes and no code review has run (or a relief record that is not one); `details.rule`, `details.write_count` as above |
 | `stop_blocked_handoff` | pause | Gate 5 blocked the Stop: nothing in flight and the branch holds commits its upstream does not, made this session, on a repository whose `espalier.toml` sets `handoff_push = true`; once per commit (the flag `.espalier-state/handoff_gate_said` holds the HEAD it judged, seeded at SessionStart); `details.ahead` is the count, never the branch or the plan's title |
+| `stop_held_handoff` | report | Gate 5 held the lane instead of blocking: the push would open a pull request and this seat has another one open (one open pull request per seat); once per held HEAD (`.espalier-state/handoff_gate_hold`, re-checked every five minutes, and the block returns once none is open); `details.ahead` is the commit count and `details.open` the pull requests held against, never the branch |
 | `post_shell_zone_change` | report | after a Bash or PowerShell call, protected files changed that nothing accounts for (`post_write_check`, "The protected files after a shell call"); `details` names them by kind (`changed`, `added`, `removed`, twenty each at most) with their `count`, the same kinds suffixed `_between_calls` for what landed before the call began, and the `tool` |
 | `hook_layer_failed_open_stack_table` | fail-open | the hook layer could not read `tools/cc/_stack_table.py` (absent, a `SyntaxError`, or older than the hooks) and every gate runs on `_hook_utils`'s pinned copy of its projections; written once a session where a root is known, by the two source gates at their root and by the reporters' `repo_name`, with the fault in `details` |
 | `stop_blocked_internal_error` | pause | the Stop hook crashed and re-blocked the Stop fail-closed (the loop signal lets the continuation's Stop through; a persistent crash re-blocks on the first Stop of every later turn until its cause is fixed); `details.rule` is the internal-error reason's name, `details.error` the exception's class |

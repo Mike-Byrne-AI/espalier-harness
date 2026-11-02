@@ -2,8 +2,17 @@
 
 A future change adding `Write` to `code-reviewer.md` would be a silent
 capability escalation if not caught. This test makes the tier explicit:
-each agent declares its tier in `AGENT_TIER`, and the tier defines what
-tools the agent may grant.
+each agent declares its tier in `AGENT_TIER`, and the tier is the set of
+tools the agent's frontmatter grants.
+
+A tools line is a list of tool names: Claude Code documents the field that
+way, and the one specifier its subagent page names is `Agent(...)`. A
+command pattern such as `Bash(git *)` is not documented there and was
+measured inert on Claude Code 2.1.314: in bypass mode a subagent holding only
+such entries ran `date`, `echo` and `ls`, and in default mode its `git tag`
+asked exactly as a plain `Bash` grant's did (DEF-1107). So a pattern read as
+a narrowed grant it never was; the contract forbids every specifier but
+`Agent(...)`, and each body that grants `Bash` says where its scope is set.
 
 `TestRootMirrorParity` already guarantees `.claude/agents/` and
 `examples/dogfooding/.claude/agents/` are byte-identical, so checking
@@ -25,6 +34,8 @@ AGENT_DIRS = [
     REPO_ROOT / ".claude" / "agents",
     REPO_ROOT / "examples" / "dogfooding" / ".claude" / "agents",
 ]
+#: Every place a bundled body lives: the two above and the deploy source.
+ALL_AGENT_DIRS = AGENT_DIRS + [REPO_ROOT / "espalier" / "assets" / "claude" / "agents"]
 
 # Update this map when intentionally changing an agent's capability.
 # CI fails if an agent's actual tools don't match its declared tier.
@@ -41,45 +52,21 @@ AGENT_TIER = {
     "failure-mode-reviewer": "review-with-comments",
 }
 
+#: Each tier's tools, exactly. A review agent reads and runs read-only
+#: commands; the docs agent edits in place, so it holds Edit beside Write; the
+#: test-writer writes new files.
 TIER_CONTRACT = {
-    "read-only": {
-        "allows_write": False,
-        "bash_allowlist_regex": (
-            r"^Bash\((?:git\s+(?:diff|log|show|status|branch|remote)"
-            r"|grep|head|cat|wc|find|ls)(\s+[^)]+)?\)$"
-        ),
-    },
-    "review-with-comments": {
-        "allows_write": False,
-        "bash_allowlist_regex": (
-            r"^Bash\((?:git\s+\*|grep\s+\*|head\s+\*|cat\s+\*|wc\s+\*"
-            r"|find\s+\*|ls\s+\*|python\s+\*|python3\s+\*)\)$"
-        ),
-        # A runner agent's deployed line may also carry the repository's own
-        # test runner, rendered from the fingerprint in the narrowed shape
-        # (DERIVED_RUNNER_REGEX below). The packaged bodies this file reads
-        # carry none; the render test pins what a deploy adds.
-        "derived_runner": True,
-    },
-    "docs-writing": {
-        "allows_write": True,
-        "bash_allowlist_regex": (
-            r"^Bash\((?:git\s+\*|grep\s+\*|head\s+\*|cat\s+\*|wc\s+\*"
-            r"|echo\s+\*)\)$"
-        ),
-    },
-    "test-writing": {
-        "allows_write": True,
-        "bash_allowlist_regex": (
-            r"^Bash\((?:pytest\s+\*|python\s+\*|python3\s+\*|git\s+\*)\)$"
-        ),
-        "derived_runner": True,
-    },
-    "mutation-capable": {
-        "allows_write": True,
-        "bash_allowlist_regex": r".*",
-    },
+    "review-with-comments": frozenset({"Read", "Grep", "Glob", "Bash"}),
+    "docs-writing": frozenset({"Read", "Grep", "Glob", "Bash", "Write", "Edit"}),
+    "test-writing": frozenset({"Read", "Grep", "Glob", "Bash", "Write"}),
 }
+
+#: A tools entry: a bare tool name (an MCP tool's included), or the one
+#: documented specifier, `Agent(...)`.
+TOOL_ENTRY = re.compile(r"[A-Za-z][A-Za-z0-9_-]*|Agent\([^()]*\)")
+
+#: The paragraph each body that grants Bash carries: where its scope is set.
+BASH_SCOPE = "**Bash scope.** `Bash` on the tools line above is the whole tool"
 
 
 def _read_agent_tools(path: Path) -> list[str]:
@@ -121,33 +108,45 @@ def test_agent_capability_matches_tier(agent_name, expected_tier):
             f"Agent {agent_name}.md not found in any expected location "
             f"(may have been intentionally removed)"
         )
-
-    contract = TIER_CONTRACT[expected_tier]
-    bash_pattern = re.compile(contract["bash_allowlist_regex"])
-
     for path in paths:
         tools = _read_agent_tools(path)
-        has_write = "Write" in tools
-        if not contract["allows_write"]:
-            assert not has_write, (
-                f"Agent {agent_name!r} is tier {expected_tier!r} but "
-                f"declares Write capability. Either update the tier in "
-                f"tests/test_agent_frontmatter_contract.py::AGENT_TIER "
-                f"or remove Write from the agent's tools.\n"
-                f"Agent file: {path.relative_to(REPO_ROOT)}\n"
-                f"Tools: {tools}"
-            )
+        assert len(tools) == len(set(tools)), (path, tools)
+        assert set(tools) == TIER_CONTRACT[expected_tier], (
+            f"Agent {agent_name!r} is tier {expected_tier!r}, whose tools are "
+            f"{sorted(TIER_CONTRACT[expected_tier])}, but declares {tools}. Either "
+            f"update the tier in tests/test_agent_frontmatter_contract.py::AGENT_TIER "
+            f"or correct the agent's tools line.\n"
+            f"Agent file: {path.relative_to(REPO_ROOT)}"
+        )
 
-        bash_tools = [t for t in tools if t.startswith("Bash(")]
-        for bash in bash_tools:
-            assert bash_pattern.match(bash), (
-                f"Agent {agent_name!r} tier {expected_tier!r} has Bash "
-                f"command {bash!r} that doesn't match tier allowlist:\n"
-                f"  {contract['bash_allowlist_regex']}\n"
-                f"Either update the tier in AGENT_TIER or narrow the Bash "
-                f"grant.\n"
-                f"Agent file: {path.relative_to(REPO_ROOT)}"
-            )
+
+def _bodies() -> list[Path]:
+    return [p for d in ALL_AGENT_DIRS for p in visible(checkout_glob(d, "*.md"), d)]
+
+
+def test_no_tools_line_carries_a_command_specifier():
+    """A specifier reads as a narrowed grant and narrows nothing; only the
+    documented `Agent(...)` form is kept. Every body, the deploy source's too."""
+    bodies = _bodies()
+    assert len(bodies) >= 3 * len(AGENT_TIER), bodies
+    bad = {
+        str(p.relative_to(REPO_ROOT)): t
+        for p in bodies for t in _read_agent_tools(p) if not TOOL_ENTRY.fullmatch(t)
+    }
+    assert not bad, bad
+
+
+def test_each_body_that_grants_bash_says_where_its_scope_is_set():
+    missing = [
+        str(p.relative_to(REPO_ROOT)) for p in _bodies()
+        if "Bash" in _read_agent_tools(p) and BASH_SCOPE not in _body_text(p)
+    ]
+    assert not missing, missing
+
+
+def _body_text(path: Path) -> str:
+    """The body's text with each paragraph's line breaks read as spaces."""
+    return re.sub(r"[ \t]*\n[ \t]*(?=\S)", " ", path.read_text(encoding="utf-8"))
 
 
 def test_every_agent_on_disk_has_tier():
@@ -165,13 +164,6 @@ def test_every_agent_on_disk_has_tier():
         f"covers it."
     )
 
-
-#: The shape of a fingerprint-derived runner rule in a deployed tools line
-#: (espalier/harness_config.py::render_agent_tools): a command of two or more
-#: words with an optional trailing ` *`, or one word exactly. Never
-#: `Bash(<binary> *)`: `Bash(npm *)` would grant the reviewer `npm install`
-#: and `npm publish` (DEF-963, in DEF-965's narrowed form).
-DERIVED_RUNNER_REGEX = r"^Bash\((?:[^\s()*]+(?: [^\s()*]+)+(?: \*)?|[^\s()*]+)\)$"
 
 #: The test commands the fingerprint records per stack, as
 #: espalier/analyze.py::detect_tests writes them.
@@ -193,46 +185,26 @@ def _runner_agents() -> list[str]:
     return sorted(Path(p).stem for p in RUNNER_AGENT_PATHS)
 
 
-def test_the_runner_agents_are_tiered_to_carry_a_derived_runner():
+def test_the_runner_agents_grant_bash():
     for name in _runner_agents():
-        assert TIER_CONTRACT[AGENT_TIER[name]].get("derived_runner"), name
+        assert "Bash" in TIER_CONTRACT[AGENT_TIER[name]], name
 
 
 @pytest.mark.parametrize("agent_name", _runner_agents())
 @pytest.mark.parametrize("stack", sorted(RUNNER_STACKS))
-def test_a_rendered_runner_agent_keeps_its_tier(agent_name, stack):
-    """The deploy renders each runner agent's tools line from the fingerprint
-    (multi-language, in the style of
-    tests/test_build_claude_md_uses_fingerprint.py): every Bash rule on the
-    rendered line is a tier rule or a narrowed runner the fingerprint
-    derived, the repository's runner is reachable, no Write appears where
-    the tier forbids it, and nothing but the tools line changes."""
+def test_a_runner_agents_deploy_is_its_packaged_body(agent_name, stack):
+    """The deploy renders each runner agent's tools line from the fingerprint's
+    test commands, appending a narrowed rule the line does not already grant.
+    A plain `Bash` grants every one, so on every stack the rendered body is
+    the packaged body: the renderer adds nothing, and the repository's runner
+    is reachable through the plain grant."""
     from espalier.harness_config import _rule_is_covered, agent_runner_rules, render_agent_tools
 
     packaged = REPO_ROOT / "espalier" / "assets" / "claude" / "agents" / f"{agent_name}.md"
     body = packaged.read_text(encoding="utf-8")
     rules = agent_runner_rules(RUNNER_STACKS[stack])
     assert rules, stack
-    rendered = render_agent_tools(body, rules)
-    tools_line = re.compile(r"^tools:.*$", re.MULTILINE)
-    assert tools_line.sub("", rendered) == tools_line.sub("", body), "only the tools line may change"
-    tools = [t.strip() for t in tools_line.search(rendered).group(0)[len("tools:"):].split(",")]
-    contract = TIER_CONTRACT[AGENT_TIER[agent_name]]
-    static = re.compile(contract["bash_allowlist_regex"])
-    derived = re.compile(DERIVED_RUNNER_REGEX)
-    assert ("Write" in tools) == contract["allows_write"]
-    for tool in (t for t in tools if t.startswith("Bash(")):
-        assert static.match(tool) or (derived.match(tool) and tool in rules), (agent_name, stack, tool)
+    assert render_agent_tools(body, rules) == body, (agent_name, stack)
+    tools = _read_agent_tools(packaged)
     for rule in rules:
         assert _rule_is_covered(rule, tools), (agent_name, stack, rule, tools)
-    for bare in ("Bash(npm *)", "Bash(pnpm *)", "Bash(go *)", "Bash(cargo *)", "Bash(make *)"):
-        assert bare not in tools, (agent_name, stack, bare)
-
-
-def test_a_derived_rule_the_line_already_grants_is_not_added():
-    from espalier.harness_config import agent_runner_rules, render_agent_tools
-
-    body = (REPO_ROOT / "espalier" / "assets" / "claude" / "agents" / "test-writer.md").read_text(encoding="utf-8")
-    assert render_agent_tools(body, agent_runner_rules(["pytest -q"])) == body, (
-        "test-writer already grants Bash(pytest *): a Python repository's deploy is the packaged body"
-    )

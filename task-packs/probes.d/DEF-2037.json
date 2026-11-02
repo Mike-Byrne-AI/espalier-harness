@@ -1,0 +1,15 @@
+{
+ "id": "DEF-2037",
+ "subject": "tests/test_proof_tier.py",
+ "cmd": "python3 -c 'import sys,ast;sys.path.insert(0,\"scripts\");import proof_tier as p;M=ast.parse(open(\"tests/test_proof_tier.py\",encoding=\"utf-8\").read()).body;E={k.split(\"::\")[0] for n in M if isinstance(n,ast.AnnAssign) and getattr(n.target,\"id\",\"\")==\"_PARALLEL_NESTED_RUNS\" for k in ast.literal_eval(n.value)};print(sum(f not in p.SERIAL_FILES and f not in E for f in (\"tests/test_bounded_spawn.py\",\"tests/test_check_handoff_landing.py\")))'",
+ "open_value": "2",
+ "why_not": null,
+ "inputs": [
+  "scripts/proof_tier.py",
+  "tests/test_bounded_spawn.py",
+  "tests/test_check_handoff_landing.py"
+ ],
+ "row_sha": "1c94426ea1b4",
+ "text_sha": "b719c599c542",
+ "verified_2026_11_01": "OPEN (filed 2026-11-01; probe driven at filing here and in the export of HEAD a5c92e451b09)"
+}

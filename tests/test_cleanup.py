@@ -1390,12 +1390,12 @@ class TestSettingsUnwireFinishesTheJob:
             "the unwire names a shim the cleanup does not delete"
         )
 
-    @pytest.mark.parametrize("lead", ["", "& "], ids=["bare", "called"])
+    @pytest.mark.parametrize("lead", ["", "& ", ". "], ids=["bare", "called", "dotted"])
     def test_the_windows_shim_statusline_goes_with_its_shim(self, harness_repo, lead):
         """DEF-729: an nt render names statusline.py nowhere -- the head is
         the shim -- so the unwire must match the shim, and its label says
-        which file the wiring ran; behind PowerShell's call operator too,
-        the render where Claude Code finds no Git Bash (DEF-929)."""
+        which file the wiring ran; behind PowerShell's call operator too
+        (DEF-929), and behind the dot `init` renders now (DEF-3017)."""
         self._wire(
             harness_repo,
             lead + '"${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" python',

@@ -44,6 +44,7 @@ import re
 import sys
 import tarfile
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -80,6 +81,15 @@ RUN_WINDOW = 20
 _PR_MERGE_RE = re.compile(r"^Merge pull request #(\d+)\b|\(#(\d+)\)\s*$")
 GH_TIMEOUT = 15.0
 OPEN_PR_LIMIT = 30
+#: The required-check reads of the blocked rows (DEF-4063), bounded like the
+#: banner's: the first REQUIRED_READ_ROWS blocked rows, one read each, inside
+#: REQUIRED_BUDGET_SECONDS for them all, each read's timeout what is left of
+#: it (at most GH_TIMEOUT). A blocked row past either says it was not read.
+REQUIRED_READ_ROWS = 8
+REQUIRED_BUDGET_SECONDS = 30.0
+#: gh's words (rc=1, no JSON) when no check, or no required check, has
+#: reported on the pull request's branch.
+_NO_CHECKS_REPORTED = ("no required checks reported", "no checks reported")
 #: Said beside the overlaps, board and ship notice alike, of a list read to the limit.
 OPEN_PR_CUT_NOTE = f"the open pull requests were read to the first {OPEN_PR_LIMIT}, so more may meet"
 LEDGER = LEDGER_FILE
@@ -158,10 +168,10 @@ MERGE_STATES: dict[str, str] = {
 }
 
 
-def _gh_json(root: Path, *args: str, run_: Runner) -> object:
+def _gh_json(root: Path, *args: str, run_: Runner, timeout: float = GH_TIMEOUT) -> object:
     """A ``gh`` read parsed as JSON whatever the exit code; a named
     ``Unresolvable`` when it cannot run or answers no JSON."""
-    rc, out, err = run_(["gh", *args], cwd=str(root), timeout=GH_TIMEOUT)
+    rc, out, err = run_(["gh", *args], cwd=str(root), timeout=timeout)
     try:
         return json.loads(out or "")  # json-dict-safe: ok every caller isinstance-checks the answer before a deref
     except ValueError:
@@ -182,6 +192,45 @@ def read_open_prs(root: Path, *, run_: Runner = run) -> list[dict]:
     if not isinstance(answer, list):
         raise Unresolvable("gh pr list answered something other than a list")
     return [pr for pr in answer if isinstance(pr, dict) and isinstance(pr.get("number"), int)]
+
+
+def read_required_section(root: Path, prs: list[dict], *, run_: Runner = run,
+                          clock: Callable[[], float] = time.monotonic) -> None:
+    """Each pull request GitHub reports as BLOCKED (a draft is not read) gets
+    ``required``: the names of its required checks that are red and those
+    still running, from the one ``gh pr checks --required`` read
+    (``_post_merge.read_required``, the driver's and the banner's too), or
+    ``{"unread": why}``. The list read carries no check status, so without
+    this the row could only say a check or a review holds it (DEF-4063).
+    Bounded as REQUIRED_READ_ROWS and REQUIRED_BUDGET_SECONDS say; one read
+    that fails costs only its row."""
+    start, made = clock(), 0
+    for pr in prs:
+        if str(pr.get("mergeStateStatus") or "").upper() != "BLOCKED" or pr.get("isDraft"):
+            continue
+        left = REQUIRED_BUDGET_SECONDS - (clock() - start)
+        if made >= REQUIRED_READ_ROWS:
+            pr["required"] = {"unread": f"the board reads the first {REQUIRED_READ_ROWS} blocked rows' checks"}
+            continue
+        if left <= 3.0:   # below a gh read's own latency: it would time out, not answer
+            pr["required"] = {"unread": f"the {REQUIRED_BUDGET_SECONDS:.0f} s budget for these reads was spent"}
+            continue
+        made += 1
+        timeout = min(GH_TIMEOUT, left)
+        try:
+            reading = _post_merge.read_required(
+                pr["number"], lambda args, t=timeout: _gh_json(root, *args, run_=run_, timeout=t))
+            pr["required"] = ({"unread": "gh pr checks answered something other than a list"} if reading is None
+                              else {key: [_ascii(str(r.get("name") or "?")) for r in reading[key]]
+                                    for key in ("red", "running")})
+        except Unresolvable as exc:
+            # gh's answer when no required check has reported (a repository
+            # that requires a review alone, or a head whose checks have not
+            # registered yet) is an answer: nothing required is red or running.
+            none = any(words in str(exc) for words in _NO_CHECKS_REPORTED)
+            pr["required"] = {"red": [], "running": []} if none else {"unread": " ".join(str(exc).split())}
+        except Exception as exc:  # noqa: BLE001 -- one row's read costs its row, never the board
+            pr["required"] = {"unread": " ".join(f"{type(exc).__name__}: {os_error_text(exc)}".split())}
 
 
 #: The transitions log: one JSON line per red transition the ``checks:`` line
@@ -1280,6 +1329,7 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run, now: datetime
         # The heads first, so the stale clause and the overlaps read the same ones;
         # --no-fetch reads them as they are here.
         head_notes = fetch_heads(root, prs, run_=run_) if fetch else []
+        read_required_section(root, prs, run_=run_)
         # At the read's limit the list may be cut, so the overlaps are among what was read.
         cut = [OPEN_PR_CUT_NOTE] if len(prs) >= OPEN_PR_LIMIT else []
         read_stale_section(root, base, prs, _merge_rules.strict(rules[1], rules[2]), fetch=False, run_=run_)
@@ -1346,6 +1396,18 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run, now: datetime
 def _pr_line(pr: dict) -> str:
     state = str(pr.get("mergeStateStatus") or "UNKNOWN").upper()
     meaning = MERGE_STATES.get(state, f"GitHub is still computing it ({state.lower()})")
+    required = pr.get("required")
+    if state == "BLOCKED" and isinstance(required, dict):
+        # What holds it, from the required-check read (DEF-4063).
+        if required.get("unread"):
+            meaning = (f"blocked: its required checks were not read ({required['unread']}): "
+                       f"gh pr checks {pr.get('number')} --required")
+        else:
+            meaning = f"blocked: {_post_merge.held_by(required.get('red') or [], required.get('running') or [])}"
+            if required.get("red"):
+                # A red cell is a test's verdict or a lost runner's; only the
+                # driver's read on the lane tells them apart (the banner says so too).
+                meaning += "; its seat's `python tools/cc/ship.py status` tells a test red from a lost runner"
     if pr.get("isDraft"):
         meaning = "draft"
     auto = "auto-merge armed" if pr.get("autoMergeRequest") else "auto-merge not armed"

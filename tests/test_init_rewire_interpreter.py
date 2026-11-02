@@ -155,20 +155,22 @@ class TestRewireChangesOnlyTheInterpreter:
         assert after.split(" || ", 1)[1] == before.split(" || ", 1)[1], after
         assert after == cli._swap_interpreter_token(before, interpreter_token(after))
 
-    @pytest.mark.parametrize("git_bash", [True, False], ids=["bare", "called"])
-    def test_the_windows_shim_render_rewires_its_interpreter_argument(self, tmp_path, git_bash):
+    @pytest.mark.parametrize("lead", ["", "& ", ". "], ids=["bare", "called", "dotted"])
+    def test_the_windows_shim_render_rewires_its_interpreter_argument(self, tmp_path, lead):
         """DEF-729: on Windows the statusLine head is the deployed shim and
         the interpreter is its first argument. The rewire swaps THAT word and
-        leaves the head byte-for-byte -- PowerShell's call operator before it
-        included, where Claude Code finds no Git Bash (DEF-929); doctor reads
-        the same helper, so the two cannot disagree about which word is the
-        interpreter."""
+        leaves the head byte-for-byte -- the operator before it included: the
+        dot `init` renders for both shells (DEF-3017), and PowerShell's call
+        operator, which an install rendered since DEF-929 can carry; doctor
+        reads the same helper, so the two cannot disagree about which word is
+        the interpreter."""
         old = _stub(tmp_path, "python3", "Python 3.9.6")
         path = _settings(tmp_path, old)
         data = json.loads(path.read_text(encoding="utf-8"))
-        shim_render = cli._statusline_command(old, posix=False, git_bash=git_bash)
-        head = ("" if git_bash else "& ") + '"${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" '
-        assert shim_render.startswith(head), shim_render
+        head = lead + '"${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" '
+        shim_render = head + old
+        if lead == ". ":
+            assert shim_render == cli._statusline_command(old, posix=False), "the render init writes"
         data["statusLine"]["command"] = shim_render
         path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
@@ -180,9 +182,9 @@ class TestRewireChangesOnlyTheInterpreter:
         assert not after.endswith(" " + old), after
         assert old not in after, after
 
-    @pytest.mark.parametrize("git_bash", [True, False], ids=["bare", "called"])
+    @pytest.mark.parametrize("lead", ["", "& ", ". "], ids=["bare", "called", "dotted"])
     @pytest.mark.parametrize("pad", ["  ", " \t", ""], ids=["trailing-spaces", "trailing-tab", "none"])
-    def test_a_hand_edit_with_trailing_whitespace_still_rewires_the_shim_argument(self, tmp_path, pad, git_bash):
+    def test_a_hand_edit_with_trailing_whitespace_still_rewires_the_shim_argument(self, tmp_path, pad, lead):
         """Both reviewers' finding (2026-09-13): the swap's start offset was
         measured on a stripped copy, so trailing whitespace from a hand edit
         put it past the interpreter word and the site was reported as neither
@@ -190,7 +192,7 @@ class TestRewireChangesOnlyTheInterpreter:
         old = _stub(tmp_path, "python3", "Python 3.9.6")
         path = _settings(tmp_path, old)
         data = json.loads(path.read_text(encoding="utf-8"))
-        data["statusLine"]["command"] = " " + cli._statusline_command(old, posix=False, git_bash=git_bash) + pad
+        data["statusLine"]["command"] = " " + lead + '"${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" ' + old + pad
         path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
         result = cli.rewire_interpreter_in_settings(path)
@@ -401,9 +403,9 @@ class TestTheLauncherRewiresWithItsFlag:
         path.write_text(json.dumps(doc), encoding="utf-8")
         return path
 
-    # The shim bare, and behind PowerShell's call operator where Claude Code
-    # finds no Git Bash (DEF-929): the launcher's flag is found past either head.
-    @pytest.mark.parametrize("lead", ["", "& "], ids=["bare-shim", "called-shim"])
+    # The shim bare, behind PowerShell's call operator (DEF-929), and behind
+    # the dot init renders (DEF-3017): the launcher's flag is found past each head.
+    @pytest.mark.parametrize("lead", ["", "& ", ". "], ids=["bare-shim", "called-shim", "dotted-shim"])
     def test_a_dead_launcher_is_rewired_to_a_name_and_loses_its_flag(self, tmp_path, monkeypatch, lead):
         from tests import _interpreter_hosts as hosts
 

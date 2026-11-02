@@ -201,7 +201,8 @@ its start, and the board's `overlaps:` section is the oracle, not this paragraph
 - **The `cc/GOAL.md` hard cap value** (4,500 against a proposed 2,500). The question dissolves
   under `TP-703d`: a goal file that holds priorities alone is under either cap.
 - **`DEF-4029`** (the PowerShell zone reader's four shapes), shelved after a platform safety
-  stop; resumes on `win` under the neutral-wording rule, outside this roadmap.
+  stop; resumed on `win` under the neutral-wording rule, outside this roadmap, landed as #366
+  (`f3f9c916`), and struck 2026-11-01.
 - **`TP-700`'s headless runner.** A fresh session per lane changes the record layer's writer
   again; `TP-703d` is written so the runner can call the same row verb, and nothing here waits
   on it.

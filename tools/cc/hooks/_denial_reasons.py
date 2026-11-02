@@ -821,24 +821,34 @@ GATE_COMMAND_DONT_FINGERPRINT = (
 # the branch (the actionability contract's subject field); {plan} is "the
 # plan `...` is complete" or "no plan is in progress"; {ahead} arrives already
 # pluralised ("1 commit", "3 commits"); {push} says what the push does for
-# this branch (open the pull request, or push onto the one already open).
+# this branch (open the pull request, or push onto the one already open);
+# {prs} is one sentence on what the gate read of this seat's OTHER open pull
+# requests (none at all; this seat has none; the push lands on the lane's own;
+# the box names no seat; or the read could not be made, with the wait named),
+# since while one IS open the gate holds the lane and sends no text at all
+# (DEF-4058: one open pull request per seat).
 GATE_HANDOFF_OWED = (
     "Handoff owed before Claude Code stops: nothing is in flight ({plan}; no "
     "tracked edit) and {target} holds {ahead} that {upstream} does not, so the "
-    "lane must be handed off now. A finished lane is handed off in the turn "
+    "lane must be handed off now. {prs} A finished lane is handed off in the turn "
     "that finishes it, while the context is warm. Run /handoff: it writes the "
     "Session Log row, and its last step, the ship driver's `handoff` verb "
     "(tools/cc/ship.py), pushes the lane once, {push}. This gate speaks once "
-    "per commit."
+    "per commit, and not at all while another of this seat's pull requests is "
+    "open (one open pull request per seat: it holds the lane and asks again once "
+    "that one merges)."
     "\n  Don't: report the lane as done and stop for the operator to type "
     "/handoff -- the lane sits unpushed, with no row and its claims live, until "
     "someone returns, and the next session hands it off from a cold context."
-    "\n  Do: run /handoff in this turn. Three carve-outs, each said in one line "
+    "\n  Do: run /handoff in this turn. {count} carve-outs, each said in one line "
     "before stopping again: the operator asked to hold the push; this lane ships "
-    "together with another; or more of this lane's work is still to come this "
-    "session (a lane group, the next pack of a chain). The continuation is let "
-    "through, and the gate does not return for this commit."
+    "together with another; more of this lane's work is still to come this "
+    "session (a lane group, the next pack of a chain){fourth}. The continuation is "
+    "let through, and the gate does not return for this commit."
 )
+# {count} is "Three" or "Four" and {fourth} the fourth carve-out's text or ''
+# (``stop_gate.HANDOFF_FOURTH_CARVE_OUT``, a fragment of this one reason, kept
+# beside the gate: every text here is a whole reason the bench knows by marker).
 
 # The Do line of GATE_COMMAND_SPAWN_FAILED, per source of the command (the
 # runner picks one and fills {remedy} with the platform's): the override is

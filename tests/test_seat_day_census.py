@@ -354,7 +354,7 @@ class TestTheOtherColumns:
         2026-10-30 were such quotations, DEF-5029). The text is read as the
         driver stores it, stripped on send, so a leading space is no opening
         (the operator-call rule reads the same way), and ``gridlock:`` counts
-        on the dispatcher's ack alone. Dies to: the colon dropped (prose about
+        on the dispatcher's ack or note alone. Dies to: the colon dropped (prose about
         a redirect counted), the marker searched anywhere in the text (a
         quotation counted), a leading space let through, or a worker's ack
         counted as a ruling."""
@@ -395,37 +395,72 @@ class TestTheOtherColumns:
         assert "gridlock: 0, stopped: 0." in census_mod.as_row(data, "win-2", "2026-10-18")
 
     def test_a_gridlock_ruling_counts_on_its_senders_row_and_the_row_names_each_rulings_id(self):
-        """The ruling's ack opens with ``gridlock:`` (the dispatcher brief's
-        sentence, tools/cc/seat.py::SELF_HOST_GRIDLOCK), so the day row the
-        handoff derives names the rulings the operator can reverse (the
-        protocol's falsifier: two reversals in a week re-open the rule). Only
-        the dispatcher's acks count, as only a request is an operator call.
-        Dies to: the count kept without the ids, the ids printed on a row with
-        none or out of time order, a ruling counted on the row of the seat it
-        answered, a worker's request or the dispatcher's note counted, or the
-        text form leaving the word out."""
+        """The ruling opens with ``gridlock:`` (the dispatcher brief's
+        sentence, tools/cc/seat.py::SELF_HOST_GRIDLOCK): an ack, or a note
+        where no request waits on the ruling (DEF-4060: air-work sat held
+        07:25Z to 10:58Z on 2026-10-31 with no request open, and the ruling,
+        note 20261031T105813Z-air-c80653, was the first of the day's three and
+        the one the row left out). So the day row the handoff derives names
+        the rulings the operator can reverse (the protocol's falsifier: two
+        reversals in a week re-open the rule). Only the dispatcher's acks and
+        notes count, as only a request is an operator call: a note and an ack
+        from each sender, and the dispatcher's own quotation mid-text, which
+        only the opening test now keeps out. Dies to: the count kept without
+        the ids, the ids printed on a row with none or out of time order, a
+        ruling counted on the row of the seat it answered, the dispatcher's
+        note left out, its quotation counted, a worker's request, ack or note
+        counted, or the text form leaving the word out."""
         src = _src(_m("win", "request", "2026-10-18T01:00:00Z", "q1",
                       text="gridlock: lane/x and lane/y both edit board.py; which first?"),
                    _m("air", "ack", "2026-10-18T02:00:00Z", "k1", ack="q1", text="gridlock: win first, the facts read"),
                    _m("air", "ack", "2026-10-18T01:30:00Z", "k2", ack="q1", text="gridlock: and win-2 catches up"),
-                   _m("air", "note", "2026-10-18T02:30:00Z", "n4", text="gridlock: a note is no ruling"),
-                   _m("win-2", "note", "2026-10-18T03:00:00Z", "n3", text="read k1, a gridlock: ruling, catching up"))
+                   _m("air", "note", "2026-10-18T02:30:00Z", "n4",
+                      text="gridlock: win-2's window re-armed, no request names it, the facts read"),
+                   _m("win", "ack", "2026-10-18T02:40:00Z", "k5", ack="n4", text="gridlock: a worker's ack is no ruling"),
+                   _m("win", "note", "2026-10-18T02:50:00Z", "n5", text="gridlock: a worker's note is no ruling"),
+                   _m("win-2", "note", "2026-10-18T03:00:00Z", "n3", text="read k1, a gridlock: ruling, catching up"),
+                   _m("air", "note", "2026-10-18T03:10:00Z", "n6", text="read k1, a gridlock: ruling, no change"))
         data = census_mod.census(src, DAY, NEXT)
         rows = {r["seat"]: (r["gridlock"], r["gridlock_ids"]) for r in data["rows"]}
-        # The worker's request opening with the word is a question, not a ruling; the
-        # dispatcher's note is not one either; win-2's quotation opens no row of its own;
-        # the ids read in time order, not in the order the ref lists them.
-        assert rows == {"air": (2, ["k2", "k1"]), "win": (0, [])}
-        assert data["totals"]["gridlock"] == 2
+        # The worker's request opening with the word is a question, not a ruling, and its
+        # ack and note rule nothing; win-2's quotation opens no row of its own and air's
+        # adds none to air's; the ids read in time order, not in the order the ref lists them.
+        assert rows == {"air": (3, ["k2", "k1", "n4"]), "win": (0, [])}
+        assert data["totals"]["gridlock"] == 3
         air_row = census_mod.as_row(data, "air", "2026-10-18")
-        assert "shelved: 0, gridlock: 2 (k2, k1), stopped: 0." in air_row, air_row
+        assert "shelved: 0, gridlock: 3 (k2, k1, n4), stopped: 0." in air_row, air_row
         for seat in ("win", "win-2"):
             row = census_mod.as_row(data, seat, "2026-10-18")
             assert "shelved: 0, gridlock: 0, stopped: 0." in row and "(" not in row.split("gridlock:")[1], row
         text = census_mod.render(data, {})
-        assert "2026-10-18 air: merged 0, " in text and "shelved: 0, gridlock: 2 (k2, k1), stopped: 0\n" in text, text
+        assert "2026-10-18 air: merged 0, " in text and "shelved: 0, gridlock: 3 (k2, k1, n4), stopped: 0\n" in text, text
         assert "2026-10-18 win: merged 0, " in text and "shelved: 0, gridlock: 0, stopped: 0\n" in text, text
         assert "2026-10-18 win-2:" not in text, text
+
+    def test_a_gridlock_ruling_rides_an_ack_or_a_note_and_no_other_kind(self):
+        """DEF-4060: the kinds a ruling rides, read on one message each. With a
+        dispatcher named, its ack and its note opening with ``gridlock:`` are
+        rulings and its request, assign, release and claim are not (a request
+        is a question, an assign a job, a release or a claim a lane's
+        bookkeeping); a worker's ack or note is none. With none named, every
+        seat's ack and note count, as every seat's assigns do. The marker is
+        the first word, so a note opening with the seat it is for is no ruling
+        (37 of the dispatcher's 46 notes from 2026-10-25 to 10-31 opened with
+        a seat's name, so the brief puts the name after the marker). Dies to:
+        the note left out, the kind test dropped or widened (a request, an
+        assign or a claim counted), the sender test dropped, or the marker read
+        past an address."""
+        def ruling(kind: str, sender: str, dispatcher: str | None = "air", text: str = "gridlock: x") -> bool:
+            return census_mod._words({"type": kind, "from": sender, "text": text}, dispatcher)["gridlock"]
+
+        assert (ruling("ack", "air"), ruling("note", "air")) == (True, True)
+        assert (ruling("request", "air"), ruling("assign", "air"), ruling("release", "air"),
+                ruling("claim", "air")) == (False, False, False, False)
+        assert (ruling("ack", "win"), ruling("note", "win")) == (False, False)
+        assert (ruling("ack", "win", None), ruling("note", "win", None), ruling("request", "win", None)) == (
+            True, True, False)
+        assert ruling("note", "air", text="air-work, gridlock: your marker re-armed") is False
+        assert ruling("note", "air", text="gridlock: air-work, your marker re-armed") is True
 
     def test_each_senders_releases_naming_an_assign_count_on_its_row_split_by_whether_each_closed_a_job(self):
         """A seat may release its own job by hand too; the measure counts every

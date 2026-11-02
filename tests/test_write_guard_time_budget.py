@@ -519,7 +519,7 @@ def _modules_the_guard_reaches() -> list[Path]:
                 print(os.path.relpath(os.path.abspath(f), os.path.dirname(hooks)))
         shutil.rmtree(root, ignore_errors=True)
     """)
-    env = {k: v for k, v in os.environ.items() if not k.startswith("ESPALIER")}
+    env = {k: v for k, v in os.environ.items() if not k.startswith("ESPALIER") or k == "ESPALIER_AUDIT_DIR"}
     result = subprocess.run([sys.executable, "-c", probe, str(HOOKS_DIR)], capture_output=True,
                             text=True, encoding="utf-8", timeout=45, env=env)
     assert result.returncode == 0, result.stderr

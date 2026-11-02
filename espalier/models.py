@@ -26,6 +26,12 @@ class Signal:
 class RepoFingerprint:
     repo_name: str
     repo_root: str
+    # The commit the fingerprint was taken at (`git rev-parse HEAD`), empty
+    # outside git or before a first commit. The repo-analyst's drift block and
+    # docs-maintainer's docs probe diff from it, since `init` gitignores
+    # reports/ and the file has no history to read. A record, never a signal:
+    # `espalier diff` drops it, or every commit would read as drift.
+    head_sha: str = ""
     language_counts: dict[str, int] = field(default_factory=dict)
     languages: list[str] = field(default_factory=list)
     package_systems: list[str] = field(default_factory=list)

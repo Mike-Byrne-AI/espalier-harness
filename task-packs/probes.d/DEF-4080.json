@@ -1,0 +1,11 @@
+{
+ "id": "DEF-4080",
+ "subject": "tools/cc/ledger_row.py",
+ "cmd": "python3 -c \"import sys,subprocess;r=subprocess.run([sys.executable,'tools/cc/ledger_row.py','repin','DEF-1','--reason','x','--why-not','y'],capture_output=True,text=True);print('unrecognized arguments: --why-not' in r.stderr)\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "3a32faaabd5f",
+ "text_sha": "faa1de94dca1",
+ "verified_2026_10_31": "OPEN (filed 2026-10-31; probe driven at filing)",
+ "verified_2026_11_01": "STILL_OPEN (re-pinned value unchanged on 2026-11-01: second read: the probe reads the flag's absence alone, declared in the text with the strike's test pinning the write; dates to the local day) [changed: text]"
+}

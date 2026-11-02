@@ -2204,7 +2204,9 @@ class TestRunnerCommandConstruction:
     def test_the_child_runs_without_the_bypass_or_a_parent_session(self, tmp_path, monkeypatch):
         """A run launched from a maintenance-mode shell, or from inside a Claude
         Code session, must still measure the scenario's hooks. Dies to: the
-        child handed os.environ unscrubbed."""
+        child handed os.environ unscrubbed, or handed no audit store of the
+        run's own."""
+        import os
         from types import SimpleNamespace
 
         from bench.end_to_end import runner
@@ -2227,9 +2229,13 @@ class TestRunnerCommandConstruction:
         for gone in ("ESPALIER_MAINTENANCE_MODE", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT",
                      "CLAUDE_PROJECT_DIR", "ESPALIER_E2E_BENCH"):
             assert gone not in env, gone
-        # Every other harness knob too: ESPALIER_STOP_GATE=full would change the
-        # stop gate BCE-002 tests, ESPALIER_AUDIT_DIR its audit trail.
-        assert not [k for k in env if k.startswith("ESPALIER_")], env.keys()
+        # Every other harness knob too (ESPALIER_STOP_GATE=full would change the
+        # stop gate BCE-002 tests), and the audit store is the run's own, beside
+        # the work dir: neither the launcher's nor, as with none, the
+        # operator's home store (DEF-3022).
+        assert [k for k in env if k.startswith("ESPALIER_")] == ["ESPALIER_AUDIT_DIR"], env.keys()
+        assert env["ESPALIER_AUDIT_DIR"] == str((tmp_path / "wd").resolve().with_name("wd-audit")), env
+        assert env["ESPALIER_AUDIT_DIR"] != os.environ["ESPALIER_AUDIT_DIR"]
 
     def test_a_run_loads_no_mcp_server_of_the_maintainer(self, tmp_path, monkeypatch):
         """Dies to: `--strict-mcp-config` dropped (a maintainer's claude.ai

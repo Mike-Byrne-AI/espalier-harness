@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4087",
+ "subject": "tools/cc/hooks/_zone_watch.py",
+ "cmd": "python3 -c \"import sys,subprocess,tempfile,pathlib as P;sys.path.insert(0,'tools/cc/hooks');import _zone_watch as z;r=P.Path(tempfile.mkdtemp());G=lambda *a:subprocess.run(['git','-c','user.name=p','-c','user.email=p@p',*a],cwd=str(r),check=True,capture_output=True);G('init','-q','-b','main');(r/'espalier.toml').write_text('protected_paths = [\\\"zone/\\\"]\\n');g=r/'zone'/'gen';g.mkdir(parents=True);(g/'.gitignore').write_text('*\\n');(g/'keep.txt').write_text('k\\n');G('add','-f','zone');G('commit','-qm','a');'zone/gen/keep.txt' in z.snapshot(r) or sys.exit('control: the fresh walk dropped a tracked declared directory');print('zone/gen/keep.txt' in z.snapshot(r,prior={},prior_taken_ns=0))\"",
+ "open_value": "False",
+ "why_not": null,
+ "row_sha": "efd10ebefbc6",
+ "text_sha": "de259402464f",
+ "verified_2026_11_01": "OPEN (filed 2026-11-01; probe driven at filing)"
+}

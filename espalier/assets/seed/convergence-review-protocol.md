@@ -202,7 +202,9 @@ scaffold asks.
   reads the file on disk. Every scaffold routes `args.model` to every `agent()` call;
   pass it on every launch, because the agents inherit the session model otherwise.
   `args.smoke: true` bounds the open-ended lanes so a wiring check stays under ten
-  agents; without it the corpus-blind lane reviews your repository for real.
+  agents; without it the corpus-blind lane reviews your repository for real. A run
+  naming no `finders` (the default smoke lens) skips the convergence-critic and its
+  ledger row unless `ledgerPath` is passed.
 - **Dedup source:** your repository's forward ledger or issue tracker — whichever
   one you keep. Keep each round's own report wherever you keep analysis output.
 - **Per-run ledger:** the file the persist step writes under `cc/`

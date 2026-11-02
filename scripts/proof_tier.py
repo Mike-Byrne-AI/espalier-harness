@@ -3,7 +3,8 @@
 
 The proof-order bodies (`/implement-task` step 7, `/preflight` Step 2,
 `/implement-pack` step 6) state one rule: a change that touched no engine code
-and no hook runs the tree-wide contracts (`pytest -n auto -m contract -q`); a change
+and no hook runs the tree-wide contracts (``-m contract`` at ``-n auto``, the
+serial files' contract rows after it at one worker); a change
 that touched a file the pull-recall corpus reads (``memory/``, the two
 catalogs, ``docs/sharp-edges/``, the principles) runs those contracts and then
 the recall engine's own tests, because a corpus edit moves the calibration
@@ -26,8 +27,8 @@ leaves it out since 2026-10-01, which is how it stopped crashing them);
 ``git add -u <file>`` stages the deletion and the population is honest again.
 
 The full tier's command lines are the hook type gate, the lint line, then the
-parallel recipe: ``pytest -n auto`` with the five serial files left out, then
-those five at one xdist worker (``-n 1`` since DEF-2017: on a thread-method
+parallel recipe: ``pytest -n auto`` with the serial files left out, then
+those files at one xdist worker (``-n 1`` since DEF-2017: on a thread-method
 host a ceiling crossing then names its test). The pytest pair is
 the local default since 2026-09-06, after the two clean full runs
 ``tests/README.md`` pre-registered as the count the flip needed (6:31 and 6:12
@@ -61,7 +62,7 @@ can break it; a missing ``mypy`` is a loud exit 127, never a skipped line.
 
 ``--run`` executes the tier's command(s) in order and prints a receipt line per
 command, then a summary naming how many ran and the worst exit code. The full
-tier is four commands, the recall tier three and the contract tier two: the
+tier is four commands, the recall tier four and the contract tier three: the
 lint line (``ruff check .``) sits in every tier, right after the type gate
 where there is one, because a lane's lint red once reached the pull request
 past a green full tier (no tier ran ruff, and the ruff-lint cell is not a
@@ -102,13 +103,15 @@ missing ref) -- the CI tier job reads that as ``full``, never as cheaper.
 from __future__ import annotations
 
 import argparse
+import ast
+import fnmatch
 import json
 import re
 import shlex
 import subprocess
 import sys
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import AbstractSet, Callable, Iterable, NamedTuple
 
 _ROOT = Path(__file__).resolve().parents[1]
 
@@ -194,8 +197,50 @@ TIMEOUT_NEAR_SERIAL_FILES: tuple[str, ...] = (
     "tests/test_guard_metamorphic.py",
     "tests/test_powershell_reachability_differential.py",
 )
+
+#: The cited-pin run: one nested pytest child over the docs' cited rows. On
+#: 2026-11-01 it carried four rows of ``tests/test_speedbump_irreversible.py``
+#: (a wall-clock file above) and 39 write-guard rows whose hook judgment writes
+#: a speed bump's state, which ``tests/_hook_spawn.py`` does not retry after a
+#: miss that left state (DEF-2014's carve-out). Beside the parallel leg on
+#: windows-latest one such judgment outran the guard's 3.5 s budget and redded
+#: the leg (run 41217045122, 2026-10-31, DEF-4062); on the full tier's serial
+#: leg the child has the runner to itself (74 s alone on the Windows seat). Not
+#: covered: the same rows in their own modules (354 state-writing rows on the
+#: parallel leg, the census of 2026-11-01). The contract and recall tiers run
+#: its rows on a contract line of their own at one worker
+#: (``SERIAL_CONTRACT_FILES``, DEF-5044). The axis registry's run of its
+#: proving nodes: one child over six session tests that init a tree and
+#: launch four deployed hooks per stack, 64 s alone on the Windows seat
+#: (2026-11-01), placed by the nested-run rule in tests/test_proof_tier.py,
+#: which reds on a launch of a pytest child that no serial list holds and no
+#: enrolment clears (DEF-2035). The verify-pins controls: each clones this
+#: repository at a fixed commit and runs a pytest child twice over its rows,
+#: reached through ``scripts/verify_pins.py`` (the rule's script hop,
+#: DEF-2036); the file took 495.7 s at one worker on the Windows seat
+#: (2026-11-01), 65 s of it waiting on the box lock and the rest beside another
+#: seat's four-worker tier, its slowest row 175 s.
+NESTED_RUN_SERIAL_FILES: tuple[str, ...] = (
+    "tests/test_declared_limits_contract.py",
+    "tests/test_axis_registry.py",
+    "tests/test_verify_pins.py",
+)
+
 #: Everything the parallel leg leaves out and the serial leg runs.
-SERIAL_FILES: tuple[str, ...] = WALL_CLOCK_SERIAL_FILES + TIMEOUT_NEAR_SERIAL_FILES
+SERIAL_FILES: tuple[str, ...] = WALL_CLOCK_SERIAL_FILES + TIMEOUT_NEAR_SERIAL_FILES + NESTED_RUN_SERIAL_FILES
+
+#: The serial files that hold a ``contract`` row. The contract line names no
+#: file, so it collects the tree at ``-n auto``, and until 2026-11-01 it ran
+#: every row of the cited-pin run beside the pool the list above keeps it off
+#: (13 rows, a collection census; DEF-5044). So the line leaves these out and
+#: a second contract line runs them at one worker. A subset of
+#: ``SERIAL_FILES``, hand-kept like it, and pinned both ways to a driven
+#: collection in tests/test_proof_tier.py: a serial file with a contract row
+#: that is not listed rides the pool, and a listed file with none leaves the
+#: second line collecting nothing, which pytest exits 5 on.
+SERIAL_CONTRACT_FILES: tuple[str, ...] = (
+    "tests/test_declared_limits_contract.py", "tests/test_axis_registry.py", "tests/test_verify_pins.py",
+)
 
 #: The recall engine's own tests: the calibration pins, the eval instrument and
 #: the pasted-table contracts. They score the corpus the tree holds, so a change
@@ -252,11 +297,21 @@ _PYTEST: tuple[str, ...] = ("pytest", "-q")
 #: saying so (failure-mode review, 2026-10-16), so the suite's own summary
 #: counts the tests that never ran (``tests/_never_ran.py``, DEF-2020). The
 #: serial files keep one worker (their placement was measured: wall-clock
-#: budgets and timeout-near gates, kept off parallel load); every other line
+#: budgets, timeout-near gates and the nested runs, kept off parallel load); every other line
 #: runs at ``-n auto``.
 _PARALLEL: tuple[str, ...] = ("-n", "auto")
 _ONE_WORKER: tuple[str, ...] = ("-n", "1")
-_CONTRACT_ARGV: tuple[str, ...] = ("pytest", "-n", "auto", "-m", "contract", "-q")
+#: ``own_tests`` leaves a contract-classified file off the own line because
+#: the contract lines run every row of it (DEF-4089): a ``-k`` or a narrower
+#: ``-m`` here would leave those rows run nowhere on the cheaper tiers. The
+#: first names no file and leaves out the serial files it would collect a row
+#: of; the second runs their contract rows at one worker (DEF-5044), and is
+#: there only while one holds such a row.
+_CONTRACT_ARGV: tuple[str, ...] = (("pytest", "-n", "auto", "-m", "contract", "-q")
+                                   + tuple(f"--ignore={rel}" for rel in SERIAL_CONTRACT_FILES))
+_CONTRACT_SERIAL_ARGV: tuple[str, ...] = ("pytest", *_ONE_WORKER, "-m", "contract", "-q", *SERIAL_CONTRACT_FILES)
+_CONTRACT_LINES: tuple[tuple[str, ...], ...] = (
+    (_CONTRACT_ARGV, _CONTRACT_SERIAL_ARGV) if SERIAL_CONTRACT_FILES else (_CONTRACT_ARGV,))
 #: The heavy end-to-end stages (tests/conftest.py::_HEAVY_E2E_TESTS) leave the
 #: per-pull-request tier: the stage-one smoke alone ran 848 s on one xdist
 #: worker of a 992 s parallel leg (a CI cell, 2026-09-30), and one member lives
@@ -280,8 +335,8 @@ _TIER_ARGVS: dict[str, tuple[tuple[str, ...], ...]] = {
         _PYTEST + _PARALLEL + _NOT_HEAVY + tuple(f"--ignore={rel}" for rel in SERIAL_FILES),
         _PYTEST + _ONE_WORKER + _NOT_HEAVY + SERIAL_FILES,
     ),
-    "recall": (_RUFF_ARGV, _CONTRACT_ARGV, _PYTEST + _PARALLEL + RECALL_SLICE_FILES),
-    "contract": (_RUFF_ARGV, _CONTRACT_ARGV),
+    "recall": (_RUFF_ARGV, *_CONTRACT_LINES, _PYTEST + _PARALLEL + RECALL_SLICE_FILES),
+    "contract": (_RUFF_ARGV, *_CONTRACT_LINES),
 }
 TIERS: tuple[str, ...] = tuple(_TIER_ARGVS)
 FULL_COMMANDS: tuple[str, ...] = tuple(shlex.join(argv) for argv in _TIER_ARGVS["full"])
@@ -322,6 +377,438 @@ def _without_heavy_filter(argv: tuple[str, ...]) -> tuple[str, ...]:
 _RUNNERS: tuple[str, ...] = ("mypy", "ruff", "pytest")
 
 
+#: The tests written for the shipped agent, command and skill bodies, and the
+#: bodies they read, as ``(kind, glob)`` under each root. A body is not a
+#: script, so its tests cannot be derived from its name, and this file is
+#: integration-classified: a diff that edits only a body earned the contract
+#: tier, whose ``-m contract`` deselected every row of it, so the first-contact
+#: diagnostics could regress with every pull-request cell green (DEF-4067).
+#: The kinds are the file's own walk (its ``BODY_KINDS``); the roots are this
+#: checkout's bodies and the deploy source ``espalier init`` copies into the
+#: adopter tree the file builds. Hand-kept like ``SERIAL_FILES``; pinned to the
+#: file's walk in tests/test_proof_tier.py.
+BODY_TEST_FILES: tuple[str, ...] = ("tests/test_first_contact_diagnostics.py",)
+BODY_KINDS: tuple[tuple[str, str], ...] = (("agents", "*.md"), ("commands", "*.md"), ("skills", "*/SKILL.md"))
+BODY_ROOTS: tuple[str, ...] = (".claude/", "espalier/assets/claude/")
+
+
+def is_body(rel: str) -> bool:
+    """A shipped agent, command or skill body: under a ``BODY_ROOTS`` root, one
+    of ``BODY_KINDS`` matched segment by segment (a glob's ``*`` never crosses
+    a ``/``, so a nested agent or a skill's other file is not one)."""
+    rel = rel.replace("\\", "/")
+    for root in BODY_ROOTS:
+        if not rel.startswith(root):
+            continue
+        parts = rel[len(root):].split("/")
+        if not all(parts):
+            continue
+        for kind, pattern in BODY_KINDS:
+            want = [kind, *pattern.split("/")]
+            if len(parts) == len(want) and all(fnmatch.fnmatchcase(p, w) for p, w in zip(parts, want)):
+                return True
+    return False
+
+
+#: The type names a ``/`` join can start from with a literal (``Path(".claude")
+#: / "commands"``): the one-argument call reads as its argument.
+_PATH_TYPES: frozenset[str] = frozenset({"Path", "PurePath", "PurePosixPath", "PureWindowsPath"})
+#: A string longer than this, or on more than one line, is prose, never a path.
+_NAME_MAX = 255
+#: The ``os.path`` spellings whose ``join`` builds a path from its arguments.
+_PATH_MODULES: frozenset[str] = frozenset({"os.path", "path", "posixpath", "ntpath"})
+#: The ``Path`` methods that write, move or remove the path they are called
+#: on: a join that is their receiver names a file the test puts into a tree,
+#: and the text this checkout holds under that name is not read there
+#: (DEF-5042). ``replace`` is left out: on an ``os.path.join`` it is
+#: ``str.replace``, a separator swap before a read.
+_WRITE_METHODS: frozenset[str] = frozenset({"write_text", "write_bytes", "touch", "mkdir", "unlink", "rmdir",
+                                            "rename", "symlink_to", "hardlink_to", "chmod"})
+#: The calls whose second positional argument is the path they write.
+_COPY_CALLS: frozenset[str] = frozenset({"shutil.copy", "shutil.copy2", "shutil.copyfile", "shutil.copytree",
+                                         "shutil.move"})
+
+
+class _Module(NamedTuple):
+    """What one parsed test module or helper names (``_parsed``)."""
+    names: frozenset[str]
+    #: ``(module, name)`` for each ``from <...>.<module> import <name>``
+    imports: frozenset[tuple[str, str]]
+    #: each module-level ``NAME = <value>`` whose value names a path
+    constants: dict[str, frozenset[str]]
+
+
+#: ``(text, module)`` per file parsed, keyed by its path: the pins ask once per
+#: body, and a file whose text is unchanged is not parsed again. Keyed on the
+#: text, not the mtime: two writes inside one tick of a coarse filesystem clock
+#: keep one mtime, and the second would read stale.
+_NAMES_CACHE: dict[str, tuple[str, _Module]] = {}
+
+
+def _norm_name(text: str) -> str:
+    text = text.replace("\\", "/")
+    while text.startswith("./"):
+        text = text[2:]
+    return text.strip("/")
+
+
+def _dotted_name(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return f"{_dotted_name(node.value)}.{node.attr}"
+    return ""
+
+
+def _call_join(node: ast.Call) -> str | None:
+    """The string constants that end a path-building call's arguments:
+    ``Path(ROOT, ".claude", "commands")``, ``root.joinpath(".claude", ...)``,
+    ``os.path.join(ROOT, ".claude", ...)``; the operands before them drop, as
+    in a ``/`` join."""
+    func = node.func
+    name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
+    joins = name in _PATH_TYPES or name == "joinpath" or (
+        name == "join" and isinstance(func, ast.Attribute) and _dotted_name(func.value) in _PATH_MODULES)
+    if not joins or node.keywords:
+        return None
+    parts: list[str] = []
+    for arg in reversed(node.args):
+        if not (isinstance(arg, ast.Constant) and isinstance(arg.value, str)):
+            break
+        parts.append(arg.value)
+    return "/".join(reversed(parts)) if parts else None
+
+
+def _literal(node: ast.AST) -> str | None:
+    """A string constant, or a one-argument ``Path``-type call on one."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Call) and len(node.args) == 1 and not node.keywords:
+        func = node.func
+        name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
+        if name in _PATH_TYPES:
+            return _literal(node.args[0])
+    return None
+
+
+def _is_join(node: ast.AST) -> bool:
+    return (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)) or (
+        isinstance(node, ast.Call) and _call_join(node) is not None)
+
+
+def _writes_mode(call: ast.Call, at: int) -> bool:
+    """Whether an ``open`` call's mode, at position ``at`` or by keyword,
+    writes without reading first (``w``, ``a`` or ``x``; ``r+`` reads)."""
+    mode = call.args[at] if len(call.args) > at else next(
+        (kw.value for kw in call.keywords if kw.arg == "mode"), None)
+    return isinstance(mode, ast.Constant) and isinstance(mode.value, str) and any(c in mode.value for c in "wax")
+
+
+def _is_written(node: ast.AST, parent: dict[int, ast.AST]) -> bool:
+    """Whether ``node`` is used as a path a write is made to: the receiver of
+    one of ``_WRITE_METHODS`` (``.parent.mkdir`` included: the tree the write
+    goes into), of ``.open`` in a mode that writes, the first argument of
+    ``open`` in one, or the second of one of ``_COPY_CALLS``."""
+    up = parent.get(id(node))
+    if isinstance(up, ast.Attribute) and up.value is node:
+        above = parent.get(id(up))
+        if up.attr == "parent":
+            return isinstance(above, ast.Attribute) and above.attr == "mkdir"
+        if up.attr == "open":
+            return isinstance(above, ast.Call) and above.func is up and _writes_mode(above, 0)
+        return up.attr in _WRITE_METHODS
+    if isinstance(up, ast.Call) and any(arg is node for arg in up.args):
+        name = _dotted_name(up.func)
+        if name in ("open", "io.open"):
+            return up.args[0] is node and _writes_mode(up, 1)
+        if name in _COPY_CALLS:
+            return len(up.args) > 1 and up.args[1] is node
+    return False
+
+
+def _written_joins(tree: ast.AST) -> set[int]:
+    """The ids of every node inside a join a module only writes to
+    (``_is_written``): the join itself, or each join a function binds to a
+    name by a plain assignment, every load of that name in the function a
+    write. A name loaded any other way (read, passed on, returned), or shared
+    with another function (``global``, ``nonlocal``), keeps its joins; so does
+    a join on a scratch tree the test's own text reads back, since ``espalier
+    init`` copies this checkout's files into the tree (DEF-5042). A read the
+    code under test makes from that tree is spelled nowhere, so it is not
+    seen either way (``path_readers``)."""
+    parent = {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    out: set[int] = set()
+    for node in ast.walk(tree):
+        if _is_join(node) and _is_written(node, parent):
+            out.update(id(n) for n in ast.walk(node))
+    for func in ast.walk(tree):
+        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        stores: dict[str, list[ast.Name]] = {}
+        loads: dict[str, list[ast.Name]] = {}
+        shared: set[str] = set()   # global or nonlocal: loaded in another function too
+        for node in ast.walk(func):
+            if isinstance(node, ast.Name):
+                (loads if isinstance(node.ctx, ast.Load) else stores).setdefault(node.id, []).append(node)
+            elif isinstance(node, (ast.Global, ast.Nonlocal)):
+                shared.update(node.names)
+        for name, bound in stores.items():
+            uses = loads.get(name)
+            if name in shared or not uses or not all(_is_written(use, parent) for use in uses):
+                continue
+            for store in bound:
+                assign = parent.get(id(store))
+                if (isinstance(assign, ast.Assign) and len(assign.targets) == 1 and assign.targets[0] is store
+                        and _is_join(assign.value)):
+                    out.update(id(n) for n in ast.walk(assign.value))
+    return out
+
+
+def _module_names(tree: ast.AST) -> set[str]:
+    """Every path a test module names: each one-line string constant, and the
+    string constants that end each ``/`` join (``REPO_ROOT / ".claude" /
+    "commands" / "inbox.md"`` names ``.claude/commands/inbox.md``; the operand
+    before them is dropped, so a tree ``espalier init`` built names the
+    deployed path, which is the source's own), outside the joins the module
+    only writes to (``_written_joins``: a file a test puts into a tree it
+    built is not one it reads)."""
+    written = _written_joins(tree)
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if id(node) in written:
+            continue
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            names.add(node.value)
+        elif isinstance(node, ast.Call):
+            joined = _call_join(node)
+            if joined:
+                names.add(joined)
+        elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            parts: list[str] = []
+            left: ast.AST = node
+            while isinstance(left, ast.BinOp) and isinstance(left.op, ast.Div):
+                right = _literal(left.right)
+                if right is None:
+                    break
+                parts.append(right)
+                left = left.left
+            else:
+                head = _literal(left) or (_call_join(left) if isinstance(left, ast.Call) else None)
+                if head is not None:
+                    parts.append(head)
+            if parts:
+                names.add("/".join(reversed(parts)))
+    return {_norm_name(n) for n in names if n and "\n" not in n and len(n) <= _NAME_MAX}
+
+
+def _read_module(path: Path) -> tuple[str, bytes] | None:
+    """A file's text and bytes; a BOM is read past, as Python's import does."""
+    try:
+        data = path.read_bytes()
+        return data.decode("utf-8-sig"), data
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _parsed(path: Path, text: str, data: bytes) -> _Module:
+    """``_module_names`` of one file, its ``from ... import`` names and its
+    module-level path constants, parsed once per text (from the bytes, so a
+    BOM parses). A file that does not parse names nothing: the suite's own
+    collection reports it."""
+    key = str(path)
+    hit = _NAMES_CACHE.get(key)
+    if hit is not None and hit[0] == text:
+        return hit[1]
+    try:
+        tree = ast.parse(data)
+    except (SyntaxError, ValueError):
+        module = _Module(frozenset(), frozenset(), {})
+    else:
+        imports = frozenset((node.module.rsplit(".", 1)[-1], alias.name) for node in ast.walk(tree)
+                            if isinstance(node, ast.ImportFrom) and node.module for alias in node.names)
+        constants: dict[str, frozenset[str]] = {}
+        for stmt in tree.body:
+            if isinstance(stmt, ast.Assign):
+                targets, value = stmt.targets, stmt.value
+            elif isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
+                targets, value = [stmt.target], stmt.value
+            else:
+                continue
+            named = frozenset(_module_names(value))
+            for target in targets:
+                if isinstance(target, ast.Name) and named:
+                    constants[target.id] = named
+        module = _Module(frozenset(_module_names(tree)), imports, constants)
+    _NAMES_CACHE[key] = (text, module)
+    return module
+
+
+def _names_path(names: AbstractSet[str], rel: str) -> bool:
+    """``rel`` itself, or a suffix of it two segments or longer (a join from a
+    directory variable: ``claude_dir / "commands" / "inbox.md"``); a bare file
+    name matches only a top-level path."""
+    if rel in names:
+        return True
+    parts = rel.split("/")
+    return any("/".join(parts[i:]) in names for i in range(1, len(parts) - 1))
+
+
+def path_readers(changed, root: Path = _ROOT) -> tuple[str, ...]:
+    """Every top-level ``tests/test_*.py`` that names a changed path
+    (``_module_names``), in the order the paths came. A body, a doc or a
+    memory note is not a script, so its tests cannot be read from its name,
+    and the files that read one are integration-classified: a diff that edited
+    only such a file earned a cheaper tier, whose ``-m contract`` deselected
+    every row of them, and their reds arrived on ``main`` (DEF-5040 for the
+    bodies, DEF-5042 for the rest: tests/test_mail.py reads docs/WORKFLOW.md).
+    Every changed path is looked up as it is, so the asset copy's own readers
+    come with it. A file a test only writes into a tree it builds is not a
+    read (``_written_joins``): that is what narrows ``README.md``, which half
+    the suite puts into a scratch tree. Derived from the test files at each
+    call, never kept. What this cannot read: a name built at run time (an
+    f-string, a glob, a file name held in a variable), which for the bodies
+    is the walk ``BODY_TEST_FILES`` keeps by hand; and a file the code under
+    test reads (a check run on the repository root, ``git``, an ``init``-built
+    tree the engine reads back), which no name in the test spells (DEF-5043).
+    The contract slice's own doc-reader census
+    (tests/test_marker_taxonomy.py::TestDocReadersRunInTheContractTier) is the
+    other mechanism for the same reds, by test function rather than file. A
+    path constant a module imports by name from a ``tests/_*.py`` helper
+    counts as its own."""
+    wanted: list[str] = []
+    for rel in changed:
+        rel = _norm_name(rel)
+        if rel and rel not in wanted:
+            wanted.append(rel)
+    tests_dir = root / "tests"
+    if not wanted or not tests_dir.is_dir():
+        return ()
+    # a literal or a join that names the path spells its file name: only a
+    # module whose text holds one, or names a helper that does, is parsed
+    bases = {rel.rsplit("/", 1)[-1] for rel in wanted}
+    helpers: dict[str, dict[str, frozenset[str]]] = {}
+    for path in sorted(tests_dir.glob("_*.py")):
+        read = _read_module(path)
+        if read is not None and any(base in read[0] for base in bases):
+            constants = _parsed(path, *read).constants
+            if constants:
+                helpers[path.stem] = constants
+    found: dict[str, list[str]] = {rel: [] for rel in wanted}
+    for path in sorted(tests_dir.glob("test_*.py")):
+        read = _read_module(path)
+        if read is None:
+            continue
+        text, data = read
+        via = [stem for stem in helpers if stem in text]
+        named = wanted if via else [rel for rel in wanted if rel.rsplit("/", 1)[-1] in text]
+        if not named:
+            continue
+        module = _parsed(path, text, data)
+        names = set(module.names)
+        for stem, name in module.imports:
+            names |= helpers.get(stem, {}).get(name, frozenset())
+        for rel in named:
+            if _names_path(names, rel):
+                found[rel].append(f"tests/{path.name}")
+    return tuple(dict.fromkeys(t for rel in wanted for t in found[rel]))
+
+
+#: Where the suite keeps its primary-marker rules, and their name there.
+_CONFTEST = "tests/conftest.py"
+_RULES_NAME = "_MARKER_RULES"
+_Rules = tuple[tuple[tuple[str, ...], str], ...]
+#: ``(text, rules)`` per conftest read, keyed by its path, as ``_NAMES_CACHE``.
+_RULES_CACHE: dict[str, tuple[str, _Rules | None]] = {}
+
+
+def _marker_rules(root: Path) -> _Rules | None:
+    """``_MARKER_RULES`` of ``root``'s conftest as ``((patterns, marker), ...)``,
+    read from its literal by ``ast`` (nothing of it runs): the CI tier job
+    composes the own line under ``--quiet`` too, with no pytest installed, and
+    the conftest imports pytest. None where there is no conftest, it does not
+    parse, or the name is not bound once, to a literal list of that shape, and
+    never changed after (a second binding, an augmented one, a method call on
+    it or an item set): the conftest's value would be one this cannot read."""
+    path = root / _CONFTEST
+    read = _read_module(path)
+    if read is None:
+        return None
+    text, data = read
+    hit = _RULES_CACHE.get(str(path))
+    if hit is not None and hit[0] == text:
+        return hit[1]
+    rules: _Rules | None = None
+    try:
+        tree = ast.parse(data)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        tree = ast.Module(body=[], type_ignores=[])
+    stores = sum(1 for node in ast.walk(tree)
+                 if isinstance(node, ast.Name) and node.id == _RULES_NAME and not isinstance(node.ctx, ast.Load))
+    touched = any(isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(node.value, ast.Name)
+                  and node.value.id == _RULES_NAME for node in ast.walk(tree))
+    for stmt in tree.body if stores == 1 and not touched else ():
+        if isinstance(stmt, ast.AnnAssign):
+            targets, value = [stmt.target], stmt.value
+        elif isinstance(stmt, ast.Assign):
+            targets, value = stmt.targets, stmt.value
+        else:
+            continue
+        if value is None or not any(isinstance(t, ast.Name) and t.id == _RULES_NAME for t in targets):
+            continue
+        try:
+            literal = ast.literal_eval(value)
+        except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+            break
+        if isinstance(literal, (list, tuple)) and all(
+                isinstance(rule, (list, tuple)) and len(rule) == 2 and isinstance(rule[1], str)
+                and isinstance(rule[0], (list, tuple)) and all(isinstance(p, str) for p in rule[0])
+                for rule in literal):
+            rules = tuple((tuple(patterns), marker) for patterns, marker in literal)
+        break
+    _RULES_CACHE[str(path)] = (text, rules)
+    return rules
+
+
+def primary_marker(stem: str, rules: _Rules) -> str:
+    """The marker of the first rule with a pattern that is ``stem`` or a prefix
+    of it before an ``_``, else ``unit``: the walk of
+    ``tests/conftest.py::_primary_marker`` over the rules ``_marker_rules``
+    reads, pinned to that function over every test module in
+    tests/test_proof_tier.py."""
+    for patterns, marker in rules:
+        if any(stem == p or stem.startswith(p + "_") for p in patterns):
+            return marker
+    return "unit"
+
+
+#: The most test files one changed body may bring to the own line: the live
+#: maximum when it was set (2026-11-01: the reflect skill's body, 10 once the
+#: contract-classified files left the line, 14 before; its 14 ran 8382 tests
+#: in 302 s on four workers). Pinned over every tracked body in
+#: tests/test_proof_tier.py and printed beside each changed body's count, so a
+#: census list added to a heavy test file, which grows every body's line and
+#: the five required cells that run it, is a decision made here rather than a
+#: cost nobody saw (DEF-4089). It bounds files, not their cost: a light reader
+#: swapped for a heavy one passes it. A doc or a top-level file has no ceiling.
+OWN_LINE_CEILING = 10
+#: What to do past it, said by the receipt and the pin alike.
+OWN_LINE_REMEDY = ("raise OWN_LINE_CEILING in the diff that grows the line, saying why, or "
+                   "reclassify the reader; never build its path at run time, which hides it "
+                   "from the reader map and lands its reds on main (DEF-5040)")
+
+
+def body_line_sizes(changed, root: Path = _ROOT) -> dict[str, int]:
+    """``{body: n}`` for each changed agent, command or skill body: how many
+    test files it brings to the own line on its own (``own_tests``), the count
+    the receipt prints beside ``OWN_LINE_CEILING``."""
+    sizes: dict[str, int] = {}
+    for rel in changed:
+        rel = _norm_name(rel)
+        if is_body(rel) and rel not in sizes:
+            sizes[rel] = len(own_tests([rel], root))
+    return sizes
+
+
 def own_tests(changed, root: Path = _ROOT) -> tuple[str, ...]:
     """``tests/test_<stem>.py`` for every changed ``scripts/<stem>.py`` that has
     one, and every changed ``tests/test_*.py`` itself (a test-only diff earned
@@ -333,7 +820,19 @@ def own_tests(changed, root: Path = _ROOT) -> tuple[str, ...]:
     it: on 2026-09-20 the row tool's red-first rows were invisible to the
     receipt the proof-order bodies tell the operator to paste (failure-mode
     pass; DEF-775's shape, one directory over). The full tier already runs
-    them, so the line rides along with the two cheaper tiers only."""
+    them, so the line rides along with the two cheaper tiers only. A changed
+    agent, command or skill body brings ``BODY_TEST_FILES``, which is
+    enumerated, not derived: a body's tests cannot be read from its name, so
+    the roster is hand-kept and pinned to that file's walk (DEF-4067: a
+    body-only diff ran none of the tests written for the bodies). Every test
+    file that names a changed path, short of writing it into a tree it built,
+    follows (``path_readers``, derived). A file the conftest classifies
+    ``contract`` is left off, whichever way it came: the contract lines, which
+    both cheaper tiers carry, have run every row of it, and the own line ran it
+    again whole (DEF-4089: 16 of the 56 files the tracked bodies brought).
+    A serial file among them runs on the second, at one worker
+    (``SERIAL_CONTRACT_FILES``, DEF-5044). The rules are
+    read by ``_marker_rules``; where they cannot be read nothing is left off."""
     out: list[str] = []
     for rel in changed:
         rel = rel.replace("\\", "/")
@@ -344,13 +843,35 @@ def own_tests(changed, root: Path = _ROOT) -> tuple[str, ...]:
         if rel.startswith("tests/test_") and rel.endswith(".py") and rel.count("/") == 1:
             if (root / rel).is_file() and rel not in out:
                 out.append(rel)
-    return tuple(out)
+        if is_body(rel):
+            out.extend(t for t in BODY_TEST_FILES if (root / t).is_file() and t not in out)
+    out.extend(t for t in path_readers(changed, root) if t not in out)
+    rules = _marker_rules(root)
+    if rules is None:
+        return tuple(out)
+    return tuple(t for t in out if primary_marker(Path(t).stem, rules) != "contract")
+
+
+def _runs_whole(argv: tuple[str, ...]) -> bool:
+    """``pytest`` with nothing but ``-q``, ``-n auto`` and test file paths: a
+    line that runs every row of each file it names."""
+    if argv[:1] != ("pytest",):
+        return False
+    rest, i = argv[1:], 0
+    while i < len(rest):
+        if rest[i] == "-q" or (rest[i].startswith("tests/") and rest[i].endswith(".py")):
+            i += 1
+        elif rest[i:i + 2] == ("-n", "auto"):
+            i += 2
+        else:
+            return False
+    return True
 
 
 def tier_argvs(which: str, changed=(), root: Path = _ROOT, *, heavy: bool = False,
                leg: str = "both") -> tuple[tuple[str, ...], ...]:
     """The argv list a tier runs for THIS diff: the tier's own commands, then
-    one line for the changed scripts' own test files on the two cheaper tiers.
+    one line for the diff's own test files (``own_tests``) on the two cheaper tiers.
     ``KeyError`` on a tier nobody wired -- never a silent fall-through to the
     cheaper tier. ``heavy`` puts the heavy end-to-end stages back on both lines
     (the clean-checkout cell and the gate's first leg); ``leg`` selects by
@@ -358,6 +879,11 @@ def tier_argvs(which: str, changed=(), root: Path = _ROOT, *, heavy: bool = Fals
     ``FULL_COMMANDS`` stays the four lines the receipts count."""
     argvs = _TIER_ARGVS[which]
     own = () if which == "full" else own_tests(changed, root)
+    # a file a bare pytest line of the tier names runs there whole (the recall
+    # slice): the own line would run it twice (DEF-4089); a line with any
+    # selection on it (-m, -k, a node id) is not one
+    whole = {token for argv in argvs if _runs_whole(argv) for token in argv[1:]}
+    own = tuple(rel for rel in own if rel not in whole)
     own_parallel = tuple(rel for rel in own if rel not in SERIAL_FILES)
     own_serial = tuple(rel for rel in own if rel in SERIAL_FILES)
     lines = (argvs
@@ -517,6 +1043,10 @@ def changed_paths(root: Path) -> tuple[list[str], list[str]]:
             continue
         code, path = entry[:2], entry[3:]
         if "R" in code or "C" in code:
+            if "R" in code and i < len(fields) and fields[i]:
+                # a rename deletes its original: that path's tier and readers
+                # count, as the --base diff's delete-plus-add reads it
+                changed.append(fields[i])
             i += 1
         if code == "??":
             untracked.append(path)
@@ -1248,6 +1778,8 @@ def main(argv: list[str] | None = None) -> int:
             # named so a lane run before its commit is not read as clean.
             pending, fresh = changed_paths(root)
             outside = sorted(set(pending + fresh))
+    # Not on --quiet, and not on the full tier, which runs no own line.
+    sizes = {} if args.quiet or which == "full" else body_line_sizes(changed + untracked, root)
     result = {
         "tier": which,
         "earned_tier": earned,
@@ -1263,6 +1795,8 @@ def main(argv: list[str] | None = None) -> int:
         "heavy": args.heavy,
         "leg": args.leg,
         "commands": list(commands(which, changed + untracked, root, heavy=args.heavy, leg=args.leg)),
+        "own_line_ceiling": OWN_LINE_CEILING,
+        "own_line_by_body": sizes,
     }
     if args.quiet:
         print(which)
@@ -1293,6 +1827,10 @@ def main(argv: list[str] | None = None) -> int:
         if outside:
             print(f"note: {len(outside)} uncommitted path(s) are outside the --base diff, so neither "
                   "line read them: " + ", ".join(outside))
+        if sizes:
+            print(f"own line per body (ceiling {OWN_LINE_CEILING}): " + ", ".join(
+                f"{rel} {n}" + (f" (past the ceiling: {OWN_LINE_REMEDY})" if n > OWN_LINE_CEILING else "")
+                for rel, n in sizes.items()))
         for line in result["commands"]:
             print("run: " + line)
         if len(result["commands"]) > 1:

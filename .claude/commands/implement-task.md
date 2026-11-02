@@ -155,19 +155,28 @@ For one bounded change, one main proof path, or a small localized edit.
    ```bash
    # Espalier-Harness tree: ONE command runs the tier the diff earns and prints
    # a receipt naming every command it ran -- full is four (the hook type gate,
-   # the lint line, xdist across the cores with the five serial files left out,
-   # then those five at one xdist worker; the two pytest lines took about six
+   # the lint line, xdist across the cores with the serial files left out,
+   # then those files at one xdist worker; the two pytest lines took about six
    # and a half minutes, measured twice), recall is the lint line, the contract
    # slice, then the recall engine's test files (the recall files about three and
-   # a half minutes on top of the slice), contract is two (the lint line, then
-   # the tree-wide contracts at `-n auto`; about six minutes on four workers);
+   # a half minutes on top of the slice), contract is three (the lint line, the
+   # tree-wide contracts at `-n auto`, then the serial files' contract rows at
+   # one worker; about six minutes on four workers);
    # every pytest line runs under xdist, so a ceiling crossing names its test
    # (up to xdist's four restarts per worker);
    # on the two cheaper tiers a changed
    # `scripts/<name>.py` adds a line running its own `tests/test_<name>.py`
    # when that file exists (derived from the diff -- a script's tests are
-   # integration-classified, so the contract slice alone never collected them);
-   # a changed file among the five serial files rides a second line, at one worker
+   # integration-classified, so the contract slice alone never collected them),
+   # a changed agent, command or skill body adds the test file written for
+   # the bodies (a hand-kept roster, pinned to that file's walk), and any
+   # changed file adds every test file that names its path in a string literal
+   # or a path join, unless the test only writes that file into a tree it
+   # builds (read from the test files; a file the tested code reads is not seen);
+   # a file another line of the tier already runs whole (a contract-classified
+   # one, the recall slice) is left off, and each changed body's count prints
+   # beside a pinned ceiling;
+   # a changed file among the serial files rides a second line, at one worker
    if [ -f scripts/proof_tier.py ]; then   # Espalier-Harness tree: its tier script
      python scripts/proof_tier.py --run   # Espalier-Harness tree: the tier the diff earns, one receipt
    else
@@ -241,7 +250,11 @@ For one bounded change, one main proof path, or a small localized edit.
     forgets is told once; it is the floor, not the plan. Three carve-outs,
     each said in one line before stopping: the operator asked to hold the
     push; this lane ships together with another; or more of this lane's work
-    is still to come this session (a lane group).
+    is still to come this session (a lane group). A fourth only where the
+    gate says its read of this seat's other open pull requests could not be
+    made: a read made in this turn naming one open, by number (where the gate
+    can read, it holds the lane itself, one open pull request per seat, and
+    asks again once that one merges).
 
 ### If tests fail
 

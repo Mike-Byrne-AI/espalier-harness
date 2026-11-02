@@ -4,7 +4,8 @@
  "cmd": null,
  "open_value": null,
  "why_not": "the race lives on GitHub's macOS runners and never showed on this repository's Mac or Windows box, so a local probe would read the roster, not the race; the oracle is the nested controller crash annotation on the macOS portability leg",
- "row_sha": "0530be5c2cc3",
- "text_sha": "ba67edf291fb",
- "verified_2026_10_19": "STILL_OPEN (re-pinned value unchanged on 2026-10-19: W3's review round: the mitigation is bounded to the race's own failure type, the runs are named, the write's ValueError variant is named, and the completed-child shape is split out to DEF-4033) [changed: text]"
+ "row_sha": "50fe68c774ba",
+ "text_sha": "a800ce727682",
+ "verified_2026_10_19": "STILL_OPEN (re-pinned value unchanged on 2026-10-19: W3's review round: the mitigation is bounded to the race's own failure type, the runs are named, the write's ValueError variant is named, and the completed-child shape is split out to DEF-4033) [changed: text]",
+ "verified_2026_10_31": "STILL_OPEN (re-pinned value unchanged on 2026-10-31: the race was read on an ubuntu runner (the clean-checkout (3.10) job, run 41239423797, 2026-10-31), where the six rows are unmarked and redded the leg; the claim stands and its scope widens from GitHub's macOS runners to GitHub's runners) [changed: anchor, text]"
 }

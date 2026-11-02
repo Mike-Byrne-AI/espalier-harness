@@ -1,0 +1,13 @@
+{
+ "id": "DEF-4071",
+ "subject": "espalier/cli.py",
+ "cmd": "python3 -c \"import json,tempfile,pathlib;import espalier.cli as c;from espalier._venv import statusline_shim_called as k;c._render_host_is_posix=lambda:False;q=chr(34);p=pathlib.Path(tempfile.mkdtemp())/'settings.json';p.write_text(json.dumps({'statusLine':{'type':'command','command':'& '+q+chr(36)+'{CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd'+q+' python3'}}),encoding='utf-8');c.rewire_interpreter_in_settings(p);print(k(json.loads(p.read_text(encoding='utf-8'))['statusLine']['command']))\"",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  "espalier/_venv.py"
+ ],
+ "row_sha": "516be2bd3b53",
+ "text_sha": "bae0d2bf7490",
+ "verified_2026_10_31": "OPEN (filed 2026-10-31; probe driven at filing)"
+}

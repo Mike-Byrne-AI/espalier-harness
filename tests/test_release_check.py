@@ -868,6 +868,72 @@ class TestNotSlowLegBound:
         assert "::warning" not in capsys.readouterr().out
 
 
+class TestARedLegNamesItsTest:
+    """A red ``tests_pass`` names the failing test (DEF-2033). On a CI runner
+    pytest's short summary keeps a failure's whole message, so an assertion
+    diff lands below the ``FAILED`` line, and the detail built from the last
+    three lines read ``rc=1;   -     'exited 128', /   - ] / 1 failed, ...`` on
+    the gate's reds of #405 (run 41299693126) and #409 (41304345654)."""
+
+    _NODE = "tests/test_zone_watch.py::TestADeclarationOlderThanTheSession::test_a_later_different_fault_is_said_too"
+    _COUNT = "1 failed, 13103 passed, 45 skipped, 14972 deselected, 1 xfailed, 2 warnings in 1203.91s (0:20:03)"
+    # #405's shape: the FAILED line, the message's diff under it, the count.
+    _RED = (
+        "=========================== short test summary info ===========================\n"
+        f"FAILED {_NODE} - AssertionError: assert [] == ['timed out past 2 s', 'exited 128']\n"
+        "  \n"
+        "  - [\n"
+        "  -     'timed out past 2 s',\n"
+        "  -     'exited 128',\n"
+        "  - ]\n"
+        f"{_COUNT}\n"
+    )
+
+    def test_a_red_leg_names_the_test_above_its_diff(self, monkeypatch):
+        """Mutation: keep the last three lines."""
+        monkeypatch.setenv("ESPALIER_RELEASE_CHECK_WITH_TESTS", "1")
+
+        class _Red:
+            returncode = 1
+            stdout = self._RED
+            stderr = ""
+
+        monkeypatch.setattr(release_check.subprocess, "run", lambda cmd, **kwargs: _Red())
+        result = release_check.check_tests_pass(REPO_ROOT)
+        assert result.status == "FAIL", result
+        assert result.detail == f"rc=1; FAILED {self._NODE} / {self._COUNT}"[:200], result
+
+    def test_each_failed_and_error_line_is_kept_by_its_node_id_then_the_count(self):
+        """The message after `` - `` is dropped, so a node id fits the
+        200-character detail. Mutation: keep the whole line, or only FAILED."""
+        out = ("=== short test summary info ===\n"
+               "FAILED tests/a.py::t - AssertionError: x\n  - y\n"
+               "ERROR tests/b.py::u - RuntimeError: z\n2 failed, 1 error in 1.0s\n")
+        assert release_check.pytest_failure_tail(out) == [
+            "FAILED tests/a.py::t", "ERROR tests/b.py::u", "2 failed, 1 error in 1.0s"]
+
+    def test_lines_above_the_summary_are_not_read_as_its_tests(self):
+        """A captured log's ERROR record and a nested child's FAILED line in a
+        test's captured output sit above the short summary. Mutation: read
+        every line of the output."""
+        out = ("----- Captured log call -----\n"
+               "ERROR    hookrun:test_shapes.py:4 the child said no\n"
+               "----- Captured stdout call -----\n"
+               "FAILED tests/test_inner.py::test_inner_one - AssertionError\n"
+               "=== short test summary info ===\n"
+               "FAILED tests/test_outer.py::test_outer - AssertionError: x\n"
+               "1 failed, 4 passed in 2.0s\n")
+        assert release_check.pytest_failure_tail(out) == [
+            "FAILED tests/test_outer.py::test_outer", "1 failed, 4 passed in 2.0s"]
+
+    def test_output_naming_no_test_keeps_its_last_three_lines(self):
+        """A collection crash or an internal error prints no FAILED line; its
+        last three lines are all there is. Mutation: keep nothing."""
+        out = "INTERNALERROR> a\nINTERNALERROR> b\nINTERNALERROR> c\nINTERNALERROR> d\n"
+        assert release_check.pytest_failure_tail(out) == [
+            "INTERNALERROR> b", "INTERNALERROR> c", "INTERNALERROR> d"]
+
+
 # ── The opt-in env census ───────────────────────────────────────────
 
 

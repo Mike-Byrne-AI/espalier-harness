@@ -370,10 +370,14 @@ class TestTheCheckStateSetsHaveOneHome:
         assert self._assignments(hook, set(self._SETS)) == {}, "a check-state set returned to the hook"
 
     def test_the_driver_reads_each_set_from_the_module(self):
+        """The driver keeps no ``_RED_BUCKETS`` at all: its required-check
+        read splits the buckets in the module (``read_required``, DEF-4063),
+        so the bucket set never reaches it."""
         import ast
         driver = HOOKS_DIR.parent / "ship.py"
         found = self._assignments(driver, set(self._SETS))
-        assert set(found) == set(self._SETS), sorted(set(self._SETS) - set(found))
+        expected = set(self._SETS) - {"_RED_BUCKETS"}
+        assert set(found) == expected, sorted(expected ^ set(found))
         for name, value in found.items():
             assert isinstance(value, ast.Attribute) and isinstance(value.value, ast.Name), name
             assert value.value.id == "_post_merge" and value.attr == name.lstrip("_"), name

@@ -395,9 +395,12 @@ class TestApplyMarkerToText:
 
 class TestApplyMarkerToBatch:
     """DEF-729: the Windows statusline shim is a batch file. To cmd.exe a
-    ``#`` line is a command, and every line before ``@echo off`` is echoed to
-    stdout -- the statusline's own channel -- so the batch marker is ``::``
-    and it goes on the line AFTER a leading echo-off."""
+    ``#`` line is a command, and every command line before ``@echo off`` is
+    echoed to stdout -- the statusline's own channel -- so the batch marker is
+    ``::`` and it goes on the line AFTER the echo-off. A label line (one
+    opening with a colon) is skipped and never echoed, even before the
+    echo-off (raw stdout, win-2 2026-10-31), which is what lets the shim open
+    with a line for bash alone (DEF-3017)."""
 
     def test_marker_lands_after_a_leading_echo_off(self):
         from espalier.managed_markers import MARKER_BATCH_COMMENT, apply_marker_to_batch, has_managed_marker
@@ -414,6 +417,25 @@ class TestApplyMarkerToBatch:
 
         result = apply_marker_to_batch("  @ECHO OFF\nx\n")
         assert result.split("\n")[1] == MARKER_BATCH_COMMENT
+
+    def test_marker_lands_after_an_echo_off_that_only_label_lines_precede(self):
+        """DEF-3017: the shim's first line is for bash, which sources the file
+        under the dot form and runs a ``::`` line as a command: on line 1 the
+        marker printed ``::: command not found`` on stderr every refresh. A
+        label line before the echo-off is not echoed, so the echo-off is
+        still the file's first command and the marker goes after it."""
+        from espalier.managed_markers import MARKER_BATCH_COMMENT, apply_marker_to_batch
+
+        result = apply_marker_to_batch(":; bash only #\n@echo off\nsetlocal\n")
+        assert result.split("\n")[:4] == [":; bash only #", "@echo off", MARKER_BATCH_COMMENT, "setlocal"]
+
+    def test_a_command_line_before_the_echo_off_keeps_the_marker_on_top(self):
+        """A command line before the echo-off is echoed whatever follows it,
+        so only label lines are passed over."""
+        from espalier.managed_markers import MARKER_BATCH_COMMENT, apply_marker_to_batch
+
+        result = apply_marker_to_batch("set x=1\n@echo off\nsetlocal\n")
+        assert result.startswith(MARKER_BATCH_COMMENT + "\nset x=1\n"), result
 
     def test_marker_goes_on_top_when_there_is_no_echo_off(self):
         from espalier.managed_markers import MARKER_BATCH_COMMENT, apply_marker_to_batch

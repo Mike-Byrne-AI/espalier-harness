@@ -239,8 +239,14 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "NEW 2026-09-27 (the fourth .claude kind): the two landing parametrize lists and the two per-kind glob comprehensions read surface_contract.CLAUDE_KIND_GLOBS / CLAUDE_SURFACE_KINDS. Deriving IS the property: a hand-named triple here left the deployed workflow bodies unchecked, the defect the kinds owner exists to end; worth having (every kind lands and no orphan lands), blind only to a kind the owner drops, which the count pins one file over catch.",
     ),
     "tests/test_cli_deploy.py": (
-        33, "f89550597aa1ec80d5b90b19c0c18b5b41f49591268144946f8fbb3ef92790a9",
+        34, "84838e4444b1dd1b295cbdc7cf0c693ef710f80b26482d00888ce3ef910bc9a6",
         "MIXED",
+        "GREW 33 -> 34 on 2026-11-01 (the export-drive lane, DEF-5045): "
+        "TestLedgerSeed::test_a_tree_that_has_a_commit_gets_every_onboarding_row_filed "
+        "compares init's outcome with a list built from `_ONBOARDING_ROWS`, as the fresh-tree "
+        "test beside it does; worth having (a row the verb refuses on a repository with a "
+        "commit reds by id), blind only to a row the roster drops, which the roster's own "
+        "count beside it pins. "
         "GREW 29 -> 33 on 2026-10-18 (the engine-stdin lane, DEF-928): "
         "TestAFailedFingerprintTakesTheSeedDocsWithIt reads `get_seed_docs()` to find the "
         "seed docs a failed init left behind and the directories it made; the roster "
@@ -969,7 +975,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "no pin cited: the property is 'everything present is safe', so a smaller population makes a s...",
     ),
     "tests/test_managed_inventory.py": (
-        8, "ddaa42235091e8bdc77fd2c734835b4455b384830b8f9c99658239d01039845e",
+        11, "24436c38461dee3c12ce44bccada2ac2616671adce952f64bc70eec51c912ed8",
         "MIXED_WITH_PRIOR_PASS",
         "tests/test_managed_inventory.py:252 — `assert get_seed_docs() == (…20 hand-typed paths…)`; th... "
         "PLUS (2026-09-05, DEF-696) two rows in TestSeedStampRenderParity iterating "
@@ -981,7 +987,16 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "unproven; and the population must be the seed list, because the claim is 'for "
         "every seed init deploys', not 'for these twenty' -- the hand-typed tuple at :252 "
         "one class up is the deletion guard for the list itself.  "
-        "GROWTH 7->8 adjudicated 2026-09-27: TestSeedAssetSourceIndirection.test_no_override_is_the_identity loops _SEED_ASSET_SOURCES asserting no row is the identity; deriving is correct, a literal pair went stale the day two memory seeds joined the map, and the harm (the asset-docs sync copying this tree's own memo over a stub) has no other pin.",
+        "GROWTH 7->8 adjudicated 2026-09-27: TestSeedAssetSourceIndirection.test_no_override_is_the_identity loops _SEED_ASSET_SOURCES asserting no row is the identity; deriving is correct, a literal pair went stale the day two memory seeds joined the map, and the harm (the asset-docs sync copying this tree's own memo over a stub) has no other pin.  "
+        "GROWTH 8->11 adjudicated 2026-10-31 (the census-walk roster, DEF-4066): three rows in "
+        "TestHarnessWrittenPaths -- all-any and comprehension over HARNESS_OWNED_ROOTS, for-assert "
+        "over fusion_manifest.HARNESS_INCLUDE -- each asserting the roster `harness_written_paths()` "
+        "covers a source roster it is derived from. CORRECT_BY_PROPERTY with a driven floor: the claim "
+        "is 'every path the harness writes is pruned', and "
+        "tests/test_first_contact_diagnostics.py::TestTheSizeCensusCountsTheAdoptersFiles::test_every_file_the_harness_wrote_is_on_the_engines_roster "
+        "walks a real init'd tree and asserts more than 40 harness files before checking each, so a "
+        "source roster shrunk to nothing fails the floor rather than passing; the fuse tree's hand copy "
+        "is pinned to git's view of tools/ one test over, the deletion guard for that list.",
     ),
     "tests/test_managed_paths.py": (
         2, "3ddecd462f189a35e27aa7c406ee240f6e4ab4a5d89abcf9551bca979159b672",

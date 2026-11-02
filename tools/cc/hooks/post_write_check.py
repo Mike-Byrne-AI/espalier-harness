@@ -848,7 +848,13 @@ def _zone_check(data: dict, tool_name: str, tool_input: dict, root: Path, operat
             if base == root:
                 _zone_watch.after_file_tool(root, sid, [rel])
         return
-    result = _zone_watch.after_shell_call(root, sid, data.get("duration_ms"))
+    try:
+        result = _zone_watch.after_shell_call(root, sid, data.get("duration_ms"))
+    finally:
+        # A fresh walk's once-a-session line (DEF-2031), rendered even when the
+        # call raised after saying it; an older kept _zone_watch has no queue.
+        for line in getattr(_zone_watch, "take_notices", list)():
+            _hook_utils.advise_warn(line)
     if result is None:
         return
     if result["status"] == "unchecked":

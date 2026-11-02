@@ -526,3 +526,150 @@ class TestSeedStampRenderParity:
             stamp = render_seed_stamp(rel)
             assert all(ord(ch) < 128 for ch in stamp), rel
             assert SEED_STAMP_RE.match(stamp), rel
+
+
+# ---------------------------------------------------------------------------
+# The roster the deployed censuses prune
+# ---------------------------------------------------------------------------
+
+
+class TestHarnessWrittenPaths:
+    """``harness_written_paths`` is every path the harness may write on any
+    tree; ``census_prune_paths`` is the part of it the deployed censuses prune
+    on one tree, rendered into the repo-analyst's and code-reviewer's ``own``
+    walk at deploy (DEF-4066: the body-kept list pruned two of the 38 files
+    init had written, and the fused engine none). The second is never wider
+    than what the harness wrote there: an adopter's own file at a path the
+    harness might write stays counted."""
+
+    def test_sorted_unique_root_relative_and_named_once(self, tmp_path):
+        from espalier.managed_inventory import census_prune_paths, harness_written_paths
+
+        for paths in (harness_written_paths(), census_prune_paths(tmp_path)):
+            assert list(paths) == sorted(set(paths)), paths
+            assert all(not p.startswith(("/", "./", "..")) and "\\" not in p for p in paths), paths
+            dirs = [p for p in paths if p.endswith("/")]
+            under = [p for p in paths if any(p != d and p.startswith(d) for d in dirs)]
+            assert under == [], under  # a file under a listed directory is the directory's
+
+    def test_every_init_install_ci_and_runtime_roster_is_in(self):
+        from espalier import fusion_manifest, surface_contract
+        from espalier.managed_inventory import get_install_ci_artifacts, get_local_runtime_prefixes, harness_written_paths
+        from espalier.managed_paths import HARNESS_OWNED_ROOTS, STANDARD_MANAGED_ROOT_DOCS
+
+        paths = harness_written_paths()
+
+        def covered(rel: str) -> bool:
+            return any(rel == p or (p.endswith("/") and rel.startswith(p)) for p in paths)
+
+        assert all(covered(root + "/") for root in HARNESS_OWNED_ROOTS), paths
+        for roster in (
+            STANDARD_MANAGED_ROOT_DOCS, get_seed_docs(), get_local_runtime_prefixes(),
+            get_install_ci_artifacts(), surface_contract.SHIPPED_TASK_PACK_FILES,
+            surface_contract.SHIPPED_TASK_PACK_DIRS, fusion_manifest.FUSE_WRITTEN_FILES,
+        ):
+            missed = [rel for rel in roster if not covered(rel)]
+            assert missed == [], missed
+
+    def test_the_session_log_directory_is_the_loaders(self):
+        """The rows a handoff writes, one file each: the census counted them as
+        the adopter's Markdown after the first handoff (the review's M2)."""
+        import ast
+
+        from espalier import managed_inventory
+
+        tree = ast.parse((REPO_ROOT / "tools" / "cc" / "_record_fragments.py").read_text(encoding="utf-8"))
+        values = [
+            node.value.value for node in tree.body
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
+            and any(isinstance(t, ast.Name) and t.id == "SESSION_LOG_DIR" for t in node.targets)
+        ]
+        assert len(values) == 1, values
+        assert values[0] + "/" in managed_inventory._HARNESS_RECORD_DIRS, values
+
+    def test_the_fuse_manifest_is_in_with_its_tools_tree_entry_by_entry(self):
+        from espalier import fusion_manifest, managed_inventory
+        from espalier.managed_inventory import harness_written_paths
+
+        paths = set(harness_written_paths())
+        for rel in fusion_manifest.HARNESS_INCLUDE:
+            if rel == "tools/":
+                assert set(managed_inventory._FUSE_TOOLS_TREE) <= paths, paths
+            elif rel.startswith(".claude/"):
+                assert ".claude/" in paths
+            else:
+                assert rel in paths, rel
+        assert "tools/" not in paths  # an adopter's own tools/ stays theirs
+
+    def test_the_fuse_tools_tree_is_this_repositorys_tracked_tools_tree(self):
+        """The hand copy of what ``tools/`` brings, pinned to git's view of the
+        tree: a new top-level entry under ``tools/`` is one a fusion vendors and
+        a census must prune."""
+        from _live_tree import checkout_iterdir
+        from espalier import managed_inventory
+
+        entries = list(checkout_iterdir(REPO_ROOT / "tools"))
+        assert entries, "git's view of tools/ is empty"
+        top = {"tools/" + p.name + ("/" if p.is_dir() else "") for p in entries}
+        assert top == set(managed_inventory._FUSE_TOOLS_TREE), top
+
+    def test_the_files_fuse_writes_are_the_manifests(self, tmp_path):
+        """The marker and the scoreboard placeholder, written where the
+        manifest names them, so a fused tree's census prunes both (the
+        review's m4)."""
+        from espalier import fuse, fusion_manifest
+
+        assert fuse._FUSION_MARKER == fusion_manifest.FUSION_MARKER
+        assert fuse._seed_fusion_marker(tmp_path) is True
+        (tmp_path / "bench").mkdir()
+        assert fuse._seed_bench_results(tmp_path) is True
+        written = {p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*") if p.is_file()}
+        assert written == set(fusion_manifest.FUSE_WRITTEN_FILES), written
+
+    def test_fuse_paths_are_pruned_on_a_fused_tree_alone(self, tmp_path):
+        from espalier import fusion_manifest
+        from espalier.managed_inventory import census_prune_paths
+
+        fuse_only = ("espalier/", "tools/__init__.py", "bench/README.md", "docs/external/",
+                     fusion_manifest.FUSION_MARKER, "bench/RESULTS.md")
+        plain = set(census_prune_paths(tmp_path))
+        assert not plain & set(fuse_only), plain & set(fuse_only)
+        assert {"tools/cc/", ".claude/", "cc/"} <= plain, plain
+        assert set(fuse_only) <= set(census_prune_paths(tmp_path, fused=True))
+        (tmp_path / fusion_manifest.FUSION_MARKER).write_text("# marker\n", encoding="utf-8")
+        assert set(fuse_only) <= set(census_prune_paths(tmp_path))
+
+    def test_an_adopters_own_seed_path_is_theirs_and_a_stamped_one_the_harnesss(self, tmp_path):
+        """``init`` keeps an adopter's own ``docs/HOOKS.md`` and stamps the ones
+        it writes; the census follows the stamp. On a fused tree a path the
+        overlay brings is the harness's whatever its stamp."""
+        from espalier.managed_inventory import census_prune_paths, render_seed_stamp
+
+        assert "docs/HOOKS.md" in census_prune_paths(tmp_path)  # absent: init writes it
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "HOOKS.md").write_text("# Our webhooks\n", encoding="utf-8")
+        assert "docs/HOOKS.md" not in census_prune_paths(tmp_path)
+        assert "docs/HOOKS.md" in census_prune_paths(tmp_path, fused=True)
+        (tmp_path / "docs" / "HOOKS.md").write_text(render_seed_stamp("docs/HOOKS.md") + "\nbody\n", encoding="utf-8")
+        assert "docs/HOOKS.md" in census_prune_paths(tmp_path)
+
+    def test_reports_are_pruned_by_suffix_never_whole(self, tmp_path):
+        from espalier.managed_inventory import census_prune_paths
+
+        paths = census_prune_paths(tmp_path)
+        assert "reports/" not in paths and "reports/*.json" in paths, paths
+        assert not [p for p in paths if p.startswith("reports/") and "*" not in p], paths
+
+    def test_a_path_takes_the_casing_the_trees_directories_hold(self, tmp_path):
+        """An adopter's ``Docs/`` on a filesystem that folds case holds the
+        seeds ``init`` wrote, and ``find -path`` compares case (the review's
+        m5). On a case-sensitive filesystem ``init`` writes ``docs/`` beside
+        it, and the roster keeps that spelling."""
+        from espalier.managed_inventory import _case_insensitive, census_prune_paths
+
+        (tmp_path / "Docs").mkdir()
+        paths = census_prune_paths(tmp_path)
+        if _case_insensitive(tmp_path):
+            assert "Docs/HOOKS.md" in paths and "docs/HOOKS.md" not in paths, paths
+        else:
+            assert "docs/HOOKS.md" in paths and "Docs/HOOKS.md" not in paths, paths

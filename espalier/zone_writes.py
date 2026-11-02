@@ -34,6 +34,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import sys
 import time
 from collections.abc import Iterator
@@ -111,6 +112,34 @@ def is_clutter(name: str) -> bool:
             or name.startswith(".#") or (name.startswith(".") and name.endswith(".tmp")))
 
 
+#: ``_zone_watch.SELF_IGNORE_FILE`` / ``SELF_IGNORE_READ_LIMIT``: a directory
+#: whose own ``.gitignore`` is one bare ``*`` declares itself generated (what
+#: pytest, ruff, mypy, uv, venv and Claude Code's plugin loader write into what
+#: they make) and is pruned below a watched top, on both sides, unless the
+#: run's before-stats hold a file under it or, at a fresh walk, git tracks one.
+SELF_IGNORE_FILE = ".gitignore"
+SELF_IGNORE_READ_LIMIT = 4096
+
+
+def is_self_ignoring(directory: Path) -> bool:
+    """``_zone_watch.is_self_ignoring``: the directory's own ``.gitignore``
+    is a regular file holding one ``*`` and nothing else but comments and
+    blank lines; absent, unreadable, a link or longer than the limit is no
+    declaration."""
+    path = directory / SELF_IGNORE_FILE
+    try:
+        if not stat.S_ISREG(os.lstat(path).st_mode):
+            return False
+        with open(path, "rb") as fh:
+            raw = fh.read(SELF_IGNORE_READ_LIMIT + 1)
+    except (OSError, ValueError):
+        return False
+    if len(raw) > SELF_IGNORE_READ_LIMIT:
+        return False
+    lines = [line.rstrip() for line in raw.decode("utf-8-sig", errors="replace").splitlines()]
+    return [line for line in lines if line and not line.startswith("#")] == ["*"]
+
+
 def _watched(root: Path) -> tuple[list[str], list[str], frozenset[str]]:
     """``(prefixes, files, pruned)``: the protected set the hook watches, the
     adopter's ``protected_paths`` included (a writer that deploys into one,
@@ -133,8 +162,57 @@ def _watched(root: Path) -> tuple[list[str], list[str], frozenset[str]]:
     return prefixes, files, pruned
 
 
-def _stats(root: Path) -> dict[str, tuple[int, int]]:
+#: ``_zone_watch.TRACKED_READ_TIMEOUT_S`` is the hook's bound; a writer's run
+#: is no hook, and a read that fails here leaves the hook watching what the
+#: run does not record, the loud side, so this one waits longer.
+TRACKED_READ_TIMEOUT_S = 30
+
+
+def _tracked_dirs(root: Path, prefixes: list[str]) -> frozenset[str]:
+    """``_zone_watch.tracked_dirs``: every directory holding a path git
+    tracks under ``prefixes``, from one ``git ls-files -z`` run at a root
+    holding a ``.git`` of its own, its pathspecs read literally; a
+    directory's own ``.gitignore`` does not hold it, and a name in bytes the
+    filesystem spells otherwise is kept undecoded; empty where the root has no
+    ``.git`` or git cannot answer, so the declared directories prune as before.
+    The hook's read answers a fault with None and its walk says so; this one
+    keeps the empty set, the loud side (above), and ``_stats`` reads None as
+    a read not yet made, so a None here would re-read at every declaration."""
+    import subprocess
+
+    from espalier._safe_walk import is_own_git_repo
+    from espalier._spawn import run_no_stdin
+
+    if not is_own_git_repo(root):
+        return frozenset()
+    try:
+        result = run_no_stdin(["git", "--literal-pathspecs", "ls-files", "-z", "--", *prefixes],
+                              cwd=str(root), capture_output=True, timeout=TRACKED_READ_TIMEOUT_S, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return frozenset()  # no tracked set: the walk prunes as it did before git was asked
+    if result.returncode != 0:
+        return frozenset()
+    dirs: set[str] = set()
+    for raw in result.stdout.split(b"\0"):
+        rel = raw.decode("utf-8", "surrogateescape")
+        if rel.rsplit("/", 1)[-1] == SELF_IGNORE_FILE:
+            rel = rel.rsplit("/", 1)[0] if "/" in rel else ""  # its directory's ancestors only
+        while "/" in rel:
+            rel = rel.rsplit("/", 1)[0]
+            if rel in dirs:
+                break  # its ancestors are in already
+            dirs.add(rel)
+    return frozenset(dirs)
+
+
+def _stats(root: Path, prior: dict[str, tuple[int, int]] | None = None) -> dict[str, tuple[int, int]]:
+    """The watched files' stats; ``prior`` (the run's before-stats) keeps a
+    directory that declared itself generated during the run walked, as the
+    hook's walk keeps one the baseline holds files under, and with no
+    ``prior`` a declared directory holding a path git tracks is walked, as the
+    hook's fresh baseline walks it (one index read, at the first declaration)."""
     out: dict[str, tuple[int, int]] = {}
+    tracked: frozenset[str] | None = None
 
     def take(rel: str, full: str) -> None:
         try:
@@ -146,10 +224,19 @@ def _stats(root: Path) -> dict[str, tuple[int, int]]:
 
     prefixes, files, pruned = _watched(root)
     for prefix in prefixes:
+        at_top = True
         # nested-repo-ok the recorder must walk exactly the hook's set (_zone_watch.snapshot), which enters a nested checkout under a protected path
         for dirpath, dirnames, filenames in os.walk(root / prefix):
-            dirnames[:] = [d for d in dirnames if d not in pruned]
             base = Path(dirpath).relative_to(root).as_posix()
+            if (not at_top and is_self_ignoring(Path(dirpath))
+                    and not any(rel.startswith(base + "/") for rel in (prior or {}))):
+                if prior is None and tracked is None:
+                    tracked = _tracked_dirs(root, prefixes)
+                if tracked is None or base not in tracked:
+                    dirnames[:] = []  # generated by its own declaration and never recorded: as the hook's walk reads it
+                    continue
+            at_top = False
+            dirnames[:] = [d for d in dirnames if d not in pruned]
             for name in filenames:
                 if not is_clutter(name):
                     take(f"{base}/{name}", os.path.join(dirpath, name))
@@ -168,7 +255,7 @@ def session_watching(root: Path) -> bool:
 
 
 def _record(root: Path, writer: str, before: dict[str, tuple[int, int]]) -> None:
-    after = _stats(root)
+    after = _stats(root, before)
     moved: dict[str, str | None] = {}
     for rel, stat in after.items():
         if before.get(rel) != stat:

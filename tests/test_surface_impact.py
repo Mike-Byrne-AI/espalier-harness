@@ -1029,3 +1029,22 @@ class TestRemovedPathsDeclareObligations:
         assert "* slash command (removed): .claude/commands/oldcmd.md [public]" in text
         assert "* shipped doc (renamed): docs/old.md [public]" in text
         assert "INBOUND" in text
+
+
+class TestARefusedBodyIsAContentHit:
+    def test_a_body_the_strip_refuses_is_a_hit_not_the_verbs_exit_1(self, tmp_path, monkeypatch) -> None:
+        """Exit 1 means the pack file is missing (/implement-pack step 0-D reads
+        it so), so a body the self-host strip refuses is reported beside the
+        other content hits rather than raised out of the verb (review)."""
+        import espalier.surface_impact as si
+        monkeypatch.setattr(si, "off_self_host", lambda root: False)
+        rel = ".claude/commands/x.md"
+        (tmp_path / ".claude" / "commands").mkdir(parents=True)
+        f = "`" * 3
+        (tmp_path / rel).write_text(
+            f"x\n{f}bash\n# <!-- espalier:self-host-only -->\na\n{f}\nprose\n"
+            f"{f}bash\n# <!-- /espalier:self-host-only -->\nb\n{f}\n", encoding="utf-8")
+        report = si.SurfaceImpactReport(pack_id="x")
+        si._scan_existing(tmp_path, rel, report)
+        assert [(h.path, h.kind) for h in report.content_hits] == [(rel, "self-host-block")]
+        assert "from line 3 to line 8" in report.content_hits[0].hits[0]

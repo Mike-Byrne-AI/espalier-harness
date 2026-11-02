@@ -290,15 +290,16 @@ class TestStatusLinePortability:
         from espalier import cli
 
         posix = cli._statusline_command("python", posix=True)
-        windows = cli._statusline_command("python", posix=False, git_bash=True)
-        called = cli._statusline_command("python", posix=False, git_bash=False)
+        windows = cli._statusline_command("python", posix=False)
         plain = 'python "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.py"'
-        assert windows == '"${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" python', windows
-        # DEF-929: where Claude Code finds no Git Bash the line runs under
-        # PowerShell, which reads a quoted head as an expression, so the shim
-        # is called through PowerShell's call operator.
-        assert called == "& " + windows, called
-        assert " || " not in windows and " || " not in called
+        # DEF-3017: one render for both shells Claude Code picks between on
+        # Windows. The dot is an operator in each: bash sources the shim,
+        # whose first line is for bash alone, and PowerShell runs it as a
+        # batch file -- so Git Bash coming or going after `init` changes
+        # nothing (the bare head blanked under PowerShell, the `&` head under
+        # bash, DEF-929).
+        assert windows == '. "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" python', windows
+        assert " || " not in windows
         assert posix.startswith(plain + " || echo '"), posix
         assert cli.STATUSLINE_FALLBACK_TEXT in posix
         # The text sits inside single quotes in a `sh -c` string: a quote or a
@@ -320,24 +321,39 @@ class TestStatusLinePortability:
         assert "hook" not in cli.STATUSLINE_FALLBACK_TEXT.lower()
         assert "docs/TROUBLESHOOTING.md" in cli.STATUSLINE_FALLBACK_TEXT
 
-    def test_statusline_host_key_is_read_at_render_time(self, monkeypatch):
+    def test_statusline_host_key_is_read_at_render_time(self, monkeypatch, tmp_path):
         """The render consults `os.name`, not a hard-wired `posix=`: a
         refactor that "makes it explicit" ships `||` to Windows PowerShell 5.1
-        with the helper test above still green. On a Windows key the host's
-        Git Bash is read at render time the same way (DEF-929): a hard-wired
-        form blanks the statusline under the other shell."""
-        from espalier import cli
+        with the helper test above still green. On a Windows key the render
+        is the one string for both shells whatever the Git Bash lookup says
+        (DEF-3017): a render keyed on it was right only until Git Bash came
+        or went after `init`."""
+        from espalier import _venv, cli
 
         # Through the seam, not `os.name`: pathlib reads `os.name` to pick
         # WindowsPath, which raises UnsupportedOperation on a POSIX box.
         monkeypatch.setattr(cli, "_render_host_is_posix", lambda: False)
-        monkeypatch.setattr(cli, "git_bash_path", lambda *_: r"C:\Program Files\Git\bin\bash.exe")
-        windows = cli._build_settings_json()["statusLine"]["command"]
+        monkeypatch.setattr(cli, "_detect_python_command", lambda: "python")
+        # The lookup's own inputs, not a name: a render that read the lookup
+        # by any route must see the two answers (both reviewers, 2026-10-31).
+        bash = tmp_path / "Git" / "bin" / "bash.exe"
+        bash.parent.mkdir(parents=True)
+        bash.write_bytes(b"")
+        monkeypatch.setattr(_venv, "GIT_BASH_DEFAULT_PATHS", ())
+        monkeypatch.setattr(_venv.Path, "home", classmethod(lambda cls: tmp_path / "no-home"))
+        monkeypatch.setenv("PATH", str(tmp_path / "no-git"))
+        renders = set()
+        for found in (str(bash), None):
+            if found:
+                monkeypatch.setenv("CLAUDE_CODE_GIT_BASH_PATH", found)
+            else:
+                monkeypatch.delenv("CLAUDE_CODE_GIT_BASH_PATH", raising=False)
+            assert _venv.git_bash_path() == found
+            renders.add(cli._build_settings_json()["statusLine"]["command"])
+        assert len(renders) == 1, renders
+        (windows,) = renders
         assert "||" not in windows
-        assert windows.startswith('"${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" '), windows
-        monkeypatch.setattr(cli, "git_bash_path", lambda *_: None)
-        called = cli._build_settings_json()["statusLine"]["command"]
-        assert called.startswith('& "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" '), called
+        assert windows.startswith('. "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" '), windows
         monkeypatch.setattr(cli, "_render_host_is_posix", lambda: True)
         assert " || echo '" in cli._build_settings_json()["statusLine"]["command"]
 
@@ -353,12 +369,15 @@ class TestStatusLinePortability:
 
     def test_every_batch_deploy_source_keeps_the_batch_constraints(self):
         """Any ``tools/cc/*.cmd``: LF-only on disk (the ``*.cmd text eol=lf``
-        pin), ASCII (cmd.exe reads the OEM code page), ``@echo off`` first
-        (the deployed marker goes on line 2 -- a line before it is echoed to
-        stdout, the statusline's channel), and no label search: cmd.exe
-        misreads a ``goto`` / ``call :label`` seek in an LF-only file. The
-        source carries no label at all; the deployed copy's ``::`` marker
-        line is one, tolerated exactly because nothing seeks it."""
+        pin), ASCII (cmd.exe reads the OEM code page), ``@echo off`` its first
+        command (a command line before it is echoed to stdout, the
+        statusline's channel; only label lines, which cmd.exe skips without
+        echoing, may precede it -- the shim's line for bash, DEF-3017 -- and
+        the deployed marker goes on the line after it), and no label search:
+        cmd.exe misreads a ``goto`` / ``call :label`` seek in an LF-only file.
+        After the echo-off the source carries no label at all; the deployed
+        copy's ``::`` marker line is one, tolerated exactly because nothing
+        seeks it."""
         shims = self._batch_sources()
         assert shims, "no .cmd under tools/cc: the population went empty"
         for shim in shims:
@@ -366,9 +385,16 @@ class TestStatusLinePortability:
             assert b"\r" not in raw, f"{shim.name} must be LF-only on disk"
             text = raw.decode("ascii")
             lines = text.splitlines()
-            assert lines[0].strip().lower() == "@echo off", (shim.name, lines[0])
+            echo_off = next(i for i, line in enumerate(lines) if not line.lstrip().startswith(":"))
+            assert lines[echo_off].strip().lower() == "@echo off", (shim.name, lines[echo_off])
+            # At most the one line for bash: a second label there is dead to
+            # bash (its source returned) and skipped by cmd.exe. And no `%~`
+            # in it: cmd.exe expands percent signs before it reads a label,
+            # and a bad `%~` is a fatal parse (air's ruling on DEF-3017).
+            assert echo_off <= 1, (shim.name, lines[:echo_off])
+            assert not any("%~" in line for line in lines[:echo_off]), (shim.name, lines[:echo_off])
             code = [
-                line for line in lines
+                line for line in lines[echo_off + 1:]
                 if line.strip() and not line.strip().lower().startswith("rem")
             ]
             assert not any(line.lstrip().startswith(":") for line in code), (shim.name, code)
@@ -381,7 +407,10 @@ class TestStatusLinePortability:
         interpreter, so its fallback text is `STATUSLINE_FALLBACK_TEXT`
         verbatim (one owner; the shim cannot import it), it forces exit 0 on
         that branch (Claude Code blanks a non-zero statusline), and it runs
-        the interpreter it is handed, defaulting to `python`."""
+        the interpreter it is handed, defaulting to `python`. It does so
+        twice (DEF-3017): on line 1 for bash, which sources the file under
+        the dot form and never reads past that line's `return`, and in the
+        batch body for PowerShell, which runs the file as a batch file."""
         from espalier import cli
         from espalier.cli import _deploy_source_path
         from espalier.managed_paths import STATUSLINE_SHIM
@@ -391,9 +420,17 @@ class TestStatusLinePortability:
         # encoding-locale-ok: a strict seven-bit decode IS the assertion -- cmd.exe reads a batch file in the OEM code page
         text = shim.read_text(encoding="ascii")
         lines = text.splitlines()
-        assert cli.STATUSLINE_FALLBACK_TEXT in text
-        fallback_line = next(line for line in lines if cli.STATUSLINE_FALLBACK_TEXT in line)
-        assert "||" in fallback_line and "exit /b 0" in fallback_line, fallback_line
+        fallback_lines = [line for line in lines if cli.STATUSLINE_FALLBACK_TEXT in line]
+        assert len(fallback_lines) == 2, fallback_lines
+        bash_line, batch_line = fallback_lines
+        assert bash_line == lines[0], "the bash line is the file's first: a source runs from the top"
+        # A colon is a no-op to bash and a label to cmd.exe; the hash at the
+        # end keeps a CRLF checkout's carriage return out of the command.
+        assert bash_line.startswith(":;") and bash_line.endswith("; return 0 #"), bash_line
+        assert f"|| echo '{cli.STATUSLINE_FALLBACK_TEXT}';" in bash_line, bash_line
+        assert r'"${BASH_SOURCE%[/\\]*}/statusline.py"' in bash_line, "runs the script beside itself"
+        assert '"${@:-python}"' in bash_line, "defaults to python when handed nothing"
+        assert "||" in batch_line and "exit /b 0" in batch_line, batch_line
         assert "%~dp0statusline.py" in text, "runs the script beside itself"
         assert 'set "ESPALIER_PY=python"' in text, "defaults to python when handed nothing"
 
@@ -445,17 +482,23 @@ class TestStatusLinePortability:
         assert unexpanded.stdout.strip() == cli.STATUSLINE_FALLBACK_TEXT, unexpanded
 
     @pytest.mark.skipif(os.name != "nt", reason="drives the two shells Claude Code picks between on Windows")
-    def test_each_windows_render_runs_in_the_shell_claude_code_picks_for_it(
+    def test_the_windows_render_runs_in_either_shell_claude_code_picks(
         self, initialized_repo
     ):
-        """DEF-929, driven: Claude Code runs a statusLine under Git Bash when
+        """DEF-3017, driven: Claude Code runs a statusLine under Git Bash when
         it finds one and under PowerShell when it does not, handing each the
         string the way 2.1.316 does (read from its binary): `bash -c` with
         CLAUDE_PROJECT_DIR forward-slashed, and `-Command` with
-        `${CLAUDE_PROJECT_DIR}` rewritten to `${env:CLAUDE_PROJECT_DIR}`. Each
-        render prints the statusline in its own shell and, with the
-        interpreter gone, the fallback line, exit 0 both times; in the other
-        shell it does not run at all, which is the mismatch doctor names."""
+        `${CLAUDE_PROJECT_DIR}` rewritten to `${env:CLAUDE_PROJECT_DIR}`. The
+        one render `init` writes prints the statusline in both, with nothing
+        on stderr (the deployed marker kept off bash's line), and with the
+        interpreter gone the fallback line, exit 0 every time: Git Bash
+        installed or removed after `init` changes nothing. Driven again over
+        a CRLF copy of the shim, whose bash line ends in a hash so the
+        carriage return is a comment. The two forms `init` wrote before
+        (DEF-929), bare for bash and `&` for PowerShell, still run in their
+        own shell through the new shim, which `upgrade` deploys beside a
+        settings file it never rewrites."""
         from espalier import cli
         from espalier._venv import git_bash_path, interpreter_site_token
 
@@ -464,7 +507,8 @@ class TestStatusLinePortability:
         if bash is None or powershell is None:
             pytest.skip("needs both Git Bash and PowerShell on this host")
         project = str(initialized_repo)
-        interp = interpreter_site_token(_load_settings(initialized_repo)["statusLine"]["command"])
+        command = _load_settings(initialized_repo)["statusLine"]["command"]
+        interp = interpreter_site_token(command)
 
         def under_bash(command):
             env = {**os.environ, "CLAUDE_PROJECT_DIR": project.replace("\\", "/")}
@@ -478,38 +522,137 @@ class TestStatusLinePortability:
                                   input="{}", capture_output=True, text=True, env=env, cwd=project,
                                   timeout=30, encoding="utf-8")
 
-        for git_bash, own, other in ((True, under_bash, under_powershell),
-                                     (False, under_powershell, under_bash)):
-            render = cli._statusline_command(interp, posix=False, git_bash=git_bash)
-            healthy = own(render)
-            assert healthy.returncode == 0 and healthy.stdout.strip(), (render, healthy)
-            assert cli.STATUSLINE_FALLBACK_TEXT not in healthy.stdout, (render, healthy)
-            broken = own(cli._swap_interpreter_token(render, "definitely-not-a-python-qqq"))
-            assert broken.returncode == 0, (render, broken)
-            assert broken.stdout.strip() == cli.STATUSLINE_FALLBACK_TEXT, (render, broken)
-            elsewhere = other(render)
-            assert elsewhere.returncode != 0 or not elsewhere.stdout.strip(), (render, elsewhere)
+        shim_head = '"${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" '
+        legacy = {under_bash: shim_head + interp, under_powershell: "& " + shim_head + interp}
+        other = {under_bash: under_powershell, under_powershell: under_bash}
+        # What the script itself prints, run directly: each shell's line must
+        # print exactly this, so a line the shim echoes or drops shows.
+        direct = subprocess.run(
+            [shutil.which(interp) or interp, str(initialized_repo / "tools" / "cc" / "statusline.py")],
+            input="{}", capture_output=True, text=True, cwd=project, timeout=30, encoding="utf-8",
+            env={**os.environ, "CLAUDE_PROJECT_DIR": project},
+        ).stdout
+        assert direct.strip(), "the statusline script printed nothing when run directly"
+        shim = initialized_repo / "tools" / "cc" / "statusline.cmd"
+        lf = shim.read_bytes()
+        assert b"\r" not in lf
+        for eol, body in (("lf", lf), ("crlf", lf.replace(b"\n", b"\r\n"))):
+            shim.write_bytes(body)
+            for run in (under_bash, under_powershell):
+                for render in (command, legacy[run]):
+                    healthy = run(render)
+                    assert healthy.returncode == 0, (eol, render, healthy)
+                    assert healthy.stdout.strip() == direct.strip(), (eol, render, healthy)
+                    assert not healthy.stderr.strip(), (eol, render, healthy)
+                    broken = run(cli._swap_interpreter_token(render, "definitely-not-a-python-qqq"))
+                    assert broken.returncode == 0, (eol, render, broken)
+                    assert broken.stdout.strip() == cli.STATUSLINE_FALLBACK_TEXT, (eol, render, broken)
+                # The premise of doctor's note on the legacy forms: each blanks
+                # in the shell it was not written for (DEF-929).
+                elsewhere = other[run](legacy[run])
+                assert elsewhere.returncode != 0 or not elsewhere.stdout.strip(), (eol, legacy[run], elsewhere)
+
+    def test_the_shims_bash_line_runs_wherever_bash_does(self, initialized_repo):
+        """DEF-3017: the shim's first line is plain bash, so it is driven on
+        every host that has one -- the required Linux and macOS cells
+        included, where the two-shell drive above is skipped. Sourced the way
+        the dotted line sources it, from a project path with a space, over LF
+        and CRLF copies: the healthy run prints exactly what the script prints
+        run directly, nothing on stderr, exit 0; with the interpreter gone,
+        the fallback line, exit 0 (both reviewers and air's ruling,
+        2026-10-31)."""
+        from espalier import cli
+        from espalier._venv import git_bash_path
+
+        bash = git_bash_path() if os.name == "nt" else shutil.which("bash")
+        if bash is None:
+            pytest.skip("no bash on this host")
+        root = initialized_repo / "with space"
+        (root / "tools").mkdir(parents=True)
+        shutil.copytree(initialized_repo / "tools" / "cc", root / "tools" / "cc")
+        shim = root / "tools" / "cc" / "statusline.cmd"
+        script = root / "tools" / "cc" / "statusline.py"
+        exe = sys.executable.replace("\\", "/")
+        env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root).replace("\\", "/")}
+        direct = subprocess.run([sys.executable, str(script)], input="{}", capture_output=True,
+                                text=True, cwd=str(root), env=env, timeout=30, encoding="utf-8").stdout
+        assert direct.strip(), "the statusline script printed nothing when run directly"
+        lf = shim.read_bytes()
+        for eol, body in (("lf", lf), ("crlf", lf.replace(b"\n", b"\r\n"))):
+            shim.write_bytes(body)
+            for interp, expected in ((f'"{exe}"', direct.strip()),
+                                     ("definitely-not-a-python-qqq", cli.STATUSLINE_FALLBACK_TEXT)):
+                line = f'. "${{CLAUDE_PROJECT_DIR}}/tools/cc/statusline.cmd" {interp}'
+                result = subprocess.run([bash, "-c", line], input="{}", capture_output=True, text=True,
+                                        cwd=str(root), env=env, timeout=30, encoding="utf-8")
+                assert result.returncode == 0, (eol, interp, result)
+                assert result.stdout.strip() == expected, (eol, interp, result)
+                if expected == direct.strip():
+                    assert not result.stderr.strip(), (eol, interp, result)
 
 
 class TestGitBashLookup:
     """DEF-929: ``_venv.git_bash_path`` finds Git Bash in Claude Code's order
-    (read from the 2.1.316 binary): ``CLAUDE_CODE_GIT_BASH_PATH`` when it
+    (its troubleshoot-install page, pinned in ``docs/external/cc-git-bash.md``;
+    the 2.1.316 binary reads the same): ``CLAUDE_CODE_GIT_BASH_PATH`` when it
     names an existing bash or sh, then the two Program Files paths, then
-    ``bin/bash.exe`` two levels above the ``git`` on PATH. Its answer decides
-    which Windows statusLine render ``init`` writes and which one ``doctor``
-    reads as the host's, so a step out of order blanks the line."""
+    ``bin/bash.exe`` two levels above the ``git`` on PATH, skipping a ``git``
+    the project placed (DEF-3021). Its answer decides which shell ``doctor``
+    reads as the host's when it judges a bare or ``&`` statusLine an older
+    ``init`` wrote, so a step out of order names a working line or stays
+    silent over a blank one."""
+
+    #: The folders the installed 2.1.316 binary's step-2 skip names (its
+    #: ``$t`` set, read 2026-11-01), transcribed here apart from the copy so
+    #: a dropped or added name reds against the binary, not the copy itself.
+    _BINARY_SKIPPED = ("node_modules", ".venv", "venv", "env", ".env", "virtualenv",
+                       ".tox", ".nox", ".direnv", "__pypackages__")
+
+    @classmethod
+    def _plain(cls, tmp_path: Path) -> Path:
+        """``tmp_path``, when no folder above it is one the skip names: a
+        temp root under an ``env`` or ``.venv`` would flip the cases that
+        judge a root above the test's own folders."""
+        if any(part.lower() in cls._BINARY_SKIPPED for part in tmp_path.parts):
+            pytest.skip(f"the temp folder {tmp_path} sits under a folder the skip names")
+        return tmp_path
+
+    @pytest.mark.contract
+    def test_the_copy_is_the_pinned_lookup(self):
+        """DEF-3018: the copy's default locations and accepted file names are
+        the ones the ``cc-git-bash`` pin quotes, read off the same ``>``
+        passages the weekly refresh checks upstream, so a re-excerpt that
+        moves either reds here until the copy follows. Marked ``contract``
+        so a re-excerpt pull request, which touches ``docs/external/`` alone
+        and earns the contract tier, runs it."""
+        from espalier import _venv
+        from espalier.external_diff import quoted_passages
+        from espalier.external_pins import parse_pin
+
+        pin = parse_pin(REPO_ROOT / "docs" / "external" / "cc-git-bash.md")
+        quoted = " ".join(p.text for p in quoted_passages(pin))
+        locations = re.search(r"The default install locations `([^`]+)` and `([^`]+)`", quoted)
+        names = re.search(r"accepts only a file named `([^`]+)`, `([^`]+)`, `([^`]+)`, or `([^`]+)`;", quoted)
+        assert locations and names, "the pin's quotes no longer read as the lookup's defaults and names: re-read the copy against them"
+        assert _venv.GIT_BASH_DEFAULT_PATHS == tuple(loc + "\\bin\\bash.exe" for loc in locations.groups())
+        assert sorted(_venv.GIT_BASH_NAMES) == sorted(names.groups())
 
     @staticmethod
-    def _host(monkeypatch, *, defaults=(), git=None, env=None, gits=None, home=None):
+    def _host(monkeypatch, *, defaults=(), git=None, env=None, gits=None, home=None, localappdata=None):
         """A host with only what the case names: no user settings (``home``
-        is an empty directory unless given), and a PATH of one entry per
-        ``git`` (``gits``, in PATH order; ``git`` is the one-entry case)."""
+        is an empty directory unless given), no ``LOCALAPPDATA`` unless
+        given, and a PATH of one entry per ``git`` (``gits``, in PATH order;
+        ``git`` is the one-entry case)."""
         from espalier import _venv
 
         if env is None:
             monkeypatch.delenv("CLAUDE_CODE_GIT_BASH_PATH", raising=False)
         else:
             monkeypatch.setenv("CLAUDE_CODE_GIT_BASH_PATH", str(env))
+        if localappdata is None:
+            monkeypatch.delenv("LOCALAPPDATA", raising=False)
+        else:
+            monkeypatch.setenv("LOCALAPPDATA", str(localappdata))
         monkeypatch.setattr(_venv, "GIT_BASH_DEFAULT_PATHS", tuple(str(p) for p in defaults))
         if home is not None:
             monkeypatch.setattr(_venv.Path, "home", classmethod(lambda cls: Path(home)))
@@ -619,35 +762,208 @@ class TestGitBashLookup:
         monkeypatch.setattr(subprocess, "Popen", no_spawn)
         assert venv.git_bash_path() == str(bash)
 
+    @pytest.mark.contract
+    def test_the_skipped_folders_hold_the_pinned_ones(self):
+        """DEF-3021: every folder the ``cc-git-bash`` pin's step-2 quote names
+        is one the copy skips, read off the same ``>`` passage the weekly
+        refresh checks upstream; the rest of the set is the 2.1.316 binary's,
+        observed, not quoted. Marked ``contract`` for the reason the lookup
+        pin above is."""
+        from espalier import _venv
+        from espalier.external_diff import quoted_passages
+        from espalier.external_pins import parse_pin
+
+        pin = parse_pin(REPO_ROOT / "docs" / "external" / "cc-git-bash.md")
+        quoted = " ".join(p.text for p in quoted_passages(pin))
+        passage = re.search(r"or below it in a path that contains (.+?), for example", quoted)
+        assert passage, "the pin's quotes no longer state the step-2 skip: re-read the copy against them"
+        named = re.findall(r"`([^`]+)`", passage.group(1))
+        assert named and set(named) <= _venv.GIT_SKIPPED_FOLDERS, named
+        assert _venv.GIT_SKIPPED_FOLDERS == frozenset(self._BINARY_SKIPPED)
+
+    @pytest.mark.parametrize("placed, launch", [
+        ("repo/git.exe", "repo"),
+        ("repo/node_modules/Git/cmd/git.exe", "repo"),
+        ("repo/tools/.venv/Git/cmd/git.exe", "repo"),
+        ("repo/Node_Modules/Git/cmd/git.exe", "repo"),
+        ("dev/env/myproject/Git/cmd/git.exe", "dev/env/myproject"),
+    ], ids=["in-the-launch-folder", "under-node_modules", "under-a-nested-venv", "case-varied",
+            "env-above-the-launch-folder"])
+    def test_a_git_the_project_placed_is_skipped(self, tmp_path, monkeypatch, placed, launch):
+        """DEF-3021: Claude Code's step 2 skips a ``git`` in the folder it was
+        launched from, or below it in a path holding ``node_modules`` or a
+        virtual-environment folder (the ``cc-git-bash`` pin's quote). The
+        installed 2.1.316 binary applies the rule to each ``where.exe``
+        answer and matches the folder names anywhere in the git's path, above
+        the launch folder too, as the page's own ``C:\\dev\\env\\myproject``
+        example has it. ``doctor`` runs from the repository root, so the copy
+        judges against ``repo_root``; unskipped, it found a bash Claude Code
+        will not use and stayed silent over a bare line PowerShell blanks."""
+        root = self._plain(tmp_path)
+        git = self._file(root / placed)
+        bash = self._file(git.parent.parent / "bin" / "bash.exe")
+        venv = self._host(monkeypatch, git=git)
+        assert venv.git_bash_path(root / launch) is None
+        assert venv.git_bash_path() == str(bash), "with no root to judge against, nothing is skipped"
+
+    @pytest.mark.parametrize("folder", _BINARY_SKIPPED)
+    def test_each_folder_the_binary_names_is_skipped(self, tmp_path, monkeypatch, folder):
+        """Each of the binary's ten, not only the three the page quotes."""
+        root = self._plain(tmp_path)
+        git = self._file(root / "repo" / folder / "Git" / "cmd" / "git.exe")
+        self._file(git.parent.parent / "bin" / "bash.exe")
+        venv = self._host(monkeypatch, git=git)
+        assert venv.git_bash_path(root / "repo") is None
+
+    @pytest.mark.parametrize("kept", [
+        "repo/tools/Git/cmd/git.exe",
+        "env/Git/cmd/git.exe",
+        "repo-tools/.venv/Git/cmd/git.exe",
+        "repo/envs/Git/cmd/git.exe",
+        "repo/venv2/Git/cmd/git.exe",
+        "repo/.venv-old/Git/cmd/git.exe",
+    ], ids=["below-in-no-such-folder", "env-outside-the-launch-folder", "a-sibling-sharing-the-name",
+            "envs", "venv2", "dot-venv-old"])
+    def test_a_git_the_project_did_not_place_is_kept(self, tmp_path, monkeypatch, kept):
+        """The skip is as narrow as Claude Code's: a ``git`` below the launch
+        folder in no such folder still answers (a name is matched whole, so
+        ``envs`` is not ``env``), so does one outside it whatever its path
+        holds, and a sibling whose name only begins with the launch folder's
+        is not below it."""
+        root = self._plain(tmp_path)
+        git = self._file(root / kept)
+        bash = self._file(git.parent.parent / "bin" / "bash.exe")
+        venv = self._host(monkeypatch, git=git)
+        assert venv.git_bash_path(root / "repo") == str(bash)
+
+    def test_a_launch_folder_at_the_drive_root_is_judged_too(self, tmp_path, monkeypatch):
+        """A root spelled with its trailing separator (``C:\\``, ``/``) still
+        has folders below it: a ``git`` under ``node_modules`` beneath it is
+        skipped, one in no such folder is kept."""
+        root = self._plain(tmp_path)
+        anchor = Path(root.anchor)
+        placed = self._file(root / "node_modules" / "Git" / "cmd" / "git.exe")
+        self._file(placed.parent.parent / "bin" / "bash.exe")
+        assert self._host(monkeypatch, git=placed).git_bash_path(anchor) is None
+        kept = self._file(root / "plain" / "Git" / "cmd" / "git.exe")
+        bash = self._file(kept.parent.parent / "bin" / "bash.exe")
+        assert self._host(monkeypatch, git=kept).git_bash_path(anchor) == str(bash)
+
+    def test_a_skipped_git_lets_the_next_one_on_path_answer(self, tmp_path, monkeypatch):
+        """Claude Code's walk passes over a skipped answer to the next
+        ``where.exe`` names; the copy asks every ``git`` on PATH, so a Git for
+        Windows install after the project's own still answers."""
+        root = self._plain(tmp_path)
+        placed = self._file(root / "repo" / ".venv" / "Git" / "cmd" / "git.exe")
+        self._file(placed.parent.parent / "bin" / "bash.exe")
+        bash = self._file(root / "Git" / "bin" / "bash.exe")
+        other = self._file(root / "Git" / "cmd" / "git.exe")
+        venv = self._host(monkeypatch, gits=[placed, other])
+        assert venv.git_bash_path(root / "repo") == str(bash)
+
+    @pytest.mark.parametrize("via", ["home", "localappdata"])
+    def test_a_git_in_a_windowsapps_alias_folder_under_the_root_is_skipped(self, tmp_path, monkeypatch, via):
+        """The 2.1.316 binary's walk also skips a ``git`` in a WindowsApps
+        alias folder (``<home>\\AppData\\Local\\Microsoft\\WindowsApps``, or
+        ``%LOCALAPPDATA%\\Microsoft\\WindowsApps``) when that folder sits at
+        or below the launch folder, as it does under a repository at the home
+        folder: the binary's rule, which the page does not state."""
+        tmp_path = self._plain(tmp_path)
+        home = tmp_path / "home"
+        local = home / "AppData" / "Local" if via == "home" else tmp_path / "local"
+        git = self._file(local / "Microsoft" / "WindowsApps" / "git.exe")
+        bash = self._file(local / "Microsoft" / "bin" / "bash.exe")
+        home.mkdir(exist_ok=True)
+        venv = self._host(monkeypatch, git=git, home=home, localappdata=None if via == "home" else local)
+        assert venv.git_bash_path(home if via == "home" else tmp_path) is None
+        assert venv.git_bash_path(tmp_path / "elsewhere") == str(bash)
+
+    @pytest.mark.parametrize("side", ["root", "git"])
+    def test_a_path_reached_through_a_link_is_judged_by_its_real_path(self, tmp_path, monkeypatch, side):
+        """The binary asks the rule again of the real paths, so a repository
+        opened through a link or a junction, or a ``git`` PATH names through
+        one into the repository's ``node_modules``, is skipped by the
+        target's spelling."""
+        root = self._plain(tmp_path)
+        repo = root / "repo"
+        target = repo / "node_modules" / "Git"
+        self._file(target / "cmd" / "git.exe")
+        self._file(target / "bin" / "bash.exe")
+        link = root / "link"
+        try:
+            if os.name == "nt":
+                import _winapi
+
+                _winapi.CreateJunction(str(repo if side == "root" else target), str(link))
+            else:
+                link.symlink_to(repo if side == "root" else target, target_is_directory=True)
+        except (OSError, NotImplementedError, AttributeError):
+            pytest.skip("this host cannot link a directory")
+        if side == "root":
+            venv = self._host(monkeypatch, git=target / "cmd" / "git.exe")
+            assert venv.git_bash_path(link) is None
+        else:
+            venv = self._host(monkeypatch, git=link / "cmd" / "git.exe")
+            assert venv.git_bash_path(repo) is None
+        assert venv.git_bash_path(root / "elsewhere") is not None, "outside the repository it answers"
+
+    def test_doctor_names_a_bare_line_whose_only_git_the_project_placed(self, tmp_path, monkeypatch):
+        """The row's user: a bare statusLine an older ``init`` wrote, on a
+        host whose one Git with a ``bin\\bash.exe`` sits under the project.
+        Claude Code skips it and runs the line under PowerShell, which blanks
+        it; ``doctor`` found the bash and said nothing."""
+        from espalier import doctor as doctor_module
+
+        tmp_path = self._plain(tmp_path)
+        git = self._file(tmp_path / "node_modules" / "Git" / "cmd" / "git.exe")
+        self._file(git.parent.parent / "bin" / "bash.exe")
+        self._host(monkeypatch, git=git)
+        note = doctor_module.statusline_shell_mismatch('"${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" python', tmp_path)
+        assert note is not None, "doctor passed over a bare line Claude Code runs under PowerShell"
+        assert "PowerShell" in note and "put `. ` before the command" in note, note
+        assert "this repository placed" in note, note
+
 
 class TestTheShimHeadReader:
-    """``_venv.statusline_shim_end`` and ``statusline_shim_called`` are the one
-    place a reader asks whether a command is headed by the Windows shim, bare
-    or behind PowerShell's ``&`` (DEF-929)."""
+    """``_venv.statusline_shim_end``, ``statusline_shim_called`` and
+    ``statusline_shim_dotted`` are the one place a reader asks whether a
+    command is headed by the Windows shim: bare, behind PowerShell's ``&``
+    (DEF-929), or behind the dot both shells have (DEF-3017)."""
 
     _SHIM = "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd"
 
-    @pytest.mark.parametrize("command, rest, called", [
-        (f'"{_SHIM}" python', " python", False),
-        (f'& "{_SHIM}" python', " python", True),
-        (f'&"{_SHIM}" py -3', " py -3", True),
-        (f"  &\t'{_SHIM}' python  ", " python  ", True),
-        (f'"{_SHIM.upper()}" python', " python", False),
-        (f'{_SHIM} python', " python", False),
-        ("", None, False),
-        ("&", None, False),
-        ("& &", None, False),
-        ('python "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.py"', None, False),
-        (f'python "{_SHIM}"', None, False),
+    @pytest.mark.parametrize("command, rest, called, dotted", [
+        (f'"{_SHIM}" python', " python", False, False),
+        (f'& "{_SHIM}" python', " python", True, False),
+        (f'&"{_SHIM}" py -3', " py -3", True, False),
+        (f"  &\t'{_SHIM}' python  ", " python  ", True, False),
+        (f'. "{_SHIM}" python', " python", False, True),
+        (f'.\t"{_SHIM}" py -3', " py -3", False, True),
+        (f"  . '{_SHIM}' python  ", " python  ", False, True),
+        # The dot is an operator only before whitespace: glued to the quote,
+        # bash reads one word, and a relative head is a path, not an operator.
+        (f'."{_SHIM}" python', None, False, False),
+        ("./tools/cc/statusline.cmd python", " python", False, False),
+        (f'"{_SHIM.upper()}" python', " python", False, False),
+        (f'{_SHIM} python', " python", False, False),
+        ("", None, False, False),
+        ("&", None, False, False),
+        ("& &", None, False, False),
+        (".", None, False, False),
+        (". .", None, False, False),
+        (f'. & "{_SHIM}" python', None, False, False),
+        ('python "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.py"', None, False, False),
+        (f'python "{_SHIM}"', None, False, False),
     ])
-    def test_the_head_and_its_form_are_read_on_the_string_itself(self, command, rest, called):
-        from espalier._venv import statusline_shim_called, statusline_shim_end
+    def test_the_head_and_its_form_are_read_on_the_string_itself(self, command, rest, called, dotted):
+        from espalier._venv import statusline_shim_called, statusline_shim_dotted, statusline_shim_end
 
         end = statusline_shim_end(command)
         assert (None if end < 0 else command[end:]) == rest, (command, end)
         assert statusline_shim_called(command) is called, command
+        assert statusline_shim_dotted(command) is dotted, command
 
-    @pytest.mark.parametrize("lead", ["", "& "], ids=["bare", "called"])
+    @pytest.mark.parametrize("lead", ["", "& ", ". "], ids=["bare", "called", "dotted"])
     def test_a_shim_path_holding_the_interpreters_name_swaps_only_the_argument(self, lead):
         """The swap and the launcher-flag read search past the head: a shim
         under a directory named like the interpreter must keep its path

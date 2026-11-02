@@ -811,14 +811,16 @@ class TestTheLiveProbeFile:
         "DEF-741": {"WALK2_FINDINGS.md", "WINDOWS_FUSE_NOTES.md"},  # classifier arguments, never opened
         "DEF-1155": {".claude/settings.json", "reports/harness_config.json",
                      "reports/repo_fingerprint.json"},         # fixtures it writes inside its temp tree (the DEF-999 shape)
-        "DEF-4029": {".claude/settings.json"},  # guard spellings judged against a scratch root, never opened (the DEF-741 shape)
-        "DEF-4031": {".claude/settings.json"},  # the same: the spellings are the command text under judgment
+        "DEF-4031": {".claude/settings.json"},  # guard spellings judged against a scratch root, never opened (the DEF-741 shape)
         # DEF-940 left this set on 2026-09-29 with its row (struck: the three
         # session files it named are required ignore entries now), so its probe
         # retired and a baseline for a retired probe is dead. DEF-884 left it
         # on 2026-10-07 the same way: its row struck (the wrapper-closer fix),
         # its probe retired. DEF-1192 left it on 2026-10-11 the same way: its
-        # row struck (the checkout's wiring note), its probe retired.
+        # row struck (the checkout's wiring note), its probe retired. DEF-4029
+        # left it on 2026-11-01 the same way: its row struck (the PowerShell
+        # write reader's four shapes, #366), its probe retired, by lane
+        # the-powershell-write-shapes-row-is-struck.
     }
     _PATH_LITERAL = re.compile(
         r"(?<![\w/.-])((?:[A-Za-z_.][\w.-]*/)+[\w.-]*"
@@ -1160,6 +1162,39 @@ class TestAProbeRunsOutsideTheLaunchingSession:
         env = self._captured_env(monkeypatch)
         assert env is not None and env["ESPALIER_PROBE_CANARY"] == "kept"
 
+    def test_a_probe_writes_its_audit_records_to_a_store_of_the_run(self, monkeypatch, tmp_path):
+        """DEF-3022 (air's 4bc9a5): a probe that drives a hook site in process
+        wrote its record into the operator's home audit store under its temp
+        tree's slug. Dies to: the launcher's store, or none, passed through,
+        or a store made fresh for every probe."""
+        import tempfile
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "launcher"))
+        env = self._captured_env(monkeypatch)
+        store = Path(env["ESPALIER_AUDIT_DIR"]).resolve()
+        assert store.name.startswith("espalier-probe-audit-") and store.is_dir(), store
+        assert Path(tempfile.gettempdir()).resolve() in store.parents, store
+        assert self._captured_env(monkeypatch)["ESPALIER_AUDIT_DIR"] == env["ESPALIER_AUDIT_DIR"]
+
+    def test_the_runs_audit_store_is_removed_when_the_run_exits(self, monkeypatch, tmp_path):
+        """Dies to: a store left behind by every checker run (22 empty
+        ``espalier-probe-audit-*`` folders sat in the temp root on
+        2026-11-01, the failure-mode review's count)."""
+        import atexit
+        import tempfile
+        registered: list[tuple] = []
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        monkeypatch.setattr(atexit, "register", lambda fn, *a, **kw: registered.append((fn, a, kw)))
+        check_ledger_probes._probe_audit_dir.cache_clear()
+        try:
+            store = Path(check_ledger_probes._probe_audit_dir())
+        finally:
+            check_ledger_probes._probe_audit_dir.cache_clear()
+        assert store.parent == tmp_path and store.is_dir(), store
+        assert len(registered) == 1, registered
+        fn, args, kwargs = registered[0]
+        fn(*args, **kwargs)
+        assert not store.exists(), store
+
     def test_a_probe_reading_the_variable_sees_what_a_terminal_would(self, monkeypatch):
         """The live sentinel, driven through the real spawn: reds without the
         strip from inside a session and from this suite alike."""
@@ -1430,6 +1465,14 @@ class TestProbeShapesAreRatcheted:
     # DEF-343a left this set on 2026-10-08 with its row (struck by lane
     # ledger-oldest-a: the actionability checks tightened; its probe keyed on the
     # old regex's spelling).
+    # DEF-4065 and DEF-4066 left this set on 2026-10-31 with their rows (struck by
+    # lane the-deployed-censuses-read-the-adopters-own-files: the code-reviewer's
+    # census reads the adopter's modules, and the census walk prunes what the
+    # harness wrote on the tree; each struck on a guard red at the base).
+    # DEF-4070 left this set on 2026-10-31 with its row (struck by lane
+    # the-reap-reads-a-pids-checkout-before-a-kill: the reap recipe reads a
+    # pid's cwd and parents before a kill, and the Loose: line names the
+    # checkout; struck on a guard red at the base).
     _TEXT_OVER_OWN_SUBJECT = {
         "CONV-3", "DEC-29", "DEF-20",
         # DEF-378a and DEF-661 left on 2026-10-09 with their rows (struck by lane
@@ -1512,13 +1555,10 @@ class TestProbeShapesAreRatcheted:
         #: which is the fix. The DEF-672 shape: same reason, earns the slot. The body
         #: contract the fix brings (beside the staging one) is what will hold it after.
         "DEF-944",
-        #: DEF-1002 and DEF-1003 (filed 2026-10-01 from the post-flip review): each
-        #: subject is an agent-read body whose deliverable is one fenced command (the
-        #: /analyze coverage loop; the dead-config pass). The probe runs `init` into a
-        #: temp tree, cuts that fence out of the DEPLOYED copy under its fixed header,
-        #: and executes it, so prose, a pointer or a changelog line cannot move it;
-        #: only changing the command does. The DEF-672 shape: same reason, earns the slot.
-        "DEF-1002", "DEF-1003",
+        #: DEF-1002 and DEF-1003 (filed 2026-10-01 from the post-flip review) left this
+        #: set on 2026-10-31: struck by lane first-contact-diagnostics-read-the-adopters-tree
+        #: (their fenced commands, the /analyze coverage loop and the dead-config pass,
+        #: now census the adopter's tree), so their probes retired with them.
         "LG-12",
     }
 

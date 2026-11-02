@@ -1,6 +1,6 @@
 export const meta = {
   name: 'layered-review',
-  description: 'Seat-by-body layered review: generic breadth finders run ALONGSIDE scoped repo-specialist FIND lanes (failure-mode-reviewer over the self-inflicted-failure surface; architecture-analyst over layer boundaries) plus a generic narrative/overclaim lane; survivors are adversarially refuted on the proven default-refuted general-purpose spine, with code-reviewer routed in to adjudicate correctness-category survivors; then a survivor-fed completeness critic (with a blind module-map fallback on a 0-survivor round) names the uncovered surface. Each agent is seated where its body actually fires. Findings emit FINDING_SCHEMA, refuted (default refuted, oracle-confirmed), survivors persisted via the two-hop bridge. Returns ONLY a compact summary + survivors-slim + corpus path. Optional args: a string scoping the review (default: the whole repo at rest).',
+  description: 'Seat-by-body layered review: generic breadth finders run ALONGSIDE scoped repo-specialist FIND lanes (failure-mode-reviewer over the self-inflicted-failure surface; architecture-analyst over layer boundaries) plus a generic narrative/overclaim lane; survivors are adversarially refuted on the proven default-refuted general-purpose spine, with code-reviewer routed in to adjudicate correctness-category survivors; then a survivor-fed completeness critic (with a blind module-map fallback on a 0-survivor round) names the uncovered surface. Each agent is seated where its body actually fires. Findings emit FINDING_SCHEMA, refuted (default refuted, oracle-confirmed), survivors persisted via the two-hop bridge. Returns ONLY a compact summary + survivors-slim + corpus path, with every lane that did not run named (a skipped, failed or thrown lane is never folded in as an empty result). Optional args: a string scoping the review (default: the whole repo at rest).',
   phases: [
     { title: 'Find' },
     { title: 'Refute' },
@@ -156,9 +156,8 @@ const REPO_FIND_LANES = [
     prompt: PRE +
       'You are running as a FAN-OUT FINDER over the repo AT REST. SCOPE: layer boundaries / import ' +
       'direction / isolation (the layer boundaries this repository\'s CLAUDE.md and docs/CONVENTIONS.md ' +
-      'declare; where they declare none, report that absence as the finding). IMPORTANT: your tool grant has NO Bash(grep *) — ' +
-      'use the Grep TOOL (not shell grep) plus `git`/`python` to confirm import-direction / layer claims, ' +
-      'or you hit a permission wall and miss the finding. Emit FINDING_SCHEMA objects with ' +
+      'declare; where they declare none, report that absence as the finding). Prefer the Grep TOOL to shell ' +
+      'grep, plus `git`/`python`, to confirm import-direction / layer claims. Emit FINDING_SCHEMA objects with ' +
       'category="layer-boundary"; ground each in path:line.' },
 ]
 
@@ -204,6 +203,18 @@ const stripRefuterFields = (x) => {
   const { corrected_category, corrected_confidence, externally_verified, ...rest } = x
   return rest
 }
+// LANES THAT DID NOT RUN. Under the Workflow API a skipped agent, or one that dies on
+// a terminal error, resolves to null, and parallel() and pipeline() turn a thrown lane
+// into null. Each such lane is recorded here by its label and returned, never folded
+// into an empty result: a lane that found nothing and a lane that never ran must not
+// read the same. A refuter that did not run leaves its finding `unattempted`.
+const lanesNotRun = []
+const refutersNotRun = []
+const notRun = (phaseName, lane) => { lanesNotRun.push({ phase: phaseName, lane }) }
+const notRunByPhase = () => lanesNotRun.reduce((acc, x) => {
+  (acc[x.phase] = acc[x.phase] || []).push(x.lane)
+  return acc
+}, {})
 
 const refutePrompt = (f) =>
   'REFUTE this code-review finding. DEFAULT = refuted — it SURVIVES only if you confirm it against the ' +
@@ -231,22 +242,37 @@ log(`layered-review: ${FINDERS.length} finders (${GENERIC_FINDERS.length} generi
 
 let routedToCodeReviewer = 0
 let routedToGeneral = 0
+// A finder lane that resolved null passes null on, and the refute stage passes it
+// through; a stage that throws drops its item to null. So a null at a finder's index
+// is a lane that did not run, and an array (empty or not) is one that did.
 const piped = await pipeline(
   FINDERS,
   (f) => agent(f.prompt, opts({ label: f.label, phase: 'Find', schema: FINDINGS, agentType: f.agentType }))
-    .then((r) => ({ finder: f, findings: ((r && r.findings) || []) })),
+    .then((r) => (r == null ? null : { finder: f, findings: (r.findings || []) })),
   (res, f) => {
+    if (res == null) return null
     const items = res.findings.map((x) => ({ ...stripRefuterFields(x), rule_or_scanner: f.id, category: x.category || f.category, _finder: f.id }))
     if (!items.length) return []
     return parallel(items.map((x, i) => () => {
       const rt = pickRefuter(x.category)
       if (rt === 'code-reviewer') routedToCodeReviewer++; else routedToGeneral++
       return agent(refutePrompt(x), opts({ label: `refute:${f.id}#${i}`, phase: 'Refute', schema: REFUTE_RESULT, agentType: rt }))
-        .then((v) => ({ ...x, ...(v || {}) }))
+        .then((v) => (v == null
+          ? { ...x, refutation_outcome: 'unattempted', refutation_reason: 'refuter returned nothing (skipped, or died on an error)' }
+          : { ...x, ...v }))
         .catch(() => ({ ...x, refutation_outcome: 'unattempted', refutation_reason: 'refuter errored' }))
+        .then((r) => {
+          if (r.refutation_outcome === 'unattempted') refutersNotRun.push(`refute:${f.id}#${i}`)
+          return r
+        })
     }))
   },
 )
+FINDERS.forEach((f, i) => { if (piped[i] == null) notRun('Find', f.label) })
+const findersRun = FINDERS.length - lanesNotRun.filter((x) => x.phase === 'Find').length
+if (findersRun < FINDERS.length) {
+  log(`layered-review: ${FINDERS.length - findersRun} of ${FINDERS.length} finder lane(s) did not run: ${notRunByPhase().Find.join(', ')}`)
+}
 
 // pipeline returns one array-per-finder (the refute stage returns an array); flatten,
 // then strip EVERY private `_*` tag before the schema-validated persist — not
@@ -268,7 +294,11 @@ log(`refute routing: ${routedToCodeReviewer} candidate(s) -> code-reviewer, ${ro
 const survivors = findings.filter((f) => f.refutation_outcome !== 'refuted')
 const slim = survivors.map((f) => ({ id: f.id, title: f.title, location: f.location, category: f.category }))
 log(`layered-review: feeding ${slim.length} survivor(s) to the completeness critic`)
-const criticPrompt = survivors.length
+const lanesMissed = findersRun < FINDERS.length
+  ? '\n\nThese finder lanes did NOT run this round, so their surface is uncovered, not clean: ' +
+    notRunByPhase().Find.join(', ') + '.'
+  : ''
+const criticPrompt = (survivors.length
   ? 'You are a completeness critic. Below are the SURVIVING findings from a layered review of this ' +
     'repo. Name what surface these findings did NOT cover — a subsystem, a failure class, an unrun ' +
     'modality. Emit FINDING_SCHEMA objects with category="completeness" for each genuine gap (ground ' +
@@ -276,9 +306,11 @@ const criticPrompt = survivors.length
   : 'You are a completeness critic. This round produced ZERO surviving findings. Do a BLIND module-map ' +
     'sweep: name the subsystems / failure classes / modalities a generic fan-out most often misses on ' +
     'this repo, and emit FINDING_SCHEMA objects with category="completeness" for any genuine gap (ground ' +
-    'each in a path/command). An empty findings array is an honest result.'
+    'each in a path/command). An empty findings array is an honest result.') + lanesMissed
 const critic = await agent(criticPrompt,
   opts({ label: 'critic:completeness', phase: 'Refute', schema: FINDINGS, agentType: 'failure-mode-reviewer' }))
+  .catch(() => null)
+if (critic == null) notRun('Refute', 'critic:completeness')
 const criticFindings = ((critic && critic.findings) || []).map(x => ({ ...stripRefuterFields(x), rule_or_scanner: 'critic:completeness' }))
 log(`layered-review: completeness critic emitted ${criticFindings.length} gap finding(s)`)
 
@@ -292,7 +324,8 @@ const allFindings = findings.concat(criticFindings)
 phase('Persist')
 if (!allFindings.length) {
   // persistError is null, not a message: nothing failed because the persist step never ran.
-  return { findersRun: FINDERS.length, candidates: 0, summary: { total: 0 }, appended: 0, persistError: null, persistWarnings: [], corpusPath: CORPUS_PATH, survivors: [] }
+  // The lanes that did not run still go back: an empty round with a dead lane is not clean.
+  return { findersRun, findersLaunched: FINDERS.length, lanesNotRun: notRunByPhase(), refutersNotRun, candidates: 0, summary: { total: 0 }, appended: 0, persistError: null, persistWarnings: [], corpusPath: CORPUS_PATH, survivors: [] }
 }
 const persistPayload = JSON.stringify({ findings: allFindings, known_categories: KNOWN_CATEGORIES, corpus_path: CORPUS_PATH })
 // ONE DESTINATION plus the summary ledger. The per-round report (CORPUS_PATH, under
@@ -347,7 +380,7 @@ const persistPrompt =
   `no interpreter that imports espalier answered on this host: report that ` +
   `line as the persist error, never as an empty result.`
 
-const persistResult = await agent(persistPrompt, opts({
+const persistRaw = await agent(persistPrompt, opts({
   label: 'persist:corpus', phase: 'Persist',
   schema: {
     type: 'object', additionalProperties: true,
@@ -365,10 +398,15 @@ const persistResult = await agent(persistPrompt, opts({
       survivors_slim: { type: 'array', items: { type: 'object', additionalProperties: true } },
     },
   },
-})).catch(() => ({ total: allFindings.length, appended: 0, persist_error: 'persist agent errored (fail-open)', corpus_path: CORPUS_PATH, survivors_slim: [] }))
+})).catch(() => null)
+if (persistRaw == null) notRun('Persist', 'persist:corpus')
+const persistResult = persistRaw || { total: allFindings.length, appended: 0, persist_error: 'the persist agent did not run (skipped, errored, or died on an error; fail-open): nothing was persisted', corpus_path: CORPUS_PATH, survivors_slim: [] }
 
 return {
-  findersRun: FINDERS.length,
+  findersRun,
+  findersLaunched: FINDERS.length,
+  lanesNotRun: notRunByPhase(),
+  refutersNotRun,
   candidates: findings.length,
   criticGaps: criticFindings.length,
   refuteRouting: { codeReviewer: routedToCodeReviewer, generalPurpose: routedToGeneral },

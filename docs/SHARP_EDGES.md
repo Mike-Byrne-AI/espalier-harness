@@ -2918,18 +2918,40 @@ stderr names the per-process directory so the operator can find it.
    their cutoff or push fresh logs out of view. The primary age check
    now reads the first JSON line's `timestamp` field via
    `_parse_first_log_timestamp`; mtime is the fallback when the log
-   body can't be parsed (truncated file, corrupted JSON).
+   body can't be parsed (truncated file, corrupted JSON). Since DEF-2029
+   that read is for a name with no date only: where the name carries the
+   date `audit_path` writes (`<slug>-<YYYYMMDD>.log`, the day the log's
+   records are written), the name is the authority, so a log whose whole
+   day is before the window is demoted unopened and one inside it is never
+   opened. A renamed log is the declared limit: renamed into the window it
+   keeps its old records
+   (`tests/test_audit_dir_home_unset.py::TestThePruneDatesALogByItsName::test_a_log_named_inside_the_window_is_kept_whatever_its_first_record_says`);
+   renamed out of it, it is demoted young, into `_cold/`
+   (`tests/test_audit_dir_home_unset.py::TestThePruneDatesALogByItsName::test_a_name_dated_before_the_window_is_demoted_unopened_and_a_dateless_one_is_read`).
 
 3. **Iteration cap.** `_MAX_PRUNE_SCAN = 5000` caps the per-call
    iteration. An attacker spamming `~/.espalier/audit/` with empty
    `.log` files (cheap: a `for` loop) could otherwise slow
    `session_start` linearly with the file count. Above the cap, the
-   sorted-first-N is processed and a stderr warning fires so the
-   operator sees the flood.
+   oldest-named 5,000 are scanned (by the date in each name,
+   `_audit_log_order`) and a stderr warning fires; that reaches the
+   debug log only, since an exit-0 hook's stderr reaches no transcript.
 
-**Receipt:** Coverage: `tests/test_audit_dir_home_unset.py` (17
-tests including `TestAuditDirOverrideValidation`,
-`TestPruneTimestampSemantics`, `TestPruneIterationCap`).
+4. **Time bound.** The cap alone did not bound a start: on the Windows
+   box 5,000 first-line reads took 11.7 s, and the banner was cut at its
+   13 s wall inside the prune (DEF-3022). SessionStart now passes the
+   prune a deadline one second away, clipped to the hook's own budget;
+   the scan stops there, and when it leaves logs named before the
+   window unread the banner's NOTES says how many and which bound
+   stopped it. The next start goes on from the oldest name date. The
+   scan also ends at the first log named inside the window (DEF-2029):
+   each start had read those again, up to its bound, and in the scan's
+   name-date order every later name is younger.
+
+**Receipt:** Coverage: `tests/test_audit_dir_home_unset.py`
+(`TestAuditDirOverrideValidation`, `TestPruneTimestampSemantics`,
+`TestPruneIterationCap`, `TestThePruneIsBoundedInsideTheWall`,
+`TestThePruneDatesALogByItsName`).
 
 ## Atomic Write Is Not Atomic Update
 
@@ -4939,7 +4961,8 @@ verified-green suite can go red minutes later with no visible cause (a real
 2026-06-23 instance flipped 25 `fuse` tests via an A/B stash experiment that
 left staged deletions un-staged). Rule: spawn mutate-capable or concurrent
 agents with `isolation: worktree`; keep review/audit agents read-only
-(Explore, or Bash scoped to status/diff/log/show); re-verify `git status`
+(Explore, or an agent whose tools line names no Bash: a command pattern on a
+tools line narrows nothing); re-verify `git status`
 and re-run gates after any git-capable agent returns. See
 `docs/FAILURE_MODES.md` §16.1.
 
@@ -6492,7 +6515,8 @@ unhandled rejection that failed the file).
 exports `ESPALIER_OWN_CLEAR=1`, the handoff's gate: any other window is told it needs a
 `/clear` by hand), armed by `ship.py handoff` through `.espalier-state/own_clear.json`
 whenever the handoff ran to its end -- the push landed, or a refusal the window is done
-with (the base red, the lane whole and unpushed here; a step after a landed push), with the
+with (the base red or this seat's other pull request open, the lane whole and unpushed here;
+a step after a landed push), with the
 refusal in the marker (`landed`, `outcome`) and the lane to land first appended to the brief;
 a refusal the window must fix first arms nothing; `ship.py arm --why ...` arms by hand after
 a hand-open -- keyed by the session id and re-primed only in the process that armed it (the

@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4085",
+ "subject": "tools/cc/hooks/_zone_watch.py",
+ "cmd": "python3 -c \"import sys,subprocess,tempfile,pathlib as P;sys.path.insert(0,'tools/cc/hooks');import _zone_watch as z;r=P.Path(tempfile.mkdtemp());G=lambda *a,cwd=r:subprocess.run(['git','-c','user.name=p','-c','user.email=p@p',*a],cwd=str(cwd),check=True,capture_output=True);G('init','-q','-b','main');(r/'espalier.toml').write_text('protected_paths = [\\\"zone/\\\"]\\n');W=lambda p:(p.parent.mkdir(parents=True,exist_ok=True),p.write_text('*\\n' if p.name=='.gitignore' else 'k\\n'));[W(r/x) for x in ('zone/gen/.gitignore','zone/gen/keep.txt','zone/sub/gen/.gitignore','zone/sub/gen/keep.txt')];G('add','-f','zone/gen');G('commit','-qm','a');G('init','-q','-b','main',cwd=r/'zone/sub');G('add','-f','gen',cwd=r/'zone/sub');G('commit','-qm','b',cwd=r/'zone/sub');F=z.snapshot(r);'zone/gen/keep.txt' in F or sys.exit('control: the fresh walk dropped a tracked declared directory');print('zone/sub/gen/keep.txt' in F)\"",
+ "open_value": "False",
+ "why_not": null,
+ "row_sha": "b0b5d81a1930",
+ "text_sha": "540c04e4695a",
+ "verified_2026_11_01": "STILL_OPEN (re-pinned 'control=True nested=False mid=False' -> 'False' on 2026-11-01: the failure-mode review before the open: split: this row keeps the nested-checkout edge alone (the mid-session top is DEF-4087, the spelling edges DEF-4088); the probe replaced: the first matched the whole output with the control, so one edge's fix struck the row while the others stood; anchors corrected (361, 378); the declared limit cited and shown not session-bounded for this edge; the twin sentence and the fold rule corrected (normcase folds on Windows only)) [changed: probe, open value, anchor, text]"
+}

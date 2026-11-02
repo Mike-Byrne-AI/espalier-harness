@@ -100,6 +100,15 @@ HARNESS_INCLUDE: tuple[str, ...] = (
     "task-packs/CLAUDE.md",         # the task-pack folder router (format spec)
 )
 
+# ── Files `fuse` writes beside the overlay ───────────────────────────────────
+# The tracked marker the installed harness-guard workflow reads (`fuse.py`'s
+# `_seed_fusion_marker`) and the benchmark scoreboard placeholder
+# (`_seed_bench_results`). One home for both names: `fuse` reads the marker's
+# from here, and `managed_inventory.census_prune_paths` reads both, so the
+# deployed censuses prune them and detect a fused tree by the marker.
+FUSION_MARKER = ".espalier-fusion"
+FUSE_WRITTEN_FILES: tuple[str, ...] = (FUSION_MARKER, "bench/RESULTS.md")
+
 # ── EXCLUDE: tracked paths under an INCLUDE that are build-espalier-only ─────
 # Matched as path-prefix OR exact against the repo-relative tracked path.
 HARNESS_EXCLUDE: tuple[str, ...] = (

@@ -33,7 +33,11 @@ Usage::
 
     # file a row after an existing one in the same section, its id left out so
     # it is minted from this seat's block; the probe is run first and must
-    # print --open-value, or nothing is written (and the number is given back)
+    # print --open-value, or nothing is written (and the number is given back).
+    # It is run twice: in this checkout, and in the export of HEAD with no
+    # .git, the tree a strike's base drive reads, where it must print the same
+    # value (a probe that asks git and prints another value there is refused;
+    # one the export cannot drive is a note); --no-base skips that drive
     python3 tools/cc/ledger_row.py file --section C49 --after DEF-695 \\
         --anchor "tools/cc/hooks/_bash_patterns.py (no PowerShell permission extractor)" \\
         --text-file /tmp/697.md --severity minor \\
@@ -1601,8 +1605,7 @@ def _drive_both_sides(ids: list[str], *, root: Path, probes: Path, data: dict, b
         # One block per tree, so a many-id cell derives each tree's memo once.
         at_bases: dict[str, tuple[str, str]] = {}
         if tree is not None:
-            with _CHK.rooted(tree, pristine=True):
-                at_bases = {rid: _CHK.run_probe(probe) for rid, probe in probes_to_drive.items()}
+            at_bases = _drive_in_export(tree, probes_to_drive)
         with _CHK.rooted(root):
             at_heads = {rid: _CHK.run_probe(probe) for rid, probe in probes_to_drive.items()}
         for rid, probe in probes_to_drive.items():
@@ -1663,6 +1666,80 @@ def _drive_both_sides(ids: list[str], *, root: Path, probes: Path, data: dict, b
                 else:
                     say(f"the guard {node} is red at {where} ({base_said}) and green at the head")
     return refusals
+
+
+def _drive_in_export(tree: Path, probes: dict[str, dict]) -> dict[str, tuple[str, str]]:
+    """Each probe's ``(verdict, detail)`` in ``tree``, an export ``_base_tree``
+    built: the runner rooted there, pristine (the tree holds no generated
+    duplicate, so the contamination memo is empty). The one way a probe is read
+    where a strike reads its base, for the strike and the filing alike, so a
+    change to how that tree is driven reaches both."""
+    with _CHK.rooted(tree, pristine=True):
+        return {key: _CHK.run_probe(probe) for key, probe in probes.items()}
+
+
+def _head_export_reading(root: Path, probe: dict, *, no_base: bool) -> tuple[str | None, str]:
+    """``(refusal, said)`` for a probe that just read its open value in this
+    checkout, driven again in the export of HEAD: ``_base_tree``'s plain tree
+    of the committed files with no ``.git``, the tree a strike's base drive
+    reads (``_drive_in_export``). ``refusal`` is the sentence when the export
+    prints another value, else None; ``said`` is where the probe was read, for
+    the filing's stamp. ``file`` drove the checkout alone until DEF-5045, so a
+    probe that asked git (DEF-4074's) filed cleanly and could be struck only
+    with ``--no-base``; two of the 228 live probes printed another value in
+    the export on 2026-11-01, and two more read UNRESOLVED there.
+
+    The refusal is the strike's default refusal and no other: a probe the
+    export cannot drive (UNRESOLVED -- a subject or input not committed yet,
+    as the ledger ``init`` has just written is; a timeout; NO_ORACLE) is a
+    printed note, as the strike's base drive treats it unless ``--base`` is
+    explicit. Refusing it stopped ``init`` filing three onboarding rows on any
+    repository with a commit (a review drove it, 2026-11-01). The refusal
+    never prints the verdict's own word: ``espalier/cli.py`` reads a filing
+    whose stderr holds it as satisfied. ``no_base`` skips the drive and says
+    so; a root that is not its own repository's top level, or whose HEAD names
+    no commit, is one note."""
+    def note(why: str, shown: str = "", tail: str = "") -> tuple[None, str]:
+        print(f"ledger_row: note -- the probe was not driven in the export of HEAD ({shown or why}){tail}",
+              file=sys.stderr)
+        return None, f"here; the export of HEAD not driven: {why}"
+
+    if no_base:
+        return note("--no-base", tail="; where it prints another value there, a strike of this row needs "
+                                      "--no-base too, and its closing text says what the base showed")
+    top = _git_read(root, "rev-parse", "--show-toplevel")
+    try:
+        own = top is not None and os.path.samefile(top, root)
+    except OSError:
+        own = False
+    if not own:
+        return note("not the top level of a git checkout", f"{root} is not the top level of a git checkout")
+    sha = _git_read(root, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+    if sha is None:
+        return note("HEAD names no commit")
+    with tempfile.TemporaryDirectory(prefix="file-export-", ignore_cleanup_errors=True) as scratch_dir:
+        try:
+            tree = _base_tree(root, sha, Path(scratch_dir))
+        except BaseUnavailable as exc:
+            return (f"HEAD {sha[:12]} could not be exported to drive the probe where a strike's base drive "
+                    f"reads it ({exc}); --no-base skips that drive"), ""
+        verdict, detail = _drive_in_export(tree, {"probe": probe})["probe"]
+    where = f"the export of HEAD {sha[:12]}"
+    if verdict == _CHK.STILL_OPEN:
+        return None, f"here and in {where}"
+    if verdict != _CHK.STRIKE_CANDIDATE:
+        print(f"ledger_row: note -- the probe reads its open value here and {verdict} in {where} ({detail}; "
+              "the export holds the committed files only): a strike's base drive reads it the same way, a "
+              "note by default and a refusal under an explicit --base, which a later strike passes with "
+              "--no-base; commit what it reads if this lane added it",
+              file=sys.stderr)
+        return None, f"here; {verdict} in {where}"
+    return (f"the probe reads its open value {probe['open_value']!r} in this checkout and prints another "
+            f"value in {where} ({detail}): that export is a plain tree of the committed files with no .git, "
+            "the tree a strike's base drive reads, so a strike would refuse at the base and pass only with "
+            "--no-base. Read the tree rather than git or a file this checkout alone holds, commit the "
+            "lane's change to what the probe reads if the value moved here, or give --no-base to skip "
+            "this drive"), ""
 
 
 def strike(rid: str, *, ledger: Path, probes: Path, text_file: Path, day: str,
@@ -1938,7 +2015,7 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str |
              probe_cmd: str, open_value: str, subject: str, why_not: str | None,
              day: str, dry_run: bool, root: Path,
              population: str | None = None, audience: str | None = None,
-             inputs: list[str] | None = None) -> int:
+             inputs: list[str] | None = None, no_base: bool = False) -> int:
     gen = _load("generate_ledger_regions")
     file_text = ledger.read_text(encoding="utf-8")
     pending = _Pending(ledger, probes, (rid,))
@@ -2074,6 +2151,7 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str |
                   f"these arguments write differs from it in {differs}; nothing written: run `file {rid}` again "
                   f"with the arguments it was filed with, or strike {rid} to give it up", file=sys.stderr)
             return 2
+    driven = ""  # where the probe was read, for the stamp: a row declared --why-not drives nothing
     # the probe is driven BEFORE anything is written: a filed row's claim must
     # be re-derivable from the day it is filed
     if why_not is None:
@@ -2095,6 +2173,14 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str |
             print(f"ledger_row: the probe does not print its open value {open_value!r} "
                   f"({verdict}: {detail}); nothing filed", file=sys.stderr)
             return 2
+        # ...and again where a strike's base drive will read it (DEF-5045).
+        refusal, said = _head_export_reading(
+            root, {"cmd": probe_cmd, "open_value": open_value, "subject": subject, "why_not": None,
+                   "inputs": inputs}, no_base=no_base)
+        if refusal:
+            print(f"ledger_row: {refusal}; nothing filed", file=sys.stderr)
+            return 2
+        driven = f" {said}"
     if finishing:
         new_text = file_text   # the row is there, as these arguments write it: only its probe is written
     elif as_files:
@@ -2121,7 +2207,7 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str |
              # its subject keeps the shape every existing entry has
              **({"inputs": inputs} if inputs is not None else {}),
              **_pins(new_line),
-             f"verified_{day.replace('-', '_')}": f"OPEN (filed {day}; probe driven at filing)"}
+             f"verified_{day.replace('-', '_')}": f"OPEN (filed {day}; probe driven at filing{driven})"}
     if dry_run:
         if finishing:
             print(f"(finishing {rid}: its row is there, so only its probe would be written)")
@@ -2156,7 +2242,7 @@ def repin(rid: str, *, ledger: Path, probes: Path, open_value: str | None, reaso
           dry_run: bool, root: Path,
           population: str | None = None, audience: str | None = None,
           severity: str | None = None, subject: str | None = None,
-          inputs: list[str] | None = None) -> int:
+          inputs: list[str] | None = None, no_base: bool = False) -> int:
     """Re-pin a LIVE row whose measured value moved off its ``open_value``.
 
     The hand pass a STRIKE_CANDIDATE verdict asks for ends one of two ways:
@@ -2220,18 +2306,25 @@ def repin(rid: str, *, ledger: Path, probes: Path, open_value: str | None, reaso
             return 2
         checker = _load("check_ledger_probes")
         checker._ROOT = root
-        verdict, detail = checker.run_probe(
-            {"cmd": cmd, "open_value": new_value, "subject": subject or entry.get("subject"),
-             "why_not": None,
-             # the declaration the recurring check will read -- new or kept --
-             # is driven here too, so a member absent on this tree refuses the
-             # re-pin instead of stamping STILL_OPEN over an UNRESOLVED (DEF-858)
-             "inputs": inputs if inputs is not None else entry.get("inputs")}
-        )
+        probe = {"cmd": cmd, "open_value": new_value, "subject": subject or entry.get("subject"),
+                 "why_not": None,
+                 # the declaration the recurring check will read -- new or kept --
+                 # is driven here too, so a member absent on this tree refuses the
+                 # re-pin instead of stamping STILL_OPEN over an UNRESOLVED (DEF-858)
+                 "inputs": inputs if inputs is not None else entry.get("inputs")}
+        verdict, detail = checker.run_probe(probe)
         if verdict != checker.STILL_OPEN:
             print(f"ledger_row: the probe does not print the new open value {new_value!r} "
                   f"({verdict}: {detail}); nothing re-pinned", file=sys.stderr)
             return 2
+        # A repin that writes a new command, subject, inputs or value writes a
+        # probe a strike will drive at the base, as a filing does (DEF-5045);
+        # one that changes none of them leaves the probe as it was.
+        if any(v is not None for v in (probe_cmd, subject, inputs, open_value)):
+            refusal, _said = _head_export_reading(root, probe, no_base=no_base)
+            if refusal:
+                print(f"ledger_row: {refusal}; nothing re-pinned", file=sys.stderr)
+                return 2
     # What the row held before this repin, for the stamp's list of the fields
     # it changed (below).
     old_cells = list(cells)
@@ -2485,6 +2578,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="a path the probe's COMMAND reads beyond --subject (repeatable); a member "
                          "absent on a checkout makes the probe UNRESOLVED there, never a strike, "
                          "and the probe is driven with the list first")
+    fi.add_argument("--no-base", action="store_true",
+                    help="skip the second drive, in the export of HEAD with no .git (the tree a strike's "
+                         "base drive reads), and say so; the stamp records it, and where the probe prints "
+                         "another value there, a strike of the row needs --no-base too")
     fi.add_argument("--why-not", help="declare the row unmeasurable instead of giving a probe")
     fi.add_argument("--population", choices=list(_GEN.POPULATIONS),
                     help="with --audience: the row's own tags (a section MIXED on either axis: §C0, or a one-axis-MIXED class where the classed cell must repeat the class tag)")
@@ -2513,6 +2610,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="re-grade the row's severity (default: keep). Every member "
                          "row carries this cell, so no MIXED class is needed; --reason "
                          "is required on this verb and carries the grade's rationale")
+    rp.add_argument("--no-base", action="store_true",
+                    help="where the repin changes the command, subject, inputs or open value, skip the "
+                         "second drive, in the export of HEAD with no .git (the tree a strike's base "
+                         "drive reads), and say so; where the probe prints another value there, a strike "
+                         "of the row needs --no-base too")
     args = ap.parse_args(argv)
     if args.reconcile_count:
         # Said, never silent: a reader who passes it after a hand edit must not
@@ -2631,7 +2733,7 @@ def _dispatch(ap: argparse.ArgumentParser, args: argparse.Namespace, *, ledger: 
                      anchor=args.anchor, probe_cmd=args.probe_cmd, subject=args.subject, day=args.date,
                      dry_run=args.dry_run, root=root,
                      population=args.population, audience=args.audience,
-                     severity=args.severity, inputs=args.inputs)
+                     severity=args.severity, inputs=args.inputs, no_base=args.no_base)
     if args.why_not is None and not (args.probe_cmd and args.open_value):
         ap.error("file: give --probe-cmd and --open-value, or --why-not")
     if args.why_not is not None and args.inputs:
@@ -2639,6 +2741,8 @@ def _dispatch(ap: argparse.ArgumentParser, args: argparse.Namespace, *, ledger: 
         # command, so a declaration written here would be undriven -- the shape
         # `repin` refuses by name (both reviewers, 2026-09-22).
         ap.error("file: --inputs cannot be driven on a row declared --why-not; drop one")
+    if args.why_not is not None and args.no_base:
+        ap.error("file: --no-base skips a drive that a row declared --why-not never makes; drop one")
     if args.verb == "file" and bool(args.population) != bool(args.audience):
         ap.error("file: --population and --audience come together")
     # The number is reserved BEFORE the row is written, under the clone's
@@ -2675,7 +2779,7 @@ def _dispatch(ap: argparse.ArgumentParser, args: argparse.Namespace, *, ledger: 
                   subject=args.subject, why_not=args.why_not, day=args.date,
                   dry_run=args.dry_run, root=root,
                   population=args.population, audience=args.audience,
-                  inputs=args.inputs)
+                  inputs=args.inputs, no_base=args.no_base)
     if rc != 0 and held:
         _unreserve(root, *held)
     return rc

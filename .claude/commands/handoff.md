@@ -666,7 +666,11 @@ python tools/cc/ship.py handoff
   request merges without it. On a red base the verb refuses as `open` does, a
   `revert/` lane excepted; where the dispatcher ruled the red a fix-forward,
   `handoff --base-red-ruled <ack id>` lands the lane on that ruling (`/ship`
-  step 2). Either way, when the lane would conflict with its
+  step 2). While this seat has another pull request open, a lane never pushed
+  is held as `open` holds it (one open pull request per seat): it stays here,
+  whole, the Stop hook's hold is written for it, and the own-clear's brief
+  says to stay on the branch and run `open` once that one merges or closes.
+  Either way, when the lane would conflict with its
   base (two machines' handoffs collide on this very row), the base is merged in
   first with the record files resolved by shape (`/ship` step 2), so the push
   leaves the pull request mergeable and the merge commit rides it. Once the
@@ -676,7 +680,11 @@ python tools/cc/ship.py handoff
   either push, the verb folds: the rows other seats parked come into the lane
   and, once the fragments run past the cap's slack, they are pruned back to
   the cap, in commits of their own, so the marker binds the head that is
-  pushed.
+  pushed. Then either push reads the lane's shape as `open` does (`/ship`
+  step 2): a deletion the driver did not make (its own prune, a struck row's
+  probe) refuses the push, the lane unpushed and no own-clear armed, until it
+  is read and, where it is the lane's own, `handoff --allow-deletions "<why>"`
+  says why.
   **A lane that already merged** (no open pull request, and nothing in its diff
   with the base but Session Log rows it added) opens no pull request for the
   row alone: the verb parks the committed row on this seat's records ref

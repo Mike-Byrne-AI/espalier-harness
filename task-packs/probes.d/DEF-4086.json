@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4086",
+ "subject": "tools/cc/ship.py",
+ "cmd": "python3 -c \"import sys,subprocess,tempfile,pathlib as P;sys.path.insert(0,'tools/cc');import ship as s;t=P.Path(tempfile.mkdtemp());o=t/'origin.git';c=t/'clone';G=lambda *a,cwd=c:subprocess.run(['git','-c','user.name=p','-c','user.email=p@p','-c','init.defaultBranch=main',*a],cwd=str(cwd),check=True,capture_output=True);G('init','-q','--bare',str(o),cwd=t);G('init','-q',str(c),cwd=t);(c/'a.txt').write_text('a\\n');G('add','a.txt');G('commit','-qm','a');G('remote','add','origin',str(o));G('push','-q','-u','origin','main');G('switch','-qc','lane/x','origin/main');(c/'b.txt').write_text('b\\n');G('add','b.txt');G('commit','-qm','b');G('push','-q','origin','HEAD');on=subprocess.run(['git','ls-remote','--heads','origin','lane/x'],cwd=str(c),capture_output=True,text=True).stdout.strip()!='';on or sys.exit('control: the push did not land on origin');print('own=%s on_origin=%s'%(s._has_own_upstream(c,'lane/x'),s._lane_not_on_origin(c) is None))\"",
+ "open_value": "own=False on_origin=False",
+ "why_not": null,
+ "row_sha": "28f103097dfa",
+ "text_sha": "366834ab92e5",
+ "verified_2026_11_01": "STILL_OPEN (re-pinned value unchanged on 2026-11-01: the failure-mode review's confirmation pass: the @{u} read in _lane_not_on_origin is at line 1741, not 1742; the citation corrected) [changed: text]"
+}

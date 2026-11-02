@@ -293,7 +293,11 @@ class TestDocReadersRunInTheContractTier:
 
     Heuristic by construction: a doc read through a helper in another module
     (``tests/_*.py``) is not followed, so a miss is possible; a hit is a test
-    that reads a repo doc and must be marked ``contract``."""
+    that reads a repo doc and must be marked ``contract``. The other mechanism
+    for the same reds is ``scripts/proof_tier.py::path_readers``: on the two
+    cheaper tiers it runs every test file that names a changed path
+    (DEF-5042), which holds a read this census misses (tests/test_mail.py joins
+    a tuple of doc paths onto the root in a loop)."""
 
     def test_every_doc_reading_test_is_in_the_contract_tier(self):
         from tests.conftest import _primary_marker

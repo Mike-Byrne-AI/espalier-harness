@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5052",
+ "subject": "tools/cc/hooks/session_start.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "The open state is a line absent because its read ran out of time, which no static read tells from a line absent because nothing is open or merged; the oracle is an in-process start with a slow gh, written with the fix.",
+ "row_sha": "ae09d0f1d05b",
+ "text_sha": "bfeead9cb9b7",
+ "verified_2026_11_01": "OPEN (filed 2026-11-01; probe driven at filing)"
+}

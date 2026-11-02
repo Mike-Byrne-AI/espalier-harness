@@ -247,10 +247,17 @@ is read on its own, and one that cannot be read says so on its own line:
   `none red` line stays off while the leg is red; and a dispatched run never
   clears the line, the next push run does.
 - **open PRs:** each with the seat whose latest claim or release names its
-  branch, and what GitHub's merge state means: ready, blocked by a required
-  check or review, in conflict with the base (its seat runs
-  `python tools/cc/ship.py catch-up`), or behind (which holds only under the
-  up-to-date rule). With that rule off, an armed one whose base has moved
+  branch, and what GitHub's merge state means: ready, blocked, in conflict
+  with the base (its seat runs `python tools/cc/ship.py catch-up`), or behind
+  (which holds only under the up-to-date rule). A blocked one says what holds
+  it, from one `gh pr checks <n> --required` read: the required checks that
+  are red by name, else `waiting on N running` (N of the required checks;
+  the banner's `Open PRs:` line counts every check), else that nothing required
+  is red or running (a review, or a required check that has not reported).
+  A read that fails says so and names that command. The reads are bounded
+  (`REQUIRED_READ_ROWS` and `REQUIRED_BUDGET_SECONDS` in `tools/cc/board.py`),
+  and a blocked row past either says it was not read. With that rule off, an
+  armed one whose base has moved
   near its files since its CI ran -- a path both changed, or a Python module
   one import away -- gets a `stale:` line under it: its seat runs `catch-up`,
   so CI tests the combination before it merges. A move elsewhere says nothing.
@@ -479,22 +486,31 @@ opening with anything else is a plain ask no reader counts apart.
 
 <!-- espalier:self-host-only -->
 A gridlock ruling (Core Rule 15, this repository's own rule) is the
-dispatcher's `ack` whose text opens with `gridlock:` (its first word; one
-ruling per ack), the marker in the family of `OPERATOR CALL:`, `redirect:`,
-`shelved:` and `stopped:`; a `(stopped)` row past the hour on the `asks:` line
-is the gridlock's read, answered by the ack that frees or re-aims the seat:
+dispatcher's `ack` whose text opens with `gridlock:` (its first word, so a
+seat's name goes after it; one ruling per message), or a note opening the same
+way where no request waits on the ruling, the marker in the family of
+`OPERATOR CALL:`, `redirect:`, `shelved:` and `stopped:`; a `(stopped)` row
+past the hour on the `asks:` line is the gridlock's read, answered by the ack
+that frees or re-aims the seat:
 
 ```bash
 python tools/cc/mail.py send --type ack --ack <request id> --text "gridlock: <the ruling, the facts you read>"
+python tools/cc/mail.py send --type note --text "gridlock: <the ruling, the facts you read>"
 ```
 
 The seat-day census counts a ruling by that opening on the dispatcher's acks
-alone and names its id on the dispatcher's day row, so a mention of the word
-mid-text, or a worker's request opening with it, is never a ruling. A ruling
-that fixes a red base forward opens with the fixed head `gridlock: fix forward
-run <id>` (the red post-merge run's id) and names the fix lane with `--lane`:
-the ship driver lands that lane on it (`open --base-red-ruled <ack id>`) and
-the board's base-branch line prints it in place of the revert (Step 2c).
+and notes alone and names its id on the dispatcher's day row, so a mention of
+the word mid-text, or a worker's message opening with it, is never a ruling. A
+ruling that fixes a red base forward is always an ack (where no request waits
+on it, `--ack` names the held seat's last message): it opens with the fixed
+head `gridlock: fix forward run <id>` (the red post-merge run's id) and names
+the fix lane with `--lane`: the ship driver lands that lane on it
+(`open --base-red-ruled <ack id>`) and the board's base-branch line prints it
+in place of the revert (Step 2c). The send refuses, on `--dry-run` alike, a
+message under that head that would rule nothing: any other type, an ack with
+no run id in digits right after the head or no `--lane`, one from a seat other
+than the dispatcher `espalier.toml` names, and any while that setting cannot
+be used.
 <!-- /espalier:self-host-only -->
 
 ## Step 5: A shipped lane releases its own claims

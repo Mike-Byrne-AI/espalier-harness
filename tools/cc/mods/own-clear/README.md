@@ -13,13 +13,19 @@ says the window needs a `/clear` by hand.
 ## The three pieces
 
 1. **The marker.** The handoff's last act (`tools/cc/ship.py::arm_own_clear_here`)
-   writes `.espalier-state/own_clear.json`: `state` (`armed`), `session_id`
+   writes `.espalier-state/own_clear.json` in the checkout the mod reads it in
+   (`ship.py::own_clear_checkout`, the mod's own order: `ESPALIER_OWN_CLEAR_ROOT`,
+   else the checkout the session was started in, from Claude Code's session
+   registry, so a lane handed off from a linked worktree of the clone arms the
+   session's own checkout, DEF-5046; a session the registry cannot place is
+   armed where the verb runs, and the line says so): `state` (`armed`), `session_id`
    (the id Claude Code exports to its tool shells as `CLAUDE_CODE_SESSION_ID`,
    which tracks the session across a clear), `head`, `seat`, `role`, `brief`
    (`seat.py::reprime_text`: the role brief with its loop line replaced, since
    the interval loop survives a `/clear`), `landed` and `outcome` (how the
    handoff ended, DEF-4057: a push that landed, or a refusal the window is
-   done with -- the base red and the lane whole here, or a step after a landed
+   done with -- the base red or this seat's other pull request open, and the
+   lane whole here, or a step after a landed
    push -- whose text rides `outcome` while the lane to land first is appended
    to `brief`, so the next window lands it before any new job) and
    `written_at`. The handoff arms on every end it ran to; a refusal the
@@ -30,7 +36,12 @@ says the window needs a `/clear` by hand.
    the handoff whose step has run.
 2. **The clear.** At the end of the main loop's next turn (`turn.complete`,
    reason `answer`), when the marker names this session, HEAD is still the
-   marker's, `git status --porcelain --untracked-files=no` is empty and
+   marker's (a pull that moved HEAD with nothing to hand off re-arms the
+   marker at the new head, its brief and record kept: the ship driver's
+   `catch-up` does it as it pulls or pushes, and `ship.py arm` does it by hand
+   after a pull by hand, so only a commit holds the clear on a moved head;
+   until 2026-10-31 a worker window sat held 3 h 33 min after its tick's
+   catch-up), `git status --porcelain --untracked-files=no` is empty and
    `cc/execution_plan.json` is not `in_progress`, the mod writes
    `clear_asked_at` into the marker and runs
    `$.command.run({ command: 'clear', args: '' })`, not awaited. A clear
@@ -57,11 +68,19 @@ says the window needs a `/clear` by hand.
    `clear_refused_at`, the state staying `armed`; each later turn's end under a
    queued clear writes `turns_since_ask` and, once the engine has answered the
    ask with the session still standing, `clear_resolved_at`, so a clear taken
-   and never run reads apart from a queued one and a refused one. The
-   SessionStart banner's `Own-clear:` line (`tools/cc/hooks/session_start.py`)
-   reads the record for every other session, and the prompt router
-   (`tools/cc/hooks/task_router.py`) tells the window whose own asked clear was
-   refused to say so in its reply.
+   and never run reads apart from a queued one and a refused one. A held turn's
+   end writes the hold: `clear_held` (what was in flight, the latest),
+   `clear_held_since` (when the hold began) and `clear_held_turns` (the turn
+   ends it has held), read from the marker so a reload keeps them and taken off
+   at the ask (DEF-2039, 2026-11-01: the dispatcher window sat held on a moved
+   HEAD for 9 h and 36 loop ticks, and its consumed marker read as a clear
+   never asked). The SessionStart banner's `Own-clear:` line
+   (`tools/cc/hooks/session_start.py`) reads the record for every other
+   session, and the prompt router (`tools/cc/hooks/task_router.py`) tells the
+   window whose own clear is held the verb that resolves the hold, and the
+   window whose own asked clear was refused to say so in its reply. The hold's
+   text names no verb: it rides the re-prime brief, where a verb would run in
+   the new window over a consumed marker; the router keeps the verbs.
 3. **The re-prime.** On the clear's SessionStart (`classic.SessionStart`,
    `source: 'clear'`) the mod reads the marker, and what the old window left
    in flight against the marker's head, before handing the event on (the
@@ -153,7 +172,15 @@ the kit above wherever `claude` is on PATH, with the pass count derived from
 the kit file, so a broken case reds the local tier; no CI cell installs
 `claude`, so there the kit is the seat's run. The engine writes
 `.claude-plugin/types/` and a `tsconfig.json` beside a mod it loads (for the
-editor); both are gitignored.
+editor); both are gitignored. The types directory ignores itself (its own
+`.gitignore` is a bare `*`), and the post-shell protected-file check prunes a
+directory that does, so the type declarations the engine rewrites at a launch
+report nothing; the `tsconfig.json` beside the mod is written once, at the
+mod's first load in a checkout, and that one appearance reports once. The
+root `.gitignore` also names a `.claude-plugin/test-tmp/`, which the kit did
+not write on 2.1.314 (a run left nothing beside the mod); a directory that
+appears there without a `.gitignore` of its own reports like any other file,
+since a root `.gitignore` entry exempts nothing.
 
 The engine hands an `fs.*` hook the path as it resolved it on the host: on
 Windows the kit's `/scratch/...` arrives as `C:\scratch\...`. So the kit's

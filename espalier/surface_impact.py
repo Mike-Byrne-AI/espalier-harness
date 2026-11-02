@@ -143,7 +143,7 @@ class ContentHit:
     """A cheap-scan finding on a declared path that already exists on disk."""
 
     path: str
-    kind: str               # "internal-id" | "self-host-vocab" | "maintainer-marker" | "provenance-tag"
+    kind: str               # "internal-id" | "self-host-vocab" | "maintainer-marker" | "provenance-tag" | "self-host-block"
     hits: list[str]
 
 
@@ -539,9 +539,11 @@ def classify_surface(rel_path: str) -> tuple[str, list[str]] | None:
             "(scripts/sync_vendor_cc.py; tests/test_vendor_cc_parity.py)",
             "no label search -- no goto, no call to a label (cmd.exe misreads "
             "one in an LF-only file; .gitattributes pins *.cmd eol=lf), ASCII "
-            "only, exit 0 on the fallback branch; the shim's own fallback text "
-            "equals cli.STATUSLINE_FALLBACK_TEXT (tests/test_hook_exec_form.py "
-            "pins every tools/cc/*.cmd)",
+            "only, exit 0 on the fallback branch; @echo off the first command, "
+            "after at most the one line for Git Bash (a colon line, its own "
+            "fallback and return, a hash last), the marker after the echo-off; "
+            "the shim's fallback text equals cli.STATUSLINE_FALLBACK_TEXT on "
+            "both lines (tests/test_hook_exec_form.py pins every tools/cc/*.cmd)",
         ]
     # "Is this path a shipped TEST MODULE?" (tests/ prefix, .py) — a third, distinct
     # "is it a test path?" question. Cf. strengthen._is_test_path (coverage view) and
@@ -911,10 +913,15 @@ def _scan_existing(repo_root: Path, rel_path: str, report: SurfaceImpactReport) 
     if p.startswith(_AUDIENCE_SCAN_PREFIXES):
         # Read the body an adopter receives: a self-host block is stripped at
         # deploy, so a marker inside one is no hit (the gate reads it so too).
+        # A body the strip refuses is a hit of its own, never the verb's exit 1.
+        try:
+            adopter_text = surface_hygiene.strip_self_host_blocks(text, source=rel_path)
+        except ValueError as exc:
+            report.content_hits.append(ContentHit(rel_path, "self-host-block", [str(exc)]))
+            adopter_text = None
         marker_hits = surface_hygiene.maintainer_marker_hits(
-            surface_hygiene.strip_self_host_blocks(text),
-            deployed_prefixes=get_managed_public_prefixes(),
-        )
+            adopter_text, deployed_prefixes=get_managed_public_prefixes(),
+        ) if adopter_text is not None else []
         if marker_hits:
             report.content_hits.append(ContentHit(
                 rel_path, "maintainer-marker",

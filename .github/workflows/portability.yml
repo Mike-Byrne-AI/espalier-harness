@@ -142,10 +142,10 @@ jobs:
           # cells named no test: pytest-timeout's thread method ends the whole session at a
           # ceiling, while under xdist the controller names the crashed test and replaces
           # the worker. A single `-n auto` run redded a wall-clock-budget test on macos-latest
-          # (test_redos, run 36702093406): the five files the local tier keeps off the
+          # (test_redos, run 36702093406): the files the local tier keeps off the
           # parallel pool run by themselves, at one worker -- no parallel load on their
           # budgets, and a crossing still named. The list is proof_tier.py's own tuple,
-          # read here, never restated.
+          # SERIAL_FILES, read here, never restated.
           serial="$(python -c 'import sys; sys.path.insert(0, "scripts"); import proof_tier; print(" ".join(proof_tier.SERIAL_FILES))')"
           if [ -z "$serial" ]; then
             echo "::error::portability.yml Test step: proof_tier.py named no serial files"; exit 70

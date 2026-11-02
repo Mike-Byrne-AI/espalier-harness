@@ -31,6 +31,12 @@ and its own words (a Windows red sat in GitHub's record for six hours on
   streak's first red and the green before it. A push run attaches to the
   merge commit and appears in no pull request's rollup, so the board's
   ``checks:`` line reads the leg through these, apart from the merges.
+* ``read_required`` is the one ``gh pr checks <n> --required`` read of an
+  open pull request, made by the board's blocked row, the ship driver's
+  ``status`` and the banner's ``Open PRs:`` line; ``held_by`` and
+  ``waiting_on`` are what a blocked row says it waits on (DEF-4063: the
+  board made no such read and printed one fixed phrase for every blocked
+  pull request).
 
 Standard library only, zero ``espalier`` imports: the hook loads this by
 path under a private alias; the driver and the board import it as a sibling.
@@ -51,6 +57,10 @@ NO_VERDICT = frozenset({"CANCELLED", "STALE"})
 #: The ``gh pr checks`` buckets that hold a merge: a cancelled required cell
 #: holds it as surely as a failed one (a job no runner picked up reads cancel).
 RED_BUCKETS = frozenset({"fail", "cancel"})
+#: The fields one required-check read asks for: each check's name and its
+#: ``gh pr checks`` bucket. The ship driver adds ``link``, to tell a cell its
+#: tests decided from one a lost runner ended.
+REQUIRED_FIELDS = "name,bucket"
 #: The fields one merged listing carries for these readers.
 MERGED_FIELDS = "number,mergedAt,statusCheckRollup"
 #: The fields the Session Log debt readers ask for (the board's ``records:``
@@ -177,6 +187,49 @@ def _default_gh(cwd: object) -> Gh:
         except ValueError:
             return None
     return run
+
+
+def read_required(number: object, gh: Gh, fields: str = REQUIRED_FIELDS) -> dict | None:
+    """The one ``gh pr checks <number> --required`` read: ``{"red", "running",
+    "rows"}``, the answer's rows whose bucket holds a merge (``RED_BUCKETS``),
+    those still running (``pending``), and every row; None when the answer is
+    not a list, which is "could not read", never green (a repository with no
+    required checks answers rc=1 with no JSON). ``gh`` takes the arguments
+    after ``gh`` and returns the parsed JSON or None; ``gh pr checks`` exits 1
+    when a check failed and 8 while one is pending, the two states this read
+    exists for, so a runner hands back the JSON whatever the exit code. A
+    runner's own refusals reach the caller, as ``read_merged``'s do."""
+    answer = gh(["pr", "checks", str(number), "--required", "--json", fields])
+    if not isinstance(answer, list):
+        return None
+    rows = [row for row in answer if isinstance(row, dict)]
+
+    def bucket(row: dict) -> str:
+        return str(row.get("bucket") or "").lower()
+
+    return {"red": [r for r in rows if bucket(r) in RED_BUCKETS],
+            "running": [r for r in rows if bucket(r) == "pending"], "rows": rows}
+
+
+def waiting_on(running: int) -> str:
+    """The words while checks still run and none holding the merge is red:
+    the banner's ``Open PRs:`` tail and the board's blocked row both."""
+    return f"waiting on {running} running"
+
+
+def held_by(red: list[str], running: list[str]) -> str:
+    """What holds a pull request GitHub reports as BLOCKED, from its
+    required-check read: the required reds by name (three, then a count),
+    which hold it whatever still runs beside them; else ``waiting_on`` the
+    required cells still running; else nothing required is red or running,
+    so a review or a required check that has not reported holds it. 7-bit
+    ASCII."""
+    if red:
+        names = ", ".join(ascii_(n) for n in red[:3]) + (f", and {len(red) - 3} more" if len(red) > 3 else "")
+        return f"required {'check' if len(red) == 1 else 'checks'} red ({names})"
+    if running:
+        return waiting_on(len(running))
+    return "no required check is red or running, so a review or a required check that has not reported holds it"
 
 
 def by_merge_desc(merged: list[dict]) -> list[dict]:

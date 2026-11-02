@@ -48,6 +48,7 @@ Stem is classified ``contract`` in ``tests/conftest.py::_MARKER_RULES``.
 from __future__ import annotations
 
 import ast
+import importlib.util
 import re
 import subprocess
 import sys
@@ -249,7 +250,10 @@ class TestTheSentenceSplitter:
 #: sees (an encoded program, a script file, pieces nothing binds, a program
 #: held in a variable), each with its pin in `TestTheCoverageContract` or
 #: `TestCrossShellRouting`, so a form that closes moves the census by one.
-_CENSUS_ON_2026_10_11 = {"docs/HOOKS.md": 29, "docs/SHARP_EDGES.md": 3}
+#: SHARP_EDGES 3 -> 4 on 2026-11-02: the audit prune dates a log by its
+#: name, so a renamed log is its declared limit, pinned both ways in
+#: `TestThePruneDatesALogByItsName`.
+_CENSUS_ON_2026_10_11 = {"docs/HOOKS.md": 29, "docs/SHARP_EDGES.md": 4}
 
 
 def test_the_census_is_the_pinned_population():
@@ -304,13 +308,35 @@ def _cited_ids() -> list[str]:
     })
 
 
+def test_the_nested_run_has_the_runner_to_itself():
+    """DEF-4062: the run below spawns the write guard through the hook for
+    rows whose judgment writes a speed bump's state, which
+    ``tests/_hook_spawn.py`` never retries on a miss, and runs rows of a
+    file the full tier keeps off the parallel load. Beside that load on
+    windows-latest one judgment outran the guard's budget (run 41217045122),
+    so this file runs on the serial leg, where the nested run is alone."""
+    spec = importlib.util.spec_from_file_location("proof_tier", REPO_ROOT / "scripts" / "proof_tier.py")
+    pt = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pt)
+    rel = Path(__file__).resolve().relative_to(REPO_ROOT).as_posix()
+    carried = sorted({cid.split("::", 1)[0] for cid in _cited_ids()} & set(pt.SERIAL_FILES))
+    assert rel in pt.SERIAL_FILES, (
+        f"{rel} is not in scripts/proof_tier.py's SERIAL_FILES, so its nested run shares the "
+        f"runner with the parallel leg; it runs rows of the serial files {carried}")
+
+
 @pytest.mark.slow
 # One pytest child over the whole cited population: 37 s on the self-host box
 # (2026-09-23) and past the global 60 s `timeout` on a 2-core CI runner, where
 # the `timeout_method = "thread"` pyproject then forced ended the WHOLE session
 # (CI run 35917451001, the first after the 2026-09-10 switch-off; since
 # 2026-10-07 only Windows keeps that method). Above the child's own 300 s bound
-# so its message, not this one, is what a reader sees.
+# so its message, not this one, is what a reader sees. That bound on
+# windows-latest, measured: the child alone 66 to 72 s (run 41375665954), the
+# test 88 to 203 s beside the parallel leg's load (130 runs). It held until the
+# child, first to end after the parallel leg, paid pytest's delete of that
+# leg's whole basetemp inside it (DEF-5056); its temp dirs now nest in this
+# session's (tests/_nested_temp.py), so no other session's dir is its cost.
 @pytest.mark.timeout(360)
 def test_every_cited_pin_runs_and_passes_on_this_host():
     """One pytest subprocess over every cited id: a pin that resolves but

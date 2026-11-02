@@ -16,7 +16,9 @@ import type { EngineInterface, Register } from 'claude-code'
 //     (measured 2026-10-26 on 2.1.310: Stop, SessionEnd reason=clear,
 //     SessionStart source=clear with a new session id, the window alive);
 //     anything in flight keeps the marker armed and names the wait on the
-//     status line; a clear the engine refuses says so there and on the marker
+//     status line and on the marker (why, since when, how many turn ends:
+//     the record the prompt router tells the held window from, with the verb
+//     that resolves it, DEF-2039); a clear the engine refuses says so there and on the marker
 //     (the reason, when, a count: the record the banner's Own-clear: line
 //     reads, DEF-5031) and is tried again at the next turn's end; a turn's
 //     end under a pending clear never moves the session this process was last
@@ -83,6 +85,11 @@ type Marker = {
   clear_refusals?: number // how many asks the engine rejected
   clear_refused_at?: string
   turns_since_ask?: number // main-loop turn ends since the ask with the clear still queued
+  // The hold (DEF-2039): what inFlight named at the latest held turn end, when
+  // the hold began, and the turn ends it has held; taken off at the ask.
+  clear_held?: string
+  clear_held_since?: string
+  clear_held_turns?: number
   consumed_at?: string
   new_session_id?: string
   previous_session_id?: string | null // at a stale marking: the session this process was last in
@@ -213,7 +220,14 @@ function armedFor(marker: Marker | undefined, id: string): marker is Marker {
 // Why the clear must wait, or '' when nothing is in flight: the handoff gate's
 // predicate (tools/cc/hooks/stop_gate.py, Gate 5) read from this side, plus
 // HEAD unmoved since the handoff (a commit after it means a handoff is owed
-// again, and that handoff re-arms the marker with the new head). Three
+// again, and that handoff re-arms the marker with the new head; a pull that
+// moved HEAD with nothing to hand off is re-armed at the new head by the ship
+// driver's catch-up, which made it, or by `ship.py arm` after a pull by hand:
+// the worker window air-work sat held 3 h 33 min on 2026-10-31 while its
+// tick's catch-up had moved HEAD and nothing re-armed). The reason names no
+// verb to run: it rides the clear's re-prime brief as what the old window
+// left in flight, and a verb named there would be run in the new window over
+// a consumed marker, arming a fresh one that clears that window again. Three
 // callers: clearable, at the ask and at a compaction, and the clear's
 // SessionStart, which reads it BEFORE the project's settings hooks run beneath
 // it, so everything read here must be the old window's own state as the
@@ -226,7 +240,7 @@ async function inFlight($: Engine, marker: Marker): Promise<string> {
   if (status.out) return 'a tracked edit is in flight'
   const head = await git($, cwd, 'rev-parse', 'HEAD')
   if (!head.ok) return `HEAD could not be read (${head.why})`
-  if (marker.head && head.out !== marker.head) return 'HEAD moved since the handoff (that handoff re-arms the marker)'
+  if (marker.head && head.out !== marker.head) return 'HEAD moved since the handoff (a commit after it owes a handoff, which re-arms the marker; the ship driver\'s catch-up re-arms it after its own pull)'
   try {
     const plan: unknown = JSON.parse(await $.fs.read(`${cwd}/${PLAN}`))
     const p = plan as { status?: unknown; steps?: unknown }
@@ -311,6 +325,17 @@ export const register: Register = on => {
     if (!marker) return next(e)
     if (why) {
       $.ui.status(`own-clear: armed, waiting: ${why}`)
+      // On the record: the dispatcher window sat held on a moved HEAD for 9 h
+      // and 36 loop ticks with this status line read by nobody, and its
+      // consumed marker read as a clear never asked (DEF-2039, 2026-11-01).
+      // The start and the count are read from the marker, so a reload keeps
+      // them; the latest cause is named. The prompt router tells the held
+      // window the verb (this text names none: it rides the re-prime brief).
+      const since = typeof marker.clear_held_since === 'string' && marker.clear_held_since
+        ? marker.clear_held_since
+        : new Date(await $.clock.now()).toISOString()
+      const turns = (typeof marker.clear_held_turns === 'number' ? marker.clear_held_turns : 0) + 1
+      await record($, id, { clear_held: why, clear_held_since: since, clear_held_turns: turns }, 'the hold')
       await note($, `turn.complete: armed for ${id}, waiting: ${why}`)
       return next(e)
     }
@@ -326,10 +351,11 @@ export const register: Register = on => {
       // is what outlives this process when a clear never comes), and an
       // earlier ask's fields taken off it (JSON drops an undefined field): a
       // refusal recorded on ask 1 must not read as ask 2's, which the engine
-      // may take. The count stays, cumulative.
+      // may take. The count stays, cumulative. A hold ends at the ask.
       await writeMarker($, {
         ...marker, clear_asked_at: new Date(await $.clock.now()).toISOString(),
         clear_refused: undefined, clear_refused_at: undefined, clear_resolved_at: undefined, turns_since_ask: undefined,
+        clear_held: undefined, clear_held_since: undefined, clear_held_turns: undefined,
       })
     } catch (err) {
       await note($, `the marker could not take the ask (${String(err)}); clearing anyway`)
@@ -381,6 +407,9 @@ export const register: Register = on => {
               await writeMarker($, {
                 ...current, clear_refused: reason, clear_refusals: count,
                 clear_refused_at: new Date(await $.clock.now()).toISOString(),
+                // A hold the ask's own write failed to take off is older than
+                // this refusal (DEF-2039's review): never left to be said over it.
+                clear_held: undefined, clear_held_since: undefined, clear_held_turns: undefined,
               })
             }
           } catch (e2) {

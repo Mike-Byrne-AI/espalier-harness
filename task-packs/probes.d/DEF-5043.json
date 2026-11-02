@@ -1,0 +1,20 @@
+{
+ "id": "DEF-5043",
+ "subject": "scripts/proof_tier.py",
+ "cmd": "python3 -c \"import sys;sys.path[:0]=['scripts','.','tests'];import proof_tier as p;from tests.conftest import _primary_marker as m;r='tests/test_release_check.py';g='.gitignore';pairs=[('CONTRIBUTING.md',r),('SECURITY.md',r),('espalier/assets/docs/HOOKS.md',r),('espalier/assets/docs/HOOK_ASSUMPTIONS.md','tests/test_reflect_protocol.py'),('task-packs/FORWARD_LEDGER.md','tests/test_check_handoff_landing.py'),('.gitattributes','tests/test_pre_release.py'),('ESPALIER_MEMORY.md','tests/test_memory_sort_audit.py'),(g,'tests/test_check_ledger_probes.py'),(g,'tests/test_execution_plan_cli.py')];print(sum(t in p.own_tests([b]) or m(t[6:-3])=='contract' for b,t in pairs))\"",
+ "open_value": "0",
+ "why_not": null,
+ "inputs": [
+  "tests/conftest.py",
+  "tests/test_release_check.py",
+  "tests/test_reflect_protocol.py",
+  "tests/test_check_handoff_landing.py",
+  "tests/test_pre_release.py",
+  "tests/test_memory_sort_audit.py",
+  "tests/test_check_ledger_probes.py",
+  "tests/test_execution_plan_cli.py"
+ ],
+ "row_sha": "12d90da00e70",
+ "text_sha": "0c24a602ce67",
+ "verified_2026_11_01": "OPEN (filed 2026-11-01; probe driven at filing)"
+}

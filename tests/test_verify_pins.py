@@ -270,9 +270,10 @@ _needs_history = pytest.mark.skipif(
     reason=(
         f"{_HISTORY if _HISTORY != 'missing' else 'a full checkout missing a control'}: "
         "the control commits and their parents are not here, so no real prior artifact "
-        "can be restored. Every full clone of this repository has them; CI's `test` job "
-        "checks out with fetch-depth: 0 and runs these, and the shallow `clean-checkout` "
-        "job skips them by design."
+        "can be restored. Every full clone of this repository has them; CI's `test-serial` "
+        "job (this file is on the serial leg) checks out with fetch-depth: 0 and runs these, "
+        "and the shallow `clean-checkout` job, portability legs and post-merge Windows leg "
+        "skip them by design."
     ),
 )
 
@@ -1271,6 +1272,30 @@ class TestTheRecursionFuse:
             f"{captured.get(DEPTH_ENV)!r}; the fuse in tests/test_verify_pins.py "
             f"reads it to stop unbounded self-recursion."
         )
+
+    def test_the_child_takes_its_basetemp_in_the_runs_own_work_dir(self, monkeypatch, tmp_path):
+        """DEF-5056: on pytest's shared root the child's session end deletes
+        every finished session's numbered dir there, inside the calling
+        test's clock, and the clone's conftest may predate the suite's own
+        rule, so the runner gives the child its basetemp beside the clone."""
+        captured: list[list[str]] = []
+
+        class _Completed:
+            returncode = 0
+            stdout = ""
+
+        def _fake_run(cmd, **kwargs):
+            captured.append(list(cmd))
+            return _Completed()
+
+        monkeypatch.setattr(verify_pins.subprocess, "run", _fake_run)
+        run_pytest(tmp_path / "clone", ["tests"], 60)
+        run_pytest(tmp_path / "clone", ["tests"], 60)   # the baseline, then the run after the revert
+        given = [arg.split("=", 1)[1] for cmd in captured for arg in cmd if arg.startswith("--basetemp=")]
+        assert len(given) == 2 and all(Path(g).parent == tmp_path for g in given), captured
+        # A fresh one each run: pytest empties a given basetemp at its first
+        # use, so the second run would pay the first's delete inside a test.
+        assert given[0] != given[1], given
 
     def test_this_module_reads_the_same_variable_the_tool_writes(self):
         """One name, two sides. A rename on either side silently disarms the

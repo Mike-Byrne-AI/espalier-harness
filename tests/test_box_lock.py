@@ -26,6 +26,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import textwrap
 import threading
 import time
@@ -127,8 +128,13 @@ def _child_env(tmp_path: Path, lock: Path | None, *, stamp: str, hold: bool = Fa
 
 
 def _spawn(tmp_path: Path, tree: Path, env: dict[str, str], *extra: str, workers: str | None = "1") -> subprocess.Popen:
+    # A basetemp of its own: the planted tree loads no suite conftest, and its
+    # xdist controller would mint a numbered dir on pytest's shared root and
+    # delete the finished ones there at its end (DEF-5056).
+    basetemp = tempfile.mkdtemp(prefix="basetemp-", dir=tmp_path)
     argv = [sys.executable, "-m", "pytest", str(tree / "test_probe.py"), "-q", "-p", "no:cacheprovider",
-            "-p", "tests._box_lock", *(["-n", workers] if workers is not None else []), *extra]
+            "-p", "tests._box_lock", f"--basetemp={basetemp}",
+            *(["-n", workers] if workers is not None else []), *extra]
     return subprocess.Popen(argv, cwd=str(tree), env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, encoding="utf-8")
 
