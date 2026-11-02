@@ -704,11 +704,13 @@ class TestTheRewireMovesAWindowsHeadWhenAsked:
         import ast
         import inspect
 
+        from tests._live_tree import checkout_glob
+
         param = inspect.signature(cli.move_statusline_head_in_settings).parameters[
             "shim_sources_under_bash"]
         assert param.default is inspect.Parameter.empty, param
         callers: dict[str, set[str]] = {}
-        for module in sorted((Path(cli.__file__).parent).glob("*.py")):
+        for module in checkout_glob(Path(__file__).resolve().parent.parent / "espalier", "*.py"):
             tree = ast.parse(module.read_text(encoding="utf-8"))
 
             def visit(node: ast.AST, owner: str) -> None:
