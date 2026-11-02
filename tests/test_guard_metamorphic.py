@@ -240,6 +240,16 @@ class TestADeadHeadIsToldFromAnAbsentOne:
         )
         assert dead == [] and absent == ["no-such-head-espalier-xyz"]
 
+    def test_the_dead_message_leaves_no_scratch_dir(self, gm, tmp_path, monkeypatch):
+        """DEF-5055: the drive behind a dead head's message ran in a dir made
+        for it and never removed, so each dead report, this class's own rows
+        among them, left an empty ``gm-dead-*`` in the system temp dir (66 on
+        the Air, 2026-11-01)."""
+        monkeypatch.setattr(gm.tempfile, "tempdir", str(tmp_path))
+        dead, _absent = gm._assert_heads_are_live([{"head": "echo", "separator": "and", "reaches": False}])
+        assert len(dead) == 1 and "rc=" in dead[0], dead
+        assert not list(tmp_path.glob("gm-dead-*")), sorted(p.name for p in tmp_path.iterdir())
+
     def test_a_head_whose_and_row_reaches_is_neither(self, gm):
         assert gm._assert_heads_are_live(
             [{"head": "echo", "separator": gm.AND_SEPARATOR_NAME, "reaches": True}]

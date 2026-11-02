@@ -17,9 +17,14 @@ raises), a dir with no lock or an unreadable one, a symlink, an entry another
 user owns, and ``pytest-current`` with the dir it names (the newest run's, for
 whoever reads it next). The lock goes last, so a delete cut short -- by a fault
 in one file, or past ``SWEEP_BUDGET_S`` -- is taken up again at the next start.
-Two makers outside pytest's root write the same lock into the work dirs they
-make in the system temp dir: ``scripts/archive_probe.py`` and
-``tests/_live_tree.py::checkout_copy``. The first sweep on the Air removed 13
+The makers outside pytest's root that write the same lock into the work dirs
+they make in the system temp dir are named by their prefixes in
+:data:`OWNED_PREFIXES` (``scripts/archive_probe.py``,
+``tests/_live_tree.py::checkout_copy``, the fresh-clone gate, the pin
+verifier, the wheel smoke, the release check, the merge-cost census and the
+ledger verbs' base exports); ``tests/test_temp_sweep.py``'s census holds every
+other Python maker under tests/, scripts/, bench/ and tools/cc/ to a reason it
+needs none. The first sweep on the Air removed 13
 dirs, 32 GB and about 1.9 million inodes, in 150 s (2026-11-01, before the
 budget), so a killed full tier's dir (about 450,000 files) costs the next start
 about half a minute. The timeout backstop drops its own lock before it ends a
@@ -65,8 +70,10 @@ PYTEST_PREFIXES = ("pytest-", "garbage-")
 #: The link pytest points at its newest numbered dir.
 CURRENT_LINK = "pytest-current"
 #: Under the system temp dir: the makers that write ``LOCK_NAME`` into the
-#: work dirs they make.
-OWNED_PREFIXES = ("espalier-archive-probe-", "checkout-copy-")
+#: work dirs they make, the one roster (``tests/test_temp_sweep.py``'s census
+#: reads every maker against it).
+OWNED_PREFIXES = ("espalier-archive-probe-", "checkout-copy-", "espalier-gate-", "verify-pins-", "wheel-smoke-",
+                  "espalier-release-check-", "merge-cost-census-", "strike-base-", "file-export-")
 #: The most a start spends deleting, checked between a dir's children: under a
 #: tool call's two-minute default with a dir's child in flight; what is left
 #: keeps its lock for the next start.
@@ -112,6 +119,11 @@ def lock_pid(directory: Path) -> int | None:
 def write_lock(directory: Path) -> None:
     """Mark ``directory`` as this process's, in pytest's lock shape."""
     (directory / LOCK_NAME).write_text(str(os.getpid()), encoding="utf-8")
+
+
+def lock_is_ours(directory: Path) -> bool:
+    """Whether ``directory``'s lock names this process."""
+    return lock_pid(directory) == os.getpid()
 
 
 def release_own_lock(root: Path | None = None) -> list[str]:

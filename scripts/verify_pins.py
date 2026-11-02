@@ -150,6 +150,11 @@ PINNED = "PINNED"
 UNPINNED = "UNPINNED"
 NOT_APPLICABLE = "NOT_APPLICABLE"
 ERROR = "ERROR"
+#: The file the suite's temp sweep reads in a work dir this script makes:
+#: this process's pid, so a run killed mid-way leaves a dir the next session
+#: start removes (``tests/_temp_sweep.py``); a run asked to keep its dir never
+#: writes it, so a kept dir stays even when its run is killed.
+LOCK_NAME = ".lock"
 
 #: Incremented into every child pytest env. A test module that itself drives
 #: this script reads it to bound recursion. See `run_pytest`.
@@ -852,6 +857,8 @@ def verify(repo: Path, *, sha: str | None = None, full: bool = False,
         return report
 
     tmp_root = Path(tempfile.mkdtemp(prefix="verify-pins-"))
+    if not keep:
+        (tmp_root / LOCK_NAME).write_text(str(os.getpid()), encoding="utf-8")
     clone = tmp_root / "clone"
     try:
         make_clone(repo, clone)

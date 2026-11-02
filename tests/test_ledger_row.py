@@ -2503,6 +2503,31 @@ class TestAStrikeReadsTheBaseAndTheHead:
         assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]))) == 0
         assert f"STILL_OPEN at the base {r['base'][:12]}" in capsys.readouterr().err
 
+    def test_the_base_scratch_is_locked_while_the_base_is_read(self, lr, tmp_path, monkeypatch, capsys):
+        """A strike or a filing killed while it exports a base leaves the
+        export's scratch locked, so the suite's next session start removes it
+        (``tests/_temp_sweep.py``); every exit the verb lives through removes
+        it."""
+        import tempfile
+
+        from tests import _temp_sweep
+
+        r = _two_commit_repo(tmp_path)
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        seen: list = []
+
+        def reading(root, sha, scratch):
+            seen.append((scratch, _temp_sweep.lock_is_ours(scratch)))
+            raise lr.BaseUnavailable("stopped once the lock was read")
+
+        monkeypatch.setattr(lr, "_base_tree", reading)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]))) == 2
+        refusal, _said = lr._head_export_reading(r["repo"], {}, no_base=False)
+        assert refusal is not None and len(seen) == 2, seen
+        assert [ours for _s, ours in seen] == [True, True], "a base scratch had no pid lock"
+        assert all(s.name.startswith(_temp_sweep.OWNED_PREFIXES) and not s.exists() for s, _ours in seen)
+        assert lr.LOCK_NAME == _temp_sweep.LOCK_NAME
+
     def test_a_base_that_cannot_be_checked_out_refuses(self, lr, tmp_path, monkeypatch, capsys):
         """Mutation: a failed checkout read as an empty base, every probe
         UNRESOLVED there with one note each."""

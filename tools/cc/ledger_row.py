@@ -145,6 +145,11 @@ def _index_line(rid: str, text: str) -> tuple[int, str] | None:
 
 
 _SEVERITIES = frozenset({"blocker", "major", "minor", "nit"})
+#: This process's pid, written into each scratch a base export makes, so a dir
+#: a run killed mid-export leaves names a dead pid, which a temp-dir sweep that
+#: reads it can tell from a live run's; the context manager removes the dir on
+#: every exit the run lives through.
+LOCK_NAME = ".lock"
 _GEN = _load("generate_ledger_regions")  # the grammar's one home: vocabularies too
 #: The retrying move (``_paths.replace_retrying``): on Windows a held roster
 #: refuses a replace at once. Loaded under a private name, so the ``_paths`` a
@@ -1595,6 +1600,7 @@ def _drive_both_sides(ids: list[str], *, root: Path, probes: Path, data: dict, b
                                     "subject": entry.get("subject"), "why_not": None, "inputs": entry.get("inputs")}
     with tempfile.TemporaryDirectory(prefix="strike-base-", ignore_cleanup_errors=True) as scratch_dir:
         scratch = Path(scratch_dir)
+        (scratch / LOCK_NAME).write_text(str(os.getpid()), encoding="utf-8")
         tree: Path | None = None
         if sha is not None and (probes_to_drive or guards):
             try:
@@ -1718,6 +1724,7 @@ def _head_export_reading(root: Path, probe: dict, *, no_base: bool) -> tuple[str
     if sha is None:
         return note("HEAD names no commit")
     with tempfile.TemporaryDirectory(prefix="file-export-", ignore_cleanup_errors=True) as scratch_dir:
+        (Path(scratch_dir) / LOCK_NAME).write_text(str(os.getpid()), encoding="utf-8")
         try:
             tree = _base_tree(root, sha, Path(scratch_dir))
         except BaseUnavailable as exc:
