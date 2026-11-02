@@ -10136,6 +10136,19 @@ class TestQuotedProgramsAreReadAsPrograms:
         ("PowerShell", 'Get-Content "$(Get-Location)\\.env"'),
         ("PowerShell", 'Write-Host "$(Get-Content .env)"'),
         ("PowerShell", "Write-Host $(gc .env)"),
+        # DEF-4061: the five spellings #373's reviewers measured, each let
+        # through on 02fde92 where the plain spelling beside it is refused --
+        # a short watch cluster ending in its interval switch, BSD script's
+        # program after its typescript file, a value glued to -c (alone and
+        # in a cluster), eval behind the builtin keyword, and Invoke-
+        # Expression's colon-bound -Command (glued and spaced)
+        ("Bash", "watch -dn 5 cat .env"),
+        ("Bash", "script -q /dev/null cat .env"),
+        ("Bash", "su -c'cat .env'"),
+        ("Bash", "script -qc'cat .env' /dev/null"),
+        ("Bash", "builtin eval 'cat .env'"),
+        ("PowerShell", "iex -Command:'gc .env'"),
+        ("PowerShell", "Invoke-Expression -Command: 'gc .env'"),
     ])
     def test_a_carriers_program_is_read(self, tool, command, tmp_path):
         assert_hook_denied(run_guard_tool(tool, {"command": command}, tmp_path),
@@ -10175,6 +10188,18 @@ class TestQuotedProgramsAreReadAsPrograms:
         ("PowerShell", "Write-Output 'a; Invoke-Expression \"type .env\"'"),
         # a subexpression inside a single-quoted string is text
         ("PowerShell", "Write-Host 'see $(gc .env)'"),
+        # DEF-4061's twins: each new spelling, quoted as data
+        ("Bash", "echo 'watch -dn 5 cat .env'"),
+        ("Bash", "echo 'script -q /dev/null cat .env'"),
+        ("Bash", "echo \"su -c'cat .env'\""),
+        ("Bash", "echo 'builtin eval cat .env'"),
+        ("PowerShell", "Write-Host 'iex -Command:\"gc .env\"'"),
+        # and each new reading runs only the program it names: a watch
+        # interval, a typescript file and a glued value are not read as one
+        ("Bash", "watch -dn 5 cat notes.txt"),
+        ("Bash", "script -q /dev/null cat notes.txt"),
+        ("Bash", "su -c'cat notes.txt'"),
+        ("PowerShell", "iex -Command:'gc notes.txt'"),
     ])
     def test_a_string_no_carrier_runs_is_a_mention(self, tool, command, tmp_path):
         assert_hook_allowed(run_guard_tool(tool, {"command": command}, tmp_path))
