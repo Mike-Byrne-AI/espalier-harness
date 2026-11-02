@@ -2938,6 +2938,50 @@ def _head_hands_its_text_to_no_shell(head: str) -> bool:
     return head == _GH_TEXT_DOOR or _head_hands_nothing_to_a_shell(head)
 
 
+#: The git verbs whose `-m`/`--message` value git stores as text and never
+#: runs or re-parses (DEF-1013). `revert`/`cherry-pick` are deliberately ABSENT:
+#: their `-m` names a mainline parent number, not a message. The quoted-
+#: substitution splice reads a captured heredoc as THIS verb's message data;
+#: every other git verb -- `config`, `-c`, the exec doors -- stores or runs a
+#: program its own readers must still see raw.
+_GIT_MESSAGE_VERBS = frozenset({"commit", "tag", "merge", "notes", "stash"})
+
+
+def _splices_quoted_capture(head: str, stmt: str) -> bool:
+    """Does the command whose head is ``head`` (statement text ``stmt``) take
+    a double-quoted argument as pure data, so a command substitution inside it
+    may be masked as the data-producing command it is (DEF-1013)?
+
+    True only for a head on `_NON_REPARSING_HEADS` (echo, printf, cat, …), and
+    for git under a message verb. A READER family re-parses its argument --
+    `perl -e`, `sed -n`, `awk`, `python -c`, and git's `config`/`-c` and exec
+    doors all run or re-parse what the capture produced -- so none of them
+    splices, and the capture stays raw for their own readers to scan (F1/F2/F4
+    of the lane review: splicing on a rostered INNER head alone lost the git
+    program-setting door and masked a perl/sed program)."""
+    if head in _NON_REPARSING_HEADS:
+        # ⚠ A DATA HEAD WITH AN EXEC DOOR DOES NOT SPLICE. `rg`/`ag` run the
+        # command given to `--pre`/`--preprocessor`, so a capture there is a
+        # program they execute, not data they print (the lane review listed
+        # `rg --pre "$(…)"`). The flag check over-excludes `--pre-glob`, which
+        # is friction, never a fail-open.
+        if head in ("rg", "ag") and any(
+                w.startswith(("--pre", "--preprocessor")) for w in stmt.split()):
+            return False
+        return True
+    if head == "git":
+        words = stmt.split()
+        i = 1 if words[:1] == ["git"] else 0
+        while i < len(words) and words[i].startswith("-"):
+            # the global options that take a separate-word value (the set
+            # `_git_program_bodies` skips) consume it; the rest are flags
+            i += 2 if words[i] in (
+                "-C", "-c", "--git-dir", "--work-tree", "--namespace",
+                "--exec-path") and "=" not in words[i] else 1
+        return i < len(words) and words[i] in _GIT_MESSAGE_VERBS
+    return False
+
+
 def mask_inert_syntax(command: str) -> str:
     """Return `command` with literal-by-position syntax characters spaced out.
 
@@ -3181,6 +3225,17 @@ def _walk_shell_roles(
     #: so a substitution beside the operator stays in the heredoc's rule-(4)
     #: slice (DEF-1012; see the consume site).
     cmd_start = 0
+    #: The head word of the simple command the walk is inside, or None at a
+    #: command position, reset at every separator. Whether a `$( )` inside a
+    #: double-quoted argument may be masked turns on it: only a data head
+    #: splices (DEF-1013; `_splices_quoted_capture`).
+    simple_head: str | None = None
+    #: An `exec` redirects a file descriptor into a process substitution
+    #: running a shell (`exec 3> >(bash)`), so a later `>&3` anywhere in the
+    #: command hands its output to that shell; every span is then captured
+    #: (DEF-1013 F3, the lane review).
+    exec_fd_procsub = False
+    in_exec_stmt = False
 
     def push_frame(kind: str, closer: str, at: int) -> None:
         """Open a frame at ``at`` for the pipeline current here. The list
@@ -3242,7 +3297,8 @@ def _walk_shell_roles(
     def mask_quoted_substitutions(a: int, b: int) -> None:
         """Mask the command inside each `$( )` of the double-quoted span
         ``[a, b)`` as that command's own walk masks it, when every head it
-        holds hands nothing to a shell (DEF-1013).
+        holds hands nothing to a shell (DEF-1013). The caller gates this on
+        the outer head taking the argument as data (`_splices_quoted_capture`).
 
         ⚠ CLAUDE CODE'S OWN COMMIT FORM, `git commit -m "$(cat <<'EOF' …
         EOF)"`, WAS READ RAW. `_neutralise_expanding_span` steps over a live
@@ -3251,16 +3307,26 @@ def _walk_shell_roles(
         the message unmasked, and an arrow in it read as a redirect. Walked
         here as a command of its own, the heredoc body is the captured text
         -- an argument of the outer head. The splice is made only when the
-        inner command's heads are all on the roster, and it changes only
-        what this span's masked text says: where an outer head re-parses its
-        argument (`eval`, `bash -c`) the masker's rule (2) keeps the span
-        raw, as it keeps any span that head owns, and the `$( )` itself stays
-        visible to every reader, so the capture still marks the statement.
-        An assignment's value is not walked here (`step_over_assignment`):
-        a headless value is handed to nobody only while it stays raw, since
-        the binding pre-pass reads it where it runs (DEF-848). A live
-        redirect inside the substitution is code, and stays live in the
-        inner walk's masked text."""
+        inner command's heads are all on the roster AND the outer head takes
+        the argument as pure data (`_splices_quoted_capture`, checked at the
+        call), and it changes only what this span's masked text says: the
+        `$( )` itself stays visible to every reader, so the capture still
+        marks the statement. An assignment's value is not walked here
+        (`step_over_assignment`): a headless value is handed to nobody only
+        while it stays raw, since the binding pre-pass reads it where it runs
+        (DEF-848). A live redirect inside the substitution is code, and stays
+        live in the inner walk's masked text.
+
+        ⚠ REJECTED: splicing on the inner heads alone, whatever the outer
+        head (the first cut of DEF-1013). A reader re-parses its argument, so
+        `perl -e "$(…)"` and `sed -n "$(…)"` run the captured text as a
+        program and masking it hid the write inside; and git counts as
+        rostered through `_reader_family`, so `git config alias.x "$(…)"` and
+        `git -c x="$(…)"` lost the program-setting door that reads the stored
+        alias. The outer head must take the argument as DATA -- a
+        `_NON_REPARSING_HEADS` head, or git under a message verb -- and every
+        reader keeps its capture raw for its own reader to scan (the lane
+        review's F1/F2/F4)."""
         k = a
         while k < b:
             ch = s[k]
@@ -3292,8 +3358,11 @@ def _walk_shell_roles(
             k += 1
 
     def record_head(word: str) -> None:
+        nonlocal simple_head, in_exec_stmt
         heads.add(word)
         current_pipeline.add(word)
+        simple_head = word
+        in_exec_stmt = word == "exec"
         if frames and frames[-1].inner_ok:
             # the settle's own per-owner rule: the gh text door (DEF-1014)
             # takes its text and its stdin as data
@@ -3510,7 +3579,8 @@ def _walk_shell_roles(
         if c == '"':
             j = _close_double_quote(s, i)
             _neutralise_expanding_span(s, out, i + 1, j)
-            if walk_substitutions:
+            if (walk_substitutions and simple_head is not None
+                    and _splices_quoted_capture(simple_head, s[cmd_start:j])):
                 mask_quoted_substitutions(i + 1, j)
             candidates.append(_SpanCandidate(i + 1, j, current_pipeline, nesting,
                                              len(statements) - 1,
@@ -3714,6 +3784,8 @@ def _walk_shell_roles(
             current_pipeline = set()
             closed_frame = None
             cmd_start = i
+            simple_head = None
+            in_exec_stmt = False
             # `i` is past any heredoc body the newline opened, so the bodies
             # belong to the statement that opened them.
             statements[-1][1] = i
@@ -3738,9 +3810,14 @@ def _walk_shell_roles(
         if c in ";|&(){}":
             at_head = expect_head
             expect_head = True
+            simple_head = None
             closes: _Frame | None = None
             if c in "({":
                 nesting += 1
+                if (c == "(" and i > 0 and s[i - 1] in "<>" and in_exec_stmt):
+                    # `exec N> >( shell )`: the descriptor now reaches a shell,
+                    # so a later `>&N` captures every span (DEF-1013 F3)
+                    exec_fd_procsub = True
                 # ⚠ A FRAME ONLY AT A COMMAND POSITION (DEF-1015): a `(` there
                 # opens a subshell, and a `{` standing alone opens a group. A
                 # `$(`, `<(` or `>(` is a substitution and an argument's `{` is
@@ -3783,6 +3860,8 @@ def _walk_shell_roles(
                 statements.append([i + 1, n])
             if c in ";&" or (c == "|" and not pipe_pending):
                 cmd_start = i + 1
+            if c != "|" or (i + 1 < n and s[i + 1] == "|"):
+                in_exec_stmt = False
             if closes is not None:
                 pop_frame(i + 1)
             elif c == ")":
@@ -3798,7 +3877,8 @@ def _walk_shell_roles(
 
     masked = "".join(out)
     _settle_statement_spans(masked, candidates, statements, safe_spans,
-                            frames=created, defines_function=defines_function)
+                            frames=created, defines_function=defines_function,
+                            no_relief=exec_fd_procsub)
     return masked, heads, safe_spans
 
 
@@ -3988,6 +4068,7 @@ def _settle_statement_spans(
     safe_spans: list[tuple[int, int]],
     frames: "list[_Frame] | None" = None,
     defines_function: bool = False,
+    no_relief: bool = False,
 ) -> None:
     """Append to `safe_spans` every recorded quoted span or comment that is
     inert data of a statement handing it to nobody -- the rule-(2) contract
@@ -4028,6 +4109,10 @@ def _settle_statement_spans(
     # Keyed by `id(owners)`: sound only because `candidates` holds a strong
     # reference to every owner set for the whole settle, so no id is reused.
     # A refactor that stores an index or a copy instead must key differently.
+    if no_relief:
+        # an `exec N> >(shell)` reaches a descriptor a later `>&N` writes to,
+        # so no span in the command is safe to relieve (DEF-1013 F3)
+        return
     rostered: dict[int, bool] = {}
     capturing: dict[int, bool] = {}
     frame_ok = _settle_frames(masked, frames or [], statements)

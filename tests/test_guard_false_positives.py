@@ -673,6 +673,33 @@ GENUINE_BASH = [
     ("capture-that-runs-a-shell-on-its-heredoc",
      f"echo \"$(bash <<'EOF'\necho x > {_HOOK}\nEOF\n)\""),
     ("capture-whose-inner-command-writes", f"echo \"$(echo x > {_HOOK})\""),
+    # DEF-1013 lane review F1/F2/F4: the quoted-substitution splice must not
+    # fire under a head that RE-PARSES or RUNS its argument, or the program it
+    # stores or runs loses the write inside. A reader (perl, sed) runs the
+    # captured text; git's config and -c doors store a program its own reader
+    # scans; rg runs the --pre capture. Each was DENY at ce61737 and must stay
+    # DENY -- the outer-head gate (`_splices_quoted_capture`) is what keeps them
+    # raw for those readers.
+    ("git-config-alias-captures-a-heredoc",
+     f"git config alias.z \"$(cat <<'EOF'\n!echo y > {_HOOK}\nEOF\n)\"; git z"),
+    ("git-c-alias-captures-an-echo",
+     f"git -c alias.z=\"$(echo '!echo y > {_HOOK}')\" z"),
+    ("git-config-credential-helper-captures",
+     f"git config credential.helper \"$(echo '!echo y > {_HOOK}')\""),
+    ("perl-e-captures-a-heredoc-write",
+     f"perl -e \"$(cat <<'EOF'\nopen(F,\">{_HOOK}\")\nEOF\n)\""),
+    ("perl-e-captures-an-echoed-system",
+     f"perl -e \"$(echo 'system(\\\"echo y > {_HOOK}\\\")')\""),
+    ("sed-captures-a-heredoc-e-command",
+     f"sed -n \"$(cat <<'EOF'\n1e echo x > {_HOOK}\nEOF\n)\" /etc/hosts"),
+    ("rg-pre-captures-a-heredoc-write",
+     f"rg --pre \"$(cat <<'EOF'\necho x > {_HOOK}\nEOF\n)\" ."),
+    # F3: an exec'd descriptor into a process substitution running a shell, a
+    # later `>&3` sends there -- both the braced group and the braceless form.
+    ("exec-fd-procsub-then-group-write",
+     f"exec 3> >(bash); {{ echo 'echo x > {_HOOK}'; }} >&3"),
+    ("exec-fd-procsub-then-toplevel-write",
+     f"exec 3> >(bash); echo 'echo x > {_HOOK}' >&3"),
     # DEF-967's must-deny twins: a substitution that itself runs the guarded
     # command, and an exec-quote body holding the nested construct before it.
     ("nested-sub-that-runs-the-catastrophic-delete", f'echo "n: $(printf "x"; {_RM_RF} /)"'),
