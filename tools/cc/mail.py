@@ -761,16 +761,27 @@ def live_claims(by_machine: dict[str, list[dict]]) -> list[dict]:
             if kind == "claim":
                 open_[m["id"]] = (i, m)
             elif kind == "release":
-                ack = m.get("ack") or ""
-                lane = (m.get("re") or {}).get("lane") or ""
                 for cid in list(open_):
-                    claim_lane = (open_[cid][1].get("re") or {}).get("lane") or ""
-                    if (ack and cid == ack) or (not ack and lane and claim_lane == lane):
+                    if _releases(m, cid, open_[cid][1]):
                         del open_[cid]
         for i, m in open_.values():
             live.append((str(m.get("at") or ""), str(m.get("from") or machine), i, m))
     live.sort(key=lambda t: t[:3])
     return [m for _at, _who, _i, m in live]
+
+
+def _releases(release: dict, claim_id: str, claim: dict) -> bool:
+    """Does ``release`` close the claim ``claim_id``? One whose ``ack`` names
+    the claim does, and one naming no id closes every claim on the lane it
+    names. The one home of the rule: :func:`live_claims` and the claims
+    :func:`live_assignments` keeps for its third closing rule both ask it, so
+    a new release rule cannot move what ``claims`` shows apart from what that
+    rule reads. A lane is compared as text on both sides, as the jobs fold
+    always read it; the claims fold once compared a malformed non-text lane
+    raw, the one shape on which the two had differed."""
+    ack = release.get("ack") or ""
+    lane = _lane_of(release)
+    return bool(ack and claim_id == ack) or bool(not ack and lane and _lane_of(claim) == lane)
 
 
 def lane_seats(by_machine: dict[str, list[dict]]) -> dict[str, str]:
@@ -1270,7 +1281,7 @@ def live_assignments(by_machine: dict[str, list[dict]], dispatcher: str | None =
         lane = _lane_of(m)
         start = begun.get((who, lane), -1)
         cover = set() if ack or not lane else {
-            i for c in mine.values() if _lane_of(c) == lane for i in _str_list((c.get("re") or {}).get("ids"))}
+            i for cid, c in mine.items() if _releases(m, cid, c) for i in _str_list((c.get("re") or {}).get("ids"))}
         for key, a in list(by_job.items()):
             a_re = a.get("re") or {}
             if who not in (a.get("from"), a_re.get(ASSIGN_SEAT_KEY)):
@@ -1286,7 +1297,7 @@ def live_assignments(by_machine: dict[str, list[dict]], dispatcher: str | None =
                 if closed is not None:
                     closed.append((a, m, rule))
         for cid in list(mine):
-            if (ack and cid == ack) or (not ack and lane and _lane_of(mine[cid]) == lane):
+            if _releases(m, cid, mine[cid]):
                 del mine[cid]   # a lane left with no live claim begins again at its next claim
     return sorted(by_job.values(), key=lambda m: order[str(m.get("id"))])
 
@@ -1779,6 +1790,45 @@ def release_lane(root: Path, lane: str, text: str = "", *, run: Runner = run,
         return None
     message = new_message(machine, "release", text, lane=lane)
     return send(root, message, run=run, say=say, timeout=timeout)
+
+
+def hand_release_notes(by_machine: dict[str, list[dict]], message: dict, dispatcher: str | None, *,
+                       sent: bool = False) -> list[str]:
+    """The notes a lane release typed by hand prints: each live job given to
+    its sender that it closes, read by replaying :func:`live_assignments` with
+    the release appended. A lane release reads exactly as the one the ship
+    driver sends at a push, which closes a job the lane's claims cover; sent
+    to shrink a claim or to drop a lane never pushed, it closes the job
+    silently. Before the send (``--dry-run``) the note gives the releases by id
+    that drop the same claims and leave the job alone; after it (``sent``) the
+    job is closed, so it names the re-send that gives it back. A dispatcher's
+    own lane release closes a job on purpose and gets none, and so does the
+    driver's (:func:`release_lane`)."""
+    machine = str(message.get("from") or "")
+    lane = _lane_of(message)
+    after = {m: list(ms) for m, ms in by_machine.items()}
+    after.setdefault(machine, []).append(message)
+    closed: list[tuple[dict, dict, str]] = []
+    live_assignments(after, dispatcher, closed=closed)
+    jobs = [a for a, r, _rule in closed if r is message and (a.get("re") or {}).get(ASSIGN_SEAT_KEY) == machine]
+    if not jobs:
+        return []
+    pushed = f"if {lane} was pushed, this is its push's release and the close stands; if not, "
+    if sent:
+        return [f"note: this release closed job {a.get('id')} ({_job_text(a.get('re') or {})}) as a push of {lane} "
+                f"does; {pushed}ask {dispatcher or 'the dispatcher'} to re-send assign {a.get('id')}" for a in jobs]
+    own = [str(c.get("id")) for c in own_live_claims(by_machine, machine, lane)]
+    keep = ("to drop the claims and keep the job, release each claim by its id instead: "
+            + "; ".join(f"python tools/cc/mail.py send --type release --ack {cid}" for cid in own) if own else
+            f"{machine} holds no live claim on it, so the release closes nothing else: to keep the job, do not send it")
+    return [f"note: this release would close job {a.get('id')} ({_job_text(a.get('re') or {})}) as a push of "
+            f"{lane} does; {pushed}{keep}" for a in jobs]
+
+
+def _job_text(re_: dict) -> str:
+    """A job as its lane, classes and ids, the words the board's rows use."""
+    return ", ".join([*([str(re_.get("lane"))] if re_.get("lane") else []), *_str_list(re_.get("classes")),
+                      *_str_list(re_.get("ids"))]) or "no lane, class or id"
 
 
 # -------------------------------------------------------------- the cursor --
@@ -2460,7 +2510,23 @@ def main(argv: list[str] | None = None) -> int:
                 tier_script = (root / "scripts" / "proof_tier.py").is_file()   # the self-host tell
                 for line in assign_shape_notes(message["text"], phrases=tier_script):
                     print(line, file=sys.stderr)
+            notes: list[str] = []
+            if args.type == "release" and args.lane and not args.ack:
+                # The other machines' mail first, best effort: an assign this
+                # clone has not fetched is one the release could close unsaid.
+                fetched, problem = fetch_mail(root)
+                stale = "" if fetched else f" (read from the mail as last fetched: {problem})"
+                try:
+                    by_machine, _skipped = read_mail(root)
+                except Unresolvable as exc:
+                    notes = [f"note: the mail could not be read ({exc}), so which job this release closes is not "
+                             "said; a lane release closes a job its claims cover, as a push does"]
+                else:
+                    notes = [line + stale for line in hand_release_notes(
+                        by_machine, message, dispatcher_setting(root)[0], sent=not args.dry_run)]
             if args.dry_run:
+                for line in notes:
+                    print(line, file=sys.stderr)
                 hits = secret_hits(message)
                 if hits:
                     raise Unresolvable("would not send, the guard reads a secret path in it: " + "; ".join(hits[:5]))
@@ -2468,6 +2534,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"body: {len(message['text'])} of {MAX_TEXT} characters", file=sys.stderr)
                 return 0
             send(root, message)
+            for line in notes:
+                print(line, file=sys.stderr)
             return 0
         if not args.no_fetch:
             ok, problem = fetch_mail(root)

@@ -237,6 +237,72 @@ class TestTheCensusReadsTheRulesFromTheFold:
             ("win", "2026-10-18", 0, 1)]
 
 
+class TestClaimClosuresToReread:
+    """DEF-4040 and DEF-4042: the third closing rule reads a claim's ids as
+    what its lane touches, so a row fixed across lanes closes at the first
+    lane's push, and a lane a push emptied begins again at the next claim, so
+    a follow-up push can close a job queued behind it. The fold stays (the
+    operator declined a claim key); the census names each such close, so the
+    dispatcher can re-send the job."""
+
+    _JOB = _m("air", "assign", "2026-10-18T01:00:00Z", "a1", seat="win", ids=["DEF-1"])
+    _CLOSE = (_m("win", "claim", "2026-10-18T01:30:00Z", "c1", lane="lane/y", ids=["DEF-1"]),
+              _m("win", "release", "2026-10-18T02:00:00Z", "r1", lane="lane/y"))
+
+    def test_a_job_whose_ids_its_seat_claims_again_is_named(self):
+        """The row's red. Dies to: the later claims not read, or read on the
+        closing lane alone."""
+        src = _src(self._JOB, *self._CLOSE, _m("win", "claim", "2026-10-18T03:00:00Z", "c2", lane="lane/z",
+                                               ids=["DEF-1", "DEF-9"]))
+        data = census_mod.census(src, DAY, NEXT)
+        text = census_mod.render(data, {})
+        assert ("2026-10-18 win: merged 0, assigns 1, closed 1 (claim 1, lane 0, ack 0), claim closures to re-read "
+                "(ids claimed again after the close: DEF-1), re-assigned after a close 0") in text, text
+        assert "(of the claim closures, ids claimed again 1, on a lane begun before the job 0)" in text, text
+        assert "claim closures to re-read (ids claimed again after the close: DEF-1)" in census_mod.as_row(
+            data, "win", "2026-10-18")
+
+    def test_a_close_on_a_lane_begun_before_the_job_is_named(self):
+        """A push emptied lane/y, the job came, the seat claimed lane/y again
+        and the follow-up push closed the job. Dies to: the seat's earlier
+        claims on the closing lane not read."""
+        src = _src(_m("win", "claim", "2026-10-18T00:20:00Z", "c0", lane="lane/y", ids=["DEF-2"]),
+                   _m("win", "release", "2026-10-18T00:40:00Z", "r0", lane="lane/y"), self._JOB, *self._CLOSE)
+        text = census_mod.render(census_mod.census(src, DAY, NEXT), {})
+        assert "claim closures to re-read (on a lane begun before the job: DEF-1)" in text, text
+
+    def test_a_pack_and_a_job_re_sent_since_are_not_named(self):
+        """A pack given by its id closes at each wave's push and is re-sent by
+        design; a job already re-sent was read. Dies to: the reads run for
+        every claim closure (the code review)."""
+        pack = _src(_m("air", "assign", "2026-10-18T01:00:00Z", "a1", seat="win", ids=["TP-7"]),
+                    _m("win", "claim", "2026-10-18T01:30:00Z", "c1", lane="lane/y", ids=["TP-7"]),
+                    _m("win", "release", "2026-10-18T02:00:00Z", "r1", lane="lane/y"),
+                    _m("win", "claim", "2026-10-18T03:00:00Z", "c2", lane="lane/z", ids=["TP-7"]))
+        assert "re-read" not in census_mod.render(census_mod.census(pack, DAY, NEXT), {})
+        resent = _src(self._JOB, *self._CLOSE, _m("air", "assign", "2026-10-18T02:30:00Z", "a2", seat="win",
+                                                  ids=["DEF-1"]),
+                      _m("win", "claim", "2026-10-18T03:00:00Z", "c2", lane="lane/z", ids=["DEF-1"]))
+        assert "re-read" not in census_mod.render(census_mod.census(resent, DAY, NEXT), {})
+
+    def test_a_close_with_neither_names_nothing(self):
+        """Dies to: every claim closure named, or a claim before the close (the
+        one that covered it) read as a claim after it."""
+        data = census_mod.census(_src(self._JOB, *self._CLOSE), DAY, NEXT)
+        assert "re-read" not in census_mod.render(data, {}) and "re-read" not in census_mod.as_row(
+            data, "win", "2026-10-18")
+
+    def test_the_fixture_names_the_two_closes_the_row_measured(self):
+        """DEF-4037's measure of 2026-10-18: of the day's 24 claim closures,
+        the seat claimed again after 2 (DEF-5016, DEF-3013); none closed on a
+        lane begun before the job (DEF-4042 read 0 such over 2026-10-20's
+        refs). Dies to: the read keyed on anything but the job's own ids."""
+        text = census_mod.render(census_mod.census(census_mod.read_fixture(FIXTURE), DAY, NEXT), {})
+        assert "(of the claim closures, ids claimed again 2, on a lane begun before the job 0)" in text, text
+        assert "ids claimed again after the close: DEF-3013" in text and "ids claimed again after the close: DEF-5016" \
+            in text, text
+
+
 class TestTheOtherColumns:
     """Merges, requests and words, each read from the source its docstring names."""
 

@@ -1034,6 +1034,112 @@ _T0 = datetime(2026, 10, 14, 20, 0, 0, tzinfo=timezone.utc)
 _NOW = datetime(2026, 10, 15, 2, 25, 0, tzinfo=timezone.utc)
 
 
+class TestClosedAtAPush:
+    """DEF-4037: the third closing rule closes a job given by its ids at the
+    lane release the ship driver sends when the push lands, before CI runs, so
+    a lane that goes red and is shelved has already dropped its job from the
+    ``jobs:`` rows. The section lists each such job while the lane's pull
+    request is open, from the fold's own ``closed`` record."""
+
+    _PR = {"number": 437, "headRefName": "lane/a", "mergeStateStatus": "CLEAN", "isDraft": False,
+           "autoMergeRequest": None}
+
+    def _pushed(self, board, *, resend=False, by_lane=False):
+        """A job given to win by its ids (or by its lane), win's claim on
+        lane/a naming them, and the release its push sent."""
+        mail = board.mail
+        job = mail.new_message("air", "assign", "", seat="win", ids=["DEF-1"],
+                               lane="lane/a" if by_lane else None, now=_T0)
+        claim = mail.new_message("win", "claim", "", lane="lane/a", ids=["DEF-1"], now=_T0.replace(minute=5))
+        release = mail.new_message("win", "release", "", lane="lane/a", now=_T0.replace(minute=9))
+        again = [mail.new_message("air", "assign", "", seat="win", ids=["DEF-1"], now=_T0.replace(minute=20))]
+        return job, release, {"air": [job, *(again if resend else [])], "win": [claim, release]}
+
+    def _text(self, board, monkeypatch, tmp_path, by_machine, prs) -> str:
+        _stub_channel(monkeypatch, board, by_machine)
+        return board.render(board.collect(tmp_path, run_=_gh({"pr list": prs, "run list": _GREEN_RUNS}), now=_NOW))
+
+    def test_a_job_the_push_closed_is_listed_while_its_pull_request_is_open(self, board, monkeypatch, tmp_path):
+        """The row's red. Dies to: the line left out of the jobs section, or
+        the closed record not read."""
+        job, _release, by_machine = self._pushed(board)
+        text = self._text(board, monkeypatch, tmp_path, by_machine, [self._PR])
+        assert "jobs:     (dispatcher air) no live assignments" in text, text
+        assert (f"          closed at a push, its pull request still open: 1: win: DEF-1 (assign {job['id']}; "
+                "#437 lane/a: ready)") in text, text
+
+    def test_the_json_carries_the_closing_release(self, board, monkeypatch, tmp_path):
+        """Dies to: the entry built without the release that closed it."""
+        job, release, by_machine = self._pushed(board)
+        _stub_channel(monkeypatch, board, by_machine)
+        collected = board.collect(tmp_path, run_=_gh({"pr list": [self._PR], "run list": _GREEN_RUNS}), now=_NOW)
+        assert collected["closed_at_a_push"] == [{"seat": "win", "ids": ["DEF-1"], "assign": job["id"],
+                                                 "release": release["id"], "lane": "lane/a", "number": 437,
+                                                 "state": "ready"}]
+
+    def test_a_lane_in_ci_reads_apart_from_a_red_one(self, board, monkeypatch, tmp_path):
+        """The dispatcher re-sends a shelved lane's job, not one still in CI.
+        Dies to: the line printed without the pull request's state."""
+        _job, _release, by_machine = self._pushed(board)
+        blocked = {**self._PR, "mergeStateStatus": "BLOCKED"}
+        for checks, said in (([{"name": "t", "bucket": "pending"}], "#437 lane/a: blocked: waiting on 1 running)"),
+                             ([{"name": "t", "bucket": "fail"}], "#437 lane/a: blocked: required check red (t)")):
+            _stub_channel(monkeypatch, board, by_machine)
+            run = _gh({"pr list": [blocked], "pr checks": checks, "run list": _GREEN_RUNS})
+            text = board.render(board.collect(tmp_path, run_=run, now=_NOW))
+            line = next(ln for ln in text.splitlines() if "closed at a push" in ln)
+            assert said in line, line
+
+    def test_a_job_assigned_again_and_closed_again_lists_nothing(self, board, monkeypatch, tmp_path):
+        """The re-sent job shipped on lane/b; lane/a's pull request still
+        open. Dies to: only the live jobs read for a re-send."""
+        mail = board.mail
+        _job, _release, by_machine = self._pushed(board, resend=True)
+        by_machine["win"] += [mail.new_message("win", "claim", "", lane="lane/b", ids=["DEF-1"],
+                                               now=_T0.replace(minute=30)),
+                              mail.new_message("win", "release", "", lane="lane/b", now=_T0.replace(minute=40))]
+        text = self._text(board, monkeypatch, tmp_path, by_machine, [self._PR])
+        assert "closed at a push" not in text and "no live assignments" in text, text
+
+    def test_a_branch_name_used_again_lists_nothing(self, board, monkeypatch, tmp_path):
+        """The closure was an earlier lane/a's push, a day before this pull
+        request. Dies to: the open pull request matched by its name alone."""
+        _job, _release, by_machine = self._pushed(board)
+        later = {**self._PR, "createdAt": "2026-10-15T20:00:00Z"}
+        assert "closed at a push" not in self._text(board, monkeypatch, tmp_path, by_machine, [later])
+        soon = {**self._PR, "createdAt": "2026-10-14T20:15:00Z"}   # created after the release: listed
+        assert "closed at a push" in self._text(board, monkeypatch, tmp_path, by_machine, [soon])
+
+    def test_a_merged_lane_lists_nothing(self, board, monkeypatch, tmp_path):
+        """The job's work merged: the closure stood. Dies to: every claim
+        closure listed whatever the pull requests."""
+        _job, _release, by_machine = self._pushed(board)
+        text = self._text(board, monkeypatch, tmp_path, by_machine, [])
+        assert "closed at a push" not in text, text
+
+    def test_a_job_re_sent_since_lists_nothing(self, board, monkeypatch, tmp_path):
+        """The dispatcher's re-send is the answer the line asks for. Dies to:
+        the live jobs not read beside the closed record."""
+        _job, _release, by_machine = self._pushed(board, resend=True)
+        text = self._text(board, monkeypatch, tmp_path, by_machine, [self._PR])
+        assert "1 live: win: DEF-1" in text, text
+        assert "closed at a push" not in text, text
+
+    def test_a_job_given_by_its_lane_lists_nothing(self, board, monkeypatch, tmp_path):
+        """A job assigned by its lane closes by the lane rule, and the open
+        PRs line already names that lane. Dies to: the rule's name not read."""
+        _job, _release, by_machine = self._pushed(board, by_lane=True)
+        text = self._text(board, monkeypatch, tmp_path, by_machine, [self._PR])
+        assert "closed at a push" not in text, text
+
+    def test_unread_pull_requests_read_as_unread_never_as_none(self, board, monkeypatch, tmp_path):
+        """Dies to: a failed pull request read leaving the key empty."""
+        _job, _release, by_machine = self._pushed(board)
+        text = self._text(board, monkeypatch, tmp_path, by_machine, board.Unresolvable("gh is not on PATH"))
+        assert ("          closed at a push: unread (the open pull requests are unread: gh is not on PATH)"
+                in text), text
+
+
 class TestUnderTwo:
     """DEF-5034: the ``jobs:`` section prints one row per live job, so a seat
     holding none had no line, and the dispatcher kept each worker at two
