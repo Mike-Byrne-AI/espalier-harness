@@ -391,9 +391,10 @@ def _take_snapshot(root: Path, data: dict) -> dict[str, str] | None:
         except OSError:  # fail-open: ok deliberate -- a snapshot left behind is swept by a later start after a day
             pass
         try:
-            docs = json.loads(raw).get("docs")
-        except (ValueError, AttributeError):  # fail-open: ok deliberate -- a torn snapshot reads as none, the named stand-down
+            parsed = json.loads(raw)
+        except ValueError:  # fail-open: ok deliberate -- a torn snapshot reads as none, the named stand-down
             return None
+        docs = parsed.get("docs") if isinstance(parsed, dict) else None
         if isinstance(docs, dict) and all(isinstance(v, str) for v in docs.values()):
             return docs
         return None
@@ -405,9 +406,15 @@ def _earlier_evidence(root: Path) -> list[str]:
     session's start sweeps), so a later run that changes nothing does not
     erase them: the failure-mode review found a second, read-only docs agent
     re-blocking Gate 2 over the first one's still-uncommitted edits."""
+    # Bytes through decode_text_or_problem, as stop_gate reads the same record:
+    # an operator writes it by hand (the gate's own message says how), and a
+    # PowerShell or editor save carries a byte-order mark.
     try:
-        earlier = json.loads((root / STATE_DIR / _hook_utils.DOCS_REFRESHED).read_text(encoding="utf-8"))
-    except (OSError, ValueError):  # fail-open: ok deliberate -- no earlier record, or a torn one, carries nothing forward
+        from _json_safe import decode_text_or_problem  # noqa: PLC0415 -- tools/cc is on the path where the hooks run
+
+        text, problem = decode_text_or_problem((root / STATE_DIR / _hook_utils.DOCS_REFRESHED).read_bytes())
+        earlier = json.loads(text) if not problem else None
+    except (OSError, ValueError, ImportError):  # fail-open: ok deliberate -- no earlier record, a torn one, or no decoder carries nothing forward
         return []
     docs = earlier.get("changed_docs") if isinstance(earlier, dict) else None
     return [p for p in docs if isinstance(p, str)] if isinstance(docs, list) else []
@@ -423,7 +430,7 @@ def _docs_evidence(root: Path, data: dict) -> tuple[list[str], str]:
     start = _take_snapshot(root, data)
     if start is None:
         _hook_utils.say_once(
-            root, "docs-evidence-unscoped", "subagent_stop", "subagentstop_docs_evidence_unscoped",
+            root, "docs-evidence-unscoped", "subagent_stop", "subagentstop_failed_open_docs_evidence_unscoped",
             f"the {data.get('agent_type')!r} run had no start record, so its docs evidence is "
             "every markdown file with uncommitted changes, edits made before it ran included. "
             "SubagentStart kept no snapshot for it that could be read: a settings file that "

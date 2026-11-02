@@ -549,14 +549,15 @@ Upstream, verbatim (`https://code.claude.com/docs/en/hooks.md`, fetched
 > returned context only when the subagent's context doesn't already hold the
 > copy from an earlier run.
 
-The page's example ids are `agent-abc123` (SubagentStart) and a stop path ending
-`subagents/agent-def456.jsonl`, and it does not say that one subagent's start
-and stop carry one `agent_id`. Driven 2026-11-02 on this host's Claude Code (a
-payload logger wired on both events, one `general-purpose` subagent launched
-from a headless session): both payloads carried `agent_id`
-`a060f8fc0f85f8900`, with no `agent-` prefix, and the stop's
-`agent_transcript_path` ended `subagents/agent-a060f8fc0f85f8900.jsonl`; the
-start payload carried no transcript path. `subagent_start.py` keys the docs
+The page's example ids are `agent-abc123` (SubagentStart) and a stop transcript
+in a subagents folder named for the id `def456`, and it does not say that one
+subagent's start and stop carry one `agent_id`. Driven 2026-11-02 on this
+host's Claude Code (a payload logger wired on both events, one
+`general-purpose` subagent launched from a headless session): both payloads
+carried `agent_id` `a060f8fc0f85f8900`, with no `agent-` prefix, and the stop's
+`agent_transcript_path` named a transcript in the subagents folder whose file
+name is that id with an `agent-` prefix and a `.jsonl` suffix; the start
+payload carried no transcript path. `subagent_start.py` keys the docs
 agent's start snapshot on that id and `subagent_stop.py` reads it back by the
 id, then by the transcript's name, with a leading `agent-` dropped from each
 (`subagent_stop._run_key`), so the upstream spelling and the driven one name

@@ -228,23 +228,22 @@ _WRITE_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
 _SETTINGS_FILES = (".claude/settings.json", ".claude/settings.local.json")
 _HOOKS_SHOWN = 3
 _COMMAND_SHOWN = 80
+# A matcher holding any of these is a pattern, not a plain list of names.
+_REGEX_SYNTAX = re.compile(r"[.*+?\[\](){}^$\\]")
 
 
 def _matcher_reaches_a_write(matcher: object) -> bool:
     """Can this PreToolUse matcher fire on a file write? No matcher, ``""`` and
-    ``*`` match every tool; any other is read as the regex Claude Code reads it
-    as, searched, so a matcher that names a write tool anywhere counts. A
-    matcher that is not a valid pattern counts too: naming a hook that cannot
+    ``*`` match every tool; a plain ``|`` list of tool names counts when it
+    names a write tool; any other shape (a regex, ``mcp__.*``) counts without
+    being evaluated, since a pattern from a settings file is never compiled in
+    a hook (the dot-star gate cannot prove one safe): naming a hook that cannot
     deny is the cheaper mistake than hiding one that can."""
-    if matcher is None or matcher == "" or matcher == "*":
+    if matcher is None or matcher == "" or matcher == "*" or not isinstance(matcher, str):
         return True
-    if not isinstance(matcher, str):
+    if _REGEX_SYNTAX.search(matcher):
         return True
-    try:
-        pattern = re.compile(matcher)
-    except re.error:
-        return True
-    return any(pattern.search(tool) for tool in _WRITE_TOOLS)
+    return any(name.strip() in _WRITE_TOOLS for name in matcher.split("|"))
 
 
 def _entry_text(entry: dict) -> str:

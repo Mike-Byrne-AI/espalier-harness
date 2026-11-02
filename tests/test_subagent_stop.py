@@ -806,7 +806,7 @@ class TestDocsEvidenceIsTheRunsOwn:
         record = json.loads((repo / ".espalier-state" / "docs_refreshed").read_text(encoding="utf-8"))
         assert record["changed_docs"] == ["docs/CONVENTIONS.md"], record
         assert record.get("evidence_scope") == "tree", record
-        said = _records("subagentstop_docs_evidence_unscoped")
+        said = _records("subagentstop_failed_open_docs_evidence_unscoped")
         assert len(said) == 1, said
         assert "SubagentStart" in result.stderr.decode("utf-8", errors="replace"), result.stderr
 

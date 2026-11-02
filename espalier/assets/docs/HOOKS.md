@@ -2390,7 +2390,7 @@ counts as its work. The stop removes the snapshot, and a start sweeps
 any left more than a day old. Where a settings file does not wire this hook
 (an install from before it took the snapshot), the record lists every dirty
 markdown file as before, says so with `"evidence_scope": "tree"`, and a
-`subagentstop_docs_evidence_unscoped` record says it once a session.
+`subagentstop_failed_open_docs_evidence_unscoped` record says it once a session.
 
 **What you see:** Nothing directly; the subagent begins with the
 orientation context already in hand.

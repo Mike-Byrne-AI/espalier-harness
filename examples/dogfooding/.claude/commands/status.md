@@ -48,9 +48,9 @@ predicates (`_protected_zones` / `plan_guard`), never a re-implementation, so th
 read-out cannot drift from what Espalier's hooks enforce. It is their verdict,
 not the session's: another PreToolUse hook or a `permissions.deny` Edit/Write
 rule can still deny a write it calls allowed, so the `unmodelled` line names
-those found in `.claude/settings.json` and `.claude/settings.local.json` (the
-rules counted, their globs not matched) and says that user-level, plugin and
-managed hooks are not listed. No mutation; no new store.
+those found in `.claude/settings.json` and the local settings file beside it
+(the rules counted, their globs not matched) and says that user-level, plugin
+and managed hooks are not listed. No mutation; no new store.
 
 ```bash
 python tools/cc/session_resume.py --explain tools/cc/hooks/write_guard.py

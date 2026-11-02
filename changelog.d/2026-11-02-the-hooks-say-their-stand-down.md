@@ -11,9 +11,9 @@
   created or changed since, with `"evidence_scope": "run"`, carrying forward
   an earlier run's files this session that are still uncommitted. A tree whose
   settings do not wire the start hook keeps the whole-tree list, marked
-  `"tree"`, and a `subagentstop_docs_evidence_unscoped` record says so once a
-  session. No snapshot under maintenance mode; the start's git read is capped
-  at 4 s inside its 10 s timeout. The gate's message says that doc edits made
+  `"tree"`, and a `subagentstop_failed_open_docs_evidence_unscoped` record says so once a
+  session. No snapshot under maintenance mode; the start's git reads are capped
+  at 6 s inside its 10 s timeout. The gate's message says that doc edits made
   before the agent ran are not its work.
 - **`/status --explain` says whose verdict it gives.** The net line opens
   "Espalier's hooks:", and an `unmodelled` line names the other PreToolUse
