@@ -536,6 +536,34 @@ agent — neither of which the operator dispatched — now appends a
 `SubagentHandback` subagent's recorded lead is its closing chatter rather than
 its report. Neither is pinned by any in-repo test.
 
+## SubagentStart input fields (verified 2026-11-02)
+
+Upstream, verbatim (`https://code.claude.com/docs/en/hooks.md`, fetched
+2026-11-02):
+
+> In addition to the common input fields, SubagentStart hooks receive
+> `agent_id` with the unique identifier for the subagent and `agent_type` with
+> the agent name that the matcher filters on.
+
+> When the hook runs again for the same subagent, Claude Code injects the
+> returned context only when the subagent's context doesn't already hold the
+> copy from an earlier run.
+
+The page's example ids are `agent-abc123` (SubagentStart) and a stop transcript
+in a subagents folder named for the id `def456`, and it does not say that one
+subagent's start and stop carry one `agent_id`. Driven 2026-11-02 on this
+host's Claude Code (a payload logger wired on both events, one
+`general-purpose` subagent launched from a headless session): both payloads
+carried `agent_id` `a060f8fc0f85f8900`, with no `agent-` prefix, and the stop's
+`agent_transcript_path` named a transcript in the subagents folder whose file
+name is that id with an `agent-` prefix and a `.jsonl` suffix; the start
+payload carried no transcript path. `subagent_start.py` keys the docs
+agent's start snapshot on that id and `subagent_stop.py` reads it back by the
+id, then by the transcript's name, with a leading `agent-` dropped from each
+(`subagent_stop._run_key`), so the upstream spelling and the driven one name
+one run. "Runs again for the same subagent" is why the snapshot is written
+once and never replaced.
+
 ## Context injection: plain stdout vs the `additionalContext` JSON field
 
 The live protocol still distinguishes **two** ways a hook puts text in front of

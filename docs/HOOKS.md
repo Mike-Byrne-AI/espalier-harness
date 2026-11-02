@@ -1855,6 +1855,7 @@ validates the result:
   → scans for placeholder values (`<repo>`, `<fill>`, `INSERT HERE`,
   `TEMPLATE_ONLY`); all three kinds are harness files, so a write to any
   of them also runs the integrity spot-check below
+- The same three kinds → reads the frontmatter as Claude Code does: a value strict YAML rejects (an unquoted `: ` inside it, a value opening on `[`) is said to unregister the agent, or drop a skill's or command's frontmatter, with CRLF line endings (now, or once a checkout writes them), and a description cut at ` #` is said with what Claude Code shows; `espalier audit` names such a body holding CRLF, and `doctor` recommends `.claude/** text eol=lf`
 - `tools/cc/**/*.py` → runs `compile()` to catch syntax errors
 - Root governance docs (`CLAUDE.md`, `ESPALIER_MEMORY.md`, etc.) → placeholder scan
 - A Session Log fragment (`memory/session-log.d/<YYYY-MM-DD>-<HHMMSS>-<seat>.md`)
@@ -2193,7 +2194,7 @@ gate is opt-in.
 | Gate | What it checks | Blocks? | Default |
 |------|---------------|---------|---------|
 | **1. Pytest** | Runs core test suite | Yes, on failure | **Off** (opt-in via env var) |
-| **2. Docs refresh** | ≥10 writes and no `docs-maintainer` subagent run that changed docs (`.espalier-state/docs_refreshed`)? | Yes, the first Stop of each turn until one has | On |
+| **2. Docs refresh** | ≥10 writes and no `docs-maintainer` subagent run that changed docs during its own run (`.espalier-state/docs_refreshed`)? | Yes, the first Stop of each turn until one has | On |
 | **3. Code review** | ≥10 writes and no `code-reviewer` subagent run (`.espalier-state/code_reviewed`)? | Yes, the first Stop of each turn until one has | On |
 | **5. Handoff** | Nothing in flight (no plan in progress, no tracked edit) and the branch holds commits its upstream does not (its own upstream, else `origin/HEAD`, else `origin/main` or `origin/master`), made this session, on a repository whose `espalier.toml` sets `handoff_push = true`; and, where the push would open a pull request, that this seat has no other one open (one open pull request per seat: one bounded `gh pr list` read, attributed by the ship driver's `seat_open_prs`) | Yes, once per commit (`.espalier-state/handoff_gate_said` holds the HEAD it judged, seeded at SessionStart); while another of this seat's pull requests is open the lane is held instead (`.espalier-state/handoff_gate_hold`, re-checked every five minutes), and the block returns once none is | On where the handoff pushes |
 | **4. Blueprint finalize** | Auto-finalizes the active blueprint | Never blocks | On |
@@ -2385,12 +2386,26 @@ candidate: it is a claim for you to distil, not a note.
 When a subagent starts cold (no inherited context), this hook injects a
 small orientation payload — host facts plus a pointer to the fan-out
 finding-schema — so the subagent does not re-derive the host
-environment. It is a reporter: it only injects context, never blocks.
+environment. It is a reporter: it injects context and never blocks.
+
+For an agent that relieves the docs gate (`docs-maintainer`, or one you
+declare under `docs_refresh_agents`), it also keeps a snapshot of the
+markdown files with uncommitted changes at the agent's start, under
+`.espalier-state/docs_snapshots/<agent id>.json`. The agent's stop compares
+against it, so the `docs_refreshed` record lists only the files the agent
+itself created or changed, plus an earlier docs run's files this session that
+are still uncommitted: markdown you edited before dispatching it no longer
+counts as its work. The stop removes the snapshot, and a start sweeps
+any left more than a day old. Where a settings file does not wire this hook
+(an install from before it took the snapshot), the record lists every dirty
+markdown file as before, says so with `"evidence_scope": "tree"`, and a
+`subagentstop_failed_open_docs_evidence_unscoped` record says it once a session.
 
 **What you see:** Nothing directly; the subagent begins with the
 orientation context already in hand.
 
-**Configuration:** None needed. Advisory only.
+**Configuration:** None needed. Under `ESPALIER_MAINTENANCE_MODE=1` it keeps
+no snapshot, since the stop writes no record to compare it with.
 
 ---
 
@@ -2548,7 +2563,8 @@ sources the shim, whose first line is written for it, and PowerShell
 runs it as a batch file, so installing or removing Git for Windows after
 `init` changes nothing. An older install can carry the shim bare (Git
 Bash only) or behind `&` (PowerShell only); `espalier doctor .` names
-one written for the other shell.
+one written for the other shell, and `espalier init . --rewire-interpreter`
+puts either behind the dot, on request, writing a backup first.
 
 Install a Python 3.10+ (or put it on PATH), then run
 `espalier doctor .` — it names the wired interpreter and the exact

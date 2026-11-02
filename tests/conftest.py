@@ -906,7 +906,8 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # under.
             "test_interpreter_hosts",
             # TP-448 Class 3: pins that --rewire-interpreter changes ONLY
-            # argv[0] of a hook command and refuses rather than clobbers.
+            # argv[0] of a hook command (and, on request, a legacy Windows
+            # statusLine head, DEF-4071) and refuses rather than clobbers.
             "test_init_rewire_interpreter",
             "test_closed_loop_contract",
             # The adopter-axes registry: every (axis, value) cell names a

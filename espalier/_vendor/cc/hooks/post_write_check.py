@@ -388,6 +388,304 @@ def check_python_syntax(content: str, rel_path: str) -> None:
         _hook_utils.advise_warn(f"{rel_path} has a Python syntax error: {e}")
 
 
+# --- Frontmatter Claude Code will not load --------------------------------------
+#
+# The hook twin of espalier/render_surface.py's frontmatter_hazards (a hook
+# cannot import the engine); tests/test_frontmatter_will_not_load.py holds the
+# two to one verdict over one corpus, PyYAML the oracle. Claude Code parses a
+# body's frontmatter as strict YAML and, when that fails, retries through a
+# fallback a trailing carriage return defeats: measured on 2.1.314, a value
+# strict YAML rejects loads with LF line endings and fails with CRLF (the agent
+# does not register, a skill or command loses its frontmatter), and a ' #'
+# cuts the value under both. String scanning only, no pattern. Measured shapes:
+# an unquoted ': ' inside a value and a value opening on '[', and a ' #'; every
+# other FRAGILE shape is the PyYAML oracle's, not a drive's (probable, not
+# measured, that Claude Code's strict parse rejects it the same way).
+
+_FM_FRAGILE = "fragile"
+_FM_CUT = "cut"
+_FM_PLAIN_FORBIDDEN_FIRST = "]},%@`"
+_FM_DQ_SIMPLE_ESCAPES = frozenset("0abt\tnvfre \"/\\N_LP")
+_FM_DQ_HEX_ESCAPES = {"x": 2, "u": 4, "U": 8}
+_FM_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+
+
+def _fm_lines(text: str) -> list[str] | None:
+    """The raw lines from the opening to the closing ``---``, or ``None``; one
+    leading byte-order mark is read past (whether Claude Code reads a BOM'd
+    body's frontmatter at all is unmeasured)."""
+    lines = text.removeprefix("\ufeff").split("\n")
+    if lines[0].rstrip("\r") != "---":
+        return None
+    for i in range(1, len(lines)):
+        if lines[i].rstrip("\r") == "---":
+            return lines[: i + 1]
+    return None
+
+
+def _frontmatter_has_crlf(text: str) -> bool:
+    """True when the frontmatter block holds CRLF line endings on disk."""
+    lines = _fm_lines(text)
+    return lines is not None and any(line.endswith("\r") for line in lines)
+
+
+def _fm_key(line: str) -> tuple[str | None, str]:
+    if not line or line[0] in " \t#-":
+        return None, ""
+    pos = line.find(":")
+    while pos != -1 and line[pos + 1:pos + 2] not in ("", " "):
+        pos = line.find(":", pos + 1)
+    if pos <= 0:
+        return None, ""
+    key = line[:pos]
+    if not all(ch.isalnum() or ch in "_-." for ch in key):
+        return None, ""
+    return key, line[pos + 1:]
+
+
+def _fm_scan_quoted(value: str) -> tuple[str, int | str]:
+    quote = value[0]
+    i = 1
+    while i < len(value):
+        ch = value[i]
+        if quote == '"' and ch == "\\":
+            nxt = value[i + 1:i + 2]
+            if not nxt:
+                return "unclosed", ""
+            if nxt in _FM_DQ_HEX_ESCAPES:
+                width = _FM_DQ_HEX_ESCAPES[nxt]
+                digits = value[i + 2:i + 2 + width]
+                if len(digits) != width or not set(digits) <= _FM_HEX_DIGITS:
+                    return "escape", nxt
+                i += 2 + width
+                continue
+            if nxt not in _FM_DQ_SIMPLE_ESCAPES:
+                return "escape", nxt
+            i += 2
+            continue
+        if ch == quote:
+            if quote == "'" and value[i + 1:i + 2] == "'":
+                i += 2
+                continue
+            return "closed", i
+        i += 1
+    return "unclosed", ""
+
+
+def _fm_scan_flow(value: str) -> int | None:
+    """A quote opens a quoted item only at an item's start; inside a plain
+    item (``[don't, b]``) it is a character."""
+    depth, quote, i, item_start = 0, "", 0, True
+    while i < len(value):
+        ch = value[i]
+        if quote:
+            if quote == '"' and ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+        elif ch == " ":
+            pass
+        elif ch in "\"'" and item_start:
+            quote = ch
+            item_start = False
+        elif ch in "[{":
+            depth += 1
+            item_start = True
+        elif ch == "," or (ch == ":" and value[i + 1:i + 2] in ("", " ")):
+            item_start = True
+        elif ch in "]}":
+            depth -= 1
+            if depth == 0:
+                return i
+            item_start = False
+        else:
+            item_start = False
+        i += 1
+    return None
+
+
+def _fm_tail_is_clean(tail: str) -> bool:
+    rest = tail.lstrip(" ")
+    return not rest or (rest.startswith("#") and len(rest) < len(tail))
+
+
+def _fm_block_header_is_valid(value: str) -> bool:
+    head = value[1:]
+    cut = head.find(" #")
+    if cut != -1:
+        head = head[:cut]
+    head = head.rstrip(" ")
+    chomp = sum(1 for ch in head if ch in "+-")
+    indent = sum(1 for ch in head if ch in "123456789")
+    return chomp + indent == len(head) and chomp <= 1 and indent <= 1
+
+
+def _fm_judge(value: str, cont: list[str]) -> tuple[str, str, str] | None:
+    value = value.strip(" ")
+    if "\t" in value or any("\t" in line for line in cont):
+        return None
+    more = [line.strip(" ") for line in cont if line.strip(" ")]
+    if not value:
+        return None
+    first = value[0]
+    if first == "#":
+        return None if more else (_FM_CUT, "a value opening on '#'", "")
+    if first in "|>":
+        if _fm_block_header_is_valid(value):
+            return None
+        return _FM_FRAGILE, f"a block-scalar marker '{first}' followed by text", ""
+    if first in "\"'":
+        state, where = _fm_scan_quoted(value)
+        if state == "escape":
+            return _FM_FRAGILE, f"an unknown escape '\\{where}' inside double quotes", ""
+        if state == "unclosed":
+            return None if more else (_FM_FRAGILE, "an unclosed quote", "")
+        if more:
+            return None
+        if _fm_tail_is_clean(value[int(where) + 1:]):
+            return None
+        return _FM_FRAGILE, "text after the closing quote", ""
+    if first in "[{":
+        end = _fm_scan_flow(value)
+        if end is None:
+            return None if more else (_FM_FRAGILE, "an unclosed bracket", "")
+        if more or _fm_tail_is_clean(value[end + 1:]):
+            return None
+        return _FM_FRAGILE, f"text after the closing '{value[end]}'", ""
+    if first in _FM_PLAIN_FORBIDDEN_FIRST or first == "*":
+        return _FM_FRAGILE, f"an unquoted value opening on '{first}'", ""
+    if first == "&" or value.startswith(("!!", "! ")) or value == "!":
+        return None
+    if first == "!":
+        return _FM_FRAGILE, "an unquoted value opening on '!'", ""
+    if first in "-?:" and value[1:2] in ("", " "):
+        return _FM_FRAGILE, f"an unquoted value opening on '{first}'", ""
+    segments = [value] + more
+    for n, seg in enumerate(segments):
+        if n and seg.startswith("#"):
+            if any(not s.startswith("#") for s in segments[n + 1:]):
+                return _FM_FRAGILE, "text continuing after a ' #' comment", ""
+            return None
+        colon = seg.find(":")
+        while colon != -1 and seg[colon + 1:colon + 2] not in ("", " "):
+            colon = seg.find(":", colon + 1)
+        hash_at = seg.find(" #")
+        if colon != -1 and (hash_at == -1 or colon < hash_at):
+            if colon == len(seg) - 1:
+                return _FM_FRAGILE, "an unquoted value ending in ':'", ""
+            return _FM_FRAGILE, "': ' inside an unquoted value", ""
+        if hash_at != -1:
+            if any(not s.startswith("#") for s in segments[n + 1:]):
+                return _FM_FRAGILE, "text continuing after a ' #' comment", ""
+            kept = " ".join(segments[:n] + [seg[:hash_at].rstrip(" ")])
+            return _FM_CUT, "' #' inside an unquoted value", kept
+    return None
+
+
+def _frontmatter_hazards(text: str) -> list[tuple[str, str, str, str]]:
+    """``(key, verdict, why, kept)`` for each top-level frontmatter key strict
+    YAML reads otherwise than written (the engine twin's contract)."""
+    block = _fm_lines(text)
+    if block is None:
+        return []
+    lines = [line.rstrip("\r") for line in block[1:-1]]
+    out: list[tuple[str, str, str, str]] = []
+    i = 0
+    while i < len(lines):
+        key, value = _fm_key(lines[i])
+        i += 1
+        if key is None:
+            continue
+        cont: list[str] = []
+        while i < len(lines) and (not lines[i].strip() or lines[i][0] in " \t"):
+            cont.append(lines[i])
+            i += 1
+        verdict = _fm_judge(value, cont)
+        if verdict is not None:
+            out.append((key, *verdict))
+    return out
+
+
+def _frontmatter_kind(rel_path: str) -> str | None:
+    rel = rel_path.replace("\\", "/").lower()
+    if rel.startswith(".claude/agents/") and rel.endswith(".md"):
+        return "agent"
+    if rel.startswith(".claude/commands/") and rel.endswith(".md"):
+        return "command"
+    if rel.startswith(".claude/skills/") and rel.endswith("/skill.md"):
+        return "skill"
+    return None
+
+
+def _fm_sentence(rel_path: str, kind: str, key: str, verdict: str, why: str, kept: str,
+                 crlf: bool) -> str | None:
+    """What one key does to the body, by the line endings on disk: the engine's
+    frontmatter_fragile_sentence / frontmatter_cut_sentence word for word. A CUT
+    is said for the description alone: a ' #' after another key's value
+    (``model: sonnet  # cheaper``) is idiomatic commenting, and the description
+    is the one value Claude Code shows."""
+    if verdict == _FM_FRAGILE and crlf and kind == "agent":
+        return (
+            f"{rel_path}: this agent does not register: its frontmatter has CRLF line "
+            f"endings and `{key}` is not strict YAML ({why}), which Claude Code cannot "
+            "read past; quote the value"
+        )
+    if verdict == _FM_FRAGILE and crlf:
+        return (
+            f"{rel_path}: Claude Code drops this {kind}'s frontmatter (its description "
+            f"and allowed tools): the file has CRLF line endings and `{key}` is not "
+            f"strict YAML ({why}); quote the value"
+        )
+    if verdict == _FM_FRAGILE:
+        effect = (
+            "this agent will not register" if kind == "agent"
+            else f"this {kind}'s frontmatter will be dropped"
+        )
+        return (
+            f"{rel_path}: `{key}` is not strict YAML ({why}); Claude Code reads it with "
+            f"LF line endings, but {effect} once checked out with CRLF line endings "
+            "(core.autocrlf on Windows); quote the value"
+        )
+    if key != "description":
+        return None
+    shown = f'"{kept}"' if kept else "no description"
+    at = '"#"' if why.startswith("a value opening") else '" #"'
+    return (
+        f"{rel_path}: the description is cut at {at} (YAML reads the rest as a "
+        f"comment), so Claude Code shows {shown}; quote the value to keep it whole"
+    )
+
+
+def check_frontmatter(full_path: Path, rel_path: str, root: Path | None = None,
+                      sid: object = None) -> None:
+    """Say, at the write, what a body's frontmatter does under each line ending:
+    a value strict YAML rejects does not load with CRLF on disk now, and will
+    not once a checkout writes CRLF; a description YAML cuts at a comment.
+    With a ``root``, each (file, key, verdict, line ending) is said once a
+    session: every Edit of a body re-runs this, and the same sentence on each
+    is noise; a changed verdict is a new key, so it is said again."""
+    kind = _frontmatter_kind(rel_path)
+    if kind is None:
+        return
+    try:
+        text = full_path.read_bytes().decode("utf-8", errors="replace")
+    except OSError:  # fail-open: ok telemetry -- a body that cannot be read back is not checked
+        return
+    crlf = _frontmatter_has_crlf(text)
+    for key, verdict, why, kept in _frontmatter_hazards(text):
+        line = _fm_sentence(rel_path, kind, key, verdict, why, kept, crlf)
+        if line is None:
+            continue
+        if root is None:
+            _hook_utils.advise_warn(line)
+            continue
+        ident = "\0".join((rel_path.lower(), key, verdict, why, "crlf" if crlf else "lf"))
+        digest = hashlib.sha256(ident.encode("utf-8")).hexdigest()[:16]
+        _say_once_to_claude(root, sid, f"frontmatter-{digest}",
+                            "posttooluse_frontmatter_not_strict", line)
+
+
 def _is_write_tool(tool_name: str) -> bool:
     """The native write tools, plus an MCP tool whose name carries a write verb
     (``mcp__filesystem__write_file``), so the post-write checks fire for both."""
@@ -1030,9 +1328,11 @@ def _check(data: dict, payloads: list[str], operator: "list[str] | None" = None)
     if rel_path == ".claude/settings.json":
         check_json(content, rel_path)
 
-    # .claude/{agents,commands,skills,workflows}/ bodies → placeholder check
+    # .claude/{agents,commands,skills,workflows}/ bodies → placeholder check;
+    # an agent, command or skill body → what Claude Code reads of its frontmatter
     if _is_claude_body(rel_path):
         check_placeholders(content, rel_path)
+        check_frontmatter(full_path, rel_path, root, data.get("session_id"))
 
     # tools/cc/**/*.py → Python syntax check
     if rel_path.startswith("tools/cc/") and rel_path.endswith(".py"):

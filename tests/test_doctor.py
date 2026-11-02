@@ -74,30 +74,43 @@ class TestDoctorPass:
 
     def test_load_bearing_tool_warning_is_self_host_gated(self, harness_repo, monkeypatch):
         """TP-266 Fix 5 earn-the-red: the load-bearing external-tool loop (ruff)
-        must fire only on the self-host repo. ruff ships in espalier's own dev
-        extras and its CI gate is `if: is_source == 'true'`, so a ruff-less
-        `pip install` adopter's headline doctor status must stay `pass` — a
-        missing-ruff warning on THEIR machine is friction, not signal. RED
-        before: the loop ran unconditionally, so a non-self-host repo with ruff
-        absent gained the warning. GREEN after: gated on is_self_host_repo, the
-        warning is absent for the adopter and still present for self-host.
+        must not nag an adopter who never asked for ruff: a missing-ruff warning
+        on THEIR machine is friction, not signal. RED before: the loop ran
+        unconditionally, so a non-self-host repo with ruff absent gained the
+        warning.
+
+        DEF-1122 narrowed the gate from the tree to the tool: an adopter whose
+        /preflight lint step runs ruff from PATH is told it is missing, with a
+        hint that is not the source repo's dev extra. Both sides are driven
+        here, with the relevance row stubbed.
 
         Simulates ruff-absent by stubbing the tool probe, and controls the
-        repo classification directly so the test does not depend on whether
-        the temp fixture happens to read as self-host."""
+        repo classification and the declaration directly so the test does not
+        depend on whether the temp fixture happens to read as either."""
+        from espalier import doctor as _doctor
+
         sentinel = "load-bearing external tool 'ruff' not found"
+        hints: list[str] = []
         monkeypatch.setattr(
             "espalier.doctor._check_external_tool",
-            lambda name, hint: [sentinel] if name == "ruff" else [],
+            lambda name, hint: (hints.append(hint), [sentinel])[1] if name == "ruff" else [],
         )
 
-        # Adopter (non-self-host): a ruff-absent warning must NOT appear.
+        # Adopter (non-self-host) that declares no ruff: no warning.
         monkeypatch.setattr(surface_contract, "is_self_host_repo", lambda p: False)
+        hint = _doctor._ADOPTER_TOOL_RELEVANCE["ruff"][1]
+        monkeypatch.setitem(_doctor._ADOPTER_TOOL_RELEVANCE, "ruff", (lambda root: False, hint))
         adopter = run_doctor_check(harness_repo, skip_self_host=True)
         assert not any(sentinel in w for w in adopter["warnings"]), (
             f"ruff-absent warning leaked to a non-self-host adopter: "
             f"{adopter['warnings']!r}"
         )
+
+        # Adopter that declares ruff: the warning is theirs, with their hint.
+        monkeypatch.setitem(_doctor._ADOPTER_TOOL_RELEVANCE, "ruff", (lambda root: True, hint))
+        declares = run_doctor_check(harness_repo, skip_self_host=True)
+        assert any(sentinel in w for w in declares["warnings"]), declares["warnings"]
+        assert hints and "pip install -e" not in hints[-1], hints
 
         # Self-host: the ruff-absent warning is real signal and must remain.
         monkeypatch.setattr(surface_contract, "is_self_host_repo", lambda p: True)
@@ -3789,10 +3802,11 @@ class TestStatuslineFallbackNotes:
         reads it as an expression; a called head with Git Bash present runs
         under bash, where a leading `&` is a syntax error. Either way the
         statusline is blank and so is its missing-interpreter line (both
-        driven, 2026-10-31), so the note names the edit and the fresh render,
-        which runs in either shell (DEF-3017); Git Bash installed or removed
-        after `init`, or a file carried in from another box, is how a tree
-        gets here."""
+        driven, 2026-10-31), so the note names the verb that puts the head
+        behind the dot, which runs in either shell (DEF-3017), on request
+        (DEF-4071), and the edit by hand; Git Bash installed or removed after
+        `init`, or a file carried in from another box, is how a tree gets
+        here."""
         from espalier import doctor as doctor_module
 
         monkeypatch.setattr(doctor_module, "_host_is_windows", lambda: True)
@@ -3800,7 +3814,7 @@ class TestStatuslineFallbackNotes:
         notes = doctor_module._statusline_fallback_notes(self._settings(tmp_path, command), tmp_path)
         assert len(notes) == 1, notes
         assert notes[0].isascii(), notes
-        assert "settings.json.new" in notes[0] and "-m espalier init ." in notes[0], notes
+        assert "-m espalier init . --rewire-interpreter`" in notes[0], notes
         assert "either shell" in notes[0], notes
         # The hand edit is the dot, never the other one-shell form: `& ` on a
         # bare line was DEF-3017's trap the day Git for Windows arrived.
@@ -5181,3 +5195,76 @@ class TestDoctorNamesReadDenyRules:
         result = self._doctor_with_denies(tmp_path, [])
         assert not any("Read(" in line for line in result["info"] + result["warnings"]), (
             result["info"], result["warnings"])
+
+
+class TestDoctorRecommendsTheFrontmatterLineEndingRule:
+    """An agent, command or skill body whose frontmatter Claude Code reads only
+    with LF line endings (a value strict YAML rejects: measured on 2.1.314, it
+    loads with LF and fails with CRLF) is named on one info row, with the
+    `.gitattributes` rule that keeps it LF, only where git does not already pin
+    the body to LF. A body already holding CRLF is the audit's to name."""
+
+    COLON = "name: probe\ndescription: Reviews code: bugs and style\ntools: Read\n"
+
+    def _notes(self, tree: Path) -> list[str]:
+        from espalier import doctor
+        fn = getattr(doctor, "_check_frontmatter_line_endings", None)
+        assert fn is not None, "doctor._check_frontmatter_line_endings is missing"
+        return fn(tree)
+
+    def _tree(self, tree: Path, block: str, *, git: bool = True) -> Path:
+        path = tree / ".claude" / "agents" / "probe.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(("---\n" + block + "---\n\nBody.\n").encode("utf-8"))
+        if git:
+            subprocess.run(["git", "init", "-q"], cwd=tree, check=True, capture_output=True,
+                           stdin=subprocess.DEVNULL)
+        return tree
+
+    def test_an_lf_body_that_would_not_load_with_crlf_is_named(self, tmp_path):
+        got = self._notes(self._tree(tmp_path, self.COLON))
+        assert len(got) == 1, got
+        assert ".claude/agents/probe.md (`description`)" in got[0], got
+        assert ".claude/** text eol=lf" in got[0] and ".gitattributes" in got[0], got
+
+    def test_the_row_rides_the_doctor_report(self, tmp_path):
+        (tmp_path / "README.md").write_text("# app\n", encoding="utf-8")
+        (tmp_path / "pyproject.toml").write_text('[project]\nname = "app"\n', encoding="utf-8")
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, capture_output=True,
+                       stdin=subprocess.DEVNULL)
+        assert cmd_init(argparse.Namespace(repo=str(tmp_path), config=None)) == 0
+        self._tree(tmp_path, self.COLON, git=False)
+        result = run_doctor_check(tmp_path, skip_self_host=True)
+        assert any(".claude/** text eol=lf" in line for line in result["info"]), result["info"]
+
+    def test_a_rule_that_pins_lf_already_says_nothing(self, tmp_path):
+        tree = self._tree(tmp_path, self.COLON)
+        (tree / ".gitattributes").write_text(".claude/** text eol=lf\n", encoding="utf-8")
+        assert self._notes(tree) == []
+
+    def test_a_strict_body_or_a_tree_outside_git_says_nothing(self, tmp_path):
+        assert self._notes(self._tree(tmp_path / "strict", 'name: probe\ndescription: "Reviews: code"\n')) == []
+        assert self._notes(self._tree(tmp_path / "loose", self.COLON, git=False)) == []
+
+    def test_a_nested_body_is_named(self, tmp_path):
+        """A namespaced command in a subfolder is a body Claude Code reads too."""
+        tree = tmp_path
+        path = tree / ".claude" / "commands" / "ns" / "probe.md"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"---\ndescription: Reviews code: bugs\n---\n\nBody.\n")
+        subprocess.run(["git", "init", "-q"], cwd=tree, check=True, capture_output=True,
+                       stdin=subprocess.DEVNULL)
+        got = self._notes(tree)
+        assert len(got) == 1 and ".claude/commands/ns/probe.md (`description`)" in got[0], got
+
+    def test_a_non_ascii_body_already_pinned_says_nothing(self, tmp_path):
+        """git quotes a non-ASCII path in its answer by default; a body the
+        rule already pins to LF is not named because its name came back quoted."""
+        tree = tmp_path
+        path = tree / ".claude" / "agents" / "caf\u00e9.md"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(("---\n" + self.COLON + "---\n\nBody.\n").encode("utf-8"))
+        subprocess.run(["git", "init", "-q"], cwd=tree, check=True, capture_output=True,
+                       stdin=subprocess.DEVNULL)
+        (tree / ".gitattributes").write_text(".claude/** text eol=lf\n", encoding="utf-8")
+        assert self._notes(tree) == []

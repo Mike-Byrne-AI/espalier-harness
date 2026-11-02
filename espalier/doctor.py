@@ -394,13 +394,61 @@ def _check_doc_drift(repo_root: Path) -> list[str]:
 # The install hint is the one-line recovery the doctor / SessionStart
 # banner shows the operator. Keep it short and copy-pasteable.
 _LOAD_BEARING_EXTERNAL_TOOLS: dict[str, str] = {
-    # The loop that shows this runs on the source tree only (run_doctor_check
-    # gates it on is_self_host_repo), so the hint installs the dev extra, which
-    # pins ruff to the one version CI runs; a range would install a newer one.
-    # A tool adopters must see needs adopter-relevance gating and a standalone
-    # hint first (the NOTE at the loop).
+    # The source tree's hint: the dev extra pins ruff to the one version CI
+    # runs; a range would install a newer one. An adopter's tree reads the
+    # tool's row in _ADOPTER_TOOL_RELEVANCE instead, hint included (DEF-1122).
     "ruff": "pip install -e '.[dev]'  # the dev extra pins the ruff CI runs",
 }
+
+
+def _adopter_ruff_relevance(repo_root: Path) -> bool:
+    """Whether /preflight's lint step on this tree runs ruff from PATH: a
+    command it would run (``harness_config.declared_action``, the one the body
+    calls) whose first word is ``ruff``. A tree that configures ruff but lints
+    through a Makefile, a package.json script or ``uv run ruff`` is not told
+    to install a ruff it never runs."""
+    from espalier.harness_config import declared_action
+
+    source, commands = declared_action(repo_root, "lint")
+    return source != "suppressed" and any(c.split()[:1] == ["ruff"] for c in commands)
+
+
+# DEF-1122: on an adopter's tree, whether the tree makes a load-bearing tool
+# load-bearing, and the hint that fits that tree. A tool with no row here is
+# checked on the source tree only. Twin of session_start's
+# _ADOPTER_TOOL_RELEVANCE: tests/test_session_start_ruff_gate.py pins the two
+# tables' keys equal and the hook's predicate to this one over a table of trees.
+_ADOPTER_TOOL_RELEVANCE: dict[str, tuple[Any, str]] = {
+    "ruff": (
+        _adopter_ruff_relevance,
+        "install it the way this project pins it (its dev dependencies), or: pip install ruff "
+        "(this project's /preflight lint step runs ruff)",
+    ),
+}
+
+
+def _load_bearing_tool_warnings(repo_root: Path) -> tuple[list[str], list[str]]:
+    """``(warnings, next_steps)`` for the load-bearing tools this tree needs and
+    PATH lacks: every registry tool on the source tree, and on an adopter's tree
+    each one its ``_ADOPTER_TOOL_RELEVANCE`` row says the tree uses (DEF-1122;
+    the loop was the source tree's alone, so an adopter whose lint runs ruff
+    lost the binary with no word from doctor)."""
+    self_host = surface_contract.is_self_host_repo(repo_root)
+    warnings: list[str] = []
+    next_steps: list[str] = []
+    for tool_name, install_hint in _LOAD_BEARING_EXTERNAL_TOOLS.items():
+        if not self_host:
+            relevance = _ADOPTER_TOOL_RELEVANCE.get(tool_name)
+            if relevance is None or not relevance[0](repo_root):
+                continue
+            install_hint = relevance[1]
+        tool_warnings = _check_external_tool(tool_name, install_hint)
+        warnings.extend(tool_warnings)
+        if tool_warnings:
+            next_steps.append(
+                f"install the missing load-bearing tool {tool_name!r}: {install_hint}"
+            )
+    return warnings, next_steps
 
 
 def _check_external_tool(name: str, install_hint: str) -> list[str]:
@@ -637,9 +685,10 @@ def _statusline_fallback_notes(settings_path: Path, repo_root: Path) -> list[str
     found Git Bash and behind PowerShell's call operator (``& "<shim>"
     <interp>``) where it found none (DEF-929), and an install keeps either.
     The merge adds the key only when it is absent and the rewire swaps the
-    interpreter the string names (DEF-798, DEF-810), so the string an install
-    carries can disagree with the host it runs on in four ways, and a fifth
-    state has no string at all:
+    interpreter the string names (DEF-798, DEF-810), moving a Windows head
+    only when asked (DEF-4071), so the string an install carries can disagree
+    with the host it runs on in four ways, and a fifth state has no string at
+    all:
 
     * Either host, neither the clause nor the shim -- rendered before the
       fallback existed: when the wired interpreter stops resolving the
@@ -661,9 +710,10 @@ def _statusline_fallback_notes(settings_path: Path, repo_root: Path) -> list[str
       a leading ``&`` as a syntax error): Git Bash installed or removed
       since ``init``, or a file carried in from another box. The statusline
       is blank and so is its missing-interpreter line, driven in both
-      shells. A fresh ``init`` renders the dotted head, which runs in
-      either, and the hand edit is that dot. A dotted head is this case
-      only over a shim whose first line is not the one Git Bash runs.
+      shells. ``init --rewire-interpreter`` puts the head behind the dot,
+      which runs in either, on request (DEF-4071), and the hand edit is that
+      dot. A dotted head is this case only over a shim whose first line is
+      not the one Git Bash runs, which a fresh ``init`` refreshes.
     * Either host, no ``statusLine`` key while ``tools/cc/statusline.py`` is
       deployed -- wired by ``--wire-hooks`` or ``merge-settings`` before the
       merge learned to add the key (DEF-798), or a hand-kept file: the harness
@@ -800,15 +850,24 @@ def statusline_shell_mismatch(command: str, repo_root: Path | None) -> str | Non
         )
     called = statusline_shim_called(command)
     git_bash = git_bash_path(repo_root) is not None
-    hand_edit = "with the shim current, {}, the form both shells run."
+    # The verb that moves a bare or called head, on request (DEF-4071); over a
+    # kept shim Git Bash cannot source it declines and says what to take.
+    # Built by a function, never `str.format` over the interpolated
+    # interpreter: a path with a brace in it would raise (code review).
+    def move(edit: str) -> str:
+        return (
+            f"`{_remedy_py()} -m espalier init . --rewire-interpreter` refreshes the "
+            "shim and puts the head behind a dot, the form either shell runs, keeping "
+            f"a backup of your file; or, with the shim current, {edit} by hand."
+        )
     if called and git_bash:
         return (
             "statusLine.command calls the Windows shim through PowerShell's `&`, "
             "the form for a host where Claude Code finds no Git Bash, but Git "
             "Bash is on this host and Claude Code runs the statusline under it, "
             "where a leading `&` is a syntax error: the statusline goes blank, "
-            f"and so does the line that reports a missing interpreter. {remedy}; or, "
-            + hand_edit.format("replace the leading `&` with a `.`")
+            "and so does the line that reports a missing interpreter. "
+            + move("replace the leading `&` with a `.`")
         )
     if not called and not git_bash:
         return (
@@ -821,8 +880,7 @@ def statusline_shell_mismatch(command: str, repo_root: Path | None) -> str | Non
             "at its bin\\bash.exe), so Claude Code runs the statusline under "
             "PowerShell, which reads a quoted head as an expression: the "
             "statusline goes blank, and so does the line that reports a missing "
-            f"interpreter. {remedy}; or, "
-            + hand_edit.format("put `. ` before the command")
+            "interpreter. " + move("put `. ` before the command")
         )
     return None
 
@@ -1686,6 +1744,67 @@ def _check_wired_hooks_start(repo_root: Path, warnings: list[str]) -> list[str]:
         f"hook cannot start: tools/cc/hooks/{script} -- {str(verdict.get('error') or 'no error text')}"
         for script, verdict in sorted(answer.items())
         if not (isinstance(verdict, dict) and verdict.get("ok") in (True, None))
+    ]
+
+
+#: How many bodies the line-ending row names before it counts the rest.
+_FRONTMATTER_ROW_NAMES = 5
+
+
+def _check_frontmatter_line_endings(repo_root: Path) -> list[str]:
+    """One info row naming the agent, command and skill bodies whose frontmatter
+    Claude Code reads only while the file has LF line endings (a value strict
+    YAML rejects, which the loader's fallback rescues only without a carriage
+    return), where git does not already pin their line endings to LF. A checkout
+    with ``core.autocrlf`` on Windows writes CRLF: the agent no longer registers
+    and a skill or command loses its frontmatter. Nothing when there is no such
+    body, no git answer, or git pins them all; a body already holding CRLF is the
+    audit's to name."""
+    import subprocess
+
+    from espalier import render_surface
+
+    at_risk: dict[str, str] = {}
+    for rel in render_surface.frontmatter_body_paths(repo_root):
+        text = render_surface._read_body_bytes(repo_root / rel)
+        if render_surface.frontmatter_has_crlf(text):
+            continue
+        keys = [
+            key for key, verdict, _why, _kept in render_surface.frontmatter_hazards(text)
+            if verdict == render_surface.FRONTMATTER_FRAGILE
+        ]
+        if keys:
+            at_risk[rel] = keys[0]
+    if not at_risk:
+        return []
+    try:
+        # -z: NUL-separated path, attribute, value triples, so a path git
+        # would otherwise quote (a non-ASCII name) comes back as written.
+        proc = run_no_stdin(  # a read-only attribute query
+            ["git", "check-attr", "-z", "eol", "--", *sorted(at_risk)],
+            cwd=str(repo_root), capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return []
+    if proc.returncode != 0:
+        return []
+    fields = proc.stdout.split("\0")
+    pinned = {
+        fields[i] for i in range(0, len(fields) - 2, 3)
+        if fields[i + 1] == "eol" and fields[i + 2] == "lf"
+    }
+    named = [f"{rel} (`{key}`)" for rel, key in sorted(at_risk.items()) if rel not in pinned]
+    if not named:
+        return []
+    shown = ", ".join(named[:_FRONTMATTER_ROW_NAMES])
+    if len(named) > _FRONTMATTER_ROW_NAMES:
+        shown += f" and {len(named) - _FRONTMATTER_ROW_NAMES} more"
+    return [
+        f"frontmatter Claude Code reads only with LF line endings: {shown}; a checkout "
+        "with CRLF line endings (core.autocrlf on Windows) unregisters such an agent and "
+        "drops a skill's or command's frontmatter: add `.claude/** text eol=lf` to "
+        ".gitattributes, or quote the value named"
     ]
 
 
@@ -3361,7 +3480,8 @@ def run_doctor_check(
             f"run `{hint} -m espalier init . "
             "--rewire-interpreter` to rewire the hook commands to an "
             "interpreter that resolves on this host and meets Python "
-            f"{floor_text()}+ (changes only the interpreter name; keeps a .bak of the file)"
+            f"{floor_text()}+ (changes only the interpreter name, and on Windows a "
+            "bare or `&` statusLine head; keeps a .bak of the file)"
         )
         if not resolver_clears_floor and _unheard_on_path() is not None:
             # A candidate never answered `--version`, the rewire's or one a
@@ -3385,26 +3505,15 @@ def run_doctor_check(
     # gitleaks/codespell/etc.) so the lint-gate-as-regression-test
     # doesn't silently degrade when the binary isn't installed.
     #
-    # ruff is a load-bearing gate only on the self-host repo: its ruff-lint CI
-    # job is `if: is_source == 'true'`, and ruff ships only in espalier's own
-    # dev extras. A median `pip install` adopter has no linter and no ruff gate,
-    # so a missing-ruff warning must not degrade THEIR headline status. Gate on
-    # self-host, matching the harness-specific checks above.
-    #
-    # NOTE: this gate is WHOLE-LOOP — every tool in the registry is treated as
-    # self-host-only. That is correct only while the registry holds solely
-    # self-host-only tools (ruff today). A tool adopters MUST be warned about
-    # (e.g. a secret scanner like gitleaks) needs per-tool adopter-relevance
-    # gating added first; a new registry row ALONE would be silently suppressed
-    # for adopters here (and by the same-shape gate in session_start.py).
-    if surface_contract.is_self_host_repo(repo_root):
-        for tool_name, install_hint in _LOAD_BEARING_EXTERNAL_TOOLS.items():
-            tool_warnings = _check_external_tool(tool_name, install_hint)
-            warnings.extend(tool_warnings)
-            if tool_warnings:
-                next_steps.append(
-                    f"install the missing load-bearing tool {tool_name!r}: {install_hint}"
-                )
+    # On the source tree every registry tool is load-bearing. On an adopter's
+    # tree a tool is checked only where its _ADOPTER_TOOL_RELEVANCE row says
+    # the tree uses it (DEF-1122): a project that configures ruff has
+    # /preflight run it, while one that does not is never nagged about a ruff
+    # it never asked for. A registry row with no relevance row is checked on
+    # the source tree alone (session_start.py reads the same shape).
+    tool_warnings, tool_steps = _load_bearing_tool_warnings(repo_root)
+    warnings.extend(tool_warnings)
+    next_steps.extend(tool_steps)
 
     # A seed doc whose first-line stamp is gone is the adopter's doc as far as
     # the fingerprint is concerned, and the day-one noise (`Large files
@@ -3545,6 +3654,7 @@ def run_doctor_check(
     warnings.extend(posture_warnings)
     # What /recall reaches here, from the deployed hook (DEF-1087): an info row.
     info.extend(_check_recall_corpus(repo_root))
+    info.extend(_check_frontmatter_line_endings(repo_root))
     # Every wired hook starts: one FAIL per hook that
     # cannot, with the repair; a hook that dies at import judges nothing. Hooks
     # a slow host kept the probe from reaching are a warning (DEF-2019).

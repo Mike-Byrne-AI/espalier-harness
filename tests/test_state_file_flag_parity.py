@@ -208,6 +208,13 @@ _ALLOWED_FLAGS = {
                          # counter write can be atomic temp+os.replace).
     "docs_refreshed",    # subagent_stop relief record for docs-maintainer (Gate 2)
     "code_reviewed",     # subagent_stop relief record for code-reviewer (Gate 3)
+    # DEF-1100: a DIRECTORY of docs-agent start snapshots, <agent_id>.json --
+    # written by subagent_start (through subagent_stop.snapshot_docs_at_start)
+    # for an agent mapped to Gate 2's record, consumed by that run's
+    # SubagentStop, and swept by the next start once older than a day. Not a
+    # flag: _clean_state_flags must never reach it, since a background docs
+    # agent can outlive the session start that would sweep it.
+    "docs_snapshots",
     "review_requested",  # LEGACY: pre-DEF-608 stop_gate wrote it; session_start
                          # sweeps it, so it can exist only until the next
                          # SessionStart on an upgraded tree. Drop with the sweep.

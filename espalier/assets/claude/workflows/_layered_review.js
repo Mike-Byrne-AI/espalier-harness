@@ -322,12 +322,16 @@ const allFindings = findings.concat(criticFindings)
 
 // --- PERSIST (two-hop bridge) ------------------------------------------------
 phase('Persist')
-if (!allFindings.length) {
-  // persistError is null, not a message: nothing failed because the persist step never ran.
-  // The lanes that did not run still go back: an empty round with a dead lane is not clean.
-  return { findersRun, findersLaunched: FINDERS.length, lanesNotRun: notRunByPhase(), refutersNotRun, candidates: 0, summary: { total: 0 }, appended: 0, persistError: null, persistWarnings: [], corpusPath: CORPUS_PATH, survivors: [] }
+// A round with zero findings persists too, as the fan-out audit's does: a whole
+// round that found nothing is the convergence evidence the per-run ledger keeps,
+// and one whose lanes died is the partial round its trend must count as left out.
+// The round's own count of its lanes rides to the per-run ledger row, so a round that
+// lost lanes is recorded as partial, never as a quiet round the trend would read.
+const runCounts = {
+  finders_launched: FINDERS.length, finders_run: findersRun,
+  lanes_not_run: lanesNotRun.length, refuters_not_run: refutersNotRun.length,
 }
-const persistPayload = JSON.stringify({ findings: allFindings, known_categories: KNOWN_CATEGORIES, corpus_path: CORPUS_PATH })
+const persistPayload = JSON.stringify({ findings: allFindings, known_categories: KNOWN_CATEGORIES, corpus_path: CORPUS_PATH, run_counts: runCounts })
 // ONE DESTINATION plus the summary ledger. The per-round report (CORPUS_PATH, under
 // reports/) is this round's record, immutable and cited by the convergence ledger;
 // finding_ledger.append_summary writes the per-run structured row the convergence-critic
@@ -349,7 +353,7 @@ const persistCmd =
   `with warnings.catch_warnings(record=True) as _w:\n` +
   `    warnings.simplefilter("always")\n` +
   `    appended = append_findings_to_corpus(corpus, survivors)\n` +
-  `    ledger = append_summary(summ, root=".")\n` +
+  `    ledger = append_summary(summ, root=".", run_counts=data.get("run_counts"))\n` +
   `for _x in _w:\n` +
   `    print("WARNING: " + str(_x.message), file=sys.stderr)\n` +
   `print(json.dumps({\n` +
