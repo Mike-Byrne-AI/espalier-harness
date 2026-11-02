@@ -1527,25 +1527,42 @@ _MAX_PRUNE_SCAN = 5000
 _AUDIT_LOG_DATE_RE = re.compile(r"-(\d{8})\.log$")
 
 
+def _audit_log_day(f: Path) -> str:
+    """The date in ``f``'s name (``YYYYMMDD``), or ``""`` for a name with
+    none or eight digits that are no day. ``audit_path`` names each log for
+    the day it appends to it, so the log holds that day's records alone."""
+    found = _AUDIT_LOG_DATE_RE.search(f.name)
+    if found is None:
+        return ""
+    day = found.group(1)
+    try:
+        datetime(int(day[:4]), int(day[4:6]), int(day[6:]))
+    except ValueError:  # fail-open: ok text-fallback -- digits that are no day read as no date, so the log's first line dates it
+        return ""
+    return day
+
+
 def _audit_log_order(f: Path) -> tuple[str, str]:
     """The prune's scan order: the name's date, oldest first, a name with
-    none before every dated one; then the name. A sort by name alone orders
-    by repository slug, so a bounded scan would read the same first slugs
-    every start and never reach an old log late in the alphabet."""
-    found = _AUDIT_LOG_DATE_RE.search(f.name)
-    return (found.group(1) if found else "", f.name)
+    none (:func:`_audit_log_day`) before every dated one; then the name. A
+    sort by name alone orders by repository slug, so a bounded scan would
+    read the same first slugs every start and never reach an old log late
+    in the alphabet; and the scan's stop at the first name inside the
+    window is sound only in this order, where every later name is younger."""
+    return (_audit_log_day(f), f.name)
 
 
 def _named_before(f: Path, cutoff: float) -> bool:
-    """Whether ``f``'s name dates it before ``cutoff`` (a POSIX time): a
-    log's entries start on its name's day, so one named inside the window
-    holds nothing to demote unless it was renamed. A name with no date, or
-    one that does not parse, may hold anything and counts as before."""
-    day = _audit_log_order(f)[0]
-    try:
-        return not day or datetime.strptime(day, "%Y%m%d").replace(tzinfo=timezone.utc).timestamp() < cutoff
-    except ValueError:  # fail-open: ok text-fallback -- an unparseable name date may hold anything, so it counts
+    """Whether ``f``'s name dates it before ``cutoff`` (a POSIX time): the
+    whole of its name's day ends by then, so every record the log holds is
+    older unless it was renamed. The log named on the cutoff's own day holds
+    records on both sides of it and is inside. A name with no date may hold
+    anything and counts as before."""
+    day = _audit_log_day(f)
+    if not day:
         return True
+    start = datetime(int(day[:4]), int(day[4:6]), int(day[6:]), tzinfo=timezone.utc).timestamp()
+    return start + 86400 <= cutoff
 
 # Forced twin of _blueprint_limits.BLUEPRINT_COLD_DIR_NAME. A literal, not a
 # sibling import: hooks run standalone and a script copied without its deps
@@ -1570,12 +1587,19 @@ def _prune_old_audit_logs(max_age_days: int = 30, *, deadline: float | None = No
     store is worth backing up is a separate question and does not have to be
     answered before this stops destroying.
 
-    The scan reads the oldest name date first (:func:`_audit_log_order`),
-    the first line's timestamp still the authority. ``deadline`` (a
-    ``time.monotonic()`` reading) stops it before the next read; ``on_stop``
-    is then called with how many unread logs are named before the window
-    (:func:`_named_before`, those past the cap among them) and the window's
-    days, and not at all when none is. On the Windows box
+    The scan reads the oldest name date first (:func:`_audit_log_order`) and
+    dates a log by its name where the name carries a date: one named before
+    the window (:func:`_named_before`) is demoted unopened, and the scan
+    stops at the first name inside it, every later one being younger, so no
+    young log named with a date is opened at any start (DEF-2029: each start
+    had read them again, up to its one-second bound). A name with no date is opened, its
+    first line's timestamp the authority, else its mtime. A renamed log is
+    the declared limit: one renamed into the window keeps its old records,
+    and one renamed out of it is demoted young, into ``_cold/``.
+    ``deadline`` (a ``time.monotonic()`` reading) stops it before the next
+    log; ``on_stop`` is then called with how many logs it did not reach are
+    named before the window (:func:`_named_before`, those past the cap among
+    them) and the window's days, and not at all when none is. On the Windows box
     5,000 first-line reads took 11.7 s, and SessionStart's banner was cut at
     its 13 s wall inside this scan (DEF-3022).
     """
@@ -1611,17 +1635,22 @@ def _prune_old_audit_logs(max_age_days: int = 30, *, deadline: float | None = No
                 except Exception:  # noqa: BLE001, S110 -- a notice that raises costs the notice, never the count
                     pass
             break
+        if not _named_before(f, cutoff):
+            # The first name inside the window; every later one is younger.
+            break
         try:
-            age_ts = _parse_first_log_timestamp(f)
-            if age_ts is None:
-                # Parse failed (empty file, corrupted JSON, no timestamp
-                # field). Fall back to mtime; this is the legacy
-                # behavior and still catches the common case.
-                age_ts = f.stat().st_mtime
-            if age_ts < cutoff:
-                cold.mkdir(parents=True, exist_ok=True)
-                f.replace(cold / f.name)
-                deleted += 1
+            if not _audit_log_day(f):
+                age_ts = _parse_first_log_timestamp(f)
+                if age_ts is None:
+                    # Parse failed (empty file, corrupted JSON, no timestamp
+                    # field). Fall back to mtime; this is the legacy
+                    # behavior and still catches the common case.
+                    age_ts = f.stat().st_mtime
+                if age_ts >= cutoff:
+                    continue
+            cold.mkdir(parents=True, exist_ok=True)
+            f.replace(cold / f.name)
+            deleted += 1
         except OSError:
             pass
     return deleted

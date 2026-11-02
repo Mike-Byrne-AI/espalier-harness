@@ -32,6 +32,12 @@ This plugin keeps the signal method's verdict and restores all three:
 * once a ceiling has fired in the session, the process is ended a minute after
   pytest unconfigures if it is still alive then (a stuck non-daemon thread).
 
+The first end, in a test that outlived its ceiling, comes before pytest's
+session finish, which is where pytest drops the session's base temp lock, and
+pytest keeps a dir whose lock names a dead pid for 72 h (DEF-5053); it drops
+that lock first (:func:`dropping_the_lock`). The second comes after
+unconfigure, by when pytest has dropped it.
+
 Inert where pytest-timeout is absent or lacks an internal this plugin calls
 (``missing_internals``; one named row reds then), where the method is ``thread`` (Windows,
 and the modules that arm SIGALRM themselves), off the main thread (where the
@@ -48,6 +54,11 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
+
+try:
+    from tests import _temp_sweep
+except ImportError:  # the suite's conftest imports its helpers bare, with tests/ on sys.path
+    import _temp_sweep  # type: ignore[no-redef]
 
 PLUGIN_NAME = "espalier-timeout-backstop"
 
@@ -158,6 +169,21 @@ def arm_exit_bound(status: int, grace: float = EXIT_GRACE_S,
     return timer
 
 
+def dropping_the_lock(end: Callable[..., Any]) -> Callable[..., Any]:
+    """``end`` behind a drop of the base temp lock this process holds, so the
+    run's dir is pytest's to clean like any finished run's rather than kept
+    72 h behind a dead pid's lock."""
+
+    def drop_then_end(*args: Any) -> Any:
+        try:
+            _temp_sweep.release_own_lock()
+        except Exception:  # noqa: BLE001, S110 -- the process is ending; the next start's sweep is the fallback
+            pass
+        return end(*args)
+
+    return drop_then_end
+
+
 class TimeoutBackstop:
     """The plugin object tests/conftest.py registers beside pytest-timeout.
 
@@ -184,7 +210,7 @@ class TimeoutBackstop:
         item.stash[_CEILING] = float(settings.timeout)
         item.stash[_BACKSTOP] = start_backstop(
             item.nodeid, float(settings.timeout),
-            lambda: pytest_timeout.timeout_timer(item, settings))
+            dropping_the_lock(lambda: pytest_timeout.timeout_timer(item, settings)))
         return True
 
     @pytest.hookimpl(hookwrapper=True)
