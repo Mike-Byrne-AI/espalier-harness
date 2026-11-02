@@ -515,6 +515,7 @@ class TestTheRosterIsWellFormed:
         assert _command_words("x=$(cat <<'EOF'\n%s\nEOF\n); eval \"$x\"") == {"cat", "eval"}
         assert _command_words("V=$(date -u); cat > f <<'EOF'\n%s\nEOF") == {"date", "cat"}
         assert _command_words("A=1 B=2 ls") == {"ls"}
+        assert _command_words("bash -c \"$(cat <<'EOF'\n%s\nEOF\n)\"") == {"bash"}
 
     @_NEEDS_REAL_BASH
     def test_no_declared_need_is_a_shell_builtin(self, rd):
@@ -581,6 +582,7 @@ class TestTheInterpreterRowsAreLive:
         "echo_dq_newline_then_interpreter",
         "py_c_sq_spliced_print",          # DEF-832: the spliced literal held as data
         "gh_pr_body_sq", "gh_body_file_heredoc",  # DEF-1014: the gh door's text
+        "commit_message_heredoc_form",    # DEF-1013: the commit form's captured heredoc
     )
 
     @staticmethod
@@ -708,6 +710,8 @@ def _command_words(template: str) -> set[str]:
             word = tokens[0].split("<", 1)[0].split(">", 1)[0]
             if not word or word in ("%s", ")", "}") or word.startswith("#"):
                 continue
+            if not word.strip("\"')"):
+                continue  # the `)"` closing a quoted substitution's last line
             words.add(word)
     return words
 

@@ -426,6 +426,19 @@ WRAPPERS: list[tuple[str, str]] = [
     ("closed_capture_then_heredoc_to_file", "V=$(date -u); cat > qs_doc.md <<'EOF'\n%s\nEOF"),
     ("earlier_backtick_body_then_heredoc_to_file",
      "cat > qs_a.md <<'EOF'\n`\nEOF\ncat > qs_doc.md <<'EOF'\n%s\nEOF"),
+    # ⚠ A HEREDOC CAPTURED INSIDE A DOUBLE-QUOTED ARGUMENT (DEF-1013), the
+    # commit form's shape. Its body is the argument's data only while every
+    # head hands nothing to a shell; these hand it to one -- eval, `bash -c`,
+    # stored and evaluated, piped into a shell, and a shell inside the
+    # capture. The last two rows are the relief: the capture behind `echo`,
+    # and the commit form itself.
+    ("eval_dq_cmdsub_heredoc", "eval \"$(cat <<'EOF'\n%s\nEOF\n)\""),
+    ("bash_c_dq_cmdsub_heredoc", "bash -c \"$(cat <<'EOF'\n%s\nEOF\n)\""),
+    ("assign_dq_cmdsub_heredoc_evaled", "x=\"$(cat <<'EOF'\n%s\nEOF\n)\"\neval \"$x\""),
+    ("echo_dq_cmdsub_heredoc_piped_to_shell", "echo \"$(cat <<'EOF'\n%s\nEOF\n)\" | sh"),
+    ("echo_dq_cmdsub_shell_heredoc", "echo \"$(bash <<'EOF'\n%s\nEOF\n)\""),
+    ("echo_dq_cmdsub_heredoc", "echo \"$(cat <<'EOF'\n%s\nEOF\n)\""),
+    ("commit_message_heredoc_form", "git commit -m \"$(cat <<'EOF'\n%s\nEOF\n)\""),
 ]
 
 #: Executables a wrapper needs beyond `/bin/bash` and the POSIX tools, one per
@@ -442,6 +455,7 @@ WRAPPER_NEEDS: dict[str, str] = {
     "zsh_c_sq": "zsh",
     "heredoc_to_file_then_run": "python3",
     "commit_message": "git",
+    "commit_message_heredoc_form": "git",
     "py_c_sq_os_system": "python3",
     "py_c_dq_os_system": "python3",
     "py_c_sq_subprocess_shell": "python3",

@@ -380,6 +380,17 @@ INERT_BASH = [
      f"V=$(date -u); cat > n.md <<'EOF'\nx > {_CC_REPORT}\nEOF"),
     ("heredoc-after-a-closed-capture-of-a-file",
      f"L=$(cat p.txt); cat > notes.json <<'EOF'\nhooks -> {_HOOK}\nEOF"),
+    # DEF-1013: Claude Code's own commit form -- a message captured from a
+    # quoted heredoc inside a double-quoted argument -- naming a protected
+    # path after an arrow, and the same capture behind `echo` and before a
+    # push. Walled at ce61737: the capture was never walked. Twins in
+    # GENUINE_BASH.
+    ("commit-form-heredoc-message-with-an-arrow",
+     f"git commit -m \"$(cat <<'EOF'\nfix: out -> {_CC_REPORT}\nEOF\n)\""),
+    ("echo-of-a-captured-heredoc-with-an-arrow",
+     f"echo \"$(cat <<'EOF'\nhooks -> {_HOOK}\nEOF\n)\""),
+    ("commit-form-then-a-push",
+     f"git commit -m \"$(cat <<'EOF'\nfix: out -> {_CC_REPORT}\nEOF\n)\" && git push"),
 ]
 
 INERT_POWERSHELL = [
@@ -647,6 +658,21 @@ GENUINE_BASH = [
      f"> >(bash) cat <<'EOF'\necho x > {_HOOK}\nEOF"),
     ("heredoc-in-a-backtick-capture-cut-by-a-separator",
      f"x=`true; cat <<'EOF'\necho x > {_HOOK}\nEOF\n`; eval \"$x\""),
+    # DEF-1013's must-deny twins: the captured heredoc handed to a shell --
+    # by eval, by `bash -c`, stored headless and evaluated, piped into a
+    # shell, run by a shell inside the capture -- and a write the captured
+    # command itself makes.
+    ("eval-of-a-captured-heredoc",
+     f"eval \"$(cat <<'EOF'\necho x > {_HOOK}\nEOF\n)\""),
+    ("bash-c-over-a-captured-heredoc",
+     f"bash -c \"$(cat <<'EOF'\necho x > {_HOOK}\nEOF\n)\""),
+    ("headless-capture-of-a-heredoc-evaled",
+     f"x=\"$(cat <<'EOF'\necho x > {_HOOK}\nEOF\n)\"; eval \"$x\""),
+    ("captured-heredoc-piped-into-a-shell",
+     f"echo \"$(cat <<'EOF'\necho x > {_HOOK}\nEOF\n)\" | sh"),
+    ("capture-that-runs-a-shell-on-its-heredoc",
+     f"echo \"$(bash <<'EOF'\necho x > {_HOOK}\nEOF\n)\""),
+    ("capture-whose-inner-command-writes", f"echo \"$(echo x > {_HOOK})\""),
     # DEF-967's must-deny twins: a substitution that itself runs the guarded
     # command, and an exec-quote body holding the nested construct before it.
     ("nested-sub-that-runs-the-catastrophic-delete", f'echo "n: $(printf "x"; {_RM_RF} /)"'),

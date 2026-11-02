@@ -3051,10 +3051,17 @@ def mask_inert_syntax(command: str) -> str:
     return _EXEC_OPENER_RE.sub(lambda m: " " * len(m.group(0)), masked)
 
 
-def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
+def _walk_shell_roles(
+    s: str, *, walk_substitutions: bool = True,
+) -> tuple[str, set[str], list[tuple[int, int]]]:
     """Return (masked_string, head_words_of_every_top_level_command,
     safe_spans) -- the third is every [start, end) range whose masking
-    survives rule (2) of `mask_inert_syntax`."""
+    survives rule (2) of `mask_inert_syntax`.
+
+    ``walk_substitutions`` reads a command substitution inside a top-level
+    double-quoted argument as a command of its own (DEF-1013); the walk of
+    that inner command passes False, so nothing is walked twice and a nest
+    of quoted substitutions stays linear."""
     out = list(s)
     i, n = 0, len(s)
     heads: set[str] = set()
@@ -3231,6 +3238,58 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
 
     def top_frame() -> _Frame | None:
         return frames[-1] if frames else None
+
+    def mask_quoted_substitutions(a: int, b: int) -> None:
+        """Mask the command inside each `$( )` of the double-quoted span
+        ``[a, b)`` as that command's own walk masks it, when every head it
+        holds hands nothing to a shell (DEF-1013).
+
+        ⚠ CLAUDE CODE'S OWN COMMIT FORM, `git commit -m "$(cat <<'EOF' …
+        EOF)"`, WAS READ RAW. `_neutralise_expanding_span` steps over a live
+        substitution whole, so its heredoc was never consumed; every head
+        was on the roster, so the masker handed back the walker's text with
+        the message unmasked, and an arrow in it read as a redirect. Walked
+        here as a command of its own, the heredoc body is the captured text
+        -- an argument of the outer head. The splice is made only when the
+        inner command's heads are all on the roster, and it changes only
+        what this span's masked text says: where an outer head re-parses its
+        argument (`eval`, `bash -c`) the masker's rule (2) keeps the span
+        raw, as it keeps any span that head owns, and the `$( )` itself stays
+        visible to every reader, so the capture still marks the statement.
+        An assignment's value is not walked here (`step_over_assignment`):
+        a headless value is handed to nobody only while it stays raw, since
+        the binding pre-pass reads it where it runs (DEF-848). A live
+        redirect inside the substitution is code, and stays live in the
+        inner walk's masked text."""
+        k = a
+        while k < b:
+            ch = s[k]
+            if ch == "\\":
+                k += 2
+                continue
+            if ch == "`":
+                close = s.find("`", k + 1)
+                if close < 0 or close >= b:
+                    return
+                k = close + 1
+                continue
+            if ch == "$" and k + 1 < b and s[k + 1] == "{":
+                k = _match_delimiter(s, k + 1, b, "{", "}") + 1
+                continue
+            if ch == "$" and k + 1 < b and s[k + 1] == "(":
+                close = _match_delimiter(s, k + 1, b, "(", ")")
+                if not (k + 2 < close and s[k + 2] == "("):   # `$((` is arithmetic
+                    try:
+                        inner, inner_heads, _ = _walk_shell_roles(
+                            s[k + 2:close], walk_substitutions=False)
+                    except (_UnresolvedShellSyntax, IndexError):
+                        inner, inner_heads = "", set()
+                    if inner_heads and all(
+                            _head_hands_nothing_to_a_shell(h) for h in inner_heads):
+                        out[k + 2:close] = inner
+                k = close + 1
+                continue
+            k += 1
 
     def record_head(word: str) -> None:
         heads.add(word)
@@ -3451,6 +3510,8 @@ def _walk_shell_roles(s: str) -> tuple[str, set[str], list[tuple[int, int]]]:
         if c == '"':
             j = _close_double_quote(s, i)
             _neutralise_expanding_span(s, out, i + 1, j)
+            if walk_substitutions:
+                mask_quoted_substitutions(i + 1, j)
             candidates.append(_SpanCandidate(i + 1, j, current_pipeline, nesting,
                                              len(statements) - 1,
                                              is_comment=False, is_value=False, frame=top_frame()))
