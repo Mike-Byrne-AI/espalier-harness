@@ -540,7 +540,7 @@ class TestTheHandler:
         calls: list = []
         child = str(root / "sub")
         spelled = {"native": str(root), "forward_slashes": root.as_posix(),
-                   "trailing_separator": str(root) + os.sep}[root_spelling]
+                   "trailing_separator": os.path.join(str(root), "")}[root_spelling]
         handler = _rmtree._make_handler(False, spelled)
         handler(self._retry_func(calls), child, PermissionError(errno.EACCES, "refused", child))
         assert calls == [child], "retried exactly once"
