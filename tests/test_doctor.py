@@ -3945,6 +3945,44 @@ class TestStatuslineFallbackNotes:
             self._settings(tmp_path, None), tmp_path
         ) == []
 
+    @pytest.mark.parametrize("windows", [False, True])
+    def test_a_foreign_statusline_beside_the_deployed_script_names_what_will_not_show(
+        self, tmp_path, monkeypatch, windows,
+    ):
+        """DEF-1116: the merge never rewrites a present statusLine, so an
+        operator who keeps their own loses the MAINT indicator -- the one
+        always-visible sign that maintenance mode is on -- and nothing said so.
+        With the script deployed, the line is named with the indicators and
+        the way to compose them; a line composed with ``--segments`` names the
+        script and is quiet (and is not read as espalier's own line, which
+        would ask it for the fallback clause); an explicit null is the
+        statusline turned off on purpose; no script, nothing to show (the
+        sibling above). Mutation: restore the bare ``return []`` and the first
+        assertion fails."""
+        from espalier import doctor as doctor_module
+
+        monkeypatch.setattr(doctor_module, "_host_is_windows", lambda: windows)
+        script = tmp_path / "tools" / "cc" / "statusline.py"
+        script.parent.mkdir(parents=True)
+        script.write_text("print('espalier')\n", encoding="utf-8")
+        own = self._settings(tmp_path, "~/.claude/statusline.sh")
+        notes = doctor_module._statusline_fallback_notes(own, tmp_path)
+        assert len(notes) == 1, notes
+        for token in ("MAINT", "STOP=full|light", "bp=", "freshness",
+                      "tools/cc/statusline.py --segments"):
+            assert token in notes[0], (token, notes[0])
+        assert notes[0].isascii(), notes[0]
+        assert doctor_module.foreign_statusline_note(own, tmp_path) == notes[0]
+
+        composed = self._settings(
+            tmp_path, '~/.claude/statusline.sh; python3 "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.py" --segments'
+        )
+        assert doctor_module._statusline_fallback_notes(composed, tmp_path) == []
+        off = tmp_path / ".claude" / "settings.json"
+        off.write_text(json.dumps({"hooks": {}, "statusLine": None}), encoding="utf-8")
+        assert doctor_module._statusline_fallback_notes(off, tmp_path) == []
+        assert doctor_module.foreign_statusline_note(off, tmp_path) is None
+
     def test_the_note_reaches_the_doctor_report_as_info(self, tmp_path, monkeypatch):
         """Wired, not merely defined: the note lands in `info`, never in
         `warnings` or `failures`."""

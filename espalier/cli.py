@@ -111,6 +111,7 @@ from espalier import pack_manifest as _pack_manifest
 from espalier.render_surface import (
     CI_RECHECK_SENTENCE,
     PLAN_READERS,
+    engine_build,
     write_required_surface,
     _block_scalar_body_continues,
     _is_block_scalar_header,
@@ -1734,14 +1735,18 @@ def _report_allow_gaps(
     announce_added: bool = True,
     stale: "Sequence[tuple[str, str]]" = (),
     scoped: "Sequence[tuple[str, int]]" = (),
+    repo_root: "Path | None" = None,
 ) -> None:
     """One voice for every caller of the merge: what was appended, what the
     file still lacks (with the opt-in that appends it), why the block could
     not be compared, which retired deny rule the file still carries
     (``stale``: ``(rule, why)`` pairs, a WARN each, with the one-line fix --
-    nothing here removes a rule), or which bare profile rule the file scopes
+    nothing here removes a rule), which bare profile rule the file scopes
     by path (``scoped``: ``(rule, count)`` pairs, said once each: not a gap,
-    never appended, DEF-989). ``prefix`` carries its own separator
+    never appended, DEF-989), or, under ``repo_root``, the statusLine of the
+    operator's own the merge stepped aside from and the indicators it does
+    not show (``doctor.foreign_statusline_note``, DEF-1116: the predicate
+    doctor reads). ``prefix`` carries its own separator
     (``merge-settings:``, ``[upgrade]``); ``hint_command`` is a callable so
     the interpreter probe it may spell runs only when there is a gap to
     report; ``announce_added`` is off when the caller's own summary line
@@ -1790,6 +1795,10 @@ def _report_allow_gaps(
     if held:
         print(f"{prefix} WARN: .claude/settings.json carries a retired deny rule, kept "
               f"because {held}.", file=sys.stderr)
+    if repo_root is not None:
+        kept = _doctor.foreign_statusline_note(repo_root / ".claude" / "settings.json", repo_root)
+        if kept:
+            print(f"{prefix} {kept}", file=out)
 
 
 def installed_settings_profile(repo_root: Path) -> str:
@@ -1897,6 +1906,7 @@ def _report_allow_gaps_read_only(
                                      repo_root=repo_root, settings_path=settings_path,
                                      blockers=blockers),
         scoped=settings_scoped_allows(settings_path, profile=profile, repo_root=repo_root),
+        repo_root=repo_root,
     )
     return bool(missing), note or ""
 
@@ -3947,7 +3957,7 @@ def _wire_hooks_into_existing(
                                          settings_path=settings_path, blockers=blockers),
             scoped=merge_result.scoped_allows,
             hint_command=lambda: _merge_settings_hint(profile_name or "workflow"),
-            stream=sys.stderr,
+            stream=sys.stderr, repo_root=repo_root,
         )
     if merge_result.status == MERGE_WIRED:
         # Wired in place -> the live file already carries the hooks, so suppress
@@ -7743,9 +7753,9 @@ def cmd_init(args: argparse.Namespace) -> int:
     # The stamp before any write, both modes (DEF-1104): init never read it,
     # so an older engine re-running init over a newer deployment rolled every
     # marked file back and re-sealed the integrity manifest over the result.
-    refused = _refuse_newer_deployment(
-        repo_root, _read_deployed_version(repo_root), "init",
-        goal_snapshot=config.goal_snapshot,
+    refused = _check_deployed_stamp(
+        repo_root, "init", args,
+        lambda: _managed_files_rewritten(repo_root, config.goal_snapshot),
     ) or _refuse_unstrippable_body(repo_root, "init")
     if refused is not None:
         return refused
@@ -10621,7 +10631,7 @@ def cmd_merge_settings(args: argparse.Namespace) -> int:
                                          settings_path=settings_path, blockers=missing),
             scoped=result.scoped_allows,
             hint_command=lambda: f"re-running with `--profile {profile} --add-allows`",
-            announce_added=announce_added,
+            announce_added=announce_added, repo_root=repo_root,
         )
 
     if result.status == MERGE_ALREADY:
@@ -10697,13 +10707,9 @@ def cmd_merge_settings(args: argparse.Namespace) -> int:
     return 0
 
 
-def _read_deployed_version(repo_root: Path) -> str | None:
-    """Read the engine version stamped into cc/PACK_MANIFEST.txt at deploy time.
-
-    The discriminator between "this harness is current" and "an older engine
-    deployed it." Returns the stamped version string, or None when the manifest
-    is absent or carries no stamp (treated as "unknown / definitely stale").
-    """
+def _read_manifest_stamp(repo_root: Path, key: str) -> str | None:
+    """The value of the ``# <key>:`` comment line in cc/PACK_MANIFEST.txt, or
+    None when the manifest is absent, unreadable or carries no such line."""
     manifest = repo_root / "cc" / "PACK_MANIFEST.txt"
     if not manifest.is_file():
         return None
@@ -10713,9 +10719,26 @@ def _read_deployed_version(repo_root: Path) -> str | None:
         return None
     for line in text.splitlines():
         stripped = line.strip()
-        if stripped.startswith("# espalier-version:"):
+        if stripped.startswith(f"# {key}:"):
             return stripped.split(":", 1)[1].strip()
     return None
+
+
+def _read_deployed_version(repo_root: Path) -> str | None:
+    """Read the engine version stamped into cc/PACK_MANIFEST.txt at deploy time.
+
+    The discriminator between "this harness is current" and "an older engine
+    deployed it." Returns the stamped version string, or None when the manifest
+    is absent or carries no stamp (treated as "unknown / definitely stale").
+    """
+    return _read_manifest_stamp(repo_root, "espalier-version")
+
+
+def _read_deployed_build(repo_root: Path) -> str | None:
+    """The build stamped under the version (``render_surface.engine_build``:
+    a digest, then the commit when the install recorded one), or None for a
+    tree stamped before builds were (DEF-1104)."""
+    return _read_manifest_stamp(repo_root, "espalier-build") or None
 
 
 _VERSION_KEY_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)(?:(a|b|rc)(\d+))?")
@@ -10746,38 +10769,98 @@ def _deployed_is_newer(deployed: "str | None", engine: str) -> bool:
     return have is not None and want is not None and have > want
 
 
-def _refuse_newer_deployment(
-    repo_root: Path, deployed: "str | None", verb: str, *,
-    goal_snapshot: "bool | None" = None, files: "list[str] | None" = None,
-) -> "int | None":
-    """Exit 2 before any write when the deployed harness is newer than this
-    engine, naming the files the verb would roll back; else ``None``.
+def _managed_files_rewritten(repo_root: Path, goal_snapshot: bool) -> list[str]:
+    """The managed files a deploy from this engine would replace on
+    ``repo_root``: the deploy preview's ``updated_managed``. None on the
+    self-host tree, whose deploy source is the tree itself."""
+    if surface_contract.is_self_host_repo(repo_root):
+        return []
+    return list(preview_managed_surface(repo_root, goal_snapshot=goal_snapshot)["updated_managed"])
 
-    For every verb that writes this engine's bytes over a deployment --
-    ``init`` and ``upgrade`` (both modes; ``goal_snapshot`` names the managed
-    files from the deploy's preview), ``install-ci`` (``files``: its gate) and
-    ``fingerprint`` (the docs and bodies it re-renders) -- because an older
-    engine's write reads as a routine refresh (DEF-1104, observed on one
-    adopter with two machines; the two sister verbs by the lane's
-    failure-mode review). The way past on purpose is named: a rollback the
-    operator chose is the stamp line removed, which every verb reads as an
-    unstamped tree."""
-    if not _deployed_is_newer(deployed, __version__):
-        return None
+
+def _check_deployed_stamp(
+    repo_root: Path, verb: str, args: argparse.Namespace,
+    rewritten: "Callable[[], list[str]]",
+) -> "int | None":
+    """The stamp, read before any write by every verb that writes this
+    engine's bytes over a deployment -- ``init`` and ``upgrade`` (both modes;
+    ``rewritten`` names the managed files from the deploy's preview),
+    ``install-ci`` (its gate) and ``fingerprint`` (the docs and bodies it
+    re-renders) -- because an older engine's write reads as a routine refresh
+    (DEF-1104, observed on one adopter with two machines; the two sister verbs
+    by the lane's failure-mode review). A later release refuses, unless
+    ``--allow-rollback``; another build of this release is said. Exit 2 or
+    ``None``. ``rewritten`` is called only when a line names the files, so a
+    current tree pays for no preview."""
+    deployed = _read_deployed_version(repo_root)
+    if _deployed_is_newer(deployed, __version__):
+        return _refuse_newer_deployment(
+            deployed, verb, rewritten(), allow=bool(getattr(args, "allow_rollback", False)))
+    _say_other_build(repo_root, deployed, verb, rewritten)
+    return None
+
+
+def _refuse_newer_deployment(
+    deployed: "str | None", verb: str, rolled_back: list[str], *, allow: bool,
+) -> "int | None":
+    """Exit 2 before any write, naming ``rolled_back``, when the deployed
+    stamp names a later release than this engine; with ``allow``
+    (``--allow-rollback``, the way past the operator names on purpose) say
+    what is rolled back and return ``None``. A stamp line deleted by hand
+    still reads as an unstamped tree."""
     print(f"[{verb}] deployed {deployed} -> engine {__version__}: the deployed "
           "harness is newer than this engine.")
-    rolled_back = list(files or [])
-    if goal_snapshot is not None and not surface_contract.is_self_host_repo(repo_root):
-        rolled_back = list(preview_managed_surface(
-            repo_root, goal_snapshot=goal_snapshot)["updated_managed"])
-    named = (f" It would rewrite {plural(len(rolled_back), 'file')} to this "
-             "engine's older bytes: " + _name_paths(rolled_back, limit=len(rolled_back)) + "."
+    named = (f" {plural(len(rolled_back), 'file')} to this engine's older bytes: "
+             + _name_paths(rolled_back, limit=len(rolled_back)) + "."
              if rolled_back else "")
-    print(f"[{verb}] REFUSED: nothing was written.{named} Run the espalier release "
-          f"that stamped {deployed}, or a later one. To roll back on purpose, delete "
-          "the `# espalier-version:` line from cc/PACK_MANIFEST.txt and re-run.",
+    if allow:
+        print(f"[{verb}] --allow-rollback: rolling back on request."
+              + (f" Rewriting{named}" if named else ""))
+        return None
+    print(f"[{verb}] REFUSED: nothing was written."
+          + (f" It would rewrite{named}" if named else "")
+          + f" Run the espalier release that stamped {deployed}, or a later one. "
+          "To roll back on purpose, re-run with --allow-rollback.",
           file=sys.stderr)
     return 2
+
+
+def _say_other_build(
+    repo_root: Path, deployed: "str | None", verb: str,
+    rewritten: "Callable[[], list[str]]",
+) -> None:
+    """Say, before a write, that the tree was deployed by another build of
+    this engine's release, or by one that stamped no build (DEF-1104's
+    remainder): a pre-release string does not move between merges, so the
+    version cannot order two builds, and replacing the files that differ
+    rolls them back if the deploying build was the later one. Said, never
+    refused: builds have no order, and a refusal would stop every forward
+    upgrade inside a pre-release. Silent when the versions differ (the
+    ordering above decides), on the self-host tree (its manifest stamps no
+    build), on this build's own stamp, and when nothing differs."""
+    if deployed != __version__ or surface_contract.is_self_host_repo(repo_root):
+        return
+    stamped = _read_deployed_build(repo_root)
+    mine = engine_build()
+    if stamped is not None and stamped.split()[0] == mine.split()[0]:
+        return
+    files = rewritten()
+    if not files:
+        return
+    # ``init`` and ``upgrade`` name the files that differ (the preview);
+    # ``install-ci`` and ``fingerprint`` the files they write.
+    names = _name_paths(files, limit=len(files))
+    if stamped is None:
+        print(f"[{verb}] the deployed stamp names no build (written before builds "
+              f"were stamped), so this engine (build {mine}) cannot tell another "
+              f"build of {deployed} from drift: if that build was the later one, "
+              "writing this build's bytes rolls back whichever of these differ: "
+              f"{names}.")
+        return
+    print(f"[{verb}] deployed by another build of {deployed} (build {stamped}; this "
+          f"engine is build {mine}): one version string cannot say which is newer, "
+          f"so if {stamped.split()[0]} is the later build, writing this build's "
+          f"bytes rolls back whichever of these differ: {names}.")
 
 
 def _refuse_unstrippable_body(repo_root: Path, verb: str) -> "int | None":
@@ -11017,12 +11100,13 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     refused = _refuse_unreadable_harness_root(repo_root, "upgrade")
     if refused is not None:
         return refused
+    refused = _check_deployed_stamp(
+        repo_root, "upgrade", args,
+        lambda: _managed_files_rewritten(repo_root, _load_config(repo_root, args).goal_snapshot),
+    )
+    if refused is not None:
+        return refused
     deployed_version = _read_deployed_version(repo_root)
-    if _deployed_is_newer(deployed_version, __version__):
-        return _refuse_newer_deployment(
-            repo_root, deployed_version, "upgrade",
-            goal_snapshot=_load_config(repo_root, args).goal_snapshot,
-        ) or 2
     refused = _refuse_unstrippable_body(repo_root, "upgrade")
     if refused is not None:
         return refused
@@ -11235,8 +11319,15 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                 "the fields it declares, re-baselined on --execute"
             )
         if drift_lines:
+            # Another build's tree was said by name above (DEF-1104): its
+            # differences are that build's bytes, which "not current" would
+            # call drift to repair.
+            stamped_build = _read_deployed_build(repo_root)
+            other = (not self_host and stamped_build is not None
+                     and stamped_build.split()[0] != engine_build().split()[0])
             print(f"[upgrade] engine version matches the stamp ({__version__}), "
-                  "but the deployed surface is not current:")
+                  + ("and the deployed surface differs from this build's:" if other
+                     else "but the deployed surface is not current:"))
             for line in drift_lines:
                 print(f"[upgrade]   {line}")
             # Fall through: the stages below are the preview and the repair.
@@ -11823,6 +11914,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                                              settings_path=settings_path, blockers=exec_blockers),
                 scoped=merge_result.scoped_allows,
                 hint_command=lambda: _merge_settings_hint(profile),
+                repo_root=repo_root,
             )
     elif getattr(args, "sandbox_posture", False):
         # The flag with no settings file to write into is answered, not dropped.
@@ -11978,9 +12070,9 @@ def cmd_fingerprint(args: argparse.Namespace) -> int:
         return 2
     # The plan's two cc/ docs and the runner bodies re-render from this
     # engine; over a newer deployment that is a rollback (DEF-1104's sister).
-    refused = _refuse_newer_deployment(
-        repo_root, _read_deployed_version(repo_root), "fingerprint",
-        files=[rel for rel in PLAN_READERS if (repo_root / rel).exists()],
+    refused = _check_deployed_stamp(
+        repo_root, "fingerprint", args,
+        lambda: [rel for rel in PLAN_READERS if (repo_root / rel).exists()],
     )
     if refused is not None:
         return refused
@@ -13218,10 +13310,10 @@ def cmd_install_ci(args: argparse.Namespace, *, report: dict | None = None) -> i
     guard_dst = repo_root / "tools" / "cc" / "ci_guard.py"
     # The merge gate rewritten to an older engine's bytes is the rollback the
     # stamp exists to stop (DEF-1104's sister, the lane's failure-mode review).
-    refused = _refuse_newer_deployment(
-        repo_root, _read_deployed_version(repo_root), "install-ci",
-        files=[rel for rel in ("tools/cc/ci_guard.py", ".github/workflows/harness-guard.yml")
-               if (repo_root / rel).exists()],
+    refused = _check_deployed_stamp(
+        repo_root, "install-ci", args,
+        lambda: [rel for rel in ("tools/cc/ci_guard.py", ".github/workflows/harness-guard.yml")
+                 if (repo_root / rel).exists()],
     )
     if refused is not None:
         return refused
@@ -15132,6 +15224,17 @@ def _add_config_arg(parser: argparse.ArgumentParser) -> None:
                         help="path to an espalier.toml config (default: repo/espalier.toml)")
 
 
+def _add_allow_rollback_arg(parser: argparse.ArgumentParser) -> None:
+    """One ``--allow-rollback`` for every verb the stamp check stops
+    (``_check_deployed_stamp``, DEF-1104's named override)."""
+    parser.add_argument(
+        "--allow-rollback", dest="allow_rollback", action="store_true",
+        help="write this engine's bytes over a deployment that cc/PACK_MANIFEST.txt "
+             "says a later espalier release made (refused without it); the run "
+             "names the files it rolls back",
+    )
+
+
 # Placeholder the top-level epilog carries for the interpreter the operator
 # should type. Resolved when help is RENDERED, never when the parser is built:
 # `_detect_python_command` spawns `--version` probes and `build_parser()` runs
@@ -15240,6 +15343,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_repo_arg(p_init, optional=True)
     _add_config_arg(p_init)
+    _add_allow_rollback_arg(p_init)
     # Default-flip so a bare `espalier init .` writes the harness-managed
     # gitignore entries (otherwise adopters following QUICKSTART ran
     # `git add -A` and committed `.claude/settings.json` + per-install state).
@@ -15401,6 +15505,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_repo_arg(p_upgrade, optional=True)
     _add_config_arg(p_upgrade)
+    _add_allow_rollback_arg(p_upgrade)
     p_upgrade.add_argument(
         "--execute", action="store_true",
         help="apply the upgrade (default: dry-run prints what would change)",
@@ -15498,6 +15603,8 @@ def build_parser() -> argparse.ArgumentParser:
         p = sub.add_parser(name, help=help_text, description=description)
         _add_repo_arg(p, optional=True)
         _add_config_arg(p)
+        if func is cmd_fingerprint:
+            _add_allow_rollback_arg(p)
         p.set_defaults(func=func)
 
     p_diff = sub.add_parser("diff", help="compare saved reports against fresh inference")
@@ -15873,6 +15980,7 @@ def build_parser() -> argparse.ArgumentParser:
     # or install-ci rewrites reports under the DEFAULT config and the next
     # doctor reports the very drift the re-baseline exists to end.
     _add_config_arg(p_ci)
+    _add_allow_rollback_arg(p_ci)
     p_ci.set_defaults(func=cmd_install_ci, zone_writer=True)
 
     p_bp = sub.add_parser(

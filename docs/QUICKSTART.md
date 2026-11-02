@@ -620,8 +620,14 @@ upstream fixes. Two states stop `upgrade` before it writes anything:
 - **A newer deployment.** When `cc/PACK_MANIFEST.txt` was stamped by a later
   release than the engine you are running, `upgrade`, `init`, `install-ci` and
   `fingerprint` refuse, in either mode, and name the files they would roll
-  back. Run the newer engine instead; to roll back on purpose, delete the
-  `# espalier-version:` line from `cc/PACK_MANIFEST.txt` first.
+  back. Run the newer engine instead; to roll back on purpose, re-run with
+  `--allow-rollback`, which names the files it rolls back.
+
+The stamp also names the build under the version (`# espalier-build:`), since a
+pre-release version string does not move between builds. Where your tree was
+deployed by another build of the release you are running, or before builds were
+stamped, these commands say so and name the files that differ before they write;
+the version cannot say which build is newer, so they go on rather than refuse.
 
 ---
 

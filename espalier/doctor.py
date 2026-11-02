@@ -626,6 +626,43 @@ def espalier_statusline_missing(settings_path: Path, repo_root: Path) -> bool:
     return script == surface_contract.PRESENCE_PRESENT
 
 
+def foreign_statusline_note(settings_path: Path, repo_root: Path) -> "str | None":
+    """The note for a ``statusLine`` of the operator's own beside a deployed
+    ``tools/cc/statusline.py`` (DEF-1116), or None. The merge never rewrites a
+    present key (``cli._would_add_statusline``), so the operator's line stays
+    and espalier's indicators do not show in it -- among them MAINT, the one
+    always-visible sign that maintenance mode is on. ``doctor``'s statusline
+    notes and every merge narrator (``cli._report_allow_gaps``) read this one
+    predicate (the DEF-798 rule). A command that names the script or its shim
+    is not foreign: espalier's own line, or the operator's composed with
+    ``--segments``, which quiets this note. An explicit ``null`` turns the
+    statusline off on purpose; a file that cannot be read has its own
+    reporters; without the script there is nothing to show."""
+    try:
+        settings = json.loads(surface_contract.decode_bom(settings_path.read_bytes()))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return None
+    status_line = settings.get("statusLine") if isinstance(settings, dict) else None
+    command = status_line.get("command") if isinstance(status_line, dict) else None
+    if not isinstance(command, str):
+        return None
+    if STATUSLINE_SCRIPT in command.replace("\\", "/") or statusline_shim_end(command) >= 0:
+        return None
+    script = surface_contract.path_presence(repo_root / STATUSLINE_SCRIPT)[0]
+    if script != surface_contract.PRESENCE_PRESENT:
+        return None
+    return (
+        "statusLine runs a command of your own, which the settings merge never "
+        "rewrites, so espalier's indicators do not show in it: MAINT (maintenance "
+        "mode is on, so the protected-zone and plan checks are off), "
+        "STOP=full|light, bp= (the blueprint chain) and the freshness counts. To "
+        f"show them, have your command also run `{_remedy_py()} "
+        "tools/cc/statusline.py --segments` from the project root: it prints the "
+        "indicators that are on and nothing when none is, and this note stops "
+        "once your statusLine command names tools/cc/statusline.py."
+    )
+
+
 def _statusline_fallback_notes(settings_path: Path, repo_root: Path) -> list[str]:
     """Info lines about the interpreter-missing fallback in ``statusLine``.
 
@@ -676,7 +713,11 @@ def _statusline_fallback_notes(settings_path: Path, repo_root: Path) -> list[str
 
     Info, never a warning: no shape breaks a guard. Only espalier's own
     statusline (one naming ``tools/cc/statusline.py`` or headed by the shim)
-    is examined; an operator's own statusLine is theirs.
+    is examined for these shapes; an operator's own statusLine is theirs, and
+    beside a deployed script it is named once, with the indicators it does not
+    show (:func:`foreign_statusline_note`, DEF-1116). A line composed with
+    ``statusline.py --segments`` is the operator's too, never asked for the
+    fallback clause.
     """
     try:
         settings = json.loads(surface_contract.decode_bom(settings_path.read_bytes()))
@@ -707,6 +748,10 @@ def _statusline_fallback_notes(settings_path: Path, repo_root: Path) -> list[str
     runs_script = STATUSLINE_SCRIPT in command.replace("\\", "/")
     runs_shim = statusline_shim_end(command) >= 0
     if not (runs_script or runs_shim):
+        # DEF-1116: one predicate with every merge narrator.
+        note = foreign_statusline_note(settings_path, repo_root)
+        return [note] if note else []
+    if runs_script and "--segments" in command:
         return []
     has_clause = " || " in command
     if _host_is_windows():
@@ -3526,7 +3571,9 @@ def run_doctor_check(
                 f"{plural(len(unstamped), 'seeded doc')} {verb} no "
                 f"`espalier:seed-version` first line ({named}) -- that stamp is "
                 "what keeps a seed out of your fingerprint, docs surface, "
-                "grounding floor and reflect's orphan check. To keep your edits, "
+                "grounding floor and reflect's orphan check (a stub-backed seed "
+                "you have grounded is your doc in the fingerprint either way). "
+                "To keep your edits, "
                 "paste the file's stamp "
                 f"back as line 1, above everything else: {'; '.join(stamps)}"
                 f"{more}.{exact} Only for a copy you never edited, delete the "

@@ -224,6 +224,27 @@ class TestStatuslineOutput:
             f"got {out!r}"
         )
 
+    def test_segments_prints_only_the_indicators_that_are_on(self, tmp_path):
+        """DEF-1116: an operator who keeps a statusLine of their own composes
+        espalier's indicators into it with ``--segments``: no ``espalier``
+        label, and no output at all when no indicator is on, so a composed
+        line gains nothing on a quiet tree. Mutation: drop the flag's branch
+        and the quiet run prints ``espalier``."""
+        def segments(env: dict) -> str:
+            proc_env = {**os.environ}
+            for var in ("ESPALIER_MAINTENANCE_MODE", "ESPALIER_STOP_GATE",
+                        "ESPALIER_AUDIT_DIR", "CLAUDE_PROJECT_DIR"):
+                proc_env.pop(var, None)
+            proc_env.update({"CLAUDE_PROJECT_DIR": str(tmp_path), **env})
+            result = run_hook_through([sys.executable, str(STATUSLINE), "--segments"],
+                                      env=proc_env, cwd=str(tmp_path), statusline=True)
+            assert result.returncode == 0, result.stderr
+            return result.stdout
+
+        assert segments({}) == ""
+        assert segments({"ESPALIER_MAINTENANCE_MODE": "1",
+                         "ESPALIER_STOP_GATE": "full"}).strip() == "MAINT | STOP=full"
+
 
 class TestStatuslineHardening:
     """TP-55: statusline resolves CLAUDE_PROJECT_DIR to absolute path

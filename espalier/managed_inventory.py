@@ -34,7 +34,7 @@ from espalier import __version__, fusion_manifest, surface_contract
 from espalier._safe_walk import safe_rglob, visible
 from espalier.asset_inventory import get_packaged_surface
 from espalier.assets import assets_root
-from espalier.managed_markers import SEED_STAMP_TOKEN, path_has_seed_stamp
+from espalier.managed_markers import SEED_STAMP_TOKEN, path_has_seed_stamp, seed_is_untouched
 from espalier.managed_paths import (
     HARNESS_OWNED_ROOTS,
     STANDARD_MANAGED_CC_DOCS,
@@ -369,6 +369,29 @@ def get_seed_asset_source(dest_relpath: str) -> str:
     ``cleanup.py``.
     """
     return _SEED_ASSET_SOURCES.get(dest_relpath, dest_relpath)
+
+
+def seed_is_harness_content(repo_root: Path, rel: str) -> bool:
+    """Whether the Markdown file at ``rel`` is a seed the fingerprint leaves
+    out as harness provenance: it opens with the seed stamp
+    (``path_has_seed_stamp``, the 256-byte peek) and, for a stub-backed seed
+    (the ones ``get_seed_asset_source`` redirects to a near-empty stub), its
+    body is still the shipped one (``seed_is_untouched``, DEF-1112). A carried
+    catalog stays harness content once edited -- an edit does not make the
+    other 460 KB the adopter's -- but a grounded stub is entirely the
+    adopter's text. The whole file is read for those few paths alone; one that
+    cannot be read is not proven untouched and counts as the adopter's, as an
+    unreadable stamp does."""
+    path = Path(repo_root) / rel
+    if not path_has_seed_stamp(path):
+        return False
+    if get_seed_asset_source(rel) == rel:
+        return True
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    return seed_is_untouched(text)
 
 
 SEED_ADAPT_HEADER = (
@@ -938,9 +961,11 @@ def unstamped_seed_docs(repo_root: Path) -> list[str]:
     until 2026-09-05 only ``upgrade`` counted the state (DEF-691). Hoisted here
     from ``cli`` because ``doctor`` must not import ``cli``.
 
-    The predicate is ``path_has_seed_stamp`` -- the fingerprint's OWN (a
-    256-byte peek, replacement decoding, BOM and CRLF folded) -- so this list
-    and the fingerprint's exclusion cannot disagree: the first cut read the
+    The predicate is ``path_has_seed_stamp`` -- the stamp test inside the
+    fingerprint's own (:func:`seed_is_harness_content`, which also counts a
+    grounded stub-backed seed as the adopter's, stamped or not: DEF-1112;
+    a 256-byte peek, replacement decoding, BOM and CRLF folded) -- so this
+    list and the fingerprint's exclusion cannot disagree: the first cut read the
     whole file strictly and skipped a seed a Windows editor had resaved as
     cp1252, under-counting exactly the doc that had re-entered the fingerprint
     (failure-mode pass, driven). A seed that is gone is not listed: a deleted

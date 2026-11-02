@@ -14,6 +14,7 @@ slash command's 10-line report.
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -737,6 +738,52 @@ class TestRenderPackManifest:
         assert f"# espalier-version: {__version__}" in result
         stamp = [l for l in result.splitlines() if l.startswith("# espalier-version:")]
         assert len(stamp) == 1  # exactly one stamp; it is a #-comment, not a path entry
+
+    def test_a_build_identity_is_stamped_beside_the_version(self, tmp_path):
+        """DEF-1104's remainder: a pre-release string does not move between
+        merges, so two builds shared one stamp and an older one's rewrite read
+        as repairing drift. The build line sits under the version line; it is
+        a #-comment, so every reader that skips comments skips it."""
+        from espalier.render_surface import engine_build
+
+        lines = render_pack_manifest(tmp_path).splitlines()
+        version = next(i for i, ln in enumerate(lines) if ln.startswith("# espalier-version:"))
+        assert lines[version + 1] == f"# espalier-build: {engine_build()}"
+        assert sum(ln.startswith("# espalier-build:") for ln in lines) == 1
+        assert re.fullmatch(r"[0-9a-f]{12}( commit [0-9a-f]{7,40})?", engine_build()), engine_build()
+
+    def test_the_self_host_manifest_carries_no_build_line(self):
+        """The committed cc/PACK_MANIFEST.txt here is pinned to the render
+        (tests/test_manifest_truth.py), and the deploy source is this tree's
+        own tools/cc/: a build line would be one tracked line every lane that
+        touches tools/cc/ recomputes (Core Rule 15)."""
+        from pathlib import Path
+
+        repo = Path(__file__).resolve().parent.parent
+        assert not any(ln.startswith("# espalier-build:")
+                       for ln in render_pack_manifest(repo).splitlines())
+
+    def test_the_build_digest_reads_the_canonical_text_of_the_deploy_source(self, tmp_path):
+        """One build is one set of deployed bytes, whatever line endings a
+        checkout gave them (the content-hash CRLF edge in docs/SHARP_EDGES.md):
+        a CRLF or BOM resave keeps the digest, a changed byte or a renamed file
+        moves it, and a compiled cache never counts."""
+        from espalier.render_surface import _surface_digest
+
+        root = tmp_path / "src"
+        (root / "hooks").mkdir(parents=True)
+        (root / "hooks" / "guard.py").write_bytes(b"x = 1\ny = 2\n")
+        first = _surface_digest([root])
+        (root / "hooks" / "guard.py").write_bytes(b"\xef\xbb\xbfx = 1\r\ny = 2\r\n")
+        assert _surface_digest([root]) == first
+        (root / "hooks" / "__pycache__").mkdir()
+        (root / "hooks" / "__pycache__" / "guard.cpython-312.pyc").write_bytes(b"\x00")
+        assert _surface_digest([root]) == first
+        (root / "hooks" / "guard.py").write_bytes(b"x = 1\ny = 3\n")
+        assert _surface_digest([root]) != first
+        (root / "hooks" / "guard.py").write_bytes(b"x = 1\ny = 2\n")
+        (root / "hooks" / "guard.py").rename(root / "hooks" / "other.py")
+        assert _surface_digest([root]) != first
 
     def test_always_includes_required_cc_docs(self, tmp_path):
         result = render_pack_manifest(tmp_path)
