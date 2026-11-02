@@ -214,7 +214,8 @@ lines say which before the session commits anything. Reporter only, and it fails
 without `gh`, a sign-in or a GitHub remote loses the lines, never the banner;
 the open and merged reads are separate calls (one shared recency window let
 ten merges hide the one open PR), each line shows three rows then a count,
-and the whole question is capped at eight seconds under the hook's fifteen.
+and the whole question takes what the mail below left of eight seconds under
+the hook's fifteen.
 The sample below omits both, as it omits `Loose:` and `Sessions:`, because all four are
 conditional.
 
@@ -226,9 +227,11 @@ other machines left, newest first, one headline per row (`Mail:      win:
 request re lane/x (1 path) -- "please look at the fixture hang"`), three rows
 then a count, and a tail that says whose text it is and where the bodies are
 (`/inbox`). One fetch, then local reads, every one of them taking what is
-left of the pull-request block's eight-second budget (the two blocks share one
-deadline under the hook's fifteen, so a slow `gh` costs the mail line and never
-the banner); a fetch that could not be made is said in the line beside what
+left of the mail's own share of the pull-request block's eight-second budget,
+read before the pull requests (the two blocks share one deadline under the
+hook's fifteen, and the mail goes first, so a slow `gh` costs the pull-request
+lines, which `/inbox board` also reads, and never the mail or the `Orders:`
+line below); a fetch that could not be made is said in the line beside what
 was fetched before. No name, no fetch and no line -- except that a clone which
 names no machine but already holds another machine's mail ref (a plain `git
 fetch origin` brings them in) gets one line saying how to opt in, so the box
