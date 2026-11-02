@@ -34,7 +34,7 @@ on:
         type: string
         default: ""
       python:
-        description: "The interpreter for a dispatched run: 3.12, the push and pull-request cells' own, or a newer one for an arm only it takes (os.chmod's follow_symlinks=False on Windows from 3.13, which the delete helper passes there)"
+        description: "The interpreter for a dispatched run: 3.12, the pull-request cells' own, or a newer one for an arm only it takes (os.chmod's follow_symlinks=False on Windows from 3.13, which the delete helper passes there)"
         type: choice
         default: "3.12"
         options: ["3.12", "3.13", "3.14"]
@@ -55,14 +55,19 @@ concurrency:
   # 2026-09-01 two hand-written lists disagreed and a manual dispatch cancelled
   # an in-flight push run. `github.event_name` cannot drift out of step with a
   # sibling condition because there is no second copy to maintain.
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  #
+  # The `os` and `python` inputs are in the key too: two dispatches on one ref
+  # that name another runner or another interpreter are two runs, not one
+  # superseding the other, so a 3.13 and a 3.14 dispatch run side by side. A
+  # pull request carries no inputs, so its key is the event's alone.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ github.event.inputs.os }}-${{ github.event.inputs.python }}
   cancel-in-progress: true
 
 jobs:
   portability:
     strategy:
       fail-fast: false
-      # All three OSes on push and pull request (the inputs are empty there).
+      # All three OSes on a pull request (the inputs are empty there).
       # The `os` dispatch input narrows a run to one runner, so a Windows-only
       # cycle over a selection (`select`) costs one leg, not three -- the loop
       # that closed the Windows reds on 2026-09-23 without a second host.
@@ -76,11 +81,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
-      # 3.12 on push and pull request (the inputs are empty there); a dispatched
-      # run may name a newer one through the `python` input, so a Windows arm
-      # that only a newer interpreter takes is run without a second cell on
-      # every pull request.
-      - name: Set up Python
+      # 3.12 on a pull request (the inputs are empty there); a dispatched run
+      # may name a newer one through the `python` input, so a Windows arm that
+      # only a newer interpreter takes is run without a second cell on every
+      # pull request.
+      - name: Set up Python ${{ github.event.inputs.python || '3.12' }}
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: ${{ github.event.inputs.python || '3.12' }}

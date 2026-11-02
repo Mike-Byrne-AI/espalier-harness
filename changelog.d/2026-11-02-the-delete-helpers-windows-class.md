@@ -12,10 +12,11 @@
 ### Added
 
 - **`portability.yml` takes a `python` input on a dispatched run** (3.12, the
-  push and pull-request cells' own, or 3.13 or 3.14), so an arm only a newer
+  pull-request cells' own, or 3.13 or 3.14), so an arm only a newer
   interpreter takes, such as `os.chmod`'s `follow_symlinks=False` on Windows
   from 3.13, runs on a Windows host without a second cell on every pull
-  request.
+  request. Two dispatches on one ref that name another runner or another
+  interpreter no longer cancel each other.
 - **The suite contract refuses an `os.chmod` fake that cannot take
   `follow_symlinks`.** The delete helper passes the keyword on macOS and on
   Windows from 3.13, so a fake taking only the path and the mode passed on
