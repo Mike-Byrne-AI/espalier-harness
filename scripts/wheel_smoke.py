@@ -211,17 +211,17 @@ _CHMOD_NO_FOLLOW = os.chmod in os.supports_follow_symlinks
 _BARE_CHMOD_IS_THE_LINKS = os.name == "nt"
 
 
-def _add_write_bit(path: str) -> None:
-    """``chmod u+w`` on ``path`` itself, never through a link to a file
-    outside the tree (DEF-5060): read by ``lstat``, set without following
-    where ``os.chmod`` can, and a link left as it is where it cannot (Linux).
-    The twin of ``espalier._rmtree._add_owner_bits``, driven over the same
-    three arms beside it in ``tests/test_wheel_smoke.py``."""
+def _add_owner_bits(path: str, bits: int) -> None:
+    """Add ``bits`` for the owner on ``path`` itself, never through a link to
+    a file outside the tree (DEF-5060): read by ``lstat``, set without
+    following where ``os.chmod`` can, and a link left as it is where it
+    cannot (Linux). The twin of ``espalier._rmtree._add_owner_bits``, driven
+    over the same three arms beside it in ``tests/test_wheel_smoke.py``."""
     try:
         mode = os.lstat(path).st_mode
     except OSError:
         return
-    wanted = stat.S_IMODE(mode) | stat.S_IWUSR
+    wanted = stat.S_IMODE(mode) | bits
     try:
         if _CHMOD_NO_FOLLOW:
             os.chmod(path, wanted, follow_symlinks=False)
@@ -231,6 +231,23 @@ def _add_write_bit(path: str) -> None:
         pass
 
 
+def _add_write_bit(path: str) -> None:
+    """``chmod u+w``: the answer to every refusal but a directory's entry."""
+    _add_owner_bits(path, stat.S_IWUSR)
+
+
+def _key(path: str) -> str:
+    """The one spelling a re-walked directory is remembered by."""
+    return os.path.normpath(path).replace("\\", "/")
+
+
+def _rmtree_with_handler(path: Path, handler) -> None:
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=handler)
+        return
+    shutil.rmtree(path, onerror=lambda func, p, exc_info: handler(func, p, exc_info[1]))
+
+
 def _remove_tree_clearing_bits(path: Path) -> None:
     """``shutil.rmtree`` that answers a permission refusal by adding the owner
     write bit to the entry and to its parent inside the tree, then retrying
@@ -238,21 +255,44 @@ def _remove_tree_clearing_bits(path: Path) -> None:
     (a read-only entry, or a locked directory inside the tree, refuses a bare
     rmtree; a second refusal raises). The bit goes on the entry itself, never
     through a link (``_add_write_bit``).
+
+    A directory the walk cannot enter (``os.open`` on the fd walk,
+    ``os.scandir`` on the walk Windows uses) is not retried bare: ``os.open``
+    needs its flags, and ``rmtree`` has already skipped the subtree. It gets
+    its owner read, write and search bits back and is walked again, once, and
+    the walk's own later call on a directory removed that way, or on an entry
+    it had queued inside one, is not a fault (DEF-5062, the engine's DEF-5054
+    fix, driven alike in both deleters in ``tests/test_wheel_smoke.py``).
     """
     root = str(path)
+    rewalked: set[str] = set()
+
+    def _under_a_rewalk(failed: str) -> bool:
+        key = _key(failed)
+        return any(key == done or key.startswith(done + "/") for done in rewalked)
 
     def _on_failure(func, failed: str, exc: BaseException) -> None:
+        if isinstance(exc, FileNotFoundError) and _under_a_rewalk(failed):
+            return
         if not (isinstance(exc, OSError) and exc.errno in (errno.EACCES, errno.EPERM)):
             raise exc
+        if func is os.open or func is os.scandir:
+            try:
+                is_directory = stat.S_ISDIR(os.lstat(failed).st_mode)
+            except OSError:
+                is_directory = False
+            if _key(failed) in rewalked or not is_directory:
+                raise exc
+            rewalked.add(_key(failed))
+            _add_owner_bits(failed, stat.S_IRWXU)
+            _rmtree_with_handler(Path(failed), _on_failure)
+            return
         for target in (failed, os.path.dirname(failed)):
             if target == root or target.startswith(root + os.sep):
                 _add_write_bit(target)
         func(failed)
 
-    if sys.version_info >= (3, 12):
-        shutil.rmtree(path, onexc=_on_failure)
-        return
-    shutil.rmtree(path, onerror=lambda func, p, exc_info: _on_failure(func, p, exc_info[1]))
+    _rmtree_with_handler(path, _on_failure)
 
 
 def _clear_stale_packaging_state(repo_root: Path) -> list[Path]:

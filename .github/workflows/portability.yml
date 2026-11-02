@@ -8,7 +8,8 @@ name: Portability
 # ubuntu in test.yml on every pull request and catch the KNOWN cross-OS classes; this
 # workflow is the empirical belt-and-suspenders for the residual no static rule
 # encodes. The `os` and `select` inputs narrow a dispatched run to one runner
-# and a selection -- the loop that closed the Windows reds on 2026-09-23.
+# and a selection -- the loop that closed the Windows reds on 2026-09-23 --
+# and `python` runs it on a newer interpreter than the cells' 3.12.
 # Pull requests and dispatch only: main never re-runs it and it is not a
 # required check, so its legs finish after auto-merge has landed the lane and
 # the verdict is read AFTER the merge -- by the board's checks: line, the
@@ -32,6 +33,11 @@ on:
         description: "Extra pytest arguments -- e.g. `@.github/windows-reds.txt` (an argument file of node ids, one per line) or `-k <expr>`; empty runs the whole not-heavy_e2e suite. windows-latest runs at PYTEST_TIMEOUT=180: add `--timeout=60` to reproduce the suite's own ceiling there"
         type: string
         default: ""
+      python:
+        description: "The interpreter for a dispatched run: 3.12, the pull-request cells' own, or a newer one for an arm only it takes (os.chmod's follow_symlinks=False on Windows from 3.13, which the delete helper passes there)"
+        type: choice
+        default: "3.12"
+        options: ["3.12", "3.13", "3.14"]
 
 # Read-only token; this job never pushes.
 permissions:
@@ -49,14 +55,28 @@ concurrency:
   # 2026-09-01 two hand-written lists disagreed and a manual dispatch cancelled
   # an in-flight push run. `github.event_name` cannot drift out of step with a
   # sibling condition because there is no second copy to maintain.
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  #
+  # A dispatched run is keyed on its own run id, so no dispatch cancels
+  # another: two on one ref that name another runner, interpreter or
+  # selection are two runs (a 3.13 and a 3.14 dispatch run side by side), and
+  # a dispatch is typed on purpose. A pull request's key is the event's alone.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}${{ github.event_name == 'workflow_dispatch' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 jobs:
   portability:
+    # A pull request's legs keep the name the board, the banner and the ship
+    # preflight read (`portability (<os>)`); a dispatched run's carries its
+    # interpreter, so a two-file dispatch on a lane's head is never read as
+    # that head's full leg (the readers keep the latest run of a name).
+    name: ${{ github.event_name == 'workflow_dispatch' && format('portability ({0}, dispatched, python {1})', matrix.os, github.event.inputs.python) || format('portability ({0})', matrix.os) }}
+    # The one spelling of the interpreter: the `python` input on a dispatch,
+    # else the pull-request cells' own, which is that input's default.
+    env:
+      PYTHON_VERSION: ${{ github.event.inputs.python || '3.12' }}
     strategy:
       fail-fast: false
-      # All three OSes on push and pull request (the inputs are empty there).
+      # All three OSes on a pull request (the inputs are empty there).
       # The `os` dispatch input narrows a run to one runner, so a Windows-only
       # cycle over a selection (`select`) costs one leg, not three -- the loop
       # that closed the Windows reds on 2026-09-23 without a second host.
@@ -70,10 +90,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
-      - name: Set up Python 3.12
+      # 3.12 on a pull request (the inputs are empty there); a dispatched run
+      # may name a newer one through the `python` input, so a Windows arm that
+      # only a newer interpreter takes is run without a second cell on every
+      # pull request.
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install
         run: pip install -e .[dev]

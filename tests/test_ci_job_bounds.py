@@ -286,3 +286,31 @@ class TestThePostMergeWindowsLegKeepsItsContracts:
         worst = max(seconds for rel in _serial_files()
                     for _label, seconds, _slow in _declared_timeout_sites((REPO_ROOT / rel).read_text(encoding="utf-8")))
         assert worst < float("inf") and job["timeout-minutes"] * 60 >= worst + 600, (job["timeout-minutes"], worst)
+
+
+class TestThePortabilityDispatchKeepsTheLegsApart:
+    """DEF-5064's dispatch input, as the readers see it. A dispatched run of
+    `portability.yml` lands its check runs on the head it ran on; the board,
+    the banner and the ship preflight keep the latest run of a check name, so
+    a dispatch under the pull-request leg's own name would stand in for that
+    head's full leg (failure-mode review). And the interpreter has one
+    spelling: the input's default is the pull-request cells' fallback."""
+
+    @staticmethod
+    def _workflow() -> dict:
+        return _workflows()["portability.yml"]
+
+    def test_a_pull_request_leg_keeps_its_name_and_a_dispatch_carries_its_own(self):
+        name = self._workflow()["jobs"]["portability"]["name"]
+        assert name.startswith("${{ github.event_name == 'workflow_dispatch' && "), name
+        assert name.endswith("|| format('portability ({0})', matrix.os) }}"), name
+        assert "dispatched" in name and "github.event.inputs.python" in name, name
+
+    def test_the_interpreter_is_spelled_once_and_its_fallback_is_the_inputs_default(self):
+        data = self._workflow()
+        default = data[True]["workflow_dispatch"]["inputs"]["python"]["default"]
+        job = data["jobs"]["portability"]
+        assert job["env"]["PYTHON_VERSION"] == f"${{{{ github.event.inputs.python || '{default}' }}}}"
+        setup = next(s for s in job["steps"] if s.get("uses", "").startswith("actions/setup-python@"))
+        assert setup["with"]["python-version"] == "${{ env.PYTHON_VERSION }}"
+        assert setup["name"] == "Set up Python ${{ env.PYTHON_VERSION }}"

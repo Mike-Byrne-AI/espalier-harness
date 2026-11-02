@@ -13,6 +13,7 @@ instead of paying the multi-minute integration cost on every PR.
 """
 from __future__ import annotations
 
+import errno
 import importlib.util
 import json
 import os
@@ -670,16 +671,22 @@ class TestBuildFailureCleanup:
 def _stale_packaging_tree(root: Path) -> None:
     """The shape the real build paths hit: both cached channels, a nested
     egg-info that must survive (only the top-level one is the package's own),
-    a bystander file, and a locked directory inside ``build/`` (on POSIX a
+    a bystander file, a locked directory inside ``build/`` (on POSIX a
     directory without its write bit refuses every child's unlink; the engine
     helper unlocks it and retries, and the twin must too -- failure-mode
-    review, TP-454 lane B)."""
+    review, TP-454 lane B), and a shut one (no bits at all: the walk cannot
+    enter it, so each deleter gives it its owner bits back and walks it
+    again, DEF-5062; on Windows the mode is the read-only attribute alone)."""
     (root / "build" / "lib").mkdir(parents=True)
     (root / "build" / "lib" / "x.py").write_text("x = 1\n", encoding="utf-8")
     locked = root / "build" / "lib" / "locked"
     locked.mkdir()
     (locked / "y.py").write_text("y = 1\n", encoding="utf-8")
     locked.chmod(0o500)
+    shut = root / "build" / "lib" / "shut"
+    (shut / "inner").mkdir(parents=True)
+    (shut / "inner" / "z.py").write_text("z = 1\n", encoding="utf-8")
+    shut.chmod(0o000)
     (root / "a.egg-info").mkdir()
     (root / "a.egg-info" / "SOURCES.txt").write_text("x.py\n", encoding="utf-8")
     (root / "pkg" / "b.egg-info").mkdir(parents=True)
@@ -772,6 +779,62 @@ def test_both_twins_take_the_same_chmod_arm(tmp_path, monkeypatch, no_follow, ba
             [k for p, k in calls if p == str(f)],
         )
     assert seen == {"twin": (link_calls, file_calls), "engine": (link_calls, file_calls)}
+
+
+@pytest.mark.parametrize("refusal", ["once", "always"])
+@pytest.mark.parametrize("walk", ["fd", "scandir"])
+def test_both_twins_walk_a_directory_they_could_not_enter_again(tmp_path, monkeypatch, walk, refusal):
+    """DEF-5062 in both deleters, driven alike: the call that enters
+    ``build/lib/shut`` refuses, as ``rmtree``'s ``os.open`` (the fd walk, on
+    POSIX) or ``os.scandir`` (the walk Windows uses, on every host) refuses a
+    directory with no read bit, a shape a Windows host cannot make with a
+    mode. Refused ``once``, each gives the directory its owner bits back and
+    walks it again, so the tree goes and the bystander stays: RED while the
+    twin retries the refused call bare (``os.open`` without its flags raises
+    ``TypeError``; a bare ``os.scandir`` of the fake lists nothing, so the
+    directory's ``rmdir`` refuses it as not empty). Refused ``always`` (a
+    directory whose bits are not ours to give back), each walks it again once
+    and then raises the refusal: RED as a ``RecursionError`` while the twin
+    walks again without remembering it already did."""
+    from tests.test_rmtree import force_walk
+
+    force_walk(walk, monkeypatch)
+    enter = "open" if walk == "fd" else "scandir"
+    real_enter = getattr(os, enter)
+    outcome = {}
+    for name, clear in (("twin", wheel_smoke._clear_stale_packaging_state),
+                        ("engine", clear_stale_packaging_state)):
+        root = tmp_path / name
+        shut = root / "build" / "lib" / "shut"
+        (shut / "inner").mkdir(parents=True)
+        (shut / "b.py").write_text("b = 1\n", encoding="utf-8")
+        (shut / "inner" / "c.py").write_text("c = 1\n", encoding="utf-8")
+        (root / "keep.txt").write_text("keep\n", encoding="utf-8")
+        refused: list[str] = []
+
+        def refuse(path, *a, _refused=refused, **k):
+            if (isinstance(path, (str, bytes, os.PathLike))
+                    and (refusal == "always" or not _refused)
+                    and os.path.basename(os.fsdecode(path)) == "shut"):
+                _refused.append(os.fsdecode(path))
+                raise PermissionError(errno.EACCES, "Permission denied", os.fsdecode(path))
+            return real_enter(path, *a, **k)
+
+        with monkeypatch.context() as m:
+            m.setattr(os, enter, refuse)
+            try:
+                removed = [p.relative_to(root).as_posix() for p in clear(root)]
+            except (OSError, TypeError, RecursionError) as exc:
+                removed = [f"raised {type(exc).__name__}"]
+        outcome[name] = (removed, len(refused), _listing(root))
+    if refusal == "once":
+        expected = (["build"], 1, ["keep.txt"])
+    else:
+        expected = (["raised PermissionError"], 2, [
+            "build", "build/lib", "build/lib/shut", "build/lib/shut/b.py",
+            "build/lib/shut/inner", "build/lib/shut/inner/c.py", "keep.txt",
+        ])
+    assert outcome == {"twin": expected, "engine": expected}
 
 
 def test_build_wheel_clears_stale_state_before_the_builder(tmp_path, monkeypatch):
