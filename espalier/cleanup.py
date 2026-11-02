@@ -327,8 +327,9 @@ def _unwire_espalier_hooks(repo_root: Path, dry_run: bool, *, live_session: bool
     # Load-modify-save: the helper prevents a torn settings.json, not a lost
     # update. Unguarded because the unwire runs once, by the operator, at
     # uninstall; a session racing it is editing a file about to be retired.
+    from espalier.cli import _settings_rewrite_text  # lazy: cli imports this module at load
     atomic_write_text(
-        settings_path, json.dumps(settings, indent=2) + "\n", follow_symlinks=True,
+        settings_path, _settings_rewrite_text(settings_path, settings), follow_symlinks=True,
     )
     return unwired
 

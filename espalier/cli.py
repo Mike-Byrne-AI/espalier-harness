@@ -8189,6 +8189,34 @@ def _back_up_settings(settings_path: Path) -> Path:
     return fresh
 
 
+def _settings_rewrite_text(settings_path: Path, settings: object) -> str:
+    """``settings`` as a rewrite of the operator's ``settings_path`` writes it:
+    ``indent=2``, in the line ending the file already uses
+    (:func:`_dominant_line_ending`, the rule the .gitignore writers follow) and
+    with its non-ASCII characters as themselves. Shared by the four rewrites
+    of an operator-owned file -- the merge, ``--repair``, the rewire's
+    :func:`_write_rewritten_settings` and ``cleanup._unwire_espalier_hooks``
+    -- each of which wrote LF, and all but the rewire ``\\uXXXX``, so a
+    tracked CRLF file under ``core.autocrlf=true`` read modified with an empty
+    diff after an install and uninstall (DEF-1062). Read before the write:
+    ``json.dumps`` puts a newline only between tokens (one inside a string is
+    the escape ``\\n``), so the replace touches layout alone.
+
+    What it does not follow: the line ending is counted on the raw bytes, so a
+    UTF-16 file reads as LF (and is written back UTF-8, as before); a UTF-8
+    byte-order mark is not written back; a missing final newline is added. A
+    value holding a lone surrogate (a ``\\ud83d`` escape with no pair) cannot
+    be written as itself in UTF-8, so that file keeps every non-ASCII
+    character escaped, as before, rather than failing the write."""
+    eol = _dominant_line_ending(settings_path)
+    text = json.dumps(settings, indent=2, ensure_ascii=False)
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        text = json.dumps(settings, indent=2)
+    return text.replace("\n", eol) + eol
+
+
 def _settings_backup_rungs_on_disk(settings_path: Path) -> list[Path]:
     """Every backup of ``settings_path`` on disk, in ladder order: the legacy
     ``settings.json.bak`` / ``.bak.N`` rungs beside it, then the current
@@ -8400,7 +8428,7 @@ def merge_hooks_into_settings(
     # Preserve the operator's key order (no sort_keys); hooks is appended/updated
     # in place. Deliberately do NOT stamp `_espalier_managed`: this remains the
     # operator's hand-editable file, so future `init` keeps preserving it.
-    atomic_write_text(settings_path, json.dumps(merged, indent=2) + "\n", follow_symlinks=True)
+    atomic_write_text(settings_path, _settings_rewrite_text(settings_path, merged), follow_symlinks=True)
     return MergeResult(
         MERGE_WIRED, detail=_backup_detail(backup_path), event_count=topped_up_events,
         missing_allows=() if added else tuple(missing_allows),
@@ -8649,7 +8677,7 @@ def repair_hook_wiring_in_settings(
     merged = dict(existing)
     merged["hooks"] = new_hooks
     backup_path = _back_up_settings(settings_path)
-    atomic_write_text(settings_path, json.dumps(merged, indent=2) + "\n", follow_symlinks=True)
+    atomic_write_text(settings_path, _settings_rewrite_text(settings_path, merged), follow_symlinks=True)
     still = sorted(unwired_governance_gates(repo_root) + unwired_reporter_hooks(repo_root))
     return RepairResult(
         REPAIR_DONE, detail=_backup_detail(backup_path), changes=tuple(changes),
@@ -9137,13 +9165,13 @@ def _load_settings_to_rewrite(settings_path: Path) -> tuple[dict, RewireResult |
 
 def _write_rewritten_settings(settings_path: Path, existing: dict) -> str:
     """Back up the pre-write bytes, then write ``existing`` back; the backup
-    detail for the report. ``ensure_ascii=False``: escaping the operator's own
-    non-ASCII paths back to \\uXXXX is a gratuitous rewrite of content this
-    does not own."""
+    detail for the report. Through :func:`_settings_rewrite_text`: escaping
+    the operator's own non-ASCII paths back to \\uXXXX, or their CRLF to LF,
+    is a gratuitous rewrite of content this does not own."""
     backup_path = _back_up_settings(settings_path)
     atomic_write_text(
         settings_path,
-        json.dumps(existing, indent=2, ensure_ascii=False) + "\n",
+        _settings_rewrite_text(settings_path, existing),
         follow_symlinks=True,
     )
     return _backup_detail(backup_path)

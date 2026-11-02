@@ -127,6 +127,15 @@ sys.path.insert(0, str(HOOKS_DIR))
 
 import _bash_patterns  # noqa: E402  (path is set immediately above)
 
+# The project fixture is the rehearsal's (DEF-811), imported as the
+# metamorphic gate imports it: same directory, no package, one builder.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from powershell_guard_rehearsal import ROOT_SHAPES, throwaway_project  # noqa: E402
+
+#: The root shape ``guard_tier`` builds every project under: plain unless
+#: ``--root-shape`` names another, so a run costs one shape's time.
+ROOT_SHAPE = "plain"
+
 # Assembled, never spelled literally — this file is scanned by the guards it
 # tests. Same construction, same reason, as the two sibling gates.
 _RI = "Remove-Item" + " " + "-Recurse" + " " + "-Force"
@@ -864,10 +873,11 @@ def guard_tier(command: str) -> str:
     Reads the DECISION CHANNEL, and treats rc=1 as the script error it is —
     an earlier probe in this class counted rc=1 (an ImportError) as ALLOW and
     reported that HEAD permitted a catastrophic delete.
+
+    The project is the rehearsal's ``throwaway_project``: a root of
+    ``ROOT_SHAPE`` carrying every protected directory the hook tree declares.
     """
-    with tempfile.TemporaryDirectory() as td:
-        project = Path(td)
-        (project / ".claude").mkdir()
+    with throwaway_project(HOOKS_DIR / "write_guard.py", ROOT_SHAPE) as project:
 
         def once() -> bool:
             env = os.environ.copy()
@@ -991,6 +1001,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     parser.add_argument("--quick", action="store_true", help="sampled population")
+    parser.add_argument("--root-shape", default="plain", choices=list(ROOT_SHAPES),
+                        help="the project root's shape (the rehearsal's ROOT_SHAPES); default plain")
     args = parser.parse_args(argv)
 
     found = find_powershell()
@@ -1002,9 +1014,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     pwsh, flavour = found
 
-    global _RUN_CACHE_DIR
+    # The shape holds for this run alone, like the cache directory beside it:
+    # a later in-process caller of guard_tier (a test) gets plain again.
+    global _RUN_CACHE_DIR, ROOT_SHAPE
     with tempfile.TemporaryDirectory(prefix="espalier-pwsh-cache-") as cache_dir:
         _RUN_CACHE_DIR = cache_dir
+        ROOT_SHAPE = args.root_shape
         try:
             assert_instrument_is_live(pwsh)
             results = run(pwsh, args.quick)
@@ -1016,14 +1031,17 @@ def main(argv: list[str] | None = None) -> int:
             return 3
         finally:
             _RUN_CACHE_DIR = None
+            ROOT_SHAPE = "plain"
 
     fail_open = [r for r in results if r["verdict"] == FAIL_OPEN]
     false_pos = [r for r in results if r["verdict"] == FALSE_POSITIVE]
 
     if args.json:
-        print(json.dumps({"interpreter": flavour, "rows": results}, indent=2))
+        print(json.dumps({"interpreter": flavour, "root_shape": args.root_shape, "rows": results},
+                         indent=2))
     else:
         print(f"interpreter: {flavour} ({pwsh})")
+        print(f"root shape:  {args.root_shape}")
         print(f"population:  {len(results)} rows "
               f"({sum(1 for r in results if r['reaches'])} reach the delete)\n")
         for label, group in (("FAIL-OPEN", fail_open), ("FALSE POSITIVE", false_pos)):

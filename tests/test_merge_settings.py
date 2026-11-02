@@ -3339,3 +3339,132 @@ class TestTheNarratorsSayWhatTheRunDid:
         self._edit(target, lambda d: d["hooks"].pop("Stop", None))
         result = _merge(target) if command == "merge-settings" else _init(target, "--wire-hooks")
         assert "wired anyway" in result.stdout + result.stderr, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("eol", ["\r\n", "\n"], ids=["crlf", "lf"])
+class TestTheSettingsWritersFollowTheFile:
+    """DEF-1062: the four rewrites of an operator's ``settings.json`` -- the
+    merge (``init --wire-hooks``, ``merge-settings``), ``merge-settings
+    --repair``, the interpreter rewire and the uninstall's unwire -- write the
+    line ending the file already uses and its non-ASCII characters as
+    themselves. Each wrote LF, and all but the rewire escaped non-ASCII, so on
+    a Windows checkout with ``core.autocrlf=true`` an install and uninstall
+    left a tracked CRLF file reading modified with an empty diff, and a rule
+    naming a non-ASCII path came back as ``\\u00f6`` on any OS. Every writer
+    runs on a CRLF file and an LF one: the LF run is the control that the
+    write follows the file rather than forcing CRLF."""
+
+    _RULE = "Read(/home/jörg/**)"
+
+    @staticmethod
+    def _seed(path: Path, data: dict, eol: str) -> bytes:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        raw = (json.dumps(data, indent=2, ensure_ascii=False).replace("\n", eol) + eol).encode("utf-8")
+        path.write_bytes(raw)
+        return raw
+
+    @classmethod
+    def _assert_follows(cls, path: Path, eol: str) -> None:
+        raw = path.read_bytes()
+        endings, crlf = raw.count(b"\n"), raw.count(b"\r\n")
+        assert crlf == (endings if eol == "\r\n" else 0), (
+            f"{crlf} CRLF of {endings} line endings, in a file that used {eol!r}")
+        assert cls._RULE.encode("utf-8") in raw, "the non-ASCII rule came back escaped"
+
+    def test_the_merge(self, tmp_path, eol):
+        from espalier.cli import MERGE_WIRED, merge_hooks_into_settings
+        path = tmp_path / ".claude" / "settings.json"
+        self._seed(path, {"permissions": {"allow": [self._RULE]}}, eol)
+        assert merge_hooks_into_settings(path, repo_root=tmp_path).status == MERGE_WIRED
+        self._assert_follows(path, eol)
+
+    def test_the_repair(self, tmp_path, eol):
+        from espalier.cli import REPAIR_DONE, repair_hook_wiring_in_settings
+        target = _git_target(tmp_path)
+        assert _init(target).returncode == 0
+        path = target / ".claude" / "settings.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["hooks"]["Stop"][0]["hooks"][0]["command"] = "echo"
+        data.setdefault("permissions", {}).setdefault("allow", []).append(self._RULE)
+        self._seed(path, data, eol)
+        result = repair_hook_wiring_in_settings(path, target)
+        assert result.status == REPAIR_DONE, result
+        self._assert_follows(path, eol)
+
+    def test_the_rewire(self, tmp_path, eol):
+        """Through ``_write_rewritten_settings``, the one write both rewire
+        verdicts make (the floor rewire and the statusLine head move); driving
+        the floor rewire itself needs the POSIX interpreter stubs."""
+        from espalier.cli import _write_rewritten_settings
+        path = tmp_path / ".claude" / "settings.json"
+        self._seed(path, {"permissions": {"allow": [self._RULE]}}, eol)
+        _write_rewritten_settings(path, json.loads(path.read_text(encoding="utf-8")))
+        self._assert_follows(path, eol)
+
+    def test_the_unwire(self, tmp_path, eol):
+        from espalier.cleanup import _unwire_espalier_hooks
+        from espalier.cli import merge_hooks_into_settings
+        path = tmp_path / ".claude" / "settings.json"
+        self._seed(path, {"permissions": {"allow": [self._RULE]}}, eol)
+        merge_hooks_into_settings(path, repo_root=tmp_path)
+        # Re-seeded in `eol`, so this reads the unwire's write alone.
+        self._seed(path, json.loads(path.read_text(encoding="utf-8")), eol)
+        assert _unwire_espalier_hooks(tmp_path, False)
+        self._assert_follows(path, eol)
+
+    def test_a_wire_then_unwire_gives_back_the_committed_bytes(self, tmp_path, eol):
+        """The row's probe as a test: an install then an uninstall leave the
+        operator's file byte for byte, so a tracked one reads unmodified."""
+        from espalier.cleanup import _unwire_espalier_hooks
+        from espalier.cli import MERGE_WIRED, merge_hooks_into_settings
+        path = tmp_path / ".claude" / "settings.json"
+        before = self._seed(path, {"permissions": {"allow": [self._RULE]}}, eol)
+        assert merge_hooks_into_settings(path, repo_root=tmp_path).status == MERGE_WIRED
+        assert _unwire_espalier_hooks(tmp_path, False)
+        assert path.read_bytes() == before
+
+    def test_a_lone_surrogate_keeps_the_file_escaped_rather_than_failing(self, tmp_path, eol):
+        """A ``\\ud83d`` escape with no pair loads as a character UTF-8 cannot
+        hold, so writing it as itself would fail the write, after the merge's
+        backup and before the uninstall's unwire finished; it stays escaped."""
+        from espalier.cli import MERGE_WIRED, merge_hooks_into_settings
+        escape = chr(92) + "ud83d"
+        path = tmp_path / ".claude" / "settings.json"
+        path.parent.mkdir(parents=True)
+        path.write_bytes((json.dumps({"permissions": {"deny": [chr(0xD83D)]}}, indent=2)
+                          .replace("\n", eol) + eol).encode("ascii"))
+        assert merge_hooks_into_settings(path, repo_root=tmp_path).status == MERGE_WIRED
+        raw = path.read_bytes()
+        assert escape.encode("ascii") in raw
+        assert raw.count(b"\r\n") == (raw.count(b"\n") if eol == "\r\n" else 0)
+
+    def test_every_write_of_the_operators_file_goes_through_the_helper(self, eol):
+        """The census: each ``atomic_write_text(settings_path, ...)`` in the
+        engine renders through ``_settings_rewrite_text``, so a fifth writer
+        cannot bring the LF, escaped write back. The two exceptions write the
+        harness's own fresh render, never an operator's file."""
+        import ast
+        own_renders = {("espalier/cli.py", "rerender_fresh_settings"),
+                       ("espalier/cli.py", "deploy_harness")}
+        sites: dict[tuple[str, str], bool] = {}
+        for rel in ("espalier/cli.py", "espalier/cleanup.py"):
+            tree = ast.parse((REPO_ROOT / rel).read_text(encoding="utf-8"))
+
+            def visit(node: ast.AST, owner: str) -> None:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    owner = node.name
+                if (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "atomic_write_text"
+                        and len(node.args) > 1 and isinstance(node.args[0], ast.Name)
+                        and node.args[0].id == "settings_path"):
+                    content = node.args[1]
+                    sites[(rel, owner)] = (isinstance(content, ast.Call)
+                                           and getattr(content.func, "id", None) == "_settings_rewrite_text")
+                for child in ast.iter_child_nodes(node):
+                    visit(child, owner)
+
+            visit(tree, "<module>")
+        assert own_renders <= set(sites), f"an exception names no write: {own_renders - set(sites)}"
+        bare = sorted(f"{rel}::{fn}" for (rel, fn), ok in sites.items()
+                      if not ok and (rel, fn) not in own_renders)
+        assert not bare, f"writes of the operator's settings.json outside _settings_rewrite_text: {bare}"
+        assert sum(sites.values()) == 4, sites
