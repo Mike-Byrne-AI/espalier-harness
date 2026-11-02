@@ -969,15 +969,59 @@ def lane_upstream(ask: Callable[..., str | None], branch: str) -> tuple[str | No
     since and not yet pruned (SessionStart's catch-up prunes) still reads as
     own, one pruned reads as never pushed, as its ``@{u}`` does, and a
     single-branch clone, whose push writes no such ref, reads by ``@{u}``
-    alone. Otherwise ``@{u}``, an upstream not the lane's own, or None where
-    there is none (no upstream, a detached HEAD). ``ask(*args)`` runs ``git
-    <args>`` and answers its stdout stripped on exit 0 and None on any other
-    exit; its faults are the caller's to raise."""
+    alone. A ref whose tip the remote's default branch already reaches is
+    not the lane's own: its pull request merged (a merge commit, as
+    auto-merge makes here), so the ref is a merged lane's, deleted on origin
+    and not yet pruned or kept there, and the lane's next push opens a new
+    one (DEF-2041: a lane started again under a merged lane's name read as
+    pushed). The default branch's own ref, and any ref when no default
+    branch is listed, reads as before. Otherwise ``@{u}``, an upstream not
+    the lane's own, or None where there is none (no upstream, a detached
+    HEAD). ``ask(*args)`` runs ``git <args>`` and answers its stdout stripped
+    on exit 0 and None on any other exit; its faults are the caller's to
+    raise."""
     if branch and branch != "HEAD":
         own = f"refs/remotes/origin/{branch}"
         if own in (ask("for-each-ref", "--format=%(refname)", own) or "").splitlines():
-            return f"origin/{branch}", True
+            base = origin_default_ref(ask)
+            if base is None or base == own or ask("merge-base", "--is-ancestor", own, base) is None:
+                return f"origin/{branch}", True
     return ask("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}") or None, False
+
+
+def origin_default_ref(ask: Callable[..., str | None]) -> str | None:
+    """The remote's default branch as this clone last saw it, by its full
+    ref name: ``refs/remotes/origin/HEAD``'s target, else ``origin/main``,
+    else ``origin/master``, the order the Stop hook's handoff gate measures a
+    lane never pushed against; None where none is listed. ``ask`` as
+    :func:`lane_upstream` takes it. An ``origin/HEAD`` naming a ref that is
+    gone (a default branch renamed, a fetch that pruned it) is passed over, as
+    ``checkout_sync.default_branch`` passes it over: read as the base it made
+    every check against it quietly answer nothing."""
+    head = ask("symbolic-ref", "-q", "refs/remotes/origin/HEAD")
+    if head and ask("rev-parse", "--verify", "-q", head) is not None:
+        return head
+    for name in ("main", "master"):
+        ref = f"refs/remotes/origin/{name}"
+        if ask("rev-parse", "--verify", "-q", ref) is not None:
+            return ref
+    return None
+
+
+def commits_off_origin(ask: Callable[..., str | None], rev: str = "HEAD") -> int | None:
+    """How many commits ``rev`` holds that no ref of origin does (every
+    remote-tracking branch under ``refs/remotes/origin/``, as this clone last
+    saw them): 0 where all of its work is on origin, whatever ``@{u}`` names
+    and whether or not the lane's own branch is still listed there (a lane
+    pushed without ``-u``, or merged and pruned). None where git could not
+    say. The one reading the ship driver's by-hand arm and its window check
+    share (DEF-2042: each read ``@{u}``, which names what the branch tracks,
+    not what origin holds); the session catch-up asks the narrower question
+    of its own count against ``origin/<base>`` and origin's list of the
+    lane's name.
+    ``ask`` as :func:`lane_upstream` takes it."""
+    out = ask("rev-list", "--count", rev, "--not", "--remotes=origin")
+    return int(out) if out is not None and out.isdigit() else None
 
 
 ADOPTER_ZONE_KEYS: tuple[tuple[str, str], ...] = (

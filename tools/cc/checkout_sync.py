@@ -1116,9 +1116,37 @@ def _checked_out_elsewhere(git: _Git, branch: str) -> str | None:
     return None
 
 
-def _upstream_gone(git: _Git, branch: str) -> bool:
-    track = git.out("for-each-ref", "--format=%(upstream:track)", f"refs/heads/{branch}")
-    return track == "[gone]"
+def _own_ref_listed(git: _Git, remote: str, branch: str) -> bool:
+    """Whether ``remote`` lists a branch of the lane's exact name, as this
+    clone last saw it (after the catch-up's pruning fetch): origin's refs,
+    never ``@{u}``, which names what the branch tracks (DEF-2042)."""
+    own = f"refs/remotes/{remote}/{branch}"
+    return own in (git.out("for-each-ref", "--format=%(refname)", own) or "").splitlines()
+
+
+def _upstream_gone(git: _Git, branch: str, remote: str, upstream: str) -> bool:
+    """Whether the lane ``branch``, every commit of it already on ``upstream``
+    (the caller's count), is a merged lane whose remote branch is gone: no
+    branch of its name listed on ``remote``, and either git reads its
+    upstream as gone (pushed with ``-u``, merged and pruned) or its tip is off
+    ``upstream``'s first-parent chain, where only a merge's second parent
+    sits (pushed without ``-u``: its upstream is ``upstream`` itself, never
+    gone, so the lane stayed behind main told its remote branch still
+    existed, DEF-2042). The chain is read only for a branch that tracks
+    ``upstream``, the shape such a lane keeps: a branch with no upstream at
+    all, cut from a merged lane's tip before its first commit, is someone's
+    choice and stays, as a lane started from ``upstream`` with nothing of its
+    own does (its tip on the chain); a chain git cannot read keeps the lane
+    in place."""
+    if _own_ref_listed(git, remote, branch):
+        return False
+    if git.out("for-each-ref", "--format=%(upstream:track)", f"refs/heads/{branch}") == "[gone]":
+        return True
+    if git.out("rev-parse", "--abbrev-ref", "--symbolic-full-name", f"{branch}@{{upstream}}") != upstream:
+        return False
+    tip = git.out("rev-parse", f"refs/heads/{branch}")
+    chain = git.out("rev-list", "--first-parent", upstream)
+    return bool(tip) and chain is not None and tip not in chain.splitlines()
 
 
 def catch_up(root: Path, *, deadline: float | None = None, other_session: str = "",
@@ -1153,14 +1181,15 @@ def catch_up(root: Path, *, deadline: float | None = None, other_session: str = 
     if behind == 0:
         return result  # nothing to gain: a lane created a moment ago stays put
     if branch != base:
-        gone = bool(branch) and ahead == 0 and _upstream_gone(git, branch)
+        gone = bool(branch) and ahead == 0 and _upstream_gone(git, branch, remote, upstream)
         if not gone:
             # Work of its own, a remote branch that still exists, no upstream
             # at all, or a detached HEAD: someone's choice. Named, never moved.
+            # The reason says what was read on origin, never @{u} (DEF-2042).
             result.state = "lane"
             if branch and ahead == 0:
-                result.reason = "its remote branch still exists" if git.out(
-                    "rev-parse", "--abbrev-ref", f"{branch}@{{upstream}}") else "nothing of its own yet"
+                result.reason = ("its remote branch still exists" if _own_ref_listed(git, remote, branch)
+                                 else "nothing of its own yet")
             return result
     elif ahead:
         result.state = "lane"
