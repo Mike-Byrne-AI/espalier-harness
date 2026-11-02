@@ -42,7 +42,12 @@ from pathlib import Path
 
 from espalier._atomic_io import atomic_write_text, lock_file, unlock_file
 from espalier._text import os_error_text
-from espalier.surface_contract import get_protected_mutation_paths, get_protected_mutation_prefixes
+from espalier.surface_contract import (
+    get_protected_mutation_paths,
+    get_protected_mutation_prefixes,
+    get_runtime_protected_prefixes,
+    is_self_host_repo,
+)
 
 STATE_DIR = ".espalier-state"
 RECORD_DIR = "zone_writes"
@@ -153,7 +158,9 @@ def _watched(root: Path) -> tuple[list[str], list[str], frozenset[str]]:
     try:
         for entry in load_config(root).protected_paths:
             prefix = entry.strip().replace("\\", "/").rstrip("/") + "/"
-            if prefix != "/" and not prefix.startswith(("/", "../")) and prefix not in prefixes:
+            while prefix.startswith("./"):
+                prefix = prefix[2:]  # the hook's spelling of the same top
+            if prefix and prefix != "/" and not prefix.startswith(("/", "../")) and prefix not in prefixes:
                 prefixes.append(prefix)
     except (OSError, ValueError):
         pass  # an unreadable config adds no prefix; a write there reports rather than hides
@@ -260,6 +267,15 @@ def _fold(name: str) -> str:
     return unicodedata.normalize("NFC", name).casefold()
 
 
+@functools.lru_cache(maxsize=8)
+def _fold_index(tracked: frozenset[str]) -> dict[str, tuple[str, ...]]:
+    """``_zone_watch._fold_index``: ``tracked`` by folded name, built once a set."""
+    index: dict[str, list[str]] = {}
+    for name in tracked:
+        index.setdefault(_fold(name), []).append(name)
+    return {key: tuple(names) for key, names in index.items()}
+
+
 def _is_tracked_dir(root: Path, base: str, tracked: frozenset[str]) -> bool:
     """``_zone_watch._is_tracked_dir``: ``tracked`` names the walked
     directory ``base`` by its spelling, or by a name that folds to it and
@@ -268,10 +284,7 @@ def _is_tracked_dir(root: Path, base: str, tracked: frozenset[str]) -> bool:
     filesystem keeps apart stay apart."""
     if base in tracked:
         return True
-    key = _fold(base)
-    for name in tracked:
-        if _fold(name) != key:
-            continue
+    for name in _fold_index(tracked).get(_fold(base), ()):
         try:
             if os.path.samefile(root / name, root / base):
                 return True
@@ -315,8 +328,10 @@ def _stats(root: Path, prior: dict[str, tuple[int, int]] | None = None) -> dict[
             out[rel] = (st.st_size, st.st_mtime_ns)
 
     prefixes, files, pruned = _watched(root)
-    harness = tuple(get_protected_mutation_prefixes())
-    tops = tuple(p for p in prefixes if p not in harness)
+    # The hook's scope (_zone_watch._nest_scope): the adopter's tops, and the
+    # harness's prefixes as write_guard applies them to this kind of tree.
+    tops = tuple(p for p in prefixes if p not in get_protected_mutation_prefixes())
+    harness = get_runtime_protected_prefixes(is_self_host_repo(root))
     for prefix in prefixes:
         at_top = True
         # nested-repo-ok the recorder must walk exactly the hook's set (_zone_watch.snapshot), which enters a nested checkout under a protected path

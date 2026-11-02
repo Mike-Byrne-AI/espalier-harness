@@ -295,8 +295,10 @@ class TestTheTwinsAgree:
         walk does, so a writer's change there is recorded. Mutations: the
         engine asks the root's index alone; asks every checkout; compares by
         spelling alone."""
-        (tree / "espalier.toml").write_bytes(b'protected_paths = ["zone/", "deep/sub/inner/", "top/"]\n')
-        for rel in ("zone/sub/gen", "deep/sub/inner/gen", "tools/cc/vend/gen", "zone/Gen", "Top/gen", "zone/odd/gen"):
+        (tree / "espalier.toml").write_bytes(
+            b'protected_paths = ["zone/", "./deep/sub/inner/", "top/", "vendor/lib/", "tools/", ".github/"]\n')
+        for rel in ("zone/sub/gen", "deep/sub/inner/gen", "tools/cc/vend/gen", "zone/Gen", "Top/gen", "zone/odd/gen",
+                    "vendor/lib/gen", ".github/workflows/gen"):
             (tree / rel).mkdir(parents=True)
             (tree / rel / ".gitignore").write_bytes(b"*\n")
             (tree / rel / "keep.txt").write_bytes(b"k\n")
@@ -304,7 +306,8 @@ class TestTheTwinsAgree:
         _git(tree, "add", "-f", "zone/Gen", "Top/gen", "zone/odd/gen")
         _git(tree, "commit", "-q", "-m", "gen")
         (tree / "zone" / "odd" / ".git").write_bytes(b"not a gitlink\n")  # no checkout, on both sides
-        for top, force in (("zone/sub", "gen"), ("deep/sub", "inner/gen"), ("tools/cc/vend", "gen")):
+        for top, force in (("zone/sub", "gen"), ("deep/sub", "inner/gen"), ("tools/cc/vend", "gen"),
+                           ("vendor/lib", "gen"), (".github/workflows", "gen")):
             for args in (["init", "-q"], ["add", "-f", force], ["commit", "-q", "-m", "nested"]):
                 _git(tree / top, *args)
         (tree / "zone" / "Gen").rename(tree / "zone" / "renaming")
@@ -312,12 +315,16 @@ class TestTheTwinsAgree:
         folds = "Gen" in _git(tree, "ls-files", "zone").decode() and (tree / "zone" / "GEN").is_dir()
         engine, hook = ze._stats(tree), zw.snapshot(tree)
         for side in (engine, hook):
-            assert {"zone/sub/gen/keep.txt", "deep/sub/inner/gen/keep.txt"} <= set(side), sorted(side)
+            # below the top, above it (spelled `./`), and the checkout the top itself
+            # and one under .github/, the adopter's own on a tree that is not the harness's source
+            assert {"zone/sub/gen/keep.txt", "deep/sub/inner/gen/keep.txt", "vendor/lib/gen/keep.txt",
+                    ".github/workflows/gen/keep.txt"} <= set(side), sorted(side)
+            # tools/cc/vend sits under the adopter's tools/ and in the harness's tools/cc/: never asked
             assert not [r for r in side if r.startswith("tools/cc/vend/")], sorted(side)
             assert ("zone/gen/keep.txt" in side) is folds, sorted(side)
             assert ("top/gen/keep.txt" in side) is folds, sorted(side)  # the top spelled otherwise than the index
             assert "zone/odd/gen/keep.txt" in side, sorted(side)       # the root's, past a .git that is no gitlink
-        zones = ("zone/", "deep/", "top/", "tools/cc/vend/")
+        zones = ("zone/", "deep/", "top/", "vendor/", ".github/workflows/gen/", "tools/cc/vend/")
         assert {r for r in engine if r.startswith(zones)} == {r for r in hook if r.startswith(zones)}
         assert zw.take_baseline(tree, "s-1")
         with ze.recorded(tree, "espalier upgrade"):

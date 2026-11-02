@@ -36,6 +36,7 @@ what it finds (a shared helper never collects advisories; tests/test_failopen_vo
 from __future__ import annotations
 
 import contextlib
+import functools
 import hashlib
 import json
 import os
@@ -331,6 +332,16 @@ def _fold(name: str) -> str:
     return unicodedata.normalize("NFC", name).casefold()
 
 
+@functools.lru_cache(maxsize=8)
+def _fold_index(tracked: frozenset[str]) -> dict[str, tuple[str, ...]]:
+    """``tracked`` by folded name, built once a set: a walk meets many
+    declared directories, and a large tree tracks many thousands."""
+    index: dict[str, list[str]] = {}
+    for name in tracked:
+        index.setdefault(_fold(name), []).append(name)
+    return {key: tuple(names) for key, names in index.items()}
+
+
 def _is_tracked_dir(root: Path, base: str, tracked: frozenset[str]) -> bool:
     """Whether ``tracked`` names the walked directory ``base``: by its
     spelling, or by a name that folds to it and that the filesystem resolves
@@ -341,10 +352,7 @@ def _is_tracked_dir(root: Path, base: str, tracked: frozenset[str]) -> bool:
     apart. Twin of ``espalier.zone_writes._is_tracked_dir``."""
     if base in tracked:
         return True
-    key = _fold(base)
-    for name in tracked:
-        if _fold(name) != key:
-            continue
+    for name in _fold_index(tracked).get(_fold(base), ()):
         try:
             if os.path.samefile(root / name, root / base):
                 return True

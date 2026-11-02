@@ -534,14 +534,16 @@ def _nested(repo: Path, where: str, *force: str) -> Path:
     return top
 
 
-def _tracked_reads(monkeypatch) -> list[tuple[Path, float]]:
-    """Every tracked read from here on, as (where git ran, its timeout), each run for real."""
-    calls: list[tuple[Path, float]] = []
+def _tracked_reads(monkeypatch) -> list[tuple[Path, float, list[str]]]:
+    """Every tracked read from here on, as (where git ran, its timeout, its
+    pathspecs), each run for real."""
+    calls: list[tuple[Path, float, list[str]]] = []
     real = zw._hook_utils.spawn_checked
 
     def counting(argv, **kw):
-        if "ls-files" in [str(a) for a in argv]:
-            calls.append((Path(kw["cwd"]).resolve(), kw["timeout"]))
+        words = [str(a) for a in argv]
+        if "ls-files" in words:
+            calls.append((Path(kw["cwd"]).resolve(), kw["timeout"], words[words.index("--") + 1:]))
         return real(argv, **kw)
 
     monkeypatch.setattr(zw._hook_utils, "spawn_checked", counting)
@@ -618,7 +620,7 @@ class TestATrackedDeclarationWhereverItsGitIs:
         snap = zw.snapshot(repo)
         assert {"zone/sub/a/keep.txt", "zone/sub/b/keep.txt"} <= set(snap), sorted(snap)
         assert not [r for r in snap if "/tmp/" in r or r.startswith("tools/cc/vend/gen/")], sorted(snap)
-        assert sorted(where for where, _t in calls) == sorted([repo.resolve(), (repo / "zone" / "sub").resolve()]), calls
+        assert sorted(where for where, *_ in calls) == sorted([repo.resolve(), (repo / "zone" / "sub").resolve()]), calls
 
     def test_a_nested_read_git_refuses_prunes_and_is_said(self, repo: Path, monkeypatch) -> None:
         """The nested checkout's git refuses (exit 128, safe.directory's
@@ -728,9 +730,9 @@ class TestATrackedDeclarationWhereverItsGitIs:
         """Every shell call walks over its baseline (the peek, then the locked
         pass): none asks git while the watched tops are the baseline's, even
         under a top it holds nothing under, and the call that meets a top the
-        baseline lacks asks once, in the locked pass, never again. Mutations:
-        ask wherever the baseline holds nothing under a top; ask in the peek
-        too."""
+        baseline lacks asks once, in the locked pass, over that top alone,
+        never again. Mutations: ask wherever the baseline holds nothing under
+        a top; ask in the peek too; ask over every top (the review's row)."""
         self._zone(repo)
         _declared(repo / "zone" / "tmp")  # untracked: the baseline holds nothing under zone/
         assert zw.take_baseline(repo, "s-1")
@@ -742,7 +744,7 @@ class TestATrackedDeclarationWhereverItsGitIs:
         _declared(repo / "more" / "tmp")
         zw.after_shell_call(repo, "s-1")
         zw.after_shell_call(repo, "s-1")
-        assert [where for where, _t in calls] == [repo.resolve()], calls
+        assert [(where, specs) for where, _t, specs in calls] == [(repo.resolve(), [":(literal,icase)more/"])], calls
 
     def test_a_new_tops_read_comes_out_of_path_twos_budget(self, repo: Path, monkeypatch) -> None:
         """The call that meets a new top and a moved file: path 2's git asks
