@@ -1242,7 +1242,8 @@ def _job_label(assign: dict) -> str:
     return ", ".join(named) or "a job with no lane"
 
 
-def _orders_line(root: Path, read: dict, mail: Any = None, seat: Any = None, python: str | None = None) -> str:
+def _orders_line(root: Path, read: dict, mail: Any = None, seat: Any = None, python: str | None = None,
+                 source: str = "") -> str:
     """The banner's `Orders:` value, on a worker seat: where espalier.toml
     names a dispatcher that is not this seat and the mail refs ``_mail_line``
     read (``read``) hold live assigns for this seat, its name, how many jobs
@@ -1254,8 +1255,12 @@ def _orders_line(root: Path, read: dict, mail: Any = None, seat: Any = None, pyt
     where the dispatcher setting is unusable. Reporter only, and no ref read
     of its own: the refs are the mail line's, the setting is one file; the
     interpreter spelling may cost one cached version probe. A seat driver
-    that does not load costs the short form, never the jobs. ``mail``,
-    ``seat`` and ``python`` are injectable for tests."""
+    that does not load costs the short form, never the jobs. ``source`` is
+    the SessionStart payload's, handed to the short form, which invites no
+    second loop on a clear or a compaction (the loop lives as long as the
+    process: DEF-4052); a kept older driver whose short form takes no source
+    gets the call it knows. ``mail``, ``seat`` and ``python`` are injectable
+    for tests."""
     machine, by_machine = read.get("machine"), read.get("by_machine")
     if not machine or not isinstance(by_machine, dict):
         return ""
@@ -1284,7 +1289,16 @@ def _orders_line(root: Path, read: dict, mail: Any = None, seat: Any = None, pyt
             seat = None
     line = getattr(seat, "brief_line", None)
     spelled = _hook_utils.python_command_hint() if python is None else python
-    hint = line("worker", machine, spelled) if callable(line) else "run /inbox, then /inbox board"
+    # The parameters by name from the code object, never a call that a
+    # TypeError answers: a kept older driver's short form takes no source.
+    code = getattr(line, "__code__", None)
+    takes_source = code is not None and "source" in code.co_varnames[:code.co_argcount + code.co_kwonlyargcount]
+    if not callable(line):
+        hint = "run /inbox, then /inbox board"
+    elif takes_source:
+        hint = line("worker", machine, spelled, source=source)
+    else:
+        hint = line("worker", machine, spelled)
     # A worker's box-lock off-note rides this line (the dispatcher's rides the
     # `Mail:` line's clause): the seat driver already loaded gives the path.
     box = _box_lock_note(root, machine, seat=seat)
@@ -5219,7 +5233,7 @@ def _run_main(wall_start: float | None = None) -> int:
     # and the seat driver's short form of its first message. No read of its own.
     _phase("orders read", Mail=mail_line)
     try:
-        orders_line = _orders_line(root, mail_read)
+        orders_line = _orders_line(root, mail_read, source=source)
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
         _late_load_failed("session_start: orders read failed", e)
         orders_line = ""

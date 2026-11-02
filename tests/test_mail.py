@@ -595,6 +595,146 @@ class TestAssignments:
         assert mail.assign_refusal(tmp_path, "win-2") is None   # no dispatcher named: a lone operator assigns
 
 
+class TestOneReleaseRule:
+    """DEF-4038: whether a release closes a claim was decided twice, in
+    ``live_claims`` and in the claims ``live_assignments`` keeps for its third
+    closing rule, so a new release rule could move one and not the other."""
+
+    _T0 = datetime(2026, 10, 9, 20, 0, 0, tzinfo=timezone.utc)
+    _T1 = datetime(2026, 10, 9, 21, 0, 0, tzinfo=timezone.utc)
+
+    def test_both_folds_ask_the_one_rule(self, mail, monkeypatch):
+        """With the rule closing nothing, the claim stays live in the claims
+        fold and the job stays live in the jobs fold. Dies to: either fold
+        deciding a release's reach on its own again."""
+        job = _msg(mail, "air", "assign", "", seat="win", ids=["DEF-1"], now=self._T0)
+        claim = _msg(mail, "win", "claim", "", lane="lane/y", ids=["DEF-1"], now=self._T0)
+        shipped = _msg(mail, "win", "release", "", lane="lane/y", now=self._T1)
+        by_machine = {"air": [job], "win": [claim, shipped]}
+        assert mail.live_claims(by_machine) == [] and mail.live_assignments(by_machine, "air") == []
+        monkeypatch.setattr(mail, "_releases", lambda release, claim_id, claim: False, raising=False)
+        assert [c["id"] for c in mail.live_claims(by_machine)] == [claim["id"]]
+        assert [a["id"] for a in mail.live_assignments(by_machine, "air")] == [job["id"]]
+
+    def test_the_jobs_fold_drops_a_released_claim_by_the_one_rule(self, mail, monkeypatch):
+        """The third site: the jobs fold's own claim deletion. With the rule
+        closing every claim, a release on lane/z drops the lane/y claim, so
+        the push of lane/y covers nothing and the job stays live. Dies to: that
+        loop deciding a release's reach on its own (the code review drove it)."""
+        job = _msg(mail, "air", "assign", "", seat="win", ids=["DEF-1"], now=self._T0)
+        claim = _msg(mail, "win", "claim", "", lane="lane/y", ids=["DEF-1"], now=self._T0.replace(minute=5))
+        other = _msg(mail, "win", "release", "", lane="lane/z", now=self._T0.replace(minute=30))
+        shipped = _msg(mail, "win", "release", "", lane="lane/y", now=self._T1)
+        monkeypatch.setattr(mail, "_releases", lambda release, claim_id, c: True, raising=False)
+        live = mail.live_assignments({"air": [job], "win": [claim, other, shipped]}, "air")
+        assert [a["id"] for a in live] == [job["id"]]
+
+    def test_the_rule_closes_by_id_or_by_lane_never_both_ways_at_once(self, mail):
+        """Dies to: a release naming an id also closing the lane's other claims."""
+        a = _msg(mail, "win", "claim", "", lane="lane/y", now=self._T0)
+        b = _msg(mail, "win", "claim", "", lane="lane/y", now=self._T0)
+        by_id = _msg(mail, "win", "release", "", ack=a["id"], now=self._T1)
+        by_lane = _msg(mail, "win", "release", "", lane="lane/y", now=self._T1)
+        assert [mail._releases(by_id, c["id"], c) for c in (a, b)] == [True, False]
+        assert [mail._releases(by_lane, c["id"], c) for c in (a, b)] == [True, True]
+        assert mail._releases(by_lane, "x", _msg(mail, "win", "claim", "", lane="lane/z", now=self._T0)) is False
+
+
+class TestAHandLaneReleaseSaysWhatItCloses:
+    """DEF-4041: a lane release sent by hand reads exactly as the ship
+    driver's release at a push, so it closed a job the lane's claims covered,
+    and the send said nothing."""
+
+    _T0 = datetime(2026, 10, 9, 20, 0, 0, tzinfo=timezone.utc)
+
+    def _send(self, mail, monkeypatch, tmp_path, capsys, by_machine, *argv, machine="win", dry=True,
+              fetched=(True, "")) -> str:
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(mail, "worktree_name_inherited", lambda root, run=None: False)
+        monkeypatch.setattr(mail, "machine_setting", lambda root, **kw: (machine, f"git config espalier.machine = {machine}"))
+        monkeypatch.setattr(mail, "fetch_mail", lambda root, **kw: fetched)
+        monkeypatch.setattr(mail, "read_mail", lambda root, **kw: (by_machine, {}))
+        monkeypatch.setattr(mail, "send", lambda root, message, **kw: "c0ffee")
+        (tmp_path / "espalier.toml").write_text('dispatcher = "air"\n', encoding="utf-8")
+        assert mail.main(["--root", str(tmp_path), "send", "--type", "release", *argv,
+                          *(["--dry-run"] if dry else [])]) == 0
+        return capsys.readouterr()[1]
+
+    def _given(self, mail):
+        job = _msg(mail, "air", "assign", "", seat="win", ids=["DEF-1"], now=self._T0)
+        claim = _msg(mail, "win", "claim", "", lane="lane/y", ids=["DEF-1"], now=self._T0.replace(minute=5))
+        return job, claim, {"air": [job], "win": [claim]}
+
+    def test_the_note_names_the_job_and_the_release_by_id_that_spares_it(self, mail, monkeypatch, tmp_path, capsys):
+        """The row's red. Dies to: the note left out of the dry run."""
+        job, claim, by_machine = self._given(mail)
+        err = self._send(mail, monkeypatch, tmp_path, capsys, by_machine, "--lane", "lane/y")
+        assert (f"note: this release would close job {job['id']} (DEF-1) as a push of lane/y does; if lane/y was "
+                "pushed, this is its push's release and the close stands; if not, to drop the claims and keep the "
+                f"job, release each claim by its id instead: python tools/cc/mail.py send --type release --ack "
+                f"{claim['id']}") in err, err
+
+    def test_a_real_send_names_the_re_send_that_gives_the_job_back(self, mail, monkeypatch, tmp_path, capsys):
+        """After the send the job is closed, so advice to release by id is
+        moot (the failure-mode review drove it). Dies to: the dry run's words
+        printed after a real send."""
+        job, _claim, by_machine = self._given(mail)
+        err = self._send(mail, monkeypatch, tmp_path, capsys, by_machine, "--lane", "lane/y", dry=False)
+        assert (f"note: this release closed job {job['id']} (DEF-1) as a push of lane/y does; if lane/y was pushed, "
+                f"this is its push's release and the close stands; if not, ask air to re-send assign {job['id']}"
+                ) in err, err
+        assert "instead" not in err, err
+
+    def test_a_failed_fetch_says_the_read_is_as_last_fetched(self, mail, monkeypatch, tmp_path, capsys):
+        """Dies to: an assign this clone has not fetched closed unsaid, with
+        nothing saying the read is stale (the code review)."""
+        _job, _claim, by_machine = self._given(mail)
+        err = self._send(mail, monkeypatch, tmp_path, capsys, by_machine, "--lane", "lane/y",
+                         fetched=(False, "could not reach origin"))
+        assert "(read from the mail as last fetched: could not reach origin)" in err, err
+
+    def test_the_dispatchers_own_lane_release_prints_no_note(self, mail, monkeypatch, tmp_path, capsys):
+        """The dispatcher closes a job by its lane on purpose. Dies to: the
+        note given for a job its sender was not given."""
+        job = _msg(mail, "air", "assign", "", seat="win", lane="lane/y", now=self._T0)
+        err = self._send(mail, monkeypatch, tmp_path, capsys, {"air": [job]}, "--lane", "lane/y", machine="air")
+        assert "close job" not in err and "closed job" not in err, err
+
+    def test_a_job_given_by_its_lane_says_there_is_no_claim_to_release(self, mail, monkeypatch, tmp_path, capsys):
+        """Dies to: an empty command list where no claim is live."""
+        job = _msg(mail, "air", "assign", "", seat="win", lane="lane/y", now=self._T0)
+        err = self._send(mail, monkeypatch, tmp_path, capsys, {"air": [job]}, "--lane", "lane/y")
+        assert (f"note: this release would close job {job['id']} (lane/y) as a push of lane/y does; if lane/y was "
+                "pushed, this is its push's release and the close stands; if not, win holds no live claim on it, "
+                "so the release closes nothing else: to keep the job, do not send it") in err, err
+
+    def test_a_release_that_closes_no_job_prints_no_note(self, mail, monkeypatch, tmp_path, capsys):
+        """A claim on a lane begun before the job, a release by id, and a lane
+        no job names. Dies to: a note on every lane release."""
+        claim = _msg(mail, "win", "claim", "", lane="lane/y", ids=["DEF-1"], now=self._T0)
+        job = _msg(mail, "air", "assign", "", seat="win", ids=["DEF-1"], now=self._T0.replace(minute=5))
+        by_machine = {"air": [job], "win": [claim]}
+        assert "close job" not in self._send(mail, monkeypatch, tmp_path, capsys, by_machine, "--lane", "lane/y")
+        assert "close job" not in self._send(mail, monkeypatch, tmp_path, capsys, by_machine, "--ack", claim["id"])
+        assert "close job" not in self._send(mail, monkeypatch, tmp_path, capsys, by_machine, "--lane", "lane/z")
+
+    def test_the_ship_drivers_release_prints_no_note(self, mail, monkeypatch, tmp_path, capsys):
+        """The driver's release at a push is the closing the rule means. Dies
+        to: the note moved into release_lane, which prints to stderr (the code
+        review drove a copy that printed it there past a say-only check)."""
+        job = _msg(mail, "air", "assign", "", seat="win", ids=["DEF-1"], now=self._T0)
+        claim = _msg(mail, "win", "claim", "", lane="lane/y", ids=["DEF-1"], now=self._T0.replace(minute=5))
+        monkeypatch.setattr(mail, "machine_setting", lambda root, **kw: ("win", "stubbed"))
+        monkeypatch.setattr(mail, "read_mail", lambda root, **kw: ({"air": [job], "win": [claim]}, {}))
+        sent: list[dict] = []
+        monkeypatch.setattr(mail, "send", lambda root, message, **kw: sent.append(message) or "c0ffee")
+        said: list[str] = []
+        assert mail.release_lane(tmp_path, "lane/y", say=said.append) == "c0ffee"
+        assert sent and sent[0]["re"]["lane"] == "lane/y" and said == []
+        out, err = capsys.readouterr()
+        assert "job" not in out and "job" not in err, (out, err)
+
+
 class TestAssignShape:
     """TP-703e 1-B: an assign's shape (memory/parallel-work-protocol.md, "What an
     assign says") is a note on stderr, never a refusal: the text's length past

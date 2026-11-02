@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5064",
+ "subject": ".github/workflows/portability.yml",
+ "cmd": "python3 -c \"import yaml; d=yaml.safe_load(open('.github/workflows/portability.yml',encoding='utf-8')); print(sorted({str(s['with']['python-version']) for j in d['jobs'].values() for s in j.get('steps',[]) if isinstance(s.get('with'),dict) and 'python-version' in s['with']}))\"",
+ "open_value": "['3.12']",
+ "why_not": null,
+ "row_sha": "d3f69c94f8e1",
+ "text_sha": "436e4c9dcc4b",
+ "verified_2026_11_02": "OPEN (filed 2026-11-02; probe driven at filing here and in the export of HEAD 8353ce5f2971)"
+}

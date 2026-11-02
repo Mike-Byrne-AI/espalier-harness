@@ -229,7 +229,10 @@ launcher did not start the handoff arms nothing and says the window needs a
      live, and only that name can release them. `retire` sends the releases
      from inside the worktree under its own name before it removes the
      worktree, and refuses to remove one whose claims it cannot release
-     (printing the by-hand release for a worktree already gone). The
+     (printing the by-hand release for a worktree already gone). A mail
+     fetch that fails, at the first read or at the one confirming the
+     releases, refuses too, since the refs as last fetched miss a job given
+     since; `--no-fetch` retires on them (2026-11-02). The
      SessionStart clean-up releases nothing: it keeps a worktree whose seat
      still holds a live claim.
 6. **Change a record's format by expand, then contract.** Readers learn the new
@@ -472,7 +475,8 @@ beginning `shelved:` says what was tried and names any job that lane's push
 closed) and the seat takes its next queued job; the dispatcher re-sequences
 the shelved lane at its next tick and re-sends the assign of each job the note
 names (the third closing rule closes a job at the push its claims cover,
-before CI has run, and no read lists such jobs yet: `DEF-4037`). A redirect after the fact is an ack beginning
+before CI has run; the board's `jobs:` section lists each such job, `closed at a
+push`, while its lane's pull request is open: `DEF-4037`). A redirect after the fact is an ack beginning
 `redirect:`, and the Session Log row counts it as rework; `TP-703f`'s census
 counts both words from the refs, so the falsifier below is read, never
 recalled -- where a text opens with the word, since 2026-10-30 (`DEF-5029`):
