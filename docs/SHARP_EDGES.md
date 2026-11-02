@@ -2924,14 +2924,16 @@ stderr names the per-process directory so the operator can find it.
    records are written), the name is the authority, so a log whose whole
    day is before the window is demoted unopened and one inside it is never
    opened. A renamed log is the declared limit: renamed into the window it
-   keeps its old records; renamed out of it, it is demoted young, into
-   `_cold/`.
+   keeps its old records
+   (`tests/test_audit_dir_home_unset.py::TestThePruneDatesALogByItsName::test_a_log_named_inside_the_window_is_kept_whatever_its_first_record_says`);
+   renamed out of it, it is demoted young, into `_cold/`
+   (`tests/test_audit_dir_home_unset.py::TestThePruneDatesALogByItsName::test_a_name_dated_before_the_window_is_demoted_unopened_and_a_dateless_one_is_read`).
 
 3. **Iteration cap.** `_MAX_PRUNE_SCAN = 5000` caps the per-call
    iteration. An attacker spamming `~/.espalier/audit/` with empty
    `.log` files (cheap: a `for` loop) could otherwise slow
    `session_start` linearly with the file count. Above the cap, the
-   oldest-named 5,000 are read (by the date in each name,
+   oldest-named 5,000 are scanned (by the date in each name,
    `_audit_log_order`) and a stderr warning fires; that reaches the
    debug log only, since an exit-0 hook's stderr reaches no transcript.
 
@@ -2948,7 +2950,8 @@ stderr names the per-process directory so the operator can find it.
 
 **Receipt:** Coverage: `tests/test_audit_dir_home_unset.py`
 (`TestAuditDirOverrideValidation`, `TestPruneTimestampSemantics`,
-`TestPruneIterationCap`, `TestThePruneIsBoundedInsideTheWall`).
+`TestPruneIterationCap`, `TestThePruneIsBoundedInsideTheWall`,
+`TestThePruneDatesALogByItsName`).
 
 ## Atomic Write Is Not Atomic Update
 

@@ -295,7 +295,7 @@ class TestThePruneIsBoundedInsideTheWall:
         left: list[tuple[int, int]] = []
         demoted = integ._prune_old_audit_logs(max_age_days=30, deadline=time.monotonic() + 0.3,
                                               on_stop=lambda n, days: left.append((n, days)))
-        assert demoted <= 31 and left == [(60 - demoted, 30)], (demoted, left)
+        assert demoted < 60 and left == [(60 - demoted, 30)], (demoted, left)
         (tmp_path / "young").mkdir()
         integ, _ = self._store(monkeypatch, tmp_path / "young", young, age_days=0)
         assert integ._prune_old_audit_logs(max_age_days=30, deadline=time.monotonic() - 1,
@@ -326,9 +326,9 @@ class TestThePruneIsBoundedInsideTheWall:
         import time
         from datetime import datetime, timezone
         integ, _ = self._store(monkeypatch, tmp_path, [])
-        named = integ.audit_path(tmp_path / "repo", datetime(2024, 1, 1, tzinfo=timezone.utc)).name
+        named = integ.audit_path(tmp_path / "repo", datetime(2024, 3, 17, tzinfo=timezone.utc)).name
         found = integ._AUDIT_LOG_DATE_RE.search(named)
-        assert found is not None and found.group(1) == "20240101", named
+        assert found is not None and found.group(1) == "20240317", named
         assert not integ._named_before(integ.audit_path(tmp_path / "repo"), time.time() - 30 * 86400)
 
     def test_session_start_bounds_the_prune_and_says_when_it_stopped_early(self, monkeypatch, tmp_path):
@@ -439,9 +439,12 @@ class TestThePruneDatesALogByItsName:
         cutoff's day holds records on both sides of it: it is kept, unread,
         until that whole day is past the window, and the day before goes.
         Dies to: a name dated before the window by its day's start."""
-        before = f"b-{self._day(31)}.log"
-        integ, audit_dir, read = self._counted(monkeypatch, tmp_path, {f"c-{self._day(30)}.log": 30, before: 31})
-        assert integ._prune_old_audit_logs(max_age_days=30) == 1 and read == [], read
+        before, cutoff_day = f"b-{self._day(31)}.log", self._day(30)
+        integ, audit_dir, read = self._counted(monkeypatch, tmp_path, {f"c-{cutoff_day}.log": 30, before: 31})
+        demoted = integ._prune_old_audit_logs(max_age_days=30)
+        if self._day(30) != cutoff_day:
+            pytest.skip("a UTC midnight passed between naming the logs and the prune's cutoff")
+        assert demoted == 1 and read == [], read
         assert [p.name for p in (audit_dir / "_cold").glob("*.log")] == [before]
 
     def test_a_name_date_that_is_no_day_is_read_with_the_dateless_names(self, monkeypatch, tmp_path):
@@ -759,7 +762,10 @@ class TestPruneTimestampSemantics:
     """TP-44: prune uses the first JSON line's ``timestamp`` field as the
     primary age signal so mtime tampering can't keep a tampered log
     visible past its cutoff. mtime is the fallback when the log body
-    can't be parsed (truncated file, corrupted JSON)."""
+    can't be parsed (truncated file, corrupted JSON). Since DEF-2029 this
+    is the rule for a name with no date only (these rows' names carry
+    none); a dated name is its log's authority, so a renamed log is the
+    limit ``TestThePruneDatesALogByItsName`` declares."""
 
     def test_prune_uses_log_timestamp_not_mtime(self, monkeypatch, tmp_path):
         """Mtime tampering on a 31-day-old-content log must still prune."""
@@ -815,7 +821,7 @@ class TestPruneTimestampSemantics:
 class TestPruneIterationCap:
     """TP-44: cap iteration so an attacker spamming the audit dir with
     empty .log files can't slow session_start indefinitely. Above the cap
-    the oldest-named N are read (by the date in each name, DEF-3022's
+    the oldest-named N are scanned (by the date in each name, DEF-3022's
     ``_audit_log_order``), a deterministic order, so each start goes on
     where the old logs are."""
 

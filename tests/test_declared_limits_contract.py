@@ -250,7 +250,10 @@ class TestTheSentenceSplitter:
 #: sees (an encoded program, a script file, pieces nothing binds, a program
 #: held in a variable), each with its pin in `TestTheCoverageContract` or
 #: `TestCrossShellRouting`, so a form that closes moves the census by one.
-_CENSUS_ON_2026_10_11 = {"docs/HOOKS.md": 29, "docs/SHARP_EDGES.md": 3}
+#: SHARP_EDGES 3 -> 4 on 2026-11-02: the audit prune dates a log by its
+#: name, so a renamed log is its declared limit, pinned both ways in
+#: `TestThePruneDatesALogByItsName`.
+_CENSUS_ON_2026_10_11 = {"docs/HOOKS.md": 29, "docs/SHARP_EDGES.md": 4}
 
 
 def test_the_census_is_the_pinned_population():

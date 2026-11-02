@@ -1547,8 +1547,8 @@ def _audit_log_order(f: Path) -> tuple[str, str]:
     none (:func:`_audit_log_day`) before every dated one; then the name. A
     sort by name alone orders by repository slug, so a bounded scan would
     read the same first slugs every start and never reach an old log late
-    in the alphabet; and the scan stops at the first name inside the window,
-    which hides no old log only in this order."""
+    in the alphabet; and the scan's stop at the first name inside the
+    window is sound only in this order, where every later name is younger."""
     return (_audit_log_day(f), f.name)
 
 
@@ -1591,15 +1591,15 @@ def _prune_old_audit_logs(max_age_days: int = 30, *, deadline: float | None = No
     dates a log by its name where the name carries a date: one named before
     the window (:func:`_named_before`) is demoted unopened, and the scan
     stops at the first name inside it, every later one being younger, so no
-    young log is opened at any start (DEF-2029: each start had read them
-    again, up to its one-second bound). A name with no date is opened, its
+    young log named with a date is opened at any start (DEF-2029: each start
+    had read them again, up to its one-second bound). A name with no date is opened, its
     first line's timestamp the authority, else its mtime. A renamed log is
     the declared limit: one renamed into the window keeps its old records,
     and one renamed out of it is demoted young, into ``_cold/``.
     ``deadline`` (a ``time.monotonic()`` reading) stops it before the next
-    log; ``on_stop`` is then called with how many unread logs are named before the window
-    (:func:`_named_before`, those past the cap among them) and the window's
-    days, and not at all when none is. On the Windows box
+    log; ``on_stop`` is then called with how many logs it did not reach are
+    named before the window (:func:`_named_before`, those past the cap among
+    them) and the window's days, and not at all when none is. On the Windows box
     5,000 first-line reads took 11.7 s, and SessionStart's banner was cut at
     its 13 s wall inside this scan (DEF-3022).
     """
