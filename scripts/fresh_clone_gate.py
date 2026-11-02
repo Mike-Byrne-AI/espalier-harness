@@ -100,6 +100,12 @@ run_bounded = _bounded_spawn()
 
 #: The gate's own refusal code -- outside pytest's 0..5.
 GATE_REFUSED = 70
+#: The file the suite's temp sweep reads in a scratch the gate makes: this
+#: process's pid, so a gate killed mid-leg leaves clones and venvs the next
+#: session start removes (``tests/_temp_sweep.py``); every exit the gate lives
+#: through on purpose drops it, so a scratch kept for reading stays; ``--keep``
+#: never writes it, so a kept run killed mid-leg keeps its scratch too.
+LOCK_NAME = ".lock"
 
 #: The tier's receipt, matched by its TAIL. Both real spellings:
 #: ``proof: PASS -- N of N command(s) ran`` and
@@ -622,6 +628,13 @@ def _main(args: argparse.Namespace) -> int:
     made_scratch = args.scratch is None
     scratch = Path(tempfile.mkdtemp(prefix="espalier-gate-")) if made_scratch else Path(args.scratch).resolve()
     scratch.mkdir(parents=True, exist_ok=True)
+    if made_scratch and not args.keep:
+        (scratch / LOCK_NAME).write_text(str(os.getpid()), encoding="utf-8")
+        print(f"gate: scratch {scratch} is locked to this run: a killed run's scratch goes at the box's next "
+              "pytest session start (--keep keeps it)", flush=True)
+    elif not made_scratch:
+        # A named scratch can hold a killed run's lock, which would let a sweep take it mid-run.
+        (scratch / LOCK_NAME).unlink(missing_ok=True)
     reuse = Path(args.reuse_venv).resolve() if args.reuse_venv else None
 
     legs: list[Leg] = []
@@ -647,6 +660,9 @@ def _main(args: argparse.Namespace) -> int:
         _remove_own(scratch, legs, made_scratch, reuse)
     else:
         print(f"gate: scratch kept at {scratch}", flush=True)
+    # What the run leaves on purpose (a failed leg's scratch, a reused venv's root) is
+    # the operator's, so unlocked; an exception or an interrupt leaves the lock.
+    (scratch / LOCK_NAME).unlink(missing_ok=True)
     return rc
 
 

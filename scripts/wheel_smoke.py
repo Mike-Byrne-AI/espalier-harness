@@ -40,6 +40,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+#: The file the suite's temp sweep reads in a work dir this script makes:
+#: this process's pid, so a run killed mid-way leaves a dir the next session
+#: start removes (``tests/_temp_sweep.py``); a run asked to keep its dir never
+#: writes it, so a kept dir stays even when its run is killed.
+LOCK_NAME = ".lock"
 
 # ── Expected deployed surface — single source of truth for the assertions ────
 #
@@ -627,6 +632,8 @@ def run_smoke(args: argparse.Namespace) -> SmokeReport:
                 "either pass --wheel to point at an existing wheel or drop --skip-build",
             ))
         scratch_dist = Path(tempfile.mkdtemp(prefix="wheel-smoke-dist-"))
+        if not args.keep_temp:
+            (scratch_dist / LOCK_NAME).write_text(str(os.getpid()), encoding="utf-8")
         try:
             wheel = build_wheel(REPO_ROOT, scratch_dist)
             report.add(StepResult("build_wheel", "PASS", wheel.name))
@@ -639,6 +646,8 @@ def run_smoke(args: argparse.Namespace) -> SmokeReport:
     report.wheel_path = str(wheel)
 
     scratch = Path(tempfile.mkdtemp(prefix="wheel-smoke-"))
+    if not args.keep_temp:
+        (scratch / LOCK_NAME).write_text(str(os.getpid()), encoding="utf-8")
     venv_dir = scratch / "venv"
     target = scratch / "target"
     report.target = str(target)

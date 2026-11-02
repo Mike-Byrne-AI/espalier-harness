@@ -529,10 +529,8 @@ def _spelling_rc(head: str) -> int | str:
     the dead message carries: a dead spelling and a missing precondition look
     the same in a boolean and different in an rc."""
     from bench.reachability_differential import run_bash_group
-    rc, timed_out = run_bash_group(
-        ["/bin/bash", "-c", _prefix_for(head)],
-        cwd=tempfile.mkdtemp(prefix="gm-dead-"), timeout=10,
-    )
+    with tempfile.TemporaryDirectory(prefix="gm-dead-", ignore_cleanup_errors=True) as scratch:
+        rc, timed_out = run_bash_group(["/bin/bash", "-c", _prefix_for(head)], cwd=scratch, timeout=10)
     return "timeout" if timed_out else rc
 
 

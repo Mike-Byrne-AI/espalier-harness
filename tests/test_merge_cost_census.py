@@ -288,3 +288,25 @@ class TestStaleIsTheBoardsReadOnTheMergeParents:
         assert "re-raise" not in text
         rows[1]["near"] = ["b.py (both changed)"]
         assert "more than half are near, so re-raise the rule" in mcc.render(["stale"], None, None, rows)
+
+
+def test_the_scratch_clones_holder_carries_this_processs_lock(tmp_path, monkeypatch):
+    """A killed census leaves its clone's holder locked, so the suite's next
+    session start removes it (``tests/_temp_sweep.py``); the caller removes it
+    on every exit it lives through."""
+    import tempfile
+
+    from tests import _temp_sweep
+
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    seen: dict = {}
+
+    def runner(argv):
+        dest = Path(argv[-1])
+        seen["holder"], seen["ours"] = dest.parent, _temp_sweep.lock_is_ours(dest.parent)
+        return 0, "", ""
+
+    clone = mcc.scratch_clone(tmp_path / "root", runner)
+    assert seen["holder"] == clone.parent and clone.parent.parent == tmp_path
+    assert seen["ours"], "the clone's holder had no pid lock while git cloned into it"
+    assert clone.parent.name.startswith(_temp_sweep.OWNED_PREFIXES) and mcc.LOCK_NAME == _temp_sweep.LOCK_NAME
