@@ -785,8 +785,9 @@ class TestTheTierGateCannotParkThePullRequest:
     def test_the_parallel_and_serial_cells_run_their_own_leg(self):
         """The two required matrices split one tier by leg: `test` runs every
         line but the serial one, `test-serial` runs that line alone, so the
-        wall-clock-budget files no longer run in series after the parallel
-        leg. The same literal five-cell matrix on both, for the park reason."""
+        serial files (scripts/proof_tier.py::SERIAL_FILES) no longer run in
+        series after the parallel leg. The same literal five-cell matrix on
+        both, for the park reason."""
         jobs = self._ci()["jobs"]
         runs = {jid: next(s["run"] for s in jobs[jid]["steps"] if "proof_tier.py --run" in (s.get("run") or ""))
                 for jid in self.REQUIRED_JOBS}

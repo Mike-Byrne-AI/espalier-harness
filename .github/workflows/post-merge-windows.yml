@@ -1,7 +1,7 @@
 name: Post-merge Windows leg
 # Advisory: the serial test files (scripts/proof_tier.py's SERIAL_FILES, the
-# wall-clock-budget and timeout-near files the local tier keeps at one worker)
-# on windows-latest after each push to main. It gates nothing and reverts
+# files the local tier keeps off its parallel pool and runs at one worker) on
+# windows-latest after each push to main. It gates nothing and reverts
 # nothing: tools/cc/board.py reads its newest push run through
 # tools/cc/_post_merge.py's base-run rule and prints a red on the board's
 # checks: line in the legs' shape, `post-merge-windows (main, advisory): red
@@ -17,14 +17,29 @@ name: Post-merge Windows leg
 # tests/test_ci_job_bounds.py pins that, this file's name, its push trigger,
 # no continue-on-error, the ceiling below and the bound.
 #
-# No concurrency group: the required cells' queue over 240 jobs (2026-10-18 to
-# 10-29) had a median of 0.2 min and a worst of 1.7, and the serial files ran
-# in 2 to 4 minutes as portability.yml dispatches of the same pytest line on a
-# shallow checkout (2026-10-29 and 10-30, runs 40402314684 and 40828944655;
-# this job adds proof_tier.py's receipt around it), so two of it overlap only
-# when two merges land within about four minutes, and a cancelled run would
-# read as no verdict. Re-measure that queue over the leg's first day: a median
-# above 2 minutes, or a worst above 5, asks for a group with cancel-in-progress.
+# No concurrency group: two runs of it overlap when two merges land within one
+# job's length, and each keeps its verdict, where a group with
+# cancel-in-progress would cancel the older and leave it none. The serial
+# files first ran in 3:59 and 2:16 as portability.yml dispatches of the same
+# pytest line on a shallow checkout (runs 40402314684 and 40828944655,
+# 2026-10-26 and 10-29). As this job, which adds proof_tier.py's receipt, the
+# leg grows with SERIAL_FILES: 2.25 to 4.2 minutes over its first 34 push runs
+# (from 2026-10-31 08:16Z), 4.1 to 6.3 over the 12 after the cited-pin run
+# joined the list (#404), 7.8 on the first after the axis registry's run did
+# (#416, run 41343705282), and 4.7 to 7.6 over the 4 after
+# tests/test_verify_pins.py did (#419, to 2026-11-02 00:40Z, run 41367861575);
+# 1 of the first 46 consecutive pairs overlapped. The
+# required cells' queue (a `test (3.x)` job's start less its test.yml run's
+# creation) was a median of 0.2 minutes and a worst of 1.7 over 240 jobs
+# (2026-10-18 to 10-29). Over the leg's first day it was 0.25 and 6.87 over
+# 215 first-attempt jobs: past the worst of 5 that was to ask for a group,
+# but that wait (run 41228678633, 2026-10-31 18:17Z) came with no run of this
+# leg going, and the leg's one self-overlap (11-01 03:18 to 03:23Z) met no
+# test.yml run within ten minutes, so a group would have moved neither. The
+# leg's own queue (run created to job started) read a median of 0.03 minutes
+# and a worst of 0.25 over its first 47 push runs. Read both queues again
+# when SERIAL_FILES grows after #419, or when a run of this job passes 10
+# minutes.
 on:
   push:
     branches: [main]
