@@ -213,14 +213,15 @@ class TestWhenItStandsDown:
 
     def test_loading_checkout_sync_leaves_the_import_path_and_the_bare_names_alone(self):
         """In a fresh interpreter, where neither ``tools/cc`` on the path nor
-        ``_json_safe`` was there before the load."""
+        ``_json_safe`` was there before the load. The census folds case as the
+        prefix does (``normcase`` lowercases on Windows, DEF-5059)."""
         program = (
-            "import json, sys\n"
+            "import json, os, sys\n"
             f"sys.path.insert(0, {str(REPO_ROOT)!r})\n"
             "from tests import _temp_sweep as ts\n"
             "path, names = list(sys.path), set(sys.modules)\n"
             "alive = ts.pid_alive()\n"
-            "cc = lambda m: (getattr(m, '__file__', None) or '').replace(chr(92), '/').startswith(ts._TOOLS_CC_PREFIX)\n"
+            "cc = lambda m: os.path.normcase(getattr(m, '__file__', None) or '').replace(chr(92), '/').startswith(ts._TOOLS_CC_PREFIX)\n"
             "added = sorted(n for n in set(sys.modules) - names if cc(sys.modules[n]))\n"
             "print(json.dumps({'path_kept': sys.path == path, 'added_from_tools_cc': added,"
             " 'self_alive': alive(__import__('os').getpid())}))\n"
