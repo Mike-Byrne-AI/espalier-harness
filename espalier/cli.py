@@ -8101,10 +8101,11 @@ def _back_up_settings(settings_path: Path) -> Path:
     the copy (under ``.espalier/settings-backups/``; the legacy ``.bak`` rungs
     beside the file are read for the dedup below and never written again).
 
-    Shared by the three paths that mutate an operator-owned ``settings.json``:
+    Shared by the paths that mutate an operator-owned ``settings.json``:
     :func:`repair_hook_wiring_in_settings`,
-    :func:`merge_hooks_into_settings` and
-    :func:`rewire_interpreter_in_settings`. Climbs the ladder from ``.bak``:
+    :func:`merge_hooks_into_settings`, and
+    :func:`rewire_interpreter_in_settings` with the statusLine head step
+    beside it (:func:`_write_rewritten_settings`). Climbs the ladder from ``.bak``:
     an existing rung that already holds these exact bytes IS the copy, and is
     returned without a write; otherwise the first free rung is written. Never
     clobbers an existing backup -- both ``settings.json`` and its ``.bak`` are
@@ -8691,10 +8692,11 @@ def _report_interpreter_rewire(settings_path: Path) -> str:
     if result.status in (REWIRE_DONE, REWIRE_NOTHING, REWIRE_NO_TARGET):
         head = move_statusline_head_in_settings(
             settings_path,
-            shim_sources_under_bash=_deployed_shim_sources_under_bash(
+            shim_sources_under_bash=lambda: _deployed_shim_sources_under_bash(
                 Path(settings_path).parent.parent),
         )
-    unwritten = "" if head.status == REWIRE_DONE else " No file was written."
+    head_wrote = head.status == REWIRE_DONE
+    unwritten = "" if head_wrote else " No file was written."
     if result.status == REWIRE_DONE:
         print(
             f"--rewire-interpreter: rewired "
@@ -8710,7 +8712,9 @@ def _report_interpreter_rewire(settings_path: Path) -> str:
         print(f"--rewire-interpreter: nothing to rewire to.{unwritten}", file=sys.stderr)
     elif result.status == REWIRE_NOTHING:
         print(
-            f"--rewire-interpreter: nothing to rewire -- every interpreter this "
+            f"--rewire-interpreter: "
+            f"{'no interpreter needed rewiring' if head_wrote else 'nothing to rewire'} "
+            f"-- every interpreter this "
             f"command can read already starts and meets Python {floor_text()}+."
             f"{unwritten}",
             file=sys.stderr,
@@ -8813,16 +8817,17 @@ def _report_interpreter_rewire(settings_path: Path) -> str:
         print(
             f"WARN: --rewire-interpreter left the {where} head as it is: the "
             f"dot form runs {STATUSLINE_SHIM} under Git Bash through the shim's "
-            f"first line, and the copy here is kept as yours and does not open "
-            f"with that line, so the dot would blank the statusline under Git "
-            f"Bash. Take the packaged shim's first line into your copy, then "
-            f"re-run.\n    {where}: `{command}`",
+            f"first line, and the copy init leaves here does not open with that "
+            f"line (a copy kept as yours, one init cannot write, or one it could "
+            f"not read), so under Git Bash the dot form would not run either. "
+            f"Take the packaged shim's first line into that copy (or make it "
+            f"writable), then re-run.\n    {where}: `{command}`",
             file=sys.stderr,
         )
     return REWIRE_DONE if REWIRE_DONE in (result.status, head.status) else result.status
 
 
-REWIRE_DONE = "rewired"            # interpreter swapped; detail = .bak filename
+REWIRE_DONE = "rewired"            # interpreter swapped, or the statusLine head moved; detail = .bak filename
 REWIRE_NOTHING = "nothing"         # every wired interpreter already clears the floor
 REWIRE_NO_FILE = "no_file"         # no settings.json to rewire
 REWIRE_UNREADABLE = "unreadable"   # a parent of settings.json denies traversal; detail = OS message
@@ -8834,7 +8839,8 @@ REWIRE_DUPLICATE_KEYS = "duplicate_keys"  # settings.json has a repeated key
 
 @dataclass
 class RewireResult:
-    """Result of :func:`rewire_interpreter_in_settings`."""
+    """Result of :func:`rewire_interpreter_in_settings`, and of
+    :func:`move_statusline_head_in_settings`, which reports in the same shape."""
 
     status: str
     detail: str = ""
@@ -9259,6 +9265,20 @@ def rewire_interpreter_in_settings(
                         changes=changes, declined=declined, unconfirmed=left)
 
 
+def _statusline_head_is_dotted(settings_path: Path) -> bool:
+    """Does ``settings_path``'s statusLine run the Windows shim behind the
+    dot? ``upgrade`` keys its remedy on it: the head step moves a bare or
+    called head and has nothing to move behind a dot. A file that cannot be
+    read, or has no string command, reads False."""
+    try:
+        settings = json.loads(surface_contract.decode_bom(Path(settings_path).read_bytes()))
+    except (OSError, ValueError):
+        return False
+    status_line = settings.get("statusLine") if isinstance(settings, dict) else None
+    command = status_line.get("command") if isinstance(status_line, dict) else None
+    return isinstance(command, str) and statusline_shim_dotted(command)
+
+
 def _dotted_statusline_head(command: str) -> str:
     """``command`` with its bare or called Windows statusline shim head put
     behind the dot, DEF-3017's one form (DEF-4071): PowerShell's ``&`` goes,
@@ -9281,16 +9301,24 @@ def _deployed_shim_sources_under_bash(repo_root: Path) -> bool:
     (:func:`_deploy_managed_py`, asked here without writing), so the copy
     read is the packaged one or the kept one, by doctor's own first-line
     test. An old install's managed shim is the common case, and it is about
-    to be replaced, so it never holds the move."""
-    source = _deploy_source_path(STATUSLINE_SHIM)
-    dest = repo_root / STATUSLINE_SHIM
-    action = _deploy_managed_py(source, dest, dry_run=True)
-    replaced = action in ("created", "updated_managed", "skipped_no_drift")
-    return _doctor._shim_runs_under_bash(source if replaced else dest)
+    to be replaced, so it never holds the move -- unless the deploy cannot
+    write it (a read-only copy, as a read-only checkout leaves it): the head
+    would then be moved over a shim that stays old, blank under Git Bash
+    (failure-mode review). A read that fails answers False: the safe side
+    is the head left where it works."""
+    try:
+        source = _deploy_source_path(STATUSLINE_SHIM)
+        dest = repo_root / STATUSLINE_SHIM
+        action = _deploy_managed_py(source, dest, dry_run=True)
+        replaced = action in ("created", "skipped_no_drift") or (
+            action == "updated_managed" and os.access(dest, os.W_OK))
+        return _doctor._shim_runs_under_bash(source if replaced else dest)
+    except OSError:
+        return False
 
 
 def move_statusline_head_in_settings(
-    settings_path: Path, *, shim_sources_under_bash: bool = True,
+    settings_path: Path, *, shim_sources_under_bash: Callable[[], bool],
 ) -> RewireResult:
     """Put a bare or called Windows statusline shim head behind the dot.
 
@@ -9309,7 +9337,8 @@ def move_statusline_head_in_settings(
     * **over espalier's own shim, bare or called**: a statusLine of the
       operator's own and a dotted head are left as they are;
     * **where the shim the deploy leaves can be sourced by Git Bash**
-      (``shim_sources_under_bash``): over a kept copy that cannot, the dot
+      (``shim_sources_under_bash``, a required judge with no default, asked
+      only once a head is there to move): over a copy that cannot, the dot
       would turn a working bare line blank under Git Bash, so the head is
       left and returned as declined, for the report to say why.
 
@@ -9325,7 +9354,7 @@ def move_statusline_head_in_settings(
     if (not isinstance(command, str) or _render_host_is_posix()
             or statusline_shim_end(command) < 0 or statusline_shim_dotted(command)):
         return RewireResult(REWIRE_NOTHING)
-    if not shim_sources_under_bash:
+    if not shim_sources_under_bash():
         return RewireResult(REWIRE_NOTHING, declined=[("statusLine", command)])
     moved = _dotted_statusline_head(command)
     status_line["command"] = moved
@@ -10351,7 +10380,8 @@ def _disarmed_diagnosis_shape(repo_root: Path) -> tuple[str, list[str], bool]:
             rewire = f"`{py} -m espalier init . --rewire-interpreter`"
             if resolver_clears_floor:
                 remedy = (f"Rewire the hook commands to one that does: {rewire} "
-                          f"(changes only the interpreter name; keeps a .bak of the file).")
+                          f"(changes only the interpreter name, and on Windows a bare or "
+                          f"`&` statusLine head; keeps a .bak of the file).")
             elif (unheard := _unheard_on_path()) is not None:
                 # A candidate never answered `--version` (DEF-5015): no proof
                 # that none is installed, so not "put a Python on PATH".
@@ -11370,12 +11400,19 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                     remedy = (f" -- `{_remedy_py()} -m espalier merge-settings .` adds "
                               "espalier's statusLine, on request, and never touches one "
                               "of yours (set the key to null to keep the statusline off)")
+                elif shell_mismatch and _statusline_head_is_dotted(settings_path):
+                    # A dotted head is named only over a shim Git Bash cannot
+                    # source, and on this version-current branch that shim is
+                    # one kept as the operator's (an old managed copy reads as
+                    # drift above): no verb moves anything, so naming one would
+                    # send them round again (failure-mode review, DEF-620's loop).
+                    remedy = (" -- the shim it sources is kept as yours and its first line "
+                              "is not the one Git Bash runs: take the packaged shim's first "
+                              "line into it (`doctor` names it)")
                 elif shell_mismatch:
-                    # DEF-4071: the verb that moves the head, on request (its
-                    # deploy also refreshes a shim older than the dot form).
+                    # DEF-4071: the verb that moves a bare or called head, on request.
                     remedy = (f" -- `{_remedy_py()} -m espalier init . --rewire-interpreter` "
-                              "refreshes the shim and puts a bare or `&` head behind a "
-                              "dot, on request")
+                              "puts its bare or `&` head behind a dot, on request")
                 else:
                     remedy = ""
                 print(f"[upgrade] harness is current ({__version__}); "
@@ -15276,7 +15313,10 @@ def build_parser() -> argparse.ArgumentParser:
              "This changes ONLY the interpreter name at the front of each hook "
              "command -- your args, permissions and every other key are "
              "preserved -- and keeps a .bak of the file first. Interpreters that already "
-             "meet the floor are left alone, so it is idempotent. A malformed "
+             "meet the floor are left alone, so it is idempotent. On a Windows "
+             "host it also puts a statusLine that runs espalier's shim bare or "
+             "behind PowerShell's & behind a dot, the one form both of Claude "
+             "Code's Windows shells run. A malformed "
              "settings.json is refused, never overwritten.",
     )
     p_init.add_argument(

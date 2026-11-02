@@ -804,11 +804,14 @@ def statusline_shell_mismatch(command: str, repo_root: Path | None) -> str | Non
     git_bash = git_bash_path(repo_root) is not None
     # The verb that moves a bare or called head, on request (DEF-4071); over a
     # kept shim Git Bash cannot source it declines and says what to take.
-    move = (
-        f"`{_remedy_py()} -m espalier init . --rewire-interpreter` refreshes the "
-        "shim and puts the head behind a dot, the form either shell runs, keeping "
-        "a backup of your file; or, with the shim current, {} by hand."
-    )
+    # Built by a function, never `str.format` over the interpolated
+    # interpreter: a path with a brace in it would raise (code review).
+    def move(edit: str) -> str:
+        return (
+            f"`{_remedy_py()} -m espalier init . --rewire-interpreter` refreshes the "
+            "shim and puts the head behind a dot, the form either shell runs, keeping "
+            f"a backup of your file; or, with the shim current, {edit} by hand."
+        )
     if called and git_bash:
         return (
             "statusLine.command calls the Windows shim through PowerShell's `&`, "
@@ -816,7 +819,7 @@ def statusline_shell_mismatch(command: str, repo_root: Path | None) -> str | Non
             "Bash is on this host and Claude Code runs the statusline under it, "
             "where a leading `&` is a syntax error: the statusline goes blank, "
             "and so does the line that reports a missing interpreter. "
-            + move.format("replace the leading `&` with a `.`")
+            + move("replace the leading `&` with a `.`")
         )
     if not called and not git_bash:
         return (
@@ -829,7 +832,7 @@ def statusline_shell_mismatch(command: str, repo_root: Path | None) -> str | Non
             "at its bin\\bash.exe), so Claude Code runs the statusline under "
             "PowerShell, which reads a quoted head as an expression: the "
             "statusline goes blank, and so does the line that reports a missing "
-            "interpreter. " + move.format("put `. ` before the command")
+            "interpreter. " + move("put `. ` before the command")
         )
     return None
 
@@ -3368,7 +3371,8 @@ def run_doctor_check(
             f"run `{hint} -m espalier init . "
             "--rewire-interpreter` to rewire the hook commands to an "
             "interpreter that resolves on this host and meets Python "
-            f"{floor_text()}+ (changes only the interpreter name; keeps a .bak of the file)"
+            f"{floor_text()}+ (changes only the interpreter name, and on Windows a "
+            "bare or `&` statusLine head; keeps a .bak of the file)"
         )
         if not resolver_clears_floor and _unheard_on_path() is not None:
             # A candidate never answered `--version`, the rewire's or one a

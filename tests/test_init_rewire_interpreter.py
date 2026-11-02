@@ -584,7 +584,7 @@ class TestTheRewireMovesAWindowsHeadWhenAsked:
         '. "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" python',
         'node "${CLAUDE_PROJECT_DIR}/my_statusline.js"',
         'python "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.py" || echo x',
-    ], ids=["dot-head", "not-espalier", "posix-render"])
+    ], ids=["dot-head", "not-espalier", "posix-string"])
     def test_a_line_with_no_legacy_shim_head_is_never_touched(self, tmp_path, monkeypatch, capsys, command):
         self._host(tmp_path, monkeypatch)
         path = self._write(tmp_path, command)
@@ -642,6 +642,141 @@ class TestTheRewireMovesAWindowsHeadWhenAsked:
         shim.write_bytes(f"@echo off\r\n{MARKER_BATCH_COMMENT}\r\nrem an older shim\r\n".encode())
         assert cli._report_interpreter_rewire(path) == cli.REWIRE_DONE, capsys.readouterr().err
         assert self._command(path) == f". {self._SHIM} python"
+
+    def test_a_managed_shim_the_deploy_cannot_write_holds_the_head(self, tmp_path, monkeypatch, capsys):
+        """Failure-mode review: a managed shim the deploy cannot replace (a
+        read-only copy, as a read-only checkout leaves it) stays old, so a
+        moved head would be blank under Git Bash over it."""
+        import stat
+
+        from espalier.managed_markers import MARKER_BATCH_COMMENT
+
+        self._host(tmp_path, monkeypatch)
+        legacy = f"{self._SHIM} python"
+        path = self._write(tmp_path, legacy)
+        shim = tmp_path / "repo" / "tools" / "cc" / "statusline.cmd"
+        shim.parent.mkdir(parents=True)
+        shim.write_bytes(f"@echo off\r\n{MARKER_BATCH_COMMENT}\r\nrem an older shim\r\n".encode())
+        shim.chmod(stat.S_IREAD)
+        try:
+            status = cli._report_interpreter_rewire(path)
+        finally:
+            shim.chmod(stat.S_IREAD | stat.S_IWRITE)
+        err = capsys.readouterr().err
+        assert self._command(path) == legacy, err
+        assert status == cli.REWIRE_NOTHING, (status, err)
+        assert "cannot write" in err and f"`{legacy}`" in err, err
+
+    def test_both_steps_write_and_each_says_what_it_wrote(self, tmp_path, monkeypatch, capsys):
+        """A dead interpreter behind a called head: the floor rewire swaps the
+        word and the head step moves the head, each on its own backup rung."""
+        self._host(tmp_path, monkeypatch)
+        path = self._write(tmp_path, f"& {self._SHIM} py -3")
+        status = cli._report_interpreter_rewire(path)
+        err = capsys.readouterr().err
+        assert self._command(path) == f". {self._SHIM} python", err
+        assert status == cli.REWIRE_DONE, (status, err)
+        assert f"`& {self._SHIM} py -3` -> `& {self._SHIM} python`" in err, err
+        assert f"`& {self._SHIM} python` -> `. {self._SHIM} python`" in err, err
+        backups = list((tmp_path / "repo" / ".espalier" / "settings-backups").iterdir())
+        assert len(backups) == 2, backups
+
+    def test_a_refused_file_never_reaches_the_head_step(self, tmp_path, monkeypatch, capsys):
+        """A repeated key is refused by the read both steps share; the head
+        step never runs over it, and "NOT modified" stays true."""
+        self._host(tmp_path, monkeypatch)
+        path = tmp_path / "repo" / ".claude" / "settings.json"
+        path.parent.mkdir(parents=True)
+        command = json.dumps(f"& {self._SHIM} python")
+        path.write_text('{"statusLine": {"command": %s}, "statusLine": {"command": %s}}'
+                        % (command, command), encoding="utf-8")
+        before = path.read_bytes()
+        status = cli._report_interpreter_rewire(path)
+        err = capsys.readouterr().err
+        assert path.read_bytes() == before, err
+        assert status == cli.REWIRE_DUPLICATE_KEYS, (status, err)
+
+    def test_the_head_step_has_no_permissive_default_and_one_caller(self):
+        """Failure-mode review: the shim judge is required (a caller that
+        forgot it got the move over a shim Git Bash cannot source), and the
+        step is reached from the report alone, which only `cmd_init` calls,
+        behind the flag: no unflagged path migrates a working line."""
+        import ast
+        import inspect
+
+        param = inspect.signature(cli.move_statusline_head_in_settings).parameters[
+            "shim_sources_under_bash"]
+        assert param.default is inspect.Parameter.empty, param
+        callers: dict[str, set[str]] = {}
+        for module in sorted((Path(cli.__file__).parent).glob("*.py")):
+            tree = ast.parse(module.read_text(encoding="utf-8"))
+
+            def visit(node: ast.AST, owner: str) -> None:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    owner = node.name
+                if isinstance(node, ast.Call):
+                    name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+                    if name in ("move_statusline_head_in_settings", "_report_interpreter_rewire"):
+                        callers.setdefault(name, set()).add(f"{module.name}::{owner}")
+                for child in ast.iter_child_nodes(node):
+                    visit(child, owner)
+
+            visit(tree, "<module>")
+        assert callers == {
+            "move_statusline_head_in_settings": {"cli.py::_report_interpreter_rewire"},
+            "_report_interpreter_rewire": {"cli.py::cmd_init"},
+        }, callers
+        lines = inspect.getsource(cli.cmd_init).splitlines()
+        at = next(i for i, ln in enumerate(lines) if "_report_interpreter_rewire(" in ln)
+        assert lines[at - 1].strip() == 'if getattr(args, "rewire_interpreter", False):', (
+            "the call is no longer behind the flag", lines[at - 1])
+
+    @pytest.mark.parametrize("dotted", [False, True], ids=["bare-head", "dotted-over-kept-shim"])
+    def test_upgrade_names_the_flag_only_where_it_moves_something(
+        self, tmp_path, monkeypatch, capsys, dotted,
+    ):
+        """Failure-mode review: upgrade's version-current line named the flag
+        for every line one Windows shell cannot run, but a dotted head over a
+        shim kept as the operator's has nothing for it to move, and upgrade
+        then said the same again (DEF-620's loop). It names the flag for a
+        bare or called head, and the shim's first line for a dotted one."""
+        import argparse
+        import subprocess
+
+        from espalier import doctor as doctor_module
+        from tests._quiet_git import NO_BACKGROUND_GIT
+
+        monkeypatch.setattr(cli, "_render_host_is_posix", lambda: False)
+        monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", True, raising=False)
+        monkeypatch.setattr(doctor_module, "_host_is_windows", lambda: True)
+        monkeypatch.setattr(doctor_module, "git_bash_path", lambda *_: None)
+        tree = tmp_path / "repo"
+        tree.mkdir()
+        (tree / "README.md").write_text("# t\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(tree), "init", "-q"], check=True, capture_output=True)
+        for key, value in NO_BACKGROUND_GIT:
+            subprocess.run(["git", "-C", str(tree), "config", key, value],
+                           check=True, capture_output=True)
+        monkeypatch.chdir(tree)
+        assert cli.cmd_init(argparse.Namespace(repo=str(tree), config=None,
+                                               write_gitignore=True)) == 0
+        path = tree / ".claude" / "settings.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        rendered = data["statusLine"]["command"]
+        if dotted:
+            (tree / "tools" / "cc" / "statusline.cmd").write_bytes(b"@echo off\r\nrem mine\r\n")
+        else:
+            data["statusLine"]["command"] = rendered[len(". "):]
+            path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        capsys.readouterr()
+        assert cli.cmd_upgrade(argparse.Namespace(repo=str(tree), execute=False, config=None)) == 0
+        out = capsys.readouterr().out
+        line = next((ln for ln in out.splitlines() if "Windows shells cannot run" in ln), "")
+        assert line, out
+        if dotted:
+            assert "--rewire-interpreter" not in line and "first line" in line, line
+        else:
+            assert "-m espalier init . --rewire-interpreter`" in line, line
 
     def test_init_moves_the_head_only_when_asked(self, tmp_path, monkeypatch, capsys):
         """The flag absent, a working line stays as it is: `init` keeps an

@@ -113,8 +113,8 @@ tell why, so the line names no cause. In order of likelihood:
 If the statusline goes **blank** instead, your `settings.json` predates
 the fallback (installs rendered before it keep their statusline:
 `merge-settings` adds espalier's `statusLine` only when the key is
-absent, and `--rewire-interpreter` swaps only the interpreter the line
-names), or it was rendered on the other kind of host and carried in by a
+absent, and `--rewire-interpreter` swaps the interpreter the line names
+and never adds the fallback), or it was rendered on the other kind of host and carried in by a
 tracked `settings.json` — a `||` clause cannot parse under Windows
 PowerShell 5.1, and a POSIX shell cannot run the `.cmd` shim's batch body. On Windows
 an older install can also carry a line written for the other shell:
