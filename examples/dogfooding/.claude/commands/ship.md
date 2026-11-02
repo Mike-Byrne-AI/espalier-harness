@@ -90,17 +90,19 @@ names -- and notes that `open` will refuse a deletion the driver did not make
 latest run of a check is red -- a check that is not required finishes after
 auto-merge has landed the lane and reports to nobody otherwise (the SessionStart
 banner's `Merged:` rule, the same states) -- so read that log
-(`gh run view <id> --log-failed`) before arming another lane on top of it. When
-the base's own post-merge proof is red, notes that `open` will refuse this lane
-(a `revert/` lane excepted) and names the way through -- the revert, or
-`open --base-red-ruled <ack id>` where the dispatcher ruled the red a
-fix-forward, with the run id the ack must name; likewise when two or more live
-sessions work in this checkout (Step 2). Where
-`handoff_push` is on, notes when this lane's commits carry no Session Log row
-(no new file under `memory/session-log.d/` and no change to
-`ESPALIER_MEMORY.md`): the handoff has not run for it, and `open` will refuse
-it without `--early "<reason>"` (and with it, past 3 lanes shipped since this
-seat's newest row). Prints the merge verdict against the base:
+(`gh run view <id> --log-failed`) before arming another lane on top of it.
+Then forecasts, as `` `open` will refuse this lane: `` and `open`'s own words,
+every state refusal `open` makes before its push: the one list `open` runs
+(`PRE_PUSH_CHECKS` in `tools/cc/ship.py`, read for the lane `lane` would make
+when HEAD is the base), so a refusal added there is forecast here with no
+second copy. Two of them name their way through: a red post-merge base (a
+`revert/` lane excepted) is cleared by the revert, or by `open --base-red-ruled
+<ack id>` where the dispatcher ruled the red a fix-forward, with the run id
+the ack must name; and where `handoff_push` is on, a lane whose commits carry
+no Session Log row (no new file under `memory/session-log.d/` and no change to
+`ESPALIER_MEMORY.md`) has not been handed off, and `open` refuses it without
+`--early "<reason>"` (and with it, past 3 lanes shipped since this seat's
+newest row). Prints the merge verdict against the base:
 clean; conflicts only on the record files (`ESPALIER_MEMORY.md`,
 `task-packs/FORWARD_LEDGER.md`, and `task-packs/LEDGER_PROBES.json` where a
 tree still keeps one), which `open` merges in first and resolves by shape; or

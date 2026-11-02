@@ -373,8 +373,8 @@ class TestBind:
 # ── preflight ────────────────────────────────────────────────────────────────
 
 def _preflight_answers(root, *, dirty="", untracked="", commits="abc1234 feat: a thing\n",
-                       merged="[]", base_runs="[]") -> dict:
-    answers = _reads(root)
+                       merged="[]", base_runs="[]", branch="lane/x", open_prs="[]") -> dict:
+    answers = _reads(root, branch=branch)
     answers.update({
         ("git", "fetch", "origin", "--quiet"): (0, "", ""),
         ("git", "status", "--porcelain", "-uno"): (0, dirty, ""),
@@ -386,6 +386,14 @@ def _preflight_answers(root, *, dirty="", untracked="", commits="abc1234 feat: a
         ("gh", "run", "list", "--workflow", "post-merge.yml"): (0, base_runs, ""),
         _ROW_FILES: _row_log(),   # no row added by the lane's own commits
         _LANE_DIFF: (0, "M\ttools/cc/ship.py\n", ""),   # the shape read: a code lane, nothing deleted
+        # `open`'s refusals before its push, read by the forecast (ship.PRE_PUSH_CHECKS):
+        # no pull request open for the lane, origin's copy of it (none) not ahead, the
+        # open pull requests (none), the head subject for the title.
+        ("gh", "pr", "list", "--head"): (0, "[]", ""),
+        ("git", "fetch"): (0, "", ""),
+        ("git", "rev-list", "--count"): (0, "0\n", ""),
+        ("gh", "pr", "list", "--state", "open"): (0, open_prs, ""),
+        ("git", "log", "-1"): (0, "feat: a thing\n", ""),
     })
     return answers
 
@@ -4629,3 +4637,216 @@ class TestTheModifiedPathsNoClaimNames:
         by_machine.clear()
         assert ship.preflight() == 0
         assert "no claim of win's names lane/x" in capsys.readouterr().out
+
+
+# ── DEF-4082: open's refusals before its push, one list preflight forecasts ───
+
+def _seat_holds(ship, tmp_path, monkeypatch, branch: str = "lane/x") -> tuple[dict, dict]:
+    """This seat (win) holds #41 (lane/y) open, and ``branch`` was never pushed."""
+    monkeypatch.setattr(ship, "_MAIL", TestOneOpenPullRequestPerSeat._channel(
+        "win", {"lane/y": "win", "lane/z": "air", branch: "win"}))
+    own = f"refs/remotes/origin/{branch}"
+    return {"open_prs": TestOneOpenPullRequestPerSeat._OTHERS}, {
+        TestOneOpenPullRequestPerSeat._UPSTREAM: TestOneOpenPullRequestPerSeat._NO_UPSTREAM,
+        TestOneOpenPullRequestPerSeat._OWN_REF + (own,): (0, "", ""),
+        ("git", "symbolic-ref", "-q", "refs/remotes/origin/HEAD"): (0, "refs/remotes/origin/main\n", ""),
+        ("git", "merge-base", "--is-ancestor"): (1, "", ""),
+    }
+
+
+def _a_marked_record(ship, tmp_path, monkeypatch) -> tuple[dict, dict]:
+    TestRecordFileMarkersStopTheShip._real_guard(tmp_path)
+    _memory(tmp_path, "2026-10-05")
+    TestRecordFileMarkersStopTheShip._half_merge(tmp_path)
+    return {}, {}
+
+
+def _two_sessions_here(ship, tmp_path, monkeypatch) -> tuple[dict, dict]:
+    ship._SYNC = _oracle(_two_sessions())
+    return {}, {}
+
+
+def _no_row_on_a_handoff_push_tree(ship, tmp_path, monkeypatch) -> tuple[dict, dict]:
+    _toml(tmp_path, "handoff_push = true\n")
+    _memory(tmp_path, "2026-10-09")
+    return {}, {_MEMORY_LOG: (0, "", "")}
+
+
+#: How each of ship.PRE_PUSH_CHECKS is made to refuse, alone, in the list's
+#: order: ``(keywords both verbs' answer tables take, answers set on both)``,
+#: after any stand-in it needs. A check added to the list with no way here to
+#: make it refuse reds test_every_check_in_the_list_has_a_way_here_to_refuse.
+_MAKE_IT_REFUSE = {
+    "head-is-base": lambda ship, root, mp: ({"branch": "main"}, {}),
+    "open-pull-request": lambda ship, root, mp: ({}, {_list_key(): _rows(_pr())}),
+    "origin-ahead": lambda ship, root, mp: ({}, {("git", "rev-list", "--count"): (0, "2\n", "")}),
+    "marked-record": _a_marked_record,
+    "shared-checkout": _two_sessions_here,
+    "no-session-log-row": _no_row_on_a_handoff_push_tree,
+    "red-base": lambda ship, root, mp: ({"base_runs": _RED_BASE}, {}),
+    "one-open-pull-request-per-seat": _seat_holds,
+    "no-title": lambda ship, root, mp: ({}, {("git", "log", "-1"): (0, "\n", "")}),
+}
+
+#: The refusals `open` raises before its push outside the list, by the
+#: message's literal head, each with the reason it stays outside.
+_RAISED_OUTSIDE_THE_LIST = {
+    "could not read --body-file": "an argument the operator passed, not the lane's state",
+    "--body-file": "an argument the operator passed (its encoding), not the lane's state",
+}
+#: The refusing callees `open_pr` calls before its push outside the list.
+_CALLED_OUTSIDE_THE_LIST = {
+    "refuse_unmade_deletions": "reads the shape after the merge-first step and the fold move the head "
+                               "(DEF-4064); preflight forecasts it from the shape before them",
+}
+
+
+def _message_head(call: ast.Call) -> str:
+    """The literal words a refusal's message opens with (an f-string up to its
+    first field), or the argument's source where it opens with none."""
+    arg = call.args[0] if call.args else None
+    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+        return arg.value.strip()
+    if isinstance(arg, ast.JoinedStr):
+        head = ""
+        for part in arg.values:
+            if not (isinstance(part, ast.Constant) and isinstance(part.value, str)):
+                break
+            head += part.value
+        if head.strip():
+            return head.strip()
+    return ast.unparse(arg) if arg is not None else ""
+
+
+def _callee(call: ast.Call) -> str:
+    func = call.func
+    return func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
+
+
+class TestPreflightForecastsEveryRefusalOpenMakesBeforeItsPush:
+    """DEF-4082. `preflight` forecast five of the refusals `open` makes before
+    its push and not five others -- `HEAD is <base>`, a pull request already
+    open for the lane, origin's copy of the lane ahead of HEAD, the
+    one-open-pull-request-per-seat hold (DEF-5038) and an empty title --
+    because its forecasts were a hand-kept copy of `open`'s checks, and each
+    forecast was added by hand when its refusal was. The seat hurt is the one
+    that runs /ship on a second lane: a preflight that reads clean, then a
+    refusal that pushes nothing. The checks are now one list
+    (``ship.PRE_PUSH_CHECKS``) that `open` runs and `preflight` forecasts in
+    `open`'s words; these rows derive from the list both ways."""
+
+    def test_every_refusal_open_raises_before_its_push_is_the_lists_or_named(self):
+        """Closed world, read from the source: every ``raise`` in open_pr
+        before its push, and every refusing callee it calls there, is the
+        list's loop or one of the few named outside it. Dies to: a refusal
+        added to `open` beside the list (the forecast would never know)."""
+        tree = ast.parse(SHIP.read_text(encoding="utf-8"))
+        verb = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "open_pr")
+        push = next(n.lineno for n in ast.walk(verb) if isinstance(n, ast.Assign)
+                    and any(isinstance(t, ast.Name) and t.id == "push" for t in n.targets))
+        loops = [n for n in ast.walk(verb) if isinstance(n, ast.For)
+                 and isinstance(n.iter, ast.Name) and n.iter.id == "PRE_PUSH_CHECKS"]
+        in_loop = {id(n) for loop in loops for n in ast.walk(loop)}
+        outside = []
+        for node in ast.walk(verb):
+            if getattr(node, "lineno", push) >= push or id(node) in in_loop:
+                continue
+            if isinstance(node, ast.Raise):
+                head = _message_head(node.exc) if isinstance(node.exc, ast.Call) else ast.unparse(node.exc or node)
+                if head not in _RAISED_OUTSIDE_THE_LIST:
+                    outside.append(f"line {node.lineno}: raise {head[:70]!r}")
+            elif isinstance(node, ast.Call) and _callee(node).lstrip("_").startswith("refuse"):
+                if _callee(node) not in _CALLED_OUTSIDE_THE_LIST:
+                    outside.append(f"line {node.lineno}: {_callee(node)}(...)")
+        assert outside == [], ("open_pr refuses before its push outside PRE_PUSH_CHECKS, so preflight cannot "
+                               "forecast it: " + "; ".join(outside))
+        assert len(loops) == 1, "open_pr does not run PRE_PUSH_CHECKS (or runs it twice)"
+        raised = {_callee(n.exc) for n in ast.walk(loops[0]) if isinstance(n, ast.Raise) and isinstance(n.exc, ast.Call)}
+        assert raised == {"Refused", "Held"}, raised
+
+    def test_every_check_in_the_list_has_a_way_here_to_refuse(self, ship):
+        """The list is the population: a check added to it without a way to
+        make it refuse here is a check whose forecast nothing proves. The
+        order is `open`'s (the row before the base, the base before the
+        hold), so it is pinned too."""
+        assert [check.name for check in ship.PRE_PUSH_CHECKS] == list(_MAKE_IT_REFUSE)
+
+    @pytest.mark.parametrize("name", list(_MAKE_IT_REFUSE))
+    def test_each_refusal_is_forecast_by_preflight_in_opens_words(
+            self, ship, tmp_path, monkeypatch, capsys, forget_guard, name):
+        """Made to refuse alone, the check stops `open` (a dry run: nothing
+        moves), and `preflight` on the same state notes "`open` will refuse
+        this lane: " and that exact text, once, and nothing else forecast.
+        Dies to: a refusal preflight does not forecast, or forecasts in words
+        of its own (the hand-kept copy's drift)."""
+        keywords, answers = _MAKE_IT_REFUSE[name](ship, tmp_path, monkeypatch)
+        opening = _open_answers(tmp_path, **keywords)
+        opening.update(answers)
+        spawns = _arm(ship, opening)
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr(dry_run=True)
+        text = str(stop.value)
+        assert spawns.mutations == []
+        capsys.readouterr()
+        ship._SHARED["asked"] = False   # each verb is a run of its own
+        forecasting = _preflight_answers(tmp_path, **keywords)
+        forecasting.update(answers)
+        spawns = _arm(ship, forecasting)
+        assert ship.preflight() == 0
+        out = capsys.readouterr().out
+        assert f"note: `open` will refuse this lane: {text}\n" in out, out
+        assert out.count("will refuse this lane") == 1, out
+        assert spawns.mutations == []
+        # The refusal is the named entry's, raised as the kind it declares.
+        check = {c.name: c for c in ship.PRE_PUSH_CHECKS}[name]
+        assert isinstance(stop.value, ship.Held) is check.held
+        ship._SHARED["asked"] = False
+        _arm(ship, opening)
+        assert check.read(ship.PrePushState(tmp_path, "main", keywords.get("branch", "lane/x"))) == text
+
+    def test_on_the_default_branch_the_checks_read_the_lane_that_lane_will_make(
+            self, ship, tmp_path, monkeypatch, capsys):
+        """/ship runs preflight before `lane`, so HEAD is often the default
+        branch, which origin holds as its own: read for it, the hold was never
+        forecast, and the lane `lane` makes is the one `open` pushes, never
+        pushed. The forecast says HEAD's own refusal and reads the rest for
+        that lane; it writes no hold record (`open`'s alone, past a dry run).
+        Dies to: the checks read for the default branch."""
+        keywords, answers = _seat_holds(ship, tmp_path, monkeypatch, branch="lane/feat-a-thing")
+        forecasting = _preflight_answers(tmp_path, branch="main", **keywords)
+        forecasting.update(answers)
+        forecasting[TestOneOpenPullRequestPerSeat._OWN_REF + ("refs/remotes/origin/main",)] = (
+            0, "refs/remotes/origin/main\n", "")
+        _arm(ship, forecasting)
+        assert ship.preflight() == 0
+        out = capsys.readouterr().out
+        assert ("note: `open` will refuse this lane: this seat (win) already has an open pull request: "
+                "#41 (lane/y). One open pull request per seat") in out, out
+        assert "git push -u origin HEAD" in out   # the by-hand way past a wrong attribution
+        assert "HEAD is main: `lane` moves the commits to lane/feat-a-thing first" in out
+        assert "note: `open` will refuse this lane: HEAD is main: run `lane` first" in out
+        assert ship._paths.hooks_module("stop_gate")._hold_read(tmp_path) is None
+
+    def test_reads_the_hold_cannot_make_are_said_and_preflight_goes_on(
+            self, ship, tmp_path, monkeypatch, capsys):
+        """No hold on a guess, and no crash: an open pull request list gh
+        cannot give, and a push state no reader beside the driver can read,
+        are each said as `open` says them. Dies to: the hold judged on an
+        unread read, or the reads left out of the forecast in silence."""
+        keywords, answers = _seat_holds(ship, tmp_path, monkeypatch)
+        forecasting = _preflight_answers(tmp_path, **keywords)
+        forecasting.update(answers)
+        forecasting[("gh", "pr", "list", "--state", "open")] = (1, "", "HTTP 502\n")
+        _arm(ship, forecasting)
+        assert ship.preflight() == 0
+        out = capsys.readouterr().out
+        assert "open pull requests could not be read (gh pr list)" in out and "were not checked" in out, out
+        assert "will refuse this lane" not in out
+        monkeypatch.setattr(ship._paths, "hooks_module", lambda name: None)
+        forecasting = _preflight_answers(tmp_path, **keywords)
+        forecasting.update(answers)
+        _arm(ship, forecasting)
+        assert ship.preflight() == 0
+        out = capsys.readouterr().out
+        assert "#41 (lane/y). Whether this lane was pushed could not be read" in out, out
+        assert "will refuse this lane" not in out
