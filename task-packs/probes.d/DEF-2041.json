@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2041",
+ "subject": "tools/cc/hooks/_hook_utils.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "each site's wrong decision is taken after a gh read a local probe cannot make: `ship.py open` reads own after its open pull request listing (ship.py 2511, 2534-2538) and the gate's hold and re-check read gh's listing (stop_gate.py 1626); the local reading the fix confirms is correct as the clone's last sight of origin and stays so, so a probe of it never closes; the fixtures the row names reproduce it, and the strike's proof is the tests its fix shape names, gh stubbed",
+ "row_sha": "5a0534133c64",
+ "text_sha": "b8397ddd900b",
+ "verified_2026_11_02": "OPEN (filed 2026-11-02; probe driven at filing)"
+}
