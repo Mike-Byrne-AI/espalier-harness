@@ -19,6 +19,7 @@ never by stash or checkout.
 """
 from __future__ import annotations
 
+import ast
 import importlib.util
 import io
 import json
@@ -472,6 +473,16 @@ class TestSessionStartLineInsideAWorktree:
         err = capsys.readouterr().err
         assert f"[INFO] session cwd is inside worktree {other.resolve()} of this repository" in err
 
+    def test_from_a_worktree_root_the_main_checkout_is_named_as_the_main_checkout(self, tmp_path, capsys):
+        # DEF-3025: a worker seat whose cwd moved into the main checkout read
+        # that it worked in a worktree.
+        root, live = _repo_with_worktree(tmp_path)
+        _session_start()._warn_if_nested_repo_litter(live, cwd=root / "src")
+        err = capsys.readouterr().err
+        assert f"[INFO] session cwd is inside the main checkout {root.resolve()} of this repository" in err
+        assert "inside worktree" not in err
+        assert "govern it like the root" in err
+
 
 class TestPostWriteCheckInsideAWorktree:
     def test_the_syntax_check_reads_the_worktree_copy(self, tmp_path):
@@ -537,3 +548,72 @@ class TestPostWriteCheckInsideAWorktree:
         assert pwc._run_main() == 0
         assert pruned == [(live.resolve(), "ESPALIER_MEMORY.md")]
         assert checked == []
+
+
+_SIBLINGS = "sibling_checkouts"
+
+# Every reader of sibling_checkouts under tools/cc, with the rule it places a
+# path by. A worktree nested in the main checkout's folder is held by both, so
+# the first sibling holding a path is the wrong answer (DEF-5068).
+_SIBLING_READERS = {
+    ("tools/cc/checkout_sync.py", "_sibling_places"): "handed to checkout_of by sessions_in_checkout",
+    ("tools/cc/hooks/_hook_utils.py", "_checkout_bases"): "sorted longest first for containing_checkout",
+    ("tools/cc/hooks/_hook_utils.py", "sibling_checkout_containing"): "equal to containing_checkout's hit",
+    ("tools/cc/hooks/_hook_utils.py", "is_sibling_checkout"): "identity by inode, no containment",
+    ("tools/cc/hooks/_speedbump.py", "<module>"): "binds the reader with a degrade, places nothing",
+    ("tools/cc/hooks/_speedbump.py", "_kill_reading"): "handed to checkout_sync.cwd_checkout",
+    ("tools/cc/hooks/session_start.py", "_loose_processes_line"): "handed to checkout_sync.pid_checkout",
+}
+
+
+def _sibling_checkout_readers(tree_root: Path) -> set[tuple[str, str]]:
+    """Every (file, enclosing function) under ``tree_root/tools/cc`` naming
+    ``sibling_checkouts``: a call by name or attribute, or getattr's string."""
+    found: set[tuple[str, str]] = set()
+
+    def walk(node: ast.AST, rel: str, owner: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                walk(child, rel, child.name)
+                continue
+            if ((isinstance(child, ast.Name) and child.id == _SIBLINGS)
+                    or (isinstance(child, ast.Attribute) and child.attr == _SIBLINGS)
+                    or (isinstance(child, ast.Constant) and child.value == _SIBLINGS)):
+                found.add((rel, owner))
+            walk(child, rel, owner)
+
+    for path in sorted((tree_root / "tools" / "cc").rglob("*.py")):
+        walk(ast.parse(path.read_text(encoding="utf-8")), path.relative_to(tree_root).as_posix(), "<module>")
+    return found
+
+
+class TestEverySiblingReaderPlacesByTheDeepest:
+    """No contract stopped a new first-match loop over sibling_checkouts, the
+    shape DEF-5068 fixed and DEF-3024 found again in checkout_sync: every
+    reader is named here with the rule it places by, so a new one is read
+    before it lands."""
+
+    def test_every_reader_is_named_with_its_rule(self):
+        found = _sibling_checkout_readers(HOOKS_DIR.parent.parent.parent)
+        new = sorted(found - set(_SIBLING_READERS))
+        gone = sorted(set(_SIBLING_READERS) - found)
+        assert not new, (
+            f"new readers of sibling_checkouts: {new}. Place a path by the deepest checkout holding it "
+            "(checkout_sync.checkout_of, or _hook_utils.containing_checkout), never the first sibling that "
+            "holds it, then name the reader in _SIBLING_READERS with its rule")
+        assert not gone, f"named readers that no longer read it: {gone}; drop them from _SIBLING_READERS"
+
+    def test_a_first_match_loop_is_named_by_the_scan(self, tmp_path):
+        planted = tmp_path / "tools" / "cc" / "hooks" / "_planted.py"
+        planted.parent.mkdir(parents=True)
+        planted.write_text(
+            "from _hook_utils import sibling_checkouts\n\n\n"
+            "def first_holder(root, path):\n"
+            "    for c in sibling_checkouts(root):\n"
+            "        if str(path).startswith(str(c)):\n"
+            "            return c\n\n\n"
+            "def by_name(h, root):\n"
+            "    return getattr(h, 'sibling_checkouts')(root)\n",
+            encoding="utf-8")
+        assert _sibling_checkout_readers(tmp_path) == {
+            ("tools/cc/hooks/_planted.py", "first_holder"), ("tools/cc/hooks/_planted.py", "by_name")}
