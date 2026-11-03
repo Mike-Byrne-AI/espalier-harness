@@ -1498,7 +1498,7 @@ total; it shrinks each review.
     (`test_shipped_bodies_spell_no_python3_command`: red at the base, green at the head).
     3-F's mutation runs on the live registry: removing either proven `target_os` cell
     prints that axis blind.
-  - Red-team, on a snapshot of `54e0d378` with edits frozen: `code-reviewer` REQUEST
+  - Red-team, on a snapshot of `69ab1203` with edits frozen: `code-reviewer` REQUEST
     CHANGES (1 blocker, 7 should-fix, 7 nits) and `failure-mode-reviewer` REQUEST CHANGES
     (1 regression, 4 gaps, 5 rough edges). Both found the blocker: a raw workflow glob
     in `tests/test_axis_registry.py` that the live-tree walk ratchet reds. One fix batch:
