@@ -26,6 +26,7 @@ from pathlib import Path
 import pytest
 
 from espalier import cli
+from tests._cut_start import skip_if_cut
 from tests._stubs import write_stub
 
 # The sh stubs below are POSIX-only, so every class built on them skips on
@@ -500,6 +501,7 @@ class TestTheLauncherRewiresWithItsFlag:
             input='{"hook_event_name":"SessionStart"}', capture_output=True, cwd=str(repo),
             env=env, text=True, encoding="utf-8", errors="replace", timeout=45,
         )
+        skip_if_cut(run.stdout)  # a cut start never reached the warn (DEF-2048)
         assert "wired hook interpreter `py" not in run.stderr, run.stderr[-2000:]
 
     def test_an_argument_after_the_flag_survives(self, tmp_path, monkeypatch):

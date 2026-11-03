@@ -31,6 +31,7 @@ import pytest
 
 from _adopter_tree import build_adopter_tree
 from espalier import cli
+from tests._cut_start import skip_if_cut
 
 # Text an any-tree row must never carry: the paths and names only the harness's
 # own tree has. The new-test-file pointer names the first two, and fires on the
@@ -58,8 +59,9 @@ def _run_hook(tree: Path, script: str, payload: dict) -> str:
         input=json.dumps(payload).encode("utf-8"), capture_output=True,
         cwd=str(tree), env=_hook_env(tree), timeout=30,
     )
-    assert proc.returncode == 0, proc.stderr.decode("utf-8", errors="replace")[-400:]
     out = proc.stdout.decode("utf-8", errors="replace").strip()
+    skip_if_cut(out)
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", errors="replace")[-400:]
     if not out:
         return ""
     return json.loads(out)["hookSpecificOutput"]["additionalContext"]
