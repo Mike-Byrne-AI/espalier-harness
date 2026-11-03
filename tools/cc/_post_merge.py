@@ -26,11 +26,16 @@ and its own words (a Windows red sat in GitHub's record for six hours on
   and one that finished after it reads as still running.
 * ``lines`` and ``board_lines`` are the words, 7-bit ASCII.
 * ``base_run_verdict`` and ``base_run_lines`` are the base-run rule and its
-  words: the newest verdict among a workflow's push runs on the base (the
-  advisory Windows leg, ``WINDOWS_WORKFLOW``), walked back on a red to the
-  streak's first red and the green before it. A push run attaches to the
-  merge commit and appears in no pull request's rollup, so the board's
-  ``checks:`` line reads the leg through these, apart from the merges.
+  words: the newest verdict among a workflow's push runs on the base,
+  walked back on a red to the streak's first red and the green before it.
+  A push run attaches to the merge commit and appears in no pull request's
+  rollup, so the board's ``checks:`` line reads each workflow that runs on
+  a push to the base through these, apart from the merges. ``pushes_to``
+  and ``cancels_superseded`` read that roster's two facts from a workflow
+  file's text: whether its triggers run it on a push to the base, and
+  whether its concurrency cancels a run a newer one supersedes (DEF-5083:
+  the roster was one workflow named by hand, so a red release matrix on
+  the base showed on no line).
 * ``read_required`` is the one ``gh pr checks <n> --required`` read of an
   open pull request, made by the board's blocked row, the ship driver's
   ``status`` and the banner's ``Open PRs:`` line; ``held_by`` and
@@ -44,6 +49,7 @@ path under a private alias; the driver and the board import it as a sibling.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Callable
 
 #: One ``statusCheckRollup`` row is a CheckRun (``status`` + ``conclusion``)
@@ -74,11 +80,19 @@ LANE_FIELDS = "number,mergedAt,headRefName,labels"
 #: skipped by a job-level ``if``, neutral, action required -- is no verdict,
 #: so a skipped run never reads as a red base. The board's ``_RED`` is this set.
 RUN_RED = frozenset({"FAILURE", "TIMED_OUT", "STARTUP_FAILURE"})
-#: The advisory Windows leg on the base: the serial test files on
-#: windows-latest after each push to it, where the repository runs a workflow
-#: of that name (Espalier's own does; ``init`` installs none, and the board
-#: prints nothing for a repository without it).
-WINDOWS_WORKFLOW = "post-merge-windows.yml"
+#: A push trigger's filters (GitHub's ``on.push``): the branch filters the
+#: pushed branch is matched against, and the tag filters that, with no branch
+#: filter beside them, make the workflow run on tag pushes alone.
+BRANCH_FILTERS = ("branches", "branches-ignore")
+TAG_FILTERS = ("tags", "tags-ignore")
+#: The context values one push's run shares with the next push's on a
+#: branch: a concurrency ``group`` built from these and literal text alone
+#: holds every push's runs, so a newer one cancels the run going. Any other
+#: expression (``github.sha``, ``github.run_id``, ``github.event.after``, a
+#: fallback such as ``github.head_ref || github.run_id``) may give each run
+#: a group of its own, and reads as cancelling nothing.
+SHARED_GROUP_CONTEXTS = frozenset({"github.workflow", "github.ref", "github.ref_name", "github.event_name",
+                                   "github.repository", "github.base_ref", "github.head_ref"})
 
 Gh = Callable[[list[str]], object]
 
@@ -460,17 +474,18 @@ def lines(checks: dict[str, dict], *, oldest: int | None = None) -> list[str]:
 
 
 def board_lines(checks: dict[str, dict], *, window: int, oldest: int | None = None,
-                new: set[str] | frozenset[str] = frozenset(), base_run: dict | None = None,
-                workflow: str = WINDOWS_WORKFLOW, base: str = "main") -> list[str]:
+                new: set[str] | frozenset[str] = frozenset(), base_runs: dict[str, dict] | None = None,
+                base: str = "main") -> list[str]:
     """The board's ``checks:`` entries: one per red check name, with the merge
     it went red on, the leg's finish and what stands beside it (``new:`` ahead
     of one this read printed for the first time); one per check that reached
     no verdict on every merge read; one line saying none when nothing is red;
-    then the base-run workflow's lines (``base_run_lines`` over ``base_run``,
-    the state ``base_run_verdict`` built, or ``{"unread": reason}``), after the
-    pull-request legs, with the none line kept off when that run is red.
-    Pull-request legs and the advisory leg, not required checks: the board
-    prints, never reverts."""
+    then each base-run workflow's lines in name order (``base_run_lines`` over
+    ``base_runs``, each workflow file's name mapped to the state
+    ``base_run_verdict`` built or ``{"unread": reason}``), after the
+    pull-request legs, with the none line kept off while any of those runs is
+    red. Pull-request legs and advisory base runs, not required checks: the
+    board prints, never reverts."""
     out: list[str] = []
     for c in reds(checks):
         since = c["since"] or {}
@@ -490,34 +505,222 @@ def board_lines(checks: dict[str, dict], *, window: int, oldest: int | None = No
     for c in never_judged(checks):
         kinds = sorted({n["conclusion"] for n in c["no_verdict"]})
         out.append(ascii_(f"{c['name']}: no verdict on every merge read ({', '.join(kinds)})"))
-    base_red = isinstance(base_run, dict) and base_run.get("verdict") == "red"
-    if not out and not base_red:
+    runs = base_runs if isinstance(base_runs, dict) else {}
+    if not out and not any(isinstance(state, dict) and state.get("verdict") == "red" for state in runs.values()):
         out.append(f"none red among the last {window} merges")
-    out.extend(base_run_lines(base_run, workflow=workflow, base=base))
+    for workflow in sorted(runs):
+        out.extend(base_run_lines(runs[workflow], workflow=workflow, base=base))
     return out
 
 
-def base_run_verdict(runs: object) -> dict:
+def _rows(text: str) -> list[tuple[int, str]]:
+    """A workflow file's lines as ``(indent, body)``, each without its comment
+    (a ``#`` at the line's start or after whitespace), blank ones dropped: the
+    shape the trigger readers below walk."""
+    out: list[tuple[int, str]] = []
+    for line in text.splitlines():
+        cut = len(line)
+        for i, ch in enumerate(line):
+            if ch == "#" and (i == 0 or line[i - 1] in " \t"):
+                cut = i
+                break
+        body = line[:cut].rstrip()
+        if body.strip():
+            out.append((len(body) - len(body.lstrip(" ")), body.strip()))
+    return out
+
+
+def _key(body: str) -> tuple[str, str] | None:
+    """``(key, value)`` of a mapping line (``key: value``), the key unquoted;
+    None for a sequence item or any other line."""
+    if body.startswith("-"):
+        return None
+    key, sep, rest = body.partition(":")
+    if not sep or (rest and not rest[0].isspace()):
+        return None
+    return key.strip().strip("\"'"), rest.strip()
+
+
+def _child(rows: list[tuple[int, str]], name: str) -> int | None:
+    """The index in ``rows`` (one mapping's rows) of the key ``name`` at the
+    mapping's own indentation, or None."""
+    top = rows[0][0] if rows else 0
+    for i, (indent, body) in enumerate(rows):
+        if indent == top and (_key(body) or ("", ""))[0] == name:
+            return i
+    return None
+
+
+def _value(rows: list[tuple[int, str]], at: int) -> tuple[str, list[tuple[int, str]]]:
+    """The value of the mapping line at ``at``: its inline text and the rows
+    under it, those indented deeper or a block list at the key's own
+    indentation (YAML allows one under a mapping key)."""
+    indent, body = rows[at]
+    flush = at + 1 < len(rows) and rows[at + 1][0] == indent and rows[at + 1][1].startswith("-")
+    under: list[tuple[int, str]] = []
+    for row in rows[at + 1:]:
+        if not (row[0] > indent or (flush and row[0] == indent and row[1].startswith("-"))):
+            break
+        under.append(row)
+    return (_key(body) or ("", ""))[1], under
+
+
+def _items(inline: str, under: list[tuple[int, str]]) -> list[str] | None:
+    """A value read as a list of words: an inline flow list (``[main, 'v*']``),
+    an inline word, or the block list under it (``- main``); None for a shape
+    this reader does not take (a flow list across lines, an anchor, an alias,
+    a block scalar, a mapping, or nothing at all)."""
+    if inline:
+        if inline.startswith("[") and inline.endswith("]"):
+            return [w.strip().strip("\"'") for w in inline[1:-1].split(",") if w.strip()]
+        return None if inline[0] in "[{&*|>!" else [inline.strip("\"'")]
+    if not under or any(indent != under[0][0] or not body.startswith("-") for indent, body in under):
+        return None
+    return [body[1:].strip().strip("\"'") for _, body in under]
+
+
+def _matches(pattern: str, name: str) -> bool:
+    """GitHub's filter pattern against one branch name: ``**`` any characters,
+    ``*`` any but ``/``, ``?`` and ``+`` the character before them zero or one
+    and one or more times, ``[...]`` a character class, the rest literal. A
+    pattern that does not compile reads as a match (the read decides)."""
+    out, i = [], 0
+    while i < len(pattern):
+        ch = pattern[i]
+        if pattern.startswith("**", i):
+            out.append(".*")
+            i += 2
+            continue
+        if ch == "[" and "]" in pattern[i + 1:]:
+            end = pattern.index("]", i + 1)
+            out.append(pattern[i:end + 1])
+            i = end + 1
+            continue
+        out.append("[^/]*" if ch == "*" else ch if ch in "?+" else re.escape(ch))
+        i += 1
+    try:
+        return re.fullmatch("".join(out), name) is not None
+    except re.error:
+        return True
+
+
+def pushes_to(text: str, base: str) -> bool:
+    """Whether a workflow file's triggers (its top-level ``on:``) run it on a
+    push to the branch ``base``, read from the text (the standard library has
+    no YAML reader): ``on: push``, ``on: [push, ...]``, a block list naming
+    ``push``, or an ``on:`` mapping with a ``push`` key, whose ``branches``
+    must match ``base`` (the last pattern that matches decides, a ``!`` one
+    excluding), whose ``branches-ignore`` must not, and whose ``tags`` or
+    ``tags-ignore`` with no branch filter make it a tag-push workflow
+    (GitHub's rule: a ref kind with no filter beside a filter of the other
+    kind does not run it). A shape this reader does not take reads True: the
+    board's read of the workflow's push runs on ``base`` is the oracle, and a
+    roster that dropped a workflow it misread would hide that workflow's red."""
+    rows = _rows(text)
+    at = _child(rows, "on")
+    if at is None:
+        return False
+    inline, under = _value(rows, at)
+    if inline.startswith("{"):
+        return "push" in inline
+    if inline or (under and under[0][1].startswith("-")):
+        events = _items(inline, under)
+        return events is None or "push" in events
+    push = _child(under, "push")
+    if push is None:
+        return False
+    inline, below = _value(under, push)
+    if inline not in ("", "null", "~", "{}"):
+        return True
+    found = {}
+    for name in BRANCH_FILTERS + TAG_FILTERS:
+        i = _child(below, name)
+        if i is not None:
+            found[name] = _items(*_value(below, i))
+    if any(patterns is None for patterns in found.values()):
+        return True
+    if "branches" in found:
+        hit = False
+        for pattern in found["branches"] or []:
+            if pattern.startswith("!"):
+                hit = hit and not _matches(pattern[1:], base)
+            elif _matches(pattern, base):
+                hit = True
+        return hit
+    if "branches-ignore" in found:
+        return not any(_matches(pattern, base) for pattern in found["branches-ignore"] or [])
+    return not any(name in found for name in TAG_FILTERS)
+
+
+def cancels_superseded(text: str) -> bool:
+    """Whether a workflow file's top-level ``concurrency:`` cancels a run a
+    newer push's run supersedes: ``cancel-in-progress: true`` beside a
+    ``group`` that one push's runs share with the next, its expressions all
+    ``SHARED_GROUP_CONTEXTS``. Only the literal ``true`` counts; a group alone
+    (``concurrency: <name>``), ``false``, an expression for it, a group with
+    any other expression or one this reader cannot read on its line, a flow
+    mapping and a job's own group read False, the rule that names every
+    cancelled run."""
+    rows = _rows(text)
+    at = _child(rows, "concurrency")
+    if at is None:
+        return False
+    inline, under = _value(rows, at)
+    cancel = None if inline else _child(under, "cancel-in-progress")
+    group = None if inline else _child(under, "group")
+    if cancel is None or group is None or _value(under, cancel)[0].lower() != "true":
+        return False
+    rest = _value(under, group)[0]
+    if not rest or rest[0] in "|>&*":
+        return False
+    while "${{" in rest:
+        _head, _, tail = rest.partition("${{")
+        expression, closed, rest = tail.partition("}}")
+        if not closed or expression.strip() not in SHARED_GROUP_CONTEXTS:
+            return False
+    return True
+
+
+def base_run_verdict(runs: object, *, supersedes: bool = False) -> dict:
     """The newest verdict among a workflow's runs on the base, from a parsed
     ``gh run list`` listing (newest first; a row that is not a dict is
     skipped, and anything but a list reads as no runs): ``{"verdict":
     "green"|"red"|"none", "sha", "run", "url", "running", "since",
-    "green_sha", "no_verdict", "read"}``. A run not completed is going
-    (``running`` when it is newer than the verdict); ``SUCCESS`` is green,
-    ``RUN_RED`` red, and cancelled, stale, skipped or neutral is no verdict,
-    walked past (its kinds in ``no_verdict`` while no verdict is reached). On
-    a red the walk goes on, past runs going or without a verdict, to the
-    streak's first red (``since``: the oldest red before the green that ends
-    the walk, with its run id and url) and that green (``green_sha``, empty
-    when none is in the listing): "red since" names where the streak began,
-    never the newest red alone. ``read`` counts the completed rows read."""
+    "green_sha", "no_verdict", "superseded", "read"}``. A run not completed
+    is going (``running`` when it is newer than the verdict); ``SUCCESS`` is
+    green, ``RUN_RED`` red, and cancelled, stale, skipped or neutral is no
+    verdict, walked past (its kinds in ``no_verdict`` while no verdict is
+    reached). With ``supersedes`` (the workflow's concurrency cancels a run a
+    newer one supersedes, ``cancels_superseded``), a cancelled run that ended
+    (``updatedAt``) at or after the next newer run's ``createdAt`` was
+    cancelled by that run and is walked past unnamed, counted in
+    ``superseded``: 41 of release.yml's 100 newest push runs on main
+    concluded cancelled, each 12 to 91 s after the next push run was created
+    (DEF-5083), and named they would print a no-verdict line beside every
+    overlapping push. A cancelled run that ended before the next run was
+    created is named (a job cut by its ``timeout-minutes`` concludes
+    cancelled too), and so is a cancelled newest run, or one whose stamps
+    are missing; stamps compare as text, gh's own format the clock. The
+    limit is cancel-in-progress's own: while pushes arrive faster than a run
+    finishes, every cancel reads superseded, a hang's among them, and the
+    words say only how many (``base_run_lines``) until a quiet period lets
+    the newest run reach its verdict or its bound. A pending run GitHub
+    cancels when a newer one queues, with cancel-in-progress off, is named:
+    the noisy direction, never a hidden one. On a red the
+    walk goes on, past runs going or without a verdict, to the streak's first
+    red (``since``: the oldest red before the green that ends the walk, with
+    its run id and url) and that green (``green_sha``, empty when none is in
+    the listing): "red since" names where the streak began, never the newest
+    red alone. ``read`` counts the completed rows read."""
     out: dict = {"verdict": "none", "sha": "", "run": "", "url": "", "running": False,
-                 "since": None, "green_sha": "", "no_verdict": [], "read": 0}
+                 "since": None, "green_sha": "", "no_verdict": [], "superseded": 0, "read": 0}
     if not isinstance(runs, list):
         return out
+    newer_created = ""
     for row in runs:
         if not isinstance(row, dict):
             continue
+        above, newer_created = newer_created, str(row.get("createdAt") or "")
         if str(row.get("status") or "").lower() != "completed":
             if out["verdict"] == "none":
                 out["running"] = True
@@ -526,6 +729,10 @@ def base_run_verdict(runs: object) -> dict:
         conclusion = str(row.get("conclusion") or "").upper()
         here = {"sha": str(row.get("headSha") or ""), "run": str(row.get("databaseId") or ""),
                 "url": str(row.get("url") or "")}
+        ended = str(row.get("updatedAt") or "")
+        if supersedes and conclusion == "CANCELLED" and above and ended >= above:
+            out["superseded"] += 1
+            continue
         if conclusion == "SUCCESS":
             if out["verdict"] == "none":
                 out.update(verdict="green", **here)
@@ -542,7 +749,7 @@ def base_run_verdict(runs: object) -> dict:
     return out
 
 
-def base_run_lines(state: dict | None, *, workflow: str = WINDOWS_WORKFLOW, base: str = "main") -> list[str]:
+def base_run_lines(state: dict | None, *, workflow: str, base: str = "main") -> list[str]:
     """The board's ``checks:`` entries for a base-run workflow, in the
     pull-request legs' shape with the base and the word advisory in the name
     (never ``<base>:``, the revert rule's own label): on a red, ``<name>
@@ -553,15 +760,18 @@ def base_run_lines(state: dict | None, *, workflow: str = WINDOWS_WORKFLOW, base
     ``; a newer run is going``; on a green under newer completed runs that
     reached no verdict, one line naming them (a hang the job's bound cuts may
     conclude cancelled on every push, and a walk that only skipped such runs
-    would hide them all behind one old green); on no verdict among every
-    completed run read, one line naming the kinds; on a failed read
+    would hide them all behind one old green; a run a newer one superseded
+    is not among them, ``base_run_verdict``'s ``supersedes``); on no verdict
+    among every completed run read, one line naming the kinds and how many
+    were superseded (a window of superseded runs alone is never silent); on
+    a failed read
     (``{"unread": reason}``), one line saying so. A plain green, absent (a
     repository without the workflow), no completed run and no state render
     nothing: the deployed board is silent where the leg is not. ``name`` is
     the workflow's file name without its extension."""
     if not isinstance(state, dict):
         return []
-    name = workflow[:-4] if workflow.endswith(".yml") else workflow
+    name = workflow.rsplit(".", 1)[0] if workflow.endswith((".yml", ".yaml")) else workflow
     label = f"{name} ({base}, advisory)"
     if state.get("unread"):
         return [ascii_(f"{label}: unread ({state['unread']})")]
@@ -583,9 +793,11 @@ def base_run_lines(state: dict | None, *, workflow: str = WINDOWS_WORKFLOW, base
         n = len(state.get("no_verdict") or [])
         return [ascii_(f"{label}: no verdict on the newest {n} run{'' if n == 1 else 's'} ({', '.join(kinds)}), "
                        f"green on {str(state.get('sha') or '')[:7]} before {'it' if n == 1 else 'them'}{going}")]
-    if verdict == "none" and kinds:
+    superseded = int(state.get("superseded") or 0)
+    if verdict == "none" and (kinds or superseded):
         read = int(state.get("read") or 0)
-        return [ascii_(f"{label}: no verdict on every run read ({', '.join(kinds)}; {read} run"
+        what = ", ".join(kinds + ([f"{superseded} superseded"] if superseded else []))
+        return [ascii_(f"{label}: no verdict on every run read ({what}; {read} run"
                        f"{'' if read == 1 else 's'}){'; a run is going' if state.get('running') else ''}")]
     return []
 

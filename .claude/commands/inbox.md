@@ -229,23 +229,33 @@ is read on its own, and one that cannot be read says so on its own line:
   the merge, the red run's finish, the read time), so red-to-first-mention
   is derived from a record; a red that has held since before the window is
   never a first mention; a failed append is a note under the line, and the
-  section still renders. Where the repository runs a workflow named
-  `post-merge-windows.yml` on each push to the base (Espalier's own repository
-  does: the serial test files on `windows-latest` after each merge, advisory;
-  `init` installs none), the line also carries that leg's newest push-run
-  verdict, which the board alone reads (neither the preflight nor the
-  banner), apart from the merges since a push run appears in no pull
-  request's rollup, in the legs' shape with the base and the word advisory in
-  its name: `post-merge-windows (main, advisory): red since <sha> (run <id>)`,
-  the streak's first red, with `, still red on <sha> (run <id>)` when the
-  newest red is a later run, `(no green among the runs read)` when none is,
-  and the green before the streak; a cancelled, stale, skipped or neutral run
-  reads no verdict and is walked past, and such runs newer than a green are
-  named above it rather than hidden behind it; a plain green, a checkout
-  without the workflow file and a leg with no completed run print nothing; a
-  failed read of it is the leg's own line, never the section's `unread`; the
-  `none red` line stays off while the leg is red; and a dispatched run never
-  clears the line, the next push run does.
+  section still renders. For each workflow file in the checkout's
+  `.github/workflows/` whose triggers run it on a push to the base (`on:
+  push`, or a `push` whose branch filters take the base; a push of tags alone
+  does not count), the post-merge proof apart since the base line above reads
+  it, the line also carries that workflow's newest push-run verdict, which the
+  board alone reads (neither the preflight nor the banner), apart from the
+  merges since a push run appears in no pull request's rollup, in the legs'
+  shape with the base and the word advisory in its name: `<workflow> (main,
+  advisory): red since <sha> (run <id>)`, the streak's first red, with `,
+  still red on <sha> (run <id>)` when the newest red is a later run, `(no
+  green among the runs read)` when none is, and the green before the streak.
+  On Espalier's own repository the release matrix and the advisory Windows
+  leg are among them; `install-ci`'s `harness-guard.yml` runs on a push to
+  `main` or `master`. A cancelled, stale, skipped or neutral run reads no
+  verdict and is walked past, and such runs newer than a green are named
+  above it rather than hidden behind it, except a cancelled run that a newer
+  run of the same workflow superseded where its concurrency sets
+  `cancel-in-progress: true` in a group one push's runs share with the next:
+  one that ended at or after the next run was created (the newer run holds
+  its head; one that ended before, a job cut by its `timeout-minutes`
+  included, is named); a plain green, a
+  workflow with no completed run and a tree without workflow files print
+  nothing; a failed read is that workflow's own line, never the section's
+  `unread`, and the reads share one budget (`BASE_RUN_BUDGET_SECONDS`), past
+  which a workflow says it was not read; the `none red` line stays off while
+  any of them is red; and push runs alone are read, so a dispatched run never
+  clears the line (the next push run does) and a scheduled one is never on it.
 - **open PRs:** each with the seat whose latest claim or release names its
   branch, and what GitHub's merge state means: ready, blocked, in conflict
   with the base (its seat runs `python tools/cc/ship.py catch-up`), or behind

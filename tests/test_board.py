@@ -313,10 +313,10 @@ class TestOpenPullRequests:
                     "so a review or a required check that has not reported holds it") in text, (words, text)
 
     def test_the_bounds_the_inbox_body_names_are_the_boards(self, board):
-        """The body names the two bounds by their names in board.py. Dies to:
+        """The body names the bounds by their names in board.py. Dies to:
         one renamed and the body left naming a constant that is gone."""
         body = (REPO_ROOT / ".claude" / "commands" / "inbox.md").read_text(encoding="utf-8")
-        for name in ("REQUIRED_READ_ROWS", "REQUIRED_BUDGET_SECONDS"):
+        for name in ("REQUIRED_READ_ROWS", "REQUIRED_BUDGET_SECONDS", "BASE_RUN_BUDGET_SECONDS"):
             assert f"`{name}`" in body and hasattr(board, name), name
 
     def test_only_a_blocked_row_spends_the_read(self, board, monkeypatch, tmp_path):
@@ -840,11 +840,14 @@ class TestChecksLine:
                           "portability (macos-latest)", conclusion="SUCCESS") for pr in _merged_rollups()]
 
     @staticmethod
-    def _leg_in_checkout(root: Path) -> None:
-        """The checkout holds the leg's workflow file: the one case the board
-        spawns the leg's read (an adopter tree never does)."""
+    def _leg_in_checkout(root: Path, base: str = "main", name: str = "post-merge-windows.yml",
+                         body: str = "") -> None:
+        """The checkout holds a workflow file that runs on a push to ``base``:
+        the case the board spawns that workflow's read (a tree with none, an
+        adopter's before it adds one, never does)."""
         (root / ".github" / "workflows").mkdir(parents=True, exist_ok=True)
-        (root / ".github" / "workflows" / "post-merge-windows.yml").write_text("name: leg\n", encoding="utf-8")
+        (root / ".github" / "workflows" / name).write_text(
+            f"name: leg\non:\n  push:\n    branches: [{base}]\n  workflow_dispatch:\n{body}", encoding="utf-8")
 
     def test_the_windows_leg_red_is_named_on_the_checks_line_never_the_main_line(self, board, monkeypatch, tmp_path):
         """The advisory Windows leg (post-merge-windows.yml) runs on a push to
@@ -865,7 +868,7 @@ class TestChecksLine:
         assert ("checks:   post-merge-windows (main, advisory): red since ccccccc (run 8), still red on ddddddd (run 9), "
                 "green on bbbbbbb") in text
         assert "none red among" not in text
-        assert collected["post_merge_checks"]["windows"]["verdict"] == "red"
+        assert collected["post_merge_checks"]["base_runs"]["post-merge-windows.yml"]["verdict"] == "red"
         reads = [c for c in run.calls if c[1:3] == ["run", "list"]]
         assert [c[c.index("--workflow") + 1] for c in reads] == ["post-merge.yml", "post-merge-windows.yml"]
         assert all(c[c.index("--event") + 1] == "push" and c[c.index("--branch") + 1] == "main" for c in reads)
@@ -885,7 +888,7 @@ class TestChecksLine:
                                                           "run list post-merge-windows.yml": answer}))
             text = board.render(collected)
             assert "checks:   none red among the last 2 merges" in text and "post-merge-windows" not in text
-            assert collected["post_merge_checks"]["windows"]["verdict"] == verdict
+            assert collected["post_merge_checks"]["base_runs"]["post-merge-windows.yml"]["verdict"] == verdict
         # No workflow file in the checkout: no spawn and no line, whatever gh
         # would have answered (the adopter tree's shape, and this one before
         # the leg lands); a 403 or a timeout there printed `unread` once.
@@ -894,7 +897,7 @@ class TestChecksLine:
         run = _gh({"pr list": [], "pr list merged": self._all_green_rollups(), "run list": _GREEN_RUNS,
                    "run list post-merge-windows.yml": board.Unresolvable("gh run list answered rc=1 with no JSON: HTTP 403")})
         collected = board.collect(tmp_path, run_=run)
-        assert collected["post_merge_checks"]["windows"] == {"verdict": "absent"}
+        assert collected["post_merge_checks"]["base_runs"] == {}
         assert not [c for c in run.calls if c[1:3] == ["run", "list"] and "post-merge-windows.yml" in c]
         assert "post-merge-windows" not in board.render(collected)
 
@@ -919,13 +922,118 @@ class TestChecksLine:
         # The base comes from the rules read, which names the branch it read.
         monkeypatch.setattr(board._merge_rules, "read", lambda root, deadline=None, base=None: (
             "trunk", 0, json.dumps({"strict": False, "contexts": ["a", "b"]})))
-        self._leg_in_checkout(tmp_path)
+        self._leg_in_checkout(tmp_path, base="trunk")
         run = _gh({"pr list": [], "pr list merged": self._all_green_rollups(), "run list": _GREEN_RUNS,
                    "run list post-merge-windows.yml": [dict(_run("completed", "failure", "d" * 40), databaseId=9)]})
         text = board.render(board.collect(tmp_path, run_=run))
         assert "checks:   post-merge-windows (trunk, advisory): red since ddddddd (run 9) (no green among the runs read)" in text
         (read,) = [c for c in run.calls if c[1:3] == ["run", "list"] and "post-merge-windows.yml" in c]
         assert read[read.index("--branch") + 1] == "trunk"
+
+    _SUPERSEDING = "concurrency:\n  group: ${{ github.workflow }}-${{ github.ref }}\n  cancel-in-progress: true\n"
+
+    def test_a_red_release_push_run_on_the_base_is_named_beside_the_windows_leg(self, board, monkeypatch, tmp_path):
+        """DEF-5083's guard: the roster was the Windows leg alone, so a red
+        release.yml push run on main (3 of its 20 newest on 2026-11-03, one
+        standing 75 min) showed on no line. Dies to: a push workflow other
+        than the leg unread, a pull-request or tag-only workflow read, the
+        post-merge proof read twice, or a superseded cancel named."""
+        _stub_channel(monkeypatch, board)
+        self._leg_in_checkout(tmp_path)
+        self._leg_in_checkout(tmp_path, name="release.yml", body=self._SUPERSEDING)
+        self._leg_in_checkout(tmp_path, name="post-merge.yml")
+        workflows = tmp_path / ".github" / "workflows"
+        (workflows / "test.yml").write_text("on:\n  pull_request:\n    branches: [main]\n", encoding="utf-8")
+        (workflows / "publish.yml").write_text("on:\n  push:\n    tags: ['v*']\n", encoding="utf-8")
+        release = [dict(_run("in_progress", "", "e" * 40), databaseId=12, createdAt="2026-11-03T18:19:48Z"),
+                   dict(_run("completed", "cancelled", "c" * 40), databaseId=11, createdAt="2026-11-03T17:50:00Z",
+                        updatedAt="2026-11-03T18:20:04Z"),
+                   dict(_run("completed", "failure", "d" * 40), databaseId=10),
+                   dict(_run("completed", "success", "b" * 40), databaseId=7)]
+        run = _gh({"pr list": [], "pr list merged": self._all_green_rollups(), "run list": _GREEN_RUNS,
+                   "run list release.yml": release})
+        collected = board.collect(tmp_path, run_=run)
+        text = board.render(collected)
+        assert ("checks:   release (main, advisory): red since ddddddd (run 10), green on bbbbbbb; "
+                "a newer run is going") in text
+        assert "none red among" not in text and "post-merge-windows" not in text
+        assert "main:     post-merge proof green on aaaaaaa" in text
+        reads = [c[c.index("--workflow") + 1] for c in run.calls if c[1:3] == ["run", "list"]]
+        assert sorted(reads) == ["post-merge-windows.yml", "post-merge.yml", "release.yml"], reads
+        # The superseded rule reads both stamps; a read that drops them names
+        # every superseded cancel (the stub answers whatever fields are asked).
+        (release_read,) = [c for c in run.calls if "release.yml" in c]
+        fields = release_read[release_read.index("--json") + 1].split(",")
+        assert {"createdAt", "updatedAt"} <= set(fields), fields
+        state = collected["post_merge_checks"]["base_runs"]["release.yml"]
+        assert state["superseded"] == 1 and state["no_verdict"] == []
+
+    def test_the_base_run_reads_share_one_budget(self, board, tmp_path):
+        """Dies to: a roster of many push workflows holding the board past one
+        budget (each read's timeout what is left of it), or a workflow past it
+        dropped instead of named."""
+        self._leg_in_checkout(tmp_path, name="a.yml")
+        self._leg_in_checkout(tmp_path, name="b.yml")
+        ticks = iter([0.0, board.BASE_RUN_BUDGET_SECONDS - 10.0, board.BASE_RUN_BUDGET_SECONDS - 1.0])
+        inner = _gh({"pr list merged": [], "run list a.yml": [dict(_run("completed", "failure", "d" * 40), databaseId=9)]})
+        timeouts: dict[str, float] = {}
+
+        def run(argv, **kw):
+            if "--workflow" in argv:
+                timeouts[argv[argv.index("--workflow") + 1]] = kw.get("timeout")
+            return inner(argv, **kw)
+
+        run.calls = inner.calls  # type: ignore[attr-defined]
+        got = board.read_post_merge_checks(tmp_path, run_=run, clock=lambda: next(ticks))
+        assert got["base_runs"]["a.yml"]["verdict"] == "red"
+        assert timeouts == {"a.yml": 10.0}, timeouts   # what is left of the budget, under GH_TIMEOUT
+        assert got["base_runs"]["b.yml"] == {"unread": f"the {board.BASE_RUN_BUDGET_SECONDS:.0f} s budget for these reads was spent"}
+        assert "b (main, advisory): unread (the 30 s budget for these reads was spent)" in got["lines"]
+        assert not [c for c in run.calls if "b.yml" in c]
+
+    def test_the_roster_is_derived_from_the_checkouts_workflow_files(self, board, monkeypatch, tmp_path):
+        """Dies to: the post-merge proof on the roster (its own line holds the
+        revert rule), a .yaml file missed, a folder or another extension read,
+        a file that cannot be decoded dropping off, or a tree with no
+        workflows folder raising."""
+        assert board.base_run_workflows(tmp_path, "main") == {}
+        self._leg_in_checkout(tmp_path, name="post-merge.yml")
+        self._leg_in_checkout(tmp_path, name="cut.yaml", body=self._SUPERSEDING)
+        self._leg_in_checkout(tmp_path, name="other.yml", base="develop")
+        workflows = tmp_path / ".github" / "workflows"
+        (workflows / "notes.md").write_text("on: push\n", encoding="utf-8")
+        (workflows / "folder.yml").mkdir()
+        (workflows / "binary.yml").write_bytes(b"on: push\n\xff\xfe")
+        assert board.base_run_workflows(tmp_path, "main") == {"binary.yml": False, "cut.yaml": True}
+        assert board.base_run_workflows(tmp_path, "develop") == {"binary.yml": False, "other.yml": False}
+        # A BOM ahead of the first line's `on:` is read through, and a file
+        # that cannot be read at all stays on the roster (the read decides).
+        (workflows / "bom.yml").write_bytes(b"\xef\xbb\xbfon:\n  push:\n    branches: [main]\n")
+        self._leg_in_checkout(tmp_path, name="locked.yml", base="develop")
+        real = Path.read_text
+
+        def read_text(path, *args, **kwargs):
+            if path.name == "locked.yml":
+                raise PermissionError(13, "Permission denied", str(path))
+            return real(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", read_text)
+        assert board.base_run_workflows(tmp_path, "main") == {"binary.yml": False, "bom.yml": False, "cut.yaml": True,
+                                                              "locked.yml": False}
+
+    def test_a_section_reader_out_of_step_costs_the_section_never_the_board(self, board, monkeypatch, tmp_path):
+        """Dies to: a sibling module kept at another version (a name one reads
+        that the other lacks) turning the whole board into a traceback."""
+        _stub_channel(monkeypatch, board)
+
+        def skewed(*args, **kwargs):
+            raise AttributeError("module '_post_merge' has no attribute 'pushes_to'")
+
+        monkeypatch.setattr(board, "read_post_merge_checks", skewed)
+        collected = board.collect(tmp_path, run_=_gh({"pr list": [], "run list": _GREEN_RUNS}))
+        assert collected["post_merge_checks"] == {
+            "unread": "AttributeError: module '_post_merge' has no attribute 'pushes_to'"}
+        assert "main:     post-merge proof green on aaaaaaa" in board.render(collected)
 
     def test_a_first_mention_is_logged_once_and_a_failed_append_is_a_note(self, board, monkeypatch, tmp_path):
         """The roadmap's red-to-first-mention figure is derived from this log.

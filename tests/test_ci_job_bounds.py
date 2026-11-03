@@ -20,6 +20,7 @@ test that crashed a worker instead of dying with no test named).
 from __future__ import annotations
 
 import contextlib
+import fnmatch
 import io
 import re
 import sys
@@ -314,6 +315,98 @@ class TestThePostMergeProofRunsEveryTip:
         assert not grouped, f"post-merge.yml sets a concurrency group on: {grouped}"
 
 
+def _load_post_merge():
+    """``tools/cc/_post_merge.py`` under an alias: the board's base-run
+    readers, held here to this tree's workflow files."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("post_merge_for_job_bounds", REPO_ROOT / "tools" / "cc" / "_post_merge.py")
+    pm = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pm)
+    return pm
+
+
+def _yaml_pushes_to(workflow: dict, base: str) -> bool:
+    """GitHub's push rule read off the parsed workflow, the oracle the
+    board's text reader is held to: ``on`` a word, a list or a mapping; a
+    ``push`` with ``branches`` (the last matching pattern decides, ``!``
+    excluding), ``branches-ignore``, or tag filters alone (tag pushes only).
+    ``fnmatch`` stands in for GitHub's patterns, which differ on ``/``; this
+    tree's push filters are literal branch names."""
+    on = workflow.get("on", workflow.get(True))   # a bare `on:` parses as the boolean key
+    if isinstance(on, str):
+        return on == "push"
+    if isinstance(on, list):
+        return "push" in on
+    if not isinstance(on, dict) or "push" not in on:
+        return False
+    push = on["push"] or {}
+    if "branches" in push:
+        hit = False
+        for pattern in push["branches"]:
+            if pattern.startswith("!"):
+                hit = hit and not fnmatch.fnmatchcase(base, pattern[1:])
+            elif fnmatch.fnmatchcase(base, pattern):
+                hit = True
+        return hit
+    if "branches-ignore" in push:
+        return not any(fnmatch.fnmatchcase(base, pattern) for pattern in push["branches-ignore"])
+    return not ({"tags", "tags-ignore"} & set(push))
+
+
+#: The context values this tree's concurrency groups build from, each one
+#: push's run shares with the next push's (the oracle's own list, apart from
+#: the module's, so a value the module wrongly counted as shared reds here).
+_SHARED_THIS_TREE = frozenset({"github.workflow", "github.ref", "github.event_name"})
+#: One expression naming a shared value and nothing else; a group is shared
+#: when every ``${{`` in it opens one (portability.yml's conditional tail,
+#: ``format('-{0}', github.run_id)`` on a dispatch, is not one).
+_SHARED_EXPRESSION = re.compile(r"\$\{\{\s*(?:" + "|".join(re.escape(v) for v in sorted(_SHARED_THIS_TREE)) + r")\s*\}\}")
+
+
+class TestTheBoardsBaseRunRoster:
+    """The board's ``checks:`` line reads the push runs on the base of each
+    workflow whose triggers run it on a push there (``tools/cc/board.py::
+    base_run_workflows``, the post-merge proof apart), derived from the
+    workflow files by a text reader, since ``tools/cc`` runs on the standard
+    library alone. Until DEF-5083 the roster was the Windows leg, named by
+    hand, and a red release matrix on main showed on no line."""
+
+    def test_the_text_reader_agrees_with_pyyaml_on_every_workflow_here(self):
+        """Dies to: the text reader and the parsed file disagreeing on any
+        workflow in this tree, about its push trigger on main or master, or
+        about whether its concurrency cancels a superseded run."""
+        pm = _load_post_merge()
+        workflows = _workflows()
+        assert workflows, "no workflow files read"
+        for name, workflow in workflows.items():
+            text = (WORKFLOWS / name).read_text(encoding="utf-8")
+            for base in ("main", "master"):
+                assert pm.pushes_to(text, base) is _yaml_pushes_to(workflow, base), (name, base)
+            concurrency = workflow.get("concurrency")
+            group = str(concurrency.get("group") or "") if isinstance(concurrency, dict) else ""
+            supersedes = (isinstance(concurrency, dict) and concurrency.get("cancel-in-progress") is True
+                          and bool(group) and group.count("${{") == len(_SHARED_EXPRESSION.findall(group)))
+            assert pm.cancels_superseded(text) is supersedes, name
+
+    def test_the_release_matrix_and_the_windows_leg_are_on_it_and_pull_request_workflows_are_not(self):
+        """The presence and absence pins beside the agreement: dies to the
+        release matrix or the Windows leg dropping off the roster (or the
+        release matrix's cancels named, 41 of its 100 newest push runs on main
+        superseded, DEF-5083), or a pull-request-only or tag-only workflow
+        read onto it. Each name pinned here is a file this tree keeps."""
+        pm = _load_post_merge()
+
+        def text(name: str) -> str:
+            return (WORKFLOWS / name).read_text(encoding="utf-8")
+
+        for name in ("release.yml", "post-merge-windows.yml", "harness-guard.yml", "post-merge.yml"):
+            assert pm.pushes_to(text(name), "main"), name
+        for name in ("test.yml", "portability.yml", "publish.yml"):
+            assert not pm.pushes_to(text(name), "main"), name
+        assert pm.cancels_superseded(text("release.yml")) and not pm.cancels_superseded(text("post-merge-windows.yml"))
+
+
 class TestThePostMergeWindowsLegKeepsItsContracts:
     """The advisory Windows leg on main (post-merge-windows.yml, the serial
     files on windows-latest after each push): its contracts were prose in the
@@ -322,21 +415,18 @@ class TestThePostMergeWindowsLegKeepsItsContracts:
 
     @staticmethod
     def _leg() -> tuple[dict, dict]:
-        import importlib.util
-
-        spec = importlib.util.spec_from_file_location("post_merge_for_job_bounds", REPO_ROOT / "tools" / "cc" / "_post_merge.py")
-        pm = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(pm)
-        workflow = _workflows()[pm.WINDOWS_WORKFLOW]
+        workflow = _workflows()["post-merge-windows.yml"]
         (job,) = workflow["jobs"].values()
         return workflow, job
 
     def test_the_file_the_board_reads_exists_and_runs_on_a_push_to_main(self):
         """Dies to: the file renamed or deleted (the board's absent state is
-        silent on purpose, so nothing else would say), or its trigger moved."""
+        silent on purpose, so nothing else would say), or its trigger moved
+        off the push to main the board's roster reads it by."""
         workflow, job = self._leg()
         on = workflow.get("on", workflow.get(True))   # a bare `on:` parses as the boolean key
         assert on["push"]["branches"] == ["main"] and "workflow_dispatch" in on, on
+        assert _load_post_merge().pushes_to((WORKFLOWS / "post-merge-windows.yml").read_text(encoding="utf-8"), "main")
         assert "windows" in str(job["runs-on"]).lower()
         assert "--leg serial" in "\n".join(str(s.get("run", "")) for s in job["steps"])
 
