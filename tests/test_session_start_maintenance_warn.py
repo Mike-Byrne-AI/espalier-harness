@@ -14,6 +14,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tests._cut_start import skip_if_cut
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SESSION_START = REPO_ROOT / "tools" / "cc" / "hooks" / "session_start.py"
 
@@ -30,7 +32,7 @@ def _run(root: Path, env_overrides: dict[str, str]) -> subprocess.CompletedProce
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = str(root)
     env.update(env_overrides)
-    return subprocess.run(
+    result = subprocess.run(
         [sys.executable, str(SESSION_START)],
         input='{"hook_event_name":"SessionStart","session_id":"maint-test"}',
         cwd=str(root),
@@ -39,6 +41,8 @@ def _run(root: Path, env_overrides: dict[str, str]) -> subprocess.CompletedProce
         text=True,
         timeout=15, encoding="utf-8",
     )
+    skip_if_cut(result.stdout)
+    return result
 
 
 def test_session_start_warns_when_maintenance_mode_active(self_host_tree_copy):

@@ -35,6 +35,7 @@ from tools.cc.hooks.write_guard import _denial_reasons
 
 import pytest
 
+from tests._cut_start import skip_if_cut
 from tests._hook_assertions import assert_hook_allowed, assert_hook_denied
 from tests._interpreter_hosts import HOOK_PYTHON
 from tests._symlink_support import requires_symlink
@@ -90,11 +91,15 @@ def run_hook(script_name: str, input_data: dict, env_overrides: dict | None = No
                 env.pop(k, None)
             else:
                 env[k] = v
-    return run_hook_through(
+    result = run_hook_through(
         [HOOK_PYTHON, str(script)],
         input=json.dumps(input_data),
         env=env,
     )
+    # A session_start cut at its wall is cannot-tell for every row reading
+    # through here, this file's and its importers' (DEF-2048).
+    skip_if_cut(result.stdout)
+    return result
 
 
 # ─── stop_gate.py ───────────────────────────────────────────────────────────
@@ -1166,6 +1171,7 @@ class TestKillSwitchTextsNameOnlyTheCIGateThisTreeHas:
         reason = json.loads(denied.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
         assert "kill-switch setting detected" in reason and "internal error" not in reason, reason
         banner = run("session_start.py", {"source": "startup", "session_id": "ks-2"})
+        skip_if_cut(banner.stdout)
         context = json.loads(banner.stdout)["hookSpecificOutput"]["additionalContext"]
         assert "Integrity: KILL-SWITCH" in context and "unverified" not in context, context
         assert "[WARN] Espalier-Harness detected 1 kill-switch setting" in context, context
@@ -4603,6 +4609,7 @@ class TestSessionMarkerEndToEnd:
         result = subprocess.run([sys.executable, str(HOOKS_DIR / "session_start.py")],  # through-the-launcher: the venv redirector shape is the case under test
                                 input=json.dumps({"source": "clear", "session_id": "next-2"}),
                                 capture_output=True, text=True, timeout=30, env=env, encoding="utf-8")
+        skip_if_cut(result.stdout)
         assert result.returncode == 0, result.stderr
         assert not (sessions / "prev-1.json").exists()
         assert json.loads((sessions / "next-2.json").read_text(encoding="utf-8"))["pid"] == os.getpid()

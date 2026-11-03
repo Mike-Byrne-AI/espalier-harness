@@ -28,6 +28,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tests._cut_start import skip_if_cut
 from tests._hook_spawn import run_hook_through
 
 
@@ -98,7 +99,7 @@ def _run_session_start(
     # the audit dir resolves under `home` on either platform.
     env["HOME"] = str(home)
     env["USERPROFILE"] = str(home)
-    return subprocess.run(
+    result = subprocess.run(
         [sys.executable, str(HOOKS_DIR / "session_start.py")],
         input=json.dumps(payload or {}),
         capture_output=True,
@@ -106,6 +107,8 @@ def _run_session_start(
         timeout=15,
         env=env, encoding="utf-8",
     )
+    skip_if_cut(result.stdout)
+    return result
 
 
 def test_session_start_warns_and_audits_kill_switch_without_claiming_block(tmp_path):

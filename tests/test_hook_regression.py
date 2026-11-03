@@ -25,6 +25,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tests._cut_start import skip_if_cut
+
 
 ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = ROOT / "tools" / "cc" / "hooks"
@@ -33,7 +35,7 @@ HOOKS_DIR = ROOT / "tools" / "cc" / "hooks"
 def _run_hook(script: str, payload: dict, env_overrides: dict) -> subprocess.CompletedProcess:
     env = os.environ.copy()
     env.update(env_overrides)
-    return subprocess.run(
+    result = subprocess.run(
         [sys.executable, str(HOOKS_DIR / script)],
         input=json.dumps(payload),
         capture_output=True,
@@ -41,6 +43,8 @@ def _run_hook(script: str, payload: dict, env_overrides: dict) -> subprocess.Com
         timeout=15,
         env=env, encoding="utf-8",
     )
+    skip_if_cut(result.stdout)
+    return result
 
 
 # ---------------------------------------------------------------------------
