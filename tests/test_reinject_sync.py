@@ -415,10 +415,12 @@ class TestAddedMirrorAdvisories:
         out = _fire("Edit", {"file_path": "/r/.github/workflows/harness-guard.yml"}, tmp_path)
         assert "INVERTED" in out
         assert "espalier/assets/github/workflows/harness-guard.yml is the source" in out
-        # Direction before remedy: running the sync at this moment would discard
-        # the edit that just landed, so the message has to say so.
+        # Direction before remedy, then what the sync does to the edit that just
+        # landed: the script's own refusal arms, in the one statement the
+        # pre-flight carries too (DEF-438; held to the script by
+        # tests/test_sync_github_workflow_asset.py).
         assert "Re-apply this edit to the ASSET" in out
-        assert "overwrite what you just wrote" in out
+        assert _reinject._HARNESS_GUARD_REFUSAL in out
 
     def test_harness_guard_asset_edit_points_at_the_root_copy(self, tmp_path):
         out = _fire(
@@ -492,6 +494,77 @@ class TestMirrorCensusCoverage:
         assert not missing, (
             "mirror registry rows name paths that are not on disk: " + str(missing)
         )
+
+    def test_every_rows_direction_agrees_with_where_its_sot_lives(self):
+        """DEF-441: ``direction`` is held to the tree, not only read.
+
+        A row is inverted exactly when its source of truth is the packaged copy
+        (``mirror_registry``'s own definition of ``SOT_IS_PACKAGED``), and the
+        packaged copies live under ``espalier/``. A row declaring the other
+        direction from where its SoT sits reds here, before the pre-flight
+        renders the wrong advisory from it.
+        """
+        wrong = [
+            f"{r.name}: sot {r.sot!r} declared {r.direction}"
+            for r in mirror_registry.MIRROR_ROWS
+            if r.is_inverted != r.sot.startswith("espalier/")
+        ]
+        assert not wrong, wrong
+
+    @staticmethod
+    def _pinning_comparison(r) -> "str | None":
+        """How ``r``'s pinning test compares its two sides, read from its source.
+
+        The pinning node's body plus each module-level function it calls (one
+        hop: the vendor parity class reads through ``_mirrored_files``). A
+        ``_normalize`` call or a CRLF replace is a normalised comparison;
+        failing those, ``read_bytes`` is a byte one; ``read_text`` alone is
+        normalised too, since universal newlines read CRLF as LF.
+        """
+        import ast
+
+        rel, *names = r.pinning_test.split("::")
+        source = (REPO / rel).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        node = tree
+        for name in names:
+            node = next(
+                c for c in ast.walk(node)
+                if isinstance(c, (ast.ClassDef, ast.FunctionDef)) and c.name == name
+            )
+        helpers = {
+            f.name: ast.get_source_segment(source, f)
+            for f in tree.body if isinstance(f, ast.FunctionDef)
+        }
+        segment = ast.get_source_segment(source, node)
+        called = {
+            c.func.id for c in ast.walk(node)
+            if isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id in helpers
+        }
+        text = "\n".join([segment, *(helpers[n] for n in sorted(called))])
+        if "_normalize(" in text or 'replace(b"\\r\\n"' in text:
+            return mirror_registry.NORMALIZED
+        if ".read_bytes()" in text:
+            return mirror_registry.BYTES
+        if ".read_text(" in text:
+            return mirror_registry.NORMALIZED
+        return None
+
+    def test_every_rows_comparator_is_the_comparison_its_pinning_test_makes(self):
+        """DEF-441: ``comparator`` is held to the test it describes.
+
+        No code read it, so a row could declare ``bytes`` over a test that
+        compares decoded text and nothing would say so; the two checklist rows
+        did, until their declaration was corrected to ``normalized``.
+        """
+        wrong = []
+        for r in mirror_registry.MIRROR_ROWS:
+            made = self._pinning_comparison(r)
+            if made is None:
+                wrong.append(f"{r.name}: {r.pinning_test} reads neither bytes nor text")
+            elif made != r.comparator:
+                wrong.append(f"{r.name}: declared {r.comparator}, {r.pinning_test} compares {made}")
+        assert not wrong, wrong
 
     @pytest.mark.contract
     def test_every_tracked_sync_script_is_claimed_by_a_row(self):
@@ -1241,20 +1314,30 @@ class TestMirrorCensusCoverage:
                 if surface_impact.classify_surface(side) is None:
                     bad.append(f"{r.name}: {side} -> None")
 
+            # The SOURCE side, given the tree, names the row's sync too (DEF-419d).
+            # The path rules alone cannot know a curated row's membership, which
+            # `covers` decides by asking whether the counterpart exists, so the
+            # one-argument call answers "shipped doc" or "test module" and names
+            # no sync; with the root, the row's own remedy is rendered from the
+            # registry. A classifier that stops consulting the rows reds here.
+            src = surface_impact.classify_surface(probe, REPO)
+            src_label, src_said = (src[0], " ".join(src[1])) if src is not None else (None, "")
+            if script is not None and script not in src_said:
+                bad.append(
+                    f"{r.name}: source {probe} -> {src_label!r} does not name {script}"
+                )
+            elif script is None and "by hand" not in src_said:
+                bad.append(
+                    f"{r.name}: unscripted row (sync=None); source {probe} does not "
+                    f"say to copy it by hand"
+                )
+
             # The MIRROR side must name the row's own sync. A mirror path belongs
             # to exactly one row by construction, so there is no ambiguity to
             # excuse a generic answer -- and a generic answer on a mirror path is
             # how the selfcheck family came to be told to run the wrong script.
-            #
-            # The SOURCE side is held to non-None only, and that is a DEFERRAL,
-            # not a principle. An earlier version of this comment justified it as
-            # "classify_surface is a pure path function that cannot know
-            # curated-subset membership" -- which is false: build_report already
-            # holds repo_root and calls _scan_existing(repo_root, ...) two lines
-            # below the classify_surface call, so the filesystem is a parameter
-            # away. The real reason is scope. Tracked as DEF-419d; until it lands,
-            # the edit-time advisory is the only net on a mirrored docs/ or tests/
-            # file, and it does not fire during pack authoring.
+            # This side's text is hand-written, never rendered from the row, so
+            # it is the witness a wrong `sync` on a row reds against.
             got = surface_impact.classify_surface(mirror_side)
             if got is None:
                 continue
@@ -1329,7 +1412,7 @@ class TestMirrorCensusCoverage:
         # and never surface_impact's live wording for that path.
         monkeypatch.setattr(
             surface_impact, "classify_surface",
-            lambda rel: ("packaged asset", ["a generic obligation naming no sync"]),
+            lambda rel, repo_root=None: ("packaged asset", ["a generic obligation naming no sync"]),
         )
         unscripted = mirror_registry.MirrorRow(
             name="synthetic-unscripted", sot="memory/README.md",

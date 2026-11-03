@@ -190,3 +190,69 @@ def _live_helper_count() -> int:
         p for p in checkout_glob(hooks_dir, "_*.py")
         if p.name != "__init__.py"
     ])
+
+
+# DEF-439: the hook ENTRY count. A bare "hooks" noun cannot be used: with the one
+# optional word the regex allows, "four blocking hooks" and "two hooks" read as
+# totals. These are the shapes the public docs use for the total.
+_HOOK_ENTRY_CLAIM_RE = make_count_claim_regex(
+    r"hook\s+(?:entry\s+)?scripts?|entry\s+scripts?|standard\s+hooks|hooks\s+across"
+)
+
+
+def _live_hook_entry_count() -> int:
+    """Count hook entry scripts (tools/cc/hooks/*.py not starting with ``_``)."""
+    hooks_dir = REPO_ROOT / "tools" / "cc" / "hooks"
+    if not hooks_dir.is_dir():
+        return 0
+    return len([p for p in checkout_glob(hooks_dir, "*.py") if not p.name.startswith("_")])
+
+
+def test_hook_entry_count_claims_match_filesystem():
+    """DEF-439: every public doc's hook entry count matches the hooks folder.
+
+    Before this, the README's digit claims were the only ones a test read
+    (tests/test_contracts.py's word list stops at "ten"): QUICKSTART's "twelve
+    entry scripts" and the "twelve hook scripts" of HOOKS.md and the README's
+    prose would have undercounted a thirteenth hook with the suite green.
+    """
+    actual = _live_hook_entry_count()
+    assert actual > 0, "no hook entry scripts found under tools/cc/hooks/"
+    matched = 0
+    for doc in PUBLIC_DOCS:
+        if not doc.exists():
+            continue
+        for n, line in _claims_in(doc.read_text(encoding="utf-8"), _HOOK_ENTRY_CLAIM_RE):
+            matched += 1
+            assert n == actual, (
+                f"{doc.relative_to(REPO_ROOT).as_posix()}: claims {n} hook entry "
+                f"scripts; filesystem has {actual}\n  line: {line}"
+            )
+    assert matched > 0, (
+        "hook-entry-count regex matched no public-doc claim -- regex drift or docs "
+        "reworded; the test would have passed vacuously"
+    )
+
+
+def test_the_pre_flight_names_every_doc_that_carries_a_hook_count():
+    """The pre-flight's hook-count sites are the docs these audits read, no more.
+
+    ``espalier surface-impact`` tells a maintainer adding a hook which docs
+    carry its count (espalier/surface_impact.py::_hook_demands). A doc that
+    gains a count claim and is not on that list is one they never update; a
+    listed doc carrying none sends them looking for a number that is not there.
+    """
+    from espalier import surface_impact
+
+    for regex, sites in (
+        (_HOOK_ENTRY_CLAIM_RE, surface_impact._HOOK_ENTRY_COUNT_SITES),
+        (_HELPER_CLAIM_RE, surface_impact._HOOK_HELPER_COUNT_SITES),
+    ):
+        carrying = {
+            doc.relative_to(REPO_ROOT).as_posix()
+            for doc in PUBLIC_DOCS
+            if doc.exists() and _claims_in(doc.read_text(encoding="utf-8"), regex)
+        }
+        # An export prunes an internal doc, so only the sites present are owed.
+        present = {s for s in sites if (REPO_ROOT / s).exists()}
+        assert carrying == present, (regex.pattern, sorted(carrying), sorted(present))

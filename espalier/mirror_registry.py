@@ -25,10 +25,14 @@ Reading the rows
 Two fields are load-bearing and easy to skim past:
 
 ``comparator``
-    Not every parity test compares the same way. Three rows compare through a
-    line-ending normalisation; the rest compare raw bytes. A guard that assumed
-    one comparator would silently loosen or tighten the other three contracts,
-    so the difference is declared rather than averaged away.
+    Not every parity test compares the same way. Some rows compare through a
+    line-ending normalisation (a ``_normalize`` call, or text read with
+    universal newlines); the rest compare raw bytes. A guard that assumed one
+    comparator would silently loosen or tighten the others' contracts, so the
+    difference is declared rather than averaged away, and each declaration is
+    held to its pinning test's actual comparison by the comparator pin in
+    ``tests/test_reinject_sync.py``. How many rows sit on each side is not
+    restated here, for the reason ``direction`` below gives.
 
 ``kind``
     ``byte`` rows are a whole-tree copy. ``subset`` rows mirror only part of
@@ -229,7 +233,10 @@ MIRROR_ROWS: tuple[MirrorRow, ...] = (
             "tests/test_implement_pack_step_zero.py::TestPackArtifactReviewSurface"
             "::test_inlined_checklist_is_generated_from_source"
         ),
-        comparator=BYTES,
+        # The pinning test splices the region out of read_text() strings, and
+        # universal newlines read CRLF as LF: a normalised comparison. Declared
+        # bytes until DEF-441's comparator pin read the test.
+        comparator=NORMALIZED,
         # Both senses at once: only the ITEM BLOCK of the source crosses (the
         # version-stamped header must NOT -- the target is common-tier, where
         # TestCommonTierAssetHygiene forbids digit-bearing pack ids), and what
@@ -252,7 +259,8 @@ MIRROR_ROWS: tuple[MirrorRow, ...] = (
             "tests/test_reflect_reasoning.py::TestReasoningReviewSurface"
             "::test_inlined_checklist_is_generated_from_source"
         ),
-        comparator=BYTES,
+        # Read as its twin's is: the region compared as decoded text.
+        comparator=NORMALIZED,
         kind=SUBSET_TRANSFORM,
         direction=SOT_IS_SOURCE_TREE,
     ),

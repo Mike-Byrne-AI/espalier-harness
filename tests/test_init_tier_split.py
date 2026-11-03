@@ -22,6 +22,7 @@ from espalier._safe_walk import visible
 from espalier import surface_contract
 from espalier.cli import cmd_init
 from espalier.surface_hygiene import (
+    COMMON_TIER_ASSET_MD_DIRS,
     FORBIDDEN_SELF_HOST_PATTERNS,
     SPECIFIC_ID_RE,
 )
@@ -184,7 +185,7 @@ class TestCommonTierAssetHygiene:
         # adopter-deployed asset bodies like the others, and the loop below was
         # the only sweep that would have caught a pack-ID leak in them.
         assets_root = REPO_ROOT / "espalier" / "assets"
-        for extra in ("docs", "memory", "seed"):
+        for extra in COMMON_TIER_ASSET_MD_DIRS:
             for path in checkout_rglob(assets_root / extra, "*.md"):
                 hits = self._SPECIFIC_ID_RE.findall(
                     path.read_text(encoding="utf-8"),
@@ -218,7 +219,7 @@ class TestCommonTierAssetHygiene:
         # seed assets: a seeded memo carried "this harness's own" to every adopter
         # while this sweep read the three .claude kinds only.
         scan = [(asset_root / kind, pattern) for kind, pattern in surface_contract.CLAUDE_KIND_GLOBS.items()]
-        scan += [(assets_root / extra, "**/*.md") for extra in ("docs", "memory", "seed")]
+        scan += [(assets_root / extra, "**/*.md") for extra in COMMON_TIER_ASSET_MD_DIRS]
         for base, pattern in scan:
             for path in base.glob(pattern):
                 rel = path.relative_to(assets_root).as_posix()

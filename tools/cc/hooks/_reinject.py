@@ -527,6 +527,16 @@ _GENERATED_DOC_REGIONS: tuple[tuple[str, str, str], ...] = (
 )
 _HARNESS_GUARD_ASSET_TAIL = "espalier/assets/github/workflows/harness-guard.yml"
 _HARNESS_GUARD_ROOT_TAIL = ".github/workflows/harness-guard.yml"
+# What scripts/sync_github_workflow_asset.py does to an edited root copy: its two
+# refusal arms in the words it prints for them, and the override. The pre-flight
+# (espalier/surface_impact.py::_HARNESS_GUARD_REFUSAL) carries the same text --
+# this module imports no espalier -- and tests/test_sync_github_workflow_asset.py
+# holds the two equal and drives each arm against the script (DEF-438).
+_HARNESS_GUARD_REFUSAL = (
+    "it refuses while the root copy differs from the asset and has uncommitted "
+    "changes, or is clean but already differed from it at its last commit (or "
+    "git cannot tell); only --force overwrites the root copy, discarding the edit"
+)
 
 
 def _render_claude_surface_sync(tool_name: str, tool_input: dict, root: Path) -> "str | None":
@@ -751,8 +761,8 @@ def _render_harness_guard_sync(tool_name: str, tool_input: dict, root: Path) -> 
                 "Unlike every other mirror here the direction is INVERTED: "
                 "espalier/assets/github/workflows/harness-guard.yml is the source of "
                 "truth. Re-apply this edit to the ASSET, then run "
-                "`python3 scripts/sync_github_workflow_asset.py` -- running it now would "
-                "overwrite what you just wrote (the script refuses unless --force). "
+                "`python3 scripts/sync_github_workflow_asset.py`: "
+                + _HARNESS_GUARD_REFUSAL + ". "
                 "This path is in _integrity.MANIFEST_FILES, so run "
                 "`espalier integrity refresh .` after syncing. "
                 "tests/test_package_resource_parity.py::TestRootMirrorParity"

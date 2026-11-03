@@ -140,6 +140,13 @@ class TestClassifySurface:
         assert any("EXPECTED_HOOK_COUNT" in d for d in demands)
         assert any("vendor mirror" in d for d in demands)
 
+    def test_a_new_hook_is_told_quickstart_carries_its_count(self) -> None:
+        # DEF-439: QUICKSTART's "twelve entry scripts plus fifteen helper
+        # modules" was the count site this list left out.
+        for rel in ("tools/cc/hooks/foo.py", "tools/cc/hooks/_foo.py"):
+            sites = next(d for d in classify_surface(rel)[1] if "hook-count sites" in d)
+            assert "docs/QUICKSTART.md" in sites, (rel, sites)
+
     def test_hook_helper(self) -> None:
         label, demands = classify_surface("tools/cc/hooks/_foo.py")
         assert label == "hook helper"
@@ -207,6 +214,9 @@ class TestClassifySurface:
         # is the failure this rule exists to catch.
         label, demands = classify_surface(".github/workflows/harness-guard.yml")
         assert label == "generated workflow mirror"
+        # Rendered from the row's declared direction (DEF-441): a row that stops
+        # declaring itself inverted stops saying so here.
+        assert any(d.startswith("INVERTED") for d in demands)
         assert any("espalier/assets/github/workflows/" in d for d in demands)
         assert any("test_package_resource_parity.py" in d for d in demands)
 
@@ -231,6 +241,30 @@ class TestClassifySurface:
         assert label == "workflow asset (source of truth)"
         assert any("INVERTED" in d for d in demands)
         assert any("sync_github_workflow_asset.py" in d for d in demands)
+
+    def test_the_harness_guard_advisories_follow_the_rows_declared_direction(
+        self, monkeypatch,
+    ) -> None:
+        """DEF-441: the registry's ``direction`` reaches a reader.
+
+        No production code read it, so a row declaring the wrong direction left
+        every guard green. Both harness-guard answers are rendered from the row
+        now: declared the ordinary way round, neither says INVERTED.
+        """
+        import dataclasses
+
+        from espalier import mirror_registry
+
+        flipped = tuple(
+            dataclasses.replace(r, direction=mirror_registry.SOT_IS_SOURCE_TREE)
+            if r.name == "harness-guard" else r
+            for r in mirror_registry.MIRROR_ROWS
+        )
+        monkeypatch.setattr(mirror_registry, "MIRROR_ROWS", flipped)
+        for rel in (".github/workflows/harness-guard.yml",
+                    "espalier/assets/github/workflows/harness-guard.yml"):
+            demands = classify_surface(rel)[1]
+            assert not any("INVERTED" in d for d in demands), (rel, demands)
 
     def test_generated_workflow_names_its_sync_script(self) -> None:
         # Regression pin for a claim that shipped stale: this obligation read
@@ -281,11 +315,97 @@ class TestClassifySurface:
         assert any("no label search" in d for d in demands)
         assert not any("zero espalier imports" in d for d in demands)
 
+    def test_a_top_level_tool_names_what_governs_it(self) -> None:
+        """DEF-533: top-level tools/ answered None while it ships and runs in CI.
+
+        Each demand names a mechanism that already reds on that tree, read at
+        the cited place, so none of them is a promise the suite does not keep.
+        """
+        label, demands = classify_surface("tools/review_agent_audit.py")
+        joined = " ".join(demands)
+        assert label == "top-level tool"
+        for named in ("_FUSE_TOOLS_TREE", "_SHIPPED_ROOTS", "code-review-audit",
+                      "tools/cc/_json_safe.py", "espalier provenance"):
+            assert named in joined, named
+        assert classify_surface("tools/__init__.py")[0] == "top-level tool"
+        assert classify_surface("tools/cc/ship.py")[0] == "standalone tool"
+        cited = (
+            ("tests/test_managed_inventory.py",
+             "def test_the_fuse_tools_tree_is_this_repositorys_tracked_tools_tree("),
+            ("tests/test_contracts.py", "class TestShippedRootsAreWhatShips"),
+            (".github/workflows/test.yml", "run: python tools/review_agent_audit.py"),
+        )
+        for rel, token in cited:
+            assert token in (REPO_ROOT / rel).read_text(encoding="utf-8"), (rel, token)
+
     def test_test_module(self) -> None:
         assert classify_surface("tests/test_foo.py")[0] == "test module"
 
     def test_unclassified_returns_none(self) -> None:
         assert classify_surface("brandnewdir/thing.py") is None
+
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+class TestAMirrorSourceNamesItsSync:
+    """DEF-419d: given the tree, a path a mirror row covers names that row's sync.
+
+    The path rules answer for what a file IS ("shipped doc", "test module") and
+    cannot see a curated row's membership, which `mirror_registry.covers` decides
+    by asking whether the counterpart exists. So a docs/ or tests/ file the asset
+    or selfcheck sync copies got an obligation list that never named the sync,
+    and the mirror drifted until a full run reded. With ``repo_root`` the row's
+    own remedy is rendered from the registry; without it the call stays the pure
+    path function the hooks' mirror census reads.
+    """
+
+    def test_a_mirrored_doc_names_the_asset_doc_sync(self) -> None:
+        label, demands = classify_surface("docs/CHEAT-SHEET.md", REPO_ROOT)
+        joined = " ".join(demands)
+        assert label == "shipped doc"
+        assert "sync_asset_docs.py" in joined
+        assert "espalier/assets/docs/CHEAT-SHEET.md" in joined
+        assert "test_deploy_doc_parity.py" in joined
+
+    def test_a_mirrored_test_file_names_the_selfcheck_sync(self) -> None:
+        label, demands = classify_surface("tests/conftest.py", REPO_ROOT)
+        joined = " ".join(demands)
+        assert label == "test module"
+        assert "sync_selfcheck_tests.py" in joined
+        assert "espalier/_vendor/selfcheck_tests/conftest.py" in joined
+
+    def test_an_unmirrored_source_gains_nothing(self) -> None:
+        rel = "docs/NO-SUCH-MIRRORED-DOC.md"
+        assert classify_surface(rel, REPO_ROOT) == classify_surface(rel)
+
+    def test_a_source_that_already_names_its_sync_is_not_told_twice(self) -> None:
+        rel = ".claude/commands/commit.md"
+        before = " ".join(classify_surface(rel)[1]).count("sync_claude_mirrors.py")
+        after = " ".join(classify_surface(rel, REPO_ROOT)[1]).count("sync_claude_mirrors.py")
+        assert before >= 1
+        assert after == before
+
+    def test_an_unscripted_source_is_told_to_copy_by_hand(self, tmp_path, monkeypatch) -> None:
+        from espalier import mirror_registry
+
+        synthetic = mirror_registry.MirrorRow(
+            name="synthetic", sot="a/b.yml", mirrors=("c/b.yml",), sync=None,
+            pinning_test="tests/test_x.py::TestX", comparator=mirror_registry.BYTES,
+            kind=mirror_registry.BYTE, direction=mirror_registry.SOT_IS_SOURCE_TREE,
+        )
+        monkeypatch.setattr(mirror_registry, "MIRROR_ROWS", (synthetic,))
+        label, demands = classify_surface("a/b.yml", tmp_path)
+        joined = " ".join(demands)
+        assert label == "mirror source"
+        assert "by hand" in joined and "c/b.yml" in joined
+        assert "run `" not in joined
+
+    def test_the_report_names_the_sync_for_a_declared_mirror_source(self, tmp_path) -> None:
+        pack = _write_pack(tmp_path, added=("docs/CHEAT-SHEET.md",))
+        report = build_report(REPO_ROOT, pack)
+        ob = next(o for o in report.obligations if o.trigger == "docs/CHEAT-SHEET.md")
+        assert any("sync_asset_docs.py" in d for d in ob.demands)
 
 
 class TestBuildReport:
@@ -576,7 +696,10 @@ class TestProvenanceObligationStandsDownWithItsVerb:
     #: unfollowable red gets widened until the guard goes blind. The question
     #: is not "does any string name the verb" but "is there a second spelling
     #: of the DEMAND" -- so scan only where demands are made.
-    DEMAND_PRODUCERS = ("classify_surface", "_hook_demands", "_cli_verb_obligation")
+    # `_classify_path` holds the path rules' table; `classify_surface` wraps it
+    # with the registry's mirror-source lines (DEF-419d), which carry no
+    # provenance demand of their own.
+    DEMAND_PRODUCERS = ("_classify_path", "_hook_demands", "_cli_verb_obligation")
 
     def test_the_demand_table_still_lives_in_this_module(self) -> None:
         """Companion to the arm above, covering what behaviour cannot see.
@@ -691,6 +814,87 @@ class TestCliVerbDetection:
         assert not any(
             o.surface.startswith("CLI subcommand") for o in report.obligations
         )
+
+
+class TestEachDemandIsKeyedToItsEnforcersPrecondition:
+    """DEF-607: a pre-flight demand holds where its enforcer would red, no wider.
+
+    The content scan read .claude/, docs/ and memory/ and all of espalier/assets/
+    while TestCommonTierAssetHygiene reads the asset bodies alone, which .claude/
+    and docs/ reach only through the mirror that copies them; and every touched
+    ``cmd_*`` drew a cheat-sheet line, listed or not. A pack author did hygiene
+    work no test required and added a line that was already there, and the false
+    demand reached authored pack text.
+    """
+
+    SCANNED = (
+        ("docs/CHEAT-SHEET.md", True),                     # the asset-docs row copies it
+        ("docs/CONVENTIONS.md", False),                    # no row copies it
+        ("espalier/assets/docs/CHEAT-SHEET.md", True),
+        ("espalier/assets/memory/README.md", True),
+        ("memory/README.md", False),                       # no row covers memory/
+        ("espalier/assets/github/workflows/harness-guard.yml", False),  # left out on purpose
+        (".claude/commands/commit.md", True),              # the claude-asset row copies it
+        ("espalier/assets/claude/commands/commit.md", True),
+    )
+
+    def test_the_content_scan_reads_what_the_hygiene_contract_reads(self, monkeypatch) -> None:
+        from espalier import surface_hygiene, surface_impact
+
+        monkeypatch.setattr(surface_hygiene, "internal_id_hits", lambda text: ["TP-1"])
+        got = {}
+        for rel, _expected in self.SCANNED:
+            report = surface_impact.SurfaceImpactReport(pack_id="TP-999")
+            surface_impact._scan_existing(REPO_ROOT, rel, report)
+            got[rel] = any(h.kind == "internal-id" for h in report.content_hits)
+        assert got == dict(self.SCANNED)
+
+    @pytest.mark.contract
+    def test_every_file_told_the_hygiene_contract_applies_is_one_it_reads(self) -> None:
+        """The hygiene demand cites TestCommonTierAssetHygiene; on a file that
+        test never reads (an assets/github/ or assets/task-packs/ file), it is a
+        demand no test would red on."""
+        from espalier import surface_impact
+        from tests._live_tree import checkout_rglob
+
+        told, wrong = 0, []
+        for top in (".claude", "docs", "espalier/assets"):
+            for path in checkout_rglob(REPO_ROOT / top, "*"):
+                if not path.is_file() or "__pycache__" in path.parts:
+                    continue
+                rel = path.relative_to(REPO_ROOT).as_posix()
+                got = classify_surface(rel, REPO_ROOT)
+                if got is None or surface_impact._ASSET_HYGIENE not in got[1]:
+                    continue
+                told += 1
+                if not surface_impact._hygiene_scans(rel, REPO_ROOT):
+                    wrong.append(rel)
+        assert told > 20, told
+        assert not wrong, wrong
+
+    @staticmethod
+    def _cli(report):
+        return [o for o in report.obligations if o.surface.startswith("CLI subcommand")]
+
+    def test_a_listed_verb_draws_no_cheat_sheet_demand(self, tmp_path: Path) -> None:
+        pack = _write_pack(tmp_path, changed=["espalier/cli.py::cmd_init", "build_parser"])
+        assert self._cli(build_report(REPO_ROOT, pack)) == []
+
+    def test_a_verb_the_cheat_sheet_lacks_still_draws_it(self, tmp_path: Path) -> None:
+        pack = _write_pack(tmp_path, changed=["espalier/cli.py::cmd_zzz_never_a_verb"])
+        cli = self._cli(build_report(REPO_ROOT, pack))
+        assert [o.trigger for o in cli] == ["cmd_zzz_never_a_verb"]
+        assert any("CHEAT-SHEET" in d for d in cli[0].demands)
+
+    def test_a_removed_verb_names_no_test_that_would_red(self, tmp_path: Path) -> None:
+        """TestCheatSheetCliParity reads registered verbs into the file, never
+        the file back, so a stale line reds nothing: the demand says so."""
+        pack = _write_pack(tmp_path, removed=["espalier/cli.py::cmd_init"])
+        cli = self._cli(build_report(REPO_ROOT, pack))
+        assert [o.direction for o in cli] == ["removed"]
+        joined = " ".join(cli[0].demands)
+        assert "no test reds" in joined
+        assert "pins both directions" not in joined
 
 
 class TestSurfaceImpactRetroCatch:

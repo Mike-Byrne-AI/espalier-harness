@@ -33,11 +33,12 @@ contract or auto-fixes an obligation — the full suite stays the actual gate.
 """
 from __future__ import annotations
 
+import fnmatch
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from espalier import surface_hygiene
+from espalier import mirror_registry, surface_hygiene
 from espalier.managed_inventory import get_managed_public_prefixes
 from espalier.pack_manifest import (
     ADDED,
@@ -52,14 +53,8 @@ from espalier.provenance_census import (
     allowed_tokens,
     path_is_scanned,
 )
-from espalier.surface_contract import classify_release_path, off_self_host
+from espalier.surface_contract import CLAUDE_KIND_GLOBS, classify_release_path, off_self_host
 from espalier._text import plural
-
-# Adopter-facing body prefixes — the surfaces TestCommonTierAssetHygiene
-# actually polices. The hygiene (internal-ID / self-host-vocab) scan applies
-# ONLY here: running it over engine source (espalier/*.py) is a category error
-# and self-matches surface_hygiene.py's own pattern definitions.
-_HYGIENE_SCAN_PREFIXES = (".claude/", "espalier/assets/", "docs/", "memory/")
 
 # The bodies the audience gate (tests/test_deployed_text_audience.py) holds at
 # zero maintainer-addressed markers. The seeded docs ratchet on a floor there
@@ -219,6 +214,20 @@ _ASSET_HYGIENE = (
 )
 
 
+#: The public docs carrying a hook entry count, and those carrying a helper
+#: count (DEF-439). Each list is held equal to the docs its audit reads by
+#: tests/test_count_claims.py::test_the_pre_flight_names_every_doc_that_carries_a_hook_count,
+#: so a doc that gains a count joins the obligation and one that drops it
+#: leaves. NOT CLAUDE.md: its only numeral is "governs 10 of Claude Code's hook
+#: EVENTS", which does not move with the hook count; its real obligation is a
+#: table row, listed separately below for hook entries.
+_HOOK_ENTRY_COUNT_SITES = (
+    "README.md", "docs/CHEAT-SHEET.md", "docs/CONVENTIONS.md", "docs/HOOKS.md",
+    "docs/QUICKSTART.md", "docs/SHARP_EDGES.md",
+)
+_HOOK_HELPER_COUNT_SITES = ("README.md", "docs/QUICKSTART.md")
+
+
 def _hook_demands(is_helper: bool) -> list[str]:
     count = (
         "EXPECTED_HOOK_HELPER_COUNT (tests/_surface_expected.py) + "
@@ -228,13 +237,15 @@ def _hook_demands(is_helper: bool) -> list[str]:
         "(tests/_surface_expected.py) + _CANONICAL_HOOK_SCRIPTS "
         "(espalier/surface_contract.py)"
     )
+    sites, audit = (
+        (_HOOK_HELPER_COUNT_SITES, "test_helper_count_claims_match_filesystem")
+        if is_helper
+        else (_HOOK_ENTRY_COUNT_SITES, "test_hook_entry_count_claims_match_filesystem")
+    )
     demands = [
         f"count SoT: bump {count}",
-        # NOT CLAUDE.md: its only numeral is "governs 10 of Claude Code's hook
-        # EVENTS", which does not move with the hook count. CLAUDE.md's real
-        # obligation is a table row, listed separately below for hook entries.
-        "the hardcoded hook-count sites (README.md, docs/HOOKS.md, "
-        "docs/CHEAT-SHEET.md)",
+        f"the hardcoded hook-count sites ({', '.join(sites)}; "
+        f"tests/test_count_claims.py::{audit})",
         "scripts/wheel_smoke.py packaged-hook SoT",
         "integrity manifest refresh (espalier integrity refresh)",
         "vendor mirror: espalier/_vendor/cc/hooks/... "
@@ -257,13 +268,107 @@ def _hook_demands(is_helper: bool) -> list[str]:
     return demands
 
 
-def classify_surface(rel_path: str) -> tuple[str, list[str]] | None:
+def classify_surface(
+    rel_path: str, repo_root: Path | None = None,
+) -> tuple[str, list[str]] | None:
     """Return ``(surface_label, demands)`` for ``rel_path``, or ``None``.
 
     ``None`` means no rule matched — an unclassified addition. If it also
     classifies ``public`` the caller warns that it will ship + be scanned
     with no declared obligations (a brand-new top-level dir usually).
+
+    With ``repo_root``, a path a mirror row covers also names that row's sync
+    when the path rule's answer names none (DEF-419d). The path rules say what
+    a file IS ("shipped doc", "test module"); whether the asset or selfcheck
+    sync copies it is a curated row's membership, which
+    :func:`espalier.mirror_registry.covers` decides by asking whether the
+    counterpart exists, so it needs the tree. Without the root the call stays a
+    pure path function.
     """
+    matched = _classify_path(rel_path)
+    if repo_root is None:
+        return matched
+    extra = _mirror_source_demands(rel_path, repo_root, matched[1] if matched else [])
+    if not extra:
+        return matched
+    if matched is None:
+        return "mirror source", extra
+    return matched[0], [*matched[1], *extra]
+
+
+def _sync_script_name(r: mirror_registry.MirrorRow) -> str | None:
+    """The basename of ``r``'s sync script, the token a demand names it by."""
+    return r.sync.split()[-1].rsplit("/", 1)[-1] if r.sync else None
+
+
+def _mirror_source_demands(rel_path: str, repo_root: Path, said: list[str]) -> list[str]:
+    """One demand per row covering ``rel_path`` whose sync ``said`` does not name.
+
+    Rendered from the row, so the registry is what this reader consumes: a row
+    whose source side, remedy or pinning test moves moves the line with it. The
+    hand-written answers on each row's MIRROR side are left alone on purpose:
+    they are the independent witness a wrong ``sync`` on a row reds against
+    (tests/test_reinject_sync.py::TestMirrorCensusCoverage), and a line
+    rendered from the row cannot disagree with it.
+    """
+    p = rel_path.replace("\\", "/")
+    joined = " ".join(said)
+    out = []
+    for r in mirror_registry.MIRROR_ROWS:
+        if not mirror_registry.covers(r, p, repo_root):
+            continue
+        script = _sync_script_name(r)
+        if script is not None and script in joined:
+            continue
+        out.append(_source_side_line(r, mirror_registry.counterpart(r, p)))
+    return out
+
+
+def _source_side_line(r: mirror_registry.MirrorRow, target: str | None) -> str:
+    """The source side's line for row ``r``, its direction read from the row.
+
+    ``is_inverted`` is what puts INVERTED in front (DEF-441): the one row whose
+    source of truth is the packaged copy is where "edit the file where it
+    lives" is wrong, and a row declaring the wrong direction now changes what
+    the reader is told, which is what the harness-guard tests in
+    tests/test_surface_impact.py red on.
+    """
+    if r.is_inverted:
+        return (
+            f"INVERTED: this IS the SoT; {target} is generated FROM it -- "
+            f"{mirror_registry.remedy(r)} after editing ({r.pinning_test} reds on drift)"
+        )
+    return (
+        f"mirror source ({r.name}): {target} is generated from this file -- "
+        f"{mirror_registry.remedy(r)} after editing ({r.pinning_test} reds on drift)"
+    )
+
+
+def _generated_side_line(r: mirror_registry.MirrorRow) -> str:
+    """The generated side's first line for row ``r``: where its SoT is, by direction."""
+    if r.is_inverted:
+        return (
+            f"INVERTED: the SoT is {r.sot} and THIS file is generated -- edit the "
+            "asset, not this copy"
+        )
+    return f"do NOT hand-edit: generated from {r.sot} -- edit the source, not this copy"
+
+
+#: What scripts/sync_github_workflow_asset.py does to an edited root copy, said
+#: once (DEF-438). Its two refusal arms, in the words the script prints for
+#: them, and the override. tools/cc imports no espalier, so the hook's advisory
+#: (tools/cc/hooks/_reinject.py::_HARNESS_GUARD_REFUSAL) carries the same text;
+#: tests/test_sync_github_workflow_asset.py holds the two equal and drives each
+#: arm against the script.
+_HARNESS_GUARD_REFUSAL = (
+    "it refuses while the root copy differs from the asset and has uncommitted "
+    "changes, or is clean but already differed from it at its last commit (or "
+    "git cannot tell); only --force overwrites the root copy, discarding the edit"
+)
+
+
+def _classify_path(rel_path: str) -> tuple[str, list[str]] | None:
+    """The path rules alone: :func:`classify_surface` without the tree."""
     p = rel_path.replace("\\", "/")
     base = p.rsplit("/", 1)[-1]
 
@@ -441,14 +546,15 @@ def classify_surface(rel_path: str) -> tuple[str, list[str]] | None:
     # this file is a copy of something. It is the something. On the one row where
     # direction is the entire point, that is the wrong answer, not a vague one.
     if p == "espalier/assets/github/workflows/harness-guard.yml":
+        # Rendered from the registry row (DEF-441), so its declared direction,
+        # sync and pinning test are what this line says.
+        guard = mirror_registry.row("harness-guard")
         return "workflow asset (source of truth)", [
-            "INVERTED: this IS the SoT; .github/workflows/harness-guard.yml is "
-            "generated FROM it -- run scripts/sync_github_workflow_asset.py after "
-            "editing (tests/test_package_resource_parity.py::TestRootMirrorParity"
-            "::test_root_workflow_mirrors_package)",
+            _source_side_line(guard, mirror_registry.counterpart(guard, p)),
             "integrity: the generated root copy is in _integrity.MANIFEST_FILES -- "
             "run `espalier integrity refresh .` after syncing",
-            _ASSET_HYGIENE,
+            # No hygiene demand: TestCommonTierAssetHygiene leaves assets/github/
+            # out on purpose, so it would red on nothing here (DEF-607).
         ]
     if p.startswith("espalier/assets/task-packs/"):
         return "packaged folder router", [
@@ -458,7 +564,8 @@ def classify_surface(rel_path: str) -> tuple[str, list[str]] | None:
             "byte-mirror of the task-packs/ router "
             "(scripts/sync_asset_docs.py; "
             "tests/test_deploy_doc_parity.py::TestSourceAssetDocByteParity)",
-            _ASSET_HYGIENE,
+            # No hygiene demand: TestCommonTierAssetHygiene does not read
+            # assets/task-packs/ (DEF-607).
         ]
     if p.startswith("espalier/assets/"):
         return "packaged asset", [
@@ -466,7 +573,8 @@ def classify_surface(rel_path: str) -> tuple[str, list[str]] | None:
             "(tests/test_package_resource_parity.py)",
             "_CENSUS_FORCE_SCAN (espalier/provenance_census.py) if not byte-pinned "
             "to a scanned SoT",
-            _ASSET_HYGIENE,
+            # Only where TestCommonTierAssetHygiene reads (DEF-607).
+            *([_ASSET_HYGIENE] if _is_common_tier_asset_body(p) else []),
         ]
     # espalier/_vendor/ hosts TWO mirror families with DIFFERENT sync scripts, so
     # the narrower one must be tested FIRST. A bare `_vendor/` prefix answers for
@@ -524,6 +632,26 @@ def classify_surface(rel_path: str) -> tuple[str, list[str]] | None:
             _PROVENANCE_DEMAND,
             _ENGINE_IMPORTS_DEMAND,
         ]
+    # Top-level tools/ (DEF-533): outside tools/cc/, so none of its rules apply,
+    # yet it ships and CI runs it. Each demand names a mechanism that already
+    # reds on this tree; no EXPECTED_ roster is added, since _FUSE_TOOLS_TREE is
+    # one already, pinned to git's view of tools/.
+    if p.startswith("tools/") and not p.startswith("tools/cc/") and p.endswith(".py"):
+        tool_demands = [
+            "roster: a new top-level tools/ entry joins _FUSE_TOOLS_TREE "
+            "(espalier/managed_inventory.py; tests/test_managed_inventory.py::"
+            "TestHarnessWrittenPaths::test_the_fuse_tools_tree_is_this_repositorys_tracked_tools_tree)",
+            "ships in the sdist: tools is one of _SHIPPED_ROOTS "
+            "(tests/test_contracts.py::TestShippedRootsAreWhatShips)",
+            _PROVENANCE_DEMAND,
+        ]
+        if base == "review_agent_audit.py":
+            tool_demands.append(
+                "CI: the code-review-audit job (.github/workflows/test.yml) runs it "
+                "with no install step, so stdlib only, and it loads "
+                "tools/cc/_json_safe.py by path: that file stays stdlib and in place"
+            )
+        return "top-level tool", tool_demands
     if p.startswith("tools/cc/") and p.endswith(".py"):
         return "standalone tool", [
             _TOOL_ZERO_IMPORTS_DEMAND,
@@ -576,13 +704,13 @@ def classify_surface(rel_path: str) -> tuple[str, list[str]] | None:
     # exactly the shape that produces a self-assured hand-edit. Exact-path, never a
     # .github/workflows/ prefix.
     if p == ".github/workflows/harness-guard.yml":
+        # Rendered from the registry row (DEF-441); the refusal is the one
+        # statement the edit-time hook carries too (DEF-438).
+        guard = mirror_registry.row("harness-guard")
         return "generated workflow mirror", [
-            "INVERTED: the SoT is espalier/assets/github/workflows/harness-guard.yml "
-            "and THIS file is generated -- edit the asset, not this copy",
-            "re-apply the change to the asset, THEN run "
-            "scripts/sync_github_workflow_asset.py -- running it against an edited "
-            "root file overwrites the edit (tests/test_package_resource_parity.py"
-            "::TestRootMirrorParity::test_root_workflow_mirrors_package)",
+            _generated_side_line(guard),
+            f"re-apply the change to {guard.sot}, THEN {mirror_registry.remedy(guard)}: "
+            f"{_HARNESS_GUARD_REFUSAL} ({guard.pinning_test} reds on drift)",
             "integrity: this path is in _integrity.MANIFEST_FILES -- "
             "run `espalier integrity refresh .` after syncing",
         ]
@@ -624,29 +752,55 @@ def classify_surface(rel_path: str) -> tuple[str, list[str]] | None:
 _CLI_VERB_RE = re.compile(r"^cmd_[a-z0-9_]+$")
 
 
+def _verb_listed(verb: str, cheat_sheet: str) -> bool:
+    """Does ``cheat_sheet`` already mention ``verb``'s subcommand name?
+
+    TestCheatSheetCliParity's own precondition: a registered name appearing
+    anywhere in the file passes. A ``cmd_*`` symbol does not carry its
+    registered name, so both spellings the parser could register are read.
+    """
+    name = verb[len("cmd_"):]
+    return name.replace("_", "-") in cheat_sheet or name in cheat_sheet
+
+
 def _cli_verb_obligation(
-    symbol_names: list[str], direction: str = "added",
+    symbol_names: list[str], direction: str = "added", cheat_sheet: str | None = None,
 ) -> Obligation | None:
     """One CLI-subcommand obligation if any ``cmd_*`` / ``build_parser`` symbol
-    is touched — the cheat-sheet CLI-parity contract the full suite enforces,
-    in both directions (a removed verb whose cheat-sheet line stays reds the
-    same parity test an added verb without one does)."""
+    is touched -- the cheat-sheet CLI-parity contract the full suite enforces.
+
+    With ``cheat_sheet`` (the file's text, where the tree has one) each demand
+    is keyed to that contract's real precondition (DEF-607): an added or changed
+    verb already listed owes no line, and neither does the ``build_parser``
+    edit that comes with it; a removed verb owes the drop only while its line
+    is there. The contract is one-way -- registered verbs must be listed, a
+    stale line reds nothing -- so the removal demand cites no test.
+    """
     triggers = [
         n for n in symbol_names if _CLI_VERB_RE.match(n) or n == "build_parser"
     ]
     if not triggers:
         return None
     verbs = sorted(n for n in triggers if n != "build_parser")
+    adding = direction == "added"
+    if cheat_sheet is not None and verbs:
+        verbs = [v for v in verbs if _verb_listed(v, cheat_sheet) != adding]
+        if not verbs:
+            return None
+    line = (
+        "docs/CHEAT-SHEET.md: list the verb (tests/test_documented_claims.py::"
+        "TestCheatSheetCliParity reds while a registered verb's name appears "
+        "nowhere in the file)"
+        if adding else
+        "docs/CHEAT-SHEET.md: drop the verb's line -- no test reds on a stale "
+        "one (TestCheatSheetCliParity reads registered verbs into the file, "
+        "never the file back)"
+    )
     return Obligation(
         surface="CLI subcommand (espalier verb)",
         trigger=", ".join(verbs) if verbs else "build_parser",
         classification="",  # a symbol edit inside an existing file, not a new path
-        demands=[
-            "docs/CHEAT-SHEET.md: the verb's line -- list it when added, drop it "
-            "when removed (tests/test_documented_claims.py::TestCheatSheetCliParity "
-            "pins both directions)",
-            "any CLI-verb count claim in CLAUDE.md / README",
-        ],
+        demands=[line, "any CLI-verb count claim in CLAUDE.md / README"],
         direction=direction,
     )
 
@@ -763,6 +917,13 @@ def build_report(repo_root: Path, pack_path: Path) -> SurfaceImpactReport:
     # this call and left alone -- it is a pure function of `repo_root`, so the
     # answers cannot disagree; the cost is a repeated 5-signal read).
     adopter_tree = off_self_host(repo_root)
+    # Read once for the verb obligation's precondition; a tree without the file
+    # cannot say whether a verb is listed, so every verb keeps its demand.
+    cheat_path = repo_root / "docs" / "CHEAT-SHEET.md"
+    cheat_sheet = (
+        cheat_path.read_text(encoding="utf-8", errors="replace")
+        if cheat_path.is_file() else None
+    )
 
     added_all = [s.name for s in manifest.affected_symbols if s.change_type == ADDED]
     added = [n for n in added_all if _looks_like_path(n)]
@@ -776,7 +937,7 @@ def build_report(repo_root: Path, pack_path: Path) -> SurfaceImpactReport:
 
     for path in added:
         classification = classify_release_path(path)
-        matched = classify_surface(path)
+        matched = classify_surface(path, repo_root)
         if matched is None:
             # Unclassified: only noteworthy if it would ship.
             if classification == "public":
@@ -797,7 +958,7 @@ def build_report(repo_root: Path, pack_path: Path) -> SurfaceImpactReport:
 
     # CLI verbs come from added-symbols OR changed symbols (a pack usually
     # files `cli.py::cmd_x` + `build_parser` under Changed-semantics).
-    verb = _cli_verb_obligation(added_symbols + changed)
+    verb = _cli_verb_obligation(added_symbols + changed, cheat_sheet=cheat_sheet)
     if verb is not None:
         report.obligations.append(verb)
 
@@ -819,14 +980,14 @@ def build_report(repo_root: Path, pack_path: Path) -> SurfaceImpactReport:
         names = [s.name for s in manifest.affected_symbols if s.change_type == change_type]
         residue = [n for n in names if not _looks_like_path(n)]
         _warn_ambiguous(report, residue, heading)
-        verb = _cli_verb_obligation(residue, direction=direction)
+        verb = _cli_verb_obligation(residue, direction=direction, cheat_sheet=cheat_sheet)
         if verb is not None:
             report.obligations.append(verb)
         for name in names:
             if not _looks_like_path(name):
                 continue
             classification = classify_release_path(name)
-            matched = classify_surface(name)
+            matched = classify_surface(name, repo_root)
             if matched is None:
                 if classification == "public":
                     report.unmatched_public_removed.append(name)
@@ -873,6 +1034,56 @@ def _provenance_applies(rel: str) -> bool:
     return path_is_scanned(rel)
 
 
+def _is_common_tier_asset_body(rel_path: str) -> bool:
+    """Is ``rel_path`` an asset body TestCommonTierAssetHygiene reads?
+
+    Each ``.claude`` kind under ``espalier/assets/claude/`` by its
+    ``CLAUDE_KIND_GLOBS`` pattern (a glob, not a recursive walk), and every
+    ``.md`` under the folders
+    :data:`espalier.surface_hygiene.COMMON_TIER_ASSET_MD_DIRS` names. Running
+    the hygiene scan anywhere else (engine source, assets/github/) is a demand
+    no test would red on.
+    """
+    p = rel_path.replace("\\", "/")
+    assets = "espalier/assets/"
+    if not p.startswith(assets):
+        return False
+    folder, _, rest = p[len(assets):].partition("/")
+    if folder in surface_hygiene.COMMON_TIER_ASSET_MD_DIRS:
+        return rest.endswith(".md")
+    if folder != "claude":
+        return False
+    kind, _, inner = rest.partition("/")
+    pattern = CLAUDE_KIND_GLOBS.get(kind)
+    if pattern is None:
+        return False
+    parts, pats = inner.split("/"), pattern.split("/")
+    return len(parts) == len(pats) and all(
+        fnmatch.fnmatchcase(part, pat) for part, pat in zip(parts, pats)
+    )
+
+
+def _hygiene_scans(rel_path: str, repo_root: Path) -> bool:
+    """Do the two common-tier hygiene scans read ``rel_path``? (DEF-607)
+
+    Directly, when it is an asset body; otherwise only through the mirror row
+    that copies it there, so a source is read when a row covers it
+    (:func:`espalier.mirror_registry.covers`, which for a curated row asks
+    whether the copy exists) and its counterpart is such a body. A docs/ file
+    no row copies is never read there, nor is memory/, which no row covers.
+    """
+    p = rel_path.replace("\\", "/")
+    if _is_common_tier_asset_body(p):
+        return True
+    for r in mirror_registry.MIRROR_ROWS:
+        if not mirror_registry.covers(r, p, repo_root):
+            continue
+        target = mirror_registry.counterpart(r, p)
+        if target is not None and _is_common_tier_asset_body(target):
+            return True
+    return False
+
+
 def _scan_existing(repo_root: Path, rel_path: str, report: SurfaceImpactReport) -> None:
     """Run the cheap content scans over ``rel_path`` if it exists on disk.
 
@@ -901,7 +1112,7 @@ def _scan_existing(repo_root: Path, rel_path: str, report: SurfaceImpactReport) 
     # hidden-command accounting could never have seen.
     if off_self_host(repo_root):
         return
-    if p.startswith(_HYGIENE_SCAN_PREFIXES):
+    if _hygiene_scans(p, repo_root):
         id_hits = surface_hygiene.internal_id_hits(text)
         if id_hits:
             report.content_hits.append(ContentHit(rel_path, "internal-id", id_hits))
