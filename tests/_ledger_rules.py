@@ -229,7 +229,11 @@ TEXT_OVER_OWN_SUBJECT = {
     # an unscripted mirror row reads as a diagnosis).
     "DEF-417h", "DEF-418b",
     "DEF-424b", "DEF-424g", "DEF-437",
-    "DEF-438", "DEF-439", "DEF-449",
+    # DEF-438 and DEF-439 left on 2026-11-02 with their rows (struck by lane
+    # the-pre-flight-derives-each-demand-from-its-enforcer, the C30 class: the
+    # two harness-guard advisories carry one refusal statement held to the
+    # script; the hook-count sites are held to the docs their audits read).
+    "DEF-449",
     # DEF-486 and DEF-561 left on 2026-10-30 with their rows (struck by lane
     # gate-populations-derive-from-the-live-source, the C37 class-fix: the
     # README's skip list is a generated region; the status guard reads the
