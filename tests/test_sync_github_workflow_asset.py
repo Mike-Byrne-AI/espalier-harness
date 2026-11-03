@@ -343,11 +343,14 @@ class TestBothAdvisoriesStateTheScriptsRefusalArms:
         from espalier.surface_impact import classify_surface
 
         _label, demands = classify_surface(ROOT_REL)
-        # The hook's entry point, as tests/test_reinject_sync.py::_fire drives it.
-        rendered = _hook_refusal_module().check(
-            "PostToolUse", "Edit", {"file_path": "/r/" + ROOT_REL}, session_dir,
+        # The renderer itself, as the generated-side census in
+        # tests/test_reinject_sync.py calls it: through check() the per-turn
+        # ceiling and the advisories other tests in a worker already spent can
+        # leave this one out, which read as a missing statement under xdist.
+        rendered = _hook_refusal_module()._render_harness_guard_sync(
+            "Edit", {"file_path": "/r/" + ROOT_REL}, session_dir,
         )
-        return " ".join(demands), " ".join(rendered)
+        return " ".join(demands), rendered or ""
 
     def test_the_two_copies_are_one_statement(self):
         engine, hook = self._statements()

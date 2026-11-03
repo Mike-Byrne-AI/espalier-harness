@@ -356,6 +356,24 @@ class TestClassifySurface:
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
+def _mirror_root(tmp_path: Path) -> Path:
+    """Write ``tmp_path / "root"``: a small tree holding two mirror pairs and the real cheat sheet, so a
+    report over it reads the registry's rows without reading this checkout:
+    the asset-doc pair (``docs/CHEAT-SHEET.md``) and the selfcheck pair
+    (``tests/conftest.py``), each counterpart present as a curated row needs."""
+    root = tmp_path / "root"
+    cheat = (REPO_ROOT / "docs" / "CHEAT-SHEET.md").read_text(encoding="utf-8")
+    for rel, text in (
+        ("docs/CHEAT-SHEET.md", cheat),
+        ("espalier/assets/docs/CHEAT-SHEET.md", cheat),
+        ("tests/conftest.py", "# fixture\n"),
+        ("espalier/_vendor/selfcheck_tests/conftest.py", "# fixture\n"),
+    ):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text, encoding="utf-8")
+    return root
+
+
 class TestAMirrorSourceNamesItsSync:
     """DEF-419d: given the tree, a path a mirror row covers names that row's sync.
 
@@ -417,7 +435,8 @@ class TestAMirrorSourceNamesItsSync:
         before, only an Added or Removed path reached the registry).
         """
         pack = _write_pack(tmp_path, changed=("docs/CHEAT-SHEET.md", "tests/conftest.py"))
-        report = build_report(REPO_ROOT, pack)
+        _mirror_root(tmp_path)
+        report = build_report(tmp_path / "root", pack)
         edited = {o.trigger: " ".join(o.demands) for o in report.obligations if o.direction == "edited"}
         assert "sync_asset_docs.py" in edited.get("docs/CHEAT-SHEET.md", "")
         assert "sync_selfcheck_tests.py" in edited.get("tests/conftest.py", "")
@@ -425,7 +444,8 @@ class TestAMirrorSourceNamesItsSync:
 
     def test_the_report_names_the_sync_for_a_declared_mirror_source(self, tmp_path) -> None:
         pack = _write_pack(tmp_path, added=("docs/CHEAT-SHEET.md",))
-        report = build_report(REPO_ROOT, pack)
+        _mirror_root(tmp_path)
+        report = build_report(tmp_path / "root", pack)
         ob = next(o for o in report.obligations if o.trigger == "docs/CHEAT-SHEET.md")
         assert any("sync_asset_docs.py" in d for d in ob.demands)
 
@@ -885,21 +905,22 @@ class TestEachDemandIsKeyedToItsEnforcersPrecondition:
         """``_is_common_tier_asset_body`` against the hygiene tests' own walk:
         the same kind globs and folders, read the way they read them."""
         from espalier import surface_contract, surface_hygiene, surface_impact
+        from espalier._safe_walk import visible
         from tests._live_tree import checkout_glob, checkout_rglob
 
         assets = REPO_ROOT / "espalier" / "assets"
         contract = {
             p.relative_to(REPO_ROOT).as_posix()
             for kind, pattern in surface_contract.CLAUDE_KIND_GLOBS.items()
-            for p in checkout_glob(assets / "claude" / kind, pattern)
+            for p in visible(checkout_glob(assets / "claude" / kind, pattern), assets / "claude" / kind)
         } | {
             p.relative_to(REPO_ROOT).as_posix()
             for folder in surface_hygiene.COMMON_TIER_ASSET_MD_DIRS
-            for p in checkout_rglob(assets / folder, "*.md")
+            for p in visible(checkout_rglob(assets / folder, "*.md"), assets / folder)
         }
         ours = {
             p.relative_to(REPO_ROOT).as_posix()
-            for p in checkout_rglob(assets, "*")
+            for p in visible(checkout_rglob(assets, "*"), assets)
             if p.is_file() and surface_impact._is_common_tier_asset_body(
                 p.relative_to(REPO_ROOT).as_posix())
         }
@@ -911,6 +932,7 @@ class TestEachDemandIsKeyedToItsEnforcersPrecondition:
         test never reads (an assets/github/ or assets/task-packs/ file), it is a
         demand no test would red on."""
         from espalier import surface_impact
+        from espalier._safe_walk import visible
         from tests._live_tree import checkout_rglob
 
         from espalier import mirror_registry
@@ -923,7 +945,7 @@ class TestEachDemandIsKeyedToItsEnforcersPrecondition:
 
         told, wrong, untold = 0, [], []
         for top in (".claude", "docs", "espalier/assets"):
-            for path in checkout_rglob(REPO_ROOT / top, "*"):
+            for path in visible(checkout_rglob(REPO_ROOT / top, "*"), REPO_ROOT / top):
                 if not path.is_file() or "__pycache__" in path.parts:
                     continue
                 rel = path.relative_to(REPO_ROOT).as_posix()
@@ -947,24 +969,28 @@ class TestEachDemandIsKeyedToItsEnforcersPrecondition:
 
     def test_a_listed_verb_draws_no_cheat_sheet_demand(self, tmp_path: Path) -> None:
         pack = _write_pack(tmp_path, changed=["espalier/cli.py::cmd_init", "build_parser"])
-        assert self._cli(build_report(REPO_ROOT, pack)) == []
+        _mirror_root(tmp_path)
+        assert self._cli(build_report(tmp_path / "root", pack)) == []
 
     def test_a_verb_the_cheat_sheet_lacks_still_draws_it(self, tmp_path: Path) -> None:
         pack = _write_pack(tmp_path, changed=["espalier/cli.py::cmd_zzz_never_a_verb"])
-        cli = self._cli(build_report(REPO_ROOT, pack))
+        _mirror_root(tmp_path)
+        cli = self._cli(build_report(tmp_path / "root", pack))
         assert [o.trigger for o in cli] == ["cmd_zzz_never_a_verb"]
         assert any("CHEAT-SHEET" in d for d in cli[0].demands)
 
     def test_a_parser_edit_naming_no_verb_is_told_its_demand_is_conditional(self, tmp_path: Path) -> None:
         pack = _write_pack(tmp_path, changed=["build_parser"])
-        cli = self._cli(build_report(REPO_ROOT, pack))
+        _mirror_root(tmp_path)
+        cli = self._cli(build_report(tmp_path / "root", pack))
         assert cli[0].demands[0].startswith("if the parser edit registers a verb: ")
 
     def test_a_removed_verb_names_no_test_that_would_red(self, tmp_path: Path) -> None:
         """TestCheatSheetCliParity reads registered verbs into the file, never
         the file back, so a stale line reds nothing: the demand says so."""
         pack = _write_pack(tmp_path, removed=["espalier/cli.py::cmd_init"])
-        cli = self._cli(build_report(REPO_ROOT, pack))
+        _mirror_root(tmp_path)
+        cli = self._cli(build_report(tmp_path / "root", pack))
         assert [o.direction for o in cli] == ["removed"]
         joined = " ".join(cli[0].demands)
         assert "no test reds" in joined

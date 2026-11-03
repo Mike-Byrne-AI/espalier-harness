@@ -159,6 +159,11 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "TestTheWalkRan floors the wiring at ten and holds the three launch sets equal to it; the wiring is the tree's own settings.json, whose blocking gates espalier/harness_config.py:103 pins by name",
     ),
     # 1 row(s), shapes: comprehension
+    "tests/test_agent_contracts.py": (
+        1, "9e0aa5cb14ff06fefeaf8e922a2275c96a9fed4643c3d99376b1dc741a0634ce",
+        "CORRECT_BY_SHAPE",
+        "NEW 2026-11-02 (the C30 lane): the pre-flight's hook-count sites (`surface_impact._HOOK_ENTRY_COUNT_SITES`, its present members) compared set-equal to the docs this file's hook-count audit reads a claim in. The other side is read from the docs, so a site dropped from the list or a doc gaining a count reds; driven red by mutation in that lane.",
+    ),
     "tests/test_agent_frontmatter_contract.py": (
         1, "a157a5264566f27c0af6aeb5d1008b5b4794749ae5494a3dc17d2335780dea7d",
         "CORRECT_BY_PROPERTY",
@@ -171,6 +176,11 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "deployed code-reviewer and test-writer tools lines carry the Node tree's runner.",
     ),
     # 2 row(s), shapes: comprehension
+    "tests/test_deployed_assets_home_path_shapes.py": (
+        1, "930cdbca2997f1575fd0b56816af7a78b822622c4ab99186f534edec1c4fd027",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-11-02 (the C30 lane): `_source_of` reads the mirror registry to name a red's source file and sync, a lookup per path that replaced a hand list mapping memory/ through a sync that copies none; `test_the_red_names_the_source_and_its_sync` pins its answers as literals, so a row that stops answering reds there.",
+    ),
     "tests/test_generators_in_parity.py": (
         2, "123e2039a7ebf4cc6dfd00619add7ec8a4e2310397acabd73e0adc9aa539ba1d",
         "CORRECT_BY_PROPERTY",
@@ -557,9 +567,9 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "here; its planted mirror rows red when the credit goes -- CORRECT_BY_SHAPE for that row.",
     ),
     "tests/test_count_claims.py": (
-        1, "94d051dbcf27ab1a7eb85989c25fd786fe98a8917b048161ef8c4ed2b048720b",
+        2, "a6dc00f973d2984525c635b957be1a1bc79be43ed945a72a0d59b8c6dd952ea4",
         "CORRECT_BY_SHAPE",
-        "derives the EXPECTATION and compares it against an independently obtained actual -- the corre...",
+        "derives the EXPECTATION and compares it against an independently obtained actual -- the corre... ONE MORE row (2026-11-02, the C30 lane): the helper-count site list (`surface_impact._HOOK_HELPER_COUNT_SITES`, its present members) compared set-equal to the docs the helper audit reads a claim in; the other side is read from the docs, so a site dropped from the list or a doc gaining a count reds, driven red by mutation in that lane.",
     ),
     "tests/test_denial_reason_actionability.py": (
         9, "a890570d3679a1d1416a5adf9b0fa5d8e0f8c4a78665df37b5c5289ad73220d2",
@@ -940,9 +950,9 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "NEW 2026-09-27 (the fourth .claude kind): test_every_deployed_kind_carries_the_marker loops CLAUDE_KIND_GLOBS after a real init asserting file_carries_marker on every deployed body. Deriving is the property (a fifth kind is checked with no new method); the three per-kind methods above it stay literal, so the class keeps an independent side.",
     ),
     "tests/test_init_tier_split.py": (
-        2, "c6f17b14af0e45d608ec78c187a1304de4c51d7c759252e11a41a86569a2c72b",
+        4, "2ad479dc7305e0fa0759f62b5425fd50315924ba6dfd41c8ec697235c30a1957",
         "CORRECT_BY_PROPERTY",
-        "NEW 2026-09-27 (the fourth .claude kind): the two hygiene sweeps (pack ids, self-host vocabulary) read CLAUDE_KIND_GLOBS so the mirrored .js bodies and the seed assets are scanned. Deriving is the property: the .md glob over three hand-named kinds saw zero workflow bodies while a real tag sat in one; the forbidden patterns stay literal, so the test keeps an independent side.",
+        "NEW 2026-09-27 (the fourth .claude kind): the two hygiene sweeps (pack ids, self-host vocabulary) read CLAUDE_KIND_GLOBS so the mirrored .js bodies and the seed assets are scanned. Deriving is the property: the .md glob over three hand-named kinds saw zero workflow bodies while a real tag sat in one; the forbidden patterns stay literal, so the test keeps an independent side. TWO MORE rows (2026-11-02, the C30 lane): the folder literal both sweeps spelled is now `surface_hygiene.COMMON_TIER_ASSET_MD_DIRS`, the tuple the pre-flight reads too, so the census sees each sweep once over the kind globs and once over that tuple. The same folders, not a narrowing; a shrink of the shared tuple is caught from the tree by `test_every_asset_folder_holding_markdown_is_read_or_left_out_by_name`, which reads git's view of espalier/assets/.",
     ),
     "tests/test_init_upgrade_paths.py": (
         1, "11e768dbf628443658ea8c709b33a2158ec96f7c0773349b3daa2fd09bfb2aa5",
@@ -1253,9 +1263,9 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "same >= 55 floor this test repeats). Adjudicated 2026-10-03 when the row was added; graded by reading, not mutation.",
     ),
     "tests/test_reinject_sync.py": (
-        38, "68fd0951d49e8c7ddafb95464ab0e3ddfb3d805db74a768029abdb96eb042bad",
+        40, "715b3b60fe992de734895412b0e34dcd41f61302a201ff5515a2a2f05c0fb79f",
         "MIXED_WITH_PRIOR_PASS",
-        "tests/test_reinject_sync.py:528+:578 — len(MIRROR_ROWS) is asserted equal to the number-word ... (5) FOUR MORE rows over `_reinject.REINJECTS` in the priority-ladder test (2026-09-06): the once-per-session <-> cap_exempt pairing, the rule-id charset and the case-folded uniqueness of ids. CORRECT_BY_PROPERTY: each is an invariant every registered row must satisfy (a smaller registry makes a smaller, still-true claim), and the registry cannot shrink unnoticed because the same test pins the exact priority ladder. FIVE MORE rows (2026-10-08, the scope census): the scope keyword set over REINJECTS, the any-id and self-host-id comprehensions set-equal to two hand rosters with a reason per row, the other-hooks all-any, and the union check. CORRECT_BY_PROPERTY: the rosters are hand-written and compared both ways, so a new PostToolUse row reds until it is placed, a row moved between scopes moves its roster line, and the registry cannot shrink unnoticed; three pins driven red by mutation in that lane. EIGHT MORE rows (2026-10-14, DEF-4015, the sync advisories leaving the session cap): the self-host roster's generated-side lines derived from `SYNC_RULE_PAIRS` (a generated rule moved to scope any reds the both-ways roster compare, since its derived line stays in the self-host roster), the two walks over `MIRROR_ROWS` in `TestSyncAdvisoriesLeaveTheSessionCap` (the canonical registry, its size pinned by the number-word row above; the walk test asserts its own count), the region-name lookup over `_CHECKLIST_REGIONS` (a fixture input whose fallback content fails the region rule loudly), the `REINJECTS` id map, the bare-row check over `_SYNC_ROWS`, and the derived-ids set and stray check over `SYNC_RULE_PAIRS` and `REINJECTS`. CORRECT_BY_PROPERTY: each is a per-row invariant or a membership lookup, and the table cannot shrink unnoticed because the derivation test pins seven pairs and fourteen distinct flags. Graded by reading; the two walks were driven red by mutation in that lane (one flag per row through `_once_flag`, and a stale silent-side exemption). NINE MORE rows (2026-10-17, DEF-2009/2011/2012, `TestTheSyncAdvisoriesCloseTheirGaps`): the region warning naming every `_GENERATED_DOC_REGIONS` entry (a text check per entry of the generator's own table), the compaction census's two sets over `COMPACT_CLEARED_RULES` and `REINJECTS` (set-equal to the cleared set plus a hand roster with a reason per id, compared both ways), the derived-set pin's walks (`COMPACT_CLEARED_RULES` equal, in order, to the `SYNC_RULE_PAIRS` sides plus the region rule, each a once rule), and the flag writes and checks over the cleared set in the counters and directory-flag rows. CORRECT_BY_PROPERTY: each is a per-row invariant or a membership check, the cleared set cannot shrink unnoticed because the derived-set pin names its parts and the derivation test above pins fourteen sides, and a new once rule reds the census until it is placed; the set's mutants (the region rule left out, the source sides left out, every once flag cleared) were driven red in that lane. ONE FEWER row (2026-11-02, the C34 lane, the mirror census): the surface-impact obligation walk over `MIRROR_ROWS` moved into `TestMirrorCensusCoverage._surface_impact_gaps(rows)`, which the obligation test calls with `MIRROR_ROWS` and the unscripted-row test with one synthetic row, so the census no longer sees its population. The same walk over the same registry, not a narrowing; the new identical-bytes census passes `MIRROR_ROWS` to its helpers the same way and asserts its own floor (119 groups linked, 50 required).",
+        "tests/test_reinject_sync.py:528+:578 — len(MIRROR_ROWS) is asserted equal to the number-word ... (5) FOUR MORE rows over `_reinject.REINJECTS` in the priority-ladder test (2026-09-06): the once-per-session <-> cap_exempt pairing, the rule-id charset and the case-folded uniqueness of ids. CORRECT_BY_PROPERTY: each is an invariant every registered row must satisfy (a smaller registry makes a smaller, still-true claim), and the registry cannot shrink unnoticed because the same test pins the exact priority ladder. FIVE MORE rows (2026-10-08, the scope census): the scope keyword set over REINJECTS, the any-id and self-host-id comprehensions set-equal to two hand rosters with a reason per row, the other-hooks all-any, and the union check. CORRECT_BY_PROPERTY: the rosters are hand-written and compared both ways, so a new PostToolUse row reds until it is placed, a row moved between scopes moves its roster line, and the registry cannot shrink unnoticed; three pins driven red by mutation in that lane. EIGHT MORE rows (2026-10-14, DEF-4015, the sync advisories leaving the session cap): the self-host roster's generated-side lines derived from `SYNC_RULE_PAIRS` (a generated rule moved to scope any reds the both-ways roster compare, since its derived line stays in the self-host roster), the two walks over `MIRROR_ROWS` in `TestSyncAdvisoriesLeaveTheSessionCap` (the canonical registry, its size pinned by the number-word row above; the walk test asserts its own count), the region-name lookup over `_CHECKLIST_REGIONS` (a fixture input whose fallback content fails the region rule loudly), the `REINJECTS` id map, the bare-row check over `_SYNC_ROWS`, and the derived-ids set and stray check over `SYNC_RULE_PAIRS` and `REINJECTS`. CORRECT_BY_PROPERTY: each is a per-row invariant or a membership lookup, and the table cannot shrink unnoticed because the derivation test pins seven pairs and fourteen distinct flags. Graded by reading; the two walks were driven red by mutation in that lane (one flag per row through `_once_flag`, and a stale silent-side exemption). NINE MORE rows (2026-10-17, DEF-2009/2011/2012, `TestTheSyncAdvisoriesCloseTheirGaps`): the region warning naming every `_GENERATED_DOC_REGIONS` entry (a text check per entry of the generator's own table), the compaction census's two sets over `COMPACT_CLEARED_RULES` and `REINJECTS` (set-equal to the cleared set plus a hand roster with a reason per id, compared both ways), the derived-set pin's walks (`COMPACT_CLEARED_RULES` equal, in order, to the `SYNC_RULE_PAIRS` sides plus the region rule, each a once rule), and the flag writes and checks over the cleared set in the counters and directory-flag rows. CORRECT_BY_PROPERTY: each is a per-row invariant or a membership check, the cleared set cannot shrink unnoticed because the derived-set pin names its parts and the derivation test above pins fourteen sides, and a new once rule reds the census until it is placed; the set's mutants (the region rule left out, the source sides left out, every once flag cleared) were driven red in that lane. ONE FEWER row (2026-11-02, the C34 lane, the mirror census): the surface-impact obligation walk over `MIRROR_ROWS` moved into `TestMirrorCensusCoverage._surface_impact_gaps(rows)`, which the obligation test calls with `MIRROR_ROWS` and the unscripted-row test with one synthetic row, so the census no longer sees its population. The same walk over the same registry, not a narrowing; the new identical-bytes census passes `MIRROR_ROWS` to its helpers the same way and asserts its own floor (119 groups linked, 50 required). TWO MORE rows (2026-11-02, the C30 lane): the direction pin and the comparator pin over `MIRROR_ROWS`. CORRECT_BY_PROPERTY: each holds a row's declared field to the tree (where its SoT lives; what its pinning test's source compares), so a smaller registry makes a smaller still-true claim, and the registry's size is pinned by the number-word row above; both driven red by mutation in that lane.",
     ),
     "tests/test_release_noise_parity.py": (
         2, "6a450daa35131de5202e220afa565b78e8d218792b40ca8ad1a141265626a3fb",
@@ -1599,9 +1609,9 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "the owner never names.",
     ),
     "tests/test_surface_impact.py": (
-        2, "470f841c4113e504a757c6fa2d0adc1508a0258ed4614c0f09532cc8b24815d9",
+        6, "4c34948f171609935bded58e504db9493c421dab8e83197c143b364b5ddb9ce7",
         "MIXED_WITH_PRIOR_PASS",
-        "per-row verdicts differ within this file; see the ledger row for DEF-600",
+        "per-row verdicts differ within this file; see the ledger row for DEF-600 FOUR MORE rows (2026-11-02, the C30 lane): the flipped-direction fixture built over `MIRROR_ROWS` (a constructed input, not a population), the two walks of the asset-body equivalence test over `CLAUDE_KIND_GLOBS` and `COMMON_TIER_ASSET_MD_DIRS` (the contract's own read, compared with the pre-flight's predicate; a shrink of the tuple is caught from the tree by tests/test_init_tier_split.py's folder witness), and the generated-copy lookup over `MIRROR_ROWS` in the hygiene census (a membership test).",
     ),
     "tests/test_surface_support_matrix.py": (
         2, "f2b0df562e6ec1eb4ed979d29c18bf13dd0ef36977a80d9ccd143dcf71ad492d",

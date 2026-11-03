@@ -525,6 +525,8 @@ class TestMirrorCensusCoverage:
         """
         import ast
 
+        from tests._source_segment import segment, source_lines
+
         rel, *names = r.pinning_test.split("::")
         source = (REPO / rel).read_text(encoding="utf-8")
         tree = ast.parse(source)
@@ -534,16 +536,17 @@ class TestMirrorCensusCoverage:
                 c for c in ast.walk(node)
                 if isinstance(c, (ast.ClassDef, ast.FunctionDef)) and c.name == name
             )
+        lines = source_lines(source)
         helpers = {
-            f.name: ast.get_source_segment(source, f)
+            f.name: segment(lines, f)
             for f in tree.body if isinstance(f, ast.FunctionDef)
         }
-        segment = ast.get_source_segment(source, node)
+        body = segment(lines, node)
         called = {
             c.func.id for c in ast.walk(node)
             if isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id in helpers
         }
-        text = "\n".join([segment, *(helpers[n] for n in sorted(called))])
+        text = "\n".join([body or "", *(helpers[n] or "" for n in sorted(called))])
         if any(t in text for t in ("_normalize(", ".splitlines(", 'replace(b"\\r\\n"', 'replace("\\r\\n"')):
             return mirror_registry.NORMALIZED
         if ".read_bytes()" in text:
