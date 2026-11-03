@@ -1713,8 +1713,15 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "than passing.",
     ),
     "tests/test_write_guard.py": (
-        34, "02d5bf3166bc34777498fa76665cbb62900bb4978656c9227a3454dfbc753676",
+        37, "88b5131b52ad6280f0a577db27bc57b99174e9d00427cc0e7dc871fc58705b32",
         "CORRECT_BY_REMEDY",
+        "GREW 34 -> 37 on 2026-11-03 (the cmd set check lane, DEF-1071 (d)): "
+        "TestQuotedVerbTailIsUniform::test_write_guard_holds_no_anchored_arm_of_its_own "
+        "builds three sets -- `_bash_patterns`' compiled patterns and every "
+        "`DANGEROUS_*` record's (by object), and `write_guard`'s own anchored ones -- "
+        "and asserts the last is empty: 'everything present is rostered', so a shrink "
+        "of the first two can only red it, and its red was earned at the base (it named "
+        "the two removed openers) and on a planted group-wrapped and prefixed arm. "
         "GREW 33 -> 34 on 2026-10-17 (the drive-row lane, DEF-2022): "
         "TestBenchGuardFixture::test_the_drive_cd_row_reads_the_tier_its_host_expects "
         "picks one row by its id out of the probe's `ROWS` and drives it through the "

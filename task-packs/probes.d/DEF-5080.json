@@ -7,7 +7,7 @@
  "inputs": [
   "tools/cc/hooks/_bash_patterns.py"
  ],
- "row_sha": "f093148764c4",
- "text_sha": "172feb369477",
- "verified_2026_11_03": "OPEN (filed 2026-11-03; probe driven at filing here and in the export of HEAD 3490b54a00f1)"
+ "row_sha": "edd3aff66c57",
+ "text_sha": "05436ef2a323",
+ "verified_2026_11_03": "STILL_OPEN (re-pinned value unchanged on 2026-11-03: text only: the advisory's condition and its declare-by-design arm stated (follow-up review); the probe still prints 10) [changed: text]"
 }
