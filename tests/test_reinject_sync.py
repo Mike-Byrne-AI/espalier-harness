@@ -10,14 +10,16 @@ guards). Sibling of tests/test_reinject.py.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 import pytest
 
 from espalier import mirror_registry, surface_contract, surface_impact
-from tests._git_oracle import require_is_gitignored
+from tests._git_oracle import require_is_gitignored, require_tracked_paths
 
 REPO = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO / "tools" / "cc" / "hooks"
@@ -251,6 +253,22 @@ def test_realistic_cofire_d_and_e_within_per_turn_cap(tmp_path):
 # tracked scripts/sync_*.py backs a declared row. An entry here needs a reason.
 _CENSUS_EXCLUDED_SYNC_SCRIPTS: frozenset[str] = frozenset()
 
+# Groups of byte-identical tracked files that no mirror row links, deliberately
+# outside the identical-bytes census below. An entry needs a reason, and one a
+# row has since come to link is stale and reds. An entry whose files stop being
+# equal goes quiet rather than red: nothing pins the pair, so editing one side
+# is allowed.
+_CENSUS_EXCLUDED_IDENTICAL_GROUPS: dict[frozenset[str], str] = {
+    frozenset({"memory/README.md", "espalier/assets/memory/README.md"}): (
+        "package data init seeds, equal to its source today with no row, sync or "
+        "parity test: tests/_surface_expected.py calls whether it should be pinned "
+        "an open question, and espalier/managed_inventory.py records that nothing "
+        "pins it. Reopen when the pair diverges (the census stops grouping it and "
+        "this entry goes dead: drop it) or the question is answered (a row "
+        "replaces it)"
+    ),
+}
+
 # Files that state the mirror-row COUNT in prose, in a form the guard can read.
 # Membership is asserted both ways: a listed site whose count is stale reds, AND a
 # listed site the pattern cannot see at all reds. The second half matters more than
@@ -475,6 +493,7 @@ class TestMirrorCensusCoverage:
             "mirror registry rows name paths that are not on disk: " + str(missing)
         )
 
+    @pytest.mark.contract
     def test_every_tracked_sync_script_is_claimed_by_a_row(self):
         """The completeness oracle -- without it the registry only documents.
 
@@ -490,13 +509,13 @@ class TestMirrorCensusCoverage:
         it is a DERIVED one, and it converts the most common way a family actually
         lands into a red.
 
-        TWO blind spots, both real, both recorded in the ledger rather than left
-        implicit:
+        TWO blind spots, both real:
           * an UNTRACKED script is invisible -- this resolves against `git
             ls-files`, so `git add` before trusting a green run. That is the same
             rule tests/CLAUDE.md already states for new test files.
           * a family arriving with NO sync script (a hand-copied pair) is not seen
-            at all; `harness-guard` was exactly that for months.
+            here at all; `harness-guard` was exactly that for months. The
+            identical-bytes census below is the one that sees it.
         """
         import subprocess
 
@@ -525,6 +544,195 @@ class TestMirrorCensusCoverage:
             f"it: {unclaimed}. Add the row, or add the script to "
             "_CENSUS_EXCLUDED_SYNC_SCRIPTS with a reason."
         )
+
+    @staticmethod
+    def _identical_tracked_groups() -> list[tuple[str, ...]]:
+        """Every set of two or more tracked, non-empty files whose bytes are equal.
+
+        Read from the working tree, which is what the parity tests compare; sized
+        first so only files that share a length are hashed. Empty files are left
+        out: any two are equal and none is a mirror.
+        """
+        by_size: dict[int, list[str]] = defaultdict(list)
+        for rel in require_tracked_paths(REPO, minimum=1000, what="tracked files"):
+            path = REPO / rel
+            if path.is_symlink() or not path.is_file():
+                continue
+            size = path.stat().st_size
+            if size:
+                by_size[size].append(rel)
+        by_digest: dict[str, list[str]] = defaultdict(list)
+        for rels in by_size.values():
+            if len(rels) > 1:
+                for rel in rels:
+                    by_digest[hashlib.sha256((REPO / rel).read_bytes()).hexdigest()].append(rel)
+        return sorted(tuple(sorted(g)) for g in by_digest.values() if len(g) > 1)
+
+    @staticmethod
+    def _source_side(r, rel: str) -> "str | None":
+        """The source path ``rel`` mirrors under row ``r``, or None: ``counterpart`` reversed."""
+        for mirror in r.mirrors:
+            if mirror.endswith("/"):
+                if rel.startswith(mirror):
+                    glob = mirror_registry.glob_row_parts(r.sot)
+                    return (glob[0] if glob is not None else r.sot) + rel[len(mirror):]
+            elif rel == mirror:
+                return r.sot
+        return None
+
+    @classmethod
+    def _row_linked_parts(cls, group, rows) -> list[list[str]]:
+        """``group`` split into the parts no row joins.
+
+        Members are joined through the source they share: a source-side member is
+        its own source, a mirror-side member reads its source back from the row.
+        So two mirrors of one source stay one part while that source is edited and
+        not yet synced (the source then differs and leaves the group), and a chain
+        of rows (``tools/cc/_stack_table.py`` reaches two copies through two
+        rows) is one part.
+
+        Positional, like ``counterpart``: a curated row covers its whole source
+        tree here, so a hand copy between ``docs/`` and ``espalier/assets/docs/``
+        reads as linked although the sync does not own it. That pair is the
+        curated rows' parity tests' to see, not this census's.
+        """
+        parent: dict[str, str] = {}
+
+        def find(p: str) -> str:
+            parent.setdefault(p, p)
+            while parent[p] != p:
+                p = parent[p]
+            return p
+
+        for p in group:
+            find(p)
+            for r in rows:
+                source = p if mirror_registry.counterpart(r, p) is not None else cls._source_side(r, p)
+                if source is not None:
+                    parent[find(p)] = find("\0source:" + source)
+        parts: dict[str, list[str]] = defaultdict(list)
+        for p in group:
+            parts[find(p)].append(p)
+        return sorted(sorted(v) for v in parts.values())
+
+    @classmethod
+    def _census_findings(cls, groups, rows, exclusions) -> "tuple[int, list, list]":
+        """(linked count, unlinked groups' parts, stale exclusions) for ``groups``."""
+        linked, unlinked = 0, []
+        for group in groups:
+            parts = cls._row_linked_parts(group, rows)
+            if len(parts) == 1:
+                linked += 1
+            elif frozenset(group) not in exclusions:
+                unlinked.append(parts)
+        stale = sorted(
+            sorted(g) for g in exclusions if len(cls._row_linked_parts(tuple(g), rows)) == 1
+        )
+        return linked, unlinked, stale
+
+    @pytest.mark.contract
+    def test_every_identical_tracked_pair_is_linked_by_a_row(self):
+        """The completeness oracle for a family that arrives with NO sync script.
+
+        The sync-script census above sees a family only through its script, so a
+        hand-copied pair (``harness-guard`` was one for months) is claimed by
+        nothing and seen by nothing, and every other test here iterates
+        MIRROR_ROWS. A byte-mirrored pair leaves its own evidence in the tree:
+        two tracked files with identical bytes. Each such group must be joined
+        by a declared row, or excluded with a reason.
+
+        Byte mirrors only: a transformed family is not identical on disk, so the
+        sync-script census sees one only through its script, and a transformed
+        family kept by hand (the two checklist rows were, until their sync) is
+        seen by neither. A contract test: the lanes that add a hand copy (package
+        data, docs, fixtures) earn the contract tier, not the full one.
+        """
+        linked, unlinked, stale = self._census_findings(
+            self._identical_tracked_groups(), mirror_registry.MIRROR_ROWS,
+            _CENSUS_EXCLUDED_IDENTICAL_GROUPS,
+        )
+        # A collapsed read (no file hashed, every group skipped) would pass here
+        # having compared nothing. Measured 2026-11-02: 119 groups linked, 57 of
+        # them by vendor-cc and 37 by the two .claude rows.
+        assert linked >= 50, (
+            f"only {linked} identical groups were linked by a row; the census read "
+            "collapsed, and a green here would have compared nothing."
+        )
+        assert not unlinked, (
+            "byte-identical tracked files that no mirror row links, so every census "
+            f"guard is blind to them: {unlinked}. A mirror kept by hand gets its row "
+            "in espalier/mirror_registry.py (sync=None when copied by hand), with the "
+            "obligations this class pins. Equality that is coincidental, or a copy "
+            "deliberately frozen, goes in _CENSUS_EXCLUDED_IDENTICAL_GROUPS with a "
+            "reason saying which: an exclusion means nothing pins the pair."
+        )
+        assert not stale, (
+            f"excluded groups a mirror row now links: {stale}. Drop them from "
+            "_CENSUS_EXCLUDED_IDENTICAL_GROUPS."
+        )
+        assert all(reason.strip() for reason in _CENSUS_EXCLUDED_IDENTICAL_GROUPS.values()), (
+            "an identical-group exclusion with no reason"
+        )
+        # Exists-only, never must-match: requiring the pair to stay equal would
+        # pin it, which is the open question an entry leaves unanswered.
+        tracked = set(require_tracked_paths(REPO, minimum=1000, what="tracked files"))
+        untracked = sorted(
+            p for g in _CENSUS_EXCLUDED_IDENTICAL_GROUPS for p in g if p not in tracked
+        )
+        assert not untracked, (
+            f"identical-group exclusions name paths that are not tracked: {untracked}. "
+            "Drop or correct the entry."
+        )
+
+    @pytest.mark.contract
+    def test_the_census_reds_on_an_unlinked_group_and_a_stale_exclusion(self):
+        """Both red branches, driven on synthetic groups.
+
+        A hand copy no row joins is reported; an exclusion that a row has come to
+        link is stale; an excluded unlinked group and a linked group are neither.
+        """
+        rows = mirror_registry.MIRROR_ROWS
+        copy = ("docs/x.md", "espalier/assets/elsewhere/x.md")
+        excluded = ("a/frozen.txt", "b/frozen.txt")
+        vendored = ("espalier/_vendor/cc/hooks/x.py", "tools/cc/hooks/x.py")
+        linked, unlinked, stale = self._census_findings(
+            [copy, excluded, vendored], rows,
+            {frozenset(excluded): "frozen", frozenset(vendored): "now a row's"},
+        )
+        assert linked == 1
+        assert unlinked == [[["docs/x.md"], ["espalier/assets/elsewhere/x.md"]]]
+        assert stale == [sorted(vendored)]
+
+    @pytest.mark.contract
+    def test_a_hand_copied_pair_is_an_unlinked_group(self):
+        """The census's join, driven both ways on synthetic groups.
+
+        A pair the vendor-cc row maps is one part; the same bytes copied to a
+        path no row covers are a part of their own, which is the red above.
+        """
+        rows = mirror_registry.MIRROR_ROWS
+        assert self._row_linked_parts(
+            ("espalier/_vendor/cc/hooks/x.py", "tools/cc/hooks/x.py"), rows
+        ) == [["espalier/_vendor/cc/hooks/x.py", "tools/cc/hooks/x.py"]]
+        assert self._row_linked_parts(
+            ("docs/x.md", "espalier/assets/elsewhere/x.md"), rows
+        ) == [["docs/x.md"], ["espalier/assets/elsewhere/x.md"]]
+
+    @pytest.mark.contract
+    def test_two_mirrors_of_an_unsynced_source_stay_linked(self):
+        """The edit-then-sync window is not a hand copy.
+
+        Edit ``.claude/agents/x.md`` and run the suite before the sync: the source
+        leaves the identical group and its two mirrors remain, each a different
+        row's. Joined only through ``counterpart`` (source to mirror) they read as
+        an unlinked hand copy, a wrong diagnosis on the step this repo misses
+        most. The same holds for the two copies of ``tools/cc/_stack_table.py``.
+        """
+        rows = mirror_registry.MIRROR_ROWS
+        claude = ("espalier/assets/claude/agents/x.md", "examples/dogfooding/.claude/agents/x.md")
+        assert self._row_linked_parts(claude, rows) == [sorted(claude)]
+        stack = ("espalier/_stack_table.py", "espalier/_vendor/cc/_stack_table.py")
+        assert self._row_linked_parts(stack, rows) == [sorted(stack)]
 
     @pytest.mark.contract
     def test_prose_never_restates_a_stale_row_count(self):
@@ -1008,12 +1216,23 @@ class TestMirrorCensusCoverage:
         exists to fix. It passed while the defect was live: a skip-on-shape guard
         cannot catch what it declines to look at.
         """
+        bad = self._surface_impact_gaps(mirror_registry.MIRROR_ROWS)
+        assert not bad, "surface_impact gaps on declared mirror paths: " + "; ".join(bad)
+
+    @classmethod
+    def _surface_impact_gaps(cls, rows) -> list[str]:
+        """The obligation gaps for ``rows``, each named; never raises on a row's shape.
+
+        ``sync=None`` is a shape ``MirrorRow`` accepts and ``remedy`` answers (copy by
+        hand), so the script split is guarded as its two siblings' are. Unguarded, an
+        unscripted row raised an AttributeError here instead of saying what it lacks.
+        """
         bad = []
-        for r in mirror_registry.MIRROR_ROWS:
-            probe = self._probe(r)
+        for r in rows:
+            probe = cls._probe(r)
             # Resolve a directory mirror to a real file rather than skipping it.
             mirror_side = mirror_registry.counterpart(r, probe) or r.mirrors[0]
-            script = r.sync.split()[-1].rsplit("/", 1)[-1]
+            script = r.sync.split()[-1].rsplit("/", 1)[-1] if r.has_sync else None
 
             for side in (probe, mirror_side):
                 if side.endswith("/"):
@@ -1037,17 +1256,46 @@ class TestMirrorCensusCoverage:
             # the edit-time advisory is the only net on a mirrored docs/ or tests/
             # file, and it does not fire during pack authoring.
             got = surface_impact.classify_surface(mirror_side)
-            if got is not None and script not in " ".join(got[1]):
+            if got is None:
+                continue
+            said = " ".join(got[1])
+            if script is not None and script not in said:
                 bad.append(
                     f"{r.name}: mirror {mirror_side} -> {got[0]!r} does not name {script}"
                 )
-        assert not bad, "surface_impact gaps on declared mirror paths: " + "; ".join(bad)
+            elif script is None and "by hand" not in said:
+                # No script to name, so the generic answer is the hazard remedy()
+                # warns of: the reader runs the nearest-looking sync, it exits 0.
+                bad.append(
+                    f"{r.name}: unscripted row (sync=None); mirror {mirror_side} -> "
+                    f"{got[0]!r} does not say to copy it by hand. Give the row a sync "
+                    f"script, or an obligation that says {mirror_registry.remedy(r)!r}"
+                )
+        return bad
 
     def test_every_row_remedy_names_its_real_sync(self):
         for r in mirror_registry.MIRROR_ROWS:
-            text = mirror_registry.remedy(r.name)
-            assert r.has_sync, f"row {r.name!r} lost its sync script"
-            assert r.sync in text and "by hand" not in text, r.name
+            assert self._remedy_gap(r) is None, self._remedy_gap(r)
+
+    @staticmethod
+    def _remedy_gap(r) -> "str | None":
+        """What is wrong with ``r``'s remedy line, or None: both row shapes are read.
+
+        A scripted row's remedy runs its own sync. An unscripted one (``sync=None``)
+        has never had a script, so it is held to the copy-by-hand remedy rather than
+        told it "lost" one.
+        """
+        text = mirror_registry.remedy(r)
+        if r.has_sync:
+            if r.sync not in text or "by hand" in text:
+                return f"row {r.name!r}: remedy {text!r} does not run its own sync {r.sync!r}"
+            return None
+        if "by hand" not in text or "run `" in text:
+            return (
+                f"row {r.name!r} has no sync script (sync=None): its remedy must say to "
+                f"copy by hand and name no script to run, got {text!r}"
+            )
+        return None
 
     def test_an_unscripted_row_is_told_to_copy_not_to_run(self):
         """The branch every row currently escapes.
@@ -1065,6 +1313,36 @@ class TestMirrorCensusCoverage:
         text = mirror_registry.remedy(synthetic)
         assert "run `" not in text
         assert "by hand" in text and "a/b.yml" in text and "c/b.yml" in text
+
+    @pytest.mark.contract
+    def test_an_unscripted_row_is_named_by_the_census_not_raised(self, monkeypatch):
+        """Declaring a hand-copied family (``sync=None``) reads as a diagnosis.
+
+        The two census checks above once split the row's sync with no guard and
+        asserted it "lost its sync script": a row that never had one met an
+        AttributeError and a wrong diagnosis. Driven with a synthetic row whose
+        mirror side gets a generic obligation, the obligation check names the
+        missing copy-by-hand remedy and the remedy check passes the row's own
+        by-hand line.
+        """
+        # Stand in a generic obligation, so this test reads the census's branch
+        # and never surface_impact's live wording for that path.
+        monkeypatch.setattr(
+            surface_impact, "classify_surface",
+            lambda rel: ("packaged asset", ["a generic obligation naming no sync"]),
+        )
+        unscripted = mirror_registry.MirrorRow(
+            name="synthetic-unscripted", sot="memory/README.md",
+            mirrors=("espalier/assets/memory/README.md",), sync=None,
+            pinning_test="tests/test_x.py::TestX", comparator=mirror_registry.BYTES,
+            kind=mirror_registry.BYTE, direction=mirror_registry.SOT_IS_SOURCE_TREE,
+        )
+        gaps = self._surface_impact_gaps([unscripted])
+        assert any(
+            "synthetic-unscripted: unscripted row (sync=None)" in g and "by hand" in g
+            for g in gaps
+        ), gaps
+        assert self._remedy_gap(unscripted) is None
 
     def test_unknown_row_name_raises(self):
         """A typo must fail loudly rather than silently disable a guard."""
