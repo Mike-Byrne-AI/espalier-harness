@@ -523,7 +523,9 @@ _SHIP_RELEASE_TAIL = (
     r"(?<![\w./\\~-])"
     # the interpreter may carry its own path (`.venv\Scripts\python.exe`, a
     # review finding, 2026-10-16), read from the same token start
-    r"(?:(?:[\w.~:/\\-]*[/\\])?(?:python[\w.]*|py)[ \t]+(?:-[^\s;|&]+[ \t]+)*)?"
+    # an interpreter in quotes closes its quote before the space (DEF-5080)
+    r"(?:(?:[\w.~:/\\-]*[/\\])?(?:python[\w.]*|py)" + _bash_patterns._QUOTED_VERB_TAIL
+    + r"[ \t]+(?:-[^\s;|&]+[ \t]+)*)?"
     r"(?:\"(?:[^\"\n]{0,512}[/\\])?ship\.py\"|'(?:[^'\n]{0,512}[/\\])?ship\.py'"
     # the tag may be quoted, or the checklist's own variable spelling (`"v$VER"`)
     r"|(?:[\w.~/\\-][^\s;|&()$<>'\"`]*[/\\])?ship\.py)[ \t]+release[ \t]+[\"']?v(?:\d|\$)"
@@ -1413,8 +1415,13 @@ _FETCH_INTERPRETER = r"(?:" + _FETCH_SHELL + r"|" + _FETCH_SCRIPTER + r")"
 #: negated classes so the newline census can see that nothing here reads
 #: past a line end.
 _FETCH_PIPE_TARGET = (
-    r"(?:" + _FETCH_SHELL + r"\b"
-    r"|" + _FETCH_SCRIPTER + r"\b(?![ \t]*[^ \t;&|\r\n-])(?![ \t]*-[^ \t;&|\r\n]))"
+    # the shell is read with its `.exe` whole (a word boundary alone passes
+    # at the dot); the scripter takes none, its version run reads a dot
+    r"(?:" + _FETCH_SHELL + _bash_patterns._EXE_SUFFIX + r"\b"
+    # the scripter in quotes closes its quote before the lookaheads, and a
+    # closing paren or brace ends its command as a separator does (DEF-5080)
+    + r"|" + _FETCH_SCRIPTER + r"\b" + _bash_patterns._QUOTED_VERB_TAIL
+    + r"(?![ \t]*[^ \t;&|\r\n)}-])(?![ \t]*-[^ \t;&|\r\n)}]))"
 )
 
 #: A pipe broken over a newline is ONE pipeline in both shells' grammar
@@ -1439,11 +1446,14 @@ _PIPE_CONTINUATION_RE = re.compile(r"\|(?!\|)[ \t]*\r?\n[ \t]*")
 # shapes past them are pinned as silent rows so a widening is a decision on
 # the record.
 _FETCH_EXEC_PIPE_RE = re.compile(
-    _bash_patterns._CMD_POS + _FETCH_VERB + r"\b"
+    # the fetch verb in quotes closes its quote before the hops, after its
+    # `.exe` (DEF-5080)
+    _bash_patterns._CMD_POS + _FETCH_VERB + _bash_patterns._EXE_SUFFIX + r"\b"
+    + _bash_patterns._QUOTED_VERB_TAIL
     # a quoted word -- a URL whose query string carries `&` -- is one hop token
     # (the separator-stop class: `?v=2&arch=arm64` cut the hop and the nudge
     # went silent, the failure-mode review of the quoted-operand lane)
-    r"(?:(?:[^\n;&|\\\"']|(?<=>)&|" + _bash_patterns._SPAN_QUOTED_ARMS_WIDE
+    + r"(?:(?:[^\n;&|\\\"']|(?<=>)&|" + _bash_patterns._SPAN_QUOTED_ARMS_WIDE
     + r"){0,2048}\|(?!\|)){1,8}[ \t]*"
     # `_CMD_POS_WRAP_RUN` is ONE wrapper with its flags (the anchor stars it
     # inside a wider alternation); starred here, bounded, behind an optional
@@ -1459,7 +1469,9 @@ _FETCH_EXEC_PIPE_RE = re.compile(
 # fetch inside a process substitution among its arguments.
 _FETCH_EXEC_PROCSUB_RE = re.compile(
     _bash_patterns._CMD_POS + r"(?:" + _FETCH_INTERPRETER + r"|source|\.)"
-    r"(?:[ \t]+-[^\s;&|]+){0,8}[ \t]+<\([ \t]*" + _FETCH_VERB + r"\b",
+    + _bash_patterns._QUOTED_VERB_TAIL   # the verb in quotes (DEF-5080)
+    # the fetch in quotes inside the substitution (DEF-5080)
+    + r"(?:[ \t]+-[^\s;&|]+){0,8}[ \t]+<\([ \t]*[\"']?" + _FETCH_VERB + r"\b",
     re.IGNORECASE,
 )
 
@@ -1468,8 +1480,12 @@ _FETCH_EXEC_PROCSUB_RE = re.compile(
 # becomes the program. The `-c` may sit in a cluster (`-lc`, `-ec`).
 _FETCH_EXEC_SUBST_RE = re.compile(
     _bash_patterns._CMD_POS
-    + r"(?:eval|(?:" + _FETCH_SHELL + r"|python[0-9.]*)[ \t]+-[A-Za-z]*c\b)"
-    r"[ \t]+[\"']?(?:\$\(|`)[ \t]*" + _FETCH_VERB + r"\b",
+    # either head in quotes closes its quote before the space (DEF-5080)
+    + r"(?:eval" + _bash_patterns._QUOTED_VERB_TAIL
+    + r"|(?:" + _FETCH_SHELL + r"|python[0-9.]*)" + _bash_patterns._QUOTED_VERB_TAIL
+    + r"[ \t]+-[A-Za-z]*c\b)"
+    # the fetch in quotes inside the substitution (DEF-5080)
+    r"[ \t]+[\"']?(?:\$\(|`)[ \t]*[\"']?" + _FETCH_VERB + r"\b",
     re.IGNORECASE,
 )
 
@@ -1477,8 +1493,11 @@ _FETCH_EXEC_SUBST_RE = re.compile(
 #: `wget` resolve to Invoke-WebRequest on Windows PowerShell), and the .NET
 #: WebClient's `DownloadString` / `DownloadData`, constructed either way.
 _PS_FETCH_HEAD = (
-    r"(?:(?:irm|iwr|Invoke-RestMethod|Invoke-WebRequest|curl|wget)\b"
-    r"|(?:New-Object[ \t]+(?:-TypeName[ \t]+)?(?:System\.)?Net\.WebClient"
+    # a cmdlet or alias in quotes behind the call operator closes its quote
+    # before its arguments (DEF-5080); a constructor is no command name
+    r"(?:(?:irm|iwr|Invoke-RestMethod|Invoke-WebRequest|curl|wget)" + _bash_patterns._EXE_SUFFIX
+    + r"\b" + _bash_patterns._QUOTED_VERB_TAIL
+    + r"|(?:New-Object[ \t]+(?:-TypeName[ \t]+)?(?:System\.)?Net\.WebClient"
     r"|\[(?:System\.)?Net\.WebClient\]::new\(\))\)?\.Download(?:String|Data)\()"
 )
 _PS_EXEC_HEAD = r"(?:iex|Invoke-Expression)"
@@ -1491,11 +1510,29 @@ _PS_PAREN = r"(?:[$@]?\([ \t]*)"
 # `irm ... | iex`, `iwr -useb ... | iex`, `(New-Object Net.WebClient)
 # .DownloadString('...') | iex`, `iwr ... | Select-Object -ExpandProperty
 # Content | iex`: a fetch at command position, one to eight pipe hops, then
-# the executor.
+# the target (`_PS_FETCH_PIPE_TARGET`, below).
+#: The pipe's target on this tool (DEF-5080): PowerShell's own executor,
+#: or a native interpreter on PATH -- Git Bash's or WSL's `bash` runs what
+#: arrives on stdin as it does from the Bash tool, and `irm` and
+#: `DownloadString` hand it the body as text -- in the Bash arm's target
+#: grammar (a shell with any arguments, a scripter bare or with the lone
+#: dash), behind the call operator or a path (`_PS_EXE_PREFIX`; a bare
+#: `| "bash"` is an expression here, so the quoted target is `| & "bash"`).
+#: Every fetch head reads it, toward friction: on Windows PowerShell 5.1
+#: `iwr`, `curl` and `wget` pass a response object, on PowerShell 7 `curl`
+#: and `wget` are the native binaries and pass text. Declared limits, each
+#: pinned silent: `pwsh`, `powershell` and `py` as the target; a scripter
+#: spelled with `.exe` (no suffix after its version run, whose dot it
+#: would share); a target behind a wrapper word (the wrapper run is the
+#: Bash arm's, not its target grammar's).
+_PS_FETCH_PIPE_TARGET = (
+    r"(?:" + _PS_EXEC_HEAD + r"\b|(?:&[ \t]*)?" + _bash_patterns._PS_EXE_PREFIX
+    + _FETCH_PIPE_TARGET + r")"
+)
 _PS_FETCH_EXEC_PIPE_RE = re.compile(
     _bash_patterns._PS_CMD_POS + _PS_PAREN + r"{0,8}" + _PS_FETCH_HEAD
     + r"(?:(?:[^\n;|\"'`]|" + _bash_patterns._PS_SPAN_QUOTED_ARMS_WIDE
-    + r"){0,2048}\|){1,8}[ \t]*" + _PS_EXEC_HEAD + r"\b",
+    + r"){0,2048}\|){1,8}[ \t]*" + _PS_FETCH_PIPE_TARGET,
     re.IGNORECASE,
 )
 
@@ -1507,7 +1544,8 @@ _PS_FETCH_EXEC_PIPE_RE = re.compile(
 # spellings put `[scriptblock]::Create` at a command position of its own.
 _PS_FETCH_EXEC_WRAP_RE = re.compile(
     _bash_patterns._PS_CMD_POS
-    + r"(?:" + _PS_EXEC_HEAD + r"|\[scriptblock\]::Create)[ \t]*"
+    # the executor in quotes behind the call operator (DEF-5080)
+    + r"(?:" + _PS_EXEC_HEAD + _bash_patterns._QUOTED_VERB_TAIL + r"|\[scriptblock\]::Create)[ \t]*"
     + _PS_PAREN + r"{1,8}"
     r"(?:\[[\w.]+\]::[\w.]+\([ \t]*(?:\([ \t]*)?)?"
     + _PS_FETCH_HEAD,
@@ -1877,11 +1915,15 @@ CP_MCP_SIDEEFFECT = SpeedBump(
 # arm), and only when a kill names a pid, each spawn bound by the judgment
 # budget's `spawn_timeout`; the reading is made once per command, for the
 # predicate, the body and the flag key alike.
+#: The verb in quotes closes its quote before the pid (DEF-5080); the tail
+#: sits outside the verb's group, so `_kill_targets` reads the bare verb.
 _KILL_HEAD_RE = re.compile(
-    _bash_patterns._CMD_POS + r"(?P<kill_verb>p?kill|taskkill" + _bash_patterns._EXE_SUFFIX + r")(?=[ \t])"
+    _bash_patterns._CMD_POS + r"(?P<kill_verb>p?kill|taskkill" + _bash_patterns._EXE_SUFFIX + r")"
+    + _bash_patterns._QUOTED_VERB_TAIL + r"(?=[ \t])"
 )
 _PS_KILL_HEAD_RE = re.compile(
-    _bash_patterns._PS_CMD_POS + r"(?P<kill_verb>Stop-Process|spps|kill|taskkill(?:\.exe)?)(?=[ \t])",
+    _bash_patterns._PS_CMD_POS + r"(?P<kill_verb>Stop-Process|spps|kill|taskkill(?:\.exe)?)"
+    + _bash_patterns._QUOTED_VERB_TAIL + r"(?=[ \t])",
     re.IGNORECASE,
 )
 _KILL_READ_S = 1.0      # each spawn, before the budget's spawn_timeout shortens it

@@ -3017,6 +3017,78 @@ class TestTheLegsAndTheHeavyLane:
         assert collected(()) == len(members)
 
 
+class TestTheBasetempRidesTheArgv:
+    """``--basetemp`` is the perturbed cell's spaced pytest root (TP-468 3-A).
+    It goes on each pytest line's argv and never into the environment: a
+    pytest child a test launches inherits ``PYTEST_ADDOPTS``, and pytest
+    empties an explicit basetemp before it uses it, so a child given the run's
+    basetemp deletes every xdist worker's directories under it (driven
+    2026-11-03, ``_with_basetemp``'s docstring)."""
+
+    SPACED = "/runner temp/axis basetemp/bt"
+
+    def test_each_pytest_line_carries_it_and_no_other_line_does(self, pt):
+        for which in pt.TIERS:
+            for leg in pt.LEGS:
+                plain = pt.tier_argvs(which, leg=leg)
+                spaced = pt.tier_argvs(which, leg=leg, basetemp=self.SPACED)
+                assert len(plain) == len(spaced), (which, leg)
+                for before, after in zip(plain, spaced):
+                    if before[0] == "pytest":
+                        assert after == ("pytest", "--basetemp", self.SPACED, *before[1:]), after
+                    else:
+                        assert after == before, after
+
+    def test_without_it_every_line_is_the_tiers_own(self, pt):
+        assert pt.tier_argvs("full") == pt._TIER_ARGVS["full"]
+        assert pt.tier_argvs("full", basetemp=None) == pt.tier_argvs("full", basetemp="")
+
+    def test_the_receipt_prints_it_quoted_as_it_runs(self, pt, tmp_path, capsys):
+        r = _repo(tmp_path)
+        pt.main(["--root", str(r), "--tier", "full", "--leg", "parallel", "--basetemp", self.SPACED])
+        runs = [line for line in capsys.readouterr().out.splitlines() if line.startswith("run: pytest")]
+        assert runs and all(line.startswith("run: pytest --basetemp '/runner temp/axis basetemp/bt' ")
+                            for line in runs), runs
+
+    def test_an_empty_value_is_refused_not_read_as_no_basetemp(self, pt, tmp_path, capsys):
+        r = _repo(tmp_path)
+        assert pt.main(["--root", str(r), "--tier", "contract", "--basetemp", ""]) == 2
+        assert "--basetemp needs a directory" in capsys.readouterr().err
+
+    def test_a_directory_inside_the_checkout_is_refused(self, pt, tmp_path, capsys):
+        r = _repo(tmp_path)
+        assert pt.main(["--root", str(r), "--tier", "contract", "--basetemp", str(r / "axis basetemp" / "bt")]) == 2
+        assert "is inside the checkout" in capsys.readouterr().err
+        assert pt.main(["--root", str(r), "--tier", "contract", "--basetemp", str(r)]) == 2
+        capsys.readouterr()
+
+    def test_run_makes_the_parent_and_passes_the_flag_on_the_argv_alone(self, pt, tmp_path, monkeypatch, capsys):
+        r = _repo(tmp_path)
+        bt = tmp_path / "axis basetemp" / "bt"
+        monkeypatch.delenv("PYTEST_ADDOPTS", raising=False)
+        spawns: list[tuple[list[str], dict]] = []
+        real_run = pt.subprocess.run
+
+        def fake_run(argv, **kw):  # git reads stay real; a runner spawn is recorded, never run
+            if argv[0] == "git":
+                return real_run(argv, **kw)
+            if list(argv)[1:] == ["--version"]:
+                return types.SimpleNamespace(returncode=0, stdout=f"{argv[0]} 0.0.0\n", stderr="")
+            spawns.append((list(argv), kw))
+            return _Rc(0)
+
+        monkeypatch.setattr(pt.subprocess, "run", fake_run)
+        assert pt.main(["--root", str(r), "--tier", "contract", "--run", "--basetemp", str(bt)]) == 0
+        assert bt.parent.is_dir() and not bt.exists(), "the parent is made and the leaf left to pytest"
+        pytest_spawns = [(argv, kw) for argv, kw in spawns if argv[0] == "pytest"]
+        assert pytest_spawns, spawns
+        for argv, kw in pytest_spawns:
+            assert argv[1:3] == ["--basetemp", str(bt)], argv
+            assert "env" not in kw, kw
+        assert "PYTEST_ADDOPTS" not in os.environ
+        capsys.readouterr()
+
+
 class _Rc:
     def __init__(self, returncode: int) -> None:
         self.returncode = returncode
