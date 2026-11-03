@@ -866,7 +866,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         1, "a52b06980a6f4ab40d70325ee8a2b0d13f5e44edcc5aeae1d62bf9f4b86bc384",
         "CORRECT_BY_PROPERTY",
         "NEW comprehension over `CANONICAL_HOOK_WIRING` "
-        "(test_every_wired_entry_starts_and_answers_on_one_channel, 2026-11-03, TP-468 2-B): "
+        "(test_every_wired_entry_starts_and_answers_on_one_channel, 2026-11-03): "
         "the claim is that the matrix launches every entry init wired, so the (event, script) "
         "pairs read from the tree's settings must equal the roster init writes from; the roster "
         "is the right derivation and a hand copy would be a second roster. The blindness (a hook "
