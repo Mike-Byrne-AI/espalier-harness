@@ -55,6 +55,21 @@ def rd():
     return _load()
 
 
+@pytest.fixture(autouse=True)
+def _import_state(monkeypatch):
+    """``main`` imports the rehearsal by its bare name from ``bench/``, and the
+    rehearsal's tree builder executes the hook tree's zones module, which puts
+    ``tools/cc`` on ``sys.path``: put both back after each test."""
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    had = "powershell_guard_rehearsal" in sys.modules
+    saved = sys.modules.get("powershell_guard_rehearsal")
+    yield
+    if had:
+        sys.modules["powershell_guard_rehearsal"] = saved
+    else:
+        sys.modules.pop("powershell_guard_rehearsal", None)
+
+
 class TestRefusesToExecuteAnythingUnconfined:
     """Every path that could put a real delete outside the sandbox."""
 
@@ -956,3 +971,64 @@ class TestTheAbsoluteReportReadsTheWorkingTree:
         assert rd.main(["--quick"]) == 0
         out = capsys.readouterr().out
         assert not any(ln.lstrip().startswith("reach=") for ln in out.splitlines())
+
+
+class TestEveryGuardCallIsJudgedInTheSharedFixture:
+    """DEF-811: each guard call's project is the rehearsal's
+    ``throwaway_project``, a root of the run's ``--root-shape`` carrying every
+    protected directory the working tree's hooks declare, for the base guard,
+    the working guard and the calibration alike. It pins the fixture's shape
+    for a future row: no row today names the root or a protected directory
+    (the next test), so the tree feeds no verdict yet."""
+
+    def test_no_row_names_the_root_or_a_protected_directory(self, rd):
+        """What the printed shape line says, held: were a body to name a
+        protected directory, the tree would feed its verdict and the line
+        would understate the run."""
+        from tests._guard_fixture import rehearsal
+
+        dirs =rehearsal.protected_fixture_dirs(REPO_ROOT / "tools" / "cc" / "hooks" / "write_guard.py")
+        named = re.compile(r"(?<![\w.-])(?:" + "|".join(re.escape(d) for d in dirs) + ")")
+        for wname, wtmpl in rd.WRAPPERS:
+            for bname, btmpl in rd.BODIES:
+                probe = (wtmpl % btmpl).replace(rd._TARGET, "/")
+                assert not named.search(probe), f"{wname} / {bname} names a protected directory: {probe}"
+                assert rehearsal.ROOT not in probe, f"{wname} / {bname} carries the root placeholder"
+
+    @pytest.mark.parametrize("shape", ["plain", "spaced"])
+    def test_each_project_carries_the_protected_tree_under_the_named_shape(
+            self, rd, tmp_path, monkeypatch, capsys, shape):
+        _stub_instrument(rd, monkeypatch, tmp_path, reaches=lambda t: False,
+                         base_denies=lambda c: True, work_denies=lambda c: True)
+        calibrated = []
+        monkeypatch.setattr(rd, "assert_baseline_is_live",
+                            lambda hooks, project: calibrated.append(
+                                (Path(project).name, (Path(project) / ".espalier").is_dir(),
+                                 (Path(project) / "tools" / "cc" / "hooks").is_dir())))
+        stubbed = rd.guard_denies
+        seen = []
+
+        def recording(cmd, hooks_dir, project_dir):
+            project = Path(project_dir)
+            seen.append((hooks_dir == tmp_path, project.name,
+                         (project / ".espalier").is_dir(),
+                         (project / "tools" / "cc" / "hooks").is_dir(),
+                         (project / ".github" / "workflows").is_dir()))
+            return stubbed(cmd, hooks_dir, project_dir)
+
+        monkeypatch.setattr(rd, "guard_denies", recording)
+        assert rd.main(["--quick", "--root-shape", shape]) == 0
+        assert f"root shape: {shape}" in capsys.readouterr().out
+        assert {base for base, *_ in seen} == {True, False}, "both guards were consulted"
+        prefix = sys.modules["powershell_guard_rehearsal"].ROOT_SHAPES[shape]
+        for base, name, *dirs in seen:
+            assert all(dirs), f"{'base' if base else 'work'} project {name!r} lacks the tree: {dirs}"
+            assert name.startswith(prefix), (shape, name)
+            assert (" " in name) == (shape == "spaced"), (shape, name)
+        ((name, *dirs),) = calibrated
+        assert name.startswith(prefix) and all(dirs), ("calibration", shape, name, dirs)
+
+    def test_an_unknown_shape_is_refused_by_name(self, rd, capsys):
+        with pytest.raises(SystemExit):
+            rd.main(["--quick", "--root-shape", "no-such-shape"])
+        assert "no-such-shape" in capsys.readouterr().err

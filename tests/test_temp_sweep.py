@@ -273,7 +273,8 @@ _UNLOCKED_MAKERS: dict[str, str] = {
     "bench/powershell_reachability_differential.py::_run_pwsh": _CM_SMALL + "a one-byte victim file",
     "bench/powershell_reachability_differential.py::main": _CM_SMALL + "pwsh's small startup cache",
     "bench/reachability_differential.py::bash_run": _CM_SMALL + "a one-byte victim file",
-    "bench/reachability_differential.py::main": _CM_SMALL + "a ~4 MB export of tools/ and a few guard state files",
+    "bench/reachability_differential.py::main": _CM_SMALL + (
+        "a ~4 MB export of tools/ (each guard call's project is the rehearsal's shaped_root, DEF-811)"),
     "bench/run_benchmark.py::_baseline_root": _CM_SMALL + "one baseline's setup, an espalier init deploy at most",
     "bench/sandbox_read_drive/drive.py::main":
         "never removed on purpose: the hand-run drive's output folder; the suite returns before making it",
@@ -284,7 +285,8 @@ _UNLOCKED_MAKERS: dict[str, str] = {
     "tests/_nested_temp.py::nested_basetemp": "made inside the launching session's basetemp, removed with it",
     "tests/_symlink_support.py::symlinks_supported": _CM_SMALL + "a one-byte file and a link",
     "tests/test_box_lock.py::_spawn": _IN_BASETEMP,
-    "tests/test_guard_false_positives.py::_tier": _CM_SMALL + ".claude/ and a few speed-bump state files",
+    "tests/test_guard_false_positives.py::_tier": _CM_SMALL + (
+        "the protected tree's empty directories and a few speed-bump state files"),
     "tests/test_scanner_filesystem_contracts.py::test_overlaid_script_in_scanner_scope": _CM_SMALL + "one small .py",
     "tests/test_wheel_install_surface_parity.py::test_source_and_wheel_init_deploy_same_managed_surface": _IN_BASETEMP,
     "tests/test_wheel_smoke.py::TestBuildFailureCleanup::test_run_smoke_cleans_scratch_dist_on_build_failure::recording_mkdtemp":
