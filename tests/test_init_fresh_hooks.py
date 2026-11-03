@@ -20,6 +20,7 @@ from pathlib import Path
 
 from espalier.cli import INIT_HOOK_SCRIPTS, INIT_TOOL_SCRIPTS, cmd_init
 
+from tests._cut_start import skip_if_cut
 from tests._hook_spawn import run_hook_through
 
 # R13: derive the exercised set from the deploy SoT (espalier.cli.INIT_*) so a
@@ -178,6 +179,7 @@ class TestHookExecutionNoModuleError:
         hooks_dir = repo / "tools" / "cc" / "hooks"
 
         failures = []
+        started = ""
         for name in HOOK_ENTRY_SCRIPTS:
             hook_path = hooks_dir / name
             stdin_json = _HOOK_INPUTS.get(name, _GENERIC_HOOK_INPUT)
@@ -185,8 +187,15 @@ class TestHookExecutionNoModuleError:
             combined = result.stdout + result.stderr
             if "ModuleNotFoundError" in combined or "ImportError" in combined:
                 failures.append(f"{name}: {combined[:300]}")
+            if name == "session_start.py":
+                started = result.stdout
 
         assert not failures, "Hooks raised import errors:\n" + "\n---\n".join(failures)
+        # The banner names a lazy sibling import that failed in a phase (the
+        # zone baseline's `_zone_watch`); a start cut before that phase never
+        # reached it, so the other hooks are judged above and this one cannot
+        # tell (DEF-2048).
+        skip_if_cut(started)
 
     def test_broken_subagent_start_import_is_caught(self, tmp_path):
         """R13 earn-the-red: a broken import in an entry hook that the old
