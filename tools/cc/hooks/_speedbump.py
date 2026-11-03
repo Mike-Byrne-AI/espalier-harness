@@ -1276,16 +1276,16 @@ _DISCARD_NO_SNAPSHOT_BODY = (
     "was taken (nothing dirty to save, or git did not answer) -- check `git status` "
     "before re-issuing"
 )
-# DEF-2050: the tree was dirty and git would not snapshot it, which the
-# variant above would have called nothing to save.
+# DEF-2050: git would not give a snapshot (it refused, or did not answer in
+# time), which the variant above would have called nothing to save.
 _DISCARD_REFUSED_BODY = (
     "discarding uncommitted working-tree changes has no reflog, and NO snapshot "
-    "could be taken: git refused it, so the dirty content has no copy -- commit or "
-    "copy what you mean to keep before re-issuing"
+    "could be taken: git refused it or did not answer in time, so any dirty "
+    "content has no copy -- commit or copy what you mean to keep before re-issuing"
 )
 # The pinned phrases (`tests/test_denial_reasons.py`) name the hard tier's
-# rules and this tier's; both variants carry them, and both composed reasons
-# stay under the 512 bytes the irreversible tier's record-shape pin allows --
+# rules and this tier's; every variant carries them, and every composed reason
+# stays under the 512 bytes the irreversible tier's record-shape pin allows --
 # a contract size whose rationale is not recorded; ask before raising it. The
 # snapshot variant sits 2 bytes under it: its word "tracked-edit" scopes the
 # promise (an untracked file is not in the snapshot) and is pinned, so a
@@ -2568,10 +2568,14 @@ _EMPTY_TREES = frozenset({
 })
 
 
-def _git_said(proc: "subprocess.CompletedProcess[str]") -> str:
+def _git_said(proc: "subprocess.CompletedProcess[Any]") -> str:
     """git's first line on stderr (the cause; `stash create`'s last is only
-    ``Cannot save the current worktree state``), bounded, else its exit code."""
-    lines = (proc.stderr or "").strip().splitlines()
+    ``Cannot save the current worktree state``), bounded, else its exit code.
+    A sentence, so read tolerantly (DEF-821)."""
+    err = proc.stderr or ""
+    if isinstance(err, bytes):
+        err = err.decode("utf-8", "replace")
+    lines = err.strip().splitlines()
     return (lines[0].strip()[:160] if lines else "") or f"exit {proc.returncode}"
 
 
@@ -2585,73 +2589,94 @@ def _snapshot_through_a_scratch_index(root: Path) -> tuple[str | None, str]:
     unborn branch ``You do not have the initial commit yet``, each with exit 1
     and nothing on stdout, which read as a clean tree: the discard that
     followed had no snapshot, and CP-DISCARD said there was nothing dirty to
-    save. A copy of the live index takes the tracked edits (``add -u``: the
-    intent-to-add files with them, where ``add -A`` would widen the promise to
-    untracked ones), then ``write-tree`` and ``commit-tree`` on HEAD, the way
-    `mail.py::_commit_entries` builds a commit. The live index is never
-    written, and nothing lands on ``git stash list``.
+    save. A copy of the live index is committed as it stands (the index
+    commit), then takes the tracked edits (``add -u``: the intent-to-add files
+    with them, where ``add -A`` would widen the promise to untracked ones), and
+    the working tree's commit sits on HEAD and the index commit, the shape
+    ``stash create`` writes, so ``git stash apply --index <sha>`` restores
+    both. The live index is never written by this path, and nothing lands on
+    ``git stash list``.
 
     ``(sha, "")`` is a snapshot; ``(None, "")`` is nothing to save (not a
-    repository, or the tracked tree is HEAD's); ``(None, why)`` is one that
-    could not be taken, ``why`` naming the step and what git said. A spawn
-    that raises is the caller's to say. KNOWN LIMIT: one tree, the working
-    tree's: a staged version the working tree has since moved past is not in
-    it, where ``stash create`` keeps the index as a second parent.
+    repository, by git's own words, or the tracked tree is HEAD's); ``(None,
+    why)`` is one that could not be taken, ``why`` naming the step and what
+    git said. Output is read as bytes: the answers strictly (a sha or a tree
+    id as ASCII, the index's path through ``os.fsdecode``), a raise the
+    caller's to say, and git's sentences tolerantly (`_git_said`). KNOWN
+    LIMITS: an unmerged index has no tree of its own, so its snapshot holds the
+    working tree on HEAD alone; and a time-budget refusal ends the hook with
+    ``os._exit``, which skips the ``finally``, so the scratch index file stays
+    in the temp folder.
     """
     import shutil      # lazy: a refusal is rare, and this module is on the hot path
     import tempfile
 
-    def git(*args: str, env: "dict[str, str] | None" = None) -> "subprocess.CompletedProcess[str]":
+    def git(*args: str, env: "dict[str, str] | None" = None) -> "subprocess.CompletedProcess[bytes]":
         return run_bounded(  # spawn: ok a recovery aid; the caller says a snapshot that could not be taken
             ["git", "-C", str(root), *args],
-            capture_output=True, text=True, encoding="utf-8", timeout=spawn_timeout(15), env=env,
+            capture_output=True, timeout=spawn_timeout(15), env=env,
         )
 
-    where = git("rev-parse", "--git-path", "index")
+    def answer(proc: "subprocess.CompletedProcess[bytes]") -> str:
+        return proc.stdout.decode("ascii").strip()   # a sha or a tree id; anything else raises
+
+    # git's own words name a directory that is not a repository; read in the C
+    # locale so a translated git says them too. Any other refusal (dubious
+    # ownership, an extension this git does not know) is a snapshot git
+    # would not give, never nothing to save.
+    where = git("rev-parse", "--git-path", "index", env={**os.environ, "LC_ALL": "C"})
     if where.returncode != 0:
-        return None, ""                  # not a repository: nothing to save, as before
+        if b"not a git repository" in (where.stderr or b""):
+            return None, ""
+        return None, f"rev-parse: {_git_said(where)}"
+    head = git("rev-parse", "HEAD", "HEAD^{tree}")
+    born = head.returncode == 0 and len(head.stdout.split()) == 2
     fd, scratch = tempfile.mkstemp(prefix="discard-index-", suffix=".idx")
     os.close(fd)
     try:
         try:
-            shutil.copyfile(root / where.stdout.strip(), scratch)
+            shutil.copyfile(root / os.fsdecode(where.stdout).strip(), scratch)
         except FileNotFoundError:
-            os.unlink(scratch)           # no index yet: git starts the scratch one empty
+            if born:
+                # A path Python cannot open (an MSYS-style answer, a long path
+                # past the host's limit) is not an empty index: starting from
+                # one would commit an empty tree and promise it as a snapshot.
+                return None, "copy index: not found"
+            os.unlink(scratch)           # an unborn branch with no index yet: git starts the scratch one empty
         env = {**os.environ, "GIT_INDEX_FILE": scratch}
+        staged = git("write-tree", env=env)      # the index as it stands; an unmerged one has no tree
         added = git("add", "-u", env=env)
         if added.returncode != 0:
             return None, f"add -u: {_git_said(added)}"
         wrote = git("write-tree", env=env)
-        tree = wrote.stdout.strip()
-        if wrote.returncode != 0 or not tree:
+        if wrote.returncode != 0:
             return None, f"write-tree: {_git_said(wrote)}"
+        tree = answer(wrote)
     finally:
         for leftover in (scratch, scratch + ".lock"):
             try:
                 os.unlink(leftover)
             except OSError:
                 pass
-    head = git("rev-parse", "HEAD", "HEAD^{tree}")
+    # An identity of its own: a checkout with none configured would refuse the
+    # commit, which `stash create` never does (it falls back to its own).
+    ident = ("-c", "user.name=espalier", "-c", "user.email=discard-snapshot@espalier.invalid")
     parents: list[str] = []
-    if head.returncode == 0 and len(head.stdout.split()) == 2:
-        commit, head_tree = head.stdout.split()
+    if born:
+        commit, head_tree = head.stdout.decode("ascii").split()
         if tree == head_tree:
             return None, ""              # the tracked tree is HEAD's: nothing to save
         parents = ["-p", commit]
+        if staged.returncode == 0:
+            index = git(*ident, "commit-tree", answer(staged), "-p", commit, "-m", "index on the discard snapshot")
+            if index.returncode == 0:
+                parents += ["-p", answer(index)]
     elif tree in _EMPTY_TREES:
         return None, ""                  # an unborn branch with nothing in its index
-    # An identity of its own: a checkout with none configured would refuse the
-    # commit, which `stash create` never does (it falls back to its own). No
-    # signing: a pinentry prompt would hang the hook to its timeout.
-    made = git(
-        "-c", "user.name=espalier", "-c", "user.email=discard-snapshot@espalier.invalid",
-        "commit-tree", tree, *parents, "--no-gpg-sign",
-        "-m", "espalier discard snapshot (git stash create refused)",
-    )
-    sha = made.stdout.strip()
-    if made.returncode != 0 or not sha:
+    made = git(*ident, "commit-tree", tree, *parents, "-m", "espalier discard snapshot (git stash create refused)")
+    if made.returncode != 0:
         return None, f"commit-tree: {_git_said(made)}"
-    return sha, ""
+    return answer(made), ""
 
 
 def snapshot_discard(
@@ -2719,7 +2744,7 @@ def snapshot_discard(
             # A refusal, not a clean tree (DEF-2050): git said why on stderr.
             try:
                 sha, why = _snapshot_through_a_scratch_index(root)
-            except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            except (OSError, subprocess.SubprocessError, ValueError) as exc:  # strict decode: a structured answer (DEF-821)
                 sha, why = None, type(exc).__name__
             if why:
                 _record_snapshot(tool_name, tool_input, root, "")
@@ -2744,7 +2769,9 @@ def snapshot_discard(
         return sha
     except (OSError, subprocess.SubprocessError, ValueError) as exc:  # strict decode: a structured answer (DEF-821)
         # A recovery aid that could not be taken is said once: the discard that
-        # follows has no snapshot behind it, and the reminder will not name one.
+        # follows has no snapshot behind it, and the reminder will not name one,
+        # nor call the tree clean (DEF-2050: git did not answer).
+        _record_snapshot(tool_name, tool_input, root, "")
         say_once(
             root, "discard-snapshot", "write_guard", "pretooluse_failed_open_discard_snapshot",
             f"discard snapshot could not be taken ({type(exc).__name__}); the next discard has no recovery point",

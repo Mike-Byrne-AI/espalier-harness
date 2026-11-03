@@ -759,9 +759,11 @@ class TestConditionalPromise:
 
 
 def _refused_here(repo: Path) -> None:
-    """Pre-register the stressor: `git stash create` refuses in ``repo``."""
+    """Pre-register the stressor: `git stash create` refuses in ``repo``. By
+    its exit code alone: on an unmerged index it prints `<path>: needs merge`
+    on stdout, so a refusal's stdout is not always empty."""
     proc = subprocess.run(["git", "-C", str(repo), "stash", "create"], capture_output=True, text=True)
-    assert proc.returncode != 0 and not proc.stdout.strip(), proc
+    assert proc.returncode != 0, proc
 
 
 def _add_intent(repo: Path, rel: str = "new.txt") -> None:
@@ -794,14 +796,37 @@ class TestARefusedStashIsNotACleanTree:
 
     def test_an_intent_to_add_entry_still_gets_a_snapshot(self, repo: Path):
         _add_intent(repo)
+        (repo / "loose.txt").write_text("never added\n", encoding="utf-8")
         cmd = "git checkout -- file.py"
         sha = _speedbump.snapshot_discard("Bash", {"command": cmd}, repo)
         assert sha, "the refusal was read as a clean tree"
         assert _git(repo, "show", f"{sha}:file.py").stdout == "UNCOMMITTED_REWRITE\n"
         assert _git(repo, "show", f"{sha}:new.txt").stdout == "FRESH\n"
+        # the tracked-edit promise: an untracked file is not in the snapshot
+        assert subprocess.run(["git", "-C", str(repo), "cat-file", "-e", f"{sha}:loose.txt"],
+                              capture_output=True).returncode != 0
         assert sha in _log_lines(repo)[-1]
         reason = _speedbump.check("Bash", {"command": cmd}, repo)
         assert reason and "A snapshot was taken first" in reason, reason
+
+    def test_the_snapshot_is_stash_shaped_and_keeps_the_staged_version(self, repo: Path):
+        """The commit sits on HEAD and an index commit, as `stash create`'s
+        does, so a version staged and then edited again survives too, and
+        `git stash apply --index <sha>` restores both."""
+        _git(repo, "add", "file.py")                              # UNCOMMITTED_REWRITE staged
+        (repo / "file.py").write_text("EDITED_AGAIN\n", encoding="utf-8")
+        _add_intent(repo)
+        sha = _speedbump.snapshot_discard("Bash", {"command": "git reset --hard"}, repo)
+        assert sha
+        assert _git(repo, "rev-parse", f"{sha}^1").stdout == _git(repo, "rev-parse", "HEAD").stdout
+        assert _git(repo, "show", f"{sha}:file.py").stdout == "EDITED_AGAIN\n"
+        assert _git(repo, "show", f"{sha}^2:file.py").stdout == "UNCOMMITTED_REWRITE\n"
+        _git(repo, "rm", "-q", "--cached", "new.txt")             # what the discard leaves:
+        _git(repo, "reset", "-q", "--hard")                       # HEAD's tree, clean
+        (repo / "new.txt").unlink()
+        _git(repo, "stash", "apply", "-q", "--index", sha)
+        assert (repo / "file.py").read_text(encoding="utf-8") == "EDITED_AGAIN\n"
+        assert _git(repo, "show", ":file.py").stdout == "UNCOMMITTED_REWRITE\n"
 
     def test_the_live_index_and_the_stash_list_are_left_alone(self, repo: Path, tmp_path: Path, monkeypatch):
         import tempfile
@@ -898,3 +923,64 @@ class TestARefusedStashIsNotACleanTree:
         said = capsys.readouterr().err
         assert "not uptodate" in said, said            # git's own refusal, read from stderr
         assert ("write-tree: fatal: simulated" if fails == "exits" else "TimeoutExpired") in said, said
+
+    @staticmethod
+    def _refused_and_said(repo: Path, cmd: str, step: str) -> None:
+        assert _speedbump.snapshot_discard("Bash", {"command": cmd}, repo) is None
+        assert _log_lines(repo) == []
+        reason = _speedbump.check("Bash", {"command": cmd}, repo)
+        assert reason and "NO snapshot could be taken" in reason and "nothing dirty" not in reason, reason
+        records = _audit("pretooluse_failed_open_discard_snapshot")
+        assert len(records) == 1 and records[0]["details"].get("step") == step, records
+
+    def test_an_index_python_cannot_open_is_never_an_empty_snapshot(self, repo: Path, monkeypatch):
+        """On a branch with commits, an index path the copy cannot open (an
+        MSYS-style answer, a long path) once started the scratch index empty:
+        an empty tree was committed and promised as the snapshot."""
+        import shutil
+        _add_intent(repo)
+
+        def _not_found(*_a, **_k):
+            raise FileNotFoundError("simulated")
+
+        monkeypatch.setattr(shutil, "copyfile", _not_found)
+        self._refused_and_said(repo, "git reset --hard", "copy index")
+
+    def test_a_git_that_refuses_the_repository_is_not_a_missing_one(self, repo: Path, monkeypatch):
+        """Dubious ownership (common on Windows, WSL and containers) makes
+        every git call exit 128, as outside a repository; only git's own
+        words tell the two apart."""
+        _add_intent(repo)
+        monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
+        self._refused_and_said(repo, "git reset --hard", "rev-parse")
+
+    def test_a_stash_create_that_does_not_answer_is_never_a_clean_tree(self, repo: Path, monkeypatch):
+        real = _speedbump.run_bounded
+
+        def _stash_hangs(args, **kwargs):
+            if "stash" in args:
+                raise subprocess.TimeoutExpired(args, 15)
+            return real(args, **kwargs)
+
+        monkeypatch.setattr(_speedbump, "run_bounded", _stash_hangs)
+        cmd = "git reset --hard"
+        assert _speedbump.snapshot_discard("Bash", {"command": cmd}, repo) is None
+        reason = _speedbump.check("Bash", {"command": cmd}, repo)
+        assert reason and "NO snapshot could be taken" in reason and "nothing dirty" not in reason, reason
+
+    def test_an_unmerged_index_whose_tree_is_heads_has_nothing_to_save(self, repo: Path):
+        """`stash create` refuses an unmerged index; with the working tree
+        put back to HEAD's content the scratch tree is HEAD's, so there is
+        nothing to save and no log line."""
+        _git(repo, "checkout", "-q", "--", "file.py")
+        _git(repo, "checkout", "-q", "-b", "side")
+        (repo / "file.py").write_text("SIDE\n", encoding="utf-8")
+        _git(repo, "commit", "-qam", "side")
+        _git(repo, "checkout", "-q", "-")
+        (repo / "file.py").write_text("MAIN\n", encoding="utf-8")
+        _git(repo, "commit", "-qam", "main")
+        assert subprocess.run(["git", "-C", str(repo), "merge", "-q", "side"], capture_output=True).returncode != 0
+        _git(repo, "checkout", "-q", "--ours", "file.py")        # the working tree is HEAD's again
+        _refused_here(repo)
+        assert _speedbump.snapshot_discard("Bash", {"command": "git reset --hard"}, repo) is None
+        assert _log_lines(repo) == []
