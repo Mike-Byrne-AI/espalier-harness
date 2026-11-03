@@ -4065,8 +4065,11 @@ def _warn_if_nested_repo_litter(root: Path, *, cwd: Path | None = None, covered:
             here = None
         beside = _hook_utils.sibling_checkout_containing(root, here) if here is not None else None
         if beside is not None:
+            # A linked worktree's .git is a file; the main checkout's is the
+            # repository itself, and it was named a worktree too (DEF-3025).
+            kind = "the main checkout" if os.path.isdir(beside / ".git") else "worktree"
             _hook_utils.advise(
-                f"[INFO] session cwd is inside worktree {beside} of this repository {governed}",
+                f"[INFO] session cwd is inside {kind} {beside} of this repository {governed}",
             )
     unread: list[str] = []
     litter = _find_nested_repo_litter(root, cwd=cwd, unread=unread)

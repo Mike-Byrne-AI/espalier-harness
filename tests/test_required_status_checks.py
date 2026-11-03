@@ -797,6 +797,19 @@ class TestTheTierGateCannotParkThePullRequest:
         assert jobs["test"]["strategy"]["matrix"] == jobs["test-serial"]["strategy"]["matrix"]
         assert jobs["test"]["strategy"]["matrix"]["python-version"] == ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
+    def test_no_required_cell_can_turn_a_red_tier_green(self):
+        """The disk reads beside the parallel leg carry continue-on-error so they
+        never fail a cell (the first in these jobs, 2026-11-03); the tier step and
+        the jobs never do, or a red tier reads green. The read after the tier
+        keeps !cancelled(), or it skips the red runs it is for."""
+        jobs = self._ci()["jobs"]
+        for jid in self.REQUIRED_JOBS:
+            assert "continue-on-error" not in jobs[jid], jid
+            tier = [s for s in jobs[jid]["steps"] if "proof_tier.py --run" in (s.get("run") or "")]
+            assert len(tier) == 1 and "continue-on-error" not in tier[0], (jid, tier)
+        after = [s for s in jobs["test"]["steps"] if "du -x" in (s.get("run") or "")]
+        assert len(after) == 1 and "!cancelled()" in str(after[0].get("if", "")), after
+
     def test_the_serial_twin_keeps_the_test_jobs_environment(self):
         """The twin is a copy of `test`'s checkout, interpreter and install, and
         a hurried edit to one of them drifts the other silently: the first two
