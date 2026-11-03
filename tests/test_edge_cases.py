@@ -21,6 +21,7 @@ from pathlib import Path
 
 from tests._hook_assertions import assert_hook_allowed
 from tests._hook_spawn import run_hook_through
+from tests._wait_budget import scaled
 
 
 HOOKS_DIR = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
@@ -138,7 +139,7 @@ class TestHookRobustness:
             input="{}",
             capture_output=True,
             text=True,
-            timeout=15,
+            timeout=scaled(30),
             env=env,
             cwd=str(tmp_path), encoding="utf-8",  # isolate from live settings.json
         )

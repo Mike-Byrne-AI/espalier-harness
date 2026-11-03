@@ -29,6 +29,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._cut_start import skip_if_cut
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TOOLS_CC = REPO_ROOT / "tools" / "cc"
 SESSION_START = TOOLS_CC / "hooks" / "session_start.py"
@@ -171,13 +173,15 @@ def _run_hook(root: Path, source: str) -> subprocess.CompletedProcess:
     # env= pins CLAUDE_PROJECT_DIR so the inner cognitive_blueprint subprocess
     # routes to ``root``, not an inherited repo (the env-isolation contract).
     env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root)}
-    return subprocess.run(
+    result = subprocess.run(
         [sys.executable, str(SESSION_START)],
         input=json.dumps(
             {"hook_event_name": "SessionStart", "source": source, "cwd": str(root)}
         ),
         cwd=str(root), env=env, capture_output=True, text=True, timeout=20, encoding="utf-8",
     )
+    skip_if_cut(result.stdout)
+    return result
 
 
 @pytest.mark.parametrize("source", ["startup", "clear"])

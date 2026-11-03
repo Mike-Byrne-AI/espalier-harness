@@ -8740,7 +8740,7 @@ class TestPowerShellScratchRootRung:
         r"Remove-Item -Recurse -Force C:\tmp\*",
         r"Remove-Item -Recurse -Force C:\tmp\x\..\..\Windows",
         r"Remove-Item -Recurse -Force C:\tmp\x,C:\Windows",
-        r"Remove-Item -Recurse -Force $env:TEMP\x",
+        r"Remove-Item -Recurse -Force $env:TEMP\x",           # a variable is unread (DEF-2049)
         r"Remove-Item -Recurse -Force C:\Windows\Temp\x",
         r"Remove-Item -Recurse -Force C:\tmpfoo\x",
         r"Remove-Item -Recurse -Force C:\tmp\x; Remove-Item -Recurse -Force C:\Windows",
@@ -9039,7 +9039,8 @@ class TestAScratchRootItselfIsTheWall:
         names and keeps the nudge, never the wall -- the Bash tool's
         `"$TMPDIR"` and the PowerShell tool's unforced `$env:TEMP`, where
         the literal spelling of the same root walls. The day a reader
-        resolves the variable this row reds and the sentence is rewritten."""
+        resolves the variable (DEF-2049) this row reds and the sentence is
+        rewritten."""
         monkeypatch.syspath_prepend(str(HOOKS_DIR))
         import _speedbump as sb
         self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
