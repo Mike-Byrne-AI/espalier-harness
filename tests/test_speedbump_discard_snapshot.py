@@ -756,3 +756,145 @@ class TestConditionalPromise:
         assert _speedbump.snapshot_discard("Bash", {"command": "git reset --hard"}, tree)
         reason = self._fire("Bash", "git reset --hard", tree)
         assert "A snapshot was taken first" in reason and "NO snapshot" not in reason
+
+
+def _refused_here(repo: Path) -> None:
+    """Pre-register the stressor: `git stash create` refuses in ``repo``."""
+    proc = subprocess.run(["git", "-C", str(repo), "stash", "create"], capture_output=True, text=True)
+    assert proc.returncode != 0 and not proc.stdout.strip(), proc
+
+
+def _add_intent(repo: Path, rel: str = "new.txt") -> None:
+    """One new file added with `git add -N`, as `/implement-task` step 7 asks."""
+    (repo / rel).write_text("FRESH\n", encoding="utf-8")
+    _git(repo, "add", "-N", rel)
+    _refused_here(repo)
+
+
+def _audit(event_type: str) -> list[dict]:
+    import json
+    import os
+    out = []
+    for log in Path(os.environ["ESPALIER_AUDIT_DIR"]).glob("*.log"):
+        out += [rec for rec in map(json.loads, filter(str.strip, log.read_text(encoding="utf-8").splitlines()))
+                if rec.get("event_type") == event_type]
+    return out
+
+
+class TestARefusedStashIsNotACleanTree:
+    """DEF-2050: `git stash create` refuses a tree holding an intent-to-add
+    entry (`git add -N`, which `/implement-task` step 7 and
+    `scripts/proof_tier.py` ask for), and on an unborn branch, with exit 1
+    and nothing on stdout; `snapshot_discard` read that as a clean tree, so
+    CP-DISCARD and the removal arm cast no snapshot before a discard of dirty
+    tracked content, and the bump said there was nothing dirty to save. RED
+    at 4ae80b0: every snapshot row below returned None. Each row first proves
+    git refuses here, so a git that stops refusing fails the premise, never
+    passes vacuously."""
+
+    def test_an_intent_to_add_entry_still_gets_a_snapshot(self, repo: Path):
+        _add_intent(repo)
+        cmd = "git checkout -- file.py"
+        sha = _speedbump.snapshot_discard("Bash", {"command": cmd}, repo)
+        assert sha, "the refusal was read as a clean tree"
+        assert _git(repo, "show", f"{sha}:file.py").stdout == "UNCOMMITTED_REWRITE\n"
+        assert _git(repo, "show", f"{sha}:new.txt").stdout == "FRESH\n"
+        assert sha in _log_lines(repo)[-1]
+        reason = _speedbump.check("Bash", {"command": cmd}, repo)
+        assert reason and "A snapshot was taken first" in reason, reason
+
+    def test_the_live_index_and_the_stash_list_are_left_alone(self, repo: Path, tmp_path: Path, monkeypatch):
+        import tempfile
+        _add_intent(repo)
+        scratch = tmp_path / "tmp"
+        scratch.mkdir()
+        monkeypatch.setattr(tempfile, "tempdir", str(scratch))
+
+        def _state() -> tuple[str, str]:
+            # tracked entries only: the snapshot log under cc/ is a new untracked file
+            return (_git(repo, "ls-files", "--stage").stdout,
+                    _git(repo, "status", "--porcelain", "--untracked-files=no").stdout)
+
+        before = _state()
+        assert _speedbump.snapshot_discard("Bash", {"command": "git reset --hard"}, repo)
+        assert _state() == before, "the live index moved"
+        assert _git(repo, "stash", "list").stdout.strip() == ""
+        assert list(scratch.iterdir()) == [], "the scratch index was left behind"
+
+    def test_the_removal_arm_takes_one_too(self, tree: Path):
+        """DEF-802's consumer: a plain remove of a dirty tracked file fires no
+        checkpoint, so the snapshot is the only net it has."""
+        _add_intent(tree, "src/new.py")
+        sha = _speedbump.snapshot_discard("Bash", {"command": "rm src/app.py"}, tree)
+        assert sha and _git(tree, "show", f"{sha}:src/app.py").stdout == DIRTY
+
+    def test_a_checkout_with_no_identity_still_gets_one(self, tmp_path: Path, monkeypatch):
+        """`stash create` falls back to an identity of its own and
+        `commit-tree` does not: on a runner with none configured the fallback
+        would refuse every time."""
+        empty = tmp_path / "empty.gitconfig"
+        empty.write_text("", encoding="utf-8")
+        repo = tmp_path / "anon"
+        repo.mkdir()
+        _git(repo, "init", "-q", ".")
+        (repo / "a.txt").write_text("one\n", encoding="utf-8")
+        _git(repo, "add", "a.txt")
+        _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty))
+        monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+        for name in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "EMAIL"):
+            monkeypatch.delenv(name, raising=False)
+        (repo / "a.txt").write_text("two\n", encoding="utf-8")
+        _add_intent(repo)
+        sha = _speedbump.snapshot_discard("Bash", {"command": "git checkout -- a.txt"}, repo)
+        assert sha and _git(repo, "show", f"{sha}:a.txt").stdout == "two\n"
+
+    def test_an_unborn_branch_with_staged_work_gets_one(self, tmp_path: Path):
+        _git(tmp_path, "init", "-q", ".")
+        (tmp_path / "s.txt").write_text("staged\n", encoding="utf-8")
+        _git(tmp_path, "add", "s.txt")
+        (tmp_path / "s.txt").write_text("EDITED\n", encoding="utf-8")
+        _refused_here(tmp_path)
+        sha = _speedbump.snapshot_discard("Bash", {"command": "git reset --hard"}, tmp_path)
+        assert sha and _git(tmp_path, "show", f"{sha}:s.txt").stdout == "EDITED\n"
+        assert "parent " not in _git(tmp_path, "cat-file", "-p", sha).stdout
+
+    def test_an_unborn_branch_with_nothing_in_it_has_nothing_to_save(self, tmp_path: Path):
+        _git(tmp_path, "init", "-q", ".")
+        _refused_here(tmp_path)
+        assert _speedbump.snapshot_discard("Bash", {"command": "git reset --hard"}, tmp_path) is None
+        assert _log_lines(tmp_path) == []
+        reason = _speedbump.check("Bash", {"command": "git reset --hard"}, tmp_path)
+        assert reason and "NO snapshot was taken (nothing dirty to save" in reason, reason
+
+    @pytest.mark.parametrize("step,fails", [
+        ("write-tree", "exits"),
+        ("add", "raises"),
+    ], ids=["write-tree-exits-128", "add-raises-a-timeout"])
+    def test_one_git_still_refuses_is_said_and_never_called_clean(
+        self, repo: Path, monkeypatch, capsys, step: str, fails: str,
+    ):
+        _add_intent(repo)
+        real = _speedbump.run_bounded
+
+        def _one_step_fails(args, **kwargs):
+            if step in args:
+                if fails == "raises":
+                    raise subprocess.TimeoutExpired(args, 15)
+                return subprocess.CompletedProcess(args, 128, "", "fatal: simulated\n")
+            return real(args, **kwargs)
+
+        monkeypatch.setattr(_speedbump, "run_bounded", _one_step_fails)
+        cmd = "git checkout -- file.py"
+        assert _speedbump.snapshot_discard("Bash", {"command": cmd}, repo) is None
+        assert _log_lines(repo) == []
+        reason = _speedbump.check("Bash", {"command": cmd}, repo)
+        assert reason and "NO snapshot could be taken" in reason and "nothing dirty" not in reason, reason
+        records = _audit("pretooluse_failed_open_discard_snapshot")
+        assert len(records) == 1, records
+        details = records[0]["details"]
+        assert details["fault"] == "StashRefused", details
+        assert details["step"] == ("write-tree" if fails == "exits" else "TimeoutExpired"), details
+        said = capsys.readouterr().err
+        assert "not uptodate" in said, said            # git's own refusal, read from stderr
+        assert ("write-tree: fatal: simulated" if fails == "exits" else "TimeoutExpired") in said, said
