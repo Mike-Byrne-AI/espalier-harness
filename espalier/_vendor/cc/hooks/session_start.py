@@ -26,6 +26,7 @@ hooks are active, and in CI for merge-time enforcement.
 """
 from __future__ import annotations
 
+import enum
 import importlib.util
 import json
 import os
@@ -493,8 +494,10 @@ def _loose_processes(table: str) -> list[tuple[int, str, str]]:
     return found
 
 
-def _read_process_table() -> str:
-    """`ps -axo pid,ppid,time,comm` on POSIX; '' on Windows or on any failure."""
+def _read_process_table() -> str | None:
+    """`ps -axo pid,ppid,time,comm` on POSIX; '' on Windows or when ps cannot
+    run or fails; None when it did not answer in time, which the Loose: line
+    says (its silence reads as nothing loose)."""
     if os.name != "posix":
         return ""
     try:
@@ -503,9 +506,15 @@ def _read_process_table() -> str:
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=5,
         )
+    except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- a ps that did not answer is None, which the Loose: line says, never a table of nothing loose
+        return None
     except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- a reporter that cannot read the process table prints no Loose: line; that is its contract
         return ""
     return result.stdout if result.returncode == 0 else ""
+
+
+#: The Loose: line when the process table did not answer in time.
+_LOOSE_UNREAD = "process table unread (ps did not answer in 5 s): a loose run, if any, is not named this start"
 
 
 # The checkout each named pid runs from (DEF-4070). Seats on one box share one
@@ -539,9 +548,14 @@ def _loose_processes_line(root: Path, table: str | None = None, cwds: dict[int, 
     qualifies. ``table`` and ``cwds`` are for tests: production reads the live
     process table and, only when a row qualifies, the named pids' working
     directories; a call given a table reads no live cwd (a fixture's pid can
-    be a live process's)."""
+    be a live process's). A live table that did not answer in time is
+    ``_LOOSE_UNREAD``."""
     live = table is None
-    rows = _loose_processes(_read_process_table() if table is None else table)
+    if table is None:
+        table = _read_process_table()
+        if table is None:
+            return _LOOSE_UNREAD
+    rows = _loose_processes(table)
     if not rows:
         return ""
     if cwds is None:
@@ -688,10 +702,11 @@ def _sessions_line(
 # (DEF-5051). The whole hook runs under settings.json's 15 s
 # ceiling, and blowing THAT loses the whole banner, so when the budget is
 # spent the block returns what it has. Measured 1.3 s for one read with every
-# field (2026-09-27). Any failure -- no `gh`, no sign-in, no GitHub remote, a
-# timeout, a foreign JSON shape -- costs the lines, never the banner. Read
-# once in main and threaded in, like the process table, so the builders never
-# spawn `gh` on a scratch tree.
+# field (2026-09-27). A failure -- no `gh`, no sign-in, no GitHub remote, a
+# foreign JSON shape -- costs the lines, never the banner; a read that did not
+# answer in time says so on its line. Each line reads in main (the builders
+# take the finished text, so they never spawn `gh` on a scratch tree), and its
+# own read, so a read that did not answer is never read again as no listing.
 _PR_BLOCK_BUDGET_SECONDS = 8.0   # the mail's share first, then the two list reads, the git questions and the required-check reads
 _PR_READ_CAP_SECONDS = 5.0       # one gh list read, never more
 _PR_CHECKS_CAP_SECONDS = 2.0     # one required-check read (a rendered row with a red), never more
@@ -730,12 +745,15 @@ def _ascii(text: str) -> str:
     return text.encode("ascii", "replace").decode("ascii")
 
 
-def _gh_pr_list(root: Path, state: str, limit: int, deadline: float | None) -> str:
-    """One `gh pr list` read for the caller's PRs in ``state``; '' on any
-    failure (no `gh`, not signed in, no GitHub remote, a timeout, no budget)."""
+def _gh_pr_list(root: Path, state: str, limit: int, deadline: float | None) -> str | None:
+    """One `gh pr list` read for the caller's PRs in ``state``; '' when it
+    could not be made or was refused (no `gh`, not signed in, no GitHub
+    remote); None when it did not answer in time (killed at its cap, or no
+    budget left to start it), which the line says: its silence would read as
+    none open, or nothing merged."""
     timeout = _seconds_left(deadline, _PR_READ_CAP_SECONDS)
     if timeout <= 0.2:
-        return ""
+        return None
     try:
         result = _hook_utils.run_bounded(  # spawn: ok a reporter: a gh that cannot run costs the Open PRs: line; a missing gh is named by the load-bearing-tool warning
             ["gh", "pr", "list", "--author", "@me", "--state", state,
@@ -743,17 +761,46 @@ def _gh_pr_list(root: Path, state: str, limit: int, deadline: float | None) -> s
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=timeout, cwd=str(root),
         )
+    except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- a read that did not answer is None, which the Open PRs: and Merged: lines say, never a listing of none
+        return None
     except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- a reporter that cannot run gh prints no Open PRs: line; a missing gh is named by the load-bearing-tool warning
         return ""
     return result.stdout if result.returncode == 0 else ""
 
 
-def _read_open_prs(root: Path, deadline: float | None = None) -> str:
+def _read_open_prs(root: Path, deadline: float | None = None) -> str | None:
     return _gh_pr_list(root, "open", _OPEN_PR_LIMIT, deadline)
 
 
-def _read_merged_prs(root: Path, deadline: float | None = None) -> str:
+def _read_merged_prs(root: Path, deadline: float | None = None) -> str | None:
     return _gh_pr_list(root, "merged", _MERGED_PR_ROWS, deadline)
+
+
+# What the two lines say when their list read did not answer: killed at its
+# cap, or never started because the block's time was spent (the mail and the
+# catch-up take theirs first), which the words cover both ways.
+_OPEN_PRS_UNREAD = ("unread (gh pr list gave no answer in time, or no time was left to ask): "
+                    "your open pull requests, if any, are not named this start")
+_MERGED_PRS_UNREAD = ("unread (gh pr list gave no answer in time, or no time was left to ask): "
+                      "a merge your local base lacks, or a red after one, is not named this start")
+
+
+class _Unanswered(enum.Enum):
+    """A bounded read killed at its cap, or never started for want of time:
+    cannot tell. Compared with ``is`` alone; its truth value raises, so a
+    caller testing ``if answer:`` -- where True means "pulled" or a path --
+    fails in the tests instead of reading it as yes."""
+
+    NOT_ANSWERED = "not answered"
+
+    def __bool__(self) -> bool:
+        raise TypeError("a read that did not answer is neither yes nor no: compare it with `is`")
+
+
+#: ``_local_has_commit``'s and ``_probe_engine``'s answer when the read did
+#: not answer in time: a merge it could not check is counted on the `Merged:`
+#: line, never read as pulled, and a probe is said, never read as agreement.
+_NOT_ANSWERED = _Unanswered.NOT_ANSWERED
 
 
 def _gh_pr_required_reds(root: Path, number: int, deadline: float | None) -> list[str] | None:
@@ -1012,19 +1059,22 @@ _ENGINE_PROBE = ("import importlib.util as u; s = u.find_spec('espalier'); "
 _ENGINE_CAP_SECONDS = 1.0
 
 
-def _probe_engine(exe: str, timeout: float, env: dict[str, str] | None) -> Path | None:
+def _probe_engine(exe: str, timeout: float, env: dict[str, str] | None) -> Path | _Unanswered | None:
     """Where ``exe`` would import ``espalier``'s package directory from, asked
     from a fresh empty directory so no cwd answers for it; None when it cannot
-    say (no answer in time, a non-zero exit, a namespace package, output that
-    is not one absolute ``__init__.py`` path: a shim or a sitecustomize that
-    prints at start is read by its LAST line, and anything else is no answer,
-    never a false alarm)."""
+    say (a non-zero exit, a namespace package, output that is not one absolute
+    ``__init__.py`` path: a shim or a sitecustomize that prints at start is
+    read by its LAST line, and anything else is no answer, never a false
+    alarm); ``_NOT_ANSWERED`` when it did not answer in time, which the line
+    says (its silence reads as the two agreeing)."""
     try:
         with tempfile.TemporaryDirectory(prefix="espalier-engine-probe-") as neutral:
             done = _hook_utils.run_bounded(  # spawn: ok reporter probe, bounded, no shell, a fixed program text
                 [exe, "-c", _ENGINE_PROBE], cwd=neutral, env=env, capture_output=True,
                 text=True, encoding="utf-8", errors="replace", timeout=timeout, check=False,
             )
+    except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- a probe that did not answer is said on the Engine: line, never read as the two agreeing
+        return _NOT_ANSWERED
     except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- an interpreter that cannot answer costs the Engine line, never the banner
         return None
     lines = [ln.strip() for ln in done.stdout.splitlines() if ln.strip()]
@@ -1055,9 +1105,11 @@ def _engine_line(root: Path, deadline: float | None = None, *,
     word. Any checkout, not only a linked worktree: a second full clone (the
     box's air-2) has the same mismatch (failure-mode review). Empty on an
     adopter tree (no engine source at its root: its engine is always the
-    installed one), when the paths agree, with no interpreter that answers, and
-    when the probe cannot answer in time. The interpreter is ``python3``, then
-    ``python`` (a Windows Store stub that cannot answer is passed over).
+    installed one), when the paths agree, and with no interpreter that answers
+    (one that cannot run, or a Windows Store stub that exits at once, is passed
+    over); a probe killed at its cap, or with no time left to ask, says it
+    cannot tell, and the next interpreter is not asked in its place. The
+    interpreter is ``python3``, then ``python``.
 
     This is the early notice; the test session itself stops on the same
     mismatch (``tests/conftest.py``), where the interpreter is the real one
@@ -1071,9 +1123,13 @@ def _engine_line(root: Path, deadline: float | None = None, *,
     names = [python] if python else [c for c in (shutil.which("python3"), shutil.which("python")) if c]
     for exe in names:
         timeout = _seconds_left(deadline, _ENGINE_CAP_SECONDS)
-        if timeout < 0.3:
-            return ""  # the line is advice; the next start asks again
-        found = _probe_engine(exe, timeout, env)
+        found = _probe_engine(exe, timeout, env) if timeout >= 0.3 else _NOT_ANSWERED
+        if isinstance(found, _Unanswered):
+            # Killed at its cap, or no time left to ask: the next interpreter
+            # is not the one a tier runs first, so its answer is not this one's.
+            return _ascii(f"{Path(exe).name} did not say in time where it imports espalier from, so a tier "
+                          "testing another checkout's engine is not ruled out this start; the test session "
+                          "stops on that mismatch")
         if found is not None:
             break
     else:
@@ -1083,8 +1139,13 @@ def _engine_line(root: Path, deadline: float | None = None, *,
     bindir = Path(".venv") / ("Scripts" if os.name == "nt" else "bin")
     venv_python = root / bindir / ("python.exe" if os.name == "nt" else "python")
     left = _seconds_left(deadline, _ENGINE_CAP_SECONDS)
-    if venv_python.is_file() and left >= 0.3 and (
-            (mine := _probe_engine(str(venv_python), left, env)) is not None and _same_dir(mine, own)):
+    mine = (_probe_engine(str(venv_python), left, env) if left >= 0.3 else _NOT_ANSWERED) \
+        if venv_python.is_file() else None
+    if isinstance(mine, _Unanswered):
+        remedy = (f"this checkout's .venv did not say in time which engine it imports: where "
+                  f"`{bindir / 'python'} -c \"import espalier; print(espalier.__file__)\"` names this "
+                  f"checkout, put {bindir} first on PATH for every tier")
+    elif mine is not None and _same_dir(mine, own):
         remedy = f"this checkout's .venv imports its own: put {bindir} first on PATH for every tier"
     else:
         remedy = (f"give this checkout its own: `uv venv .venv`, then `uv pip install --python "
@@ -1416,8 +1477,11 @@ def _pr_summary(pr: dict, required_red: list[str] | None = None) -> str:
         elif running:
             # _post_merge.waiting_on's words, which the board's blocked row
             # prints (DEF-4063); kept literal here so the row renders without
-            # the module, and pinned equal in tests/test_post_merge.py.
+            # the module, and pinned equal in tests/test_post_merge.py. A red
+            # whose required read did not answer may hold it whatever runs.
             tail = f"auto-merge armed; waiting on {running} running"
+            if red and required_red is None:
+                tail += f"; could not read which reds are required: gh pr checks {pr['number']} --required"
         elif red and required_red is None:
             tail = (f"auto-merge armed but held ({merge_state.lower()}); could not "
                     f"read which reds are required: gh pr checks {pr['number']} --required")
@@ -1451,13 +1515,16 @@ def _open_prs_line(
 ) -> str:
     """The banner's `Open PRs:` value -- one open pull request per line, the
     first on the label's line and the rest aligned under it -- or '' when the
-    caller has none open. ``listing`` is for tests; production reads `gh` in
-    main and passes the text with ``root`` and the block's ``deadline``, which
-    bound the one extra read a row with a red earns (`gh pr checks --required`,
-    ``_gh_pr_required_reds``); ``required_reader`` is that read, injectable so
-    the tests count it."""
+    caller has none open, and ``_OPEN_PRS_UNREAD`` when the read did not
+    answer in time. ``listing`` is for tests; production passes ``root`` and
+    the block's ``deadline`` and the line reads `gh` itself, under the same
+    deadline as the one extra read a row with a red earns (`gh pr checks
+    --required`, ``_gh_pr_required_reds``); ``required_reader`` is that read,
+    injectable so the tests count it."""
     if listing is None:
         listing = _read_open_prs(root if root is not None else Path.cwd(), deadline)
+        if listing is None:
+            return _OPEN_PRS_UNREAD
     if required_reader is None and root is not None:
         base = root
 
@@ -1483,13 +1550,15 @@ def _local_has_commit(
     root: Path, base: str, oid: str,
     deadline: float | None = None,
     local_branches: dict[str, bool] | None = None,
-) -> bool | None:
+) -> bool | _Unanswered | None:
     """Does the LOCAL branch ``base`` reach commit ``oid``? True when it does,
     False when the branch exists here and does not (the merge is not pulled
-    yet, or was never fetched), None when the branch is not local, git could
-    not answer, or the block's budget is spent -- a None costs the row, never
-    the banner. ``local_branches`` caches the branch-exists question per base
-    across one banner, so five merges into `main` cost one `rev-parse`."""
+    yet, or was never fetched), None when the branch is not local or git
+    could not run -- a None costs the row, never the banner -- and
+    ``_NOT_ANSWERED`` when git did not answer in time or the block's budget
+    is spent, which the line counts. ``local_branches`` caches the
+    branch-exists question per base across one banner, so five merges into
+    `main` cost one `rev-parse`."""
     if not base or not oid or not all(c in "0123456789abcdefABCDEF" for c in oid):
         return None
     if local_branches is not None and base in local_branches:
@@ -1497,13 +1566,15 @@ def _local_has_commit(
     else:
         timeout = _seconds_left(deadline, _PR_GIT_CAP_SECONDS)
         if timeout <= 0.2:
-            return None
+            return _NOT_ANSWERED
         try:
             have = _hook_utils.run_bounded(  # spawn: ok a reporter: a git that cannot answer decides nothing about the Merged: line
                 ["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{base}"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=timeout, cwd=str(root),
             )
+        except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- a read that did not answer is counted on the Merged: line, never read as pulled
+            return _NOT_ANSWERED
         except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- a git that cannot answer decides nothing; the Merged: line is not drawn
             return None
         known = have.returncode == 0
@@ -1513,13 +1584,15 @@ def _local_has_commit(
         return None
     timeout = _seconds_left(deadline, _PR_GIT_CAP_SECONDS)
     if timeout <= 0.2:
-        return None
+        return _NOT_ANSWERED
     try:
         reach = _hook_utils.run_bounded(  # spawn: ok a reporter: a git that cannot answer decides nothing about the Merged: line
             ["git", "merge-base", "--is-ancestor", oid, f"refs/heads/{base}"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=timeout, cwd=str(root),
         )
+    except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- a read that did not answer is counted on the Merged: line, never read as pulled
+        return _NOT_ANSWERED
     except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- a git that cannot answer decides nothing; the Merged: line is not drawn
         return None
     # 0: reachable. 1: not reachable. 128: the commit is unknown here -- never
@@ -1582,20 +1655,25 @@ def _post_merge_verdicts(merged: list[dict]) -> dict[int, tuple[list[str], list[
 def _merged_prs_line(
     listing: str | None = None,
     root: Path | None = None,
-    local_has_commit: Callable[[str, str], bool | None] | None = None,
+    local_has_commit: Callable[[str, str], bool | _Unanswered | None] | None = None,
     deadline: float | None = None,
 ) -> str:
     """The banner's `Merged:` value -- each recently merged pull request whose
     merge commit the local base branch does not reach, with the pull that
     catches up, and each whose latest run of a check is red (or cancelled with
     no re-run: `no verdict`) -- or '' when everything merged is here and green.
+    A list read that did not answer in time is ``_MERGED_PRS_UNREAD``, and the
+    merges git did not answer for are counted on a last line of their own,
+    past the "and N more" fold, which never takes it.
     At most `_MERGED_PR_ROWS` merged rows are read (one `merge-base` each, plus
     one `rev-parse` per distinct base; the rollup rows cost no call, `_PR_FIELDS`
     already fetches them). ``listing`` and ``local_has_commit`` are for tests;
-    production reads `gh` in main under the block's deadline."""
+    production reads `gh` here under the block's deadline."""
     root = root if root is not None else Path.cwd()
     if listing is None:
         listing = _read_merged_prs(root, deadline)
+        if listing is None:
+            return _MERGED_PRS_UNREAD
     branches: dict[str, bool] = {}
     has = local_has_commit or (
         lambda base, oid: _local_has_commit(root, base, oid, deadline, branches)
@@ -1609,15 +1687,25 @@ def _merged_prs_line(
     )[:_MERGED_PR_ROWS]
     verdicts = _post_merge_verdicts(merged)
     rows: list[str] = []
+    unchecked = 0
     for pr in merged:
         mc = pr.get("mergeCommit")
         oid = str(mc.get("oid") or "") if isinstance(mc, dict) else ""
         base = str(pr.get("baseRefName") or "")
-        unpulled = bool(oid and base) and has(base, oid) is False
+        reached = has(base, oid) if oid and base else None
+        unchecked += reached is _NOT_ANSWERED
+        unpulled = reached is False
         reds, no_verdict = verdicts.get(pr["number"], ([], []))
         if unpulled or reds or no_verdict:
             rows.append(_merged_summary(pr, unpulled=unpulled, reds=reds, no_verdict=no_verdict))
-    return _render_rows(rows)
+    text = _render_rows(rows)
+    if unchecked:
+        # Past the fold: three rows above it must never fold this away, the
+        # one clause that says the rest were not checked.
+        count = (f"{_hook_utils.plural(unchecked, 'merge')} not checked against your local base: "
+                 "git gave no answer in time, or no time was left to ask")
+        text = f"{text}\n{_PR_INDENT}{count}" if text else count
+    return text
 
 def _summarize_memory(root: Path) -> str:
     """Read ESPALIER_MEMORY.md and produce a compact summary.
@@ -3172,6 +3260,7 @@ def _nested_repo_containing(root: Path, cwd: Path | None) -> str | None:
 
 def _find_nested_repo_litter(
     root: Path, *, cwd: Path | None = None, max_depth: int = 4, max_nodes: int = 5000,
+    unread: list[str] | None = None,
 ) -> list[str]:
     """Repo-relative paths of nested git repos littering the working tree.
 
@@ -3229,10 +3318,13 @@ def _find_nested_repo_litter(
     nothing) -- a SessionStart reporter must never crash the session. The
     untracked descent is bounded in both depth (``max_depth``) and total visited
     dirs (``max_nodes``) so a large untracked tree cannot slow session start
-    unboundedly.
+    unboundedly. What did not finish -- a git read killed at its cap, the
+    descent stopped at ``max_nodes`` -- is appended to ``unread`` when the
+    caller passes one, so a short list is never read as a clean tree.
     """
     root_resolved = root.resolve()
     offenders: set[str] = set()
+    told: list[str] = unread if unread is not None else []
     locked: set[Path] = set()  # filled by source A; read by both sources
 
     cwd_resolved: Path | None
@@ -3314,7 +3406,9 @@ def _find_nested_repo_litter(
                 if _is_locked(wt) or _in_use(wt):
                     continue  # in use: a lock, or the session's own tree
                 offenders.add(rel)
-    except (subprocess.TimeoutExpired, OSError, ValueError):
+    except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- a list that did not answer is told to the caller (``unread``); source B may still contribute (without the lock skip)
+        told.append("git worktree list did not answer in 5 s")
+    except (OSError, ValueError):
         pass  # fail-open; source B may still contribute (without the lock skip)
 
     # Source B: untracked dirs that are (or hide) a nested ``.git``.
@@ -3323,7 +3417,10 @@ def _find_nested_repo_litter(
             ["git", "-c", "core.quotepath=false", "status", "--porcelain"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, cwd=str(root),
         )
-    except (subprocess.TimeoutExpired, OSError, ValueError):
+    except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- a status that did not answer is told to the caller (``unread``) beside what source A found
+        told.append("git status did not answer in 5 s")
+        return sorted(offenders)
+    except (OSError, ValueError):
         return sorted(offenders)
     if st.returncode != 0:
         return sorted(offenders)
@@ -3344,6 +3441,7 @@ def _find_nested_repo_litter(
         for dirpath, dirnames, _files in os.walk(cand, followlinks=False):
             nodes += 1
             if nodes > max_nodes:
+                told.append(f"the untracked descent stopped at {max_nodes} directories in {entry}")
                 return sorted(offenders)  # bounded: never slow boot unboundedly
             here = Path(dirpath)
             # A ``.git`` entry of any kind (dir, gitlink, or a dangling
@@ -3934,6 +4032,9 @@ def _warn_if_nested_repo_litter(root: Path, *, cwd: Path | None = None, covered:
     the checkout containing it, so they govern the worktree like the root --
     DEF-743, ``_hook_utils.sibling_checkouts``); a foreign nested repo, which
     they do not govern, keeps the clause saying so.
+    A scan that did not finish says so: a git read killed at its cap is a
+    WARN beside the litter it did find, and the descent's node cap an INFO
+    naming the folder to ignore, since it repeats on every start.
     Spoken through ``_hook_utils.advise``, so each line joins the banner's
     Warnings block (stderr keeps the debug copy). Silent when the tree is clean.
     """
@@ -3967,7 +4068,8 @@ def _warn_if_nested_repo_litter(root: Path, *, cwd: Path | None = None, covered:
             _hook_utils.advise(
                 f"[INFO] session cwd is inside worktree {beside} of this repository {governed}",
             )
-    litter = _find_nested_repo_litter(root, cwd=cwd)
+    unread: list[str] = []
+    litter = _find_nested_repo_litter(root, cwd=cwd, unread=unread)
     if covered:
         # The worktrees the catch-up's reaper already named on the Worktrees:
         # line, each with the reason it kept it; a second line here offering
@@ -3975,6 +4077,24 @@ def _warn_if_nested_repo_litter(root: Path, *, cwd: Path | None = None, covered:
         named = {str(Path(p).resolve()).replace("\\", "/").casefold() for p in covered}
         litter = [rel for rel in litter
                   if str((root / rel).resolve()).replace("\\", "/").casefold() not in named]
+    killed = [u for u in unread if "did not answer" in u]
+    capped = [u for u in unread if u not in killed]
+    if killed:
+        # A scan cut short names what it found so far; its silence, or a
+        # short list, is never a clean tree.
+        lock = (", and without the worktree list a locked worktree may be named as litter"
+                if any("worktree list" in u for u in killed) else "")
+        _hook_utils.advise(
+            f"[WARN] the nested-repo scan did not finish ({'; '.join(killed)}), so a leftover "
+            f"worktree or clone may go unnamed this start{lock}.",
+        )
+    if capped:
+        # The node cap is a size bound, not a kill: it repeats on every start
+        # until the folder is ignored, so it names the folder and the remedy.
+        _hook_utils.advise(
+            f"[INFO] the nested-repo scan stops early ({'; '.join(capped)}): a nested repo past it "
+            "is not named, on every start until that folder is gitignored.",
+        )
     if not litter:
         return
     shown = ", ".join(litter[:5]) + ("  ..." if len(litter) > 5 else "")
@@ -4359,13 +4479,16 @@ def _open_plan_section(root: Path) -> str:
 
 
 def _recent_commits(root: Path, n: int = 3) -> str:
-    """The newest ``n`` commit subjects, regenerated here. '' on git failure/timeout."""
+    """The newest ``n`` commit subjects, regenerated here. '' on git failure;
+    a log that did not answer in time says so in the section."""
     try:
         r = _hook_utils.run_bounded(  # spawn: ok a reporter: a git that cannot run draws no recent-commits section
             ["git", "log", f"-{n}", "--oneline", "--no-decorate"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, cwd=str(root),
         )
-    except (OSError, subprocess.TimeoutExpired, ValueError):  # fail-open: ok deliberate -- a git that cannot run draws no recent-commits section; a missing git is named by the load-bearing-tool warning
+    except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- a log that did not answer says so in its section, never an absent one that reads as no history to show
+        return "\n--- RECENT COMMITS ---\n(git log did not answer in 5 s)\n"
+    except (OSError, ValueError):  # fail-open: ok deliberate -- a git that cannot run draws no recent-commits section; a missing git is named by the load-bearing-tool warning
         return ""
     if r.returncode != 0 or not r.stdout.strip():
         return ""
@@ -5282,13 +5405,15 @@ def _run_main(wall_start: float | None = None) -> int:
         open_prs_line = _POST_MERGE_UNREAD
         merged_prs_line = ""
     else:
+        # Each line makes its own list read, so a read that did not answer
+        # reaches the line as one, never as a listing to read again.
         try:
-            open_prs_line = _open_prs_line(_read_open_prs(root, pr_deadline), root, deadline=pr_deadline)
+            open_prs_line = _open_prs_line(None, root, deadline=pr_deadline)
         except Exception as e:  # noqa: BLE001 — bounded warn, never block session
             _late_load_failed("session_start: open pull-request scan failed", e)
             open_prs_line = ""
         try:
-            merged_prs_line = _merged_prs_line(_read_merged_prs(root, pr_deadline), root, deadline=pr_deadline)
+            merged_prs_line = _merged_prs_line(None, root, deadline=pr_deadline)
         except Exception as e:  # noqa: BLE001 — bounded warn, never block session
             _late_load_failed("session_start: merged pull-request scan failed", e)
             merged_prs_line = ""

@@ -121,8 +121,10 @@ PID whose working directory is in another checkout of this clone is that
 checkout's run: the line names it and leaves it out of the paste (`Left out of
 the paste: 5100 -- run in another checkout of this clone: ask the session
 working there; with none there, read its parents first.`), and says `Nothing
-to paste.` when that leaves none. The sample below omits the line because it
-is conditional, and Windows reports nothing. On every platform it writes this
+to paste.` when that leaves none. A `ps` that does not answer in five seconds
+fills the line with `process table unread (ps did not answer in 5 s)`, never
+the silence that reads as nothing loose. The sample below omits the line
+because it is conditional, and Windows reports nothing. On every platform it writes this
 session's marker under `.espalier-state/sessions/<session_id>.json` (the
 payload's `session_id`, sanitised to `[A-Za-z0-9_-]` before it names a file;
 `task_router.py` touches it on every prompt as a heartbeat) and, when another
@@ -183,7 +185,8 @@ required reds it answers with, `... but GitHub is holding it (blocked): no red i
 required check that has not reported` when the read answered that none of
 the reds is required, `... GitHub is holding it (blocked): gh pr checks <n>
 --required says which` when nothing is red and nothing runs, or `could not
-read which reds are required` when the read could not be made (the read is
+read which reds are required` when the read could not be made, after the
+running count too, since a required red holds the merge whatever runs (the read is
 spent only on the three rows the line renders, and only while the block can
 still afford the `Merged:` read after it);
 a red on a check that is not required does not hold the merge; a conflict
@@ -212,6 +215,11 @@ that sits armed and unmerged (the behind row and the conflict row each name the
 catch-up; the conflict row says the record files resolve by shape); the two
 lines say which before the session commits anything. Reporter only, and it fails open: a host
 without `gh`, a sign-in or a GitHub remote loses the lines, never the banner;
+a read that does not answer in time (killed at its cap, or with no budget
+left to start it) says so on its line instead (`Open PRs:  unread (gh pr list
+gave no answer in time, or no time was left to ask): ...`), since its silence would read as none open or
+nothing merged, and merges git did not answer for are counted on the
+`Merged:` line, never read as pulled;
 the open and merged reads are separate calls (one shared recency window let
 ten merges hide the one open PR), each line shows three rows then a count,
 and the whole question takes what the mail below left of eight seconds under
@@ -321,9 +329,12 @@ against the git in hand.
 A `Merging:` line after `Merged:` prints the base branch's merge rules as
 GitHub reports them now: whether a pull request must be up to date with the
 base before it merges, and how many checks are required (one bounded read of
-branch protection under the pull-request block's deadline; no line when it
-cannot be read, never a guess). The docs point here rather than restating the
-setting.
+branch protection under the pull-request block's deadline; no line when
+GitHub's answer cannot be read -- an unknown branch, a token without admin
+rights, no `gh` -- never a guess). A read that does not answer in time says
+the rules are unread, and so does a default branch git does not name in time,
+when no protection is asked: a `main` read in its place would print another
+branch's rules. The docs point here rather than restating the setting.
 
 An `Engine:` line names a checkout that holds the engine source (the
 `espalier` package at its root, so never an adopter tree) whose test
@@ -337,7 +348,10 @@ from, without importing it: about 20 ms, capped at one second, after the
 network reads. The line names both locations and the fix: a `.venv` of the
 checkout's own with its `bin` (`Scripts` on Windows) first on PATH, or, when
 that `.venv` exists already, to put it first. It is silent when the two agree,
-on an adopter tree, and when no interpreter answers in time. It is the early
+on an adopter tree, and with no interpreter that can run; a probe that does
+not answer in time says the question went unanswered, never the silence that
+reads as the two agreeing, and a `.venv` probe that does not gives the check
+to run rather than a second `.venv` to build. It is the early
 notice; the engine's own test suite stops its session on the same mismatch,
 with the interpreter that is really running.
 

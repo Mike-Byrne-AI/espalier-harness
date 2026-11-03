@@ -1,11 +1,11 @@
 {
  "id": "DEF-2046",
- "subject": "tools/cc/_merge_rules.py",
- "cmd": "python3 -c \"import sys,subprocess;from pathlib import Path;sys.path.insert(0,'tools/cc');import _merge_rules as m;m.run_bounded=lambda *a,**k:(_ for _ in ()).throw(subprocess.TimeoutExpired('gh',2));print(m.line(*m.read(Path('.'),base='main'))=='')\"",
+ "subject": "tools/cc/checkout_sync.py",
+ "cmd": "python3 -c \"import sys;sys.path.insert(0,'tools/cc');import checkout_sync as c;c.os.name='posix';c.run=lambda *a,**k:None;print(c._parent_map()=={})\"",
  "open_value": "True",
  "why_not": null,
- "row_sha": "d311ae7c62bd",
- "text_sha": "74f9089a535c",
+ "row_sha": "ed409f4057b1",
+ "text_sha": "32f2efeee69b",
  "verified_2026_11_02": "OPEN (filed 2026-11-02; probe driven at filing here and in the export of HEAD ea3c8ce2b71c)",
- "verified_2026_11_03": "STILL_OPEN (re-pinned value unchanged on 2026-11-03: the review batch closed _checked_out_elsewhere and seat.py's retire too; the text says so, the probe and its value unchanged) [changed: probe, anchor, text, subject]"
+ "verified_2026_11_03": "STILL_OPEN (re-pinned value unchanged on 2026-11-03: the review batch closed seat.py's three sibling reads and named the Stop gate's base read as left) [changed: probe, anchor, text, subject]"
 }
