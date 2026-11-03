@@ -1,0 +1,13 @@
+{
+ "id": "DEF-2049",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c 'import os, sys; from pathlib import Path; os.environ.update(TEMP=\"C:/tmp/job-1\", TMP=\"C:/tmp/job-1\", TMPDIR=\"/tmp/job-1\"); sys.path.insert(0, \"tools/cc/hooks\"); import write_guard as wg; repo = Path.home() / \"scratch-root-no-such-repo\"; rm, ri = \"rm \" + \"-r\" + \"f \", \"Remove-Item \" + \"-Rec\" + \"urse \"; w = lambda t, c: (wg._bash_dangerous_reason if t == \"Bash\" else wg._ps_dangerous_reason)(c, repo, cwd=repo) is not None; ok = w(\"Bash\", rm + \"/tmp/job-1\") and w(\"PowerShell\", ri + \"-Force $env:TEMP\"); n = sum(not w(t, c) for t, c in ((\"Bash\", rm + chr(34) + \"$TMPDIR\" + chr(34)), (\"Bash\", rm + \"$TMPDIR\"), (\"Bash\", rm + \"$TEMP\"), (\"PowerShell\", ri + \"$env:TEMP\"))) + w(\"PowerShell\", ri + \"-Force $env:TEMP\" + chr(92) + \"x\"); print(n if ok else \"the literal root does not wall\")'",
+ "open_value": "5",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/write_guard.py"
+ ],
+ "row_sha": "b9b000c3d48f",
+ "text_sha": "96c4b7d29e06",
+ "verified_2026_11_03": "OPEN (filed 2026-11-03; probe driven at filing here and in the export of HEAD ee06c9d56790)"
+}
