@@ -60,19 +60,20 @@ def _ascii(text: str) -> str:
     return text.encode("ascii", "replace").decode("ascii")
 
 
-def _base_answer(root: Path, deadline: float | None) -> str | None:
-    """``base_branch``'s answer, or None when git did not answer in time
-    (killed at its cap, or no time left to ask)."""
-    timeout = _left(deadline, BASE_REF_CAP_SECONDS)
+def _base_answer(root: Path, deadline: float | None, cap: float = BASE_REF_CAP_SECONDS) -> str | None:
+    """The one read behind ``base_branch`` and ``read``: the name, or None
+    when git did not answer in time (killed at ``cap``, or no time left to
+    ask)."""
+    timeout = _left(deadline, cap)
     if timeout <= 0.2:
         return None
     try:
-        result = run_bounded(  # spawn: ok a reporter: a git that cannot answer costs the base name, which falls back to main
+        result = run_bounded(  # spawn: ok a reporter: a git that cannot run costs the base name, which falls back to main; one that did not answer in time is None
             ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=timeout, cwd=str(root),
         )
-    except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- a read that did not answer is no name, never main: read() returns BASE_UNANSWERED and line() says so
+    except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- a read that did not answer is no name, never main: base_branch() answers None, read() returns BASE_UNANSWERED and line() says so
         return None
     except (OSError, subprocess.SubprocessError):  # fail-open: ok text-fallback -- a git that cannot run reads as main, and a wrong guess prints no line
         return "main"
@@ -80,15 +81,17 @@ def _base_answer(root: Path, deadline: float | None) -> str | None:
     return name.split("/", 1)[1] if name.startswith("origin/") and len(name) > len("origin/") else "main"
 
 
-def base_branch(root: Path, deadline: float | None = None) -> str:
+def base_branch(root: Path, deadline: float | None = None, cap: float = BASE_REF_CAP_SECONDS) -> str | None:
     """The remote's default branch, from the local ``origin/HEAD`` ref (no
     network); ``main`` when that ref is unset or cannot be read. The line names
     the branch it read, so a wrong default shows as a branch GitHub does not
-    know, which prints no line rather than a wrong setting. A git that did not
-    answer in time reads as ``main`` here too; ``read`` tells it apart
-    (``BASE_UNANSWERED``), so a caller that prints the rules takes its base
-    from ``read``."""
-    return _base_answer(root, deadline) or "main"
+    know, which prints no line rather than a wrong setting. None where git did
+    not answer in time (killed at ``cap``, or no time left to ask): a read
+    that did not answer is never ``main``, which on a clone whose default is
+    another branch is the wrong branch (DEF-5079); ``read`` answers the same
+    case as ``BASE_UNANSWERED``. ``cap`` is the banner's second by default; a
+    script with no start budget to keep asks with a longer one."""
+    return _base_answer(root, deadline, cap)
 
 
 def protection_endpoint(base: str) -> str:

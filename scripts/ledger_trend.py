@@ -8,6 +8,8 @@ read from the local ``origin/HEAD``) when the ledger is tracked there -- every
 merge that touched it is a snapshot -- else the ``record`` ref
 (:func:`default_ref`). The fixed ``record`` default went stale once the ledger
 was tracked on main: on 2026-10-14 it printed its last step for 2026-09-21.
+Where git gives no name for the default branch in time, the script says so
+and reads nothing, never ``origin/main`` in its place.
 
 Why this exists
 ---------------
@@ -98,7 +100,20 @@ def _merge_rules():
     return mod
 
 
-def default_ref(repo: Path, path: str) -> str:
+#: The base read's cap: the merge rules' own (one second) is the session
+#: banner's, and a by-hand run on a box a test tier loads can outlast it.
+_BASE_CAP_S = 20.0
+
+
+def _base_ref(repo: Path) -> str | None:
+    """``origin/<the remote's default branch>``, the name read from the local
+    ``origin/HEAD`` (``_merge_rules.base_branch``); None where git did not
+    answer for it within ``_BASE_CAP_S``."""
+    name = _merge_rules().base_branch(repo, cap=_BASE_CAP_S)
+    return None if name is None else f"origin/{name}"
+
+
+def default_ref(repo: Path, path: str, base: str | None = None) -> str | None:
     """The ref the snapshots are read from when ``--ref`` is not given: the
     base branch's remote-tracking ref (``origin/<base>``, the base read from
     the local ``origin/HEAD``) when the ledger is tracked there, else the
@@ -108,8 +123,18 @@ def default_ref(repo: Path, path: str) -> str:
     carried the ledger to the day; probable, not measured, cause: ``record``
     stopped carrying the ledger once main tracked it. Read with
     ``--ref origin/main`` on 2026-10-15, the same script printed steps
-    through that day, strikes 8 / 3 / 6 on 10-12 to 10-14."""
-    base = f"origin/{_merge_rules().base_branch(repo)}"
+    through that day, strikes 8 / 3 / 6 on 10-12 to 10-14.
+
+    None, with no ref read, where git did not answer for the default branch's
+    name in time (:func:`_base_ref`): that read was ``main`` once, so the
+    snapshots came from ``origin/main`` whatever the remote's default, and on
+    a clone whose default is another branch from ``record`` past a base with
+    no ledger (DEF-5079). ``base`` is the caller's ``origin/<name>`` when it
+    already read it."""
+    if base is None:
+        base = _base_ref(repo)
+        if base is None:
+            return None
     # the ledger as one file, or as its rows under the row-file directory: a
     # base that keeps only the rows still carries the ledger
     for where in (path, _row_dir(path)):
@@ -498,9 +523,15 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     repo = Path(args.repo).resolve()
     if args.ref is None:
-        args.ref = default_ref(repo, args.path)
+        # One read of the base, which the default and the fallback's note share.
+        base = _base_ref(repo)
+        if base is None:
+            print("ledger_trend: git gave no name for the remote's default branch in time (git symbolic-ref "
+                  f"refs/remotes/origin/HEAD did not answer in {_BASE_CAP_S:g}s), so no snapshot ref was chosen: "
+                  "run it again, or name the ref (--ref origin/<base>)", file=sys.stderr)
+            return 2
+        args.ref = default_ref(repo, args.path, base)
         if args.ref == _DEFAULT_REF:
-            base = f"origin/{_merge_rules().base_branch(repo)}"
             if _git(repo, "rev-parse", "--verify", "--quiet", base).returncode == 0:
                 print(f"ledger_trend: {base} carries no ledger at {args.path}; reading {_DEFAULT_REF!r}",
                       file=sys.stderr)

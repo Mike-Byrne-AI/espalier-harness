@@ -98,16 +98,25 @@ def _bounded_spawn():
 run_bounded = _bounded_spawn()
 
 
-def _git(*args: str) -> bytes | None:
+def _git_told(*args: str) -> bytes | None:
     """``git -C <root> <args>``'s stdout, or None when git is absent, the root is
-    no checkout, or the command fails (a ref or a path that does not resolve)."""
+    no checkout, or the command fails (a ref or a path that does not resolve);
+    a git that did not answer in time raises ``subprocess.TimeoutExpired``."""
     try:
         proc = run_bounded(
             ["git", "-C", str(_ROOT), *args], capture_output=True, timeout=_GIT_TIMEOUT_S,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except OSError:
         return None
     return proc.stdout if proc.returncode == 0 else None
+
+
+def _git(*args: str) -> bytes | None:
+    """:func:`_git_told`, with a git that did not answer in time read as None."""
+    try:
+        return _git_told(*args)
+    except subprocess.TimeoutExpired:
+        return None
 
 
 def _baseline() -> tuple[str | None, str]:
@@ -115,15 +124,21 @@ def _baseline() -> tuple[str | None, str]:
     merge-base with origin's default branch, else HEAD; ``(None, label)`` where
     git cannot answer, and the mirror body this sync replaced stands in. Read off
     git, not the mirror on disk: a refused run has already copied, so a second
-    run judged against the disk would find nothing new and name no word."""
+    run judged against the disk would find nothing new and name no word. A read
+    of the default branch or the merge-base that did not answer is HEAD, and the
+    label says so: the lane's own commits are then not judged (DEF-5079)."""
     if _git("rev-parse", "--verify", "-q", "HEAD") is None:
         return None, "the mirror body this sync replaced"
-    default = _git("rev-parse", "--abbrev-ref", "origin/HEAD")
-    if default is not None:
-        name = default.decode("utf-8", errors="replace").strip()
-        base = _git("merge-base", "HEAD", name)
-        if base is not None:
-            return base.decode("ascii", errors="replace").strip(), f"the merge-base with {name}"
+    try:
+        default = _git_told("rev-parse", "--abbrev-ref", "origin/HEAD")
+        if default is not None:
+            name = default.decode("utf-8", errors="replace").strip()
+            base = _git_told("merge-base", "HEAD", name)
+            if base is not None:
+                return base.decode("ascii", errors="replace").strip(), f"the merge-base with {name}"
+    except subprocess.TimeoutExpired:
+        return "HEAD", (f"HEAD (git did not answer in {_GIT_TIMEOUT_S:g}s for origin's default branch or the "
+                        "merge-base with it, so this lane's own commits are not judged: run it again)")
     return "HEAD", "HEAD"
 
 
