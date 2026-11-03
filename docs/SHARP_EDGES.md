@@ -5974,10 +5974,10 @@ the probe never started. Nothing was wrong with any row; the instrument could no
 **How to avoid it:** the runner runs a bare leading `python` or `python3` under
 `sys.executable` (`check_ledger_probes._under_this_interpreter`), so probe data stays
 spelled as authored and grades on every host. A probe that spawns an interpreter INSIDE its
-program must spell `sys.executable` there: `DEF-751` was re-pinned that way, and `DEF-411a`
-and `DEF-412h` still carry the literal because the verb can only re-pin them on a tree that
-holds `task-packs/Done/`; a ratchet beside the paperwork one
-(`TestProbeShapesAreRatcheted`, its baseline `SPAWNS_A_LITERAL_INTERPRETER` in `tests/_ledger_rules.py`) refuses a third. A shipped
+program must spell `sys.executable` there: `DEF-751` was re-pinned that way, and so were
+`DEF-411a` and `DEF-412h` on 2026-11-03, on a tree that holds `task-packs/Done/` (the only
+tree the verb can drive them on); a ratchet beside the paperwork one
+(`TestProbeShapesAreRatcheted`, its baseline `SPAWNS_A_LITERAL_INTERPRETER` in `tests/_ledger_rules.py`, empty since) refuses a new one. A shipped
 workflow body cannot resolve at an executor, because its executor is an agent told to run
 the command exactly as written, so its persist command opens with the resolver line the
 command bodies' shell blocks share (`PY=; for c in 'python3' python 'py -3'; do ...`, then

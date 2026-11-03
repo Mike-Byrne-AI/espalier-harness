@@ -350,12 +350,13 @@ def is_trap_shaped(probe: dict) -> bool:
 #: Probes whose PROGRAM spawns an interpreter by its bare name -- a
 #: `['python3', ...]` argv inside the -c payload -- which the runner's own
 #: resolution cannot reach (`_under_this_interpreter` rewrites argv[0], not
-#: the program). Both read UNRESOLVED on a python-only host (the inner spawn
-#: raises, rc 1) and can only be re-pinned by the verb on a tree that carries
-#: `task-packs/Done/`, their declared input. Shrink freely; an addition is a
-#: new probe spelling a literal interpreter, and the fix is `sys.executable`
-#: (DEF-751 was re-pinned that way on 2026-09-28).
-SPAWNS_A_LITERAL_INTERPRETER = frozenset({"DEF-411a", "DEF-412h"})
+#: the program): such a probe reads UNRESOLVED on a python-only host (the
+#: inner spawn raises, rc 1). Empty since 2026-11-03, when DEF-411a and
+#: DEF-412h were re-pinned to `sys.executable` on a tree that carries
+#: `task-packs/Done/`, their declared input, as DEF-751 was on 2026-09-28; an
+#: addition is a new probe spelling a literal interpreter, and the fix is
+#: `sys.executable`.
+SPAWNS_A_LITERAL_INTERPRETER: frozenset[str] = frozenset()
 LITERAL_SPAWN_RE = re.compile(r"""\[\s*['"]python3?['"]\s*,""")
 
 

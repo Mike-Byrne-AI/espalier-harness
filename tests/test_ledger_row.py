@@ -3067,16 +3067,18 @@ class TestTheContentRulesRunBeforeTheWrite:
         assert [r for r, _ in breaks(rel, capped)] == [MEMORY_CAP_RULE]
         assert breaks(rel, "| the memory file stays under its line cap |") == []
 
-    def test_the_real_rules_name_a_phantom_citation_and_both_probe_shapes(self):
+    def test_the_real_rules_name_a_phantom_citation_and_both_probe_shapes(self, monkeypatch):
         """The cited-path rule reads a drafted row as its test reads a doc
         (a file git does not track, a symbol its file does not define, a
         struck row read as the record it is), and the probe-shape ratchet
         reads a drafted probe with its baselines (a text read of its own
         subject, a bare interpreter spawned inside the program, each let
         through for an id its baseline holds). Mutation: any of the three
-        dropped from ``breaks``, or a baseline not consulted."""
-        from tests._ledger_rules import (CITED_PATH_RULE, LITERAL_SPAWN_RULE, PAPERWORK_PROBE_RULE,
-                                         SPAWNS_A_LITERAL_INTERPRETER, TEXT_OVER_OWN_SUBJECT, breaks)
+        dropped from ``breaks``, or a baseline not consulted. Each baseline is
+        handed the drafted id here, never read for a live member, since a
+        baseline drains to empty (SPAWNS_A_LITERAL_INTERPRETER, 2026-11-03)."""
+        import tests._ledger_rules as rules
+        from tests._ledger_rules import CITED_PATH_RULE, LITERAL_SPAWN_RULE, PAPERWORK_PROBE_RULE, breaks
         rel = "task-packs/ledger.d/DEF-9.md"
         cites = "| `DEF-9` | a | `tools/cc/no_such_tool.py` and `tools/cc/ledger_row.py::no_such_verb` |"
         assert [(r, w.split(",")[0]) for r, w in breaks(rel, cites)] == [
@@ -3086,11 +3088,13 @@ class TestTheContentRulesRunBeforeTheWrite:
         assert breaks(rel, "| ~~`DEF-9`~~ | a | `tools/cc/no_such_tool.py` |") == []
         reads = {"id": "DEF-9", "subject": "docs/X.md", "cmd": "grep -c x docs/X.md"}
         assert [r for r, _ in breaks(rel, "", reads)] == [PAPERWORK_PROBE_RULE]
-        assert breaks(rel, "", {**reads, "id": sorted(TEXT_OVER_OWN_SUBJECT)[0]}) == []
         assert breaks(rel, "", {**reads, "cmd": "python3 -c \"import ast;ast.parse(open('docs/X.md').read())\""}) == []
         spawns = {"id": "DEF-9", "subject": "a.py", "cmd": "python3 -c \"import subprocess;subprocess.run(['python3','a.py'])\""}
         assert [r for r, _ in breaks(rel, "", spawns)] == [LITERAL_SPAWN_RULE]
-        assert breaks(rel, "", {**spawns, "id": sorted(SPAWNS_A_LITERAL_INTERPRETER)[0]}) == []
+        monkeypatch.setattr(rules, "TEXT_OVER_OWN_SUBJECT", {"DEF-9"})
+        monkeypatch.setattr(rules, "SPAWNS_A_LITERAL_INTERPRETER", frozenset({"DEF-9"}))
+        assert breaks(rel, "", reads) == []
+        assert breaks(rel, "", spawns) == []
 
     def test_a_census_site_states_the_cap_as_often_as_the_census_says(self):
         """A ledger row the cap census holds to one statement of the cap is
