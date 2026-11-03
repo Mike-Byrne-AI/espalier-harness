@@ -1,0 +1,13 @@
+{
+ "id": "DEF-5075",
+ "subject": "espalier/surface_impact.py",
+ "cmd": "python3 -c \"import pathlib, tempfile; from espalier import surface_impact as si; d = pathlib.Path(tempfile.mkdtemp()); p = d / 'TP-1-x.md'; p.write_text('# TP-1\\n\\n## Affected symbols\\n\\n### Changed-semantics\\n- ' + chr(96) + 'tests/conftest.py::_MARKER_RULES' + chr(96) + '\\n', encoding='utf-8'); r = si.build_report(pathlib.Path('.'), p); print(any('sync_selfcheck_tests.py' in x for o in r.obligations for x in o.demands))\"",
+ "open_value": "False",
+ "why_not": null,
+ "inputs": [
+  "tests/conftest.py"
+ ],
+ "row_sha": "d6c3e3757a01",
+ "text_sha": "aed7f21ac330",
+ "verified_2026_11_02": "OPEN (filed 2026-11-02; probe driven at filing here and in the export of HEAD ef1c4563b791)"
+}

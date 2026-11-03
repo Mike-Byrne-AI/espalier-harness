@@ -130,7 +130,14 @@ class Obligation:
     #: ``### Renamed`` entry, reported as the removal of its old name). The
     #: demands are the SAME sites in every direction -- one table, never a
     #: reverse-worded copy; the renderer says what reverse means once.
+    #: ``"edited"`` is a Changed-semantics path whose only demand is the sync
+    #: an edited mirror source owes (DEF-419d): no reverse, no exit-2 count.
     direction: str = "added"
+
+
+#: The directions that read as a file leaving: the renderer's reverse wording
+#: and the removal counts apply to these, never to an edit.
+_REMOVAL_DIRECTIONS = ("removed", "renamed")
 
 
 @dataclass
@@ -214,18 +221,25 @@ _ASSET_HYGIENE = (
 )
 
 
-#: The public docs carrying a hook entry count, and those carrying a helper
-#: count (DEF-439). Each list is held equal to the docs its audit reads by
-#: tests/test_count_claims.py::test_the_pre_flight_names_every_doc_that_carries_a_hook_count,
-#: so a doc that gains a count joins the obligation and one that drops it
-#: leaves. NOT CLAUDE.md: its only numeral is "governs 10 of Claude Code's hook
-#: EVENTS", which does not move with the hook count; its real obligation is a
-#: table row, listed separately below for hook entries.
+#: The docs carrying a hook entry count, and those carrying a helper count
+#: (DEF-439), each held equal to the docs its audit reads (the entry list by
+#: tests/test_agent_contracts.py::TestHookCountConsistentAcrossDocs, the helper
+#: list by tests/test_count_claims.py), so a doc that gains a count joins the
+#: obligation and one that drops it leaves. The .claude bodies' mirrors follow
+#: them through the sync. NOT CLAUDE.md: its only numeral is "governs 10 of
+#: Claude Code's hook EVENTS", which does not move with the hook count; its
+#: real obligation is a table row, listed separately below for hook entries.
 _HOOK_ENTRY_COUNT_SITES = (
-    "README.md", "docs/CHEAT-SHEET.md", "docs/CONVENTIONS.md", "docs/HOOKS.md",
-    "docs/QUICKSTART.md", "docs/SHARP_EDGES.md",
+    ".claude/agents/harness-config-advisor.md", ".claude/skills/design/SKILL.md",
+    ".claude/skills/hook-authoring/SKILL.md", "README.md", "docs/CHEAT-SHEET.md",
+    "docs/CONVENTIONS.md", "docs/HOOKS.md", "docs/QUICKSTART.md", "docs/SHARP_EDGES.md",
 )
 _HOOK_HELPER_COUNT_SITES = ("README.md", "docs/QUICKSTART.md")
+_HOOK_COUNT_AUDITS = {
+    True: "tests/test_count_claims.py::test_helper_count_claims_match_filesystem",
+    False: "tests/test_agent_contracts.py::TestHookCountConsistentAcrossDocs"
+           "::test_hook_count_claims_match_reality",
+}
 
 
 def _hook_demands(is_helper: bool) -> list[str]:
@@ -237,15 +251,11 @@ def _hook_demands(is_helper: bool) -> list[str]:
         "(tests/_surface_expected.py) + _CANONICAL_HOOK_SCRIPTS "
         "(espalier/surface_contract.py)"
     )
-    sites, audit = (
-        (_HOOK_HELPER_COUNT_SITES, "test_helper_count_claims_match_filesystem")
-        if is_helper
-        else (_HOOK_ENTRY_COUNT_SITES, "test_hook_entry_count_claims_match_filesystem")
-    )
+    sites = _HOOK_HELPER_COUNT_SITES if is_helper else _HOOK_ENTRY_COUNT_SITES
     demands = [
         f"count SoT: bump {count}",
         f"the hardcoded hook-count sites ({', '.join(sites)}; "
-        f"tests/test_count_claims.py::{audit})",
+        f"{_HOOK_COUNT_AUDITS[is_helper]})",
         "scripts/wheel_smoke.py packaged-hook SoT",
         "integrity manifest refresh (espalier integrity refresh)",
         "vendor mirror: espalier/_vendor/cc/hooks/... "
@@ -288,7 +298,12 @@ def classify_surface(
     matched = _classify_path(rel_path)
     if repo_root is None:
         return matched
-    extra = _mirror_source_demands(rel_path, repo_root, matched[1] if matched else [])
+    said = matched[1] if matched else []
+    extra = _mirror_source_demands(rel_path, repo_root, said)
+    if _ASSET_HYGIENE not in said and _hygiene_scans(rel_path, repo_root):
+        # The hygiene contract reads this file's copy (a docs/ source the
+        # asset sync carries), so it owes the demand its copy is told (DEF-607).
+        extra.append(_ASSET_HYGIENE)
     if not extra:
         return matched
     if matched is None:
@@ -363,7 +378,8 @@ def _generated_side_line(r: mirror_registry.MirrorRow) -> str:
 _HARNESS_GUARD_REFUSAL = (
     "it refuses while the root copy differs from the asset and has uncommitted "
     "changes, or is clean but already differed from it at its last commit (or "
-    "git cannot tell); only --force overwrites the root copy, discarding the edit"
+    "git cannot tell); only --force overwrites the root copy, discarding the edit, "
+    "which is right only when the root holds nothing but an earlier sync's output"
 )
 
 
@@ -636,15 +652,25 @@ def _classify_path(rel_path: str) -> tuple[str, list[str]] | None:
     # yet it ships and CI runs it. Each demand names a mechanism that already
     # reds on this tree; no EXPECTED_ roster is added, since _FUSE_TOOLS_TREE is
     # one already, pinned to git's view of tools/.
-    if p.startswith("tools/") and not p.startswith("tools/cc/") and p.endswith(".py"):
-        tool_demands = [
-            "roster: a new top-level tools/ entry joins _FUSE_TOOLS_TREE "
-            "(espalier/managed_inventory.py; tests/test_managed_inventory.py::"
-            "TestHarnessWrittenPaths::test_the_fuse_tools_tree_is_this_repositorys_tracked_tools_tree)",
-            "ships in the sdist: tools is one of _SHIPPED_ROOTS "
-            "(tests/test_contracts.py::TestShippedRootsAreWhatShips)",
-            _PROVENANCE_DEMAND,
-        ]
+    if p.startswith("tools/") and not p.startswith("tools/cc/"):
+        # Each demand where its enforcer reads: the roster pin compares the
+        # top-level entries only, the shipped-root census and the provenance
+        # census read .py files (review of the C30 lane).
+        tool_demands = []
+        if p.count("/") == 1:
+            tool_demands.append(
+                "roster: a new top-level tools/ entry joins _FUSE_TOOLS_TREE "
+                "(espalier/managed_inventory.py; tests/test_managed_inventory.py::"
+                "TestHarnessWrittenPaths::test_the_fuse_tools_tree_is_this_repositorys_tracked_tools_tree)"
+            )
+        if p.endswith(".py"):
+            tool_demands += [
+                "ships in the sdist: tools is one of _SHIPPED_ROOTS "
+                "(tests/test_contracts.py::TestShippedRootsAreWhatShips)",
+                _PROVENANCE_DEMAND,
+            ]
+        if not tool_demands:
+            return None
         if base == "review_agent_audit.py":
             tool_demands.append(
                 "CI: the code-review-audit job (.github/workflows/test.yml) runs it "
@@ -757,10 +783,11 @@ def _verb_listed(verb: str, cheat_sheet: str) -> bool:
 
     TestCheatSheetCliParity's own precondition: a registered name appearing
     anywhere in the file passes. A ``cmd_*`` symbol does not carry its
-    registered name, so both spellings the parser could register are read.
+    registered name; every registered verb spells its words with hyphens, so
+    that is the spelling read (an underscore spelling would find a mention the
+    contract never counts).
     """
-    name = verb[len("cmd_"):]
-    return name.replace("_", "-") in cheat_sheet or name in cheat_sheet
+    return verb[len("cmd_"):].replace("_", "-") in cheat_sheet
 
 
 def _cli_verb_obligation(
@@ -787,20 +814,33 @@ def _cli_verb_obligation(
         verbs = [v for v in verbs if _verb_listed(v, cheat_sheet) != adding]
         if not verbs:
             return None
-    line = (
-        "docs/CHEAT-SHEET.md: list the verb (tests/test_documented_claims.py::"
-        "TestCheatSheetCliParity reds while a registered verb's name appears "
-        "nowhere in the file)"
-        if adding else
-        "docs/CHEAT-SHEET.md: drop the verb's line -- no test reds on a stale "
-        "one (TestCheatSheetCliParity reads registered verbs into the file, "
-        "never the file back)"
-    )
+    # A parser edit with no cmd_* symbol names no verb, so whether it owes a
+    # line is the edit's to say (review of the C30 lane).
+    when = "" if verbs else "if the parser edit registers a verb: " if adding else (
+        "if the parser edit drops a verb: ")
+    demands = [
+        when + (
+            "docs/CHEAT-SHEET.md: list the verb (tests/test_documented_claims.py::"
+            "TestCheatSheetCliParity reds while a registered verb's name appears "
+            "nowhere in the file)"
+            if adding else
+            "docs/CHEAT-SHEET.md: drop the verb's line -- no test reds on a stale "
+            "one (TestCheatSheetCliParity reads registered verbs into the file, "
+            "never the file back)"
+        ),
+        "any CLI-verb count claim in CLAUDE.md / README",
+    ]
+    if not adding:
+        demands.append(
+            "README.md: drop the verb from its command examples "
+            "(tests/test_cli_commands.py::TestHelpListsTheDocumentedVerbs::"
+            "test_every_verb_the_readme_documents_is_listed_in_help reds while one stays)"
+        )
     return Obligation(
         surface="CLI subcommand (espalier verb)",
         trigger=", ".join(verbs) if verbs else "build_parser",
         classification="",  # a symbol edit inside an existing file, not a new path
-        demands=[line, "any CLI-verb count claim in CLAUDE.md / README"],
+        demands=demands,
         direction=direction,
     )
 
@@ -962,6 +1002,21 @@ def build_report(repo_root: Path, pack_path: Path) -> SurfaceImpactReport:
     if verb is not None:
         report.obligations.append(verb)
 
+    # A path under Changed-semantics is an edit to a file that exists: none of
+    # the path table's add-time demands apply, but an edited mirror source owes
+    # its sync, which is the edit DEF-419d's row names. Its classification is
+    # empty, as the verb obligation's is: an edit neither starts nor stops
+    # shipping anything, so it stays out of the exit-2 counts.
+    for name in changed:
+        if not _looks_like_path(name):
+            continue
+        demands = _mirror_source_demands(name, repo_root, [])
+        if demands:
+            report.obligations.append(Obligation(
+                surface="mirror source", trigger=name, classification="",
+                demands=demands, direction="edited",
+            ))
+
     # Removed paths (DEF-410j): the SAME classifier, so a removal names exactly
     # the sites its addition enrolled it in -- one table, never a reverse-worded
     # copy (a prefix rule that swallowed a sibling would name the wrong remedy
@@ -1076,10 +1131,14 @@ def _hygiene_scans(rel_path: str, repo_root: Path) -> bool:
     if _is_common_tier_asset_body(p):
         return True
     for r in mirror_registry.MIRROR_ROWS:
-        if not mirror_registry.covers(r, p, repo_root):
-            continue
         target = mirror_registry.counterpart(r, p)
-        if target is not None and _is_common_tier_asset_body(target):
+        if target is None or not _is_common_tier_asset_body(target):
+            continue
+        # The claude sync copies every file of the four kinds, which the kind
+        # glob already decides, so a new body not yet synced is read by
+        # position; a docs/ file is copied only if the sync lists it, which
+        # only the copy's existence says (review of the C30 lane).
+        if target.startswith("espalier/assets/claude/") or mirror_registry.covers(r, p, repo_root):
             return True
     return False
 
@@ -1154,7 +1213,7 @@ def render_report(report: SurfaceImpactReport, pack_rel: str) -> str:
     lines.append("=" * 40)
     lines.append(f"Pack: {pack_rel}")
     n_added = sum(1 for o in report.obligations if o.direction == "added")
-    n_removed = len(report.obligations) - n_added
+    n_removed = sum(1 for o in report.obligations if o.direction in _REMOVAL_DIRECTIONS)
     n_public = len(report.public_additions())
     n_public_removed = len(report.public_removals())
     any_removal = bool(n_removed or report.unmatched_public_removed)
@@ -1183,7 +1242,7 @@ def render_report(report: SurfaceImpactReport, pack_rel: str) -> str:
         tag = f" [{ob.classification}]" if ob.classification else ""
         kind = "" if ob.direction == "added" else f" ({ob.direction})"
         lines.append(f"* {ob.surface}{kind}: {ob.trigger}{tag}")
-        if ob.direction != "added":
+        if ob.direction in _REMOVAL_DIRECTIONS:
             # Said once, here, rather than as a reverse-worded copy of every
             # demand below: the sites are the same, the verb is the inverse.
             # The one obligation a removal carries that an addition never does

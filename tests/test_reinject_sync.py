@@ -517,9 +517,11 @@ class TestMirrorCensusCoverage:
 
         The pinning node's body plus each module-level function it calls (one
         hop: the vendor parity class reads through ``_mirrored_files``). A
-        ``_normalize`` call or a CRLF replace is a normalised comparison;
-        failing those, ``read_bytes`` is a byte one; ``read_text`` alone is
-        normalised too, since universal newlines read CRLF as LF.
+        ``_normalize`` call, a CRLF replace (bytes or text) or ``splitlines``
+        is a normalised comparison; failing those, ``read_bytes`` is a byte
+        one; ``read_text`` alone is normalised too, since universal newlines
+        read CRLF as LF. A source read, so a heuristic: a normalising call it
+        does not know reads as bytes.
         """
         import ast
 
@@ -542,7 +544,7 @@ class TestMirrorCensusCoverage:
             if isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id in helpers
         }
         text = "\n".join([segment, *(helpers[n] for n in sorted(called))])
-        if "_normalize(" in text or 'replace(b"\\r\\n"' in text:
+        if any(t in text for t in ("_normalize(", ".splitlines(", 'replace(b"\\r\\n"', 'replace("\\r\\n"')):
             return mirror_registry.NORMALIZED
         if ".read_bytes()" in text:
             return mirror_registry.BYTES

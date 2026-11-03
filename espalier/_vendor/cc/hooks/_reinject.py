@@ -535,7 +535,8 @@ _HARNESS_GUARD_ROOT_TAIL = ".github/workflows/harness-guard.yml"
 _HARNESS_GUARD_REFUSAL = (
     "it refuses while the root copy differs from the asset and has uncommitted "
     "changes, or is clean but already differed from it at its last commit (or "
-    "git cannot tell); only --force overwrites the root copy, discarding the edit"
+    "git cannot tell); only --force overwrites the root copy, discarding the edit, "
+    "which is right only when the root holds nothing but an earlier sync's output"
 )
 
 

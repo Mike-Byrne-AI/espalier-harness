@@ -30,9 +30,10 @@ Two fields are load-bearing and easy to skim past:
     universal newlines); the rest compare raw bytes. A guard that assumed one
     comparator would silently loosen or tighten the others' contracts, so the
     difference is declared rather than averaged away, and each declaration is
-    held to its pinning test's actual comparison by the comparator pin in
-    ``tests/test_reinject_sync.py``. How many rows sit on each side is not
-    restated here, for the reason ``direction`` below gives.
+    held to the comparison its pinning test's source shows by the comparator
+    pin in ``tests/test_reinject_sync.py`` (a read of the source, so a
+    heuristic: its docstring names the calls it knows). How many rows sit on
+    each side is not restated here, for the reason ``direction`` below gives.
 
 ``kind``
     ``byte`` rows are a whole-tree copy. ``subset`` rows mirror only part of

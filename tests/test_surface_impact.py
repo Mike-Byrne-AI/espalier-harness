@@ -321,13 +321,21 @@ class TestClassifySurface:
         Each demand names a mechanism that already reds on that tree, read at
         the cited place, so none of them is a promise the suite does not keep.
         """
-        label, demands = classify_surface("tools/review_agent_audit.py")
+        got = classify_surface("tools/review_agent_audit.py")
+        assert got is not None, "top-level tools/ matched no surface rule"
+        label, demands = got
         joined = " ".join(demands)
         assert label == "top-level tool"
         for named in ("_FUSE_TOOLS_TREE", "_SHIPPED_ROOTS", "code-review-audit",
                       "tools/cc/_json_safe.py", "espalier provenance"):
             assert named in joined, named
         assert classify_surface("tools/__init__.py")[0] == "top-level tool"
+        # The roster pins top-level entries of any kind; the shipped-root and
+        # provenance censuses read .py files at any depth.
+        shell = " ".join(classify_surface("tools/zz.sh")[1])
+        assert "_FUSE_TOOLS_TREE" in shell and "_SHIPPED_ROOTS" not in shell
+        nested = " ".join(classify_surface("tools/sub/zz.py")[1])
+        assert "_FUSE_TOOLS_TREE" not in nested and "_SHIPPED_ROOTS" in nested
         assert classify_surface("tools/cc/ship.py")[0] == "standalone tool"
         cited = (
             ("tests/test_managed_inventory.py",
@@ -400,6 +408,20 @@ class TestAMirrorSourceNamesItsSync:
         assert label == "mirror source"
         assert "by hand" in joined and "c/b.yml" in joined
         assert "run `" not in joined
+
+    def test_an_edited_mirror_source_names_its_sync(self, tmp_path) -> None:
+        """The edit the row names: a file declared under Changed-semantics.
+
+        It carries none of the path table's add-time demands and moves no exit
+        code, but the sync its mirror needs is named (review of the C30 lane:
+        before, only an Added or Removed path reached the registry).
+        """
+        pack = _write_pack(tmp_path, changed=("docs/CHEAT-SHEET.md", "tests/conftest.py"))
+        report = build_report(REPO_ROOT, pack)
+        edited = {o.trigger: " ".join(o.demands) for o in report.obligations if o.direction == "edited"}
+        assert "sync_asset_docs.py" in edited.get("docs/CHEAT-SHEET.md", "")
+        assert "sync_selfcheck_tests.py" in edited.get("tests/conftest.py", "")
+        assert not report.has_public_changes()
 
     def test_the_report_names_the_sync_for_a_declared_mirror_source(self, tmp_path) -> None:
         pack = _write_pack(tmp_path, added=("docs/CHEAT-SHEET.md",))
@@ -849,6 +871,40 @@ class TestEachDemandIsKeyedToItsEnforcersPrecondition:
             got[rel] = any(h.kind == "internal-id" for h in report.content_hits)
         assert got == dict(self.SCANNED)
 
+    def test_a_body_not_yet_synced_is_read_by_its_kind(self) -> None:
+        """A new .claude command is read before the sync makes its copy: the
+        claude rows copy every file of the four kinds. A docs/ file is read
+        only once the asset sync carries it (review of the C30 lane)."""
+        from espalier import surface_impact
+
+        assert surface_impact._hygiene_scans(".claude/commands/zz-not-yet-synced.md", REPO_ROOT)
+        assert not surface_impact._hygiene_scans(".claude/zz-not-a-kind.md", REPO_ROOT)
+        assert not surface_impact._hygiene_scans("docs/ZZ-NOT-YET-SYNCED.md", REPO_ROOT)
+
+    def test_the_asset_bodies_read_are_the_ones_the_contract_reads(self) -> None:
+        """``_is_common_tier_asset_body`` against the hygiene tests' own walk:
+        the same kind globs and folders, read the way they read them."""
+        from espalier import surface_contract, surface_hygiene, surface_impact
+        from tests._live_tree import checkout_glob, checkout_rglob
+
+        assets = REPO_ROOT / "espalier" / "assets"
+        contract = {
+            p.relative_to(REPO_ROOT).as_posix()
+            for kind, pattern in surface_contract.CLAUDE_KIND_GLOBS.items()
+            for p in checkout_glob(assets / "claude" / kind, pattern)
+        } | {
+            p.relative_to(REPO_ROOT).as_posix()
+            for folder in surface_hygiene.COMMON_TIER_ASSET_MD_DIRS
+            for p in checkout_rglob(assets / folder, "*.md")
+        }
+        ours = {
+            p.relative_to(REPO_ROOT).as_posix()
+            for p in checkout_rglob(assets, "*")
+            if p.is_file() and surface_impact._is_common_tier_asset_body(
+                p.relative_to(REPO_ROOT).as_posix())
+        }
+        assert contract and ours == contract, (sorted(ours - contract), sorted(contract - ours))
+
     @pytest.mark.contract
     def test_every_file_told_the_hygiene_contract_applies_is_one_it_reads(self) -> None:
         """The hygiene demand cites TestCommonTierAssetHygiene; on a file that
@@ -857,20 +913,33 @@ class TestEachDemandIsKeyedToItsEnforcersPrecondition:
         from espalier import surface_impact
         from tests._live_tree import checkout_rglob
 
-        told, wrong = 0, []
+        from espalier import mirror_registry
+
+        def generated(rel: str) -> bool:
+            return any(
+                rel.startswith(m) if m.endswith("/") else rel == m
+                for r in mirror_registry.MIRROR_ROWS for m in r.mirrors
+            )
+
+        told, wrong, untold = 0, [], []
         for top in (".claude", "docs", "espalier/assets"):
             for path in checkout_rglob(REPO_ROOT / top, "*"):
                 if not path.is_file() or "__pycache__" in path.parts:
                     continue
                 rel = path.relative_to(REPO_ROOT).as_posix()
                 got = classify_surface(rel, REPO_ROOT)
-                if got is None or surface_impact._ASSET_HYGIENE not in got[1]:
-                    continue
-                told += 1
-                if not surface_impact._hygiene_scans(rel, REPO_ROOT):
+                is_told = got is not None and surface_impact._ASSET_HYGIENE in got[1]
+                scanned = surface_impact._hygiene_scans(rel, REPO_ROOT)
+                told += is_told
+                if is_told and not scanned:
                     wrong.append(rel)
+                # The other half: a file the contract reads, edited where it
+                # lives, is told so (a generated copy is edited at its source).
+                if scanned and not is_told and not generated(rel):
+                    untold.append(rel)
         assert told > 20, told
         assert not wrong, wrong
+        assert not untold, untold
 
     @staticmethod
     def _cli(report):
@@ -886,6 +955,11 @@ class TestEachDemandIsKeyedToItsEnforcersPrecondition:
         assert [o.trigger for o in cli] == ["cmd_zzz_never_a_verb"]
         assert any("CHEAT-SHEET" in d for d in cli[0].demands)
 
+    def test_a_parser_edit_naming_no_verb_is_told_its_demand_is_conditional(self, tmp_path: Path) -> None:
+        pack = _write_pack(tmp_path, changed=["build_parser"])
+        cli = self._cli(build_report(REPO_ROOT, pack))
+        assert cli[0].demands[0].startswith("if the parser edit registers a verb: ")
+
     def test_a_removed_verb_names_no_test_that_would_red(self, tmp_path: Path) -> None:
         """TestCheatSheetCliParity reads registered verbs into the file, never
         the file back, so a stale line reds nothing: the demand says so."""
@@ -895,6 +969,8 @@ class TestEachDemandIsKeyedToItsEnforcersPrecondition:
         joined = " ".join(cli[0].demands)
         assert "no test reds" in joined
         assert "pins both directions" not in joined
+        # The README's command examples are the half a test does read.
+        assert "test_every_verb_the_readme_documents_is_listed_in_help" in joined
 
 
 class TestSurfaceImpactRetroCatch:
