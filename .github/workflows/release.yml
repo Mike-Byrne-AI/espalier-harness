@@ -133,6 +133,20 @@ jobs:
           WHEEL=$(ls dist/espalier_harness-*.whl | head -1)
           python scripts/wheel_smoke.py --wheel "$WHEEL" --skip-build
 
+      - name: Wheel smoke on a Node tree under a spaced root
+        # The step above installs into an empty `git init`. This one writes the
+        # Node adopter row of tests/_stack_trees.py into the target first, and
+        # puts the venv and the target under a directory whose name holds a
+        # space: the tree and root an adopter brings, which no other release
+        # leg's own run is at (tests/_axis_registry.py INSTRUMENTS).
+        # It runs where the first smoke reds, so one tag round shows both.
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          WHEEL=$(ls dist/espalier_harness-*.whl | head -1)
+          python scripts/wheel_smoke.py --wheel "$WHEEL" --skip-build --stack node --spaced-root
+
       - name: Hash built artifacts
         # Produce SHA256SUMS so a downstream consumer can verify the
         # wheel + sdist they received match what CI built. The output
