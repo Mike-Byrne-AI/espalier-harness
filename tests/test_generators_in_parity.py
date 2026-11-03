@@ -65,7 +65,9 @@ def _sync_script(sync: str) -> str:
 
 def _generators() -> tuple[str, ...]:
     out: list[str] = []
-    for script in [_sync_script(row.sync) for row in MIRROR_ROWS] + list(_REGION_GENERATORS):
+    # A row with sync=None is copied by hand: it has no generator to hold here.
+    scripted = [_sync_script(row.sync) for row in MIRROR_ROWS if row.sync is not None]
+    for script in scripted + list(_REGION_GENERATORS):
         if script not in out:
             out.append(script)
     return tuple(out)

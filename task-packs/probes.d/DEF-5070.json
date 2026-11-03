@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5070",
+ "subject": "tests/test_state_file_flag_parity.py",
+ "cmd": "python3 -c \"import sys;sys.path[:0]=['.','tests'];import test_state_file_flag_parity as t;print(t._is_documented_flag('wedge-'+'restore'))\"",
+ "open_value": "False",
+ "why_not": null,
+ "row_sha": "602f62f4d7c2",
+ "text_sha": "640228da76ea",
+ "verified_2026_11_02": "OPEN (filed 2026-11-02; probe driven at filing here and in the export of HEAD 5e5b07f81b97)"
+}

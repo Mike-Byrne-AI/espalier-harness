@@ -71,8 +71,9 @@ runner and on any host with ``pwsh`` on PATH. Point it at an unpacked build with
 
 Exit code: 1 if any FAIL-OPEN, 2 if only FALSE POSITIVEs, 0 if clean, 3 when
 the instrument itself is broken (the interpreter or the guard stopped
-answering -- never a tree verdict), and 0 with a SKIPPED banner when no
-interpreter is present. Stdlib only.
+answering) or write_guard's time budget left a call unjudged -- never a tree
+verdict -- and 0 with a SKIPPED banner when no interpreter is present.
+Stdlib only.
 
 ⚠ EACH RUN OWNS ITS INTERPRETER CACHE. pwsh keeps a startup cache in the
 user's profile (``~/.cache/powershell/StartupProfileData-NonInteractive``),
@@ -126,6 +127,21 @@ run_bounded = _bounded_spawn()
 sys.path.insert(0, str(HOOKS_DIR))
 
 import _bash_patterns  # noqa: E402  (path is set immediately above)
+
+# The project fixture is the rehearsal's (DEF-811), imported as the
+# metamorphic gate imports it: same directory, no package, one builder. The
+# budget's reader comes the same way (DEF-5071).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from powershell_guard_rehearsal import (  # noqa: E402
+    ROOT_SHAPES,
+    BudgetMiss,
+    judged_within_budget,
+    throwaway_project,
+)
+
+#: The root shape ``guard_tier`` builds every project under: plain unless
+#: ``--root-shape`` names another, so a run costs one shape's time.
+ROOT_SHAPE = "plain"
 
 # Assembled, never spelled literally — this file is scanned by the guards it
 # tests. Same construction, same reason, as the two sibling gates.
@@ -864,22 +880,23 @@ def guard_tier(command: str) -> str:
     Reads the DECISION CHANNEL, and treats rc=1 as the script error it is —
     an earlier probe in this class counted rc=1 (an ImportError) as ALLOW and
     reported that HEAD permitted a catastrophic delete.
+
+    The project is the rehearsal's ``throwaway_project``: a root of
+    ``ROOT_SHAPE`` carrying every protected directory the hook tree declares.
     """
-    with tempfile.TemporaryDirectory() as td:
-        project = Path(td)
-        (project / ".claude").mkdir()
+    with throwaway_project(HOOKS_DIR / "write_guard.py", ROOT_SHAPE) as project:
 
         def once() -> bool:
             env = os.environ.copy()
             env["CLAUDE_PROJECT_DIR"] = str(project)
             env.pop("ESPALIER_MAINTENANCE_MODE", None)
-            proc = run_bounded(
+            proc = judged_within_budget(lambda: run_bounded(
                 [sys.executable, str(HOOKS_DIR / "write_guard.py")],
                 input=json.dumps(
                     {"tool_name": "PowerShell", "tool_input": {"command": command}}),
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=30, env=env,
-            )
+            ), HOOKS_DIR, project)
             if proc.returncode == 1 or "Traceback" in (proc.stderr or ""):
                 raise InstrumentBroken(
                     "write_guard errored -- the instrument is broken, not the "
@@ -991,6 +1008,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     parser.add_argument("--quick", action="store_true", help="sampled population")
+    parser.add_argument("--root-shape", default="plain", choices=list(ROOT_SHAPES),
+                        help="the project root's shape (the rehearsal's ROOT_SHAPES); default plain")
     args = parser.parse_args(argv)
 
     found = find_powershell()
@@ -1002,9 +1021,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     pwsh, flavour = found
 
-    global _RUN_CACHE_DIR
+    # The shape holds for this run alone, like the cache directory beside it:
+    # a later in-process caller of guard_tier (a test) gets plain again.
+    global _RUN_CACHE_DIR, ROOT_SHAPE
     with tempfile.TemporaryDirectory(prefix="espalier-pwsh-cache-") as cache_dir:
         _RUN_CACHE_DIR = cache_dir
+        ROOT_SHAPE = args.root_shape
         try:
             assert_instrument_is_live(pwsh)
             results = run(pwsh, args.quick)
@@ -1014,16 +1036,23 @@ def main(argv: list[str] | None = None) -> int:
             # read a broken oracle as a false allow (review).
             print(f"INSTRUMENT BROKEN -- no verdict: {exc}", file=sys.stderr)
             return 3
+        except BudgetMiss as exc:
+            # A judgment that never finished: no tree verdict either.
+            print(f"NO VERDICT -- {exc}", file=sys.stderr)
+            return 3
         finally:
             _RUN_CACHE_DIR = None
+            ROOT_SHAPE = "plain"
 
     fail_open = [r for r in results if r["verdict"] == FAIL_OPEN]
     false_pos = [r for r in results if r["verdict"] == FALSE_POSITIVE]
 
     if args.json:
-        print(json.dumps({"interpreter": flavour, "rows": results}, indent=2))
+        print(json.dumps({"interpreter": flavour, "root_shape": args.root_shape, "rows": results},
+                         indent=2))
     else:
         print(f"interpreter: {flavour} ({pwsh})")
+        print(f"root shape:  {args.root_shape}")
         print(f"population:  {len(results)} rows "
               f"({sum(1 for r in results if r['reaches'])} reach the delete)\n")
         for label, group in (("FAIL-OPEN", fail_open), ("FALSE POSITIVE", false_pos)):

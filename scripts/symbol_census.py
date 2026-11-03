@@ -169,7 +169,7 @@ def classify(rel: str, mirror_rows) -> tuple[str, str]:
             if region_only:
                 continue
             if rel.startswith(prefix):
-                return "mirror", f"{row.name}: {row.sync}"
+                return "mirror", f"{row.name}: {row.sync or 'copied by hand'}"
     if rel in _RECORD_SURFACES or rel.startswith(_RECORD_DIRS):
         return "record", "record"
     for group, prefixes in _GROUPS:

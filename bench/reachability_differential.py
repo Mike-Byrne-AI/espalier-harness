@@ -72,8 +72,23 @@ Usage::
     python3 bench/reachability_differential.py --quick      # smoke subset
     python3 bench/reachability_differential.py --base <ref> # different baseline
     python3 bench/reachability_differential.py --report     # + per-wrapper / per-row bits
+    python3 bench/reachability_differential.py --root-shape spaced  # another project root shape
 
-Exits non-zero if any fail-open is found. Stdlib only; no espalier imports.
+Each guard call judges the command in a project built by the rehearsal's
+``throwaway_project`` (DEF-811): a root of one of its ``ROOT_SHAPES``, plain by
+default, carrying every protected directory the working tree's hooks declare.
+The base and the working guard are judged in the same fixture, so the only
+difference between the two bits is the guard. No row here names the root or a
+protected directory (every probe targets ``/``, every ``cd`` goes to ``/tmp``),
+so today the tree feeds no verdict and a shape reaches the guard as
+``CLAUDE_PROJECT_DIR`` only: a shaped run is a regression watch on the
+fixture, not root coverage. A future row that names a protected directory
+would also want the base tree's directories laid beside the working tree's,
+so a prefix the working tree drops still reads FAIL-OPEN.
+
+Exits non-zero if any fail-open is found, and 3, no verdict, where
+write_guard's time budget left a call unjudged. Stdlib only; no espalier
+imports.
 """
 from __future__ import annotations
 
@@ -947,22 +962,35 @@ def _bash_oracle_available() -> bool:
     return bool(shutil.which("bash") and Path("/bin/bash").exists())
 
 
+def _rehearsal():
+    """The rehearsal, imported by its bare name from this directory as the
+    other benches import it (DEF-811): at the call, never at module level, so
+    a test importing this file for its shell oracle puts nothing on sys.path."""
+    bench_dir = str(Path(__file__).resolve().parent)
+    if bench_dir not in sys.path:
+        sys.path.insert(0, bench_dir)
+    import powershell_guard_rehearsal
+    return powershell_guard_rehearsal
+
+
 def guard_denies(cmd: str, hooks_dir: Path, project_dir: str) -> bool:
     """Does write_guard deny? Reads the DECISION CHANNEL, not the return code.
 
     ⚠ `deny()` writes JSON to stdout and returns 0. A return-code-only check
     reports every deny as an allow -- the first probe written during the incident
     that motivated this file did exactly that and called 12 correct denials wrong.
+    The time budget's refusal is a deny on the same channel that judged
+    nothing: it is retried once, or raises (DEF-5071).
     """
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = project_dir
     env.pop("ESPALIER_MAINTENANCE_MODE", None)
-    result = run_bounded(
+    result = _rehearsal().judged_within_budget(lambda: run_bounded(
         [sys.executable, str(hooks_dir / "write_guard.py")],
         input=json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}}),
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         env=env,
-    )
+    ), hooks_dir, Path(project_dir))
     if result.returncode != 0 or "Traceback" in (result.stderr or ""):
         raise RuntimeError(
             "guard crashed -- the instrument is broken, not the tree:\n"
@@ -999,9 +1027,28 @@ def materialise_baseline(ref: str, dest: Path) -> Path:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """The differential, or exit 3 with no verdict where write_guard's time
+    budget left a call unjudged (DEF-5071): exit 1 is a fail-open."""
+    rehearsal = _rehearsal()
+    try:
+        return _differential(argv, rehearsal)
+    except rehearsal.BudgetMiss as exc:
+        print(f"[reachability] NO VERDICT -- {exc}", file=sys.stderr)
+        return 3
+
+
+def _differential(argv: list[str] | None, rehearsal) -> int:
+    # The project fixture is the rehearsal's (DEF-811).
+    ROOT_SHAPES, throwaway_project = rehearsal.ROOT_SHAPES, rehearsal.throwaway_project
+
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--base", default="HEAD",
                         help="git ref to compare against (default: HEAD)")
+    parser.add_argument("--root-shape", default="plain", choices=list(ROOT_SHAPES),
+                        help="the project root every guard call is judged in "
+                             "(default: plain, so a run costs one shape's time); "
+                             "no row names the root, so it reaches the guard "
+                             "as CLAUDE_PROJECT_DIR only")
     parser.add_argument("--quick", action="store_true",
                         help="reduced matrix for a fast smoke")
     parser.add_argument("--report", action="store_true",
@@ -1044,11 +1091,15 @@ def main(argv: list[str] | None = None) -> int:
         print(skipped_line)
         return 1
 
+    work_hooks = REPO_ROOT / "tools" / "cc" / "hooks"
+    # One fixture for both guards: the working tree's protected directories,
+    # so a deny is never missing because the project lacked the directory,
+    # and a base ref older than a directory still sees the same project.
+    fixture_hook = work_hooks / "write_guard.py"
     with tempfile.TemporaryDirectory() as base_root, \
-            tempfile.TemporaryDirectory() as calibration_dir:
+            throwaway_project(fixture_hook, args.root_shape) as calibration_dir:
         base_hooks = materialise_baseline(args.base, Path(base_root))
-        work_hooks = REPO_ROOT / "tools" / "cc" / "hooks"
-        assert_baseline_is_live(base_hooks, calibration_dir)
+        assert_baseline_is_live(base_hooks, str(calibration_dir))
 
         failopen, relief, newfp, unchanged = [], [], [], 0
         # (wrapper, body, reached, exit, base_denies, work_denies) per row:
@@ -1065,10 +1116,10 @@ def main(argv: list[str] | None = None) -> int:
                 # CLAUDE_PROJECT_DIR, and a soft-tier row driven twice in one
                 # project reads deny-then-allow -- a fail-open the tree did
                 # not produce (Core Rule 14, one writer per shared state).
-                with tempfile.TemporaryDirectory() as base_project, \
-                        tempfile.TemporaryDirectory() as work_project:
-                    base = guard_denies(probe, base_hooks, base_project)
-                    work = guard_denies(probe, work_hooks, work_project)
+                with throwaway_project(fixture_hook, args.root_shape) as base_project, \
+                        throwaway_project(fixture_hook, args.root_shape) as work_project:
+                    base = guard_denies(probe, base_hooks, str(base_project))
+                    work = guard_denies(probe, work_hooks, str(work_project))
                 bits.append((wname, bname, reaches, rc, base, work))
                 row = f"{wname} / {bname}"
                 verdict = classify(reaches, base, work)
@@ -1096,6 +1147,8 @@ def main(argv: list[str] | None = None) -> int:
     allowed_reaching = [f"{b[0]} / {b[1]}" for b in reaching if not b[5]]
 
     print(f"[reachability] {total} shapes vs {args.base}; unchanged {unchanged}")
+    print(f"  root shape: {args.root_shape} (no row names the root; it reaches "
+          "the guard as CLAUDE_PROJECT_DIR only)")
     if absent:
         print(skipped_line)
     print(f"  FAIL-OPEN (must be 0): {len(failopen)}")

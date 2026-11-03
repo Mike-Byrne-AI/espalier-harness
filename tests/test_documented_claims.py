@@ -1348,19 +1348,9 @@ from tests._surface_expected import (
 # Cap-claim shapes, each verified against a real live site — none speculative.
 # A bare "N lines" (space form) is deliberately ABSENT: it matched "324 lines",
 # "656 lines" and similar session-log prose about unrelated things.
-_CAP_CONTEXT_SHAPES: tuple[str, ...] = (
-    # cap verb + number
-    r"(?:at most|under|capped at|caps it at|bounded at|past the|over the"
-    r"|stay at|--expected-value)\s*~?{value}\b",
-    # comparison
-    r"[≤<]=?\s*{value}\s+lines?\b",
-    # hyphenated compound: "120-line cap", "~120-line index"
-    r"~?{value}-line\b",
-    # terminal element of a documented cap-history chain (60 → 75 → 80 → 120),
-    # which is what makes a raise self-documenting: the history must be
-    # APPENDED to rather than silently overwritten.
-    r"(?:→|->)\s*{value}\b",
-)
+# The shapes live beside the predicate the ledger verb shares, so a drafted
+# row is read as this census reads a tracked file (DEF-1121).
+from tests._ledger_rules import CAP_CONTEXT_SHAPES as _CAP_CONTEXT_SHAPES  # noqa: E402
 
 
 # Tracked .md files that state the cap but are deliberately NOT census rows.
@@ -2055,7 +2045,7 @@ class TestMemoryCapPopulation:
             f"({EXPECTED_MEMORY_MD_CAP}). Either its prose went stale against "
             f"the SoT (tests/_surface_expected.EXPECTED_MEMORY_MD_CAP), or the "
             f"claim was reworded into a shape this contract does not know. "
-            f"Fix the prose, or add the new shape to _CAP_CONTEXT_SHAPES — do "
+            f"Fix the prose, or add the new shape to CAP_CONTEXT_SHAPES in tests/_ledger_rules.py — do "
             f"NOT drop the row for a reword (that silently un-binds the surface); "
             f"drop it only when the surface stops stating the cap ON PURPOSE (a "
             f"finished de-leak), with the reason beside the census.\n"

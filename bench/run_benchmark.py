@@ -22,7 +22,10 @@ exception — the refusal firing IS the block. The marker-recognition and
 statusline-read verifiers additionally carry positive controls (a real marker /
 a normal blueprint must still be recognized/loaded) so a recognizer that
 regresses to always-False cannot keep the corpus gate green. Re-audit if a new
-verifier is added.
+verifier is added. One exception passes every arm: ``BudgetMiss``, a call
+write_guard's time budget refused, which judged nothing. Scored, it would read
+as a block, or through a broad arm as an allow; the run exits 3 with no
+verdict instead (DEF-5071).
 
 Run:
     python3 bench/run_benchmark.py
@@ -32,16 +35,21 @@ Run:
 from __future__ import annotations
 
 import argparse
+import ast
+import contextlib
 import datetime as _dt
 import fnmatch
+import functools
 import json
 import os
 import re
 import shutil
+import string
 import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +77,38 @@ BASELINE_DIR = BENCH_DIR / "baselines"
 RESULTS_DIR = BENCH_DIR / "results"
 HOOK_SCRIPT = REPO_ROOT / "tools" / "cc" / "hooks" / "write_guard.py"
 BASELINES = ["no-governance", "settings-deny-only", "minimal-hooks", "espalier"]
+
+#: The root shape ``run_baseline`` builds each project under: plain unless
+#: ``--root-shape`` names another of the rehearsal's ROOT_SHAPES (DEF-811), so
+#: a run costs one shape's time; running the release gate under every shape is
+#: the operator's call. ``main`` sets it for its run and puts plain back.
+ROOT_SHAPE = "plain"
+
+
+def _rehearsal_shapes():
+    """The rehearsal's ``ROOT_SHAPES`` and ``shaped_root``, imported only for a
+    shaped run: the rehearsal is a source-tree bench file the sdist and a fused
+    install do not ship, and the plain run this script publishes must start
+    there. Same directory, imported by its bare name, as the other benches
+    import it."""
+    sys.path.insert(0, str(BENCH_DIR))
+    from powershell_guard_rehearsal import ROOT_SHAPES, shaped_root
+    return ROOT_SHAPES, shaped_root
+
+
+@contextlib.contextmanager
+def _baseline_root(name: str) -> Iterator[Path]:
+    """The throwaway project one baseline runs in: tempfile's own plain name
+    (the shape the published numbers are measured under), or under a
+    ``ROOT_SHAPE`` other than plain the rehearsal's ``shaped_root``. The
+    baseline's setup builds the rest; no protected tree is laid over it."""
+    if ROOT_SHAPE == "plain":
+        with tempfile.TemporaryDirectory(prefix=f"bench-{name}-") as td:
+            yield Path(td)
+        return
+    _shapes, shaped_root = _rehearsal_shapes()
+    with shaped_root(ROOT_SHAPE, prefix=f"bench-{name}-") as root:
+        yield root
 
 
 # ---------------------------------------------------------------------------
@@ -136,14 +176,16 @@ def _invoke_hook_stdin(
     for _k, _v in (attempt_env or {}).items():
         env[str(_k)] = str(_v)
     t0 = time.perf_counter()
-    proc = run_bounded(
+    # A naive baseline's script has no time budget beside it, so the reader
+    # hands its answer back as it came.
+    proc = judged_within_budget(lambda: run_bounded(
         [sys.executable, str(script)],
         input=json.dumps(payload),
         capture_output=True,
         text=True, encoding="utf-8", errors="replace",
         timeout=30,
         env=env,
-    )
+    ), script.parent, tmp_project)
     elapsed = (time.perf_counter() - t0) * 1000.0
     return proc.returncode, proc.stdout, elapsed
 
@@ -293,19 +335,21 @@ def invoke_killswitch_under_maintenance(attempt: dict, tmp_project: Path) -> Ver
         env[str(k)] = str(v)
     payload = {"tool_name": attempt.get("tool_name", ""), "tool_input": attempt.get("tool_input", {})}
     t0 = time.perf_counter()
-    proc = run_bounded(
-        [sys.executable, str(HOOK_SCRIPT)],
-        input=json.dumps(payload),
-        capture_output=True,
-        text=True, encoding="utf-8", errors="replace",
-        timeout=30,
-        env=env,
-    )
-    elapsed = (time.perf_counter() - t0) * 1000.0
-    if backup is not None:
-        settings_path.write_text(backup, encoding="utf-8")
-    else:
-        settings_path.unlink(missing_ok=True)
+    try:
+        proc = judged_within_budget(lambda: run_bounded(
+            [sys.executable, str(HOOK_SCRIPT)],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True, encoding="utf-8", errors="replace",
+            timeout=30,
+            env=env,
+        ), HOOK_SCRIPT.parent, tmp_project)
+        elapsed = (time.perf_counter() - t0) * 1000.0
+    finally:
+        if backup is not None:
+            settings_path.write_text(backup, encoding="utf-8")
+        else:
+            settings_path.unlink(missing_ok=True)
 
     if _is_deny(proc.stdout, proc.returncode):
         return VerifierResult(
@@ -527,13 +571,124 @@ def invoke_real_integrity_verify(attempt: dict, tmp_project: Path) -> VerifierRe
     return VerifierResult(False, f"integrity verify exit={proc.returncode}", elapsed)
 
 
+#: The name of write_guard's time-budget refusal in a hook tree's
+#: ``_denial_reasons.py``.
+_BUDGET_TEMPLATE = "WRITE_GUARD_TIME_BUDGET"
+
+
+class BudgetMiss(RuntimeError):
+    """A call write_guard's time budget refused, so no verdict: the refusal
+    came twice, or once after the refused judgment left state a retry would
+    read as a re-issue."""
+
+
+@functools.lru_cache(maxsize=None)
+def _budget_refusal(hooks_dir: str) -> re.Pattern[str] | None:
+    """write_guard's time-budget refusal as the hook tree at ``hooks_dir``
+    words it: ``_denial_reasons.py::WRITE_GUARD_TIME_BUDGET``, read out of the
+    source rather than imported (an import would run the tree's hook
+    helpers), each literal piece as written and each field any text. None for
+    a tree with no such template: one older than the budget, or a stand-in
+    hook. A template that cannot be read is no verdict either way: a read
+    that failed must not pass every refusal as a judged deny."""
+    source = Path(hooks_dir) / "_denial_reasons.py"
+    try:
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, SyntaxError, ValueError) as exc:
+        raise BudgetMiss(f"cannot read write_guard's budget template in {source}: {exc}") from exc
+    for node in tree.body:
+        targets = node.targets if isinstance(node, ast.Assign) else (
+            [node.target] if isinstance(node, ast.AnnAssign) and node.value is not None else [])
+        if any(isinstance(t, ast.Name) and t.id == _BUDGET_TEMPLATE for t in targets):
+            try:
+                template = ast.literal_eval(node.value)
+                pieces = list(string.Formatter().parse(template))
+            except (ValueError, TypeError) as exc:
+                raise BudgetMiss(f"{source}::{_BUDGET_TEMPLATE} is not a string literal: {exc}") from exc
+            return re.compile("".join(
+                re.escape(literal) + (".*?" if field is not None else "")
+                for literal, field, _spec, _conversion in pieces), re.DOTALL)
+    return None
+
+
+def budget_refused(stdout: str, hooks_dir: Path) -> bool:
+    """True when ``stdout`` is write_guard's time-budget refusal: stdout
+    JSON whose ``permissionDecisionReason`` is the hook tree's template in
+    full, from a judgment that never finished. Never for a judged deny."""
+    pattern = _budget_refusal(str(hooks_dir))
+    if pattern is None:
+        return False
+    try:
+        data = json.loads(stdout or "")
+    except ValueError:
+        return False
+    hso = data.get("hookSpecificOutput") if isinstance(data, dict) else None
+    reason = hso.get("permissionDecisionReason") if isinstance(hso, dict) else None
+    return isinstance(reason, str) and pattern.fullmatch(reason) is not None
+
+
+def _espalier_state(project: Path) -> list[tuple[str, int, int]]:
+    """What lies under ``project``'s ``.espalier-state``: (path, size, mtime)."""
+    state = Path(project) / ".espalier-state"
+    out = []
+    for p in sorted(state.rglob("*")) if state.is_dir() else []:
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        out.append((p.relative_to(state).as_posix(), st.st_size, st.st_mtime_ns))
+    return out
+
+
+def judged_within_budget(
+    spawn: Callable[[], subprocess.CompletedProcess], hooks_dir: Path, project: Path,
+) -> subprocess.CompletedProcess:
+    """``spawn()``'s answer, once write_guard judged the call within its time
+    budget (DEF-5071). The budget's refusal judged nothing: a stalled runner
+    answers a second call, a judgment slow every time is refused again. So a
+    refusal is retried once, and only when the refused call left the
+    project's ``.espalier-state`` as it found it, since a nudge the refused
+    judgment fired would read the retry as a re-issue. A second refusal, or
+    one that left state, raises ``BudgetMiss``. Every bench that reads
+    write_guard's deny spawns through here: this is the one bench file the
+    sdist ships, so the source-tree benches load it, never the reverse."""
+    before = _espalier_state(project)
+    began = time.monotonic()
+    proc = spawn()
+    if not budget_refused(proc.stdout, hooks_dir):
+        return proc
+    first = time.monotonic() - began
+    if _espalier_state(project) != before:
+        raise BudgetMiss(
+            f"write_guard's time budget refused the call after {first:.1f} s, and the refused "
+            f"judgment left state under {Path(project) / '.espalier-state'} that a retry would "
+            "read as a re-issue: no verdict")
+    print(f"write_guard's time budget refused a call after {first:.1f} s; retrying it once",
+          file=sys.stderr)
+    began = time.monotonic()
+    proc = spawn()
+    if budget_refused(proc.stdout, hooks_dir):
+        raise BudgetMiss(
+            f"write_guard's time budget refused the call twice ({first:.1f} s, then "
+            f"{time.monotonic() - began:.1f} s): a runner stalled for both, or a judgment slow "
+            "every time, and no verdict")
+    return proc
+
+
 def _is_deny(stdout: str, rc: int) -> bool:
     """True if hook output indicates a deny/block decision.
 
     Supports both protocol channels:
       - exit 0 + structured JSON (preferred, current espalier)
       - exit 2 + stderr (legacy / simple-path hooks, e.g. naive baselines)
+
+    write_guard's time-budget refusal is neither: it raises ``BudgetMiss``.
+    The spawns retry it first, so one here is a spawn that skipped them.
     """
+    if budget_refused(stdout, HOOK_SCRIPT.parent):
+        raise BudgetMiss("write_guard's time budget refused a call no spawn retried: no verdict")
     if rc == 2:
         return True
     if rc != 0:
@@ -2008,11 +2163,12 @@ def setup_baseline(name: str, tmp_project: Path) -> None:
 
 
 def run_baseline(name: str, corpus: list[dict]) -> list[dict]:
-    """Run all corpus attempts against one baseline; return result records."""
+    """Run all corpus attempts against one baseline; return result records.
+
+    The project is ``_baseline_root``'s, a root of ``ROOT_SHAPE``."""
     invokers = BASELINE_INVOKERS[name]
     results: list[dict] = []
-    with tempfile.TemporaryDirectory(prefix=f"bench-{name}-") as tmp:
-        tmp_project = Path(tmp)
+    with _baseline_root(name) as tmp_project:
         setup_baseline(name, tmp_project)
         for entry in corpus:
             for attempt in entry["canonical_attempts"]:
@@ -2036,6 +2192,10 @@ def run_baseline(name: str, corpus: list[dict]) -> list[dict]:
                     invoker = invoke_always_allow
                 try:
                     res = invoker(attempt, tmp_project)
+                except BudgetMiss:
+                    # No verdict to score: an OOS row would pass as this arm's
+                    # allow, an in-scope row fail as a regression (DEF-5071).
+                    raise
                 except Exception as exc:
                     res = VerifierResult(False, f"runner error: {exc!r}", 0.0)
                 results.append({
@@ -2279,8 +2439,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--baseline", action="append", help="Run only specified baseline(s); default = all")
     parser.add_argument("--update-canonical", action="store_true", help="Rewrite bench/RESULTS.md with this run's report")
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--root-shape", default="plain",
+                        help="the project root's shape, one of bench/powershell_guard_rehearsal.py's "
+                             "ROOT_SHAPES (a source-tree file); default plain")
     args = parser.parse_args(argv)
 
+    if args.root_shape != "plain":
+        try:
+            shapes, _shaped_root = _rehearsal_shapes()
+        except ImportError as exc:
+            print(f"error: --root-shape needs bench/powershell_guard_rehearsal.py, which this "
+                  f"tree does not have ({exc}); the plain run needs nothing more", file=sys.stderr)
+            return 1
+        if args.root_shape not in shapes:
+            print(f"error: unknown root shape {args.root_shape!r} (known: {list(shapes)})",
+                  file=sys.stderr)
+            return 1
     corpus = load_corpus()
     if not corpus:
         print("error: no corpus files found in", CORPUS_DIR, file=sys.stderr)
@@ -2299,6 +2473,13 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
+    if args.update_canonical and args.root_shape != "plain":
+        print(
+            "error: --update-canonical records the plain root shape's run "
+            "(remove --root-shape)",
+            file=sys.stderr,
+        )
+        return 1
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -2306,10 +2487,19 @@ def main(argv: list[str] | None = None) -> int:
     report_path = RESULTS_DIR / f"{timestamp}-report.md"
 
     all_results: list[dict] = []
-    for b in baselines:
-        if not args.quiet:
-            print(f"[bench] running baseline: {b}")
-        all_results.extend(run_baseline(b, corpus))
+    global ROOT_SHAPE
+    ROOT_SHAPE = args.root_shape
+    try:
+        for b in baselines:
+            if not args.quiet:
+                print(f"[bench] running baseline: {b} (root shape: {args.root_shape})")
+            all_results.extend(run_baseline(b, corpus))
+    except BudgetMiss as exc:
+        # Exit 3, apart from a failed pass condition (2): nothing was judged.
+        print(f"[bench] NO VERDICT -- {exc}", file=sys.stderr)
+        return 3
+    finally:
+        ROOT_SHAPE = "plain"
 
     with jsonl_path.open("w", encoding="utf-8") as f:
         for rec in all_results:

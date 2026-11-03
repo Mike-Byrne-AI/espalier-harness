@@ -256,7 +256,7 @@ _DIR_MAKERS = frozenset({"mkdtemp", "TemporaryDirectory"})
 _MAKER_TREES = ("tests", "scripts", "bench", "tools/cc")
 #: The makers the census finds at the pin; under half is a broken scan, over
 #: twice a population the pin no longer describes.
-_MAKERS_AT_PIN = 49  # 2026-11-02, aliases included
+_MAKERS_AT_PIN = 47  # 2026-11-02 (DEF-811's shared fixture builder), aliases included
 #: Each maker that writes no lock, EXACT, ``file::function`` -> why its dir
 #: needs none. An unlocked maker missing here reds, and so does an entry whose
 #: function no longer makes an unlocked dir.
@@ -266,14 +266,16 @@ _UNLOCKED_MAKERS: dict[str, str] = {
     "bench/end_to_end/runner.py::run_scenario":
         "removed in its own finally unless --keep-work-dir; a paid, hand-run bench, so a kill is the operator's",
     "bench/guard_metamorphic.py::_spelling_rc": _CM_SMALL + "an empty dir or one probe file",
-    "bench/guard_metamorphic.py::guard_tier": _CM_SMALL + ".claude/ and a few speed-bump state files",
-    "bench/powershell_guard_rehearsal.py::_tier": _CM_SMALL + "empty fixture dirs and a few speed-bump state files",
+    "bench/powershell_guard_rehearsal.py::shaped_root": _CM_SMALL + (
+        "empty fixture dirs and a few speed-bump state files, or in a shaped "
+        "benchmark run one baseline's setup, an espalier init deploy at most "
+        "(every guard fixture's shaped project is built under it, DEF-811)"),
     "bench/powershell_reachability_differential.py::_run_pwsh": _CM_SMALL + "a one-byte victim file",
-    "bench/powershell_reachability_differential.py::guard_tier": _CM_SMALL + ".claude/ and a few state files",
     "bench/powershell_reachability_differential.py::main": _CM_SMALL + "pwsh's small startup cache",
     "bench/reachability_differential.py::bash_run": _CM_SMALL + "a one-byte victim file",
-    "bench/reachability_differential.py::main": _CM_SMALL + "a ~4 MB export of tools/ and a few guard state files",
-    "bench/run_benchmark.py::run_baseline": _CM_SMALL + "one baseline's setup, an espalier init deploy at most",
+    "bench/reachability_differential.py::_differential": _CM_SMALL + (
+        "a ~4 MB export of tools/ (each guard call's project is the rehearsal's shaped_root, DEF-811)"),
+    "bench/run_benchmark.py::_baseline_root": _CM_SMALL + "one baseline's setup, an espalier init deploy at most",
     "bench/sandbox_read_drive/drive.py::main":
         "never removed on purpose: the hand-run drive's output folder; the suite returns before making it",
     "bench/sandbox_read_drive/drive.py::run_case": "made inside the drive's own runs folder, kept with it as the record",
@@ -283,7 +285,8 @@ _UNLOCKED_MAKERS: dict[str, str] = {
     "tests/_nested_temp.py::nested_basetemp": "made inside the launching session's basetemp, removed with it",
     "tests/_symlink_support.py::symlinks_supported": _CM_SMALL + "a one-byte file and a link",
     "tests/test_box_lock.py::_spawn": _IN_BASETEMP,
-    "tests/test_guard_false_positives.py::_tier": _CM_SMALL + ".claude/ and a few speed-bump state files",
+    "tests/test_guard_false_positives.py::_tier": _CM_SMALL + (
+        "the protected tree's empty directories and a few speed-bump state files"),
     "tests/test_scanner_filesystem_contracts.py::test_overlaid_script_in_scanner_scope": _CM_SMALL + "one small .py",
     "tests/test_wheel_install_surface_parity.py::test_source_and_wheel_init_deploy_same_managed_surface": _IN_BASETEMP,
     "tests/test_wheel_smoke.py::TestBuildFailureCleanup::test_run_smoke_cleans_scratch_dist_on_build_failure::recording_mkdtemp":

@@ -326,58 +326,13 @@ _REPO_ROOT = _HOOKS_DIR.parent.parent.parent
 _NUMBER_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight"}
 
 
+from tests._ledger_rules import NOT_A_ROSTER_CLAIM, maintenance_bypass_callers, partial_rosters  # noqa: E402
+
+
 def _maintenance_bypass_callers() -> set[str]:
-    """DERIVED, not enumerated: every hook module whose SOURCE calls
-    ``_maintenance_mode.is_active`` -- the logging bypass entry point -- through
-    any spelling of the import (``_maintenance_mode.is_active(...)``, an
-    ``import _maintenance_mode as mm`` alias, or ``from _maintenance_mode import
-    is_active``). An AST walk, so a docstring or comment that merely mentions the
-    name does not count. Readers of the raw predicate or of ``ENV_VAR`` (the
-    session-start warning, ``_explain_path``'s explanation) are not bypasses: a
-    hook that early-returned on those would be a bypass that never logs, which
-    the helper's own contract forbids."""
-    import ast
-
-    callers: set[str] = set()
-    for path in sorted(checkout_glob(_HOOKS_DIR, "*.py")):
-        if path.name == "_maintenance_mode.py":
-            continue
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        module_aliases = {"_maintenance_mode"}
-        bare_names: set[str] = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    if alias.name == "_maintenance_mode":
-                        module_aliases.add(alias.asname or alias.name)
-            elif isinstance(node, ast.ImportFrom) and node.module == "_maintenance_mode":
-                for alias in node.names:
-                    if alias.name == "is_active":
-                        bare_names.add(alias.asname or alias.name)
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            func = node.func
-            if (
-                isinstance(func, ast.Attribute)
-                and func.attr == "is_active"
-                and isinstance(func.value, ast.Name)
-                and func.value.id in module_aliases
-            ) or (isinstance(func, ast.Name) and func.id in bare_names):
-                callers.add(path.stem)
-    return callers
-
-
-def _units(text: str):
-    """Roster-claim units: each markdown table row on its own, otherwise a
-    blank-line-separated paragraph (a table is one paragraph, but each row scopes
-    one thing)."""
-    for para in re.split(r"\n\s*\n", text):
-        lines = para.splitlines()
-        if lines and all(line.lstrip().startswith("|") for line in lines if line.strip()):
-            yield from lines
-        else:
-            yield para
+    """The roster, derived over the checkout's tracked hook files by the one
+    predicate the ledger verb shares (``tests/_ledger_rules.py``, DEF-1121)."""
+    return maintenance_bypass_callers(_HOOKS_DIR, checkout_glob)
 
 
 def _paragraph_at(lines: list[str], index: int) -> str:
@@ -394,16 +349,10 @@ def _paragraph_at(lines: list[str], index: int) -> str:
 
 
 # Units that name the env var and two or more roster hooks WITHOUT being a
-# statement of what the flag bypasses. Each entry is (tracked path, a substring
-# of the unit) with its reason; the sweep asserts every entry still matches, so
-# a stale exclusion reds instead of silently widening the blind spot.
-_NOT_A_ROSTER_CLAIM = (
-    (".claude/commands/implement-pack.md", "enforce protected-zone and plan-required"),  # a guard explainer plus the relaunch line
-    ("bench/README.md", "A caveat the numbers do not carry"),  # a dated measurement narrative
-    ("docs/HOOKS.md", "Every gate block also lands one record"),  # which hooks WRITE an audit record on bypass; subagent_stop writes none
-    ("docs/SURFACE_SUPPORT_MATRIX.md", "Main session Write/Edit/NotebookEdit"),  # one surface's guards, "hard-blocked unless" the flag; not the flag's roster
-    ("task-packs/FORWARD_LEDGER.md", "write_guard and plan_guard driven with"),  # DEF-992's driven evidence: which hooks were run with the padded value, not which bypass
-)
+# statement of what the flag bypasses: the list lives beside the predicate the
+# ledger verb shares (``tests/_ledger_rules.py``); the sweep below asserts every
+# entry still matches, so a stale exclusion reds.
+_NOT_A_ROSTER_CLAIM = NOT_A_ROSTER_CLAIM
 # Append-only records and generated mirrors: a stale roster there is history, or
 # a copy of a source the sweep already reads.
 _NOT_SWEPT_PREFIXES = ("espalier/assets/", "examples/dogfooding/", "espalier/_vendor/")
@@ -471,7 +420,7 @@ class TestBypassRosterCarriers:
         from tests._git_oracle import require_tracked_paths
 
         callers = _maintenance_bypass_callers()
-        from tests._record_paths import is_dated_fragment, is_ledger_record
+        from tests._record_paths import is_dated_fragment
 
         # The dated records kept one file per change are records like the two
         # files they came from (ESPALIER_MEMORY.md, CHANGELOG.md).
@@ -485,21 +434,11 @@ class TestBypassRosterCarriers:
         matched: set[tuple[str, str]] = set()
         for rel in tracked:
             text = (_REPO_ROOT / rel).read_text(encoding="utf-8", errors="replace")
-            for unit in _units(text):
-                if "MAINTENANCE_MODE" not in unit:
-                    continue
-                named = {n for n in callers if re.search(rf"\b{re.escape(n)}\b", unit)}
-                if len(named) < 2 or named == callers:
-                    continue
-                # An exclusion naming the ledger file covers its rows wherever
-                # they live (a file each under task-packs/ledger.d/ since the fold).
-                excl = next(((p, sub) for p, sub in _NOT_A_ROSTER_CLAIM
-                             if (p == rel or (p == "task-packs/FORWARD_LEDGER.md" and is_ledger_record(rel)))
-                             and sub in unit), None)
+            for unit, omitted, excl in partial_rosters(rel, text, callers):
                 if excl:
                     matched.add(excl)
                     continue
-                partial.append(f"{rel}: omits {sorted(callers - named)} :: {unit.strip()[:120]!r}")
+                partial.append(f"{rel}: omits {sorted(omitted)} :: {unit.strip()[:120]!r}")
         assert not partial, "a doc states a partial maintenance-mode roster:\n  " + "\n  ".join(partial)
         stale = set(_NOT_A_ROSTER_CLAIM) - matched
         assert not stale, f"exclusions that no longer match a unit (delete them): {sorted(stale)}"

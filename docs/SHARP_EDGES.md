@@ -5885,18 +5885,19 @@ read-modify-write; a second one refuses with `LedgerBusy` and writes nothing,
 and a lock a crash left behind names its holder (deleting it is the remedy).
 A refusal is a retry, not a merge, so sequence them anyway.
 
-**What is left: the content rules run after the write.** The ledger's content
-rules are tests, not checks inside the verb, and `--dry-run` does not run them.
-A row that breaks one is written, converges, and then reds the contract tier;
-the repair is `repin --text-file`, never a hand edit, because a live row
-carries a hash a hand edit stales. The rules that have bitten a filing: the
-maintenance switch named beside two or more of the bypass hooks
+**What is left: three content rules still run only as tests.** Since
+2026-11-02 the verb runs the rules the tests own over the row file and the probe
+each writer is about to write, before it writes and in its dry run, naming each
+break by its test (`tests/_ledger_rules.py`): the maintenance switch named beside
+two or more of the bypass hooks
 (`tests/test_maintenance_mode.py::TestBypassRosterCarriers`; write "the
 maintenance switch" in words), a restated memory line cap
-(`tests/test_documented_claims.py::TestMemoryCapPopulation`), a pack id or a
-path the public tree cannot resolve, and a probe keyed on an identifier that
-does not exist yet (the probe-shape ratchet in
-`tests/test_check_ledger_probes.py`). Run the contract tier
+(`tests/test_documented_claims.py::TestMemoryCapPopulation`), a cited path the
+tree cannot resolve, and the probe-shape ratchet in
+`tests/test_check_ledger_probes.py`. A pack id no pack holds, a relative link the
+release archive lacks and the probe file's own contracts still red only in the
+contract tier (`DEF-5069`); the repair is `repin --text-file`, never a hand edit,
+because a live row carries a hash a hand edit stales. Run the contract tier
 (`scripts/proof_tier.py`) after a batch of filings and before the commit: the
 2026-10-03 audit filing re-filed from HEAD after each red for want of it.
 
@@ -5971,7 +5972,7 @@ spelled as authored and grades on every host. A probe that spawns an interpreter
 program must spell `sys.executable` there: `DEF-751` was re-pinned that way, and `DEF-411a`
 and `DEF-412h` still carry the literal because the verb can only re-pin them on a tree that
 holds `task-packs/Done/`; a ratchet beside the paperwork one
-(`TestProbeShapesAreRatcheted::_SPAWNS_A_LITERAL_INTERPRETER`) refuses a third. A shipped
+(`TestProbeShapesAreRatcheted`, its baseline `SPAWNS_A_LITERAL_INTERPRETER` in `tests/_ledger_rules.py`) refuses a third. A shipped
 workflow body cannot resolve at an executor, because its executor is an agent told to run
 the command exactly as written, so its persist command opens with the resolver line the
 command bodies' shell blocks share (`PY=; for c in 'python3' python 'py -3'; do ...`, then

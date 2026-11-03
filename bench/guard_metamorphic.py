@@ -112,6 +112,22 @@ sys.path.insert(0, str(HOOKS_DIR))
 
 import _bash_patterns  # noqa: E402  (path is set immediately above)
 
+# The project fixture is the rehearsal's (DEF-811). Same directory, so the
+# import needs no package, and a second builder here would drift from the
+# first the day one of them learned a new root shape or protected directory.
+# The budget's reader comes the same way (DEF-5071).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from powershell_guard_rehearsal import (  # noqa: E402
+    ROOT_SHAPES,
+    BudgetMiss,
+    judged_within_budget,
+    throwaway_project,
+)
+
+#: The root shape ``guard_tier`` builds every project under: plain unless
+#: ``--root-shape`` names another, so a run costs one shape's time.
+ROOT_SHAPE = "plain"
+
 # Assembled, never written literally: this file is itself scanned by the guards
 # it tests, and a literal spelling would make the module unreadable through an
 # ordinary `cat`. Same construction, and the same reason, as the sibling
@@ -426,23 +442,25 @@ def guard_tier(command: str, tool: str) -> str:
     earlier probe in this class counted rc=1 (an ImportError) as ALLOW and
     reported that HEAD permitted a catastrophic delete — the flattering answer,
     from a broken instrument.
+
+    The project is the rehearsal's ``throwaway_project``: a root of
+    ``ROOT_SHAPE`` carrying every protected directory the hook tree declares,
+    so a deny is never missing because the fixture lacked the directory.
     """
-    with tempfile.TemporaryDirectory() as td:
-        project = Path(td)
-        (project / ".claude").mkdir()
+    with throwaway_project(HOOKS_DIR / "write_guard.py", ROOT_SHAPE) as project:
 
         def once() -> bool:
             env = os.environ.copy()
             env["CLAUDE_PROJECT_DIR"] = str(project)
             env.pop("ESPALIER_MAINTENANCE_MODE", None)
-            proc = run_bounded(
+            proc = judged_within_budget(lambda: run_bounded(
                 [sys.executable, str(HOOKS_DIR / "write_guard.py")],
                 input=json.dumps(
                     {"tool_name": tool, "tool_input": {"command": command}}
                 ),
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=30, env=env,
-            )
+            ), HOOKS_DIR, project)
             if proc.returncode == 1 or "Traceback" in (proc.stderr or ""):
                 raise InstrumentBroken(
                     "write_guard errored — the instrument is broken, not the "
@@ -788,30 +806,45 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="machine-readable output")
     parser.add_argument("--relation", choices=["R1", "R2", "R3"],
                         help="run one relation")
+    parser.add_argument("--root-shape", default="plain", choices=list(ROOT_SHAPES),
+                        help="the project root's shape (the rehearsal's ROOT_SHAPES); default plain")
     args = parser.parse_args(argv)
 
-    assert_instrument_is_live()
+    # The shape holds for this run alone: a later in-process caller of
+    # guard_tier (a test) gets plain again.
+    global ROOT_SHAPE
+    ROOT_SHAPE = args.root_shape
+    try:
+        assert_instrument_is_live()
 
-    # R1's oracle is a real `/bin/bash`. Stand down rather than crash where it is
-    # absent -- the sibling differential does the same (it did not until
-    # 2026-09-01; it checked only `which`), and a Windows host has
-    # no `/bin/bash` at that exact path even when a shell is installed.
-    run_r1 = args.relation in (None, "R1")
-    if run_r1 and not (shutil.which("bash") and Path("/bin/bash").exists()):
-        print("R1 SKIPPED -- no /bin/bash; R1's ground truth is a real shell.")
-        run_r1 = False
+        # R1's oracle is a real `/bin/bash`. Stand down rather than crash where it is
+        # absent -- the sibling differential does the same (it did not until
+        # 2026-09-01; it checked only `which`), and a Windows host has
+        # no `/bin/bash` at that exact path even when a shell is installed.
+        run_r1 = args.relation in (None, "R1")
+        if run_r1 and not (shutil.which("bash") and Path("/bin/bash").exists()):
+            print("R1 SKIPPED -- no /bin/bash; R1's ground truth is a real shell.")
+            run_r1 = False
 
-    reports = []
-    if run_r1:
-        reports.append(check_r1(args.quick))
-    if args.relation in (None, "R2"):
-        reports.append(check_r2(args.quick))
-    if args.relation in (None, "R3"):
-        reports.append(check_r3(args.quick))
+        reports = []
+        if run_r1:
+            reports.append(check_r1(args.quick))
+        if args.relation in (None, "R2"):
+            reports.append(check_r2(args.quick))
+        if args.relation in (None, "R3"):
+            reports.append(check_r3(args.quick))
+    except BudgetMiss as exc:
+        # A judgment that never finished: exit 3, never the violations' 1.
+        print(f"NO VERDICT -- {exc}", file=sys.stderr)
+        return 3
+    finally:
+        ROOT_SHAPE = "plain"
 
     if args.json:
-        print(json.dumps({"quick": args.quick, "reports": reports}, indent=2))
+        print(json.dumps({"quick": args.quick, "root_shape": args.root_shape, "reports": reports},
+                         indent=2))
     else:
+        print(f"root shape: {args.root_shape}")
         for rep in reports:
             print(f"\n{rep['relation']} — {rep['description']}")
             print(f"  population: {rep['rows']} rows", end="")

@@ -45,8 +45,8 @@ never surfaces them: they are hazards of the artifact kind, not of the task.
    subject file.** A new ledger probe built on `count(`, `findall`, `grep`,
    `.read()`, `read_text`, `in open(` or `splitlines` over its subject is a
    probe the fix's own paperwork can satisfy
-   (`tests/test_check_ledger_probes.py`, the `_TEXT_READS` markers and their
-   grandfathered baseline). Remedy: build it on `ast.parse(` or drive the
+   (`tests/test_check_ledger_probes.py`; the `TEXT_READS` markers and their
+   grandfathered baseline live in `tests/_ledger_rules.py`). Remedy: build it on `ast.parse(` or drive the
    instance, which the ratchet reads as structural. A strike that retires a
    baselined probe leaves a dead baseline slot; drop the id.
 

@@ -100,6 +100,7 @@ Stdlib only. Works on 3.10+.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import functools
 import hashlib
 import importlib.util
@@ -109,6 +110,7 @@ import platform
 import posixpath
 import sys
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path, PurePath
 from typing import NamedTuple
 
@@ -127,6 +129,36 @@ def _bounded_spawn():
 
 
 run_bounded = _bounded_spawn()
+
+
+def _release_benchmark():
+    """``bench/run_benchmark.py``, loaded by path once a process: the one
+    bench file the sdist ships, so the reader of write_guard's time-budget
+    refusal every bench shares lives there (DEF-5071). A copy already loaded
+    (``__main__`` for a release run, ``bench.run_benchmark`` in a test) is
+    reused, so a process has one ``BudgetMiss`` for every arm to catch."""
+    target = Path(__file__).resolve().with_name("run_benchmark.py")
+    for module in list(sys.modules.values()):
+        known = getattr(module, "__file__", None)
+        if (isinstance(known, str) and Path(known).name == target.name
+                and Path(known).resolve() == target and hasattr(module, "judged_within_budget")):
+            return module
+    name = "_run_benchmark_for_powershell_guard_rehearsal"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, target)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            sys.modules.pop(name, None)
+            raise
+    return sys.modules[name]
+
+
+#: For this file's judgments and the benches that import their fixture from here.
+BudgetMiss = _release_benchmark().BudgetMiss
+judged_within_budget = _release_benchmark().judged_within_budget
 
 R = "Remove-Item -Recurse -Force"
 #: The harness env var, assembled rather than spelled -- a literal here is
@@ -943,17 +975,55 @@ def protected_fixture_dirs(hook: Path) -> tuple[str, ...]:
     return tuple(sorted(dirs))
 
 
+@contextlib.contextmanager
+def shaped_root(shape: str = "plain", *, prefix: str = "") -> Iterator[Path]:
+    """A throwaway directory whose name opens with ``shape``'s prefix, then
+    ``prefix``, removed at exit: the root every guard fixture builds its
+    project under (DEF-811), so a bench or test that drives the guard can
+    measure each shape in ``ROOT_SHAPES`` rather than tempfile's never-spaced
+    name alone. The plain shape is only plain if the ambient temp directory
+    is, so one that carries an inert character raises."""
+    with tempfile.TemporaryDirectory(prefix=(ROOT_SHAPES[shape] + prefix) or None) as td:
+        root = Path(td)
+        if shape == "plain" and _INERT & set(root.as_posix()):
+            raise RuntimeError(
+                f"the ambient temp directory is not plain ({root}): it carries "
+                f"{sorted(_INERT & set(root.as_posix()))}, so the plain shape would "
+                f"measure a shaped root and every declaration would be keyed to the "
+                f"wrong shape -- point TMPDIR/TEMP at a path with none of {sorted(_INERT)}")
+        yield root
+
+
+def carry_protected_tree(project: Path, hook: Path) -> Path:
+    """Make every directory ``protected_fixture_dirs(hook)`` names under
+    ``project`` (the ones already there are kept) and return ``project``. A
+    separate step from :func:`shaped_root` for a fixture that builds its
+    project first, such as the benchmark's baseline setup."""
+    for rel in protected_fixture_dirs(hook):
+        (project / rel).mkdir(parents=True, exist_ok=True)
+    return project
+
+
+@contextlib.contextmanager
+def throwaway_project(hook: Path, shape: str = "plain") -> Iterator[Path]:
+    """:func:`shaped_root` carrying the protected tree of the hook under
+    ``hook``: the project ``_tier`` and every other guard evaluator judges a
+    command in."""
+    with shaped_root(shape) as root:
+        yield carry_protected_tree(root, hook)
+
+
 def _invoke(hook: Path, tool: str, command: str, project: Path) -> bool:
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = str(project)
     # Measure what an ADOPTER sees. This tier is not maintenance-bypassable
     # anyway, but a developer's ambient shell must not colour the result.
     env.pop("ESPALIER_MAINTENANCE_MODE", None)
-    proc = run_bounded(
+    proc = judged_within_budget(lambda: run_bounded(
         [sys.executable, str(hook)],
         input=json.dumps({"tool_name": tool, "tool_input": {"command": command}}),
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60, env=env,
-    )
+    ), hook.parent, project)
     # rc=1 is a SCRIPT ERROR, never an allow. Reading it as "allowed" already
     # produced one false "a catastrophic delete is permitted" reading.
     if proc.returncode == 1:
@@ -975,17 +1045,7 @@ def _tier(hook: Path, tool: str, command: str, shape: str = "plain") -> str:
     fixture without the tree under-reports a deny, and a deny absent because
     the fixture is absent looks identical to a matcher that failed.
     """
-    prefix = ROOT_SHAPES[shape]
-    with tempfile.TemporaryDirectory(prefix=prefix or None) as td:
-        project = Path(td)
-        if shape == "plain" and _INERT & set(project.as_posix()):
-            raise RuntimeError(
-                f"the ambient temp directory is not plain ({project}): it carries "
-                f"{sorted(_INERT & set(project.as_posix()))}, so the plain shape would "
-                f"measure a shaped root and every declaration would be keyed to the "
-                f"wrong shape -- point TMPDIR/TEMP at a path with none of {sorted(_INERT)}")
-        for rel in protected_fixture_dirs(hook):
-            (project / rel).mkdir(parents=True, exist_ok=True)
+    with throwaway_project(hook, shape) as project:
         root_text = bash_spelling(project) if tool == "Bash" else str(project)
         cmd = command.replace(ROOT, root_text)
         if not _invoke(hook, tool, cmd, project):

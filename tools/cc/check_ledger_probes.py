@@ -360,6 +360,12 @@ def _suffixes_walked(cmd: str) -> set[str]:
 _GIT_UNKNOWN = "git-unavailable"
 _CONTAMINATION: "dict[str, set[str]] | str | None" = None
 
+#: Whether a probe's environment puts ``_ROOT`` first on ``PYTHONPATH``: set
+#: by :func:`rooted` for a tree a caller exported from a ref, whose package no
+#: interpreter has installed. Off for a checkout, whose interpreter is the
+#: operator's to point (DEF-5047).
+_IMPORTABLE = False
+
 
 def _contamination_cache() -> "dict[str, set[str]] | str":
     """`_contaminating_trees()` once per process -- it walks the filesystem.
@@ -566,9 +572,19 @@ def _outside_the_launching_session() -> dict[str, str]:
     is the suite's twin of this strip. For the same reason a probe's harness
     audit records go to a store of this run's (:func:`_probe_audit_dir`), never
     the operator's: a probe that drives a hook site in process wrote its record
-    into the home store under its temp tree's slug (DEF-3022)."""
+    into the home store under its temp tree's slug (DEF-3022).
+    In a tree rooted ``importable`` (an export a strike's base drive or a
+    filing's export drive built), the tree's root goes first on
+    ``PYTHONPATH``: a probe that collects pytest there met the suite's
+    engine-location check, which asks a child started in an empty directory
+    where ``espalier`` comes from, found the box's own install (or none) and
+    stopped the session, so the base read UNRESOLVED and a strike needed
+    ``--no-base`` (DEF-5047; both hand readings of 2026-11-01 put the root on
+    ``PYTHONPATH`` and read the defect)."""
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
     env["ESPALIER_AUDIT_DIR"] = _probe_audit_dir()
+    if _IMPORTABLE:
+        env["PYTHONPATH"] = os.pathsep.join([str(_ROOT)] + ([env["PYTHONPATH"]] if env.get("PYTHONPATH") else []))
     return env
 
 
@@ -715,8 +731,9 @@ def run_probe(probe: dict) -> tuple[str, str]:
 
 
 @contextlib.contextmanager
-def rooted(root: "str | os.PathLike[str]", *, pristine: bool = False) -> Iterator[Path]:
-    """Root the runner at ``root`` for the block and restore its four module
+def rooted(root: "str | os.PathLike[str]", *, pristine: bool = False,
+           importable: bool = False) -> Iterator[Path]:
+    """Root the runner at ``root`` for the block and restore its five module
     globals after it, whatever the block did.
 
     The one home of that swap: ``main``'s ``--root`` is this, and the strike
@@ -731,17 +748,22 @@ def rooted(root: "str | os.PathLike[str]", *, pristine: bool = False) -> Iterato
     directory takes the git-unavailable path and reads every tree-walking probe
     UNRESOLVED (19 of the live commands by ``_TREE_WALK_MARKERS``; measured on a
     replayed strike, 2026-10-25). The subject and inputs gates are unchanged:
-    a tree that lacks the probe's subject still reads UNRESOLVED there."""
-    global _ROOT, _PROBES, _LEDGER, _CONTAMINATION
-    saved = _ROOT, _PROBES, _LEDGER, _CONTAMINATION
+    a tree that lacks the probe's subject still reads UNRESOLVED there.
+
+    ``importable`` puts the tree's root first on each probe's ``PYTHONPATH``
+    for the block (:func:`_outside_the_launching_session` says why), for a
+    tree no interpreter has installed: an export, never a checkout."""
+    global _ROOT, _PROBES, _LEDGER, _CONTAMINATION, _IMPORTABLE
+    saved = _ROOT, _PROBES, _LEDGER, _CONTAMINATION, _IMPORTABLE
     _ROOT = _grammar().find_root(root)
     _PROBES = _ROOT / "task-packs" / "LEDGER_PROBES.json"
     _LEDGER = _ROOT / "task-packs" / "FORWARD_LEDGER.md"
     _CONTAMINATION = {} if pristine else None  # the memo is per tree
+    _IMPORTABLE = importable
     try:
         yield _ROOT
     finally:
-        _ROOT, _PROBES, _LEDGER, _CONTAMINATION = saved
+        _ROOT, _PROBES, _LEDGER, _CONTAMINATION, _IMPORTABLE = saved
 
 
 def main(argv: list[str] | None = None) -> int:

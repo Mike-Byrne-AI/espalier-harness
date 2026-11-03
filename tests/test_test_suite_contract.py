@@ -14,6 +14,7 @@ import fnmatch
 import functools
 import re
 import sys
+from collections import Counter
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -1402,7 +1403,13 @@ def _read_timeout_mark(expr: ast.expr, consts: dict[str, float]) -> _TimeoutMark
 
 def _resolve_number(node: ast.expr, consts: dict[str, float]) -> float | None:
     """A literal number, or a name bound to one at module level (here or in
-    the sibling test module it was imported from)."""
+    the sibling test module it was imported from), or either one as the sole
+    argument of ``scaled(...)``: tests/_wait_budget.py keeps a budget's ratio
+    to the ceiling its test runs under, so the literal's ratio is the one
+    judged."""
+    if (isinstance(node, ast.Call) and _terminal_name(node.func) == "scaled"
+            and len(node.args) == 1 and not node.keywords):
+        node = node.args[0]
     number = _numeric(node)
     if number is None and isinstance(node, ast.Name):
         number = consts.get(node.id)
@@ -2210,21 +2217,102 @@ def _is_alarm_guard_call(node: ast.AST, modules: set[str]) -> bool:
             and isinstance(node.args[1], ast.Constant) and node.args[1].value in _ALARM_NAMES)
 
 
-def _alarm_guard_names(tree: ast.Module, modules: set[str]) -> set[str]:
-    """The names a module assigns a guard to (``has_alarm = hasattr(signal,
-    "SIGALRM")``), which its code then tests in place of the call."""
-    out: set[str] = set()
-    for n in ast.walk(tree):
+def _own_nodes(body: list[ast.stmt]) -> Iterator[ast.AST]:
+    """Every node a scope's own statements hold. A def, a class or a lambda
+    nested in it is a scope of its own: the node (its name) is this scope's,
+    what is inside it is not."""
+    stack: list[ast.AST] = list(body)
+    while stack:
+        node = stack.pop()
+        yield node
+        if not isinstance(node, (*_FuncDef, ast.ClassDef, ast.Lambda)):
+            stack.extend(ast.iter_child_nodes(node))
+
+
+def _yields(stmt: ast.stmt) -> bool:
+    """Whether ``stmt`` yields each time it runs: ``yield x`` or ``v = yield x``
+    as a statement of its own. A ``yield from`` can yield nothing, and a yield in
+    a branch or a loop may not run."""
+    return (isinstance(stmt, (ast.Expr, ast.Assign, ast.AnnAssign, ast.AugAssign))
+            and isinstance(stmt.value, ast.Yield))
+
+
+@dataclass
+class _AlarmScope:
+    """A scope the alarm-guard rule reads: a module's own statements or a def's body."""
+
+    qual: str                # "<module>", "helper", "TestX::test_y", "test_y.<locals>.inner"
+    body: list[ast.stmt]
+    kind: str                # "module", "function" or "generator"
+    reads: set[str]          # the bare names a `from signal import` bound to an alarm name
+    guards: set[str]         # the names that hold only where the alarm exists
+    top: ast.stmt | None     # the module-level statement a def sits in; None for the module
+
+
+def _scope_bindings(body: list[ast.stmt], fn: ast.FunctionDef | ast.AsyncFunctionDef | None,
+                    ) -> tuple[Counter[str], dict[str, list[ast.expr]], set[str]]:
+    """(how many times a scope binds each name by a parameter or an assignment
+    target, the values an assignment or a walrus binds each name to, the names
+    a ``from signal import`` binds to an alarm name -- all of them for a star
+    import)."""
+    count: Counter[str] = Counter()
+    values: dict[str, list[ast.expr]] = {}
+    alarm: set[str] = set()
+    if fn is not None:
+        count.update(a.arg for a in ast.walk(fn.args) if isinstance(a, ast.arg))
+    for n in _own_nodes(body):
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store):
+            count[n.id] += 1
+        elif isinstance(n, ast.ImportFrom) and n.module == "signal":
+            for alias in n.names:
+                if alias.name == "*" or alias.name in _ALARM_NAMES:
+                    alarm |= _ALARM_NAMES if alias.name == "*" else {alias.asname or alias.name}
         if isinstance(n, (ast.Assign, ast.AnnAssign, ast.NamedExpr)) and n.value is not None:
-            if any(_is_alarm_guard_call(m, modules) for m in ast.walk(n.value)):
-                targets = n.targets if isinstance(n, ast.Assign) else [n.target]
-                out.update(t.id for t in targets if isinstance(t, ast.Name))
-    return out
+            for target in n.targets if isinstance(n, ast.Assign) else [n.target]:
+                if isinstance(target, ast.Name):
+                    values.setdefault(target.id, []).append(n.value)
+    return count, values, alarm
+
+
+def _alarm_scopes(tree: ast.Module, modules: set[str]) -> list[_AlarmScope]:
+    """The module and every def (``_every_def``), each with the bare names that
+    read an alarm in it and the names that guard one. A def sees its enclosing
+    function's names, or the module's where no function encloses it (a class
+    body is no scope its methods see), less every name it binds itself. A name
+    guards where every value its scope binds it to holds only with the alarm
+    (``_alarm_present``): ``has_alarm = hasattr(signal, "SIGALRM")``, never its
+    ``not``, a reassignment or a parameter."""
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+
+    def build(qual: str, body: list[ast.stmt], fn: ast.FunctionDef | ast.AsyncFunctionDef | None,
+              enclosing: _AlarmScope | None, top: ast.stmt | None) -> _AlarmScope:
+        count, values, alarm = _scope_bindings(body, fn)
+        reads = alarm | (enclosing.reads - set(count)) if enclosing else alarm
+        guards = enclosing.guards - set(count) if enclosing else set()
+        while more := {name for name, vs in values.items() if name not in guards and len(vs) == count[name]
+                       and all(_alarm_present(v, modules, guards) for v in vs)}:
+            guards |= more
+        kind = "module" if fn is None else "generator" if any(
+            isinstance(n, (ast.Yield, ast.YieldFrom)) for n in _own_nodes(body)) else "function"
+        return _AlarmScope(qual, body, kind, reads, guards, top)
+
+    module = build("<module>", tree.body, None, None, None)
+    built: dict[ast.AST, _AlarmScope] = {tree: module}
+    for qual, fn in _every_def(tree):
+        up, top = parents[fn], fn
+        while not isinstance(up, (*_FuncDef, ast.Module)):
+            up = parents[up]
+        while parents[top] is not tree:
+            top = parents[top]
+        built[fn] = build(qual, fn.body, fn, built[up], top)
+    return list(built.values())
 
 
 def _alarm_present(test: ast.expr, modules: set[str], guards: set[str]) -> bool:
     """Whether ``test`` holds only where the alarm exists: a guard, a name
-    assigned one, or ``a and b`` with one of them."""
+    assigned one, a walrus binding one, or ``a and b`` with one of them."""
+    if isinstance(test, ast.NamedExpr):
+        return _alarm_present(test.value, modules, guards)
     if _is_alarm_guard_call(test, modules) or (isinstance(test, ast.Name) and test.id in guards):
         return True
     return (isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And)
@@ -2234,27 +2322,47 @@ def _alarm_present(test: ast.expr, modules: set[str], guards: set[str]) -> bool:
 def _alarm_absent(test: ast.expr, modules: set[str], guards: set[str]) -> bool:
     """Whether ``test`` holds wherever the alarm is missing: ``not`` a guard,
     or ``a or b`` with one of them."""
+    if isinstance(test, ast.NamedExpr):
+        return _alarm_absent(test.value, modules, guards)
     if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
         return _alarm_present(test.operand, modules, guards)
     return (isinstance(test, ast.BoolOp) and isinstance(test.op, ast.Or)
             and any(_alarm_absent(v, modules, guards) for v in test.values))
 
 
-def _leaves_quietly(block: list[ast.stmt]) -> bool:
-    """Whether a block ends its scope without a red: ``return``, or a call named
-    ``skip`` (``pytest.skip``). A ``raise`` or an ``assert`` reds the host it
-    fires on, so it guards nothing here."""
+def _is_skip(node: ast.expr) -> bool:
+    """Whether ``node`` is ``pytest.skip(...)`` or a bare ``skip(...)``: the call
+    that ends a test without a red (``pytest.mark.skip(...)`` builds a mark and
+    ends nothing)."""
+    return isinstance(node, ast.Call) and (
+        (isinstance(node.func, ast.Name) and node.func.id == "skip")
+        or (isinstance(node.func, ast.Attribute) and node.func.attr == "skip"
+            and isinstance(node.func.value, ast.Name) and node.func.value.id == "pytest"))
+
+
+def _leaves_quietly(block: list[ast.stmt], kind: str, yielded: bool) -> bool:
+    """Whether a block ends its scope without a red where it runs, told the
+    scope's kind. At module level only a skip with ``allow_module_level=True``
+    (without it the skip is a collection error); in a function a skip or a
+    ``return``; in a generator (a context manager, a yield fixture) a skip, or
+    a ``return`` once a yield has run (``yielded``: before the block, or in it):
+    one before the first yield is a "didn't yield" error. A ``raise`` or an
+    ``assert`` reds the host it fires on, so it guards nothing here."""
     last = block[-1]
-    return isinstance(last, ast.Return) or (
-        isinstance(last, ast.Expr) and isinstance(last.value, ast.Call)
-        and _terminal_name(last.value.func) == "skip")
+    if isinstance(last, ast.Expr) and _is_skip(last.value):
+        return kind != "module" or any(
+            k.arg == "allow_module_level" and isinstance(k.value, ast.Constant) and k.value.value is True
+            for k in last.value.keywords)
+    return isinstance(last, ast.Return) and (
+        kind == "function" or (kind == "generator" and (yielded or any(map(_yields, block[:-1])))))
 
 
-def _alarm_reads(scope: list[ast.stmt], modules: set[str]) -> list[list[ast.AST]]:
+def _alarm_reads(scope: list[ast.stmt], modules: set[str], names: set[str]) -> list[list[ast.AST]]:
     """Each read of an alarm name that ``scope`` runs, as its path from the
-    scope's statement down to the read: an attribute of the signal module, or a
-    ``from signal import`` of one. A def's decorators and defaults run in the
-    scope that defines it; its body is a scope of its own."""
+    scope's statement down to the read: an attribute of the signal module, a
+    ``from signal import`` of one, or a use of a name such an import bound
+    (``names``: ``_AlarmScope.reads``). A def's decorators and defaults run in
+    the scope that defines it; its body is a scope of its own."""
     out: list[list[ast.AST]] = []
 
     def visit(node: ast.AST, path: list[ast.AST]) -> None:
@@ -2267,7 +2375,8 @@ def _alarm_reads(scope: list[ast.stmt], modules: set[str]) -> list[list[ast.AST]
         if ((isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
                 and node.value.id in modules and node.attr in _ALARM_NAMES)
                 or (isinstance(node, ast.ImportFrom) and node.module == "signal"
-                    and any(a.name in _ALARM_NAMES for a in node.names))):
+                    and any(a.name in _ALARM_NAMES for a in node.names))
+                or (isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id in names)):
             out.append(path)
         for child in ast.iter_child_nodes(node):
             visit(child, path)
@@ -2277,20 +2386,25 @@ def _alarm_reads(scope: list[ast.stmt], modules: set[str]) -> list[list[ast.AST]
     return out
 
 
-def _alarm_read_covered(path: list[ast.AST], scope: list[ast.stmt],
-                        modules: set[str], guards: set[str]) -> bool:
+def _alarm_read_covered(path: list[ast.AST], scope: _AlarmScope, modules: set[str]) -> bool:
     """Whether a guard covers the read at the end of ``path``: it sits in a
     branch (of an ``if``, or of ``x if test else y``) that runs only with the
     alarm, or an earlier statement of a block around it leaves quietly without
-    it (``if not hasattr(signal, "SIGALRM"): pytest.skip(...)``)."""
-    def exits_before(block: list[ast.stmt], node: ast.AST) -> bool:
+    it (``if not hasattr(signal, "SIGALRM"): pytest.skip(...)``), as the
+    scope's kind lets it (``_leaves_quietly``)."""
+    guards = scope.guards
+
+    def exits_before(block: list[ast.stmt], node: ast.AST, yielded: bool) -> bool:
         if node not in block:
             return False
+        before = block[:block.index(node)]
         return any(isinstance(s, ast.If) and _alarm_absent(s.test, modules, guards)
-                   and _leaves_quietly(s.body) for s in block[:block.index(node)])
+                   and _leaves_quietly(s.body, scope.kind, yielded or any(map(_yields, before[:i])))
+                   for i, s in enumerate(before))
 
-    if exits_before(scope, path[0]):
+    if exits_before(scope.body, path[0], False):
         return True
+    yielded = any(map(_yields, scope.body[:scope.body.index(path[0])]))
     for parent, child in zip(path, path[1:]):
         if isinstance(parent, (ast.If, ast.IfExp)):
             body = parent.body if isinstance(parent.body, list) else [parent.body]
@@ -2300,8 +2414,10 @@ def _alarm_read_covered(path: list[ast.AST], scope: list[ast.stmt],
                 return True
         for field in ("body", "orelse", "finalbody"):
             block = getattr(parent, field, None)
-            if isinstance(block, list) and exits_before(block, child):
-                return True
+            if isinstance(block, list) and child in block:
+                if exits_before(block, child, yielded):
+                    return True
+                yielded = yielded or any(map(_yields, block[:block.index(child)]))
     return False
 
 
@@ -2311,17 +2427,17 @@ def _sigalrm_unguarded(modules: list[tuple[str, str]]) -> tuple[list[str], list[
     module's own statements as ``<module>``.
 
     ``_ALARM_NAMES`` are the names an alarm reads from ``signal`` that Windows
-    lacks. A read is covered when a guard holds wherever it runs
+    lacks; a name a ``from signal import`` bound is read where it is used. A
+    read is covered when a guard holds wherever it runs
     (``_alarm_read_covered``): it sits in a branch that runs only with the
     alarm (``_alarm_present``), or an earlier statement of a block around it
-    leaves quietly without it (``_leaves_quietly``). A guard in a caller, in a
-    mark or after the read does not cover it, so a helper answers for itself.
-    Each def is a scope of its own (``_every_def``); its decorators and defaults
-    belong to the scope that defines it (``_alarm_reads``). Not yet read
-    (DEF-4034): a bare use of a name a ``from signal import`` bound (only the
-    import is a read), a quiet exit's scope (a module-level skip without
-    ``allow_module_level``, a generator's ``return`` before its ``yield``), and
-    what a guard name's value means.
+    leaves quietly without it as its scope's kind allows (``_leaves_quietly``).
+    A guard in a caller, in a mark or after the read does not cover it, so a
+    helper answers for itself. Each def is a scope of its own (``_every_def``),
+    with the guard names and the imported names it sees (``_alarm_scopes``);
+    its decorators and defaults belong to the scope that defines it
+    (``_alarm_reads``), and a module-level skip covers every def after it,
+    since none of them is defined where it fires.
     """
     parse = _memo_parser(modules)
     reading: list[str] = []
@@ -2332,14 +2448,15 @@ def _sigalrm_unguarded(modules: list[tuple[str, str]]) -> tuple[list[str], list[
         if tree is None:
             continue
         signal_modules = _signal_module_names(tree)
-        guards = _alarm_guard_names(tree, signal_modules)
-        for qual, scope in [("<module>", tree.body), *((q, fn.body) for q, fn in _every_def(tree))]:
-            paths = _alarm_reads(scope, signal_modules)
+        module, *defs = _alarm_scopes(tree, signal_modules)
+        for scope in [module, *defs]:
+            paths = _alarm_reads(scope.body, signal_modules, scope.reads)
             if not paths:
                 continue
-            where = f"tests/{stem}.py::{qual}"
+            where = f"tests/{stem}.py::{scope.qual}"
             reading.append(where)
-            if not all(_alarm_read_covered(p, scope, signal_modules, guards) for p in paths):
+            skipped = scope.top is not None and _alarm_read_covered([scope.top], module, signal_modules)
+            if not skipped and not all(_alarm_read_covered(p, scope, signal_modules) for p in paths):
                 uncovered.append(where)
     return sorted(reading), sorted(uncovered)
 
@@ -2555,6 +2672,67 @@ def _shapes_the_walker_cannot_read(modules: list[tuple[str, str]]) -> list[str]:
     return out
 
 
+def _scaled_at_import(tree: ast.Module) -> list[int]:
+    """Lines of each ``scaled(...)`` call Python evaluates when the module is
+    imported: module and class bodies, and a def's defaults and decorators.
+    A def's body runs when it is called, so a call there is left alone."""
+    out: list[int] = []
+
+    def visit(node: ast.AST) -> None:
+        if isinstance(node, (*_FuncDef, ast.Lambda)):
+            args = node.args
+            for evaluated in [*args.defaults, *(d for d in args.kw_defaults if d is not None),
+                              *getattr(node, "decorator_list", [])]:
+                visit(evaluated)
+            return
+        if isinstance(node, ast.Call) and _terminal_name(node.func) == "scaled":
+            out.append(node.lineno)
+        for child in ast.iter_child_nodes(node):
+            visit(child)
+
+    visit(tree)
+    return out
+
+
+def test_a_scaled_budget_is_computed_when_its_wait_runs():
+    """``tests/_wait_budget.py::scaled`` reads the ceiling of the test running
+    when it is called. A call evaluated at import -- a module constant, a class
+    attribute, a parameter default, a decorator -- runs outside every test, at
+    a factor of 1, so it keeps its literal under the leg's raised ceiling while
+    the walker reads it as scaled (DEF-5067). Write it at the wait:
+    ``timeout=scaled(_TIMEOUT)``."""
+    modules = _all_test_dir_modules()
+    calls = sum(1 for _, text in modules if "scaled(" in text
+                for n in ast.walk(ast.parse(text))
+                if isinstance(n, ast.Call) and _terminal_name(n.func) == "scaled")
+    assert calls >= 10, (
+        f"{calls} scaled() calls under tests/, fewer than the wedge class's ten git waits: the "
+        "walker stopped finding them, or a wait went back to a literal")
+    at_import = [f"tests/{stem}.py:{line}" for stem, text in modules if "scaled(" in text
+                 for line in _scaled_at_import(ast.parse(text))]
+    assert not at_import, (
+        f"{at_import}: scaled() evaluated at import keeps its literal; call it at the wait")
+
+
+class TestAScaledCallAtImportIsNamed:
+    """Calibration for ``_scaled_at_import``: the live tree has no offender,
+    so these rows are where its red path is seen."""
+
+    def test_a_module_constant_a_class_attribute_a_default_and_a_decorator_are_named(self):
+        src = ("T = scaled(30)\n"
+               "class C:\n    U = scaled(30)\n"
+               "def f(timeout=scaled(30), *, b=scaled(30)):\n    pass\n"
+               "@pytest.mark.timeout(scaled(30))\ndef test_x():\n    pass\n"
+               "g = lambda timeout=scaled(30): timeout\n")
+        assert _scaled_at_import(ast.parse(src)) == [1, 3, 4, 4, 6, 9]
+
+    def test_a_call_in_a_body_runs_with_its_test_and_is_left_alone(self):
+        src = ("def _run():\n    subprocess.run(['x'], timeout=scaled(30))\n"
+               "def test_x():\n    def inner(timeout=scaled(30)):\n        pass\n"
+               "g = lambda: subprocess.run(['x'], timeout=scaled(3))\n")
+        assert _scaled_at_import(ast.parse(src)) == []
+
+
 _SYNTH_RUN = "import subprocess\nimport pytest\n\n"
 
 
@@ -2653,6 +2831,17 @@ class TestTheCeilingWalkerReportsBothVerdicts:
                                     "    subprocess.run(['x'], timeout=BUDGET)\n")) == 1
         assert _synth_offenders("def test_x():\n"
                                 "    raise subprocess.TimeoutExpired(['x'], timeout=120)\n") == []
+
+    def test_a_scaled_budget_is_judged_as_its_literal(self):
+        # tests/_wait_budget.py::scaled keeps a budget's ratio to the ceiling
+        # its test runs under, so the ratio this contract reads is the
+        # literal's (DEF-5067). A call it cannot read stays unread.
+        assert len(_synth_offenders("def test_x():\n    subprocess.run(['x'], timeout=scaled(120))\n")) == 1
+        assert _synth_offenders("def test_x():\n    subprocess.run(['x'], timeout=scaled(45))\n") == []
+        assert len(_synth_offenders("BUDGET = 120\ndef test_x():\n"
+                                    "    subprocess.run(['x'], timeout=wb.scaled(BUDGET))\n")) == 1
+        unit = _collect_units(ast.parse("def test_x(n):\n    subprocess.run(['x'], timeout=scaled(n))\n"), {})[0]
+        assert _unread_budgets(unit, {}) == [2]
 
     def test_module_level_code_runs_at_collection_and_is_not_read(self):
         assert _synth_offenders("PROBE = subprocess.run(['x'], timeout=120)\n") == []
@@ -3120,6 +3309,158 @@ class TestTheAlarmGuardDetectorReportsBothVerdicts:
 
     def test_a_call_named_alarm_on_another_object_is_not_a_read(self):
         assert self._read("def test_x(clock):\n    clock.alarm(1)\n") == ([], [])
+
+    def test_a_name_imported_from_signal_is_read_where_it_is_used(self):
+        """DEF-4034 (1): the import was the only read, so a guard around a
+        module-level ``from signal import`` read green while the helper using
+        the name raised NameError on Windows."""
+        guarded_import = ("import signal\nif hasattr(signal, 'SIGALRM'):\n    from signal import setitimer\n"
+                          "def _arm():\n    setitimer(0, 0.1)\n")
+        star = "from signal import *\ndef _arm():\n    alarm(1)\n"
+        star_guarded = star.replace("def _arm():\n", "import signal\ndef _arm():\n"
+                                    "    if not hasattr(signal, 'SIGALRM'):\n        return\n")
+        aliased = "import signal\nif hasattr(signal, 'SIGALRM'):\n    from signal import alarm as a\na(0)\n"
+        enclosing = ("import signal\ndef test_x():\n    if hasattr(signal, 'SIGALRM'):\n"
+                     "        from signal import alarm\n    def arm():\n        alarm(1)\n    arm()\n")
+        shadowed = ("import signal\nif hasattr(signal, 'SIGALRM'):\n    from signal import alarm\n"
+                    "def _ring(alarm):\n    alarm(1)\ndef _tick():\n    alarm = print\n    alarm(1)\n")
+        assert star_guarded != star
+        assert self._read(guarded_import) == ([self._S + "<module>", self._S + "_arm"], [self._S + "_arm"])
+        assert self._read(star) == ([self._S + "_arm"], [self._S + "_arm"])
+        assert self._read(star_guarded) == ([self._S + "_arm"], [])
+        assert self._read(aliased)[1] == [self._S + "<module>"]
+        assert self._read(enclosing)[1] == [self._S + "test_x.<locals>.arm"]
+        assert self._read(shadowed) == ([self._S + "<module>"], [])
+
+    def test_a_module_level_skip_covers_only_with_allow_module_level(self):
+        """DEF-4034 (2): a module-level ``pytest.skip`` without the flag is a
+        collection error, so it covers nothing; with it, it covers the rest of
+        the module, the defs after it included (none is defined where it fires)."""
+        flagless = ("import signal, pytest\nif not hasattr(signal, 'SIGALRM'):\n    pytest.skip('no SIGALRM')\n"
+                    "signal.alarm(0)\ndef _arm():\n    signal.alarm(1)\nclass TestX:\n"
+                    "    def test_y(self):\n        signal.alarm(1)\n")
+        flagged = flagless.replace("'no SIGALRM')", "'no SIGALRM', allow_module_level=True)")
+        flag_false = flagless.replace("'no SIGALRM')", "'no SIGALRM', allow_module_level=False)")
+        bare = flagged.replace("import signal, pytest\n", "import signal\nfrom pytest import skip\n").replace(
+            "pytest.skip(", "skip(")
+        before = ("import signal, pytest\ndef _arm():\n    signal.alarm(1)\nif not hasattr(signal, 'SIGALRM'):\n"
+                  "    pytest.skip('no SIGALRM', allow_module_level=True)\n")
+        assert len({flagless, flagged, flag_false, bare}) == 4
+        every = [self._S + "<module>", self._S + "TestX::test_y", self._S + "_arm"]
+        assert self._read(flagless) == (every, every)
+        assert self._read(flag_false)[1] == every
+        assert self._read(flagged) == (every, [])
+        assert self._read(bare)[1] == []
+        assert self._read(before)[1] == [self._S + "_arm"]
+
+    def test_a_generator_returns_quietly_only_after_a_yield_has_run(self):
+        """DEF-4034 (2): a context manager's or a yield fixture's ``return``
+        before its first yield is a "didn't yield" error on Windows; a skip, or
+        a return once a yield has run, is quiet. A ``yield from`` can yield
+        nothing, and a yield in a branch may not run."""
+        ctx = ("import contextlib, pytest, signal\n@contextlib.contextmanager\ndef _alarm():\n"
+               "    if not hasattr(signal, 'SIGALRM'):\n        return\n    signal.alarm(1)\n    yield\n")
+        fixture = ctx.replace("@contextlib.contextmanager\ndef _alarm():", "@pytest.fixture\ndef armed():")
+        skipped = ctx.replace("        return\n", "        pytest.skip('no SIGALRM')\n")
+        yield_then_return = ctx.replace("        return\n", "        yield\n        return\n")
+        after = ("import signal\ndef _ticks(ctx):\n    yield 0\n    if not hasattr(signal, 'SIGALRM'):\n"
+                 "        return\n    yield signal.alarm(0)\n")
+        maybe = after.replace("    yield 0\n", "    if ctx:\n        yield 0\n")
+        yield_from = after.replace("    yield 0\n", "    yield from ()\n")
+        in_a_block = after.replace("    if not hasattr(signal, 'SIGALRM'):\n        return\n    yield signal.alarm(0)\n",
+                                   "    with ctx:\n        if not hasattr(signal, 'SIGALRM'):\n"
+                                   "            return\n        signal.alarm(0)\n")
+        nested = ("import signal\ndef _ticks(ctx):\n    with ctx:\n        yield 0\n        with ctx:\n"
+                  "            if not hasattr(signal, 'SIGALRM'):\n                return\n            signal.alarm(0)\n")
+        assert len({ctx, fixture, skipped, yield_then_return, after, maybe, yield_from, in_a_block}) == 8
+        assert self._read(ctx) == ([self._S + "_alarm"], [self._S + "_alarm"])
+        assert self._read(fixture)[1] == [self._S + "armed"]
+        for src in (skipped, yield_then_return, after, in_a_block, nested):
+            assert self._read(src)[1] == [], src
+        for src in (maybe, yield_from):
+            assert self._read(src)[1] == [self._S + "_ticks"], src
+
+    def test_only_pytest_skip_or_a_bare_skip_leaves_quietly(self):
+        """DEF-4034 (2): a call named ``skip`` on another receiver ends nothing
+        (``pytest.mark.skip(...)`` as a statement builds a mark), and another
+        call on ``pytest`` is no skip (``pytest.fail`` reds)."""
+        src = ("import signal, pytest\ndef _arm(runner):\n    if not hasattr(signal, 'SIGALRM'):\n"
+               "        EXIT\n    signal.alarm(1)\n")
+        for exit_ in ("pytest.mark.skip('no SIGALRM')", "runner.skip('no SIGALRM')", "pytest.fail('no SIGALRM')"):
+            assert self._read(src.replace("EXIT", exit_))[1] == [self._S + "_arm"], exit_
+        for exit_ in ("skip('no SIGALRM')", "pytest.skip('no SIGALRM')"):
+            assert self._read(src.replace("EXIT", exit_))[1] == [], exit_
+
+    def test_a_guard_name_counts_only_where_every_value_it_holds_needs_the_alarm(self):
+        """DEF-4034 (3): a name counted as a guard whatever it was assigned and
+        wherever in the module; it now counts in its own scope and the defs it
+        encloses, where every value the scope binds it to holds only with the
+        alarm, and never where a parameter or another assignment rebinds it."""
+        inverted = ("import signal\nHAS_ALARM = not hasattr(signal, 'SIGALRM')\n"
+                    "def _arm():\n    if HAS_ALARM:\n        signal.alarm(1)\n")
+        guard = "not hasattr(signal, 'SIGALRM')"
+        either = inverted.replace(guard, "hasattr(signal, 'SIGALRM') or True")
+        both = inverted.replace(guard, "hasattr(signal, 'SIGALRM') and True")
+        plain = inverted.replace(guard, "hasattr(signal, 'SIGALRM')")
+        reassigned = plain.replace("\ndef _arm", "\nHAS_ALARM = True\ndef _arm")
+        augmented = plain.replace("\ndef _arm", "\nHAS_ALARM |= True\ndef _arm")
+        shadowed = plain.replace("def _arm():", "def _arm(HAS_ALARM=True):")
+        chained = plain.replace("\ndef _arm", "\nARMED = HAS_ALARM and True\ndef _arm").replace(
+            "    if HAS_ALARM:", "    if ARMED:")
+        other_def = ("import signal\ndef _probe():\n    has_alarm = hasattr(signal, 'SIGALRM')\n    return has_alarm\n"
+                     "def _arm(has_alarm=True):\n    if has_alarm:\n        signal.alarm(1)\n")
+        enclosing = ("import signal\ndef test_x():\n    has_alarm = hasattr(signal, 'SIGALRM')\n"
+                     "    def arm():\n        if has_alarm:\n            signal.alarm(1)\n    arm()\n")
+        assert len({inverted, either, both, plain, reassigned, augmented, shadowed, chained}) == 8
+        for src in (inverted, either, reassigned, augmented, shadowed, other_def):
+            assert self._read(src)[1] == [self._S + "_arm"], src
+        for src in (both, plain, chained):
+            assert self._read(src)[1] == [], src
+        assert self._read(enclosing) == ([self._S + "test_x.<locals>.arm"], [])
+
+    def test_a_nested_scopes_bindings_and_yields_are_its_own(self):
+        """A class attribute does not rebind a module guard its methods read,
+        and a nested def's yield does not make its parent a generator."""
+        src = ("import signal\nHAS_ALARM = hasattr(signal, 'SIGALRM')\nclass TestX:\n    HAS_ALARM = True\n"
+               "    def test_y(self):\n        if not hasattr(signal, 'SIGALRM'):\n            return\n"
+               "        signal.alarm(1)\n        def ticks():\n            yield 0\n"
+               "    def test_z(self):\n        if HAS_ALARM:\n            signal.alarm(0)\n")
+        assert self._read(src) == ([self._S + "TestX::test_y", self._S + "TestX::test_z"], [])
+
+    def test_and_and_or_keep_their_polarity(self):
+        """DEF-4034 (4): ``a and b`` holds only with the alarm when either side
+        does, ``a or b`` holds without it when either side does; the swapped
+        shapes read nothing. No row pinned either before, so six mutants of the
+        two rules survived the calibration (re-driven 2026-11-02)."""
+        alarm = "hasattr(signal, 'SIGALRM')"
+        branch = "import signal\ndef _arm(x):\n    if TEST:\n        signal.alarm(1)\n"
+        exit_ = "import signal\ndef _arm(x):\n    if TEST:\n        return\n    signal.alarm(1)\n"
+        covered = [branch.replace("TEST", f"{alarm} and x"), branch.replace("TEST", f"x and (x and {alarm})"),
+                   exit_.replace("TEST", f"not {alarm} or x"), exit_.replace("TEST", f"x or (x or not {alarm})"),
+                   exit_.replace("TEST", f"not ({alarm} and x)")]
+        reported = [branch.replace("TEST", f"{alarm} or x"), branch.replace("TEST", f"not {alarm} and x"),
+                    exit_.replace("TEST", f"not {alarm} and x"), exit_.replace("TEST", f"{alarm} or x"),
+                    exit_.replace("TEST", f"not ({alarm} or x)")]
+        for src in covered:
+            assert self._read(src)[1] == [], src
+        for src in reported:
+            assert self._read(src)[1] == [self._S + "_arm"], src
+
+    def test_a_walrus_guard_holds_where_it_is_bound_and_after(self):
+        """A walrus is read through to its value, and the name it binds guards
+        what follows; one binding the guard's ``not`` guards nothing."""
+        branch = ("import signal\ndef _arm():\n    if (has_alarm := hasattr(signal, 'SIGALRM')):\n"
+                  "        signal.alarm(1)\n    if has_alarm:\n        signal.alarm(0)\n")
+        exit_ = ("import signal\ndef _arm():\n    if not (has_alarm := hasattr(signal, 'SIGALRM')):\n"
+                 "        return\n    signal.alarm(1)\n")
+        exit_inverted = exit_.replace("not (has_alarm := hasattr(signal, 'SIGALRM'))",
+                                      "(no_alarm := not hasattr(signal, 'SIGALRM'))")
+        branch_inverted = ("import signal\ndef _arm():\n    if (no_alarm := not hasattr(signal, 'SIGALRM')):\n"
+                           "        signal.alarm(1)\n")
+        assert exit_inverted != exit_
+        for src in (branch, exit_, exit_inverted):
+            assert self._read(src)[1] == [], src
+        assert self._read(branch_inverted)[1] == [self._S + "_arm"]
 
 
 # ---------------------------------------------------------------------------

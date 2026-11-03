@@ -38,12 +38,14 @@ import importlib.util
 import json
 import os
 import re
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 import pytest
+
+from tests._guard_fixture import carry_protected_tree
+from tests._hook_spawn import run_hook_through
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOK = REPO_ROOT / "tools" / "cc" / "hooks" / "write_guard.py"
@@ -77,16 +79,21 @@ def _decide(tool: str, command: str, project: Path) -> bool:
     earlier probe in this class counted rc=1 (an ImportError) as ALLOW and
     reported that HEAD permitted a catastrophic delete -- the flattering answer,
     from a broken instrument. Raising is what makes that impossible here.
+
+    Through the one hook spawn (``tests/_hook_spawn.py``): the budget's refusal
+    is a deny on this same channel, so read here it was the SOFT tier's first
+    deny on a loaded runner (DEF-5066). The helper retries it once, and not
+    after a miss that left state a retry would read as the re-issue.
     """
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = str(project)
     # An adopter is not in maintenance mode, and the tier under test is not
     # bypassable by it anyway. Strip the developer's ambient shell either way.
     env.pop("ESPALIER_MAINTENANCE_MODE", None)
-    proc = subprocess.run(
+    proc = run_hook_through(
         [sys.executable, str(HOOK)],
         input=json.dumps({"tool_name": tool, "tool_input": {"command": command}}),
-        capture_output=True, text=True, encoding="utf-8", timeout=30, env=env,
+        env=env,
     )
     if proc.returncode == 1:
         raise AssertionError(f"write_guard errored (rc=1): {(proc.stderr or '')[-400:]}")
@@ -100,10 +107,14 @@ def _tier(tool: str, command: str) -> str:
     tell it from a wall -- which is exactly the distinction that mattered: nine
     of fifteen ordinary relative cleans were HARD on PowerShell and SOFT on
     Bash, and a one-shot probe reports both as "denied".
+
+    The project carries every protected directory the hook tree declares
+    (the rehearsal's ``carry_protected_tree``, DEF-811), so an ALLOW here is
+    never a deny the fixture suppressed by lacking the directory. Its root is
+    tempfile's own, as before.
     """
     with tempfile.TemporaryDirectory() as td:
-        project = Path(td)
-        (project / ".claude").mkdir()
+        project = carry_protected_tree(Path(td), HOOK)
         if not _decide(tool, command, project):
             return "ALLOW"
         return "SOFT" if not _decide(tool, command, project) else "HARD"
@@ -1138,6 +1149,19 @@ class TestTheInstrumentReportsBothVerdicts:
     def test_an_ordinary_command_is_allowed(self):
         assert _tier("PowerShell", "Get-Date") == "ALLOW"
         assert _tier("Bash", "ls -la") == "ALLOW"
+
+    @pytest.mark.parametrize("cd_into, target", [
+        ("tools/cc", "hooks/probe.py"),
+        (".espalier", "integrity.json"),
+        (".github/workflows", "harness-guard.yml"),
+    ])
+    def test_a_write_from_inside_a_protected_directory_is_denied(self, cd_into, target):
+        """The project carries the protected tree (DEF-811). A relative write
+        judged from the command's own directory resolves only when that
+        directory exists, and the project this fixture built until 2026-11-02
+        held `.claude/` alone: there these read ALLOW, a deny the fixture
+        suppressed, which an ALLOW-asserting row would have banked."""
+        assert _tier("Bash", f"cd {cd_into} && echo x > {target}") == "HARD"
 
 
 class TestInertCommandsAreNotRefused:

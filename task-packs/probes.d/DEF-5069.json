@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5069",
+ "subject": "tests/_ledger_rules.py",
+ "cmd": "python3 -c \"import sys;sys.path.insert(0,'.');import tests._ledger_rules as r;q=chr(96);f='task-packs/ledger.d/X.md';a='| x | '+q+'TP'+'-99999'+q+' |';c='| x | [y](../../'+'no-such-dir/z.md) |';print([r.breaks(f,a,notes=[])==[],r.breaks(f,c,notes=[])==[]])\"",
+ "open_value": "[True, True]",
+ "why_not": null,
+ "row_sha": "28bebf43540b",
+ "text_sha": "a06bda6e6a4b",
+ "verified_2026_11_02": "OPEN (filed 2026-11-02; probe driven at filing here and in the export of HEAD 5e5b07f81b97)"
+}
