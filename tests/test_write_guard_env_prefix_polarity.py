@@ -258,7 +258,8 @@ _CMD_SET_REACH = [
     ("bash", f"cmd //c 'set {ENV_VAR}=1 && claude -p x'"),
     ("bash", f"cmd //c 'set \"{ENV_VAR}=1\" && claude -p x'"),
     ("bash", f"cmd //c 'set {ENV_VAR}=1&& claude -p x'"),
-    # spellings around the same reach: the opener's case and suffix, switches
+    # spellings around the same reach: the switch's case and the head's suffix
+    # (the head's own case is in _CMD_SET_BY_PATH_OR_QUOTED below), switches
     # before /c, a single `&`, the npm shim, the set mid-payload, `set /a`,
     # the other harness variable, an opener after a separator
     ("ps", f'cmd.exe /C "set {STOP}=full && claude"'),
@@ -282,6 +283,36 @@ _CMD_SET_REACH = [
     # the elevation idiom: `-Verb` is Verb's, not a prefix of `-Verbose`
     ("ps", f"Start-Process cmd -Verb RunAs -ArgumentList '/c','set {ENV_VAR}=1','&&','claude'"),
 ]
+
+# DEF-1071 (a): cmd given by path or in quotes. The check's own openers ended
+# before a quoted head's closing quote, so the switch walk started on the quote
+# and read no program, and the PowerShell one took no path; each of these
+# allowed until the check moved onto the delete reader's openers. One template
+# per shape, read twice: with `claude` it is a deny row, with `pytest` its
+# must-allow twin (the variable reaching a real invocation); a new shape of the
+# check goes here, so its twin comes with it. The last three are the head in
+# upper and mixed case, which both pairs of openers read case-blind (the head's
+# inline flag, and on PowerShell the opener's compile flag): pinned against a
+# tidy-up that drops either flag, which no other row would notice.
+_CMD_SET_BY_PATH_OR_QUOTED = [
+    ("bash", "\"cmd\" //c 'set {var}=1 && {run}'"),
+    ("bash", "'cmd.exe' //c 'set {var}=1 && {run}'"),
+    ("bash", "\"/c/Windows/System32/cmd.exe\" //c 'set {var}=1 && {run}'"),
+    ("ps", "C:\\Windows\\System32\\cmd.exe /c \"set {var}=1 && {run}\""),
+    ("ps", "C:/Windows/System32/cmd.exe /c 'set {var}=1 && {run}'"),
+    ("ps", ".\\cmd.exe /c 'set {var}=1 && {run}'"),
+    ("ps", "& \"C:\\Windows\\System32\\cmd.exe\" /c \"set {var}=1 && {run}\""),
+    ("ps", "& 'cmd.exe' /c 'set {var}=1 && {run}'"),
+    ("ps", "& \"cmd\" /c \"set {var}=1 && {run}\""),
+    ("ps", "Start-Process 'C:\\Windows\\System32\\cmd.exe' -ArgumentList '/c set {var}=1 && {run}'"),
+    ("ps", "Start-Process \"cmd\" -ArgumentList '/c set {var}=1 && {run}'"),
+    ("ps", "Start-Process C:\\Windows\\System32\\cmd.exe -ArgumentList '/c set {var}=1 && {run}'"),
+    ("bash", "CMD.EXE //c 'set {var}=1 && {run}'"),
+    ("ps", "Cmd.Exe /c 'set {var}=1 && {run}'"),
+    ("ps", "& 'C:\\WINDOWS\\System32\\CMD.EXE' /c 'set {var}=1 && {run}'"),
+]
+_CMD_SET_REACH += [(shell, t.format(var=ENV_VAR, run="claude -p x"))
+                   for shell, t in _CMD_SET_BY_PATH_OR_QUOTED]
 
 
 def _dispatch(shell: str):
@@ -316,6 +347,18 @@ def test_cmd_exe_set_then_claude_denies(shell, command):
     ("ps", f"Start-Process cmd -Verb RunAs -ArgumentList '/c','set {ENV_VAR}=1','&&','pytest'"),
     ("ps", 'Write-Output "Start-Process cmd -ArgumentList '
            + f"'/c set {ENV_VAR}=1 && claude -p x'" + '"'),
+    # DEF-1071 (a)'s twins: each by-path or quoted shape before a real
+    # invocation, then the shapes as mentions (a double-quoted string the
+    # masker keeps, a here-string, a commit message), a binary whose name only
+    # ends in cmd, cmd's path as an argument, and another variable
+    *[(shell, t.format(var=ENV_VAR, run="pytest -q")) for shell, t in _CMD_SET_BY_PATH_OR_QUOTED],
+    ("ps", f"Write-Output \"& 'C:\\Windows\\System32\\cmd.exe' /c set {ENV_VAR}=1 && claude -p x\""),
+    ("ps", f"$s = @'\nC:\\Windows\\System32\\cmd.exe /c set {ENV_VAR}=1 && claude -p x\n'@"),
+    ("bash", f"git commit -m 'docs: \"cmd\" //c set {ENV_VAR}=1 && claude is refused'"),
+    ("ps", f"& 'C:\\tools\\mycmd.exe' /c 'set {ENV_VAR}=1 && claude -p x'"),
+    ("bash", f"/opt/xcmd //c 'set {ENV_VAR}=1 && claude -p x'"),
+    ("ps", f"Get-Item C:\\Windows\\System32\\cmd.exe; Write-Output 'cmd /c set {ENV_VAR}=1 && claude -p x'"),
+    ("bash", "\"cmd\" //c 'set ESPALIER_OTHER=1 && claude -p x'"),
 ])
 def test_cmd_exe_set_before_a_real_invocation_is_allowed(shell, command):
     assert not _denies(_dispatch(shell), command)
