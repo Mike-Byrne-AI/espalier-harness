@@ -8,6 +8,15 @@ This pins the zero-corpus floor and prevents that silent vacuous pass.
 """
 from __future__ import annotations
 
+import contextlib
+import importlib.util
+import io
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
 from bench.run_benchmark import (
     _is_deny,
     check_pass_conditions,
@@ -224,3 +233,193 @@ class TestBC029InvokerRunsTheRealExtractor:
         assert "not importable" not in res.reason, res.reason
         assert "vacuous" not in res.reason, res.reason
         assert res.blocked is True, res.reason
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+HOOKS = REPO_ROOT / "tools" / "cc" / "hooks"
+BENCH = REPO_ROOT / "bench"
+
+
+def _refusal(monkeypatch) -> str:
+    """write_guard's time-budget refusal as the hook prints it: its own
+    ``deny`` over the live template at the live budget."""
+    monkeypatch.syspath_prepend(str(HOOKS))
+    import _denial_reasons
+    import write_guard
+
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        write_guard.deny(_denial_reasons.WRITE_GUARD_TIME_BUDGET.format(budget=write_guard.JUDGMENT_BUDGET_S))
+    return out.getvalue()
+
+
+class _Answers:
+    """A stand-in for a bench module's ``run_bounded``: each call answers the
+    next stdout in turn with exit 0, and is counted."""
+
+    def __init__(self, *stdouts: str):
+        self.stdouts = list(stdouts)
+        self.calls = 0
+
+    def __call__(self, argv, **kwargs) -> subprocess.CompletedProcess:
+        self.calls += 1
+        return subprocess.CompletedProcess(argv, 0, stdout=self.stdouts.pop(0), stderr="")
+
+
+class TestTheBudgetsRefusalIsNoVerdict:
+    """DEF-5071: write_guard's time budget refuses a judgment that outruns
+    3.5 s with a deny on the decision channel, exit 0, that judged nothing.
+    The bench's reader (``bench/run_benchmark.py``, which every bench reader
+    of the deny goes through) knows it by the template the hook tree words
+    it with, retries it once where the refused call left no state, and
+    otherwise has no verdict to give."""
+
+    def test_the_reader_knows_the_refusal_and_only_it(self, monkeypatch, tmp_path):
+        import bench.run_benchmark as rb
+
+        refusal = _refusal(monkeypatch)
+        import write_guard
+
+        judged = io.StringIO()
+        with contextlib.redirect_stdout(judged):
+            write_guard.deny("Command blocked: a judged deny, whatever its reason.")
+        assert rb.budget_refused(refusal, HOOKS) is True
+        assert rb.budget_refused(judged.getvalue(), HOOKS) is False
+        assert rb.budget_refused("", HOOKS) is False
+        assert rb.budget_refused("not json", HOOKS) is False
+        # A tree with no such template (one older than the budget, or a
+        # stand-in hook) has no refusal to read.
+        assert rb.budget_refused(refusal, tmp_path) is False
+
+    def test_a_refusal_that_left_no_state_is_retried_once(self, monkeypatch, tmp_path, capsys):
+        import bench.run_benchmark as rb
+
+        answers = _Answers(_refusal(monkeypatch), "")
+        proc = rb.judged_within_budget(lambda: answers(["write_guard.py"]), HOOKS, tmp_path)
+        assert (proc.stdout, answers.calls) == ("", 2)
+        assert "retrying it once" in capsys.readouterr().err
+
+    def test_a_second_refusal_is_no_verdict(self, monkeypatch, tmp_path):
+        import bench.run_benchmark as rb
+
+        refusal = _refusal(monkeypatch)
+        answers = _Answers(refusal, refusal)
+        with pytest.raises(rb.BudgetMiss, match="refused the call twice"):
+            rb.judged_within_budget(lambda: answers(["write_guard.py"]), HOOKS, tmp_path)
+        assert answers.calls == 2
+
+    def test_a_refusal_that_left_state_is_not_retried(self, monkeypatch, tmp_path):
+        """A nudge the refused judgment fired would read the retry as its
+        re-issue and answer differently."""
+        import bench.run_benchmark as rb
+
+        answers = _Answers(_refusal(monkeypatch), "")
+
+        def spawn():
+            (tmp_path / ".espalier-state").mkdir(exist_ok=True)
+            (tmp_path / ".espalier-state" / "nudge").write_text("fired", encoding="utf-8")
+            return answers(["write_guard.py"])
+
+        with pytest.raises(rb.BudgetMiss, match="left state"):
+            rb.judged_within_budget(spawn, HOOKS, tmp_path)
+        assert answers.calls == 1
+
+    def test_is_deny_never_scores_the_refusal(self, monkeypatch):
+        import bench.run_benchmark as rb
+
+        with pytest.raises(rb.BudgetMiss):
+            rb._is_deny(_refusal(monkeypatch), 0)
+
+    def test_the_attempt_loop_lets_the_miss_through(self, monkeypatch):
+        """Its broad arm scores any other exception as not blocked, which an
+        out-of-scope row reads as the allow it expects."""
+        import bench.run_benchmark as rb
+
+        def refused(attempt, project):
+            raise rb.BudgetMiss("refused twice")
+
+        monkeypatch.setattr(rb, "setup_baseline", lambda name, project: None)
+        monkeypatch.setitem(rb.BASELINE_INVOKERS, "espalier", {"refused": refused})
+        corpus = [{"id": "BC-T", "in_scope": False, "canonical_attempts": [
+            {"attempt_id": "BC-T-a1", "verifier": "refused", "expected_outcome": "allowed"}]}]
+        with pytest.raises(rb.BudgetMiss):
+            rb.run_baseline("espalier", corpus)
+
+    def test_the_run_exits_3_with_no_verdict(self, monkeypatch, tmp_path, capsys):
+        import bench.run_benchmark as rb
+
+        monkeypatch.setattr(rb, "RESULTS_DIR", tmp_path / "results")
+
+        def run(name, corpus):
+            raise rb.BudgetMiss("refused twice")
+
+        monkeypatch.setattr(rb, "run_baseline", run)
+        assert rb.main(["--quiet", "--baseline", "espalier"]) == 3
+        assert "NO VERDICT" in capsys.readouterr().err
+        assert list((tmp_path / "results").iterdir()) == []
+        assert rb.ROOT_SHAPE == "plain"
+
+
+@pytest.fixture
+def load_bench():
+    """Load ``bench/<name>.py`` by path under an alias (tests/CLAUDE.md). The
+    tier benches import the rehearsal by its bare name after a sys.path
+    insert: both are put back after the test."""
+    path = list(sys.path)
+    saved = sys.modules.get("powershell_guard_rehearsal")
+
+    def load(name: str):
+        spec = importlib.util.spec_from_file_location(f"_budget_reader_{name}", BENCH / f"{name}.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    yield load
+    sys.path[:] = path
+    if saved is None:
+        sys.modules.pop("powershell_guard_rehearsal", None)
+    else:
+        sys.modules["powershell_guard_rehearsal"] = saved
+
+
+#: Each bench reader of write_guard's deny, driven with a command the guard
+#: allows, and what it answers for an allow.
+_READERS = [
+    pytest.param("guard_metamorphic", lambda m, p: m.guard_tier("ls -la", "Bash"), "ALLOW",
+                 id="guard_metamorphic.guard_tier"),
+    pytest.param("powershell_reachability_differential", lambda m, p: m.guard_tier("Get-Date"), "ALLOW",
+                 id="powershell_reachability_differential.guard_tier"),
+    pytest.param("powershell_guard_rehearsal", lambda m, p: m._tier(HOOKS / "write_guard.py", "Bash", "ls"),
+                 "ALLOW", id="powershell_guard_rehearsal._tier"),
+    pytest.param("reachability_differential", lambda m, p: m.guard_denies("ls", HOOKS, str(p)), False,
+                 id="reachability_differential.guard_denies"),
+    pytest.param("run_benchmark", lambda m, p: m.invoke_real_write_guard(
+        {"tool_name": "Bash", "tool_input": {"command": "ls"}}, p).blocked, False,
+                 id="run_benchmark.invoke_real_write_guard"),
+]
+
+
+class TestEveryBenchReaderTellsTheBudgetFromAVerdict:
+    """DEF-5071: each bench reader of write_guard's deny, its spawn answering
+    the budget's refusal first. Read as a verdict, the refusal turned an
+    ALLOW tier into SOFT, a guard_denies call into a deny and the release
+    gate's row into a block; each reader now retries it and reads the allow,
+    and a refusal that comes twice is no verdict."""
+
+    @pytest.mark.parametrize(("name", "read", "allowed"), _READERS)
+    def test_a_refusal_then_an_allow_reads_as_the_allow(
+            self, load_bench, monkeypatch, tmp_path, name, read, allowed):
+        module = load_bench(name)
+        answers = _Answers(_refusal(monkeypatch), "")
+        monkeypatch.setattr(module, "run_bounded", answers)
+        assert read(module, tmp_path) == allowed
+        assert answers.calls == 2
+
+    @pytest.mark.parametrize(("name", "read", "allowed"), _READERS)
+    def test_a_refusal_twice_is_no_verdict(self, load_bench, monkeypatch, tmp_path, name, read, allowed):
+        module = load_bench(name)
+        refusal = _refusal(monkeypatch)
+        monkeypatch.setattr(module, "run_bounded", _Answers(refusal, refusal))
+        with pytest.raises(RuntimeError, match="refused the call twice") as caught:
+            read(module, tmp_path)
+        assert type(caught.value).__name__ == "BudgetMiss"
