@@ -916,11 +916,14 @@ class TestTheLiveProbeFile:
         id_shaped = re.compile(r"^[A-Z]{2,5}-\d+[a-z]?$")
         owners = [here, rules, *(v for v in vars(here).values()
                                  if isinstance(v, type) and v.__module__ == here.__name__)]
-        expected = {(name, k) for owner in owners for name, value in vars(owner).items()
-                    if name.lstrip("_").isupper() and isinstance(value, (dict, set, frozenset))
+        tables = [(name, value) for owner in owners for name, value in vars(owner).items()
+                  if name.lstrip("_").isupper() and isinstance(value, (dict, set, frozenset))]
+        # A table is found by its name, never by the ids it holds: a baseline
+        # can drain to empty (SPAWNS_A_LITERAL_INTERPRETER, 2026-11-03).
+        assert {name for name, _ in tables} >= {"_NAMED_NOT_READ", "TEXT_OVER_OWN_SUBJECT",
+                                                "SPAWNS_A_LITERAL_INTERPRETER"}, sorted({n for n, _ in tables})
+        expected = {(name, k) for name, value in tables
                     for k in value if isinstance(k, str) and id_shaped.match(k)}
-        assert {name for name, _ in expected} >= {"_NAMED_NOT_READ", "TEXT_OVER_OWN_SUBJECT",
-                                                  "SPAWNS_A_LITERAL_INTERPRETER"}, expected
         hits = lr._baselined_in_tests(REPO_ROOT, sorted({k for _, k in expected}))
         got = {m.groups() for h in hits if (m := re.search(r": (\w+) holds (\S+)$", h))}
         assert got == expected, {"missed": sorted(expected - got), "over-read": sorted(got - expected)}

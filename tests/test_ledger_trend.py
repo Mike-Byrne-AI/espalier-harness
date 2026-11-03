@@ -282,6 +282,46 @@ class TestTheDefaultRef:
         self._point_origin_main(record_repo, _git(record_repo, "commit-tree", empty_tree, "-m", "no ledger").strip())
         assert lt.default_ref(record_repo, LEDGER) == "record"
 
+    @staticmethod
+    def _kill_the_base_read(lt, monkeypatch) -> list:
+        """The merge rules' own spawn kills ``git symbolic-ref`` at its cap, as
+        a loaded box does; every other git read the script makes is recorded."""
+        rules = lt._merge_rules()
+        real = rules.run_bounded
+
+        def killed(args, *a, **kw):
+            if "symbolic-ref" in list(args):
+                raise subprocess.TimeoutExpired(list(args), kw.get("timeout") or 0)
+            return real(args, *a, **kw)
+
+        monkeypatch.setattr(rules, "run_bounded", killed)
+        monkeypatch.setattr(lt, "_merge_rules", lambda: rules)
+        seen: list = []
+        real_git = lt._git
+        monkeypatch.setattr(lt, "_git", lambda repo, *args: (seen.append(args), real_git(repo, *args))[1])
+        return seen
+
+    def test_a_base_read_that_did_not_answer_reads_no_ref(self, lt, record_repo, monkeypatch):
+        """DEF-5079: a killed base read was ``main``, so the snapshots came from
+        ``origin/main`` whatever the remote's default is (and on a clone whose
+        default is another branch, from ``record`` past a base with no ledger).
+        Dies to: ``base_branch``'s ``main`` taken for a name again."""
+        self._point_origin_main(record_repo, _git(record_repo, "rev-parse", "record").strip())
+        seen = self._kill_the_base_read(lt, monkeypatch)
+        assert lt.default_ref(record_repo, LEDGER) is None
+        assert not [args for args in seen if any(str(a).startswith("origin/") for a in args)]
+
+    def test_main_says_the_base_read_did_not_answer_and_reads_nothing(self, lt, record_repo, monkeypatch, capsys):
+        """The line the read fills says it did not answer and names ``--ref``;
+        no trend is printed from a guessed branch."""
+        self._point_origin_main(record_repo, _git(record_repo, "rev-parse", "record").strip())
+        self._kill_the_base_read(lt, monkeypatch)
+        assert lt.main(["--repo", str(record_repo)]) == 2
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "did not answer" in captured.err and "--ref origin/<base>" in captured.err
+        assert "carries no ledger" not in captured.err
+
 
 class TestItFailsHonestly:
     def test_a_missing_ref_is_a_note_not_a_crash(self, lt, tmp_path, capsys):

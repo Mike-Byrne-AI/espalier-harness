@@ -32,6 +32,10 @@ from pathlib import Path
 
 import pytest
 
+from tests._hook_runner import LAUNCHER_FLAG as _LAUNCHER_FLAG
+from tests._hook_runner import iter_hooks as _iter_hooks
+from tests._hook_runner import script_arg as _script_arg
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # The bare interpreter names `cli._detect_python_command` can wire: "python",
@@ -39,16 +43,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # version flag leading `args`, on a host where only the launcher runs).
 # Portable = on PATH, not absolute.
 _PORTABLE_INTERPRETERS = {"python", "python3", "py"}
-_LAUNCHER_FLAG = re.compile(r"-3(\.\d+)?(-(32|64|arm64))?")
-
-
-def _script_arg(hook: dict) -> str:
-    """The program slot of an exec-form hook: ``args[0]``, or ``args[1]``
-    behind the launcher's version flag (``py -3 <hook>``)."""
-    args = hook.get("args", [])
-    if hook.get("command") == "py" and args and _LAUNCHER_FLAG.fullmatch(args[0]):
-        return args[1] if len(args) > 1 else ""
-    return args[0] if args else ""
 
 
 @pytest.fixture
@@ -65,13 +59,6 @@ def initialized_repo(tmp_path: Path) -> Path:
 
 def _load_settings(repo: Path) -> dict:
     return json.loads((repo / ".claude" / "settings.json").read_text(encoding="utf-8"))
-
-
-def _iter_hooks(settings: dict):
-    for event, entries in settings.get("hooks", {}).items():
-        for entry in entries:
-            for hook in entry.get("hooks", []):
-                yield event, hook
 
 
 @pytest.mark.integration
@@ -1277,30 +1264,22 @@ class TestInitOnTheTwoInterpreterHosts:
         """Run the wired entry as Claude Code would -- `command` resolved on
         PATH (here through `shutil.which`, which also finds the stub's `.cmd`;
         the real launcher is an `.exe` either way), `args` verbatim with the
-        project placeholder expanded -- and ask it to write under the
-        protected `tools/cc/` zone."""
+        project placeholder expanded (``tests/_hook_runner.py::run_hook_as_wired``)
+        -- and ask it to write under the protected `tools/cc/` zone."""
         from tests import _interpreter_hosts as hosts
         from tests._hook_assertions import assert_hook_denied
-        from tests._hook_spawn import not_a_budget_miss
+        from tests._hook_runner import run_hook_as_wired
 
-        repo, bin_dir, settings, _ = self._init(tmp_path, hosts.LAUNCHER_ONLY)
-        entry = next(
-            h for _, h in _iter_hooks(settings)
-            if _script_arg(h).endswith("/write_guard.py")
+        repo, bin_dir, _, _ = self._init(tmp_path, hosts.LAUNCHER_ONLY)
+        result = run_hook_as_wired(
+            repo, "write_guard.py",
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Write",
+                "tool_input": {"file_path": str(repo / "tools" / "cc" / "planted.py"), "content": "x"},
+            },
+            path=hosts.path_with(bin_dir),
+            # the zone check is what is under test
+            env_overrides={"ESPALIER_MAINTENANCE_MODE": None},
         )
-        command = shutil.which(entry["command"], path=str(bin_dir))
-        assert command, f"{entry['command']!r} does not resolve on the launcher-only host"
-        args = [a.replace("${CLAUDE_PROJECT_DIR}", str(repo)) for a in entry["args"]]
-        env = {**os.environ, "PATH": hosts.path_with(bin_dir), "CLAUDE_PROJECT_DIR": str(repo)}
-        env.pop("ESPALIER_MAINTENANCE_MODE", None)  # the zone check is what is under test
-        payload = {
-            "hook_event_name": "PreToolUse",
-            "tool_name": "Write",
-            "tool_input": {"file_path": str(repo / "tools" / "cc" / "planted.py"), "content": "x"},
-            "cwd": str(repo),
-        }
-        result = not_a_budget_miss(subprocess.run(
-            [command, *args], input=json.dumps(payload), cwd=repo, env=env,
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45,
-        ))
         assert_hook_denied(result)

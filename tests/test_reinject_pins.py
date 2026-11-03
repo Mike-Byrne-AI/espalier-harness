@@ -409,7 +409,7 @@ class TestBashDerivedPaths:
         file, in a scratch self-host tree, because the bridge fires only for a
         path that exists."""
         from _hook_utils import is_self_host_repo
-        from tests.test_hooks import run_hook
+        from tests._hook_runner import run_hook
         root = self._scratch_self_host(tmp_path)
         assert is_self_host_repo(root), "the scratch tree must read as self-host, or the drive is vacuous"
         probe = root / "tests" / "test_zz_probe_only_pins_drive.py"

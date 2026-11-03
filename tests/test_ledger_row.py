@@ -2682,6 +2682,78 @@ class TestAStrikeReadsTheBaseAndTheHead:
         assert "reads its open value '1' at the head too" in capsys.readouterr().err
 
 
+class TestAGitReadThatDidNotAnswerSaysSo:
+    """DEF-5079: ``_git_read`` answered None for a git killed at the probe
+    runner's bound, so a killed ``origin/HEAD`` read fell through to a stale
+    ``origin/main`` (the strike's base drive on the wrong branch) or to no
+    base, said as a clone with no remote, and the filing's export drive said
+    the root was no checkout. Each now says git did not answer, in the line
+    the read fills. Dies to: the timeout folded into ``_git_read``'s None."""
+
+    @staticmethod
+    def _kill(lr, monkeypatch, word: str) -> None:
+        """The probe runner's bounded spawn kills the git command naming
+        ``word`` at its cap, as a loaded box does; every other one runs."""
+        real = lr._CHK.run_bounded
+
+        def killed(args, *a, **kw):
+            if list(args[:1]) == ["git"] and word in list(args):
+                raise subprocess.TimeoutExpired(list(args), kw.get("timeout") or 0)
+            return real(args, *a, **kw)
+
+        monkeypatch.setattr(lr._CHK, "run_bounded", killed)
+
+    def test_a_killed_default_base_read_is_not_a_stale_origin_main(self, lr, tmp_path, monkeypatch):
+        from tests._git_oracle import _git_env
+
+        r = _two_commit_repo(tmp_path, remote="trunk")
+        subprocess.run(["git", "update-ref", "refs/remotes/origin/main", r["head"]], cwd=r["repo"],
+                       env=_git_env(), check=True, capture_output=True)
+        assert lr._base_commit(r["repo"], None) == (r["base"], "the merge-base of HEAD and origin/trunk")
+        self._kill(lr, monkeypatch, "symbolic-ref")
+        with pytest.raises(lr._GitUnanswered, match=r"^git symbolic-ref did not answer in 30s$"):
+            lr._base_commit(r["repo"], None)
+
+    @pytest.mark.parametrize("guard", [True, False], ids=["with-a-guard", "no-guard"])
+    def test_a_strike_whose_base_read_did_not_answer_refuses_and_writes_nothing(
+            self, lr, tmp_path, monkeypatch, capsys, guard):
+        """With no guard the strike went ahead on a note, the base drive
+        skipped, where a run again would read it (the failure-mode review drove
+        it). It refuses whatever its flags."""
+        r = _two_commit_repo(tmp_path, remote="trunk")
+        before = _files(r)
+        self._kill(lr, monkeypatch, "symbolic-ref")
+        rest = ("--guard", "tests/test_guard.py::test_answer") if guard else ()
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]), *rest)) == 2
+        err = capsys.readouterr().err
+        assert ("the base could not be read (git symbolic-ref did not answer in 30s), so neither side was "
+                "driven: run the strike again") in err
+        assert "no remote" not in err
+        assert _files(r) == before
+
+    @pytest.mark.parametrize("dry_run", [False, True], ids=["writing", "dry-run"])
+    def test_a_read_no_line_catches_refuses_by_name(self, lr, tmp_path, monkeypatch, capsys, dry_run):
+        """The backstop for a read added later outside both catches: a refusal
+        naming it, never a traceback."""
+        r = _two_commit_repo(tmp_path)
+
+        def unanswered(*a, **k):
+            raise lr._GitUnanswered("git log did not answer in 30s")
+
+        monkeypatch.setattr(lr, "_dispatch", unanswered)
+        flags = ("--dry-run",) if dry_run else ()
+        assert lr.main(_repo_args(r, *flags, "strike", "DEF-1", "--text-file", str(r["closing"]))) == 2
+        assert "refused -- git log did not answer in 30s: nothing written" in capsys.readouterr().err
+
+    def test_a_filing_whose_export_read_did_not_answer_says_so(self, lr, tmp_path, monkeypatch, capsys):
+        r = _two_commit_repo(tmp_path)
+        self._kill(lr, monkeypatch, "--show-toplevel")
+        refusal, said = lr._head_export_reading(r["repo"], {}, no_base=False)
+        assert refusal is None
+        assert said == "here; the export of HEAD not driven: git rev-parse did not answer in 30s"
+        assert "not the top level" not in capsys.readouterr().err
+
+
 #: A probe that reads the checkout alone: ``.git`` is there and not in the
 #: export. Read without asking git, so a temp folder that sits inside some
 #: other repository cannot answer for the export.
@@ -2995,16 +3067,18 @@ class TestTheContentRulesRunBeforeTheWrite:
         assert [r for r, _ in breaks(rel, capped)] == [MEMORY_CAP_RULE]
         assert breaks(rel, "| the memory file stays under its line cap |") == []
 
-    def test_the_real_rules_name_a_phantom_citation_and_both_probe_shapes(self):
+    def test_the_real_rules_name_a_phantom_citation_and_both_probe_shapes(self, monkeypatch):
         """The cited-path rule reads a drafted row as its test reads a doc
         (a file git does not track, a symbol its file does not define, a
         struck row read as the record it is), and the probe-shape ratchet
         reads a drafted probe with its baselines (a text read of its own
         subject, a bare interpreter spawned inside the program, each let
         through for an id its baseline holds). Mutation: any of the three
-        dropped from ``breaks``, or a baseline not consulted."""
-        from tests._ledger_rules import (CITED_PATH_RULE, LITERAL_SPAWN_RULE, PAPERWORK_PROBE_RULE,
-                                         SPAWNS_A_LITERAL_INTERPRETER, TEXT_OVER_OWN_SUBJECT, breaks)
+        dropped from ``breaks``, or a baseline not consulted. Each baseline is
+        handed the drafted id here, never read for a live member, since a
+        baseline drains to empty (SPAWNS_A_LITERAL_INTERPRETER, 2026-11-03)."""
+        import tests._ledger_rules as rules
+        from tests._ledger_rules import CITED_PATH_RULE, LITERAL_SPAWN_RULE, PAPERWORK_PROBE_RULE, breaks
         rel = "task-packs/ledger.d/DEF-9.md"
         cites = "| `DEF-9` | a | `tools/cc/no_such_tool.py` and `tools/cc/ledger_row.py::no_such_verb` |"
         assert [(r, w.split(",")[0]) for r, w in breaks(rel, cites)] == [
@@ -3014,11 +3088,13 @@ class TestTheContentRulesRunBeforeTheWrite:
         assert breaks(rel, "| ~~`DEF-9`~~ | a | `tools/cc/no_such_tool.py` |") == []
         reads = {"id": "DEF-9", "subject": "docs/X.md", "cmd": "grep -c x docs/X.md"}
         assert [r for r, _ in breaks(rel, "", reads)] == [PAPERWORK_PROBE_RULE]
-        assert breaks(rel, "", {**reads, "id": sorted(TEXT_OVER_OWN_SUBJECT)[0]}) == []
         assert breaks(rel, "", {**reads, "cmd": "python3 -c \"import ast;ast.parse(open('docs/X.md').read())\""}) == []
         spawns = {"id": "DEF-9", "subject": "a.py", "cmd": "python3 -c \"import subprocess;subprocess.run(['python3','a.py'])\""}
         assert [r for r, _ in breaks(rel, "", spawns)] == [LITERAL_SPAWN_RULE]
-        assert breaks(rel, "", {**spawns, "id": sorted(SPAWNS_A_LITERAL_INTERPRETER)[0]}) == []
+        monkeypatch.setattr(rules, "TEXT_OVER_OWN_SUBJECT", {"DEF-9"})
+        monkeypatch.setattr(rules, "SPAWNS_A_LITERAL_INTERPRETER", frozenset({"DEF-9"}))
+        assert breaks(rel, "", reads) == []
+        assert breaks(rel, "", spawns) == []
 
     def test_a_census_site_states_the_cap_as_often_as_the_census_says(self):
         """A ledger row the cap census holds to one statement of the cap is

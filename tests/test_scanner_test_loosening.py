@@ -451,6 +451,57 @@ def test_nondiscriminating_hook_deny_detects_underscore_run_hook(tmp_path) -> No
     )
 
 
+def test_both_hook_arms_read_the_wired_launcher(tmp_path) -> None:
+    """The adopter-axes pack's 2-B: ``tests/_hook_runner.py::run_hook_as_wired``
+    launches a hook the way an adopter's settings wire it, and a test on it that
+    observes only ``.returncode`` is the same non-discriminating shape as one on
+    ``run_hook``: under channel-XOR a deny and an over-block are both exit 0.
+    Its name is in ``_HOOK_INVOKERS``, so a returncode-only deny test and allow
+    test on it each fire their arm, and their twins that read the decision
+    channel clear."""
+    planted = (
+        "def test_denies_a_protected_write_as_wired():\n"
+        "    r = run_hook_as_wired(tree, 'write_guard.py', payload)\n"
+        "    assert r.returncode == 0\n"
+        "def test_allows_a_plain_read_as_wired():\n"
+        "    r = run_hook_as_wired(tree, 'write_guard.py', payload)\n"
+        "    assert r.returncode == 0\n"
+        "def test_denies_a_protected_write_as_wired_and_reads_it():\n"
+        "    r = run_hook_as_wired(tree, 'write_guard.py', payload)\n"
+        "    assert r.returncode == 0\n"
+        "    assert_hook_denied(r)\n"
+        "def test_allows_a_plain_read_as_wired_and_reads_it():\n"
+        "    r = run_hook_as_wired(tree, 'write_guard.py', payload)\n"
+        "    assert r.returncode == 0\n"
+        "    assert_hook_allowed(r)\n"
+    )
+    p = tmp_path / "test_wired_launcher_fixture.py"
+    p.write_text(planted, encoding="utf-8")
+    flagged = {
+        (f["function"], f["rule"])
+        for f in scn.scan_file(str(p))["findings"]
+        if f["rule"].startswith("nondiscriminating_hook_")
+    }
+    assert flagged == {
+        ("test_denies_a_protected_write_as_wired", "nondiscriminating_hook_assert"),
+        ("test_allows_a_plain_read_as_wired", "nondiscriminating_hook_allow"),
+    }, f"the hook arms did not read run_hook_as_wired as a hook invoker; flagged {flagged}"
+
+
+def test_every_shared_hook_runner_is_a_hook_invoker() -> None:
+    """The invoker set names functions by hand, so a runner the shared module
+    gains, or a rename of one, would leave tests on it outside both arms with
+    the test above still green on its planted literal. Every top-level
+    ``run_hook*`` function in ``tests/_hook_runner.py`` is in the set."""
+    import ast
+
+    tree = ast.parse((REPO_ROOT / "tests" / "_hook_runner.py").read_text(encoding="utf-8"))
+    runners = {n.name for n in tree.body if isinstance(n, ast.FunctionDef) and n.name.startswith("run_hook")}
+    assert runners >= {"run_hook", "run_hook_as_wired"}, runners
+    assert runners <= scn._HOOK_INVOKERS, (
+        f"shared hook runners outside test_loosening's _HOOK_INVOKERS: {sorted(runners - scn._HOOK_INVOKERS)}")
+
+
 def test_blocked_audit_token_stays_coupled_to_the_hooks_real_block_events(tmp_path):
     """TP-312 coupling-lock. `_observes_decision_channel` recognizes an audit-log
     discrimination via the underscore-anchored `_blocked` token. That token is coupled
