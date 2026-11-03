@@ -22,20 +22,25 @@ no ceiling is armed the factor is 1.
 Call it at the wait, ``timeout=scaled(45)``: a module constant, a default or a
 decorator is evaluated at import, outside every test, and keeps the literal, so
 the contract refuses ``scaled`` there. Pinned by tests/test_timeout_backstop.py.
+
+It reads the backstop conftest registered from ``sys.modules`` and imports
+nothing: a caller outside pytest (a script that reaches tests/_live_tree.py)
+gets the literal without loading pytest, and no second copy of the backstop can
+answer for the one the session armed.
 """
 from __future__ import annotations
 
+import sys
 from typing import Any
 
-try:
-    from tests import _timeout_backstop
-except ImportError:  # the suite's conftest imports its helpers bare, with tests/ on sys.path
-    import _timeout_backstop  # type: ignore[no-redef]
+#: The module tests/conftest.py registers the backstop from.
+BACKSTOP_MODULE = "tests._timeout_backstop"
 
 
 def scaled(seconds: float) -> float:
     """``seconds`` times the running test's ceiling over the one it was judged against."""
-    armed = _timeout_backstop.armed()
+    backstop = sys.modules.get(BACKSTOP_MODULE)
+    armed = backstop.armed() if backstop is not None else None
     if armed is None:
         return seconds
     item, ceiling = armed

@@ -954,7 +954,7 @@ def _wedge_restore(wt: Path) -> tuple[bytes, list[Path]]:
                "tool_input": {"command": "git restore --source=HEAD -- tools/cc/hooks/_reinject.py"}}
     guard = subprocess.run([HOOK_PYTHON, str(wt / "tools" / "cc" / "hooks" / "write_guard.py")],
                            input=json.dumps(payload), capture_output=True, text=True, encoding="utf-8",
-                           errors="replace", cwd=wt, env=env, timeout=50)
+                           errors="replace", cwd=wt, env=env, timeout=scaled(50))
     assert guard.returncode == 0, guard.stderr
     copies = sorted(wt.rglob("*.py.txt"))
     _git(wt, "restore", "--source=HEAD", "--", "tools/cc/hooks/_reinject.py")
@@ -1813,7 +1813,7 @@ class TestACatchUpThatMovesAnImportedHelper:
         driver.write_bytes(_STALE_HELPER_CHILD.encode("utf-8"))
         r = subprocess.run([HOOK_PYTHON, str(driver), str(repo), mode, json.dumps(sites)], capture_output=True,
                            input=json.dumps(payload or self.PAYLOAD), text=True, encoding="utf-8",
-                           errors="replace", timeout=45, env={**os.environ, **(env or {})})
+                           errors="replace", timeout=scaled(45), env={**os.environ, **(env or {})})
         assert r.returncode == 0, r.stderr[-2000:]
         return r.stdout
 

@@ -122,6 +122,7 @@ class TestTheBackstopEndsATestThatBlocksAgain:
             item.cancel_timeout = lambda: plugin_cancels.append(item.nodeid)
 
         monkeypatch.setattr(pytest_timeout, "pytest_timeout_set_timer", plugin_arming)
+        monkeypatch.setattr(backstop, "_ARMED", backstop._ARMED)
         item = SimpleNamespace(stash=pytest.Stash(), nodeid="t.py::test_x")
         settings = pytest_timeout.Settings(30.0, "signal", False, False)
         plugin = backstop.TimeoutBackstop(owns_patch=False)
@@ -269,7 +270,7 @@ def _drive(tmp_path: Path, body: str, *, ceiling: tuple[str, ...] = ("--timeout=
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *ceiling,
          "test_probe.py"],
         cwd=tmp_path, env=env, capture_output=True, text=True, encoding="utf-8",
-        errors="replace", timeout=45,
+        errors="replace", timeout=wb.scaled(45),
     )
     return proc, time.monotonic() - t0
 

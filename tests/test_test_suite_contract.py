@@ -2705,7 +2705,9 @@ def test_a_scaled_budget_is_computed_when_its_wait_runs():
     calls = sum(1 for _, text in modules if "scaled(" in text
                 for n in ast.walk(ast.parse(text))
                 if isinstance(n, ast.Call) and _terminal_name(n.func) == "scaled")
-    assert calls >= 10, f"{calls} scaled() calls under tests/ -- this contract is policing an empty set"
+    assert calls >= 10, (
+        f"{calls} scaled() calls under tests/, fewer than the wedge class's ten git waits: the "
+        "walker stopped finding them, or a wait went back to a literal")
     at_import = [f"tests/{stem}.py:{line}" for stem, text in modules if "scaled(" in text
                  for line in _scaled_at_import(ast.parse(text))]
     assert not at_import, (
