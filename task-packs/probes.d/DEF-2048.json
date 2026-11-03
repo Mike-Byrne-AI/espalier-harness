@@ -1,0 +1,24 @@
+{
+ "id": "DEF-2048",
+ "subject": "tests/test_hooks.py",
+ "cmd": "python3 -c \"import pathlib;fs='hooks zone_watch session_start_toc_gating integrity session_banner session_start_source_aware checkout_sync session_start_maintenance_warn session_start_interpreter_warn security_regression nested_repo_litter hook_regression adopter_generic_systems_fire'.split();print(sum('skip_if_cut' not in pathlib.Path('tests/test_'+f+'.py').read_text(encoding='utf-8') for f in fs))\"",
+ "open_value": "13",
+ "why_not": null,
+ "inputs": [
+  "tests/test_zone_watch.py",
+  "tests/test_session_start_toc_gating.py",
+  "tests/test_integrity.py",
+  "tests/test_session_banner.py",
+  "tests/test_session_start_source_aware.py",
+  "tests/test_checkout_sync.py",
+  "tests/test_session_start_maintenance_warn.py",
+  "tests/test_session_start_interpreter_warn.py",
+  "tests/test_security_regression.py",
+  "tests/test_nested_repo_litter.py",
+  "tests/test_hook_regression.py",
+  "tests/test_adopter_generic_systems_fire.py"
+ ],
+ "row_sha": "346559c73616",
+ "text_sha": "99d553667ef1",
+ "verified_2026_11_03": "OPEN (filed 2026-11-03; probe driven at filing here and in the export of HEAD 5a806b72a385)"
+}
