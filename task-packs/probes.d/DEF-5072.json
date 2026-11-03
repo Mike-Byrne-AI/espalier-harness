@@ -1,0 +1,13 @@
+{
+ "id": "DEF-5072",
+ "subject": "tests/test_reinject_sync.py",
+ "cmd": "python3 -c \"from tests.test_reinject_sync import TestMirrorCensusCoverage as T; from espalier import mirror_registry as m; print(len(T._row_linked_parts(('docs/zz-hand-copy.json', 'espalier/assets/docs/zz-hand-copy.json'), m.MIRROR_ROWS)))\"",
+ "open_value": "1",
+ "why_not": null,
+ "inputs": [
+  "espalier/mirror_registry.py"
+ ],
+ "row_sha": "f99d6841b678",
+ "text_sha": "65658dcdac74",
+ "verified_2026_11_02": "OPEN (filed 2026-11-02; probe driven at filing here and in the export of HEAD ef1c4563b791)"
+}

@@ -50,8 +50,14 @@ def _all_doc_files() -> list[Path]:
     # hooks") that the count-claim battery never scanned — include them so a
     # stale "thirteen hooks" drift in a skill is caught.
     files += visible(checkout_glob(REPO_ROOT / ".claude" / "skills", "*/SKILL.md"), REPO_ROOT / ".claude" / "skills")
-    for name in ("README.md", "CLAUDE.md", "ESPALIER_MEMORY.md", "docs/CONVENTIONS.md",
-                 "docs/SHARP_EDGES.md", "docs/CHEAT-SHEET.md", "docs/TASK_RECIPES.md"):
+    # The public doc set joins the hand list (DEF-439): docs/QUICKSTART.md and
+    # docs/HOOKS.md each state the hook count and were read by no audit.
+    from espalier.surface_contract import get_public_doc_relpaths
+
+    names = ("README.md", "CLAUDE.md", "ESPALIER_MEMORY.md", "docs/CONVENTIONS.md",
+             "docs/SHARP_EDGES.md", "docs/CHEAT-SHEET.md", "docs/TASK_RECIPES.md",
+             *get_public_doc_relpaths())
+    for name in dict.fromkeys(names):
         p = REPO_ROOT / name
         if p.exists():
             files.append(p)
@@ -230,6 +236,12 @@ _HOOK_ALL_RE = re.compile(
     rf"\ball\s+(\d+|{_HOOK_WORD_ALT})\s+(?:\w+\s+)?hook(?:s|\s+script)?(?!\s+events?\b)\b",
     re.IGNORECASE,
 )
+# "twelve entry scripts", "12 hook entry scripts" (DEF-439): QUICKSTART's and
+# README's inventory bullets, which the three shapes above never read.
+_HOOK_ENTRY_RE = re.compile(
+    rf"\b(\d+|{_HOOK_WORD_ALT})\s+(?:hook\s+)?entry\s+scripts?\b",
+    re.IGNORECASE,
+)
 
 
 def _hook_count_violations(content: str, actual_count: int, source: str) -> list[str]:
@@ -237,7 +249,7 @@ def _hook_count_violations(content: str, actual_count: int, source: str) -> list
     from espalier.surface_contract import parse_count_token
 
     out: list[str] = []
-    for pat in (_HOOK_NUMERIC_RE, _HOOK_WORD_RE, _HOOK_ALL_RE):
+    for pat in (_HOOK_NUMERIC_RE, _HOOK_WORD_RE, _HOOK_ALL_RE, _HOOK_ENTRY_RE):
         for m in pat.finditer(content):
             n = parse_count_token(m.group(1).lower())
             if n is not None and n != actual_count:
@@ -265,6 +277,30 @@ class TestHookCountConsistentAcrossDocs:
         assert not violations, (
             f"Stale hook count claims found (actual: {actual_count}).\n"
             + "\n".join(violations)
+        )
+
+    def test_the_pre_flight_names_every_doc_that_carries_a_hook_count(self):
+        """The pre-flight's hook-count sites are the docs this audit reads, no more.
+
+        ``espalier surface-impact`` tells a maintainer adding a hook which docs
+        carry its count (``espalier/surface_impact.py::_HOOK_ENTRY_COUNT_SITES``).
+        A doc that gains a count is one they never update unless it is listed;
+        a listed doc this audit reads no count in sends them looking for nothing.
+        """
+        from espalier import surface_impact
+
+        carrying = {
+            path.relative_to(REPO_ROOT).as_posix()
+            for path in _all_doc_files()
+            # A count no live tree has reads every claim back as a violation.
+            if _hook_count_violations(path.read_text(encoding="utf-8"), -1, path.name)
+        }
+        # An export prunes an internal doc, so only the sites present are owed.
+        present = {s for s in surface_impact._HOOK_ENTRY_COUNT_SITES if (REPO_ROOT / s).exists()}
+        assert carrying == present, (
+            f"docs carrying a hook count: {sorted(carrying)}; listed: {sorted(present)}. A listed "
+            "doc with no count this audit reads: if it still states one, the wording slipped "
+            "past the regexes -- widen them; drop the site only when the doc states no count."
         )
 
     def test_skill_bodies_in_count_claim_corpus(self):

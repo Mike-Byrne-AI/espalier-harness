@@ -22,6 +22,7 @@ from espalier._safe_walk import visible
 from espalier import surface_contract
 from espalier.cli import cmd_init
 from espalier.surface_hygiene import (
+    COMMON_TIER_ASSET_MD_DIRS,
     FORBIDDEN_SELF_HOST_PATTERNS,
     SPECIFIC_ID_RE,
 )
@@ -154,6 +155,26 @@ class TestCommonTierAssetHygiene:
         ).read_text(encoding="utf-8")
         assert "review_agent_audit.py" not in body
 
+    def test_every_asset_folder_holding_markdown_is_read_or_left_out_by_name(self) -> None:
+        """The scanned folders are a shared tuple (COMMON_TIER_ASSET_MD_DIRS, read
+        by both scans and the pre-flight), so a folder dropped from it narrows all
+        three at once. This is the witness from the tree: every espalier/assets/
+        folder holding a tracked .md is scanned, or left out here with its reason
+        (github/ holds no markdown; one there reds this until it is placed)."""
+        left_out = {
+            "claude": "read by kind, through CLAUDE_KIND_GLOBS, in both scans",
+            "task-packs": "the router copy, held to its source by the asset-doc parity test",
+        }
+        assets_root = REPO_ROOT / "espalier" / "assets"
+        holding = {
+            p.relative_to(assets_root).parts[0]
+            for p in checkout_rglob(assets_root, "*.md")
+            if len(p.relative_to(assets_root).parts) > 1
+        }
+        assert holding, "git's view of espalier/assets/ holds no folder with markdown"
+        assert holding == set(COMMON_TIER_ASSET_MD_DIRS) | set(left_out), (
+            sorted(holding), sorted(COMMON_TIER_ASSET_MD_DIRS), sorted(left_out))
+
     def test_common_tier_assets_have_no_internal_pack_ids(self) -> None:
         """No specific ``TP-NN`` / ``BC-NNN`` / ``TASK_PACK_NN`` IDs
         in common-tier command, agent, skill or workflow bodies. Generic
@@ -184,7 +205,7 @@ class TestCommonTierAssetHygiene:
         # adopter-deployed asset bodies like the others, and the loop below was
         # the only sweep that would have caught a pack-ID leak in them.
         assets_root = REPO_ROOT / "espalier" / "assets"
-        for extra in ("docs", "memory", "seed"):
+        for extra in COMMON_TIER_ASSET_MD_DIRS:
             for path in checkout_rglob(assets_root / extra, "*.md"):
                 hits = self._SPECIFIC_ID_RE.findall(
                     path.read_text(encoding="utf-8"),
@@ -218,7 +239,7 @@ class TestCommonTierAssetHygiene:
         # seed assets: a seeded memo carried "this harness's own" to every adopter
         # while this sweep read the three .claude kinds only.
         scan = [(asset_root / kind, pattern) for kind, pattern in surface_contract.CLAUDE_KIND_GLOBS.items()]
-        scan += [(assets_root / extra, "**/*.md") for extra in ("docs", "memory", "seed")]
+        scan += [(assets_root / extra, "**/*.md") for extra in COMMON_TIER_ASSET_MD_DIRS]
         for base, pattern in scan:
             for path in base.glob(pattern):
                 rel = path.relative_to(assets_root).as_posix()

@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5073",
+ "subject": "tests/test_reinject_sync.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "latent: no transformed family kept by hand is known on the tree, and the row names an absence no census reads, so a probe would print a constant",
+ "row_sha": "ad5771351429",
+ "text_sha": "c222ea0577f7",
+ "verified_2026_11_02": "OPEN (filed 2026-11-02; probe driven at filing)"
+}
