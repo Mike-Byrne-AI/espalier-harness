@@ -18,6 +18,7 @@ from types import ModuleType
 
 import pytest
 
+from tests._guard_fixture import carry_protected_tree
 from tests._hook_assertions import assert_hook_allowed, assert_hook_denied
 from tests._hook_spawn import run_hook_through
 from tests._symlink_support import requires_symlink
@@ -66,7 +67,14 @@ class TestBashPatternsLoaderContract:
 
 
 def run_bash_guard(command: str, tmp_path: Path) -> subprocess.CompletedProcess:
+    """The guard's verdict on a Bash call, judged in ``tmp_path`` as the
+    project. The project carries every protected directory the hook tree
+    declares (the rehearsal's builder, DEF-811), laid beside whatever the test
+    wrote there first: a relative write judged from inside a protected
+    directory resolves only when the directory exists, so a bare ``tmp_path``
+    reads a deny the fixture suppressed as an ALLOW."""
     script = HOOKS_DIR / "write_guard.py"
+    carry_protected_tree(tmp_path, script)
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
     payload = {"tool_name": "Bash", "tool_input": {"command": command}}
@@ -82,8 +90,10 @@ def run_guard_from(
 ) -> subprocess.CompletedProcess:
     """`run_bash_guard` for either shell tool, with the payload ``cwd`` Claude
     Code sends: the directory Claude is in, which follows a ``cd`` from an
-    EARLIER call (DEF-509). ``None`` omits the field, as an older client would."""
+    EARLIER call (DEF-509). ``None`` omits the field, as an older client would.
+    The project carries the protected tree as ``run_bash_guard``'s does."""
     script = HOOKS_DIR / "write_guard.py"
+    carry_protected_tree(tmp_path, script)
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
     payload: dict = {"tool_name": tool_name, "tool_input": {"command": command}}
@@ -94,6 +104,55 @@ def run_guard_from(
         input=json.dumps(payload),
         env=env,
     )
+
+
+class TestTheShellFixturesCarryTheProtectedTree:
+    """DEF-811: the five shell fixtures here judge each call in a project
+    carrying every protected directory the hook tree declares. Measured
+    2026-11-02 on both shells: a write from inside `.espalier/` reads ALLOW in
+    a bare `tmp_path` and a deny once the directory exists, so a fixture
+    without the tree banks a suppressed deny as a correct ALLOW. The roster is
+    derived below: a sixth fixture in this file that spawns the guard on a
+    shell payload with a project of its own fails the derivation until it
+    lays the tree and joins the list."""
+
+    _FIXTURES = ("run_bash_guard", "run_guard_from", "_run_ps_guard",
+                 "_run_ps_guard_with_temp", "run_guard_tool")
+
+    def test_the_roster_is_every_module_level_shell_fixture_here(self):
+        import ast
+
+        src = Path(__file__).read_text(encoding="utf-8")
+        found = set()
+        for node in ast.parse(src).body:
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            body = ast.get_source_segment(src, node) or ""
+            if "CLAUDE_PROJECT_DIR" in body and "write_guard.py" in body and "tool_name" in body:
+                found.add(node.name)
+                assert "carry_protected_tree(" in body, f"{node.name} spawns the guard on a bare project"
+        assert found == set(self._FIXTURES), found
+
+    _BASH = "cd .espalier && echo x > integrity.json"
+    _PS = "Set-Location .espalier; 'x' > integrity.json"
+
+    @pytest.mark.parametrize("fixture", [
+        "run_bash_guard", "run_guard_from", "_run_ps_guard", "_run_ps_guard_with_temp",
+        "run_guard_tool",
+    ])
+    def test_a_write_from_inside_a_protected_directory_is_denied(self, fixture, tmp_path):
+        project = tmp_path / "project"
+        project.mkdir()
+        temp = tmp_path / "temp"
+        temp.mkdir()
+        calls = {
+            "run_bash_guard": lambda: run_bash_guard(self._BASH, project),
+            "run_guard_from": lambda: run_guard_from("Bash", self._BASH, project, None),
+            "_run_ps_guard": lambda: _run_ps_guard(self._PS, project),
+            "_run_ps_guard_with_temp": lambda: _run_ps_guard_with_temp(self._PS, project, str(temp)),
+            "run_guard_tool": lambda: run_guard_tool("PowerShell", {"command": self._PS}, project),
+        }
+        assert_hook_denied(calls[fixture]())
 
 
 class TestBashProtectedWritesDenied:
@@ -6120,8 +6179,10 @@ def _load_write_guard():
 
 
 def _run_ps_guard(command: str, tmp_path: Path) -> subprocess.CompletedProcess:
-    """Mirror of run_bash_guard for PowerShell tool calls. TP-42."""
+    """Mirror of run_bash_guard for PowerShell tool calls. TP-42. The project
+    carries the protected tree as ``run_bash_guard``'s does (DEF-811)."""
     script = HOOKS_DIR / "write_guard.py"
+    carry_protected_tree(tmp_path, script)
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
     payload = {"tool_name": "PowerShell", "tool_input": {"command": command}}
@@ -8621,7 +8682,9 @@ def _run_ps_guard_with_temp(command: str, tmp_path: Path, temp: str,
     """`_run_ps_guard` with TEMP, TMP and TMPDIR pinned to ``temp``, so a row
     reads the same on every runner whatever its own temp directory is; ``home``
     pins HOME and USERPROFILE the same way, for a row about a TEMP that names
-    the home directory or a parent of it."""
+    the home directory or a parent of it. The project carries the protected
+    tree as ``run_bash_guard``'s does (DEF-811)."""
+    carry_protected_tree(tmp_path, HOOKS_DIR / "write_guard.py")
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
     for var in ("TEMP", "TMP", "TMPDIR"):
@@ -9528,9 +9591,11 @@ def run_guard_tool(tool_name: str, tool_input: dict, tmp_path: Path) -> subproce
     """Invoke write_guard for an arbitrary tool, not just Bash.
 
     `run_bash_guard` hardcodes `tool_name: "Bash"`; the secret-path arm has to
-    be provable for READ-ONLY tools too, which is the whole point of it.
+    be provable for READ-ONLY tools too, which is the whole point of it. The
+    project carries the protected tree as ``run_bash_guard``'s does (DEF-811).
     """
     script = HOOKS_DIR / "write_guard.py"
+    carry_protected_tree(tmp_path, script)
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
     return run_hook_through(
