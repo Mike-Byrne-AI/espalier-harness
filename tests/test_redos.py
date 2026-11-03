@@ -262,6 +262,16 @@ def _alarm(_signum, _frame) -> None:
     raise _Timeout()
 
 
+def test_every_row_here_is_timed_with_the_collector_paused():
+    """The suite pauses the cyclic collector for this file's tests
+    (`tests/conftest.py::_pause_the_collector_in_the_wall_clock_files`,
+    DEF-5081): a full collection of the one-process run's heap that lands
+    inside a window is the host's cost, not the consumer's, and on the release
+    gate it read a 36 ms probe past the 1000 ms ceiling. Red here means a row
+    of this file is timed with that term in it again."""
+    assert not gc.isenabled()
+
+
 @pytest.mark.parametrize("name,pattern,flag", _REGEX_TARGETS)
 def test_regex_linear_on_backslash_run(name, pattern, flag):
     """Pattern completes within 100ms on a 30KB unclosed-quote
@@ -1727,11 +1737,15 @@ def test_bash_walker_linear_on_opener_flood(label, payload, tmp_path):
 #     same (2.01) but its thaw promotes the young generations into the oldest
 #     one (verified on 3.14), a residue the pause does not leave. A hook
 #     process starts with a small heap and never pays that term, so it is not
-#     the consumer's cost. The CEILING row above deliberately stays a single
-#     unpaused sample: its 2000 ms sits at more than three times the recorded
-#     floor and only has to catch a runaway, so the host term eats margin it
-#     can spare -- do not pause it for symmetry, and do not widen the ceiling
-#     on a stage-02 reading; this arm is the shape detector;
+#     the consumer's cost. The CEILING rows stay single samples, and since
+#     2026-11-03 they are paused too, by the file-wide pause in
+#     `tests/conftest.py::_pause_the_collector_in_the_wall_clock_files`
+#     (DEF-5081): they were left unpaused on the reading that the host term
+#     eats margin they can spare, which held at the walker tier and failed at
+#     the regex tier's 1000 ms, where the release gate's one-process run read
+#     a full collection inside `test_binding_pre_pass_linear_on_its_anchor_runs`
+#     three runs in a row. Do not widen a ceiling on a stage-02 reading;
+#     this arm is the shape detector;
 #   * a super-linear reading is CONFIRMED on a second, later window before it
 #     reds, and the windows are judged as PAIRS -- the window with the lower
 #     ratio is the estimate, and the sample floor is asked again of a chosen
@@ -4571,7 +4585,6 @@ class TestPlanModeBridgeReader:
         assert len(shapes_mod._ADVERSARIAL_PLANS) >= 7
         for name, body in shapes_mod._ADVERSARIAL_PLANS.items():
             assert len(body) >= _WORST_CASE_BODY_LEN, name
-            gc.collect()
             t0 = time.perf_counter()
             assert rt._steps_from_plan(body)
             rt._not_doing_from_plan(body)
