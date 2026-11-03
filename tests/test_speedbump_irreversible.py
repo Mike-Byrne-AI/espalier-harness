@@ -1004,14 +1004,16 @@ class TestCpRmrfTempRoots:
         assert not _fires_ps(_speedbump._pred_rmrf, "Remove-Item -Recurse " + ",".join(w[:cap]), repo)
         assert _fires_ps(_speedbump._pred_rmrf, "Remove-Item -Recurse " + ",".join(w), repo)
 
-    def test_a_temp_directory_nested_below_a_temp_root_keeps_the_nudge(self, tmp_path, monkeypatch):
+    def test_a_temp_directory_nested_below_a_temp_root_is_never_scratch(self, tmp_path, monkeypatch):
         """The environment's temp directory below a POSIX temp root -- macOS's
         default under /var/folders, a per-user /tmp/user/<uid>, pytest's own
         temp on a Linux runner -- is strictly below the outer root, so it and
         its parents passed as scratch until the failure-mode review drove it
-        (2026-10-07). Spelled as a POSIX path that need not exist, so the row
-        reds on every host. A sibling of it below the outer root is scratch to
-        the rule, a declared leftover."""
+        (2026-10-07), and drew the nudge after: since DEF-4027 a remove of
+        either takes the temp directory with it and is the wall's, so the
+        bump steps aside for it. Spelled as a POSIX path that need not exist,
+        so the row reds on every host. A sibling of it below the outer root is
+        scratch to the rule, a declared leftover."""
         nested = "/tmp/espalier-nested-temp/T"
         for var in ("TEMP", "TMP", "TMPDIR"):
             monkeypatch.setenv(var, nested)
@@ -1022,7 +1024,7 @@ class TestCpRmrfTempRoots:
         for spelled in (nested, "/tmp/espalier-nested-temp"):
             assert not _bash_patterns.below_a_temp_root(spelled, r, bash=True), spelled
             assert not _bash_patterns.below_a_temp_root(spelled, r, bash=False), spelled
-            assert _fires(_speedbump._pred_rmrf, f"rm -rf {spelled}", repo), spelled
+            assert _bash_patterns.has_catastrophic_recursive_rm(f"rm -rf {spelled}", r), spelled
         assert _bash_patterns.below_a_temp_root("/tmp/espalier-nested-temp/C", r, bash=True)
 
     def test_a_sweep_or_a_cmd_delete_reads_only_an_absolute_target(self, env):

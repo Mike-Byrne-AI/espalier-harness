@@ -11222,10 +11222,13 @@ def _vetted_scratch_values() -> list[str]:
     A value that is the home directory or a parent of it, or a shallow
     system path, names no scratch root: a sandbox that sets `TMPDIR=$HOME`
     or `TEMP=C:\\Windows` would otherwise turn every wall below it into a
-    nudge (code review, driven, 2026-10-04). Read from the environment,
+    nudge (code review, driven, 2026-10-04). A value that IS a fixed temp
+    root (`TMPDIR=/tmp`) is that root, catastrophic itself, and read through
+    `_TEMP_ROOTS` alone. Read from the environment,
     never through `tempfile.gettempdir`, which writes a probe file to
-    answer. One home for the scratch-root reader and the speed bump's
-    temp-root carve-out (`below_a_temp_root`). Remembered per environment
+    answer. One home for the scratch-root reader, the speed bump's
+    temp-root carve-out (`below_a_temp_root`) and the catastrophic reader's
+    temp-root rule (`_target_is_catastrophic`). Remembered per environment
     and home (`_VETTED_MEMO`): the carve-out asks it several times a target,
     and each answer resolves paths on disk."""
     key = (*(os.environ.get(v, "") for v in ("TEMP", "TMP", "TMPDIR")),
@@ -11274,11 +11277,16 @@ def _below_a_scratch_root(path: str) -> bool:
     file to answer), or a drive-root `tmp` / `temp`. A drive-qualified path
     compares without case, as NTFS does; a POSIX one with it. The root itself
     is never below itself, so removing a whole temp directory stays the
-    wall's."""
+    wall's -- the environment's value included where it lies below a fixed
+    root or a drive-root `tmp`, as every Mac's `TMPDIR` does
+    (`/var/folders/<x>/T`): asked first, or the outer root admits it
+    (DEF-4027)."""
     path = path.rstrip("/")
     drive = bool(_DRIVE_OR_UNC_ABSOLUTE_RE.match(path + "/")) and not path.startswith("//")
-    roots = [] if drive else list(_TEMP_ROOTS)
-    roots.extend(v for v in _vetted_scratch_values() if (v[1:2] == ":") == drive)
+    vetted = [v for v in _vetted_scratch_values() if (v[1:2] == ":") == drive]
+    if any(_fold(path) == _fold(v) for v in vetted):
+        return False
+    roots = ([] if drive else list(_TEMP_ROOTS)) + vetted
     if drive:
         key = path.lower()
         parts = key.split("/")
@@ -13099,14 +13107,15 @@ def _target_is_catastrophic(
     operator's decision, 2026-08-24.
 
     Catastrophic means: the filesystem root, anything that IS or CONTAINS
-    `$HOME` or the repo, or a shallow path outside all of them (so `/etc`,
-    `/usr`, `/bin` stay refused). A bare unbounded glob is judged AS the
+    `$HOME` or the repo, a delete that takes a temp root with it, or a shallow
+    path outside all of them (so `/etc`, `/usr`, `/bin` stay refused). A bare
+    unbounded glob is judged AS the
     directory it expands in and `$PWD` as the directory the command runs in
     (DEF-849, DEF-843) -- so each walls where that directory is one of these,
     and from nowhere a bare leading glob walls as it always did. Everything else — including
-    every path *inside* the repo or *inside* `$HOME`, and anything under a temp
-    root — falls to CP-RMRF's deny-once-then-allow nudge, which is the tier that
-    already owns "you probably meant this, confirm it".
+    every path *inside* the repo or *inside* `$HOME`, and anything strictly
+    under a temp root — falls to CP-RMRF's deny-once-then-allow nudge, which is
+    the tier that already owns "you probably meant this, confirm it".
 
     ⚠ NOT POSIX-ONLY, though the rule this replaced was. The absolute test
     admits `C:/...` and `//server/share` as well as a leading `/`, because
@@ -13161,7 +13170,11 @@ def _target_is_catastrophic(
     # met the wall -- while the same wipe spelled by its absolute root
     # (`<repo>/*`, `~/*`) read as a path INSIDE the checkout or the home and
     # drew the nudge. A BOUNDED glob (`*.egg-info`) names a suffix, not
-    # everything, and stays a path: refusing it was pure friction.
+    # everything, and stays a path: refusing it was pure friction. Reduced so,
+    # it names the directory's CONTENTS (``contents``): the temp-root rule
+    # below asks what the delete takes, and the contents take only what lies
+    # strictly below.
+    contents = False
     parts = (expanded.rstrip("/") or expanded).split("/")
     if _is_unbounded_glob(parts[0]):
         if base is None:
@@ -13178,12 +13191,14 @@ def _target_is_catastrophic(
             # reds on the first Portability run to finish the suite on
             # windows-latest (2026-09-23), reproduced with the spelling alone.
             expanded = base.replace("\\", "/")
+            contents = True
         # ... and only a BARE glob is that directory (the review's item 6): one
         # followed by more path names that path under each entry, so it joins
         # below as a literal component and parent steps resolve -- `*/build`
         # is inside the checkout, as `./*/build` read; `*/..` is the base.
     elif len(parts) > 1 and _is_unbounded_glob(parts[-1]):
         expanded = "/".join(parts[:-1]) + "/"
+        contents = True
     if not (expanded.startswith("/") or _DRIVE_OR_UNC_ABSOLUTE_RE.match(expanded)):
         if base is None:
             return False                  # relative, nowhere to stand -> the soft tier owns it
@@ -13222,8 +13237,25 @@ def _target_is_catastrophic(
     for site in sensitive:
         if target == site or site.startswith(target.rstrip("/") + "/"):
             return True
-    if any(target == _posix(t) or target.startswith(_posix(t) + "/")
-           for t in _TEMP_ROOTS):
+    # (a2) the delete TAKES A TEMP ROOT WITH IT -> catastrophic: a fixed root
+    # (`_TEMP_ROOTS`) or the directory TEMP, TMP or TMPDIR names
+    # (`_vetted_scratch_values`), as the root itself or by a parent of it; a
+    # glob's contents take only what lies strictly below. Until DEF-4028 the
+    # scratch clause below admitted a fixed root by identity, so `rm -rf /tmp`
+    # drew the nudge on this tool while the PowerShell tool walled it; and a
+    # TMPDIR below a fixed root -- every Mac's `/var/folders/<x>/T` -- passed
+    # through that root on both (DEF-4027). One nudge, re-issued as its own
+    # protocol says, takes the per-user temp directory and every file and
+    # socket held there. Also outranks the scratch clause, and keeps the
+    # rules monotone going down, which the brace reader's fast path relies on
+    # (`_operand_can_be_catastrophic`).
+    fixed = [_posix(t) for t in _TEMP_ROOTS]
+    held = _fold(target).rstrip("/")
+    for temp_root in (*fixed, *(_posix(v) for v in _vetted_scratch_values())):
+        key = _fold(temp_root)
+        if key.startswith(held + "/") or (key == held and not contents):
+            return True
+    if any(target.startswith(t + "/") or (contents and target == t) for t in fixed):
         return False                      # scratch by construction
     # (b) the target is strictly INSIDE home or the repo -> recoverable, soft tier
     for site in sensitive:
@@ -13337,11 +13369,17 @@ def _operand_can_be_catastrophic(
 
 def _brace_prefix_completes_a_site(prefix: str, root: str | None, base: str | None) -> bool:
     """Can a brace list right after ``prefix`` -- which stops mid-name --
-    complete that name into the home directory or the checkout? True when
-    one of them sits in the prefix's directory under a name that starts
-    with the prefix's partial one, read by `_target_is_catastrophic`'s own
+    complete that name into the home directory, the checkout or a temp root
+    (a fixed one, or the directory TEMP, TMP or TMPDIR names: the root itself
+    walls, DEF-4027/DEF-4028)? True when
+    one of them lies at or below a name in the prefix's directory that
+    starts with the prefix's partial one -- a completed name can be a
+    PARENT of a site, which walls as the site does (the failure-mode
+    review, driven: `<parent of TEMP minus a letter>{<letter>,}` drew the
+    nudge where the plain spelling walls) -- read by `_target_is_catastrophic`'s own
     resolution (the home by `~`, a relative prefix joined to ``base``) in
-    both the typed and the symlink-resolved form. A relative prefix with
+    both the typed and the symlink-resolved form, a drive spelling without
+    case as NTFS reads it. A relative prefix with
     nowhere to stand names no site (the soft tier's, every expansion); a
     `$PWD` one is probed rather than read."""
     m = _HOME_PREFIX_RE.match(prefix)
@@ -13352,11 +13390,13 @@ def _brace_prefix_completes_a_site(prefix: str, root: str | None, base: str | No
         if base is None:
             return False
         p = posixpath.join(base.replace("\\", "/").rstrip("/") or "/", p)
-    forms = {posixpath.normpath(p), _posix(p)}
-    sites = [os.path.expanduser("~")] + ([str(root)] if root else [])
+    forms = {_fold(posixpath.normpath(p)), _fold(_posix(p))}
+    sites = [os.path.expanduser("~"), *([str(root)] if root else []),
+             *_TEMP_ROOTS, *_vetted_scratch_values()]
     return any(
-        s.startswith(f) and "/" not in s[len(f):]
-        for site in sites for s in {posixpath.normpath(site.replace("\\", "/")), _posix(site)}
+        s.startswith(f)
+        for site in sites
+        for s in {_fold(posixpath.normpath(site.replace("\\", "/"))), _fold(_posix(site))}
         for f in forms
     )
 

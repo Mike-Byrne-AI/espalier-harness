@@ -253,7 +253,10 @@ class TestTheSentenceSplitter:
 #: SHARP_EDGES 3 -> 4 on 2026-11-02: the audit prune dates a log by its
 #: name, so a renamed log is its declared limit, pinned both ways in
 #: `TestThePruneDatesALogByItsName`.
-_CENSUS_ON_2026_10_11 = {"docs/HOOKS.md": 29, "docs/SHARP_EDGES.md": 4}
+#: HOOKS 29 -> 31 on 2026-11-03: a temp root itself walls, and its two
+#: limits are declared, each with its row in `TestAScratchRootItselfIsTheWall`
+#: (a sweep's walk root, and a root spelled by its variable).
+_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 31, "docs/SHARP_EDGES.md": 4}
 
 
 def test_the_census_is_the_pinned_population():

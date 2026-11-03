@@ -1170,7 +1170,9 @@ first; the dangerous-command catch is a secondary slip-catcher):
    `Remove-Item -Recurse` without `-Force`, which still removes every item
    that is not hidden or read-only with no prompt, walled on a catastrophic
    target -- the filesystem or a drive root, your home directory by path or
-   by `$HOME` / `$env:USERPROFILE`, the repo or a parent of either, a
+   by `$HOME` / `$env:USERPROFILE`, the repo or a parent of either, a temp
+   root itself (`/tmp`, a drive-root `tmp`, the directory `TEMP`, `TMP` or
+   `TMPDIR` names) or a parent of it, a
    shallow system path such as `/etc`, a path two or fewer levels below a
    drive root outside the repo, your home directory and the temp roots
    (`C:\Windows\System32`, `C:\work\old`; a path inside the repo or the home
@@ -1221,12 +1223,26 @@ first; the dangerous-command catch is a secondary slip-catcher):
    elsewhere). It keeps the nudge when it is, or sits inside, a git checkout
    (a clone or a worktree may hold work), this project's checkout, or a
    home directory that lies below a temp root, and when it carries a
-   variable, a wildcard or a `..` step -- pinned by
-   `tests/test_speedbump_irreversible.py::TestCpRmrfTempRoots`. The
-   environment's temp directory nested below a POSIX temp root (macOS's
-   `/var/folders/<x>/T`) and every parent of it keep the nudge too, while a
-   sibling of it there is scratch to the rule, a declared limit
-   (`tests/test_speedbump_irreversible.py::TestCpRmrfTempRoots::test_a_temp_directory_nested_below_a_temp_root_keeps_the_nudge`).
+   variable, a wildcard or a `..` step. A temp
+   root itself is the wall on both tools, forced or not: a POSIX temp root
+   (`rm -rf /tmp`, which drew the nudge on the Bash tool until 2026-11-03),
+   a drive-root `tmp` or `temp`, and the directory `TEMP`, `TMP` or
+   `TMPDIR` names, with every parent of that one -- the remove takes the
+   temp directory with it, even where it lies below a POSIX temp root, as
+   macOS's `/var/folders/<x>/T` does, or inside this project's checkout
+   (a `TMPDIR` set to a directory under `build/` makes `rm -rf build` the
+   wall); a glob's contents (`rm -rf /tmp/*`) take only what lies below,
+   and keep the reading above. The sweeps (a `find` with a delete action,
+   an enumerator piped or looped into a remove) read the walk's root as
+   the root itself, so `find /tmp -mindepth 1 -delete` walls while
+   `rm -rf /tmp/*`, the same deletion, keeps the nudge (narrow the walk
+   with `-name` or `-path`, or root it below), a declared limit
+   (`tests/test_write_guard.py::TestAScratchRootItselfIsTheWall::test_a_sweep_reads_its_walk_root_as_the_root_itself`).
+   The root spelled by its variable (`"$TMPDIR"`, `$env:TEMP` without
+   `-Force`) is not read, and keeps the nudge, a declared limit
+   (`tests/test_write_guard.py::TestAScratchRootItselfIsTheWall::test_a_root_spelled_by_its_variable_is_not_read`). A
+   sibling of the nested one there is scratch to the rule, a declared limit
+   (`tests/test_speedbump_irreversible.py::TestCpRmrfTempRoots::test_a_temp_directory_nested_below_a_temp_root_is_never_scratch`).
    A checkout deeper inside the target is not looked for, a declared limit
    (`tests/test_speedbump_irreversible.py::TestCpRmrfTempRoots::test_a_checkout_deeper_inside_the_target_is_a_declared_limit`).
    The forced PowerShell remove reads a relative target where the command
@@ -1268,8 +1284,7 @@ first; the dangerous-command catch is a secondary slip-catcher):
    name is read by no reader
    (`tests/test_write_guard.py::TestEveryLaunchFormMeetsTheRecursiveDeleteWall::test_the_native_path_cap_is_a_declared_limit`).
    Every form the readers declare is crossed with the hard-tier texts'
-   target claims by
-   `tests/test_write_guard.py::TestEveryLaunchFormMeetsTheRecursiveDeleteWall`.
+   target claims by one test class.
 
    The
    same sweeps as the Bash tool's are walled on the PowerShell tool: an
@@ -1732,14 +1747,17 @@ or:
 > Dangerous command blocked: a recursive delete of the filesystem
 > root itself ('rm -rf /'). If this was a deliberate, scoped cleanup,
 > narrow the target to the directory you mean: a path inside the repo or
-> inside your home directory, or under a temp root, is not refused here
+> inside your home directory, or strictly under a temp root, is not refused
+> here, bar the directory TEMP, TMP or TMPDIR names and a parent of it
 > (scratch below a temp root that is no git checkout, and a relative
 > build/ or dist/, pass without a nudge; the rest draw one
 > confirm-by-re-issue nudge); the filesystem root, your home directory or
 > the repo itself (a bare '*' glob or $PWD counts as the directory the
 > delete runs in when the command is plain, and is refused when it is
-> not), a shallow system path such as /etc or /usr/local, and an absolute path
-> with a '..' step are refused in every flag order -- then re-run.
+> not), a temp root itself (/tmp, a drive-root tmp, the directory TEMP,
+> TMP or TMPDIR names) or a parent of it, a shallow system path such as
+> /etc or /usr/local, and an absolute path with a '..' step are refused
+> in every flag order -- then re-run.
 
 or (kill-switch):
 
