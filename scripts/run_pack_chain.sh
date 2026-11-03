@@ -40,6 +40,13 @@ set -uo pipefail
 # (e.g. check_pack_landing) regardless of the cwd the driver runs a pack from.
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# The interpreter every python step below runs: the first of python3, python and
+# py -3 that ANSWERS a Python 3.10+ importing espalier (the canonical resolver line,
+# tests/_interpreter_hosts.py::shell_resolver_line). A name that only resolves is
+# not enough: where python3 is a Store alias stub, as on a python-only Windows host,
+# every step spelled python3 failed. $PY stays unquoted so `py -3` runs as two words.
+PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys, espalier; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ with espalier answered to python3, python or py -3' >&2; exit 1; }
+
 DRY_RUN=0
 FRESH=0
 # Per-pack dollar cap is OPT-IN. Empty (the default) = NO cap: a long but productive
@@ -181,7 +188,7 @@ SCOPE_INJECT=""
 scope_gate() {
   local file="$1" report rc gap_section actionable n lit_section lit_actionable
   SCOPE_INJECT=""
-  report=$(python3 -m espalier scope-check "$file" 2>&1); rc=$?
+  report=$($PY -m espalier scope-check "$file" 2>&1); rc=$?
 
   if [[ $rc -eq 0 ]]; then
     echo ">> scope-check: clean (no gap, or already acknowledged in the pack)."
@@ -272,7 +279,7 @@ verify_pack_receipt() {
     echo ">> receipt: no $PACK_RECEIPT - session did not attest its steps. Halting." >&2
     return 1
   fi
-  python3 - "$PACK_RECEIPT" "$RT_FINDINGS" "$RT_REPROS" "$(git rev-parse --short HEAD)" "$expected_pack" <<'PY'
+  $PY - "$PACK_RECEIPT" "$RT_FINDINGS" "$RT_REPROS" "$(git rev-parse --short HEAD)" "$expected_pack" <<'PY'
 import json, os, sys
 receipt = json.loads(open(sys.argv[1], encoding="utf-8").read())
 rt = receipt.get("red_team", {})
@@ -357,7 +364,7 @@ verify_install_green() {
   gate_root="$(mktemp -d)"
   foreign="$(mktemp -d)"
   echo ">> install-green gate: building clean venv in $gate_root"
-  if ! python3 -m venv "$gate_root"; then
+  if ! $PY -m venv "$gate_root"; then
     echo ">> install-green: venv create failed (infra) - halting." >&2
     rm -rf "$gate_root" "$foreign"; return 1
   fi
@@ -444,7 +451,7 @@ finalize_landing() {
     candidates=( "$done_dir/${pack}"-*.md )
     if [[ ${#candidates[@]} -ge 1 && -e "${candidates[0]}" ]]; then
       for cand in "${candidates[@]}"; do
-        if python3 - "$cand" "$SELF_DIR" <<'PY'
+        if $PY - "$cand" "$SELF_DIR" <<'PY'
 import sys
 sys.path.insert(0, sys.argv[2])          # the driver's own dir -> scripts/check_pack_landing.py
 import check_pack_landing as ckl
@@ -461,7 +468,7 @@ PY
     return 4   # LANDED-unverified: caller reports a distinct triage outcome, NOT a clean LANDED
   fi
 
-  result=$(python3 - "$target" "$commit" "$PACK_RECEIPT" "$(date +%Y-%m-%d)" "$SELF_DIR" <<'PY'
+  result=$($PY - "$target" "$commit" "$PACK_RECEIPT" "$(date +%Y-%m-%d)" "$SELF_DIR" <<'PY'
 import json, os, re, sys
 sys.path.insert(0, sys.argv[5])          # the driver's own dir -> scripts/check_pack_landing.py
 import check_pack_landing as ckl
@@ -614,7 +621,7 @@ post_commit_verify_and_finalize() {
   if [[ -n "$pre_head" && "$pre_head" != "none" ]]; then
     # A lane's entries are CHANGELOG.md's [Unreleased] or its own changelog.d/ file (either counts).
     if grep -qxE 'CHANGELOG\.md|changelog\.d/.+\.md' <<<"$(git diff "$pre_head"..HEAD --name-only 2>/dev/null)"; then cl_real=1; else cl_real=0; fi
-    cl_claim=$(python3 -c "import json;print(1 if json.load(open('$PACK_RECEIPT')).get('changelog_touched') else 0)" 2>/dev/null || echo 0)
+    cl_claim=$($PY -c "import json;print(1 if json.load(open('$PACK_RECEIPT')).get('changelog_touched') else 0)" 2>/dev/null || echo 0)
     [[ "$cl_claim" != "$cl_real" ]] && echo ">> $pack: NOTE - receipt.changelog_touched=$cl_claim but commit CHANGELOG.md change=$cl_real (advisory; not every pack needs one)."
   fi
   echo ">> $pack committed ($commit) + receipt verified + install-green; advancing."

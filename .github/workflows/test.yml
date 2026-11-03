@@ -298,6 +298,86 @@ jobs:
           echo "proof tier: $TIER (serial leg)"
           python scripts/proof_tier.py --run --tier "$TIER" --base "${BASE_SHA:-HEAD}" --leg serial
 
+  # The perturbed cell: the parallel leg of the tier this pull
+  # request earns, on a host shaped like ones adopters bring and no other cell
+  # is. `python3` on PATH is a Microsoft Store alias stub that prints the
+  # alias's not-found text and exits 49 (9009 on Windows), `python` answers, and
+  # pytest's root holds a space. Every other cell answers both names under a
+  # plain root, so a fixture that spells `python3` or splits a path on spaces
+  # stays green there and reds here. NOT a required check: it lands
+  # non-required, and promoting it is the operator's call after a run of
+  # greens, because a required name that never reports parks every pull
+  # request (tests/test_required_status_checks.py). Its row in
+  # tests/_axis_registry.py's INSTRUMENTS is read against these steps.
+  perturbed:
+    needs: tier
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    # The `test` cells' bound: the same leg on one interpreter.
+    timeout-minutes: 75
+
+    steps:
+      - name: Keep the temp dir on the runner's disk
+        # The `test` job's first step says why (DEF-3027).
+        run: |
+          mkdir -p "$RUNNER_TEMP/tmp"
+          echo "TMPDIR=$RUNNER_TEMP/tmp" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # Full history and tags, as the `test` cells check out.
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e .[dev]
+
+      - name: Put a Store-alias python3 first on PATH
+        # tests/_interpreter_hosts.py's store_python3 host in its sh flavour,
+        # built after the install so pip ran unperturbed: `python3` is the
+        # stub, and `python` execs the interpreter this step runs. A line in
+        # $GITHUB_PATH goes ahead of PATH for every later step.
+        run: |
+          bin="$(python -c "import os; from pathlib import Path; from tests._interpreter_hosts import build_host, STORE_PYTHON3, SH; print(build_host(Path(os.environ['RUNNER_TEMP']) / 'axis hosts', STORE_PYTHON3, SH))")"
+          echo "$bin" >> "$GITHUB_PATH"
+
+      - name: Read the perturbed host before the tier
+        # Resolved on the PATH the tier step gets, never the PATH of the step
+        # that built the host: a probe that reads its own process's PATH can
+        # report the shim absent while it is in force. A host
+        # that is not the stub host fails the cell here, so the tier never
+        # runs unperturbed under this cell's name.
+        run: |
+          case "$(command -v python3)" in "$RUNNER_TEMP/axis hosts/"*) ;; *) echo "::error::python3 resolves to $(command -v python3), not the stub host"; exit 1;; esac
+          case "$(command -v python)" in "$RUNNER_TEMP/axis hosts/"*) ;; *) echo "::error::python resolves to $(command -v python), not the stub host"; exit 1;; esac
+          rc=0; python3 -c pass 2>/dev/null || rc=$?
+          [ "$rc" = 49 ] || { echo "::error::python3 exited $rc, not the Store stub's 49"; exit 1; }
+          python -c 'import espalier, sys; print("python answers:", sys.executable)'
+
+      - name: Run the proof tier's parallel leg on the perturbed host
+        # --basetemp goes on each pytest line's argv inside proof_tier, never
+        # into PYTEST_ADDOPTS: a pytest child a test launches inherits that
+        # variable, and pytest empties an explicit basetemp before it uses it,
+        # so a child given this one would delete every xdist worker's
+        # directories under it (proof_tier.py::_with_basetemp). The script
+        # makes the parent; pytest makes only the leaf. Inside the TMPDIR the
+        # first step exports: a pytest child a test launches takes its
+        # basetemp inside its parent session's only when that dir is under its
+        # temp root (tests/_nested_temp.py), so there the space reaches the
+        # nested runs too. The leg leaves out proof_tier.py::SERIAL_FILES,
+        # which never run on this host.
+        env:
+          TIER: ${{ needs.tier.outputs.tier || 'full' }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PYTEST_ADDOPTS: --durations=25
+        run: |
+          echo "proof tier: $TIER (parallel leg, perturbed host)"
+          python scripts/proof_tier.py --run --tier "$TIER" --base "${BASE_SHA:-HEAD}" --leg parallel --basetemp "$RUNNER_TEMP/tmp/axis basetemp/bt"
+
   # The tagless-clone job lives in its own workflow
   # (.github/workflows/clean-checkout.yml), on the floor interpreter, with the
   # heavy stages: a required cell's re-run never waits on it, and four

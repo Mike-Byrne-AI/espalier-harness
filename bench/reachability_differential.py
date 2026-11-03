@@ -909,17 +909,38 @@ def bash_reaches(template: str) -> bool:
     return bash_run(template)[0]
 
 
+#: The names that must also ANSWER, not only resolve, before a row that needs
+#: one runs, with the program each is asked to run. A Microsoft Store alias
+#: stub resolves as ``python3`` or ``python`` and, run, prints its not-found
+#: text and exits 49 (9009 on Windows), so a row whose interpreter is one never
+#: reached its body and read as a row that does not reach the delete
+#: (``tests/_interpreter_hosts.py``'s store_python3 host, 2026-11-03). Python's
+#: names alone: no other need has an alias stub, and a version flag is not
+#: portable (BSD ``sed`` has none).
+_MUST_ANSWER: dict[str, tuple[str, ...]] = {"python3": ("-c", "pass"), "python": ("-c", "pass")}
+
+
 def _executable_available(exe: str) -> bool:
     """Does `exe` resolve for the shell that runs the rows? Asked of bash
     itself (``command -v``), as ``guard_metamorphic._head_is_resolvable``
     does, so a builtin is never called absent; ``shutil.which`` answers where
-    no ``/bin/bash`` can. The tests stub THIS name, never the stdlib."""
+    no ``/bin/bash`` can. A name in ``_MUST_ANSWER`` must also run its
+    program and exit 0. The tests stub THIS name, never the stdlib."""
+    probe = _MUST_ANSWER.get(exe)
     if Path("/bin/bash").exists():
         rc, _timed_out = run_bash_group(
             ["/bin/bash", "-c", 'command -v -- "$1" > /dev/null 2>&1', "_", exe],
             timeout=10)
+        if rc != 0 or probe is None:
+            return rc == 0
+        rc, _timed_out = run_bash_group(
+            ["/bin/bash", "-c", '"$@" > /dev/null 2>&1', "_", exe, *probe], timeout=10)
         return rc == 0
-    return shutil.which(exe) is not None
+    found = shutil.which(exe)
+    if found is None or probe is None:
+        return found is not None
+    rc, _timed_out = run_bash_group([found, *probe], timeout=10)
+    return rc == 0
 
 
 def _syntax_supported(snippet: str) -> bool:

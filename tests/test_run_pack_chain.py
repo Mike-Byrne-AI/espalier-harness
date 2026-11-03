@@ -21,6 +21,7 @@ driver's own ``verify_install_green`` function name).
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -204,7 +205,9 @@ def _fake_claude_body_with_sentinel(receipt_json: str | None, *, dispatch_ok: bo
 
 def _scope_gate_harness(report: str, rc: int, tail: str) -> str:
     """A bash script that defines the driver's real ``scope_gate()`` with
-    ``python3`` stubbed to return ``report``/``rc``, then runs ``tail``."""
+    ``python3`` stubbed to return ``report``/``rc``, then runs ``tail``. The
+    driver runs its python steps as ``$PY``, resolved at its top; the lifted
+    function gets ``PY`` pointed at the stub."""
     import re as _re
     script = SCRIPT.read_text(encoding="utf-8")
     m = _re.search(r"(?ms)^scope_gate\(\) \{.*?^\}", script)
@@ -214,6 +217,7 @@ def _scope_gate_harness(report: str, rc: int, tail: str) -> str:
         "set -uo pipefail\n"
         "SCOPE_INJECT_CAP=12\n"
         'SCOPE_INJECT=""\n'
+        "PY=python3\n"
         "python3() {\n"
         "  cat <<'__SCOPE_REPORT__'\n"
         f"{report}\n"
@@ -453,7 +457,8 @@ class TestRunPackChain:
             fn + "\nCHAIN_STARTED=1\nREPORT_ROWS=()\nprint_report\n", encoding="utf-8"
         )
         r = subprocess.run(
-            ["bash", "-c", f"set -uo pipefail; source {harness}"],
+            # quoted: a pytest root that holds a space split the bare path
+            ["bash", "-c", f"set -uo pipefail; source {shlex.quote(str(harness))}"],
             capture_output=True,
             text=True, encoding="utf-8",
         )

@@ -371,6 +371,21 @@ def _without_heavy_filter(argv: tuple[str, ...]) -> tuple[str, ...]:
         if argv[i:i + 2] == _NOT_HEAVY:
             return argv[:i] + argv[i + 2:]
     return argv
+
+
+def _with_basetemp(argv: tuple[str, ...], basetemp: str) -> tuple[str, ...]:
+    """A pytest line with ``--basetemp`` on its own argv; any other line as it is.
+
+    On the argv, never in the environment: a pytest child that a test launches
+    inherits ``PYTEST_ADDOPTS``, and pytest empties an explicit basetemp before
+    it makes its own directory there, so a child given the run's basetemp
+    deletes every xdist worker's directories under it. Driven 2026-11-03 with
+    two workers: under ``PYTEST_ADDOPTS="--basetemp=..."`` a file the other
+    worker held in ``popen-gw0`` vanished; with the flag on the argv alone both
+    tests passed."""
+    if argv[0] != "pytest":
+        return argv
+    return (argv[0], "--basetemp", basetemp, *argv[1:])
 #: The runners a proof command may lead with. `run_commands` dispatches on the
 #: head with one literal call per runner, so the receipt line (shlex.join of the
 #: argv) and the spawned binary are the same token by construction -- a widened
@@ -1042,14 +1057,15 @@ def _runs_whole(argv: tuple[str, ...]) -> bool:
 
 
 def tier_argvs(which: str, changed=(), root: Path = _ROOT, *, heavy: bool = False,
-               leg: str = "both") -> tuple[tuple[str, ...], ...]:
+               leg: str = "both", basetemp: str | None = None) -> tuple[tuple[str, ...], ...]:
     """The argv list a tier runs for THIS diff: the tier's own commands, then
     one line for the diff's own test files (``own_tests``) on the two cheaper tiers.
     ``KeyError`` on a tier nobody wired -- never a silent fall-through to the
     cheaper tier. ``heavy`` puts the heavy end-to-end stages back on both lines
     (the clean-checkout cell and the gate's first leg); ``leg`` selects by
     complement (see ``LEGS``), so the default form is always the whole tier and
-    ``FULL_COMMANDS`` stays the four lines the receipts count."""
+    ``FULL_COMMANDS`` stays the four lines the receipts count. ``basetemp``
+    puts pytest's ``--basetemp`` on each pytest line (``_with_basetemp``)."""
     argvs = _TIER_ARGVS[which]
     own = () if which == "full" else own_tests(changed, root)
     # a file a bare pytest line of the tier names runs there whole (the recall
@@ -1070,14 +1086,17 @@ def tier_argvs(which: str, changed=(), root: Path = _ROOT, *, heavy: bool = Fals
         lines = tuple(argv for argv in lines if not _is_serial_line(argv))
     elif leg != "both":
         raise ValueError(f"leg must be one of {LEGS}, got {leg!r}")
+    if basetemp:
+        lines = tuple(_with_basetemp(argv, basetemp) for argv in lines)
     return lines
 
 
 def commands(which: str, changed=(), root: Path = _ROOT, *, heavy: bool = False,
-             leg: str = "both") -> tuple[str, ...]:
+             leg: str = "both", basetemp: str | None = None) -> tuple[str, ...]:
     """The command line(s) a tier runs for this diff, in order (``tier_argvs``
     rendered with ``shlex.join``, so the receipt and the execution cannot drift)."""
-    return tuple(shlex.join(argv) for argv in tier_argvs(which, changed, root, heavy=heavy, leg=leg))
+    return tuple(shlex.join(argv) for argv in tier_argvs(which, changed, root, heavy=heavy, leg=leg,
+                                                          basetemp=basetemp))
 
 
 #: The flag each runner answers with its version. The receipt prints one
@@ -1898,7 +1917,10 @@ def review(changed: Iterable[str], root: Path = _ROOT, *, at_head: bool = False,
     return "none", []
 
 
-def main(argv: list[str] | None = None) -> int:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """The script's flags, apart from ``main`` so a reader of a workflow's
+    command line parses it as the script does
+    (``tests/test_axis_registry.py``'s perturbed-cell witness)."""
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--root", default=str(_ROOT))
     ap.add_argument("--json", action="store_true")
@@ -1918,8 +1940,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--leg", choices=LEGS, default="both",
                     help="run one leg of the tier: serial is the SERIAL_FILES line where one "
                          "exists, parallel is every other line; both (the default) is the tier")
-    args = ap.parse_args(argv)
+    ap.add_argument("--basetemp", metavar="DIR",
+                    help="give each pytest line pytest's --basetemp DIR, on its argv and never "
+                         "in the environment, so a pytest child a test launches cannot inherit "
+                         "it and empty it; --run makes DIR's parent first (pytest makes only DIR)")
+    return ap.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     root = Path(args.root).resolve()
+    # Absolute before either use: --run makes the parent from this process's
+    # directory, and pytest reads a relative basetemp from the root it runs in.
+    basetemp = str(Path(args.basetemp).absolute()) if args.basetemp else None
     diff_unread = False
     if args.base:
         try:
@@ -1981,7 +2014,9 @@ def main(argv: list[str] | None = None) -> int:
         "outside_the_base_diff": outside,
         "heavy": args.heavy,
         "leg": args.leg,
-        "commands": list(commands(which, changed + untracked, root, heavy=args.heavy, leg=args.leg)),
+        "basetemp": basetemp,
+        "commands": list(commands(which, changed + untracked, root, heavy=args.heavy, leg=args.leg,
+                                  basetemp=basetemp)),
         "own_line_ceiling": OWN_LINE_CEILING,
         "own_line_by_body": sizes,
     }
@@ -2048,7 +2083,10 @@ def main(argv: list[str] | None = None) -> int:
     if untracked or deleted:
         return 2
     if args.run:
-        argvs = tier_argvs(which, changed + untracked, root, heavy=args.heavy, leg=args.leg)
+        argvs = tier_argvs(which, changed + untracked, root, heavy=args.heavy, leg=args.leg,
+                           basetemp=basetemp)
+        if basetemp:
+            Path(basetemp).parent.mkdir(parents=True, exist_ok=True)
         if not argvs:
             # A required cell must report on every pull request: say, in words,
             # which leg of which tier has nothing to run, then let the receipt
