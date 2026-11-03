@@ -1256,8 +1256,9 @@ total; it shrinks each review.
 - State: DRAFT (foundation lane landed on `lane/adopter-axes-foundation`, 2026-10-06; the
   session-and-stack lane landed 2-B on `lane/adopter-axes-session-and-stack`, 2026-11-03,
   with 2-C dropped and 2-D landed through `TP-474`; the release-and-collectors work runs
-  as a lane per wave: 3-D and 3-F landed on `lane/adopter-axes-collectors` and 3-B on
-  `lane/adopter-axes-wheel-smoke-stack`, 2026-11-03, and 3-A and 3-C are open)
+  as a lane per wave: 3-D and 3-F landed on `lane/adopter-axes-collectors`, 3-B on
+  `lane/adopter-axes-wheel-smoke-stack` and 3-C on `lane/adopter-axes-dirty-machine-cell`,
+  2026-11-03, and 3-A is open)
 - Commits (foundation lane):
   - `b92ce7d` Task 0 record
   - `68689b5` 1-A
@@ -1566,6 +1567,47 @@ total; it shrinks each review.
     `Namespace`, and the dispatch (above).
   - Reach (wheel-smoke lane): `DEF-975`'s release instruments row is **CLOSED by 3-B and
     3-F**. `DEF-975` stays open on its host axis (3-A); `DEF-937` waits on 3-C.
+- **Dirty-machine lane (2026-11-03, `lane/adopter-axes-dirty-machine-cell`, Windows box): 3-C**
+  (assign `20261103T183510Z-air-5b21c3`), stacked on the wheel-smoke lane, `main` merged in
+  after #476.
+  - Oracles: Decision 4's reply is ack `20261011T220856Z-air-9b8938`, the five findings as
+    read from the walk record; the `# VERIFICATION PASS` appendix is on the Mac, so the ack
+    is this box's copy. Each was read at HEAD before an assertion was written: F-4
+    (`harness-guard.yml` pushes on `[main, master]`), appendix Finding 8 (the render is
+    harness-owned in the untracked note) and F-5 (`_remedy_py`) are fixed, so each is
+    asserted as what the verbs do now; no verb here spawns a bare `espalier`; F-6 and F-7
+    are printed by none of these verbs (read in their output); F-2 is the install docs'
+    and F-9 is `fuse`'s, neither asserted.
+  - Landed as 3-C says, with two choices it leaves open: the adopter's `.claude/` is
+    committed (Claude Code's shared settings live in source control, so `init` takes its
+    tracked-settings branch; the untracked variant was driven green by the reviewer, not
+    asserted), and the interpreter's own folder follows the stale bin on PATH, so a
+    remedy's `python` is the engine under test. The registry's rule refuses a function
+    collected at one `tree` value, so the module runs a clean tree beside the dirty one and
+    its keeps-and-wires node proves `tree/clean` and `tree/dirty` (floor 11 to 13).
+  - Earn-the-red on a scratch archive of HEAD with the lane's files: 3-C's mutation (`init`
+    overwrites the adopter's settings) reds the proving node's `[dirty]` alone; six more,
+    each red on its own oracle: the render named as the adopter's work, the guard pushing
+    on `main` alone, `upgrade` running the PATH `espalier`, the remedy spelling `python3`
+    (host-specific: a host without `python3`, this one), the activate remedy spelling the
+    bare command, a fresh `init` wiring no SessionStart (the `[clean]` side).
+  - Red-team: `code-reviewer` REQUEST CHANGES (0 BLOCK, 3 SHOULD-FIX, nits), read-only on
+    the live checkout with its probes in its own scratch. One fix batch: the stale-command
+    check moved into the proving node (its separate test was a tautology on the clean
+    tree); remedies split as the host's shell reads a paste, the launcher flag read, and
+    `doctor`'s JSON read as its strings; the untracked note read across every verb for a
+    render or a backup; planted-line controls for the module's patterns; the bare-command
+    pattern built from the cell's own verbs, not the CLI parser (a parser read made it a
+    tree-wide sweep outside the contract tier). Not taken: a run of `init <path>` from
+    another folder (F-9's sibling, `fuse`'s class).
+  - Found on the way, sent to the dispatcher as candidates (note
+    `20261103T195950Z-win-68e353`): the hook-side PATH-first ladder
+    (`tools/cc/hooks/post_write_check.py`'s autoprune, `tools/cc/record_merge.py`) runs
+    the stale engine, driven by the reviewer (the stub recorded `memory prune --rows 37`);
+    `_remedy_interpreter` checks the floor, not that the name imports this engine
+    (probable); `init`'s no-hooks WARN spells `merge-settings <repo>` (nit).
+  - Reach (dirty-machine lane): `DEF-937` is **CLOSED by 3-C** (struck by the verb; no probe
+    to drive). `DEF-975` stays open on its host axis (3-A).
 
 ## Appendix A — the census instrument
 
