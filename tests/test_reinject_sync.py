@@ -260,9 +260,12 @@ _CENSUS_EXCLUDED_SYNC_SCRIPTS: frozenset[str] = frozenset()
 # is allowed.
 _CENSUS_EXCLUDED_IDENTICAL_GROUPS: dict[frozenset[str], str] = {
     frozenset({"memory/README.md", "espalier/assets/memory/README.md"}): (
-        "package data init seeds, equal to the source today with no row, sync or "
-        "parity test; whether it should be pinned is an open question, recorded in "
-        "tests/_surface_expected.py and espalier/managed_inventory.py, not answered here"
+        "package data init seeds, equal to its source today with no row, sync or "
+        "parity test: tests/_surface_expected.py calls whether it should be pinned "
+        "an open question, and espalier/managed_inventory.py records that nothing "
+        "pins it. Reopen when the pair diverges (the census stops grouping it and "
+        "this entry goes dead: drop it) or the question is answered (a row "
+        "replaces it)"
     ),
 }
 
@@ -669,6 +672,16 @@ class TestMirrorCensusCoverage:
         )
         assert all(reason.strip() for reason in _CENSUS_EXCLUDED_IDENTICAL_GROUPS.values()), (
             "an identical-group exclusion with no reason"
+        )
+        # Exists-only, never must-match: requiring the pair to stay equal would
+        # pin it, which is the open question an entry leaves unanswered.
+        tracked = set(require_tracked_paths(REPO, minimum=1000, what="tracked files"))
+        untracked = sorted(
+            p for g in _CENSUS_EXCLUDED_IDENTICAL_GROUPS for p in g if p not in tracked
+        )
+        assert not untracked, (
+            f"identical-group exclusions name paths that are not tracked: {untracked}. "
+            "Drop or correct the entry."
         )
 
     @pytest.mark.contract
