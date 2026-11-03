@@ -18,7 +18,7 @@
   "tests/test_hook_regression.py",
   "tests/test_adopter_generic_systems_fire.py"
  ],
- "row_sha": "346559c73616",
- "text_sha": "99d553667ef1",
- "verified_2026_11_03": "OPEN (filed 2026-11-03; probe driven at filing here and in the export of HEAD 5a806b72a385)"
+ "row_sha": "1dc4ef3e7298",
+ "text_sha": "cc64afdca13c",
+ "verified_2026_11_03": "STILL_OPEN (re-pinned value unchanged on 2026-11-03: cite the wall's arm by symbol, not a bare line anchor (the tree retires that form)) [changed: text]"
 }
