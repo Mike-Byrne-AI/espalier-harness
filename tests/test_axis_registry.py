@@ -692,6 +692,74 @@ class TestTheInstruments:
                 if job and can_be_windows(_runner_labels(workflows[name]["jobs"][job])):
                     assert i.host != "both", (i.name, r)
 
+    def test_the_perturbed_cell_row_is_its_jobs_perturbations(self):
+        """A row's values are declared, not read (TP-468's Landing); this one is
+        read against ``test.yml::perturbed``'s own steps. Its host is the shape
+        a step builds with ``build_host`` and puts on ``$GITHUB_PATH``; its root
+        is ``spaced`` when the tier step's ``--basetemp``, parsed through the
+        script's own parser, holds a space. The host goes on PATH before the
+        tier step runs, the tier step is the parallel leg and nothing keeps it
+        from gating, no ``PYTEST_ADDOPTS`` carries the basetemp, which a pytest
+        child would inherit and empty (``scripts/proof_tier.py::_with_basetemp``),
+        and the basetemp sits inside the TMPDIR the job's first step exports,
+        where a nested run takes its own inside it (``tests/_nested_temp.py``).
+        A step that drops either perturbation and leaves the row reds here."""
+        import importlib.util
+        import shlex
+
+        path = REPO_ROOT / "scripts" / "proof_tier.py"
+        spec = importlib.util.spec_from_file_location("_instruments_proof_tier", path)
+        assert spec is not None and spec.loader is not None
+        tier = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = tier
+        try:
+            spec.loader.exec_module(tier)
+        finally:
+            sys.modules.pop(spec.name, None)
+        steps = self._workflows()["test.yml"]["jobs"]["perturbed"]["steps"]
+        exported = re.search(r'echo "TMPDIR=([^"]+)" >> "\$GITHUB_ENV"', steps[0].get("run") or "")
+        assert exported, steps[0]
+        shape = re.compile(r"build_host\(.*?\b(" + "|".join(name.upper() for name in hosts.SHAPES) + r")\b")
+        built, ran = [], []
+        for index, step in enumerate(steps):
+            text = (step.get("run") or "").replace("\\\n", " ")
+            found = shape.search(text)
+            if found and '>> "$GITHUB_PATH"' in text:
+                built.append((index, getattr(hosts, found.group(1))))
+            for ln in text.splitlines():
+                if "scripts/proof_tier.py" not in ln or ln.lstrip().startswith("#"):
+                    continue
+                words = shlex.split(ln, comments=True)
+                assert "continue-on-error" not in step and "||" not in words, step
+                assert step.get("if") is None, step
+                assert "basetemp" not in str((step.get("env") or {}).get("PYTEST_ADDOPTS", "")), step
+                # $TIER is the tier job's output, read at run time; its
+                # fallback, full, stands in for it so --tier's choices parse
+                args = [w.replace("$TIER", "full") for w in words[words.index("scripts/proof_tier.py") + 1:]]
+                ns = tier.parse_args(args)
+                assert ns.run and ns.leg == "parallel", words
+                if ns.basetemp:
+                    assert ns.basetemp.startswith(exported.group(1) + "/"), (ns.basetemp, exported.group(1))
+                ran.append((index, "spaced" if " " in (ns.basetemp or "") else "plain"))
+        assert len(built) == 1 and len(ran) == 1, (built, ran)
+        assert built[0][0] < ran[0][0], "the host goes on PATH in a step before the tier's"
+        # The one step between them is the read that fails the cell unless the
+        # stub is in force on the PATH the tier step gets; nothing there may
+        # put another interpreter ahead (a second setup-python, a $GITHUB_PATH
+        # line), and the tier step may not set its own PATH.
+        between = steps[built[0][0] + 1:ran[0][0]]
+        assert len(between) == 1, [s.get("name") or s.get("uses") for s in between]
+        probe = between[0].get("run") or ""
+        assert "command -v python3" in probe and '= 49' in probe and "GITHUB_PATH" not in probe, probe
+        assert "PATH" not in (steps[ran[0][0]].get("env") or {}), steps[ran[0][0]]
+        assert "continue-on-error" not in self._workflows()["test.yml"]["jobs"]["perturbed"]
+        rows = [(i.host, i.root) for i in reg.INSTRUMENTS if "test.yml::perturbed" in i.runs]
+        assert rows == [(built[0][1], ran[0][1])], rows
+        # The root/spaced gap says the cell runs on a plain root; that sentence
+        # goes when the cell's root is spaced again.
+        (gap,) = [c.gap for c in reg.AXIS_REGISTRY if (c.axis, c.value) == ("root", "spaced")]
+        assert ("perturbed cell runs with a plain pytest root" in gap) == (ran[0][1] == "plain"), gap
+
     def test_the_release_checklist_carries_the_step(self):
         text = (REPO_ROOT / "docs" / "RELEASE_CHECKLIST.md").read_text(encoding="utf-8")
         assert "python tests/_axis_registry.py" in text and "gh release edit" in text

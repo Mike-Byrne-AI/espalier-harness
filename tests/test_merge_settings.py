@@ -1048,13 +1048,22 @@ class TestEnforcementClaimSurvivesRealSettingsShapes:
 
     @staticmethod
     def _rewire_to_quoted_shell_form(settings_path: Path) -> None:
-        """Spell every hook the pre-v0.6.5 way: path inside a quoted command."""
+        """Spell every hook the pre-v0.6.5 way: path inside a quoted command.
+
+        The interpreter is the one ``init`` wired (``command``, with any
+        launcher flag that leads ``args``), never a literal ``python3``: on a
+        host where ``python3`` is a Store stub that name is dead, the product
+        is right to report the hooks disarmed, and the row below red there
+        for the host, not the quoting (driven under the stub host of
+        ``tests/_interpreter_hosts.py``, 2026-11-03).
+        """
         data = json.loads(settings_path.read_text(encoding="utf-8"))
         for entries in data["hooks"].values():
             for entry in entries:
                 for hook in entry.get("hooks", []):
                     if hook.get("args"):
-                        hook["command"] = 'python3 "' + hook.pop("args")[0] + '"'
+                        *flags, script = hook.pop("args")
+                        hook["command"] = " ".join([hook["command"], *flags]) + ' "' + script + '"'
         settings_path.write_text(
             json.dumps(data, indent=2) + "\n", encoding="utf-8"
         )

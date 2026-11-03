@@ -21,6 +21,8 @@ driver's own ``verify_install_green`` function name).
 from __future__ import annotations
 
 import os
+import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -204,7 +206,9 @@ def _fake_claude_body_with_sentinel(receipt_json: str | None, *, dispatch_ok: bo
 
 def _scope_gate_harness(report: str, rc: int, tail: str) -> str:
     """A bash script that defines the driver's real ``scope_gate()`` with
-    ``python3`` stubbed to return ``report``/``rc``, then runs ``tail``."""
+    ``python3`` stubbed to return ``report``/``rc``, then runs ``tail``. The
+    driver runs its python steps as ``$PY``, resolved at its top; the lifted
+    function gets ``PY`` pointed at the stub."""
     import re as _re
     script = SCRIPT.read_text(encoding="utf-8")
     m = _re.search(r"(?ms)^scope_gate\(\) \{.*?^\}", script)
@@ -214,6 +218,7 @@ def _scope_gate_harness(report: str, rc: int, tail: str) -> str:
         "set -uo pipefail\n"
         "SCOPE_INJECT_CAP=12\n"
         'SCOPE_INJECT=""\n'
+        "PY=python3\n"
         "python3() {\n"
         "  cat <<'__SCOPE_REPORT__'\n"
         f"{report}\n"
@@ -376,6 +381,31 @@ def _regate_two_run_fixture(tmp_path):
     return repo, packdir, ledger, marker, drive
 
 
+class TestTheDriverResolvesItsInterpreter:
+    """The driver picks its interpreter once, with the canonical resolver line,
+    and runs every python step as ``$PY``: where ``python3`` is a Store alias
+    stub, which resolves and does not answer, each step spelled ``python3``
+    failed (21 of this file's tests under the stub host, 2026-11-03). The
+    perturbed CI cell is not a required check, so these two are the gate."""
+
+    def test_it_carries_the_canonical_resolver_line_once(self):
+        from tests._interpreter_hosts import shell_resolver_line
+
+        lines = SCRIPT.read_text(encoding="utf-8").splitlines()
+        assert lines.count(shell_resolver_line()) == 1, (
+            "the driver's resolver line drifted from tests/_interpreter_hosts.py::shell_resolver_line")
+
+    def test_no_other_line_runs_a_bare_python3(self):
+        from tests._interpreter_hosts import shell_resolver_line
+
+        bare = re.compile(r"(?<![\w./'-])python3(?![\w.'-])")
+        found = [
+            (n, line.strip()) for n, line in enumerate(SCRIPT.read_text(encoding="utf-8").splitlines(), 1)
+            if line != shell_resolver_line() and not line.lstrip().startswith("#") and bare.search(line)
+        ]
+        assert not found, f"a driver line runs python3 by name, not $PY: {found}"
+
+
 class TestRunPackChain:
     """The hardened pack-chain driver's correctness + operability contracts."""
 
@@ -453,7 +483,8 @@ class TestRunPackChain:
             fn + "\nCHAIN_STARTED=1\nREPORT_ROWS=()\nprint_report\n", encoding="utf-8"
         )
         r = subprocess.run(
-            ["bash", "-c", f"set -uo pipefail; source {harness}"],
+            # quoted: a pytest root that holds a space split the bare path
+            ["bash", "-c", f"set -uo pipefail; source {shlex.quote(str(harness))}"],
             capture_output=True,
             text=True, encoding="utf-8",
         )
