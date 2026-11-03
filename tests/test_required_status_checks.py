@@ -812,12 +812,13 @@ class TestTheTierGateCannotParkThePullRequest:
 
     def test_the_serial_twin_keeps_the_test_jobs_environment(self):
         """The twin is a copy of `test`'s checkout, interpreter and install, and
-        a hurried edit to one of them drifts the other silently: the first two
-        steps are byte-equal, the install runs the same command, and the twin's
-        install is gated on the full tier (its leg is empty elsewhere and the
-        tier script is stdlib) -- the one deliberate difference."""
+        a hurried edit to one of them drifts the other silently: the first three
+        steps (the temp dir's move, the checkout, the interpreter) are
+        byte-equal, the install runs the same command, and the twin's install is
+        gated on the full tier (its leg is empty elsewhere and the tier script is
+        stdlib) -- the one deliberate difference."""
         jobs = self._ci()["jobs"]
-        assert jobs["test"]["steps"][:2] == jobs["test-serial"]["steps"][:2]
+        assert jobs["test"]["steps"][:3] == jobs["test-serial"]["steps"][:3]
         installs = {jid: next(s for s in jobs[jid]["steps"] if s.get("name") == "Install")
                     for jid in self.REQUIRED_JOBS}
         assert installs["test"]["run"] == installs["test-serial"]["run"]
