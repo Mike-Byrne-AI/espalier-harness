@@ -640,6 +640,46 @@ class TestTheInstruments:
                         running.add(name)
         assert running <= set(reg.INSTRUMENT_WORKFLOWS), sorted(running - set(reg.INSTRUMENT_WORKFLOWS))
 
+    def test_the_matrix_smoke_rows_are_its_wheel_smoke_runs(self):
+        """A row's values are declared, not read (TP-468's Landing). In
+        ``release.yml::matrix-smoke`` the perturbation is a flag on the smoke's
+        own command line, so its rows are read against those lines, through the
+        script's own parser: one row per ``scripts/wheel_smoke.py`` run, its
+        stack the run's ``--stack`` and its root ``spaced`` under
+        ``--spaced-root``. A step that drops or renames the flags and leaves the
+        row reds here, and so does one a ``continue-on-error``, an ``||`` or an
+        ``if:`` other than ``!cancelled()`` keeps from gating."""
+        import importlib.util
+        import shlex
+
+        path = REPO_ROOT / "scripts" / "wheel_smoke.py"
+        spec = importlib.util.spec_from_file_location("_instruments_wheel_smoke", path)
+        assert spec is not None and spec.loader is not None
+        smoke = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = smoke
+        try:
+            spec.loader.exec_module(smoke)
+        finally:
+            sys.modules.pop(spec.name, None)
+        job = self._workflows()["release.yml"]["jobs"]["matrix-smoke"]
+        runs = []
+        for step in job.get("steps") or []:
+            text = (step.get("run") or "").replace("\\\n", " ")
+            for ln in text.splitlines():
+                # the substring first: a step's other lines may be a -c body
+                # shlex cannot split
+                if "scripts/wheel_smoke.py" not in ln or ln.lstrip().startswith("#"):
+                    continue
+                words = shlex.split(ln, comments=True)
+                if "scripts/wheel_smoke.py" not in words:
+                    continue
+                assert "continue-on-error" not in step and "||" not in words, step
+                assert step.get("if") in (None, "${{ !cancelled() }}"), step
+                ns = smoke.parse_args(words[words.index("scripts/wheel_smoke.py") + 1:])
+                runs.append((ns.stack, "spaced" if ns.spaced_root else "plain"))
+        rows = [(i.stack, i.root) for i in reg.INSTRUMENTS if "release.yml::matrix-smoke" in i.runs]
+        assert runs and sorted(runs) == sorted(rows), (runs, rows)
+
     def test_a_row_with_a_windows_leg_never_reads_both(self):
         """windows-latest answering python3 is probable, not measured (TP-468 0-C),
         so a row whose runner can be Windows says "not measured" for host."""

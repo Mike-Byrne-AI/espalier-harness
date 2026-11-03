@@ -1696,9 +1696,12 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "no pin cited: the property is 'everything present is safe', so a smaller population makes a s...",
     ),
     "tests/test_wheel_smoke.py": (
-        2, "06fecacb93fec888ae58d0ec05d1f5b0c0508eb91cac99e1a2ee80e1d6535d99",
+        3, "fb0df5c5b7831ace5c4730530b1da592c25695cba46f948ccf51462c7b90d4f5",
         "MIXED",
-        "scripts/wheel_smoke.py:443-457 — `extra_helpers = helper_names - set(EXPECTED_HOOK_HELPERS)` ...",
+        "scripts/wheel_smoke.py:443-457 — `extra_helpers = helper_names - set(EXPECTED_HOOK_HELPERS)` ... "
+        "NEW 2026-11-03 (lane/adopter-axes-wheel-smoke-stack): the third row, the comprehension over "
+        "STACK_CHOICES[1:], is pinned in its own test: the assert above it holds STACK_CHOICES to the "
+        "five-name literal, so the population cannot narrow without that line redding.",
     ),
     "tests/test_worktree_seat.py": (
         5, "edb59aaf00d73300bb5965a62702e14e7fa468246487aa4d2ca696e629fdd1f7",
