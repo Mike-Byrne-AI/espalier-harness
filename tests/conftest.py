@@ -732,6 +732,10 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             "test_hooks_worktree_checkouts",
             # The deny hooks start or refuse on a kept, older helper (TP-474 2-A).
             "test_hooks_start_on_a_kept_helper",
+            # Every wired hook launched as Claude Code launches it, per adopter
+            # stack and interpreter host shape (TP-468 2-B; the prefix rule
+            # classifies it too).
+            "test_hooks_as_wired",
             # TP-215 — post_compact BC-033 capture lock (hook regression).
             "test_post_compact_capture",
             "test_hook_contracts",
@@ -1764,6 +1768,9 @@ _SLOW_FILES: set[str] = {
     # DEF-743: `git worktree add` on tmp trees, then write_guard / plan_guard /
     # session_start / post_write_check driven as subprocesses inside the worktree.
     "test_hooks_worktree_checkouts",
+    # `init` on six adopter trees (two stacks, three host shapes), then every
+    # wired hook launched through its host's stubs: about a dozen spawns a tree.
+    "test_hooks_as_wired",
     "test_plan_guard",
     "test_plan_guard_adopter_config",
     "test_recall",

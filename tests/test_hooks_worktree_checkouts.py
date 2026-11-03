@@ -31,7 +31,7 @@ from pathlib import Path, PureWindowsPath
 import pytest
 
 from _hook_assertions import assert_hook_allowed
-from test_hooks import run_hook  # intentional cross-test reuse (the litter tests do the same)
+from _hook_runner import run_hook
 from test_nested_repo_litter import _add_worktree, _git, _init_repo, _seed_commit
 
 HOOKS_DIR = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"

@@ -1252,8 +1252,9 @@ total; it shrinks each review.
 ## Landing
 
 - State: DRAFT (foundation lane landed on `lane/adopter-axes-foundation`, 2026-10-06; the
-  session-and-stack lane, 2-B to 2-D, and the release-and-collectors lane, 3-A to 3-F, are
-  open)
+  session-and-stack lane landed 2-B on `lane/adopter-axes-session-and-stack`, 2026-11-03,
+  with 2-C dropped and 2-D landed through `TP-474`; the release-and-collectors lane, 3-A
+  to 3-F, is open)
 - Commits (foundation lane):
   - `b92ce7d` Task 0 record
   - `68689b5` 1-A
@@ -1314,6 +1315,110 @@ total; it shrinks each review.
   - 0-E's `newline=` arm is **not reached**: 16 sites, over the 10-site bound, and ownership
     needs a judgement at each site.
 - Date: 2026-10-06 (authored; foundation lane landed)
+- **Session-and-stack lane (2026-11-03, `lane/adopter-axes-session-and-stack`, Windows box):
+  2-B alone.** 2-D had landed through `TP-474` (the fixture
+  `tests/test_adopter_lifecycle_diagnostics.py::walked` is parametrised by stack). 2-C was dropped on 0-D's refuting
+  result, ruled in by the dispatcher (ack `20261103T082952Z-air-4d26c3`).
+  - 0-D, re-run at `a291436` before building: python, node `.mjs` and node `.js` trees,
+    every hook launched as the tree's settings wire it, every `ESPALIER_` and `CLAUDE_`
+    variable unset. Each tree denies its root source file with no plan and allows it with
+    one, reaches `write_count` 10, and blocks Stop at Gate 2 under `light`, and under `full`
+    with a passing test override. Under `full` with no override the python tree stops at
+    Gate 1 instead: the detected `pytest -q` exits 2 on the `adopter-python` row's own
+    src-layout import (pre-existing, byte-folded at `44748db`), while node's `npm test`
+    passes. Gate 1 reads the env, `espalier.toml` and the fingerprint, never `write_count`
+    (`tools/cc/hooks/stop_gate.py::_resolve_core_tests`), so that split is not on the session
+    axis. The refuting clause holds: the Node-defaults and stack-registry lanes closed the
+    differential 0-D pre-registered. The full record is the session log row
+    `memory/session-log.d/2026-11-03-033440-win-2.md`.
+  - Landed:
+    - `tests/_hook_runner.py`: `run_hook` moved unchanged, bound in `tests/test_hooks.py`
+      by assignment; `run_hook_as_wired`; `iter_hooks`, `script_arg` and the launcher flag
+      from `tests/test_hook_exec_form.py`; the Walk's per-event no-op input (`NOOP_INPUT`).
+      The five importers of `run_hook` (four at authoring, `tests/test_checkout_sync.py`
+      the fifth) import it from there.
+    - The Walk's channel predicate moved to `tests/_hook_assertions.py::is_decision_or_silent`.
+    - The launcher-only write_guard test runs through `run_hook_as_wired`.
+    - `tests/test_hooks_as_wired.py`, the matrix: `python` and `node` trees times the three
+      host shapes, every wired entry launched on its event's no-op input. Each launch must
+      exit 0 on one channel and not be refused at start-up, the roster must be
+      `CANONICAL_HOOK_WIRING`'s, and the wired write_guard must deny a protected write
+      (a launch that ran nothing passes the channel rule). Second witness: the wired
+      command is the name the host answers to, and the fingerprint names the stack's
+      language.
+    - `tests/test_test_suite_contract.py::test_private_hook_runners_only_shrink`: Appendix A
+      line 3 per file, widened to the subprocess module under an alias, a bare-imported
+      spawn and `run_hook_through` (the line read 56 in 38 files and missed 29 runners);
+      seeded at 85 runners in 49 files, with the zero-census floor, a planted-file test of
+      the matcher, and `test_the_hooks_module_binds_the_shared_runner` against a merge
+      that brings a body back to `tests/test_hooks.py`.
+    - `espalier/scanners/test_loosening.py::_HOOK_INVOKERS` gains `run_hook_as_wired`.
+    - The hook-authoring sentence names the shared module and the launcher, in a
+      self-host-only block (the shipped copy keeps one portable sentence).
+    - Registry: `host/store_python3`, `host/launcher_only` and `host/python3_only` proven by
+      the matrix's Python nodes, so `PROVEN_FLOOR` goes from 8 to 11. The registry test
+      that pinned the launcher test as not proving its cell was deleted, as its docstring
+      said to once the cell was proven.
+  - Departures from the text above:
+    - `run_hook_as_wired` takes no `timeout`. Its bound is `WIRED_S = 45`, a module
+      constant: the wait-budget contract reads constants, and the sketch's 60 equals the
+      per-test ceiling. Every launch goes through `not_a_budget_miss`, and
+      `tests/test_hook_spawn_routing.py` pins that. That file's read-population floor went
+      from 6 to 5, because the launcher test's spawn moved into the shared module.
+    - The payload's `hook_event_name` picks the entry; one entry must match.
+    - `session/single_event` stays a gap. The matrix launches one event per launch, but a
+      function collected at one session value is the born-blind shape the registry refuses.
+      So the session axis holds **no** proven value, not one.
+    - One copy of the no-op table remains, in `tests/test_hooks_start_on_a_kept_helper.py`.
+      Its ConfigChange input differs on purpose (audit-only).
+  - Earn-the-red, each in a scratch archive with a control run green:
+    - the matrix: `_detect_python_command` returning `python3` reds the `store_python3`
+      cell, every wired launch exiting 9009 with the Store alias text. The static
+      `test_a_store_alias_python3_wires_python` reds on the same mutant on every host, so
+      this red shows nothing only the matrix catches; the launch half's own red is the
+      deny witness's: with the `py` stub's forwarder exiting 0 for a hook script without
+      running it, the committed matrix (`e363948c`) passed the `launcher_only` cell and
+      the fix batch's reds it on the empty deny;
+    - the ratchet: a runner planted in a new file and in `tests/test_stop_gate.py` (5 to 6)
+      each red, and a census matcher that finds nothing reds the floor (on the first
+      census; the widened one's matcher is held by its planted-file test);
+    - the scanner: the planted returncode-only deny and allow tests on the launcher flag
+      nothing at the old invoker set, and each fires its arm after.
+  - Red-team, on a snapshot of `e363948c` with edits frozen: `code-reviewer` APPROVE WITH
+    SHOULD-FIX (3 should-fix, 4 nits) and `failure-mode-reviewer` APPROVE-WITH-NOTES (0
+    regressions, 5 gaps, 3 rough edges). One fix batch: the matrix's exit-0 rule (CPython
+    exits 2 on a script it cannot open), cannot-start check, canonical roster and deny
+    witness; the ratchet's widening and its two new pins; a pin that every `run_hook*`
+    function of the shared module is in the scanner's invoker set; the channel
+    predicate's own rows (`tests/test_hook_assertions_helpers.py`); the launcher
+    docstring's limits; the nested run's timing (99 s on the Windows box, eleven nodes);
+    a note to the dispatcher for the DEF-2048 lane (`20261103T104613Z-win-2-5dcbd9`: the
+    cut skip belongs in the shared `run_hook`, and the ratchet keys 11 of its 13 files).
+    Not taken, with reasons: a script wired twice for one event still raises (one entry
+    launches; a double wiring is the finding); the launch keeps the suite's env (the
+    conftest's isolation fixtures cover what changes a verdict, and the launcher sets the
+    project root); the entry's own `timeout` is not used (named in the docstring); the
+    matrix's Windows flake exposure stands on one run here, with no POSIX timing yet.
+  - Reach (session-and-stack lane):
+    - `DEF-975` is **not struck by this lane**. `blind_axes` counts `session` (no proven
+      value), `root` and `tree` as blind, and the row's probe prints 1. The Reach session
+      row reads **NOT CLOSED**: nothing proves `session/cross_event` once 2-C was dropped.
+      Its closure (a re-pin, or another owner) is the dispatcher's call.
+    - The Reach stack row's earn-the-red names 2-C's Node chain, which was not built. It is
+      **unmeasured**, not re-pointed. The mutation as 0-B spells it has no site any more:
+      `SOURCE_LANGUAGE_EXTENSIONS` is read from the stack table since the stack-registry
+      lanes (`tools/cc/hooks/_hook_utils.py`, `_STACK_TABLE`). And the session test's Node tree writes
+      `.mjs`, which that mutation never named.
+    - What stays unproven at session level:
+      `tests/test_node_adopter_defaults.py::TestASessionOnTheTreeIsGoverned` spawns
+      `plan_guard`, `reflect_trigger` (ten times), `stop_gate` (light only) and
+      `subagent_stop` directly under `HOOK_PYTHON`, not as wired. The matrix launches every
+      entry as wired, but one event at a time on a no-op input. No test carries a session
+      launched as wired through SessionStart, write_guard, a plan created then allowing,
+      or full-mode Gate 1.
+    - `DEF-915` stays **NOT CLOSED**. `run_hook_as_wired` is its launch oracle, but its
+      cannot-start shape (`tests/_interpreter_hosts.py::build_cannot_start`) is not one of
+      the matrix's host shapes.
 
 ## Appendix A — the census instrument
 
