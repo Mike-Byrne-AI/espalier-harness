@@ -1287,6 +1287,32 @@ class TestRetire:
             seat.cmd_retire(clone, "box-feat", dry_run=False, fetch=True)
         assert feat.is_dir() and len(_live_claims_from(seat, clone, "box-feat")) == 1
 
+    def test_a_list_killed_after_a_removal_that_worked_still_retires(self, seat, clone, registry, monkeypatch,
+                                                                     capsys):
+        """The reaper reads the worktree list back after the removal; that read
+        killed at its cap read as the worktree still registered, so retire
+        exited 1 with "git did not remove it" over a worktree git had removed
+        (the dispatcher's ruling on the killed-read class). Dies to: reading a
+        list that did not answer as the worktree still being there."""
+        feat = _worktree(clone, "feat", name="box-feat")
+        sync, reap, removed = seat.sync, seat.sync.reap_worktrees, []
+
+        def runner(argv, *, cwd, timeout):
+            if removed and argv[1:3] == ["worktree", "list"]:
+                return None
+            return sync.run(argv, cwd=cwd, timeout=timeout)
+
+        def spawner(argv, *, cwd, wait, kill):
+            done = sync.spawn(argv, cwd=cwd, wait=wait, kill=kill)
+            if argv[1:3] == ["worktree", "remove"]:
+                removed.append(argv)
+            return done
+
+        monkeypatch.setattr(sync, "reap_worktrees", lambda *a, **k: reap(*a, runner=runner, spawner=spawner, **k))
+        assert seat.cmd_retire(clone, "box-feat", dry_run=False, fetch=True) == 0
+        assert removed and not feat.exists()
+        assert f"retired box-feat: removed {feat}" in capsys.readouterr().out
+
     def test_occupancy_nobody_can_tell_releases_and_removes_nothing(self, seat, clone, monkeypatch):
         feat = _worktree(clone, "feat", name="box-feat")
         _send(seat, feat, "box-feat", "claim", "the feature", lane="lane/feat")
