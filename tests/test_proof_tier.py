@@ -478,16 +478,24 @@ class TestTheFullRecipe:
                        ".claude/skills/SKILL.md", ".claude/skills/a/b/SKILL.md", ".claude/skills//SKILL.md",
                        ".claude/agents//x.md"):
             # beside a body the roster does not come: the line is the path's own
-            # readers alone (the dogfooding mirror's tail is the source body's
-            # path, so the files that name that path come by name)
+            # readers (the dogfooding mirror's tail is the source body's path, so
+            # the files that name that path come by name), then the pin of a
+            # mirror row that holds it (DEF-5076)
             assert not pt.is_body(beside), beside
-            assert pt.own_tests([beside], REPO_ROOT) == tuple(
-                t for t in pt.path_readers([beside], REPO_ROOT) if not _contract_classified(t)), beside
+            assert pt.own_tests([beside], REPO_ROOT) == tuple(dict.fromkeys(
+                t for t in (*pt.path_readers([beside], REPO_ROOT), *pt.mirror_pins([beside], REPO_ROOT))
+                if not _contract_classified(t))), beside
+        # the dogfooding mirror's row brings its pin, which the contract line
+        # already runs whole (a module-level contract mark), so the line leaves it off
+        dogfooding = "examples/dogfooding/.claude/agents/repo-analyst.md"
+        assert pt.mirror_pins([dogfooding], REPO_ROOT) == ("tests/test_package_resource_parity.py",)
+        assert "tests/test_package_resource_parity.py" not in pt.own_tests([dogfooding], REPO_ROOT)
         changed = [".claude/agents/repo-analyst.md", "espalier/assets/claude/agents/repo-analyst.md",
                    "scripts/ledger_row.py", diagnostics]
         readers = [t for t in pt.path_readers(changed, REPO_ROOT) if not _contract_classified(t)]
+        pins = [t for t in pt.mirror_pins(changed, REPO_ROOT) if not _contract_classified(t)]
         assert pt.own_tests(changed, REPO_ROOT) == tuple(
-            dict.fromkeys((diagnostics, "tests/test_ledger_row.py", *readers)))
+            dict.fromkeys((diagnostics, "tests/test_ledger_row.py", *readers, *pins)))
         own = pt.own_tests([".claude/agents/repo-analyst.md"], REPO_ROOT)
         assert own[0] == diagnostics and not set(own) & set(pt.SERIAL_FILES), own
         assert pt.commands("contract", [".claude/agents/repo-analyst.md"], REPO_ROOT) == (
@@ -760,8 +768,20 @@ def _tracked_bodies(pt) -> list[str]:
 
 
 def _contract_classified(rel: str) -> bool:
+    """The contract line runs every row of ``rel``: the conftest classifies it
+    ``contract``, or the module's own ``pytestmark``, as imported, holds the
+    mark (DEF-5076's review: tests/test_package_resource_parity.py)."""
     from tests.conftest import _primary_marker
-    return _primary_marker(Path(rel).stem) == "contract"
+    if _primary_marker(Path(rel).stem) == "contract":
+        return True
+    return "contract" in _imported_marks(rel)
+
+
+def _imported_marks(rel: str) -> set[str]:
+    """The names of the marks the module's ``pytestmark`` holds once it runs."""
+    module = importlib.import_module(f"tests.{Path(rel).stem}")
+    marks = getattr(module, "pytestmark", [])
+    return {getattr(mark, "name", None) for mark in (marks if isinstance(marks, (list, tuple)) else [marks])}
 
 
 #: The scratch suite the rows below ask: a contract-classified file, one that
@@ -921,16 +941,24 @@ class TestTheOwnLineSkipsWhatTheTierRan:
         """The CI tier job installs no pytest and composes the commands under
         ``--quiet`` too, so the rules are read from the conftest's text: a
         script that imported the conftest would answer every pull request
-        ``full`` there. Driven in a child where ``import pytest`` fails."""
-        code = ("import sys; sys.modules['pytest'] = None; sys.path.insert(0, 'scripts'); "
+        ``full`` there. Driven in a child where ``import pytest`` fails, and
+        ``import espalier`` too: the mirror rows' pins are read from the
+        registry's literals (DEF-5076), so a curated selfcheck source's line
+        keeps its row's pin."""
+        selfcheck = pt.own_tests(["tests/test_analyze.py"], REPO_ROOT)
+        assert "tests/test_selfcheck_tests_parity.py" in selfcheck, selfcheck
+        code = ("import sys; sys.modules['pytest'] = None; sys.modules['espalier'] = None; "
+                "sys.path.insert(0, 'scripts'); "
                 "import proof_tier as t; "
                 "print(len(t._marker_rules(t._ROOT) or ())); "
-                "print(len(t.own_tests(['.claude/skills/reflect/SKILL.md'])))")
+                "print(len(t.own_tests(['.claude/skills/reflect/SKILL.md']))); "
+                "print(' '.join(t.own_tests(['tests/test_analyze.py'])))")
         done = subprocess.run([sys.executable, "-c", code], cwd=REPO_ROOT, capture_output=True,
                               text=True, encoding="utf-8", errors="replace", check=False)
         assert done.returncode == 0, done.stderr
-        rules, line = (int(n) for n in done.stdout.split())
-        assert rules > 0 and line == len(pt.own_tests([".claude/skills/reflect/SKILL.md"], REPO_ROOT))
+        rules, line, child = done.stdout.splitlines()
+        assert int(rules) > 0 and int(line) == len(pt.own_tests([".claude/skills/reflect/SKILL.md"], REPO_ROOT))
+        assert tuple(child.split()) == selfcheck, child
 
     def test_a_line_with_a_selection_on_it_runs_no_file_whole(self, pt, tmp_path, monkeypatch):
         """Only a bare pytest line runs its files whole: with a ``-k`` on the
@@ -1005,6 +1033,215 @@ class TestTheOwnLineCeiling:
         # the full tier runs no own line, so it prints no count
         assert pt.main(["--root", str(r), "--tier", "full"]) == 0
         assert "own line per body" not in capsys.readouterr().out
+
+
+#: A scratch registry in the engine's spelling: a curated tree row, a whole
+#: file row, a glob row and a row whose pin file is not there, the kinds
+#: bound to module constants as the engine binds them.
+_SCRATCH_REGISTRY = """\
+CURATED_KIND = "subset"
+WHOLE = "byte"
+_CURATED = (CURATED_KIND,)
+
+MIRROR_ROWS = (
+    MirrorRow(name="curated", sot="src/", mirrors=("pkg/src/",),
+              pinning_test="tests/test_i.py::TestParity::test_x", kind=CURATED_KIND),
+    MirrorRow(name="file", sot="one.md", mirrors=("pkg/one.md",),
+              pinning_test=("tests/test_c.py"
+                            "::TestOne"), kind=WHOLE),
+    MirrorRow(name="glob", sot="lib/**/*.{py,cmd}", mirrors=("pkg/lib/",),
+              pinning_test="tests/test_u.py", kind=WHOLE),
+    MirrorRow(name="gone", sot="gone/", mirrors=("pkg/gone/",),
+              pinning_test="tests/test_missing.py", kind=WHOLE),
+)
+"""
+
+
+def _scratch_registry(root: Path, registry: str = _SCRATCH_REGISTRY) -> Path:
+    """The scratch suite, the registry above, and a mirror tree holding the
+    counterpart of ``src/a.py`` alone."""
+    _scratch_suite(root)
+    (root / "espalier").mkdir()
+    (root / "espalier" / "mirror_registry.py").write_text(registry, encoding="utf-8")
+    (root / "pkg" / "src").mkdir(parents=True)
+    (root / "pkg" / "src" / "a.py").write_text("x\n", encoding="utf-8")
+    return root
+
+
+class TestAMirroredSourceRunsItsParityPin:
+    """DEF-5076: a tests-only diff on a curated selfcheck source, a body edit
+    and an edit of the harness-guard asset each earned a cheaper tier whose
+    lines ran no parity test for the mirror they feed, so an unsynced mirror
+    could go green on the required cells and red on ``main``'s post-merge
+    proof. The own line now brings each mirror-registry row's pin, read from
+    the registry's literals; these hold that read to the engine's rows and
+    ``covers``, and each row's pin to the tier its paths earn."""
+
+    def test_each_rows_pin_runs_on_the_tier_a_path_on_either_side_earns(self, pt):
+        """The row's probe for every row: one tracked source the row covers
+        (one that earns a cheaper tier where there is one) and one tracked
+        file under each mirror, each read locally and as a pull request's
+        run. The pin runs where the tier is full, where the contract line runs
+        its file whole (classified ``contract``, or marked so module-wide, as
+        imported), or where a line of the tier names it. Earn-the-red: three
+        of the twenty pairs at 437fe40, before the own line read the registry
+        (the selfcheck row's two sides and the vendored tools/cc copy)."""
+        from espalier import mirror_registry
+        from tests._git_oracle import require_tracked_paths
+        tracked = require_tracked_paths(REPO_ROOT, minimum=1000, what="the tree the mirror rows read")
+        missed, read = [], 0
+        for row in mirror_registry.MIRROR_ROWS:
+            pin = row.pinning_test.split("::", 1)[0]
+            sources = [rel for rel in tracked if mirror_registry.covers(row, rel, REPO_ROOT)]
+            assert sources, f"{row.name}: no tracked file on its source side"
+            probes = [next((rel for rel in sources if pt.tier([rel]) != "full"), sources[0])]
+            for mirror in row.mirrors:
+                held = [rel for rel in tracked if rel == mirror or (mirror.endswith("/") and rel.startswith(mirror))]
+                assert held, f"{row.name}: no tracked file under {mirror}"
+                probes.append(held[0])
+            for rel in probes:
+                for in_ci in (False, True):
+                    which = pt.tier([rel], workflows_are_runtime=in_ci)
+                    if which == "full" or _contract_classified(pin):
+                        continue
+                    read += 1
+                    if not any(pin in argv for argv in pt.tier_argvs(which, [rel], REPO_ROOT)):
+                        missed.append((row.name, rel, which, "ci" if in_ci else "local"))
+        assert read >= 4, f"only {read} probes earned a cheaper tier: the walk read nothing"
+        assert not missed, f"{missed}: a mirrored path earned a tier no line of which names its row's pin"
+
+    def test_the_registry_reads_as_the_engines_rows(self, pt):
+        """The read held to the rows it reads, the producer/consumer pair:
+        every row the engine declares, in order, with its name, source,
+        mirrors, pin file and whether its kind is curated, and no row more.
+        A read of none would leave every pin off the line and read clean."""
+        from espalier import mirror_registry
+        read = pt._registry_rows((REPO_ROOT / pt._REGISTRY).read_text(encoding="utf-8"))
+        assert [(r.name, r.sot, r.mirrors, r.pin, r.curated) for r in read] == [
+            (row.name, row.sot, row.mirrors, row.pinning_test.split("::", 1)[0],
+             row.kind in mirror_registry._CURATED) for row in mirror_registry.MIRROR_ROWS]
+        assert any(r.curated for r in read) and not all(r.curated for r in read)
+
+    def test_the_source_side_is_covers_over_every_tracked_file(self, pt):
+        """``_on_source`` against ``mirror_registry.covers`` for every row and
+        every tracked path: a curated row's neighbour the mirror tree does not
+        hold, a glob row's file of another suffix and a file row's every other
+        path answer as the engine does."""
+        from espalier import mirror_registry
+        from tests._git_oracle import require_tracked_paths
+        tracked = require_tracked_paths(REPO_ROOT, minimum=1000, what="the tree the mirror rows read")
+        read = pt._registry_rows((REPO_ROOT / pt._REGISTRY).read_text(encoding="utf-8"))
+        assert len(read) == len(mirror_registry.MIRROR_ROWS), read
+        differ, held, curated_out = [], 0, 0
+        for mine, row in zip(read, mirror_registry.MIRROR_ROWS):
+            for rel in tracked:
+                want = mirror_registry.covers(row, rel, REPO_ROOT)
+                held += want
+                curated_out += mine.curated and not want and rel.startswith(row.sot)
+                if pt._on_source(mine, rel, REPO_ROOT) != want:
+                    differ.append((row.name, rel, want))
+        assert not differ, differ[:20]
+        assert held >= 100 and curated_out >= 100, (held, curated_out)
+
+    def test_the_pins_come_by_either_side_once_and_the_contract_filter_holds(self, pt, tmp_path):
+        """On the scratch registry: a curated source brings its pin only where
+        the mirror tree holds its counterpart, a hand edit under a mirror
+        brings it, the node id's file is what rides, a glob reads its
+        suffixes, a pin file that is not there stays off, two paths on one
+        row bring it once, and ``own_tests`` leaves a contract-classified pin
+        off as it does any other file."""
+        r = _scratch_registry(tmp_path)
+        assert pt.mirror_pins(["src/a.py"], r) == ("tests/test_i.py",)
+        assert pt.mirror_pins(["src/b.py"], r) == ()
+        assert pt.mirror_pins(["pkg/src/b.py"], r) == ("tests/test_i.py",)
+        assert pt.mirror_pins(["lib/x/y.cmd"], r) == ("tests/test_u.py",)
+        assert pt.mirror_pins(["lib/x/y.md"], r) == ()
+        assert pt.mirror_pins(["gone/z.md", "pkg/gone/z.md"], r) == ()
+        assert pt.mirror_pins(["one.md", "pkg/one.md", "src\\a.py"], r) == ("tests/test_c.py", "tests/test_i.py")
+        assert pt.own_tests(["one.md"], r) == ()
+        assert pt.own_tests(["src/a.py"], r) == ("tests/test_i.py",)
+        assert pt.commands("contract", ["src/a.py"], r)[-1] == (
+            "pytest -q -n auto -m 'not heavy_e2e' tests/test_i.py")
+
+    @pytest.mark.parametrize("label,old,new", [
+        ("curated kinds built at run time", "_CURATED = (CURATED_KIND,)", "_CURATED = tuple(KINDS)"),
+        ("a kind that is no constant", "kind=CURATED_KIND)", "kind=kinds.SUBSET)"),
+    ])
+    def test_a_kind_that_does_not_read_brings_more_never_fewer(self, pt, tmp_path, label, old, new):
+        """Where the curated kinds or a row's kind cannot be read, the row is
+        matched by prefix: a source with no counterpart brings its pin."""
+        assert _SCRATCH_REGISTRY.count(old) == 1, label
+        r = _scratch_registry(tmp_path, _SCRATCH_REGISTRY.replace(old, new))
+        assert pt.mirror_pins(["src/b.py"], r) == ("tests/test_i.py",), label
+
+    def test_a_tree_with_no_registry_brings_no_pin(self, pt, tmp_path):
+        """No registry, no row: the line is what it was before the read."""
+        _scratch_suite(tmp_path)
+        assert pt.mirror_pins(["src/a.py", "tests/test_i.py"], tmp_path) == ()
+
+    def test_a_pin_the_contract_line_runs_whole_is_left_off(self, pt, tmp_path):
+        """A pin whose module carries ``contract`` in its ``pytestmark`` is
+        run whole by the contract line, so ``own_tests`` leaves it off as it
+        leaves a contract-classified file (the ``.claude/`` rows' pin)."""
+        r = _scratch_registry(tmp_path)
+        (r / "tests" / "test_u.py").write_text(
+            'import pytest\npytestmark = [pytest.mark.contract, pytest.mark.release]\n', encoding="utf-8")
+        assert pt.mirror_pins(["lib/x/y.py"], r) == ("tests/test_u.py",)
+        assert pt.own_tests(["lib/x/y.py"], r) == ()
+
+    def test_a_changed_registry_is_read_again(self, pt, tmp_path):
+        """The rows are kept per registry text: a registry edited in the same
+        tree is read anew, never answered from the first read."""
+        r = _scratch_registry(tmp_path)
+        assert pt.mirror_pins(["src/b.py"], r) == ()
+        (r / "espalier" / "mirror_registry.py").write_text(
+            _SCRATCH_REGISTRY.replace("_CURATED = (CURATED_KIND,)", "_CURATED = ()"), encoding="utf-8")
+        assert pt.mirror_pins(["src/b.py"], r) == ("tests/test_i.py",)
+
+    def test_a_registry_that_does_not_parse_raises(self, pt, tmp_path):
+        """Loud on purpose, as ``review`` always was: the CI tier job reads a
+        script error as ``full``, never an empty line."""
+        r = _scratch_registry(tmp_path, "MIRROR_ROWS = (\n")
+        with pytest.raises(SyntaxError):
+            pt.mirror_pins(["src/a.py"], r)
+
+    def test_module_marks_read_as_pytest_applies_them(self, pt):
+        """``_module_marks`` against each module's ``pytestmark`` as imported,
+        over every test module that binds one at its top level: it never
+        reads a mark the module does not carry (the contract filter would
+        leave a file off that no line runs), and it misses no ``contract``
+        mark today. A mark bound through a name (``pytestmark =
+        requires_symlink``) is not read, which keeps a file on the line,
+        never off it."""
+        from tests._git_oracle import require_tracked_paths
+        modules = [rel for rel in require_tracked_paths(REPO_ROOT, "tests/test_*.py", minimum=400,
+                                                        what="the test modules")
+                   if re.search(r"^pytestmark\b", (REPO_ROOT / rel).read_text(encoding="utf-8"), re.M)]
+        assert len(modules) >= 10, modules
+        read = {rel: pt._module_marks(REPO_ROOT / rel) for rel in modules}
+        beyond = [(rel, sorted(read[rel] - _imported_marks(rel))) for rel in modules
+                  if not read[rel] <= _imported_marks(rel)]
+        assert not beyond, beyond
+        missed = [rel for rel in modules if "contract" in _imported_marks(rel) and "contract" not in read[rel]]
+        assert not missed, missed
+        assert sum("contract" in marks for marks in read.values()) >= 4
+
+    def test_the_three_measured_pairs_run_their_pin(self, pt):
+        """The row's three exposed pairs by name, with no git to ask (the
+        strike's base is an export): a curated selfcheck source, its vendored
+        copy and a hand edit under the vendored tools/cc each earned the
+        contract tier, and no line of it named the row's parity test.
+        Earn-the-red: all three at 437fe40."""
+        missed = []
+        for rel, pin in (("tests/test_analyze.py", "tests/test_selfcheck_tests_parity.py"),
+                         ("espalier/_vendor/selfcheck_tests/test_analyze.py", "tests/test_selfcheck_tests_parity.py"),
+                         ("espalier/_vendor/cc/mail.py", "tests/test_vendor_cc_parity.py")):
+            assert (REPO_ROOT / rel).is_file() and (REPO_ROOT / pin).is_file(), (rel, pin)
+            which = pt.tier([rel])
+            assert which == "contract" and not _contract_classified(pin), (rel, which, pin)
+            if not any(pin in argv for argv in pt.tier_argvs(which, [rel], REPO_ROOT)):
+                missed.append(rel)
+        assert not missed, f"{missed}: no line of the contract tier names the row's parity test"
 
 
 #: Engine entry points that read the freshness manifest of the root they are
