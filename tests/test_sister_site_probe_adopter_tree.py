@@ -36,6 +36,7 @@ import pytest
 from _adopter_tree import _git, build_adopter_tree, deployed_python
 from _quiet_git import NO_BACKGROUND_GIT, background_git_settings
 from espalier.managed_markers import file_carries_marker
+from tests._wait_budget import scaled
 
 _MARKER = "# espalier:managed v0.0.0 sha256:0000\n"
 
@@ -98,7 +99,7 @@ def _run_probe(tree: Path, *extra: str) -> subprocess.CompletedProcess:
             sys.executable, str(tree / "tools" / "cc" / "sister_site_probe.py"),
             "--root", str(tree), "--json", *extra,
         ],
-        capture_output=True, text=True, cwd=tree, timeout=50, encoding="utf-8",
+        capture_output=True, text=True, cwd=tree, timeout=scaled(50), encoding="utf-8",
     )
 
 
@@ -282,7 +283,7 @@ class TestDeployedProbeOnAdopterTree:
                 sys.executable, str(tree / "tools" / "cc" / "sister_site_probe.py"),
                 "--root", str(tree),
             ],
-            capture_output=True, text=True, cwd=tree, timeout=50, encoding="utf-8",
+            capture_output=True, text=True, cwd=tree, timeout=scaled(50), encoding="utf-8",
         )
         out = result.stdout
         assert result.returncode == 2

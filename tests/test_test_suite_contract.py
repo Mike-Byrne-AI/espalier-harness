@@ -2733,6 +2733,122 @@ class TestAScaledCallAtImportIsNamed:
         assert _scaled_at_import(ast.parse(src)) == []
 
 
+#: The python spawns under ``tests/*.py`` whose bound is a literal, as
+#: ``_literal_python_spawn_bounds`` counts them: a ceiling that only falls
+#: (DEF-2047). 2026-11-03: 236 in 88 modules, after the adopter-tree probe's two
+#: spawns took ``scaled(50)``; 164 of them at 30 s or more.
+_LITERAL_PYTHON_SPAWN_BOUNDS = 236
+
+
+def _holds_an_executable(node: ast.expr) -> bool:
+    """True where ``node`` reads ``<name>.executable`` (``sys.executable``, or
+    ``_sys.executable`` under an alias) anywhere inside it."""
+    return any(isinstance(n, ast.Attribute) and n.attr == "executable"
+               and isinstance(n.value, ast.Name) for n in ast.walk(node))
+
+
+def _literal_python_spawn_bounds(modules: list[tuple[str, str]]) -> tuple[list[str], int]:
+    """(``module:line timeout=N`` for each python spawn whose bound is a
+    literal, the count of bounded python spawns read).
+
+    A bounded python spawn is a call whose first positional argument holds
+    ``<name>.executable`` and which passes ``timeout=``, whatever the call is
+    named: subprocess's own, ``run_no_stdin``, a module's ``_run``. Its bound is
+    literal where ``timeout=`` is a number or a name this module binds to one;
+    ``scaled(n)`` keeps its place under the ceiling its test runs at and is not.
+    Not read: an argv bound to a name before the call, an argv passed by
+    keyword, a constant imported from another module, and a bound passed
+    through a parameter, whose default is where its literal sits (two today:
+    ``test_axis_registry`` and ``test_hooks_start_on_a_kept_helper``)."""
+    sites: list[str] = []
+    spawns = 0
+    for stem, text in modules:
+        if "executable" not in text:
+            continue
+        tree = ast.parse(text)
+        consts = _module_constants(tree)
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and node.args and _holds_an_executable(node.args[0])):
+                continue
+            for kw in node.keywords:
+                if kw.arg != "timeout":
+                    continue
+                spawns += 1
+                seconds = _numeric(kw.value)
+                if seconds is None and isinstance(kw.value, ast.Name):
+                    seconds = consts.get(kw.value.id)
+                if seconds is not None:
+                    sites.append(f"{stem}:{node.lineno} timeout={seconds:g}")
+    return sites, spawns
+
+
+def test_no_python_spawn_under_tests_takes_a_new_literal_bound():
+    """A python spawn's literal ``timeout=`` is written against the ini's 60 s
+    ceiling and fires at a third of the 180 s the Windows legs run the suite at
+    (``PYTEST_TIMEOUT``): the adopter-tree probe's literal 50 s expired on #451's
+    and #455's windows-latest legs, in a file neither diff touched (DEF-2047).
+    ``timeout=scaled(n)`` (tests/_wait_budget.py) keeps the bound's ratio to the
+    ceiling its test runs under, so a new spawn takes that form and the count of
+    literal ones only falls.
+
+    A ceiling, not an equality: the up-to-date rule is off, so two lanes that
+    each convert sites and lower the pin to the same figure merge cleanly to a
+    count below it, which an equality would read as red on main. Lower the pin
+    in the commit that converts; never raise it."""
+    sites, spawns = _literal_python_spawn_bounds(_all_test_dir_modules())
+    assert spawns >= 200, (
+        f"{spawns} bounded python spawns read under tests/: the walker regressed, and the "
+        "ceiling below is policing an empty set")
+    assert len(sites) <= _LITERAL_PYTHON_SPAWN_BOUNDS, (
+        f"{len(sites)} python spawns under tests/ take a literal timeout=, above the ceiling "
+        f"of {_LITERAL_PYTHON_SPAWN_BOUNDS}: bound a new one with timeout=scaled(n) at the "
+        "wait (tests/_wait_budget.py). Converted some: lower _LITERAL_PYTHON_SPAWN_BOUNDS "
+        "to the new count in the same commit; never raise it. By module: "
+        + ", ".join(f"{stem} ({n})" for stem, n in sorted(
+            Counter(site.split(":", 1)[0] for site in sites).items())))
+
+
+class TestTheLiteralPythonSpawnCensusReadsBothWays:
+    """Calibration for ``_literal_python_spawn_bounds``: each row drives it on a
+    synthetic module, so the counted and the uncounted paths are both seen."""
+
+    @staticmethod
+    def _read(src: str) -> tuple[list[str], int]:
+        return _literal_python_spawn_bounds([("test_synth", "import subprocess, sys\n" + src)])
+
+    def test_a_literal_and_a_module_constant_are_counted(self):
+        sites, spawns = self._read(
+            "T = 45\n"
+            "def test_x():\n"
+            "    subprocess.run([sys.executable, '-c', ''], timeout=30)\n"
+            "    subprocess.check_output([sys.executable, '-V'], timeout=T)\n")
+        assert sites == ["test_synth:4 timeout=30", "test_synth:5 timeout=45"]
+        assert spawns == 2
+
+    def test_a_scaled_bound_is_read_and_not_counted(self):
+        sites, spawns = self._read(
+            "def test_x():\n    subprocess.run([sys.executable, '-V'], timeout=scaled(50))\n")
+        assert (sites, spawns) == ([], 1)
+
+    def test_a_helper_a_built_argv_and_an_alias_are_python_spawns(self):
+        sites, _ = self._read(
+            "import sys as _sys\n"
+            "def test_x():\n"
+            "    run_no_stdin([sys.executable, '-c', ''], timeout=30)\n"
+            "    subprocess.run([sys.executable, 'x.py'] + ARGS, timeout=10)\n"
+            "    subprocess.run([_sys.executable, '-m', 'espalier'], timeout=45)\n")
+        assert sites == ["test_synth:4 timeout=30", "test_synth:5 timeout=10",
+                         "test_synth:6 timeout=45"]
+
+    def test_a_git_spawn_and_an_unbounded_python_spawn_are_not_counted(self):
+        sites, spawns = self._read(
+            "def test_x():\n"
+            "    subprocess.run(['git', 'status'], timeout=45)\n"
+            "    subprocess.run([sys.executable, '-V'])\n"
+            "    Path(sys.executable).parent\n")
+        assert (sites, spawns) == ([], 0)
+
+
 _SYNTH_RUN = "import subprocess\nimport pytest\n\n"
 
 
