@@ -525,7 +525,10 @@ def copy_includes(root: Path, worktree: Path) -> tuple[list[str], list[str]]:
                 if dst.exists():
                     continue
                 ignored = git.ask("check-ignore", "-q", "--", rel)
-                if ignored is None or ignored.returncode != 0:
+                if ignored is None:
+                    skipped.append(f"{rel} (git did not answer whether it is ignored)")
+                    continue
+                if ignored.returncode != 0:
                     continue
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dst)
@@ -542,20 +545,41 @@ def _settings_missing(root: Path, worktree: Path) -> bool:
     return listed and (root / SETTINGS_REL).is_file() and not (worktree / SETTINGS_REL).is_file()
 
 
+def origin_default(git: "sync._Git") -> str | None:
+    """origin's default branch, ``main`` where origin names none; None where
+    git did not answer for it (a read killed at its cap), since a fallback
+    past that read is a guess, and on a clone whose default is another branch
+    a wrong one."""
+    asked = getattr(git, "unanswered", None)
+    base = sync.default_branch(git)
+    if asked is None:  # a kept older checkout_sync counts no reads: its fallback, as before
+        return base or "main"
+    return None if git.unanswered > asked else (base or "main")
+
+
+#: The refusal where ``origin_default`` could not tell.
+BASE_UNANSWERED = "git did not answer which branch is origin's default: retry"
+
+
 def create(root: Path, target: Target) -> None:
     """``git worktree add -b worktree-<dir> <path> origin/<base>``, never
     killed. Refused where ``.claude/worktrees/`` is not gitignored (the new
     checkout would show as untracked, and ``git add -A`` would commit it as a
-    gitlink), where origin cannot be fetched, and where the branch is taken by
-    unmerged work; a leftover branch already merged into the base is deleted
-    first and said."""
+    gitlink), where git did not answer which branch is origin's default,
+    where origin cannot be fetched, and where the branch is taken by unmerged
+    work; a leftover branch already merged into the base is deleted first and
+    said."""
     git = sync._Git(root, None)
     rel = "/".join(WORKTREES_REL + (target.path.name,))
     probe = git.ask("check-ignore", "-q", "--", f"{rel}/{INCLUDE_FILE}")
-    if probe is None or probe.returncode != 0:
+    if probe is None:
+        raise Refused(f"git did not answer whether {rel}/ is ignored here: retry")
+    if probe.returncode != 0:
         raise Refused(f"{rel}/ is not ignored by git here, so a worktree there would show as untracked and "
                       "`git add -A` would commit it: add `.claude/worktrees/` to .gitignore first")
-    base = sync.default_branch(git) or "main"
+    base = origin_default(git)
+    if base is None:
+        raise Refused(f"the new seat's base is unknown: {BASE_UNANSWERED}")
     fetched = git.ask("-c", "credential.interactive=never", "fetch", "--quiet", "--no-tags", sync.REMOTE,
                       cap=FETCH_CAP_S)
     if fetched is None or fetched.returncode != 0:
@@ -563,12 +587,18 @@ def create(root: Path, target: Target) -> None:
     upstream = f"{sync.REMOTE}/{base}"
     branch = BRANCH_PREFIX + target.path.name
     if git.yes("rev-parse", "-q", "--verify", f"refs/heads/{branch}"):
-        listing = git.out("worktree", "list", "--porcelain") or ""
+        listed = git.ask("worktree", "list", "--porcelain")
+        if listed is None:
+            raise Refused(f"git did not answer which checkouts hold the leftover branch {branch}: retry")
+        listing = listed.stdout if listed.returncode == 0 else ""
         in_use = f"branch refs/heads/{branch}" in listing.splitlines()
         if in_use or not git.yes("merge-base", "--is-ancestor", f"refs/heads/{branch}", upstream):
             raise Refused(f"a branch {branch} already exists with work {upstream} lacks, or checked out elsewhere: "
                           f"look at it (`git log {upstream}..{branch}`), then delete it or launch another seat name")
-        git.ask("branch", "-D", branch)
+        deleted = git.ask("branch", "-D", branch)
+        if deleted is None or deleted.returncode != 0:
+            raise Refused(f"the leftover branch {branch} (merged into {upstream}) was not deleted: "
+                          f"{sync._err(deleted)}")
         say(f"deleted the leftover branch {branch} (merged into {upstream}, checked out nowhere)")
     target.path.parent.mkdir(parents=True, exist_ok=True)
     added = git.change("worktree", "add", "-b", branch, str(target.path), upstream, wait=CREATE_WAIT_S)
@@ -957,14 +987,17 @@ def compose_brief(root: Path, seat: str, checkout: Path | None = None) -> Brief:
     ``espalier.toml`` names the dispatcher, as its banner's reads do, and
     what it holds picks the protocol's home and the phrases), else the clone.
     Refused where the dispatcher setting is there but unusable: the brief
-    would name a dispatcher no seat is."""
+    would name a dispatcher no seat is; and where git did not answer which
+    branch is origin's default, which the brief names."""
     where = checkout if checkout is not None and checkout.is_dir() else root
     dispatcher, how = mail.dispatcher_setting(where)
     if dispatcher == mail.DISPATCHER_UNUSABLE:
         raise Refused(f"the brief names the dispatcher, and {how}")
     home = next(((rel, words) for rel, words in PROTOCOL_HOMES if (where / rel).is_file()), ("", PROTOCOL_FALLBACK))
     protocol, self_host = home[1], home[0] == PROTOCOL_HOMES[0][0]
-    base = sync.default_branch(sync._Git(root, None)) or "main"
+    base = origin_default(sync._Git(root, None))
+    if base is None:
+        raise Refused(f"the brief names the base branch, and {BASE_UNANSWERED}")
     if dispatcher is not None and dispatcher == seat:
         goal = f" and {GOAL_NOTES}'s notes" if (where / GOAL_NOTES).is_file() else ""
         red = (SELF_HOST_RED if self_host else ADOPTER_RED).format(base=base)
@@ -1199,7 +1232,9 @@ def by_hand_release(root: Path, clone: str, seat: str, claim_ids: list[str]) -> 
     given (``mail.live_assignments``); its jobs stay for the retire to hand
     back."""
     folder = seat[len(clone) + 1:] if seat.startswith(clone + "-") else "<folder>"
-    base = sync.default_branch(sync._Git(root, None)) or "main"
+    # Where git did not answer for the default branch, the ref git resolves
+    # to it itself: never a guessed `main` in a recipe the operator pastes.
+    base = origin_default(sync._Git(root, None)) or "HEAD"
     return (f"its worktree is gone, and only the name {seat} can release them: "
             f"git worktree add --detach .claude/worktrees/{folder} {sync.REMOTE}/{base}, then "
             f"git -C .claude/worktrees/{folder} config --worktree {mail.MACHINE_KEY} {seat}, then in it "
@@ -1271,7 +1306,9 @@ def cmd_retire(root: Path, seat: str, *, dry_run: bool, fetch: bool, return_jobs
                       "would work them. Ask the dispatcher to release or reassign them, or --return-jobs releases "
                       "them with this retire (the release says why)")
     git = sync._Git(root, None)
-    base = sync.default_branch(git) or "main"
+    base = origin_default(git)
+    if base is None:
+        raise Refused(f"seat {seat} was not retired: {BASE_UNANSWERED}")
     if fetch:
         fetched = git.ask("-c", "credential.interactive=never", "fetch", "--quiet", "--no-tags", sync.REMOTE, base,
                           cap=FETCH_CAP_S)

@@ -292,6 +292,97 @@ class TestSourceGuards:
         assert (tree / ROOT_REL).read_text(encoding="utf-8") == "name: guard\n"
 
 
+def _hook_refusal_module():
+    """The PostToolUse advisory module, imported the way the hook tests import it."""
+    hooks = str(REPO / "tools" / "cc" / "hooks")
+    if hooks not in sys.path:
+        sys.path.insert(0, hooks)
+    import _reinject
+
+    return _reinject
+
+
+def _dirty_root_edit(root: Path) -> None:
+    (root / ROOT_REL).write_text("name: uncommitted-root-work\n", encoding="utf-8")
+
+
+def _committed_root_edit(root: Path) -> None:
+    (root / ROOT_REL).write_text("name: committed-root-work\n", encoding="utf-8")
+    _commit(root, "root-side edit, committed")
+
+
+class TestBothAdvisoriesStateTheScriptsRefusalArms:
+    """DEF-438: what this script does to an edited root file, said once.
+
+    The pre-flight (``espalier/surface_impact.py``) said running it "overwrites
+    the edit"; the edit-time hook (``tools/cc/hooks/_reinject.py``) said it
+    "refuses unless --force". Neither named when it refuses, so a maintainer
+    holding a hand-edited root file could not tell whether the sync would
+    destroy the edit or stop, and skipped it or reached for ``--force``.
+
+    ``tools/cc`` imports no espalier, so the statement is two copies held equal
+    here, and each is held to the script's behaviour: every refusal arm is
+    driven, and the phrase the script prints for it must be in the statement.
+    """
+
+    #: (the phrase the script prints for the arm, what puts the tree in it)
+    ARMS = (
+        ("uncommitted changes", _dirty_root_edit),
+        ("at its last commit", _committed_root_edit),
+    )
+
+    @staticmethod
+    def _statements() -> tuple[str, str]:
+        from espalier import surface_impact
+
+        return surface_impact._HARNESS_GUARD_REFUSAL, _hook_refusal_module()._HARNESS_GUARD_REFUSAL
+
+    @staticmethod
+    def _advisories(session_dir: Path) -> tuple[str, str]:
+        """What each surface tells a maintainer who edited the root copy."""
+        from espalier.surface_impact import classify_surface
+
+        _label, demands = classify_surface(ROOT_REL)
+        # The renderer itself, as the generated-side census in
+        # tests/test_reinject_sync.py calls it: through check() the per-turn
+        # ceiling and the advisories other tests in a worker already spent can
+        # leave this one out, which read as a missing statement under xdist.
+        rendered = _hook_refusal_module()._render_harness_guard_sync(
+            "Edit", {"file_path": "/r/" + ROOT_REL}, session_dir,
+        )
+        return " ".join(demands), rendered or ""
+
+    def test_the_two_copies_are_one_statement(self):
+        engine, hook = self._statements()
+        assert engine == hook
+
+    @pytest.mark.parametrize("phrase, put", ARMS, ids=[a[0] for a in ARMS])
+    def test_each_arm_the_script_refuses_on_is_in_both_advisories(
+        self, tree, capsys, tmp_path_factory, phrase, put,
+    ):
+        put(tree)
+        before = (tree / ROOT_REL).read_text(encoding="utf-8")
+        assert _load(tree).main([]) == 1
+        assert (tree / ROOT_REL).read_text(encoding="utf-8") == before
+        assert phrase in capsys.readouterr().err
+        engine, hook = self._advisories(tmp_path_factory.mktemp("session"))
+        assert phrase in engine
+        assert phrase in hook
+
+    def test_force_is_the_override_both_advisories_name(self, tree, tmp_path_factory):
+        _dirty_root_edit(tree)
+        assert _load(tree).main(["--force"]) == 0
+        assert (tree / ROOT_REL).read_text(encoding="utf-8") == "name: guard\n"
+        engine, hook = self._advisories(tmp_path_factory.mktemp("session"))
+        assert "--force" in engine and "--force" in hook
+
+    def test_both_advisories_carry_the_statement(self, tmp_path):
+        engine, hook = self._statements()
+        said_engine, said_hook = self._advisories(tmp_path)
+        assert engine in said_engine
+        assert hook in said_hook
+
+
 def test_live_repo_is_in_parity():
     """The real tree, not a fixture -- the drift this script exists to catch."""
     assert (REPO / ASSET_REL).read_bytes() == (REPO / ROOT_REL).read_bytes(), (

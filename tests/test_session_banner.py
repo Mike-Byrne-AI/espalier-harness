@@ -1375,6 +1375,17 @@ class TestCompactVariant:
         mod = _load()
         assert mod._recent_commits(tmp_path) == ""  # no .git -> '' (fail-open)
 
+    def test_recent_commits_killed_at_the_cap_says_so(self, tmp_path, monkeypatch):
+        """A log killed at its cap drew no section, the same as a tree with no
+        git. Dies to: the kill folded back into the empty return."""
+        mod = _load()
+
+        def slow(argv, **kw):
+            raise subprocess.TimeoutExpired(argv, kw.get("timeout", 5))
+
+        monkeypatch.setattr(mod.subprocess, "run", slow)
+        assert mod._recent_commits(tmp_path) == "\n--- RECENT COMMITS ---\n(git log did not answer in 5 s)\n"
+
     def test_blueprint_recent_failopen_on_absent(self, tmp_path):
         mod = _load()
         assert mod._blueprint_recent(tmp_path) == ""  # no cognitive_blueprint.py -> ''
@@ -1843,6 +1854,31 @@ class TestLooseProcessLine:
         assert mod._read_process_table() == ""
         assert mod._read_process_cwds([os.getpid()]) == {}
         assert mod._loose_processes_line(tmp_path) == ""
+
+    def test_a_process_table_that_did_not_answer_says_so(self, monkeypatch, tmp_path):
+        """A `ps` killed at its cap printed no Loose: line, the same as nothing
+        loose. Dies to: the kill folded back into the empty table."""
+        mod = _load()
+        monkeypatch.setattr(mod, "_read_process_table", lambda: None)
+        assert mod._loose_processes_line(tmp_path) == mod._LOOSE_UNREAD and mod._LOOSE_UNREAD.isascii()
+        monkeypatch.setattr(mod, "_read_process_table", lambda: "  PID  PPID      TIME COMM\n")
+        assert mod._loose_processes_line(tmp_path) == "", "control: an answered table with nothing loose"
+
+    @pytest.mark.skipif(os.name != "posix", reason="`ps -axo` is the POSIX arm; Windows reads no table")
+    def test_a_ps_killed_at_its_cap_reads_as_no_answer(self, monkeypatch):
+        mod = _load()
+
+        def slow(argv, **kw):
+            raise subprocess.TimeoutExpired(argv, kw.get("timeout", 5))
+
+        monkeypatch.setattr(mod.subprocess, "run", slow)
+        assert mod._read_process_table() is None
+
+        def missing(argv, **kw):
+            raise FileNotFoundError("ps")
+
+        monkeypatch.setattr(mod.subprocess, "run", missing)
+        assert mod._read_process_table() == "", "a ps that cannot run stays the silent contract"
 
     @pytest.mark.skipif(os.name != "posix", reason="`ps -axo` is the POSIX arm")
     def test_live_process_table_has_the_four_columns(self):
@@ -2630,14 +2666,17 @@ class TestOpenPRsLine:
 
     def test_a_spent_budget_stops_the_block_without_a_call(self, monkeypatch, tmp_path):
         """Every read and git question takes its timeout from the block's
-        deadline; past it, nothing is started and the lines are simply empty."""
+        deadline; past it, nothing is started, and each line says it was not
+        read: an empty line read as none open and nothing merged."""
         mod = _load()
         calls = []
         monkeypatch.setattr(mod.subprocess, "run", lambda argv, **kw: calls.append(argv))
         past = mod.time.monotonic() - 1
-        assert mod._read_open_prs(tmp_path, past) == ""
-        assert mod._read_merged_prs(tmp_path, past) == ""
-        assert mod._local_has_commit(tmp_path, "main", "a" * 40, deadline=past) is None
+        assert mod._read_open_prs(tmp_path, past) is None
+        assert mod._read_merged_prs(tmp_path, past) is None
+        assert mod._local_has_commit(tmp_path, "main", "a" * 40, deadline=past) == mod._NOT_ANSWERED
+        assert mod._open_prs_line(root=tmp_path, deadline=past) == mod._OPEN_PRS_UNREAD
+        assert mod._merged_prs_line(root=tmp_path, deadline=past) == mod._MERGED_PRS_UNREAD
         assert calls == []
         # Under the block budget, one read's timeout never exceeds its own cap.
         assert mod._seconds_left(None, 5.0) == 5.0
@@ -2694,10 +2733,78 @@ class TestOpenPRsLine:
         def refused(argv, **kw):
             return subprocess.CompletedProcess(argv, 4, stdout="", stderr="gh: not logged in")
 
-        for fake in (missing, slow, refused):
+        for fake in (missing, refused):
             monkeypatch.setattr(mod.subprocess, "run", fake)
             assert mod._open_prs_line(root=tmp_path) == ""
             assert mod._merged_prs_line(root=tmp_path) == ""
+        # A read killed at its cap is no answer, never an answer of none: each
+        # line says it, and only it, so the banner still renders.
+        monkeypatch.setattr(mod.subprocess, "run", slow)
+        assert mod._open_prs_line(root=tmp_path) == mod._OPEN_PRS_UNREAD
+        assert mod._merged_prs_line(root=tmp_path) == mod._MERGED_PRS_UNREAD
+        assert mod._OPEN_PRS_UNREAD.isascii() and mod._MERGED_PRS_UNREAD.isascii()
+
+    def test_a_merge_git_did_not_answer_for_is_counted_never_read_as_pulled(self, monkeypatch, tmp_path):
+        """A killed `rev-parse` or `merge-base` dropped the row as if the merge
+        were pulled. Dies to: the kill read as None (a branch not local)."""
+        mod = _load()
+        assert "not checked" not in mod._merged_prs_line(_PR_LISTING, local_has_commit=_has_c95a), "control"
+
+        def slow(argv, **kw):
+            raise subprocess.TimeoutExpired(argv, kw.get("timeout", 0))
+
+        monkeypatch.setattr(mod.subprocess, "run", slow)
+        killed = mod._merged_prs_line(_PR_LISTING, root=tmp_path)
+        assert killed == ("2 merges not checked against your local base: git gave no answer in time, "
+                          "or no time was left to ask"), killed
+        assert mod._local_has_commit(tmp_path, "main", "a" * 40, deadline=None) == mod._NOT_ANSWERED
+        cache: dict = {"main": True}
+        assert mod._local_has_commit(tmp_path, "main", "a" * 40, None, cache) == mod._NOT_ANSWERED
+
+        def no_git(argv, **kw):
+            raise FileNotFoundError("git")
+
+        monkeypatch.setattr(mod.subprocess, "run", no_git)
+        assert mod._local_has_commit(tmp_path, "main", "a" * 40, deadline=None) is None, "no git decides nothing"
+
+    def test_the_not_checked_count_is_never_folded_away(self, monkeypatch, tmp_path):
+        """Three red rows filled the line, and the count of merges git did not
+        answer for went into "and N more" as if it were one more merge (both
+        reviews drove it). Dies to: the count rendered as one of the rows."""
+        mod = _load()
+        merged = json.dumps([
+            {"number": 50 + i, "state": "MERGED", "headRefName": f"lane/{i}", "baseRefName": "main",
+             "mergeCommit": {"oid": str(i) * 40}, "mergedAt": f"2026-11-03T0{i}:00:00Z",
+             "statusCheckRollup": [{"name": f"leg {i}", "status": "COMPLETED", "conclusion": "FAILURE"}]}
+            for i in range(1, 5)])
+
+        def slow(argv, **kw):
+            raise subprocess.TimeoutExpired(argv, kw.get("timeout", 0))
+
+        monkeypatch.setattr(mod.subprocess, "run", slow)
+        lines = [ln.strip() for ln in mod._merged_prs_line(merged, root=tmp_path).splitlines()]
+        assert [ln.split()[0] for ln in lines[:3]] == ["#54", "#53", "#52"], lines
+        assert lines[3] == "and 1 more", lines
+        assert lines[4].startswith("4 merges not checked against your local base"), lines
+
+    def test_a_running_blocked_row_whose_required_read_did_not_answer_says_so(self):
+        """The running branch printed `waiting on N running` whether or not the
+        required read answered, so a required red holding the merge read as a
+        wait. Dies to: the clause dropped, or printed on a read that answered."""
+        mod = _load()
+        row = json.dumps([{
+            "number": 41, "state": "OPEN", "headRefName": "lane/held", "baseRefName": "main", "isDraft": False,
+            "mergeStateStatus": "BLOCKED", "autoMergeRequest": {"mergeMethod": "MERGE"},
+            "statusCheckRollup": [
+                {"name": "verify", "status": "COMPLETED", "conclusion": "FAILURE"},
+                {"name": "test (3.12)", "status": "IN_PROGRESS", "conclusion": None},
+            ],
+        }])
+        unread = mod._open_prs_line(row, required_reader=lambda n: None)
+        assert unread.endswith("auto-merge armed; waiting on 1 running; could not read which reds are "
+                               "required: gh pr checks 41 --required"), unread
+        answered = mod._open_prs_line(row, required_reader=lambda n: [])
+        assert answered.endswith("auto-merge armed; waiting on 1 running"), "control: the read answered none"
 
     def test_builders_never_spawn_gh(self, monkeypatch, tmp_path):
         """Read in main and threaded in, like Loose: a scratch-tree banner is
@@ -2808,8 +2915,10 @@ class TestMergeRulesLine:
         )
 
     def test_an_answer_it_cannot_read_prints_no_line_never_a_guess(self, monkeypatch, tmp_path):
-        """A missing branch, a token without admin rights, a foreign shape, no
-        `gh`, or no budget: no line. Dies to: a fallback that prints a setting."""
+        """A missing branch, a token without admin rights, a foreign shape, or
+        no `gh`: no line. No budget left is a read that did not answer, which
+        the line says, and it still prints no setting. Dies to: a fallback that
+        prints a setting."""
         mod = _load()
         for rc, out in ((1, json.dumps({"message": "Branch not found", "status": "404"})),
                         (1, json.dumps({"message": "Must have admin rights to Repository.", "status": "403"})),
@@ -2825,8 +2934,56 @@ class TestMergeRulesLine:
         assert mod._merge_rules_line(*mod._read_merge_rules(tmp_path, time.monotonic() + 8.0)) == ""
         seen: list = []
         monkeypatch.setattr(mod.subprocess, "run", _merge_rules_run("origin/main", 0, "{}", seen))
-        assert mod._merge_rules_line(*mod._read_merge_rules(tmp_path, time.monotonic())) == ""
-        assert not [argv for argv in seen if argv[0] == "gh"], "a spent budget must not start the read"
+        spent = mod._merge_rules_line(*mod._read_merge_rules(tmp_path, time.monotonic()))
+        assert spent.startswith("merge rules unread:") and "up-to-date rule" not in spent, spent
+        assert seen == [], "a spent budget must start neither read"
+
+    def test_a_read_killed_at_its_cap_says_the_rules_are_unread(self, monkeypatch, tmp_path):
+        """A protection read killed at its cap printed no line, the same as a
+        token without admin rights, so a loaded box read as a branch with no
+        rules to see. Dies to: the kill folded back into the silent -1."""
+        mod = _load()
+        answered = _merge_rules_run("origin/main", 0, json.dumps({"strict": False, "contexts": []}))
+
+        def killed_gh(argv, **kw):
+            if argv[0] == "gh":
+                raise subprocess.TimeoutExpired(argv, kw.get("timeout", 2.0))
+            return answered(argv, **kw)
+
+        monkeypatch.setattr(mod.subprocess, "run", killed_gh)
+        base, rc, out = mod._read_merge_rules(tmp_path, time.monotonic() + 8.0)
+        assert (base, out) == ("main", "") and mod._load_merge_rules().strict(rc, out) is None
+        assert mod._merge_rules_line(base, rc, out) == (
+            "main: merge rules unread (the branch-protection read gave no answer in time, "
+            "or no time was left to ask)")
+        monkeypatch.setattr(mod.subprocess, "run", answered)
+        assert mod._merge_rules_line(*mod._read_merge_rules(tmp_path, time.monotonic() + 8.0)).startswith(
+            "main: up-to-date rule off"), "control: the answered read"
+
+    def test_a_default_branch_read_killed_asks_no_protection(self, monkeypatch, tmp_path):
+        """A killed `origin/HEAD` read substituted `main` and asked main's rules,
+        so a clone whose default is another branch printed main's as its own.
+        Dies to: the substitute kept on a kill."""
+        mod = _load()
+        seen: list = []
+        answered = _merge_rules_run("origin/trunk", 0, json.dumps({"strict": True, "contexts": []}), seen)
+
+        def killed_ref(argv, **kw):
+            if argv[:2] == ["git", "symbolic-ref"]:
+                seen.append(list(argv))
+                raise subprocess.TimeoutExpired(argv, kw.get("timeout", 1.0))
+            return answered(argv, **kw)
+
+        monkeypatch.setattr(mod.subprocess, "run", killed_ref)
+        base, rc, out = mod._read_merge_rules(tmp_path, time.monotonic() + 8.0)
+        assert mod._load_merge_rules().strict(rc, out) is None
+        line = mod._merge_rules_line(base, rc, out)
+        assert line.startswith("merge rules unread: git gave no name for the remote's default branch"), line
+        assert [argv[0] for argv in seen] == ["git"], "no protection read on a base it could not name"
+        seen.clear()
+        monkeypatch.setattr(mod.subprocess, "run", answered)
+        assert mod._merge_rules_line(*mod._read_merge_rules(tmp_path, time.monotonic() + 8.0)).startswith(
+            "trunk: up-to-date rule ON"), "control: the answered read names trunk"
 
     def test_the_read_targets_the_remote_default_branch(self, monkeypatch, tmp_path):
         """The base is `origin/HEAD`'s branch, quoted into the path, and `main`
@@ -3269,14 +3426,47 @@ class TestEngineLine:
         assert mod._engine_line(seat, python=garbage) == ""
         assert mod._engine_line(seat, python=relative) == ""
 
-    def test_a_probe_that_times_out_costs_the_line_only(self, tmp_path, monkeypatch):
+    def test_a_probe_that_times_out_says_it_cannot_tell(self, tmp_path, monkeypatch):
+        """A probe killed at its cap printed no line, the same as the two
+        agreeing, so a mismatch on a loaded box went unsaid. Dies to: the kill
+        read as an answer, or as no interpreter."""
         mod = _load()
         seat = self._seat(tmp_path)
 
         def _hang(cmd, **kw):
             raise mod.subprocess.TimeoutExpired(cmd, kw.get("timeout", 1.0))
         monkeypatch.setattr(mod.subprocess, "run", _hang)
-        assert mod._engine_line(seat, python=sys.executable) == ""
+        line = mod._engine_line(seat, python=sys.executable)
+        assert line.startswith(f"{Path(sys.executable).name} did not say in time where it imports espalier from")
+        assert "not ruled out this start" in line and line.isascii(), line
+        calls: list = []
+        monkeypatch.setattr(mod.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+        spent = mod._engine_line(seat, mod.time.monotonic() - 1, python=sys.executable)
+        assert "did not say in time" in spent and calls == [], "no time left: nothing started, and said"
+
+    @pytest.mark.skipif(os.name == "nt", reason="the stand-in interpreter is a /bin/sh script")
+    def test_a_venv_probe_that_times_out_never_prescribes_a_new_venv(self, tmp_path, monkeypatch):
+        """The seat's `.venv` probe killed at its cap fell to the build remedy
+        (`uv venv .venv`) beside a `.venv` that may import its own. Dies to:
+        the kill read as a `.venv` that imports elsewhere."""
+        mod = _load()
+        seat, main = self._seat(tmp_path), self._other_checkout(tmp_path)
+        launch = self._fake_python(tmp_path, "launch", str(main / "espalier" / "__init__.py"))
+        (seat / ".venv" / "bin").mkdir(parents=True)
+        venv = Path(self._fake_python(seat / ".venv" / "bin", "python", str(seat / "espalier" / "__init__.py")))
+        real_run = mod.subprocess.run
+
+        def venv_killed(argv, **kw):
+            if Path(argv[0]) == venv:
+                raise mod.subprocess.TimeoutExpired(argv, kw.get("timeout", 1.0))
+            return real_run(argv, **kw)
+
+        monkeypatch.setattr(mod.subprocess, "run", venv_killed)
+        line = mod._engine_line(seat, python=launch)
+        assert "this checkout's .venv did not say in time which engine it imports" in line, line
+        assert "uv venv" not in line and line.isascii(), line
+        monkeypatch.setattr(mod.subprocess, "run", real_run)
+        assert "this checkout's .venv imports its own" in mod._engine_line(seat, python=launch), "control"
 
     @pytest.mark.skipif(os.name == "nt", reason="the stand-in interpreter is a /bin/sh script")
     def test_a_venv_of_its_own_is_named_as_the_remedy(self, tmp_path):
@@ -3371,10 +3561,14 @@ class TestEngineLine:
         assert mod._engine_line(seat, python=sys.executable, env=env) == ""
 
     def test_a_spent_budget_or_no_interpreter_spawns_nothing(self, tmp_path, monkeypatch):
+        """A spent budget starts no probe and says the question went unasked
+        (never the two agreeing); no interpreter on PATH is no line, since a
+        tier there fails loudly on its own."""
         mod = _load()
         seat = self._seat(tmp_path)
         self._no_spawn(monkeypatch, mod)
-        assert mod._engine_line(seat, deadline=time.monotonic()) == ""
+        assert "did not say in time where it imports espalier from" in mod._engine_line(
+            seat, deadline=time.monotonic(), python=sys.executable)
         monkeypatch.setattr(mod.shutil, "which", lambda name: None)
         assert mod._engine_line(seat) == ""
 

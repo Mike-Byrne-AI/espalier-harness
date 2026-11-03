@@ -156,6 +156,17 @@ class TestStaleBase:
         assert result["moved"] == 1 and result["near"] == [] and not result["unread"]
         assert rules.stale_line(result, "main", 7) == ""
 
+    def test_a_hop_not_read_is_said_beside_the_meetings_it_found(self, rules):
+        """``stale_line`` dropped ``unread`` whenever ``near`` held a meeting,
+        so a hop that was not read read as no further meeting. Dies to: the
+        unread clause printed only on an empty ``near``."""
+        unread = "the import hop into main's files was not read (git grep failed): paths only"
+        result = {"tested": "a" * 40, "now": "b" * 40, "moved": 2,
+                  "near": ["tools/a.py (both changed)"], "unread": unread}
+        line = rules.stale_line(result, "main", 7)
+        assert "near its files (tools/a.py (both changed))" in line and line.endswith(f"; also, {unread}"), line
+        assert rules.stale_line(dict(result, unread=""), "main", 7).endswith("before it merges"), "control"
+
     def test_a_ci_run_older_than_every_base_commit_is_said_not_read(self, rules, tmp_path):
         repo = _Repo(tmp_path)
         head, _ = _lane(repo, {"tools/b.py": "VALUE = 99\n"})

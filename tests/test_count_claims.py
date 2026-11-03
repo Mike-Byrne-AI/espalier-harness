@@ -190,3 +190,29 @@ def _live_helper_count() -> int:
         p for p in checkout_glob(hooks_dir, "_*.py")
         if p.name != "__init__.py"
     ])
+
+
+
+def test_the_pre_flight_names_every_doc_that_carries_a_helper_count():
+    """The pre-flight's helper-count sites are the docs the helper audit reads.
+
+    ``espalier surface-impact`` tells a maintainer adding a hook helper which
+    docs carry its count (espalier/surface_impact.py::_HOOK_HELPER_COUNT_SITES,
+    DEF-439; the entry-count twin sits beside its own audit in
+    tests/test_agent_contracts.py). A doc that gains a count is one they never
+    update unless it is listed; a listed doc carrying none sends them looking.
+    """
+    from espalier import surface_impact
+
+    carrying = {
+        doc.relative_to(REPO_ROOT).as_posix()
+        for doc in PUBLIC_DOCS
+        if doc.exists() and _claims_in(doc.read_text(encoding="utf-8"), _HELPER_CLAIM_RE)
+    }
+    # An export prunes an internal doc, so only the sites present are owed.
+    present = {s for s in surface_impact._HOOK_HELPER_COUNT_SITES if (REPO_ROOT / s).exists()}
+    assert carrying == present, (
+        f"docs carrying a helper count: {sorted(carrying)}; listed: {sorted(present)}. A "
+        "listed doc with no count this audit reads: if it still states one, the wording "
+        "slipped past the regex -- widen it; drop the site only when the doc states none."
+    )

@@ -345,12 +345,53 @@ class TestWorktreeInUseIsNotLitter:
             return real_run(args, *a, **kw)
 
         monkeypatch.setattr(mod.subprocess, "run", failing_worktree_list)
-        degraded = mod._find_nested_repo_litter(tmp_path, cwd=live)
+        unread: list[str] = []
+        degraded = mod._find_nested_repo_litter(tmp_path, cwd=live, unread=unread)
         assert ".claude/worktrees/held" in degraded  # reported: the lock skip is lost
         assert ".claude/worktrees/live" not in degraded  # the cwd skip holds
+        assert unread == ["git worktree list did not answer in 5 s"]  # and the loss is told
         monkeypatch.setattr(mod.subprocess, "run", real_run)
-        assert ".claude/worktrees/held" not in mod._find_nested_repo_litter(tmp_path, cwd=live)  # control
-        assert held.is_dir()
+        unread.clear()
+        assert ".claude/worktrees/held" not in mod._find_nested_repo_litter(tmp_path, cwd=live, unread=unread)
+        assert unread == [] and held.is_dir()  # control
+
+    def test_a_scan_cut_short_warns_and_never_reads_as_a_clean_tree(self, tmp_path, monkeypatch, capsys):
+        """A killed `git status` (or the descent's node cap) returned what it
+        had, and an empty list printed nothing, the same as a clean tree. Dies
+        to: either cut-off folded back into the silent return."""
+        _init_repo(tmp_path)
+        nested = tmp_path / "adopt2"
+        nested.mkdir()
+        _git(["init"], nested)
+        mod = _load()
+        real_run = mod.subprocess.run
+
+        def killed_status(args, *a, **kw):
+            if "status" in list(args):
+                raise mod.subprocess.TimeoutExpired(args, 5)
+            return real_run(args, *a, **kw)
+
+        monkeypatch.setattr(mod.subprocess, "run", killed_status)
+        mod._warn_if_nested_repo_litter(tmp_path, cwd=tmp_path)
+        err = capsys.readouterr().err
+        assert "the nested-repo scan did not finish (git status did not answer in 5 s)" in err, err
+        assert "adopt2" not in err
+        monkeypatch.setattr(mod.subprocess, "run", real_run)
+        unread: list[str] = []
+        assert mod._find_nested_repo_litter(tmp_path, cwd=tmp_path, max_nodes=0, unread=unread) == []
+        assert unread == ["the untracked descent stopped at 0 directories in adopt2/"]
+        # The cap is a size bound that repeats every start: an INFO with the folder and the remedy.
+        real_find = mod._find_nested_repo_litter
+        monkeypatch.setattr(mod, "_find_nested_repo_litter", lambda root, **kw: real_find(root, max_nodes=0, **kw))
+        mod._warn_if_nested_repo_litter(tmp_path, cwd=tmp_path)
+        err = capsys.readouterr().err
+        assert "[INFO] the nested-repo scan stops early (the untracked descent stopped at 0 directories in " \
+               "adopt2/)" in err and "gitignored" in err, err
+        assert "[WARN] the nested-repo scan" not in err
+        monkeypatch.setattr(mod, "_find_nested_repo_litter", real_find)
+        mod._warn_if_nested_repo_litter(tmp_path, cwd=tmp_path)
+        err = capsys.readouterr().err
+        assert "adopt2" in err and "did not finish" not in err  # control: the scan that finished
 
     def test_case_variant_root_spelling_keeps_both_skips(self, tmp_path):
         # On a case-insensitive filesystem (APFS, NTFS) one directory has two
