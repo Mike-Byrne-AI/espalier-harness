@@ -9033,6 +9033,23 @@ class TestAScratchRootItselfIsTheWall:
         assert not self._walls(
             "find /tmp -mindepth 1 -maxdepth 1 -name 'claude-*' -exec rm -rf {} +", "Bash")
 
+    def test_a_root_spelled_by_its_variable_is_not_read(self, monkeypatch):
+        """A declared limit (docs/HOOKS.md): the reader resolves no
+        variable, so a root spelled by its variable is not the root it
+        names and keeps the nudge, never the wall -- the Bash tool's
+        `"$TMPDIR"` and the PowerShell tool's unforced `$env:TEMP`, where
+        the literal spelling of the same root walls. The day a reader
+        resolves the variable this row reds and the sentence is rewritten."""
+        monkeypatch.syspath_prepend(str(HOOKS_DIR))
+        import _speedbump as sb
+        self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
+        repo = Path.home() / "scratch-root-no-such-repo"
+        for tool, command in (("Bash", self.RM + '"$TMPDIR"'),
+                              ("PowerShell", "Remove-Item -Recurse $env:TEMP")):
+            assert not self._walls(command, tool), command
+            assert sb._pred_rmrf(tool, {"command": command}, repo), command
+        assert self._walls(self.RM + "/tmp/job-1", "Bash")
+
     @pytest.mark.parametrize("value, path, below", [
         ("C:/tmp/job-1", "C:/tmp/job-1", False),
         ("C:/tmp/job-1", "c:/TMP/Job-1", False),
