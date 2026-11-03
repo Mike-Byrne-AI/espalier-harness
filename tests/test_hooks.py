@@ -35,6 +35,7 @@ from tools.cc.hooks.write_guard import _denial_reasons
 
 import pytest
 
+from tests import _hook_runner
 from tests._hook_assertions import assert_hook_allowed, assert_hook_denied
 from tests._interpreter_hosts import HOOK_PYTHON
 from tests._symlink_support import requires_symlink
@@ -70,31 +71,11 @@ def _make_self_host_layout(tmp_path: Path, name: str = "espalier-harness") -> No
     (tmp_path / "pyproject.toml").write_text(f'[project]\nname = "{name}"\n', encoding="utf-8")
 
 
-def run_hook(script_name: str, input_data: dict, env_overrides: dict | None = None) -> subprocess.CompletedProcess:
-    """Run a hook script with JSON piped to stdin.
-
-    ``env_overrides`` values: str sets the var; ``None`` deletes it. The
-    deletion semantics let tests assert "no env var set" even when the
-    operator's parent shell exports a harness var globally (see
-    `docs/SHARP_EDGES.md` "ESPALIER_STOP_GATE=full Exported in Shell RC").
-
-    Spawned through ``HOOK_PYTHON`` (the base interpreter), so the hook's
-    parent is this process on every host, a Windows venv included: the
-    session-marker rows assert on it.
-    """
-    script = HOOKS_DIR / script_name
-    env = os.environ.copy()
-    if env_overrides:
-        for k, v in env_overrides.items():
-            if v is None:
-                env.pop(k, None)
-            else:
-                env[k] = v
-    return run_hook_through(
-        [HOOK_PYTHON, str(script)],
-        input=json.dumps(input_data),
-        env=env,
-    )
+# The shared runner (tests/_hook_runner.py), bound here by assignment rather
+# than imported: a `file::symbol` citation resolves through definitions and
+# assignments only (tests/test_doc_test_citations.py::_defined_names), and
+# docs/SHARP_EDGES.md cites `tests/test_hooks.py::run_hook`.
+run_hook = _hook_runner.run_hook
 
 
 # ─── stop_gate.py ───────────────────────────────────────────────────────────

@@ -1391,13 +1391,24 @@ class BaseUnavailable(Exception):
     """The base tree could not be built: the reason, for the refusal."""
 
 
+class _GitUnanswered(Exception):
+    """A read-only git command killed at the probe runner's bound; the
+    message names the command and the bound, for the line the read fills."""
+
+
 def _git_read(root: Path, *args: str) -> str | None:
     """stdout of a read-only git command run in ``root``, stripped; None when
-    git is absent, ``root`` is not a repository, or the command failed."""
+    git is absent, ``root`` is not a repository, or the command failed.
+    Raises ``_GitUnanswered`` where git did not answer within the bound: a
+    read that did not answer is never a no (a killed ``origin/HEAD`` read once
+    fell through to a stale ``origin/main``, or to a clone with no remote,
+    DEF-5079), so each caller says it in the line it fills."""
     env = {k: v for k, v in os.environ.items() if k not in _GIT_OVERRIDES}
     try:
         proc = _CHK.run_bounded(["git", *args], cwd=root, env=env, capture_output=True, text=True,
                                 encoding="utf-8", errors="replace", timeout=_CHK._TIMEOUT)
+    except subprocess.TimeoutExpired as exc:
+        raise _GitUnanswered(f"git {args[0]} did not answer in {_CHK._TIMEOUT:g}s") from exc
     except (OSError, subprocess.SubprocessError):
         return None
     return proc.stdout.strip() if proc.returncode == 0 else None
@@ -1408,7 +1419,8 @@ def _default_base(root: Path) -> str | None:
     names a remote-tracking ref that exists, else ``main``, else ``master``,
     None where none is there (``checkout_sync.default_branch``'s rule; never
     ``gh``, which the ship driver asks: a strike runs on an adopter's clone,
-    offline)."""
+    offline). Raises ``_GitUnanswered`` where a read did not answer: a
+    killed ``origin/HEAD`` read is never the fallback's ``main``."""
     head = _git_read(root, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
     if head and head.startswith("origin/") and _git_read(
             root, "show-ref", "--verify", "--quiet", f"refs/remotes/{head}") is not None:
@@ -1424,7 +1436,9 @@ def _base_commit(root: Path, base: str | None) -> tuple[str | None, str]:
     or None and why not. An explicit ``base`` resolves as given (a sha, a
     branch, ``origin/main``); the default is the merge-base of HEAD and
     ``origin/<default branch>``, the commit the lane branched from, so a fix
-    another lane merged after that does not make a true strike refuse."""
+    another lane merged after that does not make a true strike refuse. Raises
+    ``_GitUnanswered`` where a git read did not answer: the strike refuses on
+    it whatever its flags, since a run again would read the base (DEF-5079)."""
     if base is not None:
         sha = _git_read(root, "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}")
         return (sha, f"--base {base}") if sha else (None, f"this clone does not hold {base}")
@@ -1587,7 +1601,10 @@ def _drive_both_sides(ids: list[str], *, root: Path, probes: Path, data: dict, b
     refusals: list[str] = []
     explicit = base is not None
     entries = {rid: _probe_entry(rid, probes=probes, data=data) for rid in ids}
-    sha, said = (None, "--no-base") if no_base else _base_commit(root, base)
+    try:
+        sha, said = (None, "--no-base") if no_base else _base_commit(root, base)
+    except _GitUnanswered as exc:
+        return [f"the base could not be read ({exc}), so neither side was driven: run the strike again"]
     if sha is None:
         if explicit:
             return [f"the base could not be read ({said})"]
@@ -1728,14 +1745,17 @@ def _head_export_reading(root: Path, probe: dict, *, no_base: bool) -> tuple[str
     if no_base:
         return note("--no-base", tail="; where it prints another value there, a strike of this row needs "
                                       "--no-base too, and its closing text says what the base showed")
-    top = _git_read(root, "rev-parse", "--show-toplevel")
     try:
-        own = top is not None and os.path.samefile(top, root)
-    except OSError:
-        own = False
-    if not own:
-        return note("not the top level of a git checkout", f"{root} is not the top level of a git checkout")
-    sha = _git_read(root, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+        top = _git_read(root, "rev-parse", "--show-toplevel")
+        try:
+            own = top is not None and os.path.samefile(top, root)
+        except OSError:
+            own = False
+        if not own:
+            return note("not the top level of a git checkout", f"{root} is not the top level of a git checkout")
+        sha = _git_read(root, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+    except _GitUnanswered as exc:
+        return note(str(exc))
     if sha is None:
         return note("HEAD names no commit")
     with tempfile.TemporaryDirectory(prefix="file-export-", ignore_cleanup_errors=True) as scratch_dir:
@@ -2596,7 +2616,8 @@ def main(argv: list[str] | None = None) -> int:
                          "this checkout, where it must read STRIKE_CANDIDATE. Default: the merge-base "
                          "of HEAD and origin/<default branch>, read offline (origin/HEAD, else main, "
                          "else master); with no base to read, the default prints one line and "
-                         "proceeds, and a probe the runner cannot drive on a side is one printed line. "
+                         "proceeds (a base read git did not answer refuses: run it again), and a "
+                         "probe the runner cannot drive on a side is one printed line. "
                          "An explicit REF makes either a refusal. Necessary, not sufficient: a probe "
                          "reading an adjacent question passes both sides")
     sides.add_argument("--no-base", action="store_true",
@@ -2743,16 +2764,21 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         for line in refusals:
             print(f"ledger_row: {'dry run' if args.dry_run else 'override'} -- {line}", file=sys.stderr)
-    if args.dry_run:
-        return _dispatch(ap, args, ledger=ledger, probes=probes, root=root)
     # Every writing verb holds the lock beside the ledger for its whole
     # read-modify-write: two at once lost a row and tore the ledger/roster
     # pair (driven 2026-09-30). The second one refuses; nothing is written.
     try:
+        if args.dry_run:
+            return _dispatch(ap, args, ledger=ledger, probes=probes, root=root)
         with _GEN.ledger_lock(ledger):
             return _dispatch(ap, args, ledger=ledger, probes=probes, root=root)
     except _GEN.LedgerBusy as exc:
         print(f"ledger_row: {exc}", file=sys.stderr)
+        return 2
+    except _GitUnanswered as exc:
+        # Each read today is caught where its line is said; a new one that is
+        # not still refuses by name, never a traceback.
+        print(f"ledger_row: refused -- {exc}: nothing written, run it again", file=sys.stderr)
         return 2
 
 

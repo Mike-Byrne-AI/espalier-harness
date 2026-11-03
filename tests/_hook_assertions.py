@@ -91,6 +91,29 @@ def assert_hook_denied(
         )
 
 
+def is_decision_or_silent(run: CompletedProcess) -> bool:
+    """The channel rule: exit 0 (stdout is the hook's own channel -- a decision
+    object, a reporter's plain-text context, or nothing; what opens as JSON
+    must parse), or exit 2 with nothing on stdout (the text is stderr's).
+
+    A predicate, not an ``assert_hook_*`` helper: it reads that a hook answered
+    on one channel, never which decision it made, so a test calling it alone
+    must not read as discriminating to the ``test_loosening`` scanner (the
+    naming contract above)."""
+    if run.returncode == 2:
+        return run.stdout.strip() == ""
+    if run.returncode != 0:
+        return False
+    text = run.stdout.strip()
+    if not text.startswith("{"):
+        return True        # a reporter's plain-text context, or nothing: exit 0's own channel
+    try:
+        json.loads(text.splitlines()[-1])
+    except ValueError:
+        return False
+    return True
+
+
 def assert_hook_allowed(result: CompletedProcess) -> None:
     """Assert that a hook produced an allow (no deny payload).
 

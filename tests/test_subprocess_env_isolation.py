@@ -162,7 +162,7 @@ class TestSessionResumeRoutingIsolation:
 
 
 class TestRunHookEnvOverrides:
-    """``tests/test_hooks.py::run_hook`` supports None semantics for env
+    """``tests/_hook_runner.py::run_hook`` supports None semantics for env
     deletion — a contract test pinning the fix in commit 907c802.
 
     Each test points ``run_hook`` at a throwaway ``tmp_path`` probe that echoes
@@ -186,11 +186,7 @@ class TestRunHookEnvOverrides:
     def test_run_hook_deletes_var_when_value_none(self, tmp_path, monkeypatch):
         """value=None pops the inherited var from the subprocess env."""
         monkeypatch.setenv("ESPALIER_PROBE_VAR", "leaked")
-        sys.path.insert(0, str(REPO_ROOT / "tests"))
-        try:
-            from test_hooks import run_hook  # noqa: WPS433 (intentional cross-test reuse)
-        finally:
-            sys.path.pop(0)
+        from tests._hook_runner import run_hook
 
         probe = self._write_env_probe(tmp_path)
         result = run_hook(
@@ -205,11 +201,7 @@ class TestRunHookEnvOverrides:
 
     def test_run_hook_sets_var_when_value_string(self, tmp_path):
         """value=str sets the var (the unchanged-behavior side of the contract)."""
-        sys.path.insert(0, str(REPO_ROOT / "tests"))
-        try:
-            from test_hooks import run_hook  # noqa: WPS433
-        finally:
-            sys.path.pop(0)
+        from tests._hook_runner import run_hook
 
         probe = self._write_env_probe(tmp_path)
         result = run_hook(

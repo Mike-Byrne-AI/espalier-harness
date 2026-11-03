@@ -1810,15 +1810,16 @@ def _clearing_clause(root: Path, branch: str, found: _SeatPrs) -> tuple[str, boo
         return None
     acks = ", ".join(sorted(set(ruled.values())))
     deadline = time.monotonic() + HANDOFF_GATE_DRIVER_CAP_S
+    unanswered = ""
     try:
         base_ref = _hook_utils.origin_default_ref(lambda *args: _git_answer(root, deadline, *args)) or ""
-    except _GitFault:  # fail-open: ok deliberate -- no base name means no gh read can be made: the block below names it (NoDefaultBranch), never a silent hold
-        base_ref = ""
+    except _GitFault as fault:  # fail-open: ok deliberate -- no base name means no gh read can be made: the block below says git did not answer for it (never NoDefaultBranch, DEF-5079), never a silent hold
+        base_ref, unanswered = "", f"git could not be asked for the default branch's name: {fault}"
     base = base_ref.removeprefix("refs/remotes/origin/") if base_ref.startswith("refs/remotes/origin/") else ""
     workflow = str(getattr(ship, "POST_MERGE_WORKFLOW", "post-merge.yml"))
     rows = _gh_rows(root, ["run", "list", "--workflow", workflow, "--branch", base, "--event", "push", "--limit",
                            str(getattr(ship, "POST_MERGE_RUN_WINDOW", 20)), "--json",
-                           "databaseId,status,conclusion"]) if base else "NoDefaultBranch"
+                           "databaseId,status,conclusion"]) if base else (unanswered or "NoDefaultBranch")
     if isinstance(rows, str):
         return (f"This seat's other open pull request ({held_by}) would hold this lane, but the dispatcher's "
                 f"fix-forward ruling ({acks}) names it, and whether the base's newest post-merge verdict is the "

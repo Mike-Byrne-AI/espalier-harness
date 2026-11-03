@@ -71,6 +71,8 @@ import espalier
 from espalier.cli import _ONBOARDING_ROWS, _build_goal_md
 
 from _adopter_tree import build_adopter_tree
+from _hook_assertions import is_decision_or_silent as _is_decision_or_silent
+from _hook_runner import NOOP_INPUT as _NOOP_INPUT
 
 
 #: The module's own per-test ceiling, on every host. Each walk is a module-scoped
@@ -144,22 +146,6 @@ def _commit_all(tree: Path, message: str) -> str:
 #: (``espalier.managed_markers.MARKER_HASH_COMMENT``), matched as a whole line:
 #: the helper's prose mentions the marker once too.
 _MARKER_LINE = "# espalier:managed\n"
-
-#: A no-op input per event, for launching a wired hook once: enough fields for
-#: the hook to parse and judge nothing, never a write.
-_NOOP_INPUT: dict[str, dict] = {
-    "PreToolUse": {"tool_name": "Read", "tool_input": {"file_path": "notes.txt"}},
-    "PostToolUse": {"tool_name": "Read", "tool_input": {"file_path": "notes.txt"}, "tool_response": {}},
-    "PostToolUseFailure": {"tool_name": "Read", "tool_input": {"file_path": "notes.txt"}, "error": "x"},
-    "UserPromptSubmit": {"prompt": "hello"},
-    "Stop": {"stop_hook_active": False},
-    "SessionStart": {"source": "startup"},
-    "PostCompact": {"trigger": "manual"},
-    "SubagentStart": {"agent_id": "a"},
-    "SubagentStop": {"agent_id": "a"},
-    "ConfigChange": {"source": "project_settings"},
-}
-
 
 def _wired_hooks(tree: Path) -> list[tuple[str, str]]:
     """``(event, script)`` for every hook ``.claude/settings.json`` wires, read
@@ -629,24 +615,6 @@ def _is_deny(run: subprocess.CompletedProcess) -> bool:
     except ValueError:
         return False
     return out.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
-
-
-def _is_decision_or_silent(run: subprocess.CompletedProcess) -> bool:
-    """The channel rule: exit 0 (stdout is the hook's own channel -- a decision
-    object, a reporter's plain-text context, or nothing; what opens as JSON
-    must parse), or exit 2 with nothing on stdout (the text is stderr's)."""
-    if run.returncode == 2:
-        return run.stdout.strip() == ""
-    if run.returncode != 0:
-        return False
-    text = run.stdout.strip()
-    if not text.startswith("{"):
-        return True        # a reporter's plain-text context, or nothing: exit 0's own channel
-    try:
-        json.loads(text.splitlines()[-1])
-    except ValueError:
-        return False
-    return True
 
 
 class TestEveryWiredHookStarts:

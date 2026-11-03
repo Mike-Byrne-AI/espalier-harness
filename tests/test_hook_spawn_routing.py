@@ -230,12 +230,31 @@ def test_every_bare_write_guard_spawn_reads_the_budgets_refusal_apart():
 
 def test_the_read_population_is_not_empty():
     """The second pin's non-vacuity: the spawns that hand their result over,
-    counted the same way, must be there."""
+    counted the same way, must be there. 2026-11-03: 6 to 5, when the
+    launcher-only write_guard row moved onto the shared wired launcher, which
+    the next test pins."""
     read = sum(1 for path in checkout_glob(TESTS, "test_*.py") if path.name not in _EXEMPT
                for spawn in hook_spawns(path) if spawn.write_guard and spawn.read)
-    assert read >= 6, (
-        f"{read} write_guard spawns hand their result to not_a_budget_miss, under the floor of 6: "
+    assert read >= 5, (
+        f"{read} write_guard spawns hand their result to not_a_budget_miss, under the floor of 5: "
         "if one now goes through run_hook_through, lower the floor to the count left, never to 0")
+
+
+def test_the_wired_launcher_reads_the_budgets_refusal_apart():
+    """``tests/_hook_runner.py::run_hook_as_wired`` launches whichever hook a
+    tree's settings wire, write_guard among them, under a bound past the
+    helper's. Its script comes from the settings file, so the pins above, which
+    read a script by its name, cannot tell it is write_guard's: its one spawn
+    sits inside ``not_a_budget_miss`` instead, read here."""
+    tree = ast.parse((TESTS / "_hook_runner.py").read_text(encoding="utf-8"))
+    launcher = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "run_hook_as_wired")
+    spawns = [c for c in ast.walk(launcher) if isinstance(c, ast.Call) and getattr(c.func, "attr", None) in _SPAWNS]
+    read = {id(n) for c in ast.walk(launcher) if isinstance(c, ast.Call) and _callee(c) == "not_a_budget_miss"
+            for n in ast.walk(c)}
+    assert len(spawns) == 1, f"run_hook_as_wired spawns {len(spawns)} times; the pin reads one"
+    assert id(spawns[0]) in read, (
+        "run_hook_as_wired's spawn is not handed to not_a_budget_miss, so a write_guard budget "
+        "refusal on a wired launch reads as a deny (DEF-5066)")
 
 
 def test_the_routed_population_is_not_empty():

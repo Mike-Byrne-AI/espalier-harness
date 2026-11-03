@@ -862,6 +862,21 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "comprehension is exact tuple equality between the hooks' CI_GATE_FILES copy "
         "and the engine's set less its .new twin, so a drop or an addition on either side reds.",
     ),
+    "tests/test_hooks_as_wired.py": (
+        1, "a52b06980a6f4ab40d70325ee8a2b0d13f5e44edcc5aeae1d62bf9f4b86bc384",
+        "CORRECT_BY_PROPERTY",
+        "NEW comprehension over `CANONICAL_HOOK_WIRING` "
+        "(test_every_wired_entry_starts_and_answers_on_one_channel, 2026-11-03): "
+        "the claim is that the matrix launches every entry init wired, so the (event, script) "
+        "pairs read from the tree's settings must equal the roster init writes from; the roster "
+        "is the right derivation and a hand copy would be a second roster. The blindness (a hook "
+        "dropped from the roster narrows both sides together) is not this test's claim: the "
+        "roster's size is pinned one file over by tests/_surface_expected.py::"
+        "EXPECTED_HOOK_ENTRY_COUNT (read in tests/test_package_resource_parity.py and "
+        "tests/test_wheel_smoke.py) and tests/test_agent_contracts.py's "
+        "`len(CANONICAL_HOOK_WIRING)` row, the pins the DEF-727 entry in "
+        "tests/test_merge_settings.py's reason cites.",
+    ),
     "tests/test_implement_pack_step_zero.py": (
         4, "bdcf38049c1482b27f8458bc21de1e5e77560677cf56165c7baede28f28a0574",
         "MIXED",
