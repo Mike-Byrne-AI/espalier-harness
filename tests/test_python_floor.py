@@ -2148,9 +2148,11 @@ class TestSessionStartWarnDistinguishesTheTwoFailures:
     @pytest.mark.skipif(sys.platform == "win32", reason="sh stub is POSIX")
     def test_a_conforming_interpreter_is_silent(self, tmp_path):
         """The control. Without it, both tests above pass on a hook that warns
-        unconditionally."""
-        import shutil as _shutil
-        warn = self._drive(tmp_path, _shutil.which("python3") or sys.executable)
+        unconditionally. It wires the interpreter running this test, a
+        conforming Python 3 by construction: a PATH lookup of ``python3`` can
+        find a Store alias stub, which resolves and does not answer, and the
+        hook is right to warn about that one."""
+        warn = self._drive(tmp_path, sys.executable)
         assert warn == "", f"a conforming interpreter produced a warning: {warn}"
 
     def test_neither_message_prescribes_the_init_no_op(self):

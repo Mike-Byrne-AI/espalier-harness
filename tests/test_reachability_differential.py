@@ -605,7 +605,7 @@ class TestTheInterpreterRowsAreLive:
         template = dict(rd.WRAPPERS)[wrapper]
         need = rd.WRAPPER_NEEDS.get(wrapper)
         if need and not rd._executable_available(need):
-            pytest.skip(f"{need} is absent on this host")
+            pytest.skip(f"{need} is absent on this host, or resolves and does not answer")
         snippet = rd.WRAPPER_SYNTAX.get(wrapper)
         if snippet and not rd._syntax_supported(snippet):
             pytest.skip(f"this host's bash cannot parse {snippet!r}")
@@ -784,6 +784,53 @@ def _quick_rows(rd):
     wrappers = [w for w in rd.WRAPPERS if w[0] in rd.QUICK_WRAPPERS]
     bodies = [b for b in rd.BODIES if b[0] in rd.QUICK_BODIES]
     return [(wn, wt % bt) for wn, wt in wrappers for bn, bt in bodies]
+
+
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="the sh stub host; the bench's rows need /bin/bash")
+class TestAStoreAliasStubIsNotAnAvailableInterpreter:
+    """A Microsoft Store alias stub resolves as ``python3`` and, run, exits 49
+    without running anything, so ``_executable_available`` also asks each name
+    in ``_MUST_ANSWER`` to run its program (the perturbed CI cell's host,
+    2026-11-03). Driven on a host the test builds, on both branches: a real
+    ``/bin/bash`` asks bash, and without one ``shutil.which`` finds the name."""
+
+    @staticmethod
+    def _on_path(monkeypatch, tmp_path, shape):
+        from tests._interpreter_hosts import SH, build_host, path_with
+
+        monkeypatch.setenv("PATH", path_with(build_host(tmp_path / "hosts", shape, SH)))
+
+    @staticmethod
+    def _branch(rd, monkeypatch, bash: bool):
+        if bash and not Path("/bin/bash").exists():
+            pytest.skip("this branch asks /bin/bash")
+        if not bash:
+            class _NoBash:
+                def __init__(self, *_a):
+                    pass
+
+                def exists(self):
+                    return False
+
+            monkeypatch.setattr(rd, "Path", _NoBash)
+
+    @pytest.mark.parametrize("bash", [True, False], ids=["bin_bash", "which"])
+    def test_the_stub_python3_reads_unavailable_and_python_available(self, rd, tmp_path, monkeypatch, bash):
+        from tests._interpreter_hosts import STORE_PYTHON3
+
+        self._on_path(monkeypatch, tmp_path, STORE_PYTHON3)
+        self._branch(rd, monkeypatch, bash)
+        assert rd._executable_available("python3") is False
+        assert rd._executable_available("python") is True
+
+    @pytest.mark.parametrize("bash", [True, False], ids=["bin_bash", "which"])
+    def test_a_python3_that_answers_reads_available(self, rd, tmp_path, monkeypatch, bash):
+        from tests._interpreter_hosts import PYTHON3_ONLY
+
+        self._on_path(monkeypatch, tmp_path, PYTHON3_ONLY)
+        self._branch(rd, monkeypatch, bash)
+        assert rd._executable_available("python3") is True
 
 
 class TestAnAbsentInterpreterSkipsTheRowInsteadOfScoringIt:
