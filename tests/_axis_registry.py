@@ -311,11 +311,17 @@ INSTRUMENTS: tuple[Instrument, ...] = (
     # the artifacts and install nothing.
     Instrument("final_release_matrix stages 4 to 6, the wheel smoke and the artifacts",
                ("scripts/final_release_matrix.py",), "none", "not measured", "not measured", "none"),
-    # wheel_smoke's target is an empty `git init` (TP-468 3-B gives it a stack).
-    # Every row with a Windows leg reads "not measured" for host: windows-latest
-    # answering python3 is probable, not measured (TP-468 0-C).
+    # One row per wheel_smoke run in the job (tests/test_axis_registry.py reads
+    # its lines): the first into an empty `git init`, the second (TP-468 3-B)
+    # into the Node adopter row under a spaced root. The venv sits under that
+    # root too, but wheel_smoke launches no hook, so session is "none" and the
+    # spaced interpreter is not claimed. Every row with a Windows leg reads
+    # "not measured" for host: windows-latest answering python3 is probable,
+    # not measured (TP-468 0-C).
     Instrument("release.yml matrix-smoke, the wheel on three operating systems",
                ("release.yml::matrix-smoke",), "none", "not measured", "plain", "none"),
+    Instrument("release.yml matrix-smoke's second smoke, a Node tree under a spaced root",
+               ("release.yml::matrix-smoke",), "node", "not measured", "spaced", "none"),
     Instrument("release.yml release-check", ("release.yml::release-check",),
                "python", "both", "plain", "single_event"),
     Instrument("test.yml test and test-serial, the required cells",

@@ -640,6 +640,32 @@ class TestTheInstruments:
                         running.add(name)
         assert running <= set(reg.INSTRUMENT_WORKFLOWS), sorted(running - set(reg.INSTRUMENT_WORKFLOWS))
 
+    def test_the_matrix_smoke_rows_are_its_wheel_smoke_runs(self):
+        """A row's values are declared, not read (TP-468's Landing). In
+        ``release.yml::matrix-smoke`` the perturbation is a flag on the smoke's
+        own command line, so its rows are read against those lines: one row per
+        ``wheel_smoke.py`` run, its stack the run's ``--stack`` (``none``
+        without one) and its root ``spaced`` under ``--spaced-root``. A step
+        that drops the flags and leaves the row reds here."""
+        import shlex
+
+        job = self._workflows()["release.yml"]["jobs"]["matrix-smoke"]
+        runs = []
+        for step in job.get("steps") or []:
+            for ln in (step.get("run") or "").splitlines():
+                if ln.lstrip().startswith("#") or "wheel_smoke.py" not in ln:
+                    continue
+                words = shlex.split(ln)
+                stack = "none"
+                for k, word in enumerate(words):
+                    if word == "--stack":
+                        stack = words[k + 1]
+                    elif word.startswith("--stack="):
+                        stack = word.partition("=")[2]
+                runs.append((stack, "spaced" if "--spaced-root" in words else "plain"))
+        rows = [(i.stack, i.root) for i in reg.INSTRUMENTS if "release.yml::matrix-smoke" in i.runs]
+        assert runs and sorted(runs) == sorted(rows), (runs, rows)
+
     def test_a_row_with_a_windows_leg_never_reads_both(self):
         """windows-latest answering python3 is probable, not measured (TP-468 0-C),
         so a row whose runner can be Windows says "not measured" for host."""

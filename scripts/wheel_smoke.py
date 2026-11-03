@@ -18,6 +18,10 @@ CLI::
     --skip-build    With --wheel, skip the build entirely (for CI artifact reuse).
     --keep-temp     Leave the scratch directory in place for inspection.
     --json          Emit a machine-readable summary at the end.
+    --stack NAME    Write the stack table's ``adopter-NAME`` row into the target
+                    before its ``git init`` (``none``, the default: an empty tree).
+    --spaced-root   Put the venv and the target under a directory whose name
+                    holds a space.
 
 Exit codes::
 
@@ -28,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import errno
+import importlib.util
 import json
 import os
 import re
@@ -36,6 +41,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import types
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -45,6 +51,16 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 #: start removes (``tests/_temp_sweep.py``); a run asked to keep its dir never
 #: writes it, so a kept dir stays even when its run is killed.
 LOCK_NAME = ".lock"
+#: The suite's stack table: ``--stack`` writes its ``adopter-<stack>`` row into
+#: the target (TP-468 3-B). Loaded by path, so this script imports nothing of
+#: the suite, and a run without ``--stack`` never reads it.
+STACK_TABLE = REPO_ROOT / "tests" / "_stack_trees.py"
+#: ``--stack``'s values. ``none`` is the empty ``git init`` every release ran
+#: before 3-B; each other names an adopter row of the table.
+STACK_CHOICES: tuple[str, ...] = ("none", "python", "node", "go", "rust")
+#: The directory ``--spaced-root`` puts the venv and the target under. The pid
+#: lock stays on the mkdtemp root above it, which is where the sweep reads.
+SPACED_ROOT_NAME = "spaced root"
 
 # ── Expected deployed surface — single source of truth for the assertions ────
 #
@@ -682,9 +698,44 @@ def _git_init(target: Path) -> None:
     )
 
 
+def load_stack_table(stack: str) -> types.ModuleType:
+    """The stack table module, checked to hold ``adopter-<stack>``.
+
+    Loaded by path through ``importlib.util.spec_from_file_location``; the
+    table is stdlib-only. A table that is absent or holds no such row fails
+    the run: the smoke never falls back to the empty tree.
+    """
+    table = STACK_TABLE
+    row = f"adopter-{stack}"
+    if not table.is_file():
+        raise SmokeFailure(format_failure(
+            f"--stack {stack}: the stack table {table} is absent",
+            "run from a source checkout, which holds tests/_stack_trees.py "
+            "(an sdist does not), or drop --stack",
+        ))
+    spec = importlib.util.spec_from_file_location("_wheel_smoke_stack_trees", table)
+    if spec is None or spec.loader is None:
+        raise SmokeFailure(format_failure(
+            f"--stack {stack}: the stack table {table} cannot be loaded",
+            "the path must name a Python source file",
+        ))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    stacks = getattr(module, "STACKS", None)
+    if not isinstance(stacks, dict) or row not in stacks or not callable(getattr(module, "write_stack", None)):
+        raise SmokeFailure(format_failure(
+            f"--stack {stack}: the stack table {table} has no {row!r} row and write_stack",
+            "a row was renamed or removed; STACK_CHOICES must name the table's adopter rows "
+            "(tests/test_wheel_smoke.py pins the two)",
+        ))
+    return module
+
+
 def run_smoke(args: argparse.Namespace) -> SmokeReport:
     """Run the full wheel-smoke sequence; return a populated report."""
     report = SmokeReport()
+    # Read first, so a table this run cannot use costs no build or install.
+    stack_table = load_stack_table(args.stack) if args.stack != "none" else None
 
     if args.wheel:
         wheel = Path(args.wheel).resolve()
@@ -717,8 +768,10 @@ def run_smoke(args: argparse.Namespace) -> SmokeReport:
     scratch = Path(tempfile.mkdtemp(prefix="wheel-smoke-"))
     if not args.keep_temp:
         (scratch / LOCK_NAME).write_text(str(os.getpid()), encoding="utf-8")
-    venv_dir = scratch / "venv"
-    target = scratch / "target"
+    work = scratch / SPACED_ROOT_NAME if args.spaced_root else scratch
+    work.mkdir(exist_ok=True)
+    venv_dir = work / "venv"
+    target = work / "target"
     report.target = str(target)
 
     try:
@@ -733,6 +786,11 @@ def run_smoke(args: argparse.Namespace) -> SmokeReport:
         pyproject = REPO_ROOT / "pyproject.toml"
         parity_version = assert_version_parity(venv_dir, pyproject)
         report.add(StepResult("version_parity", "PASS", parity_version))
+
+        if stack_table is not None:
+            row = f"adopter-{args.stack}"
+            stack_table.write_stack(target, row)
+            report.add(StepResult("write_stack", "PASS", f"{row}: {len(stack_table.STACKS[row])} paths"))
 
         _git_init(target)
         report.add(StepResult("git_init", "PASS", str(target)))
@@ -814,6 +872,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--json", dest="emit_json", action="store_true",
         help="Emit a machine-readable JSON summary at the end.",
+    )
+    parser.add_argument(
+        "--stack", choices=STACK_CHOICES, default="none",
+        help="Write the adopter-<stack> row of tests/_stack_trees.py into the "
+             "target before its git init; none (the default) leaves it empty.",
+    )
+    parser.add_argument(
+        "--spaced-root", action="store_true",
+        help="Put the venv and the target under a directory whose name holds a space.",
     )
     return parser.parse_args(argv)
 

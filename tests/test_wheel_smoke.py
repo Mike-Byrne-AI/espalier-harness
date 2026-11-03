@@ -653,7 +653,7 @@ class TestBuildFailureCleanup:
 
         monkeypatch.setattr(wheel_smoke, "build_wheel", boom)
 
-        args = argparse.Namespace(wheel=None, skip_build=False, keep_temp=False)
+        args = argparse.Namespace(wheel=None, skip_build=False, keep_temp=False, stack="none", spaced_root=False)
         with pytest.raises(wheel_smoke.SmokeFailure):
             wheel_smoke.run_smoke(args)
 
@@ -986,7 +986,8 @@ class TestTheWorkDirsLock:
         monkeypatch.setattr(wheel_smoke, "build_wheel", build)
         monkeypatch.setattr(wheel_smoke, "install_wheel", install)
         with pytest.raises(wheel_smoke.SmokeFailure):
-            wheel_smoke.run_smoke(argparse.Namespace(wheel=None, skip_build=False, keep_temp=keep_temp))
+            wheel_smoke.run_smoke(argparse.Namespace(wheel=None, skip_build=False, keep_temp=keep_temp,
+                                                     stack="none", spaced_root=False))
         return seen
 
     def test_both_dirs_are_locked_while_it_runs_and_go_after(self, tmp_path, monkeypatch):
@@ -1003,3 +1004,124 @@ class TestTheWorkDirsLock:
         seen = self._drive(tmp_path, monkeypatch, keep_temp=True)
         assert [ours for _d, ours in seen] == [False, False], "a --keep-temp run locked a dir it keeps"
         assert all(d.is_dir() and _temp_sweep.lock_pid(d) is None for d, _ours in seen), seen
+
+
+class TestTheStackAndSpacedRootFlags:
+    """TP-468 3-B: ``--stack`` writes the stack table's ``adopter-<stack>`` row
+    into the target before its ``git init``, and ``--spaced-root`` puts the venv
+    and the target under a directory whose name holds a space, the pid lock
+    staying on the mkdtemp root the sweep reads. The default is today's run: an
+    empty ``git init`` under the bare scratch, the table never read."""
+
+    @staticmethod
+    def _tree(root: Path) -> dict[str, str]:
+        if not root.is_dir():
+            return {}
+        return {
+            p.relative_to(root).as_posix(): p.read_bytes().decode("utf-8")
+            for p in sorted(root.rglob("*"))
+            if p.is_file() and ".git" not in p.relative_to(root).parts
+        }
+
+    @staticmethod
+    def _args(tmp_path: Path, stack: str, spaced_root: bool):
+        import argparse
+
+        wheel = tmp_path / "espalier_harness-0-py3-none-any.whl"
+        wheel.write_bytes(b"")
+        return argparse.Namespace(wheel=str(wheel), skip_build=True, keep_temp=False,
+                                  stack=stack, spaced_root=spaced_root)
+
+    def _drive(self, tmp_path, monkeypatch, *, stack: str, spaced_root: bool) -> dict:
+        import tempfile
+
+        from tests import _temp_sweep
+
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        seen: dict = {}
+        real_git_init = wheel_smoke._git_init
+
+        def git_init(target):
+            seen["before_git_init"] = self._tree(target)
+            real_git_init(target)
+
+        def install(wheel, venv_dir):
+            seen["venv"] = venv_dir
+            venv_dir.mkdir(parents=True)
+
+        def run_cli(venv_dir, *args, cwd=None):
+            if args[:1] == ("init",):
+                target = Path(args[1])
+                seen["target"] = target
+                seen["git_at_init"] = (target / ".git").is_dir()
+                seen["locked"] = [d for d in target.parents
+                                  if tmp_path in d.parents and _temp_sweep.lock_is_ours(d)]
+            return "espalier 0.0.0\n"
+
+        monkeypatch.setattr(wheel_smoke, "install_wheel", install)
+        monkeypatch.setattr(wheel_smoke, "run_cli", run_cli)
+        monkeypatch.setattr(wheel_smoke, "assert_version_parity", lambda venv_dir, pyproject: "0.0.0")
+        monkeypatch.setattr(wheel_smoke, "assert_surface", lambda target: None)
+        monkeypatch.setattr(wheel_smoke, "_git_init", git_init)
+        seen["report"] = wheel_smoke.run_smoke(self._args(tmp_path, stack, spaced_root))
+        return seen
+
+    def test_the_flags_parse_and_every_stack_is_a_table_row(self):
+        from tests import _stack_trees
+
+        ns = wheel_smoke.parse_args([])
+        assert (ns.stack, ns.spaced_root) == ("none", False)
+        ns = wheel_smoke.parse_args(["--stack", "node", "--spaced-root"])
+        assert (ns.stack, ns.spaced_root) == ("node", True)
+        with pytest.raises(SystemExit):
+            wheel_smoke.parse_args(["--stack", "cobol"])
+        # The script reads the suite's own table, and each stack it offers is a
+        # row there, so a renamed row reds here and not on the release matrix.
+        assert wheel_smoke.STACK_TABLE == REPO_ROOT / "tests" / "_stack_trees.py"
+        assert wheel_smoke.STACK_CHOICES == ("none", "python", "node", "go", "rust")
+        offered = {f"{_stack_trees.ADOPTER_PREFIX}{s}" for s in wheel_smoke.STACK_CHOICES[1:]}
+        assert offered <= set(_stack_trees.STACKS), offered - set(_stack_trees.STACKS)
+
+    @pytest.mark.parametrize("stack", ["python", "node", "go", "rust"])
+    def test_the_stack_row_is_written_under_a_spaced_root_before_git_init(self, tmp_path, monkeypatch, stack):
+        from tests import _stack_trees
+
+        seen = self._drive(tmp_path, monkeypatch, stack=stack, spaced_root=True)
+        assert seen["before_git_init"] == _stack_trees.STACKS[f"adopter-{stack}"], (
+            f"--stack {stack} did not write its adopter row before git init")
+        assert seen["git_at_init"], "init ran on a target git never initialised"
+        target, venv = seen["target"], seen["venv"]
+        assert " " in target.parent.name and venv.parent == target.parent, (target, venv)
+        # the lock is on the mkdtemp root, above the spaced dir, where the sweep reads
+        assert seen["locked"] == [target.parent.parent], seen["locked"]
+        assert not target.parent.parent.exists(), "the scratch outlived its run"
+        assert seen["report"].status == "PASS"
+
+    def test_the_default_is_an_empty_git_init_and_never_reads_the_table(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(wheel_smoke, "STACK_TABLE", tmp_path / "absent" / "_stack_trees.py")
+        seen = self._drive(tmp_path, monkeypatch, stack="none", spaced_root=False)
+        assert seen["before_git_init"] == {} and seen["git_at_init"]
+        assert seen["locked"] == [seen["target"].parent] and seen["venv"].parent == seen["target"].parent
+
+    @pytest.mark.parametrize("planted", ["absent", "no_row"])
+    def test_a_table_it_cannot_use_fails_before_the_install(self, tmp_path, monkeypatch, planted):
+        """No silent fallback: an absent table (an archive without ``tests/``) or
+        one without the row fails the run, naming the table, before the wheel
+        is installed."""
+        import tempfile
+
+        table = tmp_path / "planted" / "_stack_trees.py"
+        if planted == "no_row":
+            table.parent.mkdir()
+            table.write_text('ADOPTER_PREFIX = "adopter-"\nSTACKS = {"adopter-python": {}}\n'
+                             "def write_stack(dest, row):\n    raise AssertionError(row)\n",
+                             encoding="utf-8")
+        monkeypatch.setattr(wheel_smoke, "STACK_TABLE", table)
+        monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+        installed: list = []
+        monkeypatch.setattr(wheel_smoke, "install_wheel", lambda wheel, venv_dir: installed.append(venv_dir))
+        with pytest.raises(wheel_smoke.SmokeFailure) as exc:
+            wheel_smoke.run_smoke(self._args(tmp_path, "node", True))
+        assert str(table) in str(exc.value) and "hint:" in str(exc.value), str(exc.value)
+        assert not installed, "the wheel was installed before the table was read"
+        assert not [d for d in tmp_path.iterdir() if d.name.startswith("wheel-smoke-")]
