@@ -1340,11 +1340,18 @@ total; it shrinks each review.
     - The Walk's channel predicate moved to `tests/_hook_assertions.py::is_decision_or_silent`.
     - The launcher-only write_guard test runs through `run_hook_as_wired`.
     - `tests/test_hooks_as_wired.py`, the matrix: `python` and `node` trees times the three
-      host shapes, every wired entry launched on its event's no-op input. Second witness:
-      the wired command is the name the host answers to, and the fingerprint names the
-      stack's language.
+      host shapes, every wired entry launched on its event's no-op input. Each launch must
+      exit 0 on one channel and not be refused at start-up, the roster must be
+      `CANONICAL_HOOK_WIRING`'s, and the wired write_guard must deny a protected write
+      (a launch that ran nothing passes the channel rule). Second witness: the wired
+      command is the name the host answers to, and the fingerprint names the stack's
+      language.
     - `tests/test_test_suite_contract.py::test_private_hook_runners_only_shrink`: Appendix A
-      line 3 per file, seeded at 56 runners in 38 files, with the zero-census floor.
+      line 3 per file, widened to the subprocess module under an alias, a bare-imported
+      spawn and `run_hook_through` (the line read 56 in 38 files and missed 29 runners);
+      seeded at 85 runners in 49 files, with the zero-census floor, a planted-file test of
+      the matcher, and `test_the_hooks_module_binds_the_shared_runner` against a merge
+      that brings a body back to `tests/test_hooks.py`.
     - `espalier/scanners/test_loosening.py::_HOOK_INVOKERS` gains `run_hook_as_wired`.
     - The hook-authoring sentence names the shared module and the launcher, in a
       self-host-only block (the shipped copy keeps one portable sentence).
@@ -1366,11 +1373,32 @@ total; it shrinks each review.
       Its ConfigChange input differs on purpose (audit-only).
   - Earn-the-red, each in a scratch archive with a control run green:
     - the matrix: `_detect_python_command` returning `python3` reds the `store_python3`
-      cell, every wired launch exiting 9009 with the Store alias text;
+      cell, every wired launch exiting 9009 with the Store alias text. The static
+      `test_a_store_alias_python3_wires_python` reds on the same mutant on every host, so
+      this red shows nothing only the matrix catches; the launch half's own red is the
+      deny witness's: with the `py` stub's forwarder exiting 0 for a hook script without
+      running it, the committed matrix (`e363948c`) passed the `launcher_only` cell and
+      the fix batch's reds it on the empty deny;
     - the ratchet: a runner planted in a new file and in `tests/test_stop_gate.py` (5 to 6)
-      each red, and a census matcher that finds nothing reds the floor;
+      each red, and a census matcher that finds nothing reds the floor (on the first
+      census; the widened one's matcher is held by its planted-file test);
     - the scanner: the planted returncode-only deny and allow tests on the launcher flag
       nothing at the old invoker set, and each fires its arm after.
+  - Red-team, on a snapshot of `e363948c` with edits frozen: `code-reviewer` APPROVE WITH
+    SHOULD-FIX (3 should-fix, 4 nits) and `failure-mode-reviewer` APPROVE-WITH-NOTES (0
+    regressions, 5 gaps, 3 rough edges). One fix batch: the matrix's exit-0 rule (CPython
+    exits 2 on a script it cannot open), cannot-start check, canonical roster and deny
+    witness; the ratchet's widening and its two new pins; a pin that every `run_hook*`
+    function of the shared module is in the scanner's invoker set; the channel
+    predicate's own rows (`tests/test_hook_assertions_helpers.py`); the launcher
+    docstring's limits; the nested run's timing (99 s on the Windows box, eleven nodes);
+    a note to the dispatcher for the DEF-2048 lane (`20261103T104613Z-win-2-5dcbd9`: the
+    cut skip belongs in the shared `run_hook`, and the ratchet keys 11 of its 13 files).
+    Not taken, with reasons: a script wired twice for one event still raises (one entry
+    launches; a double wiring is the finding); the launch keeps the suite's env (the
+    conftest's isolation fixtures cover what changes a verdict, and the launcher sets the
+    project root); the entry's own `timeout` is not used (named in the docstring); the
+    matrix's Windows flake exposure stands on one run here, with no POSIX timing yet.
   - Reach (session-and-stack lane):
     - `DEF-975` is **not struck by this lane**. `blind_axes` counts `session` (no proven
       value), `root` and `tree` as blind, and the row's probe prints 1. The Reach session

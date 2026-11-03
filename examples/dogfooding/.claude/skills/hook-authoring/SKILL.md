@@ -547,7 +547,8 @@ In this repository's suite it lives in `tests/_hook_runner.py` (bound in
 resolved on PATH, its `args` verbatim with `${CLAUDE_PROJECT_DIR}` expanded.
 `run_hook` answers what a hook decides; the wired launcher answers whether it
 starts on that host, and `tests/test_hooks_as_wired.py` asks it on every stack
-and interpreter host shape. A new private runner reds
+and interpreter host shape. A new private runner (a helper that spawns a hook
+from a literal argv, through `subprocess` or `run_hook_through`) reds
 `tests/test_test_suite_contract.py::test_private_hook_runners_only_shrink`.
 <!-- /espalier:self-host-only -->
 

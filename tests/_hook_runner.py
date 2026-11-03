@@ -11,12 +11,20 @@ cannot run a hook (a Store alias, a launcher with no Python behind it) leaves
 every guard open while the source-script runs stay green.
 
 ``run_hook_as_wired`` is the other half. It reads the wired entry for the
-hook, resolves its ``command`` on the PATH it is given (``shutil.which``, as a
-spawn by name does), passes its ``args`` verbatim with ``${CLAUDE_PROJECT_DIR}``
-expanded, and runs it rooted in the tree. A missing entry, a shell-form entry
-and a command that does not resolve each raise: a wiring that cannot launch is
-the finding, never a skip. ``tests/test_hooks_as_wired.py`` runs every wired
-entry this way on each adopter stack and interpreter host shape.
+hook, resolves its ``command`` on the PATH it is given, passes its ``args``
+verbatim with ``${CLAUDE_PROJECT_DIR}`` expanded, and runs it rooted in the
+tree. A missing entry, a shell-form entry and a command that does not resolve
+each raise: a wiring that cannot launch is the finding, never a skip.
+``tests/test_hooks_as_wired.py`` runs every wired entry this way on each adopter
+stack and interpreter host shape.
+
+Where it is not Claude Code's launch, by design: ``shutil.which`` honours
+``PATHEXT``, so on Windows it finds the host stubs' ``.cmd`` files, which a
+spawn by name may not (a real interpreter or launcher is an ``.exe`` either
+way); the bound is ``WIRED_S``, not the entry's own ``timeout``, so a hook slow
+to start past its wired timeout still answers here; and a ``.cmd`` child is run
+with ``subprocess.run``'s timeout, which on Windows can wait on a grandchild
+that holds the pipe.
 
 A wired launch is never a parent-pid oracle: on a Windows venv the wired
 ``python`` resolves through PATH to the venv's redirector, which starts the
@@ -35,6 +43,7 @@ import os
 import re
 import shutil
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 
 from tests._hook_spawn import not_a_budget_miss, run_hook_through
@@ -104,7 +113,7 @@ def script_arg(hook: dict) -> str:
     return args[0] if args else ""
 
 
-def iter_hooks(settings: dict):
+def iter_hooks(settings: dict) -> Iterator[tuple[str, dict]]:
     """``(event, hook)`` for every hook entry a settings document wires."""
     for event, entries in settings.get("hooks", {}).items():
         for entry in entries:

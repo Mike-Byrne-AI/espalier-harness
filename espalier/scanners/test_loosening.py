@@ -29,7 +29,7 @@ Detects landed artifacts of test-loosening:
                         the value is rendered there, never compared or parsed.
   nondiscriminating_hook_allow
                       — the allow-side mirror: an allow-intent `test_*` invoking the
-                        same hook helpers that observes ONLY the return
+                        same hook helpers and observes ONLY the return
                         code. An over-block regression (a legitimate op flipping to a
                         deny) is exit 0 too, so a bare returncode assert cannot catch it.
                         Same invoker scope and channel-observation exemption as the deny

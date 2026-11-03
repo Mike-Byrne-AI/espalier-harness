@@ -16,7 +16,7 @@ from subprocess import CompletedProcess
 
 import pytest
 
-from tests._hook_assertions import assert_hook_allowed, assert_hook_denied
+from tests._hook_assertions import assert_hook_allowed, assert_hook_denied, is_decision_or_silent
 
 
 def _make_result(returncode: int = 0, stdout: str = "", stderr: str = "") -> CompletedProcess:
@@ -98,3 +98,24 @@ class TestAssertHookAllowed:
     def test_passes_on_non_json_stdout(self):
         # Some hooks log to stdout without JSON; tolerated.
         assert_hook_allowed(_make_result(stdout="some log line\n"))
+
+
+class TestIsDecisionOrSilent:
+    """The channel rule the wired matrix and the lifecycle Walk read: exit 0
+    with a decision object, a reporter's plain text or nothing; exit 2 with
+    nothing on stdout; anything else is off the protocol."""
+
+    @pytest.mark.parametrize("returncode, stdout, expected", [
+        (0, "", True),
+        (0, "a reporter's context line\n", True),
+        (0, json.dumps({"hookSpecificOutput": {"permissionDecision": "deny"}}), True),
+        (0, "log line\n" + json.dumps({"decision": "block"}), True),
+        (2, "", True),
+        (2, json.dumps({"decision": "block"}), False),
+        (1, "", False),
+        (9009, "", False),
+        (0, "{not json", False),
+    ], ids=["silent", "plain-text", "decision", "decision-after-a-log-line", "exit-2-stderr-only",
+            "exit-2-with-stdout", "exit-1", "store-alias-exit", "unparseable-json"])
+    def test_the_channel_rule(self, returncode, stdout, expected):
+        assert is_decision_or_silent(_make_result(returncode, stdout)) is expected

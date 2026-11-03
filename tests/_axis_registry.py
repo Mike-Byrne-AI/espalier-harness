@@ -87,8 +87,10 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
     # stop_gate and subagent_stop on one session's events and asserts the
     # stack's own files are governed (a root source file needs a plan, ten
     # source writes arm the hygiene gates, Stop blocks, the adopter's declared
-    # agents relieve both gates). The wired-hooks matrix and the session
-    # driver will be stronger proofs; this is the strongest that runs today.
+    # agents relieve both gates). The wired-hooks matrix launches every hook
+    # as wired on the python and node trees too, but one no-op event at a
+    # time; this test stays the cells' proof because it asserts what the
+    # hooks govern (the cross-event driver was dropped, 2026-11-03).
     AxisCell("stack", "python",
              "tests/test_node_adopter_defaults.py::TestASessionOnTheTreeIsGoverned::"
              "test_the_hooks_govern_a_session_on_the_tree[python]", ""),

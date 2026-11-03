@@ -3620,7 +3620,10 @@ def test_raw_git_population_sites_only_shrink():
 # delete the key at zero.
 #
 # Seeded 2026-11-03 by the census on the lane that added the shared runner:
-# 56 functions in 38 files.
+# 85 functions in 49 files. The pack's census read subprocess calls alone
+# (56 in 38); this one also reads the subprocess module under an alias, a
+# spawn function imported bare, and tests/_hook_spawn.py::run_hook_through,
+# the retrying spawn 29 of the runners use (the lane's failure-mode review).
 _PRIVATE_HOOK_RUNNERS: dict[str, int] = {
     "test_action_justifications.py": 1,
     "test_adopter_generic_systems_fire.py": 2,
@@ -3629,12 +3632,20 @@ _PRIVATE_HOOK_RUNNERS: dict[str, int] = {
     "test_cli_deploy.py": 1,
     "test_cognitive_blueprint.py": 1,
     "test_config_guard_wiring.py": 2,
-    "test_governance_audit_log.py": 2,
+    "test_demo_end_to_end.py": 1,
+    "test_edge_cases.py": 1,
+    "test_governance_audit_log.py": 3,
+    "test_guard_false_positives.py": 1,
+    "test_hook_protocol.py": 1,
     "test_hook_regression.py": 1,
+    "test_hook_unicode_stdin.py": 1,
     "test_hook_voice_reaches_claude.py": 1,
+    "test_hooks.py": 1,
     "test_hooks_start_on_a_kept_helper.py": 2,
+    "test_init_fresh_hooks.py": 1,
     "test_init_upgrade_paths.py": 1,
     "test_integrity.py": 1,
+    "test_kill_switch_blocking_surfaces.py": 1,
     "test_memory_autoprune.py": 1,
     "test_node_adopter_defaults.py": 1,
     "test_plan_guard.py": 3,
@@ -3644,7 +3655,7 @@ _PRIVATE_HOOK_RUNNERS: dict[str, int] = {
     "test_quickstart_doctor_example.py": 1,
     "test_reflect_trigger_plan_bridge.py": 1,
     "test_reinject.py": 1,
-    "test_security_regression.py": 1,
+    "test_security_regression.py": 2,
     "test_session_banner.py": 2,
     "test_session_signals.py": 1,
     "test_session_start_interpreter_warn.py": 1,
@@ -3652,11 +3663,14 @@ _PRIVATE_HOOK_RUNNERS: dict[str, int] = {
     "test_session_start_source_aware.py": 1,
     "test_session_start_toc_gating.py": 1,
     "test_session_start_wall.py": 1,
-    "test_speedbump_metacognitive.py": 1,
+    "test_speedbump_metacognitive.py": 2,
+    "test_speedbump_v1_1.py": 1,
+    "test_statusline.py": 3,
     "test_stop_gate.py": 5,
     "test_stop_gate_dormancy.py": 1,
     "test_subagent_stop.py": 2,
     "test_task_router.py": 4,
+    "test_write_guard.py": 14,
     "test_write_guard_time_budget.py": 1,
     "test_xdist_never_ran.py": 1,
     "test_zone_watch.py": 1,
@@ -3665,21 +3679,31 @@ _PRIVATE_HOOK_RUNNERS: dict[str, int] = {
 _HOOK_RUNNER_SPAWNS = frozenset({"run", "Popen", "check_output", "check_call", "call"})
 
 
-def _private_hook_runner_census() -> dict[str, int]:
-    """Per-file count of the private hook runners (the block comment above),
-    keyed by the path under ``tests/``. ``tests/_hook_runner.py``, the shared
-    module, is left out by construction. A spawn is a call on the
-    ``subprocess`` module (or its ``sp`` alias), or a bare ``Popen``,
-    ``check_output`` or ``check_call``, so a local helper named ``run`` is not
-    one; an argv built in a variable is invisible here, the census's stated
-    limit."""
+def _private_hook_runners_in(path: Path) -> int:
+    """How many private hook runners (the block comment above) ``path`` holds.
+    A spawn is a call on the ``subprocess`` module under any name the file
+    imports it as (``sp`` too), one of its spawn functions imported bare (as
+    itself or an alias), or ``tests/_hook_spawn.py::run_hook_through`` however
+    reached; a local helper named ``run`` is not one. An argv built in a
+    variable is invisible here, the census's stated limit."""
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+    except (SyntaxError, UnicodeDecodeError):  # pragma: no cover - reds elsewhere
+        return 0
+    modules = {"subprocess", "sp"}
+    bare = {"Popen", "check_output", "check_call", "run_hook_through"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules |= {a.asname for a in node.names if a.name == "subprocess" and a.asname}
+        elif isinstance(node, ast.ImportFrom) and node.module == "subprocess":
+            bare |= {a.asname or a.name for a in node.names if a.name in _HOOK_RUNNER_SPAWNS}
 
-    def spawn_name(call: ast.Call) -> str:
+    def is_spawn(call: ast.Call) -> bool:
         fn = call.func
         if isinstance(fn, ast.Attribute):
-            return fn.attr if ast.unparse(fn.value) in ("subprocess", "sp") else ""
-        name = getattr(fn, "id", "")
-        return name if name in ("Popen", "check_output", "check_call") else ""
+            return fn.attr == "run_hook_through" or (
+                fn.attr in _HOOK_RUNNER_SPAWNS and ast.unparse(fn.value) in modules)
+        return getattr(fn, "id", "") in bare
 
     def argv0(call: ast.Call) -> str | None:
         argv = call.args[0] if call.args else None
@@ -3687,23 +3711,26 @@ def _private_hook_runner_census() -> dict[str, int]:
             return ast.unparse(argv.elts[0])
         return None
 
+    count = 0
+    for fn in ast.walk(tree):
+        if not isinstance(fn, ast.FunctionDef) or fn.name.startswith("test_"):
+            continue
+        heads = {argv0(c) for c in ast.walk(fn) if isinstance(c, ast.Call) and is_spawn(c)}
+        heads -= {None, "'git'"}
+        if heads and "HOOK" in ast.unparse(fn).upper():
+            count += 1
+    return count
+
+
+def _private_hook_runner_census() -> dict[str, int]:
+    """Per-file count of the private hook runners, keyed by the path under
+    ``tests/``. ``tests/_hook_runner.py``, the shared module, is left out by
+    construction."""
     census: dict[str, int] = {}
     for path in sorted(checkout_rglob(TESTS_DIR, "*.py")):
         rel = path.relative_to(TESTS_DIR).as_posix()
-        if rel == "_hook_runner.py":
-            continue
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8-sig"))
-        except (SyntaxError, UnicodeDecodeError):  # pragma: no cover - reds elsewhere
-            continue
-        for fn in ast.walk(tree):
-            if not isinstance(fn, ast.FunctionDef) or fn.name.startswith("test_"):
-                continue
-            heads = {argv0(c) for c in ast.walk(fn)
-                     if isinstance(c, ast.Call) and spawn_name(c) in _HOOK_RUNNER_SPAWNS}
-            heads -= {None, "'git'"}
-            if heads and "HOOK" in ast.unparse(fn).upper():
-                census[rel] = census.get(rel, 0) + 1
+        if rel != "_hook_runner.py" and (count := _private_hook_runners_in(path)):
+            census[rel] = count
     return census
 
 
@@ -3733,10 +3760,55 @@ def test_private_hook_runners_only_shrink():
         if census.get(rel, 0) < allowed
     }
     assert not shrank, (
-        f"private hook runner(s) removed, file -> (found, allowed): {shrank}. Good -- now "
-        "lower the entry (or delete the key at zero) so the ratchet cannot silently "
-        "absorb a new one in the space you just freed."
+        f"fewer private hook runners than allowed, file -> (found, allowed): {shrank}. "
+        "Confirm a runner really went (moved onto tests/_hook_runner.py, or deleted) and "
+        "the census did not just stop seeing it (a spawn spelled a new way), then lower "
+        "the entry (or delete the key at zero) so the ratchet cannot silently absorb a "
+        "new one in the space freed."
     )
+
+
+def test_the_private_runner_census_reads_each_spawn_shape(tmp_path):
+    """The census's matcher, held on a planted file: each way a helper can
+    spawn a hook counts once, and the shapes it leaves out (a git call, a spawn
+    that names no hook, a test function) count nothing."""
+    planted = tmp_path / "test_planted_runners.py"
+    planted.write_text(
+        "import subprocess\n"
+        "import subprocess as _sub\n"
+        "from subprocess import run as _run\n"
+        "from tests import _hook_spawn\n"
+        "from tests._hook_spawn import run_hook_through\n"
+        "HOOKS = 'tools/cc/hooks'\n"
+        "def by_module(): return subprocess.run(['python', HOOKS])\n"
+        "def by_alias(): return _sub.Popen(['python', HOOKS])\n"
+        "def by_bare_import(): return _run(['python', HOOKS])\n"
+        "def by_the_retrying_spawn(): return run_hook_through(['python', HOOKS])\n"
+        "def by_its_module(): return _hook_spawn.run_hook_through(['python', HOOKS])\n"
+        "def a_git_call(): return subprocess.run(['git', 'status', HOOKS])\n"
+        "def spawns_a_plain_script(): return subprocess.run(['python', 'x.py'])\n"
+        "def run(argv): return argv\n"
+        "def a_local_run(): return run(['python', HOOKS])\n"
+        "def test_a_test(): subprocess.run(['python', HOOKS])\n",
+        encoding="utf-8",
+    )
+    assert _private_hook_runners_in(planted) == 5
+
+
+def test_the_hooks_module_binds_the_shared_runner():
+    """``tests/test_hooks.py`` keeps ``run_hook`` only as a binding of
+    ``tests/_hook_runner.py::run_hook`` (the name ``docs/SHARP_EDGES.md``
+    cites). A merge that brings a body back there splits the runner in two: the
+    copy's fixes miss every module that imports the shared one, and the census
+    above cannot see it (it spawns through the retrying helper)."""
+    tree = ast.parse((TESTS_DIR / "test_hooks.py").read_text(encoding="utf-8"))
+    defs = [n.lineno for n in tree.body
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == "run_hook"]
+    binds = [ast.unparse(n.value) for n in tree.body if isinstance(n, ast.Assign)
+             and any(isinstance(t, ast.Name) and t.id == "run_hook" for t in n.targets)]
+    assert not defs and binds == ["_hook_runner.run_hook"], (
+        f"tests/test_hooks.py defines run_hook at {defs} and binds it to {binds}: keep the one "
+        "body in tests/_hook_runner.py and the one binding `run_hook = _hook_runner.run_hook`")
 
 # `Path.exists()`, `is_file()`, `is_dir()` and `is_symlink()` share ONE
 # `_ignore_error` table that admits ENOENT/ENOTDIR/EBADF/ELOOP and does NOT admit

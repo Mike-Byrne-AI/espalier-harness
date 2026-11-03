@@ -488,6 +488,20 @@ def test_both_hook_arms_read_the_wired_launcher(tmp_path) -> None:
     }, f"the hook arms did not read run_hook_as_wired as a hook invoker; flagged {flagged}"
 
 
+def test_every_shared_hook_runner_is_a_hook_invoker() -> None:
+    """The invoker set names functions by hand, so a runner the shared module
+    gains, or a rename of one, would leave tests on it outside both arms with
+    the test above still green on its planted literal. Every top-level
+    ``run_hook*`` function in ``tests/_hook_runner.py`` is in the set."""
+    import ast
+
+    tree = ast.parse((REPO_ROOT / "tests" / "_hook_runner.py").read_text(encoding="utf-8"))
+    runners = {n.name for n in tree.body if isinstance(n, ast.FunctionDef) and n.name.startswith("run_hook")}
+    assert runners >= {"run_hook", "run_hook_as_wired"}, runners
+    assert runners <= scn._HOOK_INVOKERS, (
+        f"shared hook runners outside test_loosening's _HOOK_INVOKERS: {sorted(runners - scn._HOOK_INVOKERS)}")
+
+
 def test_blocked_audit_token_stays_coupled_to_the_hooks_real_block_events(tmp_path):
     """TP-312 coupling-lock. `_observes_decision_channel` recognizes an audit-log
     discrimination via the underscore-anchored `_blocked` token. That token is coupled

@@ -250,6 +250,9 @@ class TestProvenCellsVaryRunAndPass:
     # stack): 25 s on ubuntu and 55 s on the Windows Portability runner on
     # 2026-10-07, 65 s alone on the Windows self-host box -- past the 60 s
     # per-test ceiling, which ended that Portability run with no test named.
+    # Eleven nodes since 2026-11-03 (the wired-hooks matrix's three host cells
+    # joined, each an init and about a dozen wired launches): 99 s on the
+    # Windows self-host box, run alone.
     # The child's own bound sits under this mark, so its message is the one a
     # reader sees.
     @pytest.mark.slow
