@@ -1744,8 +1744,16 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "than passing.",
     ),
     "tests/test_write_guard.py": (
-        37, "88b5131b52ad6280f0a577db27bc57b99174e9d00427cc0e7dc871fc58705b32",
+        47, "529507a7ee4ee366ff94ee5093fff774b443622e17655a26495420315a2017c5",
         "CORRECT_BY_REMEDY",
+        "GREW 37 -> 47 on 2026-11-03 (the speed bump's quoted-verb lane, DEF-5080): "
+        "both quoted-verb rosters' `test_a_quoted_verb_bumps_like_the_bare_verb` search "
+        "an arm over `_speedbump_readings` (eight rows: each asserts the arm matches at "
+        "least one of its checkpoint's readings, so a narrowed reading set can only red "
+        "it), and `_speedbump_own_anchored` builds `_bash_patterns`' object set and "
+        "`_speedbump`'s own anchored arms, compared by set equality with each class's "
+        "`_SPEEDBUMP_FIXTURES`, so a narrowed walk reds as a fixture naming a missing "
+        "arm; both earned their red at the base (18 rows, nine arms by two quotes). "
         "GREW 34 -> 37 on 2026-11-03 (the cmd set check lane, DEF-1071 (d)): "
         "TestQuotedVerbTailIsUniform::test_write_guard_holds_no_anchored_arm_of_its_own "
         "builds three sets -- `_bash_patterns`' compiled patterns and every "
