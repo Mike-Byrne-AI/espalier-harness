@@ -1,7 +1,7 @@
 {
  "id": "DEF-411a",
  "subject": "scripts/check_pack_landing.py",
- "cmd": "python3 -c \"import subprocess,re,sys; o=subprocess.run(['python3','scripts/check_pack_landing.py'],capture_output=True,text=True).stdout; sys.exit(2) if 'SCANNED NOTHING' in o else print(bool(re.search(r'ROADMAP packs in Done/ [(][1-9]',o)) or bool(re.search(r'incomplete Landing stanza [(][1-9]',o)))\"",
+ "cmd": "python3 -c \"import subprocess,re,sys; o=subprocess.run([sys.executable,'scripts/check_pack_landing.py'],capture_output=True,text=True).stdout; sys.exit(2) if 'SCANNED NOTHING' in o else print(bool(re.search(r'ROADMAP packs in Done/ [(][1-9]',o)) or bool(re.search(r'incomplete Landing stanza [(][1-9]',o)))\"",
  "open_value": "True",
  "why_not": null,
  "verified_2026_08_20": "STILL_OPEN",
@@ -12,5 +12,6 @@
  "inputs": [
   "task-packs/Done"
  ],
- "verified_2026_09_22": "STILL_OPEN (re-pinned value unchanged; inputs None -> ['task-packs/Done'] on 2026-09-22: the command shells out to check_pack_landing.py, whose two tiers read task-packs/Done/, local-only: the public checkout struck this row on it (measured 2026-09-22 in a --shared clone); declared, and the predicate exits 2 with no stdout when the lint says SCANNED NOTHING, so a Done/ that exists but holds no pack is UNRESOLVED, not a strike (DEF-858))"
+ "verified_2026_09_22": "STILL_OPEN (re-pinned value unchanged; inputs None -> ['task-packs/Done'] on 2026-09-22: the command shells out to check_pack_landing.py, whose two tiers read task-packs/Done/, local-only: the public checkout struck this row on it (measured 2026-09-22 in a --shared clone); declared, and the predicate exits 2 with no stdout when the lint says SCANNED NOTHING, so a Done/ that exists but holds no pack is UNRESOLVED, not a strike (DEF-858))",
+ "verified_2026_11_03": "STILL_OPEN (re-pinned value unchanged on 2026-11-03: the program spawned a bare python3 inside its -c body, past the runner's leading-name rewrite: on a PATH holding only python the runner graded it UNRESOLVED (rc=1, FileNotFoundError: python3), driven 2026-11-03; respelled sys.executable there, the predicate unchanged. The claim stands: True with task-packs/Done (the checker prints eight items now, five ROADMAP packs and three incomplete Landing stanzas), and exit 2 without it) [changed: probe]"
 }
