@@ -379,6 +379,38 @@ class TestTheMarkerIsArmedWhereTheSessionsModReadsIt:
         assert _marker(wt)["head"] == _git(wt, "rev-parse", "HEAD")
         assert "does not list this session" in line and "/clear by hand" in line
 
+    def test_a_session_an_unread_process_table_could_not_place_is_said_so(self, ship, repo, tmp_path, monkeypatch):
+        """A table that could not be read matched none of the caller's parents,
+        which says nothing about the registry (DEF-2046)."""
+        wt = _worktree_of(repo)
+        _in_a_mod_window(monkeypatch)
+        _session_registry(tmp_path, monkeypatch, "s-another", repo)
+        monkeypatch.setattr(ship, "_SYNC", None)
+        monkeypatch.setattr(ship._sync_module(), "_parent_map", lambda *a, **k: None)
+        monkeypatch.chdir(wt)
+        line = ship.arm_own_clear_here(wt)
+        assert _marker(wt)["head"] == _git(wt, "rev-parse", "HEAD")
+        assert ("the process table could not be read, so this session could not be found in Claude Code's "
+                "session registry, so it is armed in this checkout") in line, line
+
+    def test_a_kept_older_checkout_sync_keeps_the_older_words(self, ship, repo, tmp_path, monkeypatch):
+        wt = _worktree_of(repo)
+        _in_a_mod_window(monkeypatch)
+        _session_registry(tmp_path, monkeypatch, "s-another", repo)
+        monkeypatch.setattr(ship, "_SYNC", None)
+        real = ship._sync_module()
+
+        class _KeptOlder:   # its caller_entry answers; the names the table's cannot-tell added are not in it
+            def __getattr__(self, name):
+                if name in ("find_own_entry", "find_caller", "TABLE_UNREAD", "NOT_LISTED", "ancestry"):
+                    raise AttributeError(name)
+                return getattr(real, name)
+
+        monkeypatch.setattr(ship, "_SYNC", _KeptOlder())
+        monkeypatch.chdir(wt)
+        line = ship.arm_own_clear_here(wt)
+        assert "does not list this session" in line and "/clear by hand" in line, line
+
     def test_a_session_started_in_another_clone_is_armed_here_and_said(self, ship, repo, tmp_path, monkeypatch):
         other = tmp_path / "other"
         _git(tmp_path, "clone", "--quiet", str(repo), str(other))

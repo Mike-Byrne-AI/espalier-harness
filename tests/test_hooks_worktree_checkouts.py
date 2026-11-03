@@ -560,6 +560,8 @@ _SIBLING_LISTS = ("sibling_checkouts", "_sibling_places")
 _SIBLING_READERS = {
     ("tools/cc/checkout_sync.py", "_sibling_places"): "filtered and handed to sessions_in_checkout",
     ("tools/cc/checkout_sync.py", "sessions_in_checkout"): "checkout_of over the places",
+    ("tools/cc/checkout_sync.py", "occupancy"): "the main checkout picked by its .git folder, never by position",
+    ("tools/cc/checkout_sync.py", "pid_checkout"): "a killed git list's stand-in, handed to cwd_checkout",
     ("tools/cc/hooks/_hook_utils.py", "_checkout_bases"): "sorted longest first for containing_checkout",
     ("tools/cc/hooks/_hook_utils.py", "sibling_checkout_containing"): "equal to containing_checkout's hit",
     ("tools/cc/hooks/_hook_utils.py", "is_sibling_checkout"): "identity by inode, no containment",

@@ -1184,6 +1184,44 @@ class TestSessionStartWiring:
                 "removed: agent-old") in banner
         assert leftover.is_dir()
 
+    def test_an_unread_process_table_is_said_and_a_kept_older_reader_keeps_its_words(self, ss, repos,
+                                                                                      monkeypatch):
+        """The catch-up places the session by its id, then by its parents: a
+        table that could not be read matched none of them, which says nothing
+        about the registry (DEF-2046). A kept older checkout_sync, with no
+        find_own_entry, keeps the older words and the hook."""
+        work = repos["work"]
+        _worktree(repos, "agent-old", "lane/agent-old")
+        monkeypatch.setenv(ss.CATCH_UP_ENV, "1")
+        sync = ss._hook_utils.load_checkout_sync()
+        monkeypatch.setattr(sync, "live_sessions", lambda *a, **k: [_row(work, pid=_dead_pid(), sid="someone")])
+        monkeypatch.setattr(sync, "_parent_map", lambda *a, **k: None)
+        _checkout, worktrees, _kept = ss._sync_checkout(work, {"cwd": str(work)}, "s1", "startup", True, None)
+        assert worktrees == ("the process table could not be read, so this session could not be found in Claude "
+                             "Code's session registry, so no worktree was removed: agent-old"), worktrees
+
+        class _KeptOlder:   # its own_entry answers; the names this change added are not in it
+            def __getattr__(self, name):
+                if name in ("find_own_entry", "find_caller", "TABLE_UNREAD", "NOT_LISTED", "ancestry"):
+                    raise AttributeError(name)
+                return getattr(sync, name)
+
+        monkeypatch.setattr(ss._hook_utils, "load_checkout_sync", _KeptOlder)
+        _checkout, worktrees, _kept = ss._sync_checkout(work, {"cwd": str(work)}, "s1", "startup", True, None)
+        assert worktrees == ("this session is not in Claude Code's session registry, so no worktree was removed: "
+                             "agent-old"), worktrees
+
+    def test_the_catch_up_places_the_others_by_the_entry_it_found(self, ss, repos, monkeypatch):
+        work = repos["work"]
+        _worktree(repos, "agent-old", "lane/agent-old")
+        monkeypatch.setenv(ss.CATCH_UP_ENV, "1")
+        sync = ss._hook_utils.load_checkout_sync()
+        walks = iter([([4242], True)])
+        monkeypatch.setattr(sync, "ancestry", lambda depth=8: next(walks, ([], False)))
+        monkeypatch.setattr(sync, "live_sessions", lambda *a, **k: [_row(work, pid=4242, sid="me")])
+        _checkout, worktrees, _kept = ss._sync_checkout(work, {"cwd": str(work)}, "s1", "startup", True, None)
+        assert "pid 4242" not in worktrees, worktrees
+
     def test_the_banner_renders_both_lines_and_stays_byte_identical_without_them(self, ss, tmp_path):
         plain = ss._build_context(tmp_path, False, False)
         assert "Checkout:" not in plain and "Worktrees:" not in plain
@@ -1243,7 +1281,9 @@ class TestPieces:
         """A session launched from another session (a nested `claude -p`) has
         both as ancestors; only the nearer is the caller, and the farther one
         is another session in the checkout (the review's W4)."""
-        ancestors = cs.ancestor_pids()
+        ancestors, read = cs.ancestry()
+        if not read:
+            pytest.skip("the process table did not answer on this host, so the walk cannot tell")
         assert len(ancestors) >= 2, ancestors
         near, far = ancestors[0], ancestors[1]
         rows = [{"pid": far, "session_id": "parent", "cwd": str(tmp_path)},
@@ -1670,11 +1710,11 @@ class TestTheOneLivenessOracle:
         monkeypatch.setenv("CLAUDECODE", "1")
         monkeypatch.delenv("CLAUDE_PID", raising=False)
         monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
-        monkeypatch.setattr(cs, "ancestor_pids", lambda depth=8: [999999])
+        monkeypatch.setattr(cs, "ancestry", lambda depth=8: ([999999], True))
         stranger = cs.occupancy(tmp_path, sessions=rows, checkouts=[tmp_path], markers=lambda tree: [])
         assert stranger.sessions is None
         assert stranger.note.startswith("this session is not in Claude Code's session registry")
-        monkeypatch.setattr(cs, "ancestor_pids", lambda depth=8: [os.getpid()])
+        monkeypatch.setattr(cs, "ancestry", lambda depth=8: ([os.getpid()], True))
         listed = cs.occupancy(tmp_path, sessions=rows, checkouts=[tmp_path], markers=lambda tree: [])
         assert listed.oracle == "registry" and listed.sessions == [{**rows[0], "source": "registry"}]
         assert listed.caller is rows[0]
@@ -1685,7 +1725,7 @@ class TestTheOneLivenessOracle:
         2026-10-15): no process walk needed. Dies to: an 8-deep walk that
         misses a longer chain and leaves the registry untrusted."""
         rows = [_row(tmp_path, pid=4242, sid="mine"), _row(tmp_path, pid=4343, sid="other")]
-        monkeypatch.setattr(cs, "ancestor_pids", lambda depth=8: [])
+        monkeypatch.setattr(cs, "ancestry", lambda depth=8: ([], True))
         monkeypatch.setenv("CLAUDE_PID", "4242")
         monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
         assert cs.caller_entry(rows) is rows[0]
@@ -2242,6 +2282,136 @@ class TestAKilledReadSaysItCannotTell:
         assert cs.worktrees_line(cs.Reap(note="git could not list the worktrees")) == "git could not list the worktrees"
         assert cs.worktrees_line(cs.Reap(unanswered=2)) == "2 git reads did not answer in time"
         assert cs.worktrees_line(cs.Reap()) == ""
+
+
+class TestAProcessTableThatDidNotAnswerSaysItCannotTell:
+    """DEF-2046, the process table and the checkout list: a ``ps`` killed at
+    its cap read as a host with no processes, so an ancestor walk stopped at
+    the first hop and a session it could not place was printed as one the
+    registry does not list; a killed ``git worktree list`` read as no other
+    checkout, and ``occupancy`` asked it twice."""
+
+    @pytest.mark.skipif(os.name != "posix", reason="the ps arm; the Windows arm is driven below on every host")
+    def test_a_ps_that_did_not_answer_is_unread_never_an_empty_table(self, cs, monkeypatch):
+        for answer in (None, subprocess.CompletedProcess(["ps"], 1, "", "ps: denied\n"),
+                       subprocess.CompletedProcess(["ps"], 0, "", "")):
+            monkeypatch.setattr(cs, "run", lambda argv, *, cwd, timeout, given=answer: given)
+            assert cs._parent_map() is None, answer
+        monkeypatch.setattr(cs, "run", lambda argv, *, cwd, timeout: subprocess.CompletedProcess(
+            argv, 0, "    1     0\n   42     1\nnoise\n", ""))
+        assert cs._parent_map() == {1: 0, 42: 1}
+
+    def test_an_empty_snapshot_is_unread_on_windows_too(self, cs, monkeypatch):
+        monkeypatch.setattr(cs, "_process_table_windows", lambda: {})
+        assert cs._parent_map_windows() is None
+        monkeypatch.setattr(cs, "_process_table_windows", lambda: {4: (0, "System")})
+        assert cs._parent_map_windows() == {4: 0}
+
+    def test_an_unread_table_leaves_the_parent_alone_and_says_so(self, cs, monkeypatch):
+        monkeypatch.setattr(cs, "_parent_map", lambda *a, **k: None)
+        assert cs.ancestry() == ([os.getppid()], False)
+        assert cs.ancestors_of(os.getpid()) is None
+        assert cs.ancestors_of(10, {10: 5}) == [5], "a table handed in is read as given"
+        # A caller older than the None hands it straight back: no second read
+        # (a second ps per pid outran the guard's time budget).
+        monkeypatch.setattr(cs, "_parent_map", lambda *a, **k: pytest.fail("a None handed in was read again"))
+        assert cs.ancestors_of(10, None) is None
+        monkeypatch.setattr(cs, "_parent_map", lambda *a, **k: {os.getpid(): 77, 77: 1})
+        assert cs.ancestry() == ([77, 1], True)
+
+    def test_a_session_the_unread_table_could_not_place_is_never_called_unlisted(self, cs, tmp_path, monkeypatch):
+        rows = [_row(tmp_path, pid=4242, sid="someone")]
+        monkeypatch.setenv("CLAUDECODE", "1")
+        monkeypatch.delenv("CLAUDE_PID", raising=False)
+        monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+        monkeypatch.setattr(cs, "_parent_map", lambda *a, **k: None)
+        blind = cs.occupancy(tmp_path, sessions=rows, checkouts=[tmp_path], markers=lambda tree: [])
+        assert blind.sessions is None
+        assert blind.note == ("the process table could not be read, so this session could not be found in "
+                              "Claude Code's session registry; no session marker answers either, so who is in "
+                              "it cannot be told")
+        assert cs.find_caller(rows) == (None, False) and cs.find_own_entry(rows) == (None, False)
+        assert cs.find_own_entry(rows, "someone") == (rows[0], True), "found by its id: no table asked"
+        monkeypatch.setenv("CLAUDE_PID", "4242")
+        assert cs.find_caller(rows) == (rows[0], True), "found by the exported window pid: no table needed"
+        monkeypatch.delenv("CLAUDE_PID")
+        monkeypatch.setattr(cs, "_parent_map", lambda *a, **k: {os.getpid(): 999999})
+        listed = cs.occupancy(tmp_path, sessions=rows, checkouts=[tmp_path], markers=lambda tree: [])
+        assert listed.note.startswith("this session is not in Claude Code's session registry"), listed.note
+        assert cs.find_caller(rows) == (None, True)
+
+    def test_the_cli_says_the_table_could_not_be_read(self, cs, repos, monkeypatch, capsys):
+        work = repos["work"]
+        _worktree(repos, "kept")   # the reaper's note names a worktree it kept
+        monkeypatch.setenv("CLAUDECODE", "1")
+        monkeypatch.delenv("CLAUDE_PID", raising=False)
+        monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+        monkeypatch.setattr(cs, "live_sessions", lambda *a, **k: [_row(work, pid=4242, sid="someone")])
+        monkeypatch.setattr(cs, "_parent_map", lambda *a, **k: None)
+        assert cs.main(["--root", str(work), "--json"]) == 0
+        note = json.loads(capsys.readouterr().out)["worktrees"]["note"]
+        assert note == ("the process table could not be read, so this session could not be found in Claude "
+                        "Code's session registry, so no worktree was removed"), note
+
+    def test_a_killed_checkout_list_is_asked_once_and_the_folder_places_the_sessions(self, cs, repos, monkeypatch):
+        work = repos["work"]
+        wt = _worktree(repos, "lane")
+        asked: list = []
+
+        def runner(argv, *, cwd, timeout):
+            if argv[1:3] == ["worktree", "list"]:
+                asked.append(argv)
+                return None
+            return cs.run(argv, cwd=cwd, timeout=timeout)
+
+        monkeypatch.delenv("CLAUDECODE", raising=False)
+        rows = [_row(work, pid=4242, sid="in-main"), _row(wt, pid=4343, sid="in-lane")]
+        occupied = cs.occupancy(work, sessions=rows, markers=lambda tree: [], runner=runner)
+        assert len(asked) == 1, asked
+        assert _ids(occupied.sessions) == ["in-main"]
+
+    def test_a_killed_checkout_list_still_reads_the_main_checkouts_markers(self, cs, repos, monkeypatch):
+        """A session that moved from the clone into a worktree keeps its
+        registry cwd and records the move in the clone's marker: a killed list
+        read as no main checkout, so retire found the worktree empty."""
+        work = repos["work"]
+        wt = _worktree(repos, "lane")
+        moved = {"session_id": "moved", "pid": os.getpid(), "cwd": str(wt)}
+        markers = lambda tree: [moved] if cs._norm(tree) == cs._norm(work) else []  # noqa: E731
+        monkeypatch.delenv("CLAUDECODE", raising=False)
+        killed = _killing(cs, ("worktree", "list"))
+        seen = cs.occupancy(wt, sessions=[], markers=markers, runner=killed)
+        assert _ids(seen.sessions) == ["moved"], seen
+        monkeypatch.setattr(cs, "_sibling_places", lambda root: None)
+        blind = cs.occupancy(wt, sessions=[], markers=markers, runner=killed)
+        assert blind.sessions is None and "main checkout's session markers were not read" in blind.note, blind
+
+    def test_the_cli_places_the_others_by_the_entry_it_found(self, cs, repos, monkeypatch, capsys):
+        """A second walk of the table, killed after the first answered, once
+        left the caller among the others: the catch-up named its own pid."""
+        work = repos["work"]
+        _worktree(repos, "kept")
+        walks = iter([([4242], True)])
+        monkeypatch.setattr(cs, "ancestry", lambda depth=8: next(walks, ([], False)))
+        monkeypatch.setattr(cs, "live_sessions", lambda *a, **k: [_row(work, pid=4242, sid="me")])
+        monkeypatch.delenv("CLAUDECODE", raising=False)
+        assert cs.main(["--root", str(work), "--json"]) == 0
+        payload = capsys.readouterr().out
+        assert "pid 4242" not in payload, payload
+
+    def test_a_killed_checkout_list_places_a_pid_by_the_registry_on_disk_or_says_unread(self, cs, repos,
+                                                                                       monkeypatch):
+        """``registered_checkouts`` is None on a kill, and ``or []`` read that
+        as no other checkout: a nested worktree's process was this checkout's,
+        and so in the Loose: line's paste."""
+        work = repos["work"]
+        wt = _worktree(repos, "lane")
+        monkeypatch.setattr(cs, "registered_checkouts", lambda *a, **k: None)
+        assert cs.pid_checkout(str(wt), work) == (
+            "cwd in .claude/worktrees/lane, another checkout of this clone", True)
+        monkeypatch.setattr(cs, "_sibling_places", lambda root: None)
+        assert cs.pid_checkout(str(wt), work) == (
+            "cwd's checkout unread: git did not list this clone's checkouts", True)
 
 
 class TestTheSweepReadsPatchesNotShas:

@@ -2010,9 +2010,30 @@ def _box_lock_holder() -> dict[str, Any] | None:
     return {"pid": pid, "seat": seat if isinstance(seat, str) else "?", "lane": lane if isinstance(lane, str) else "?"}
 
 
-def _kill_reading(tool_name: str, tool_input: dict, root: Path) -> tuple[tuple[int, ...], str] | None:
-    """``(every pid CP-KILL nudges for, whose run the first is, in words)``,
-    or None (the block above has the rule)."""
+def _unread_kill_nudge(parents: list[int], unplaced: list[int],
+                       unanswered: str) -> tuple[tuple[int, ...], str, bool] | None:
+    """CP-KILL's reading where no checkout placed a pid because a read did not
+    answer (DEF-2046): a `pkill -P` whose children a table that could not be
+    read cannot list, else a live pid no checkout holds by its own cwd; None
+    when there is neither."""
+    named = parents + unplaced
+    if not named:
+        return None
+    more = f" (and {len(named) - 1} more named here)" if len(named) > 1 else ""
+    if parents:
+        return tuple(named), (f"pkill -P {parents[0]}{more}: the process table could not be read, so which "
+                              "processes it ends, and whose run each one is, cannot be told: read each one's "
+                              "working directory and parents first"), True
+    return tuple(named), (f"pid {unplaced[0]}{more}: {unanswered} could not be read, so whose run it is cannot be "
+                          "told, and another checkout of this clone may be working it: read its working directory "
+                          "and parents before you end it"), True
+
+
+def _kill_reading(tool_name: str, tool_input: dict, root: Path) -> tuple[tuple[int, ...], str, bool] | None:
+    """``(every pid CP-KILL nudges for, whose run the first is, in words,
+    whether a read that did not answer is why)``, or None (the block above
+    has the rule). A reading that placed a pid takes the words over one a
+    read that did not answer left unplaced."""
     targets = _named_kill_targets(tool_name, tool_input)
     if not targets:
         return None
@@ -2025,23 +2046,36 @@ def _kill_reading(tool_name: str, tool_input: dict, root: Path) -> tuple[tuple[i
         return None
     if holder is not None and sync.pid_alive(holder["pid"]) is False:
         holder = None   # the record a holder killed hard left behind names nobody
-    table = sync._parent_map(spawn_timeout(_KILL_READ_S))
+    # A table that could not be read is None, and empty from a checkout_sync
+    # older than that (no host has an empty one): either is unread, never a
+    # host with no processes (DEF-2046).
+    table = sync._parent_map(spawn_timeout(_KILL_READ_S)) or None
     pids: list[int] = []
+    parents_unread: list[int] = []   # `pkill -P` targets whose children an unread table cannot list
     for pid, parent in targets:
+        if parent and table is None:
+            parents_unread.append(pid)   # judged after the rest: a pid placed elsewhere takes the words
+            continue
         # A parent `pkill -P` names ends its children: they are what is judged.
-        children = [child for child, up in table.items() if up == pid] if parent else [pid]
+        children = [child for child, up in (table or {}).items() if up == pid] if parent else [pid]
         if parent and (pid == 1 or len(children) > _KILL_PID_CAP):
             return (pid,), (f"pkill -P {pid} ends {len(children) or 'its'} processes, more than this reads one by "
                             "one, and a run another checkout of this clone is working may be among them: read each "
-                            "one's working directory and parents first")
+                            "one's working directory and parents first"), False
         pids += [p for p in children if p not in pids]
     pids = pids[:_KILL_PID_CAP]
     if not pids:
-        return None
+        return _unread_kill_nudge(parents_unread, [], "the process table")
     depth = max(1, sync.CWD_PID_CAP // len(pids) - 1)   # every chain fits the one read
-    chains = {pid: [pid, *sync.ancestors_of(pid, table, depth)] for pid in pids}
-    cwds = sync.process_cwds(list(dict.fromkeys(p for c in chains.values() for p in c)),
-                             timeout=spawn_timeout(_KILL_READ_S)) or {}
+    # An unread table leaves each pid its own chain: its own cwd still places
+    # it, and a pid that cwd does not place cannot be climbed to its owner.
+    chains = {pid: [pid, *(sync.ancestors_of(pid, table, depth) if table is not None else [])] for pid in pids}
+    read_cwds = sync.process_cwds(list(dict.fromkeys(p for c in chains.values() for p in c)),
+                                  timeout=spawn_timeout(_KILL_READ_S))
+    cwds = read_cwds or {}
+    unanswered = " and ".join(what for what, missing in (("the process table", table is None),
+                                                         ("its working directory", read_cwds is None)) if missing)
+    unplaced: list[int] = []   # pids a read that did not answer left unplaced
     hits: list[int] = []
     first: tuple[int, int, Path | None] | None = None   # (pid, the process that names its owner, its checkout)
     mine = lane = ""   # this checkout's seat and lane, read only where the box lock decides
@@ -2067,8 +2101,12 @@ def _kill_reading(tool_name: str, tool_input: dict, root: Path) -> tuple[tuple[i
                 continue   # this checkout's own run holds the lock
             hits.append(pid)
             first = first or (pid, holder["pid"], None)
+        elif unanswered and sync.pid_alive(pid) is not False:
+            # No reading placed it and one did not answer: never "nobody's". A
+            # gone pid has no run to protect (and lsof reads none as unread).
+            unplaced.append(pid)
     if first is None:
-        return None
+        return _unread_kill_nudge(parents_unread, unplaced, unanswered)
     pid, owner, home = first
     more = f" (and {len(hits) - 1} more named here)" if len(hits) > 1 else ""
     if home is None:
@@ -2078,7 +2116,7 @@ def _kill_reading(tool_name: str, tool_input: dict, root: Path) -> tuple[tuple[i
         unread = "; this checkout's seat or lane unread" if mine == "?" or lane in ("", "?") else ""
         return tuple(hits), (f"{who} the box lock's holder (pid {owner}, seat {holder['seat'][:40]}, lane "
                              f"{holder['lane'][:80]}{unread}), another seat's tier: ask that seat, or the dispatcher, "
-                             "before you end it")
+                             "before you end it"), False
     where = sync.checkout_name(home, checkouts)[:_KILL_WHERE_CAP]
     seat = _seat_name(home)
     named = "seat unread" if seat == "?" else f"seat {seat[:40]}" if seat else "no seat name"
@@ -2087,15 +2125,15 @@ def _kill_reading(tool_name: str, tool_input: dict, root: Path) -> tuple[tuple[i
              "no live Claude session there: read its parents first" if live is not None else "its sessions unread")
     who = f"pid {pid}{more}" if owner == pid else f"pid {pid}{more} runs under pid {owner}, which"
     return tuple(hits), (f"{who} works in {where}, another checkout of this clone ({named}; {there}) -- that is "
-                         "its run: ask the session working there, or the dispatcher, before you end it")
+                         "its run: ask the session working there, or the dispatcher, before you end it"), False
 
 
 #: The last command's reading: the predicate, the body and the flag key each
 #: ask, and the reading spawns, so it is made once (a hook run judges one call).
-_last_kill: tuple[tuple[str, str, str], tuple[tuple[int, ...], str] | None] | None = None
+_last_kill: tuple[tuple[str, str, str], tuple[tuple[int, ...], str, bool] | None] | None = None
 
 
-def _kill_hit(tool_name: str, tool_input: dict, root: Path | None) -> tuple[tuple[int, ...], str] | None:
+def _kill_hit(tool_name: str, tool_input: dict, root: Path | None) -> tuple[tuple[int, ...], str, bool] | None:
     global _last_kill
     command = str(tool_input.get("command", ""))
     if root is None:   # the flag key is handed no root: the reading just made is this call's
@@ -2119,9 +2157,13 @@ def _kill_key(tool_name: str, tool_input: dict) -> str:
     # Per pid, never id-only: one fire would retire the bump for the session and
     # a second seat's pid would pass with no word (air's c8e05b). A re-issue of
     # the same command names the same pids, and passes; a kill naming another
-    # seat's pid this session has not been told about is nudged again.
+    # seat's pid this session has not been told about is nudged again. A nudge
+    # for a read that did not answer keys apart, so a later reading that places
+    # the same pid in another checkout is still shown (DEF-2046).
     hit = _kill_hit(tool_name, tool_input, None)
-    return "pid" + "-".join(str(pid) for pid in hit[0]) if hit is not None else _discard_key(tool_name, tool_input)
+    if hit is None:
+        return _discard_key(tool_name, tool_input)
+    return ("unread-pid" if hit[2] else "pid") + "-".join(str(pid) for pid in hit[0])
 
 
 def _ascii_text(text: str) -> str:

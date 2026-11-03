@@ -3950,15 +3950,21 @@ def _sync_checkout(
         return "", "", []
     sessions = sync.live_sessions()
     unreadable = ""
-    if sessions is not None and sync.own_entry(sessions, sid) is None:
+    # A kept older checkout_sync has no find_own_entry, and its own_entry
+    # cannot say a process table that did not answer: the older words stand.
+    find = getattr(sync, "find_own_entry", None)
+    mine, read = ((find(sessions, sid) if find is not None else (sync.own_entry(sessions, sid), True))
+                  if sessions is not None else (None, True))
+    if sessions is not None and mine is None:
         # A registry that does not list the session asking is not the one this
         # session writes to (another config dir, a renamed file, a new shape):
         # nothing it fails to list can be trusted to be absent.
-        unreadable = "this session is not in Claude Code's session registry"
+        unreadable = "this session is not in Claude Code's session registry" if read else sync.TABLE_UNREAD
         sessions = None
     markers = _hook_utils.other_live_sessions(root, sid)
     if sessions is not None:
-        others = sync.other_sessions_in_checkout(sessions, root, sid)
+        # By the entry already found: a second walk of the process table could miss it.
+        others = [s for s in sync.sessions_in_checkout(sessions, root) if s is not mine]
         other = f"pid {others[0].get('pid')}" if others else ""
     else:
         # The registry cannot be trusted: fall back to this tree's own
