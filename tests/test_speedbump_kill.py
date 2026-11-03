@@ -475,6 +475,9 @@ class TestTheKillWords:
         ("echo 'kill 117'", []),
         ("kill $PID", []),
         ("kill 118 119 120 121 122", [118, 119, 120, 121]),
+        # DEF-5080: the verb in quotes reads as the bare verb, its pid after it
+        ('"kill" -9 123', [123]),
+        ("'pkill' -P 124", [124]),
     ])
     def test_the_bash_tool_reads_each_spelling(self, command, pids):
         assert _speedbump._named_kill_pids("Bash", {"command": command}) == pids
@@ -490,6 +493,9 @@ class TestTheKillWords:
         ("Stop-Process -Id 207 -WhatIf", []),
         ("taskkill.exe /PID 208", [208]),
         ("Write-Output 'Stop-Process -Id 209'", []),
+        # DEF-5080: the verb in quotes behind the call operator
+        ("& 'Stop-Process' -Id 211", [211]),
+        ('& "kill" 212', [212]),
     ])
     def test_the_powershell_tool_reads_each_spelling(self, command, pids):
         assert _speedbump._named_kill_pids("PowerShell", {"command": command}) == pids
