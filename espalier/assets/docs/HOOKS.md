@@ -1222,7 +1222,8 @@ first; the dangerous-command catch is a secondary slip-catcher):
    and keep the reading above. Two declared limits: the sweeps (a `find`
    with a delete action, an enumerator piped or looped into a remove) read
    the walk's root as the root itself, so `find /tmp -mindepth 1 -delete`
-   walls (narrow it with `-name` or `-path`, or root it below); and the
+   walls while `rm -rf /tmp/*`, the same deletion, keeps the nudge (narrow
+   the walk with `-name` or `-path`, or root it below); and the
    root spelled by its variable (`"$TMPDIR"`, `$env:TEMP` without
    `-Force`) is not read, and keeps the nudge. A
    sibling of the nested one there is scratch to the rule, a declared limit

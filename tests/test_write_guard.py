@@ -9022,9 +9022,16 @@ class TestAScratchRootItselfIsTheWall:
     def test_a_sweep_reads_its_walk_root_as_the_root_itself(self, monkeypatch):
         """A declared limit (docs/HOOKS.md): the sweep readers judge a walk's
         root, and `-mindepth` is not read, so a walk rooted at a temp root
-        walls even where it takes only what lies below."""
+        walls even where it takes only what lies below -- the deletion
+        `rm -rf /tmp/*` makes, which keeps the nudge (one deletion, two
+        tiers). A name predicate narrows the walk off the wall. Beside
+        `TestCatastrophicFindDelete`'s matrix, whose project lies under the
+        temp directory and walls these rows by containment; here the repo
+        is outside every temp root."""
         self._env(monkeypatch)
         assert self._walls("find /tmp -mindepth 1 -maxdepth 1 -mtime +7 -delete", "Bash")
+        assert not self._walls(
+            "find /tmp -mindepth 1 -maxdepth 1 -name 'claude-*' -exec rm -rf {} +", "Bash")
 
     @pytest.mark.parametrize("value, path, below", [
         ("C:/tmp/job-1", "C:/tmp/job-1", False),
