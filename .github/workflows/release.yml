@@ -138,7 +138,7 @@ jobs:
         # Node adopter row of tests/_stack_trees.py into the target first, and
         # puts the venv and the target under a directory whose name holds a
         # space: the tree and root an adopter brings, which no other release
-        # leg's own run is at (TP-468 3-B; tests/_axis_registry.py INSTRUMENTS).
+        # leg's own run is at (tests/_axis_registry.py INSTRUMENTS).
         # It runs where the first smoke reds, so one tag round shows both.
         if: ${{ !cancelled() }}
         shell: bash

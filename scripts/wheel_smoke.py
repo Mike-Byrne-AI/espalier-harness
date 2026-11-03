@@ -52,11 +52,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 #: writes it, so a kept dir stays even when its run is killed.
 LOCK_NAME = ".lock"
 #: The suite's stack table: ``--stack`` writes its ``adopter-<stack>`` row into
-#: the target (TP-468 3-B). Loaded by path, so this script imports nothing of
-#: the suite, and a run without ``--stack`` never reads it.
+#: the target. Loaded by path, so this script imports nothing of the suite,
+#: and a run without ``--stack`` never reads it.
 STACK_TABLE = REPO_ROOT / "tests" / "_stack_trees.py"
-#: ``--stack``'s values. ``none`` is the empty ``git init`` every release ran
-#: before 3-B; each other names an adopter row of the table.
+#: ``--stack``'s values. ``none`` is the default run's empty ``git init``; each
+#: other names an adopter row of the table.
 STACK_CHOICES: tuple[str, ...] = ("none", "python", "node", "go", "rust")
 #: The directory ``--spaced-root`` puts the venv and the target under. The pid
 #: lock stays on the mkdtemp root above it, which is where the sweep reads.
