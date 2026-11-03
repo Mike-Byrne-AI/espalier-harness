@@ -1696,9 +1696,12 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "no pin cited: the property is 'everything present is safe', so a smaller population makes a s...",
     ),
     "tests/test_wheel_smoke.py": (
-        2, "06fecacb93fec888ae58d0ec05d1f5b0c0508eb91cac99e1a2ee80e1d6535d99",
+        3, "fb0df5c5b7831ace5c4730530b1da592c25695cba46f948ccf51462c7b90d4f5",
         "MIXED",
-        "scripts/wheel_smoke.py:443-457 — `extra_helpers = helper_names - set(EXPECTED_HOOK_HELPERS)` ...",
+        "scripts/wheel_smoke.py:443-457 — `extra_helpers = helper_names - set(EXPECTED_HOOK_HELPERS)` ... "
+        "NEW 2026-11-03 (lane/adopter-axes-wheel-smoke-stack): the third row, the comprehension over "
+        "STACK_CHOICES[1:], is pinned in its own test: the assert above it holds STACK_CHOICES to the "
+        "five-name literal, so the population cannot narrow without that line redding.",
     ),
     "tests/test_worktree_seat.py": (
         5, "edb59aaf00d73300bb5965a62702e14e7fa468246487aa4d2ca696e629fdd1f7",
@@ -1728,8 +1731,15 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "than passing.",
     ),
     "tests/test_write_guard.py": (
-        34, "02d5bf3166bc34777498fa76665cbb62900bb4978656c9227a3454dfbc753676",
+        37, "88b5131b52ad6280f0a577db27bc57b99174e9d00427cc0e7dc871fc58705b32",
         "CORRECT_BY_REMEDY",
+        "GREW 34 -> 37 on 2026-11-03 (the cmd set check lane, DEF-1071 (d)): "
+        "TestQuotedVerbTailIsUniform::test_write_guard_holds_no_anchored_arm_of_its_own "
+        "builds three sets -- `_bash_patterns`' compiled patterns and every "
+        "`DANGEROUS_*` record's (by object), and `write_guard`'s own anchored ones -- "
+        "and asserts the last is empty: 'everything present is rostered', so a shrink "
+        "of the first two can only red it, and its red was earned at the base (it named "
+        "the two removed openers) and on a planted group-wrapped and prefixed arm. "
         "GREW 33 -> 34 on 2026-10-17 (the drive-row lane, DEF-2022): "
         "TestBenchGuardFixture::test_the_drive_cd_row_reads_the_tier_its_host_expects "
         "picks one row by its id out of the probe's `ROWS` and drives it through the "

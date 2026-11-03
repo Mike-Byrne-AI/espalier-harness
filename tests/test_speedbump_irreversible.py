@@ -1007,7 +1007,7 @@ class TestCpRmrfTempRoots:
     def test_a_temp_directory_nested_below_a_temp_root_is_never_scratch(self, tmp_path, monkeypatch):
         """The environment's temp directory below a POSIX temp root -- macOS's
         default under /var/folders, a per-user /tmp/user/<uid>, pytest's own
-        temp on a Linux runner -- is strictly below the outer root, so it and
+        temp on a Linux box with TMPDIR unset -- is strictly below the outer root, so it and
         its parents passed as scratch until the failure-mode review drove it
         (2026-10-07), and drew the nudge after: since DEF-4027 a remove of
         either takes the temp directory with it and is the wall's, so the
@@ -1089,7 +1089,8 @@ class TestCpRmrfTempRoots:
         Every root it reads is the test's own: the literal roots
         (`_TEMP_ROOTS`, one value on every host) and an environment root
         below none of them (`_PINNED_TEMP`). The fixture's scratch directory
-        sits below `/tmp` on a Linux runner, so a name that only STARTS with
+        sits below `/tmp` on a Linux box with TMPDIR unset (CI's Linux jobs
+        move it under `$RUNNER_TEMP`), so a name that only STARTS with
         it is below a temp root there, and the pin read it as one until the
         test-serial cells went red (2026-10-07). Only the checkout rule
         needs the disk, so it is asked of the fixture's scratch beside its
@@ -2716,8 +2717,8 @@ class TestCommandPositionClassClose:
             "arm: a pipe into a remove verb or a .NET directory delete anywhere "
             "opens the walk; the anchored readers select the operands (DEF-822).",
         "_bash_patterns._PS_START_PROCESS_RE":
-            "GATE inside the span an anchored cmd opener (`_PS_CMD_REMOVE_OPENER_RE`, "
-            "`write_guard._PS_CMD_OPENER_RE`) matched: finds the process-start "
+            "GATE inside the span the anchored cmd opener (`_PS_CMD_REMOVE_OPENER_RE`, "
+            "the delete reader's and the harness-variable check's) matched: finds the process-start "
             "cmdlet's word there, never over a command, and "
             "`start_process_cmd_line` then requires it at a statement start in code, "
             "so a mention in a double-quoted string is not read (DEF-1071 (e)).",

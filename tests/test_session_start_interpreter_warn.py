@@ -31,6 +31,9 @@ from pathlib import Path
 
 import pytest
 
+from tests._cut_start import skip_if_cut
+from tests._wait_budget import scaled
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SESSION_START = REPO_ROOT / "tools" / "cc" / "hooks" / "session_start.py"
 
@@ -54,15 +57,17 @@ def _write_settings(repo: Path, command: str, args: list | None = None) -> None:
 def _run(repo: Path) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = str(repo)
-    return subprocess.run(
+    result = subprocess.run(
         [sys.executable, str(SESSION_START)],
         input='{"hook_event_name":"SessionStart"}',
         capture_output=True,
         cwd=str(repo),
         env=env,
         text=True,
-        timeout=15, encoding="utf-8",
+        timeout=scaled(30), encoding="utf-8",
     )
+    skip_if_cut(result.stdout)
+    return result
 
 
 def test_warns_when_hook_interpreter_unresolved(tmp_path):

@@ -1,6 +1,6 @@
-"""Every CI job that runs the test suite stops in bounded time, the
-portability cell runs the local tier's two legs, and the post-merge proof runs
-to the end on every push.
+"""Every CI job that runs the test suite stops in bounded time and, on Linux,
+keeps its temp dir on the runner's disk; the portability cell runs the local
+tier's two legs, and the post-merge proof runs to the end on every push.
 
 Why this exists: none of the four jobs that run the full suite set
 ``timeout-minutes`` (DEF-1178), so a hang the per-test ceiling cannot reach
@@ -47,6 +47,9 @@ _FULL_SUITE_JOBS = {
     ("test.yml", "test"), ("test.yml", "test-serial"),
     ("clean-checkout.yml", "clean-checkout"), ("portability.yml", "portability"),
 }
+#: Where a Linux job that runs the suite points TMPDIR: under the runner's own
+#: temp dir, which is on the root disk on both of GitHub's runner pools.
+_RUNNER_DISK_TMP = "$RUNNER_TEMP/tmp"
 
 
 def _workflows() -> dict[str, dict]:
@@ -74,6 +77,14 @@ def _suite_jobs() -> dict[tuple[str, str], dict]:
             if _RUNS_THE_SUITE.search(runs):
                 jobs[(name, job_id)] = job
     return jobs
+
+
+def _can_run_on_linux(job: dict) -> bool:
+    """An ubuntu label, or a matrix expression whose runner list names one."""
+    runs_on = str(job.get("runs-on", ""))
+    if "matrix." in runs_on:
+        runs_on += str((job.get("strategy") or {}).get("matrix") or {})
+    return "ubuntu" in runs_on.lower()
 
 
 def _portability_test_step() -> str:
@@ -127,6 +138,85 @@ class TestEveryJobThatRunsTheSuiteIsBounded:
         job = _suite_jobs()[(workflow, job_id)]
         (checkout,) = [s for s in job["steps"] if str(s.get("uses", "")).startswith("actions/checkout@")]
         assert (checkout.get("with") or {}).get("fetch-depth") == 0, checkout
+
+
+class TestTheSuitesTempLivesOnTheRunnerDisk:
+    """DEF-3027: GitHub's AWS pool mounts /tmp as a 7.7G tmpfs with
+    `usrquota`, and the full tier's parallel leg filled the runner user's quota
+    there: the sampler read /tmp's use freeze at 6.1G (6,431,024 KB) from
+    13:06:53 with 1.6G of the tmpfs still free, and pytest's terminal flush
+    raised Errno 122 at 13:07:48 (#470's test (3.13), job 125929994703,
+    2026-11-03), where the same leg reached 11G on the Azure pool, whose /tmp is
+    the root disk. So every job that runs the suite on a Linux runner makes a
+    directory under $RUNNER_TEMP, on the root disk on both pools (19G free on
+    the AWS cell's 72G root before the tier), and exports TMPDIR to it as its
+    first step, before anything writes a temp file. Made, not only named:
+    tempfile.gettempdir() passes over a TMPDIR that is not a directory and
+    settles on /tmp without a word."""
+
+    @staticmethod
+    def _linux_jobs() -> dict[tuple[str, str], dict]:
+        return {key: job for key, job in _suite_jobs().items() if _can_run_on_linux(job)}
+
+    def test_the_derived_population_holds_the_full_suite_jobs_and_the_proof(self):
+        assert _FULL_SUITE_JOBS | {("post-merge.yml", "full-tier")} <= set(self._linux_jobs()), (
+            sorted(self._linux_jobs()))
+
+    def test_each_one_makes_its_temp_dir_and_exports_it_first(self):
+        """Dies to: the step dropped, moved below a step that writes a temp file
+        (the install builds in TMPDIR, the disk read samples it), or its mkdir
+        dropped; and to a job added tomorrow that runs the suite without it."""
+        expected = [f'mkdir -p "{_RUNNER_DISK_TMP}"', f'echo "TMPDIR={_RUNNER_DISK_TMP}" >> "$GITHUB_ENV"']
+        wrong = {}
+        for (name, job_id), job in sorted(self._linux_jobs().items()):
+            first = (job.get("steps") or [{}])[0]
+            if [line.strip() for line in str(first.get("run", "")).splitlines()] != expected:
+                wrong[f"{name}::{job_id}"] = first.get("name") or first.get("uses")
+        assert not wrong, (
+            f"a job that runs the suite on Linux opens with the step that makes {_RUNNER_DISK_TMP} and "
+            f"exports TMPDIR to it (DEF-3027); the first step here is another: {wrong}")
+
+    def test_a_job_whose_matrix_crosses_systems_takes_the_step_on_linux_alone(self):
+        """Windows' tempfile reads TMPDIR ahead of TEMP and TMP, and a macOS
+        runner's TMPDIR is the system's own per-user directory, so a cross-system
+        matrix (portability's) runs the step on its Linux leg only; a job on a
+        fixed ubuntu label runs it unconditionally, where an `if:` could only
+        skip it."""
+        guards = {f"{name}::{job_id}": (job.get("steps") or [{}])[0].get("if")
+                  for (name, job_id), job in sorted(self._linux_jobs().items())}
+        # Any computed runner is read as one that may cross systems: an input or
+        # a fallback (`inputs.os || 'ubuntu-latest'`) can name Windows as well.
+        crossing = {f"{name}::{job_id}" for (name, job_id), job in self._linux_jobs().items()
+                    if "${{" in str(job.get("runs-on", ""))}
+        assert crossing, "no job that runs the suite has a cross-system matrix; this test reads nothing"
+        assert {key: guard for key, guard in guards.items() if key in crossing} == dict.fromkeys(
+            sorted(crossing), "runner.os == 'Linux'"), guards
+        assert not [key for key, guard in guards.items() if key not in crossing and guard is not None], guards
+
+    def test_no_job_off_linux_exports_a_tmpdir(self):
+        """Dies to: the step copied into the Windows leg on main
+        (post-merge-windows.yml), whose TMPDIR its tempfile would read first."""
+        exporting = [f"{name}::{job_id}" for name, data in sorted(_workflows().items())
+                     for job_id, job in ((data or {}).get("jobs") or {}).items()
+                     if not _can_run_on_linux(job)
+                     and any("TMPDIR=" in str(step.get("run", "")) for step in job.get("steps") or [])]
+        assert not exporting, exporting
+
+    def test_no_env_block_sets_tmpdir(self):
+        """The first step's export is the one home of TMPDIR: a workflow-, job-
+        or step-level `env:` naming it outranks the export for that step or
+        sits beside it (a step reproducing the quota by `TMPDIR: /tmp` on the
+        tier, a job env on the Windows leg), and the tests above read only the
+        steps' `run` text. Dies to: any `env:` mapping in a workflow naming
+        TMPDIR."""
+        named = [f"{name}{where}" for name, data in sorted(_workflows().items())
+                 for where, env in [("", (data or {}).get("env"))] + [
+                     (f"::{job_id}{at}", block)
+                     for job_id, job in ((data or {}).get("jobs") or {}).items()
+                     for at, block in [("", job.get("env"))] + [
+                         (f"::step {i}", step.get("env")) for i, step in enumerate(job.get("steps") or [])]]
+                 if isinstance(env, dict) and "TMPDIR" in env]
+        assert not named, f"an env: block sets TMPDIR, beside the first step's export (DEF-3027): {named}"
 
 
 class TestThePortabilityCellRunsTheLocalTiersLegs:

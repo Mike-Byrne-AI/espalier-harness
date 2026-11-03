@@ -21,6 +21,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tests._cut_start import skip_if_cut
+
 
 HOOK = (
     Path(__file__).resolve().parent.parent
@@ -46,6 +48,7 @@ def _run_session_start(repo: Path) -> dict:
         input=json.dumps({"session_id": "test"}),
         capture_output=True, text=True, env=env, encoding="utf-8",
     )
+    skip_if_cut(out.stdout)
     if out.returncode != 0 or not out.stdout.strip():
         raise RuntimeError(
             f"session_start failed: rc={out.returncode} "

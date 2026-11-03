@@ -548,11 +548,171 @@ class TestTheTable:
         assert "- stack: **a blind axis** -- every proving test ran at one value (python)." in table
         assert "- host: proven at 2 values (store_python3, launcher_only)." in table
 
-    def test_running_the_module_prints_the_table(self):
+    def test_running_the_module_prints_the_report(self):
         proc = subprocess.run(
             [sys.executable, str(REPO_ROOT / "tests" / "_axis_registry.py")],
             cwd=REPO_ROOT, env=_child_env(), capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=45,
         )
         assert proc.returncode == 0, proc.stderr
-        assert proc.stdout == reg.render_table() + "\n"
+        assert proc.stdout == reg.render_report() + "\n"
+        assert proc.stdout.startswith(reg.render_table()) and reg.render_instruments() in proc.stdout
+
+    def test_removing_a_proven_cell_names_its_axis_blind(self):
+        """The release step's mutation, on the live registry: each axis proven
+        at exactly two values reads blind once either proof is taken away."""
+        by_axis = reg.proven_values_by_axis()
+        pairs = [axis for axis, values in by_axis.items() if len(values) == 2]
+        assert pairs, "no axis is proven at exactly two values; plant the mutation instead"
+        for axis in pairs:
+            for value in by_axis[axis]:
+                cells = tuple(c for c in reg.AXIS_REGISTRY if (c.axis, c.value) != (axis, value))
+                assert f"- {axis}: **a blind axis**" not in reg.render_table()
+                assert f"- {axis}: **a blind axis**" in reg.render_table(cells), (axis, value)
+
+
+class TestTheInstruments:
+    """The release instruments' half of the report (``docs/RELEASE_CHECKLIST.md``,
+    the blind-axis step): every job of the instrument workflows is named, every
+    value is a cell's or a declared outsider, and an axis every instrument ran
+    at one value reads blind."""
+
+    @staticmethod
+    def _workflows() -> dict[str, dict]:
+        """Every workflow, through git's view of the checkout, by file name."""
+        yaml = pytest.importorskip("yaml")
+        from tests._live_tree import checkout_glob
+
+        base = REPO_ROOT / ".github" / "workflows"
+        paths = [*checkout_glob(base, "*.yml"), *checkout_glob(base, "*.yaml")]
+        return {p.name: yaml.safe_load(p.read_text(encoding="utf-8")) or {} for p in paths}
+
+    def test_every_value_is_a_cell_value_or_a_declared_outsider(self):
+        cell_values = {c.value for c in reg.AXIS_REGISTRY}
+        assert not reg.OUTSIDE_VALUES & cell_values, "an outsider value is also a cell's, so it would count"
+        for i in reg.INSTRUMENTS:
+            values = [getattr(i, axis) for axis in reg.INSTRUMENT_AXES]
+            for axis, value in zip(reg.INSTRUMENT_AXES, values):
+                known = {c.value for c in reg.AXIS_REGISTRY if c.axis == axis}
+                assert value in known | reg.OUTSIDE_VALUES, (i.name, axis, value)
+            # a row naming nothing is a placeholder for an instrument not built yet,
+            # and a row naming a job or a script is built
+            assert (not i.runs) == all(v == "not built" for v in values), (i.name, values)
+            assert not i.runs or "not built" not in values, (i.name, values)
+
+    def test_every_job_of_the_instrument_workflows_is_named(self):
+        workflows = self._workflows()
+        named = {r for i in reg.INSTRUMENTS for r in i.runs}
+        missing, stale = [], []
+        for name in reg.INSTRUMENT_WORKFLOWS:
+            assert name in workflows, f"{name} is an instrument workflow and is gone: drop it, and its rows"
+            jobs = workflows[name].get("jobs") or {}
+            missing += [f"{name}::{job}" for job in jobs if f"{name}::{job}" not in named]
+        for r in sorted(named):
+            name, _, job = r.partition("::")
+            if job:
+                if name not in reg.INSTRUMENT_WORKFLOWS or job not in (workflows.get(name, {}).get("jobs") or {}):
+                    stale.append(r)
+            elif not (REPO_ROOT / r).is_file():
+                stale.append(r)
+        assert not missing, (
+            f"a job of an instrument workflow is in no INSTRUMENTS row: {missing}. Add it to a row "
+            "whose values its own lines show (the tree it installs into, the names its runner answers, "
+            "its root, whether one run carries hook state), 'not measured' where they do not say"
+        )
+        assert not stale, f"an INSTRUMENTS row names a job or script that is gone: {stale}"
+
+    def test_every_workflow_is_an_instrument_or_says_why_not(self):
+        runner = re.compile(r"\b(?:pytest|proof_tier\.py|fresh_clone_gate\.py|final_release_matrix\.py"
+                            r"|wheel_smoke\.py|release_check\.py|archive_probe\.py)\b")
+        workflows = self._workflows()
+        assert set(workflows) == set(reg.INSTRUMENT_WORKFLOWS) | set(reg.NOT_INSTRUMENTS), (
+            "every workflow is an instrument workflow or a NOT_INSTRUMENTS entry with its reason: "
+            f"{sorted(set(workflows) ^ (set(reg.INSTRUMENT_WORKFLOWS) | set(reg.NOT_INSTRUMENTS)))}")
+        assert not set(reg.INSTRUMENT_WORKFLOWS) & set(reg.NOT_INSTRUMENTS)
+        running = set()
+        for name, doc in workflows.items():
+            for job in (doc.get("jobs") or {}).values():
+                for step in (job.get("steps") or []) if isinstance(job, dict) else []:
+                    run = step.get("run") if isinstance(step, dict) else None
+                    lines = [ln for ln in (run or "").splitlines() if not ln.lstrip().startswith("#")]
+                    if any(runner.search(ln) for ln in lines):
+                        running.add(name)
+        assert running <= set(reg.INSTRUMENT_WORKFLOWS), sorted(running - set(reg.INSTRUMENT_WORKFLOWS))
+
+    def test_the_matrix_smoke_rows_are_its_wheel_smoke_runs(self):
+        """A row's values are declared, not read (TP-468's Landing). In
+        ``release.yml::matrix-smoke`` the perturbation is a flag on the smoke's
+        own command line, so its rows are read against those lines, through the
+        script's own parser: one row per ``scripts/wheel_smoke.py`` run, its
+        stack the run's ``--stack`` and its root ``spaced`` under
+        ``--spaced-root``. A step that drops or renames the flags and leaves the
+        row reds here, and so does one a ``continue-on-error``, an ``||`` or an
+        ``if:`` other than ``!cancelled()`` keeps from gating."""
+        import importlib.util
+        import shlex
+
+        path = REPO_ROOT / "scripts" / "wheel_smoke.py"
+        spec = importlib.util.spec_from_file_location("_instruments_wheel_smoke", path)
+        assert spec is not None and spec.loader is not None
+        smoke = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = smoke
+        try:
+            spec.loader.exec_module(smoke)
+        finally:
+            sys.modules.pop(spec.name, None)
+        job = self._workflows()["release.yml"]["jobs"]["matrix-smoke"]
+        runs = []
+        for step in job.get("steps") or []:
+            text = (step.get("run") or "").replace("\\\n", " ")
+            for ln in text.splitlines():
+                # the substring first: a step's other lines may be a -c body
+                # shlex cannot split
+                if "scripts/wheel_smoke.py" not in ln or ln.lstrip().startswith("#"):
+                    continue
+                words = shlex.split(ln, comments=True)
+                if "scripts/wheel_smoke.py" not in words:
+                    continue
+                assert "continue-on-error" not in step and "||" not in words, step
+                assert step.get("if") in (None, "${{ !cancelled() }}"), step
+                ns = smoke.parse_args(words[words.index("scripts/wheel_smoke.py") + 1:])
+                runs.append((ns.stack, "spaced" if ns.spaced_root else "plain"))
+        rows = [(i.stack, i.root) for i in reg.INSTRUMENTS if "release.yml::matrix-smoke" in i.runs]
+        assert runs and sorted(runs) == sorted(rows), (runs, rows)
+
+    def test_a_row_with_a_windows_leg_never_reads_both(self):
+        """windows-latest answering python3 is probable, not measured (TP-468 0-C),
+        so a row whose runner can be Windows says "not measured" for host."""
+        from tests.test_portability_contract import _runner_labels, can_be_windows
+
+        workflows = self._workflows()
+        for i in reg.INSTRUMENTS:
+            for r in i.runs:
+                name, _, job = r.partition("::")
+                if job and can_be_windows(_runner_labels(workflows[name]["jobs"][job])):
+                    assert i.host != "both", (i.name, r)
+
+    def test_the_release_checklist_carries_the_step(self):
+        text = (REPO_ROOT / "docs" / "RELEASE_CHECKLIST.md").read_text(encoding="utf-8")
+        assert "python tests/_axis_registry.py" in text and "gh release edit" in text
+
+    def test_one_value_across_the_instruments_reads_blind(self):
+        cells = (
+            reg.AxisCell("stack", "python", "t.py::t[python]", ""),
+            reg.AxisCell("stack", "node", "", "not yet"),
+            reg.AxisCell("root", "plain", "", "x"),
+            reg.AxisCell("root", "spaced", "", "x"),
+        )
+        instruments = (
+            reg.Instrument("a", (), "python", "both", "plain", "none"),
+            reg.Instrument("b", (), "python", "not measured", "spaced", "none"),
+            reg.Instrument("c", (), "none", "both", "plain", "not built"),
+        )
+        assert reg.instrument_values_by_axis(instruments, cells) == {
+            "stack": ["python"], "host": [], "root": ["plain", "spaced"], "session": []}
+        report = reg.render_instruments(instruments, cells)
+        assert "- stack: **a blind axis** -- every instrument's own run is at one value (python)." in report
+        assert "- host: **a blind axis** -- no instrument's own run is at a value its cells name." in report
+        assert "- root: the instruments' own runs take 2 values (plain, spaced)." in report
+        assert reg.blind_instrument_axes(instruments, cells) == ["stack", "host", "session"]
+        assert "| b | python | not measured | spaced | none |" in report

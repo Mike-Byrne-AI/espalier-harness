@@ -151,6 +151,7 @@ Every skip that fires belongs to exactly one of these classes:
 | tool-gated | the single job that installs the tool | `tests/test_scope_walker.py` → `ripgrep-parity` |
 | session-state-gated | when a live state flag is present; each has an **unconditional twin** carrying the actual contract | `tests/test_state_file_flag_parity.py` |
 | deliberate | nowhere, on purpose — a documented archeology skip whose load moved elsewhere | `tests/test_corpus_count_parity.py` |
+| load-conditional | a loaded runner, where a driven SessionStart start is cut at its wall and only a full start judges the row; the cut itself is judged unconditionally | `tests/_cut_start.py` (its twin: `tests/test_session_start_wall.py`) |
 | **dead** | **nowhere, by accident** | none — drain it or delete it |
 
 The last row must stay empty. A test that can never *not* skip is not

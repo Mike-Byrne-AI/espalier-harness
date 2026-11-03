@@ -29,6 +29,8 @@ from pathlib import Path
 import pytest
 
 from _json_key_paths import key_paths
+from tests._cut_start import CUT_OPEN_RE, skip_if_cut
+from tests._live_tree import checkout_rglob
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -194,22 +196,7 @@ class TestQuickstartDoctorExampleMatchesLiveOutput:
 
 _BANNER_DOCS = ("docs/QUICKSTART.md", "docs/HOOKS.md", "docs/WORKFLOW.md")
 _BANNER_OPEN = "=== Espalier-Harness === Session Start ==="
-# The opening of the short banner a script start cut at its wall gives
-# (`session_start._cut_banner`); calibrated against the hook's own short form
-# below, so a rewording reds there, never as a skip.
-_CUT_OPEN_RE = re.compile(
-    r"=== Espalier-Harness === SessionStart \(short: cut at (?P<seconds>\d+(?:\.\d+)?) s in the (?P<phase>[^;]+);")
 _LABEL_RE = re.compile(r"^([A-Z][A-Za-z_]*):")
-
-
-def _skip_if_cut(output: str) -> None:
-    """A driven start cut at its wall is cannot-tell, never a verdict: skip,
-    naming the phase and the seconds, when ``output`` (the hook's stdout or
-    its banner) is a cut start's; a full start returns."""
-    cut = _CUT_OPEN_RE.search(output)
-    if cut:
-        pytest.skip(f"cannot tell: the driven start was cut at {cut['seconds']} s in the "
-                    f"{cut['phase']} and printed the short banner; only a full start judges this row")
 
 
 def _banner_head(block: str) -> list[str]:
@@ -295,7 +282,7 @@ class TestBannerSamplesMatchTheDrivenHook:
         ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
         # A loaded runner can carry the start past its wall (#456's
         # windows-latest leg: cut at 13.0 s in the banner build, ten errors).
-        _skip_if_cut(ctx)
+        skip_if_cut(ctx)
         assert ctx.startswith(_BANNER_OPEN), ctx[:200]
         head = _banner_head(ctx)
         # The floor the capture must clear before it is allowed to judge a doc:
@@ -351,8 +338,11 @@ class TestBannerSamplesMatchTheDrivenHook:
 
 
 class TestTheCutOpeningReadsAsCannotTell:
-    """The driven capture above skips on a cut start and judges every other
-    one, so its reader must know the hook's short form and nothing else."""
+    """Every driven start in DEF-2048's census files, the capture above among
+    them, skips on a cut start and judges every other one through
+    ``tests/_cut_start.py``; the wall file, which judges the cut itself, never
+    reads it. So that one reader must know the hook's short form and nothing
+    else; it is calibrated here, beside the capture it was written for."""
 
     def test_the_hooks_own_short_form_reads_as_a_cut_with_its_phase_and_seconds(self, monkeypatch, tmp_path):
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
@@ -362,11 +352,23 @@ class TestTheCutOpeningReadsAsCannotTell:
 
         ss._reset_wall_state()
         ctx = ss._cut_banner("banner build", 13.0)["hookSpecificOutput"]["additionalContext"]
-        cut = _CUT_OPEN_RE.search(ctx)
+        cut = CUT_OPEN_RE.search(ctx)
         assert cut and (cut["seconds"], cut["phase"]) == ("13.0", "banner build"), ctx[:200]
         with pytest.raises(pytest.skip.Exception, match="cut at 13.0 s in the banner build"):
-            _skip_if_cut(json.dumps(ss._cut_banner("banner build", 13.0)))
+            skip_if_cut(json.dumps(ss._cut_banner("banner build", 13.0)))
 
     def test_the_full_opening_is_never_read_as_a_cut(self):
-        assert not _CUT_OPEN_RE.search(_BANNER_OPEN + "\nHost:      OS=Linux; python3=yes\n")
-        _skip_if_cut(json.dumps({"hookSpecificOutput": {"additionalContext": _BANNER_OPEN}}))
+        assert not CUT_OPEN_RE.search(_BANNER_OPEN + "\nHost:      OS=Linux; python3=yes\n")
+        skip_if_cut(json.dumps({"hookSpecificOutput": {"additionalContext": _BANNER_OPEN}}))
+
+    def test_the_reader_is_defined_once_and_the_wall_file_never_skips_a_cut(self):
+        """A second copy, of the reader or of the opening it reads, would drift
+        from the calibration above unseen, and a skip in the wall file would
+        hide the cut that file exists to judge. (``cut[ ]at`` keeps this
+        pattern from reading its own line.)"""
+        tests_dir = REPO_ROOT / "tests"
+        copy = re.compile(r"^\s*def _?skip_if_cut\b|^\s*_?CUT_OPEN_RE\s*=|short: cut[ ]at", re.M)
+        homes = sorted(p.relative_to(tests_dir).as_posix() for p in checkout_rglob(tests_dir, "*.py")
+                       if copy.search(_read(p)))
+        assert homes == ["_cut_start.py"], homes
+        assert "skip_if_cut" not in _read(tests_dir / "test_session_start_wall.py")

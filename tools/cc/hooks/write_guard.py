@@ -852,9 +852,18 @@ def _ps_harness_env_prefix_is_benign(command: str) -> bool:
 # deny: a launch the OUTER shell runs after cmd returns (an unquoted
 # `cmd /c set ... && claude`, chained by Bash or PowerShell 7) never sees the
 # variable and is still refused.
-_CMD_OPENER_TAIL = r"(?i:cmd(?:\.exe)?)(?=[ \t\"'/]|$)"
-_BASH_CMD_OPENER_RE = re.compile(_bash_patterns._CMD_POS + _CMD_OPENER_TAIL)
-_PS_CMD_OPENER_RE = re.compile(_bash_patterns._PS_CMD_POS + _CMD_OPENER_TAIL)
+#
+# The openers are the delete reader's (`_bash_patterns._CMD_REMOVE_OPENER_RE`
+# and `_PS_CMD_REMOVE_OPENER_RE`, DEF-1071 (a)): cmd by name, with `.exe`, in
+# any case, by path on both tools and quoted, the closing quote consumed so the
+# switch walk starts past it. This check kept a pair of its own until
+# 2026-11-03 that took no path on PowerShell and ended before a quoted head's
+# closing quote, where the walk found no `/c`: a full-path or quoted cmd was
+# allowed on both tools, and the quoted-verb roster walks never saw the pair.
+# The PowerShell opener is compiled case-blind, so every word
+# `_bash_patterns._PS_CMD_POS` spells before cmd is read in any case too, as
+# PowerShell reads it; the old pair was compiled without that flag.
+#
 # A statement start inside a cmd program: the program's own start, or the end
 # of a `&`, `&&`, `|`, `||` or `(`.
 _CMD_SEPARATOR_RE = re.compile(r"&&?|\|\|?|\(")
@@ -2350,7 +2359,7 @@ def _bash_dangerous_reason_here(
     # cmd.exe's `set` of a harness variable before a launch (DEF-1070): the
     # env-prefix record's lesson, reached through `cmd /c` instead of an
     # assignment. Ahead of the maintenance gate, as that record is.
-    if _cmd_set_launches_claude(scan, _BASH_CMD_OPENER_RE):
+    if _cmd_set_launches_claude(scan, _bash_patterns._CMD_REMOVE_OPENER_RE):
         return _denial_reasons.HARNESS_ENV_PREFIX_INLINE
     # Flag-order-independent backstop for the catastrophic recursive-delete
     # class. The two literal `rm -rf /` / `rm -rf *` records above match ONLY
@@ -2582,7 +2591,7 @@ def _ps_dangerous_reason_here(
             return entry.message or _denial_reasons.format_dangerous_ps(entry.pid)
     # The Bash twin's cmd.exe `set` check (DEF-1070): the opener read at a
     # command position in the masked text, its program from the unmasked twin.
-    if _cmd_set_launches_claude(command, _PS_CMD_OPENER_RE, raw):
+    if _cmd_set_launches_claude(command, _bash_patterns._PS_CMD_REMOVE_OPENER_RE, raw):
         return _denial_reasons.HARNESS_ENV_PREFIX_INLINE
     # A recursive remove WITHOUT the force switch (DEF-842), which the records
     # above never match: it still takes every item that is not hidden or

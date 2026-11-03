@@ -46,6 +46,7 @@ import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 
+from tests._cut_start import skip_if_cut
 from tests._hook_spawn import not_a_budget_miss, run_hook_through
 from tests._interpreter_hosts import HOOK_PYTHON
 
@@ -97,11 +98,15 @@ def run_hook(script_name: str, input_data: dict, env_overrides: dict | None = No
                 env.pop(k, None)
             else:
                 env[k] = v
-    return run_hook_through(
+    result = run_hook_through(
         [HOOK_PYTHON, str(script)],
         input=json.dumps(input_data),
         env=env,
     )
+    # A session_start cut at its wall is cannot-tell for every row reading
+    # through here (DEF-2048).
+    skip_if_cut(result.stdout)
+    return result
 
 
 def script_arg(hook: dict) -> str:

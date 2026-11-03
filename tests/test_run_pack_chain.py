@@ -613,7 +613,7 @@ class TestRunPackChain:
             encoding="utf-8",
         )
         real = subprocess.run(
-            ["python3", "-m", "espalier", "scope-check", str(pack), "--repo", str(repo)],
+            [sys.executable, "-m", "espalier", "scope-check", str(pack), "--repo", str(repo)],
             cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8",
         )
         assert real.returncode == 2, real.stdout + real.stderr
@@ -671,7 +671,7 @@ class TestRunPackChain:
             encoding="utf-8",
         )
         declared = subprocess.run(
-            ["python3", "-m", "espalier", "scope-check", str(pack)],
+            [sys.executable, "-m", "espalier", "scope-check", str(pack)],
             cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8",
         )
         assert declared.returncode == 1, declared.stdout + declared.stderr
@@ -682,7 +682,7 @@ class TestRunPackChain:
         # The genuine no-section pack must NOT carry it: that one is a clean skip.
         nosym = _write_pack(tmp_path, "TP-107", "nosym", symbol=None)
         skip = subprocess.run(
-            ["python3", "-m", "espalier", "scope-check", str(nosym)],
+            [sys.executable, "-m", "espalier", "scope-check", str(nosym)],
             cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8",
         )
         assert skip.returncode == 1, skip.stdout + skip.stderr
@@ -707,7 +707,7 @@ class TestRunPackChain:
         # 1) The real no-symbols pack -> rc 1 + a message the grep MUST match (legit skip).
         pack = _write_pack(tmp_path, "TP-105", "nosym", symbol=None)
         skip = subprocess.run(
-            ["python3", "-m", "espalier", "scope-check", str(pack)],
+            [sys.executable, "-m", "espalier", "scope-check", str(pack)],
             cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8",
         )
         assert skip.returncode == 1, skip.stdout + skip.stderr
@@ -717,7 +717,7 @@ class TestRunPackChain:
         )
         # 2) A missing pack -> rc 1 (a FAIL, not a skip) the grep MUST NOT match.
         err = subprocess.run(
-            ["python3", "-m", "espalier", "scope-check", str(tmp_path / "NOPE-does-not-exist.md")],
+            [sys.executable, "-m", "espalier", "scope-check", str(tmp_path / "NOPE-does-not-exist.md")],
             cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8",
         )
         assert err.returncode == 1, err.stdout + err.stderr

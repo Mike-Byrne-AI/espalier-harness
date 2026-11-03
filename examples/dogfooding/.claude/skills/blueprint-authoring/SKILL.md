@@ -147,7 +147,7 @@ test written to prove the fix.
 | A rotted citation's fix target is itself a claim | `docs/sharp-edges/citation-rot-verify-fix-target-tree-wide.md` |
 | The measuring instrument is a claim too | `docs/sharp-edges/the-measuring-instrument-is-a-claim-too.md` |
 
-Resolved at authoring time by `python3 tools/cc/hooks/_recall.py "<topic>"`;
+Resolved at authoring time by `python tools/cc/hooks/_recall.py "<topic>"`;
 re-run it rather than trusting this list if the pack has been sitting.
 That command prints **up to four candidates per query**, from two rankers
 deliberately calibrated differently, alternating: line one is the winner of the
@@ -406,7 +406,7 @@ verdict it produced:
 
 ````markdown
 ## Reach
-Members derived by: `python3 tools/cc/sister_site_probe.py --json`
+Members derived by: `python tools/cc/sister_site_probe.py --json`
 (scope: whatever its SCOPE block names — your source roots on an adopter
 tree, hooks + top-level engine on the harness's own; a clean exit is not an
 absence proof)

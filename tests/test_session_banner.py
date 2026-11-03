@@ -26,6 +26,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._cut_start import skip_if_cut
+
 _TESTS_DIR = Path(__file__).resolve().parent
 if str(_TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(_TESTS_DIR))
@@ -3342,6 +3344,7 @@ class TestOrdersLine:
                 timeout=45, cwd=str(clones["w"]), check=False, encoding="utf-8",   # the hook's own ceiling is 15 s
                 env={**os.environ, "CLAUDE_PROJECT_DIR": str(clones["w"])},
             )
+            skip_if_cut(res.stdout)
             assert res.returncode == 0, res.stderr
             return json.loads(res.stdout)["hookSpecificOutput"]["additionalContext"]
 
@@ -4603,6 +4606,7 @@ class TestSessionsLine:
             timeout=45, cwd=str(root), check=False, encoding="utf-8",   # the hook's own ceiling is 15 s
             env={**os.environ, "CLAUDE_PROJECT_DIR": str(root), "CLAUDE_CONFIG_DIR": str(config)},
         )
+        skip_if_cut(res.stdout)
         assert res.returncode == 0, res.stderr
         marker = root / ".espalier-state" / "sessions" / f"{payload['session_id']}.json"
         return json.loads(marker.read_text(encoding="utf-8"))
