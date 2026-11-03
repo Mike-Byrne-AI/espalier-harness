@@ -1403,7 +1403,13 @@ def _read_timeout_mark(expr: ast.expr, consts: dict[str, float]) -> _TimeoutMark
 
 def _resolve_number(node: ast.expr, consts: dict[str, float]) -> float | None:
     """A literal number, or a name bound to one at module level (here or in
-    the sibling test module it was imported from)."""
+    the sibling test module it was imported from), or either one as the sole
+    argument of ``scaled(...)``: tests/_wait_budget.py keeps a budget's ratio
+    to the ceiling its test runs under, so the literal's ratio is the one
+    judged."""
+    if (isinstance(node, ast.Call) and _terminal_name(node.func) == "scaled"
+            and len(node.args) == 1 and not node.keywords):
+        node = node.args[0]
     number = _numeric(node)
     if number is None and isinstance(node, ast.Name):
         number = consts.get(node.id)
@@ -2666,6 +2672,67 @@ def _shapes_the_walker_cannot_read(modules: list[tuple[str, str]]) -> list[str]:
     return out
 
 
+def _scaled_at_import(tree: ast.Module) -> list[int]:
+    """Lines of each ``scaled(...)`` call Python evaluates when the module is
+    imported: module and class bodies, and a def's defaults and decorators.
+    A def's body runs when it is called, so a call there is left alone."""
+    out: list[int] = []
+
+    def visit(node: ast.AST) -> None:
+        if isinstance(node, (*_FuncDef, ast.Lambda)):
+            args = node.args
+            for evaluated in [*args.defaults, *(d for d in args.kw_defaults if d is not None),
+                              *getattr(node, "decorator_list", [])]:
+                visit(evaluated)
+            return
+        if isinstance(node, ast.Call) and _terminal_name(node.func) == "scaled":
+            out.append(node.lineno)
+        for child in ast.iter_child_nodes(node):
+            visit(child)
+
+    visit(tree)
+    return out
+
+
+def test_a_scaled_budget_is_computed_when_its_wait_runs():
+    """``tests/_wait_budget.py::scaled`` reads the ceiling of the test running
+    when it is called. A call evaluated at import -- a module constant, a class
+    attribute, a parameter default, a decorator -- runs outside every test, at
+    a factor of 1, so it keeps its literal under the leg's raised ceiling while
+    the walker reads it as scaled (DEF-5067). Write it at the wait:
+    ``timeout=scaled(_TIMEOUT)``."""
+    modules = _all_test_dir_modules()
+    calls = sum(1 for _, text in modules if "scaled(" in text
+                for n in ast.walk(ast.parse(text))
+                if isinstance(n, ast.Call) and _terminal_name(n.func) == "scaled")
+    assert calls >= 10, (
+        f"{calls} scaled() calls under tests/, fewer than the wedge class's ten git waits: the "
+        "walker stopped finding them, or a wait went back to a literal")
+    at_import = [f"tests/{stem}.py:{line}" for stem, text in modules if "scaled(" in text
+                 for line in _scaled_at_import(ast.parse(text))]
+    assert not at_import, (
+        f"{at_import}: scaled() evaluated at import keeps its literal; call it at the wait")
+
+
+class TestAScaledCallAtImportIsNamed:
+    """Calibration for ``_scaled_at_import``: the live tree has no offender,
+    so these rows are where its red path is seen."""
+
+    def test_a_module_constant_a_class_attribute_a_default_and_a_decorator_are_named(self):
+        src = ("T = scaled(30)\n"
+               "class C:\n    U = scaled(30)\n"
+               "def f(timeout=scaled(30), *, b=scaled(30)):\n    pass\n"
+               "@pytest.mark.timeout(scaled(30))\ndef test_x():\n    pass\n"
+               "g = lambda timeout=scaled(30): timeout\n")
+        assert _scaled_at_import(ast.parse(src)) == [1, 3, 4, 4, 6, 9]
+
+    def test_a_call_in_a_body_runs_with_its_test_and_is_left_alone(self):
+        src = ("def _run():\n    subprocess.run(['x'], timeout=scaled(30))\n"
+               "def test_x():\n    def inner(timeout=scaled(30)):\n        pass\n"
+               "g = lambda: subprocess.run(['x'], timeout=scaled(3))\n")
+        assert _scaled_at_import(ast.parse(src)) == []
+
+
 _SYNTH_RUN = "import subprocess\nimport pytest\n\n"
 
 
@@ -2764,6 +2831,17 @@ class TestTheCeilingWalkerReportsBothVerdicts:
                                     "    subprocess.run(['x'], timeout=BUDGET)\n")) == 1
         assert _synth_offenders("def test_x():\n"
                                 "    raise subprocess.TimeoutExpired(['x'], timeout=120)\n") == []
+
+    def test_a_scaled_budget_is_judged_as_its_literal(self):
+        # tests/_wait_budget.py::scaled keeps a budget's ratio to the ceiling
+        # its test runs under, so the ratio this contract reads is the
+        # literal's (DEF-5067). A call it cannot read stays unread.
+        assert len(_synth_offenders("def test_x():\n    subprocess.run(['x'], timeout=scaled(120))\n")) == 1
+        assert _synth_offenders("def test_x():\n    subprocess.run(['x'], timeout=scaled(45))\n") == []
+        assert len(_synth_offenders("BUDGET = 120\ndef test_x():\n"
+                                    "    subprocess.run(['x'], timeout=wb.scaled(BUDGET))\n")) == 1
+        unit = _collect_units(ast.parse("def test_x(n):\n    subprocess.run(['x'], timeout=scaled(n))\n"), {})[0]
+        assert _unread_budgets(unit, {}) == [2]
 
     def test_module_level_code_runs_at_collection_and_is_not_read(self):
         assert _synth_offenders("PROBE = subprocess.run(['x'], timeout=120)\n") == []

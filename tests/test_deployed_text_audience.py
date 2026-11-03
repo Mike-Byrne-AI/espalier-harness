@@ -106,11 +106,12 @@ def _source_of(rel: str) -> str:
             continue
         glob = glob_row_parts(row.sot)
         source_base = glob[0] if glob is not None else row.sot
+        then = row.sync or "copy it by hand (the row has no sync script)"
         for mirror in row.mirrors:
             if mirror.endswith("/") and rel.startswith(mirror):
-                return f"{source_base}{rel[len(mirror):]} -- then {row.sync}"
+                return f"{source_base}{rel[len(mirror):]} -- then {then}"
             if rel == mirror:
-                return f"{row.sot} -- then {row.sync}"
+                return f"{row.sot} -- then {then}"
     return f"{rel} (no mirror row: it is its own source)"
 
 

@@ -5,12 +5,14 @@ in a fixture's teardown -- is still ended, and the run still exits.
 The logic rows run on every host. The end-to-end rows drive a real pytest child
 under pytest-timeout's signal method, so they need SIGALRM: they run on the
 POSIX CI cells and skip on Windows, where the method is thread and the backstop
-stands down.
+stands down. The stashed ceiling and tests/_wait_budget.py::scaled, which reads
+it, are pinned on every host, one child included (DEF-5067).
 """
 from __future__ import annotations
 
 # slow-exempt: three one-test pytest children of two or three seconds each, and
-# only where SIGALRM exists; the rest is in-process.
+# only where SIGALRM exists, plus one four-test child on every host; the rest is
+# in-process.
 
 import os
 import signal
@@ -24,6 +26,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests import _timeout_backstop as backstop
+from tests import _wait_budget as wb
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -119,6 +122,7 @@ class TestTheBackstopEndsATestThatBlocksAgain:
             item.cancel_timeout = lambda: plugin_cancels.append(item.nodeid)
 
         monkeypatch.setattr(pytest_timeout, "pytest_timeout_set_timer", plugin_arming)
+        monkeypatch.setattr(backstop, "_ARMED", backstop._ARMED)
         item = SimpleNamespace(stash=pytest.Stash(), nodeid="t.py::test_x")
         settings = pytest_timeout.Settings(30.0, "signal", False, False)
         plugin = backstop.TimeoutBackstop(owns_patch=False)
@@ -203,6 +207,37 @@ def test_this_test_is_armed(request):
     assert backstop._BACKSTOP in request.node.stash
 
 
+def test_this_test_reads_the_ceiling_it_is_armed_with(request):
+    """On either method the live session's running test is the armed one,
+    with its ceiling, so a wait budget reads it on the Windows legs too
+    (DEF-5067: the thread method once stashed nothing)."""
+    pytest.importorskip("pytest_timeout")
+    armed = backstop.armed()
+    assert armed is not None and armed[0] is request.node, armed
+    assert armed[1] == request.node.stash[backstop._CEILING] > 0
+
+
+class TestEveryMethodStashesItsCeiling:
+    def test_the_thread_method_stashes_the_ceiling_and_names_the_test_until_its_protocol_ends(
+            self, monkeypatch):
+        # The plugin's own arming is stubbed, the backstop's is real; the
+        # running test's own arming is put back after.
+        pytest_timeout = pytest.importorskip("pytest_timeout")
+        monkeypatch.setattr(pytest_timeout, "pytest_timeout_set_timer", lambda item, settings: None)
+        monkeypatch.setattr(backstop, "_ARMED", None, raising=False)
+        item = SimpleNamespace(stash=pytest.Stash(), nodeid="t.py::test_x")
+        plugin = backstop.TimeoutBackstop(owns_patch=False)
+        plugin.pytest_timeout_set_timer(item=item, settings=pytest_timeout.Settings(180.0, "thread", False, False))
+        assert item.stash.get(backstop._CEILING, None) == 180.0
+        assert backstop._BACKSTOP not in item.stash, "the thread method's ceiling got a signal backstop"
+        assert backstop.armed() == (item, 180.0)
+        wrapper = plugin.pytest_runtest_protocol(item=item, nextitem=None)
+        next(wrapper)
+        with pytest.raises(StopIteration):
+            wrapper.send(None)
+        assert backstop.armed() is None
+
+
 _CONFTEST = (
     "import sys\n"
     f"sys.path.insert(0, {str(REPO_ROOT)!r})\n"
@@ -210,12 +245,21 @@ _CONFTEST = (
 )
 
 
-def _drive(tmp_path: Path, body: str) -> tuple[subprocess.CompletedProcess, float]:
+def _drive(tmp_path: Path, body: str, *, ceiling: tuple[str, ...] = ("--timeout=1",),
+           env_ceiling: str | None = None, ini: str | None = None) -> tuple[subprocess.CompletedProcess, float]:
+    """A pytest child on ``body`` under ``ceiling`` (its arguments), with
+    ``PYTEST_TIMEOUT`` set to ``env_ceiling`` where given (the parent's never
+    reaches it) and a ``pytest.ini`` holding ``ini`` where given."""
     # Without the plugin, `--timeout=1` is a usage error and there is no ceiling.
     pytest.importorskip("pytest_timeout")
     (tmp_path / "conftest.py").write_text(_CONFTEST, encoding="utf-8")
     (tmp_path / "test_probe.py").write_text(body, encoding="utf-8")
-    env = {k: v for k, v in os.environ.items() if k not in ("PYTEST_ADDOPTS", "PYTEST_DEBUG_TEMPROOT")}
+    if ini is not None:
+        (tmp_path / "pytest.ini").write_text(ini, encoding="utf-8")
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("PYTEST_ADDOPTS", "PYTEST_DEBUG_TEMPROOT", "PYTEST_TIMEOUT")}
+    if env_ceiling is not None:
+        env["PYTEST_TIMEOUT"] = env_ceiling
     # The child's temp dir, and so its pytest root, inside tmp_path: a child
     # the backstop ends by os._exit once left its numbered dir in the real root.
     temp = tmp_path / "temp"
@@ -223,10 +267,10 @@ def _drive(tmp_path: Path, body: str) -> tuple[subprocess.CompletedProcess, floa
     env.update(TMPDIR=str(temp), TEMP=str(temp), TMP=str(temp))
     t0 = time.monotonic()
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--timeout=1",
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *ceiling,
          "test_probe.py"],
         cwd=tmp_path, env=env, capture_output=True, text=True, encoding="utf-8",
-        errors="replace", timeout=45,
+        errors="replace", timeout=wb.scaled(45),
     )
     return proc, time.monotonic() - t0
 
@@ -283,3 +327,34 @@ def test_a_teardown_that_blocks_after_a_surfaced_ceiling_is_ended(tmp_path):
     assert proc.returncode != 0 and "Timeout" in out, out
     assert took < 30, f"the child ran {took:.1f} s: the teardown was never bounded"
     assert _locks_left(tmp_path) == [], "the backstop's os._exit left the run's base temp lock"
+
+
+class TestAWaitBudgetScalesWithTheArmedCeiling:
+    """tests/_wait_budget.py::scaled: a budget keeps its ratio to the ceiling
+    its test runs under (DEF-5067)."""
+
+    def test_the_factor_is_the_armed_ceiling_over_the_one_the_budget_was_judged_against(self):
+        assert wb.factor(180.0, None, 60.0) == 3.0
+        assert wb.factor(300.0, 300.0, 60.0) == 1.0
+        assert wb.factor(60.0, None, 60.0) == 1.0
+        assert wb.factor(180.0, None, None) == wb.factor(180.0, None, 0.0) == 1.0
+
+    def test_outside_a_test_the_budget_is_its_literal(self, monkeypatch):
+        monkeypatch.setattr(backstop, "_ARMED", None, raising=False)
+        assert wb.scaled(45) == 45
+
+    def test_a_child_on_the_legs_ceiling_scales_each_budget_its_ceiling_moved(self, tmp_path):
+        # The leg's own spelling: the ini's 60 and PYTEST_TIMEOUT=180, under
+        # whichever method this host gives an unmarked test.
+        proc, _ = _drive(tmp_path, (
+            "import pytest\nfrom tests._wait_budget import scaled\n\n"
+            "AT_IMPORT = scaled(45)\n\n"
+            "@pytest.fixture\ndef budget():\n    return scaled(45)\n\n"
+            "def test_unmarked(budget):\n    assert (scaled(45), budget) == (135, 135)\n\n"
+            "@pytest.mark.timeout(300)\ndef test_its_own_mark():\n    assert scaled(45) == 45\n\n"
+            "@pytest.mark.timeout(method='thread')\ndef test_a_mark_without_seconds():\n"
+            "    assert scaled(45) == 135\n\n"
+            "def test_at_import():\n    assert AT_IMPORT == 45\n"
+        ), ceiling=(), env_ceiling="180", ini="[pytest]\ntimeout = 60\n")
+        out = proc.stdout + proc.stderr
+        assert proc.returncode == 0 and "4 passed" in out, out
