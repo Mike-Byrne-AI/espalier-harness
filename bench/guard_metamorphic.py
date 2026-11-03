@@ -117,7 +117,12 @@ import _bash_patterns  # noqa: E402  (path is set immediately above)
 # first the day one of them learned a new root shape or protected directory.
 # The budget's reader comes the same way (DEF-5071).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from powershell_guard_rehearsal import ROOT_SHAPES, judged_within_budget, throwaway_project  # noqa: E402
+from powershell_guard_rehearsal import (  # noqa: E402
+    ROOT_SHAPES,
+    BudgetMiss,
+    judged_within_budget,
+    throwaway_project,
+)
 
 #: The root shape ``guard_tier`` builds every project under: plain unless
 #: ``--root-shape`` names another, so a run costs one shape's time.
@@ -828,6 +833,10 @@ def main(argv: list[str] | None = None) -> int:
             reports.append(check_r2(args.quick))
         if args.relation in (None, "R3"):
             reports.append(check_r3(args.quick))
+    except BudgetMiss as exc:
+        # A judgment that never finished: exit 3, never the violations' 1.
+        print(f"NO VERDICT -- {exc}", file=sys.stderr)
+        return 3
     finally:
         ROOT_SHAPE = "plain"
 

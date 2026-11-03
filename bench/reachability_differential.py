@@ -86,7 +86,9 @@ fixture, not root coverage. A future row that names a protected directory
 would also want the base tree's directories laid beside the working tree's,
 so a prefix the working tree drops still reads FAIL-OPEN.
 
-Exits non-zero if any fail-open is found. Stdlib only; no espalier imports.
+Exits non-zero if any fail-open is found, and 3, no verdict, where
+write_guard's time budget left a call unjudged. Stdlib only; no espalier
+imports.
 """
 from __future__ import annotations
 
@@ -977,8 +979,8 @@ def guard_denies(cmd: str, hooks_dir: Path, project_dir: str) -> bool:
     ⚠ `deny()` writes JSON to stdout and returns 0. A return-code-only check
     reports every deny as an allow -- the first probe written during the incident
     that motivated this file did exactly that and called 12 correct denials wrong.
-    So is the time budget's refusal, which judged nothing: it is retried once,
-    or raises (DEF-5071).
+    The time budget's refusal is a deny on the same channel that judged
+    nothing: it is retried once, or raises (DEF-5071).
     """
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = project_dir
@@ -1025,8 +1027,18 @@ def materialise_baseline(ref: str, dest: Path) -> Path:
 
 
 def main(argv: list[str] | None = None) -> int:
-    # The project fixture is the rehearsal's (DEF-811).
+    """The differential, or exit 3 with no verdict where write_guard's time
+    budget left a call unjudged (DEF-5071): exit 1 is a fail-open."""
     rehearsal = _rehearsal()
+    try:
+        return _differential(argv, rehearsal)
+    except rehearsal.BudgetMiss as exc:
+        print(f"[reachability] NO VERDICT -- {exc}", file=sys.stderr)
+        return 3
+
+
+def _differential(argv: list[str] | None, rehearsal) -> int:
+    # The project fixture is the rehearsal's (DEF-811).
     ROOT_SHAPES, throwaway_project = rehearsal.ROOT_SHAPES, rehearsal.throwaway_project
 
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])

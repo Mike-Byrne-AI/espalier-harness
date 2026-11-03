@@ -423,3 +423,35 @@ class TestEveryBenchReaderTellsTheBudgetFromAVerdict:
         with pytest.raises(RuntimeError, match="refused the call twice") as caught:
             read(module, tmp_path)
         assert type(caught.value).__name__ == "BudgetMiss"
+
+
+def _raising(exc: BaseException):
+    def raise_it(*args, **kwargs):
+        raise exc
+    return raise_it
+
+
+#: Each differential's main, its first judgment refused twice. Exit 1 is a
+#: fail-open in reachability_differential and a violation in guard_metamorphic.
+_MAINS = [
+    pytest.param("guard_metamorphic", lambda m, mp: mp.setattr(
+        m, "assert_instrument_is_live", _raising(m.BudgetMiss("refused the call twice"))),
+                 id="guard_metamorphic.main"),
+    pytest.param("powershell_reachability_differential", lambda m, mp: (
+        mp.setattr(m, "find_powershell", lambda: ("pwsh", "core")),
+        mp.setattr(m, "assert_instrument_is_live", _raising(m.BudgetMiss("refused the call twice")))),
+                 id="powershell_reachability_differential.main"),
+    pytest.param("reachability_differential", lambda m, mp: mp.setattr(
+        m, "_differential", _raising(m._rehearsal().BudgetMiss("refused the call twice"))),
+                 id="reachability_differential.main"),
+]
+
+
+@pytest.mark.parametrize(("name", "refuse"), _MAINS)
+def test_a_differential_exits_3_with_no_verdict(load_bench, monkeypatch, capsys, name, refuse):
+    """DEF-5071: a miss ends a differential with exit 3, as a broken
+    instrument does, never with a tree verdict or a traceback's exit 1."""
+    module = load_bench(name)
+    refuse(module, monkeypatch)
+    assert module.main([]) == 3
+    assert "NO VERDICT" in capsys.readouterr().err

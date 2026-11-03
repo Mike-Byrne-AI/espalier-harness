@@ -391,11 +391,13 @@ def test_the_budget_refusal_phrase_is_write_guards_and_only_its():
 
 
 def _names_deny(node: ast.AST) -> bool:
-    """``node`` is the decision ``deny`` (bare or JSON-quoted), or a literal
-    list, tuple or set holding it."""
+    """``node`` is a string naming the decision ``deny`` as a word (``deny``,
+    ``'"deny"'``, ``'"permissionDecision": "deny"'``), or a literal list,
+    tuple or set holding one."""
     if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
         return any(_names_deny(e) for e in node.elts)
-    return isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value.strip('"') == "deny"
+    return isinstance(node, ast.Constant) and isinstance(node.value, str) and bool(
+        re.search(r"(?<![\w.-])deny(?![\w-])", node.value))
 
 
 def bench_deny_readers(path: Path) -> list[tuple[str, bool]]:
@@ -469,6 +471,10 @@ def test_the_bench_pin_sees_each_shape_it_holds(tmp_path):
         "    return json.loads(stdout)['decision'] == 'deny'\n"
         "def listed(stdout):\n"
         "    return json.loads(stdout)['decision'] in ('deny', 'ask')\n"
+        "def keyed(out):\n"
+        "    return '\"permissionDecision\": \"deny\"' in out\n"
+        "def other_word(out):\n"
+        "    return 'denylist' in out or 'permissions.deny' in out\n"
         "def tier(run, project):\n"
         "    def once():\n"
         "        proc = judged_within_budget(lambda: run(), HOOKS_DIR, project)\n"
@@ -487,7 +493,7 @@ def test_the_bench_pin_sees_each_shape_it_holds(tmp_path):
         "    return inner()\n",
         encoding="utf-8")
     assert [(row.split()[1], reads) for row, reads in bench_deny_readers(sample)] == [
-        ("quoted", False), ("bare", False), ("equal", False), ("listed", False),
+        ("quoted", False), ("bare", False), ("equal", False), ("listed", False), ("keyed", False),
         ("once", True), ("through_a_module", True), ("inner", False)]
 
 

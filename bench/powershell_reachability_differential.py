@@ -71,8 +71,9 @@ runner and on any host with ``pwsh`` on PATH. Point it at an unpacked build with
 
 Exit code: 1 if any FAIL-OPEN, 2 if only FALSE POSITIVEs, 0 if clean, 3 when
 the instrument itself is broken (the interpreter or the guard stopped
-answering -- never a tree verdict), and 0 with a SKIPPED banner when no
-interpreter is present. Stdlib only.
+answering) or write_guard's time budget left a call unjudged -- never a tree
+verdict -- and 0 with a SKIPPED banner when no interpreter is present.
+Stdlib only.
 
 ⚠ EACH RUN OWNS ITS INTERPRETER CACHE. pwsh keeps a startup cache in the
 user's profile (``~/.cache/powershell/StartupProfileData-NonInteractive``),

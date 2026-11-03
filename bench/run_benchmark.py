@@ -589,25 +589,34 @@ def _budget_refusal(hooks_dir: str) -> re.Pattern[str] | None:
     source rather than imported (an import would run the tree's hook
     helpers), each literal piece as written and each field any text. None for
     a tree with no such template: one older than the budget, or a stand-in
-    hook."""
+    hook. A template that cannot be read is no verdict either way: a read
+    that failed must not pass every refusal as a judged deny."""
+    source = Path(hooks_dir) / "_denial_reasons.py"
     try:
-        tree = ast.parse((Path(hooks_dir) / "_denial_reasons.py").read_text(encoding="utf-8"))
-    except (OSError, SyntaxError, ValueError):
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+    except FileNotFoundError:
         return None
+    except (OSError, SyntaxError, ValueError) as exc:
+        raise BudgetMiss(f"cannot read write_guard's budget template in {source}: {exc}") from exc
     for node in tree.body:
-        if isinstance(node, ast.Assign) and any(
-                isinstance(t, ast.Name) and t.id == _BUDGET_TEMPLATE for t in node.targets):
-            template = ast.literal_eval(node.value)
+        targets = node.targets if isinstance(node, ast.Assign) else (
+            [node.target] if isinstance(node, ast.AnnAssign) and node.value is not None else [])
+        if any(isinstance(t, ast.Name) and t.id == _BUDGET_TEMPLATE for t in targets):
+            try:
+                template = ast.literal_eval(node.value)
+                pieces = list(string.Formatter().parse(template))
+            except (ValueError, TypeError) as exc:
+                raise BudgetMiss(f"{source}::{_BUDGET_TEMPLATE} is not a string literal: {exc}") from exc
             return re.compile("".join(
                 re.escape(literal) + (".*?" if field is not None else "")
-                for literal, field, _spec, _conversion in string.Formatter().parse(template)), re.DOTALL)
+                for literal, field, _spec, _conversion in pieces), re.DOTALL)
     return None
 
 
 def budget_refused(stdout: str, hooks_dir: Path) -> bool:
-    """True when ``stdout`` is write_guard's time-budget refusal: a deny on
-    the decision channel, exit 0, whose reason is the template's, from a
-    judgment that never finished. Never for a judged deny."""
+    """True when ``stdout`` is write_guard's time-budget refusal: stdout
+    JSON whose ``permissionDecisionReason`` is the hook tree's template in
+    full, from a judgment that never finished. Never for a judged deny."""
     pattern = _budget_refusal(str(hooks_dir))
     if pattern is None:
         return False

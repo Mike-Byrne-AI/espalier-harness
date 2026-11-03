@@ -134,11 +134,18 @@ run_bounded = _bounded_spawn()
 def _release_benchmark():
     """``bench/run_benchmark.py``, loaded by path once a process: the one
     bench file the sdist ships, so the reader of write_guard's time-budget
-    refusal every bench shares lives there (DEF-5071)."""
+    refusal every bench shares lives there (DEF-5071). A copy already loaded
+    (``__main__`` for a release run, ``bench.run_benchmark`` in a test) is
+    reused, so a process has one ``BudgetMiss`` for every arm to catch."""
+    target = Path(__file__).resolve().with_name("run_benchmark.py")
+    for module in list(sys.modules.values()):
+        known = getattr(module, "__file__", None)
+        if (isinstance(known, str) and Path(known).name == target.name
+                and Path(known).resolve() == target and hasattr(module, "judged_within_budget")):
+            return module
     name = "_run_benchmark_for_powershell_guard_rehearsal"
     if name not in sys.modules:
-        spec = importlib.util.spec_from_file_location(
-            name, Path(__file__).resolve().with_name("run_benchmark.py"))
+        spec = importlib.util.spec_from_file_location(name, target)
         module = importlib.util.module_from_spec(spec)
         sys.modules[name] = module
         try:
