@@ -1391,6 +1391,8 @@ _FETCH_INTERPRETER = r"(?:" + _FETCH_SHELL + r"|" + _FETCH_SCRIPTER + r")"
 #: negated classes so the newline census can see that nothing here reads
 #: past a line end.
 _FETCH_PIPE_TARGET = (
+    # the shell is read with its `.exe` whole (a word boundary alone passes
+    # at the dot); the scripter takes none, its version run reads a dot
     r"(?:" + _FETCH_SHELL + _bash_patterns._EXE_SUFFIX + r"\b"
     # the scripter in quotes closes its quote before the lookaheads, and a
     # closing paren or brace ends its command as a separator does (DEF-5080)
@@ -1420,8 +1422,10 @@ _PIPE_CONTINUATION_RE = re.compile(r"\|(?!\|)[ \t]*\r?\n[ \t]*")
 # shapes past them are pinned as silent rows so a widening is a decision on
 # the record.
 _FETCH_EXEC_PIPE_RE = re.compile(
-    # the fetch verb in quotes closes its quote before the hops (DEF-5080)
-    _bash_patterns._CMD_POS + _FETCH_VERB + r"\b" + _bash_patterns._QUOTED_VERB_TAIL
+    # the fetch verb in quotes closes its quote before the hops, after its
+    # `.exe` (DEF-5080)
+    _bash_patterns._CMD_POS + _FETCH_VERB + _bash_patterns._EXE_SUFFIX + r"\b"
+    + _bash_patterns._QUOTED_VERB_TAIL
     # a quoted word -- a URL whose query string carries `&` -- is one hop token
     # (the separator-stop class: `?v=2&arch=arm64` cut the hop and the nudge
     # went silent, the failure-mode review of the quoted-operand lane)
@@ -1467,7 +1471,8 @@ _FETCH_EXEC_SUBST_RE = re.compile(
 _PS_FETCH_HEAD = (
     # a cmdlet or alias in quotes behind the call operator closes its quote
     # before its arguments (DEF-5080); a constructor is no command name
-    r"(?:(?:irm|iwr|Invoke-RestMethod|Invoke-WebRequest|curl|wget)\b" + _bash_patterns._QUOTED_VERB_TAIL
+    r"(?:(?:irm|iwr|Invoke-RestMethod|Invoke-WebRequest|curl|wget)" + _bash_patterns._EXE_SUFFIX
+    + r"\b" + _bash_patterns._QUOTED_VERB_TAIL
     + r"|(?:New-Object[ \t]+(?:-TypeName[ \t]+)?(?:System\.)?Net\.WebClient"
     r"|\[(?:System\.)?Net\.WebClient\]::new\(\))\)?\.Download(?:String|Data)\()"
 )
@@ -1481,7 +1486,7 @@ _PS_PAREN = r"(?:[$@]?\([ \t]*)"
 # `irm ... | iex`, `iwr -useb ... | iex`, `(New-Object Net.WebClient)
 # .DownloadString('...') | iex`, `iwr ... | Select-Object -ExpandProperty
 # Content | iex`: a fetch at command position, one to eight pipe hops, then
-# the executor.
+# the target (`_PS_FETCH_PIPE_TARGET`, below).
 #: The pipe's target on this tool (DEF-5080): PowerShell's own executor,
 #: or a native interpreter on PATH -- Git Bash's or WSL's `bash` runs what
 #: arrives on stdin as it does from the Bash tool, and `irm` and
@@ -1489,9 +1494,13 @@ _PS_PAREN = r"(?:[$@]?\([ \t]*)"
 #: grammar (a shell with any arguments, a scripter bare or with the lone
 #: dash), behind the call operator or a path (`_PS_EXE_PREFIX`; a bare
 #: `| "bash"` is an expression here, so the quoted target is `| & "bash"`).
-#: On Windows PowerShell 5.1 `iwr`, `curl` and `wget` pass a response
-#: object, so a nudge on those is friction, not the class; `pwsh`,
-#: `powershell` and `py` as the target are declared limits, pinned silent.
+#: Every fetch head reads it, toward friction: on Windows PowerShell 5.1
+#: `iwr`, `curl` and `wget` pass a response object, on PowerShell 7 `curl`
+#: and `wget` are the native binaries and pass text. Declared limits, each
+#: pinned silent: `pwsh`, `powershell` and `py` as the target; a scripter
+#: spelled with `.exe` (no suffix after its version run, whose dot it
+#: would share); a target behind a wrapper word (the wrapper run is the
+#: Bash arm's, not its target grammar's).
 _PS_FETCH_PIPE_TARGET = (
     r"(?:" + _PS_EXEC_HEAD + r"\b|(?:&[ \t]*)?" + _bash_patterns._PS_EXE_PREFIX
     + _FETCH_PIPE_TARGET + r")"

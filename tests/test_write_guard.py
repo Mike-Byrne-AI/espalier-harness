@@ -395,13 +395,16 @@ def _speedbump_own_anchored(fragment: str) -> set[str]:
 _FETCH_URL = "https://example.invalid/install.sh"
 
 
-def _speedbump_readings(sb, tool: str, cmd: str) -> list[str]:
+def _speedbump_readings(sb, reader: str, tool: str, cmd: str) -> list[str]:
     """The texts a speed-bump arm is searched on: the checkpoints' masked
     readings (the Bash command and the programs it hands a shell, or the
-    PowerShell scan text) and the raw command, which the writing arm reads by
-    design -- each with a pipe broken over a newline joined, as the
+    PowerShell scan text), or for the writing arm the raw command, which it
+    reads by design -- each with a pipe broken over a newline joined, as the
     fetch-and-run checkpoint joins it."""
-    texts = [text for text, _bash in sb._git_checkpoint_readings(tool, {"command": cmd})] + [cmd]
+    if reader == "writing":
+        texts = [cmd]
+    else:
+        texts = [text for text, _bash in sb._git_checkpoint_readings(tool, {"command": cmd})]
     return [sb._PIPE_CONTINUATION_RE.sub("| ", text) for text in texts]
 
 
@@ -409,17 +412,21 @@ def _speedbump_fires(sb, reader: str, arm: str, tool: str, cmd: str, root: Path)
     """Whether the checkpoint that owns ``arm`` fires on ``cmd``: its predicate
     (``_pred_<reader>``), or for the kill head the pid reader, for the writing
     arm its own reader, and for the snapshot arm the snapshot's decision line
-    (the arm over `_discard_readings`) -- the snapshot itself spawns git, so it
-    is not called."""
+    (each reading's own tool's arm over `_discard_readings`) -- the snapshot
+    itself spawns git, so it is not called."""
     tool_input = {"command": cmd}
     if reader == "kill":
         return bool(sb._named_kill_pids(tool, tool_input))
     if reader == "writing":
         return sb._is_writing_bash(tool_input)
     if reader == "snapshot":
-        rx = getattr(sb, arm)
-        return any(rx.search(text) for text, _raw, _bash in sb._discard_readings(tool, tool_input))
-    return bool(getattr(sb, "_pred_" + reader)(tool, tool_input, root))
+        return any((sb._SNAPSHOTABLE_RE if is_bash else sb._PS_SNAPSHOTABLE_RE).search(text)
+                   for text, _raw, is_bash in sb._discard_readings(tool, tool_input))
+    predicate = getattr(sb, "_pred_" + reader, None)
+    assert predicate is not None, (
+        f"{arm}: no checkpoint reader `{reader}`; name the arm's predicate (`_pred_<reader>`) "
+        "or teach `_speedbump_fires` its reader")
+    return bool(predicate(tool, tool_input, root))
 
 
 class TestQuotedVerbTailIsUniform:
@@ -621,8 +628,10 @@ class TestQuotedVerbTailIsUniform:
     def test_the_speed_bumps_own_arms_are_rostered(self):
         own = _speedbump_own_anchored(_bash_patterns_module()._CMD_POS_NO_VERB)
         assert own == set(self._SPEEDBUMP_FIXTURES), (
-            "a speed-bump arm anchored on _CMD_POS has no quoted-verb fixture, or a "
-            f"fixture names a retired arm: {sorted(own ^ set(self._SPEEDBUMP_FIXTURES))}"
+            "a `_speedbump` arm anchored on _CMD_POS has no entry in this class's "
+            "`_SPEEDBUMP_FIXTURES` (verb, bare fixture, its checkpoint's reader; not "
+            "`_FIXTURES`, which expects a hook deny a speed bump never gives), or an "
+            f"entry names a retired arm: {sorted(own ^ set(self._SPEEDBUMP_FIXTURES))}"
         )
 
     @pytest.mark.parametrize("quote", ['"', "'"])
@@ -632,11 +641,12 @@ class TestQuotedVerbTailIsUniform:
         verb, bare, reader = self._SPEEDBUMP_FIXTURES[arm]
         assert bare.startswith(verb)
         rx = getattr(sb, arm)
-        # the bare control: the arm reads it and its checkpoint fires
-        assert any(rx.search(text) for text in _speedbump_readings(sb, "Bash", bare))
-        assert _speedbump_fires(sb, reader, arm, "Bash", bare, tmp_path)
+        assert any(rx.search(text) for text in _speedbump_readings(sb, reader, "Bash", bare)), (
+            f"{arm}: the bare control is not read by the arm; fix the fixture first")
+        assert _speedbump_fires(sb, reader, arm, "Bash", bare, tmp_path), (
+            f"{arm}: the bare control does not fire its checkpoint `{reader}`")
         quoted = quote + verb + quote + bare[len(verb):]
-        assert any(rx.search(text) for text in _speedbump_readings(sb, "Bash", quoted)), (
+        assert any(rx.search(text) for text in _speedbump_readings(sb, reader, "Bash", quoted)), (
             f"{arm} does not read the verb in quotes")
         assert _speedbump_fires(sb, reader, arm, "Bash", quoted, tmp_path)
 
@@ -920,8 +930,10 @@ class TestPowerShellQuotedVerbBehindTheCallOperator:
     def test_the_speed_bumps_own_arms_are_rostered(self):
         own = _speedbump_own_anchored(_bash_patterns_module()._PS_CMD_POS_SEP)
         assert own == set(self._SPEEDBUMP_FIXTURES), (
-            "a speed-bump arm anchored on _PS_CMD_POS has no quoted-verb fixture, or a "
-            f"fixture names a retired arm: {sorted(own ^ set(self._SPEEDBUMP_FIXTURES))}"
+            "a `_speedbump` arm anchored on _PS_CMD_POS has no entry in this class's "
+            "`_SPEEDBUMP_FIXTURES` (verb, bare fixture, its checkpoint's reader; not "
+            "`_FIXTURES`, which expects a hook deny a speed bump never gives), or an "
+            f"entry names a retired arm: {sorted(own ^ set(self._SPEEDBUMP_FIXTURES))}"
         )
 
     @pytest.mark.parametrize("quote", ['"', "'"])
@@ -930,12 +942,13 @@ class TestPowerShellQuotedVerbBehindTheCallOperator:
         sb = _speedbump_module()
         verb, bare, reader = self._SPEEDBUMP_FIXTURES[arm]
         rx = getattr(sb, arm)
-        # the bare control: the arm reads it and its checkpoint fires
-        assert any(rx.search(text) for text in _speedbump_readings(sb, "PowerShell", bare))
-        assert _speedbump_fires(sb, reader, arm, "PowerShell", bare, tmp_path)
+        assert any(rx.search(text) for text in _speedbump_readings(sb, reader, "PowerShell", bare)), (
+            f"{arm}: the bare control is not read by the arm; fix the fixture first")
+        assert _speedbump_fires(sb, reader, arm, "PowerShell", bare, tmp_path), (
+            f"{arm}: the bare control does not fire its checkpoint `{reader}`")
         quoted = bare.replace(verb, "& " + quote + verb + quote, 1)
         assert quoted != bare
-        assert any(rx.search(text) for text in _speedbump_readings(sb, "PowerShell", quoted)), (
+        assert any(rx.search(text) for text in _speedbump_readings(sb, reader, "PowerShell", quoted)), (
             f"{arm} does not read the verb in quotes")
         assert _speedbump_fires(sb, reader, arm, "PowerShell", quoted, tmp_path)
 
