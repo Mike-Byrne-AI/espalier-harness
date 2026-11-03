@@ -1256,8 +1256,9 @@ total; it shrinks each review.
 - State: DRAFT (foundation lane landed on `lane/adopter-axes-foundation`, 2026-10-06; the
   session-and-stack lane landed 2-B on `lane/adopter-axes-session-and-stack`, 2026-11-03,
   with 2-C dropped and 2-D landed through `TP-474`; the release-and-collectors work runs
-  as a lane per wave: 3-D and 3-F landed on `lane/adopter-axes-collectors` and 3-B on
-  `lane/adopter-axes-wheel-smoke-stack`, 2026-11-03, and 3-A and 3-C are open)
+  as a lane per wave: 3-D and 3-F landed on `lane/adopter-axes-collectors`, 3-B on
+  `lane/adopter-axes-wheel-smoke-stack` and 3-A's Store-stub half on
+  `lane/adopter-axes-perturbed-cell`, 2026-11-03; 3-A's spaced root and 3-C are open)
 - Commits (foundation lane):
   - `b92ce7d` Task 0 record
   - `68689b5` 1-A
@@ -1566,6 +1567,93 @@ total; it shrinks each review.
     `Namespace`, and the dispatch (above).
   - Reach (wheel-smoke lane): `DEF-975`'s release instruments row is **CLOSED by 3-B and
     3-F**. `DEF-975` stays open on its host axis (3-A); `DEF-937` waits on 3-C.
+- **Perturbed-cell lane (2026-11-03, `lane/adopter-axes-perturbed-cell`, the Air): 3-A, the
+  Store-stub half** (assign `20261103T153200Z-air-0030b6`; rulings `20261103T194212Z-air-44013f`,
+  note `20261103T194252Z-air-8b219e` and note `20261103T204103Z-air-b2c91a`).
+  - Task 0 at `ab1f1b5`, on this POSIX host, the `sh` store_python3 host first on PATH:
+    - 0-C's slice: the `test_merge_settings` legacy-quoted row reds under the stub (`python3`
+      exits 49 with the alias text, and the product reports the hooks disarmed) and passes in
+      the control, as on the Windows host. The rest of the slice, driven at `-n 2` under the
+      stub and a spaced basetemp: `tests/test_run_pack_chain.py` red 21 (below), the override
+      pair green.
+    - The nested hazard (3-A above, "probable, not driven") is driven: two xdist workers under
+      the recipe's `PYTEST_ADDOPTS="--basetemp='<spaced>/bt'"`; a child pytest inheriting it
+      emptied `bt`, and a file the other worker held in `bt/popen-gw0` vanished (1 failed,
+      1 passed). The same run with `--basetemp` on the argv alone: 2 passed.
+    - The cell's own recipe over the full tier's parallel leg (the stub host, a spaced
+      basetemp under the temp root, four workers) red 188 of 27,189. Each perturbation alone
+      over the 13 red files: the stub alone red 31 (`tests/test_run_pack_chain.py` 21,
+      `tests/test_reachability_differential.py` 9, `tests/test_python_floor.py` 1); the
+      spaced basetemp alone red 155 in nine files, mostly guard rows that put `tmp_path` into a
+      command's text unquoted (`tests/test_write_guard.py` 99, `tests/test_denial_reasons.py`
+      19, `tests/test_init_rewire_interpreter.py` 13, `tests/test_write_guard_root_reading.py`
+      10, `tests/test_reachability_differential.py` 6, `tests/test_hooks_worktree_checkouts.py`
+      4, `tests/test_temp_sweep.py` 2, `tests/test_execution_plan_cli.py` 1,
+      `tests/test_correctness_minors.py` 1). One more,
+      `tests/test_adopter_verb_stand_down.py::TestTheGateIsNotVacuousOnSelfHost::test_the_census_still_runs_here_rather_than_standing_down`,
+      red only under both, unexplained. Ruled (note `b2c91a`): this lane lands the stub half;
+      the spaced root waits, and its row's shape is the dispatcher's.
+  - Landed:
+    - `test.yml::perturbed`: non-required, Python 3.12, the TMPDIR step first, the
+      `store_python3` host (`sh` flavour) built after the install and put on `$GITHUB_PATH`, a
+      step that fails the cell unless `python3` and `python` resolve under the host and
+      `python3` exits 49, then the tier's parallel leg.
+    - `scripts/proof_tier.py --basetemp DIR` puts pytest's `--basetemp DIR` on each pytest
+      line's argv after the leg is selected (`_with_basetemp`), never in the environment, and
+      `--run` makes DIR's parent; its flags are read by `parse_args`, apart from `main`. The
+      cell does not pass it yet: it is the spaced root's way back, under the TMPDIR the job
+      exports, where a nested run takes its basetemp inside its parent's
+      (`tests/_nested_temp.py`).
+    - The stub reds, fixed: `tests/test_merge_settings.py::_rewire_to_quoted_shell_form` builds
+      the legacy string from the `command` and launcher flags `init` wired, the interpreter
+      `init` detected (`_detect_python_command`: `python` under the stub); the floor control in
+      `tests/test_python_floor.py` wires the interpreter running the test;
+      `scripts/run_pack_chain.sh` resolves its interpreter once with the canonical resolver line
+      and runs its six python steps as `$PY` (its function-lifting test harness points `PY` at
+      its stub); `bench/reachability_differential.py::_executable_available` asks `python3` and
+      `python` to answer (`_MUST_ANSWER`), not only resolve, so a row whose interpreter is an
+      alias skips where it never reached its body. Also a spaced-root fixture red found on the
+      way: `test_print_report_survives_empty_rows` quotes the path it sources.
+    - `INSTRUMENTS`: the placeholder becomes `test.yml perturbed` (`python`, `store_python3`,
+      `plain`, `single_event`), read against the job's steps through proof_tier's own parser by
+      `test_the_perturbed_cell_row_is_its_jobs_perturbations`; the `root/spaced` gap names the
+      release smoke's leg as the one instrument that reaches it and why the cell does not.
+  - Departures from the text above:
+    - The spaced basetemp is not on the cell (the 155 reds above; the dispatcher's ruling).
+    - A spaced root, when it comes back, rides proof_tier's argv, not `PYTEST_ADDOPTS` (the
+      hazard driven above).
+    - `root/spaced` stays a gap: a cell is proven only by a node parametrised over `root` (1-B's
+      rule), and a CI job is none (ruled in `44013f`; the operator can reverse it).
+    - No spaced checkout: optional in 3-A, and 0-C put the override pair's red on a spaced
+      interpreter, not a spaced checkout.
+    - The mutation's red is driven on this Mac, a POSIX host, with the cell's recipe; on Linux
+      it is probable, not measured (no dispatch, #476's precedent).
+  - Declared limit: `--leg parallel` leaves out `scripts/proof_tier.py::SERIAL_FILES`, so
+    `tests/test_hooks.py` and `tests/test_declared_limits_contract.py` (a nested-run site named
+    above) among them never run under the stub in this cell.
+  - Earn-the-red:
+    - 3-A's mutation, the fixture fix reverted: under the stub the legacy-quoted row reds
+      (1 failed, 5 passed) and passes after (6 passed); the whole file is green in the control
+      (181 passed).
+    - The DETECTS row under the stub (asked by note `8b219e`: does it pass there vacuously?):
+      driven in a scratch worktree, it does not. With `_WIRED_PATH_END_RE`'s quote dropped, or
+      the existence arm reading nothing, it reds under the stub with the old helper and the new,
+      because it also asserts the warning names `stop_gate.py`, which a dead interpreter never
+      prints.
+    - The stub's other reds: `tests/test_run_pack_chain.py` 21 failed under the stub before,
+      50 passed under the stub and in the control after; the floor control and the
+      reachability interpreter rows red under the stub before, green after (47 passed and
+      21 skipped under the stub, 66 passed and 2 skipped in the control, as before).
+    - `--basetemp`: four new `tests/test_proof_tier.py` rows red on the unchanged script.
+    - The witness: thirteen in-memory mutants of the job, twelve red and one equivalent (a
+      plain basetemp keeps the row's `plain`), the control green.
+  - Drive, the cell as landed: the 13 files the recipe red, under the stub alone after the
+    fixes at `-n 4`: 7,986 passed, 81 skipped, 0 failed. The cell's green on this lane's pull
+    request is CI's proof.
+  - Reach (perturbed-cell lane): `DEF-975`'s host-axis row is **CLOSED by 3-A** (the cell reds
+    on the reverted fixture fix, driven here). `DEF-975` stays open: its probe reads the
+    session axis blind (no proven value), the root axis has no proven value, and `DEF-937`
+    waits on 3-C.
 
 ## Appendix A — the census instrument
 

@@ -148,11 +148,12 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
     AxisCell("root", "plain", "",
              "every test runs here, and none is parametrised against a spaced root"),
     AxisCell("root", "spaced", "",
-             "no test is parametrised over the root axis. The instruments reach it: "
-             "test.yml's perturbed cell runs the suite's parallel leg under a spaced "
-             "pytest basetemp, so every tree its tests build sits under a space, and "
-             "the release smoke's --spaced-root leg installs into one (their "
-             "INSTRUMENTS rows)"),
+             "no test is parametrised over the root axis. One instrument reaches it: "
+             "the release smoke's --spaced-root leg installs into a tree under a "
+             "space (its INSTRUMENTS row). test.yml's perturbed cell runs with a "
+             "plain pytest root: under a spaced one the suite reds 155 tests in nine "
+             "files (measured 2026-11-03), and scripts/proof_tier.py --basetemp is "
+             "the flag that puts one back on it"),
     AxisCell("root", "spaced_interpreter", "",
              "no CI interpreter a hook runs from holds a space (the release smoke's "
              "second leg runs the CLI from a venv under a spaced root and launches "
@@ -338,11 +339,11 @@ INSTRUMENTS: tuple[Instrument, ...] = (
         "test.yml::workflow-lint",
     ), "none", "both", "plain", "none"),
     # The perturbed cell (TP-468 3-A): the parallel leg on the store_python3 host
-    # (python3 the Store stub, python answering), under a spaced pytest basetemp
-    # that every tree its tests build sits under; its checkout is plain. Read
-    # against the job's steps (tests/test_axis_registry.py).
-    Instrument("test.yml perturbed, the parallel leg on a Store-stub host under a spaced basetemp",
-               ("test.yml::perturbed",), "python", "store_python3", "spaced", "single_event"),
+    # (python3 the Store stub, python answering), under a plain pytest root
+    # until the suite's spaced-root reds are fixed (the root/spaced cell says
+    # why). Read against the job's steps (tests/test_axis_registry.py).
+    Instrument("test.yml perturbed, the parallel leg on a Store-stub host",
+               ("test.yml::perturbed",), "python", "store_python3", "plain", "single_event"),
     Instrument("portability.yml on ubuntu, windows and macos", ("portability.yml::portability",),
                "python", "not measured", "plain", "single_event"),
     Instrument("clean-checkout.yml, the full tier with the heavy stages", ("clean-checkout.yml::clean-checkout",),
