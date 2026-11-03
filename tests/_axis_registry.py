@@ -70,9 +70,11 @@ class AxisCell:
     gap: str         # why no test proves this cell yet (a row id, or a reason); "" if proven
 
 
-# The perturbed CI cell and the release smoke's flags are the adopter-axes pack's
-# later work; until each lands, its cells are gaps that say so. The wired-hooks
-# matrix and the dirty-machine cell landed 2026-11-03; the cross-event session
+# The release smoke's flags are the adopter-axes pack's later work; until they
+# land, their cells are gaps that say so. The perturbed CI cell landed
+# 2026-11-03 as an instrument (its INSTRUMENTS row): a CI job is no pytest node,
+# so it proves no cell here. The wired-hooks matrix and the dirty-machine cell
+# landed 2026-11-03; the cross-event session
 # driver was dropped that day (the session cells say why).
 _MATRIX = ("tests/test_hooks_as_wired.py::"
            "test_every_wired_entry_starts_and_answers_on_one_channel")
@@ -147,8 +149,13 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
     AxisCell("root", "plain", "",
              "every test runs here, and none is parametrised against a spaced root"),
     AxisCell("root", "spaced", "",
-             "the perturbed CI cell (a spaced --basetemp) and the release smoke's "
-             "--spaced-root leg"),
+             "no test is parametrised over the root axis. One instrument reaches it: "
+             "the release smoke's --spaced-root leg installs into a tree under a "
+             "space (its INSTRUMENTS row). test.yml's perturbed cell runs with a "
+             "plain pytest root: under a spaced one the suite reds 155 tests in nine "
+             "files, fixtures that put a tmp path into shell or expected text "
+             "unquoted (DEF-5082); scripts/proof_tier.py --basetemp is the flag that "
+             "puts one back on it once they are fixed"),
     AxisCell("root", "spaced_interpreter", "",
              "no CI interpreter a hook runs from holds a space (the release smoke's "
              "second leg runs the CLI from a venv under a spaced root and launches "
@@ -345,7 +352,12 @@ INSTRUMENTS: tuple[Instrument, ...] = (
         "test.yml::stdlib-audit", "test.yml::code-review-audit", "test.yml::artifact-parity",
         "test.yml::workflow-lint",
     ), "none", "both", "plain", "none"),
-    Instrument("the perturbed cell (TP-468 3-A)", (), "not built", "not built", "not built", "not built"),
+    # The perturbed cell (TP-468 3-A): the parallel leg on the store_python3 host
+    # (python3 the Store stub, python answering), under a plain pytest root
+    # until the suite's spaced-root reds are fixed (the root/spaced cell says
+    # why). Read against the job's steps (tests/test_axis_registry.py).
+    Instrument("test.yml perturbed, the parallel leg on a Store-stub host",
+               ("test.yml::perturbed",), "python", "store_python3", "plain", "single_event"),
     Instrument("portability.yml on ubuntu, windows and macos", ("portability.yml::portability",),
                "python", "not measured", "plain", "single_event"),
     Instrument("clean-checkout.yml, the full tier with the heavy stages", ("clean-checkout.yml::clean-checkout",),
