@@ -156,10 +156,16 @@ class TestAuditDirEnvOverride:
         assert integ._audit_dir() == override
 
     def test_env_override_takes_priority_over_home(self, monkeypatch, tmp_path):
+        """With HOME moved off tmp_path, the override is under a safe root only
+        as the system temp dir, which the validator trusts only while TMPDIR is
+        unset (one an environment sets is distrusted by design: TestTmpdirPoisoning).
+        CI's Linux jobs set TMPDIR (DEF-3027), so the test unsets it: it is about
+        priority over HOME, not about TMPDIR's trust."""
         integ = _load_integrity_module()
         override = tmp_path / "my_audit"
         monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(override))
         monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        monkeypatch.delenv("TMPDIR", raising=False)
         result = integ._audit_dir()
         assert result == override
         assert result != tmp_path / "home" / ".espalier" / "audit"

@@ -88,6 +88,16 @@ jobs:
     # measured worst case: windows-latest 172.9 min serial (12 jobs to 2026-10-16).
     timeout-minutes: 240
     steps:
+      - name: Keep the temp dir on the runner's disk
+        # test.yml's `test` job's first step says why (DEF-3027): on GitHub's
+        # AWS pool /tmp is a quota'd tmpfs this leg's parallel half would fill. The
+        # Linux leg alone: Windows' tempfile reads TMPDIR ahead of TEMP and
+        # TMP, and a macOS runner's TMPDIR is the system's own per-user dir.
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p "$RUNNER_TEMP/tmp"
+          echo "TMPDIR=$RUNNER_TEMP/tmp" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       # 3.12 on a pull request (the inputs are empty there); a dispatched run
