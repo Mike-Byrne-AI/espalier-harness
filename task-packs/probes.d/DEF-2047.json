@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2047",
+ "subject": "tests/test_sister_site_probe_adopter_tree.py",
+ "cmd": "python3 -c \"import ast,pathlib;t=ast.parse(pathlib.Path('tests/test_sister_site_probe_adopter_tree.py').read_text(encoding='utf-8'));print(sum(1 for n in ast.walk(t) if isinstance(n,ast.Call) and n.args and isinstance(n.args[0],ast.List) and n.args[0].elts and ast.unparse(n.args[0].elts[0])=='sys.executable' and any(k.arg=='timeout' and isinstance(k.value,ast.Constant) for k in n.keywords)))\"",
+ "open_value": "2",
+ "why_not": null,
+ "row_sha": "11d91376382d",
+ "text_sha": "b9b6dfa65f7d",
+ "verified_2026_11_02": "OPEN (filed 2026-11-02; probe driven at filing here and in the export of HEAD df69395f53ff)"
+}
