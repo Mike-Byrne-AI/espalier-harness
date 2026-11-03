@@ -20,6 +20,7 @@ what the sync script actually copies. Two flavours of mirrored file:
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 from tests._live_tree import checkout_rglob
 
@@ -58,6 +59,33 @@ class TestSelfcheckTestsParity:
             "(run `python scripts/sync_selfcheck_tests.py`): "
             f"only curated={sorted(expected - mirror)}; "
             f"only in mirror={sorted(mirror - expected)}"
+        )
+
+    def test_every_curated_name_is_a_direct_child_of_tests(self):
+        """The mirror is flat, and that is a contract here, not a comment.
+
+        The edit-time advisory's source-side pattern
+        (``_SELFCHECK_SOT_RE`` in ``tools/cc/hooks/_reinject.py``) keeps the slash
+        out of its name class, so it reads a direct child of ``tests/`` only. A
+        curated name under a subdirectory would leave its file outside the
+        advisory while every parity test here stayed green, and an edit of it
+        would go without the reminder to sync.
+        """
+        hooks = str(REPO_ROOT / "tools" / "cc" / "hooks")
+        if hooks not in sys.path:
+            sys.path.insert(0, hooks)
+        import _reinject  # the hook's own pattern, never a restated copy of it
+
+        sync = _load_sync()
+        unread = sorted(
+            n for n in (*sync.BYTE_MIRRORED, *sync.TRANSFORMED)
+            if not _reinject._SELFCHECK_SOT_RE.search("tests/" + n)
+        )
+        assert not unread, (
+            f"curated selfcheck names the advisory cannot read: {unread}. "
+            "_SELFCHECK_SOT_RE reads a direct child of tests/ ending .py or .ini: "
+            "widen its name class and the comment above it in the same change, or "
+            "keep the name flat."
         )
 
     def test_byte_mirrored_files_are_identical(self):

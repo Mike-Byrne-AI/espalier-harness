@@ -395,7 +395,12 @@ def after_memory_row(root: Path, *, message: str, also: list[str], trailers: lis
                     twin = mirror_registry.counterpart(row, rel)
                     if twin and (root / twin).exists():
                         twins.append(twin)
-                    if row.sync not in syncs:
+                    if row.sync is None:
+                        # no script to run: shlex.split(None) below raises on 3.12
+                        # and reads stdin before it
+                        print(f"(mirror row {row.name} has no sync script: "
+                              f"{mirror_registry.remedy(row)})")
+                    elif row.sync not in syncs:
                         syncs.append(row.sync)
     except Exception as exc:  # noqa: BLE001 -- no engine here means no twins to stage
         print(f"(mirror twins not derived: {type(exc).__name__}: {exc})")

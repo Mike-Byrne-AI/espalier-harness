@@ -223,14 +223,18 @@ TEXT_OVER_OWN_SUBJECT = {
     "DEF-392c", "DEF-392d",
     "DEF-393a", "DEF-400b", "DEF-413a", "DEF-415b",
     "DEF-415f", "DEF-415h", "DEF-416b",
-    "DEF-417h", "DEF-418b", "DEF-419c",
-    "DEF-419e", "DEF-424b", "DEF-424g", "DEF-437",
+    # DEF-419c, DEF-419e and DEF-477 left on 2026-11-02 with their rows (struck
+    # by lane the-mirror-census-diagnoses-each-mutant, the C34 class: the census
+    # reads identical bytes, the curated-name pin reads the hook's own pattern,
+    # an unscripted mirror row reads as a diagnosis).
+    "DEF-417h", "DEF-418b",
+    "DEF-424b", "DEF-424g", "DEF-437",
     "DEF-438", "DEF-439", "DEF-449",
     # DEF-486 and DEF-561 left on 2026-10-30 with their rows (struck by lane
     # gate-populations-derive-from-the-live-source, the C37 class-fix: the
     # README's skip list is a generated region; the status guard reads the
     # gate_details spelling; their probes keyed on the old text's spelling).
-    "DEF-450", "DEF-476", "DEF-477", "DEF-483", "DEF-485", "DEF-488",
+    "DEF-450", "DEF-476", "DEF-483", "DEF-485", "DEF-488",
     # DEF-519 and DEF-593 left on 2026-10-08 with their rows (struck by lane
     # ledger-oldest-c: contract rule 2 names the live gate; the index parser
     # names the rows it cannot read).

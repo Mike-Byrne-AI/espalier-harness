@@ -418,7 +418,9 @@ class TestTheTwinsAgree:
         is accounted by its sync script's record instead."""
         from espalier import mirror_registry as reg
         transforming = {
-            r.sync.split()[-1] for r in reg.MIRROR_ROWS
+            # A sync=None row has no script to record: it reds here by name.
+            r.sync.split()[-1] if r.has_sync else f"{r.name}: no sync script"
+            for r in reg.MIRROR_ROWS
             if r.kind not in (reg.BYTE, reg.SUBSET)
             and zw.is_watched(ROOT, r.mirrors[0] + "probe.py" if r.mirrors[0].endswith("/") else r.mirrors[0])
         }

@@ -532,6 +532,35 @@ class TestTheMemoryCommitTakesOnlyItsOwnPaths:
         assert git("rev-parse", "HEAD").stdout.strip() == head, "a commit landed past the failed sync"
         assert not any(a[:1] == ["git"] and "commit" in a for a in children)
 
+    def test_an_unscripted_mirror_row_is_named_and_never_run(
+            self, hm, tmp_path, monkeypatch, capsys):
+        """A row declared with ``sync=None`` (copied by hand) had its None queued
+        as a sync command, and ``shlex.split(None)`` raises on Python 3.12 and
+        later and reads stdin before that. The phase names the hand copy, runs
+        nothing for the row and still stages its twin."""
+        from espalier import mirror_registry
+        repo, git = self._repo(tmp_path)
+        (repo / "ESPALIER_MEMORY.md").write_text("# memory\n| 2026-10-06 | row |\n", encoding="utf-8")
+        for rel in ("memory/README.md", "espalier/assets/memory/README.md"):
+            (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            (repo / rel).write_text("# memory\n", encoding="utf-8")
+        monkeypatch.setattr(mirror_registry, "MIRROR_ROWS", (mirror_registry.MirrorRow(
+            name="by-hand", sot="memory/README.md",
+            mirrors=("espalier/assets/memory/README.md",), sync=None,
+            pinning_test="tests/test_x.py::TestX", comparator=mirror_registry.BYTES,
+            kind=mirror_registry.BYTE, direction=mirror_registry.SOT_IS_SOURCE_TREE,
+        ),))
+        self._arm(hm, monkeypatch)
+        rc = hm.main(["--root", str(repo), "after-memory-row", "--message", "docs(memory): t",
+                      "--also", "memory/README.md"])
+        out = capsys.readouterr().out
+        assert rc == 0, out
+        assert "mirror row by-hand has no sync script" in out and "by hand" in out, out
+        committed = git("show", "--name-only", "--format=", "HEAD").stdout.split()
+        assert sorted(committed) == [
+            "ESPALIER_MEMORY.md", "espalier/assets/memory/README.md", "memory/README.md",
+        ], committed
+
     @pytest.mark.parametrize("operation", ["merge", "cherry-pick", "rebase"])
     def test_an_operation_in_progress_stops_the_phase_before_it_stages_anything(
             self, hm, tmp_path, monkeypatch, capsys, operation):
