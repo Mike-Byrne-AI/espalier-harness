@@ -30,6 +30,7 @@ import pytest
 
 from _json_key_paths import key_paths
 from tests._cut_start import CUT_OPEN_RE, skip_if_cut
+from tests._live_tree import checkout_rglob
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -367,7 +368,7 @@ class TestTheCutOpeningReadsAsCannotTell:
         pattern from reading its own line.)"""
         tests_dir = REPO_ROOT / "tests"
         copy = re.compile(r"^\s*def _?skip_if_cut\b|^\s*_?CUT_OPEN_RE\s*=|short: cut[ ]at", re.M)
-        homes = sorted(p.relative_to(tests_dir).as_posix() for p in tests_dir.rglob("*.py")
+        homes = sorted(p.relative_to(tests_dir).as_posix() for p in checkout_rglob(tests_dir, "*.py")
                        if copy.search(_read(p)))
         assert homes == ["_cut_start.py"], homes
         assert "skip_if_cut" not in _read(tests_dir / "test_session_start_wall.py")
