@@ -477,6 +477,37 @@ class TestQuotedVerbTailIsUniform:
             f"names a retired arm: {sorted(anchored ^ set(self._FIXTURES))}"
         )
 
+    def test_write_guard_holds_no_anchored_arm_of_its_own(self):
+        """Both roster walks (this class's and
+        `TestPowerShellQuotedVerbBehindTheCallOperator`'s) read `_bash_patterns`
+        and write_guard's records, so a command-position pattern write_guard
+        binds at module level for itself is in neither roster and its quoted
+        spelling goes unproven. DEF-1071 (d): the cmd `set` check's two openers
+        were such patterns until the check moved onto the delete reader's
+        openers, which both rosters hold. Anchored is the class-close census's
+        reading (`TestCommandPositionClassClose._is_anchored` in
+        tests/test_speedbump_irreversible.py: the pattern holds either tool's
+        command-position fragment anywhere, so a group-wrapped or prefixed arm
+        counts); a record is any `DANGEROUS_*` list's, by object."""
+        import re
+        import sys
+        sys.path.insert(0, str(HOOKS_DIR))
+        import write_guard as wg
+        bp = wg._bash_patterns   # the module object write_guard reads, not a second copy
+        shared = {id(v) for v in vars(bp).values() if isinstance(v, re.Pattern)}
+        for name, registry in vars(wg).items():
+            if name.startswith("DANGEROUS_") and isinstance(registry, (tuple, list)):
+                shared |= {id(e.pattern) for e in registry}
+        own = sorted(
+            name for name, value in vars(wg).items()
+            if isinstance(value, re.Pattern) and id(value) not in shared
+            and (bp._CMD_POS_NO_VERB in value.pattern or bp._PS_CMD_POS_SEP in value.pattern)
+        )
+        assert own == [], (
+            f"write_guard binds anchored arms no roster walks: {own}; define each in "
+            "`_bash_patterns` with its quoted-verb fixture in the roster, or make it a record"
+        )
+
     def test_the_tail_is_one_optional_character(self):
         # A single optional character: no adjacent quantifier can share its
         # input, so the tail adds nothing to any arm's backtracking (ReDoS rule).
@@ -8740,7 +8771,7 @@ class TestPowerShellScratchRootRung:
         r"Remove-Item -Recurse -Force C:\tmp\*",
         r"Remove-Item -Recurse -Force C:\tmp\x\..\..\Windows",
         r"Remove-Item -Recurse -Force C:\tmp\x,C:\Windows",
-        r"Remove-Item -Recurse -Force $env:TEMP\x",
+        r"Remove-Item -Recurse -Force $env:TEMP\x",           # a variable is unread (DEF-2049)
         r"Remove-Item -Recurse -Force C:\Windows\Temp\x",
         r"Remove-Item -Recurse -Force C:\tmpfoo\x",
         r"Remove-Item -Recurse -Force C:\tmp\x; Remove-Item -Recurse -Force C:\Windows",
@@ -9039,7 +9070,8 @@ class TestAScratchRootItselfIsTheWall:
         names and keeps the nudge, never the wall -- the Bash tool's
         `"$TMPDIR"` and the PowerShell tool's unforced `$env:TEMP`, where
         the literal spelling of the same root walls. The day a reader
-        resolves the variable this row reds and the sentence is rewritten."""
+        resolves the variable (DEF-2049) this row reds and the sentence is
+        rewritten."""
         monkeypatch.syspath_prepend(str(HOOKS_DIR))
         import _speedbump as sb
         self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")

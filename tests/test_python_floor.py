@@ -33,6 +33,7 @@ from pathlib import Path
 import pytest
 
 from espalier import _python_floor
+from tests._cut_start import skip_if_cut
 from tests._stubs import write_stub
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -2113,6 +2114,9 @@ class TestSessionStartWarnDistinguishesTheTwoFailures:
             input='{"hook_event_name":"SessionStart","source":"startup"}',
             capture_output=True, text=True, timeout=30, env=env, cwd=str(tmp_path), encoding="utf-8",
         )
+        # A start cut at its wall never reached the interpreter warn, so the
+        # control's empty answer would pass on it: cannot-tell (DEF-2048).
+        skip_if_cut(result.stdout)
         return "\n".join(
             ln for ln in result.stderr.splitlines() if "wired hook interpreter" in ln
         )

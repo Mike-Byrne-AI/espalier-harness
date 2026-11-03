@@ -1,0 +1,13 @@
+{
+ "id": "DEF-5080",
+ "subject": "tools/cc/hooks/_speedbump.py",
+ "cmd": "python3 -c \"import re,sys; sys.path.insert(0,'tools/cc/hooks'); import _bash_patterns as b, _speedbump as s; o={id(v) for v in vars(b).values()}; print(sum(1 for v in vars(s).values() if isinstance(v,re.Pattern) and id(v) not in o and (b._CMD_POS_NO_VERB in v.pattern or b._PS_CMD_POS_SEP in v.pattern) and b._QUOTED_VERB_TAIL not in v.pattern))\"",
+ "open_value": "10",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/_bash_patterns.py"
+ ],
+ "row_sha": "edd3aff66c57",
+ "text_sha": "05436ef2a323",
+ "verified_2026_11_03": "STILL_OPEN (re-pinned value unchanged on 2026-11-03: text only: the advisory's condition and its declare-by-design arm stated (follow-up review); the probe still prints 10) [changed: text]"
+}

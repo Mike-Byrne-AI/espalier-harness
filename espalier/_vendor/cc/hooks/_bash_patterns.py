@@ -11868,11 +11868,13 @@ def _outside_quotes(span: str) -> str:
 #: draws one nudge, as `rm -rf <target>` does there.
 #:
 #: The opener is cmd as a command word, by name, with `.exe`, in any case, by
-#: path and quoted; the closing quote is the uniform tail's. It is not the
-#: harness-variable check's opener (`write_guard._BASH_CMD_OPENER_RE` /
-#: `_PS_CMD_OPENER_RE`, DEF-1070), which DEF-1071 records as reading neither
-#: a path on PowerShell nor a quoted head: the two share the switch walk
-#: (`_cmd_program_at`), and DEF-1071's fix can move that check onto these.
+#: path and quoted; the closing quote is the uniform tail's. The
+#: harness-variable check (`write_guard._cmd_set_launches_claude`, DEF-1070)
+#: reads these openers too, since DEF-1071 (a): its own pair read neither a
+#: path on PowerShell nor a quoted head. The two share the switch walk
+#: (`_cmd_program_at`). A change to either opener moves that check's reach
+#: too: its rows are in tests/test_write_guard_env_prefix_polarity.py, the
+#: only by-path and case rows for the PowerShell opener.
 _CMD_EXE_HEAD = r"(?i:cmd(?:\.exe)?)"
 _CMD_REMOVE_OPENER_RE = re.compile(
     _CMD_POS + _CMD_EXE_HEAD + _QUOTED_VERB_TAIL + r"(?=[ \t/]|$)"

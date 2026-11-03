@@ -26,6 +26,7 @@ import unicodedata
 from pathlib import Path
 
 import pytest
+from tests._cut_start import skip_if_cut
 from tests._live_tree import copy_checkout
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -910,6 +911,7 @@ def _session_start(tree: Path, source: str, sid: str = "s-1", **kw) -> str:
     """session_start over ``tree``; its banner (the additionalContext)."""
     result = _run(tree, "session_start.py", {"hook_event_name": "SessionStart", "source": source, "session_id": sid},
                   **kw)
+    skip_if_cut(result.stdout)
     assert result.returncode == 0, result.stderr
     return _context(json.loads(result.stdout)) if result.stdout.strip() else ""
 
