@@ -67,10 +67,10 @@ import pytest
 
 try:
     from tests._never_ran import NO_TEST_RUNS
-    from tests._temp_sweep import _load as _load_restoring
+    from tests._temp_sweep import _load as _load_restoring, restoring_imports
 except ImportError:  # the suite's conftest imports its helpers bare, with tests/ on sys.path
     from _never_ran import NO_TEST_RUNS  # type: ignore[no-redef]
-    from _temp_sweep import _load as _load_restoring  # type: ignore[no-redef]
+    from _temp_sweep import _load as _load_restoring, restoring_imports  # type: ignore[no-redef]
 
 #: The name the plugin object is registered under.
 PLUGIN_NAME = "espalier-box-lock"
@@ -276,8 +276,10 @@ def holder_seat_live(record: dict, *, config_dir: Path | None = None) -> bool | 
     Claude Code's registry (``config_dir`` in place of its own, for tests),
     its git read bounded at ``SESSIONS_READ_S``. Loaded the temp sweep's way,
     under the sweep's own alias: ``sys.path`` and the bare ``tools/cc`` names
-    its imports add are put back, so a load while this run waits, before
-    collection, changes nothing a test resolves. None, cannot tell, for a
+    its imports, and its call, add are put back (where git cannot list the
+    checkouts, the call loads ``hooks/_hook_utils.py``), so a read while this
+    run waits, before collection, changes nothing a test resolves. None,
+    cannot tell, for a
     record with no checkout (an older plugin's), a reader that does not load
     or raises, and a registry it cannot read whole."""
     checkout = record.get("checkout")
@@ -285,9 +287,10 @@ def holder_seat_live(record: dict, *, config_dir: Path | None = None) -> bool | 
         return None
     try:
         sync = _load_restoring(_TOOLS_CC / "checkout_sync.py", "_temp_sweep_checkout_sync")
-        sessions = sync.live_sessions(config_dir)
-        found = None if sessions is None else sync.sessions_in(
-            Path(checkout), sessions=sessions, deadline=time.monotonic() + SESSIONS_READ_S)
+        with restoring_imports():
+            sessions = sync.live_sessions(config_dir)
+            found = None if sessions is None else sync.sessions_in(
+                Path(checkout), sessions=sessions, deadline=time.monotonic() + SESSIONS_READ_S)
     except Exception:  # noqa: BLE001 -- a reader that cannot answer is "cannot tell", never "no session"
         return None
     return None if found is None else bool(found)

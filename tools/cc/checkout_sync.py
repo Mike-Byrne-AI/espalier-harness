@@ -858,13 +858,52 @@ def window_pid(table: dict[int, tuple[int, str]] | None = None) -> int | None:
     return grandparent if _is_launcher(name) and registered(grandparent) else None
 
 
+def _sibling_places(root: Path) -> list[Path] | None:
+    """``root`` and every other checkout of its repository, read off the disk
+    from git's own worktree registry by the deployed hooks' reader
+    (``_hook_utils.sibling_checkouts``: a few small reads, no spawn), for a
+    placement with no ``git worktree list`` of its own; None where that
+    reader is not deployed beside this script or breaks. A registration
+    whose ``.git`` is gone (git reads it prunable) is no checkout: a session
+    in its folder counts for the checkout holding the folder."""
+    try:
+        hook_utils = _hook_utils_by_path()
+        reader = getattr(hook_utils, "sibling_checkouts", None) if hook_utils is not None else None
+        if not callable(reader):
+            return None
+        return [root, *(c for c in reader(root) if os.path.exists(os.path.join(c, ".git")))]
+    except Exception:  # noqa: BLE001 -- fail-open: ok deliberate -- a reader that breaks leaves the folder rule, which only ever keeps more
+        return None
+
+
 def sessions_in_checkout(sessions: list[dict[str, object]], root: Path) -> list[dict[str, object]]:
     """The sessions working in the checkout at ``root`` itself: their ``cwd``
-    is inside it, and not inside a worktree under ``.claude/worktrees/``
-    (a session there shares no file with this checkout)."""
+    is inside it, not inside a worktree under ``.claude/worktrees/`` (a
+    session there shares no file with this checkout), and in no deeper
+    checkout of the repository (:func:`checkout_of` over
+    :func:`_sibling_places`: a worktree nested elsewhere in the folder is its
+    own, DEF-3024). Where the siblings cannot be read the folder rule stands
+    alone, which only ever keeps more. A ``...``-prefixed cwd (a session
+    marker caps one past 120 characters) is kept on :func:`within` alone: its
+    folder names cannot tell ``.claude/worktrees`` from any ``worktrees``
+    folder, nor place it deeper."""
     home = root.joinpath(*WORKTREES_REL)
-    return [s for s in sessions
-            if within(str(s.get("cwd", "")), root) and not within(str(s.get("cwd", "")), home)]
+    places = _sibling_places(root)
+    target = _norm(root)
+    kept: list[dict[str, object]] = []
+    for s in sessions:
+        cwd = str(s.get("cwd", ""))
+        if not within(cwd, root):
+            continue
+        if cwd.startswith("..."):
+            kept.append(s)
+            continue
+        if within(cwd, home):
+            continue
+        deepest = checkout_of(cwd, places) if places is not None else root
+        if deepest is not None and _norm(deepest) == target:
+            kept.append(s)
+    return kept
 
 
 def other_sessions_in_checkout(sessions: list[dict[str, object]], root: Path,
@@ -910,8 +949,9 @@ def sessions_in(path: Path, *, sessions: list[dict[str, object]] | None = None,
     """The live sessions working in the checkout at ``path``: each registry
     entry whose ``cwd`` lies in ``path`` and in no deeper registered checkout.
     ``sessions`` defaults to :func:`live_sessions`, ``checkouts`` to
-    :func:`registered_checkouts`; where git cannot list them, a worktree under
-    ``.claude/worktrees/`` still counts as its own (the reaper's rule). None
+    :func:`registered_checkouts`; where git cannot list them,
+    :func:`sessions_in_checkout` places them (git's registry read off the
+    disk, and the reaper's ``.claude/worktrees/`` rule). None
     when the registry cannot be read in full: the caller cannot tell."""
     if sessions is None:
         sessions = live_sessions()
@@ -1031,7 +1071,7 @@ def occupancy(path: Path, *, sessions: list[dict[str, object]] | None = None,
     for tree in trees:
         for row in marker_sessions(tree, markers):
             home = checkout_of(str(row["cwd"]), places) if checkouts is not None else (
-                path if within(str(row["cwd"]), path) else None)
+                path if sessions_in_checkout([row], path) else None)
             if home is not None and _norm(home) == target:
                 marked.append(row)
     if sessions is not None:

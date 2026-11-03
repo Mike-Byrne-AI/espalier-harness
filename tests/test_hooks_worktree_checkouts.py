@@ -19,6 +19,7 @@ never by stash or checkout.
 """
 from __future__ import annotations
 
+import ast
 import importlib.util
 import io
 import json
@@ -472,6 +473,16 @@ class TestSessionStartLineInsideAWorktree:
         err = capsys.readouterr().err
         assert f"[INFO] session cwd is inside worktree {other.resolve()} of this repository" in err
 
+    def test_from_a_worktree_root_the_main_checkout_is_named_as_the_main_checkout(self, tmp_path, capsys):
+        # DEF-3025: a worker seat whose cwd moved into the main checkout read
+        # that it worked in a worktree.
+        root, live = _repo_with_worktree(tmp_path)
+        _session_start()._warn_if_nested_repo_litter(live, cwd=root / "src")
+        err = capsys.readouterr().err
+        assert f"[INFO] session cwd is inside the main checkout {root.resolve()} of this repository" in err
+        assert "inside worktree" not in err
+        assert "govern it like the root" in err
+
 
 class TestPostWriteCheckInsideAWorktree:
     def test_the_syntax_check_reads_the_worktree_copy(self, tmp_path):
@@ -537,3 +548,89 @@ class TestPostWriteCheckInsideAWorktree:
         assert pwc._run_main() == 0
         assert pruned == [(live.resolve(), "ESPALIER_MEMORY.md")]
         assert checked == []
+
+
+# The lists of a repository's checkouts read off the disk: the hooks' reader
+# and checkout_sync's wrapper of it, which lists the root first.
+_SIBLING_LISTS = ("sibling_checkouts", "_sibling_places")
+
+# Every reader of those lists under tools/cc, with the rule it places a path
+# by. A worktree nested in the main checkout's folder is held by both, so the
+# first checkout holding a path is the wrong answer (DEF-5068, DEF-3024).
+_SIBLING_READERS = {
+    ("tools/cc/checkout_sync.py", "_sibling_places"): "filtered and handed to sessions_in_checkout",
+    ("tools/cc/checkout_sync.py", "sessions_in_checkout"): "checkout_of over the places",
+    ("tools/cc/hooks/_hook_utils.py", "_checkout_bases"): "sorted longest first for containing_checkout",
+    ("tools/cc/hooks/_hook_utils.py", "sibling_checkout_containing"): "equal to containing_checkout's hit",
+    ("tools/cc/hooks/_hook_utils.py", "is_sibling_checkout"): "identity by inode, no containment",
+    ("tools/cc/hooks/_speedbump.py", "<module>"): "binds the reader with a degrade, places nothing",
+    ("tools/cc/hooks/_speedbump.py", "_kill_reading"): "handed to checkout_sync.cwd_checkout",
+    ("tools/cc/hooks/session_start.py", "_loose_processes_line"): "handed to checkout_sync.pid_checkout",
+}
+
+
+def _sibling_checkout_readers(tree_root: Path) -> set[tuple[str, str]]:
+    """Every (file, enclosing function) under ``tree_root/tools/cc`` naming a
+    list in ``_SIBLING_LISTS``: a call by name or attribute, getattr's
+    string, or an import of it (an alias is caught where it is imported)."""
+    found: set[tuple[str, str]] = set()
+
+    def walk(node: ast.AST, rel: str, owner: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                walk(child, rel, child.name)
+                continue
+            if ((isinstance(child, ast.Name) and child.id in _SIBLING_LISTS)
+                    or (isinstance(child, ast.Attribute) and child.attr in _SIBLING_LISTS)
+                    or (isinstance(child, ast.Constant) and child.value in _SIBLING_LISTS)
+                    or (isinstance(child, ast.alias) and child.name in _SIBLING_LISTS)):
+                found.add((rel, owner))
+            walk(child, rel, owner)
+
+    for path in sorted((tree_root / "tools" / "cc").rglob("*.py")):
+        walk(ast.parse(path.read_text(encoding="utf-8")), path.relative_to(tree_root).as_posix(), "<module>")
+    return found
+
+
+class TestEverySiblingReaderIsNamedWithItsRule:
+    """No contract stopped a new first-match loop over sibling_checkouts, the
+    shape DEF-5068 fixed and DEF-3024 found again in checkout_sync: every
+    reader is named here with the rule it places by, so a new one is read
+    before it lands. It pins the roster of readers, not their bodies: a
+    second loop inside a named reader is the reviewer's to read."""
+
+    def test_every_reader_is_named_with_its_rule(self):
+        root = HOOKS_DIR.parent.parent.parent
+        assert "def sibling_checkouts(" in (HOOKS_DIR / "_hook_utils.py").read_text(encoding="utf-8"), (
+            "sibling_checkouts moved or was renamed: point _SIBLING_LISTS at its new name, never empty the census")
+        found = _sibling_checkout_readers(root)
+        assert found, "the scan found no reader at all: the scan is broken, not the tree clean"
+        new = sorted(found - set(_SIBLING_READERS))
+        gone = sorted(set(_SIBLING_READERS) - found)
+        assert not new and not gone, (
+            f"new readers: {new}; named readers that no longer read a list: {gone}. Place a path by the "
+            "deepest checkout holding it (checkout_sync.checkout_of, or _hook_utils.containing_checkout), "
+            "never the first that holds it, then name each new reader in _SIBLING_READERS with its rule; a "
+            "reader renamed or moved is one of each, its rule carried over")
+
+    def test_a_first_match_loop_is_named_by_the_scan(self, tmp_path):
+        planted = tmp_path / "tools" / "cc" / "hooks" / "_planted.py"
+        planted.parent.mkdir(parents=True)
+        planted.write_text(
+            "from _hook_utils import sibling_checkouts\n\n\n"
+            "def first_holder(root, path):\n"
+            "    for c in sibling_checkouts(root):\n"
+            "        if str(path).startswith(str(c)):\n"
+            "            return c\n\n\n"
+            "def by_name(h, root):\n"
+            "    return getattr(h, 'sibling_checkouts')(root)\n",
+            encoding="utf-8")
+        aliased = tmp_path / "tools" / "cc" / "_aliased.py"
+        aliased.write_text(
+            "from checkout_sync import _sibling_places as places\n\n\n"
+            "def first_place(root, path):\n"
+            "    return next(p for p in places(root) if str(path).startswith(str(p)))\n",
+            encoding="utf-8")
+        assert _sibling_checkout_readers(tmp_path) == {
+            ("tools/cc/hooks/_planted.py", "<module>"), ("tools/cc/hooks/_planted.py", "first_holder"),
+            ("tools/cc/hooks/_planted.py", "by_name"), ("tools/cc/_aliased.py", "<module>")}

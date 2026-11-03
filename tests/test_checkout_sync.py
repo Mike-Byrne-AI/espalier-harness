@@ -1559,6 +1559,87 @@ class TestTheOneLivenessOracle:
         rows = [_row(root, sid="root"), _row(root / ".claude" / "worktrees" / "a", sid="a")]
         assert _ids(cs.sessions_in(root, sessions=rows, runner=lambda *a, **k: None)) == ["root"]
 
+    def test_without_git_a_worktree_nested_elsewhere_in_the_folder_counts_as_its_own(self, cs, repos):
+        """DEF-3024: the catch-up's other-session read (session_start.py's
+        other_sessions_in_checkout) and the git-less fallback placed a session
+        by folder, so one in a worktree nested in the clone's folder outside
+        .claude/worktrees/ held the clone's catch-up. The siblings are read
+        from git's registry on disk, no spawn. Dies to: the folder rule alone,
+        and to placing by the first checkout that holds the cwd."""
+        work = repos["work"]
+        inside = _worktree(repos, "seat-a")
+        side = work / "side"
+        _git(work, "worktree", "add", "--quiet", "--detach", str(side), "origin/main")
+        rows = [_row(work, pid=4001, sid="root"), _row(work / "src", pid=4002, sid="root-sub"),
+                _row(inside, pid=4003, sid="a"), _row(side, pid=4004, sid="side"),
+                _row(side / "deep", pid=4005, sid="side-sub"), _row(work.parent / "elsewhere", pid=4006, sid="out")]
+        assert _ids(cs.sessions_in_checkout(rows, work)) == ["root", "root-sub"]
+        assert _ids(cs.other_sessions_in_checkout(rows, work, "root")) == ["root-sub"]
+        assert _ids(cs.sessions_in_checkout(rows, side)) == ["side", "side-sub"]
+        assert _ids(cs.sessions_in(work, sessions=rows, runner=lambda *a, **k: None)) == ["root", "root-sub"]
+
+    def test_where_the_hooks_reader_cannot_answer_the_folder_rule_stands(self, cs, repos, monkeypatch):
+        """A checkout_sync.py deployed without hooks/_hook_utils.py, or one whose
+        reader breaks, cannot read the registry off the disk: the
+        .claude/worktrees/ rule stands alone and holds for the rest, never a
+        raise. Dies to: an unguarded reader."""
+        work = repos["work"]
+        side = work / "side"
+        _git(work, "worktree", "add", "--quiet", "--detach", str(side), "origin/main")
+        rows = [_row(work, pid=4001, sid="root"), _row(side, pid=4004, sid="side")]
+        monkeypatch.setattr(cs, "_hook_utils_by_path", lambda: None)
+        assert _ids(cs.sessions_in_checkout(rows, work)) == ["root", "side"]
+
+        class _Broken:
+            @staticmethod
+            def sibling_checkouts(root):
+                raise OSError("unreadable")
+
+        monkeypatch.setattr(cs, "_hook_utils_by_path", lambda: _Broken)
+        assert _ids(cs.sessions_in_checkout(rows, work)) == ["root", "side"]
+
+        def _unloadable():
+            raise ImportError("a hooks file that raises at import")
+
+        monkeypatch.setattr(cs, "_hook_utils_by_path", _unloadable)
+        assert _ids(cs.sessions_in_checkout(rows, work)) == ["root", "side"]
+
+    def test_a_registration_whose_git_file_is_gone_is_no_checkout(self, cs, repos):
+        """A worktree folder whose .git file was deleted while its registration
+        stayed (git reads it prunable) is the clone's folder again: a session
+        there shares the clone's repository and must hold its catch-up. Dies
+        to: taking every registered folder that exists as a checkout."""
+        work = repos["work"]
+        side = work / "side"
+        _git(work, "worktree", "add", "--quiet", "--detach", str(side), "origin/main")
+        (side / ".git").unlink()
+        rows = [_row(work, pid=4001, sid="root"), _row(side, pid=4004, sid="side")]
+        assert _ids(cs.sessions_in_checkout(rows, work)) == ["root", "side"]
+
+    def test_without_git_a_marker_is_placed_by_the_same_rule(self, cs, repos, monkeypatch):
+        """occupancy's marker fallback placed a marker by folder alone, where the
+        registry rows' fallback leaves .claude/worktrees/ out and places by the
+        deepest checkout. Dies to: within(cwd, path) for the markers."""
+        monkeypatch.delenv("CLAUDECODE", raising=False)
+        work = repos["work"]
+        inside = _worktree(repos, "seat-a")
+        side = work / "side"
+        _git(work, "worktree", "add", "--quiet", "--detach", str(side), "origin/main")
+        marks = [{"session_id": "in-root", "pid": 4101, "cwd": str(work / "src")},
+                 {"session_id": "in-seat", "pid": 4102, "cwd": str(inside)},
+                 {"session_id": "in-side", "pid": 4103, "cwd": str(side)}]
+        occ = cs.occupancy(work, sessions=[], markers=lambda tree: marks, runner=lambda *a, **k: None)
+        assert _ids(occ.sessions) == ["in-root"]
+        seat = cs.occupancy(inside, sessions=[], markers=lambda tree: marks, runner=lambda *a, **k: None)
+        assert _ids(seat.sessions) == ["in-seat"]
+        # A marker caps a cwd past 120 characters to "..." and its tail, which
+        # matches by folder names alone: kept where the folder rule keeps it,
+        # never ruled out by a worktrees folder in its tail.
+        capped = {"session_id": "capped", "pid": 4104,
+                  "cwd": ".../.claude/worktrees/seat-a/packages/core/src/lib/components/forms/" + "y" * 40}
+        long_seat = cs.occupancy(inside, sessions=[], markers=lambda tree: [capped], runner=lambda *a, **k: None)
+        assert _ids(long_seat.sessions) == ["capped"]
+
     def test_an_unreadable_registry_is_cannot_tell_and_the_markers_only_ever_add(self, cs, tmp_path,
                                                                                   monkeypatch):
         """An idle session touches no marker, so "no marker" is never "nobody".

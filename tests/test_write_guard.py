@@ -8885,6 +8885,203 @@ class TestPowerShellScratchRootRung:
             os.rmdir(link) if sys.platform == "win32" else os.unlink(link)
 
 
+#: The fixed temp roots, read from the guard's one home for them at
+#: collection, so a root added there is asked here unasked.
+_FIXED_TEMP_ROOTS = tuple(_bash_patterns_module()._TEMP_ROOTS)
+
+
+class TestAScratchRootItselfIsTheWall:
+    """A recursive remove that takes a scratch root with it -- a fixed temp
+    root (`_bash_patterns._TEMP_ROOTS`, a drive-root tmp), or the directory
+    ``TEMP``, ``TMP`` or ``TMPDIR`` names, or a parent of that one -- is the
+    wall on both tools; a path strictly below a root stays scratch, and a
+    glob takes only what lies below the directory it expands in
+    (DEF-4027, DEF-4028).
+
+    ⚠ WHY. The scratch reader's docstring said the root itself is never
+    below itself, "so removing a whole temp directory stays the wall's", and
+    the code kept it on one tool at a time: on the Bash tool every fixed root
+    read the nudge while the PowerShell tool walled it (the catastrophic
+    reader admitted a root by identity as scratch), and a ``TMPDIR`` below a
+    fixed root -- every Mac by default, ``/var/folders/<x>/T`` -- read the
+    nudge on both, through that root. A session nudged once re-issues, as
+    the nudge's protocol says, and the per-user temp directory goes with
+    every file and socket its running programs hold there (driven in-process
+    on both hosts, 2026-10-17 and 2026-11-03).
+
+    Judged in-process through each tool's wall reader, as the rows' probes
+    are, with the repo a path below the home that is not there, so no
+    identity rule decides a row; the environment is pinned per row, and
+    nothing here makes a directory under a real temp root. The hook-driven
+    pair proves the wall is a wall: refused on the re-issue too. These are
+    test fixtures for a friction guard: a command is handed to it as text,
+    never run."""
+
+    RM = "rm -rf "
+    RI = "Remove-Item -Recurse -Force "
+
+    @staticmethod
+    def _walls(command: str, tool: str) -> bool:
+        wg = _load_write_guard()
+        repo = Path.home() / "scratch-root-no-such-repo"
+        judge = wg._bash_dangerous_reason if tool == "Bash" else wg._ps_dangerous_reason
+        return judge(command, repo, cwd=repo) is not None
+
+    @staticmethod
+    def _env(monkeypatch, **values: str) -> None:
+        for var in ("TEMP", "TMP", "TMPDIR"):
+            monkeypatch.delenv(var, raising=False)
+        for var, value in values.items():
+            monkeypatch.setenv(var, value)
+
+    @pytest.mark.parametrize("target", [*_FIXED_TEMP_ROOTS, "C:/tmp", "/c/tmp"])
+    @pytest.mark.parametrize("tool", ["Bash", "PowerShell"])
+    def test_a_fixed_temp_root_itself_is_the_wall(self, target, tool, monkeypatch):
+        self._env(monkeypatch)
+        verb = self.RM if tool == "Bash" else self.RI
+        assert self._walls(verb + target, tool), (tool, target)
+
+    #: (variable, its value, the root as a command spells it): below a fixed
+    #: root, below a drive-root tmp, and below neither and deep enough that
+    #: no depth rule walls it; the macOS trailing slash and a backslash TEMP.
+    VETTED = [
+        ("TMPDIR", "/tmp/job-1", "/tmp/job-1"),
+        ("TMPDIR", "/tmp/job-1/", "/tmp/job-1"),
+        ("TEMP", "C:/tmp/job-1", "C:/tmp/job-1"),
+        ("TEMP", "C:\\tmp\\job-1", "C:/tmp/job-1"),
+        ("TMP", "E:/Scratch/a/b/Temp", "E:/Scratch/a/b/Temp"),
+        ("TMP", "E:/Scratch/a/b/Temp", "e:/scratch/A/B/temp"),   # NTFS reads without case
+    ]
+
+    @pytest.mark.parametrize("var, value, root", VETTED, ids=[f"{v}={x}" for v, x, _ in VETTED])
+    @pytest.mark.parametrize("tool", ["Bash", "PowerShell"])
+    def test_the_temp_directory_the_environment_names_is_the_wall(
+            self, var, value, root, tool, monkeypatch):
+        self._env(monkeypatch, **{var: value})
+        verb = self.RM if tool == "Bash" else self.RI
+        parent = root.rsplit("/", 1)[0]
+        assert self._walls(verb + root, tool), (tool, "the root", root)
+        assert self._walls(verb + parent, tool), (tool, "a parent", parent)
+        assert not self._walls(verb + root + "/one-below", tool), (tool, "one below", root)
+
+    def test_a_glob_takes_only_what_lies_below_the_directory(self, monkeypatch):
+        """``/tmp/*`` empties the root and leaves it, DEF-849's reading of a
+        glob as the directory it expands in, so it keeps its answer -- unless
+        the directory the environment names lies below, which it takes."""
+        self._env(monkeypatch)
+        assert not self._walls(self.RM + "/tmp/*", "Bash")
+        self._env(monkeypatch, TMPDIR="/tmp/job-1")
+        assert self._walls(self.RM + "/tmp/*", "Bash")
+        assert not self._walls(self.RM + "/tmp/job-1/*", "Bash")
+
+    @pytest.mark.parametrize("command, env", [
+        ("rm -rf /private/var/t{mp,}", {}),
+        ("rm -rf /tmp/jo{b-1,}", {"TMPDIR": "/tmp/job-1"}),
+        ("rm -rf /tmp/{job-1,other}", {"TMPDIR": "/tmp/job-1"}),
+        ("rm -rf C:/TMP/JO{B-1,}", {"TEMP": "C:/tmp/job-1"}),      # without case
+        ("rm -rf E:/S/x/ab{c,}", {"TMP": "E:/S/x/abc/d/Temp"}),    # completes a parent
+    ])
+    def test_a_brace_spelling_of_a_root_is_the_wall(self, command, env, monkeypatch):
+        """The brace reader answers for every expansion from a prefix that is
+        not catastrophic, unless that prefix can complete into a site or a
+        parent of one; a root is a site, so a name cut mid-word before the
+        braces is probed."""
+        self._env(monkeypatch, **env)
+        assert self._walls(command, "Bash"), command
+
+    def test_a_bare_glob_run_inside_a_root_takes_only_what_lies_below(
+            self, tmp_path, monkeypatch):
+        """The leading glob's reduction is the directory's contents: from the
+        root they lie below it, from its parent they take it, and a glob
+        with more path after it names a path, not contents."""
+        root = tmp_path / "scratch-root"
+        root.mkdir()
+        self._env(monkeypatch, TMPDIR=str(root))
+        wg = _load_write_guard()
+        repo = Path.home() / "scratch-root-no-such-repo"
+
+        def walls(command: str, cwd: Path) -> bool:
+            return wg._bash_dangerous_reason(command, repo, cwd=cwd) is not None
+        assert not walls(self.RM + "*", root)
+        assert walls(self.RM + "*", tmp_path)
+        assert walls(self.RM + "*/..", root)
+
+    def test_a_temp_directory_inside_the_repo_walls_and_the_text_says_why(
+            self, tmp_path, monkeypatch):
+        """A TMPDIR set inside the checkout (a sandbox, a build's own temp)
+        is a root too: its removal walls, and the wall's remedy text, which
+        says a path inside the repo is not refused, names the exception."""
+        repo = tmp_path / "repo"
+        (repo / "build" / "tmp").mkdir(parents=True)
+        self._env(monkeypatch, TMPDIR=(repo / "build" / "tmp").as_posix())
+        wg = _load_write_guard()
+        reason = wg._bash_dangerous_reason(self.RM + "build", repo, cwd=repo)
+        assert reason and "bar the directory TEMP, TMP or TMPDIR names" in reason, reason
+        assert wg._bash_dangerous_reason(self.RM + "build/tmp/x", repo, cwd=repo) is None
+
+    def test_a_sweep_reads_its_walk_root_as_the_root_itself(self, monkeypatch):
+        """A declared limit (docs/HOOKS.md): the sweep readers judge a walk's
+        root, and `-mindepth` is not read, so a walk rooted at a temp root
+        walls even where it takes only what lies below -- the deletion
+        `rm -rf /tmp/*` makes, which keeps the nudge (one deletion, two
+        tiers). A name predicate narrows the walk off the wall. Beside
+        `TestCatastrophicFindDelete`'s matrix, whose project lies under the
+        temp directory and walls these rows by containment; here the repo
+        is outside every temp root."""
+        self._env(monkeypatch)
+        assert self._walls("find /tmp -mindepth 1 -maxdepth 1 -mtime +7 -delete", "Bash")
+        assert not self._walls(
+            "find /tmp -mindepth 1 -maxdepth 1 -name 'claude-*' -exec rm -rf {} +", "Bash")
+
+    def test_a_root_spelled_by_its_variable_is_not_read(self, monkeypatch):
+        """A declared limit (docs/HOOKS.md): the reader resolves no
+        variable, so a root spelled by its variable is not the root it
+        names and keeps the nudge, never the wall -- the Bash tool's
+        `"$TMPDIR"` and the PowerShell tool's unforced `$env:TEMP`, where
+        the literal spelling of the same root walls. The day a reader
+        resolves the variable this row reds and the sentence is rewritten."""
+        monkeypatch.syspath_prepend(str(HOOKS_DIR))
+        import _speedbump as sb
+        self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
+        repo = Path.home() / "scratch-root-no-such-repo"
+        for tool, command in (("Bash", self.RM + '"$TMPDIR"'),
+                              ("PowerShell", "Remove-Item -Recurse $env:TEMP")):
+            assert not self._walls(command, tool), command
+            assert sb._pred_rmrf(tool, {"command": command}, repo), command
+        assert self._walls(self.RM + "/tmp/job-1", "Bash")
+
+    @pytest.mark.parametrize("value, path, below", [
+        ("C:/tmp/job-1", "C:/tmp/job-1", False),
+        ("C:/tmp/job-1", "c:/TMP/Job-1", False),
+        ("C:/tmp/job-1", "C:/tmp/job-1/x", True),
+        ("/tmp/job-1", "/tmp/job-1", False),
+        ("/tmp/job-1", "/tmp/job-1/x", True),
+    ])
+    def test_the_scratch_reader_never_reads_a_root_below_itself(
+            self, value, path, below, monkeypatch):
+        """`_below_a_scratch_root`'s own contract, asked directly: the value
+        the environment names is a root, even where it lies below a fixed
+        one, and a drive spelling compares without case as NTFS does."""
+        self._env(monkeypatch, TMPDIR=value)
+        assert _bash_patterns_module()._below_a_scratch_root(path) is below
+
+    def test_the_root_itself_is_refused_on_the_re_issue_too(self, tmp_path):
+        """A nudge passes on the second issue; the wall does not."""
+        script = HOOKS_DIR / "write_guard.py"
+        carry_protected_tree(tmp_path, script)
+        env = os.environ.copy()
+        env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
+        for var in ("TEMP", "TMP", "TMPDIR"):
+            env[var] = "C:/tmp/job-1"
+        for tool, command in (("Bash", self.RM + "/tmp"),
+                              ("Bash", self.RM + "C:/tmp/job-1"),
+                              ("PowerShell", self.RI + "C:\\tmp\\job-1")):
+            payload = json.dumps({"tool_name": tool, "tool_input": {"command": command}})
+            for _ in range(2):
+                result = run_hook_through([sys.executable, str(script)], input=payload, env=env)
+                assert_hook_denied(result, contains_reason="blocked")
+
+
 def _roster_words(roster: str) -> list[str]:
     """The words of a roster spelled as a regex alternation
     (`_PS_NATIVE_REMOVE_NAMES`), in order. The roster is the FIRST argument

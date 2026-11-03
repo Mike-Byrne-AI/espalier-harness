@@ -721,6 +721,11 @@ def hard_tier_target_claims(tmp_path: Path, monkeypatch) -> tuple[Path, dict[str
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setattr(_bash_patterns.os.path, "expanduser",
                         lambda p: p.replace("~", str(home), 1))
+    # The temp directory the environment names, pinned beside the home, so
+    # the texts' claim about it is asked of every form (DEF-4027)
+    scratch = tmp_path / "scratch"
+    for var in ("TEMP", "TMP", "TMPDIR"):
+        monkeypatch.setenv(var, str(scratch))
     claims = {
         # refused (the text's "are refused in every flag order" list)
         "/": True,                          # the filesystem root
@@ -736,7 +741,11 @@ def hard_tier_target_claims(tmp_path: Path, monkeypatch) -> tuple[Path, dict[str
         "/etc": True,                       # a shallow system path
         "/usr/local": True,
         "/opt/x/../y": True,                # an absolute path with a '..' step
+        "/tmp": True,                       # a temp root itself (DEF-4028)
+        scratch.as_posix(): True,           # the directory TEMP names (DEF-4027)
         # not refused here (the soft tier's, or nothing's)
+        "/tmp/x": False,                    # below a temp root
+        (scratch / "x").as_posix(): False,  # below the directory TEMP names
         "/usr/local/share/x": False,        # deeper than shallow
         (repo / "build").as_posix(): False, # inside the repo
         "~/proj/thing": False,              # inside your home directory
@@ -875,7 +884,7 @@ class TestDangerousBashPlainEnglish:
         ):
             for phrase in ("filesystem root", "home directory", "the repo",
                            "shallow system path", "'*'", "'..'",
-                           "inside the repo", "temp root"):
+                           "inside the repo", "temp root", "a temp root itself"):
                 assert phrase in text, (phrase, text)
             assert "absolute" not in text.replace("an absolute path with a '..'", ""), text
         soft = speedbump.CP_RMRF.body
@@ -989,6 +998,8 @@ class TestDangerousBashPlainEnglish:
             drive_repo + "/..": True,             # its parent, by a '..' step
             "C:/": True,                          # the drive root
             "C:/Temp/x": False,                   # below a drive-root temp
+            "C:/Temp": True,                      # the drive-root temp itself
+            "C:/tmp": True,                       # likewise
             "C:/Windows/System32": True,          # shallow
             "C:/work/old": True,                  # shallow, outside the repo and home
         }

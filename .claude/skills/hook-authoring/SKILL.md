@@ -154,8 +154,10 @@ read. The friction-layer scope:
   pinned to the readers by an AST walk there -- that class, not a list here,
   is the oracle. An UN-NARROWED `find` with a delete action is read one
   tier up as well: from a catastrophic root -- the repo or a
-  parent of it, your home, the filesystem root, a shallow system path --
-  it is the same hard stop the recursive force-delete draws, ahead of the
+  parent of it, your home, the filesystem root, a temp root itself or a
+  parent of the directory TEMP, TMP or TMPDIR names (the walk's root is
+  read as the root, so `-mindepth 1` does not narrow it), a shallow system
+  path -- it is the same hard stop the recursive force-delete draws, ahead of the
   maintenance gate; from any other root it is the CP-RMRF nudge, and a
   roster-ephemeral root (`find build -delete`) passes. NARROWED means a
   `-name`/`-path`/`-regex` predicate (or `-samefile`, `-inum`, `-empty`)
