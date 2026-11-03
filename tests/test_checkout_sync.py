@@ -1142,7 +1142,7 @@ class TestSessionStartWiring:
         """The hook as Claude Code runs it on a fresh session, against a
         fixture registry; HOME moved so the real ~/.claude/sessions is never
         read (the reader also looks at the default location)."""
-        from tests.test_hooks import run_hook
+        from tests._hook_runner import run_hook
 
         home = tmp_path / "home"
         home.mkdir(exist_ok=True)

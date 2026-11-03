@@ -67,12 +67,12 @@ class AxisCell:
     gap: str         # why no test proves this cell yet (a row id, or a reason); "" if proven
 
 
-# The wired-hooks matrix, the cross-event session driver, the parametrised Walk,
-# the perturbed CI cell, the release smoke's flags and the dirty-machine cell are
+# The perturbed CI cell, the release smoke's flags and the dirty-machine cell are
 # the adopter-axes pack's later work; until each lands, its cells are gaps that
-# say so.
-_MATRIX = "the wired-hooks matrix (tests/test_hooks_as_wired.py, not yet written)"
-_DRIVER = "the cross-event session driver (tests/test_adopter_session.py, not yet written)"
+# say so. The wired-hooks matrix landed 2026-11-03; the cross-event session
+# driver was dropped that day (the session cells say why).
+_MATRIX = ("tests/test_hooks_as_wired.py::"
+           "test_every_wired_entry_starts_and_answers_on_one_channel")
 
 AXIS_REGISTRY: tuple[AxisCell, ...] = (
     # -- stack ---------------------------------------------------------------
@@ -117,17 +117,27 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
     # -- host ----------------------------------------------------------------
     # Exactly the tests/_interpreter_hosts.py shapes (the contract derives the
     # roster from SHAPES): which interpreter names answer, and nothing else.
-    AxisCell("host", "store_python3", "",
-             f"the perturbed CI cell (a Store-alias python3 first on PATH) and {_MATRIX}"),
-    AxisCell("host", "launcher_only", "",
-             "tests/test_hook_exec_form.py::TestInitOnTheTwoInterpreterHosts::"
-             "test_the_launcher_wired_write_guard_spawns_and_denies launches one hook "
-             f"as wired on this host but is not parametrised over the host; {_MATRIX} "
-             "proves the cell"),
-    AxisCell("host", "python3_only", "", f"{_MATRIX}"),
+    # Proven 2026-11-03 by the wired-hooks matrix: on each host shape it runs
+    # `init` with that host's stubs first on PATH, then launches every entry
+    # the tree's settings wire as Claude Code does (the command resolved on
+    # that PATH), and reads every launch exiting 0 or 2 on one channel and the
+    # wired command being the name the host answers to. The cells name its
+    # Python tree; its Node tree runs beside it.
+    AxisCell("host", "store_python3", f"{_MATRIX}[python-store_python3]", ""),
+    AxisCell("host", "launcher_only", f"{_MATRIX}[python-launcher_only]", ""),
+    AxisCell("host", "python3_only", f"{_MATRIX}[python-python3_only]", ""),
     # -- session -------------------------------------------------------------
-    AxisCell("session", "single_event", "", f"{_MATRIX} (one event per launch)"),
-    AxisCell("session", "cross_event", "", f"{_DRIVER}"),
+    AxisCell("session", "single_event", "",
+             f"{_MATRIX} launches one event per launch on every wired entry, but no test "
+             "is parametrised over the session axis: a function collected at one session "
+             "value is the born-blind shape the rule refuses, and the other value is a gap"),
+    AxisCell("session", "cross_event", "",
+             "the cross-event session driver was dropped on 2026-11-03: the pack's 0-D, "
+             "re-run at a291436 on the python, node .mjs and node .js trees with every "
+             "hook launched as wired, found no differential the single-event tests miss "
+             "(the one it pre-registered was closed by the Node-defaults and stack-registry "
+             "lanes), so the pack's refuting clause shrank its session work to the wired "
+             "matrix; the measurement is in task-packs/TP-468-adopter-axes.md's Landing"),
     # -- root ----------------------------------------------------------------
     AxisCell("root", "plain", "",
              "every test runs here, and none is parametrised against a spaced root"),
@@ -192,7 +202,9 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
 #   trees (the stack registry's source-and-manifests lane, Decision 6).
 # 2026-10-26: 8 -- target_os/linux and target_os/windows, by the platform stand-ins lane (the
 #   bounded spawn's timeout-shape node over linux and windows).
-PROVEN_FLOOR = 8
+# 2026-11-03: 11 -- host/store_python3, host/launcher_only and host/python3_only, by the
+#   wired-hooks matrix (the adopter-axes pack's session-and-stack lane).
+PROVEN_FLOOR = 11
 
 
 def proven(cells: tuple[AxisCell, ...] = AXIS_REGISTRY) -> list[AxisCell]:

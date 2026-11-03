@@ -46,11 +46,6 @@ from tests import _interpreter_hosts as hosts
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-_LAUNCHER_NODE = (
-    "tests/test_hook_exec_form.py::TestInitOnTheTwoInterpreterHosts::"
-    "test_the_launcher_wired_write_guard_spawns_and_denies"
-)
-
 # Prints one line per collected item: its node id, its parameters (callspec)
 # and the names of its marks. Run as `python -c` so the collection happens in a
 # child: one file's collection error cannot take this module down with it.
@@ -267,21 +262,6 @@ class TestProvenCellsVaryRunAndPass:
             pytest.skip("no proven cell yet -- the floor test says so")
         problems = not_passed([c.proven_by for c in cells], REPO_ROOT, timeout=600)
         assert not problems, "proving nodes that do not run and pass here:\n" + "\n".join(problems)
-
-    def test_the_one_hook_launched_as_wired_today_does_not_prove_its_host_cell(self):
-        """The launcher-only host is the one host a hook is launched on as wired
-        today, by one test that is not parametrised over the host. Named as the
-        cell's proof, the rule refuses it, which is why the cell is a gap. When
-        that test is parametrised over the host shapes, this reds: prove the
-        cell, then delete this test."""
-        cell = reg.AxisCell("host", hosts.LAUNCHER_ONLY, _LAUNCHER_NODE, "")
-        items = collected_items([_LAUNCHER_NODE], REPO_ROOT)
-        assert _LAUNCHER_NODE in items, (
-            f"{_LAUNCHER_NODE} no longer collects; update this test and the "
-            "launcher_only cell's gap"
-        )
-        reason = refusal(cell, items)
-        assert reason is not None and "carries no 'host' parameter" in reason, reason
 
 
 _PLANTED = '''\

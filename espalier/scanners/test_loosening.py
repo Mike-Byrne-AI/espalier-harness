@@ -12,7 +12,8 @@ Detects landed artifacts of test-loosening:
   skip_no_reason      — `@pytest.mark.skip` decorator without reason= kwarg
   xfail_no_reason     — `@pytest.mark.xfail` decorator without reason= kwarg
   nondiscriminating_hook_assert
-                      — a deny-intent `test_*` that invokes the `run_hook` helper and
+                      — a deny-intent `test_*` that invokes a hook helper (`run_hook`,
+                        `_run_hook`, or the wired launcher `run_hook_as_wired`) and
                         observes ONLY the return code. Under the channel-XOR hook
                         protocol a deny is signalled by exit 0 + a stdout-JSON
                         `permissionDecision`, so `assert result.returncode == 0` is
@@ -28,13 +29,13 @@ Detects landed artifacts of test-loosening:
                         the value is rendered there, never compared or parsed.
   nondiscriminating_hook_allow
                       — the allow-side mirror: an allow-intent `test_*` invoking the
-                        same `run_hook`/`_run_hook` helper that observes ONLY the return
+                        same hook helpers that observes ONLY the return
                         code. An over-block regression (a legitimate op flipping to a
                         deny) is exit 0 too, so a bare returncode assert cannot catch it.
                         Same invoker scope and channel-observation exemption as the deny
                         arm; the two are mutually exclusive (the deny arm disqualifies
-                        allow-intent names). Broader invoker coverage than
-                        `run_hook`/`_run_hook` is a shared, deliberate boundary of both
+                        allow-intent names). Broader invoker coverage than those three
+                        names is a shared, deliberate boundary of both
                         arms — a separate calibration, not this rule.
 
 Empirical case: ImpossibleBench (Oct 2025) — GPT-5 exploits test cases 76%
@@ -274,7 +275,9 @@ def _has_skip_or_xfail_decorator(node: ast.FunctionDef | ast.AsyncFunctionDef) -
 # underscore-prefixed private `_run_hook` are live in this repo (189 vs 65 call sites);
 # exact-equality on `run_hook` alone is blind to the `_run_hook` helper — including the
 # kill-switch + integrity deny-tests. (Sister-hazard to `_has_deny_intent`'s substring note.)
-_HOOK_INVOKERS = frozenset({"run_hook", "_run_hook"})
+# `run_hook_as_wired` (tests/_hook_runner.py) launches the entry an adopter's settings
+# wire: a deny test on it that reads only the exit code is the same blind shape.
+_HOOK_INVOKERS = frozenset({"run_hook", "_run_hook", "run_hook_as_wired"})
 # Deny-intent substring signals (matched against the lowercased test NAME). Enumerated
 # by stem so substring matching covers inflections ("block" ⊂ "blocks"/"blocked");
 # "deny" is NOT a substring of "denied"/"denies", so those stems are listed explicitly.
@@ -321,8 +324,9 @@ def _body_without_docstring(node: ast.FunctionDef | ast.AsyncFunctionDef) -> lis
 
 
 def _invokes_hook(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
-    """True if the body CALLS a hook-invocation helper — the bare `run_hook(...)` or the
-    underscore-prefixed private `_run_hook(...)` — i.e. the test actually exercises a hook
+    """True if the body CALLS a hook-invocation helper — the bare `run_hook(...)`, the
+    underscore-prefixed private `_run_hook(...)` or the wired launcher
+    `run_hook_as_wired(...)` — i.e. the test actually exercises a hook
     (as opposed to merely naming one in a string)."""
     return any(
         isinstance(n, ast.Call) and _call_name(n) in _HOOK_INVOKERS
@@ -479,8 +483,8 @@ def _is_nondiscriminating_hook_allow(node: ast.FunctionDef | ast.AsyncFunctionDe
     over-block regression (a legitimate op flipping to a deny) is exit 0 too, so a bare
     ``returncode`` assertion cannot catch it.
 
-    Invoker scope is the same ``_HOOK_INVOKERS`` ({run_hook, _run_hook}) as the deny-arm —
-    its calibrated scope. Other hook-invoker helpers in the suite (run_bash_guard,
+    Invoker scope is the same ``_HOOK_INVOKERS`` ({run_hook, _run_hook, run_hook_as_wired})
+    as the deny-arm — its calibrated scope. Other hook-invoker helpers in the suite (run_bash_guard,
     run_hook_edit, …) are outside BOTH arms; widening ``_HOOK_INVOKERS`` also shifts the
     deny-arm population, so it is a separate calibration, not this rule."""
     return (

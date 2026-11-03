@@ -3604,6 +3604,140 @@ def test_raw_git_population_sites_only_shrink():
         "cannot silently absorb a NEW one in the space you just freed."
     )
 
+
+# ---------------------------------------------------------------------------
+# Private hook runners: helpers that spawn a hook by hand rather than through
+# tests/_hook_runner.py (the adopter-axes pack's 2-B ratchet).
+#
+# The census is that pack's Appendix A, line 3: a non-test function that calls
+# subprocess.run / Popen / check_output / check_call / call with a literal argv
+# whose first element is not 'git', and whose source mentions a hook (the word,
+# in any case). Moving them onto the shared runner buys de-duplication, not
+# coverage (the pack's Scope (out)): its default spawn is the one most of them
+# make already, and only the wired launch exercises anything new. What this
+# stops is growth: a new runner is written on the shared module, or its file's
+# entry is raised with the reason beside it. Lower an entry when a runner goes;
+# delete the key at zero.
+#
+# Seeded 2026-11-03 by the census on the lane that added the shared runner:
+# 56 functions in 38 files.
+_PRIVATE_HOOK_RUNNERS: dict[str, int] = {
+    "test_action_justifications.py": 1,
+    "test_adopter_generic_systems_fire.py": 2,
+    "test_checkout_sync.py": 3,
+    "test_cleanup.py": 2,
+    "test_cli_deploy.py": 1,
+    "test_cognitive_blueprint.py": 1,
+    "test_config_guard_wiring.py": 2,
+    "test_governance_audit_log.py": 2,
+    "test_hook_regression.py": 1,
+    "test_hook_voice_reaches_claude.py": 1,
+    "test_hooks_start_on_a_kept_helper.py": 2,
+    "test_init_upgrade_paths.py": 1,
+    "test_integrity.py": 1,
+    "test_memory_autoprune.py": 1,
+    "test_node_adopter_defaults.py": 1,
+    "test_plan_guard.py": 3,
+    "test_plan_guard_adopter_config.py": 1,
+    "test_post_compact_capture.py": 1,
+    "test_python_floor.py": 1,
+    "test_quickstart_doctor_example.py": 1,
+    "test_reflect_trigger_plan_bridge.py": 1,
+    "test_reinject.py": 1,
+    "test_security_regression.py": 1,
+    "test_session_banner.py": 2,
+    "test_session_signals.py": 1,
+    "test_session_start_interpreter_warn.py": 1,
+    "test_session_start_maintenance_warn.py": 1,
+    "test_session_start_source_aware.py": 1,
+    "test_session_start_toc_gating.py": 1,
+    "test_session_start_wall.py": 1,
+    "test_speedbump_metacognitive.py": 1,
+    "test_stop_gate.py": 5,
+    "test_stop_gate_dormancy.py": 1,
+    "test_subagent_stop.py": 2,
+    "test_task_router.py": 4,
+    "test_write_guard_time_budget.py": 1,
+    "test_xdist_never_ran.py": 1,
+    "test_zone_watch.py": 1,
+}
+
+_HOOK_RUNNER_SPAWNS = frozenset({"run", "Popen", "check_output", "check_call", "call"})
+
+
+def _private_hook_runner_census() -> dict[str, int]:
+    """Per-file count of the private hook runners (the block comment above),
+    keyed by the path under ``tests/``. ``tests/_hook_runner.py``, the shared
+    module, is left out by construction. A spawn is a call on the
+    ``subprocess`` module (or its ``sp`` alias), or a bare ``Popen``,
+    ``check_output`` or ``check_call``, so a local helper named ``run`` is not
+    one; an argv built in a variable is invisible here, the census's stated
+    limit."""
+
+    def spawn_name(call: ast.Call) -> str:
+        fn = call.func
+        if isinstance(fn, ast.Attribute):
+            return fn.attr if ast.unparse(fn.value) in ("subprocess", "sp") else ""
+        name = getattr(fn, "id", "")
+        return name if name in ("Popen", "check_output", "check_call") else ""
+
+    def argv0(call: ast.Call) -> str | None:
+        argv = call.args[0] if call.args else None
+        if isinstance(argv, (ast.List, ast.Tuple)) and argv.elts:
+            return ast.unparse(argv.elts[0])
+        return None
+
+    census: dict[str, int] = {}
+    for path in sorted(checkout_rglob(TESTS_DIR, "*.py")):
+        rel = path.relative_to(TESTS_DIR).as_posix()
+        if rel == "_hook_runner.py":
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+        except (SyntaxError, UnicodeDecodeError):  # pragma: no cover - reds elsewhere
+            continue
+        for fn in ast.walk(tree):
+            if not isinstance(fn, ast.FunctionDef) or fn.name.startswith("test_"):
+                continue
+            heads = {argv0(c) for c in ast.walk(fn)
+                     if isinstance(c, ast.Call) and spawn_name(c) in _HOOK_RUNNER_SPAWNS}
+            heads -= {None, "'git'"}
+            if heads and "HOOK" in ast.unparse(fn).upper():
+                census[rel] = census.get(rel, 0) + 1
+    return census
+
+
+def test_private_hook_runners_only_shrink():
+    """The shared hook runner, held as a mechanism: a new private runner reds
+    here (the adopter-axes pack's 2-B)."""
+    census = _private_hook_runner_census()
+    assert census, (
+        "the census found ZERO private hook runners, which cannot be right while "
+        "_PRIVATE_HOOK_RUNNERS is non-empty -- the matcher broke and this contract "
+        "would pass having checked nothing."
+    )
+    grew = {
+        rel: (count, _PRIVATE_HOOK_RUNNERS.get(rel, 0))
+        for rel, count in census.items()
+        if count > _PRIVATE_HOOK_RUNNERS.get(rel, 0)
+    }
+    assert not grew, (
+        f"new private hook runner(s), file -> (found, allowed): {grew}. Spawn the hook "
+        "through tests/_hook_runner.py (run_hook for the source script under HOOK_PYTHON, "
+        "run_hook_as_wired for the entry a tree's settings wire). If it must spawn by "
+        "hand, raise that file's entry deliberately and say why in a comment beside it."
+    )
+    shrank = {
+        rel: (census.get(rel, 0), allowed)
+        for rel, allowed in _PRIVATE_HOOK_RUNNERS.items()
+        if census.get(rel, 0) < allowed
+    }
+    assert not shrank, (
+        f"private hook runner(s) removed, file -> (found, allowed): {shrank}. Good -- now "
+        "lower the entry (or delete the key at zero) so the ratchet cannot silently "
+        "absorb a new one in the space you just freed."
+    )
+
 # `Path.exists()`, `is_file()`, `is_dir()` and `is_symlink()` share ONE
 # `_ignore_error` table that admits ENOENT/ENOTDIR/EBADF/ELOOP and does NOT admit
 # EACCES -- and CPython MOVED that boundary: 3.14 rewrote all four over

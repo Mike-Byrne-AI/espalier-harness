@@ -381,7 +381,7 @@ class TestWorktreeInUseIsNotLitter:
         # The whole hook as Claude Code runs it for a worktree session:
         # CLAUDE_PROJECT_DIR at the project root, the payload's cwd inside the
         # worktree (docs/external/cc-worktrees.md).
-        from test_hooks import run_hook  # noqa: WPS433 (intentional cross-test reuse)
+        from _hook_runner import run_hook  # noqa: WPS433
         _seed_commit(tmp_path)
         _exclude_worktrees(tmp_path)
         live = _add_worktree(tmp_path, "live")
