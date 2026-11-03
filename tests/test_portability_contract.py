@@ -68,8 +68,13 @@ def _all_hook_commands() -> list[str]:
 #: under ``python3``, the name a python-only host (Windows with only ``python``
 #: on PATH) does not answer. Command-shaped only: hook-authoring quotes guard
 #: patterns (``python3 -W ignore -c``) and ``/tmp/`` examples as data about the
-#: guard, and those stay allowed (DEF-1049).
-_PYTHON3_COMMAND = re.compile(r"(?<![\w./-])python3\s+(?:tools/|scripts/|-m\s+espalier\b)")
+#: guard, and those stay allowed (DEF-1049). Interpreter flags may stand before
+#: the target (``python3 -X utf8 tools/...``, the hooks' as-wired form); the
+#: match never crosses a line.
+_PYTHON3_COMMAND = re.compile(
+    r"(?<![\w./-])python3(?:[ \t]+-[A-Za-z]{1,2}(?:[ \t]+(?!-|\./|tools/|scripts/)\w+)?)*"
+    r"[ \t]+(?:(?:\./)?(?:tools|scripts)/|-m[ \t]+espalier\b)"
+)
 
 
 class TestOperatorDocsPortability:
@@ -125,7 +130,9 @@ class TestOperatorDocsPortability:
         (skill / "SKILL.md").write_text(
             "Members derived by: `python3 tools/cc/sister_site_probe.py --json`\n"
             "```bash\npython3 -m espalier audit .\n```\n"
-            "kept: `python3 -W ignore -c` denies on both shells; `python3 - <<'PY'`; /tmp/x\n",
+            "kept: `python3 -W ignore -c` denies on both shells; `python3 - <<'PY'`; /tmp/x\n"
+            "`python3 -X utf8 tools/cc/hooks/write_guard.py` and `python3 ./scripts/y.py`\n"
+            "wrapped prose: run python3\ntools/ never joins two lines\n",
             encoding="utf-8")
         for kind in ("agents", "commands"):
             (tmp_path / ".claude" / kind).mkdir(parents=True)
@@ -142,7 +149,10 @@ class TestOperatorDocsPortability:
         assert ".claude/skills/probe-skill/SKILL.md:1: python3 tools/" in str(skills_red.value)
         assert ".claude/skills/probe-skill/SKILL.md:3: python3 -m espalier" in str(skills_red.value)
         assert "espalier/assets/docs/PROBE.md:1: python3 scripts/" in str(skills_red.value)
-        assert ":4:" not in str(skills_red.value)
+        assert ".claude/skills/probe-skill/SKILL.md:6: python3 -X utf8 tools/" in str(skills_red.value)
+        assert ".claude/skills/probe-skill/SKILL.md:6: python3 ./scripts/" in str(skills_red.value)
+        assert ":7:" not in str(skills_red.value)
+        assert ":5:" not in str(skills_red.value)  # the kept line: guard patterns and /tmp/ as data
         with pytest.raises(AssertionError) as workflows_red:
             docs.test_operator_docs_no_unix_only_default_workflows()
         assert "probe.js: contains 'python3 '" in str(workflows_red.value)
@@ -2647,8 +2657,9 @@ class TestShippedProofFencesNameTheRepositorysRunner:
 #: and the canonical resolver line names ``'python3'`` quoted, as a candidate,
 #: so it never matches.
 FENCED_PYTHON3 = re.compile(
-    r"(?:^\s*\(?|[;&|]|\$\(|\b(?:then|do|else)\s)\s*"
-    r"(?:(?:[A-Za-z_]\w*=\S*|env|exec|nohup|sudo|time)\s+)*python3(?=\s|;|\)|$)"
+    r"(?:^\s*\(?|[;&|{!`]|\$\(|\b(?:then|do|else|elif|if|while|until)\s)\s*"
+    r"(?:(?:[A-Za-z_]\w*=\S*|env|exec|nohup|sudo|time|command|xargs|timeout[ \t]+\S+|uv[ \t]+run)\s+)*"
+    r"python3(?=\s|;|\)|`|$)"
 )
 
 
@@ -2701,6 +2712,10 @@ class TestShippedFencesRunNoBarePython3:
             "echo python3",
             "Host: OS=Darwin; python3=yes python=no (python3 only)",
             "(python3 -V)",
+            "if python3 -c 'pass'; then :; fi",
+            "timeout 30 python3 x.py | xargs python3 y.py",
+            "{ python3 -V; } && uv run python3 z.py",
+            "out=`python3 -V`; PY=${PY:-python} \"$PY\" -V",
             "```",
             "1. a list item",
             "    ```bash",
@@ -2709,7 +2724,7 @@ class TestShippedFencesRunNoBarePython3:
         ]) + "\n", encoding="utf-8")
         seen = [lineno for lineno, line in (*_fenced_lines(doc), *_deep_fenced_lines(doc))
                 if FENCED_PYTHON3.search(line)]
-        assert seen == [3, 4, 5, 6, 7, 15, 19]
+        assert seen == [3, 4, 5, 6, 7, 15, 16, 17, 18, 19, 23]
 
 
 # ---------------------------------------------------------------------------
@@ -2735,11 +2750,11 @@ def _matrix_values(matrix: object, key: str) -> list[str] | None:
     as an expression this reader does not expand."""
     if not isinstance(matrix, dict):
         return None
-    base = matrix.get(key)
-    if base is not None and not isinstance(base, list):
+    base, include = matrix.get(key), matrix.get("include") or []
+    if (base is not None and not isinstance(base, list)) or not isinstance(include, list):
         return None
     values = [str(v) for v in base or []]
-    values += [str(inc[key]) for inc in matrix.get("include") or [] if isinstance(inc, dict) and key in inc]
+    values += [str(inc[key]) for inc in include if isinstance(inc, dict) and key in inc]
     return values or None
 
 
@@ -2754,7 +2769,7 @@ def _runner_labels(job: dict) -> list[str] | None:
         m = _MATRIX_REF.match(item.strip())
         if m:
             values = _matrix_values((job.get("strategy") or {}).get("matrix"), m.group(1))
-            if values is None:
+            if values is None or any("${{" in v for v in values):
                 return None
             labels += values
         elif "${{" in item:
@@ -2764,10 +2779,27 @@ def _runner_labels(job: dict) -> list[str] | None:
     return labels
 
 
+def can_be_windows(labels: list[str] | None) -> bool:
+    """A runner whose labels this reader could not expand, a Windows label, or
+    a self-hosted runner that names no other operating system."""
+    if labels is None:
+        return True
+    low = [label.lower() for label in labels]
+    if any("windows" in label for label in low):
+        return True
+    return "self-hosted" in low and not any(os_ in label for label in low for os_ in ("linux", "ubuntu", "macos"))
+
+
+#: A step condition that keeps the step off Windows (a probe of python3 there
+#: is spelled under one).
+_OFF_WINDOWS = re.compile(r"runner\.os\s*(?:!=\s*'Windows'|==\s*'(?:Linux|macOS)')")
+
+
 def _windows_reachable_python3(path: Path) -> list[str]:
     """``job: line`` for each ``run:`` line naming a bare ``python3`` in a job
-    of ``path`` whose runner can be Windows. A runner this reader cannot expand
-    is read as Windows: an unread expression is never a pass."""
+    of ``path`` whose runner can be Windows, outside a step whose ``if:`` keeps
+    it off Windows. A runner this reader cannot expand is read as Windows: an
+    unread expression is never a pass. A shell comment line is not read."""
     import yaml
 
     jobs = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("jobs") or {}
@@ -2775,13 +2807,14 @@ def _windows_reachable_python3(path: Path) -> list[str]:
     for job_id, job in jobs.items():
         if not isinstance(job, dict) or "steps" not in job:
             continue  # a reusable workflow's call runs no steps of its own
-        labels = _runner_labels(job)
-        if labels is not None and not any("windows" in label.lower() for label in labels):
+        if not can_be_windows(_runner_labels(job)):
             continue
         for step in job["steps"] or []:
-            run = step.get("run") if isinstance(step, dict) else None
-            for line in (run or "").splitlines() if isinstance(run, str) else ():
-                if BARE_PYTHON3.search(line):
+            if not isinstance(step, dict) or _OFF_WINDOWS.search(str(step.get("if") or "")):
+                continue
+            run = step.get("run")
+            for line in run.splitlines() if isinstance(run, str) else ():
+                if not line.lstrip().startswith("#") and BARE_PYTHON3.search(line):
                     hits.append(f"{job_id}: {line.strip()}")
     return hits
 
@@ -2800,7 +2833,8 @@ class TestWindowsReachableWorkflowStepsRunNoBarePython3:
                 for path in _workflow_files() for hit in _windows_reachable_python3(path)]
         assert not hits, (
             "a workflow step whose runner can be Windows names a bare python3; spell python "
-            "(setup-python puts it first on every runner) or pin the job to ubuntu:\n  "
+            "(setup-python puts it first on every runner), pin the job to ubuntu, or, for a step "
+            "that probes python3 on purpose, keep it off Windows with `if: runner.os != 'Windows'`:\n  "
             + "\n  ".join(hits)
         )
 
@@ -2811,8 +2845,7 @@ class TestWindowsReachableWorkflowStepsRunNoBarePython3:
         reachable = []
         for path in _workflow_files():
             for job_id, job in ((yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("jobs") or {}).items():
-                labels = _runner_labels(job) if isinstance(job, dict) and "steps" in job else []
-                if labels is None or any("windows" in label.lower() for label in labels):
+                if isinstance(job, dict) and "steps" in job and can_be_windows(_runner_labels(job)):
                     reachable.append(f"{path.name}::{job_id}")
         assert reachable, "no job reads as Windows-reachable: the reader went blind, or the matrix lost Windows"
 
@@ -2856,8 +2889,36 @@ class TestWindowsReachableWorkflowStepsRunNoBarePython3:
                 runs-on: windows-latest
                 steps:
                   - run: python -m pytest -q; python3-config --prefix; python3.12 -V
+                  - if: runner.os != 'Windows'
+                    run: command -v python3 && python3 --version
+                  - run: |
+                      # python3 is not this step's interpreter
+                      python x.py
               called:
                 uses: ./.github/workflows/other.yml
+              element:
+                runs-on: ${{ matrix.os }}
+                strategy:
+                  matrix:
+                    os: [ubuntu-latest, "${{ inputs.extra_os }}"]
+                steps:
+                  - run: python3 x.py
+              included-expression:
+                runs-on: ${{ matrix.os }}
+                strategy:
+                  matrix:
+                    os: [ubuntu-latest]
+                    include: ${{ fromJSON(inputs.extra) }}
+                steps:
+                  - run: python3 x.py
+              self-hosted:
+                runs-on: [self-hosted, win-x64]
+                steps:
+                  - run: python3 x.py
+              self-hosted-linux:
+                runs-on: [self-hosted, linux]
+                steps:
+                  - run: python3 x.py
         """), encoding="utf-8")
         shipped = tmp_path / "espalier" / "assets" / "github" / "workflows"
         shipped.mkdir(parents=True)
@@ -2867,7 +2928,9 @@ class TestWindowsReachableWorkflowStepsRunNoBarePython3:
         monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
         assert {p.name: _windows_reachable_python3(p) for p in _workflow_files()} == {
             "planted.yml": ["literal: python3 -m pytest -q", "listed: python3 scripts/x.py",
-                            "included: python3 x.py", "unexpanded: python3 x.py"],
+                            "included: python3 x.py", "unexpanded: python3 x.py",
+                            "element: python3 x.py", "included-expression: python3 x.py",
+                            "self-hosted: python3 x.py"],
             "guard.yml": ["g: python3 g.py"],
         }
 
@@ -2876,26 +2939,48 @@ class TestWindowsReachableWorkflowStepsRunNoBarePython3:
 # A spawn's argv never opens with a bare interpreter name
 # ---------------------------------------------------------------------------
 
-_ARGV_ROOTS = ("espalier", "tools/cc", "scripts", "tests")
+_ARGV_ROOTS = ("espalier", "tools", "scripts", "tests", "bench")
 #: Scanner corpus and the vendored mirrors, which their sources govern.
 _ARGV_EXEMPT = ("tests/fixtures/", "espalier/_vendor/")
 _SPAWN_CALLS = frozenset({"run", "Popen", "check_output", "check_call", "call"})
+#: The harness's own bounded spawns (docs/CONVENTIONS.md: tools/cc spawns go
+#: through them), read by name wherever they are called from.
+_BOUNDED_SPAWNS = frozenset({"run_bounded", "spawn_checked"})
 _BARE_INTERPRETERS = frozenset({"python", "python3"})
 
 
+def _argv_head(argv: ast.expr | None, held: dict[str, ast.expr]) -> object:
+    """The first element of a literal argv: inline, held by a name the file
+    assigns a literal to, or the left side of a ``+``."""
+    if isinstance(argv, ast.BinOp) and isinstance(argv.op, ast.Add):
+        argv = argv.left
+    if isinstance(argv, ast.Name):
+        argv = held.get(argv.id)
+    if isinstance(argv, (ast.List, ast.Tuple)) and argv.elts and isinstance(argv.elts[0], ast.Constant):
+        return argv.elts[0].value
+    return None
+
+
 def _bare_interpreter_spawns(path: Path) -> list[tuple[int, str]]:
-    """``(lineno, name)`` for each ``subprocess`` spawn in ``path`` whose argv
-    is a literal list or tuple opening with a bare ``python`` or ``python3``.
-    A spawn is a call of the module under any alias the file binds, or of a
-    name it imports from it; a local helper named ``run`` is not one."""
+    """``(lineno, name)`` for each spawn in ``path`` whose argv opens with a
+    bare ``python`` or ``python3``. A spawn is a ``subprocess`` call under any
+    alias the file binds or any name it imports from it, or the harness's own
+    ``run_bounded``/``spawn_checked``; a local helper named ``run`` is not one.
+    The argv is read inline, through a name the file assigns a literal list or
+    tuple to, or as the left side of a ``+``; one built any other way, and
+    ``os.exec*`` or a shell string, are not read."""
     tree = ast.parse(path.read_text(encoding="utf-8-sig"))
     modules: set[str] = set()
-    bare: set[str] = set()
+    bare: set[str] = set(_BOUNDED_SPAWNS)
+    held: dict[str, ast.expr] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             modules |= {a.asname or a.name for a in node.names if a.name == "subprocess"}
         elif isinstance(node, ast.ImportFrom) and node.module == "subprocess":
             bare |= {a.asname or a.name for a in node.names if a.name in _SPAWN_CALLS}
+        elif (isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+              and isinstance(node.value, (ast.List, ast.Tuple))):
+            held[node.targets[0].id] = node.value
     hits = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -2903,12 +2988,14 @@ def _bare_interpreter_spawns(path: Path) -> list[tuple[int, str]]:
         f = node.func
         if not ((isinstance(f, ast.Attribute) and f.attr in _SPAWN_CALLS
                  and isinstance(f.value, ast.Name) and f.value.id in modules)
+                or (isinstance(f, ast.Attribute) and f.attr in _BOUNDED_SPAWNS)
                 or (isinstance(f, ast.Name) and f.id in bare)):
             continue
-        argv = node.args[0] if node.args else next((k.value for k in node.keywords if k.arg == "args"), None)
-        if (isinstance(argv, (ast.List, ast.Tuple)) and argv.elts and isinstance(argv.elts[0], ast.Constant)
-                and argv.elts[0].value in _BARE_INTERPRETERS):
-            hits.append((node.lineno, argv.elts[0].value))
+        argv = node.args[0] if node.args else next(
+            (k.value for k in node.keywords if k.arg in ("args", "argv")), None)
+        head = _argv_head(argv, held)
+        if head in _BARE_INTERPRETERS:
+            hits.append((node.lineno, str(head)))
     return hits
 
 
@@ -2924,11 +3011,12 @@ def _argv_population() -> list[Path]:
 
 
 class TestSpawnsNameTheirInterpreter:
-    """No spawn in the engine, the hooks and tools, the scripts or the suite
-    opens its argv with a bare ``python`` or ``python3``: the name resolves on
-    the parent's PATH, so on a python-only host (``python3`` absent, or the
-    Store stub) the spawn fails or runs another interpreter than the one the
-    caller runs under. Spell ``sys.executable``. The probes' ``-c`` bodies are
+    """No spawn the reader sees (:func:`_bare_interpreter_spawns`) in the
+    engine, the tools, the scripts, the suite or the bench opens its argv with a
+    bare ``python`` or ``python3``: the name resolves on the parent's PATH, so
+    on a python-only host (``python3`` absent, or the Store stub) the spawn
+    fails or runs another interpreter than the one the caller runs under. Spell
+    ``sys.executable``. The probes' ``-c`` bodies are
     read by the ledger's own ratchet
     (``tests/test_check_ledger_probes.py::TestProbeShapesAreRatcheted::
     test_no_new_probe_spawns_a_literal_interpreter_inside_its_program``),
@@ -2967,10 +3055,17 @@ class TestSpawnsNameTheirInterpreter:
             def run(argv):
                 return argv
             run(["python3", "-c", "pass"])
+            argv = ["python3", "-m", "x"]
+            subprocess.run(argv)
+            subprocess.run(["python"] + sys.argv[1:])
+            run_bounded(["python3", "x.py"], timeout=5)
+            _CHK.spawn_checked(argv=("python", "-c", "1"), root=None)
+            subprocess.run(NAMES[0:1])
         """), encoding="utf-8")
         (tmp_path / "tests" / "fixtures" / "corpus.py").write_text(
             "import subprocess\nsubprocess.run(['python3'])\n", encoding="utf-8")
         monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
         assert [p.relative_to(tmp_path).as_posix() for p in _argv_population()] == ["tests/test_planted.py"]
-        assert _bare_interpreter_spawns(tmp_path / "tests" / "test_planted.py") == [
-            (6, "python3"), (7, "python"), (8, "python3"), (9, "python")]
+        assert sorted(_bare_interpreter_spawns(tmp_path / "tests" / "test_planted.py")) == [
+            (6, "python3"), (7, "python"), (8, "python3"), (9, "python"),
+            (17, "python3"), (18, "python"), (19, "python3"), (20, "python")]

@@ -61,25 +61,39 @@ proof**. Treat the unflagged invocation as the actual readiness gate.
 
 Every pre-release check once ran the harness on a tree shaped like the harness
 itself (`DEF-975`). Before Tier 3, whoever cuts the tag prints the adopter-axes
-report and pastes it into the release notes:
+report, reads it, and keeps it for the release notes:
 
 ```bash
-python tests/_axis_registry.py
+python tests/_axis_registry.py > axes.md
 ```
 
 It prints two tables. The first is the registry's cells: each stack, host
-shape, session path, root and tree value, with the test that proves it or the
-gap that says why none does. The second is the release instruments (the fresh
-clone gate, the release matrix's stages, the release workflow's legs, the
-`test.yml` cells, the portability matrix, the clean checkout, the post-merge
-legs and the perturbed cell once it is built), with the value each runs the
-harness at. An axis proven at fewer than two values, or that every instrument
-ran at one value, reads **a blind axis**, and the notes say so in those words.
+shape, session path, root, tree and target operating system value, with the
+test that proves it or the gap that says why none does. The second is the
+release instruments (the fresh clone gate, the release matrix's stages, the
+release workflow's legs, the `test.yml` cells, the portability matrix, the
+clean checkout, the post-merge legs, the end-to-end bench and the perturbed
+cell once it is built), with the value each instrument's own run is at: the
+tree it installs into, the names its host answers, its root, and whether one
+run carries hook state. An axis proven at fewer than two values, or that every
+instrument's own run is at one value, reads **a blind axis**, and the notes say
+so in those words.
+
+`/ship --release` and the by-hand tag both write a one-line release body, so
+the report is appended once the release exists (after the tag, in the release
+procedure below):
+
+```bash
+gh release view vX.Y.Z --json body -q .body > notes.md
+cat axes.md >> notes.md
+gh release edit vX.Y.Z --notes-file notes.md
+```
 
 The exit is disclosure, not a block: a blind axis ships, named. A new release
 instrument joins `INSTRUMENTS` in `tests/_axis_registry.py`, and
-`tests/test_axis_registry.py` reds while a job of a workflow that runs the
-suite is in no row.
+`tests/test_axis_registry.py` reds while a job of an instrument workflow is in
+no row, while a row names a job that is gone, and while a workflow is neither
+an instrument workflow nor a `NOT_INSTRUMENTS` entry with its reason.
 
 ## Tier 3 — Publish gate (about two hours on the self-host box: step 0 about 25 minutes per interpreter, then the matrix, measured 55:39 wall on 2026-09-23 with stage 02 alone 45:14; `DEF-918` and `DEF-919` row the two levers that halve it)
 

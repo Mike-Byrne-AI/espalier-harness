@@ -271,12 +271,19 @@ def render_table(cells: tuple[AxisCell, ...] = AXIS_REGISTRY) -> str:
 INSTRUMENT_AXES: tuple[str, ...] = ("stack", "host", "root", "session")
 OUTSIDE_VALUES = frozenset({"both", "none", "not measured", "not built"})
 
-#: The workflows whose jobs run the suite or a release instrument; the contract
-#: derives the list from the run steps and names every job of these in a row.
+#: The workflows whose jobs run the suite or a release instrument: the contract
+#: names every job of these in a row, and holds every workflow to this list or
+#: to NOT_INSTRUMENTS.
 INSTRUMENT_WORKFLOWS: tuple[str, ...] = (
-    "clean-checkout.yml", "portability.yml", "post-merge.yml", "post-merge-windows.yml",
-    "release.yml", "test.yml",
+    "clean-checkout.yml", "end-to-end-bench.yml", "portability.yml", "post-merge.yml",
+    "post-merge-windows.yml", "release.yml", "test.yml",
 )
+NOT_INSTRUMENTS: dict[str, str] = {
+    "benchmark.yml": "the guard's bypass benchmark over its command corpus; it installs the harness into no tree",
+    "harness-guard.yml": "the merge gate's own checks (title, ci_guard, freshness, lint, mypy); it runs no suite",
+    "publish.yml": "builds and uploads a tagged release; its gate calls release.yml, which is read",
+    "refresh-externals.yml": "refreshes the external pins; it runs no suite",
+}
 
 
 @dataclass(frozen=True)
@@ -296,33 +303,41 @@ INSTRUMENTS: tuple[Instrument, ...] = (
     # python only, the Mac python3 only); which box cuts a tag is not recorded.
     Instrument("fresh_clone_gate (Tier 3 step 0)", ("scripts/fresh_clone_gate.py",),
                "python", "not measured", "not measured", "single_event"),
-    Instrument("final_release_matrix stage 1, the source checkout's tests",
+    # Stages 1 to 3 run the suite: the source checkout's, the extracted archive's
+    # after a pip install, and the sdist's where it ships test modules.
+    Instrument("final_release_matrix stages 1 to 3, the checkout's, archive's and sdist's tests",
                ("scripts/final_release_matrix.py",), "python", "not measured", "not measured", "single_event"),
-    # Stages 2 to 4 smoke the built archive, sdist and wheel on a README tree
-    # (doctor_target); 5 and 6 read the artifacts and install nothing.
-    Instrument("final_release_matrix stages 2 to 6, the artifacts",
+    # Stage 4 smokes the wheel on a README tree (doctor_target); 5 and 6 read
+    # the artifacts and install nothing.
+    Instrument("final_release_matrix stages 4 to 6, the wheel smoke and the artifacts",
                ("scripts/final_release_matrix.py",), "none", "not measured", "not measured", "none"),
     # wheel_smoke's target is an empty `git init` (TP-468 3-B gives it a stack).
+    # Every row with a Windows leg reads "not measured" for host: windows-latest
+    # answering python3 is probable, not measured (TP-468 0-C).
     Instrument("release.yml matrix-smoke, the wheel on three operating systems",
-               ("release.yml::matrix-smoke",), "none", "both", "plain", "none"),
+               ("release.yml::matrix-smoke",), "none", "not measured", "plain", "none"),
     Instrument("release.yml release-check", ("release.yml::release-check",),
                "python", "both", "plain", "single_event"),
     Instrument("test.yml test and test-serial, the required cells",
                ("test.yml::test", "test.yml::test-serial"), "python", "both", "plain", "single_event"),
-    Instrument("test.yml tier and the audit jobs", (
-        "test.yml::tier", "test.yml::ripgrep-parity", "test.yml::stdlib-audit",
-        "test.yml::code-review-audit", "test.yml::artifact-parity", "test.yml::workflow-lint",
+    Instrument("the tier computations and the audit jobs", (
+        "test.yml::tier", "clean-checkout.yml::clean-tier", "test.yml::ripgrep-parity",
+        "test.yml::stdlib-audit", "test.yml::code-review-audit", "test.yml::artifact-parity",
+        "test.yml::workflow-lint",
     ), "none", "both", "plain", "none"),
     Instrument("the perturbed cell (TP-468 3-A)", (), "not built", "not built", "not built", "not built"),
-    # windows-latest answering python3 is probable, not measured (TP-468 0-C).
     Instrument("portability.yml on ubuntu, windows and macos", ("portability.yml::portability",),
+               "python", "not measured", "plain", "single_event"),
+    Instrument("clean-checkout.yml, the full tier with the heavy stages", ("clean-checkout.yml::clean-checkout",),
                "python", "both", "plain", "single_event"),
-    Instrument("clean-checkout.yml, the heavy stages", (
-        "clean-checkout.yml::clean-tier", "clean-checkout.yml::clean-checkout",
-    ), "python", "both", "plain", "single_event"),
-    Instrument("post-merge.yml and post-merge-windows.yml, main after each merge", (
-        "post-merge.yml::full-tier", "post-merge-windows.yml::serial-leg",
-    ), "python", "both", "plain", "single_event"),
+    Instrument("post-merge.yml, main after each merge", ("post-merge.yml::full-tier",),
+               "python", "both", "plain", "single_event"),
+    Instrument("post-merge-windows.yml, main's serial files on Windows", ("post-merge-windows.yml::serial-leg",),
+               "python", "not measured", "plain", "single_event"),
+    # It installs Claude Code and drives a live session; which tree, host, root
+    # and session it runs the harness at is not read here.
+    Instrument("end-to-end-bench.yml, a live Claude Code session", ("end-to-end-bench.yml::e2e",),
+               "not measured", "not measured", "not measured", "not measured"),
 )
 
 
@@ -356,13 +371,15 @@ def render_instruments(
     for i in instruments:
         lines.append(f"| {i.name} | " + " | ".join(getattr(i, axis) for axis in INSTRUMENT_AXES) + " |")
     lines.append("")
+    # Each row is the instrument's OWN machine, tree, root and run; the tests it
+    # runs reach the cells above, which this half does not credit.
     for axis, values in instrument_values_by_axis(instruments, cells).items():
         if len(values) >= 2:
-            lines.append(f"- {axis}: the instruments reach {len(values)} values ({', '.join(values)}).")
+            lines.append(f"- {axis}: the instruments' own runs take {len(values)} values ({', '.join(values)}).")
         elif values:
-            lines.append(f"- {axis}: **a blind axis** -- every instrument ran at one value ({values[0]}).")
+            lines.append(f"- {axis}: **a blind axis** -- every instrument's own run is at one value ({values[0]}).")
         else:
-            lines.append(f"- {axis}: **a blind axis** -- no instrument reaches a value its cells name.")
+            lines.append(f"- {axis}: **a blind axis** -- no instrument's own run is at a value its cells name.")
     return "\n".join(lines)
 
 

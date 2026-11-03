@@ -1431,8 +1431,9 @@ total; it shrinks each review.
       re-pinned on air-work's lane (#469);
     - Windows-reachable workflow steps naming `python3`: none. Three jobs can reach a
       Windows runner (the portability matrix, read fail-closed on its `fromJSON`; the
-      release smoke matrix; the post-merge Windows leg). The `python3` steps that exist
-      (`harness-guard.yml`, both copies, and `publish.yml`) run on ubuntu;
+      release smoke matrix; the post-merge Windows leg). The one `python3` step that
+      exists (`harness-guard.yml`, both copies) runs on ubuntu, and `publish.yml`'s one
+      match is a comment saying not to use it;
     - fenced `python3` at a command position: none in the command, agent and skill bodies
       (182 fences), six lines in the packaged docs;
     - fifteen GNU-only or BSD-only flag shapes in the same fences: zero hits, so no ban is
@@ -1465,9 +1466,13 @@ total; it shrinks each review.
       value each runs at on stack, host, root and session, read from each instrument's own
       lines) and `render_report`, which the module prints; `tests/test_axis_registry.py`
       gains `TestTheInstruments` and the step's mutation on the live registry; and
-      `docs/RELEASE_CHECKLIST.md` gains the step before Tier 3. At `68c799d` every
-      instrument axis reads blind: every tree is the harness's own or none, no instrument
-      host is a perturbed shape, every root is plain, and no instrument carries a session.
+      `docs/RELEASE_CHECKLIST.md` gains the step before Tier 3, with the commands that
+      append the report to the release body once the release exists. At `68c799d` every
+      instrument axis reads blind on each instrument's **own** run: its tree is the
+      harness's own or none, its host is no perturbed shape, its root is plain, and no
+      run carries hook state. The tests those instruments run do reach the cells (the
+      wired matrix's three host shapes, the session test's six stacks); the instrument
+      half does not credit them, and its lines say "own run".
     - Sibling sites (root `CLAUDE.md` Core Rule 12): eight lines in
       `docs/TROUBLESHOOTING.md`, `docs/FRESHNESS.md`, `docs/TASK_RECIPES.md` and
       `docs/ENV_CATALOG.md` spell `python` (mirrors synced).
@@ -1476,7 +1481,15 @@ total; it shrinks each review.
       skill and agent bodies. That population found the eight doc lines.
     - `DEF-1049`'s check matches `python3` at any word start, not only after a backtick.
     - An instrument value counts toward an axis only when it is one of that axis's cells.
-      `both`, `none`, `not measured` and `not built` are shown and never count.
+      `both`, `none`, `not measured` and `not built` are shown and never count. A row with
+      a Windows leg reads `not measured` for host, as 0-C says (windows-latest answering
+      `python3` is probable, not measured).
+    - Every workflow is an instrument workflow or a `NOT_INSTRUMENTS` entry with its
+      reason; `end-to-end-bench.yml` is a row whose values are not measured.
+    - For 3-A and 3-B: a row's values are declared, not read from its jobs. A lane that
+      makes an instrument's own run reach a new cell value (3-A's spaced root and Store
+      stub, 3-B's `--stack`) changes that row in the same diff, and nothing reds if a
+      later edit drops the perturbation and leaves the row.
   - Earn-the-red: each collector against a planted tree (the `DEF-1049` probe's form),
     and live at `68c799d`. The argv collector reds on the five sites, the fence collector
     on the six doc lines, and the command-shaped check on the two skill lines and the doc
@@ -1485,6 +1498,38 @@ total; it shrinks each review.
     (`test_shipped_bodies_spell_no_python3_command`: red at the base, green at the head).
     3-F's mutation runs on the live registry: removing either proven `target_os` cell
     prints that axis blind.
+  - Red-team, on a snapshot of `54e0d378` with edits frozen: `code-reviewer` REQUEST
+    CHANGES (1 blocker, 7 should-fix, 7 nits) and `failure-mode-reviewer` REQUEST CHANGES
+    (1 regression, 4 gaps, 5 rough edges). Both found the blocker: a raw workflow glob
+    in `tests/test_axis_registry.py` that the live-tree walk ratchet reds. One fix batch:
+    - the walk goes through git's view;
+    - the rows are pinned to live jobs and scripts, with the placeholder and outsider
+      rules and an exact workflow partition;
+    - the stages are re-split (2 and 3 run the suite);
+    - `not measured` is required on Windows legs;
+    - the instrument lines say "own run";
+    - the workflow reader fails closed on an expression matrix element, an expression
+      `include` and a self-hosted runner with no OS label, and skips a step kept off
+      Windows and a shell comment line;
+    - the spawn reader reads a held name, a `+` left side, `run_bounded` and
+      `spawn_checked`, and the bench and all of `tools/`;
+    - the fence regex takes `if`/`while`/`until`/`elif`, `!`, `{`, backticks, `timeout`,
+      `xargs`, `command` and `uv run`;
+    - the command regex takes interpreter flags and `./`, and never crosses a line;
+    - the planted kept-line assertion reads the right line;
+    - the checklist names the release body and the commands that append the report.
+
+    Five in-process mutants of the new registry pins were each killed. Not taken, with
+    reasons:
+    - a witness tying a counted value to its job's lines (latent until 3-A, named for it
+      above);
+    - a per-line opt-out for a deliberate bare-name spawn (none exists);
+    - `os.exec*`, a shell string and an argv built any other way (named in the reader's
+      docstring);
+    - `$(command -v python3)`, a lookup rather than a run, live in
+      `espalier/assets/docs/CHEAT-SHEET.md` and the release checklist's gate line (named
+      for the dispatcher);
+    - the duplicate `_BARE_INTERPRETERS` beside `tools/cc/check_ledger_probes.py`'s.
   - Reach (collectors lane): `DEF-1049` **CLOSED** (struck). `DEF-975`'s collectors row
     is **CLOSED by 3-D** with the `newline=` arm **NOT REACHED** (0-E). Its release
     instruments row is half closed: 3-F lands and 3-B is open. The row stays open.
