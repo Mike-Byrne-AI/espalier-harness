@@ -1270,9 +1270,12 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run, now: datetime
     ``{"unread": reason}`` and the rest still come back. ``now`` is for tests."""
     now = now or datetime.now(timezone.utc)
     board: dict = {"read_at": now.strftime("%Y-%m-%dT%H:%M:%SZ")}
-    base = _merge_rules.base_branch(root)
+    # The base from the rules read, which tells a default-branch name git did
+    # not answer for apart from one it named, and the merging line says so.
+    rules = _merge_rules.read(root, None)
+    base = rules[0]
     board["base"] = base
-    rules = _merge_rules.read(root, None, base)
+    board["base_unread"] = rules[1] == _merge_rules.BASE_UNANSWERED
     board["merging"] = _merge_rules.line(*rules)
     machine, machine_how = mail.machine_setting(root, run=run_)
     board["seat"] = machine or ""
@@ -1818,6 +1821,10 @@ def under_two(assignments: list[dict], rows: list[dict], dispatcher: str = "") -
 def render(board: dict) -> str:
     lines = [f"board -- read live {board.get('read_at')}" + (f" by {board['seat']}" if board.get("seat") else "")]
     lines.append(f"merging:  {board.get('merging') or 'unread (no branch-protection answer)'}")
+    if board.get("base_unread"):
+        # Every section below reads the base: a guessed one is said once, here.
+        lines.append(f"base:     {board.get('base') or 'main'} assumed: git gave no name for origin's default "
+                     "branch in time, so every section below reads that branch")
     pm = board.get("post_merge") or {}
     base = board.get("base") or "main"
     label = f"{base + ':':<10}"

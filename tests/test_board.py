@@ -916,7 +916,9 @@ class TestChecksLine:
         """Dies to: the base dropped from the leg's read or its words (every
         other board test stubs the base to main)."""
         _stub_channel(monkeypatch, board)
-        monkeypatch.setattr(board._merge_rules, "base_branch", lambda root, deadline=None: "trunk")
+        # The base comes from the rules read, which names the branch it read.
+        monkeypatch.setattr(board._merge_rules, "read", lambda root, deadline=None, base=None: (
+            "trunk", 0, json.dumps({"strict": False, "contexts": ["a", "b"]})))
         self._leg_in_checkout(tmp_path)
         run = _gh({"pr list": [], "pr list merged": self._all_green_rollups(), "run list": _GREEN_RUNS,
                    "run list post-merge-windows.yml": [dict(_run("completed", "failure", "d" * 40), databaseId=9)]})
@@ -994,6 +996,24 @@ class TestMailSections:
         assert "open PRs: unread (gh is not on PATH)" in text
         assert "post-merge proof green" in text
         assert "merging:  main: up-to-date rule off" in text
+
+    def test_a_default_branch_git_did_not_name_is_said_on_the_merging_line(self, board, monkeypatch, tmp_path):
+        """The board read its base on its own, so a killed `origin/HEAD` read
+        stood in as `main` with nothing said. Dies to: the base read apart from
+        the rules read again."""
+        _stub_channel(monkeypatch, board)
+        answered = (0, json.dumps({"strict": False, "contexts": ["a", "b"]}))
+        # The base name unread only where the board asks read() for it.
+        monkeypatch.setattr(board._merge_rules, "read", lambda root, deadline=None, base=None: (
+            ("main", board._merge_rules.BASE_UNANSWERED, "") if not base else (base, *answered)))
+        collected = board.collect(tmp_path, run_=_gh({"pr list": [], "run list": _GREEN_RUNS}))
+        text = board.render(collected)
+        assert "merging:  merge rules unread: git gave no name for the remote's default branch" in text
+        assert "base:     main assumed: git gave no name for origin's default branch in time" in text
+        assert collected["base"] == "main" and collected["base_unread"] is True
+        monkeypatch.setattr(board._merge_rules, "read", lambda root, deadline=None, base=None: ("main", *answered))
+        text = board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "run list": _GREEN_RUNS})))
+        assert "\nbase:" not in text and "merging:  main: up-to-date rule off" in text, "control"
 
     def test_an_unread_mail_never_reads_as_no_jobs_or_no_seat(self, board, monkeypatch, tmp_path):
         """The failure-mode review's major: a failed mail read printed "no live

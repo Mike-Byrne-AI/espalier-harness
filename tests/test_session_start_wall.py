@@ -327,6 +327,17 @@ class TestEveryBlockHasAPhase:
         return [n for n in ast.walk(self._func("_run_main")) if isinstance(n, ast.Call)
                 and getattr(n.func, "id", "") == "_phase"]
 
+    def test_main_hands_each_pull_request_line_its_own_read(self):
+        """A listing of None tells a line to read for itself, so a listing main
+        pre-read that did not answer would be read again (a second gh read at
+        its 5 s cap). Dies to: main reading the listing itself again."""
+        calls = [n for n in ast.walk(self._func("_run_main")) if isinstance(n, ast.Call)
+                 and isinstance(n.func, ast.Name)]
+        assert not {c.func.id for c in calls} & {"_read_open_prs", "_read_merged_prs"}
+        for name in ("_open_prs_line", "_merged_prs_line"):
+            (call,) = [c for c in calls if c.func.id == name]
+            assert isinstance(call.args[0], ast.Constant) and call.args[0].value is None, name
+
     def test_the_cut_keeps_every_line_the_full_banner_renders(self):
         build = next(n for n in ast.walk(self._func("_build_context")) if isinstance(n, ast.Call)
                      and getattr(n.func, "id", "") == "_fit_run_lines")

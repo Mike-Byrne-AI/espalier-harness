@@ -7,8 +7,8 @@ share this module: the SessionStart banner's ``Merging:`` line
 (``hooks/session_start.py``) and the board (``board.py``).
 
 One local git question (``origin/HEAD``, no network) and one bounded
-``gh api`` read. Reporter-shaped: anything it cannot read is no line, never a
-guessed setting. Stdlib-only, zero espalier imports; text is 7-bit ASCII.
+``gh api`` read. Reporter-shaped: an answer it cannot read is no line, never a
+guessed setting, and a read that did not answer in time says so. Stdlib-only, zero espalier imports; text is 7-bit ASCII.
 
 The second half is what the rule being OFF leaves to the seats: a pull
 request merges on its own green CI, which tested it merged with the base as
@@ -42,6 +42,14 @@ except ImportError:  # fail-open: ok deliberate -- tools/cc is not on sys.path (
 
 READ_CAP_SECONDS = 2.0       # one branch-protection read (measured 0.48 s median, 2026-10-09), never more
 BASE_REF_CAP_SECONDS = 1.0   # the local origin/HEAD question, never more
+#: ``read``'s returncode for a protection read that did not answer: killed at
+#: its cap, or never started for want of time. ``line`` says so, and ``strict``
+#: reads it as no answer, so nothing about merging is decided on it.
+UNANSWERED = -2
+#: ``read``'s returncode when git did not answer for the default branch's own
+#: name, so no protection was asked: a ``main`` read in its place would print
+#: another branch's rules as this one's.
+BASE_UNANSWERED = -3
 
 
 def _left(deadline: float | None, cap: float) -> float:
@@ -52,24 +60,35 @@ def _ascii(text: str) -> str:
     return text.encode("ascii", "replace").decode("ascii")
 
 
-def base_branch(root: Path, deadline: float | None = None) -> str:
-    """The remote's default branch, from the local ``origin/HEAD`` ref (no
-    network); ``main`` when that ref is unset or cannot be read. The line names
-    the branch it read, so a wrong default shows as a branch GitHub does not
-    know, which prints no line rather than a wrong setting."""
+def _base_answer(root: Path, deadline: float | None) -> str | None:
+    """``base_branch``'s answer, or None when git did not answer in time
+    (killed at its cap, or no time left to ask)."""
     timeout = _left(deadline, BASE_REF_CAP_SECONDS)
     if timeout <= 0.2:
-        return "main"
+        return None
     try:
         result = run_bounded(  # spawn: ok a reporter: a git that cannot answer costs the base name, which falls back to main
             ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=timeout, cwd=str(root),
         )
-    except (OSError, subprocess.SubprocessError):  # fail-open: ok text-fallback -- an unanswered origin/HEAD reads as main, and a wrong guess prints no line
+    except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- a read that did not answer is no name, never main: read() returns BASE_UNANSWERED and line() says so
+        return None
+    except (OSError, subprocess.SubprocessError):  # fail-open: ok text-fallback -- a git that cannot run reads as main, and a wrong guess prints no line
         return "main"
     name = result.stdout.strip() if result.returncode == 0 else ""
     return name.split("/", 1)[1] if name.startswith("origin/") and len(name) > len("origin/") else "main"
+
+
+def base_branch(root: Path, deadline: float | None = None) -> str:
+    """The remote's default branch, from the local ``origin/HEAD`` ref (no
+    network); ``main`` when that ref is unset or cannot be read. The line names
+    the branch it read, so a wrong default shows as a branch GitHub does not
+    know, which prints no line rather than a wrong setting. A git that did not
+    answer in time reads as ``main`` here too; ``read`` tells it apart
+    (``BASE_UNANSWERED``), so a caller that prints the rules takes its base
+    from ``read``."""
+    return _base_answer(root, deadline) or "main"
 
 
 def protection_endpoint(base: str) -> str:
@@ -82,18 +101,26 @@ def read(root: Path, deadline: float | None = None, base: str | None = None) -> 
     protection: ``(base, returncode, stdout)``. GitHub answers an unprotected
     or unknown branch with HTTP 404 and a JSON message on stdout, and ``gh``
     exits 1, so stdout is kept whatever the exit code. Returncode -1 when the
-    read could not be made (no ``gh``, a timeout, no budget left). ``base`` is
-    the caller's when it already read it."""
-    base = base or base_branch(root, deadline)
+    read could not be made (no ``gh``); ``UNANSWERED`` when it did not answer
+    in time (killed at its cap, or no budget left to start it), and
+    ``BASE_UNANSWERED`` with ``main`` when the default branch's name did not
+    (no protection is asked then). ``base`` is the caller's when it already
+    read it."""
+    if not base:
+        base = _base_answer(root, deadline)
+        if base is None:
+            return "main", BASE_UNANSWERED, ""
     timeout = _left(deadline, READ_CAP_SECONDS)
     if timeout <= 0.2:
-        return base, -1, ""
+        return base, UNANSWERED, ""
     try:
         result = run_bounded(  # spawn: ok a reporter: a gh that cannot run costs the merge-rules line; a missing gh is named by the load-bearing-tool warning
             ["gh", "api", protection_endpoint(base)],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=timeout, cwd=str(root),
         )
+    except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- a read that did not answer is UNANSWERED, which line() says, never a guessed setting
+        return base, UNANSWERED, ""
     except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- a reporter that cannot run gh prints no merge-rules line, never a guessed setting
         return base, -1, ""
     return base, result.returncode, result.stdout
@@ -102,10 +129,18 @@ def read(root: Path, deadline: float | None = None, base: str | None = None) -> 
 def line(base: str, returncode: int, stdout: str) -> str:
     """Whether a pull request must be caught up with ``base`` before it merges
     (the up-to-date rule, GitHub's ``strict``), and how many checks are
-    required, as GitHub answered just now. An unprotected base says so.
-    Anything else (an unknown branch, a token without admin rights, a foreign
-    shape, no read) is ``""``: the docs point here instead of restating the
-    setting, so this must never print a guess."""
+    required, as GitHub answered just now. An unprotected base says so, and so
+    does a read that did not answer in time (``UNANSWERED``,
+    ``BASE_UNANSWERED``): its silence would read as a branch with no rules
+    this reader can see. Anything else (an unknown branch, a token without
+    admin rights, a foreign shape, no ``gh``) is ``""``: the docs point here
+    instead of restating the setting, so this must never print a guess."""
+    if returncode == BASE_UNANSWERED:
+        return ("merge rules unread: git gave no name for the remote's default branch in time "
+                "(or no time was left to ask), so its branch protection was not asked")
+    if returncode == UNANSWERED:
+        return _ascii(f"{base}: merge rules unread (the branch-protection read gave no answer in time, "
+                      "or no time was left to ask)")
     try:
         answer = json.loads(stdout or "")  # json-dict-safe: ok isinstance-checked on the next line before any deref
     except ValueError:  # fail-open: ok deliberate -- an unparseable answer prints no merge-rules line, never a guessed setting
@@ -461,12 +496,14 @@ def _symbol_clauses(root: Path, paths: list[str], *, base_ref: str, tested: str,
 def stale_line(result: dict, base: str, number: object = None) -> str:
     """The advisory for one ``stale_base`` result, or "" when the green
     stands: the base did not move, or moved away from this pull request's
-    files and their imports. A read that failed is said."""
+    files and their imports. A read that failed is said, beside the meetings
+    when there are some: a hop not read can hide another."""
     who = f"#{number}'s" if number is not None else "the pull request's"
     near = result.get("near") or []
     if not near:
         return _ascii(f"stale-base check not read for {who} CI: {result['unread']}") if result.get("unread") else ""
     shown = "; ".join(near[:3]) + (f"; and {len(near) - 3} more" if len(near) > 3 else "")
+    also = f"; also, {result['unread']}" if result.get("unread") else ""
     return _ascii(f"{base} moved {result.get('moved')} merge(s) since {who} CI tested it on "
                   f"{str(result.get('tested') or '')[:7]}, near its files ({shown}): catch up "
-                  "(python tools/cc/ship.py catch-up) so CI tests the combination before it merges")
+                  f"(python tools/cc/ship.py catch-up) so CI tests the combination before it merges{also}")
