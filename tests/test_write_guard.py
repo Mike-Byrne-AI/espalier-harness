@@ -122,12 +122,15 @@ class TestTheShellFixturesCarryTheProtectedTree:
     def test_the_roster_is_every_module_level_shell_fixture_here(self):
         import ast
 
+        from tests._source_segment import segment, source_lines
+
         src = Path(__file__).read_text(encoding="utf-8")
+        lines = source_lines(src)
         found = set()
         for node in ast.parse(src).body:
             if not isinstance(node, ast.FunctionDef):
                 continue
-            body = ast.get_source_segment(src, node) or ""
+            body = segment(lines, node) or ""
             if "CLAUDE_PROJECT_DIR" in body and "write_guard.py" in body and "tool_name" in body:
                 found.add(node.name)
                 assert "carry_protected_tree(" in body, f"{node.name} spawns the guard on a bare project"
