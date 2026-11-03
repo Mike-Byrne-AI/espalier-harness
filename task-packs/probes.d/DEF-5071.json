@@ -1,0 +1,16 @@
+{
+ "id": "DEF-5071",
+ "subject": "bench/guard_metamorphic.py",
+ "cmd": "python3 -c \"import ast,pathlib;S=[('bench/guard_metamorphic.py','guard_tier'),('bench/powershell_guard_rehearsal.py','_invoke'),('bench/powershell_reachability_differential.py','guard_tier'),('bench/run_benchmark.py','_is_deny'),('bench/reachability_differential.py','guard_denies')];K=lambda x:(isinstance(x,ast.Constant) and isinstance(x.value,str) and 'could not finish judging' in x.value) or getattr(x,'id',getattr(x,'attr','')) in ('BUDGET_REFUSAL','WRITE_GUARD_TIME_BUDGET');R=lambda d:any((isinstance(c,ast.Compare) and any(K(x) for x in [c.left,*c.comparators])) or (isinstance(c,ast.Call) and 'budget' in str(getattr(c.func,'id',getattr(c.func,'attr','')))) for c in ast.walk(d));print(sum(1 for f,n in S for m in [{d.name:d for d in ast.walk(ast.parse(pathlib.Path(f).read_text(encoding='utf-8'))) if isinstance(d,ast.FunctionDef)}] if n not in m or not R(m[n])))\"",
+ "open_value": "5",
+ "why_not": null,
+ "inputs": [
+  "bench/powershell_guard_rehearsal.py",
+  "bench/powershell_reachability_differential.py",
+  "bench/run_benchmark.py",
+  "bench/reachability_differential.py"
+ ],
+ "row_sha": "8d5757ff5693",
+ "text_sha": "64cd43d6d326",
+ "verified_2026_11_02": "OPEN (filed 2026-11-02; probe driven at filing here and in the export of HEAD f60b9bc969fe)"
+}

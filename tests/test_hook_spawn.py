@@ -10,7 +10,9 @@ source (where the helper must be used, and what it agrees with) are
 tests/test_hook_spawn_routing.py's, in the contract slice."""
 from __future__ import annotations
 
+import json
 import os
+import subprocess
 import sys
 
 import pytest
@@ -157,3 +159,39 @@ class TestTheRetrysLimits:
         argv, runs = child
         result = hs.run_hook_through(argv("answer"), env=None, input=b"\xef\xbb\xbf{}")
         assert (result.stdout.strip(), runs()) == (b"answered", 1)
+
+
+def _deny(reason: str) -> str:
+    return json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}})
+
+
+class TestALongerBoundReadsTheRefusalApart:
+    """A spawn past the helper's bound hands its result to ``not_a_budget_miss``
+    (DEF-5066): the budget's refusal fails the row as a miss, whichever way the
+    row reads a deny, and every other answer, a deny included, comes back as
+    it was. Built results, no child: the reader spawns nothing."""
+
+    ARGV = [sys.executable, "write_guard.py"]
+
+    def test_the_budgets_refusal_fails_as_a_miss_not_a_verdict(self):
+        refused = subprocess.CompletedProcess(
+            self.ARGV, 0, stdout=_deny(f"Command blocked: write_guard {hs.BUDGET_REFUSAL} this command"), stderr="")
+        with pytest.raises(pytest.fail.Exception, match="a miss, not a verdict"):
+            hs.not_a_budget_miss(refused)
+
+    def test_a_verdict_comes_back_as_it_was(self):
+        for result in (
+            subprocess.CompletedProcess(self.ARGV, 0, stdout="", stderr=""),
+            subprocess.CompletedProcess(self.ARGV, 0, stdout=_deny("a protected zone"), stderr=""),
+            subprocess.CompletedProcess(self.ARGV, 2, stdout="", stderr="blocked"),
+            subprocess.CompletedProcess(self.ARGV, 1, stdout="", stderr="Traceback"),
+        ):
+            assert hs.not_a_budget_miss(result) is result
+
+    def test_bytes_out_is_read_and_no_capture_is_no_refusal(self):
+        refused = subprocess.CompletedProcess(self.ARGV, 0, stdout=hs.BUDGET_REFUSAL.encode("utf-8"), stderr=b"")
+        with pytest.raises(pytest.fail.Exception, match="a miss, not a verdict"):
+            hs.not_a_budget_miss(refused)
+        uncaptured = subprocess.CompletedProcess(self.ARGV, 0)
+        assert hs.not_a_budget_miss(uncaptured) is uncaptured
