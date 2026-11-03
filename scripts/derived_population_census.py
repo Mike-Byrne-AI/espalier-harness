@@ -218,6 +218,19 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "checks on the registry. Honest residual: no row can tell a WRONG classification (a "
         "census field declared a signal); that is the operator's reading of the roster.",
     ),
+    "tests/test_dirty_machine_install.py": (
+        1, "a52b06980a6f4ab40d70325ee8a2b0d13f5e44edcc5aeae1d62bf9f4b86bc384",
+        "CORRECT_BY_PROPERTY",
+        "NEW comprehension over `CANONICAL_HOOK_WIRING` "
+        "(test_the_install_keeps_what_the_adopter_brought_and_wires_the_harness, 2026-11-03): "
+        "the claim is that a tree ends the install with every hook init writes from the roster "
+        "wired, so the (event, script) pairs the roster names must be a subset of the pairs read "
+        "from the tree's settings; the roster is the right derivation and a hand copy would be a "
+        "second roster. The blindness (a hook dropped from the roster narrows both sides together) "
+        "is not this test's claim: the roster's size is pinned one file over by "
+        "tests/_surface_expected.py::EXPECTED_HOOK_ENTRY_COUNT and tests/test_agent_contracts.py's "
+        "`len(CANONICAL_HOOK_WIRING)` row, the same pins the tests/test_hooks_as_wired.py entry cites.",
+    ),
     # 5 row(s), shapes: all-any, comprehension
     "tests/test_artifact_parity.py": (
         5, "58f8f9bb1e4b19ca6c6992f88172770d9b43c70a91ce78239f564bb15a4493af",

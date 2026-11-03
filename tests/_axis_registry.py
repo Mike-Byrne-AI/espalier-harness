@@ -70,9 +70,9 @@ class AxisCell:
     gap: str         # why no test proves this cell yet (a row id, or a reason); "" if proven
 
 
-# The perturbed CI cell, the release smoke's flags and the dirty-machine cell are
-# the adopter-axes pack's later work; until each lands, its cells are gaps that
-# say so. The wired-hooks matrix landed 2026-11-03; the cross-event session
+# The perturbed CI cell and the release smoke's flags are the adopter-axes pack's
+# later work; until each lands, its cells are gaps that say so. The wired-hooks
+# matrix and the dirty-machine cell landed 2026-11-03; the cross-event session
 # driver was dropped that day (the session cells say why).
 _MATRIX = ("tests/test_hooks_as_wired.py::"
            "test_every_wired_entry_starts_and_answers_on_one_channel")
@@ -159,9 +159,19 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
              "a real interpreter under a spaced directory on every host), but no "
              "test is parametrised over this axis"),
     # -- tree ----------------------------------------------------------------
-    AxisCell("tree", "clean", "",
-             "every test runs here, and none is parametrised against a dirty machine"),
-    AxisCell("tree", "dirty", "", "DEF-937 (the dirty-machine install cell)"),
+    # Proven 2026-11-03 by the dirty-machine cell (the adopter-axes pack's 3-C):
+    # init, install-ci, doctor and upgrade as subprocesses on a dirty machine's
+    # tree (master, a spaced parent, the adopter's own committed .claude/, a
+    # stale espalier first on PATH) and on a clean one. On the dirty tree it
+    # asserts the adopter's settings survive init byte for byte and the remedy
+    # init prints wires every hook while their own hook and rule survive; on
+    # the clean tree, that init wires every hook itself.
+    AxisCell("tree", "clean",
+             "tests/test_dirty_machine_install.py::"
+             "test_the_install_keeps_what_the_adopter_brought_and_wires_the_harness[clean]", ""),
+    AxisCell("tree", "dirty",
+             "tests/test_dirty_machine_install.py::"
+             "test_the_install_keeps_what_the_adopter_brought_and_wires_the_harness[dirty]", ""),
     AxisCell("tree", "crlf", "",
              "tests/_stack_trees.py writes LF on every host since 2026-10-06; before, "
              "Windows runs built CRLF fixture trees by accident. A CRLF checkout (Git "
@@ -211,7 +221,9 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
 #   bounded spawn's timeout-shape node over linux and windows).
 # 2026-11-03: 11 -- host/store_python3, host/launcher_only and host/python3_only, by the
 #   wired-hooks matrix (the adopter-axes pack's session-and-stack lane).
-PROVEN_FLOOR = 11
+# 2026-11-03: 13 -- tree/clean and tree/dirty, by the dirty-machine install cell
+#   (the adopter-axes pack's dirty-machine lane).
+PROVEN_FLOOR = 13
 
 
 def proven(cells: tuple[AxisCell, ...] = AXIS_REGISTRY) -> list[AxisCell]:
