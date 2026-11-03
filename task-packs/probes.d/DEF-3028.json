@@ -1,0 +1,13 @@
+{
+ "id": "DEF-3028",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c \"import io,os,sys,tempfile,pathlib;sys.path.insert(0,'tools/cc/hooks');[os.environ.pop(k) for k in list(os.environ) if k.startswith('ESPALIER')];T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);r=pathlib.Path(T.name);(r/'tools'/'cc'/'hooks').mkdir(parents=True);os.environ['CLAUDE_PROJECT_DIR']=str(r);os.environ['ESPALIER_AUDIT_DIR']=str(r/'a');import write_guard as g;Q=chr(34);S=chr(39);D=chr(36);B=' tools/cc/hooks';Y='; do rm '+D+'f; done';Z=lambda c:(setattr(sys,'stdout',io.StringIO()),g.check_bash_for_protected_mutations(c,r,r),sys.stdout.getvalue(),setattr(sys,'stdout',sys.__stdout__));print(sum(not(t[1] or t[2].strip()) for t in [Z('for f in '+D+'('+Q+'find'+Q+B+')'+Y),Z('for f in '+D+'('+'/usr/bin/find'+B+')'+Y),Z('for f in '+D+'('+D+S+'find'+S+B+')'+Y),Z('for f in `'+Q+'find'+Q+B+'`'+Y),Z('while read f'+Y+' < <('+Q+'find'+Q+B+')'),Z('while read f'+Y+' <<< '+Q+D+'('+S+'ls'+S+B+')'+Q)]))\"",
+ "open_value": "6",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/write_guard.py"
+ ],
+ "row_sha": "07e9050810a9",
+ "text_sha": "98d8fe007bff",
+ "verified_2026_11_03": "OPEN (filed 2026-11-03; probe driven at filing here and in the export of HEAD 4ae80b08abbd)"
+}
