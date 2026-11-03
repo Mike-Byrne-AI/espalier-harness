@@ -44,13 +44,14 @@ cannot run is one line, and the session proceeds. Registered from
 """
 from __future__ import annotations
 
+import contextlib
 import getpass
 import importlib.util
 import os
 import sys
 import tempfile
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -165,23 +166,35 @@ def _load(path: Path, alias: str) -> Any:
     directory first on ``sys.path`` and imports ``_json_safe`` bare)."""
     if alias in sys.modules:
         return sys.modules[alias]
-    saved_path, saved = list(sys.path), set(sys.modules)
     spec = importlib.util.spec_from_file_location(alias, path)
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
-    sys.modules[alias] = mod
+    with restoring_imports(keep=alias):
+        sys.modules[alias] = mod
+        try:
+            spec.loader.exec_module(mod)
+        except BaseException:
+            sys.modules.pop(alias, None)
+            raise
+    return mod
+
+
+@contextlib.contextmanager
+def restoring_imports(keep: str = "") -> Iterator[None]:
+    """Put ``sys.path`` back and drop the bare ``tools/cc`` modules added
+    inside the block (``keep`` stays): around a load, and around a call into
+    a loaded module, which can load more on demand (``checkout_sync``'s
+    placement fallback loads ``hooks/_hook_utils.py`` and puts its folder
+    first on ``sys.path``)."""
+    saved_path, saved = list(sys.path), set(sys.modules)
     try:
-        spec.loader.exec_module(mod)
-    except BaseException:
-        sys.modules.pop(alias, None)
-        raise
+        yield
     finally:
         sys.path[:] = saved_path
-        for name in set(sys.modules) - saved - {alias}:
+        for name in set(sys.modules) - saved - {keep}:
             where = os.path.normcase(getattr(sys.modules[name], "__file__", None) or "").replace("\\", "/")
             if where.startswith(_TOOLS_CC_PREFIX):
                 del sys.modules[name]
-    return mod
 
 
 def pid_alive() -> Callable[[object], bool | None]:

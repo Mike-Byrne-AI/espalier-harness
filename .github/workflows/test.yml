@@ -142,7 +142,32 @@ jobs:
       - name: Install
         run: pip install -e .[dev]
 
+      - name: Read the runner's disk before the tier
+        # PR #464's parallel leg ended in Errno 122 (disk quota exceeded) on
+        # every cell GitHub placed on its AWS pool (image ubuntu-26.04
+        # 20261018.50.1, four cells) and on none of the Azure pool's
+        # (2026-11-03). This step and the one after the tier read the disk
+        # those cells filled: the pool, the volumes, their mounts and any
+        # quota. Errno 122 is a quota, so where findmnt's OPTIONS list
+        # usrquota or prjquota, df's Avail is not the runner user's headroom:
+        # read the quota reports. A sampler logs the temp dir's use every 20 s
+        # through the tier, so the peak is read and not only what the run
+        # left. Neither step can fail the cell, and the tier step itself never
+        # carries continue-on-error (tests/test_required_status_checks.py).
+        continue-on-error: true
+        run: |
+          echo "image: $ImageOS $ImageVersion; vendor: $(cat /sys/class/dmi/id/sys_vendor 2>/dev/null)"
+          tmp="${TMPDIR:-/tmp}"
+          findmnt -T "$tmp" -o TARGET,SOURCE,FSTYPE,SIZE,OPTIONS || true
+          findmnt -T "$GITHUB_WORKSPACE" -o TARGET,SOURCE,FSTYPE,SIZE,OPTIONS || true
+          df -h || true
+          df -i || true
+          sudo -n repquota -as 2>&1 | head -20
+          sudo -n xfs_quota -x -c 'report -h -ubgp' 2>&1 | head -20
+          nohup sh -c 'while sleep 20; do echo "$(date +%T) $(df --output=used,iused,avail "$0" | tail -1)"; done' "$tmp" > "$RUNNER_TEMP/disk-trace.txt" 2>&1 &
+
       - name: Run the proof tier this pull request earns
+        id: tier
         # `proof_tier.py --run` executes the tier's own recipe under one receipt:
         # contract = the tree-wide contracts; recall = those plus the recall
         # engine's files; every tier opens with `ruff check .` below the type
@@ -163,6 +188,26 @@ jobs:
         run: |
           echo "proof tier: $TIER"
           python scripts/proof_tier.py --run --tier "$TIER" --base "${BASE_SHA:-HEAD}" --leg parallel
+
+      - name: Read the runner's disk after the tier
+        # Runs after a red tier too, and there says so in an annotation, which
+        # `gh run view` prints beside a failed log (this step never fails).
+        # The du lines name the largest folders under pytest's base temp,
+        # down to a test's own dir.
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 5
+        run: |
+          tmp="${TMPDIR:-/tmp}"
+          df -h "$tmp" "$GITHUB_WORKSPACE" || true
+          df -i "$tmp" "$GITHUB_WORKSPACE" || true
+          echo "the temp dir's use every 20 s through the tier (used KB, inodes used, avail KB):"
+          tail -n 60 "$RUNNER_TEMP/disk-trace.txt" 2>/dev/null || true
+          timeout 120 du -xh --max-depth=4 "$tmp/pytest-of-$(id -un)" 2>/dev/null | sort -h | tail -12
+          timeout 60 du -xsh "$GITHUB_WORKSPACE" "$HOME/.cache" 2>/dev/null || true
+          if [ "${{ steps.tier.outcome }}" = "failure" ]; then
+            echo "::warning title=runner disk after a red tier::$(df -h "$tmp" | tail -1); image $ImageOS $ImageVersion"
+          fi
 
       - name: Self-host check
         # --skip-self-host is belt-and-suspenders, NOT load-bearing for
