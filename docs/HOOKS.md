@@ -370,7 +370,10 @@ origin/main, 2 uncommitted changes to tracked files) -- finish or stash that,
 then: git switch main && git pull --ff-only origin main`; when another session
 holds it, the remedy is to end that session first). Then each registered
 worktree under `.claude/worktrees/` is removed only when it is clean, merged
-into `origin/main`, holds no lock or a lock whose holder process has exited,
+into `origin/main` (every commit of it there, or, on a branch, there as the
+same patch under another commit: a cherry-pick or an applied diff; a detached
+worktree goes only by ancestry, since nothing keeps its commits after the
+removal), holds no lock or a lock whose holder process has exited,
 no live session is in it, no other process works in it, and every ignored file in
 it is a cache, a build output or a regenerable report (`reports/`,
 `.espalier/`, `dist/`), a byte-identical copy of the root's (what
@@ -406,7 +409,12 @@ none on that ground. A plan left in progress keeps a worktree with work in
 it, never a clean, merged one: that lane finished, so the worktree is
 removed, its plan saved with the rest of its `cc/` state, and the line says
 which (`x (its plan was never closed; the lane merged)`). A
-merged branch a removed worktree held is deleted. A `Worktrees:` line names
+merged branch a removed worktree held is deleted; one main holds only by patch
+is kept, since a patch match ignores whitespace. A git read that does not
+answer in time (killed at its cap, or not started for want of time) is never
+read as a no: the move or removal resting on it holds, and the `Checkout:`
+and `Worktrees:` lines count it (`1 git read did not answer in time`), and
+say when origin was not reached, whatever the state. A `Worktrees:` line names
 what was removed, what was kept and why (`2 commit(s) not in main (lane/y)`,
 `a live Claude session is in it (pid 4242)`, `locked by hand`, `1 ignored file
 git status cannot see (notes.md)`). "A live session" is read from Claude

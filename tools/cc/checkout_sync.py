@@ -28,7 +28,9 @@ Two jobs, each touching nothing unless every safety condition holds:
   at its wait is left to finish and named. A detached HEAD, a lane with work
   of its own, or a branch whose remote still exists is named, never moved.
 * :func:`reap_worktrees` -- a registered worktree under ``.claude/worktrees/``
-  is removed only when it is clean, its HEAD is in ``origin/<default>``, any
+  is removed only when it is clean, every commit of its HEAD is in
+  ``origin/<default>`` (by ancestry, or, on a branch, which the removal
+  keeps, as the same patch under another sha: a cherry-pick), any
   lock names a dead pid, every ignored file in it is a cache, a
   byte-identical copy of the root's, or session state saved first, no seat
   named for the worktree alone still holds a live claim on the mail channel
@@ -49,7 +51,9 @@ Network and read-only git calls take their timeouts from one deadline, so
 the SessionStart hook stays inside its budget; a call that changes the tree
 (the move, a removal) is started only with time left and is never killed.
 Nothing here raises to the caller for a git or filesystem failure: it comes
-back as a held outcome with the reason.
+back as a held outcome with the reason. A read that did not answer (killed
+at its cap, or not started for want of time) is never read as a no: an act
+resting on it holds, and the outcome counts it (``unanswered``) for the line.
 
 Verbs::
 
@@ -100,6 +104,8 @@ _MID_OPERATION = (
     ("CHERRY_PICK_HEAD", "a cherry-pick"), ("REVERT_HEAD", "a revert"),
     ("sequencer", "a cherry-pick or revert sequence"), ("BISECT_LOG", "a bisect"),
 )
+# What _mid_operation answers when git did not list the paths: a hold, never a no.
+_UNRULED_OPERATION = "an operation git could not rule out"
 _GIT_ENV_OVERRIDES = (
     "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
     "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR", "GIT_CEILING_DIRECTORIES",
@@ -152,7 +158,9 @@ class CatchUp:
     do), ``caught_up``, ``would_catch_up`` (dry run), ``moving`` (the move is
     still running; ``reason`` names its pid), ``held`` (unsafe or failed;
     ``reason`` and ``remedy`` say why and what to run), ``lane`` (named, left
-    as is) or ``skipped`` (no origin, no default branch: nothing to say)."""
+    as is) or ``skipped`` (no origin, no default branch: nothing to say).
+    ``unanswered`` counts the git reads that did not answer (DEF-2046), and
+    ``changed_unread`` says what a move changed could not be read."""
     state: str
     branch: str = ""
     base: str = ""
@@ -165,6 +173,8 @@ class CatchUp:
     detached: bool = False
     fetched: bool = True
     changed: list[str] = field(default_factory=list)
+    unanswered: int = 0
+    changed_unread: bool = False
 
 
 @dataclass
@@ -173,8 +183,9 @@ class Reap:
     (name, reason) with ``kept_paths`` beside them, ``deferred`` (not reached
     this session, out of time), ``saved`` (paths written into the root),
     ``would_remove`` (dry run), ``unlocked`` (a dead holder's lock released
-    before its removal, as ``name (pid N)``; not on the banner line) and a
-    ``note`` for a reason that kept every worktree."""
+    before its removal, as ``name (pid N)``; not on the banner line), a
+    ``note`` for a reason that kept every worktree and ``unanswered``, the git
+    reads that did not answer (DEF-2046)."""
     removed: list[str] = field(default_factory=list)
     kept: list[tuple[str, str]] = field(default_factory=list)
     kept_paths: list[str] = field(default_factory=list)
@@ -183,6 +194,7 @@ class Reap:
     would_remove: list[str] = field(default_factory=list)
     note: str = ""
     unlocked: list[str] = field(default_factory=list)
+    unanswered: int = 0
 
     def keep(self, path: Path, reason: str) -> None:
         self.kept.append((path.name, reason))
@@ -269,17 +281,35 @@ def spawn(argv: list[str], *, cwd: Path, wait: float | None, kill: bool) -> Spaw
 
 class _Git:
     """git at one directory under one deadline. ``ask`` returns the completed
-    process or None (no budget left, or git could not run)."""
+    process or None (no budget left, or git could not run).
+
+    A None is a read that did not answer, never a no: a read killed at its cap
+    on a loaded box answered as its success would have, a killed fetch read
+    ``current`` and a killed ref read let the catch-up switch a lane whose
+    remote branch still exists (DEF-2046). Each one is counted, apart from a
+    non-zero exit (git answered), in a tally :meth:`at` shares, so an act can
+    wait on every read it rests on and a line can say what did not answer."""
 
     def __init__(self, cwd: Path, deadline: float | None, runner: Runner = run,
-                 spawner: Callable[..., Spawned | None] = spawn):
+                 spawner: Callable[..., Spawned | None] = spawn, tally: list[int] | None = None):
         self.cwd, self.deadline, self.runner, self.spawner = cwd, deadline, runner, spawner
+        self.tally = tally if tally is not None else [0]
+
+    @property
+    def unanswered(self) -> int:
+        """The reads that did not answer, here and in every :meth:`at` of it."""
+        return self.tally[0]
+
+    def at(self, cwd: Path) -> "_Git":
+        """git at ``cwd`` under the same deadline, counting into the same tally."""
+        return _Git(cwd, self.deadline, self.runner, self.spawner, self.tally)
 
     def ask(self, *args: str, cap: float = GIT_CAP_S) -> "subprocess.CompletedProcess[str] | None":
         timeout = _left(self.deadline, cap)
-        if timeout < MIN_SPAWN_S:
-            return None
-        return self.runner(["git", *args], cwd=self.cwd, timeout=timeout)
+        answer = self.runner(["git", *args], cwd=self.cwd, timeout=timeout) if timeout >= MIN_SPAWN_S else None
+        if answer is None:
+            self.tally[0] += 1
+        return answer
 
     def out(self, *args: str, cap: float = GIT_CAP_S) -> str | None:
         """stdout stripped on rc 0, else None."""
@@ -1051,7 +1081,8 @@ def plan_in_progress(tree: Path, merged_and_clean: bool = False) -> bool:
     """``cc/execution_plan.json`` in ``tree`` reads ``in_progress``; an
     unreadable one counts as in progress (keep, never guess). With
     ``merged_and_clean`` (the reaper's reading of a worktree: nothing
-    uncommitted, no operation running, its HEAD in the default branch) no plan
+    uncommitted, no operation running, its commits in the default branch, by
+    ancestry or by patch) no plan
     is in progress: the lane merged, so a plan still open there was never
     closed, and the work is finished whatever it says (DEF-4047: one kept the
     work worktree for six days)."""
@@ -1096,7 +1127,7 @@ def _mid_operation(git: _Git) -> str | None:
     listing = git.out("rev-parse", *args)
     lines = listing.splitlines() if listing is not None else []
     if len(lines) != len(_MID_OPERATION):
-        return "an operation git could not rule out"
+        return _UNRULED_OPERATION
     for rel, (_name, what) in zip(lines, _MID_OPERATION):
         target = Path(rel) if Path(rel).is_absolute() else git.cwd / rel
         if target.exists():
@@ -1105,23 +1136,28 @@ def _mid_operation(git: _Git) -> str | None:
 
 
 def _checked_out_elsewhere(git: _Git, branch: str) -> str | None:
-    """The path of another worktree that has ``branch`` checked out, or None."""
+    """The path of another worktree that has ``branch`` checked out, '' when
+    none does, None when git could not list them: git before 2.43 does not
+    refuse a ``switch -C`` of a branch another worktree holds, so a list that
+    did not answer must never read as nowhere (DEF-2046)."""
     listing = git.out("worktree", "list", "--porcelain")
     if listing is None:
         return None
     here = _norm(git.cwd)
     for block in parse_worktrees(listing):
         if block.get("branch") == f"refs/heads/{branch}" and _norm(block.get("worktree", "")) != here:
-            return block.get("worktree")
-    return None
+            return block.get("worktree", "")
+    return ""
 
 
-def _own_ref_listed(git: _Git, remote: str, branch: str) -> bool:
+def _own_ref_listed(git: _Git, remote: str, branch: str) -> bool | None:
     """Whether ``remote`` lists a branch of the lane's exact name, as this
     clone last saw it (after the catch-up's pruning fetch): origin's refs,
-    never ``@{u}``, which names what the branch tracks (DEF-2042)."""
+    never ``@{u}``, which names what the branch tracks (DEF-2042). None when
+    git could not say: a read that did not answer is never a no (DEF-2046)."""
     own = f"refs/remotes/{remote}/{branch}"
-    return own in (git.out("for-each-ref", "--format=%(refname)", own) or "").splitlines()
+    listing = git.out("for-each-ref", "--format=%(refname)", own)
+    return None if listing is None else own in listing.splitlines()
 
 
 def _upstream_gone(git: _Git, branch: str, remote: str, upstream: str) -> bool:
@@ -1137,8 +1173,8 @@ def _upstream_gone(git: _Git, branch: str, remote: str, upstream: str) -> bool:
     all, cut from a merged lane's tip before its first commit, is someone's
     choice and stays, as a lane started from ``upstream`` with nothing of its
     own does (its tip on the chain); a chain git cannot read keeps the lane
-    in place."""
-    if _own_ref_listed(git, remote, branch):
+    in place, as an own-ref read that cannot say does."""
+    if _own_ref_listed(git, remote, branch) is not False:
         return False
     if git.out("for-each-ref", "--format=%(upstream:track)", f"refs/heads/{branch}") == "[gone]":
         return True
@@ -1155,9 +1191,16 @@ def catch_up(root: Path, *, deadline: float | None = None, other_session: str = 
     """Bring the checkout at ``root`` up to ``<remote>/<default>`` when, and
     only when, nothing can be lost (the module docstring has the rules).
     ``other_session`` names a live session sharing this checkout ('' for
-    none) and ``plan_open`` says a plan is in progress; either holds. Never
-    raises."""
+    none) and ``plan_open`` says a plan is in progress; either holds. A read
+    that did not answer holds an act it rests on and is counted on the
+    outcome (``unanswered``). Never raises."""
     git = _Git(root, deadline, runner, spawner)
+    result = _catch_up(git, other_session=other_session, plan_open=plan_open, dry_run=dry_run, remote=remote)
+    result.unanswered = git.unanswered
+    return result
+
+
+def _catch_up(git: _Git, *, other_session: str, plan_open: bool, dry_run: bool, remote: str) -> CatchUp:
     has_remote = git.ask("remote", "get-url", remote)
     if has_remote is None:
         return CatchUp("held", reason="git did not answer in time", fetched=False,
@@ -1165,12 +1208,23 @@ def catch_up(root: Path, *, deadline: float | None = None, other_session: str = 
     if has_remote.returncode != 0:
         return CatchUp("skipped", reason=f"no {remote} remote")
     fetched = git.fetch(remote)
+    asked = git.unanswered
     base = default_branch(git, remote)
+    if git.unanswered > asked:
+        # A fallback guess past a read that did not answer is no base: a
+        # repository whose default is not main would compare with main.
+        return CatchUp("held", reason=f"git did not answer which branch is {remote}'s default",
+                       remedy=f"git pull --ff-only {remote}", fetched=fetched)
     if base is None:
         return CatchUp("skipped", reason=f"no default branch on {remote}", fetched=fetched)
     upstream = f"{remote}/{base}"
     remedy = f"git switch {base} && git pull --ff-only {remote} {base}"
-    branch = git.out("symbolic-ref", "--quiet", "--short", "HEAD") or ""
+    head_ref = git.ask("symbolic-ref", "--quiet", "--short", "HEAD")
+    if head_ref is None:
+        # Exit 1 is a detached HEAD; no answer at all is not one (DEF-2046).
+        return CatchUp("held", base=base, reason="git did not answer which branch is checked out",
+                       remedy=f"`git status` first; on a merged lane: {remedy}", fetched=fetched)
+    branch = head_ref.stdout.strip() if head_ref.returncode == 0 else ""
     behind_text = git.out("rev-list", "--count", f"HEAD..{upstream}")
     ahead_text = git.out("rev-list", "--count", f"{upstream}..HEAD")
     if behind_text is None or ahead_text is None:
@@ -1181,14 +1235,20 @@ def catch_up(root: Path, *, deadline: float | None = None, other_session: str = 
     if behind == 0:
         return result  # nothing to gain: a lane created a moment ago stays put
     if branch != base:
-        gone = bool(branch) and ahead == 0 and _upstream_gone(git, branch, remote, upstream)
+        asked = git.unanswered
+        # A merge read from a read that did not answer is no merge: the lane
+        # stays, worded as unread (DEF-2046).
+        gone = (bool(branch) and ahead == 0 and _upstream_gone(git, branch, remote, upstream)
+                and git.unanswered == asked)
         if not gone:
             # Work of its own, a remote branch that still exists, no upstream
             # at all, or a detached HEAD: someone's choice. Named, never moved.
             # The reason says what was read on origin, never @{u} (DEF-2042).
             result.state = "lane"
             if branch and ahead == 0:
-                result.reason = ("its remote branch still exists" if _own_ref_listed(git, remote, branch)
+                listed = _own_ref_listed(git, remote, branch) if git.unanswered == asked else None
+                result.reason = ("its remote branch still exists" if listed
+                                 else "whether it merged could not be read" if listed is None
                                  else "nothing of its own yet")
             return result
     elif ahead:
@@ -1202,16 +1262,20 @@ def catch_up(root: Path, *, deadline: float | None = None, other_session: str = 
         holds.append("a plan is in progress (cc/execution_plan.json)")
     operation = _mid_operation(git)
     if operation:
-        holds.append(f"{operation} is in progress")
+        holds.append("git could not rule out an operation in progress" if operation == _UNRULED_OPERATION
+                     else f"{operation} is in progress")
     edits = git.out("status", "--porcelain", "--untracked-files=no")
     if edits is None:
         holds.append("git could not read the working tree")
     elif edits:
         holds.append(f"{_plural(len(edits.splitlines()), 'uncommitted change')} to tracked files")
     has_local = git.yes("show-ref", "--verify", "--quiet", f"refs/heads/{base}")
+    contained = git.yes("merge-base", "--is-ancestor", f"refs/heads/{base}", upstream) if has_local else True
     if has_local is None:
         holds.append(f"git could not say whether a local {base} exists")
-    elif has_local and git.yes("merge-base", "--is-ancestor", f"refs/heads/{base}", upstream) is not True:
+    elif contained is None:
+        holds.append(f"git could not compare local {base} with {upstream}")
+    elif not contained:
         holds.append(f"local {base} has commits {upstream} does not")
     if holds:
         result.state = "held"
@@ -1227,13 +1291,20 @@ def catch_up(root: Path, *, deadline: float | None = None, other_session: str = 
     if dry_run:
         result.state = "would_catch_up"
         return result
-    if _left(deadline, MOVE_FLOOR_S) < MOVE_FLOOR_S:
+    if _left(git.deadline, MOVE_FLOOR_S) < MOVE_FLOOR_S:
         result.state = "held"
         result.reason = "out of time this session"
         result.remedy = f"the next session does it, or: {remedy}"
         return result
     old = git.out("rev-parse", "HEAD") or ""
-    elsewhere = _checked_out_elsewhere(git, base) if branch != base else None
+    elsewhere = _checked_out_elsewhere(git, base) if branch != base else ""
+    if elsewhere is None:
+        # git before 2.43 moves a branch another worktree holds under it, so
+        # an unread list holds the move (DEF-2046; measured on 2.39.5).
+        result.state = "held"
+        result.reason = f"git did not answer where {base} is checked out"
+        result.remedy = f"the next session does it, or: {remedy}"
+        return result
     if elsewhere:
         result.detached = True
         moved = git.change("switch", "--quiet", "--detach", upstream, wait=MOVE_WAIT_S)
@@ -1252,15 +1323,20 @@ def catch_up(root: Path, *, deadline: float | None = None, other_session: str = 
         result.remedy = remedy
         return result
     tip = git.out("rev-parse", "--short", "HEAD") or ""
-    if (git.out("rev-parse", "HEAD") or "x") != (git.out("rev-parse", upstream) or "y"):
+    now, wanted = git.out("rev-parse", "HEAD"), git.out("rev-parse", upstream)
+    # Only two answers that differ are a move that missed: a read that did not
+    # answer leaves the switch's own exit 0 standing, and the line counts it.
+    if now is not None and wanted is not None and now != wanted:
         result.state = "held"
         result.reason = f"after the move HEAD is {tip or 'unknown'}, not {upstream}"
         result.remedy = remedy
         return result
     result.state, result.head = "caught_up", tip
-    if old:
-        changed = git.out("diff", "--name-only", old, "HEAD")
-        result.changed = changed.splitlines() if changed else []
+    changed = git.out("diff", "--name-only", old, "HEAD") if old else None
+    if changed is None:
+        result.changed_unread = True
+    else:
+        result.changed = changed.splitlines()
     if branch and branch != base:
         dropped = git.ask("branch", "--quiet", "-d", branch)
         if dropped is not None and dropped.returncode == 0:
@@ -1486,9 +1562,21 @@ def reap_worktrees(root: Path, *, deadline: float | None = None,
     nothing is removed; ``unreadable_note`` says why); ``held_by_other`` names
     a live session in the root checkout, which also removes nothing, since
     that session may have entered one of them. Each worktree is named,
-    removed or kept with its reason. Never raises."""
-    report = Reap()
+    removed or kept with its reason; ``unanswered`` counts every read that
+    did not answer, in each worktree too. Never raises."""
     git = _Git(root, deadline, runner, spawner)
+    report = _reap(git, root, sessions=sessions, own_cwd=own_cwd, marker_live=marker_live,
+                   held_by_other=held_by_other, unreadable_note=unreadable_note, dry_run=dry_run,
+                   remote=remote, only=only)
+    report.unanswered = git.unanswered
+    return report
+
+
+def _reap(git: _Git, root: Path, *, sessions: list[dict[str, object]] | None, own_cwd: Path | None,
+          marker_live: Callable[[Path], bool] | None, held_by_other: str, unreadable_note: str,
+          dry_run: bool, remote: str, only: Path | None) -> Reap:
+    report = Reap()
+    deadline = git.deadline
     listing = git.out("worktree", "list", "--porcelain")
     if listing is None:
         report.note = "git could not list the worktrees"
@@ -1511,7 +1599,13 @@ def reap_worktrees(root: Path, *, deadline: float | None = None,
             report.keep(Path(b["worktree"]), "not checked")
         return report
     assert sessions is not None
+    asked = git.unanswered
     base = default_branch(git, remote)
+    if git.unanswered > asked:
+        # A fallback guess past a read that did not answer is no base.
+        base, no_base = None, f"git did not answer which branch is {remote}'s default"
+    else:
+        no_base = f"no default branch on {remote} to compare with"
     upstream = f"{remote}/{base}" if base else None
     outside_prunable = any("prunable" in b for b in blocks if b not in ours)
     read: list[dict[int, str] | None] = []
@@ -1539,7 +1633,7 @@ def reap_worktrees(root: Path, *, deadline: float | None = None,
         if _left(deadline, REMOVE_FLOOR_S) < MIN_SPAWN_S * 3:
             report.deferred.append(path.name)
             continue
-        reason = _why_kept(git, block, path, upstream, sessions, own_cwd, marker_live, root)
+        reason = _why_kept(git, block, path, upstream, sessions, own_cwd, marker_live, root, no_base=no_base)
         if reason:
             report.keep(path, reason)
             continue
@@ -1562,8 +1656,7 @@ def reap_worktrees(root: Path, *, deadline: float | None = None,
         if busy:
             report.keep(path, busy)
             continue
-        cc_files = _Git(path, deadline, runner, spawner).out(
-            "ls-files", "--others", "--ignored", "--exclude-standard", "--", "cc")
+        cc_files = git.at(path).out("ls-files", "--others", "--ignored", "--exclude-standard", "--", "cc")
         if cc_files is None:
             report.keep(path, "git could not list its session notes")
             continue
@@ -1581,8 +1674,12 @@ def reap_worktrees(root: Path, *, deadline: float | None = None,
             report.keep(path, f"its removal is still running (git pid {removal.pid}); it finishes on its own")
             continue
         after = git.out("worktree", "list", "--porcelain")
-        still_registered = after is None or any(
-            _norm(b.get("worktree", "")) == _norm(path) for b in parse_worktrees(after))
+        if after is None:
+            # The list did not read back: git's own exit answers, and the
+            # folder check below still does (the line counts the read).
+            still_registered = removal is None or removal.returncode != 0
+        else:
+            still_registered = any(_norm(b.get("worktree", "")) == _norm(path) for b in parse_worktrees(after))
         if still_registered:
             report.keep(path, f"git did not remove it: {_err(removal)}")
             continue
@@ -1608,8 +1705,10 @@ def reap_worktrees(root: Path, *, deadline: float | None = None,
 
 def _why_kept(git: _Git, block: dict[str, str], path: Path, upstream: str | None,
               sessions: list[dict[str, object]], own_cwd: Path | None,
-              marker_live: Callable[[Path], bool] | None, root: Path) -> str:
-    """'' when the worktree may go; else the reason it stays, in words."""
+              marker_live: Callable[[Path], bool] | None, root: Path, *,
+              no_base: str = f"no default branch on {REMOTE} to compare with") -> str:
+    """'' when the worktree may go; else the reason it stays, in words.
+    ``no_base`` is the reason when ``upstream`` is None."""
     if own_cwd is not None and within(own_cwd, path):
         return "this session is in it"
     for row in sessions:
@@ -1629,28 +1728,40 @@ def _why_kept(git: _Git, block: dict[str, str], path: Path, upstream: str | None
     if not (path / ".git").exists():
         return "its .git link is missing (`git worktree repair`, or remove the folder by hand)"
     if upstream is None:
-        return "no default branch on origin to compare with"
-    here = _Git(path, git.deadline, git.runner, git.spawner)
+        return no_base
+    here = git.at(path)
     status = here.out("status", "--porcelain")
     mid = _mid_operation(here) if status == "" else None
     head = block.get("HEAD", "")
     merged = git.yes("merge-base", "--is-ancestor", head, upstream) if head and status == "" and not mid else None
+    unmerged: int | None = 0
+    if merged is False:
+        # By sha, a commit main holds by patch (a cherry-pick, an applied
+        # diff) is still ahead; by patch it is not (DEF-5077). A merge commit
+        # is never marked equivalent, so it counts as one main lacks. A patch
+        # id ignores whitespace, so a match counts only where a branch keeps
+        # the commits after the removal (its -D below stays on ancestry); a
+        # detached HEAD's commits would be left unreachable, so each counts.
+        marks = git.out("rev-list", "--cherry-mark", "--right-only", f"{upstream}...{head}")
+        held = bool(block.get("branch"))
+        unmerged = None if marks is None else sum(
+            1 for line in marks.splitlines() if line.startswith("+") or (line and not held))
     # The plan is read beside the lane (DEF-4047): an open plan keeps a tree
     # with work in it, never a merged, clean one, whose plan was never closed.
-    if plan_in_progress(path, merged_and_clean=bool(merged)):
+    if plan_in_progress(path, merged_and_clean=merged is not None and unmerged == 0):
         return "a plan in it is still in progress"
     if status is None:
         return "git could not read it"
     if status:
         return _plural(len(status.splitlines()), "uncommitted change")
     if mid:
-        return "an operation is in progress in it"
-    if merged is None:
+        return ("git could not rule out an operation in progress in it" if mid == _UNRULED_OPERATION
+                else "an operation is in progress in it")
+    if merged is None or unmerged is None:
         return "git could not compare it with " + upstream
-    if not merged:
-        ahead = git.out("rev-list", "--count", f"{upstream}..{head}") or "some"
+    if unmerged:
         branch = block.get("branch", "").replace("refs/heads/", "") or "detached"
-        return f"{ahead} commit(s) not in main ({branch})"
+        return f"{unmerged} commit(s) not in main ({branch})"
     ignored = _ignored_entries(here)
     if ignored is None:
         return "git could not list its ignored files"
@@ -1748,25 +1859,35 @@ def _names(names: list[str]) -> str:
 
 
 def checkout_line(result: CatchUp) -> str:
-    """The banner's ``Checkout:`` value, or '' when there is nothing to say."""
+    """The banner's ``Checkout:`` value, or '' when there is nothing to say.
+    A fetch that did not land, and a read that did not answer, are said on
+    every state that would otherwise read as fact, ``current`` included
+    (DEF-2046); a hold and a move in flight say it in their reason."""
     stale = "" if result.fetched else " (origin not reached; compared with the last fetch)"
+    unread = f" ({_plural(result.unanswered, 'git read')} did not answer in time)" if result.unanswered else ""
     if result.state == "caught_up":
         left = ""
         if result.branch and result.branch != result.base:
             dropped = ", branch deleted" if result.deleted_branch else ""
             left = f"left {result.branch} (merged{dropped}); "
         where = f"detached at {REMOTE}/{result.base}" if result.detached else f"{result.base} fast-forwarded"
-        line = f"caught up -- {left}{where}, {_plural(result.behind, 'commit')}, now {result.head}{stale}"
-        if any(p.startswith((".claude/", "tools/cc/hooks/")) or p == "CLAUDE.md" for p in result.changed):
+        line = (f"caught up -- {left}{where}, {_plural(result.behind, 'commit')}, now {result.head or 'unread'}"
+                f"{stale}{unread}")
+        if result.changed_unread:
+            line += " (what it changed did not read: /clear to load any new hooks in this session)"
+        elif any(p.startswith((".claude/", "tools/cc/hooks/")) or p == "CLAUDE.md" for p in result.changed):
             line += " (hooks or CLAUDE.md changed with it: /clear to load them in this session)"
         return _ascii(line)
     if result.state == "would_catch_up":
-        return f"would catch up {_plural(result.behind, 'commit')} from {result.branch or 'HEAD'} to {result.base}"
+        return _ascii(f"would catch up {_plural(result.behind, 'commit')} from {result.branch or 'HEAD'} "
+                      f"to {result.base}{stale}{unread}")
     if result.state == "moving":
         return _ascii(f"catching up -- {result.reason}")
     if result.state == "held":
         behind = f"{_plural(result.behind, 'commit')} behind {REMOTE}/{result.base}, " if result.behind else ""
         tail = f" -- {result.remedy}" if result.remedy else ""
+        if stale and not result.behind:
+            stale = " (origin not reached)"   # held before any comparison: nothing was compared
         return _ascii(f"NOT caught up ({behind}{result.reason}){stale}{tail}")
     if result.state == "lane" and result.behind:
         where = result.branch or "a detached HEAD"
@@ -1774,7 +1895,11 @@ def checkout_line(result: CatchUp) -> str:
             result.reason or "nothing of its own")
         if result.branch == result.base:
             own = result.reason
-        return _ascii(f"on {where} ({own}); {result.base} has {result.behind} newer -- left as is")
+        return _ascii(f"on {where} ({own}); {result.base} has {result.behind} newer -- left as is{stale}{unread}")
+    if result.state == "current" and (stale or unread):
+        return _ascii(f"current{stale}{unread}")
+    if result.state == "skipped" and (stale or unread):
+        return _ascii(f"{result.reason or 'not compared'}{' (origin not reached)' if stale else ''}{unread}")
     return ""
 
 
@@ -1788,7 +1913,8 @@ def worktrees_line(report: Reap) -> str:
     if report.deferred:
         parts.append(f"{len(report.deferred)} more next session (out of time): {_names(report.deferred)}")
     if report.note:
-        parts.append(f"{report.note}: {_names([n for n, _ in report.kept])}")
+        kept = _names([n for n, _ in report.kept])
+        parts.append(f"{report.note}: {kept}" if kept else report.note)
     elif report.kept:
         # A saved edit is the one copy of an edit (DEF-3009): every worktree
         # holding one is named, first, whatever the count.
@@ -1797,6 +1923,8 @@ def worktrees_line(report: Reap) -> str:
         parts.append(f"kept {len(report.kept)}: " + ", ".join(saved + ([_names(rest)] if rest else [])))
     if report.saved:
         parts.append(f"their session notes saved under cc/blueprints/ ({_plural(len(report.saved), 'file')})")
+    if report.unanswered:
+        parts.append(f"{_plural(report.unanswered, 'git read')} did not answer in time")
     return _ascii("; ".join(parts))
 
 
@@ -1808,11 +1936,18 @@ def _repo_root(explicit: str | None) -> Path:
     # The main checkout, even when run from inside a linked worktree: the
     # common git dir's parent. `--path-format` needs git 2.31; older gits
     # fall back to this checkout's own top level.
+    # A read that did not answer is never the fallback's cue: inside a linked
+    # worktree the fallback roots at the worktree (DEF-2046).
+    unanswered = "checkout_sync: git did not answer in 10 s (git rev-parse); run it again, or pass --root"
     r = run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=Path.cwd(), timeout=10)
-    if r is not None and r.returncode == 0 and Path(r.stdout.strip()).name == ".git":
+    if r is None:
+        raise SystemExit(unanswered)
+    if r.returncode == 0 and Path(r.stdout.strip()).name == ".git":
         return Path(r.stdout.strip()).parent
     r = run(["git", "rev-parse", "--show-toplevel"], cwd=Path.cwd(), timeout=10)
-    if r is None or r.returncode != 0:
+    if r is None:
+        raise SystemExit(unanswered)
+    if r.returncode != 0:
         raise SystemExit("checkout_sync: not inside a git repository")
     return Path(r.stdout.strip())
 
