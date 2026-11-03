@@ -141,10 +141,10 @@ only prevents *pruning*, it does not create a second copy.
 
 ```
 # Espalier source repo only -- not deployed by init
-python3 scripts/archive_transcripts.py --check     # report only, writes nothing
-python3 scripts/archive_transcripts.py             # archive if grown past the threshold
-python3 scripts/archive_transcripts.py --force     # archive regardless
-python3 scripts/archive_transcripts.py --print-plist   # launchd job, absolute paths filled in
+python scripts/archive_transcripts.py --check      # report only, writes nothing
+python scripts/archive_transcripts.py              # archive if grown past the threshold
+python scripts/archive_transcripts.py --force      # archive regardless
+python scripts/archive_transcripts.py --print-plist    # launchd job, absolute paths filled in
 ```
 
 The threshold is **growth since the last archive**, not absolute size — with

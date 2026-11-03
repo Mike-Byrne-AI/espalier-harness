@@ -548,11 +548,86 @@ class TestTheTable:
         assert "- stack: **a blind axis** -- every proving test ran at one value (python)." in table
         assert "- host: proven at 2 values (store_python3, launcher_only)." in table
 
-    def test_running_the_module_prints_the_table(self):
+    def test_running_the_module_prints_the_report(self):
         proc = subprocess.run(
             [sys.executable, str(REPO_ROOT / "tests" / "_axis_registry.py")],
             cwd=REPO_ROOT, env=_child_env(), capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=45,
         )
         assert proc.returncode == 0, proc.stderr
-        assert proc.stdout == reg.render_table() + "\n"
+        assert proc.stdout == reg.render_report() + "\n"
+        assert proc.stdout.startswith(reg.render_table()) and reg.render_instruments() in proc.stdout
+
+    def test_removing_a_proven_cell_names_its_axis_blind(self):
+        """The release step's mutation, on the live registry: each axis proven
+        at exactly two values reads blind once either proof is taken away."""
+        by_axis = reg.proven_values_by_axis()
+        pairs = [axis for axis, values in by_axis.items() if len(values) == 2]
+        assert pairs, "no axis is proven at exactly two values; plant the mutation instead"
+        for axis in pairs:
+            for value in by_axis[axis]:
+                cells = tuple(c for c in reg.AXIS_REGISTRY if (c.axis, c.value) != (axis, value))
+                assert f"- {axis}: **a blind axis**" not in reg.render_table()
+                assert f"- {axis}: **a blind axis**" in reg.render_table(cells), (axis, value)
+
+
+class TestTheInstruments:
+    """The release instruments' half of the report (``docs/RELEASE_CHECKLIST.md``,
+    the blind-axis step): every job of the instrument workflows is named, every
+    value is a cell's or a declared outsider, and an axis every instrument ran
+    at one value reads blind."""
+
+    def test_every_value_is_a_cell_value_or_a_declared_outsider(self):
+        for i in reg.INSTRUMENTS:
+            for axis in reg.INSTRUMENT_AXES:
+                known = {c.value for c in reg.AXIS_REGISTRY if c.axis == axis}
+                assert getattr(i, axis) in known | reg.OUTSIDE_VALUES, (i.name, axis, getattr(i, axis))
+
+    def test_every_job_of_the_instrument_workflows_is_named(self):
+        yaml = pytest.importorskip("yaml")
+        named = {r for i in reg.INSTRUMENTS for r in i.runs}
+        workflows = REPO_ROOT / ".github" / "workflows"
+        missing = []
+        for name in reg.INSTRUMENT_WORKFLOWS:
+            jobs = (yaml.safe_load((workflows / name).read_text(encoding="utf-8")) or {}).get("jobs") or {}
+            assert jobs, f"{name} holds no jobs"
+            missing += [f"{name}::{job}" for job in jobs if f"{name}::{job}" not in named]
+        assert not missing, f"a job of an instrument workflow is in no INSTRUMENTS row: {missing}"
+        stale = sorted(r for r in named if "::" in r and r.split("::")[0] not in reg.INSTRUMENT_WORKFLOWS)
+        assert not stale, stale
+        for r in named - {r for r in named if "::" in r}:
+            assert (REPO_ROOT / r).is_file(), r
+
+    def test_every_workflow_that_runs_a_check_is_an_instrument_workflow(self):
+        yaml = pytest.importorskip("yaml")
+        runner = re.compile(r"\b(?:pytest|proof_tier\.py|fresh_clone_gate\.py|final_release_matrix\.py|wheel_smoke\.py)\b")
+        running = set()
+        for path in sorted((REPO_ROOT / ".github" / "workflows").glob("*.yml")):
+            for job in ((yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("jobs") or {}).values():
+                for step in (job.get("steps") or []) if isinstance(job, dict) else []:
+                    run = step.get("run") if isinstance(step, dict) else None
+                    lines = [ln for ln in (run or "").splitlines() if not ln.lstrip().startswith("#")]
+                    if any(runner.search(ln) for ln in lines):
+                        running.add(path.name)
+        assert running == set(reg.INSTRUMENT_WORKFLOWS), (sorted(running), reg.INSTRUMENT_WORKFLOWS)
+
+    def test_one_value_across_the_instruments_reads_blind(self):
+        cells = (
+            reg.AxisCell("stack", "python", "t.py::t[python]", ""),
+            reg.AxisCell("stack", "node", "", "not yet"),
+            reg.AxisCell("root", "plain", "", "x"),
+            reg.AxisCell("root", "spaced", "", "x"),
+        )
+        instruments = (
+            reg.Instrument("a", (), "python", "both", "plain", "none"),
+            reg.Instrument("b", (), "python", "not measured", "spaced", "none"),
+            reg.Instrument("c", (), "none", "both", "plain", "not built"),
+        )
+        assert reg.instrument_values_by_axis(instruments, cells) == {
+            "stack": ["python"], "host": [], "root": ["plain", "spaced"], "session": []}
+        report = reg.render_instruments(instruments, cells)
+        assert "- stack: **a blind axis** -- every instrument ran at one value (python)." in report
+        assert "- host: **a blind axis** -- no instrument reaches a value its cells name." in report
+        assert "- root: the instruments reach 2 values (plain, spaced)." in report
+        assert reg.blind_instrument_axes(instruments, cells) == ["stack", "host", "session"]
+        assert "| b | python | not measured | spaced | none |" in report

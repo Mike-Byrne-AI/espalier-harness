@@ -821,7 +821,9 @@ Optionally, `actions/checkout` with `path: "spaced root/espalier-harness"` and e
 **Land it with the test-fixture reds 0-C named fixed:**
 
 - the `test_merge_settings` row wires the interpreter that answers, not a literal `python3`;
-- the five `tests/test_run_pack_chain.py` argv sites use `sys.executable`.
+- the five `tests/test_run_pack_chain.py` argv sites use `sys.executable` (landed in the
+  collectors lane, 2026-11-03, ack `20261103T153156Z-air-f6f251`: 3-A keeps the
+  `test_merge_settings` row alone).
 
 A **product** red is a row plus a registry gap (Scope (out)).
 
@@ -1253,8 +1255,9 @@ total; it shrinks each review.
 
 - State: DRAFT (foundation lane landed on `lane/adopter-axes-foundation`, 2026-10-06; the
   session-and-stack lane landed 2-B on `lane/adopter-axes-session-and-stack`, 2026-11-03,
-  with 2-C dropped and 2-D landed through `TP-474`; the release-and-collectors lane, 3-A
-  to 3-F, is open)
+  with 2-C dropped and 2-D landed through `TP-474`; the release-and-collectors work runs
+  as a lane per wave: 3-D and 3-F landed on `lane/adopter-axes-collectors`, 2026-11-03,
+  and 3-A, 3-B and 3-C are open)
 - Commits (foundation lane):
   - `b92ce7d` Task 0 record
   - `68689b5` 1-A
@@ -1419,6 +1422,72 @@ total; it shrinks each review.
     - `DEF-915` stays **NOT CLOSED**. `run_hook_as_wired` is its launch oracle, but its
       cannot-start shape (`tests/_interpreter_hosts.py::build_cannot_start`) is not one of
       the matrix's host shapes.
+- **Collectors lane (2026-11-03, `lane/adopter-axes-collectors`, Windows box): 3-D and
+  3-F** (assign `20261103T100313Z-air-f09205`).
+  - Task 0 slice at `68c799d`, Appendix A's line 6 widened to `'python'` and to
+    `task-packs/probes.d/` (the pack's `LEDGER_PROBES.json` is gone):
+    - subprocess argv opening with a bare name: the five `tests/test_run_pack_chain.py`
+      sites and nothing else; probe `-c` bodies: none, since `DEF-411a` and `DEF-412h` were
+      re-pinned on air-work's lane (#469);
+    - Windows-reachable workflow steps naming `python3`: none. Three jobs can reach a
+      Windows runner (the portability matrix, read fail-closed on its `fromJSON`; the
+      release smoke matrix; the post-merge Windows leg). The `python3` steps that exist
+      (`harness-guard.yml`, both copies, and `publish.yml`) run on ubuntu;
+    - fenced `python3` at a command position: none in the command, agent and skill bodies
+      (182 fences), six lines in the packaged docs;
+    - fifteen GNU-only or BSD-only flag shapes in the same fences: zero hits, so no ban is
+      added.
+  - Landed, all in `tests/test_portability_contract.py` unless named:
+    - 3-D.1: the token ban reads `.claude/workflows/*.js`, and
+      `TestOperatorDocsPortability::test_shipped_bodies_spell_no_python3_command` holds the
+      skills and packaged docs (`_shipped_markdown`, the deploy owners) to `DEF-1049`'s
+      command-shaped check. The two blueprint-authoring lines spell `python` (mirrors
+      synced).
+    - 3-D.2: `TestShippedFencesRunNoBarePython3`, over both fence grammars. The two fence
+      walkers are now `_fenced_lines` and `_deep_fenced_lines`, which the pytest-label class
+      reads too.
+    - 3-D.3: `TestWindowsReachableWorkflowStepsRunNoBarePython3`: runner labels, matrix
+      lists and `include`, and an expression it cannot expand read as Windows.
+    - 3-D.4: `TestSpawnsNameTheirInterpreter`: a `subprocess` spawn under any alias or
+      bare import, `tests/fixtures/` and `espalier/_vendor/` exempt. It reads spawns, so
+      these argv-shaped lists stay out as data: `tools/cc/hooks/stop_gate.py:302` (a token
+      matcher), `tests/test_cli_deploy.py:5491` (a fake process's argv),
+      `tests/test_hook_utils.py:1703` and `:1718` (`TimeoutExpired` commands),
+      `tests/test_surface_contract.py:860` (a settings fixture),
+      `tests/test_wheel_smoke.py:652` (a `CalledProcessError` command) and
+      `tests/test_record_merge.py:1112` (a parsed doc line). It keys on subprocess calls, not
+      helpers: `tests/test_python_floor.py` hands `["python3"]` to a helper that spawns
+      it on purpose. The five `tests/test_run_pack_chain.py` sites spell `sys.executable`
+      (3-A's item, moved here). The probe-body arm is the ledger's own ratchet,
+      `tests/test_check_ledger_probes.py::TestProbeShapesAreRatcheted::test_no_new_probe_spawns_a_literal_interpreter_inside_its_program`,
+      not rebuilt.
+    - 3-F: `tests/_axis_registry.py` gains `INSTRUMENTS` (the release instruments and the
+      value each runs at on stack, host, root and session, read from each instrument's own
+      lines) and `render_report`, which the module prints; `tests/test_axis_registry.py`
+      gains `TestTheInstruments` and the step's mutation on the live registry; and
+      `docs/RELEASE_CHECKLIST.md` gains the step before Tier 3. At `68c799d` every
+      instrument axis reads blind: every tree is the harness's own or none, no instrument
+      host is a perturbed shape, every root is plain, and no instrument carries a session.
+    - Sibling sites (root `CLAUDE.md` Core Rule 12): eight lines in
+      `docs/TROUBLESHOOTING.md`, `docs/FRESHNESS.md`, `docs/TASK_RECIPES.md` and
+      `docs/ENV_CATALOG.md` spell `python` (mirrors synced).
+  - Departures from the text above:
+    - 3-D.1 and 3-D.2 read the deploy owners' population, wider than the pack's command,
+      skill and agent bodies. That population found the eight doc lines.
+    - `DEF-1049`'s check matches `python3` at any word start, not only after a backtick.
+    - An instrument value counts toward an axis only when it is one of that axis's cells.
+      `both`, `none`, `not measured` and `not built` are shown and never count.
+  - Earn-the-red: each collector against a planted tree (the `DEF-1049` probe's form),
+    and live at `68c799d`. The argv collector reds on the five sites, the fence collector
+    on the six doc lines, and the command-shaped check on the two skill lines and the doc
+    lines. `ledger_row.py strike` drove `DEF-1049`'s probe (STILL_OPEN at `68c799d`,
+    STRIKE_CANDIDATE at the head) and its guard
+    (`test_shipped_bodies_spell_no_python3_command`: red at the base, green at the head).
+    3-F's mutation runs on the live registry: removing either proven `target_os` cell
+    prints that axis blind.
+  - Reach (collectors lane): `DEF-1049` **CLOSED** (struck). `DEF-975`'s collectors row
+    is **CLOSED by 3-D** with the `newline=` arm **NOT REACHED** (0-E). Its release
+    instruments row is half closed: 3-F lands and 3-B is open. The row stays open.
 
 ## Appendix A — the census instrument
 

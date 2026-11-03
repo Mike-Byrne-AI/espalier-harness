@@ -57,6 +57,30 @@ tests. The `--skip-tests` and `--skip-parity` flags
 exist for narrow debug loops; they produce fast signal, **not publish
 proof**. Treat the unflagged invocation as the actual readiness gate.
 
+## Before Tier 3 — the blind-axis disclosure (seconds)
+
+Every pre-release check once ran the harness on a tree shaped like the harness
+itself (`DEF-975`). Before Tier 3, whoever cuts the tag prints the adopter-axes
+report and pastes it into the release notes:
+
+```bash
+python tests/_axis_registry.py
+```
+
+It prints two tables. The first is the registry's cells: each stack, host
+shape, session path, root and tree value, with the test that proves it or the
+gap that says why none does. The second is the release instruments (the fresh
+clone gate, the release matrix's stages, the release workflow's legs, the
+`test.yml` cells, the portability matrix, the clean checkout, the post-merge
+legs and the perturbed cell once it is built), with the value each runs the
+harness at. An axis proven at fewer than two values, or that every instrument
+ran at one value, reads **a blind axis**, and the notes say so in those words.
+
+The exit is disclosure, not a block: a blind axis ships, named. A new release
+instrument joins `INSTRUMENTS` in `tests/_axis_registry.py`, and
+`tests/test_axis_registry.py` reds while a job of a workflow that runs the
+suite is in no row.
+
 ## Tier 3 — Publish gate (about two hours on the self-host box: step 0 about 25 minutes per interpreter, then the matrix, measured 55:39 wall on 2026-09-23 with stage 02 alone 45:14; `DEF-918` and `DEF-919` row the two levers that halve it)
 
 **Step 0 — the suite on a tree it was not written on.** Before the matrix, the

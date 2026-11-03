@@ -46,8 +46,11 @@ parametrised over ``stack`` that builds a Python tree whatever its value would
 pass it. When the first cell is proven, that test should also check the tree
 it built.
 
-``python tests/_axis_registry.py`` prints the table. An axis with fewer than
-two proven values is a blind axis, and the table says so in those words.
+``python tests/_axis_registry.py`` prints the table, then the release
+instruments and the value each runs at (``INSTRUMENTS``): the report
+``docs/RELEASE_CHECKLIST.md``'s blind-axis step pastes into the release notes.
+An axis with fewer than two proven values, or that every instrument ran at one
+value, is a blind axis, and the report says so in those words.
 """
 from __future__ import annotations
 
@@ -256,5 +259,118 @@ def render_table(cells: tuple[AxisCell, ...] = AXIS_REGISTRY) -> str:
     return "\n".join(lines)
 
 
+# -- the instruments ---------------------------------------------------------
+# The cells above say which values the suite's tests reach. These say which the
+# machines that run a release's checks reach: the tree each installs the harness
+# into, the interpreter names its host answers to, whether its root holds a
+# space, and whether one run carries hook state from event to event. Read
+# 2026-11-03 from each instrument's own lines. A value outside the axis's cells
+# is shown and never counts: "both" (python and python3 answer, the shape no
+# cell perturbs), "none" (the instrument installs into no stack tree, or
+# launches no hook), "not measured" and "not built".
+INSTRUMENT_AXES: tuple[str, ...] = ("stack", "host", "root", "session")
+OUTSIDE_VALUES = frozenset({"both", "none", "not measured", "not built"})
+
+#: The workflows whose jobs run the suite or a release instrument; the contract
+#: derives the list from the run steps and names every job of these in a row.
+INSTRUMENT_WORKFLOWS: tuple[str, ...] = (
+    "clean-checkout.yml", "portability.yml", "post-merge.yml", "post-merge-windows.yml",
+    "release.yml", "test.yml",
+)
+
+
+@dataclass(frozen=True)
+class Instrument:
+    """One release check, and the value it runs the harness at on each axis."""
+
+    name: str
+    runs: tuple[str, ...]   # the workflow jobs (``<file>::<job>``) or scripts it is
+    stack: str
+    host: str
+    root: str
+    session: str
+
+
+INSTRUMENTS: tuple[Instrument, ...] = (
+    # Run alone on the release box (TP-468's Motivation: the Windows box answers
+    # python only, the Mac python3 only); which box cuts a tag is not recorded.
+    Instrument("fresh_clone_gate (Tier 3 step 0)", ("scripts/fresh_clone_gate.py",),
+               "python", "not measured", "not measured", "single_event"),
+    Instrument("final_release_matrix stage 1, the source checkout's tests",
+               ("scripts/final_release_matrix.py",), "python", "not measured", "not measured", "single_event"),
+    # Stages 2 to 4 smoke the built archive, sdist and wheel on a README tree
+    # (doctor_target); 5 and 6 read the artifacts and install nothing.
+    Instrument("final_release_matrix stages 2 to 6, the artifacts",
+               ("scripts/final_release_matrix.py",), "none", "not measured", "not measured", "none"),
+    # wheel_smoke's target is an empty `git init` (TP-468 3-B gives it a stack).
+    Instrument("release.yml matrix-smoke, the wheel on three operating systems",
+               ("release.yml::matrix-smoke",), "none", "both", "plain", "none"),
+    Instrument("release.yml release-check", ("release.yml::release-check",),
+               "python", "both", "plain", "single_event"),
+    Instrument("test.yml test and test-serial, the required cells",
+               ("test.yml::test", "test.yml::test-serial"), "python", "both", "plain", "single_event"),
+    Instrument("test.yml tier and the audit jobs", (
+        "test.yml::tier", "test.yml::ripgrep-parity", "test.yml::stdlib-audit",
+        "test.yml::code-review-audit", "test.yml::artifact-parity", "test.yml::workflow-lint",
+    ), "none", "both", "plain", "none"),
+    Instrument("the perturbed cell (TP-468 3-A)", (), "not built", "not built", "not built", "not built"),
+    # windows-latest answering python3 is probable, not measured (TP-468 0-C).
+    Instrument("portability.yml on ubuntu, windows and macos", ("portability.yml::portability",),
+               "python", "both", "plain", "single_event"),
+    Instrument("clean-checkout.yml, the heavy stages", (
+        "clean-checkout.yml::clean-tier", "clean-checkout.yml::clean-checkout",
+    ), "python", "both", "plain", "single_event"),
+    Instrument("post-merge.yml and post-merge-windows.yml, main after each merge", (
+        "post-merge.yml::full-tier", "post-merge-windows.yml::serial-leg",
+    ), "python", "both", "plain", "single_event"),
+)
+
+
+def instrument_values_by_axis(
+    instruments: tuple[Instrument, ...] = INSTRUMENTS,
+    cells: tuple[AxisCell, ...] = AXIS_REGISTRY,
+) -> dict[str, list[str]]:
+    """For each instrument axis, the cell values some instrument reaches, in
+    first-reached order; a value outside the axis's cells never counts."""
+    out: dict[str, list[str]] = {}
+    for axis in INSTRUMENT_AXES:
+        known = {c.value for c in cells if c.axis == axis}
+        out[axis] = list(dict.fromkeys(v for i in instruments if (v := getattr(i, axis)) in known))
+    return out
+
+
+def blind_instrument_axes(
+    instruments: tuple[Instrument, ...] = INSTRUMENTS,
+    cells: tuple[AxisCell, ...] = AXIS_REGISTRY,
+) -> list[str]:
+    """Instrument axes every instrument ran at one cell value, or at none."""
+    return [axis for axis, values in instrument_values_by_axis(instruments, cells).items() if len(values) < 2]
+
+
+def render_instruments(
+    instruments: tuple[Instrument, ...] = INSTRUMENTS,
+    cells: tuple[AxisCell, ...] = AXIS_REGISTRY,
+) -> str:
+    lines = ["| Instrument | " + " | ".join(INSTRUMENT_AXES) + " |",
+             "|---|" + "---|" * len(INSTRUMENT_AXES)]
+    for i in instruments:
+        lines.append(f"| {i.name} | " + " | ".join(getattr(i, axis) for axis in INSTRUMENT_AXES) + " |")
+    lines.append("")
+    for axis, values in instrument_values_by_axis(instruments, cells).items():
+        if len(values) >= 2:
+            lines.append(f"- {axis}: the instruments reach {len(values)} values ({', '.join(values)}).")
+        elif values:
+            lines.append(f"- {axis}: **a blind axis** -- every instrument ran at one value ({values[0]}).")
+        else:
+            lines.append(f"- {axis}: **a blind axis** -- no instrument reaches a value its cells name.")
+    return "\n".join(lines)
+
+
+def render_report() -> str:
+    """The table the release notes carry (docs/RELEASE_CHECKLIST.md): the cells
+    the suite proves, then the values the release instruments run at."""
+    return render_table() + "\n\n" + render_instruments()
+
+
 if __name__ == "__main__":
-    print(render_table())
+    print(render_report())
