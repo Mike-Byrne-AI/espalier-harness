@@ -2716,8 +2716,8 @@ class TestCommandPositionClassClose:
             "arm: a pipe into a remove verb or a .NET directory delete anywhere "
             "opens the walk; the anchored readers select the operands (DEF-822).",
         "_bash_patterns._PS_START_PROCESS_RE":
-            "GATE inside the span an anchored cmd opener (`_PS_CMD_REMOVE_OPENER_RE`, "
-            "`write_guard._PS_CMD_OPENER_RE`) matched: finds the process-start "
+            "GATE inside the span the anchored cmd opener (`_PS_CMD_REMOVE_OPENER_RE`, "
+            "the delete reader's and the harness-variable check's) matched: finds the process-start "
             "cmdlet's word there, never over a command, and "
             "`start_process_cmd_line` then requires it at a statement start in code, "
             "so a mention in a double-quoted string is not read (DEF-1071 (e)).",
