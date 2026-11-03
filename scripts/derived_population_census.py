@@ -1145,6 +1145,18 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "CORRECT_BY_PROPERTY",
         "no pin cited: the property is 'everything present is safe', so a smaller population makes a s...",
     ),
+    "tests/test_proof_tier.py": (
+        2, "1c9a5ebe85ec8e3b98489e5b6aff580befea393c4ff64d06598cee87afa5ba35",
+        "CORRECT_BY_PROPERTY",
+        "Two walks over `mirror_registry.MIRROR_ROWS` (2026-11-03, DEF-5076): the "
+        "for-assert drives each row's pin through the tier a path on either side "
+        "earns, so a row added later is held to the same rule by construction; the "
+        "comprehension is the producer/consumer parity pin, `_registry_rows`' AST "
+        "read of the registry against the engine's own rows. Deriving from the "
+        "registry is the point of both, and neither is blind: the first reds by "
+        "name on a row whose pin no line runs (three pairs at 437fe40), the "
+        "second on any field the AST read gets wrong.",
+    ),
     "tests/test_protected_path_contract_parity.py": (
         4, "655c863c6fda1df764a7b48135b8c1a92c79938ae030a7d17b20678767275993",
         "CORRECT_BY_SHAPE",

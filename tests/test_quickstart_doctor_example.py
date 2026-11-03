@@ -194,7 +194,22 @@ class TestQuickstartDoctorExampleMatchesLiveOutput:
 
 _BANNER_DOCS = ("docs/QUICKSTART.md", "docs/HOOKS.md", "docs/WORKFLOW.md")
 _BANNER_OPEN = "=== Espalier-Harness === Session Start ==="
+# The opening of the short banner a script start cut at its wall gives
+# (`session_start._cut_banner`); calibrated against the hook's own short form
+# below, so a rewording reds there, never as a skip.
+_CUT_OPEN_RE = re.compile(
+    r"=== Espalier-Harness === SessionStart \(short: cut at (?P<seconds>\d+(?:\.\d+)?) s in the (?P<phase>[^;]+);")
 _LABEL_RE = re.compile(r"^([A-Z][A-Za-z_]*):")
+
+
+def _skip_if_cut(output: str) -> None:
+    """A driven start cut at its wall is cannot-tell, never a verdict: skip,
+    naming the phase and the seconds, when ``output`` (the hook's stdout or
+    its banner) is a cut start's; a full start returns."""
+    cut = _CUT_OPEN_RE.search(output)
+    if cut:
+        pytest.skip(f"cannot tell: the driven start was cut at {cut['seconds']} s in the "
+                    f"{cut['phase']} and printed the short banner; only a full start judges this row")
 
 
 def _banner_head(block: str) -> list[str]:
@@ -278,6 +293,9 @@ class TestBannerSamplesMatchTheDrivenHook:
         )
         assert result.returncode == 0, result.stderr
         ctx = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+        # A loaded runner can carry the start past its wall (#456's
+        # windows-latest leg: cut at 13.0 s in the banner build, ten errors).
+        _skip_if_cut(ctx)
         assert ctx.startswith(_BANNER_OPEN), ctx[:200]
         head = _banner_head(ctx)
         # The floor the capture must clear before it is allowed to judge a doc:
@@ -330,3 +348,25 @@ class TestBannerSamplesMatchTheDrivenHook:
             return memory.split("**Stack:**", 1)[1].strip()
         sample = _banner_head(_doc_banner_sample(_read(QUICKSTART), "docs/QUICKSTART.md"))
         assert stack(sample) == stack(driven_banner)
+
+
+class TestTheCutOpeningReadsAsCannotTell:
+    """The driven capture above skips on a cut start and judges every other
+    one, so its reader must know the hook's short form and nothing else."""
+
+    def test_the_hooks_own_short_form_reads_as_a_cut_with_its_phase_and_seconds(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        monkeypatch.syspath_prepend(str(HOOK.parent.parent))
+        monkeypatch.syspath_prepend(str(HOOK.parent))
+        import session_start as ss
+
+        ss._reset_wall_state()
+        ctx = ss._cut_banner("banner build", 13.0)["hookSpecificOutput"]["additionalContext"]
+        cut = _CUT_OPEN_RE.search(ctx)
+        assert cut and (cut["seconds"], cut["phase"]) == ("13.0", "banner build"), ctx[:200]
+        with pytest.raises(pytest.skip.Exception, match="cut at 13.0 s in the banner build"):
+            _skip_if_cut(json.dumps(ss._cut_banner("banner build", 13.0)))
+
+    def test_the_full_opening_is_never_read_as_a_cut(self):
+        assert not _CUT_OPEN_RE.search(_BANNER_OPEN + "\nHost:      OS=Linux; python3=yes\n")
+        _skip_if_cut(json.dumps({"hookSpecificOutput": {"additionalContext": _BANNER_OPEN}}))
