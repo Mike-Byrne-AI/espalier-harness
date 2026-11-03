@@ -85,10 +85,13 @@ class TestOperatorDocsPortability:
             REPO_ROOT / "docs" / "SHARP_EDGES.md",
             *visible(checkout_glob(REPO_ROOT / ".claude" / "agents", "*.md"), REPO_ROOT / ".claude" / "agents"),
             *visible(checkout_glob(REPO_ROOT / ".claude" / "commands", "*.md"), REPO_ROOT / ".claude" / "commands"),
-            # the persist lines' resolver is pinned by
-            # tests/test_interpreter_hosts.py::TestShellResolverLine; this reads the rest
-            *visible(checkout_glob(REPO_ROOT / ".claude" / "workflows", "*.js"), REPO_ROOT / ".claude" / "workflows"),
         ]
+        # Not in active_docs, which is the reinject rule's operator-doc population
+        # (tests/test_reinject_pin_referents.py): the review workflows' bodies, whose
+        # persist lines' resolver tests/test_interpreter_hosts.py::TestShellResolverLine
+        # pins; this reads the rest.
+        workflows = REPO_ROOT / ".claude" / "workflows"
+        active_docs += visible(checkout_glob(workflows, "*.js"), workflows)
 
         forbidden_tokens = ["python3 ", "/tmp/"]
 
