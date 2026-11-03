@@ -25,8 +25,8 @@ from pathlib import Path
 import pytest
 
 from _legacy_pathlib import legacy_pathlib_probes, probes_raise_on_eacces
-from tests._cut_start import skip_if_cut
 from _wired_settings import write_wired_settings
+from tests._cut_start import skip_if_cut
 
 ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = ROOT / "tools" / "cc" / "hooks"

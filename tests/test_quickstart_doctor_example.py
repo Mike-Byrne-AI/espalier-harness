@@ -361,10 +361,13 @@ class TestTheCutOpeningReadsAsCannotTell:
         skip_if_cut(json.dumps({"hookSpecificOutput": {"additionalContext": _BANNER_OPEN}}))
 
     def test_the_reader_is_defined_once_and_the_wall_file_never_skips_a_cut(self):
-        """A second copy would drift from the calibration above unseen, and a
-        skip in the wall file would hide the cut that file exists to judge."""
+        """A second copy, of the reader or of the opening it reads, would drift
+        from the calibration above unseen, and a skip in the wall file would
+        hide the cut that file exists to judge. (``cut[ ]at`` keeps this
+        pattern from reading its own line.)"""
         tests_dir = REPO_ROOT / "tests"
+        copy = re.compile(r"^\s*def _?skip_if_cut\b|^\s*_?CUT_OPEN_RE\s*=|short: cut[ ]at", re.M)
         homes = sorted(p.relative_to(tests_dir).as_posix() for p in tests_dir.rglob("*.py")
-                       if re.search(r"^\s*def _?skip_if_cut\b", _read(p), re.M))
+                       if copy.search(_read(p)))
         assert homes == ["_cut_start.py"], homes
         assert "skip_if_cut" not in _read(tests_dir / "test_session_start_wall.py")

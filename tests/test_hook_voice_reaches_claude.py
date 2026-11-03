@@ -28,6 +28,7 @@ import types
 from pathlib import Path
 
 import pytest
+from tests._cut_start import skip_if_cut
 from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -38,14 +39,18 @@ if str(HOOKS_DIR) not in sys.path:
 
 def _hook(name: str, payload: dict, root: Path, **env: str) -> subprocess.CompletedProcess:
     """Run a hook as Claude Code does: JSON on stdin, the project at ``root``,
-    and none of the launching shell's harness variables."""
+    and none of the launching shell's harness variables. A SessionStart cut
+    at its wall skips as cannot-tell (DEF-2048): its short banner holds no
+    Warnings block, so the quiet-boot row would pass on it unseen."""
     clean = {k: v for k, v in os.environ.items() if not k.startswith(("CLAUDE_", "ESPALIER_"))}
     clean.update(CLAUDE_PROJECT_DIR=str(root), ESPALIER_AUDIT_DIR=os.environ["ESPALIER_AUDIT_DIR"], **env)
-    return subprocess.run(
+    result = subprocess.run(
         [sys.executable, str(HOOKS_DIR / f"{name}.py")],
         input=json.dumps(payload), capture_output=True, encoding="utf-8",
         env=clean, cwd=str(root), timeout=45,
     )
+    skip_if_cut(result.stdout)
+    return result
 
 
 def _one_object(stdout: str) -> str:

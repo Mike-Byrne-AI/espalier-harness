@@ -30,8 +30,8 @@ from pathlib import Path
 import pytest
 
 from _adopter_tree import build_adopter_tree
-from tests._cut_start import skip_if_cut
 from espalier import cli
+from tests._cut_start import skip_if_cut
 
 # Text an any-tree row must never carry: the paths and names only the harness's
 # own tree has. The new-test-file pointer names the first two, and fires on the
