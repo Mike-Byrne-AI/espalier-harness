@@ -38,7 +38,6 @@ import importlib.util
 import json
 import os
 import re
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -46,6 +45,7 @@ from pathlib import Path
 import pytest
 
 from tests._guard_fixture import carry_protected_tree
+from tests._hook_spawn import run_hook_through
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOK = REPO_ROOT / "tools" / "cc" / "hooks" / "write_guard.py"
@@ -79,16 +79,21 @@ def _decide(tool: str, command: str, project: Path) -> bool:
     earlier probe in this class counted rc=1 (an ImportError) as ALLOW and
     reported that HEAD permitted a catastrophic delete -- the flattering answer,
     from a broken instrument. Raising is what makes that impossible here.
+
+    Through the one hook spawn (``tests/_hook_spawn.py``): the budget's refusal
+    is a deny on this same channel, so read here it was the SOFT tier's first
+    deny on a loaded runner (DEF-5066). The helper retries it once, and not
+    after a miss that left state a retry would read as the re-issue.
     """
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = str(project)
     # An adopter is not in maintenance mode, and the tier under test is not
     # bypassable by it anyway. Strip the developer's ambient shell either way.
     env.pop("ESPALIER_MAINTENANCE_MODE", None)
-    proc = subprocess.run(
+    proc = run_hook_through(
         [sys.executable, str(HOOK)],
         input=json.dumps({"tool_name": tool, "tool_input": {"command": command}}),
-        capture_output=True, text=True, encoding="utf-8", timeout=30, env=env,
+        env=env,
     )
     if proc.returncode == 1:
         raise AssertionError(f"write_guard errored (rc=1): {(proc.stderr or '')[-400:]}")
