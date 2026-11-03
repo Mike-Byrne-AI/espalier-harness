@@ -125,10 +125,12 @@ jobs:
     steps:
       - name: Keep the temp dir on the runner's disk
         # GitHub's AWS pool mounts /tmp as a 7.7G tmpfs with usrquota, and this
-        # leg's base temp filled the runner user's quota there: Errno 122 at 6.4G
+        # leg's base temp filled the runner user's quota there: Errno 122 at 6.1G
         # (#470's test (3.13), 2026-11-03), where the same leg reaches 11G on the
         # Azure pool, whose /tmp is the root disk. $RUNNER_TEMP is on the root
-        # disk on both pools. First, before anything writes a temp file, and made,
+        # disk on both pools (the AWS cell's 72G root had 19G free before the
+        # tier; a job running both legs there is unmeasured, and the disk steps
+        # below read it). First, before anything writes a temp file, and made,
         # not only named: tempfile.gettempdir() passes over a TMPDIR that is not a
         # directory and settles on /tmp without a word. Every Linux job that runs
         # the suite opens with this step (tests/test_ci_job_bounds.py, DEF-3027).
@@ -161,18 +163,22 @@ jobs:
         # pool's (2026-11-03); these two steps measured why (the first step's
         # comment), and now read where the temp dir lives after that step moved
         # it: findmnt of $TMPDIR is the root disk on both pools, so every cell
-        # shows the move, and a cell on the AWS pool shows the quota no longer
-        # reached. Errno 122 is a quota, so where findmnt's OPTIONS list
-        # usrquota or prjquota, df's Avail is not the runner user's headroom:
-        # read the quota reports. A sampler logs the temp dir's use every 20 s
-        # through the tier, so the peak is read and not only what the run
-        # left. Neither step can fail the cell, and the tier step itself never
-        # carries continue-on-error (tests/test_required_status_checks.py).
+        # shows the move, and a warning annotation says so where the temp dir's
+        # mount still carries usrquota or prjquota (the move missed the quota).
+        # Errno 122 is a quota, so where findmnt's OPTIONS list one, df's Avail
+        # is not the runner user's headroom: read the quota reports. A sampler
+        # logs the temp dir's filesystem every 20 s through the tier, so the
+        # peak is read and not only what the run left. Neither step can fail
+        # the cell, and the tier step itself never carries continue-on-error
+        # (tests/test_required_status_checks.py).
         continue-on-error: true
         run: |
           echo "image: $ImageOS $ImageVersion; vendor: $(cat /sys/class/dmi/id/sys_vendor 2>/dev/null)"
           tmp="${TMPDIR:-/tmp}"
           findmnt -T "$tmp" -o TARGET,SOURCE,FSTYPE,SIZE,OPTIONS || true
+          if findmnt -n -o OPTIONS -T "$tmp" 2>/dev/null | grep -qE 'usrquota|prjquota'; then
+            echo "::warning title=temp dir on a quota'd mount::$tmp is on a mount with a quota option; image $ImageOS $ImageVersion"
+          fi
           findmnt -T "$GITHUB_WORKSPACE" -o TARGET,SOURCE,FSTYPE,SIZE,OPTIONS || true
           df -h || true
           df -i || true
@@ -215,7 +221,7 @@ jobs:
           tmp="${TMPDIR:-/tmp}"
           df -h "$tmp" "$GITHUB_WORKSPACE" || true
           df -i "$tmp" "$GITHUB_WORKSPACE" || true
-          echo "the temp dir's use every 20 s through the tier (used KB, inodes used, avail KB):"
+          echo "the temp dir's filesystem every 20 s through the tier (used KB, inodes used, avail KB):"
           tail -n 60 "$RUNNER_TEMP/disk-trace.txt" 2>/dev/null || true
           timeout 120 du -xh --max-depth=4 "$tmp/pytest-of-$(id -un)" 2>/dev/null | sort -h | tail -12
           timeout 60 du -xsh "$GITHUB_WORKSPACE" "$HOME/.cache" 2>/dev/null || true

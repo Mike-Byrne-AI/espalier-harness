@@ -1105,8 +1105,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # name GitHub can actually report (workflow-name / file-slug / bare
             # matrix-id are the three spellings that park a PR forever).
             "test_required_status_checks",
-            # every CI job that runs the suite declares timeout-minutes, and the
-            # portability cell's serial set is proof_tier.py's (DEF-1178, DEF-979).
+            # every CI job that runs the suite declares timeout-minutes and, on
+            # Linux, opens by moving TMPDIR to the runner's disk; the portability
+            # cell's serial set is proof_tier.py's (DEF-1178, DEF-3027, DEF-979).
             "test_ci_job_bounds",
             # the record/claim axis agrees with every registry that declares a
             # record, so Core Rule 13's answer does not depend on which module

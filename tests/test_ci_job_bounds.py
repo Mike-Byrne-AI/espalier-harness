@@ -143,13 +143,14 @@ class TestEveryJobThatRunsTheSuiteIsBounded:
 class TestTheSuitesTempLivesOnTheRunnerDisk:
     """DEF-3027: GitHub's AWS pool mounts /tmp as a 7.7G tmpfs with
     `usrquota`, and the full tier's parallel leg filled the runner user's quota
-    there: the sampler read /tmp's use freeze at 6.4G from 13:06:53 with 1.6G of
-    the tmpfs still free, and pytest's terminal flush raised Errno 122 at
-    13:07:48 (#470's test (3.13), job 125929994703, 2026-11-03), where the same
-    leg reached 11G on the Azure pool, whose /tmp is the root disk. So every job
-    that runs the suite on a Linux runner makes a directory under $RUNNER_TEMP,
-    on the root disk on both pools, and exports TMPDIR to it as its first step,
-    before anything writes a temp file. Made, not only named:
+    there: the sampler read /tmp's use freeze at 6.1G (6,431,024 KB) from
+    13:06:53 with 1.6G of the tmpfs still free, and pytest's terminal flush
+    raised Errno 122 at 13:07:48 (#470's test (3.13), job 125929994703,
+    2026-11-03), where the same leg reached 11G on the Azure pool, whose /tmp is
+    the root disk. So every job that runs the suite on a Linux runner makes a
+    directory under $RUNNER_TEMP, on the root disk on both pools (19G free on
+    the AWS cell's 72G root before the tier), and exports TMPDIR to it as its
+    first step, before anything writes a temp file. Made, not only named:
     tempfile.gettempdir() passes over a TMPDIR that is not a directory and
     settles on /tmp without a word."""
 
@@ -183,8 +184,10 @@ class TestTheSuitesTempLivesOnTheRunnerDisk:
         skip it."""
         guards = {f"{name}::{job_id}": (job.get("steps") or [{}])[0].get("if")
                   for (name, job_id), job in sorted(self._linux_jobs().items())}
+        # Any computed runner is read as one that may cross systems: an input or
+        # a fallback (`inputs.os || 'ubuntu-latest'`) can name Windows as well.
         crossing = {f"{name}::{job_id}" for (name, job_id), job in self._linux_jobs().items()
-                    if "matrix." in str(job.get("runs-on", ""))}
+                    if "${{" in str(job.get("runs-on", ""))}
         assert crossing, "no job that runs the suite has a cross-system matrix; this test reads nothing"
         assert {key: guard for key, guard in guards.items() if key in crossing} == dict.fromkeys(
             sorted(crossing), "runner.os == 'Linux'"), guards
@@ -198,6 +201,22 @@ class TestTheSuitesTempLivesOnTheRunnerDisk:
                      if not _can_run_on_linux(job)
                      and any("TMPDIR=" in str(step.get("run", "")) for step in job.get("steps") or [])]
         assert not exporting, exporting
+
+    def test_no_env_block_sets_tmpdir(self):
+        """The first step's export is the one home of TMPDIR: a workflow-, job-
+        or step-level `env:` naming it outranks the export for that step or
+        sits beside it (a step reproducing the quota by `TMPDIR: /tmp` on the
+        tier, a job env on the Windows leg), and the tests above read only the
+        steps' `run` text. Dies to: any `env:` mapping in a workflow naming
+        TMPDIR."""
+        named = [f"{name}{where}" for name, data in sorted(_workflows().items())
+                 for where, env in [("", (data or {}).get("env"))] + [
+                     (f"::{job_id}{at}", block)
+                     for job_id, job in ((data or {}).get("jobs") or {}).items()
+                     for at, block in [("", job.get("env"))] + [
+                         (f"::step {i}", step.get("env")) for i, step in enumerate(job.get("steps") or [])]]
+                 if isinstance(env, dict) and "TMPDIR" in env]
+        assert not named, f"an env: block sets TMPDIR, beside the first step's export (DEF-3027): {named}"
 
 
 class TestThePortabilityCellRunsTheLocalTiersLegs:

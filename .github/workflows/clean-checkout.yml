@@ -112,7 +112,7 @@ jobs:
     steps:
       - name: Keep the temp dir on the runner's disk
         # test.yml's `test` job's first step says why (DEF-3027): on GitHub's
-        # AWS pool /tmp is a quota'd tmpfs this run's parallel leg fills.
+        # AWS pool /tmp is a quota'd tmpfs this run's parallel leg would fill.
         run: |
           mkdir -p "$RUNNER_TEMP/tmp"
           echo "TMPDIR=$RUNNER_TEMP/tmp" >> "$GITHUB_ENV"
