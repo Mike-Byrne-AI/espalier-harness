@@ -833,11 +833,15 @@ def _sibling_places(root: Path) -> list[Path] | None:
     from git's own worktree registry by the deployed hooks' reader
     (``_hook_utils.sibling_checkouts``: a few small reads, no spawn), for a
     placement with no ``git worktree list`` of its own; None where that
-    reader is not deployed beside this script or breaks."""
+    reader is not deployed beside this script or breaks. A registration
+    whose ``.git`` is gone (git reads it prunable) is no checkout: a session
+    in its folder counts for the checkout holding the folder."""
     try:
         hook_utils = _hook_utils_by_path()
         reader = getattr(hook_utils, "sibling_checkouts", None) if hook_utils is not None else None
-        return [root, *reader(root)] if callable(reader) else None
+        if not callable(reader):
+            return None
+        return [root, *(c for c in reader(root) if os.path.exists(os.path.join(c, ".git")))]
     except Exception:  # noqa: BLE001 -- fail-open: ok deliberate -- a reader that breaks leaves the folder rule, which only ever keeps more
         return None
 
@@ -849,14 +853,22 @@ def sessions_in_checkout(sessions: list[dict[str, object]], root: Path) -> list[
     checkout of the repository (:func:`checkout_of` over
     :func:`_sibling_places`: a worktree nested elsewhere in the folder is its
     own, DEF-3024). Where the siblings cannot be read the folder rule stands
-    alone, which only ever keeps more."""
+    alone, which only ever keeps more. A ``...``-prefixed cwd (a session
+    marker caps one past 120 characters) is kept on :func:`within` alone: its
+    folder names cannot tell ``.claude/worktrees`` from any ``worktrees``
+    folder, nor place it deeper."""
     home = root.joinpath(*WORKTREES_REL)
     places = _sibling_places(root)
     target = _norm(root)
     kept: list[dict[str, object]] = []
     for s in sessions:
         cwd = str(s.get("cwd", ""))
-        if not within(cwd, root) or within(cwd, home):
+        if not within(cwd, root):
+            continue
+        if cwd.startswith("..."):
+            kept.append(s)
+            continue
+        if within(cwd, home):
             continue
         deepest = checkout_of(cwd, places) if places is not None else root
         if deepest is not None and _norm(deepest) == target:

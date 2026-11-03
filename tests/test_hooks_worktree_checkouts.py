@@ -550,13 +550,16 @@ class TestPostWriteCheckInsideAWorktree:
         assert checked == []
 
 
-_SIBLINGS = "sibling_checkouts"
+# The lists of a repository's checkouts read off the disk: the hooks' reader
+# and checkout_sync's wrapper of it, which lists the root first.
+_SIBLING_LISTS = ("sibling_checkouts", "_sibling_places")
 
-# Every reader of sibling_checkouts under tools/cc, with the rule it places a
-# path by. A worktree nested in the main checkout's folder is held by both, so
-# the first sibling holding a path is the wrong answer (DEF-5068).
+# Every reader of those lists under tools/cc, with the rule it places a path
+# by. A worktree nested in the main checkout's folder is held by both, so the
+# first checkout holding a path is the wrong answer (DEF-5068, DEF-3024).
 _SIBLING_READERS = {
-    ("tools/cc/checkout_sync.py", "_sibling_places"): "handed to checkout_of by sessions_in_checkout",
+    ("tools/cc/checkout_sync.py", "_sibling_places"): "filtered and handed to sessions_in_checkout",
+    ("tools/cc/checkout_sync.py", "sessions_in_checkout"): "checkout_of over the places",
     ("tools/cc/hooks/_hook_utils.py", "_checkout_bases"): "sorted longest first for containing_checkout",
     ("tools/cc/hooks/_hook_utils.py", "sibling_checkout_containing"): "equal to containing_checkout's hit",
     ("tools/cc/hooks/_hook_utils.py", "is_sibling_checkout"): "identity by inode, no containment",
@@ -567,8 +570,9 @@ _SIBLING_READERS = {
 
 
 def _sibling_checkout_readers(tree_root: Path) -> set[tuple[str, str]]:
-    """Every (file, enclosing function) under ``tree_root/tools/cc`` naming
-    ``sibling_checkouts``: a call by name or attribute, or getattr's string."""
+    """Every (file, enclosing function) under ``tree_root/tools/cc`` naming a
+    list in ``_SIBLING_LISTS``: a call by name or attribute, getattr's
+    string, or an import of it (an alias is caught where it is imported)."""
     found: set[tuple[str, str]] = set()
 
     def walk(node: ast.AST, rel: str, owner: str) -> None:
@@ -576,9 +580,10 @@ def _sibling_checkout_readers(tree_root: Path) -> set[tuple[str, str]]:
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 walk(child, rel, child.name)
                 continue
-            if ((isinstance(child, ast.Name) and child.id == _SIBLINGS)
-                    or (isinstance(child, ast.Attribute) and child.attr == _SIBLINGS)
-                    or (isinstance(child, ast.Constant) and child.value == _SIBLINGS)):
+            if ((isinstance(child, ast.Name) and child.id in _SIBLING_LISTS)
+                    or (isinstance(child, ast.Attribute) and child.attr in _SIBLING_LISTS)
+                    or (isinstance(child, ast.Constant) and child.value in _SIBLING_LISTS)
+                    or (isinstance(child, ast.alias) and child.name in _SIBLING_LISTS)):
                 found.add((rel, owner))
             walk(child, rel, owner)
 
@@ -587,21 +592,26 @@ def _sibling_checkout_readers(tree_root: Path) -> set[tuple[str, str]]:
     return found
 
 
-class TestEverySiblingReaderPlacesByTheDeepest:
+class TestEverySiblingReaderIsNamedWithItsRule:
     """No contract stopped a new first-match loop over sibling_checkouts, the
     shape DEF-5068 fixed and DEF-3024 found again in checkout_sync: every
     reader is named here with the rule it places by, so a new one is read
-    before it lands."""
+    before it lands. It pins the roster of readers, not their bodies: a
+    second loop inside a named reader is the reviewer's to read."""
 
     def test_every_reader_is_named_with_its_rule(self):
-        found = _sibling_checkout_readers(HOOKS_DIR.parent.parent.parent)
+        root = HOOKS_DIR.parent.parent.parent
+        assert "def sibling_checkouts(" in (HOOKS_DIR / "_hook_utils.py").read_text(encoding="utf-8"), (
+            "sibling_checkouts moved or was renamed: point _SIBLING_LISTS at its new name, never empty the census")
+        found = _sibling_checkout_readers(root)
+        assert found, "the scan found no reader at all: the scan is broken, not the tree clean"
         new = sorted(found - set(_SIBLING_READERS))
         gone = sorted(set(_SIBLING_READERS) - found)
-        assert not new, (
-            f"new readers of sibling_checkouts: {new}. Place a path by the deepest checkout holding it "
-            "(checkout_sync.checkout_of, or _hook_utils.containing_checkout), never the first sibling that "
-            "holds it, then name the reader in _SIBLING_READERS with its rule")
-        assert not gone, f"named readers that no longer read it: {gone}; drop them from _SIBLING_READERS"
+        assert not new and not gone, (
+            f"new readers: {new}; named readers that no longer read a list: {gone}. Place a path by the "
+            "deepest checkout holding it (checkout_sync.checkout_of, or _hook_utils.containing_checkout), "
+            "never the first that holds it, then name each new reader in _SIBLING_READERS with its rule; a "
+            "reader renamed or moved is one of each, its rule carried over")
 
     def test_a_first_match_loop_is_named_by_the_scan(self, tmp_path):
         planted = tmp_path / "tools" / "cc" / "hooks" / "_planted.py"
@@ -615,5 +625,12 @@ class TestEverySiblingReaderPlacesByTheDeepest:
             "def by_name(h, root):\n"
             "    return getattr(h, 'sibling_checkouts')(root)\n",
             encoding="utf-8")
+        aliased = tmp_path / "tools" / "cc" / "_aliased.py"
+        aliased.write_text(
+            "from checkout_sync import _sibling_places as places\n\n\n"
+            "def first_place(root, path):\n"
+            "    return next(p for p in places(root) if str(path).startswith(str(p)))\n",
+            encoding="utf-8")
         assert _sibling_checkout_readers(tmp_path) == {
-            ("tools/cc/hooks/_planted.py", "first_holder"), ("tools/cc/hooks/_planted.py", "by_name")}
+            ("tools/cc/hooks/_planted.py", "<module>"), ("tools/cc/hooks/_planted.py", "first_holder"),
+            ("tools/cc/hooks/_planted.py", "by_name"), ("tools/cc/_aliased.py", "<module>")}

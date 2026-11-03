@@ -1591,6 +1591,24 @@ class TestTheOneLivenessOracle:
         monkeypatch.setattr(cs, "_hook_utils_by_path", lambda: _Broken)
         assert _ids(cs.sessions_in_checkout(rows, work)) == ["root", "side"]
 
+        def _unloadable():
+            raise ImportError("a hooks file that raises at import")
+
+        monkeypatch.setattr(cs, "_hook_utils_by_path", _unloadable)
+        assert _ids(cs.sessions_in_checkout(rows, work)) == ["root", "side"]
+
+    def test_a_registration_whose_git_file_is_gone_is_no_checkout(self, cs, repos):
+        """A worktree folder whose .git file was deleted while its registration
+        stayed (git reads it prunable) is the clone's folder again: a session
+        there shares the clone's repository and must hold its catch-up. Dies
+        to: taking every registered folder that exists as a checkout."""
+        work = repos["work"]
+        side = work / "side"
+        _git(work, "worktree", "add", "--quiet", "--detach", str(side), "origin/main")
+        (side / ".git").unlink()
+        rows = [_row(work, pid=4001, sid="root"), _row(side, pid=4004, sid="side")]
+        assert _ids(cs.sessions_in_checkout(rows, work)) == ["root", "side"]
+
     def test_without_git_a_marker_is_placed_by_the_same_rule(self, cs, repos, monkeypatch):
         """occupancy's marker fallback placed a marker by folder alone, where the
         registry rows' fallback leaves .claude/worktrees/ out and places by the
@@ -1607,6 +1625,13 @@ class TestTheOneLivenessOracle:
         assert _ids(occ.sessions) == ["in-root"]
         seat = cs.occupancy(inside, sessions=[], markers=lambda tree: marks, runner=lambda *a, **k: None)
         assert _ids(seat.sessions) == ["in-seat"]
+        # A marker caps a cwd past 120 characters to "..." and its tail, which
+        # matches by folder names alone: kept where the folder rule keeps it,
+        # never ruled out by a worktrees folder in its tail.
+        capped = {"session_id": "capped", "pid": 4104,
+                  "cwd": ".../.claude/worktrees/seat-a/packages/core/src/lib/components/forms/" + "y" * 40}
+        long_seat = cs.occupancy(inside, sessions=[], markers=lambda tree: [capped], runner=lambda *a, **k: None)
+        assert _ids(long_seat.sessions) == ["capped"]
 
     def test_an_unreadable_registry_is_cannot_tell_and_the_markers_only_ever_add(self, cs, tmp_path,
                                                                                   monkeypatch):
