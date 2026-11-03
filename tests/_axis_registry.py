@@ -150,7 +150,9 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
              "the perturbed CI cell (a spaced --basetemp) and the release smoke's "
              "--spaced-root leg"),
     AxisCell("root", "spaced_interpreter", "",
-             "no CI interpreter path holds a space. On the Windows host, whose venv "
+             "no CI interpreter a hook runs from holds a space (the release smoke's "
+             "second leg runs the CLI from a venv under a spaced root and launches "
+             "no hook, so its INSTRUMENTS row claims spaced). On the Windows host, whose venv "
              "does, the stop-gate override pair reds because its fixture spells "
              "sys.executable unquoted (measured 2026-10-06). DEF-968 closed the "
              "product half (struck 2026-10-16: tests/test_hook_entry_argv.py spawns "

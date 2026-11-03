@@ -634,7 +634,6 @@ class TestBuildFailureCleanup:
         the ``wheel-smoke-dist-*`` tempdir it created before re-raising
         SmokeFailure. RED before the fix: the dir leaks on every failed build.
         Asserts against the SPECIFIC path captured from mkdtemp, not a /tmp glob."""
-        import argparse
         import subprocess
         import tempfile
 
@@ -653,7 +652,7 @@ class TestBuildFailureCleanup:
 
         monkeypatch.setattr(wheel_smoke, "build_wheel", boom)
 
-        args = argparse.Namespace(wheel=None, skip_build=False, keep_temp=False, stack="none", spaced_root=False)
+        args = wheel_smoke.parse_args([])
         with pytest.raises(wheel_smoke.SmokeFailure):
             wheel_smoke.run_smoke(args)
 
@@ -965,7 +964,6 @@ class TestTheWorkDirsLock:
     so a kept dir stays even when its run is killed."""
 
     def _drive(self, tmp_path, monkeypatch, keep_temp: bool) -> list:
-        import argparse
         import tempfile
 
         from tests import _temp_sweep
@@ -986,8 +984,7 @@ class TestTheWorkDirsLock:
         monkeypatch.setattr(wheel_smoke, "build_wheel", build)
         monkeypatch.setattr(wheel_smoke, "install_wheel", install)
         with pytest.raises(wheel_smoke.SmokeFailure):
-            wheel_smoke.run_smoke(argparse.Namespace(wheel=None, skip_build=False, keep_temp=keep_temp,
-                                                     stack="none", spaced_root=False))
+            wheel_smoke.run_smoke(wheel_smoke.parse_args(["--keep-temp"] if keep_temp else []))
         return seen
 
     def test_both_dirs_are_locked_while_it_runs_and_go_after(self, tmp_path, monkeypatch):
@@ -1025,12 +1022,10 @@ class TestTheStackAndSpacedRootFlags:
 
     @staticmethod
     def _args(tmp_path: Path, stack: str, spaced_root: bool):
-        import argparse
-
         wheel = tmp_path / "espalier_harness-0-py3-none-any.whl"
         wheel.write_bytes(b"")
-        return argparse.Namespace(wheel=str(wheel), skip_build=True, keep_temp=False,
-                                  stack=stack, spaced_root=spaced_root)
+        return wheel_smoke.parse_args(["--wheel", str(wheel), "--skip-build", "--stack", stack]
+                                      + (["--spaced-root"] if spaced_root else []))
 
     def _drive(self, tmp_path, monkeypatch, *, stack: str, spaced_root: bool) -> dict:
         import tempfile
@@ -1103,19 +1098,23 @@ class TestTheStackAndSpacedRootFlags:
         assert seen["before_git_init"] == {} and seen["git_at_init"]
         assert seen["locked"] == [seen["target"].parent] and seen["venv"].parent == seen["target"].parent
 
-    @pytest.mark.parametrize("planted", ["absent", "no_row"])
+    _PLANTED = {
+        "no_row": 'STACKS = {"adopter-python": {}}\ndef write_stack(dest, row):\n    raise AssertionError(row)\n',
+        "no_writer": 'STACKS = {"adopter-node": {}}\n',
+        "raises": 'import not_a_stdlib_module_anywhere\nSTACKS = {"adopter-node": {}}\n',
+    }
+
+    @pytest.mark.parametrize("planted", ["absent", "no_row", "no_writer", "raises"])
     def test_a_table_it_cannot_use_fails_before_the_install(self, tmp_path, monkeypatch, planted):
-        """No silent fallback: an absent table (an archive without ``tests/``) or
-        one without the row fails the run, naming the table, before the wheel
-        is installed."""
+        """No silent fallback: an absent table (an sdist has no ``tests/``), one
+        without the row or the writer, and one that raises on load each fail
+        the run, naming the table, before the wheel is installed."""
         import tempfile
 
         table = tmp_path / "planted" / "_stack_trees.py"
-        if planted == "no_row":
+        if planted != "absent":
             table.parent.mkdir()
-            table.write_text('ADOPTER_PREFIX = "adopter-"\nSTACKS = {"adopter-python": {}}\n'
-                             "def write_stack(dest, row):\n    raise AssertionError(row)\n",
-                             encoding="utf-8")
+            table.write_text(self._PLANTED[planted], encoding="utf-8")
         monkeypatch.setattr(wheel_smoke, "STACK_TABLE", table)
         monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
         installed: list = []
@@ -1125,3 +1124,20 @@ class TestTheStackAndSpacedRootFlags:
         assert str(table) in str(exc.value) and "hint:" in str(exc.value), str(exc.value)
         assert not installed, "the wheel was installed before the table was read"
         assert not [d for d in tmp_path.iterdir() if d.name.startswith("wheel-smoke-")]
+
+    def test_a_table_holding_a_dataclass_loads(self, tmp_path, monkeypatch):
+        """The table is loaded under postponed annotations, where a dataclass
+        reads its module from ``sys.modules``: the load registers it while it
+        runs, and leaves nothing registered after."""
+        table = tmp_path / "planted" / "_stack_trees.py"
+        table.parent.mkdir()
+        table.write_text(
+            "from __future__ import annotations\nfrom dataclasses import dataclass\n\n"
+            "@dataclass\nclass Row:\n    body: str\n\n"
+            'STACKS = {"adopter-node": {"README.md": Row("x").body}}\n'
+            "def write_stack(dest, row):\n    return dest\n",
+            encoding="utf-8")
+        monkeypatch.setattr(wheel_smoke, "STACK_TABLE", table)
+        before = set(sys.modules)
+        assert wheel_smoke.load_stack_table("node").STACKS == {"adopter-node": {"README.md": "x"}}
+        assert set(sys.modules) == before

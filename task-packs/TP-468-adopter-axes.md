@@ -1256,8 +1256,8 @@ total; it shrinks each review.
 - State: DRAFT (foundation lane landed on `lane/adopter-axes-foundation`, 2026-10-06; the
   session-and-stack lane landed 2-B on `lane/adopter-axes-session-and-stack`, 2026-11-03,
   with 2-C dropped and 2-D landed through `TP-474`; the release-and-collectors work runs
-  as a lane per wave: 3-D and 3-F landed on `lane/adopter-axes-collectors`, 2026-11-03,
-  and 3-A, 3-B and 3-C are open)
+  as a lane per wave: 3-D and 3-F landed on `lane/adopter-axes-collectors` and 3-B on
+  `lane/adopter-axes-wheel-smoke-stack`, 2026-11-03, and 3-A and 3-C are open)
 - Commits (foundation lane):
   - `b92ce7d` Task 0 record
   - `68689b5` 1-A
@@ -1533,6 +1533,39 @@ total; it shrinks each review.
   - Reach (collectors lane): `DEF-1049` **CLOSED** (struck). `DEF-975`'s collectors row
     is **CLOSED by 3-D** with the `newline=` arm **NOT REACHED** (0-E). Its release
     instruments row is half closed: 3-F lands and 3-B is open. The row stays open.
+- **Wheel-smoke lane (2026-11-03, `lane/adopter-axes-wheel-smoke-stack`, Windows box): 3-B**
+  (assign `20261103T152847Z-air-f732b8`), stacked on the collectors lane.
+  - Landed as 3-B says: `scripts/wheel_smoke.py` gains `--stack` and `--spaced-root`; the
+    table is read by path first, before any build, and an absent table, one without the row
+    or `write_stack`, and one that raises on load each fail by `format_failure` (the load
+    registers the module while it runs). `release.yml`'s `matrix-smoke` gains the second
+    smoke, `--stack node --spaced-root`, under `if: ${{ !cancelled() }}` so it runs where
+    the first reds. Its `INSTRUMENTS` row reads `node`, `not measured`, `spaced`, `none`, so
+    the instruments' own runs take two values on stack and on root.
+  - Departure: `TestTheInstruments::test_the_matrix_smoke_rows_are_its_wheel_smoke_runs`
+    reads the job's smoke lines through the script's own parser against its rows, and
+    refuses a step that a `continue-on-error`, an `||` or an `if:` other than `!cancelled()`
+    keeps from gating. For this job a dropped perturbation reds, unlike the 3-A/3-B note
+    above; every other row stays declared.
+  - Earn-the-red: the eight flag rows red on the unchanged script (the four stack rows on
+    their content assertion); 3-B's mutation (`--stack node` writes nothing) reds the
+    `[node]` row alone; ten witness mutants killed (the row dropped or plain, either flag
+    dropped, the flag renamed, the step removed or commented out, `continue-on-error`, an
+    OS `if:`, `|| true`), two equivalent spellings green (`--stack=node`, a continuation).
+  - Drive: `python scripts/wheel_smoke.py --stack node --spaced-root` PASS on the Windows
+    box (twelve steps, `adopter-node: 6 paths`, the venv and the target under `spaced
+    root`). The release matrix itself was not run: it runs on a dispatch or a tag, and a
+    dispatch on the lane is 15 cells with macOS billed at 10x, the dispatcher's call. Linux
+    and macOS are probable, not measured.
+  - Red-team on a snapshot of `791eb883`: `code-reviewer` APPROVE (2 should-fix, 3 nits),
+    `failure-mode-reviewer` REQUEST CHANGES (3 gaps, 3 rough edges, no regression). One fix
+    batch: the witness parses through the script and reads a step's gating; the second
+    smoke runs past a red first; the load names a raising table and registers the module;
+    the hint and the `spaced_interpreter` note say what is true; the tests build their
+    `Namespace` through `parse_args`. Not taken: `getattr` defaults for a hand-built
+    `Namespace`, and the dispatch (above).
+  - Reach (wheel-smoke lane): `DEF-975`'s release instruments row is **CLOSED by 3-B and
+    3-F**. `DEF-975` stays open on its host axis (3-A); `DEF-937` waits on 3-C.
 
 ## Appendix A — the census instrument
 

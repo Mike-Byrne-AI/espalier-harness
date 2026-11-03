@@ -720,13 +720,24 @@ def load_stack_table(stack: str) -> types.ModuleType:
             "the path must name a Python source file",
         ))
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # Registered while it runs: a dataclass in a module under postponed
+    # annotations looks its module up in sys.modules.
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:
+        raise SmokeFailure(format_failure(
+            f"--stack {stack}: the stack table {table} raised on load: {exc!r}",
+            "the table must import with the standard library alone (tests/test_stack_trees.py)",
+        )) from exc
+    finally:
+        sys.modules.pop(spec.name, None)
     stacks = getattr(module, "STACKS", None)
     if not isinstance(stacks, dict) or row not in stacks or not callable(getattr(module, "write_stack", None)):
         raise SmokeFailure(format_failure(
             f"--stack {stack}: the stack table {table} has no {row!r} row and write_stack",
-            "a row was renamed or removed; STACK_CHOICES must name the table's adopter rows "
-            "(tests/test_wheel_smoke.py pins the two)",
+            "a row was renamed or removed; each STACK_CHOICES value but none must be an "
+            "adopter row of the table (tests/test_wheel_smoke.py pins each to one)",
         ))
     return module
 
