@@ -212,6 +212,29 @@ class TestTheSyncHoldsTheSeededCeiling:
         assert dst.stat().st_mtime_ns == stamp
         assert out == ""
 
+    @pytest.mark.parametrize("word", ["--abbrev-ref", "merge-base"], ids=["default-branch", "merge-base"])
+    def test_a_baseline_read_that_did_not_answer_says_so_in_its_label(self, tree, monkeypatch, word):
+        """DEF-5079's sibling: a killed read of origin's default branch, or of
+        the merge-base with it, fell to HEAD in silence, so the lane's own
+        commits were judged as committed and their new words went unnamed.
+        Dies to: the timeout folded into ``_git``'s None for those two reads."""
+        mod, root = tree
+        (root / "seed.txt").write_text("seed\n", encoding="utf-8")
+        _commit_all(root)
+        _git(root, "update-ref", "refs/remotes/origin/main", "HEAD")
+        _git(root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+        assert mod._baseline()[1] == "the merge-base with origin/main"
+        real = mod.run_bounded
+
+        def killed(argv, *a, **kw):
+            if word in list(argv):
+                raise subprocess.TimeoutExpired(list(argv), kw.get("timeout") or 0)
+            return real(argv, *a, **kw)
+
+        monkeypatch.setattr(mod, "run_bounded", killed)
+        ref, label = mod._baseline()
+        assert ref == "HEAD" and "did not answer" in label and "run it again" in label
+
     def test_without_git_the_replaced_mirror_body_is_the_baseline(self, tmp_path, monkeypatch, capsys):
         mod = _load_sync_script(monkeypatch)
         (tmp_path / "docs").mkdir()

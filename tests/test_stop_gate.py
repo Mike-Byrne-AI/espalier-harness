@@ -1992,6 +1992,36 @@ class TestARedBasesClearingIsNotHeld:
         assert verdict is not None and not held
         assert "20261102T120000Z-air-abcdef" in verdict[0] and "could not be read" in verdict[0]
 
+    @pytest.mark.parametrize("base", ["killed", "absent"], ids=["a-killed-base-read", "no-default-branch"])
+    def test_a_base_read_that_did_not_answer_says_so_not_no_default_branch(self, tmp_path, monkeypatch, base):
+        """DEF-5079: the base's name read killed at the gate's cap printed
+        ``NoDefaultBranch``, a clone with no default branch, where git had not
+        answered. The block now says which; a clone with none listed keeps
+        the word. Both block (the safe direction), and no gh read is made.
+        Dies to: the fault caught into the absence again."""
+        mod, root, asked, held = self._gate(
+            tmp_path, monkeypatch, rulings={"lane/ruled": {"77": "20261102T120000Z-air-abcdef"}}, runs=self._RED_77)
+        if base == "absent":
+            _git(root, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
+            _git(root, "update-ref", "-d", "refs/remotes/origin/main")
+        else:
+            inner = mod._hook_utils.spawn_checked
+
+            def killed(argv, **kw):
+                if list(argv[:2]) == ["git", "symbolic-ref"]:
+                    raise subprocess.TimeoutExpired(list(argv), kw.get("timeout", 0))
+                return inner(argv, **kw)
+
+            monkeypatch.setattr(mod._hook_utils, "spawn_checked", killed)
+        verdict = mod._hold_or_clause(root, _head(root), "lane/ruled", 1, found=self._found(mod))
+        assert verdict is not None and not held and not asked
+        assert "20261102T120000Z-air-abcdef" in verdict[0] and "could not be read" in verdict[0]
+        if base == "absent":
+            assert "(NoDefaultBranch)" in verdict[0]
+        else:
+            assert "NoDefaultBranch" not in verdict[0]
+            assert "git could not be asked for the default branch's name" in verdict[0]
+
     def test_a_channel_that_cannot_be_read_holds_and_says_so_once(self, tmp_path, monkeypatch):
         mod, root, asked, held = self._gate(tmp_path, monkeypatch, raises=OSError("refs unreadable"))
         assert mod._hold_or_clause(root, _head(root), "lane/ruled", 1, found=self._found(mod)) is None
@@ -2063,6 +2093,35 @@ class TestTheOwnUpstreamRuleHasOneReading:
         # Pushed with -u: the same reading.
         _git(root, "push", "-q", "-u", "origin", "HEAD")
         assert self._read(mod, ship, root) == (0, "origin/lane/the-fixture", True, True, None)
+
+    def test_a_default_branch_read_that_did_not_answer_stops_both_readers(self, tmp_path, monkeypatch):
+        """DEF-5079's Task 0, pinned: on a lane origin holds as its own, the
+        shared reading asks the default branch's name; that read killed at
+        its cap is the gate's ``_GitFault`` (whose catch says git could not be
+        asked and lets the Stop through) and the driver's refusal naming the
+        timeout, never a lane read as not on origin or a base read as
+        ``origin/main``. A pin over paths this lane did not change: it reds
+        when either ask folds a kill into the None a non-zero exit answers
+        (both mutations driven)."""
+        root = _lane_repo(tmp_path, ahead=1, push_lane=True)
+        mod = TestTheHandoffGate._load()
+        ship = self._driver(monkeypatch)
+
+        def killing(real):
+            def spawn(argv, *a, **kw):
+                if "symbolic-ref" in list(argv):
+                    raise subprocess.TimeoutExpired(list(argv), kw.get("timeout") or 0)
+                return real(argv, *a, **kw)
+            return spawn
+
+        monkeypatch.setattr(mod._hook_utils, "spawn_checked", killing(mod._hook_utils.spawn_checked))
+        monkeypatch.setattr(ship, "run_bounded", killing(ship.run_bounded))
+        with pytest.raises(mod._GitFault):
+            mod._unpushed_commits(root, time.monotonic() + 30)
+        with pytest.raises(ship.Refused, match="git symbolic-ref took longer than"):
+            ship._has_own_upstream(root, "lane/the-fixture")
+        with pytest.raises(ship.Refused, match="git symbolic-ref took longer than"):
+            ship._lane_not_on_origin(root)
 
     def test_a_lane_started_again_under_a_merged_lanes_name_was_never_pushed(self, tmp_path, monkeypatch):
         """DEF-2041: the lane pushed by hand, merged with a merge commit, its
