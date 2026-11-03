@@ -443,8 +443,17 @@ class TestAddedMirrorAdvisories:
 
 # ── TestMirrorCensusCoverage: the census is derived, and every row is advised ─
 
+class _PinGone(LookupError):
+    """A mirror row's pinning test names a module or a node that is not there."""
+
+
+@pytest.mark.contract
 class TestMirrorCensusCoverage:
     """Every declared mirror row must warn at EDIT time, on both advisory surfaces.
+
+    Marked ``contract`` as a class: two of its guards read the pinning tests,
+    which a tests-only lane edits on the contract tier, so a guard here off
+    that line reds ``main`` first, and a guard added later starts on it.
 
     This is the enumeration guard. It exists because the mirror census was kept by
     hand in four independent places that said three, four, two and four when the
@@ -521,21 +530,31 @@ class TestMirrorCensusCoverage:
         is a normalised comparison; failing those, ``read_bytes`` is a byte
         one; ``read_text`` alone is normalised too, since universal newlines
         read CRLF as LF. A source read, so a heuristic: a normalising call it
-        does not know reads as bytes.
+        does not know reads as bytes. A module or a node the id names that is
+        not there raises ``_PinGone`` naming it, which the comparator test
+        reports under the row's name (a bare ``next`` raised ``StopIteration``,
+        an error that named no row).
         """
         import ast
 
         from tests._source_segment import segment, source_lines
 
         rel, *names = r.pinning_test.split("::")
-        source = (REPO / rel).read_text(encoding="utf-8")
+        path = REPO / rel
+        if not path.is_file():
+            raise _PinGone(f"no module {rel}")
+        source = path.read_text(encoding="utf-8")
         tree = ast.parse(source)
         node = tree
         for name in names:
-            node = next(
-                c for c in ast.walk(node)
-                if isinstance(c, (ast.ClassDef, ast.FunctionDef)) and c.name == name
+            found = next(
+                (c for c in ast.walk(node)
+                 if isinstance(c, (ast.ClassDef, ast.FunctionDef)) and c.name == name),
+                None,
             )
+            if found is None:
+                raise _PinGone(f"{rel} defines no {name}")
+            node = found
         lines = source_lines(source)
         helpers = {
             f.name: segment(lines, f)
@@ -560,11 +579,17 @@ class TestMirrorCensusCoverage:
 
         No code read it, so a row could declare ``bytes`` over a test that
         compares decoded text and nothing would say so; the two checklist rows
-        did, until their declaration was corrected to ``normalized``.
+        did, until their declaration was corrected to ``normalized``. On the
+        contract line with its class, as the resolve guard is: an edit to a
+        pinning test earns the contract tier.
         """
         wrong = []
         for r in mirror_registry.MIRROR_ROWS:
-            made = self._pinning_comparison(r)
+            try:
+                made = self._pinning_comparison(r)
+            except _PinGone as exc:
+                wrong.append(f"{r.name}: {r.pinning_test} does not resolve: {exc}")
+                continue
             if made is None:
                 wrong.append(f"{r.name}: {r.pinning_test} reads neither bytes nor text")
             elif made != r.comparator:
@@ -994,7 +1019,8 @@ class TestMirrorCensusCoverage:
         assert _reinject.REINJECT_PER_TURN_CAP == 2
 
     def test_every_row_pinning_test_resolves(self):
-        """A row citing a dead test is a row with no guard behind it."""
+        """A row citing a dead test is a row with no guard behind it. On the
+        contract line with its class: renaming a pinning test earns that tier."""
         unresolved = []
         for r in mirror_registry.MIRROR_ROWS:
             mod, _, node = r.pinning_test.partition("::")
@@ -1010,6 +1036,34 @@ class TestMirrorCensusCoverage:
         assert not unresolved, (
             "mirror registry rows cite tests that do not exist: " + str(unresolved)
         )
+
+    @pytest.mark.parametrize("gone", ["node", "module"])
+    def test_a_pinning_test_that_is_gone_reds_both_guards_by_its_row(self, monkeypatch, gone):
+        """Both guards above report a pinning test that is gone by assertion,
+        under the row's name and the name that is gone: driven on a real row
+        with its last node renamed, or its module, where the comparator's walk
+        once raised ``StopIteration``, an error that named no row. Each guard
+        is also held to the contract line, which pytest's selection, not this
+        call, decides."""
+        import dataclasses
+
+        rows = [r for r in mirror_registry.MIRROR_ROWS if "::" in r.pinning_test]
+        assert rows, "no mirror row cites a node to rename"
+        row = rows[0]
+        node = row.pinning_test.partition("::")[2]
+        moved = f"{row.pinning_test}_renamed" if gone == "node" else f"tests/test_no_such_pin.py::{node}"
+        missing = "_renamed" if gone == "node" else "test_no_such_pin.py"
+        monkeypatch.setattr(mirror_registry, "MIRROR_ROWS", (dataclasses.replace(row, pinning_test=moved),))
+        class_marks = {m.name for m in getattr(type(self), "pytestmark", ())}
+        for guard, says in ((self.test_every_row_pinning_test_resolves, missing),
+                            (self.test_every_rows_comparator_is_the_comparison_its_pinning_test_makes,
+                             "does not resolve")):
+            marks = class_marks | {m.name for m in getattr(guard, "pytestmark", ())}
+            assert "contract" in marks, f"{guard.__name__} is off the contract line"
+            with pytest.raises(AssertionError) as caught:
+                guard()
+            text = str(caught.value)
+            assert f"{row.name}:" in text and missing in text and says in text, (guard.__name__, text)
 
     @pytest.mark.contract
     def test_every_row_has_an_edit_time_advisory(self, tmp_path):

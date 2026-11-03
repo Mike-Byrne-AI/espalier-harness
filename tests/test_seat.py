@@ -1534,6 +1534,125 @@ class TestRetire:
 
 
 
+def _kill_reads(seat, monkeypatch, *heads: tuple[str, ...], seen: list | None = None) -> None:
+    """Every git the driver builds answers each read whose argv opens with one
+    of ``heads`` as one killed at its cap does (no answer), notes every argv in
+    ``seen``, and runs the rest."""
+    sync = seat.sync
+    real = sync._Git
+
+    def runner(argv, *, cwd, timeout):
+        if seen is not None:
+            seen.append(list(argv))
+        if argv[0] == "git" and any(tuple(argv[1:1 + len(h)]) == h for h in heads):
+            return None
+        return sync.run(argv, cwd=cwd, timeout=timeout)
+
+    class Killing(real):
+        def __init__(self, cwd, deadline, _runner=None, spawner=sync.spawn, tally=None):
+            super().__init__(cwd, deadline, runner, spawner, tally)
+
+    monkeypatch.setattr(sync, "_Git", Killing)
+
+
+def _kill_origin_head(seat, monkeypatch, seen: list | None = None) -> None:
+    """The `origin/HEAD` read killed; the main fallback behind it still
+    answers, which is the guess the driver must not take."""
+    _kill_reads(seat, monkeypatch, ("symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"), seen=seen)
+
+
+class TestTheDefaultBranchGitDidNotNameIsNeverGuessed:
+    """The driver read origin's default branch as `default_branch(...) or
+    "main"`, so a read killed at its cap stood in as `main`: on a clone whose
+    default is another branch, a seat built from the wrong base, a brief that
+    names it, a recipe that pastes it and a retire that fetches it. Dies to:
+    the substitute kept past a read that did not answer."""
+
+    def test_the_helper_tells_a_kill_from_an_answer(self, seat, clone, monkeypatch):
+        assert seat.origin_default(seat.sync._Git(clone, None)) == "main"   # control
+        _kill_origin_head(seat, monkeypatch)
+        assert seat.origin_default(seat.sync._Git(clone, None)) is None
+
+    def test_a_kept_older_checkout_sync_keeps_its_fallback(self, seat, clone):
+        """A `checkout_sync.py` from before reads were counted has no
+        `unanswered`: the driver keeps the old fallback, never a traceback
+        (the failure-mode review drove the AttributeError)."""
+        class Older(seat.sync._Git):
+            unanswered = None
+        assert seat.origin_default(Older(clone, None)) == "main"
+
+    def test_create_refuses_a_base_it_could_not_name(self, seat, clone, monkeypatch):
+        _kill_origin_head(seat, monkeypatch)
+        target = seat.resolve(clone, "box-new")
+        with pytest.raises(seat.Refused, match="git did not answer which branch is origin's default: retry"):
+            seat.create(clone, target)
+        assert not target.path.exists()
+
+    def test_the_brief_is_refused_rather_than_name_a_guessed_base(self, seat, clone, monkeypatch):
+        _dispatcher(clone, '"air"')
+        feat = _worktree(clone, "feat", name="box-feat")
+        assert seat.compose_brief(clone, "box-feat", feat).role == "worker"   # control
+        _kill_origin_head(seat, monkeypatch)
+        with pytest.raises(seat.Refused, match="the brief names the base branch, and git did not answer"):
+            seat.compose_brief(clone, "box-feat", feat)
+
+    def test_the_by_hand_recipe_names_the_ref_git_resolves_never_main(self, seat, clone, monkeypatch):
+        assert "origin/main, then" in seat.by_hand_release(clone, "box", "box-gone", ["c1"])   # control
+        _kill_origin_head(seat, monkeypatch)
+        text = seat.by_hand_release(clone, "box", "box-gone", ["c1"])
+        assert "git worktree add --detach .claude/worktrees/gone origin/HEAD, then" in text, text
+        assert "origin/main" not in text
+
+    def test_retire_refuses_rather_than_fetch_a_guessed_base(self, seat, clone, registry, monkeypatch):
+        feat = _worktree(clone, "feat", name="box-feat")
+        seen: list = []
+        _kill_origin_head(seat, monkeypatch, seen)
+        with pytest.raises(seat.Refused, match="seat box-feat was not retired: git did not answer"):
+            seat.cmd_retire(clone, "box-feat", dry_run=False, fetch=True)
+        assert feat.is_dir() and not [a for a in seen if "fetch" in a], "no fetch of a guessed base"
+
+
+class TestTheCreateReadsThatDidNotAnswer:
+    """The reads `create` makes past the base: a killed ignore check read as
+    "not ignored" (the wrong fix named), a killed worktree list as a branch
+    checked out nowhere, and a `branch -D` git never answered as deleted.
+    Dies to: any of the three read as an answer."""
+
+    def test_a_killed_ignore_check_is_said_as_a_kill(self, seat, clone, monkeypatch):
+        target = seat.resolve(clone, "box-new")
+        _kill_reads(seat, monkeypatch, ("check-ignore",))
+        with pytest.raises(seat.Refused, match="git did not answer whether .claude/worktrees/new/ is ignored here"):
+            seat.create(clone, target)
+        assert not target.path.exists()
+
+    def test_a_killed_worktree_list_holds_the_leftover_branch(self, seat, clone, monkeypatch):
+        _git(clone, "branch", "worktree-new")
+        target = seat.resolve(clone, "box-new")
+        _kill_reads(seat, monkeypatch, ("worktree", "list"))
+        with pytest.raises(seat.Refused, match="git did not answer which checkouts hold the leftover branch "
+                                                "worktree-new"):
+            seat.create(clone, target)
+        assert "worktree-new" in _out(clone, "branch", "--format=%(refname:short)").split()
+
+    def test_a_branch_delete_git_did_not_answer_is_never_said_deleted(self, seat, clone, monkeypatch, capsys):
+        _git(clone, "branch", "worktree-new")
+        target = seat.resolve(clone, "box-new")
+        _kill_reads(seat, monkeypatch, ("branch", "-D"))
+        with pytest.raises(seat.Refused, match="the leftover branch worktree-new .* was not deleted: git did not "
+                                                "answer in time"):
+            seat.create(clone, target)
+        assert "deleted the leftover branch" not in capsys.readouterr().out
+
+    def test_an_include_git_did_not_judge_is_skipped_and_said(self, seat, clone, monkeypatch):
+        first, second = clone.parent / "first", clone.parent / "second"
+        first.mkdir()
+        second.mkdir()
+        assert seat.copy_includes(clone, first) == ([".claude/settings.json"], [])   # control
+        _kill_reads(seat, monkeypatch, ("check-ignore",))
+        assert seat.copy_includes(clone, second) == (
+            [], [".claude/settings.json (git did not answer whether it is ignored)"])
+
+
 class TestTheLauncherSetsTheBoxLock:
     """A seat launched by the tool, or by its printed line, runs under the box
     lock: ``ESPALIER_BOX_LOCK`` names one path per user under the home
