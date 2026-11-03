@@ -1952,7 +1952,21 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.root).resolve()
     # Absolute before either use: --run makes the parent from this process's
     # directory, and pytest reads a relative basetemp from the root it runs in.
-    basetemp = str(Path(args.basetemp).absolute()) if args.basetemp else None
+    # Refused empty (an unset variable would run on pytest's default root
+    # without a word) and inside the checkout, where the trees the tests plant
+    # would sit under the tree the contracts walk and the next run would
+    # refuse on them as untracked.
+    basetemp = None
+    if args.basetemp is not None:
+        if not args.basetemp.strip():
+            print("proof_tier: --basetemp needs a directory; it was given an empty value", file=sys.stderr)
+            return 2
+        bt = Path(args.basetemp).absolute()
+        if bt.resolve() == root or root in bt.resolve().parents:
+            print(f"proof_tier: --basetemp {bt} is inside the checkout {root}; give it a directory "
+                  "outside it (the job's TMPDIR, say)", file=sys.stderr)
+            return 2
+        basetemp = str(bt)
     diff_unread = False
     if args.base:
         try:

@@ -152,8 +152,9 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
              "the release smoke's --spaced-root leg installs into a tree under a "
              "space (its INSTRUMENTS row). test.yml's perturbed cell runs with a "
              "plain pytest root: under a spaced one the suite reds 155 tests in nine "
-             "files (measured 2026-11-03), and scripts/proof_tier.py --basetemp is "
-             "the flag that puts one back on it"),
+             "files, fixtures that put a tmp path into shell or expected text "
+             "unquoted (DEF-5082); scripts/proof_tier.py --basetemp is the flag that "
+             "puts one back on it once they are fixed"),
     AxisCell("root", "spaced_interpreter", "",
              "no CI interpreter a hook runs from holds a space (the release smoke's "
              "second leg runs the CLI from a venv under a spaced root and launches "

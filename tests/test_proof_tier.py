@@ -3033,6 +3033,18 @@ class TestTheBasetempRidesTheArgv:
         assert runs and all(line.startswith("run: pytest --basetemp '/runner temp/axis basetemp/bt' ")
                             for line in runs), runs
 
+    def test_an_empty_value_is_refused_not_read_as_no_basetemp(self, pt, tmp_path, capsys):
+        r = _repo(tmp_path)
+        assert pt.main(["--root", str(r), "--tier", "contract", "--basetemp", ""]) == 2
+        assert "--basetemp needs a directory" in capsys.readouterr().err
+
+    def test_a_directory_inside_the_checkout_is_refused(self, pt, tmp_path, capsys):
+        r = _repo(tmp_path)
+        assert pt.main(["--root", str(r), "--tier", "contract", "--basetemp", str(r / "axis basetemp" / "bt")]) == 2
+        assert "is inside the checkout" in capsys.readouterr().err
+        assert pt.main(["--root", str(r), "--tier", "contract", "--basetemp", str(r)]) == 2
+        capsys.readouterr()
+
     def test_run_makes_the_parent_and_passes_the_flag_on_the_argv_alone(self, pt, tmp_path, monkeypatch, capsys):
         r = _repo(tmp_path)
         bt = tmp_path / "axis basetemp" / "bt"

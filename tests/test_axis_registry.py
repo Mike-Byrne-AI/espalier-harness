@@ -743,8 +743,22 @@ class TestTheInstruments:
                 ran.append((index, "spaced" if " " in (ns.basetemp or "") else "plain"))
         assert len(built) == 1 and len(ran) == 1, (built, ran)
         assert built[0][0] < ran[0][0], "the host goes on PATH in a step before the tier's"
+        # The one step between them is the read that fails the cell unless the
+        # stub is in force on the PATH the tier step gets; nothing there may
+        # put another interpreter ahead (a second setup-python, a $GITHUB_PATH
+        # line), and the tier step may not set its own PATH.
+        between = steps[built[0][0] + 1:ran[0][0]]
+        assert len(between) == 1, [s.get("name") or s.get("uses") for s in between]
+        probe = between[0].get("run") or ""
+        assert "command -v python3" in probe and '= 49' in probe and "GITHUB_PATH" not in probe, probe
+        assert "PATH" not in (steps[ran[0][0]].get("env") or {}), steps[ran[0][0]]
+        assert "continue-on-error" not in self._workflows()["test.yml"]["jobs"]["perturbed"]
         rows = [(i.host, i.root) for i in reg.INSTRUMENTS if "test.yml::perturbed" in i.runs]
         assert rows == [(built[0][1], ran[0][1])], rows
+        # The root/spaced gap says the cell runs on a plain root; that sentence
+        # goes when the cell's root is spaced again.
+        (gap,) = [c.gap for c in reg.AXIS_REGISTRY if (c.axis, c.value) == ("root", "spaced")]
+        assert ("perturbed cell runs with a plain pytest root" in gap) == (ran[0][1] == "plain"), gap
 
     def test_the_release_checklist_carries_the_step(self):
         text = (REPO_ROOT / "docs" / "RELEASE_CHECKLIST.md").read_text(encoding="utf-8")

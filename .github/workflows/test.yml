@@ -368,8 +368,10 @@ jobs:
         # explicit basetemp before it uses it, so the child would delete every
         # xdist worker's directories under it (proof_tier.py::_with_basetemp);
         # inside the TMPDIR the first step exports, where a nested run takes
-        # its basetemp inside its parent's (tests/_nested_temp.py). The leg
-        # leaves out proof_tier.py::SERIAL_FILES, which never run on this host.
+        # its basetemp inside its parent's (tests/_nested_temp.py). On the full
+        # tier the leg leaves out proof_tier.py::SERIAL_FILES, which then never
+        # run on this host; on the cheaper tiers a changed serial file rides
+        # this leg at one worker.
         env:
           TIER: ${{ needs.tier.outputs.tier || 'full' }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}

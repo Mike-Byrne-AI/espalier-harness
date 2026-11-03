@@ -21,6 +21,7 @@ driver's own ``verify_install_green`` function name).
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -378,6 +379,31 @@ def _regate_two_run_fixture(tmp_path):
         )
 
     return repo, packdir, ledger, marker, drive
+
+
+class TestTheDriverResolvesItsInterpreter:
+    """The driver picks its interpreter once, with the canonical resolver line,
+    and runs every python step as ``$PY``: where ``python3`` is a Store alias
+    stub, which resolves and does not answer, each step spelled ``python3``
+    failed (21 of this file's tests under the stub host, 2026-11-03). The
+    perturbed CI cell is not a required check, so these two are the gate."""
+
+    def test_it_carries_the_canonical_resolver_line_once(self):
+        from tests._interpreter_hosts import shell_resolver_line
+
+        lines = SCRIPT.read_text(encoding="utf-8").splitlines()
+        assert lines.count(shell_resolver_line()) == 1, (
+            "the driver's resolver line drifted from tests/_interpreter_hosts.py::shell_resolver_line")
+
+    def test_no_other_line_runs_a_bare_python3(self):
+        from tests._interpreter_hosts import shell_resolver_line
+
+        bare = re.compile(r"(?<![\w./'-])python3(?![\w.'-])")
+        found = [
+            (n, line.strip()) for n, line in enumerate(SCRIPT.read_text(encoding="utf-8").splitlines(), 1)
+            if line != shell_resolver_line() and not line.lstrip().startswith("#") and bare.search(line)
+        ]
+        assert not found, f"a driver line runs python3 by name, not $PY: {found}"
 
 
 class TestRunPackChain:
