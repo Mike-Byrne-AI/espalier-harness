@@ -3456,16 +3456,23 @@ def sibling_checkouts(root: Path) -> tuple[Path, ...]:
 
 def sibling_checkout_containing(root: Path, path: Path) -> Path | None:
     """The sibling checkout of ``root`` (see ``sibling_checkouts``) that
-    contains ``path`` -- a worktree beside or under the root -- or ``None``.
-    Compares resolved spellings case-insensitively; never raises."""
+    contains ``path`` -- a worktree beside or under the root, or the main
+    checkout when the root is a worktree in its folder -- or ``None``.
+    The DEEPEST checkout holding the path answers, the root among them
+    (``containing_checkout``): a worktree nested in the main checkout's folder
+    is held by both, so a path in the root names no sibling and a path in
+    another nested worktree names that one, never the main checkout listed
+    first (DEF-5068). Compares resolved spellings case-insensitively, the
+    base it names to each sibling's spelling too; never raises."""
     try:
         here = str(path.resolve()).replace("\\", "/")
     except (OSError, ValueError, NotImplementedError):  # fail-open: ok deliberate -- a path that cannot be resolved sits in no sibling checkout; the root's rules apply
         return None
-    for checkout in sibling_checkouts(root):
-        if _rel_under_root(here, str(checkout).replace("\\", "/").rstrip("/")) is not None:
-            return checkout
-    return None
+    hit = containing_checkout(here, root)
+    if hit is None:
+        return None
+    return next((checkout for checkout in sibling_checkouts(root)
+                 if _rel_under_root(hit[0], str(checkout).replace("\\", "/").rstrip("/")) == ""), None)
 
 
 def is_sibling_checkout(root: Path, path: Path) -> bool:

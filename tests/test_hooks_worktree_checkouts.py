@@ -183,6 +183,54 @@ class TestSiblingCheckouts:
         assert hu.sibling_checkout_containing(root, root / "src") is None
 
 
+class TestSiblingCheckoutContaining:
+    """``_hook_utils.sibling_checkout_containing`` answers the DEEPEST checkout
+    holding the path, the root among them, and ``None`` when that is the root.
+    From a worktree nested in the main checkout's folder the main checkout is
+    the first sibling listed and holds every path in the worktree by folder;
+    the first match named it on every worker seat's banner (DEF-5068)."""
+
+    def test_from_a_nested_worktree_root_its_own_path_names_no_sibling(self, tmp_path):
+        # The probe's shape: the session's root is the worktree, its cwd the root.
+        _root, live = _repo_with_worktree(tmp_path)
+        hu = _hook_utils()
+        assert hu.sibling_checkout_containing(live, live) is None
+        assert hu.sibling_checkout_containing(live, live / "src") is None
+
+    def test_from_a_nested_worktree_root_a_second_nested_worktree_is_named(self, tmp_path):
+        root, live = _repo_with_worktree(tmp_path)
+        other = _add_worktree(root, "other")
+        assert _hook_utils().sibling_checkout_containing(live, other / "src") == other.resolve()
+
+    def test_from_a_nested_worktree_root_the_main_checkouts_own_folder_names_it(self, tmp_path):
+        # The deepest holding the path is still the main checkout here (control).
+        root, live = _repo_with_worktree(tmp_path)
+        assert _hook_utils().sibling_checkout_containing(live, root / "src") == root.resolve()
+
+    def test_from_a_root_beside_the_main_checkout_a_nested_worktree_is_named(self, tmp_path):
+        root, live = _repo_with_worktree(tmp_path)
+        beside = tmp_path / "beside"
+        _git(["worktree", "add", str(beside), "-b", "wt-beside"], root)
+        assert _hook_utils().sibling_checkout_containing(beside, live / "src") == live.resolve()
+
+    def test_a_worktree_nested_in_a_worktree_is_named_over_the_one_holding_it(self, tmp_path):
+        # `live` sorts before `nested` in git's registry, so the first match was `live`.
+        root, live = _repo_with_worktree(tmp_path)
+        nested = live / "nested"
+        _git(["worktree", "add", str(nested), "-b", "wt-nested"], root)
+        assert _hook_utils().sibling_checkout_containing(root, nested / "src") == nested.resolve()
+
+    def test_the_base_named_is_matched_to_its_sibling_case_insensitively(self, tmp_path, monkeypatch):
+        # A base list spelled in another case (a later edit folding Windows' `c:`
+        # and `C:` together) still names the sibling; an exact compare went silent.
+        root, live = _repo_with_worktree(tmp_path)
+        other = _add_worktree(root, "other")
+        hu = _hook_utils()
+        bases = tuple(b.upper() for b in hu._checkout_bases(live))
+        monkeypatch.setattr(hu, "_checkout_bases", lambda _root: bases)
+        assert hu.sibling_checkout_containing(live, other / "src") == other.resolve()
+
+
 class TestResolveInCheckout:
     """Every normaliser relativises against the DEEPEST checkout containing
     the target; the rejoin sites get that checkout back as the base."""
@@ -409,6 +457,20 @@ class TestSessionStartLineInsideAWorktree:
         err = capsys.readouterr().err
         assert f"[INFO] session cwd is inside worktree {beside.resolve()} of this repository" in err
         assert "govern it like the root" in err
+
+    def test_a_cwd_in_a_nested_worktree_root_names_no_other_checkout(self, tmp_path, capsys):
+        # A worker seat: the root is the worktree, nested in the main checkout's
+        # folder, and the line named the main checkout as the cwd's worktree.
+        _root, live = _repo_with_worktree(tmp_path)
+        _session_start()._warn_if_nested_repo_litter(live, cwd=live / "src")
+        assert "session cwd is inside" not in capsys.readouterr().err
+
+    def test_from_a_nested_worktree_root_a_cwd_in_another_names_that_one(self, tmp_path, capsys):
+        root, live = _repo_with_worktree(tmp_path)
+        other = _add_worktree(root, "other")
+        _session_start()._warn_if_nested_repo_litter(live, cwd=other / "src")
+        err = capsys.readouterr().err
+        assert f"[INFO] session cwd is inside worktree {other.resolve()} of this repository" in err
 
 
 class TestPostWriteCheckInsideAWorktree:
