@@ -2257,6 +2257,9 @@ _FULL_TREE_NODEIDS: set[str] = {
     #        the file-granular contract does not claim (the 2026-08-14 decision),
     #        which is why stage 02, not the contract, is the oracle for it.
     "test_archive_probe.py::TestRefusals::test_this_checkout_is_not_an_export_so_the_guard_is_live_here",
+    # 2026-11-03 (TP-468 3-F): the release checklist's blind-axis step is read
+    # from docs/RELEASE_CHECKLIST.md, which .gitattributes export-ignores.
+    "test_axis_registry.py::TestTheInstruments::test_the_release_checklist_carries_the_step",
 }
 
 

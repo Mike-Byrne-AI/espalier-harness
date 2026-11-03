@@ -18,12 +18,12 @@ context -- you just cannot see the handoff.
 To confirm the wiring and read the same state yourself:
 
 ```bash
-python3 -c "import json, sys; sys.stdout.reconfigure(encoding='utf-8', errors='replace'); print(sorted(json.load(open('.claude/settings.json', encoding='utf-8')).get('hooks', {})))"
+python -c "import json, sys; sys.stdout.reconfigure(encoding='utf-8', errors='replace'); print(sorted(json.load(open('.claude/settings.json', encoding='utf-8')).get('hooks', {})))"
 ```
 
 That lists every wired event (ten on a current install). Then type `/status` in
 the session for the harness state, or run
-`python3 tools/cc/session_resume.py --mode status` in your shell for the same
+`python tools/cc/session_resume.py --mode status` in your shell for the same
 read-out without a session. If events are missing, see "Hooks aren't firing"
 below; `espalier merge-settings .` adds absent events non-destructively.
 

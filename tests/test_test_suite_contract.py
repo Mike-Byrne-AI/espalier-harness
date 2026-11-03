@@ -4708,6 +4708,9 @@ def test_every_exempt_module_carries_exactly_its_measured_dev_only_chains():
 # fourth deployed kind): test_contracts 5 -> 1, and test_convergence_workflow_stages
 # and test_finding_ledger read no pruned path any more, so they left.
 _REGISTERED_MODULE_DEV_ONLY_CHAINS: dict[str, int] = {
+    # 2026-11-03 (TP-468 3-F): the release checklist's blind-axis step, read from
+    # the export-ignored docs/RELEASE_CHECKLIST.md by one registered node.
+    "test_axis_registry.py": 1,
     "test_contracts.py": 1,
     # test_doc_source_citations.py left 2026-09-26: its three registrations retired
     # (TP-457 3-A; the registry doc stayed in the archive, the witnesses are synthetic).
