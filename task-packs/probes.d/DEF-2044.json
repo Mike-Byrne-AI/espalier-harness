@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2044",
+ "subject": "tests/conftest.py",
+ "cmd": "python3 -c \"import ast,pathlib;t=ast.parse(pathlib.Path('tests/conftest.py').read_text(encoding='utf-8'));v=[n.value.value for n in t.body if isinstance(n,ast.Assign) and isinstance(n.value,ast.Constant) and any(getattr(x,'id','')=='_BUILD_HOOK_STEP_TIMEOUT_S' for x in n.targets)];print(int(v==[180]) if v else -1)\"",
+ "open_value": "1",
+ "why_not": null,
+ "row_sha": "e76d4f20c04a",
+ "text_sha": "28dc444238e1",
+ "verified_2026_11_02": "STILL_OPEN (re-pinned '180' -> '1' on 2026-11-02: the open value 180 read as a line number to the probe-file contract; the probe now prints 1 while the bound is 180) [changed: row moved before, probe, open value]"
+}

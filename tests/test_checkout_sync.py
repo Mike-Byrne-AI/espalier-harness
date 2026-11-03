@@ -28,6 +28,7 @@ import pytest
 
 from tests._git_oracle import _git_env
 from tests._interpreter_hosts import HOOK_PYTHON
+from tests._wait_budget import scaled
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MODULE = REPO_ROOT / "tools" / "cc" / "checkout_sync.py"
@@ -48,7 +49,7 @@ def cs():
 
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", env=_git_env(), check=check, timeout=45)
+                          errors="replace", env=_git_env(), check=check, timeout=scaled(45))
 
 
 def _out(repo: Path, *args: str) -> str:
@@ -426,7 +427,8 @@ class TestReapWorktrees:
         # Bytes and -z: a text-mode input on Windows writes "\n" as "\r\n", and
         # mktree would name the file "mail.jsonl\r".
         tree = subprocess.run(["git", "mktree", "-z"], cwd=work, input=f"100644 blob {blob}\tmail.jsonl\0".encode(),
-                              capture_output=True, env=_git_env(), check=True, timeout=45).stdout.decode().strip()
+                              capture_output=True, env=_git_env(), check=True,
+                              timeout=scaled(45)).stdout.decode().strip()
         commit = _out(work, "commit-tree", tree, "-m", "mail")
         _git(work, "update-ref", "refs/remotes/origin/mail/work-feat", commit)
         claims = cs.seat_live_claims(work, "work-feat", 10.0)
@@ -952,7 +954,7 @@ def _wedge_restore(wt: Path) -> tuple[bytes, list[Path]]:
                "tool_input": {"command": "git restore --source=HEAD -- tools/cc/hooks/_reinject.py"}}
     guard = subprocess.run([HOOK_PYTHON, str(wt / "tools" / "cc" / "hooks" / "write_guard.py")],
                            input=json.dumps(payload), capture_output=True, text=True, encoding="utf-8",
-                           errors="replace", cwd=wt, env=env, timeout=50)
+                           errors="replace", cwd=wt, env=env, timeout=scaled(50))
     assert guard.returncode == 0, guard.stderr
     copies = sorted(wt.rglob("*.py.txt"))
     _git(wt, "restore", "--source=HEAD", "--", "tools/cc/hooks/_reinject.py")
@@ -1804,13 +1806,14 @@ class TestACatchUpThatMovesAnImportedHelper:
         repo = tmp_path / "repo"
         copy_checkout(REPO_ROOT / "tools" / "cc", repo / "tools" / "cc")
         (repo / "memory" / "session-log.d").mkdir(parents=True)
-        subprocess.run(["git", "init", "-q", str(repo)], check=True, timeout=30)
-        subprocess.run(["git", "-C", str(repo), "config", "espalier.machine", "t-def2003"], check=True, timeout=30)
+        subprocess.run(["git", "init", "-q", str(repo)], check=True, timeout=scaled(30))
+        subprocess.run(["git", "-C", str(repo), "config", "espalier.machine", "t-def2003"], check=True,
+                       timeout=scaled(30))
         driver = tmp_path / "child.py"
         driver.write_bytes(_STALE_HELPER_CHILD.encode("utf-8"))
         r = subprocess.run([HOOK_PYTHON, str(driver), str(repo), mode, json.dumps(sites)], capture_output=True,
                            input=json.dumps(payload or self.PAYLOAD), text=True, encoding="utf-8",
-                           errors="replace", timeout=45, env={**os.environ, **(env or {})})
+                           errors="replace", timeout=scaled(45), env={**os.environ, **(env or {})})
         assert r.returncode == 0, r.stderr[-2000:]
         return r.stdout
 
