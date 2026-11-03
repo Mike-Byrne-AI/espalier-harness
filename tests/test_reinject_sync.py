@@ -1314,6 +1314,7 @@ class TestMirrorCensusCoverage:
         assert "run `" not in text
         assert "by hand" in text and "a/b.yml" in text and "c/b.yml" in text
 
+    @pytest.mark.contract
     def test_an_unscripted_row_is_named_by_the_census_not_raised(self, monkeypatch):
         """Declaring a hand-copied family (``sync=None``) reads as a diagnosis.
 
