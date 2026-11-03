@@ -142,6 +142,19 @@ jobs:
       - name: Install
         run: pip install -e .[dev]
 
+      - name: Read the runner's disk before the tier
+        # The parallel leg has ended in Errno 122 (disk quota exceeded) on
+        # runners from one pool and never on the other's (2026-11-03), and no
+        # step read the disk: this one and its twin after the tier name the
+        # volume under /tmp (where pytest's base temp and its capture files
+        # go), its mount and its inodes, so a small volume reads apart from a
+        # test that fills one. Neither can fail the cell.
+        continue-on-error: true
+        run: |
+          findmnt -T /tmp -o TARGET,SOURCE,FSTYPE,SIZE,OPTIONS || true
+          df -h /tmp "$GITHUB_WORKSPACE" || true
+          df -i /tmp "$GITHUB_WORKSPACE" || true
+
       - name: Run the proof tier this pull request earns
         # `proof_tier.py --run` executes the tier's own recipe under one receipt:
         # contract = the tree-wide contracts; recall = those plus the recall
@@ -163,6 +176,16 @@ jobs:
         run: |
           echo "proof tier: $TIER"
           python scripts/proof_tier.py --run --tier "$TIER" --base "${BASE_SHA:-HEAD}" --leg parallel
+
+      - name: Read the runner's disk after the tier
+        # Runs after a red tier too; the largest folders under /tmp say what
+        # the leg left there.
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: |
+          df -h /tmp "$GITHUB_WORKSPACE" || true
+          df -i /tmp "$GITHUB_WORKSPACE" || true
+          du -xh --max-depth=1 /tmp 2>/dev/null | sort -h | tail -8 || true
 
       - name: Self-host check
         # --skip-self-host is belt-and-suspenders, NOT load-bearing for
