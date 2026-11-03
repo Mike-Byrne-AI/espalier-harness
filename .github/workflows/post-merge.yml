@@ -34,6 +34,13 @@ jobs:
     # DEF-1178: above the measured worst case, 48.2 min (10 runs to 2026-10-16).
     timeout-minutes: 75
     steps:
+      - name: Keep the temp dir on the runner's disk
+        # test.yml's `test` job's first step says why (DEF-3027): on GitHub's
+        # AWS pool /tmp is a quota'd tmpfs this run's parallel leg fills.
+        run: |
+          mkdir -p "$RUNNER_TEMP/tmp"
+          echo "TMPDIR=$RUNNER_TEMP/tmp" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           # Full history and tags, as test.yml's cells fetch, so the tests

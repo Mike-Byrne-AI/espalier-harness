@@ -110,6 +110,13 @@ jobs:
         python-version: ["3.10"]
 
     steps:
+      - name: Keep the temp dir on the runner's disk
+        # test.yml's `test` job's first step says why (DEF-3027): on GitHub's
+        # AWS pool /tmp is a quota'd tmpfs this run's parallel leg fills.
+        run: |
+          mkdir -p "$RUNNER_TEMP/tmp"
+          echo "TMPDIR=$RUNNER_TEMP/tmp" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           # Shallow, tagless checkout — the deliberate opposite of the `test`

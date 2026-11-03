@@ -1,0 +1,16 @@
+{
+ "id": "DEF-3027",
+ "subject": ".github/workflows/test.yml",
+ "cmd": "python -c \"import yaml,pathlib;W=pathlib.Path('.github/workflows');N={'test.yml':('test','test-serial','ripgrep-parity','artifact-parity'),'post-merge.yml':('full-tier',),'clean-checkout.yml':('clean-checkout',),'portability.yml':('portability',),'release.yml':('release-check',)};print(any('RUNNER_TEMP/tmp' not in str(yaml.safe_load((W/f).read_text(encoding='utf-8'))['jobs'][j]['steps'][0].get('run','')) for f,js in N.items() for j in js))\"",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  ".github/workflows/post-merge.yml",
+  ".github/workflows/clean-checkout.yml",
+  ".github/workflows/portability.yml",
+  ".github/workflows/release.yml"
+ ],
+ "row_sha": "10febba3c417",
+ "text_sha": "6fbbce86eba3",
+ "verified_2026_11_03": "OPEN (filed 2026-11-03; probe driven at filing here and in the export of HEAD 4937b91e15e1)"
+}

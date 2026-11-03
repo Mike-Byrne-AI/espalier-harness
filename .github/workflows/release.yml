@@ -181,6 +181,14 @@ jobs:
       ESPALIER_RELEASE_CHECK_WITH_TESTS: 1
       ESPALIER_RELEASE_CHECK_WITH_WHEEL_SMOKE: 1
     steps:
+      - name: Keep the temp dir on the runner's disk
+        # test.yml's `test` job's first step says why (DEF-3027): on GitHub's
+        # AWS pool /tmp is a quota'd tmpfs, and this job runs the suite's
+        # non-slow slice; every Linux job that runs the suite opens so.
+        run: |
+          mkdir -p "$RUNNER_TEMP/tmp"
+          echo "TMPDIR=$RUNNER_TEMP/tmp" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           # Release validation runs the pytest slice with WITH_TESTS=1; fetch

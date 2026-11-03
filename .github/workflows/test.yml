@@ -123,6 +123,19 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
     steps:
+      - name: Keep the temp dir on the runner's disk
+        # GitHub's AWS pool mounts /tmp as a 7.7G tmpfs with usrquota, and this
+        # leg's base temp filled the runner user's quota there: Errno 122 at 6.4G
+        # (#470's test (3.13), 2026-11-03), where the same leg reaches 11G on the
+        # Azure pool, whose /tmp is the root disk. $RUNNER_TEMP is on the root
+        # disk on both pools. First, before anything writes a temp file, and made,
+        # not only named: tempfile.gettempdir() passes over a TMPDIR that is not a
+        # directory and settles on /tmp without a word. Every Linux job that runs
+        # the suite opens with this step (tests/test_ci_job_bounds.py, DEF-3027).
+        run: |
+          mkdir -p "$RUNNER_TEMP/tmp"
+          echo "TMPDIR=$RUNNER_TEMP/tmp" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           # Full history and tags, so the tests that read past commits RUN here
@@ -144,11 +157,12 @@ jobs:
 
       - name: Read the runner's disk before the tier
         # PR #464's parallel leg ended in Errno 122 (disk quota exceeded) on
-        # every cell GitHub placed on its AWS pool (image ubuntu-26.04
-        # 20261018.50.1, four cells) and on none of the Azure pool's
-        # (2026-11-03). This step and the one after the tier read the disk
-        # those cells filled: the pool, the volumes, their mounts and any
-        # quota. Errno 122 is a quota, so where findmnt's OPTIONS list
+        # every cell GitHub placed on its AWS pool and on none of the Azure
+        # pool's (2026-11-03); these two steps measured why (the first step's
+        # comment), and now read where the temp dir lives after that step moved
+        # it: findmnt of $TMPDIR is the root disk on both pools, so every cell
+        # shows the move, and a cell on the AWS pool shows the quota no longer
+        # reached. Errno 122 is a quota, so where findmnt's OPTIONS list
         # usrquota or prjquota, df's Avail is not the runner user's headroom:
         # read the quota reports. A sampler logs the temp dir's use every 20 s
         # through the tier, so the peak is read and not only what the run
@@ -244,6 +258,12 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
     steps:
+      - name: Keep the temp dir on the runner's disk
+        # The `test` job's first step says why (DEF-3027).
+        run: |
+          mkdir -p "$RUNNER_TEMP/tmp"
+          echo "TMPDIR=$RUNNER_TEMP/tmp" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           # Full history: tests/test_verify_pins.py, a serial file since
@@ -306,6 +326,12 @@ jobs:
     # DEF-1178: above the measured worst case, 0.8 min (18 runs to 2026-10-16).
     timeout-minutes: 10
     steps:
+      - name: Keep the temp dir on the runner's disk
+        # The `test` job's first step says why (DEF-3027).
+        run: |
+          mkdir -p "$RUNNER_TEMP/tmp"
+          echo "TMPDIR=$RUNNER_TEMP/tmp" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Set up Python 3.12
@@ -404,6 +430,12 @@ jobs:
     # DEF-1178: above the measured worst case, 0.8 min (18 runs to 2026-10-16).
     timeout-minutes: 10
     steps:
+      - name: Keep the temp dir on the runner's disk
+        # The `test` job's first step says why (DEF-3027).
+        run: |
+          mkdir -p "$RUNNER_TEMP/tmp"
+          echo "TMPDIR=$RUNNER_TEMP/tmp" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Set up Python 3.12
