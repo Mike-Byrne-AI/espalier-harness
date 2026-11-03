@@ -10,8 +10,10 @@ hook's designed answer as a failure, or an absence assertion passes on a
 banner that never got that far. Either way the row could not tell.
 
 So each driven-start helper in DEF-2048's census files hands the hook's
-stdout (or its banner) to ``skip_if_cut`` before it asserts: a cut start skips, naming the
-phase and the seconds, and a full start returns. The opening is calibrated
+stdout (or its banner) to ``skip_if_cut`` before it asserts what only a full
+start shows (a row a cut start still answers, its rc or another hook's import
+errors, asserts that first): a cut start skips, naming the phase and the
+seconds, and a full start returns. The opening is calibrated
 against the hook's own short form in
 ``tests/test_quickstart_doctor_example.py::TestTheCutOpeningReadsAsCannotTell``,
 so a rewording reds there, never as a skip. ``tests/test_session_start_wall.py``

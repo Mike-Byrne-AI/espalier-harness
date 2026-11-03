@@ -40,8 +40,9 @@ if str(HOOKS_DIR) not in sys.path:
 def _hook(name: str, payload: dict, root: Path, **env: str) -> subprocess.CompletedProcess:
     """Run a hook as Claude Code does: JSON on stdin, the project at ``root``,
     and none of the launching shell's harness variables. A SessionStart cut
-    at its wall skips as cannot-tell (DEF-2048): its short banner holds no
-    Warnings block, so the quiet-boot row would pass on it unseen."""
+    at its wall skips as cannot-tell (DEF-2048): its short banner carries only
+    the warnings the phases before the cut raised, so the quiet-boot row would
+    pass on it unseen."""
     clean = {k: v for k, v in os.environ.items() if not k.startswith(("CLAUDE_", "ESPALIER_"))}
     clean.update(CLAUDE_PROJECT_DIR=str(root), ESPALIER_AUDIT_DIR=os.environ["ESPALIER_AUDIT_DIR"], **env)
     result = subprocess.run(

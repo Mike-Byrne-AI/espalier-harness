@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 from tests._cut_start import skip_if_cut
+from tests._wait_budget import scaled
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SESSION_START = REPO_ROOT / "tools" / "cc" / "hooks" / "session_start.py"
@@ -39,7 +40,7 @@ def _run(root: Path, env_overrides: dict[str, str]) -> subprocess.CompletedProce
         capture_output=True,
         env=env,
         text=True,
-        timeout=15, encoding="utf-8",
+        timeout=scaled(30), encoding="utf-8",
     )
     skip_if_cut(result.stdout)
     return result

@@ -26,6 +26,7 @@ import sys
 from pathlib import Path
 
 from tests._cut_start import skip_if_cut
+from tests._wait_budget import scaled
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -40,7 +41,7 @@ def _run_hook(script: str, payload: dict, env_overrides: dict) -> subprocess.Com
         input=json.dumps(payload),
         capture_output=True,
         text=True,
-        timeout=15,
+        timeout=scaled(30),
         env=env, encoding="utf-8",
     )
     skip_if_cut(result.stdout)

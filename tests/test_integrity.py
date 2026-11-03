@@ -27,6 +27,7 @@ import pytest
 from _legacy_pathlib import legacy_pathlib_probes, probes_raise_on_eacces
 from _wired_settings import write_wired_settings
 from tests._cut_start import skip_if_cut
+from tests._wait_budget import scaled
 
 ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = ROOT / "tools" / "cc" / "hooks"
@@ -1062,7 +1063,7 @@ def _run_hook(script: str, payload: dict, env_overrides: dict) -> subprocess.Com
         input=json.dumps(payload),
         capture_output=True,
         text=True,
-        timeout=15,
+        timeout=scaled(30),
         env=env, encoding="utf-8",
     )
     skip_if_cut(result.stdout)

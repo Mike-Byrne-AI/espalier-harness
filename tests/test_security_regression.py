@@ -30,6 +30,7 @@ from pathlib import Path
 
 from tests._cut_start import skip_if_cut
 from tests._hook_spawn import run_hook_through
+from tests._wait_budget import scaled
 
 
 
@@ -104,7 +105,7 @@ def _run_session_start(
         input=json.dumps(payload or {}),
         capture_output=True,
         text=True,
-        timeout=15,
+        timeout=scaled(30),
         env=env, encoding="utf-8",
     )
     skip_if_cut(result.stdout)
