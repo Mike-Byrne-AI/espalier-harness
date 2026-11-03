@@ -43,7 +43,7 @@ as GAP and does not fail the run; a declared gap that starts passing FAILS
 (``GAPFIXED``) until the entry is removed or narrowed on purpose; a
 declaration naming no row fails as stale.
 
-Derived from the module: 68 rows x 5 root shapes, 340 of 340 verdicts
+Derived from the module: 72 rows x 5 root shapes, 360 of 360 verdicts
 as expected and 0 declared gaps (a derivation, not a measurement -- the
 last live run on macOS was 2026-10-07, when the ``amp`` and ``semi`` shapes
 joined the table and made five: the two carrier rows by absolute root read
@@ -168,6 +168,18 @@ ROWS: list[tuple[str, str, str, str, str]] = [
     ("4B-4h", "HARD", "rm -rf C:/Temp",
      "two components under a drive: the drive-root temp itself, the wall's on every OS "
      "(never drive this live)", "Bash"),
+    # A fixed temp root ITSELF, the wall's on this tool as on PowerShell
+    # (2026-11-03): the scratch clause admitted each by identity, so all three
+    # read SOFT -- `C:/tmp` on Windows alone, where the POSIX root resolves
+    # onto it -- and one below the root stays the carve-out's.
+    ("4B-4t", "HARD", "rm -rf /tmp", "a fixed temp root itself (never drive this live)", "Bash"),
+    ("4B-4p", "HARD", "rm -rf /private/var/tmp",
+     "a fixed temp root three components deep, which no depth rule reaches "
+     "(never drive this live)", "Bash"),
+    ("4B-4c", "HARD", "rm -rf C:/tmp",
+     "the drive-root tmp itself, read the same on every OS (never drive this live)", "Bash"),
+    ("4B-4s", "ALLOW", "rm -rf /tmp/scratch",
+     "one component below a fixed temp root: the scratch carve-out", "Bash"),
     ("4B-6", _DRIVE_CD_TIER, "cd C:/Temp && rm -rf scratch",
      "a relative delete judged from the command's directory, its tier the host's "
      "(_DRIVE_CD_TIER: the carve-out where the cd reaches the drive-root temp, "

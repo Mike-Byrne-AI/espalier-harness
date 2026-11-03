@@ -1404,9 +1404,14 @@ variable target — operator, 2026-09-18 — bar a literal path below a scratch
 root, which both forms nudge since 2026-10-04) —
 against a target that — after the statically-decodable shell transforms — is
 catastrophic **by meaning** (`_target_is_catastrophic`, re-tiered 2026-08-24):
-the filesystem root, `$HOME` or the repo (or a parent of either), a shallow
-system path such as `/etc` or `/usr/local`, or an absolute path with a `..`
-step. A bare `*` glob is judged as the directory it expands in, and `$PWD` as
+the filesystem root, `$HOME` or the repo (or a parent of either), a temp root
+itself -- a POSIX one, a drive-root `tmp`, or the directory `TEMP`, `TMP` or
+`TMPDIR` names, with every parent of that one, even where it lies below a
+POSIX root (`DEF-4027`, `DEF-4028`: until 2026-11-03 the Bash judge admitted
+each as scratch, so `rm -rf /tmp` and every Mac's `TMPDIR` drew a nudge one
+re-issue clears) -- a shallow system path such as `/etc` or `/usr/local`, or
+an absolute path with a `..` step. A bare `*` glob is judged as the directory
+it expands in, and `$PWD` as
 the directory the command runs in (DEF-849, DEF-843, 2026-09-18 -- until then a
 leading glob walled wherever it ran, so clearing a build directory from inside
 it met the wall) -- but only in a PLAIN command (2026-09-19): statements joined

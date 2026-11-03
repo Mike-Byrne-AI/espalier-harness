@@ -288,10 +288,21 @@ DANGEROUS_BASH_PLAIN = {
 # that holds no git checkout. Annotated, so the dead-template contract reads
 # it as a fragment, not a template a hook must name.
 _NOT_REFUSED_HERE: str = (
-    "a path inside the repo or inside your home directory, or under a temp "
-    "root, is not refused here (scratch below a temp root that is no git "
+    "a path inside the repo or inside your home directory, or strictly under "
+    "a temp root, is not refused here, bar the directory TEMP, TMP or TMPDIR "
+    "names and a parent of it (scratch below a temp root that is no git "
     "checkout, and a relative build/ or dist/, pass without a nudge; the "
     "rest draw one confirm-by-re-issue nudge)"
+)
+#: What every recursive-delete wall text says of a temp root ITSELF, ONE
+#: fragment for each text that names the refused set: until DEF-4028 and
+#: DEF-4027 the Bash judge read a fixed temp root, and the directory TEMP,
+#: TMP or TMPDIR names where it lies below one, as scratch, and drew the
+#: nudge one re-issue clears. Annotated, so the dead-template contract
+#: reads it as a fragment.
+_TEMP_ROOT_ITSELF: str = (
+    "a temp root itself (/tmp, a drive-root tmp, the directory TEMP, TMP or "
+    "TMPDIR names) or a parent of it"
 )
 DANGEROUS_BASH_PATTERN_FALLBACK = (
     "Dangerous command blocked: {what}. If this was a deliberate, scoped "
@@ -299,7 +310,8 @@ DANGEROUS_BASH_PATTERN_FALLBACK = (
     + _NOT_REFUSED_HERE
     + "; the filesystem root, your home directory or the "
     "repo itself (a bare '*' glob or $PWD counts as the directory the delete "
-    "runs in when the command is plain, and is refused when it is not), a "
+    "runs in when the command is plain, and is refused when it is not), "
+    + _TEMP_ROOT_ITSELF + ", a "
     "shallow system path such as /etc or "
     "/usr/local, and an absolute path with a '..' step are refused in every "
     "flag order -- then re-run."
@@ -330,7 +342,8 @@ _SHALLOW_SYSTEM_PATHS: str = (
 CATASTROPHIC_RM = (
     "Dangerous command blocked: recursive delete, forced or not, of a "
     "catastrophic target -- the filesystem root, your home "
-    "directory or the repo (or a parent of either), " + _SHALLOW_SYSTEM_PATHS
+    "directory or the repo (or a parent of either), " + _TEMP_ROOT_ITSELF
+    + ", " + _SHALLOW_SYSTEM_PATHS
     + ", or an absolute path with a '..' step -- "
     "detected in any flag order, by rm or by cmd.exe's own rd /s, rmdir /s, "
     "del /s or erase /s in a program cmd /c runs (cmd's %USERPROFILE% read "
@@ -361,7 +374,8 @@ CATASTROPHIC_FIND_DELETE = (
     "it (a -type or an attribute test narrows nothing; a negation or an -o "
     "re-widens the walk), rooted at a catastrophic target -- the filesystem "
     "root, your home directory or the repo "
-    "(or a parent of either), " + _SHALLOW_SYSTEM_PATHS + ", or an absolute "
+    "(or a parent of either), " + _TEMP_ROOT_ITSELF + ", "
+    + _SHALLOW_SYSTEM_PATHS + ", or an absolute "
     "path with a '..' step; a relative root is "
     "read from the directory the command runs in, after its own cd, and a "
     "bare '*' glob root is refused wherever it runs (root the walk at . or a "
@@ -387,6 +401,7 @@ CATASTROPHIC_PIPED_REMOVE = (
     "as -name '*' narrows nothing; an exclude pathspec narrows nothing), rooted at "
     "a catastrophic target -- the filesystem root, "
     "your home directory or the repo (or a parent of either), "
+    + _TEMP_ROOT_ITSELF + ", "
     + _SHALLOW_SYSTEM_PATHS + ", or an absolute path with a '..' "
     "step; a relative root is read from the directory the command runs in, "
     "after its own cd, and a bare '*' glob root is refused wherever it runs "
@@ -419,6 +434,7 @@ CATASTROPHIC_LOOP_REMOVE = (
     "as -name '*' narrows nothing; an exclude pathspec narrows nothing), rooted at "
     "a catastrophic target -- the filesystem root, "
     "your home directory or the repo (or a parent of either), "
+    + _TEMP_ROOT_ITSELF + ", "
     + _SHALLOW_SYSTEM_PATHS + ", or an absolute path with a '..' "
     "step; a relative root is read from the directory the command runs in, "
     "after its own cd, and a bare '*' glob root is refused wherever it runs "
@@ -445,7 +461,8 @@ CATASTROPHIC_LOOP_REMOVE = (
 # backslash in a PowerShell reason reads as a leaked regex there.
 _PS_CATASTROPHIC_TARGETS: str = (
     "the filesystem root or a drive root, your home directory or the repo "
-    "(or a parent of either), " + _SHALLOW_SYSTEM_PATHS + ", an absolute "
+    "(or a parent of either), " + _TEMP_ROOT_ITSELF + ", "
+    + _SHALLOW_SYSTEM_PATHS + ", an absolute "
     "path with a '..' step"
 )
 
