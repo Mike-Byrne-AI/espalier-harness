@@ -435,25 +435,28 @@ def _pid_alive_windows(pid: int) -> bool | None:
         return None
 
 
-def _parent_map(timeout: float = GIT_CAP_S) -> dict[int, int]:
-    """pid -> parent pid for every process on the host, in one read; {} when
-    the table cannot be read. Windows: a Toolhelp32 snapshot (no spawn);
-    elsewhere: one ``ps``, killed at ``timeout``."""
+def _parent_map(timeout: float = GIT_CAP_S) -> dict[int, int] | None:
+    """pid -> parent pid for every process on the host, in one read; None
+    when the table could not be read: a ``ps`` killed at ``timeout`` or
+    failed, or a table with no rows, which no host has (the reader is in
+    it). Never {}, which read as a host with no processes, so an ancestor
+    walk stopped at the first hop and CP-KILL found no children (DEF-2046).
+    Windows: a Toolhelp32 snapshot (no spawn); elsewhere: one ``ps``."""
     if os.name == "nt":
         return _parent_map_windows()
     r = run(["ps", "-A", "-o", "pid=,ppid="], cwd=Path(os.path.abspath("/")), timeout=timeout)
-    table: dict[int, int] = {}
     if r is None or r.returncode != 0:
-        return table
+        return None
+    table: dict[int, int] = {}
     for line in r.stdout.splitlines():
         parts = line.split()
         if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
             table[int(parts[0])] = int(parts[1])
-    return table
+    return table or None
 
 
-def _parent_map_windows() -> dict[int, int]:
-    return {pid: ppid for pid, (ppid, _name) in _process_table_windows().items()}
+def _parent_map_windows() -> dict[int, int] | None:
+    return {pid: ppid for pid, (ppid, _name) in _process_table_windows().items()} or None
 
 
 def _process_table_windows() -> dict[int, tuple[int, str]]:
@@ -494,25 +497,38 @@ def _process_table_windows() -> dict[int, tuple[int, str]]:
     return table
 
 
-def ancestor_pids(depth: int = 8) -> list[int]:
-    """This process's ancestors, nearest first, up to ``depth`` levels."""
+def ancestry(depth: int = 8) -> tuple[list[int], bool]:
+    """This process's ancestors, nearest first, up to ``depth`` levels, and
+    whether the process table answered. Where it did not, the parent alone
+    is known (read without a spawn) and the walk stops there: a caller that
+    finds no session among them cannot tell, never "none" (DEF-2046)."""
     table = _parent_map()
     found: list[int] = []
     pid = os.getpid()
     for _ in range(depth):
-        parent = table.get(pid) if table else (os.getppid() if pid == os.getpid() else None)
+        parent = table.get(pid) if table is not None else (os.getppid() if pid == os.getpid() else None)
         if not parent or parent in found or parent == pid:
             break
         found.append(parent)
         pid = parent
-    return found
+    return found, table is not None
 
 
-def ancestors_of(pid: int, table: dict[int, int] | None = None, depth: int = 8) -> list[int]:
+#: ancestors_of's default: read the table here. An explicit None is a table
+#: the caller could not read, answered None with no second read: a caller
+#: older than that hands the None it was given straight back (DEF-2046).
+_READ_TABLE = object()
+
+
+def ancestors_of(pid: int, table: dict[int, int] | None | object = _READ_TABLE,
+                 depth: int = 8) -> list[int] | None:
     """``pid``'s ancestors, nearest first, up to ``depth`` levels, from one
-    read of the process table (``table`` when the caller holds one); [] when
-    it cannot be read."""
-    table = _parent_map() if table is None else table
+    read of the process table (``table`` when the caller holds one, read as
+    given); None when the table could not be read."""
+    held = _parent_map() if table is _READ_TABLE else table
+    if not isinstance(held, dict):
+        return None
+    table = held
     found: list[int] = []
     seen = {pid}
     for _ in range(depth):
@@ -641,7 +657,14 @@ def pid_checkout(cwd: str, root: Path, checkouts: list[Path] | None = None) -> t
     right copied into another window."""
     if cwd.endswith(" (deleted)") or not os.path.isdir(cwd):
         return "cwd deleted", False
-    places = list(checkouts) if checkouts is not None else (registered_checkouts(root) or [])
+    found = list(checkouts) if checkouts is not None else registered_checkouts(root)
+    # git did not list them: its registry read off the disk places the pid the
+    # same way; where that cannot be read either, whose checkout it is cannot
+    # be told, so it is kept out of a paste -- never read as this one (DEF-2046).
+    found = found if found is not None else _sibling_places(root)
+    if found is None:
+        return "cwd's checkout unread: git did not list this clone's checkouts", True
+    places = list(found)
     if not any(_norm(c) == _norm(root) for c in places):
         places.append(root)
     home = cwd_checkout(cwd, places)
@@ -779,22 +802,47 @@ def live_sessions(config_dir: Path | None = None) -> list[dict[str, object]] | N
     return rows
 
 
+#: Why the caller has no registry entry, in the words a line prints: a
+#: registry that does not list the session asking is not the one it writes
+#: to; a process table that could not be read matched none of the caller's
+#: parents, which says nothing about the registry (DEF-2046). ``occupancy``
+#: and ``main`` print both; the SessionStart catch-up, the board and the ship
+#: driver print TABLE_UNREAD and keep a NOT_LISTED sentence of their own, which
+#: a kept older copy of this file must still find in them.
+NOT_LISTED = "this session is not in Claude Code's session registry"
+TABLE_UNREAD = ("the process table could not be read, so this session could not be found in Claude Code's "
+                "session registry")
+
+
 def own_entry(sessions: list[dict[str, object]], own_session_id: str = "",
               ancestors: list[int] | None = None) -> dict[str, object] | None:
     """The caller's own registry entry: the one whose session id is
     ``own_session_id``, else the one whose pid is the NEAREST of the caller's
     ancestors to appear (a session launched from another session has both as
     ancestors; only the nearer is the caller). None when neither is there --
-    in the hook, the sign that this registry does not track this session."""
+    in the hook, the sign that this registry does not track this session,
+    unless the process table could not be read (:func:`find_own_entry`)."""
+    return find_own_entry(sessions, own_session_id, ancestors)[0]
+
+
+def find_own_entry(sessions: list[dict[str, object]], own_session_id: str = "",
+                   ancestors: list[int] | None = None) -> tuple[dict[str, object] | None, bool]:
+    """:func:`own_entry`, and whether the process table it walked answered:
+    False only for no entry found among ancestors read here from a table
+    that could not be read, which is no sign the registry does not track
+    this session (:data:`TABLE_UNREAD`, never :data:`NOT_LISTED`)."""
     if own_session_id:
         for row in sessions:
             if row.get("session_id") == own_session_id:
-                return row
-    for pid in ancestors if ancestors is not None else ancestor_pids():
+                return row, True
+    read = True
+    if ancestors is None:
+        ancestors, read = ancestry()
+    for pid in ancestors:
         for row in sessions:
             if row.get("pid") == pid:
-                return row
-    return None
+                return row, True
+    return None, read
 
 
 def _is_launcher(name: str) -> bool:
@@ -1032,10 +1080,18 @@ def caller_entry(sessions: list[dict[str, object]], own_session_id: str = "") ->
     session exports to its children (``CLAUDE_CODE_SESSION_ID``,
     ``CLAUDE_PID``; both equal the registry's, read 2026-10-15), then by the
     nearest registered ancestor (:func:`own_entry`)."""
+    return find_caller(sessions, own_session_id)[0]
+
+
+def find_caller(sessions: list[dict[str, object]],
+                own_session_id: str = "") -> tuple[dict[str, object] | None, bool]:
+    """:func:`caller_entry`, and whether the process table answered, as
+    :func:`find_own_entry` says it."""
     sid = own_session_id or os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     pid_text = os.environ.get("CLAUDE_PID", "")
-    ancestors = ([int(pid_text)] if pid_text.isdigit() else []) + ancestor_pids()
-    return own_entry(sessions, sid, ancestors)
+    chain, read = ancestry()
+    entry, _ = find_own_entry(sessions, sid, ([int(pid_text)] if pid_text.isdigit() else []) + chain)
+    return entry, entry is not None or read
 
 
 def occupancy(path: Path, *, sessions: list[dict[str, object]] | None = None,
@@ -1057,25 +1113,41 @@ def occupancy(path: Path, *, sessions: list[dict[str, object]] | None = None,
         sessions = live_sessions()
         if sessions is None:
             note = "Claude Code's session registry could not be read in full"
-    caller = caller_entry(sessions, own_session_id) if sessions is not None else None
+    caller, read = find_caller(sessions, own_session_id) if sessions is not None else (None, True)
     if sessions is not None and os.environ.get("CLAUDECODE") and caller is None:
-        note, sessions = "this session is not in Claude Code's session registry", None
+        note, sessions = NOT_LISTED if read else TABLE_UNREAD, None
     if checkouts is None:
         checkouts = registered_checkouts(path, deadline=deadline, runner=runner)
     target = _norm(path)
     places = list(checkouts or [])
     if not any(_norm(c) == target for c in places):
         places.append(path)
-    trees = [path] + [c for c in (checkouts or [])[:1] if _norm(c) != target]
+    if checkouts is not None:
+        mains = [c for c in checkouts[:1] if _norm(c) != target]
+    else:
+        # git did not list them: the clone's main checkout read off the disk
+        # (the place whose .git is a folder), whose marker records a session
+        # that moved here; where that cannot be read, who is here cannot be told.
+        on_disk = [] if os.path.isdir(os.path.join(path, ".git")) else _sibling_places(path)
+        if on_disk is None:
+            return Occupancy(None, "", "git did not list this clone's checkouts, and its registry could not be read "
+                                       "off the disk, so the main checkout's session markers were not read")
+        mains = [c for c in on_disk if os.path.isdir(os.path.join(c, ".git")) and _norm(c) != target][:1]
+    trees = [path, *mains]
     marked: list[dict[str, object]] = []
     for tree in trees:
         for row in marker_sessions(tree, markers):
             home = checkout_of(str(row["cwd"]), places) if checkouts is not None else (
                 path if sessions_in_checkout([row], path) else None)
-            if home is not None and _norm(home) == target:
+            # One session once, whichever tree's marker names it.
+            if home is not None and _norm(home) == target and not any(
+                    (m["session_id"] or m["pid"]) == (row["session_id"] or row["pid"]) for m in marked):
                 marked.append(row)
     if sessions is not None:
-        placed = sessions_in(path, sessions=sessions, checkouts=checkouts, deadline=deadline, runner=runner) or []
+        # A list git did not give is placed by the folder reader that
+        # sessions_in falls to, never asked a second time.
+        placed = (sessions_in(path, sessions=sessions, checkouts=checkouts, deadline=deadline, runner=runner)
+                  if checkouts is not None else sessions_in_checkout(sessions, path)) or []
         rows = [{**r, "source": "registry"} for r in placed]
         ids = {r["session_id"] for r in rows if r["session_id"]}
         pids = {r["pid"] for r in rows}
@@ -2024,13 +2096,15 @@ def main(argv: list[str] | None = None) -> int:
     hook_utils = _hook_utils_by_path()
     sessions = live_sessions()
     note = ""
-    if sessions is not None and os.environ.get("CLAUDECODE") and own_entry(sessions) is None:
+    mine, read = find_own_entry(sessions) if sessions is not None else (None, True)
+    if sessions is not None and os.environ.get("CLAUDECODE") and mine is None:
         # Run from inside a session, the registry must list that session, or it
         # is not the registry this session writes to.
-        note = "this session is not in Claude Code's session registry"
+        note = NOT_LISTED if read else TABLE_UNREAD
         sessions = None
     if sessions is not None:
-        others = other_sessions_in_checkout(sessions, root)
+        # By the entry already found: a second walk of the table could miss it.
+        others = [s for s in sessions_in_checkout(sessions, root) if s is not mine]
         other = f"pid {others[0]['pid']}" if others else ""
     else:
         rows: list[dict[str, object]] = (

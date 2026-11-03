@@ -1732,8 +1732,11 @@ def own_clear_checkout(root: Path) -> tuple[Path, str | None]:
     try:
         sync = _sync_module()
         sessions = sync.live_sessions() if sync is not None else None
-        entry = sync.caller_entry(sessions, os.environ.get(SESSION_ID_ENV, "").strip()) \
-            if sessions is not None else None
+        sid = os.environ.get(SESSION_ID_ENV, "").strip()
+        # A kept older checkout_sync cannot say a process table that did not answer.
+        find = getattr(sync, "find_caller", None)
+        entry, read = ((find(sessions, sid) if find is not None else (sync.caller_entry(sessions, sid), True))
+                       if sessions is not None else (None, True))
     except Exception as exc:  # noqa: BLE001 -- fail-open with voice: the note rides the arm's line
         return root, f"the session registry could not be read ({os_error_text(exc)}), {fallback}"
     if sync is None:
@@ -1741,7 +1744,8 @@ def own_clear_checkout(root: Path) -> tuple[Path, str | None]:
     if sessions is None:
         return root, f"Claude Code's session registry could not be read in full, {fallback}"
     if entry is None:
-        return root, f"Claude Code's session registry does not list this session, {fallback}"
+        why = "Claude Code's session registry does not list this session" if read else sync.TABLE_UNREAD
+        return root, f"{why}, {fallback}"
     started = Path(str(entry.get("cwd")))
     try:
         rc, out, _ = _git("rev-parse", "--show-toplevel", cwd=str(started))

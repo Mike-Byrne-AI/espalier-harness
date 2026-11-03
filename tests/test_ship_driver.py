@@ -3227,7 +3227,7 @@ class TestASharedCheckoutStopsThePush:
             monkeypatch.delenv(name, raising=False)
         sync = ship._sync_module()
         assert sync is not None and sync.__file__ == str(SHIP.parent / "checkout_sync.py")
-        monkeypatch.setattr(sync, "ancestor_pids", lambda depth=8: [])
+        monkeypatch.setattr(sync, "ancestry", lambda depth=8: ([], True))
         cfg = tmp_path / "cfg"
         (cfg / "sessions").mkdir(parents=True)
         for pid, entry in ((os.getpid(), "cli"), (os.getppid(), "sdk-cli")):
