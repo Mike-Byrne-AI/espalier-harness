@@ -2255,6 +2255,34 @@ class TestSeats:
                                     inside_session=True)
         assert "does not list this session" in local["unread"]
 
+    def test_a_process_table_that_could_not_be_read_is_said_never_an_unlisted_session(self, board, tmp_path,
+                                                                                      monkeypatch):
+        """The board finds this session by its parents (no id is passed): a
+        table that could not be read matched none of them, which says nothing
+        about the registry (DEF-2046)."""
+        import checkout_sync   # the module the board's lazy import binds: tools/cc is first on sys.path
+        main, work = self._clone(tmp_path)
+        monkeypatch.setattr(checkout_sync, "_parent_map", lambda *a, **k: None)
+        local = board.read_sessions(main, run_=_git_for(main, work), config_dir=_registry(tmp_path, work),
+                                    inside_session=True)
+        assert local["unread"] == ("the process table could not be read, so this session could not be found in "
+                                   "Claude Code's session registry"), local
+
+    def test_a_kept_older_checkout_sync_keeps_the_older_words(self, board, tmp_path, monkeypatch):
+        import checkout_sync
+
+        class _KeptOlder:   # its own_entry answers; the names the table's cannot-tell added are not in it
+            def __getattr__(self, name):
+                if name in ("find_own_entry", "find_caller", "TABLE_UNREAD", "NOT_LISTED", "ancestry"):
+                    raise AttributeError(name)
+                return getattr(checkout_sync, name)
+
+        main, work = self._clone(tmp_path)
+        monkeypatch.setitem(sys.modules, "checkout_sync", _KeptOlder())
+        local = board.read_sessions(main, run_=_git_for(main, work), config_dir=_registry(tmp_path, work),
+                                    inside_session=True)
+        assert "does not list this session" in local["unread"], local
+
     def test_a_session_outside_this_clone_is_not_named(self, board, tmp_path):
         main, work = self._clone(tmp_path)
         elsewhere = tmp_path / "other-repo"

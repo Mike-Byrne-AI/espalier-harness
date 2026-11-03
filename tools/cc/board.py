@@ -979,9 +979,14 @@ def read_sessions(root: Path, *, run_: Runner = run, config_dir: Path | None = N
         return {"checkouts": [], "unread": "Claude Code's session registry could not be read in full"}
     if inside_session is None:
         inside_session = bool(os.environ.get("CLAUDECODE"))
-    if inside_session and checkout_sync.own_entry(sessions) is None:
-        return {"checkouts": [], "unread": "Claude Code's session registry does not list this session, so it is "
-                                           "not the registry this session writes to"}
+    if inside_session:
+        # A kept older checkout_sync cannot say a process table that did not answer.
+        find = getattr(checkout_sync, "find_own_entry", None)
+        mine, read = find(sessions) if find is not None else (checkout_sync.own_entry(sessions), True)
+        if mine is None:
+            return {"checkouts": [], "unread": checkout_sync.TABLE_UNREAD if not read else (
+                "Claude Code's session registry does not list this session, so it is not the registry this "
+                "session writes to")}
     dirs = [config_dir] if config_dir is not None else checkout_sync.claude_config_dirs()
     registry = ", ".join(str(Path(d) / "sessions") for d in dirs)
     named_clone, clone_how = mail.clone_machine(root, run=run_)

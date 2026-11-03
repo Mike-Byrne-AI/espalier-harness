@@ -283,6 +283,98 @@ class TestAnotherCheckoutsRun:
         assert fired is not None and len(fired[1].encode("utf-8")) <= 512, len(fired[1].encode("utf-8"))
 
 
+def _reads(monkeypatch, **answers) -> None:
+    """Answer the named readers of the checkout_sync the hook loads."""
+    import _hook_utils
+    sync = _hook_utils.load_checkout_sync()
+    for name, answer in answers.items():
+        monkeypatch.setattr(sync, name, answer)
+
+
+@needs_git
+class TestAReadThatDidNotAnswer:
+    """DEF-2046 at CP-KILL: a process table or a cwd read that did not answer
+    read as empty, so `pkill -P` found no children and a pid its own cwd does
+    not place could not be climbed to its owner: the kill passed with no
+    word. Such a read now nudges once for each pid it leaves unplaced; a pid
+    its own cwd places still decides as before."""
+
+    @pytest.mark.parametrize("table", [None, {}], ids=["unread", "empty-from-an-older-checkout-sync"])
+    def test_a_parent_kill_on_an_unread_table_is_nudged(self, tmp_path, monkeypatch, table):
+        main, _other = _clone(tmp_path)
+        _reads(monkeypatch, _parent_map=lambda *a, **k: table)
+        fired = _fire(main, "pkill -P 4242")
+        assert fired is not None and "pkill -P 4242: the process table could not be read" in fired[1], fired
+        assert _fire(main, "pkill -P 4242") is None, "the re-issue proceeds"
+
+    @posix_only
+    def test_a_pid_its_own_cwd_does_not_place_is_nudged_on_an_unread_table(self, tmp_path, children, monkeypatch):
+        main, _other = _clone(tmp_path)
+        loose = tmp_path / "loose"
+        loose.mkdir()
+        theirs = children(loose)
+        time.sleep(0.3)
+        assert _fire(main, f"kill {theirs.pid}") is None, "a table that answered climbs to no checkout"
+        _reads(monkeypatch, _parent_map=lambda *a, **k: None)
+        fired = _fire(main, f"kill {theirs.pid}")
+        assert fired is not None and (
+            f"pid {theirs.pid}: the process table could not be read, so whose run" in fired[1]), fired
+        assert _fire(main, f"kill {theirs.pid}") is None, "the re-issue proceeds"
+
+    @posix_only
+    def test_a_pid_placed_elsewhere_beside_an_unread_parent_kill_takes_the_words(self, tmp_path, children,
+                                                                                monkeypatch):
+        """The parent kill's cannot-tell once returned before the other targets
+        were judged, and its re-issue passed another seat's run unnamed."""
+        main, other = _clone(tmp_path)
+        theirs = children(other)
+        time.sleep(0.3)
+        _reads(monkeypatch, _parent_map=lambda *a, **k: None)
+        fired = _fire(main, f"pkill -P 4242; kill {theirs.pid}")
+        assert fired is not None and "works in .claude/worktrees/other" in fired[1], fired
+
+    @posix_only
+    def test_a_cannot_tell_nudge_never_spends_the_flag_a_placed_reading_needs(self, tmp_path, children,
+                                                                               monkeypatch):
+        main, other = _clone(tmp_path)
+        theirs = children(other)
+        time.sleep(0.3)
+        with monkeypatch.context() as unread:
+            _reads(unread, process_cwds=lambda *a, **k: None)
+            assert "could not be read" in _fire(main, f"kill {theirs.pid}")[1]
+        fired = _fire(main, f"kill -9 {theirs.pid}")
+        assert fired is not None and "works in .claude/worktrees/other" in fired[1], fired
+
+    @posix_only
+    def test_a_gone_pid_is_never_nudged_for_a_read_that_did_not_answer(self, tmp_path, monkeypatch):
+        """lsof reads a gone pid as nothing found and exit 1, which the
+        reader cannot tell from a failed run: a pid that is gone has no run
+        to protect either way."""
+        main, _other = _clone(tmp_path)
+        _reads(monkeypatch, _parent_map=lambda *a, **k: None, process_cwds=lambda *a, **k: None)
+        assert _fire(main, "kill 2147483646") is None
+
+    @posix_only
+    def test_a_pid_its_own_cwd_places_still_decides_on_an_unread_table(self, tmp_path, children, monkeypatch):
+        main, other = _clone(tmp_path)
+        mine, theirs = children(main), children(other)
+        time.sleep(0.3)
+        _reads(monkeypatch, _parent_map=lambda *a, **k: None)
+        assert _fire(main, f"kill {mine.pid}") is None, "this checkout's own run"
+        fired = _fire(main, f"kill {theirs.pid}")
+        assert fired is not None and "works in .claude/worktrees/other" in fired[1], fired
+
+    @posix_only
+    def test_a_cwd_read_that_did_not_answer_is_nudged(self, tmp_path, children, monkeypatch):
+        main, _other = _clone(tmp_path)
+        mine = children(main)
+        time.sleep(0.3)
+        _reads(monkeypatch, process_cwds=lambda *a, **k: None)
+        fired = _fire(main, f"kill {mine.pid}")
+        assert fired is not None and (
+            f"pid {mine.pid}: its working directory could not be read, so whose run" in fired[1]), fired
+
+
 def _record(rootpath: Path) -> dict:
     """The box lock's holder record, written by the suite's own writer, for a
     run in ``rootpath``: this test process is its pid."""
