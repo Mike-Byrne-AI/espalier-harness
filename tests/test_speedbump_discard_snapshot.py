@@ -23,6 +23,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._hook_spawn import not_a_budget_miss
+
 HOOKS_DIR = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
 if str(HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(HOOKS_DIR))
@@ -664,11 +666,11 @@ class TestLoopRemovalSnapshot:
         import os
         cmd = 'for f in src; do rm -rf "$f"; done'
         env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tree)}
-        result = subprocess.run(
+        result = not_a_budget_miss(subprocess.run(
             [sys.executable, str(HOOKS_DIR / "write_guard.py")],
             input=json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}}),
             capture_output=True, text=True, timeout=30, env=env, encoding="utf-8",
-        )
+        ))
         assert "Speed-bump [CP-RMRF]" in result.stdout, (result.returncode, result.stdout, result.stderr)
         assert "snapshot just taken" in result.stdout, result.stdout
         lines = _log_lines(tree)
@@ -734,11 +736,11 @@ class TestConditionalPromise:
         import json
         import os
         env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)}
-        result = subprocess.run(
+        result = not_a_budget_miss(subprocess.run(
             [sys.executable, str(HOOKS_DIR / "write_guard.py")],
             input=json.dumps({"tool_name": "Bash", "tool_input": {"command": 'rm -rf "$(pwd)"'}}),
             capture_output=True, text=True, timeout=30, env=env, encoding="utf-8",
-        )
+        ))
         assert "Speed-bump [CP-RMRF]" in result.stdout, result.stdout
         assert "a spelling it cannot read" in result.stdout, result.stdout
         assert "if it can read them" in result.stdout, result.stdout

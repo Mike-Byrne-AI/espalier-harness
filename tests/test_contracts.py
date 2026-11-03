@@ -616,6 +616,11 @@ class TestShippedRootsDoNotImportTests:
             "the benchmark's BC-034 verifier loads the corpus-ref resolver by path inside a try, and the "
             "sdist ships that one tests/ file beside the benchmark by name; the wheel ships neither",
             "include tests/_corpus_ref_resolver.py"),
+        ("tools/cc/ledger_row.py", "tests/_ledger_rules.py"): (
+            "the ledger verb runs the content rules the tests own over a drafted row (DEF-1121), loaded by "
+            "path from the tree it writes into, only where that file is there, inside a try that turns any "
+            "failure into a note; an adopter's tree holds no such file and runs none, and the note says so",
+            None),
         ("scripts/generate_doc_regions.py", "tests._local_only_skips"): (
             "the region generator renders tests/README.md's local-only skip list from the test tree's "
             "own reader of its skip reasons (the population IS the test tree, so the derivation lives "

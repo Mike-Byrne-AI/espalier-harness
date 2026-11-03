@@ -26,6 +26,15 @@ Three limits keep the retry honest:
 A retry that answers is a ``HookSpawnRetried`` warning, which the run's summary
 counts (``tests/conftest.py::pytest_terminal_summary``). The budget itself is
 the hook's and is not touched here: it fails closed by design.
+
+A write_guard spawn that keeps a bound past ``HOOK_S`` does not come here: a
+retry under that bound would carry its row past the suite's per-test ceiling.
+The budget refuses at 3.5 s whatever the bound, and its refusal is a deny on
+the decision channel, so such a spawn hands its result to
+``not_a_budget_miss``, which fails the row as the miss it is: never an ALLOW
+row redded as a wrong answer, nor a must-deny row passed on a judgment that
+never finished (DEF-5066). ``tests/test_hook_spawn_routing.py`` derives both
+populations from the tree.
 """
 from __future__ import annotations
 
@@ -82,6 +91,22 @@ def _state(env: dict | None) -> list[tuple[str, int, int]] | None:
             continue
         out.append((str(p.relative_to(state)), st.st_size, st.st_mtime_ns))
     return out
+
+
+def not_a_budget_miss(result: subprocess.CompletedProcess) -> subprocess.CompletedProcess:
+    """``result`` as it came, unless write_guard's budget refused the call:
+    then the row fails as a miss, never read as the verdict it looks like.
+    For a spawn whose bound is past ``HOOK_S`` (the module docstring); it
+    spawns nothing and reads the finished result only."""
+    out = result.stdout if isinstance(result.stdout, str) else (result.stdout or b"").decode("utf-8", "replace")
+    if BUDGET_REFUSAL in (out or ""):
+        script = next((str(a) for a in reversed(result.args) if str(a).endswith(".py")), str(result.args))
+        pytest.fail(
+            f"{script} answered with write_guard's budget refusal ({BUDGET_REFUSAL!r}): a miss, not a "
+            f"verdict. This spawn keeps a bound past the helper's {HOOK_S:.0f} s, where a retry would "
+            "overrun the per-test ceiling, so it is not retried: a stalled runner misses now and "
+            "then, a judgment slow every time misses on every runner.")
+    return result
 
 
 def _row() -> str:

@@ -76,6 +76,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import traceback
 from collections import Counter
 from datetime import date
 from pathlib import Path
@@ -1122,43 +1123,54 @@ def _deferrals_into(ledger: Path, ids: list[str]) -> list[str]:
     return hits
 
 
-#: The probe test's hand-kept per-id tables over the live probes: all three
-#: (`_NAMED_NOT_READ`, `_TEXT_OVER_OWN_SUBJECT`, `_SPAWNS_A_LITERAL_INTERPRETER`)
-#: sit in this one file, and the other id-holding constants under tests/ are
-#: fixtures over scratch ledgers (measured 2026-10-18, DEF-1172).
-_PROBE_BASELINES = Path("tests") / "test_check_ledger_probes.py"
+#: The hand-kept per-id tables over the live probes: `_NAMED_NOT_READ` in the
+#: probe test, and the probe-shape ratchet's two baselines
+#: (`TEXT_OVER_OWN_SUBJECT`, `SPAWNS_A_LITERAL_INTERPRETER`) in the ledger
+#: content rules the test and this verb share since DEF-1121; the other
+#: id-holding constants under tests/ are fixtures over scratch ledgers
+#: (measured 2026-10-18, DEF-1172).
+_PROBE_BASELINES = (Path("tests") / "test_check_ledger_probes.py", Path("tests") / "_ledger_rules.py")
 
 
 def _baselined_in_tests(root: Path, ids: list[str]) -> list[str]:
-    """Where the probe test's per-id tables still hold an id of ``ids`` (the ids
-    whose probe this strike retires), as ``path:line: TABLE holds ID``.
+    """Where the per-id tables over the live probes still hold an id of
+    ``ids`` (the ids whose probe this strike retires), as ``path:line: TABLE
+    holds ID``.
 
     ``DEF-1172``: the strike retired the probe and read nothing under
     ``tests/``, so the id stayed in a baseline over the live probes, and that
     table's dead-entry check went red on a later run, in a lane that never
     touched the file (``DEF-940`` on 2026-09-29, ``DEF-884`` on 2026-10-07).
-    The tables are found by parsing the file, never by name: every upper-case
+    The tables are found by parsing each file of ``_PROBE_BASELINES``, never by
+    name: every upper-case
     constant assigned directly in the module body or in a class body (any class,
     nested ones too) whose value is a dict (its keys) or a set of strings
     (``{...}``, ``set(...)``, ``frozenset(...)``). A bare list or tuple is an
     argument vector or a word list, not a table, and is not read; nor is a table
     built under an ``if`` or ``try``, by a comprehension or by a set operation,
-    shapes none of the three uses (pinned against the live file by
+    shapes none of the three uses (pinned against the live files by
     ``tests/test_check_ledger_probes.py``). Each hit names the line of the id
-    itself, since one line can hold several. No file (an adopter's tree, a
-    release export) reads nothing; a file that does not parse is named and read
-    as nothing, since the suite reds on it louder than this could."""
-    path = root / _PROBE_BASELINES
-    if not ids or not path.is_file():
+    itself, since one line can hold several. A file that is not there (an
+    adopter's tree, a release export) reads nothing; one that does not parse is
+    named and read as nothing, since the suite reds on it louder than this
+    could."""
+    if not ids:
         return []
-    rel = _PROBE_BASELINES.as_posix()
+    hits: list[str] = []
+    for rel_path in _PROBE_BASELINES:
+        if (root / rel_path).is_file():
+            hits += _baselined_in(root / rel_path, rel_path.as_posix(), set(ids))
+    return hits
+
+
+def _baselined_in(path: Path, rel: str, wanted: set[str]) -> list[str]:
+    """``_baselined_in_tests``'s read of one file."""
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel)
     except (SyntaxError, ValueError, UnicodeDecodeError) as exc:
         print(f"ledger_row: note: {rel} does not parse ({exc}), so its per-id baselines were not read",
               file=sys.stderr)
         return []
-    wanted = set(ids)
     hits: list[str] = []
     for body in (tree.body, *(n.body for n in ast.walk(tree) if isinstance(n, ast.ClassDef))):
         for st in body:
@@ -1677,10 +1689,13 @@ def _drive_both_sides(ids: list[str], *, root: Path, probes: Path, data: dict, b
 def _drive_in_export(tree: Path, probes: dict[str, dict]) -> dict[str, tuple[str, str]]:
     """Each probe's ``(verdict, detail)`` in ``tree``, an export ``_base_tree``
     built: the runner rooted there, pristine (the tree holds no generated
-    duplicate, so the contamination memo is empty). The one way a probe is read
-    where a strike reads its base, for the strike and the filing alike, so a
-    change to how that tree is driven reaches both."""
-    with _CHK.rooted(tree, pristine=True):
+    duplicate, so the contamination memo is empty) and importable (the tree's
+    root first on each probe's ``PYTHONPATH``: no interpreter has installed it,
+    so a pytest-collecting probe met the suite's engine-location check there
+    and read UNRESOLVED, DEF-5047). The one way a probe is read where a strike
+    reads its base, for the strike and the filing alike, so a change to how
+    that tree is driven reaches both."""
+    with _CHK.rooted(tree, pristine=True, importable=True):
         return {key: _CHK.run_probe(probe) for key, probe in probes.items()}
 
 
@@ -1874,6 +1889,9 @@ def strike(rid: str, *, ledger: Path, probes: Path, text_file: Path, day: str,
     retired = retired_in_roster + _retire_probe_files(probes, ids, pending)
     index_note = (f"index row {index_state[rid]}" if len(ids) == 1
                   else "index rows: " + ", ".join(f"{i} {s}" for i, s in index_state.items()))
+    if _content_rules_refuse(root or ledger.resolve().parent.parent, pending, ledger=ledger, legacy=new_line,
+                             probe=None, dry_run=dry_run):
+        return 2
     if dry_run:
         print(new_line)
         print(f"({index_note}; {retired} probe(s) would retire"
@@ -2215,6 +2233,9 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str |
              **({"inputs": inputs} if inputs is not None else {}),
              **_pins(new_line),
              f"verified_{day.replace('-', '_')}": f"OPEN (filed {day}; probe driven at filing{driven})"}
+    if _content_rules_refuse(root, pending, ledger=ledger, legacy=f"{new_line}\n{new_index}", probe=entry,
+                             dry_run=dry_run):
+        return 2
     if dry_run:
         if finishing:
             print(f"(finishing {rid}: its row is there, so only its probe would be written)")
@@ -2249,8 +2270,18 @@ def repin(rid: str, *, ledger: Path, probes: Path, open_value: str | None, reaso
           dry_run: bool, root: Path,
           population: str | None = None, audience: str | None = None,
           severity: str | None = None, subject: str | None = None,
-          inputs: list[str] | None = None, no_base: bool = False) -> int:
+          inputs: list[str] | None = None, no_base: bool = False,
+          why_not: str | None = None) -> int:
     """Re-pin a LIVE row whose measured value moved off its ``open_value``.
+
+    ``why_not`` replaces the reason a row declared unmeasurable gives, the one
+    cell of its probe entry a verb could not move until DEF-4080: the roster
+    says never hand-edit, so a widened row kept a reason naming the old scope.
+    Refused on a row with a probe command (it is measured, and its command is
+    the oracle); ``cmd`` and ``open_value`` stay None, and the stamp lists
+    ``why not``, spaced as the other field names are, so the two readers of
+    the list (the same-day carry below and the engine's onboarding refresh)
+    read it.
 
     The hand pass a STRIKE_CANDIDATE verdict asks for ends one of two ways:
     the row is struck, or it is still open and the number moved. This is the
@@ -2299,6 +2330,17 @@ def repin(rid: str, *, ledger: Path, probes: Path, open_value: str | None, reaso
     if entry is None:
         print(f"ledger_row: {rid} carries no probe to re-pin", file=sys.stderr)
         return 2
+    if why_not is not None:
+        why_not = why_not.strip()
+        if not why_not:
+            print(f"ledger_row: --why-not is empty; give the reason {rid} cannot be measured", file=sys.stderr)
+            return 2
+        if entry.get("cmd"):
+            print(f"ledger_row: {rid} carries a probe command, so it is measured and its command is the oracle; "
+                  "--why-not replaces the reason of a row declared unmeasurable, never a probe (strike the "
+                  "row, or re-pin its probe)", file=sys.stderr)
+            return 2
+    old_why_not = entry.get("why_not")
     cmd = probe_cmd or entry.get("cmd")
     new_value = open_value if open_value is not None else entry.get("open_value")
     if (subject or inputs) and not cmd:
@@ -2448,6 +2490,8 @@ def repin(rid: str, *, ledger: Path, probes: Path, open_value: str | None, reaso
         entry["subject"] = subject
     if probe_cmd:
         entry["why_not"] = None
+    if why_not is not None:
+        entry["why_not"] = why_not
     entry.update(_pins(new_line))
     moved = f"{old_value!r} -> {new_value!r}" if new_value != old_value else "value unchanged"
     if severity and severity != old_severity:
@@ -2479,12 +2523,16 @@ def repin(rid: str, *, ledger: Path, probes: Path, open_value: str | None, reaso
         ("classes", cells[4:] != old_cells[4:]),
         ("subject", bool(subject) and subject != old_subject),
         ("inputs", inputs is not None and inputs != old_inputs),
+        ("why not", why_not is not None and why_not != old_why_not),
     ) if moved_field or name in carried_names]
     entry[key] = (
         f"STILL_OPEN (re-pinned {moved} on {day}: {reason}) [changed: {', '.join(changed) or 'none'}]"
     )
     sibling_note = (f" (shares its row with {', '.join(siblings)}, whose probe(s) this verb did "
                     f"not drive -- repin each if the claim moved)") if siblings else ""
+    if _content_rules_refuse(root, pending, ledger=ledger, legacy=new_line,
+                             probe=entry if (probe_cmd or subject) else None, dry_run=dry_run):
+        return 2
     if dry_run:
         print(new_line)
         if sibling_note:
@@ -2617,6 +2665,10 @@ def main(argv: list[str] | None = None) -> int:
                     help="re-grade the row's severity (default: keep). Every member "
                          "row carries this cell, so no MIXED class is needed; --reason "
                          "is required on this verb and carries the grade's rationale")
+    rp.add_argument("--why-not", help="replace the reason a row declared unmeasurable gives (default: keep); "
+                                      "refused beside --probe-cmd or --open-value and on a row with a probe "
+                                      "command, since a row is measured or declared, never both; the stamp "
+                                      "lists `why not` among the fields it changed")
     rp.add_argument("--no-base", action="store_true",
                     help="where the repin changes the command, subject, inputs or open value, skip the "
                          "second drive, in the export of HEAD with no .git (the tree a strike's base "
@@ -2704,6 +2756,87 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
 
+#: The ledger's content rules, kept beside the tests that own them (DEF-1121).
+_RULES_REL = "tests/_ledger_rules.py"
+
+
+def _content_rule_breaks(root: Path, rel: str, text: str,
+                         probe: dict | None = None) -> tuple[list[str], list[str]]:
+    """``(breaks, notes)``: each ledger content rule the drafted ``text`` (the
+    row at ``rel``, empty where only the probe changes) or the drafted
+    ``probe`` entry breaks, as ``<owning test>: <what>``, from the predicates
+    the tests own (``tests/_ledger_rules.py`` in ``root``, loaded by path with
+    ``root`` first on the import path), and a note for each rule that is there
+    and could not be run. A tree without that file (an adopter's: the rules
+    are about Espalier's own docs) runs none, and a note says so. Until
+    DEF-1121 they lived in test methods alone, so a row that broke one was
+    written, converged and redded only in the contract tier, each red a repin
+    and another tier run."""
+    if not (root / _RULES_REL).is_file():
+        return [], [f"the ledger content rules were not run: this tree holds no {_RULES_REL} "
+                    "(they are Espalier's own rules about its docs)"]
+    added = str(root) not in sys.path
+    if added:
+        sys.path.insert(0, str(root))
+    notes: list[str] = []
+    try:
+        # The path spelled whole in the call: the contract that no shipped
+        # root imports tests/ reads this load by its literal and declares it
+        # (tests/test_contracts.py::TestShippedRootsDoNotImportTests._SANCTIONED).
+        spec = importlib.util.spec_from_file_location("_espalier_ledger_rules",
+                                                      root / "tests" / "_ledger_rules.py")
+        if spec is None or spec.loader is None:
+            return [], [f"the ledger content rules in {_RULES_REL} could not be loaded"]
+        mod = importlib.util.module_from_spec(spec)
+        # Registered while it runs: a path-loaded module missing from
+        # sys.modules cannot hold a dataclass under postponed annotations.
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        found = mod.breaks(rel, text, probe, notes=notes)
+    except Exception as exc:  # noqa: BLE001 -- a rule that cannot run is a note, never a refusal
+        frames = traceback.extract_tb(exc.__traceback__)
+        where = f" at {Path(frames[-1].filename).name}:{frames[-1].lineno}" if frames else ""
+        return [], [f"the ledger content rules in {_RULES_REL} could not be run "
+                    f"({type(exc).__name__}{where}: {_load('_json_safe').os_error_text(exc)})"]
+    finally:
+        sys.modules.pop("_espalier_ledger_rules", None)
+        if added and str(root) in sys.path:
+            sys.path.remove(str(root))
+    return [f"{node}: {what}" for node, what in found], notes
+
+
+def _content_rules_refuse(root: Path, pending: _Pending, *, ledger: Path, legacy: str,
+                          probe: dict | None, dry_run: bool) -> bool:
+    """Run the ledger's content rules over what this write will leave, before
+    anything is written and in the dry run alike (DEF-1121): each row file
+    the verb is about to write, whole (its class line, member row and index
+    rows, a strike's closing and prior text among them), or ``legacy`` (the
+    row lines a tree that keeps rows in the ledger file gets), and the probe
+    entry it is about to write. A break is printed by the test that owns the
+    rule; True when it refuses the write (never in a dry run). --override is
+    the claims' alone: a break reds the contract tier whatever this verb
+    writes."""
+    rows = [(path, text) for path, text in pending.rows.items() if text is not None]
+    if not rows:
+        rows = [(ledger, legacy)]
+    breaks: list[str] = []
+    notes: list[str] = []
+    for i, (path, text) in enumerate(rows):
+        try:
+            rel = path.resolve().relative_to(root.resolve()).as_posix()
+        except ValueError:
+            rel = path.name
+        found, said = _content_rule_breaks(root, rel, text, probe if i == 0 else None)
+        breaks += found
+        notes += [n for n in said if n not in notes]
+    for note in notes:
+        print(f"ledger_row: note -- {note}", file=sys.stderr)
+    for line in breaks:
+        print(f"ledger_row: {'dry run' if dry_run else 'refused'} -- the drafted row breaks a ledger content "
+              f"rule, {line}", file=sys.stderr)
+    return bool(breaks) and not dry_run
+
+
 def _mint(kind: str, *, ledger: Path, probes: Path, root: Path, dry_run: bool) -> tuple[str, str] | None:
     """Mint and reserve (a dry run only picks), saying why not."""
     try:
@@ -2734,7 +2867,14 @@ def _dispatch(ap: argparse.ArgumentParser, args: argparse.Namespace, *, ledger: 
                          population=args.population, audience=args.audience,
                          effort=args.effort, dry_run=args.dry_run)
     if args.verb == "repin":
+        if args.why_not is not None and (args.probe_cmd or args.open_value is not None):
+            # A row is measured or declared, never both: a reason beside a new
+            # command would be written over by the command's drive (DEF-4080).
+            ap.error("repin: --why-not declares the row unmeasurable; drop --probe-cmd and --open-value")
+        if args.why_not is not None and args.no_base:
+            ap.error("repin: --no-base skips a drive that a row declared --why-not never makes; drop one")
         return repin(args.rid, ledger=ledger, probes=probes, open_value=args.open_value,
+                     why_not=args.why_not,
                      reason=args.reason,
                      text_file=Path(args.text_file) if args.text_file else None,
                      anchor=args.anchor, probe_cmd=args.probe_cmd, subject=args.subject, day=args.date,

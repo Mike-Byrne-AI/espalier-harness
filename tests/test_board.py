@@ -1055,9 +1055,16 @@ class TestClosedAtAPush:
         again = [mail.new_message("air", "assign", "", seat="win", ids=["DEF-1"], now=_T0.replace(minute=20))]
         return job, release, {"air": [job, *(again if resend else [])], "win": [claim, release]}
 
-    def _text(self, board, monkeypatch, tmp_path, by_machine, prs) -> str:
+    def _text(self, board, monkeypatch, tmp_path, by_machine, prs, merged=None) -> str:
         _stub_channel(monkeypatch, board, by_machine)
-        return board.render(board.collect(tmp_path, run_=_gh({"pr list": prs, "run list": _GREEN_RUNS}), now=_NOW))
+        answers = {"pr list": prs, "run list": _GREEN_RUNS}
+        if merged is not None:
+            answers["pr list merged"] = merged
+        return board.render(board.collect(tmp_path, run_=_gh(answers), now=_NOW))
+
+    @staticmethod
+    def _merge(name: str, at: str, number: int = 437) -> dict:
+        return {"number": number, "headRefName": name, "mergedAt": at, "labels": []}
 
     def test_a_job_the_push_closed_is_listed_while_its_pull_request_is_open(self, board, monkeypatch, tmp_path):
         """The row's red. Dies to: the line left out of the jobs section, or
@@ -1098,7 +1105,10 @@ class TestClosedAtAPush:
         by_machine["win"] += [mail.new_message("win", "claim", "", lane="lane/b", ids=["DEF-1"],
                                                now=_T0.replace(minute=30)),
                               mail.new_message("win", "release", "", lane="lane/b", now=_T0.replace(minute=40))]
-        text = self._text(board, monkeypatch, tmp_path, by_machine, [self._PR])
+        # lane/b shipped: its merge after its release (a lane/b with no pull
+        # request at all is the job closed with no pull request, DEF-5063).
+        text = self._text(board, monkeypatch, tmp_path, by_machine, [self._PR],
+                          merged=[self._merge("lane/b", "2026-10-14T21:00:00Z", number=438)])
         assert "closed at a push" not in text and "no live assignments" in text, text
 
     def test_a_branch_name_used_again_lists_nothing(self, board, monkeypatch, tmp_path):
@@ -1112,10 +1122,74 @@ class TestClosedAtAPush:
 
     def test_a_merged_lane_lists_nothing(self, board, monkeypatch, tmp_path):
         """The job's work merged: the closure stood. Dies to: every claim
-        closure listed whatever the pull requests."""
+        closure listed whatever the pull requests, or a merge of the lane
+        after its release not read as it landing."""
         _job, _release, by_machine = self._pushed(board)
-        text = self._text(board, monkeypatch, tmp_path, by_machine, [])
+        text = self._text(board, monkeypatch, tmp_path, by_machine, [],
+                          merged=[self._merge("lane/a", "2026-10-14T20:40:00Z")])
         assert "closed at a push" not in text, text
+
+    def test_a_job_closed_with_no_pull_request_is_listed(self, board, monkeypatch, tmp_path):
+        """DEF-5063, the row's red: the push sent its release and ``gh pr
+        create`` then failed (or an older seat dropped a lane never pushed),
+        so the lane has no pull request open or merged, and the job was listed
+        nowhere. Dies to: the line left out, or the merged read not handed to
+        it."""
+        job, release, by_machine = self._pushed(board)
+        text = self._text(board, monkeypatch, tmp_path, by_machine, [], merged=[])
+        assert "jobs:     (dispatcher air) no live assignments" in text, text
+        assert (f"          closed at a push, no pull request open or merged: 1: win: DEF-1 (assign {job['id']}; "
+                f"lane/a, released {release['at']})") in text, text
+        _stub_channel(monkeypatch, board, by_machine)
+        collected = board.collect(tmp_path, run_=_gh({"pr list": [], "pr list merged": [], "run list": _GREEN_RUNS}),
+                                  now=_NOW)
+        assert collected["closed_with_no_pr"] == [{"seat": "win", "ids": ["DEF-1"], "assign": job["id"],
+                                                  "release": release["id"], "lane": "lane/a",
+                                                  "released": release["at"]}]
+        assert "merged" not in collected["records"], "the merged read is the section's, never the JSON's"
+
+    def test_an_unnamed_clone_reads_the_line_as_unread(self, board, monkeypatch, tmp_path):
+        """An unnamed clone's records section reads no merges, so the line is
+        unread, never none, as its docstring says. Dies to: the unnamed
+        section left with no verdict (the line silent)."""
+        _job, _release, by_machine = self._pushed(board)
+        _stub_channel(monkeypatch, board, by_machine)
+        monkeypatch.setattr(board, "read_records_section", lambda *a, **k: {
+            "window": board.ROW_DEBT_WINDOW, "read": 0, "unclaimed": 0, "entries": [], "unread": "", "unnamed": True})
+        collected = board.collect(tmp_path, run_=_gh({"pr list": [], "pr list merged": [], "run list": _GREEN_RUNS}),
+                                  now=_NOW)
+        assert collected["closed_with_no_pr"] == {"unread": "this clone names no seat, so its merges were not read"}
+
+    def test_a_merge_of_the_name_before_the_release_is_an_earlier_lane(self, board, monkeypatch, tmp_path):
+        """A lane that used the branch name before merged a day earlier; this
+        push's pull request was never created. Dies to: the merged lanes
+        matched by name alone."""
+        job, _release, by_machine = self._pushed(board)
+        text = self._text(board, monkeypatch, tmp_path, by_machine, [],
+                          merged=[self._merge("lane/a", "2026-10-13T20:00:00Z")])
+        assert f"no pull request open or merged: 1: win: DEF-1 (assign {job['id']}" in text, text
+
+    def test_a_release_older_than_a_full_window_lists_nothing(self, board, monkeypatch, tmp_path):
+        """Where the merged read filled its window, a release older than its
+        oldest merge may have merged beyond what was read: left out, never a
+        false listing of every old job. Dies to: the window's floor not read."""
+        _job, _release, by_machine = self._pushed(board)
+        window = [self._merge(f"lane/other-{i}", "2026-10-15T01:00:00Z", number=500 + i)
+                  for i in range(board.ROW_DEBT_WINDOW)]
+        text = self._text(board, monkeypatch, tmp_path, by_machine, [], merged=window)
+        assert "no pull request open or merged" not in text, text
+        short = window[:-1]   # one short of the window: every merge was read, so the job is listed
+        assert "no pull request open or merged: 1" in self._text(board, monkeypatch, tmp_path, by_machine, [],
+                                                                  merged=short)
+
+    def test_unread_merged_pull_requests_read_as_unread(self, board, monkeypatch, tmp_path):
+        """Dies to: a failed merged read leaving the key empty, so a lost job
+        reads as none."""
+        _job, _release, by_machine = self._pushed(board)
+        text = self._text(board, monkeypatch, tmp_path, by_machine, [],
+                          merged=board.Unresolvable("gh pr list --state merged failed"))
+        assert ("          closed at a push with no pull request: unread (the merged pull requests are unread: "
+                in text), text
 
     def test_a_job_re_sent_since_lists_nothing(self, board, monkeypatch, tmp_path):
         """The dispatcher's re-send is the answer the line asks for. Dies to:
