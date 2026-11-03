@@ -1,6 +1,7 @@
 """Shared fixtures for Espalier-Harness test suite."""
 from __future__ import annotations
 
+import gc
 import json
 import os
 import subprocess
@@ -156,6 +157,51 @@ def _restore_interpreter_warn_flag():
         yield
     finally:
         _cli._INTERPRETER_WARNING_EMITTED = original
+
+
+#: The files whose tests run with the cyclic collector paused, spelled as
+#: `scripts/proof_tier.py::WALL_CLOCK_SERIAL_FILES` spells them: the files that
+#: hold this suite's in-process wall-clock bounds. A literal, because that module
+#: is not in the sdist; tests/test_proof_tier.py pins the two equal both ways.
+_COLLECTOR_PAUSED_FILES: tuple[str, ...] = (
+    "tests/test_redos.py",
+    "tests/test_speedbump_irreversible.py",
+    "tests/test_hooks.py",
+)
+_COLLECTOR_PAUSED_PATHS = frozenset(
+    (Path(__file__).resolve().parent.parent / rel).resolve() for rel in _COLLECTOR_PAUSED_FILES
+)
+
+
+@pytest.fixture(autouse=True)
+def _pause_the_collector_in_the_wall_clock_files(request):
+    """Pause the cyclic collector for every test of `_COLLECTOR_PAUSED_FILES`,
+    restored to what it found after (DEF-5081). Their rows time a consumer in
+    this process, and under pytest this process is the suite: in the release
+    gate's one-process run (`scripts/release_check.py::check_tests_pass`,
+    Python 3.12) a full collection walks the whole suite's heap, and one that
+    lands inside a timed window is charged to the consumer -- a hook process,
+    whose small heap never pays that term. Measured 2026-11-03 on the Air
+    (3.12.14): `test_redos.py`'s `bindings-then-paren-run` probe runs about 150
+    gen-0 collections in 36 ms, and with the pending survivors near the
+    threshold it triggered a full one that read 881 to 1177 ms at 12M live
+    objects, against the regex tier's 1000 ms ceiling, and 34 ms paused;
+    `time.process_time` read the same 1176 ms, so a CPU clock leaves it in.
+    The scaling arms already paused their own windows
+    (`tests/test_redos.py::_walker_window_ms`); this pause is file-wide, so a
+    row added later is covered without anyone remembering it. An explicit
+    `gc.collect()` still runs, and a test's own pause composes, since each
+    restores what it found."""
+    if Path(request.path).resolve() not in _COLLECTOR_PAUSED_PATHS:
+        yield
+        return
+    collector_was_on = gc.isenabled()
+    gc.disable()
+    try:
+        yield
+    finally:
+        if collector_was_on:
+            gc.enable()
 
 
 @pytest.fixture(autouse=True)

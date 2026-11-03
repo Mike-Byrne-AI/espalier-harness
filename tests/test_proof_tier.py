@@ -1887,6 +1887,23 @@ class TestTheWallClockRule:
         is enrolled with its row, and a retired one until it is struck."""
         assert self._live(pt).exemptions == _WALL_CLOCK_EXEMPTIONS
 
+    def test_the_collector_is_paused_in_exactly_the_wall_clock_serial_files(self, pt):
+        """`tests/conftest.py` pauses the cyclic collector for the tests of the
+        files it lists (DEF-5081), a literal because this module is not in the
+        sdist; so the two are pinned equal here, both ways: a serial file added
+        without the pause times its rows with the suite heap's full collections
+        in them, and a listed file this module no longer names pauses a file
+        that holds no wall-clock bound. The tuple is floored first (three
+        files at the pin, 2026-11-03), so two emptied lists cannot read as
+        agreeing."""
+        from tests.conftest import _COLLECTOR_PAUSED_FILES
+        assert len(pt.WALL_CLOCK_SERIAL_FILES) >= 3, pt.WALL_CLOCK_SERIAL_FILES
+        assert len(set(_COLLECTOR_PAUSED_FILES)) == len(_COLLECTOR_PAUSED_FILES), _COLLECTOR_PAUSED_FILES
+        unpaused = sorted(set(pt.WALL_CLOCK_SERIAL_FILES) - set(_COLLECTOR_PAUSED_FILES))
+        not_serial = sorted(set(_COLLECTOR_PAUSED_FILES) - set(pt.WALL_CLOCK_SERIAL_FILES))
+        assert not unpaused, f"wall-clock serial files conftest does not pause: {unpaused}"
+        assert not not_serial, f"conftest pauses files that are not wall-clock serial files: {not_serial}"
+
     # One file with one row, one helper and one pairing, green as written;
     # each row below breaks exactly one thing and names the sentence the rule
     # must answer with.
