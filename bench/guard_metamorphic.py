@@ -115,8 +115,14 @@ import _bash_patterns  # noqa: E402  (path is set immediately above)
 # The project fixture is the rehearsal's (DEF-811). Same directory, so the
 # import needs no package, and a second builder here would drift from the
 # first the day one of them learned a new root shape or protected directory.
+# The budget's reader comes the same way (DEF-5071).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from powershell_guard_rehearsal import ROOT_SHAPES, throwaway_project  # noqa: E402
+from powershell_guard_rehearsal import (  # noqa: E402
+    ROOT_SHAPES,
+    BudgetMiss,
+    judged_within_budget,
+    throwaway_project,
+)
 
 #: The root shape ``guard_tier`` builds every project under: plain unless
 #: ``--root-shape`` names another, so a run costs one shape's time.
@@ -447,14 +453,14 @@ def guard_tier(command: str, tool: str) -> str:
             env = os.environ.copy()
             env["CLAUDE_PROJECT_DIR"] = str(project)
             env.pop("ESPALIER_MAINTENANCE_MODE", None)
-            proc = run_bounded(
+            proc = judged_within_budget(lambda: run_bounded(
                 [sys.executable, str(HOOKS_DIR / "write_guard.py")],
                 input=json.dumps(
                     {"tool_name": tool, "tool_input": {"command": command}}
                 ),
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=30, env=env,
-            )
+            ), HOOKS_DIR, project)
             if proc.returncode == 1 or "Traceback" in (proc.stderr or ""):
                 raise InstrumentBroken(
                     "write_guard errored — the instrument is broken, not the "
@@ -827,6 +833,10 @@ def main(argv: list[str] | None = None) -> int:
             reports.append(check_r2(args.quick))
         if args.relation in (None, "R3"):
             reports.append(check_r3(args.quick))
+    except BudgetMiss as exc:
+        # A judgment that never finished: exit 3, never the violations' 1.
+        print(f"NO VERDICT -- {exc}", file=sys.stderr)
+        return 3
     finally:
         ROOT_SHAPE = "plain"
 

@@ -273,7 +273,7 @@ class TestRefusesToExecuteAnythingUnconfined:
 
 
 # The guard below mirrors the product stand-down in
-# `bench/reachability_differential.py::main` EXACTLY, and deliberately keys on
+# `bench/reachability_differential.py::_differential` EXACTLY, and deliberately keys on
 # the artifact rather than on `sys.platform`. These two tests call
 # `bash_reaches` directly, bypassing `main()` and therefore bypassing that
 # stand-down -- which is why they, and not the end-to-end arm, are the ones

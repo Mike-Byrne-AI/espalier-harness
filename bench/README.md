@@ -35,6 +35,9 @@ python3 bench/run_benchmark.py --update-canonical    # rewrite RESULTS.md
 
 The runner prints a summary; non-zero exit if espalier fails to block any
 in-scope attempt or incorrectly blocks any documented out-of-scope case.
+Exit 3 is no verdict: write_guard's time budget refused a call twice (or
+once, after the refused judgment left state a retry would read), so the run
+stops rather than score a judgment that never finished.
 That second condition matters as much as the first: blocking a documented
 limit would mean the friction layer drifted past its stated scope.
 

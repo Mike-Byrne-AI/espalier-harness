@@ -273,7 +273,7 @@ _UNLOCKED_MAKERS: dict[str, str] = {
     "bench/powershell_reachability_differential.py::_run_pwsh": _CM_SMALL + "a one-byte victim file",
     "bench/powershell_reachability_differential.py::main": _CM_SMALL + "pwsh's small startup cache",
     "bench/reachability_differential.py::bash_run": _CM_SMALL + "a one-byte victim file",
-    "bench/reachability_differential.py::main": _CM_SMALL + (
+    "bench/reachability_differential.py::_differential": _CM_SMALL + (
         "a ~4 MB export of tools/ (each guard call's project is the rehearsal's shaped_root, DEF-811)"),
     "bench/run_benchmark.py::_baseline_root": _CM_SMALL + "one baseline's setup, an espalier init deploy at most",
     "bench/sandbox_read_drive/drive.py::main":

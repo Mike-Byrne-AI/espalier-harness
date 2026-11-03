@@ -130,6 +130,36 @@ def _bounded_spawn():
 
 run_bounded = _bounded_spawn()
 
+
+def _release_benchmark():
+    """``bench/run_benchmark.py``, loaded by path once a process: the one
+    bench file the sdist ships, so the reader of write_guard's time-budget
+    refusal every bench shares lives there (DEF-5071). A copy already loaded
+    (``__main__`` for a release run, ``bench.run_benchmark`` in a test) is
+    reused, so a process has one ``BudgetMiss`` for every arm to catch."""
+    target = Path(__file__).resolve().with_name("run_benchmark.py")
+    for module in list(sys.modules.values()):
+        known = getattr(module, "__file__", None)
+        if (isinstance(known, str) and Path(known).name == target.name
+                and Path(known).resolve() == target and hasattr(module, "judged_within_budget")):
+            return module
+    name = "_run_benchmark_for_powershell_guard_rehearsal"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, target)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            sys.modules.pop(name, None)
+            raise
+    return sys.modules[name]
+
+
+#: For this file's judgments and the benches that import their fixture from here.
+BudgetMiss = _release_benchmark().BudgetMiss
+judged_within_budget = _release_benchmark().judged_within_budget
+
 R = "Remove-Item -Recurse -Force"
 #: The harness env var, assembled rather than spelled -- a literal here is
 #: read as an assignment by the Bash guard whenever this file is carried
@@ -989,11 +1019,11 @@ def _invoke(hook: Path, tool: str, command: str, project: Path) -> bool:
     # Measure what an ADOPTER sees. This tier is not maintenance-bypassable
     # anyway, but a developer's ambient shell must not colour the result.
     env.pop("ESPALIER_MAINTENANCE_MODE", None)
-    proc = run_bounded(
+    proc = judged_within_budget(lambda: run_bounded(
         [sys.executable, str(hook)],
         input=json.dumps({"tool_name": tool, "tool_input": {"command": command}}),
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60, env=env,
-    )
+    ), hook.parent, project)
     # rc=1 is a SCRIPT ERROR, never an allow. Reading it as "allowed" already
     # produced one false "a catastrophic delete is permitted" reading.
     if proc.returncode == 1:

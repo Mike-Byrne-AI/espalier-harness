@@ -17,6 +17,9 @@ the 15 s rows lacked) and are not retried; but write_guard's budget refuses at
 so the second pin derives every write_guard spawn by hand at any bound the
 same way and holds the function that spawns it to hand the result to
 ``not_a_budget_miss``, which fails the row as a miss instead of a verdict.
+The bench pin holds the same line under bench/ (DEF-5071), keyed on the
+reading rather than the spawn: a function that compares a value with ``deny``
+reads the refusal apart through ``bench/run_benchmark.py``'s reader.
 """
 from __future__ import annotations
 
@@ -27,10 +30,13 @@ from pathlib import Path
 from typing import NamedTuple
 
 from tests import _hook_spawn as hs
-from tests._live_tree import checkout_glob
+from tests._live_tree import checkout_glob, checkout_rglob
 
 TESTS = Path(__file__).resolve().parent
 HOOKS = TESTS.parent / "tools" / "cc" / "hooks"
+BENCH = TESTS.parent / "bench"
+#: bench/run_benchmark.py's readers of write_guard's budget refusal (DEF-5071).
+_BENCH_BUDGET_READERS = {"judged_within_budget", "budget_refused"}
 
 _SPAWNS = {"run", "Popen", "check_output", "check_call"}
 _NAMES = re.compile(r"write_guard|statusline|STATUSLINE")
@@ -382,6 +388,113 @@ def test_the_budget_refusal_phrase_is_write_guards_and_only_its():
     holders = [p.name for p in sorted(checkout_glob(HOOKS, "*.py"))
                if hs.BUDGET_REFUSAL in p.read_text(encoding="utf-8")]
     assert holders == ["_denial_reasons.py"], holders
+
+
+def _names_deny(node: ast.AST) -> bool:
+    """``node`` is a string naming the decision ``deny`` as a word (``deny``,
+    ``'"deny"'``, ``'"permissionDecision": "deny"'``), or a literal list,
+    tuple or set holding one."""
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        return any(_names_deny(e) for e in node.elts)
+    return isinstance(node, ast.Constant) and isinstance(node.value, str) and bool(
+        re.search(r"(?<![\w.-])deny(?![\w-])", node.value))
+
+
+def bench_deny_readers(path: Path) -> list[tuple[str, bool]]:
+    """``("line function", reads)`` for each function in ``path`` that compares
+    a value with ``deny`` (``'"deny"' in out``, ``"deny" in out``, ``== "deny"``,
+    ``in ("deny", ...)``), the innermost function holding the comparison, and
+    whether that same function calls one of the bench's budget readers
+    (``bench/run_benchmark.py``'s ``judged_within_budget`` or
+    ``budget_refused``, bare or through a module). Not read: a deny matched by
+    a regex or a method call, or compared at module level."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    functions = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    owner: dict[int, ast.FunctionDef | ast.AsyncFunctionDef] = {}
+    for fn in functions:  # outer first, so an inner function's nodes end up its own
+        for node in ast.walk(fn):
+            owner[id(node)] = fn
+    readers = {id(fn): fn for node in ast.walk(tree)
+               if isinstance(node, ast.Compare) and any(_names_deny(x) for x in [node.left, *node.comparators])
+               and (fn := owner.get(id(node))) is not None}
+    return [
+        (f"{fn.lineno} {fn.name}", any(
+            isinstance(c, ast.Call) and owner.get(id(c)) is fn and _callee(c) in _BENCH_BUDGET_READERS
+            for c in ast.walk(fn)))
+        for fn in sorted(readers.values(), key=lambda f: f.lineno)]
+
+
+def test_every_bench_reader_of_a_deny_reads_the_budgets_refusal_apart():
+    """DEF-5071: the second pin's class outside tests/. Five bench readers of
+    write_guard's decision channel read the budget's refusal as a judged deny,
+    so the live-tree calibration of tests/test_guard_metamorphic.py on a
+    loaded runner would read `ls -la` as SOFT and call the instrument broken,
+    and the release gate would count a judgment that never finished as a
+    block. A function under bench/ that compares a value with ``deny`` reads
+    the refusal apart in that same function, through
+    ``bench/run_benchmark.py``'s reader (the one bench file the sdist ships)."""
+    stray = {
+        path.relative_to(BENCH).as_posix(): rows
+        for path in checkout_rglob(BENCH, "*.py")
+        if (rows := [row for row, reads in bench_deny_readers(path) if not reads])
+    }
+    assert not stray, (
+        "spawn write_guard through judged_within_budget, or read its answer with "
+        f"budget_refused, in the function that reads the deny (DEF-5071): {stray}")
+
+
+def test_the_bench_reader_population_is_not_empty():
+    """The bench pin's non-vacuity: the readers that read the refusal apart,
+    counted the same way, must be there."""
+    read = sum(1 for path in checkout_rglob(BENCH, "*.py") for _row, reads in bench_deny_readers(path) if reads)
+    assert read >= 5, (
+        f"{read} bench readers of a deny read the budget's refusal apart, under the floor of 5: "
+        "if one was retired, lower the floor to the count left, never to 0")
+
+
+def test_the_bench_pin_sees_each_shape_it_holds(tmp_path):
+    """Calibration of the bench pin: a deny read by the JSON-quoted word, the
+    bare word, an equality and a literal tuple, each unread; and the ones it
+    must pass over: a reader that spawns through ``judged_within_budget`` (an
+    inner function, as the tier helpers' ``once`` is) or calls
+    ``budget_refused`` through a module, and a function that compares nothing
+    with ``deny``. A budget reader called by the enclosing function does not
+    read the inner function's comparison."""
+    sample = tmp_path / "sample.py"
+    sample.write_text(
+        "import json\n"
+        "def quoted(proc):\n"
+        "    return '\"deny\"' in proc.stdout\n"
+        "def bare(result):\n"
+        "    return 'deny' in result.stdout\n"
+        "def equal(stdout):\n"
+        "    return json.loads(stdout)['decision'] == 'deny'\n"
+        "def listed(stdout):\n"
+        "    return json.loads(stdout)['decision'] in ('deny', 'ask')\n"
+        "def keyed(out):\n"
+        "    return '\"permissionDecision\": \"deny\"' in out\n"
+        "def other_word(out):\n"
+        "    return 'denylist' in out or 'permissions.deny' in out\n"
+        "def tier(run, project):\n"
+        "    def once():\n"
+        "        proc = judged_within_budget(lambda: run(), HOOKS_DIR, project)\n"
+        "        return '\"deny\"' in proc.stdout\n"
+        "    return once()\n"
+        "def through_a_module(stdout, rc):\n"
+        "    if rb.budget_refused(stdout, HOOKS_DIR):\n"
+        "        raise RuntimeError(stdout)\n"
+        "    return rc == 2 or 'deny' in stdout\n"
+        "def allow(proc):\n"
+        "    return 'allow' in proc.stdout\n"
+        "def outer(stdout):\n"
+        "    def inner():\n"
+        "        return 'deny' in stdout\n"
+        "    budget_refused(stdout, HOOKS_DIR)\n"
+        "    return inner()\n",
+        encoding="utf-8")
+    assert [(row.split()[1], reads) for row, reads in bench_deny_readers(sample)] == [
+        ("quoted", False), ("bare", False), ("equal", False), ("listed", False), ("keyed", False),
+        ("once", True), ("through_a_module", True), ("inner", False)]
 
 
 class _Reporter:

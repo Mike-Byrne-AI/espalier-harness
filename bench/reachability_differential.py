@@ -86,7 +86,9 @@ fixture, not root coverage. A future row that names a protected directory
 would also want the base tree's directories laid beside the working tree's,
 so a prefix the working tree drops still reads FAIL-OPEN.
 
-Exits non-zero if any fail-open is found. Stdlib only; no espalier imports.
+Exits non-zero if any fail-open is found, and 3, no verdict, where
+write_guard's time budget left a call unjudged. Stdlib only; no espalier
+imports.
 """
 from __future__ import annotations
 
@@ -960,22 +962,35 @@ def _bash_oracle_available() -> bool:
     return bool(shutil.which("bash") and Path("/bin/bash").exists())
 
 
+def _rehearsal():
+    """The rehearsal, imported by its bare name from this directory as the
+    other benches import it (DEF-811): at the call, never at module level, so
+    a test importing this file for its shell oracle puts nothing on sys.path."""
+    bench_dir = str(Path(__file__).resolve().parent)
+    if bench_dir not in sys.path:
+        sys.path.insert(0, bench_dir)
+    import powershell_guard_rehearsal
+    return powershell_guard_rehearsal
+
+
 def guard_denies(cmd: str, hooks_dir: Path, project_dir: str) -> bool:
     """Does write_guard deny? Reads the DECISION CHANNEL, not the return code.
 
     ⚠ `deny()` writes JSON to stdout and returns 0. A return-code-only check
     reports every deny as an allow -- the first probe written during the incident
     that motivated this file did exactly that and called 12 correct denials wrong.
+    The time budget's refusal is a deny on the same channel that judged
+    nothing: it is retried once, or raises (DEF-5071).
     """
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = project_dir
     env.pop("ESPALIER_MAINTENANCE_MODE", None)
-    result = run_bounded(
+    result = _rehearsal().judged_within_budget(lambda: run_bounded(
         [sys.executable, str(hooks_dir / "write_guard.py")],
         input=json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}}),
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         env=env,
-    )
+    ), hooks_dir, Path(project_dir))
     if result.returncode != 0 or "Traceback" in (result.stderr or ""):
         raise RuntimeError(
             "guard crashed -- the instrument is broken, not the tree:\n"
@@ -1012,14 +1027,19 @@ def materialise_baseline(ref: str, dest: Path) -> Path:
 
 
 def main(argv: list[str] | None = None) -> int:
-    # The project fixture is the rehearsal's (DEF-811), imported by its bare
-    # name from this directory as the other benches import it; here, not at
-    # module level, so a test importing this file for its shell oracle puts
-    # nothing on sys.path.
-    bench_dir = str(Path(__file__).resolve().parent)
-    if bench_dir not in sys.path:
-        sys.path.insert(0, bench_dir)
-    from powershell_guard_rehearsal import ROOT_SHAPES, throwaway_project
+    """The differential, or exit 3 with no verdict where write_guard's time
+    budget left a call unjudged (DEF-5071): exit 1 is a fail-open."""
+    rehearsal = _rehearsal()
+    try:
+        return _differential(argv, rehearsal)
+    except rehearsal.BudgetMiss as exc:
+        print(f"[reachability] NO VERDICT -- {exc}", file=sys.stderr)
+        return 3
+
+
+def _differential(argv: list[str] | None, rehearsal) -> int:
+    # The project fixture is the rehearsal's (DEF-811).
+    ROOT_SHAPES, throwaway_project = rehearsal.ROOT_SHAPES, rehearsal.throwaway_project
 
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--base", default="HEAD",

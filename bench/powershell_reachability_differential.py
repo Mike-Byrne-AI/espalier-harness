@@ -71,8 +71,9 @@ runner and on any host with ``pwsh`` on PATH. Point it at an unpacked build with
 
 Exit code: 1 if any FAIL-OPEN, 2 if only FALSE POSITIVEs, 0 if clean, 3 when
 the instrument itself is broken (the interpreter or the guard stopped
-answering -- never a tree verdict), and 0 with a SKIPPED banner when no
-interpreter is present. Stdlib only.
+answering) or write_guard's time budget left a call unjudged -- never a tree
+verdict -- and 0 with a SKIPPED banner when no interpreter is present.
+Stdlib only.
 
 ⚠ EACH RUN OWNS ITS INTERPRETER CACHE. pwsh keeps a startup cache in the
 user's profile (``~/.cache/powershell/StartupProfileData-NonInteractive``),
@@ -128,9 +129,15 @@ sys.path.insert(0, str(HOOKS_DIR))
 import _bash_patterns  # noqa: E402  (path is set immediately above)
 
 # The project fixture is the rehearsal's (DEF-811), imported as the
-# metamorphic gate imports it: same directory, no package, one builder.
+# metamorphic gate imports it: same directory, no package, one builder. The
+# budget's reader comes the same way (DEF-5071).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from powershell_guard_rehearsal import ROOT_SHAPES, throwaway_project  # noqa: E402
+from powershell_guard_rehearsal import (  # noqa: E402
+    ROOT_SHAPES,
+    BudgetMiss,
+    judged_within_budget,
+    throwaway_project,
+)
 
 #: The root shape ``guard_tier`` builds every project under: plain unless
 #: ``--root-shape`` names another, so a run costs one shape's time.
@@ -883,13 +890,13 @@ def guard_tier(command: str) -> str:
             env = os.environ.copy()
             env["CLAUDE_PROJECT_DIR"] = str(project)
             env.pop("ESPALIER_MAINTENANCE_MODE", None)
-            proc = run_bounded(
+            proc = judged_within_budget(lambda: run_bounded(
                 [sys.executable, str(HOOKS_DIR / "write_guard.py")],
                 input=json.dumps(
                     {"tool_name": "PowerShell", "tool_input": {"command": command}}),
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=30, env=env,
-            )
+            ), HOOKS_DIR, project)
             if proc.returncode == 1 or "Traceback" in (proc.stderr or ""):
                 raise InstrumentBroken(
                     "write_guard errored -- the instrument is broken, not the "
@@ -1028,6 +1035,10 @@ def main(argv: list[str] | None = None) -> int:
             # FALSE POSITIVE (2), so a CI consumer keying on the code cannot
             # read a broken oracle as a false allow (review).
             print(f"INSTRUMENT BROKEN -- no verdict: {exc}", file=sys.stderr)
+            return 3
+        except BudgetMiss as exc:
+            # A judgment that never finished: no tree verdict either.
+            print(f"NO VERDICT -- {exc}", file=sys.stderr)
             return 3
         finally:
             _RUN_CACHE_DIR = None
