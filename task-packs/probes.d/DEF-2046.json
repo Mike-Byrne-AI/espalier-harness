@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2046",
+ "subject": "tools/cc/checkout_sync.py",
+ "cmd": "python3 -c \"import sys;sys.path.insert(0,'tools/cc');import checkout_sync as c;print(c.checkout_line(c.CatchUp('current',fetched=False))=='')\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "f82540c2242b",
+ "text_sha": "e1803de5839f",
+ "verified_2026_11_02": "OPEN (filed 2026-11-02; probe driven at filing here and in the export of HEAD ea3c8ce2b71c)"
+}
