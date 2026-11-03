@@ -36,6 +36,7 @@ import re
 from pathlib import Path
 
 import pytest
+from espalier import mirror_registry
 from tests._live_tree import checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -46,17 +47,6 @@ DEPLOYED_ROOTS: dict[str, int] = {
     "espalier/assets": 20,
     "espalier/_vendor/selfcheck_tests": 5,  # eight files today; a floor, not a count
 }
-#: Where a mirror's source lives, and the sync that regenerates the mirror:
-#: the red names the file to edit, because every path this scan can name is
-#: one the mirror rules forbid hand-editing.
-MIRROR_SOURCES: tuple[tuple[str, str, str], ...] = (
-    ("espalier/_vendor/cc/", "tools/cc/", "python3 scripts/sync_vendor_cc.py"),
-    ("espalier/_vendor/selfcheck_tests/", "tests/", "python3 scripts/sync_selfcheck_tests.py"),
-    ("espalier/assets/claude/", ".claude/", "python3 scripts/sync_claude_mirrors.py"),
-    ("espalier/assets/docs/", "docs/", "python3 scripts/sync_asset_docs.py"),
-    ("espalier/assets/memory/", "memory/", "python3 scripts/sync_asset_docs.py"),
-    ("espalier/assets/task-packs/", "task-packs/", "python3 scripts/sync_asset_docs.py"),
-)
 TEXT_SUFFIXES = {".py", ".md", ".js", ".json", ".toml", ".txt", ".yml", ".yaml", ".cmd", ".ps1"}
 SELF_HOST_ARTEFACT = re.compile(
     r"\b(?:PR|pull requests?)\s*#\d+"                    # a real pull-request number (PR #46, PR#46, pull requests #26)
@@ -79,10 +69,23 @@ HOME_SHAPES = re.compile(
 
 def _source_of(rel: str) -> str:
     """``rel`` (a mirror path) as `source -- then <sync>`, or itself for a file
-    that is its own source (the seed stubs)."""
-    for mirror, source, sync in MIRROR_SOURCES:
-        if rel.startswith(mirror):
-            return f"{source}{rel[len(mirror):]} -- then {sync}"
+    that is its own source (the seed stubs, the hand-kept memory assets).
+
+    The red names the file to edit, because every path this scan can name is
+    one the mirror rules forbid hand-editing. Derived from the mirror registry,
+    the one census of mirror families: a hand list here once mapped memory/ to
+    espalier/assets/memory/ through scripts/sync_asset_docs.py, which copies
+    no memory/ file.
+    """
+    for row in mirror_registry.MIRROR_ROWS:
+        glob = mirror_registry.glob_row_parts(row.sot)
+        source_base = glob[0] if glob is not None else row.sot
+        then = row.sync or "copy it by hand (the row has no sync script)"
+        for mirror in row.mirrors:
+            if mirror.endswith("/") and rel.startswith(mirror):
+                return f"{source_base}{rel[len(mirror):]} -- then {then}"
+            if rel == mirror:
+                return f"{row.sot} -- then {then}"
     return rel
 
 
@@ -172,3 +175,5 @@ class TestDeployedAssetsCarryNoHomePathShape:
         assert _source_of("espalier/assets/docs/HOOKS.md") == "docs/HOOKS.md -- then python3 scripts/sync_asset_docs.py"
         assert _source_of("espalier/assets/seed/convergence-review-protocol.md") == (
             "espalier/assets/seed/convergence-review-protocol.md")
+        # No sync copies memory/, so the asset is the file to edit.
+        assert _source_of("espalier/assets/memory/README.md") == "espalier/assets/memory/README.md"

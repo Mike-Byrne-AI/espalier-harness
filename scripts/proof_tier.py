@@ -786,6 +786,167 @@ def primary_marker(stem: str, rules: _Rules) -> str:
     return "unit"
 
 
+#: ``(text, marks)`` per test module read, keyed by its path, as ``_RULES_CACHE``.
+_MARKS_CACHE: dict[str, tuple[str, frozenset[str]]] = {}
+
+
+def _module_marks(path: Path) -> frozenset[str]:
+    """The markers a module-level ``pytestmark`` of the file at ``path`` holds
+    (``pytest.mark.<name>`` alone, in a list or a tuple, or called), read by
+    ``ast`` as the rules are. pytest puts each on every test of the file, so
+    ``-m <name>`` runs the file whole whatever its primary marker: four files
+    carry ``contract`` that way (tests/test_package_resource_parity.py among
+    them, the pin of three mirror rows). Nothing where the file does not
+    read or parse."""
+    read = _read_module(path)
+    if read is None:
+        return frozenset()
+    hit = _MARKS_CACHE.get(str(path))
+    if hit is not None and hit[0] == read[0]:
+        return hit[1]
+    marks: set[str] = set()
+    try:
+        tree = ast.parse(read[1])
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        tree = ast.Module(body=[], type_ignores=[])
+    for stmt in tree.body:
+        if isinstance(stmt, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+            targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
+            if stmt.value is not None and any(isinstance(t, ast.Name) and t.id == "pytestmark" for t in targets):
+                marks.update(node.attr for node in ast.walk(stmt.value) if isinstance(node, ast.Attribute)
+                             and isinstance(node.value, ast.Attribute) and node.value.attr == "mark")
+    _MARKS_CACHE[str(path)] = (read[0], frozenset(marks))
+    return frozenset(marks)
+
+
+#: The census of this repo's byte-mirror families, the name its tuple of
+#: curated kinds is bound to there, and the mark of a glob source in it
+#: (``espalier/mirror_registry.py``: ``_CURATED``, ``_GLOB_MARK``).
+_REGISTRY = "espalier/mirror_registry.py"
+_REGISTRY_CURATED = "_CURATED"
+_GLOB_MARK = "/**/*."
+
+
+class _Mirror(NamedTuple):
+    """One ``MirrorRow(...)`` of the registry, as its literals read."""
+    name: str | None
+    sot: str
+    mirrors: tuple[str, ...]
+    #: The pinning test's file: its node id before the first ``::``.
+    pin: str | None
+    #: A curated kind: a source is one whose counterpart the mirror tree holds.
+    curated: bool
+
+
+#: ``(text, rows)`` per registry read, keyed by its path, as ``_RULES_CACHE``.
+_REGISTRY_CACHE: dict[str, tuple[str, list[_Mirror]]] = {}
+
+
+def _registry_rows(source: str) -> list[_Mirror]:
+    """Every ``MirrorRow(...)`` of the registry's text, read from its literals
+    by ``ast`` (nothing of it runs, so this script imports no ``espalier``):
+    a row whose source or mirrors are not string literals is skipped, a name or a
+    pinning test that is not one reads None, and a kind is read through the
+    module's string constants. A kind outside the ``_CURATED`` that reads is
+    not curated, so its source side matches by prefix and brings more pins,
+    never fewer. A registry that does not parse raises, as ``review`` always
+    has: the CI tier job reads a script error as ``full``, and the suite
+    cannot import that registry either. Held to ``MIRROR_ROWS`` in
+    tests/test_proof_tier.py."""
+    tree = ast.parse(source)
+    strings: dict[str, str] = {}
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Constant) \
+                and isinstance(stmt.value.value, str):
+            strings.update((t.id, stmt.value.value) for t in stmt.targets if isinstance(t, ast.Name))
+
+    def text(node: ast.AST | None) -> str | None:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        return strings.get(node.id) if isinstance(node, ast.Name) else None
+
+    curated: set[str] = set()
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Tuple) and any(
+                isinstance(t, ast.Name) and t.id == _REGISTRY_CURATED for t in stmt.targets):
+            curated = {kind for kind in map(text, stmt.value.elts) if kind is not None}
+    rows: list[_Mirror] = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "MirrorRow"):
+            continue
+        fields = {kw.arg: kw.value for kw in node.keywords}
+        try:
+            sot = ast.literal_eval(fields["sot"])
+            mirrors = tuple(ast.literal_eval(fields["mirrors"]))
+        except (KeyError, ValueError, TypeError):
+            continue
+        if not isinstance(sot, str) or not all(isinstance(mirror, str) for mirror in mirrors):
+            continue
+        pin = text(fields.get("pinning_test"))
+        rows.append(_Mirror(text(fields.get("name")), sot, mirrors,
+                            pin.split("::", 1)[0] if pin else None, text(fields.get("kind")) in curated))
+    return rows
+
+
+def _on_source(row: _Mirror, rel: str, root: Path) -> bool:
+    """Whether ``rel`` is a source-side file ``row`` mirrors: the file itself,
+    a path under a tree, or one under a ``<base>/**/*.<ext>`` glob that ends
+    in one of its suffixes, and on a curated row only where the mirror tree
+    holds its counterpart. ``espalier/mirror_registry.py::covers`` with
+    nothing of it imported, held to it over every tracked file in
+    tests/test_proof_tier.py."""
+    rel = rel.replace("\\", "/")
+    mark = row.sot.find(_GLOB_MARK)
+    if mark >= 0:
+        base, ext = row.sot[:mark + 1], row.sot[mark + len(_GLOB_MARK):]
+        names = ext[1:-1].split(",") if ext.startswith("{") and ext.endswith("}") else [ext]
+        suffixes = tuple("." + name.strip() for name in names if name.strip())
+        tail = rel[len(base):] if rel.startswith(base) and rel.endswith(suffixes) else None
+    elif row.sot.endswith("/"):
+        tail = rel[len(row.sot):] if rel.startswith(row.sot) else None
+    else:
+        tail = "" if rel == row.sot else None
+    if tail is None or not row.mirrors:
+        return False
+    if not row.curated:
+        return True
+    mirror = row.mirrors[0]
+    return (root / (mirror + tail if mirror.endswith("/") else mirror)).exists()
+
+
+def mirror_pins(changed, root: Path = _ROOT) -> tuple[str, ...]:
+    """The pinning test file of every ``espalier/mirror_registry.py`` row that
+    holds a changed path, on its source side (``_on_source``) or under one of
+    its mirrors (a hand edit there is the drift the pin reds), in the order
+    the paths came. A mirrored path that earned a cheaper tier ran no line
+    holding its row's parity test where that test is not contract-marked and
+    names no mirrored path, so ``path_readers`` cannot find it (DEF-5076: the
+    selfcheck row's curated test files and their vendored copies, and a hand
+    edit under the vendored ``tools/cc/``; the ``.claude/`` and harness-guard
+    rows' pin carries a module-level ``contract`` mark, so the contract line
+    already ran it and ``own_tests`` leaves it off). A pin file that is not
+    there is left out. Read from the registry's literals (``_registry_rows``),
+    once per text."""
+    read = _read_module(root / _REGISTRY)
+    if read is None:
+        return ()
+    key = str(root / _REGISTRY)
+    hit = _REGISTRY_CACHE.get(key)
+    if hit is None or hit[0] != read[0]:
+        hit = (read[0], _registry_rows(read[0]))
+        _REGISTRY_CACHE[key] = hit
+    out: list[str] = []
+    for rel in changed:
+        rel = rel.replace("\\", "/")
+        for row in hit[1]:
+            if row.pin is None or row.pin in out or not (root / row.pin).is_file():
+                continue
+            if _on_source(row, rel, root) or any(
+                    rel == mirror or (mirror.endswith("/") and rel.startswith(mirror)) for mirror in row.mirrors):
+                out.append(row.pin)
+    return tuple(out)
+
+
 #: The most test files one changed body may bring to the own line: the live
 #: maximum when it was set (2026-11-01: the reflect skill's body, 10 once the
 #: contract-classified files left the line, 14 before; its 14 ran 8382 tests
@@ -831,10 +992,15 @@ def own_tests(changed, root: Path = _ROOT) -> tuple[str, ...]:
     the roster is hand-kept and pinned to that file's walk (DEF-4067: a
     body-only diff ran none of the tests written for the bodies). Every test
     file that names a changed path, short of writing it into a tree it built,
-    follows (``path_readers``, derived). A file the conftest classifies
+    follows (``path_readers``, derived), then the pinning test of each
+    mirror-registry row that holds a changed path (``mirror_pins``, read from
+    the registry: DEF-5076). A file the conftest classifies
     ``contract`` is left off, whichever way it came: the contract lines, which
     both cheaper tiers carry, have run every row of it, and the own line ran it
-    again whole (DEF-4089: 16 of the 56 files the tracked bodies brought).
+    again whole (DEF-4089: 16 of the 56 files the tracked bodies brought); so
+    is one whose module-level ``pytestmark`` carries ``contract``
+    (``_module_marks``), which every body's line ran again once it brought the
+    ``.claude/`` mirror rows' pin (DEF-5076's review).
     A serial file among them runs on the second, at one worker
     (``SERIAL_CONTRACT_FILES``, DEF-5044). The rules are
     read by ``_marker_rules``; where they cannot be read nothing is left off."""
@@ -851,10 +1017,12 @@ def own_tests(changed, root: Path = _ROOT) -> tuple[str, ...]:
         if is_body(rel):
             out.extend(t for t in BODY_TEST_FILES if (root / t).is_file() and t not in out)
     out.extend(t for t in path_readers(changed, root) if t not in out)
+    out.extend(t for t in mirror_pins(changed, root) if t not in out)
     rules = _marker_rules(root)
     if rules is None:
         return tuple(out)
-    return tuple(t for t in out if primary_marker(Path(t).stem, rules) != "contract")
+    return tuple(t for t in out if primary_marker(Path(t).stem, rules) != "contract"
+                 and "contract" not in _module_marks(root / t))
 
 
 def _runs_whole(argv: tuple[str, ...]) -> bool:
@@ -1617,29 +1785,20 @@ def hook_loaded_files(root: Path = _ROOT, *, at_head: bool = False) -> dict[str,
 
 def _mirror_rows(root: Path, at_head: bool) -> list[tuple[str, tuple[str, ...]]]:
     """``(source, mirrors)`` per ``MirrorRow(...)`` of
-    ``espalier/mirror_registry.py`` at the diff's head, read from its literals
-    by ``ast`` (nothing of it runs), a glob source read as the directory
-    before its first wildcard; empty where the tree keeps no registry."""
-    import ast
-
+    ``espalier/mirror_registry.py`` at the diff's head (``_registry_rows``),
+    a glob source read as the directory before its first wildcard; empty
+    where the tree keeps no registry."""
     _files, read = _head_files(root, at_head)
-    source = read("espalier/mirror_registry.py")
+    source = read(_REGISTRY)
     if source is None:
         return []
     rows = []
-    for node in ast.walk(ast.parse(source)):
-        if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "MirrorRow"):
-            continue
-        fields = {kw.arg: kw.value for kw in node.keywords}
-        try:
-            sot = ast.literal_eval(fields["sot"])
-            mirrors = tuple(ast.literal_eval(fields["mirrors"]))
-        except (KeyError, ValueError):
-            continue
+    for row in _registry_rows(source):
+        sot = row.sot
         for wild in ("*", "{", "?"):
             if wild in sot:
                 sot = sot[:sot.index(wild)]
-        rows.append((sot, mirrors))
+        rows.append((sot, row.mirrors))
     return rows
 
 

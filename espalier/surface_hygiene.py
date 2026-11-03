@@ -41,6 +41,15 @@ import re
 from collections.abc import Callable, Iterable
 from pathlib import Path
 
+#: Where the two common-tier hygiene scans read (``TestCommonTierAssetHygiene``):
+#: every ``.md`` under these ``espalier/assets/`` folders, beside each ``.claude``
+#: kind under ``espalier/assets/claude/`` by ``surface_contract.CLAUDE_KIND_GLOBS``.
+#: ``github/`` is left out on purpose (``harness-guard.yml`` carries adjudicated
+#: provenance comments) and ``task-packs/`` is not read. One tuple, read by both
+#: scans and by ``espalier surface-impact``'s content scan (DEF-607), so the
+#: pre-flight scans exactly what the contract would red on.
+COMMON_TIER_ASSET_MD_DIRS: tuple[str, ...] = ("docs", "memory", "seed")
+
 # Specific IDs contain at least one digit (a real pack number). Generic
 # placeholders without a digit (``TP-NN``, ``BC-NNN``) are explicitly
 # allowed as documentation vocabulary and must not match.

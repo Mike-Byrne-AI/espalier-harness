@@ -1346,8 +1346,13 @@ class TestPieces:
                            text=True, encoding="utf-8", env=env, timeout=30, cwd=str(work))
         assert r.returncode == 0, r.stderr
         payload = json.loads(r.stdout)
-        assert payload["checkout"]["state"] == "would_catch_up"
         assert _out(work, "rev-parse", "HEAD") == before
+        if not payload["checkout"]["fetched"]:
+            # The fetch did not land inside FETCH_CAP_S (a loaded runner:
+            # #452's windows-latest leg read `current` here), so the state is
+            # the last fetch's and this test cannot tell (DEF-2046).
+            pytest.skip("the CLI's fetch did not land inside its cap on this runner")
+        assert payload["checkout"]["state"] == "would_catch_up"
 
 
 # -- the one liveness oracle (TP-701 B-1) ----------------------------------------------
@@ -2058,3 +2063,267 @@ class TestTheReaperKeepsAWorktreeWhoseClaimsDidNotRead:
 
     def test_a_mail_driver_not_deployed_is_no_claims(self, tmp_path):
         assert self._run(tmp_path, None) == "CLAIMS []"
+
+
+# -- a read that did not answer says it cannot tell (DEF-2046) -------------------------
+
+def _killing(cs, *heads: tuple[str, ...], once_after: list | None = None):
+    """A runner that answers as a read killed at its cap does (None) for each
+    git argv opening with one of ``heads`` and runs every other read; with
+    ``once_after``, only once that list holds something (a spawner fills it
+    when the change under test has run)."""
+    def runner(argv, *, cwd, timeout):
+        if argv[0] == "git" and (once_after is None or once_after) and any(
+                tuple(argv[1:1 + len(head)]) == head for head in heads):
+            return None
+        return cs.run(argv, cwd=cwd, timeout=timeout)
+    return runner
+
+
+def _noting(cs, verb: tuple[str, ...], seen: list):
+    """A spawner that runs everything and notes each run of git ``verb``."""
+    def spawner(argv, *, cwd, wait, kill):
+        done = cs.spawn(argv, cwd=cwd, wait=wait, kill=kill)
+        if tuple(argv[1:1 + len(verb)]) == verb:
+            seen.append(argv)
+        return done
+    return spawner
+
+
+_ORIGIN_HEAD_READ = ("symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+
+
+class TestAKilledReadSaysItCannotTell:
+    """DEF-2046, this module's sites: a bounded read killed at its cap, or
+    never started for want of time, answered as its success would. A killed
+    fetch read ``current`` and the line printed nothing (#452's windows-latest
+    leg); a killed ref read let the catch-up switch a lane whose remote branch
+    still exists. A read that did not answer is now counted apart from a
+    non-zero exit, an act waits on every read it rests on, and the line says
+    what did not answer. Each case runs real git with one read killed, beside
+    the success twin the classes above already pin."""
+
+    def test_a_read_that_did_not_answer_is_counted_and_a_failed_one_is_not(self, cs, tmp_path):
+        killed = cs._Git(tmp_path, None, runner=lambda argv, **_k: None)
+        assert killed.out("status") is None and killed.yes("show-ref") is None
+        assert killed.unanswered == 2
+        assert killed.at(tmp_path / "wt").out("status") is None and killed.unanswered == 3  # one count
+        failed = cs._Git(tmp_path, None,
+                         runner=lambda argv, **_k: subprocess.CompletedProcess(argv, 128, "", "fatal: no\n"))
+        assert failed.out("status") is None and failed.yes("show-ref") is None
+        assert failed.unanswered == 0
+        spent = cs._Git(tmp_path, time.monotonic() - 1, runner=lambda argv, **_k: pytest.fail("spawned"))
+        assert spent.out("status") is None and spent.unanswered == 1
+
+    def test_a_fetch_that_did_not_land_is_said_on_every_state_that_compares(self, cs):
+        """The row's own site: the note rode ``caught_up`` and ``held`` alone."""
+        for state in ("current", "lane", "would_catch_up", "caught_up", "skipped"):
+            result = cs.CatchUp(state, branch="lane/x", base="main", behind=1, head="abc1234",
+                                reason="no default branch on origin", fetched=False)
+            line = cs.checkout_line(result)
+            assert "origin not reached" in line and line.isascii(), (state, line)
+        assert cs.checkout_line(cs.CatchUp("current")) == ""
+        early = cs.checkout_line(cs.CatchUp("held", reason="git did not answer in time", fetched=False))
+        assert early == "NOT caught up (git did not answer in time) (origin not reached)"  # nothing compared
+
+    def test_a_killed_fetch_reads_current_and_says_so(self, cs, repos):
+        work = repos["work"]
+        _advance(repos["seed"])
+
+        def spawner(argv, *, cwd, wait, kill):
+            return None if "fetch" in argv else cs.spawn(argv, cwd=cwd, wait=wait, kill=kill)
+
+        result = cs.catch_up(work, spawner=spawner)
+        assert (result.state, result.fetched) == ("current", False), result
+        assert cs.checkout_line(result) == "current (origin not reached; compared with the last fetch)"
+
+    def test_a_killed_default_branch_read_holds_and_never_reads_as_skipped(self, cs, repos):
+        """The origin/HEAD read alone killed: the main/master fallback that
+        still answers is a guess past it, never the base."""
+        result = cs.catch_up(repos["work"], runner=_killing(cs, _ORIGIN_HEAD_READ))
+        assert (result.state, result.reason) == ("held", "git did not answer which branch is origin's default")
+        assert cs.checkout_line(result).startswith("NOT caught up (git did not answer")
+
+    def test_a_killed_head_read_holds_and_never_reads_as_detached(self, cs, repos):
+        work = repos["work"]
+        _advance(repos["seed"])
+        before = _out(work, "rev-parse", "HEAD")
+        result = cs.catch_up(work, runner=_killing(cs, ("symbolic-ref", "--quiet", "--short", "HEAD")))
+        assert result.state == "held" and "did not answer" in result.reason, result
+        assert _out(work, "rev-parse", "HEAD") == before
+
+    def test_a_killed_ref_read_never_switches_a_lane_whose_remote_branch_exists(self, cs, repos):
+        """The unsafe one. A lane pushed without -u tracks main, so only its
+        own ref on origin says it is still someone's (DEF-2042); a killed read
+        of it read as not listed, and the catch-up switched the lane away and
+        deleted it."""
+        work, seed = repos["work"], repos["seed"]
+        _git(work, "switch", "--quiet", "-c", "lane/kept", "--track", "origin/main")
+        _commit(work, "kept.txt")
+        _git(work, "push", "--quiet", "origin", "lane/kept")
+        _git(seed, "pull", "--quiet", "--ff-only")
+        _git(seed, "fetch", "--quiet", "origin", "lane/kept")
+        _git(seed, "merge", "--quiet", "--no-ff", "-m", "Merge lane/kept", "origin/lane/kept")
+        _git(seed, "push", "--quiet", "origin", "main")
+        assert cs.catch_up(work, dry_run=True).reason == "its remote branch still exists"
+        result = cs.catch_up(work, runner=_killing(cs, ("for-each-ref", "--format=%(refname)")))
+        assert (result.state, result.reason) == ("lane", "whether it merged could not be read"), result
+        assert _out(work, "symbolic-ref", "--short", "HEAD") == "lane/kept"
+        assert "lane/kept" in _out(work, "branch", "--format=%(refname:short)").split()
+
+    def test_a_killed_worktree_list_never_moves_a_branch_another_checkout_holds(self, cs, repos):
+        """git before 2.43 runs `switch -C main` over a main another worktree
+        holds and moves it under that checkout (both reviews drove it on
+        2.39.5): a list that did not answer holds the move."""
+        work = repos["work"]
+        _merged_lane(repos, "lane/z")
+        _git(work, "switch", "--quiet", "main")
+        linked = work.parent / "linked"
+        _git(work, "worktree", "add", "--quiet", str(linked), "lane/z")
+        _advance(repos["seed"])
+        before = _out(work, "rev-parse", "refs/heads/main")
+        result = cs.catch_up(linked, runner=_killing(cs, ("worktree", "list")))
+        assert (result.state, result.reason) == ("held", "git did not answer where main is checked out"), result
+        assert _out(work, "rev-parse", "refs/heads/main") == before
+        assert _out(linked, "symbolic-ref", "--short", "HEAD") == "lane/z"
+
+    def test_a_killed_local_base_read_says_it_could_not_compare(self, cs, repos):
+        work = repos["work"]
+        _merged_lane(repos)
+        _advance(repos["seed"])
+        result = cs.catch_up(work, runner=_killing(cs, ("merge-base", "--is-ancestor", "refs/heads/main")))
+        assert (result.state, result.reason) == ("held", "git could not compare local main with origin/main")
+
+    def test_reads_killed_after_a_move_that_worked_read_caught_up(self, cs, repos):
+        work = repos["work"]
+        _merged_lane(repos)
+        _advance(repos["seed"])
+        moved: list = []
+        result = cs.catch_up(work, runner=_killing(cs, ("rev-parse",), ("diff", "--name-only"), once_after=moved),
+                             spawner=_noting(cs, ("switch",), moved))
+        assert moved and result.state == "caught_up", result
+        assert _out(work, "rev-parse", "HEAD") == _out(work, "rev-parse", "origin/main")
+        line = cs.checkout_line(result)
+        assert line.startswith("caught up -- left lane/x (merged, branch deleted); main fast-forwarded"), line
+        assert "now unread" in line and "4 git reads did not answer in time" in line, line
+        assert "/clear" in line, line   # what changed did not read, so the hooks may have
+
+    def test_a_killed_root_read_says_git_did_not_answer(self, cs, monkeypatch, tmp_path):
+        """The common-dir read alone killed: its fallback answers (here, no
+        repository; in a linked worktree, the worktree's own root), and must
+        not be reached on a read that did not answer."""
+        monkeypatch.chdir(tmp_path)
+        real = cs.run
+        monkeypatch.setattr(cs, "run", lambda argv, **k: None if "--git-common-dir" in argv else real(argv, **k))
+        with pytest.raises(SystemExit, match="did not answer"):
+            cs._repo_root(None)
+
+    def test_a_killed_list_after_a_removal_that_worked_reads_removed(self, cs, repos):
+        work = repos["work"]
+        wt = _worktree(repos, "done")
+        removed: list = []
+        report = cs.reap_worktrees(work, sessions=[], runner=_killing(cs, ("worktree", "list"), once_after=removed),
+                                   spawner=_noting(cs, ("worktree", "remove"), removed))
+        assert (report.removed, report.kept) == (["done"], []), report
+        assert not wt.exists() and not _registered(work, wt)
+        assert cs.worktrees_line(report).endswith("; 1 git read did not answer in time")
+
+    def test_a_killed_default_branch_read_in_the_reaper_says_so(self, cs, repos):
+        _worktree(repos, "unknown")
+        report = cs.reap_worktrees(repos["work"], sessions=[], runner=_killing(cs, _ORIGIN_HEAD_READ))
+        assert report.kept == [("unknown", "git did not answer which branch is origin's default")], report
+
+    def test_a_killed_operation_read_says_it_could_not_rule_one_out(self, cs, repos):
+        _worktree(repos, "unsure")
+        report = cs.reap_worktrees(repos["work"], sessions=[], runner=_killing(cs, ("rev-parse", "--git-path")))
+        assert report.kept == [("unsure", "git could not rule out an operation in progress in it")], report
+
+    def test_the_line_counts_what_did_not_answer_and_a_bare_note_ends_clean(self, cs):
+        assert cs.worktrees_line(cs.Reap(note="git could not list the worktrees")) == "git could not list the worktrees"
+        assert cs.worktrees_line(cs.Reap(unanswered=2)) == "2 git reads did not answer in time"
+        assert cs.worktrees_line(cs.Reap()) == ""
+
+
+class TestTheSweepReadsPatchesNotShas:
+    """DEF-5077: a worktree whose commits reached main as cherry-picks or
+    applied diffs was kept on every banner as ``<n> commit(s) not in main``,
+    counted by sha (three of five agent worktrees on the Air, 2026-11-02). The
+    sweep now reads which commits main lacks by patch; a merge commit is never
+    read as on main, and a read that did not answer keeps the worktree."""
+
+    @staticmethod
+    def _on_main_by_patch(repos, *names: str) -> None:
+        """Each of ``names`` committed onto origin/main by the seed: the same
+        patch as the worktree's commit, under another sha (main moves first
+        and the pick says so, or the two commits are one object)."""
+        seed = repos["seed"]
+        _git(seed, "pull", "--quiet", "--ff-only")
+        _commit(seed, "main-moved-on.txt")
+        for name in names:
+            (seed / name).write_text("x\n", encoding="utf-8")
+            _git(seed, "add", name)
+            _git(seed, "commit", "--quiet", "-m", f"pick {name}")
+        _git(seed, "push", "--quiet", "origin", "main")
+        _git(repos["work"], "fetch", "--quiet", "origin")
+
+    @staticmethod
+    def _lane(repos, name: str, *files: str) -> Path:
+        wt = _worktree(repos, name, f"lane/{name}")
+        _identity(wt)
+        for file in files:
+            _commit(wt, file)
+        return wt
+
+    def test_a_worktree_main_holds_by_patch_is_removed(self, cs, repos):
+        wt = self._lane(repos, "picked", "p.txt", "p2.txt")
+        self._on_main_by_patch(repos, "p.txt", "p2.txt")
+        report = cs.reap_worktrees(repos["work"], sessions=[])
+        assert (report.removed, report.kept) == (["picked"], []), report
+        assert not wt.exists()
+
+    def test_a_commit_main_lacks_keeps_it_named_by_the_patch_count(self, cs, repos):
+        self._lane(repos, "half", "p.txt", "own.txt")
+        self._on_main_by_patch(repos, "p.txt")
+        report = cs.reap_worktrees(repos["work"], sessions=[])
+        assert report.kept == [("half", "1 commit(s) not in main (lane/half)")], report
+
+    def test_a_merge_commit_is_never_read_as_on_main(self, cs, repos):
+        wt = self._lane(repos, "merged-in", "p.txt")
+        _git(wt, "switch", "--quiet", "-c", "side", "origin/main")
+        _commit(wt, "q.txt")
+        _git(wt, "switch", "--quiet", "lane/merged-in")
+        _git(wt, "merge", "--quiet", "--no-ff", "-m", "merge side", "side")
+        self._on_main_by_patch(repos, "p.txt", "q.txt")
+        report = cs.reap_worktrees(repos["work"], sessions=[])
+        assert report.kept == [("merged-in", "1 commit(s) not in main (lane/merged-in)")], report
+
+    def test_a_detached_head_main_holds_by_patch_is_kept(self, cs, repos):
+        """A patch id ignores whitespace, and a detached HEAD has no branch to
+        keep its commits after the removal (the failure-mode review): only
+        ancestry removes it. Dies to: counting `=` for a detached HEAD."""
+        wt = _worktree(repos, "loose")
+        _identity(wt)
+        _commit(wt, "p.txt")
+        self._on_main_by_patch(repos, "p.txt")
+        report = cs.reap_worktrees(repos["work"], sessions=[])
+        assert report.kept == [("loose", "1 commit(s) not in main (detached)")], report
+        assert wt.is_dir()
+
+    def test_a_patch_read_that_did_not_answer_keeps_it_as_cannot_tell(self, cs, repos):
+        wt = self._lane(repos, "unread", "p.txt")
+        self._on_main_by_patch(repos, "p.txt")
+        report = cs.reap_worktrees(repos["work"], sessions=[], runner=_killing(cs, ("rev-list", "--cherry-mark")))
+        assert report.kept == [("unread", "git could not compare it with origin/main")], report
+        assert wt.is_dir()
+
+    def test_a_plan_left_open_in_a_worktree_main_holds_by_patch_is_named_and_removed(self, cs, repos):
+        """DEF-4047's rule reads the patch answer too: the lane finished."""
+        work = repos["work"]
+        with open(work / ".git" / "info" / "exclude", "a", encoding="utf-8") as exclude:
+            exclude.write("cc/\n")
+        wt = self._lane(repos, "picked-plan", "p.txt")
+        (wt / "cc").mkdir()
+        (wt / "cc" / "execution_plan.json").write_text('{"status": "in_progress"}', encoding="utf-8")
+        self._on_main_by_patch(repos, "p.txt")
+        report = cs.reap_worktrees(work, sessions=[])
+        assert report.removed == ["picked-plan (its plan was never closed; the lane merged)"], report

@@ -79,6 +79,14 @@ _UNSCANNED_DIRS: dict[str, str] = {
     "espalier/_vendor/selfcheck_tests": (
         "Vendored test mirror; a transform-mirror of tests/, not runtime source."
     ),
+    "tools": (
+        "Top-level tools/ (review_agent_audit.py, __init__.py) is governed "
+        "outside this probe: _FUSE_TOOLS_TREE is pinned to git's view of it "
+        "(tests/test_managed_inventory.py), _SHIPPED_ROOTS names it "
+        "(tests/test_contracts.py), the provenance census scans it, CI's "
+        "code-review-audit job runs review_agent_audit.py, and espalier "
+        "surface-impact names each for a file added there where it applies."
+    ),
     # --- recorded gaps, NOT carve-outs ----------------------------------
     "tools/cc": (
         "DEF-20 (OPEN): tools/cc root modules — cognitive_blueprint, "
@@ -91,10 +99,6 @@ _UNSCANNED_DIRS: dict[str, str] = {
         "have legitimately parallel _classify shapes. That rationale covers "
         "clique detection, not the rename-alias arm, which inherits the "
         "narrowing. Recorded, not resolved."
-    ),
-    "tools": (
-        "DEF-533 (OPEN): top-level tools/ (review_agent_audit.py, __init__.py) "
-        "sits outside every surface-governance mechanism that covers scripts/."
     ),
 }
 
