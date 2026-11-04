@@ -31,7 +31,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._spaced_paths import quoted, skip_unless_plain
+from tests._spaced_paths import quoted, spaced
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "bench" / "reachability_differential.py"
@@ -57,6 +57,20 @@ def rd():
     return _load()
 
 
+@pytest.fixture
+def sandbox(rd, tmp_path):
+    """The sandbox the confinement tests hand the assertion: pytest's temp
+    path while condition (7) accepts it, else a directory under the
+    rehearsal's plain temp root -- a spaced `--basetemp` puts a blank in
+    every `tmp_path` (DEF-5082), and these rows test the other six
+    conditions, so their victim must be one bare word to begin with."""
+    if not (rd._BARE_WORD_HAZARDS & set(str(tmp_path))):
+        yield tmp_path
+        return
+    with tempfile.TemporaryDirectory(dir=str(rd._rehearsal().plain_temp_root())) as plain:
+        yield Path(plain)
+
+
 @pytest.fixture(autouse=True)
 def _import_state(monkeypatch):
     """``main`` imports the rehearsal by its bare name from ``bench/``, and the
@@ -75,32 +89,32 @@ def _import_state(monkeypatch):
 class TestRefusesToExecuteAnythingUnconfined:
     """Every path that could put a real delete outside the sandbox."""
 
-    def test_accepts_a_properly_confined_command(self, rd, tmp_path):
-        victim = tmp_path / "victim"
+    def test_accepts_a_properly_confined_command(self, rd, sandbox):
+        victim = sandbox / "victim"
         victim.mkdir()
-        rd.assert_safe_to_execute(f"rm -rf {quoted(str(victim))}", victim, tmp_path)
+        rd.assert_safe_to_execute(f"rm -rf {quoted(str(victim))}", victim, sandbox)
 
-    def test_refuses_an_unsubstituted_placeholder(self, rd, tmp_path):
+    def test_refuses_an_unsubstituted_placeholder(self, rd, sandbox):
         """The catastrophic case: substitution silently did not happen."""
-        victim = tmp_path / "victim"
+        victim = sandbox / "victim"
         victim.mkdir()
         with pytest.raises(rd.UnsafeToExecute, match="placeholder"):
-            rd.assert_safe_to_execute(f"rm -rf {rd._TARGET}", victim, tmp_path)
+            rd.assert_safe_to_execute(f"rm -rf {rd._TARGET}", victim, sandbox)
 
-    def test_refuses_when_the_victim_is_absent(self, rd, tmp_path):
+    def test_refuses_when_the_victim_is_absent(self, rd, sandbox):
         """Substituted, but with something other than the intended victim."""
-        victim = tmp_path / "victim"
+        victim = sandbox / "victim"
         victim.mkdir()
         with pytest.raises(rd.UnsafeToExecute, match="victim path absent"):
-            rd.assert_safe_to_execute("rm -rf /somewhere/else", victim, tmp_path)
+            rd.assert_safe_to_execute("rm -rf /somewhere/else", victim, sandbox)
 
-    def test_refuses_a_victim_outside_the_sandbox(self, rd, tmp_path):
-        outside = tmp_path.parent / "not_in_sandbox"
+    def test_refuses_a_victim_outside_the_sandbox(self, rd, sandbox):
+        outside = sandbox.parent / "not_in_sandbox"
         with pytest.raises(rd.UnsafeToExecute, match="outside sandbox"):
-            rd.assert_safe_to_execute(f"rm -rf {outside}", outside, tmp_path)
+            rd.assert_safe_to_execute(f"rm -rf {outside}", outside, sandbox)
 
     @pytest.mark.parametrize("operand", ["/", "~", "*"])
-    def test_refuses_a_catastrophic_operand_however_it_arrived(self, rd, tmp_path,
+    def test_refuses_a_catastrophic_operand_however_it_arrived(self, rd, sandbox,
                                                                operand):
         """The belt to the other three braces.
 
@@ -108,17 +122,45 @@ class TestRefusesToExecuteAnythingUnconfined:
         only that one is present. It must fire even when the victim path is also
         present and every other condition is satisfied.
         """
-        victim = tmp_path / "victim"
+        victim = sandbox / "victim"
         victim.mkdir()
         cmd = f"rm -rf {quoted(str(victim))}; rm -rf {operand}"
         with pytest.raises(rd.UnsafeToExecute, match="catastrophic operand"):
-            rd.assert_safe_to_execute(cmd, victim, tmp_path)
+            rd.assert_safe_to_execute(cmd, victim, sandbox)
+
+    @pytest.mark.parametrize("char", [" ", "&", ";"], ids=["blank", "amp", "semi"])
+    @pytest.mark.parametrize("body", ["carrier_find_plain", "loop_for_substitution"])
+    def test_refuses_a_victim_whose_path_a_shell_would_split(self, rd, tmp_path, char, body):
+        """A temp root holding a blank (`TMPDIR=.../axis tmp`, a maintainer's
+        `--basetemp`) puts the blank in every victim's path. Quoted, the path
+        is one operand to `rm` and the six conditions above pass -- but
+        `find | xargs` and `for x in $(find …)` split the enumerator's output
+        on whitespace and hand the remove verb the PREFIX before the blank,
+        `/x/axis`, the real directory beside the spaced one (driven 2026-11-04,
+        DEF-4093). That operand is never in the text, so the victim's own
+        path is what can be read: refused before any shell, even quoted."""
+        template = dict(rd.BODIES)[body]
+        sandbox = tmp_path / f"axis{char}tmp" / "sb"
+        victim = sandbox / "victim"
+        cmd = template.replace(rd._TARGET, f'"{victim}"')
+        with pytest.raises(rd.UnsafeToExecute, match="more than one shell word"):
+            rd.assert_safe_to_execute(cmd, victim, sandbox,
+                                      env={rd._ITEM: str(sandbox / "unbound-item")})
+
+    def test_the_belt_covers_every_character_the_rehearsal_calls_unplain(self, rd):
+        """The sandbox is built under the rehearsal's plain temp root (the
+        brace); the assertion refuses a victim path carrying a character bash
+        reads in a bare word as something other than the word (the belt). The
+        belt covers whatever the brace keeps out, so a root the rehearsal would
+        refuse is one this assertion refuses too."""
+        rehearsal = rd._rehearsal()
+        assert set(rehearsal._INERT) <= set(rd._BARE_WORD_HAZARDS)
 
     @pytest.mark.parametrize(
         "trailing", ["/", "~", "~/Documents", "../../etc"],
         ids=["root", "home", "home-child", "parent-escape"],
     )
-    def test_refuses_a_second_operand_riding_behind_the_victim(self, rd, tmp_path,
+    def test_refuses_a_second_operand_riding_behind_the_victim(self, rd, sandbox,
                                                                trailing):
         """⚠ REGRESSION PIN, and the twin of the same hole on the PowerShell leg.
 
@@ -126,28 +168,28 @@ class TestRefusesToExecuteAnythingUnconfined:
         delete naming the victim and THEN the home directory matched nothing and
         was accepted — handed to a real `/bin/bash`. `rm` takes a list.
         """
-        victim = tmp_path / "victim"
+        victim = sandbox / "victim"
         victim.mkdir()
         with pytest.raises(rd.UnsafeToExecute, match="operand"):
             rd.assert_safe_to_execute(
-                f"rm -rf {quoted(str(victim))} {trailing}", victim, tmp_path)
+                f"rm -rf {quoted(str(victim))} {trailing}", victim, sandbox)
 
-    def test_an_inert_quoted_delete_is_still_accepted(self, rd, tmp_path):
+    def test_an_inert_quoted_delete_is_still_accepted(self, rd, sandbox):
         """The calibration twin. A quoted delete lexes to ONE token, so it is not
         a verb — which is correct, because the shell will not execute it either.
         Without this the operand check would refuse well-formed prose rows."""
-        victim = tmp_path / "victim"
+        victim = sandbox / "victim"
         victim.mkdir()
         rd.assert_safe_to_execute(
-            f"echo 'rm -rf /' ; rm -rf {quoted(str(victim))}", victim, tmp_path)
+            f"echo 'rm -rf /' ; rm -rf {quoted(str(victim))}", victim, sandbox)
 
-    def test_a_heredoc_terminator_is_not_read_as_an_operand(self, rd, tmp_path):
+    def test_a_heredoc_terminator_is_not_read_as_an_operand(self, rd, sandbox):
         """The other calibration twin: a bare trailing word resolves against the
         SANDBOX, not the caller's cwd, so a heredoc terminator is confined."""
-        victim = tmp_path / "victim"
+        victim = sandbox / "victim"
         victim.mkdir()
         rd.assert_safe_to_execute(
-            f"cat <<'EOF' | bash\nrm -rf {quoted(str(victim))}\nEOF", victim, tmp_path)
+            f"cat <<'EOF' | bash\nrm -rf {quoted(str(victim))}\nEOF", victim, sandbox)
 
     def test_every_body_template_carries_the_placeholder(self, rd):
         """A body without the placeholder would be executed verbatim; a body
@@ -171,39 +213,39 @@ class TestRefusesToExecuteAnythingUnconfined:
             "the exception names a body that no longer exists"
         )
 
-    def test_the_bound_expansion_resolves_inside_the_sandbox(self, rd, tmp_path):
+    def test_the_bound_expansion_resolves_inside_the_sandbox(self, rd, sandbox):
         """The exception's promise, driven: the environment a row runs in
         binds the loop variable to a path inside the sandbox, and a row that
         expands it is accepted with that environment."""
         from pathlib import Path
 
-        env = rd._sandbox_env(tmp_path)
-        assert Path(env[rd._ITEM]).resolve().relative_to(tmp_path.resolve())
-        victim = tmp_path / "victim"
+        env = rd._sandbox_env(sandbox)
+        assert Path(env[rd._ITEM]).resolve().relative_to(sandbox.resolve())
+        victim = sandbox / "victim"
         victim.mkdir()
-        rd.assert_safe_to_execute(f'rm -rf {quoted(str(victim))} "${rd._ITEM}"', victim, tmp_path, env=env)
+        rd.assert_safe_to_execute(f'rm -rf {quoted(str(victim))} "${rd._ITEM}"', victim, sandbox, env=env)
 
-    def test_refuses_an_expansion_the_environment_does_not_bind(self, rd, tmp_path):
+    def test_refuses_an_expansion_the_environment_does_not_bind(self, rd, sandbox):
         """The must-trip twin of condition (6): the binding absent, empty, or
         outside the sandbox, and the row is refused before any shell sees it
         -- whatever the shell would have made of the name. The 2026-09-17
         incident was an unbound fixture variable; this is the check that was
         missing."""
-        victim = tmp_path / "victim"
+        victim = sandbox / "victim"
         victim.mkdir()
         cmd = f'rm -rf {quoted(str(victim))} "${rd._ITEM}"'
         with pytest.raises(rd.UnsafeToExecute, match="unbound parameter expansion"):
-            rd.assert_safe_to_execute(cmd, victim, tmp_path)
+            rd.assert_safe_to_execute(cmd, victim, sandbox)
         with pytest.raises(rd.UnsafeToExecute, match="unbound parameter expansion"):
-            rd.assert_safe_to_execute(cmd, victim, tmp_path, env={})
+            rd.assert_safe_to_execute(cmd, victim, sandbox, env={})
         with pytest.raises(rd.UnsafeToExecute, match="bound outside sandbox"):
-            rd.assert_safe_to_execute(cmd, victim, tmp_path, env={rd._ITEM: "/"})
+            rd.assert_safe_to_execute(cmd, victim, sandbox, env={rd._ITEM: "/"})
         braced = f'rm -rf {quoted(str(victim))} "${{{rd._ITEM}}}"'
         with pytest.raises(rd.UnsafeToExecute, match="unbound parameter expansion"):
-            rd.assert_safe_to_execute(braced, victim, tmp_path, env={})
+            rd.assert_safe_to_execute(braced, victim, sandbox, env={})
         # the calibration twin: an expansion that is no delete's operand (the
         # git rows probe their environment so) is the shell's, not this check's
-        rd.assert_safe_to_execute(f'[ -z "$GIT_DIR" ] && rm -rf {quoted(str(victim))}', victim, tmp_path, env={})
+        rd.assert_safe_to_execute(f'[ -z "$GIT_DIR" ] && rm -rf {quoted(str(victim))}', victim, sandbox, env={})
 
     @_NEEDS_REAL_BASH_DEFERRED
     def test_an_inherited_git_variable_does_not_reach_the_row(self, rd, monkeypatch):
@@ -264,9 +306,12 @@ class TestRefusesToExecuteAnythingUnconfined:
         before = count()
         deep = outer / "deep"
         deep.mkdir()
-        # the differential substitutes its victim bare, so under a spaced
-        # sandbox its own ceiling refuses every row (DEF-4093)
-        skip_unless_plain(deep, "DEF-4093: the differential's bare victim substitution")
+        # the differential builds its sandbox under a plain temp root
+        # (DEF-4093), so a spaced `deep` is one it would not use and the
+        # scenario cannot be laid under it
+        if spaced(deep):
+            pytest.skip(f"DEF-4093: the sandbox goes under a plain temp root, never {str(deep)!r}, "
+                        "so a commit row cannot be laid under this repository from here")
         # `tempfile` caches its directory on first use, so the env var alone
         # would not move the sandbox; the cache is the thing to point.
         monkeypatch.setattr(tempfile, "tempdir", str(deep))
@@ -296,6 +341,34 @@ class TestTheOracleIsLive:
     @_NEEDS_REAL_BASH
     def test_bash_reaches_detects_a_real_delete(self, rd):
         assert rd.bash_reaches(f"rm -rf {rd._TARGET}") is True
+
+    @_NEEDS_REAL_BASH
+    def test_the_sandbox_goes_under_a_plain_root_when_the_temp_directory_is_not(
+            self, rd, tmp_path, monkeypatch):
+        """`TMPDIR=.../axis tmp` (a maintainer's `--basetemp`, a profile named
+        `First Last`) made every victim's path two shell words, so the ceiling
+        refused each row before the shell -- the right verdict for that text,
+        and a bench that could not run there (DEF-4093; 65 of DEF-4095's 70
+        reds). The sandbox goes under the rehearsal's plain temp root, the
+        ambient directory only while it is plain, so every row keeps its bytes."""
+        unplain = tmp_path / "axis tmp"
+        unplain.mkdir()
+        monkeypatch.setattr(tempfile, "tempdir", str(unplain))
+        seen: list[Path] = []
+        confined = rd.assert_safe_to_execute
+
+        def recording(cmd, victim, sandbox, env=None):
+            seen.append(Path(sandbox))
+            confined(cmd, victim, sandbox, env=env)
+
+        monkeypatch.setattr(rd, "assert_safe_to_execute", recording)
+        try:
+            reached = rd.bash_reaches(f"rm -rf {rd._TARGET}")
+        except rd.UnsafeToExecute as exc:
+            pytest.fail(f"the ceiling refused the row under a spaced temp directory: {exc}")
+        assert reached is True
+        (sandbox,) = seen
+        assert " " not in str(sandbox) and unplain not in sandbox.parents, sandbox
 
     @_NEEDS_REAL_BASH
     def test_bash_reaches_is_false_when_the_delete_is_only_mentioned(self, rd):

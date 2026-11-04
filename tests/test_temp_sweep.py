@@ -276,6 +276,10 @@ _UNLOCKED_MAKERS: dict[str, str] = {
     "bench/end_to_end/runner.py::run_scenario":
         "removed in its own finally unless --keep-work-dir; a paid, hand-run bench, so a kill is the operator's",
     "bench/guard_metamorphic.py::_spelling_rc": _CM_SMALL + "an empty dir or one probe file",
+    "bench/powershell_guard_rehearsal.py::plain_temp_root": _CM_SMALL + (
+        "nothing: a writability probe of a fallback temp root, entered and left "
+        "at once, where the ambient temp directory is not plain; the shaped roots "
+        "and the differential's sandbox are then built under the root it chose"),
     "bench/powershell_guard_rehearsal.py::shaped_root": _CM_SMALL + (
         "empty fixture dirs and a few speed-bump state files, or in a shaped "
         "benchmark run one baseline's setup, an espalier init deploy at most "
@@ -297,6 +301,9 @@ _UNLOCKED_MAKERS: dict[str, str] = {
     "tests/test_box_lock.py::_spawn": _IN_BASETEMP,
     "tests/test_guard_false_positives.py::_tier": _CM_SMALL + (
         "the protected tree's empty directories and a few speed-bump state files"),
+    "tests/test_reachability_differential.py::sandbox": _CM_SMALL + (
+        "an empty victim dir at most, under the rehearsal's plain temp root, used "
+        "only where pytest's tmp_path is not plain (a spaced --basetemp, DEF-5082)"),
     "tests/test_scanner_filesystem_contracts.py::test_overlaid_script_in_scanner_scope": _CM_SMALL + "one small .py",
     "tests/test_wheel_install_surface_parity.py::test_source_and_wheel_init_deploy_same_managed_surface": _IN_BASETEMP,
     "tests/test_wheel_smoke.py::TestBuildFailureCleanup::test_run_smoke_cleans_scratch_dist_on_build_failure::recording_mkdtemp":

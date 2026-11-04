@@ -611,6 +611,20 @@ QUICK_BODIES = {"one_statement", "two_statements_semicolon"}
 #: gone wrong and we must not run it.
 _CATASTROPHIC_OPERAND_RE = re.compile(r"\brm\s+(?:-\S+\s+)*(?:/|~|\*)(?=\s|$)")
 
+#: The characters bash reads in a BARE word as something other than the word:
+#: its metacharacters (a blank, a tab, a newline, ``|&;()<>``), the quotes,
+#: the expansions' ``$`` and backtick, and the glob characters. A victim path
+#: carrying one is not one operand to every row: a consumer that splits on
+#: whitespace (``find | xargs``, ``for x in $(find …)``) hands the remove verb
+#: the PREFIX before the blank -- the real directory beside a spaced temp root
+#: (``/x/axis`` beside ``/x/axis tmp``) -- which conditions (4) to (6) of
+#: `assert_safe_to_execute` cannot see, since that operand arrives on stdin or
+#: in a variable the loop binds (driven 2026-11-04, DEF-4093). The rehearsal's
+#: ``_INERT`` (what a plain root may not carry) is a subset, and `bash_run`
+#: builds its sandbox under the rehearsal's plain temp root, so condition (7)
+#: never fires; it is the belt to that brace.
+_BARE_WORD_HAZARDS = frozenset(" \t\n|&;()<>'\"$`*?[")
+
 
 #: The four verdicts a shape can earn.
 FAIL_OPEN = "fail_open"
@@ -695,7 +709,7 @@ def assert_safe_to_execute(
     ⚠ THIS FUNCTION IS THE REASON THIS SCRIPT IS SAFE TO RUN. Everything below
     executes genuine recursive deletes. If a template ever reached the shell with
     its placeholder unsubstituted, the command run would be the catastrophic form
-    against the real filesystem. Six independent conditions, each fatal:
+    against the real filesystem. Seven independent conditions, each fatal:
 
     1. the placeholder is gone (substitution happened at all)
     2. the victim path is present (it was substituted with the RIGHT thing)
@@ -708,6 +722,11 @@ def assert_safe_to_execute(
        unbound fixture variable is the 2026-09-17 incident's shape; an
        expansion elsewhere in the row (the git rows' environment probes) is
        not a delete's operand and is left to the shell
+    7. the victim's path is one bare word to bash (none of
+       `_BARE_WORD_HAZARDS`): the sandbox is built under the rehearsal's plain
+       temp root, and this is the belt to that brace -- a consumer that splits
+       on whitespace would hand the delete the prefix before a blank, an
+       operand (4) to (6) never see (DEF-4093)
 
     (4) is the belt to (1)-(3)'s braces: it does not care HOW a catastrophic
     operand got there, only that one is present.
@@ -727,6 +746,18 @@ def assert_safe_to_execute(
     except ValueError:
         raise UnsafeToExecute(
             f"victim {victim} is outside sandbox {sandbox}") from None
+    # (7) The victim's path is ONE bare word to bash. Quoted, a spaced path
+    # is one operand to `rm` and (4) to (6) pass; but a consumer that splits
+    # on whitespace (`find | xargs`, `for x in $(find …)`) hands the remove
+    # verb the prefix before the blank -- the real directory beside the
+    # spaced temp root -- and that operand is never in the text. Only the
+    # path itself can be read, so it is read here (DEF-4093).
+    hazards = _BARE_WORD_HAZARDS & set(str(victim))
+    if hazards:
+        raise UnsafeToExecute(
+            f"victim path {str(victim)!r} carries {sorted(hazards)}: a row reads it as "
+            f"more than one shell word, and a consumer that splits on whitespace would "
+            f"hand the delete the prefix before it, a path outside the sandbox: {cmd!r}")
     hit = _CATASTROPHIC_OPERAND_RE.search(cmd)
     if hit:
         raise UnsafeToExecute(
@@ -890,8 +921,13 @@ def bash_run(template: str) -> tuple[bool, int | None]:
     and what did the shell exit with (None on a timeout). The exit status is
     what lets `main` tell a render its interpreter rejected from inert text
     -- the reach bit alone cannot, since both leave the victim standing.
+
+    The sandbox goes under the rehearsal's plain temp root (DEF-4093): the
+    ambient temp directory while it is plain, else the platform's first plain
+    fallback, so the victim's path is one word to every row and the rows keep
+    their bytes; `assert_safe_to_execute`'s condition (7) is the belt.
     """
-    with tempfile.TemporaryDirectory() as sandbox_str:
+    with tempfile.TemporaryDirectory(dir=str(_rehearsal().plain_temp_root())) as sandbox_str:
         sandbox = Path(sandbox_str)
         victim = sandbox / "victim"
         victim.mkdir()
@@ -1170,6 +1206,7 @@ def _differential(argv: list[str] | None, rehearsal) -> int:
     print(f"[reachability] {total} shapes vs {args.base}; unchanged {unchanged}")
     print(f"  root shape: {args.root_shape} (no row names the root; it reaches "
           "the guard as CLAUDE_PROJECT_DIR only)")
+    print(f"  temp root: {rehearsal.plain_temp_root()}{rehearsal.temp_root_note()}")
     if absent:
         print(skipped_line)
     print(f"  FAIL-OPEN (must be 0): {len(failopen)}")

@@ -918,10 +918,68 @@ ROOT_SHAPES: dict[str, str] = {
 }
 
 #: The characters a "plain" root must not carry. The plain shape is only plain
-#: if the ambient temp directory is: a Windows profile named `First Last`, or
-#: a redirected TMPDIR, would collapse the shapes into fewer and key every
-#: declaration to the wrong one.
+#: if the directory it is built under is: a Windows profile named `First Last`,
+#: or a redirected TMPDIR, would collapse the shapes into fewer and key every
+#: declaration to the wrong one -- so every throwaway root goes under
+#: :func:`plain_temp_root`, below, and the ambient temp directory is used only
+#: while it carries none of these.
 _INERT = frozenset(" ()&;")
+
+#: Where a throwaway root goes while the ambient temp directory is not plain:
+#: the interpreter's own fallback directories for the platform, in its order.
+#: A maintainer's ``TMPDIR`` (``--basetemp``, a profile named ``First Last``)
+#: can carry a blank or an inert character. A bench row that reads a root
+#: under it bare is two words to the shell, and a consumer that splits on
+#: whitespace (``find | xargs``, ``for x in $(find …)``) hands the remove verb
+#: the prefix before the blank, the real directory BESIDE the spaced one
+#: (``/x/axis`` beside ``/x/axis tmp``; driven 2026-11-04, DEF-4093); and the
+#: plain shape is only plain while the directory under it is (DEF-4095). So
+#: every throwaway tree goes under :func:`plain_temp_root`.
+_PLAIN_TEMP_FALLBACKS: tuple[str, ...] = (
+    (r"c:\temp", r"c:\tmp", r"\temp", r"\tmp") if os.name == "nt"
+    else ("/tmp", "/var/tmp", "/usr/tmp"))
+
+
+def _unplain(path: Path) -> list[str]:
+    """The characters of ``_INERT`` that ``path`` carries, sorted; empty for a plain one."""
+    return sorted(_INERT & set(path.as_posix()))
+
+
+def plain_temp_root() -> Path:
+    """The directory every bench throwaway tree is built under: tempfile's
+    ambient directory while it carries none of ``_INERT``, else the first of
+    ``_PLAIN_TEMP_FALLBACKS`` that is a plain, writable directory. Raises,
+    naming the characters and the remedy, where neither is: a refusal, never
+    a root the rows would read as two words. Read at each call, so a test
+    that points ``tempfile.tempdir`` elsewhere is followed."""
+    ambient = Path(tempfile.gettempdir())
+    if not _unplain(ambient):
+        return ambient
+    for candidate in _PLAIN_TEMP_FALLBACKS:
+        root = Path(candidate)
+        if _unplain(root) or not root.is_dir():
+            continue
+        try:
+            with tempfile.TemporaryDirectory(dir=str(root)):
+                pass
+        except OSError:
+            continue
+        return root
+    raise RuntimeError(
+        f"the ambient temp directory is not plain ({ambient}): it carries "
+        f"{_unplain(ambient)}, a bench row would read a root under it as more than one "
+        f"shell word, and none of {list(_PLAIN_TEMP_FALLBACKS)} is a plain writable "
+        f"directory -- point TMPDIR/TEMP at a path with none of {sorted(_INERT)}")
+
+
+def temp_root_note() -> str:
+    """One clause for a run's header: empty while the ambient temp directory
+    is the root, else why the throwaway trees are built elsewhere."""
+    ambient = Path(tempfile.gettempdir())
+    if plain_temp_root() == ambient:
+        return ""
+    return (f" (the ambient temp directory {str(ambient)!r} carries {_unplain(ambient)}; "
+            f"every throwaway tree goes under the plain one)")
 
 #: A row may carry this placeholder where it needs the project's ABSOLUTE
 #: path. ``_tier`` substitutes the throwaway root per shape -- the Bash tool's
@@ -981,9 +1039,12 @@ def shaped_root(shape: str = "plain", *, prefix: str = "") -> Iterator[Path]:
     ``prefix``, removed at exit: the root every guard fixture builds its
     project under (DEF-811), so a bench or test that drives the guard can
     measure each shape in ``ROOT_SHAPES`` rather than tempfile's never-spaced
-    name alone. The plain shape is only plain if the ambient temp directory
-    is, so one that carries an inert character raises."""
-    with tempfile.TemporaryDirectory(prefix=(ROOT_SHAPES[shape] + prefix) or None) as td:
+    name alone. Built under :func:`plain_temp_root`, so the plain shape is
+    plain whatever the ambient temp directory carries and each other shape
+    carries its own character alone (DEF-4095); the check below is the belt
+    to that brace."""
+    with tempfile.TemporaryDirectory(prefix=(ROOT_SHAPES[shape] + prefix) or None,
+                                     dir=str(plain_temp_root())) as td:
         root = Path(td)
         if shape == "plain" and _INERT & set(root.as_posix()):
             raise RuntimeError(
