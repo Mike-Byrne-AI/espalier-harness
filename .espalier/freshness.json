@@ -4,8 +4,8 @@
       "bound": [
         "tools/cc/ci_guard.py::_approval_marker_present"
       ],
-      "last_verified_at": "2026-09-30T23:44:21Z",
-      "last_verified_sha": "3a267d09e91436d136c1829ed48b53b43b45a058",
+      "last_verified_at": "2026-11-04T17:02:05Z",
+      "last_verified_sha": "0e18ffa678b6482283701a1da71730285ce4b16d",
       "marker_path": "docs/SHARP_EDGES.md",
       "policy": "verify-on-touch"
     },
@@ -94,8 +94,8 @@
       "bound": [
         "tests/test_release_check.py"
       ],
-      "last_verified_at": "2026-10-14T18:30:21Z",
-      "last_verified_sha": "333743813aef24cb9ca9d7f2bd62ad5454ea41ce",
+      "last_verified_at": "2026-11-04T17:02:05Z",
+      "last_verified_sha": "0e18ffa678b6482283701a1da71730285ce4b16d",
       "marker_path": "README.md",
       "policy": "verify-on-touch"
     },
