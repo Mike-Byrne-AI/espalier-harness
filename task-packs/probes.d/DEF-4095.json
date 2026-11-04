@@ -3,8 +3,8 @@
  "subject": "tests/test_write_guard.py",
  "cmd": null,
  "open_value": null,
- "why_not": "measured by a run, not a predicate: ten files at four workers under TMPDIR='.../axis tmp' red 136 at this head against 0 under a plain TMPDIR; no predicate over the fixtures separates its four shapes, and a nested pytest probe would run inside the ledger's probe run",
- "row_sha": "61590a5b04d6",
- "text_sha": "cc4378d79ed3",
- "verified_2026_11_04": "STILL_OPEN (re-pinned value unchanged on 2026-11-04: cite the plain-root-only skip by its reason text beside the test the row names, not a bare line number: the anchor ratchet retires path:NN) [changed: text]"
+ "why_not": "measured by a run, not a predicate: ten files at four workers under TMPDIR='.../axis tmp' red 70 at this head (136 before the suite's own two shapes were fixed) against 0 under a plain TMPDIR; no predicate over the bench separates its two shapes, and a nested pytest probe would run inside the ledger's probe run",
+ "row_sha": "40fd6d90c5d5",
+ "text_sha": "c328d4fe76e1",
+ "verified_2026_11_04": "STILL_OPEN (re-pinned value unchanged on 2026-11-04: the suite's two shapes (64 step-aside params, 2 directory rows) are fixed in this lane and measured 0 under the spaced TMPDIR; the bench's two remain at 70 reds, so the row is re-anchored to the bench) [changed: anchor, text, why not]"
 }
