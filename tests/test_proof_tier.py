@@ -3045,10 +3045,16 @@ class TestTheBasetempRidesTheArgv:
 
     def test_the_receipt_prints_it_quoted_as_it_runs(self, pt, tmp_path, capsys):
         r = _repo(tmp_path)
+        # The expected token is the product's own two calls, never the POSIX
+        # literal: main() takes Path.absolute() of the value, which on Windows
+        # anchors a rooted, drive-less path onto the current drive and flips
+        # its separators (D:\runner temp\...), and the receipt is shlex.join of
+        # that argv. The literal red the windows-latest portability leg on #479
+        # (DEF-4090).
+        spelled = shlex.quote(str(Path(self.SPACED).absolute()))
         pt.main(["--root", str(r), "--tier", "full", "--leg", "parallel", "--basetemp", self.SPACED])
         runs = [line for line in capsys.readouterr().out.splitlines() if line.startswith("run: pytest")]
-        assert runs and all(line.startswith("run: pytest --basetemp '/runner temp/axis basetemp/bt' ")
-                            for line in runs), runs
+        assert runs and all(line.startswith(f"run: pytest --basetemp {spelled} ") for line in runs), runs
 
     def test_an_empty_value_is_refused_not_read_as_no_basetemp(self, pt, tmp_path, capsys):
         r = _repo(tmp_path)
