@@ -26,7 +26,9 @@ from pathlib import Path
 import pytest
 
 from espalier import cli
+from espalier._text import quoted_if_spaced
 from tests._cut_start import skip_if_cut
+from tests._spaced_paths import skip_unless_plain
 from tests._stubs import write_stub
 
 # The sh stubs below are POSIX-only, so every class built on them skips on
@@ -45,9 +47,19 @@ def _stub(tmp_path: Path, name: str, says: str) -> str:
     return str(write_stub(d / name, f"#!/bin/sh\necho '{says}'\n"))
 
 
+#: Why a row that asserts on the shell-form or statusLine sites skips under a
+#: spaced root: the fixture quotes the spaced interpreter there as `init`
+#: does, and the rewire declines the quoted spaced token (DEF-4094); the
+#: always-spaced strict xfail below is the row that reds when it is fixed.
+_DECLINED_WHEN_SPACED = "DEF-4094: a quoted spaced interpreter at a shell-form or statusLine site"
+
+
 def _settings(tmp_path: Path, interpreter: str) -> Path:
     """A realistic adopter settings.json: exec form, legacy shell form,
-    statusLine, a non-Python hook of their own, and keys we must not touch."""
+    statusLine, a non-Python hook of their own, and keys we must not touch.
+    The shell-form strings carry the interpreter as `init` renders one,
+    quoted when its path holds a space (DEF-5082); the exec-form command is
+    argv[0] whole and takes no quotes (DEF-968)."""
     path = tmp_path / ".claude" / "settings.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({
@@ -60,12 +72,12 @@ def _settings(tmp_path: Path, interpreter: str) -> Path:
             ]}],
             "SessionStart": [{"matcher": "*", "hooks": [
                 {"type": "command",
-                 "command": f"{interpreter} tools/cc/hooks/session_start.py"},
+                 "command": f"{quoted_if_spaced(interpreter)} tools/cc/hooks/session_start.py"},
                 {"type": "command", "command": "node", "args": ["their_own.js"]},
             ]}],
         },
         "statusLine": {"type": "command",
-                       "command": f"{interpreter} tools/cc/statusline.py --short"},
+                       "command": f"{quoted_if_spaced(interpreter)} tools/cc/statusline.py --short"},
         "theirOwnKey": {"nested": [1, 2, {"deep": True}]},
     }, indent=2) + "\n", encoding="utf-8")
     return path
@@ -113,6 +125,7 @@ class TestRewireChangesOnlyTheInterpreter:
     def test_all_three_command_shapes_are_covered(self, tmp_path):
         """Exec form, legacy shell form, and statusLine — the last lives
         OUTSIDE `hooks` and is the 13th interpreter site."""
+        skip_unless_plain(tmp_path, _DECLINED_WHEN_SPACED)
         old = _stub(tmp_path, "python3", "Python 3.9.6")
         path = _settings(tmp_path, old)
         result = cli.rewire_interpreter_in_settings(path)
@@ -165,13 +178,16 @@ class TestRewireChangesOnlyTheInterpreter:
         operator, which an install rendered since DEF-929 can carry; doctor
         reads the same helper, so the two cannot disagree about which word is
         the interpreter."""
+        skip_unless_plain(tmp_path, _DECLINED_WHEN_SPACED)
         old = _stub(tmp_path, "python3", "Python 3.9.6")
         path = _settings(tmp_path, old)
         data = json.loads(path.read_text(encoding="utf-8"))
         head = lead + '"${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" '
-        shim_render = head + old
+        shim_render = head + quoted_if_spaced(old)
         if lead == ". ":
-            assert shim_render == cli._statusline_command(old, posix=False), "the render init writes"
+            # init hands the render the detected interpreter already quoted
+            # when spaced (`_detect_python_command`), as this fixture does
+            assert shim_render == cli._statusline_command(quoted_if_spaced(old), posix=False), "the render init writes"
         data["statusLine"]["command"] = shim_render
         path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
@@ -190,10 +206,12 @@ class TestRewireChangesOnlyTheInterpreter:
         measured on a stripped copy, so trailing whitespace from a hand edit
         put it past the interpreter word and the site was reported as neither
         changed nor declined. The offset is measured on the string itself."""
+        skip_unless_plain(tmp_path, _DECLINED_WHEN_SPACED)
         old = _stub(tmp_path, "python3", "Python 3.9.6")
         path = _settings(tmp_path, old)
         data = json.loads(path.read_text(encoding="utf-8"))
-        data["statusLine"]["command"] = " " + lead + '"${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" ' + old + pad
+        data["statusLine"]["command"] = (" " + lead + '"${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" '
+                                         + quoted_if_spaced(old) + pad)
         path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
         result = cli.rewire_interpreter_in_settings(path)
@@ -202,6 +220,24 @@ class TestRewireChangesOnlyTheInterpreter:
         assert old not in after, after
         assert after.endswith(pad), "the whitespace the operator left is kept as found"
         assert '/tools/cc/statusline.cmd" ' in after, after
+
+    @pytest.mark.xfail(strict=True, reason="DEF-4094: _is_rewirable_interpreter refuses a token holding "
+                       "whitespace, so a quoted spaced interpreter at a shell-form or statusLine site is declined")
+    def test_a_quoted_spaced_shell_form_interpreter_is_rewired(self, tmp_path):
+        """The settings.json `init` writes on a host whose interpreter path
+        holds a space: the shell-form and statusLine sites carry the
+        interpreter quoted (`_detect_python_command` hands it over as
+        `quoted_if_spaced`), and the rewire swaps them as it swaps the
+        exec-form site beside them. On every host: the space is this test's."""
+        spaced = tmp_path / "with space"
+        spaced.mkdir()
+        old = _stub(spaced, "python3", "Python 3.9.6")
+        path = _settings(spaced, old)
+        result = cli.rewire_interpreter_in_settings(path)
+        assert result.status == cli.REWIRE_DONE, result
+        where = {w for w, _, _ in result.changes}
+        assert "statusLine" in where and any(w.startswith("hooks.SessionStart") for w in where), (
+            where, result.declined)
 
     def test_a_backup_is_written_before_the_change(self, tmp_path):
         old = _stub(tmp_path, "python3", "Python 3.9.6")

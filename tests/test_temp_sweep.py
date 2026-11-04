@@ -158,9 +158,19 @@ def _numbered_dir(tmp_path: Path, pytestconfig) -> Path:
     """The numbered dir pytest made for this session, directly under its
     root, above ``tmp_path``: an xdist worker's base temp is a child of the
     controller's (``popen-gw<N>``), so it is found the same way there."""
+    given = "a --basetemp given at the top level puts this session's dirs outside pytest's root"
     if pytestconfig.option.basetemp and not hasattr(pytestconfig, "workerinput"):
-        pytest.skip("a --basetemp given at the top level puts this session's dirs outside pytest's root")
+        pytest.skip(given)
     root = ts.pytest_root()
+    if hasattr(pytestconfig, "workerinput"):
+        # xdist gives every worker its own --basetemp, a child of the
+        # controller's, so the option says nothing here; the controller's is
+        # read as that parent, and one that is not a numbered dir under the
+        # root is the top level's own (DEF-5082's lane: red under any explicit
+        # basetemp with xdist, plain or spaced, measured 2026-11-04)
+        controller = Path(pytestconfig.option.basetemp).resolve().parent
+        if controller.parent != root:
+            pytest.skip(given + " (read on the worker as its own basetemp's parent)")
     found = [p for p in tmp_path.resolve().parents if p.parent == root]
     assert found, f"{tmp_path} is not under pytest's root as the sweep reads it ({root})"
     return found[0]

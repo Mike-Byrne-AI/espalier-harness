@@ -21,6 +21,7 @@ import pytest
 from tests._guard_fixture import carry_protected_tree
 from tests._hook_assertions import assert_hook_allowed, assert_hook_denied
 from tests._hook_spawn import run_hook_through
+from tests._spaced_paths import CMD, PS, SH, fill, quoted
 from tests._symlink_support import requires_symlink
 
 HOOKS_DIR = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
@@ -902,7 +903,7 @@ class TestBinaryVerbSpellingIsUniform:
         # the must-deny twin: `CD` fails, so the delete runs in the checkout
         (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True, exist_ok=True)
         assert_hook_denied(run_bash_guard("CD /tmp; rm -rf tools/cc/hooks", tmp_path))
-        assert_hook_denied(run_bash_guard("cd /tmp; rm -rf " + str(tmp_path / "tools" / "cc" / "hooks"), tmp_path))
+        assert_hook_denied(run_bash_guard("cd /tmp; rm -rf " + quoted(str(tmp_path / "tools" / "cc" / "hooks")), tmp_path))
 
     @pytest.mark.parametrize("head", ["rm.exe", "RM.EXE", "/usr/bin/rm.exe", "Rm",
                                       '"rm.exe"', "'/usr/bin/rm.exe'"])
@@ -1507,11 +1508,12 @@ class TestTheDirectoryAWriteRunsIn:
         # there fails, and the walk reads that from disk (the oracle)
         (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True)
         (tmp_path / "reports").mkdir()
-        cmd = cmd.replace("{abs}", str(tmp_path))
+        # each path as bash takes it, quoted only when spaced (DEF-5082)
+        cmd = fill(cmd, "{abs}", str(tmp_path))
         # `{tmp}` is "a directory outside the checkout that exists on this host":
         # /tmp on POSIX, the temp root spelled `C:/...` on Windows (the walk reads
         # the directory from disk, and a cd into one that is not there fails)
-        cmd = cmd.replace("{tmp}", Path(tempfile.gettempdir()).as_posix())
+        cmd = fill(cmd, "{tmp}", Path(tempfile.gettempdir()).as_posix())
         # `/tmp` in the table stands for "a directory outside the checkout";
         # on this host it is the temp root, which on Windows is not `/tmp`
         at = (None if cwd is None else Path(tempfile.gettempdir()) if cwd == "/tmp"
@@ -1870,10 +1872,11 @@ class TestTheDirectoryADeleteRunsIn:
     ])
     def test_bash(self, tmp_path, cmd, cwd, expect):
         (tmp_path / "sub" / "deeper").mkdir(parents=True)
-        cmd = cmd.replace("{name}", tmp_path.name).replace("{abs}", str(tmp_path))
+        # each path as bash takes it, quoted only when spaced (DEF-5082)
+        cmd = fill(cmd.replace("{name}", tmp_path.name), "{abs}", str(tmp_path))
         # `/tmp` in the table stands for "a directory outside the checkout";
         # on this host it is the temp root, which on Windows is not `/tmp`
-        cmd = cmd.replace("{tmp}", Path(tempfile.gettempdir()).as_posix())
+        cmd = fill(cmd, "{tmp}", Path(tempfile.gettempdir()).as_posix())
         at = (None if cwd is None else Path(tempfile.gettempdir()) if cwd == "/tmp"
               else (Path(cwd) if cwd.startswith("/") else tmp_path / cwd))
         assert _delete_verdict(run_guard_from("Bash", cmd, tmp_path, at)) == expect
@@ -2010,10 +2013,11 @@ class TestTheDirectoryADeleteRunsIn:
     ])
     def test_powershell(self, tmp_path, cmd, cwd, expect):
         (tmp_path / "sub").mkdir()
-        cmd = cmd.replace("{name}", tmp_path.name).replace("{abs}", str(tmp_path))
+        # each path as PowerShell takes it, quoted only when spaced (DEF-5082)
+        cmd = fill(cmd.replace("{name}", tmp_path.name), "{abs}", str(tmp_path), PS)
         # `/tmp` in the table stands for "a directory outside the checkout";
         # on this host it is the temp root, which on Windows is not `/tmp`
-        cmd = cmd.replace("{tmp}", Path(tempfile.gettempdir()).as_posix())
+        cmd = fill(cmd, "{tmp}", Path(tempfile.gettempdir()).as_posix(), PS)
         at = (None if cwd is None else Path(tempfile.gettempdir()) if cwd == "/tmp"
               else (Path(cwd) if cwd.startswith("/") else tmp_path / cwd))
         assert _delete_verdict(run_guard_from("PowerShell", cmd, tmp_path, at)) == expect
@@ -7717,10 +7721,11 @@ class TestCatastrophicRmFlagOrderIndependent:
         one of them the checkout itself (the review's item 8)."""
         root = tmp_path.as_posix()   # as bash receives it: a backslash root would be collapsed by quote removal
         bp = self._bp()
-        partial = "rm -rf " + root[:-1] + "{" + root[-1] + ",}"
+        # the brace list stays outside the quotes a spaced root takes (DEF-5082)
+        partial = "rm -rf " + quoted(root[:-1]) + "{" + root[-1] + ",}"
         assert bp.has_catastrophic_recursive_rm(partial, root) is True, partial
         # the twin the fast path still answers: a list under a separator
-        assert bp.has_catastrophic_recursive_rm("rm -rf " + root + "/{a,b}", root) is False
+        assert bp.has_catastrophic_recursive_rm("rm -rf " + quoted(root) + "/{a,b}", root) is False
 
     def test_what_the_walk_does_not_place_is_judged_from_nowhere(self, tmp_path):
         """The walk's net no longer judges a bare glob from nowhere (the
@@ -9684,9 +9689,13 @@ class TestEveryLaunchFormMeetsTheRecursiveDeleteWall:
             monkeypatch.setenv(var, str(tmp_path / "scratch"))
         wg = _load_write_guard()
         tier = wg._bash_dangerous_reason if tool == "Bash" else wg._ps_dangerous_reason
+        # the target goes into the form as its shell takes it, quoted only
+        # when spaced (DEF-5082): a cmd.exe program and the PowerShell tool
+        # take the wildcard inside the quotes, the Bash tool's shell outside
+        shell = CMD if "-cmd-" in _id else SH if tool == "Bash" else PS
         wrong = sorted(
             target for target, want in claims.items()
-            if (tier(template.format(t=target), repo, cwd=repo) is not None) != want
+            if (tier(fill(template, "{t}", target, shell), repo, cwd=repo) is not None) != want
         )
         assert not wrong, (
             f"{len(wrong)} of {len(claims)} target claims disagree with the wall; "
@@ -10056,7 +10065,10 @@ class TestPowerShellRecursiveRemoveTiersAgree:
             monkeypatch.setenv(var, str(scratch))
         wg = _load_write_guard()
         import _speedbump
-        command = command.format(scratch=scratch.as_posix(), repo=repo.as_posix())
+        # the brace idiom's `{{ }}` collapse first, the placeholders kept; then
+        # each path as PowerShell takes it, quoted only when spaced (DEF-5082)
+        command = command.format(scratch="{scratch}", repo="{repo}")
+        command = fill(fill(command, "{scratch}", scratch.as_posix(), PS), "{repo}", repo.as_posix(), PS)
         if wg._ps_dangerous_reason(command, repo, cwd=repo) is not None:
             return "wall"
         return "bump" if _speedbump._pred_rmrf("PowerShell", {"command": command}, repo, repo) else "allow"
@@ -11078,7 +11090,7 @@ class TestPowerShellPermissionVerbs:
         pwsh on macOS or Linux hands these tools an absolute path in that
         form, and the icacls and attrib branches dropped it as a switch while
         `Set-Acl -Path` on the same path denied (review, driven)."""
-        hook = f"{tmp_path.as_posix()}/tools/cc/hooks/write_guard.py"
+        hook = quoted(f"{tmp_path.as_posix()}/tools/cc/hooks/write_guard.py", PS)
         assert_hook_denied(_run_ps_guard(f"icacls {hook} /deny Everyone:(R)", tmp_path))
         assert_hook_denied(_run_ps_guard(f"attrib +R {hook}", tmp_path))
 

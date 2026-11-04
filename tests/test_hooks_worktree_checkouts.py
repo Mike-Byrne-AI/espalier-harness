@@ -30,6 +30,8 @@ from pathlib import Path, PureWindowsPath
 
 import pytest
 
+from tests._spaced_paths import PS, quoted
+
 from _hook_assertions import assert_hook_allowed
 from _hook_runner import run_hook
 from test_nested_repo_litter import _add_worktree, _git, _init_repo, _seed_commit
@@ -304,8 +306,8 @@ class TestWriteGuardInsideAWorktree:
                 "tool_input": {"command": command}, "cwd": str(live),
             }, env)
 
-        assert _decision(bash(f"echo x > {live / TARGET}")) == "deny"
-        assert_hook_allowed(bash(f"echo x > {live / 'src' / 'app.py'}"))
+        assert _decision(bash(f"echo x > {quoted(str(live / TARGET))}")) == "deny"
+        assert_hook_allowed(bash(f"echo x > {quoted(str(live / 'src' / 'app.py'))}"))
 
     def test_mcp_writes_into_the_worktree_zone_are_denied_on_both_layers(self, tmp_path):
         root, live = _repo_with_worktree(tmp_path)
@@ -346,10 +348,10 @@ class TestWriteGuardInsideAWorktree:
         alias = live / "alias.py"
         os.link(root / TARGET, alias)
         if channel == "Bash":
-            payload = {"tool_name": "Bash", "tool_input": {"command": f"echo x > {alias}"}}
+            payload = {"tool_name": "Bash", "tool_input": {"command": f"echo x > {quoted(str(alias))}"}}
         elif channel == "PowerShell":
             payload = {"tool_name": "PowerShell",
-                       "tool_input": {"command": f"Set-Content -Path {alias} -Value x"}}
+                       "tool_input": {"command": f"Set-Content -Path {quoted(str(alias), PS)} -Value x"}}
         else:
             payload = {"tool_name": "mcp__filesystem__write_file",
                        "tool_input": {"path": str(alias), "content": "x"}}
@@ -523,7 +525,7 @@ class TestPostWriteCheckInsideAWorktree:
         new = live / "tests" / "test_new2.py"
         new.write_text("def test_x():\n    pass\n", encoding="utf-8")
         pwc = _hook_module("post_write_check")
-        out = pwc._bash_derived_payloads({"command": f"echo x > {new}"}, root, already=0)
+        out = pwc._bash_derived_payloads({"command": f"echo x > {quoted(str(new))}"}, root, already=0)
         assert "New test file `tests/test_new2.py`" in "\n".join(out), out
 
     def test_the_prune_takes_the_checkout_and_the_spot_check_stays_on_the_root(self, tmp_path, monkeypatch):

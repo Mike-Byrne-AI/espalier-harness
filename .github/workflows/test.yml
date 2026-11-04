@@ -303,10 +303,11 @@ jobs:
   # on PATH is a Microsoft Store alias stub that prints the alias's not-found
   # text and exits 49 (9009 on Windows), and `python` answers. Every other cell
   # answers both names, so a fixture or a script that spells `python3` stays
-  # green there and reds here. Its pytest root is plain for now: under a root
-  # that holds a space the suite reds 155 tests in nine files (measured
-  # 2026-11-03), and `proof_tier.py --basetemp` puts one back on the tier step
-  # once they are fixed. NOT a required check: it lands non-required, and
+  # green there and reds here. Its pytest root holds a space (`--basetemp` on
+  # the tier step, under the job's TMPDIR): under one the suite red 155 tests
+  # in nine files until DEF-5082's lane quoted the fixtures' temp paths for
+  # their shells (measured 2026-11-03, fixed 2026-11-04). NOT a required
+  # check: it lands non-required, and
   # promoting it is the operator's call after a run of greens, because a
   # required name that never reports parks every pull request
   # (tests/test_required_status_checks.py). Its row in tests/_axis_registry.py's
@@ -361,8 +362,8 @@ jobs:
           python -c 'import espalier, sys; print("python answers:", sys.executable)'
 
       - name: Run the proof tier's parallel leg on the perturbed host
-        # A spaced root, when it comes back, goes on this line as
-        # `--basetemp "$RUNNER_TEMP/tmp/axis basetemp/bt"`: on each pytest
+        # The spaced root is `--basetemp "$RUNNER_TEMP/tmp/axis basetemp/bt"`
+        # (its parent made first: pytest makes only the leaf): on each pytest
         # line's argv inside proof_tier, never into PYTEST_ADDOPTS, which a
         # pytest child a test launches inherits, and pytest empties an
         # explicit basetemp before it uses it, so the child would delete every
@@ -377,8 +378,9 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PYTEST_ADDOPTS: --durations=25
         run: |
-          echo "proof tier: $TIER (parallel leg, perturbed host)"
-          python scripts/proof_tier.py --run --tier "$TIER" --base "${BASE_SHA:-HEAD}" --leg parallel
+          echo "proof tier: $TIER (parallel leg, perturbed host, spaced root)"
+          mkdir -p "$RUNNER_TEMP/tmp/axis basetemp"
+          python scripts/proof_tier.py --run --tier "$TIER" --base "${BASE_SHA:-HEAD}" --leg parallel --basetemp "$RUNNER_TEMP/tmp/axis basetemp/bt"
 
   # The tagless-clone job lives in its own workflow
   # (.github/workflows/clean-checkout.yml), on the floor interpreter, with the

@@ -149,13 +149,13 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
     AxisCell("root", "plain", "",
              "every test runs here, and none is parametrised against a spaced root"),
     AxisCell("root", "spaced", "",
-             "no test is parametrised over the root axis. One instrument reaches it: "
+             "no test is parametrised over the root axis. Two instruments reach it: "
              "the release smoke's --spaced-root leg installs into a tree under a "
-             "space (its INSTRUMENTS row). test.yml's perturbed cell runs with a "
-             "plain pytest root: under a spaced one the suite reds 155 tests in nine "
-             "files, fixtures that put a tmp path into shell or expected text "
-             "unquoted (DEF-5082); scripts/proof_tier.py --basetemp is the flag that "
-             "puts one back on it once they are fixed"),
+             "space, and test.yml's perturbed cell runs the parallel leg under a "
+             "spaced --basetemp (their INSTRUMENTS rows), since DEF-5082's lane "
+             "quoted, for their shells, the fixtures that put a tmp path into shell "
+             "or expected text bare (155 reds in nine files at be20c0a, two of them "
+             "an explicit basetemp's own under xdist; 2026-11-04)"),
     AxisCell("root", "spaced_interpreter", "",
              "no CI interpreter a hook runs from holds a space (the release smoke's "
              "second leg runs the CLI from a venv under a spaced root and launches "
@@ -353,11 +353,11 @@ INSTRUMENTS: tuple[Instrument, ...] = (
         "test.yml::workflow-lint",
     ), "none", "both", "plain", "none"),
     # The perturbed cell (TP-468 3-A): the parallel leg on the store_python3 host
-    # (python3 the Store stub, python answering), under a plain pytest root
-    # until the suite's spaced-root reds are fixed (the root/spaced cell says
-    # why). Read against the job's steps (tests/test_axis_registry.py).
+    # (python3 the Store stub, python answering), under a spaced pytest root
+    # (the tier step's --basetemp, inside the job's TMPDIR, since DEF-5082's
+    # lane). Read against the job's steps (tests/test_axis_registry.py).
     Instrument("test.yml perturbed, the parallel leg on a Store-stub host",
-               ("test.yml::perturbed",), "python", "store_python3", "plain", "single_event"),
+               ("test.yml::perturbed",), "python", "store_python3", "spaced", "single_event"),
     Instrument("portability.yml on ubuntu, windows and macos", ("portability.yml::portability",),
                "python", "not measured", "plain", "single_event"),
     Instrument("clean-checkout.yml, the full tier with the heavy stages", ("clean-checkout.yml::clean-checkout",),

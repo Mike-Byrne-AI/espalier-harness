@@ -16,7 +16,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from _wired_settings import write_wired_settings
+
+from tests._spaced_paths import skip_unless_plain
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "tools" / "cc" / "execution_plan.py"
@@ -258,6 +261,9 @@ class TestClaimOverlapPreflight:
         """An absolute `symbols:` entry passed the typo check by its file and then met no claim:
         the silence a plan reads as clear (failure-mode review, driven). Dies to: the entry handed
         on as written. Under the root it is the repo path; outside, a warning names it."""
+        # the entry is written bare, and a bare spaced path IS two entries to
+        # the field parser; the quoted spelling is cut too (DEF-4092, below)
+        skip_unless_plain(tmp_path, "DEF-4092: an absolute symbols: entry written bare")
         mod = _load_plan_module()
         self._symbol_tree(mod, monkeypatch, tmp_path)
         mail = _load_mail_module()
@@ -268,6 +274,15 @@ class TestClaimOverlapPreflight:
         assert len(lines) == 1 and "claims symbol tools/cc/mail.py::send" in lines[0], lines
         lines = mod._claim_overlaps("s; symbols: /elsewhere/x.py::f; proof: x", mail=stub)
         assert len(lines) == 1 and "/elsewhere/x.py::f" in lines[0] and "not a repo path" in lines[0], lines
+
+    @pytest.mark.xfail(strict=True, reason="DEF-4092: _field_entries strips the quotes before it splits "
+                       "on a space, so a quoted spaced path is cut to its first word")
+    def test_a_quoted_spaced_path_in_a_field_is_one_entry(self):
+        """The spelling a plan's author types for a path under a spaced
+        directory, read as one entry; reds the day the parser is fixed."""
+        mod = _load_plan_module()
+        assert mod._field_entries('"/x/with space/tools/cc/mail.py::send"') == [
+            "/x/with space/tools/cc/mail.py::send"]
 
     def test_a_typed_symbol_warning_outlives_a_channel_that_cannot_be_read(self, monkeypatch, tmp_path):
         """The typo is about the plan's own text, not the channel. Dies to: the warning computed
