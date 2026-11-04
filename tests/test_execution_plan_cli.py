@@ -16,10 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
 from _wired_settings import write_wired_settings
-
-from tests._spaced_paths import skip_unless_plain
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "tools" / "cc" / "execution_plan.py"
@@ -261,28 +258,49 @@ class TestClaimOverlapPreflight:
         """An absolute `symbols:` entry passed the typo check by its file and then met no claim:
         the silence a plan reads as clear (failure-mode review, driven). Dies to: the entry handed
         on as written. Under the root it is the repo path; outside, a warning names it."""
-        # the entry is written bare, and a bare spaced path IS two entries to
-        # the field parser; the quoted spelling is cut too (DEF-4092, below)
-        skip_unless_plain(tmp_path, "DEF-4092: an absolute symbols: entry written bare")
+        # the entry under the root is written quoted, the spelling an author
+        # types for a path under a spaced directory, so the row runs under a
+        # spaced temp root too (a bare spaced path is two entries, by design)
         mod = _load_plan_module()
         self._symbol_tree(mod, monkeypatch, tmp_path)
         mail = _load_mail_module()
         claim = mail.new_message("win", "claim", "", lane="lane/w", symbols=["tools/cc/mail.py::send"])
         stub = self._mail(monkeypatch, tmp_path, "mac", [claim])
         inside = (tmp_path / "tools" / "cc" / "mail.py").as_posix() + "::send"
-        lines = mod._claim_overlaps(f"s; symbols: {inside}; proof: x", mail=stub)
+        lines = mod._claim_overlaps(f's; symbols: "{inside}"; proof: x', mail=stub)
         assert len(lines) == 1 and "claims symbol tools/cc/mail.py::send" in lines[0], lines
         lines = mod._claim_overlaps("s; symbols: /elsewhere/x.py::f; proof: x", mail=stub)
         assert len(lines) == 1 and "/elsewhere/x.py::f" in lines[0] and "not a repo path" in lines[0], lines
 
-    @pytest.mark.xfail(strict=True, reason="DEF-4092: _field_entries strips the quotes before it splits "
-                       "on a space, so a quoted spaced path is cut to its first word")
     def test_a_quoted_spaced_path_in_a_field_is_one_entry(self):
         """The spelling a plan's author types for a path under a spaced
-        directory, read as one entry; reds the day the parser is fixed."""
+        directory, read whole to its closing mark on each of the three marks:
+        a parenthesis or a comma inside the marks is part of the path, a
+        `::name` glued to the closing mark (the shell's quoting) is part of
+        the entry, a note or other text after the mark is dropped. An
+        unterminated or mismatched mark keeps the first-word reading and
+        empty marks are no entry, the inputs the fix must not widen on. Dies
+        to: the marks stripped before the split on a space, which cut the
+        path to its first word (DEF-4092, struck); to the note strip run over
+        the whole value before the marks were read, which rewrote a quoted
+        `Proj (v2)` folder (code review, driven); and to a `::name` after the
+        mark dropped with the entry, where the typo warning it drew went
+        silent (failure-mode review, driven)."""
         mod = _load_plan_module()
         assert mod._field_entries('"/x/with space/tools/cc/mail.py::send"') == [
             "/x/with space/tools/cc/mail.py::send"]
+        assert mod._field_entries("`/x/with space/a.py::f` (new), '/y z/b.py'") == [
+            "/x/with space/a.py::f", "/y z/b.py"]
+        assert mod._field_entries('"/U/My Proj (v2)/a.py::f", "/x/a,b.py" (new, moved), c.py') == [
+            "/U/My Proj (v2)/a.py::f", "/x/a,b.py", "c.py"]
+        assert mod._field_entries("'a b.py' trailing, c.py") == ["a b.py", "c.py"]
+        assert mod._step_symbols('s; symbols: "/x/a b/c.py"::f, `/x/a b/d.py`::g() (new), e.py::h') == [
+            "/x/a b/c.py::f", "/x/a b/d.py::g", "e.py::h"]
+        assert mod._field_entries('"/x/with space/a.py') == ["/x/with"]
+        assert mod._field_entries("\"a b'") == ["a"]
+        assert mod._field_entries('a.py, "", b.py') == ["a.py", "b.py"]
+        assert mod._step_fields('s; files: "/x/with space/c.py", d.py (new, moved); classes: C1') == (
+            ["/x/with space/c.py", "d.py"], ["C1"])
 
     def test_a_typed_symbol_warning_outlives_a_channel_that_cannot_be_read(self, monkeypatch, tmp_path):
         """The typo is about the plan's own text, not the channel. Dies to: the warning computed
