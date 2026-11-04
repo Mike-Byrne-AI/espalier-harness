@@ -869,6 +869,14 @@ _C52_BASH_ROWS = [
     ("tail_loop_remove", _bash_patterns._TAIL_LOOP_REMOVE_RE, "while read f; do rm -rf $f; done < <(find"),
     ("tail_loop_remove_closers", _bash_patterns._TAIL_LOOP_REMOVE_RE, "done <"),
     ("tail_loop_remove_heads", _bash_patterns._TAIL_LOOP_REMOVE_RE, "while read"),
+    # DEF-3028: the inner head's command-position run inside the
+    # substitution (a wrapper flood, an open quoted directory), and the
+    # native verb's quoted and escaped paths behind the carrier
+    ("for_subst_remove_inner_wrappers", _bash_patterns._FOR_SUBST_REMOVE_RE, "for f in $(env "),
+    ("for_subst_remove_inner_quoted_dir", _bash_patterns._FOR_SUBST_REMOVE_RE, 'for f in $("a b/'),
+    ("tail_loop_remove_inner_wrappers", _bash_patterns._TAIL_LOOP_REMOVE_RE, "done < <(env "),
+    ("piped_remove_quoted_verb_path", _bash_patterns._PIPED_REMOVE_RE, 'find . | xargs "a b/'),
+    ("piped_remove_escaped_verb_path", _bash_patterns._PIPED_REMOVE_RE, "find . | xargs a\\ "),
     # DEF-837: the word-list head -- a repeated head (the later ones read as
     # WORDS behind the first, so the word run floods), a flood of heads each
     # on its own command position, an open double quote (the quoted-word
@@ -907,6 +915,9 @@ _C52_PS_ROWS = [
     ("ps_piped_remove_carrier_flood", _bash_patterns._PS_PIPED_REMOVE_RE, "-0"),
     ("ps_piped_remove_listing", _bash_patterns._PS_PIPED_REMOVE_RE, "git -C . ls-files |"),
     ("ps_piped_remove_listing_heads", _bash_patterns._PS_PIPED_REMOVE_RE, "git ls-files"),
+    # DEF-3028's sibling: this tool's native verb path behind the carrier,
+    # its separator flood
+    ("ps_piped_remove_backslash_verb_path", _bash_patterns._PS_PIPED_REMOVE_RE, "gci . | xargs a\\"),
     ("ps_git_rm_mv", _bash_patterns._PS_GIT_RM_MV_RE, "git rm"),
     ("ps_compress_archive", _bash_patterns._PS_COMPRESS_ARCHIVE_RE, "Compress-Archive"),
     # the find family on the PowerShell tool (DEF-824): the head with its

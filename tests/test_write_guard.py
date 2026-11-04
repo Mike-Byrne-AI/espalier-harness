@@ -106,13 +106,19 @@ def run_guard_from(
     )
 
 
-def _respelled(fixture: str, verb: str, spelling: str) -> str:
-    """``fixture`` with its verb spelled ``spelling``: the verb's first
-    occurrence, which is the fixture's start for a command-position arm and
-    the enumerator head inside the substitution for the two loop openers it
-    feeds (DEF-3028)."""
+#: The two loop openers a substitution feeds: their roster fixture opens on
+#: the `for` or `while` keyword, and the verb a spelling replaces is the
+#: enumerator head inside the substitution (DEF-3028).
+_INNER_HEAD_ARMS = frozenset({"_FOR_SUBST_REMOVE_RE", "_TAIL_LOOP_REMOVE_RE"})
+
+
+def _respelled(fixture: str, verb: str, spelling: str, *, inner: bool = False) -> str:
+    """``fixture`` with its verb spelled ``spelling``: the fixture's start for
+    a command-position arm (held: a verb's text earlier in a later fixture,
+    `sh` in `bash`, would otherwise be respelled where no command runs), and
+    the first occurrence for an inner head (``inner``, `_INNER_HEAD_ARMS`)."""
     at = fixture.find(verb)
-    assert at >= 0, (verb, fixture)
+    assert at == 0 or (inner and at > 0), (verb, fixture)
     return fixture[:at] + spelling + fixture[at + len(verb):]
 
 
@@ -134,17 +140,27 @@ def _past_the_bump(command: str, tmp_path: Path, run=run_bash_guard) -> subproce
     return result
 
 
+#: The walls a zone-deny row may meet, by their texts in
+#: tools/cc/hooks/_denial_reasons.py: the zone tier's (a write, an effect, a
+#: hardlink alias of a protected file) and the hard tier's, which answers the
+#: catastrophic fixtures first. A bump, the guard failing closed, and every
+#: other deny (a secret-path read, an environment prefix, the kill-switch,
+#: the time budget) are not one.
+_WALL_TEXTS = ("protected harness zone", "protected harness file",
+               "Dangerous command blocked", "Dangerous PowerShell command blocked")
+
+
 def _assert_zone_walled(command: str, tmp_path: Path, run=run_bash_guard) -> None:
-    """The zone wall itself, never an answer that stands in for it: past the
-    speed bump, a deny that is neither a bump nor the guard failing closed
-    on an internal error. Before DEF-3028 and DEF-3029 any deny passed the
-    quoted-verb rosters: on 6 of the Bash roster's 39 fixtures and 5 of the
-    PowerShell roster's every spelling's first deny was the bump, and the
-    four `.exe` rows on the two enumerator arms denied on a `KeyError`."""
+    """A wall, never an answer that stands in for one: past the speed bump,
+    a deny whose reason is one of `_WALL_TEXTS`. Before DEF-3028 and
+    DEF-3029 any deny passed the quoted-verb rosters: on 6 of the Bash
+    roster's 39 fixtures and 5 of the PowerShell roster's every spelling's
+    first deny was the bump, and the four `.exe` rows on the two enumerator
+    arms denied on a `KeyError`."""
     result = _past_the_bump(command, tmp_path, run)
     assert_hook_denied(result)
     reason = _guard_reason(result)
-    assert not reason.startswith("Speed-bump [") and "internal error" not in reason, (command, reason)
+    assert any(text in reason for text in _WALL_TEXTS), (command, reason)
 
 
 class TestTheShellFixturesCarryTheProtectedTree:
@@ -622,6 +638,15 @@ class TestQuotedVerbTailIsUniform:
         bp = _bash_patterns_module()
         assert bp._QUOTED_VERB_TAIL == """["']?"""
 
+    def test_the_quoted_directory_arm_has_one_home(self):
+        # DEF-3028's split: the anchor's prefix and both carriers' verb paths
+        # read the one arm, so an edit to it reaches all three, and an anchor
+        # refactor that inlines it again would leave the carriers on a copy
+        bp = _bash_patterns_module()
+        assert bp._CMD_POS_QUOTED_DIR in bp._CMD_POS_VERB_PREFIX
+        assert bp._CMD_POS_QUOTED_DIR in bp._NATIVE_VERB_PATH
+        assert bp._CMD_POS_QUOTED_DIR in bp._PS_NATIVE_VERB_PATH
+
     @pytest.mark.parametrize("quote", ['"', "'"])
     @pytest.mark.parametrize("arm", sorted(k for k, v in _FIXTURES.items() if v))
     def test_a_quoted_verb_denies_like_the_bare_verb(self, tmp_path, arm, quote):
@@ -630,7 +655,7 @@ class TestQuotedVerbTailIsUniform:
         # the disk whether that directory is there (DEF-509)
         (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True, exist_ok=True)
         _assert_zone_walled(bare, tmp_path)   # the bare control
-        _assert_zone_walled(_respelled(bare, verb, quote + verb + quote), tmp_path)
+        _assert_zone_walled(_respelled(bare, verb, quote + verb + quote, inner=arm in _INNER_HEAD_ARMS), tmp_path)
 
     #: DEF-3028: the inner head at a command position beyond the quote pair
     #: the roster walks -- `$'...'`, a leading backslash, a directory prefix
@@ -644,7 +669,19 @@ class TestQuotedVerbTailIsUniform:
     @pytest.mark.parametrize("arm", ["_LOOP_REMOVE_RE", "_FOR_SUBST_REMOVE_RE", "_TAIL_LOOP_REMOVE_RE"])
     def test_a_prefixed_enumerator_head_denies_like_the_bare_head(self, tmp_path, arm, spelling):
         verb, bare = self._FIXTURES[arm]
-        _assert_zone_walled(_respelled(bare, verb, spelling), tmp_path)
+        _assert_zone_walled(_respelled(bare, verb, spelling, inner=arm in _INNER_HEAD_ARMS), tmp_path)
+
+    #: The other substitution spelling each opener takes: backticks for the
+    #: for loop, a here-string of a substitution for the read loop.
+    _OTHER_SUBSTITUTION_FORMS = [
+        'for f in `find tools/cc/hooks`; do rm -rf "$f"; done',
+        'while read f; do rm -rf "$f"; done <<< "$(find tools/cc/hooks)"',
+    ]
+
+    @pytest.mark.parametrize("spelling", ["find", '"find"', "/usr/bin/find", "command find", "LC_ALL=C find"])
+    @pytest.mark.parametrize("form", _OTHER_SUBSTITUTION_FORMS, ids=["backtick", "here-string"])
+    def test_a_prefixed_head_in_the_other_substitution_form_denies(self, tmp_path, form, spelling):
+        _assert_zone_walled(_respelled(form, "find", spelling, inner=True), tmp_path)
 
     @pytest.mark.parametrize("spelling", ['"find"', "'ls'", "/usr/bin/find", "command find"])
     @pytest.mark.parametrize("arm", ["_FOR_SUBST_REMOVE_RE", "_TAIL_LOOP_REMOVE_RE"])
@@ -655,17 +692,19 @@ class TestQuotedVerbTailIsUniform:
         verb, bare = self._FIXTURES[arm]
         (tmp_path / "build").mkdir()
         head = spelling.strip("'\"").rsplit("/", 1)[-1].split()[-1]
-        command = _respelled(bare.replace("tools/cc/hooks", "build"), verb, spelling)
+        command = _respelled(bare.replace("tools/cc/hooks", "build"), verb, spelling, inner=True)
         assert_hook_allowed(_past_the_bump(command, tmp_path))
-        assert_hook_allowed(_past_the_bump(_respelled(bare.replace("tools/cc/hooks", "build"), verb, head),
-                                           tmp_path))
+        assert_hook_allowed(_past_the_bump(
+            _respelled(bare.replace("tools/cc/hooks", "build"), verb, head, inner=True), tmp_path))
 
     #: DEF-3028's sibling site (the dispatcher's ruling a39c61): the remove
     #: verb behind `-exec`, behind the xargs carrier and in a loop body
     #: (`_bash_patterns._FIND_EXEC_VERB`) took a quote and an unquoted path,
-    #: so `$'rm'` and a quoted path holding a space reached no zone deny; it
-    #: now also reads the command-position prefix (`_CMD_POS_VERB_PREFIX`).
-    #: `~/bin/rm` is the broad path arm it keeps, which that prefix lacks.
+    #: so `$'rm'`, a quoted path holding a blank and an escaped blank reached
+    #: no zone deny; it now reads the one home's quoted-directory arm, an
+    #: ANSI-C quote and an escaped character (`_NATIVE_VERB_PATH`, not the
+    #: anchor's whole prefix). The home-relative spellings are the unquoted
+    #: arm's, which that prefix lacks (DEF-3030).
     _REMOVE_VERB_SHAPES = [
         "find {root} -exec {v} -rf {{}} +",
         "find {root} | xargs {v} -rf",
@@ -674,9 +713,12 @@ class TestQuotedVerbTailIsUniform:
     ]
     _REMOVE_VERB_IDS = ["exec", "xargs", "for-body", "read-body"]
 
-    @pytest.mark.parametrize("spelling", ["rm", "$'rm'", '"/opt/my tools/rm"', "~/bin/rm", '"/bin/rm"'])
+    @pytest.mark.parametrize("spelling", [
+        "rm", "$'rm'", '"/opt/my tools/rm"', "/opt/my\\ tools/rm", '"/bin/rm"',
+        "~/bin/rm", "$HOME/bin/rm", "${HOME}/bin/rm",
+    ])
     @pytest.mark.parametrize("shape", _REMOVE_VERB_SHAPES, ids=_REMOVE_VERB_IDS)
-    def test_the_remove_verb_behind_an_enumerator_reads_the_command_position_prefix(
+    def test_the_remove_verb_behind_an_enumerator_reads_a_quoted_or_escaped_path(
             self, tmp_path, shape, spelling):
         _assert_zone_walled(shape.format(root="tools/cc/hooks", v=spelling), tmp_path)
 
@@ -726,7 +768,8 @@ class TestQuotedVerbTailIsUniform:
         assert own == set(self._SPEEDBUMP_FIXTURES), (
             "a `_speedbump` arm anchored on _CMD_POS has no entry in this class's "
             "`_SPEEDBUMP_FIXTURES` (verb, bare fixture, its checkpoint's reader; not "
-            "`_FIXTURES`, which expects a hook deny a speed bump never gives), or an "
+            "`_FIXTURES`, which expects a wall past the bump, where a speed bump denies once and "
+            "lets the re-issue through), or an "
             f"entry names a retired arm: {sorted(own ^ set(self._SPEEDBUMP_FIXTURES))}"
         )
 
@@ -769,7 +812,10 @@ class TestBinaryVerbSpellingIsUniform:
     """
 
     #: Builtins and keywords bash matches case-sensitively; never spelled
-    #: case-blind (each pinned below, with the must-deny twin).
+    #: case-blind (each pinned below, with the must-deny twin). The two loop
+    #: openers a substitution feeds are here by their keyword; the enumerator
+    #: head inside the substitution is a binary, walked case-blind by the
+    #: binary test below (DEF-3028), so those two sit in both.
     _CASE_SENSITIVE_BY_DESIGN = frozenset({
         "_DIR_VERB_RE", "_MKDIR_RE",
         "_FOR_SUBST_REMOVE_RE", "_TAIL_LOOP_REMOVE_RE", "_FOR_WORDS_REMOVE_RE",
@@ -798,6 +844,10 @@ class TestBinaryVerbSpellingIsUniform:
         assert set(fixtures) == walked | self._CASE_SENSITIVE_BY_DESIGN, sorted(
             set(fixtures) ^ (walked | self._CASE_SENSITIVE_BY_DESIGN))
         assert not walked & self._CASE_SENSITIVE_BY_DESIGN
+        # the inner-head arms keep their keyword pin and carry a fixture the
+        # binary test walks
+        assert _INNER_HEAD_ARMS <= self._CASE_SENSITIVE_BY_DESIGN
+        assert fixtures["_FOR_SUBST_REMOVE_RE"] and fixtures["_TAIL_LOOP_REMOVE_RE"]
 
     @pytest.mark.parametrize("spelling", [0, 1, 2], ids=["suffix", "upper", "mixed-suffix"])
     @pytest.mark.parametrize("arm", sorted(
@@ -809,7 +859,8 @@ class TestBinaryVerbSpellingIsUniform:
         verb, bare = TestQuotedVerbTailIsUniform._FIXTURES[arm]
         (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True, exist_ok=True)
         _assert_zone_walled(bare, tmp_path)   # the bare control
-        _assert_zone_walled(_respelled(bare, verb, self._spellings(verb)[spelling]), tmp_path)
+        _assert_zone_walled(
+            _respelled(bare, verb, self._spellings(verb)[spelling], inner=arm in _INNER_HEAD_ARMS), tmp_path)
 
     @pytest.mark.parametrize("arm", sorted(_PATTERN_SAMPLES))
     def test_a_read_arm_takes_every_spelling_at_the_pattern(self, arm):
@@ -824,9 +875,17 @@ class TestBinaryVerbSpellingIsUniform:
     @pytest.mark.parametrize("arm", sorted(_CASE_SENSITIVE_BY_DESIGN - {"_MKDIR_RE"}))
     def test_a_builtin_or_keyword_arm_stays_case_sensitive(self, arm):
         bp = _bash_patterns_module()
-        upper = {"_DIR_VERB_RE": "CD /tmp", "_FOR_SUBST_REMOVE_RE": "FOR f in $(ls); do rm $f; done",
-                 "_TAIL_LOOP_REMOVE_RE": "WHILE read f; do rm $f; done",
-                 "_FOR_WORDS_REMOVE_RE": "FOR f in a b; do rm $f; done"}[arm]
+        # each upper-case keyword beside its lower-case twin, which must match:
+        # a pin whose twin the arm could never read proves nothing (the read
+        # loop's had no feed until DEF-3028's review)
+        upper, lower = {
+            "_DIR_VERB_RE": ("CD /tmp", "cd /tmp"),
+            "_FOR_SUBST_REMOVE_RE": ("FOR f in $(ls); do rm $f; done", "for f in $(ls); do rm $f; done"),
+            "_TAIL_LOOP_REMOVE_RE": ("WHILE read f; do rm $f; done < <(ls)",
+                                     "while read f; do rm $f; done < <(ls)"),
+            "_FOR_WORDS_REMOVE_RE": ("FOR f in a b; do rm $f; done", "for f in a b; do rm $f; done"),
+        }[arm]
+        assert getattr(bp, arm).search(lower), (arm, lower)
         assert getattr(bp, arm).search(upper) is None, (arm, upper)
 
     def test_the_carrier_opener_reads_eval_case_sensitively(self):
@@ -1044,11 +1103,12 @@ class TestPowerShellQuotedVerbBehindTheCallOperator:
 
     #: DEF-3028's sibling on this tool: the native remove verb behind the
     #: xargs carrier (`_bash_patterns._PS_PIPE_CARRIER`) took an unquoted
-    #: path or a quote, so a quoted path with a space -- Git for Windows'
-    #: own install path among them -- reached no zone deny.
+    #: path ending in `/` or a quote, so a quoted path with a space -- Git
+    #: for Windows' own install path among them -- and an unquoted path with
+    #: this tool's separator (an msys install) reached no zone deny.
     @pytest.mark.parametrize("spelling", [
         "rm", '"/opt/my tools/rm"', '"C:/Program Files/Git/usr/bin/rm.exe"',
-        '"C:\\Program Files\\Git\\usr\\bin\\rm.exe"',
+        '"C:\\Program Files\\Git\\usr\\bin\\rm.exe"', "C:\\msys64\\usr\\bin\\rm.exe",
     ])
     def test_the_native_remove_verb_behind_the_carrier_reads_a_spaced_path(self, tmp_path, spelling):
         (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True, exist_ok=True)
@@ -1089,7 +1149,8 @@ class TestPowerShellQuotedVerbBehindTheCallOperator:
         assert own == set(self._SPEEDBUMP_FIXTURES), (
             "a `_speedbump` arm anchored on _PS_CMD_POS has no entry in this class's "
             "`_SPEEDBUMP_FIXTURES` (verb, bare fixture, its checkpoint's reader; not "
-            "`_FIXTURES`, which expects a hook deny a speed bump never gives), or an "
+            "`_FIXTURES`, which expects a wall past the bump, where a speed bump denies once and "
+            "lets the re-issue through), or an "
             f"entry names a retired arm: {sorted(own ^ set(self._SPEEDBUMP_FIXTURES))}"
         )
 
@@ -1288,7 +1349,8 @@ class TestDiscoveredCommandHead:
         verb, bare = TestQuotedVerbTailIsUniform._FIXTURES[arm]
         (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True, exist_ok=True)
         _assert_zone_walled(bare, tmp_path)   # the bare control
-        _assert_zone_walled(_respelled(bare, verb, "$(which " + verb + ")"), tmp_path)
+        _assert_zone_walled(
+            _respelled(bare, verb, "$(which " + verb + ")", inner=arm in _INNER_HEAD_ARMS), tmp_path)
 
     def test_the_masker_alone_does_not_resolve(self):
         """The home, pinned in both directions: the splicer resolves, the

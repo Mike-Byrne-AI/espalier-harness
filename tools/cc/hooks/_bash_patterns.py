@@ -265,7 +265,10 @@ _CMD_POS_SEP = r"[;&|\n\r(){}`]"
 _CMD_POS_WS = r"[ \t\r\v\f]*"
 #: The quoted-directory arm, named so the native remove verb behind a
 #: carrier reads it from here (`_NATIVE_VERB_PATH`, DEF-3028's sibling);
-#: the composed prefix is byte-identical to the one it replaced.
+#: the composed prefix is byte-identical to the one it replaced. It fronts
+#: every `_CMD_POS` consumer and `_speedbump`'s fetch target as well, so an
+#: edit made for the carriers widens all of them (its composition is pinned
+#: in tests/test_write_guard.py::TestQuotedVerbTailIsUniform).
 _CMD_POS_QUOTED_DIR = r"[\"'][^\"'\n]{0,256}[/\\]"
 _CMD_POS_VERB_PREFIX = (
     r"\\?\$?(?:" + _CMD_POS_QUOTED_DIR
@@ -954,24 +957,31 @@ _FIND_DELETE_RE = re.compile(
     _CMD_POS + r"\b" + r"(?i:find)" + _EXE_SUFFIX + r"\b(?!=)" + _QUOTED_VERB_TAIL + r"[ \t]+([^|;&\n]{0,512})",
     re.IGNORECASE,
 )
+#: The path before a native remove verb behind a carrier (`_FIND_EXEC_VERB`
+#: below: find's exec action, the xargs carrier, a loop body; and the
+#: PowerShell carrier): the one home's quoted-directory arm
+#: (`_CMD_POS_QUOTED_DIR`, a quoted path that holds a blank or a backslash)
+#: beside an unquoted run, each tool's own. On Bash a backslash escapes the
+#: next character (an escaped blank stays in the path) and the run ends at
+#: `/`; on PowerShell a backslash is a separator and the run ends at either.
+#: The unquoted run reads `~/bin/` and `${HOME}/bin/`, which
+#: `_CMD_POS_VERB_PREFIX` itself does not (DEF-3030). Not the anchor's whole
+#: prefix: a union with it scanned a run of separators twice and doubled the
+#: PowerShell carrier's linear cost on a 30 KB slash run (98 to 202 ms); the
+#: arms here part on their first character. Until DEF-3028's sibling sweep
+#: (the dispatcher's ruling 20261103T223033Z-air-a39c61) `$'rm'`, a quoted
+#: path with a blank and an escaped blank here, and Git for Windows' quoted
+#: or msys `rm.exe` path behind the PowerShell carrier, drew no zone deny
+#: where the bare verb drew the wall.
+_NATIVE_VERB_PATH = (
+    r"(?:" + _CMD_POS_QUOTED_DIR + r"""|["']?\\?(?:(?:[^\s;|&"'\\]|\\.)*/)?)"""
+)
+_PS_NATIVE_VERB_PATH = r"(?:" + _CMD_POS_QUOTED_DIR + r"""|["']?(?:[^\s;|&"']*[/\\])?)"""
 #: The remove verb behind `-exec`, spelled as the rm arm's tokenizer admits
 #: it (DEF-815's review): behind a wrapper word, a directory prefix, a
 #: leading backslash or a quote -- `-exec /bin/rm`, `-exec env rm`, `-exec
-#: \rm` and `-exec 'rm'` all run rm. The wrapper run is bounded, the prefix
-#: run is on the bounded separator class and must end in `/`.
-#:
-#: The path before a native remove verb behind a carrier (this one, the
-#: xargs carrier, a loop body, and the PowerShell carrier): the one home's
-#: quoted-directory arm (`_CMD_POS_QUOTED_DIR`, a quoted path that holds a
-#: blank or a backslash) beside the unquoted run this verb always took
-#: (`~/bin/`, `${HOME}/bin/`, which `_CMD_POS_VERB_PREFIX` itself lacks).
-#: The arms part on their first character for an unquoted path, so a run of
-#: separators is scanned once. On the Bash tool an ANSI-C quote (`$'rm'`)
-#: leads it. Until DEF-3028's sibling sweep (the dispatcher's ruling
-#: 20261103T223033Z-air-a39c61) `$'rm'` and `"/opt/my tools/rm"` here, and
-#: Git for Windows' quoted `rm.exe` path behind the PowerShell carrier, drew
-#: no zone deny where the bare verb drew the wall.
-_NATIVE_VERB_PATH = r"(?:" + _CMD_POS_QUOTED_DIR + r"""|["']?\\?(?:[^\s;|&"']*/)?)"""
+#: \rm` and `-exec 'rm'` all run rm -- and an ANSI-C quote. The wrapper run
+#: is bounded, the path is `_NATIVE_VERB_PATH`'s.
 _FIND_EXEC_VERB = (
     r"(?:(?:env|sudo|command|nice|nohup|busybox|doas)[ \t]+){0,3}"
     r"\$?" + _NATIVE_VERB_PATH + r"(?:rm|unlink|rmdir|shred|mv)\b"
@@ -9647,7 +9657,7 @@ _PS_ENUMERATE_VERB = r"(?:Get-ChildItem|gci|ls|dir|Get-Item|gi|find)"
 _PS_PIPE_CARRIER = (
     r"(?P<carrier>(?:" + _CMD_POS_WRAP_RUN + r")?\bxargs\b(?!=)" + _XARGS_SWITCH_RUN
     + r"[ \t]+(?:(?:env|sudo|command|nice|nohup|busybox|doas)[ \t]+){0,3}"
-    + _NATIVE_VERB_PATH + r")"
+    + _PS_NATIVE_VERB_PATH + r")"
 )
 #: The remove stage behind the pipe: the carrier and then a verb from the
 #: UNION of the cmdlet roster and the find arm's `-exec` roster (`unlink`,
