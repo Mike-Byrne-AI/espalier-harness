@@ -1538,6 +1538,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # it plants: whether a child deletes another session's dir is the
             # child's own session end, so no in-process stand-in reaches it.
             "test_nested_temp",
+            # Reads a filled spaced path back through real bash and pwsh: the
+            # shells are the oracle for what the quoter means (DEF-5082).
+            "test_spaced_paths",
         ),
         "integration",
     ),

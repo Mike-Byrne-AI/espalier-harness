@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4095",
+ "subject": "tests/test_write_guard.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "measured by a run, not a predicate: ten files at four workers under TMPDIR='.../axis tmp' red 136 at this head against 0 under a plain TMPDIR; no predicate over the fixtures separates its four shapes, and a nested pytest probe would run inside the ledger's probe run",
+ "row_sha": "b37a286bc7ff",
+ "text_sha": "830aad28d4b9",
+ "verified_2026_11_04": "OPEN (filed 2026-11-04; probe driven at filing)"
+}

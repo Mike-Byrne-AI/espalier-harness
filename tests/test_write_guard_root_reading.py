@@ -28,6 +28,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._spaced_paths import skip_unless_plain
+
 HOOKS_DIR = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
 if str(HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(HOOKS_DIR))
@@ -178,6 +180,11 @@ class TestDriveLetterBinding:
 
     @staticmethod
     def _bound(style: str, target: Path, ref: str) -> str:
+        # a bare binding or reference is the row's point: under a spaced
+        # root the shell splits it, so the row skips saying so, and the
+        # always-spaced class below pins the split (DEF-5082)
+        if style == "{}" or ref == "$d":
+            skip_unless_plain(target, "an unquoted binding or reference, on purpose")
         return f"d={style.format(target.as_posix())}; rm -rf {ref}"
 
     @pytest.mark.parametrize("ref", ['"$d"', "$d"])
@@ -204,6 +211,37 @@ class TestDriveLetterBinding:
         cmd = self._bound(style, scratch / "sp", ref)
         assert not _speedbump._pred_rmrf("Bash", {"command": cmd}, repo), cmd
         assert not _bash_patterns.has_catastrophic_recursive_rm(cmd, str(repo), cwd=repo), cmd
+
+
+class TestASpacedBindingCarriesWholeOnlyWhenQuoted:
+    """DEF-5082: the binding rows above, on a checkout whose path holds a
+    space on EVERY host (``tmp_path / "with space"``). A quoted binding read
+    through the quoted reference carries the checkout whole, so the wall reads
+    it; a bare binding or a bare reference is split by the shell at the blank
+    (DEF-1016's reading), so the wall does not read the checkout in it -- the
+    verdict the shell reaches, which the rows above skip under a spaced root
+    rather than assert as theirs."""
+
+    @pytest.fixture
+    def spaced_env(self, tmp_path, monkeypatch):
+        base = tmp_path / "with space"
+        scratch, repo = base / "scratch", base / "repo"
+        for d in (scratch / "sp", repo / "cc"):
+            d.mkdir(parents=True)
+        for var in ("TEMP", "TMP", "TMPDIR"):
+            monkeypatch.setenv(var, str(scratch))
+        return repo
+
+    @pytest.mark.parametrize("style", ['"{}"', "'{}'"])
+    def test_the_quoted_binding_carries_the_checkout_whole(self, spaced_env, style):
+        cmd = f'd={style.format(spaced_env.as_posix())}; rm -rf "$d"'
+        assert " " in cmd and _bash_patterns.has_catastrophic_recursive_rm(cmd, str(spaced_env), cwd=spaced_env), cmd
+
+    @pytest.mark.parametrize("style, ref", [("{}", '"$d"'), ("{}", "$d"), ('"{}"', "$d"), ("'{}'", "$d")])
+    def test_a_bare_binding_or_reference_is_split_so_the_wall_does_not_read_the_checkout(
+            self, spaced_env, style, ref):
+        cmd = f"d={style.format(spaced_env.as_posix())}; rm -rf {ref}"
+        assert not _bash_patterns.has_catastrophic_recursive_rm(cmd, str(spaced_env), cwd=spaced_env), cmd
 
 
 class TestDriveDepthParity:

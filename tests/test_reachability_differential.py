@@ -31,6 +31,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._spaced_paths import quoted, skip_unless_plain
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "bench" / "reachability_differential.py"
 
@@ -76,7 +78,7 @@ class TestRefusesToExecuteAnythingUnconfined:
     def test_accepts_a_properly_confined_command(self, rd, tmp_path):
         victim = tmp_path / "victim"
         victim.mkdir()
-        rd.assert_safe_to_execute(f"rm -rf {victim}", victim, tmp_path)
+        rd.assert_safe_to_execute(f"rm -rf {quoted(str(victim))}", victim, tmp_path)
 
     def test_refuses_an_unsubstituted_placeholder(self, rd, tmp_path):
         """The catastrophic case: substitution silently did not happen."""
@@ -108,7 +110,7 @@ class TestRefusesToExecuteAnythingUnconfined:
         """
         victim = tmp_path / "victim"
         victim.mkdir()
-        cmd = f"rm -rf {victim}; rm -rf {operand}"
+        cmd = f"rm -rf {quoted(str(victim))}; rm -rf {operand}"
         with pytest.raises(rd.UnsafeToExecute, match="catastrophic operand"):
             rd.assert_safe_to_execute(cmd, victim, tmp_path)
 
@@ -128,7 +130,7 @@ class TestRefusesToExecuteAnythingUnconfined:
         victim.mkdir()
         with pytest.raises(rd.UnsafeToExecute, match="operand"):
             rd.assert_safe_to_execute(
-                f"rm -rf {victim} {trailing}", victim, tmp_path)
+                f"rm -rf {quoted(str(victim))} {trailing}", victim, tmp_path)
 
     def test_an_inert_quoted_delete_is_still_accepted(self, rd, tmp_path):
         """The calibration twin. A quoted delete lexes to ONE token, so it is not
@@ -137,7 +139,7 @@ class TestRefusesToExecuteAnythingUnconfined:
         victim = tmp_path / "victim"
         victim.mkdir()
         rd.assert_safe_to_execute(
-            f"echo 'rm -rf /' ; rm -rf {victim}", victim, tmp_path)
+            f"echo 'rm -rf /' ; rm -rf {quoted(str(victim))}", victim, tmp_path)
 
     def test_a_heredoc_terminator_is_not_read_as_an_operand(self, rd, tmp_path):
         """The other calibration twin: a bare trailing word resolves against the
@@ -145,7 +147,7 @@ class TestRefusesToExecuteAnythingUnconfined:
         victim = tmp_path / "victim"
         victim.mkdir()
         rd.assert_safe_to_execute(
-            f"cat <<'EOF' | bash\nrm -rf {victim}\nEOF", victim, tmp_path)
+            f"cat <<'EOF' | bash\nrm -rf {quoted(str(victim))}\nEOF", victim, tmp_path)
 
     def test_every_body_template_carries_the_placeholder(self, rd):
         """A body without the placeholder would be executed verbatim; a body
@@ -179,7 +181,7 @@ class TestRefusesToExecuteAnythingUnconfined:
         assert Path(env[rd._ITEM]).resolve().relative_to(tmp_path.resolve())
         victim = tmp_path / "victim"
         victim.mkdir()
-        rd.assert_safe_to_execute(f'rm -rf {victim} "${rd._ITEM}"', victim, tmp_path, env=env)
+        rd.assert_safe_to_execute(f'rm -rf {quoted(str(victim))} "${rd._ITEM}"', victim, tmp_path, env=env)
 
     def test_refuses_an_expansion_the_environment_does_not_bind(self, rd, tmp_path):
         """The must-trip twin of condition (6): the binding absent, empty, or
@@ -189,19 +191,19 @@ class TestRefusesToExecuteAnythingUnconfined:
         missing."""
         victim = tmp_path / "victim"
         victim.mkdir()
-        cmd = f'rm -rf {victim} "${rd._ITEM}"'
+        cmd = f'rm -rf {quoted(str(victim))} "${rd._ITEM}"'
         with pytest.raises(rd.UnsafeToExecute, match="unbound parameter expansion"):
             rd.assert_safe_to_execute(cmd, victim, tmp_path)
         with pytest.raises(rd.UnsafeToExecute, match="unbound parameter expansion"):
             rd.assert_safe_to_execute(cmd, victim, tmp_path, env={})
         with pytest.raises(rd.UnsafeToExecute, match="bound outside sandbox"):
             rd.assert_safe_to_execute(cmd, victim, tmp_path, env={rd._ITEM: "/"})
-        braced = f'rm -rf {victim} "${{{rd._ITEM}}}"'
+        braced = f'rm -rf {quoted(str(victim))} "${{{rd._ITEM}}}"'
         with pytest.raises(rd.UnsafeToExecute, match="unbound parameter expansion"):
             rd.assert_safe_to_execute(braced, victim, tmp_path, env={})
         # the calibration twin: an expansion that is no delete's operand (the
         # git rows probe their environment so) is the shell's, not this check's
-        rd.assert_safe_to_execute(f'[ -z "$GIT_DIR" ] && rm -rf {victim}', victim, tmp_path, env={})
+        rd.assert_safe_to_execute(f'[ -z "$GIT_DIR" ] && rm -rf {quoted(str(victim))}', victim, tmp_path, env={})
 
     @_NEEDS_REAL_BASH_DEFERRED
     def test_an_inherited_git_variable_does_not_reach_the_row(self, rd, monkeypatch):
@@ -262,6 +264,9 @@ class TestRefusesToExecuteAnythingUnconfined:
         before = count()
         deep = outer / "deep"
         deep.mkdir()
+        # the differential substitutes its victim bare, so under a spaced
+        # sandbox its own ceiling refuses every row (DEF-4093)
+        skip_unless_plain(deep, "DEF-4093: the differential's bare victim substitution")
         # `tempfile` caches its directory on first use, so the env var alone
         # would not move the sandbox; the cache is the thing to point.
         monkeypatch.setattr(tempfile, "tempdir", str(deep))

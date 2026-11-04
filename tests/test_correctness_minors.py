@@ -229,7 +229,7 @@ class TestOsErrorText:
         expected = str(exc)
         for raw in (exc.filename, exc.filename2):
             if raw is not None:
-                expected = expected.replace(repr(raw), str(raw))
+                expected = expected.replace(repr(raw), quoted_if_spaced(str(raw)))
         assert os_error_text(exc) == expected
 
     def test_a_spaced_path_is_quoted_once(self):

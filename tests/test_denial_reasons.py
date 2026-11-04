@@ -46,6 +46,7 @@ from espalier import cli, managed_inventory
 # tests/ sibling helper -- the shared cross-document pointer matchers.
 from _doc_pointers import section_citations
 from tests._live_tree import checkout_glob, checkout_rglob
+from tests._spaced_paths import PS, SH, fill, quoted
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -974,10 +975,16 @@ class TestDangerousBashPlainEnglish:
             for t, want in overrides.items()
         })
         judge = _claims_judge(classifier)
+        # the targets under tmp_path go into the text as a shell takes them,
+        # quoted only when spaced (DEF-5082); the PowerShell tool's readers
+        # take the wildcard inside the quotes, the Bash tool's outside
+        shell = PS if classifier in (
+            "powershell_recursive_removal_is_catastrophic", "has_catastrophic_ps_sweep",
+            _FORCED_REMOVE_TIER) else SH
         wrong = {
             target: got
             for target, want in claims.items()
-            if (got := judge(spelling.format(t=target), str(repo))) != want
+            if (got := judge(fill(spelling, "{t}", target, shell), str(repo))) != want
         }
         assert not wrong, f"the text's claims and the classifier disagree: {wrong}"
         # §C65: the drive rows. Their repo sits one level under a drive root,
@@ -1015,12 +1022,12 @@ class TestDangerousBashPlainEnglish:
             # placed before the action narrows; placed after, negated, or
             # under an -o it does not; an attribute test never does
             for command, want in (
-                ("find " + repo.as_posix() + " -name '*.pyc' -delete", False),
-                ("find " + repo.as_posix() + " -delete -name '*.pyc'", True),
-                ("find " + repo.as_posix() + " ! -name '*.pyc' -delete", True),
-                ("find " + repo.as_posix() + " -name '*.pyc' -o -delete", True),
-                ("find " + repo.as_posix() + " -type f -delete", True),
-                ("find " + repo.as_posix() + " -size +0c -delete", True),
+                ("find " + quoted(repo.as_posix()) + " -name '*.pyc' -delete", False),
+                ("find " + quoted(repo.as_posix()) + " -delete -name '*.pyc'", True),
+                ("find " + quoted(repo.as_posix()) + " ! -name '*.pyc' -delete", True),
+                ("find " + quoted(repo.as_posix()) + " -name '*.pyc' -o -delete", True),
+                ("find " + quoted(repo.as_posix()) + " -type f -delete", True),
+                ("find " + quoted(repo.as_posix()) + " -size +0c -delete", True),
             ):
                 assert judge(command, str(repo)) is want, command
         # DEF-790: the text also says a relative target is read from the
