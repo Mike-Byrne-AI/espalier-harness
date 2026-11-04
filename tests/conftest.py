@@ -1460,6 +1460,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # build_adopter_tree at each depth: a real `git init` + commit, and
             # `init` + `install-ci` once per adopter stack.
             "test_stack_trees",
+            # init, install-ci, doctor and upgrade as subprocesses on a dirty
+            # machine's tree and a clean one (the adopter-axes pack's 3-C).
+            "test_dirty_machine_install",
             # Drives scripts/fresh_clone_gate.py end to end on a scratch
             # repository: a real `git clone`, a real venv, a stub tier that
             # records the environment it saw -- the gate's own controls are
@@ -1842,6 +1845,10 @@ _SLOW_FILES: set[str] = {
     # `git init` + commit per depth case, and `init` + `install-ci` once per
     # adopter stack (five trees, about 5 s each on the Windows host).
     "test_stack_trees",
+    # Two trees, a dirty machine's and a clean one: init, install-ci, doctor,
+    # upgrade twice and doctor again on each, and on the dirty one the remedy
+    # init prints (six verb runs and seven).
+    "test_dirty_machine_install",
     # `init` on a Node tree and a Python one, then the deployed /preflight
     # fences under a real bash, a few interpreter starts each.
     "test_node_adopter_defaults",
