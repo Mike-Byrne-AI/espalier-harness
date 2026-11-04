@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4097",
+ "subject": "tests/_axis_registry.py",
+ "cmd": "python3 -c \"import ast;t=ast.parse(open(\\\"tests/_axis_registry.py\\\",encoding=\\\"utf-8\\\").read());print(any(isinstance(n,ast.Call) and getattr(n.func,\\\"id\\\",\\\"\\\")==\\\"Instrument\\\" and any(isinstance(e,ast.Constant) and e.value==\\\"test.yml::perturbed\\\" for e in ast.walk(n.args[1])) and \\\"parallel leg\\\" in n.args[0].value for n in ast.walk(t)))\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "38696e907175",
+ "text_sha": "7d94d0bef9b2",
+ "verified_2026_11_04": "OPEN (filed 2026-11-04; probe driven at filing here and in the export of HEAD 691fce00a8f3)"
+}
