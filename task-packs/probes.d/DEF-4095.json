@@ -4,7 +4,7 @@
  "cmd": null,
  "open_value": null,
  "why_not": "measured by a run, not a predicate: ten files at four workers under TMPDIR='.../axis tmp' red 136 at this head against 0 under a plain TMPDIR; no predicate over the fixtures separates its four shapes, and a nested pytest probe would run inside the ledger's probe run",
- "row_sha": "b37a286bc7ff",
- "text_sha": "830aad28d4b9",
- "verified_2026_11_04": "OPEN (filed 2026-11-04; probe driven at filing)"
+ "row_sha": "61590a5b04d6",
+ "text_sha": "cc4378d79ed3",
+ "verified_2026_11_04": "STILL_OPEN (re-pinned value unchanged on 2026-11-04: cite the plain-root-only skip by its reason text beside the test the row names, not a bare line number: the anchor ratchet retires path:NN) [changed: text]"
 }
