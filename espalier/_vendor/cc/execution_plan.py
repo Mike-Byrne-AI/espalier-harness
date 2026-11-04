@@ -273,9 +273,10 @@ _STEP_ID_RE = re.compile(r"\b[A-Z][A-Z0-9]*-[0-9]+[a-z]?\b")
 
 
 def _step_fields(steps: str) -> tuple[list[str], list[str]]:
-    """``(paths, classes)`` named by a plan's step text: the first token of
-    each comma-separated entry, kept when it looks like a path (a slash or a
-    dot) or a class id; a note in parentheses is not an entry."""
+    """``(paths, classes)`` named by a plan's step text: each comma-separated
+    entry as ``_field_entries`` reads it (its first token, or the whole of a
+    quoted one), kept when it looks like a path (a slash or a dot) or a class
+    id; a note in parentheses is not an entry."""
     paths: list[str] = []
     classes: list[str] = []
     for kind, tok in _step_entries(steps):
@@ -287,18 +288,61 @@ def _step_fields(steps: str) -> tuple[list[str], list[str]]:
     return paths, classes
 
 
+#: The marks an entry may open with, read whole to the matching close: a path
+#: holding a space (or a comma, or a parenthesis) is one entry quoted and two
+#: words bare.
+_ENTRY_MARKS = "`'\""
+
+
 def _field_entries(value: str) -> list[str]:
     """The entries of one field's value: the first token of each
-    comma-separated entry, quotes and backticks stripped; a note in
-    parentheses, commas and all, is not an entry (nor a call's parentheses
-    after a symbol, `path::f()`)."""
-    value = re.sub(r"\([^)]*\)", " ", value)
+    comma-separated entry, quotes and backticks stripped. An entry that
+    opens with a quote or a backtick is read whole to its closing mark, so a
+    path holding a space, a parenthesis or a comma, quoted as its author
+    types it under such a directory (`"/x/with space/a.py::f"`), is one
+    entry and not its first word; a `::name` glued to the closing mark
+    (`"/x/with space/a.py"::f`, the shell's way of quoting) is part of the
+    entry, any other text after the mark is dropped, and an unterminated
+    mark keeps the first-word reading. A note in parentheses, commas and
+    all, is not an entry (nor a call's parentheses after a symbol,
+    `path::f()`)."""
     out: list[str] = []
-    for entry in value.split(","):
-        tok = entry.strip().strip("`'\"").split(" ")[0].strip().strip("`'\"")
+    i, n = 0, len(value)
+    while i <= n:
+        while i < n and value[i].isspace():
+            i += 1
+        close = value.find(value[i], i + 1) if i < n and value[i] in _ENTRY_MARKS else -1
+        if close > 0:
+            end = _entry_end(value, close + 1)
+            tail = re.sub(r"\([^)]*\)", " ", value[close + 1:end])
+            tok = value[i + 1:close].strip()
+            if tail.startswith("::"):
+                tok += tail.split()[0].strip(_ENTRY_MARKS)
+        else:
+            end = _entry_end(value, i)
+            entry = re.sub(r"\([^)]*\)", " ", value[i:end])
+            tok = entry.strip().strip(_ENTRY_MARKS).split(" ")[0].strip().strip(_ENTRY_MARKS)
         if tok and not tok.startswith("("):
             out.append(tok)
+        i = end + 1
     return out
+
+
+def _entry_end(value: str, start: int) -> int:
+    """The index of the comma that ends the entry starting at ``start``, a
+    comma inside a closed pair of parentheses (a note) left alone; the
+    value's end where none does."""
+    i, n = start, len(value)
+    while i < n:
+        if value[i] == ",":
+            return i
+        if value[i] == "(":
+            close = value.find(")", i + 1)
+            if close > 0:
+                i = close + 1
+                continue
+        i += 1
+    return n
 
 
 def _step_entries(steps: str) -> list[tuple[str, str]]:

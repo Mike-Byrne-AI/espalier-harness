@@ -49,7 +49,7 @@ For one bounded change, one main proof path, or a small localized edit.
 
 2. **Present plan and wait for approval.** List what changes, in what order, and what test proves each change.
 
-3. **Create a one-step execution plan** (after approval, before source writes; `create` warns on stderr when a step's `files:` meet another machine's live claim on the mail channel -- advisory, `/inbox` has the body):
+3. **Create a one-step execution plan** (after approval, before source writes; `create` warns on stderr when a step's `files:`, `classes:` or `symbols:` meet another machine's live claim on the mail channel -- advisory, `/inbox` has the body). A path holding a space goes whole in double quotes or backticks in those fields, with `::name` inside the quotes or glued to the closing one: a bare one is read as two entries, and a comma, `;` or `|` ends an entry:
    ```bash
    python tools/cc/execution_plan.py create \
      --task "<task description>" \
