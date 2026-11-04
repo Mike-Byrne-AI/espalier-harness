@@ -60,6 +60,9 @@ def _row(name: str, started: str, completed: str | None, conclusion: str | None,
 
 WIN = "portability (windows-latest)"
 MAC = "portability (macos-latest)"
+#: One base-run workflow's file name, for the words' label: the advisory
+#: Windows leg's, the first workflow the board read this way.
+LEG = "post-merge-windows.yml"
 
 
 class TestTheSetsAndTheOutcome:
@@ -387,9 +390,11 @@ class TestTheRequiredRead:
         assert spelled == ["tools/cc/_post_merge.py"], spelled
 
 
-def _run_row(status: str, conclusion: str | None, sha: str, run_id: int) -> dict:
-    """One ``gh run list`` row as the board's base-run read asks for it."""
-    return {"databaseId": run_id, "status": status, "conclusion": conclusion, "headSha": sha, "url": f"u-{run_id}"}
+def _run_row(status: str, conclusion: str | None, sha: str, run_id: int, created: str = "", updated: str = "") -> dict:
+    """One ``gh run list`` row as the board's base-run read asks for it; the
+    stamps only where a test reads them (the superseded walk)."""
+    row = {"databaseId": run_id, "status": status, "conclusion": conclusion, "headSha": sha, "url": f"u-{run_id}"}
+    return {**row, "createdAt": created, "updatedAt": updated} if created or updated else row
 
 
 class TestTheBaseRunVerdict:
@@ -460,12 +465,171 @@ class TestTheBaseRunVerdict:
         state = pm.base_run_verdict(["not a row", None, _run_row("completed", "success", "b" * 40, 5)])
         assert state["verdict"] == "green" and state["read"] == 1
 
-    def test_the_red_set_is_the_three_conclusions_and_the_workflow_is_named_once(self, pm):
+    def test_the_red_set_is_the_three_conclusions_and_no_workflow_is_named(self, pm):
         """Dies to: the set widened (a cancelled run would read red) or narrowed
-        (a timed-out run would read as no verdict); the board's `_RED` is
-        pinned to this object in tests/test_board.py."""
+        (a timed-out run would read as no verdict), or a module constant named
+        for a workflow again, the shape the hand-named Windows leg had
+        (DEF-5083: it left a red release matrix on the base unread); the
+        board's `_RED` is pinned to this object in tests/test_board.py."""
         assert pm.RUN_RED == frozenset({"FAILURE", "TIMED_OUT", "STARTUP_FAILURE"})
-        assert pm.WINDOWS_WORKFLOW == "post-merge-windows.yml"
+        assert not [name for name in vars(pm) if name.endswith("_WORKFLOW")]
+
+    def test_a_superseded_cancel_is_walked_past_unnamed_and_counted(self, pm):
+        """Dies to: a cancelled run that ended after the next newer run was
+        created named as no verdict under a workflow whose concurrency cancels
+        superseded runs (41 of release.yml's 100 newest push runs on main, each
+        12 to 91 s after its successor's createdAt, DEF-5083), or the flag
+        reaching a workflow without it (the Windows leg's cancels are hangs
+        its job's bound cuts, named on purpose)."""
+        rows = [_run_row("in_progress", None, "e" * 40, 9, "2026-11-03T12:10:00Z"),
+                _run_row("completed", "cancelled", "c" * 40, 8, "2026-11-03T12:05:00Z", "2026-11-03T12:10:16Z"),
+                _run_row("completed", "cancelled", "d" * 40, 7, "2026-11-03T12:00:00Z", "2026-11-03T12:05:00Z"),
+                _run_row("completed", "success", "b" * 40, 6, "2026-11-03T11:00:00Z", "2026-11-03T11:40:00Z")]
+        state = pm.base_run_verdict(rows, supersedes=True)
+        assert state["verdict"] == "green" and state["no_verdict"] == [] and state["superseded"] == 2
+        assert state["running"] and state["read"] == 3
+        assert pm.base_run_lines(workflow="release.yml", state=state) == []
+        plain = pm.base_run_verdict(rows)
+        assert plain["no_verdict"] == ["cancelled", "cancelled"] and plain["superseded"] == 0
+        assert pm.base_run_lines(workflow=LEG, state=plain)[0].startswith(
+            "post-merge-windows (main, advisory): no verdict on the newest 2 runs (cancelled)")
+
+    def test_a_cancel_no_newer_run_caused_is_named_even_where_runs_are_superseded(self, pm):
+        """Dies to: a cancel that ended before the next run was created walked
+        past (a job cut by timeout-minutes concludes cancelled too, run
+        37666634873), the newest run's cancel or one without stamps walked
+        past, or a superseded cancel inside a red streak breaking it."""
+        cut = pm.base_run_verdict([_run_row("completed", "success", "a" * 40, 9, "2026-11-03T14:00:00Z", "2026-11-03T14:40:00Z"),
+                                   _run_row("completed", "cancelled", "c" * 40, 8, "2026-11-03T07:00:00Z", "2026-11-03T13:00:00Z"),
+                                   _run_row("completed", "success", "b" * 40, 6)], supersedes=True)
+        assert cut["verdict"] == "green" and cut["sha"] == "a" * 40 and cut["superseded"] == 0
+        timed = pm.base_run_verdict([_run_row("in_progress", None, "e" * 40, 9, "2026-11-03T14:00:00Z"),
+                                     _run_row("completed", "cancelled", "c" * 40, 8, "2026-11-03T07:00:00Z", "2026-11-03T13:00:00Z"),
+                                     _run_row("completed", "success", "b" * 40, 6)], supersedes=True)
+        assert timed["no_verdict"] == ["cancelled"] and timed["superseded"] == 0
+        newest = pm.base_run_verdict([_run_row("completed", "cancelled", "c" * 40, 8, "2026-11-03T12:00:00Z", "2026-11-03T12:30:00Z"),
+                                      _run_row("completed", "success", "b" * 40, 6)], supersedes=True)
+        assert newest["no_verdict"] == ["cancelled"] and newest["superseded"] == 0
+        alone = pm.base_run_verdict([_run_row("in_progress", None, "e" * 40, 9, "2026-11-03T12:10:00Z"),
+                                     _run_row("completed", "cancelled", "c" * 40, 8, "2026-11-03T12:05:00Z", "2026-11-03T12:10:16Z"),
+                                     _run_row("completed", "cancelled", "d" * 40, 7, "2026-11-03T12:00:00Z", "2026-11-03T12:05:20Z")],
+                                    supersedes=True)
+        assert alone["verdict"] == "none" and alone["superseded"] == 2
+        assert pm.base_run_lines(workflow="release.yml", state=alone) == [
+            "release (main, advisory): no verdict on every run read (2 superseded; 2 runs); a run is going"]
+        bare = pm.base_run_verdict([_run_row("in_progress", None, "e" * 40, 9), _run_row("completed", "cancelled", "c" * 40, 8),
+                                    _run_row("completed", "success", "b" * 40, 6)], supersedes=True)
+        assert bare["no_verdict"] == ["cancelled"] and bare["superseded"] == 0
+        streak = pm.base_run_verdict([_run_row("completed", "failure", "a" * 40, 9, "2026-11-03T12:10:00Z", "2026-11-03T12:50:00Z"),
+                                      _run_row("completed", "cancelled", "c" * 40, 8, "2026-11-03T12:05:00Z", "2026-11-03T12:10:20Z"),
+                                      _run_row("completed", "failure", "f" * 40, 7),
+                                      _run_row("completed", "success", "b" * 40, 6)], supersedes=True)
+        assert streak["superseded"] == 1
+        assert streak["verdict"] == "red" and streak["since"]["run"] == "7" and streak["green_sha"] == "b" * 40
+        assert pm.base_run_lines(workflow="release.yml", state=streak) == [
+            "release (main, advisory): red since fffffff (run 7), still red on aaaaaaa (run 9), green on bbbbbbb"]
+
+
+class TestTheBaseRunRoster:
+    """The two facts the board's base-run roster reads from a workflow file's
+    text (``pushes_to``, ``cancels_superseded``): the standard library has no
+    YAML reader, so these pin the shapes GitHub's trigger syntax takes, both
+    ways. ``tests/test_ci_job_bounds.py::TestTheBoardsBaseRunRoster`` drives
+    the same readers over every workflow in this tree against PyYAML."""
+
+    RUNS = [
+        "on: push\n",
+        "on: [push, pull_request]\n",
+        "on:\n  - pull_request\n  - push\n",
+        "on:\n- push\n",
+        "on:\n  push:\n    branches: [main, master]\n",
+        "on:\n  push:\n    branches:\n      - main\n",
+        "on:\n  push:\n    branches:\n    - 'main'\n",
+        "'on':\n  push:\n    branches: [\"main\"]  # the base\n",
+        "on:\n  push:\n  pull_request:\n",
+        "on:\n  push:\n    paths: ['**.py']\n",
+        "on:\n  push:\n    branches: ['**']\n",
+        "on:\n  push:\n    branches: [ma*]\n",
+        "on:\n  push:\n    branches: [release/*, main]\n",
+        "on:\n  push:\n    branches-ignore: [develop]\n",
+        "on:\n  push:\n    branches: ['*', '!develop']\n",
+        "on:\n  push: {}\n",
+        "on:\n  push:\n    branches: &b [main]\n",
+        "on: {push: {branches: [main]}}\n",
+        "on:\n  workflow_dispatch:\n  push:\n    branches:\n      - main\n    tags: ['v*']\n",
+    ]
+    NEVER = [
+        "name: no trigger\n",
+        "on: pull_request\n",
+        "on: [pull_request, workflow_dispatch]\n",
+        "on:\n  pull_request:\n    branches: [main]\n  workflow_dispatch:\n",
+        "on:\n  push:\n    tags: ['v*']\n",
+        "on:\n  push:\n    tags-ignore: ['v0*']\n",
+        "on:\n  push:\n    branches: [develop, 'release/**']\n",
+        "on:\n  push:\n    branches: ['*', '!main']\n",
+        "on:\n  push:\n    branches-ignore: [main]\n",
+        "on:\n  push:\n    branches-ignore: ['ma*']\n",
+        "jobs:\n  a:\n    on:\n      push:\n",
+        "on:\n  schedule:\n    - cron: '0 9 * * MON'\n",
+        "# on: push\non: workflow_dispatch\n",
+        "on:\n  push:\n    branches: ['!develop']\n",
+    ]
+
+    @pytest.mark.parametrize("text", RUNS)
+    def test_a_trigger_that_runs_on_a_push_to_the_base_is_on_the_roster(self, pm, text):
+        """Dies to: a spelling of the push trigger misread (a flow list, a
+        block list at the key's own indentation, a quoted key, a pattern, a
+        negation that does not exclude the base, an anchor or flow mapping
+        this reader cannot follow dropped instead of read: the roster that
+        drops a workflow hides its red, DEF-5083)."""
+        assert pm.pushes_to(text, "main") is True, text
+
+    @pytest.mark.parametrize("text", NEVER)
+    def test_a_workflow_that_never_runs_on_a_push_to_the_base_is_not(self, pm, text):
+        """Dies to: a pull-request or tag-push workflow, or one whose branch
+        filter leaves the base out, read onto the roster (one wasted spawn
+        each, inside a shared budget), or a nested or commented ``on``
+        read as the trigger."""
+        assert pm.pushes_to(text, "main") is False, text
+
+    def test_the_base_decides_the_branch_filter(self, pm):
+        text = "on:\n  push:\n    branches: [main, master]\n"
+        assert pm.pushes_to(text, "master") and not pm.pushes_to(text, "trunk")
+        assert pm.pushes_to("on:\n  push:\n    branches: ['release/**']\n", "release/v1/a")
+        assert not pm.pushes_to("on:\n  push:\n    branches: ['release/*']\n", "release/v1/a")
+
+    def test_only_a_literal_true_cancel_in_progress_supersedes(self, pm):
+        """Dies to: a group alone, false, an expression, a job's own group, no
+        group, or a group with any expression but a value one push's runs
+        share with the next (a per-run value, a fallback, a misspelling: each
+        run may hold its own group, nothing cancelled across pushes) read as
+        superseding, or the workflow-level true missed."""
+        assert pm.cancels_superseded("concurrency:\n  group: x\n  cancel-in-progress: true\n")
+        assert pm.cancels_superseded("concurrency:\n  # why\n  group: ${{ github.workflow }}\n  cancel-in-progress: True\n")
+        assert pm.cancels_superseded("concurrency:\n  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}"
+                                     "\n  cancel-in-progress: true\n")
+        for text in ("name: none\n", "concurrency: one-group\n", "concurrency:\n  cancel-in-progress: true\n",
+                     "concurrency:\n  group: ${{ github.workflow }}-${{ github.sha }}\n  cancel-in-progress: true\n",
+                     "concurrency:\n  group: ${{ github.event.after }}\n  cancel-in-progress: true\n",
+                     "concurrency:\n  group: ${{ github .sha }}\n  cancel-in-progress: true\n",
+                     "concurrency:\n  group: ${{ github.head_ref || github.run_id }}\n  cancel-in-progress: true\n",
+                     "concurrency:\n  group: ${{ github.workflow\n  cancel-in-progress: true\n",
+                     "concurrency:\n  group: x-${{ github.run_id }}\n  cancel-in-progress: true\n",
+                     "concurrency:\n  cancel-in-progress: true\n  group: ${{ github.run_number }}\n",
+                     "concurrency:\n  group: >\n    ${{ github.sha }}\n  cancel-in-progress: true\n",
+                     "concurrency:\n  group: x\n  cancel-in-progress: false\n",
+                     "concurrency:\n  group: x\n  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}\n",
+                     "concurrency: {group: x, cancel-in-progress: true}\n",
+                     "jobs:\n  a:\n    concurrency:\n      group: x\n      cancel-in-progress: true\n"):
+            assert not pm.cancels_superseded(text), text
+
+    def test_the_readers_take_any_text_without_raising(self, pm):
+        """Dies to: a crash on a file that is not a workflow (the board reads
+        every file in the folder)."""
+        for text in ("", "\n\n", "on:", "on:\n", "on:\n  push:", "on:\n  push:\n    branches:\n",
+                     "on:\n  push:\n    branches: [", "on:\n  push:\n    branches: ['[']\n", ":\n-\n", "\t on: push"):
+            assert isinstance(pm.pushes_to(text, "main"), bool), text
+            assert isinstance(pm.cancels_superseded(text), bool), text
 
 
 class TestTheBaseRunWords:
@@ -475,36 +639,36 @@ class TestTheBaseRunWords:
         state = pm.base_run_verdict([_run_row("completed", "timed_out", "d" * 40, 9),
                                      _run_row("completed", "failure", "a" * 40, 6),
                                      _run_row("completed", "success", "b" * 40, 5)])
-        assert pm.base_run_lines(state) == [
+        assert pm.base_run_lines(workflow=LEG, state=state) == [
             "post-merge-windows (main, advisory): red since aaaaaaa (run 6), still red on ddddddd (run 9), green on bbbbbbb"]
 
     def test_a_single_red_says_since_itself_and_a_newer_run_going(self, pm):
         state = pm.base_run_verdict([_run_row("in_progress", None, "e" * 40, 8),
                                      _run_row("completed", "failure", "a" * 40, 6),
                                      _run_row("completed", "success", "b" * 40, 5)])
-        assert pm.base_run_lines(state, base="trunk") == [
+        assert pm.base_run_lines(workflow=LEG, state=state, base="trunk") == [
             "post-merge-windows (trunk, advisory): red since aaaaaaa (run 6), green on bbbbbbb; a newer run is going"]
 
     def test_no_green_in_the_window_says_so(self, pm):
         state = pm.base_run_verdict([_run_row("completed", "failure", "a" * 40, 6)])
-        assert pm.base_run_lines(state) == [
+        assert pm.base_run_lines(workflow=LEG, state=state) == [
             "post-merge-windows (main, advisory): red since aaaaaaa (run 6) (no green among the runs read)"]
 
     def test_green_absent_empty_going_and_no_state_render_nothing(self, pm):
         """Dies to: a line for a leg that is not red (the deployed board runs
         on trees without the workflow, and here before its first run)."""
-        assert pm.base_run_lines(pm.base_run_verdict([_run_row("completed", "success", "b" * 40, 5)])) == []
-        assert pm.base_run_lines({"verdict": "absent"}) == []
-        assert pm.base_run_lines(pm.base_run_verdict([])) == []
-        assert pm.base_run_lines(pm.base_run_verdict([_run_row("queued", None, "e" * 40, 8)])) == []
-        assert pm.base_run_lines(None) == []
+        assert pm.base_run_lines(workflow=LEG, state=pm.base_run_verdict([_run_row("completed", "success", "b" * 40, 5)])) == []
+        assert pm.base_run_lines(workflow=LEG, state={"verdict": "absent"}) == []
+        assert pm.base_run_lines(workflow=LEG, state=pm.base_run_verdict([])) == []
+        assert pm.base_run_lines(workflow=LEG, state=pm.base_run_verdict([_run_row("queued", None, "e" * 40, 8)])) == []
+        assert pm.base_run_lines(workflow=LEG, state=None) == []
 
     def test_no_verdict_and_unread_are_each_one_line(self, pm):
         state = pm.base_run_verdict([_run_row("completed", "cancelled", "c" * 40, 4)])
-        assert pm.base_run_lines(state) == ["post-merge-windows (main, advisory): no verdict on every run read (cancelled; 1 run)"]
+        assert pm.base_run_lines(workflow=LEG, state=state) == ["post-merge-windows (main, advisory): no verdict on every run read (cancelled; 1 run)"]
         two = pm.base_run_verdict([_run_row("completed", "cancelled", "c" * 40, 4), _run_row("completed", "stale", "s" * 40, 3)])
-        assert pm.base_run_lines(two) == ["post-merge-windows (main, advisory): no verdict on every run read (cancelled, stale; 2 runs)"]
-        assert pm.base_run_lines({"unread": "gh run list answered rc=1 with no JSON"}) == [
+        assert pm.base_run_lines(workflow=LEG, state=two) == ["post-merge-windows (main, advisory): no verdict on every run read (cancelled, stale; 2 runs)"]
+        assert pm.base_run_lines(workflow=LEG, state={"unread": "gh run list answered rc=1 with no JSON"}) == [
             "post-merge-windows (main, advisory): unread (gh run list answered rc=1 with no JSON)"]
 
     def test_board_lines_keep_the_none_line_off_only_when_the_leg_is_red(self, pm):
@@ -516,16 +680,25 @@ class TestTheBaseRunWords:
             _leg(green, leg)["conclusion"] = "SUCCESS"
         checks = pm.transitions([green])
         red = pm.base_run_verdict([_run_row("completed", "failure", "a" * 40, 6)])
-        assert pm.board_lines(checks, window=1, oldest=312, base_run=red) == [
+        green_run = pm.base_run_verdict([_run_row("completed", "success", "b" * 40, 5)])
+        assert pm.board_lines(checks, window=1, oldest=312, base_runs={LEG: red}) == [
             "post-merge-windows (main, advisory): red since aaaaaaa (run 6) (no green among the runs read)"]
-        assert pm.board_lines(checks, window=1, oldest=312, base_run={"unread": "x"}) == [
+        assert pm.board_lines(checks, window=1, oldest=312, base_runs={LEG: {"unread": "x"}}) == [
             "none red among the last 1 merges", "post-merge-windows (main, advisory): unread (x)"]
-        assert pm.board_lines(checks, window=1, oldest=312, base_run={"verdict": "absent"}) == [
+        assert pm.board_lines(checks, window=1, oldest=312, base_runs={LEG: {"verdict": "absent"}}) == [
             "none red among the last 1 merges"]
         assert pm.board_lines(checks, window=1, oldest=312) == ["none red among the last 1 merges"]
-        both = pm.board_lines(pm.transitions([_pr(312), _pr(313)]), window=2, oldest=312, base_run=red)
+        both = pm.board_lines(pm.transitions([_pr(312), _pr(313)]), window=2, oldest=312, base_runs={LEG: red})
         assert len(both) == 3 and both[0].startswith("portability (windows-latest)")
         assert both[-1].startswith("post-merge-windows (main, advisory): red since")
+        # Several workflows: each its own line in name order, the none line
+        # off while any one is red, and a green one silent beside it.
+        several = pm.board_lines(checks, window=1, oldest=312,
+                                 base_runs={"release.yml": red, LEG: {"unread": "x"}, "harness-guard.yml": green_run})
+        assert several == ["post-merge-windows (main, advisory): unread (x)",
+                           "release (main, advisory): red since aaaaaaa (run 6) (no green among the runs read)"]
+        assert pm.board_lines(checks, window=1, oldest=312, base_runs={"a.yaml": red})[0].startswith(
+            "a (main, advisory): red since")
 
     def test_newer_runs_without_a_verdict_above_a_green_are_named_never_hidden(self, pm):
         """Dies to: a cancelled newest run walked past to an older green with
@@ -535,16 +708,16 @@ class TestTheBaseRunWords:
         state = pm.base_run_verdict([_run_row("completed", "cancelled", "c" * 40, 7),
                                      _run_row("completed", "cancelled", "d" * 40, 6),
                                      _run_row("completed", "success", "b" * 40, 5)])
-        assert pm.base_run_lines(state) == [
+        assert pm.base_run_lines(workflow=LEG, state=state) == [
             "post-merge-windows (main, advisory): no verdict on the newest 2 runs (cancelled), green on bbbbbbb before them"]
         one = pm.base_run_verdict([_run_row("in_progress", None, "e" * 40, 8), _run_row("completed", "stale", "c" * 40, 7),
                                    _run_row("completed", "success", "b" * 40, 5)])
-        assert pm.base_run_lines(one) == [
+        assert pm.base_run_lines(workflow=LEG, state=one) == [
             "post-merge-windows (main, advisory): no verdict on the newest 1 run (stale), green on bbbbbbb before it; "
             "a newer run is going"]
         none = pm.base_run_verdict([_run_row("queued", None, "e" * 40, 8), _run_row("completed", "cancelled", "c" * 40, 4)])
-        assert pm.base_run_lines(none) == [
+        assert pm.base_run_lines(workflow=LEG, state=none) == [
             "post-merge-windows (main, advisory): no verdict on every run read (cancelled; 1 run); a run is going"]
 
     def test_the_base_run_words_are_ascii(self, pm):
-        assert all(line.isascii() for line in pm.base_run_lines({"unread": "café"}))
+        assert all(line.isascii() for line in pm.base_run_lines(workflow=LEG, state={"unread": "café"}))
