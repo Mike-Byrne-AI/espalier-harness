@@ -14,6 +14,21 @@
   The two that changed the pack: the first census counted the host's spill previews as
   banners (108 of 148), and the draft's second refuter was met by construction, so the
   pack's question became which lever gives the blueprint back, not whether a tenant yields.
+- Reshaped 2026-11-04 by the operator's ruling (ack 20261104T065609Z-air-fd4ca1 on the
+  operator call 20261103T052454Z-air-fbee39): the two findings land as defects, not levers --
+  `DEF-4101` (`_bound_blueprint_context`'s floor anchored on `## Recent reasoning`, the
+  heading `cmd_load` prints LAST, so the first fragment was byte-cut or dropped whole; 16 of
+  16 newest dispatcher starts yielded, 7 of 16 opened with no reasoning line) and `DEF-4100`
+  (the cut marker named `cc/blueprints/latest.json`, the new empty node after the chain
+  advance) -- with 1-A (the census script) in their lane. 2-A (the full banner file, 3 h) and
+  4-A (the ranking constant) are HELD until the fix shows what is still lost; the GOAL notes
+  head is trimmed where it repeats the blueprint (no code). State stays DRAFT for what is held.
+- Task 0 on the seat `air`, 2026-11-04 (`scripts/banner_census.py` over this box's project
+  directory, landed with the defects): 82 whole banners, 108 spill previews, 16 compact; DEF-674's
+  merge read at 2026-10-31T07:14Z (not the 29th, the lane's commit day); since it, 64 of 64 starts
+  yielded, the blueprint handed in a median 3,000 units and kept a median 917 (loss 1,038 to
+  2,695), the goal past its 2,000-byte budget on 64 of 64 (median 3,211); 3 clips. The other
+  seats' runs are still owed to the per-start table.
 
 ## Motivation
 
@@ -391,14 +406,17 @@ with the census as its probe.
    seat, collect the notes; decide: build, or stop. Checkpoint: each seat's summary lines
    and the per-start table in the pack's Landing, and the kill condition not met.
 2. **1-A The census script and its test** — the smallest change; checkpoint
-   `pytest tests/test_banner_census.py`.
-3. **2-A `_fit_banner`'s `on_full`, the writer, the pointer line** — checkpoint the new
+   `pytest tests/test_banner_census.py`. Lands in the defect lane of `DEF-4100` and
+   `DEF-4101` (the ruling of 2026-11-04, ack fd4ca1).
+3. **HELD (ack fd4ca1) — 2-A `_fit_banner`'s `on_full`, the writer, the pointer line** —
+   until the defect fix shows what is still lost; checkpoint the new
    rows in `tests/test_session_banner.py` red before, green after, and the earn-the-red
    mutations recorded.
 4. **3-A The verb and the docs** — checkpoint `pytest tests/test_read_summary.py`, both
    syncs run, `python3 scripts/sync_claude_mirrors.py --check` style parity green.
-5. **4-A The lever the operator's letter names** — the ranking constant, the filling
-   cutter, or neither; checkpoint the yield rows under each value built.
+5. **HELD (ack fd4ca1) — 4-A The lever the operator's letter names** — the ranking
+   constant waits on what the defect fix still loses; the filling cutter, or neither;
+   checkpoint the yield rows under each value built.
 6. **5-A The orientation measurement** — a figure in Landing.
 7. **6-A Red-team** — the `adversarial` skill over the hook diff, with the pack's likeliest
    error named: a stale file from an earlier start printed as current (the removal at the

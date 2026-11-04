@@ -195,6 +195,7 @@ EXPECTED_HOOK_HELPER_COUNT = 15  # class: literal  (TP-159: +_speedbump.py; TP-1
 EXPECTED_SCRIPT_NAMES = frozenset({  # class: literal
     # 2026-10-08: a user-scope SessionStart hook the operator installs per machine;
     # it says so when a session on an Espalier tree starts without the tree's hooks.
+    "banner_census.py",
     "hook_wiring_canary.py",
     # 2026-10-09: what two lanes merged in turn cost (catch-ups, CI runs, the
     # conflicts behind them, replayed as GitHub merges); TP-478's Task 0 oracle.

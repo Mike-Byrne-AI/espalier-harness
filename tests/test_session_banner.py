@@ -1463,6 +1463,91 @@ class TestDropWholeEntries:
         text = "# Session Context\n\n## Next steps\nGOAL pointer\n"
         assert mod._bound_blueprint_context(text) == text
 
+    # cmd_load prints the continuation fragments FIRST ("## What the prior session
+    # wants you to know"), then "## Next steps", then the decisions under "## Recent
+    # reasoning". The floor was anchored on that last heading (DEF-4101).
+
+    def test_floor_keeps_the_first_fragment_when_the_anchored_heading_is_gone(self):
+        # A pre-cut text (the first bound to the share drops trailing lines) that
+        # lost "## Recent reasoning" had a one-line floor: the shrink popped every
+        # fragment and the section reached the window with no reasoning line.
+        mod = _load()
+        text = ("# Session Context\n\n## What the prior session wants you to know\n\n"
+                "- " + "a" * 300 + "\n- " + "b" * 300)
+        out = mod._bound_blueprint_context(text, 200)
+        assert any(ln.startswith("- a") for ln in out.split("\n")), out
+        assert len(out.encode("utf-8")) <= 200
+
+    def test_floor_sheds_decisions_before_it_byte_cuts_the_first_fragment(self):
+        # With fragments present the floor sat below them all, nothing was popped,
+        # and the shrink fell through to the byte-cut: the first fragment reached
+        # the window cut mid-thought under a marker calling it the newest entry.
+        mod = _load()
+        head = ("# Session Context\n\nContinuing from session `s1` (t).\n\n"
+                "## What the prior session wants you to know\n\n- first fragment " + "f" * 200)
+        text = (head + "\n- second fragment " + "g" * 200 + "\n\n## Next steps\nSee the GOAL section.\n\n"
+                "## Recent reasoning -- pinned\n\n- newest decision " + "d" * 200 + "\n- older decision " + "e" * 200)
+        budget = len(head.encode("utf-8")) + len("\n[blueprint context truncated]") + 10
+        out = mod._bound_blueprint_context(text, budget)
+        assert "- first fragment " + "f" * 200 in out, out      # whole, never byte-cut
+        assert "newest entry truncated" not in out
+        assert out.endswith("[blueprint context truncated]")
+
+    def test_the_byte_cut_marker_names_the_node_the_text_came_from(self):
+        # On a startup/clear start the chain has advanced by the time the banner is
+        # read: latest.json is the new empty node, and the text came from the node
+        # the Continuing line names, which sits beside it under its id (DEF-4100).
+        mod = _load()
+        text = ("# Session Context\n\nContinuing from session `20261104-154332-e914ff` (t).\n\n"
+                "## Recent reasoning\n\n- " + "a" * 900)
+        out = mod._bound_blueprint_context(text, 300)
+        assert out.endswith("pull cc/blueprints/20261104-154332-e914ff.json]"), out
+        assert "latest.json" not in out
+        assert len(out.encode("utf-8")) <= 300
+
+    def test_the_byte_cut_marker_falls_back_to_latest_without_a_continuing_line(self):
+        mod = _load()
+        out = mod._bound_blueprint_context("# Session Context\n\n## Recent reasoning\n\n- " + "a" * 900, 300)
+        assert out.endswith("pull cc/blueprints/latest.json]"), out
+
+    def test_a_drop_that_fits_only_without_its_marker_is_still_marked(self):
+        # The floor's kept text can fit the budget alone and not with the plain
+        # marker; _hard_cut returns a text under budget unmarked, so the drop of
+        # every later line would have been silent. The first entry is shaved for
+        # the node marker instead.
+        mod = _load()
+        head = ("# Session Context\n\nContinuing from session `s1` (t).\n\n"
+                "## What the prior session wants you to know\n\n- first fragment " + "f" * 200)
+        text = head + "\n- second fragment " + "g" * 200
+        budget = len(head.encode("utf-8")) + 5
+        out = mod._bound_blueprint_context(text, budget)
+        assert out.endswith("pull cc/blueprints/s1.json]"), out
+        assert len(out.encode("utf-8")) <= budget
+        assert "second fragment" not in out and out.startswith(head[:60])
+
+    def test_a_second_cut_of_a_byte_cut_text_keeps_the_node_pointer(self):
+        # The load's cut to the share can byte-cut the first fragment under the
+        # node marker; _fit_banner then shrinks that output again, which dropped
+        # the marker line as trailing and relabelled the cut a whole-line drop.
+        mod = _load()
+        text = ("# Session Context\n\nContinuing from session `s1` (t).\n\n"
+                "## What the prior session wants you to know\n\n- " + "a" * 900)
+        first = mod._bound_blueprint_context(text, 600)
+        assert first.endswith("pull cc/blueprints/s1.json]"), first
+        second = mod._bound_blueprint_context(first, 560)
+        assert second.endswith("pull cc/blueprints/s1.json]"), second
+        assert "[blueprint context truncated]" not in second
+        assert len(second.encode("utf-8")) <= 560
+
+    def test_a_dash_line_in_the_header_does_not_hold_the_floor(self):
+        # cmd_load prints the session id and timestamp unsanitized; a line that
+        # starts "- " before the first heading is header, never the floor.
+        mod = _load()
+        text = ("# Session Context\n- not an entry\n\n## What the prior session wants you to know\n\n"
+                "- " + "a" * 300 + "\n- " + "b" * 300)
+        out = mod._bound_blueprint_context(text, 250)
+        assert any(ln.startswith("- a") for ln in out.split("\n")), out
+
 
 # ─── Integrity reaches the banner, not only stderr ──────────────────────────
 
