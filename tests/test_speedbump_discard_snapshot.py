@@ -762,7 +762,8 @@ def _refused_here(repo: Path) -> None:
     """Pre-register the stressor: `git stash create` refuses in ``repo``. By
     its exit code alone: on an unmerged index it prints `<path>: needs merge`
     on stdout, so a refusal's stdout is not always empty."""
-    proc = subprocess.run(["git", "-C", str(repo), "stash", "create"], capture_output=True, text=True)
+    proc = subprocess.run(["git", "-C", str(repo), "stash", "create"], capture_output=True,
+                          text=True, encoding="utf-8", errors="replace")
     assert proc.returncode != 0, proc
 
 
