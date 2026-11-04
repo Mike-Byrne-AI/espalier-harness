@@ -1,0 +1,13 @@
+{
+ "id": "DEF-3032",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c \"import io,os,sys,tempfile,pathlib;sys.path.insert(0,'tools/cc/hooks');[os.environ.pop(k) for k in list(os.environ) if k.startswith('ESPALIER')];T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);r=pathlib.Path(T.name);(r/'tools'/'cc'/'hooks').mkdir(parents=True);os.environ['CLAUDE_PROJECT_DIR']=str(r);os.environ['ESPALIER_AUDIT_DIR']=str(r/'a');import write_guard as g;Q=chr(34);D=chr(36);Z=lambda c:(setattr(sys,'stdout',io.StringIO()),g.check_bash_for_protected_mutations(c,r,r),sys.stdout.getvalue(),setattr(sys,'stdout',sys.__stdout__));print(sum(not(t[1] or t[2].strip()) for t in [Z('find tools/cc/hooks -exec nice -n 19 mv -t /tmp/x {} +'),Z('find tools/cc/hooks | xargs sudo -u build mv -t /tmp/x'),Z('find tools/cc/hooks | xargs timeout 60 mv -t /tmp/x'),Z('for f in '+D+'(find tools/cc/hooks); do LC_ALL=C mv '+Q+D+'f'+Q+' /tmp/x; done')]))\"",
+ "open_value": "4",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/write_guard.py"
+ ],
+ "row_sha": "52102fbe73c1",
+ "text_sha": "433a2befba3e",
+ "verified_2026_11_03": "OPEN (filed 2026-11-03; probe driven at filing here and in the export of HEAD cd9c8bdc873a)"
+}

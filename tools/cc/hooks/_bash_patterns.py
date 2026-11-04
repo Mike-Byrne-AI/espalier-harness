@@ -263,9 +263,16 @@ _CMD_POS_EXEC_QUOTE = r"(?:\b(?:eval|(?:ba|z|k|da)?sh[ \t]+-c)[ \t]*(?:[\"'][ \t
 # every adjacent quantifier pair is mutually exclusive, for the ReDoS gate.
 _CMD_POS_SEP = r"[;&|\n\r(){}`]"
 _CMD_POS_WS = r"[ \t\r\v\f]*"
+#: The quoted-directory arm, named so the native remove verb behind a
+#: carrier reads it from here (`_NATIVE_VERB_PATH`, DEF-3028's sibling);
+#: the composed prefix is byte-identical to the one it replaced. It fronts
+#: every `_CMD_POS` consumer and `_speedbump`'s fetch target as well, so an
+#: edit made for the carriers widens all of them (its composition is pinned
+#: in tests/test_write_guard.py::TestQuotedVerbTailIsUniform).
+_CMD_POS_QUOTED_DIR = r"[\"'][^\"'\n]{0,256}[/\\]"
 _CMD_POS_VERB_PREFIX = (
-    r"\\?\$?(?:[\"'][^\"'\n]{0,256}[/\\]"
-    r"|[\"']?(?:(?:[A-Za-z]:)?(?:[\w./-]|\\ ?)*[/\\])?)"
+    r"\\?\$?(?:" + _CMD_POS_QUOTED_DIR
+    + r"|[\"']?(?:(?:[A-Za-z]:)?(?:[\w./-]|\\ ?)*[/\\])?)"
 )
 # ⚠ SPLIT, NOT COPIED. `_CMD_POS_NO_VERB` is every command-position arm WITHOUT
 # the trailing verb prefix; `_CMD_POS` is that plus the prefix, so every existing
@@ -950,14 +957,34 @@ _FIND_DELETE_RE = re.compile(
     _CMD_POS + r"\b" + r"(?i:find)" + _EXE_SUFFIX + r"\b(?!=)" + _QUOTED_VERB_TAIL + r"[ \t]+([^|;&\n]{0,512})",
     re.IGNORECASE,
 )
+#: The path before a native remove verb behind a carrier (`_FIND_EXEC_VERB`
+#: below: find's exec action, the xargs carrier, a loop body; and the
+#: PowerShell carrier): the one home's quoted-directory arm
+#: (`_CMD_POS_QUOTED_DIR`, a quoted path that holds a blank or a backslash)
+#: beside an unquoted run, each tool's own. On Bash a backslash escapes the
+#: next character (an escaped blank stays in the path) and the run ends at
+#: `/`; on PowerShell a backslash is a separator and the run ends at either.
+#: The unquoted run reads `~/bin/` and `${HOME}/bin/`, which
+#: `_CMD_POS_VERB_PREFIX` itself does not (DEF-3030). Not the anchor's whole
+#: prefix: a union with it scanned a run of separators twice and doubled the
+#: PowerShell carrier's linear cost on a 30 KB slash run (98 to 202 ms); the
+#: arms here part on their first character. Until DEF-3028's sibling sweep
+#: (the dispatcher's ruling 20261103T223033Z-air-a39c61) `$'rm'`, a quoted
+#: path with a blank and an escaped blank here, and Git for Windows' quoted
+#: or msys `rm.exe` path behind the PowerShell carrier, drew no zone deny
+#: where the bare verb drew the wall.
+_NATIVE_VERB_PATH = (
+    r"(?:" + _CMD_POS_QUOTED_DIR + r"""|["']?\\?(?:(?:[^\s;|&"'\\]|\\.)*/)?)"""
+)
+_PS_NATIVE_VERB_PATH = r"(?:" + _CMD_POS_QUOTED_DIR + r"""|["']?(?:[^\s;|&"']*[/\\])?)"""
 #: The remove verb behind `-exec`, spelled as the rm arm's tokenizer admits
 #: it (DEF-815's review): behind a wrapper word, a directory prefix, a
 #: leading backslash or a quote -- `-exec /bin/rm`, `-exec env rm`, `-exec
-#: \rm` and `-exec 'rm'` all run rm. The wrapper run is bounded, the prefix
-#: run is on the bounded separator class and must end in `/`.
+#: \rm` and `-exec 'rm'` all run rm -- and an ANSI-C quote. The wrapper run
+#: is bounded, the path is `_NATIVE_VERB_PATH`'s.
 _FIND_EXEC_VERB = (
     r"(?:(?:env|sudo|command|nice|nohup|busybox|doas)[ \t]+){0,3}"
-    r"""["']?\\?(?:[^\s;|&"']*/)?(?:rm|unlink|rmdir|shred|mv)\b"""
+    r"\$?" + _NATIVE_VERB_PATH + r"(?:rm|unlink|rmdir|shred|mv)\b"
 )
 _FIND_DELETE_ACTION_RE = re.compile(
     r"(?<![\w-])-delete\b|(?<![\w-])-(?:exec|execdir|ok|okdir)[ \t]+" + _FIND_EXEC_VERB
@@ -1319,10 +1346,18 @@ _SUBST_ENUM_ARGS = (
     r"""(?P<args>(?:[^\n;|&`)\\"']|""" + _SPAN_QUOTED_ARMS + r"""){0,512})"""
 )
 #: (2) the for loop over a command substitution, either spelling, UNQUOTED
-#: (a quoted substitution is one word, not a list).
+#: (a quoted substitution is one word, not a list). The enumerator head
+#: inside a substitution, here and in (3), is a command position, read by
+#: the whole `_CMD_POS` grammar as opener (1) reads its head: the opener
+#: stops before the paren or the backtick, which `_CMD_POS_SEP` holds, so a
+#: wrapper word, an assignment prefix, a quote, `$'...'`, a leading
+#: backslash and a directory prefix all reach the head, and the closing
+#: quote's tail follows it. Until DEF-3028 the head took the tail alone, so
+#: `"find"`, `$'find'`, `/usr/bin/find`, `command find` and `LC_ALL=C find`
+#: there drew no zone deny where the bare head drew the wall.
 _FOR_SUBST_REMOVE_RE = re.compile(
-    _CMD_POS + r"(?-i:for)[ \t]+(?P<vars>" + _LOOP_VAR + r")[ \t]+(?-i:in)[ \t]+(?:\$\(|`)[ \t]*"
-    + _PIPED_ENUM_HEAD_GROUP + _QUOTED_VERB_TAIL
+    _CMD_POS + r"(?-i:for)[ \t]+(?P<vars>" + _LOOP_VAR + r")[ \t]+(?-i:in)[ \t]+(?:\$(?=\()|(?=`))"
+    + _CMD_POS + _PIPED_ENUM_HEAD_GROUP + _QUOTED_VERB_TAIL
     + _SUBST_ENUM_ARGS + r"(?:\)|`)" + _DO_BODY,
     re.IGNORECASE,
 )
@@ -1331,8 +1366,8 @@ _FOR_SUBST_REMOVE_RE = re.compile(
 _TAIL_LOOP_REMOVE_RE = re.compile(
     _CMD_POS + _WHILE_READ_HEAD + _DO_BODY
     + _LOOP_SEP + r"[ \t\n]{0,64}(?:" + _LOOP_BODY_STATEMENT + r"){0,4}"
-    + r"(?-i:done)[ \t]*(?:<[ \t]*<\(|<<<[ \t]*\"?\$\()[ \t]*"
-    + _PIPED_ENUM_HEAD_GROUP + _QUOTED_VERB_TAIL
+    + r"(?-i:done)[ \t]*(?:<[ \t]*<(?=\()|<<<[ \t]*\"?\$(?=\())"
+    + _CMD_POS + _PIPED_ENUM_HEAD_GROUP + _QUOTED_VERB_TAIL
     + _SUBST_ENUM_ARGS + r"\)",
     re.IGNORECASE,
 )
@@ -8484,17 +8519,20 @@ def _find_delete_roots(span: str, *, powershell: bool = False) -> tuple[list[str
 
 def _enum_head_key(head: str) -> str:
     """The dispatch key of one matched enumerator head text (DEF-831): a
-    one-word head keys to itself; a multi-word head keys by its verb, by any
-    spelling of that verb (quoted, `.exe`) and whatever global-option run
-    sits between it and the subcommand. ONE mapping for both tools' readers,
-    pinned against `_PIPED_ENUM_HEAD_KEYS` by the roster test."""
+    one-word head keys to its verb's roster key; a multi-word head keys by
+    its verb, by any spelling of that verb (quoted, `.exe`) and whatever
+    global-option run sits between it and the subcommand. The verb is
+    `_verb_key`'s, the one fold every verb-dispatching reader asks: a
+    one-word head kept its `.exe` until DEF-3029, so `find.exe` behind any
+    Bash opener keyed to no roots reader and the guard failed closed on
+    every issue. ONE mapping for both tools' readers, pinned against
+    `_PIPED_ENUM_HEAD_KEYS` by the roster test."""
     words = head.split()
-    word = words[0].lower().strip("\"'") if words else ""
-    verb = word[:-4] if word.endswith(".exe") else word
+    verb = _verb_key(words[0]) if words else ""
     for key in _PIPED_ENUM_HEAD_KEYS:
         if " " in key and key.split()[0] == verb:
             return key
-    return word
+    return verb
 
 
 def _listing_roots(positionals: list[str]) -> tuple[list[str], bool]:
@@ -9619,7 +9657,7 @@ _PS_ENUMERATE_VERB = r"(?:Get-ChildItem|gci|ls|dir|Get-Item|gi|find)"
 _PS_PIPE_CARRIER = (
     r"(?P<carrier>(?:" + _CMD_POS_WRAP_RUN + r")?\bxargs\b(?!=)" + _XARGS_SWITCH_RUN
     + r"[ \t]+(?:(?:env|sudo|command|nice|nohup|busybox|doas)[ \t]+){0,3}"
-    + r"""["']?\\?(?:[^\s;|&"']*/)?)"""
+    + _PS_NATIVE_VERB_PATH + r")"
 )
 #: The remove stage behind the pipe: the carrier and then a verb from the
 #: UNION of the cmdlet roster and the find arm's `-exec` roster (`unlink`,
