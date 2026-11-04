@@ -11404,6 +11404,60 @@ class TestBenchGuardFixture:
         got = rehearsal._tier(hook, "Bash", f"cd {cd_into} && echo x > {target}", shape)
         assert got == "HARD", f"{cd_into}/{target} @{shape}: {got}"
 
+    def test_a_shaped_root_goes_under_a_plain_temp_directory(self, tmp_path, monkeypatch):
+        """A temp directory holding a blank (`TMPDIR=.../axis tmp`) made the
+        plain shape unplain by the bench's own definition, so the rehearsal
+        refused to run there (DEF-4095, five reds), and gave every other shape
+        a blank beside its own character. Each shaped root goes under
+        `plain_temp_root`: the ambient directory only while it is plain."""
+        import tempfile
+
+        rehearsal = _load_bench("powershell_guard_rehearsal")
+        unplain = tmp_path / "axis tmp"
+        unplain.mkdir()
+        monkeypatch.setattr(tempfile, "tempdir", str(unplain))
+        try:
+            with rehearsal.shaped_root("plain") as plain, rehearsal.shaped_root("paren") as paren:
+                assert not (set(rehearsal._INERT) & set(plain.as_posix())), plain
+                assert unplain not in plain.parents and unplain not in paren.parents
+                # the paren root carries its own character and the blank every
+                # prefix ends in, and nothing of the ambient directory's
+                assert set(rehearsal._INERT) & set(paren.as_posix()) == {"(", ")", " "}, paren
+        except RuntimeError as exc:
+            pytest.fail(f"the plain shape was refused under a spaced temp directory: {exc}")
+
+    def test_a_plain_temp_directory_is_the_root_as_it_is(self, tmp_path, monkeypatch):
+        """Today's bytes on every plain host: while the ambient directory is
+        plain it is the root, and the fallbacks are never read."""
+        import tempfile
+
+        rehearsal = _load_bench("powershell_guard_rehearsal")
+        ambient = tmp_path / "plain"
+        ambient.mkdir()
+        if set(rehearsal._INERT) & set(ambient.as_posix()):
+            pytest.skip(f"pytest's temp path {str(ambient)!r} is itself unplain (DEF-5082)")
+        monkeypatch.setattr(tempfile, "tempdir", str(ambient))
+        monkeypatch.setattr(rehearsal, "_PLAIN_TEMP_FALLBACKS", (str(tmp_path / "never read"),))
+        assert rehearsal.plain_temp_root() == ambient
+
+    def test_no_plain_fallback_is_a_refusal_naming_the_remedy(self, tmp_path, monkeypatch):
+        """Where neither the ambient directory nor a fallback is plain and
+        writable, the bench refuses by name rather than build a root the rows
+        would read as two words: a Windows profile named `First Last` with no
+        `C:\\Temp` beside it."""
+        import tempfile
+
+        rehearsal = _load_bench("powershell_guard_rehearsal")
+        unplain = tmp_path / "axis tmp"
+        unplain.mkdir()
+        also = tmp_path / "R&D"
+        also.mkdir()
+        monkeypatch.setattr(tempfile, "tempdir", str(unplain))
+        monkeypatch.setattr(rehearsal, "_PLAIN_TEMP_FALLBACKS",
+                            (str(tmp_path / "absent"), str(also)))
+        with pytest.raises(RuntimeError, match="TMPDIR/TEMP"):
+            rehearsal.plain_temp_root()
+
     def test_the_drive_cd_row_reads_the_tier_its_host_expects(self):
         """Row 4B-6's expectation is the host's (DEF-2022): the carve-out where
         its ``cd`` reaches the drive-root temp, the nudge where it is not
@@ -11458,16 +11512,16 @@ class TestBenchGuardFixture:
         assert " " in project.name and had_hooks and had_espalier
         assert not project.exists(), "the throwaway project outlived the row"
 
-    def test_the_plain_shape_refuses_an_ambient_temp_dir_that_is_not_plain(self, monkeypatch, tmp_path):
+    def test_the_plain_shape_refuses_a_root_that_is_not_plain(self, monkeypatch, tmp_path):
         """A spaced profile or a redirected TMPDIR would collapse three shapes
-        into two and key every declaration to the wrong one; the plain shape
-        asserts it is plain instead of assuming it."""
+        into two and key every declaration to the wrong one. The shaped roots
+        go under `plain_temp_root` (the brace, DEF-4095); the plain shape still
+        asserts the root it got is plain instead of assuming it (the belt),
+        driven here with the brace stubbed to hand it a spaced parent."""
         rehearsal = _load_bench("powershell_guard_rehearsal")
         spaced_parent = tmp_path / "not plain"
         spaced_parent.mkdir()
-        real = rehearsal.tempfile.TemporaryDirectory
-        monkeypatch.setattr(rehearsal.tempfile, "TemporaryDirectory",
-                            lambda prefix=None: real(prefix=prefix, dir=spaced_parent))
+        monkeypatch.setattr(rehearsal, "plain_temp_root", lambda: spaced_parent)
         with pytest.raises(RuntimeError, match="not plain"):
             rehearsal._tier(HOOKS_DIR / "write_guard.py", "Bash", "ls", "plain")
 
@@ -11862,7 +11916,8 @@ class TestQuotedTargetSurvivesTheRoot:
         with pytest.MonkeyPatch.context() as mp, tempfile.TemporaryDirectory() as audit:
             mp.setenv("ESPALIER_AUDIT_DIR", audit)
             for shape, prefix in rehearsal.ROOT_SHAPES.items():
-                td = tempfile.TemporaryDirectory(prefix=prefix or None)
+                td = tempfile.TemporaryDirectory(prefix=prefix or None,
+                                                 dir=str(rehearsal.plain_temp_root()))
                 keep.append(td)
                 # resolved, as the hook resolves its root at startup: the runner's
                 # temp dir is spelled by its 8.3 short name (`RUNNER~1`), the
@@ -13148,7 +13203,8 @@ class TestAMetacharacterRootIsReadWhole:
         with pytest.MonkeyPatch.context() as mp, tempfile.TemporaryDirectory() as audit:
             mp.setenv("ESPALIER_AUDIT_DIR", audit)
             for shape, prefix in rehearsal.ROOT_SHAPES.items():
-                td = tempfile.TemporaryDirectory(prefix=prefix or None)
+                td = tempfile.TemporaryDirectory(prefix=prefix or None,
+                                                 dir=str(rehearsal.plain_temp_root()))
                 keep.append(td)
                 project = Path(td.name).resolve()
                 for rel in rehearsal.protected_fixture_dirs(hook):
@@ -15375,7 +15431,8 @@ class TestRemovedOrRelocatedOperandIsAMutation:
         with pytest.MonkeyPatch.context() as mp, tempfile.TemporaryDirectory() as audit:
             mp.setenv("ESPALIER_AUDIT_DIR", audit)
             for shape, prefix in rehearsal.ROOT_SHAPES.items():
-                td = tempfile.TemporaryDirectory(prefix=prefix or None)
+                td = tempfile.TemporaryDirectory(prefix=prefix or None,
+                                                 dir=str(rehearsal.plain_temp_root()))
                 keep.append(td)
                 # resolved, as the hook resolves its root at startup: the runner's
                 # temp dir is spelled by its 8.3 short name (`RUNNER~1`), the
