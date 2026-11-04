@@ -106,10 +106,17 @@ OPT_IN_ENV_FLAGS: tuple[str, ...] = (
 #: beside a call: twice the leg, the rule the matrix states for its archive
 #: stages -- a bound trimmed to the measurement fires on a slow day. One
 #: constant serves every place the leg runs, so the figure is the SLOWEST of
-#: them: the release-readiness gate's ubuntu-latest runner, where nine
-#: completed legs on 2026-10-05 read 734, 737, 954, 1093, 1106, 1118, 1119,
-#: 1122 and 1153 s (9,314 to 9,372 tests) and a tenth was killed at the old
-#: 1240 s bound; 1153 s is the slowest completed reading, recorded as read.
+#: them: the release-readiness gate's ubuntu-latest runner, where the four
+#: completed legs of 2026-11-04 read 1822, 2177, 2042 and 2147 s (13,878 to
+#: 13,901 tests; runs 41788718032, 41811254070, 41816620731, 41830773937) and
+#: a fifth was killed at the old 2306 s bound (1c4d50b, run 41851781247);
+#: 2177 s is the slowest completed reading, recorded as read. Before it, nine
+#: completed legs on 2026-10-05 read 734 to 1153 s (9,314 to 9,372 tests) and
+#: a tenth was killed at the 1240 s bound of that day; 1153 s stood from then.
+#: The job's own wall (`.github/workflows/release.yml`, job `release-check`,
+#: `timeout-minutes`) must hold the derived bound plus the gate's other
+#: checks, or the runner kills the leg first and the TIMED OUT line below is
+#: never printed: tests/test_release_check.py::TestNotSlowLegBound pins it.
 #: The 620 before it was sized on the 8 GB self-host box (592 s and 604 s on
 #: 2026-09-23, 8,558 tests; a bare 600 had killed the leg at 97 %), a box the
 #: runner runs about half as fast as, and nothing said so until the bound
@@ -128,7 +135,7 @@ OPT_IN_ENV_FLAGS: tuple[str, ...] = (
 #: window, not a drift signal). The CI runners' earlier headroom readings are
 #: in the ledger's `DEF-856` strike. Pinned by tests/test_release_check.py
 #: and by the matrix's own driven rows.
-NOT_SLOW_LEG_MEASURED_S = 1153
+NOT_SLOW_LEG_MEASURED_S = 2177
 NOT_SLOW_LEG_BOUND_S = 2 * NOT_SLOW_LEG_MEASURED_S
 
 #: The leg's own clock, injectable by the driven rows (the matrix's shape).

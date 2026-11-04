@@ -637,6 +637,19 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **The release-readiness gate's not-slow leg figure moved to its runner's
+  slowest reading again, and the job's wall now holds the derived bound.**
+  `scripts/release_check.py::NOT_SLOW_LEG_MEASURED_S` read 1153 s (2026-10-05)
+  while the gate's ubuntu-latest runner ran the leg at 1822 to 2177 s on the
+  four green Release CI runs of 2026-11-04, each printing the on-green NOTE
+  that no seat acted on; the derived 2306 s bound then fired at 1c4d50b with
+  no failed test in the leg. The figure is now 2177 s, the slowest completed
+  reading, so the bound is 4354 s, and the job's `timeout-minutes` moves from
+  60 to 90: a 60-minute wall would have killed the re-measured leg before its
+  bound and lost the reason again. `tests/test_release_check.py::TestNotSlowLegBound`
+  pins the wall against the bound plus ten minutes for the gate's other checks,
+  and the release matrix smoke's outer timeout mark moves from 3000 to 5400 s
+  to stay above the stage's summed bounds, as its own driven row requires.
 - **A session launched in a worktree of an adopter tree loads the hooks.**
   Claude Code reads the shared `.claude/settings.json` from the session's own
   directory and a worktree checks out tracked files only, so with that file

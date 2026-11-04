@@ -785,11 +785,28 @@ class TestNotSlowLegBound:
 
     def test_the_bound_is_twice_the_recorded_leg(self):
         assert release_check.NOT_SLOW_LEG_BOUND_S == 2 * release_check.NOT_SLOW_LEG_MEASURED_S
-        # never below the slowest completed reading (1153 s on the gate's
-        # ubuntu-latest runner, 2026-10-05; 604 s on the self-host box before
-        # it); a re-measure moves the figure up or, on a faster box, is a
-        # deliberate re-record
-        assert release_check.NOT_SLOW_LEG_MEASURED_S >= 1153
+        # never below the slowest completed reading (2177 s on the gate's
+        # ubuntu-latest runner, 2026-11-04, run 41811254070; 1153 s there on
+        # 2026-10-05; 604 s on the self-host box before it); a re-measure moves
+        # the figure up or, on a faster box, is a deliberate re-record
+        assert release_check.NOT_SLOW_LEG_MEASURED_S >= 2177
+
+    def test_the_release_job_wall_holds_the_derived_bound(self):
+        """The release-readiness job's own wall (`timeout-minutes` on
+        `release-check` in .github/workflows/release.yml) holds the derived
+        bound with room for the gate's other checks, or the runner kills the
+        job before the bound fires and the reason is lost again. At 1c4d50b
+        (2026-11-04) the leg crossed the 2306 s bound inside a 60-minute wall;
+        re-measured to 2177 s the bound is 4354 s, which that wall would have
+        cut about 3400 s into the leg. The other checks took about three
+        minutes around the leg on that run; ten minutes is the margin."""
+        yaml = pytest.importorskip(
+            "yaml", reason="PyYAML not installed -- run `pip install -e .[dev]`")
+        workflow = REPO_ROOT / ".github" / "workflows" / "release.yml"
+        job = yaml.safe_load(workflow.read_text(encoding="utf-8"))["jobs"]["release-check"]
+        wall_s = int(job["timeout-minutes"]) * 60
+        assert wall_s >= release_check.NOT_SLOW_LEG_BOUND_S + 600, (
+            wall_s, release_check.NOT_SLOW_LEG_BOUND_S)
 
     def test_check_tests_pass_hands_the_child_the_derived_bound(self, monkeypatch):
         monkeypatch.setenv("ESPALIER_RELEASE_CHECK_WITH_TESTS", "1")
