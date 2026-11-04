@@ -824,8 +824,9 @@ class TestCpRmrf:
         the snapshot only when `snapshot_discard` recorded one for the
         command; both variants keep the phrases `tests/test_denial_reasons.py`
         pins and both composed reasons stay under the irreversible tier's 512
-        bytes, as do CP-DISCARD's two. The static `body` stays the honest
-        one, so a reader that never fires sees no promise."""
+        bytes, as do CP-DISCARD's three (DEF-2050 added the snapshot git
+        refused). The static `body` stays the honest one, so a reader that
+        never fires sees no promise."""
         bump = _speedbump.CP_RMRF
         assert bump.body is _speedbump._RMRF_BODY
         assert bump.body_for is _speedbump._rmrf_body
@@ -845,11 +846,15 @@ class TestCpRmrf:
         discard = _speedbump.CP_DISCARD
         assert discard.body is _speedbump._DISCARD_BODY
         assert discard.body_for is _speedbump._discard_body
-        for body in (_speedbump._DISCARD_BODY, _speedbump._DISCARD_NO_SNAPSHOT_BODY):
+        for body in (_speedbump._DISCARD_BODY, _speedbump._DISCARD_NO_SNAPSHOT_BODY,
+                     _speedbump._DISCARD_REFUSED_BODY):
             reason = _speedbump._REASON_TEMPLATE.format(id=discard.id, body=body)
             assert len(reason.encode("utf-8")) <= 512
         assert "snapshot was taken first" in _speedbump._DISCARD_BODY
         assert "NO snapshot was taken" in _speedbump._DISCARD_NO_SNAPSHOT_BODY
+        # the refused variant must never read as the clean tree's
+        assert "NO snapshot could be taken" in _speedbump._DISCARD_REFUSED_BODY
+        assert "nothing dirty" not in _speedbump._DISCARD_REFUSED_BODY
 
     def test_the_nudge_is_not_a_safety_verdict(self, tmp_path):
         """DEF-837's lane, plan step 5: the body said write_guard hard-blocks

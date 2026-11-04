@@ -4506,6 +4506,20 @@ keeps the honest no-recovery wording, because the promise must be exactly as
 wide as the net. `CP-DISCARD` likewise says "NO snapshot was taken" when git
 could not answer, instead of claiming one.
 
+**A refused stash is not a clean tree (`DEF-2050`, 2026-11-03).** `git stash
+create` exits 1 with nothing on stdout on a tree holding an intent-to-add
+entry (`git add -N`, which `/implement-task` step 7 and `scripts/proof_tier.py`
+ask for) and on an unborn branch, and on an unmerged index it prints
+`<path>: needs merge` on stdout. Read by stdout alone, each was "nothing dirty
+to save", and the discard ran with no net. `snapshot_discard` now takes the
+snapshot through a scratch copy of the index (`_snapshot_through_a_scratch_index`:
+the index committed as it stands, `add -u`, the working tree committed on HEAD
+and that index commit), so the sha is stash-shaped and recovers the same way
+(`git show <sha>:<path>`, or `git stash apply --index <sha>`); the live index
+is never written by that path. A snapshot git still will not give (dubious
+ownership, a timeout, an index path Python cannot open) is said once and the
+nudge says "NO snapshot could be taken", never that the tree was clean.
+
 **A loop's roots, and the net's own store (2026-09-18).** A shell loop that
 removes each item (`for f in src; do rm -rf "$f"; done`, `find src | while
 read f; do rm "$f"; done`) took no snapshot: the remove's operand is the loop
