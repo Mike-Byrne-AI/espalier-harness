@@ -1430,6 +1430,34 @@ class TestAStartProbeThatNeverAnswers:
         assert "not confirmed" in reason and "does not answer as Python 3" not in reason, reason
         assert any("-m espalier doctor ." in r for r in remedies), remedies
 
+    def test_the_disarmed_diagnosis_prescribes_the_rewire_for_a_quoted_spaced_head(
+        self, tmp_path, monkeypatch, capsys, slow
+    ):
+        """DEF-4094's third reader: the prescriber reads the folded shape's
+        `quoted` beside the form and the cut, so a hand-wired quoted spaced
+        interpreter gets the rewire step, and the same head read without its
+        closing quote (the unterminated shape) keeps the by-hand sentence.
+        Dropping `quoted=` at this call turned no other test red (failure-mode
+        review, by mutation)."""
+        import argparse
+
+        from espalier import cli, doctor
+
+        self._host(tmp_path, monkeypatch, working=("python3",), stubbed=("python",))
+        target = self._adopter(tmp_path, monkeypatch)
+        assert cli.cmd_init(argparse.Namespace(repo=str(target), config=None)) == 0
+        capsys.readouterr()
+        monkeypatch.setattr(doctor, "_interpreter_is_python3", lambda resolved, *flags: False)
+        head = str(tmp_path / "with space" / "python3")
+        for quoted, by_hand in ((True, False), (False, True)):
+            found = {head: cli._NotPython3(None, ["tools/cc/hooks/write_guard.py"], False, False, (head,), "",
+                                           quoted=quoted)}
+            monkeypatch.setattr(cli, "_not_python3_from_entries", lambda entries, found=found: found)
+            reason, remedies = cli._disarmed_diagnosis(target)
+            joined = " ".join(remedies)
+            assert ("declines this command shape" in joined) is by_hand, (quoted, reason, remedies)
+            assert ("Rewire the hook commands" in joined) is not by_hand, (quoted, remedies)
+
     def test_the_rewire_says_what_it_left_and_never_already_starts(
         self, tmp_path, monkeypatch, capsys, slow
     ):

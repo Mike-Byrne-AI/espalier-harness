@@ -25,10 +25,9 @@ from pathlib import Path
 
 import pytest
 
-from espalier import cli
+from espalier import _venv, cli
 from espalier._text import quoted_if_spaced
 from tests._cut_start import skip_if_cut
-from tests._spaced_paths import skip_unless_plain
 from tests._stubs import write_stub
 
 # The sh stubs below are POSIX-only, so every class built on them skips on
@@ -45,13 +44,6 @@ def _stub(tmp_path: Path, name: str, says: str) -> str:
     d = tmp_path / "bin"
     d.mkdir(exist_ok=True)
     return str(write_stub(d / name, f"#!/bin/sh\necho '{says}'\n"))
-
-
-#: Why a row that asserts on the shell-form or statusLine sites skips under a
-#: spaced root: the fixture quotes the spaced interpreter there as `init`
-#: does, and the rewire declines the quoted spaced token (DEF-4094); the
-#: always-spaced strict xfail below is the row that reds when it is fixed.
-_DECLINED_WHEN_SPACED = "DEF-4094: a quoted spaced interpreter at a shell-form or statusLine site"
 
 
 def _settings(tmp_path: Path, interpreter: str) -> Path:
@@ -125,7 +117,6 @@ class TestRewireChangesOnlyTheInterpreter:
     def test_all_three_command_shapes_are_covered(self, tmp_path):
         """Exec form, legacy shell form, and statusLine — the last lives
         OUTSIDE `hooks` and is the 13th interpreter site."""
-        skip_unless_plain(tmp_path, _DECLINED_WHEN_SPACED)
         old = _stub(tmp_path, "python3", "Python 3.9.6")
         path = _settings(tmp_path, old)
         result = cli.rewire_interpreter_in_settings(path)
@@ -178,15 +169,15 @@ class TestRewireChangesOnlyTheInterpreter:
         operator, which an install rendered since DEF-929 can carry; doctor
         reads the same helper, so the two cannot disagree about which word is
         the interpreter."""
-        skip_unless_plain(tmp_path, _DECLINED_WHEN_SPACED)
         old = _stub(tmp_path, "python3", "Python 3.9.6")
         path = _settings(tmp_path, old)
         data = json.loads(path.read_text(encoding="utf-8"))
         head = lead + '"${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" '
         shim_render = head + quoted_if_spaced(old)
         if lead == ". ":
-            # init hands the render the detected interpreter already quoted
-            # when spaced (`_detect_python_command`), as this fixture does
+            # the render takes the interpreter spelling as given: `init` hands
+            # it a PATH name or the launcher, this fixture a quoted spaced
+            # path, the spelling a hand edit under Program Files writes
             assert shim_render == cli._statusline_command(quoted_if_spaced(old), posix=False), "the render init writes"
         data["statusLine"]["command"] = shim_render
         path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
@@ -206,7 +197,6 @@ class TestRewireChangesOnlyTheInterpreter:
         measured on a stripped copy, so trailing whitespace from a hand edit
         put it past the interpreter word and the site was reported as neither
         changed nor declined. The offset is measured on the string itself."""
-        skip_unless_plain(tmp_path, _DECLINED_WHEN_SPACED)
         old = _stub(tmp_path, "python3", "Python 3.9.6")
         path = _settings(tmp_path, old)
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -221,14 +211,17 @@ class TestRewireChangesOnlyTheInterpreter:
         assert after.endswith(pad), "the whitespace the operator left is kept as found"
         assert '/tools/cc/statusline.cmd" ' in after, after
 
-    @pytest.mark.xfail(strict=True, reason="DEF-4094: _is_rewirable_interpreter refuses a token holding "
-                       "whitespace, so a quoted spaced interpreter at a shell-form or statusLine site is declined")
     def test_a_quoted_spaced_shell_form_interpreter_is_rewired(self, tmp_path):
-        """The settings.json `init` writes on a host whose interpreter path
-        holds a space: the shell-form and statusLine sites carry the
-        interpreter quoted (`_detect_python_command` hands it over as
-        `quoted_if_spaced`), and the rewire swaps them as it swaps the
-        exec-form site beside them. On every host: the space is this test's."""
+        """A wired interpreter whose path holds a space, quoted as every shell
+        this repo targets reads one word (`_detect_python_command` writes a
+        PATH name or the launcher, so the spelling is a hand edit's, or a
+        tool's absolute write): the shell-form and statusLine sites carry it
+        quoted, and the rewire swaps them as it swaps the exec-form site
+        beside them, the target bringing its own quoting. DEF-4094: the predicate read
+        the quote's content, whitespace and all, as the unterminated-quote
+        shape, declined both sites and reported the exec-form one rewired,
+        so a below-floor interpreter stayed wired at two of three sites. On
+        every host: the space is this test's."""
         spaced = tmp_path / "with space"
         spaced.mkdir()
         old = _stub(spaced, "python3", "Python 3.9.6")
@@ -238,6 +231,19 @@ class TestRewireChangesOnlyTheInterpreter:
         where = {w for w, _, _ in result.changes}
         assert "statusLine" in where and any(w.startswith("hooks.SessionStart") for w in where), (
             where, result.declined)
+        assert not result.declined, result.declined
+        after = json.loads(path.read_text(encoding="utf-8"))
+        shell = after["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+        status = after["statusLine"]["command"]
+        assert old not in shell and old not in status, (shell, status)
+        # The target brings its own quoting (a bare name bare: PowerShell, which
+        # runs a shell-form hook where Git Bash is absent, refuses `"python3" x.py`);
+        # the arguments are byte for byte, and the three sites run one interpreter.
+        exec_head = after["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+        assert shell.endswith(" tools/cc/hooks/session_start.py"), shell
+        assert status.endswith(" tools/cc/statusline.py --short"), status
+        assert _venv.interpreter_token(shell) == _venv.interpreter_token(status) == exec_head, (
+            shell, status, exec_head)
 
     def test_a_backup_is_written_before_the_change(self, tmp_path):
         old = _stub(tmp_path, "python3", "Python 3.9.6")
@@ -406,6 +412,218 @@ class TestShapesTheRewireMustDecline:
         assert "will NOT fix this one" in issues, (
             f"doctor prescribed a remedy the rewire declines: {issues}"
         )
+
+
+class TestAQuotedHeadIsOneWordToItsShell:
+    """DEF-4094: a shell-form head in a terminated quote is one word to the
+    shell, as an exec-form ``command`` is to its spawn, so the whitespace
+    inside it is the path's own (``"C:\\Program Files\\Python39\\python.exe"
+    x.py``: the shape the swap's docstring kept both quotes for while the
+    predicate declined it). The refusal the 2026-09-03 adversarial pass drove
+    stays for the unterminated quote, whose token is the rest of the line: the
+    two read alike as a token, and only a reader of the command string tells
+    them apart, so each row here feeds both (a pin fed only conforming inputs
+    certifies nothing). No stub, every host; the doctor rows patch the remedy
+    spelling so no interpreter is probed for it."""
+
+    @pytest.mark.parametrize("token,kwargs,rewirable", [
+        pytest.param("/x y/python3", {"quoted": True}, True, id="terminated-quote-spaced-dir"),
+        pytest.param("/x y/python3 x.py", {}, False, id="unterminated-quote-rest-of-line"),
+        pytest.param("/x y/python3", {}, False, id="whitespace-with-no-quote-read"),
+        pytest.param("/x y/python3 -u", {"quoted": True}, False, id="terminated-quote-space-in-the-name"),
+        pytest.param("python3", {}, True, id="bare"),
+        pytest.param("/x y/python3", {"exec_form": True}, True, id="exec-form-spaced-dir"),
+        pytest.param("/x y/python3", {"quoted": True, "cut": True}, False, id="cut-is-read-first"),
+        pytest.param("/x y/python_hook.py", {"quoted": True}, False, id="shebang-script-stays-declined"),
+    ])
+    def test_the_predicate_reads_a_terminated_quote_as_the_paths_own_space(self, token, kwargs, rewirable):
+        assert cli._is_rewirable_interpreter(token, **kwargs) is rewirable
+
+    @pytest.mark.parametrize("command,quoted", [
+        pytest.param('"/x y/python3" x.py', True, id="double-terminated"),
+        pytest.param("'/x y/python3' x.py", True, id="single-terminated"),
+        pytest.param('"/x y/python3 x.py', False, id="double-unterminated"),
+        pytest.param("'/x y/python3 x.py", False, id="single-unterminated"),
+        pytest.param("/x y/python3 x.py", False, id="bare-spaced-the-shell-cuts"),
+        pytest.param("python3 x.py", False, id="bare"),
+        pytest.param('  "/x y/python3" x.py  ', True, id="padded"),
+        pytest.param('"/x y/python3"', True, id="terminated-nothing-after"),
+        pytest.param('"/x y/python3"x.py', False, id="closing-quote-glued-to-the-next-word"),
+        pytest.param("", False, id="empty"),
+        pytest.param("   ", False, id="blank"),
+    ])
+    def test_the_venv_reader_tells_a_terminated_quote_from_an_unterminated_one(self, command, quoted):
+        assert _venv.head_is_quoted(command) is quoted
+        if quoted:
+            # The token the terminated quote returns is its content, whitespace and all.
+            body = command.strip()
+            assert _venv.interpreter_token(command) == body[1:body.find(body[0], 1)]
+
+    @pytest.mark.parametrize("command,quoted", [
+        pytest.param('. "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" "/x y/python3"', True, id="dotted-shim-quoted"),
+        pytest.param('& "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" "C:/Program Files/py.exe" -3', True,
+                     id="called-shim-quoted-launcher"),
+        pytest.param('"${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" python3', False, id="bare-shim-bare-interpreter"),
+        pytest.param('. "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" "/x y/python3', False, id="dotted-shim-unterminated"),
+        pytest.param('"/x y/python3" tools/cc/statusline.py --short', True, id="posix-quoted"),
+        pytest.param("python3 tools/cc/statusline.py --short", False, id="posix-bare"),
+    ])
+    def test_the_site_reader_looks_past_the_windows_shim(self, command, quoted):
+        assert _venv.interpreter_site_quoted(command) is quoted
+
+    @pytest.mark.parametrize("command,target,expected", [
+        pytest.param('"/x y/python3" x.py', '"/a b/python3"', '"/a b/python3" x.py', id="quoted-old-quoted-spaced-target"),
+        pytest.param('"/x y/python3" x.py', "/a b/python3", '"/a b/python3" x.py', id="quoted-old-bare-spaced-target"),
+        pytest.param('"/x y/python3" x.py', "python3", "python3 x.py", id="quoted-old-bare-target-drops-the-quotes"),
+        pytest.param('"/x y/python3" x.py', "py -3", "py -3 x.py", id="quoted-old-launcher-target-drops-the-quotes"),
+        pytest.param("'/x y/python3' x.py", '"/a b/python3"', '"/a b/python3" x.py', id="single-quoted-old-takes-double-quotes"),
+        pytest.param("python3 x.py", "/a b/python3", '"/a b/python3" x.py', id="bare-old-bare-spaced-target"),
+        pytest.param("python3 x.py", '"/a b/python3"', '"/a b/python3" x.py', id="bare-old-quoted-spaced-target"),
+        pytest.param("python3 x.py", "py -3", "py -3 x.py", id="bare-old-launcher-target"),
+        pytest.param("python3 x.py", '"C:/Program Files/py.exe" -3', '"C:/Program Files/py.exe" -3 x.py',
+                     id="bare-old-quoted-launcher-path-target"),
+        pytest.param('. "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" "/x y/python3"', "python3",
+                     '. "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" python3', id="dotted-shim-quoted-old-bare-target"),
+        pytest.param('& "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" "C:/Program Files/py.exe" -3', "/a b/python3",
+                     '& "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" "/a b/python3"',
+                     id="called-shim-quoted-launcher-old-spaced-target"),
+        pytest.param('"C:/Program Files/py.exe" -3 x.py', '"/a b/python3"', '"/a b/python3" x.py',
+                     id="quoted-launcher-old-quoted-spaced-target"),
+        pytest.param('"C:/Program Files/py.exe" -3 x.py', "python3", "python3 x.py", id="quoted-launcher-old-bare-target"),
+    ])
+    def test_the_swap_quotes_the_target_as_the_site_does(self, command, target, expected):
+        """The target brings its own quoting: the old name's quotes go with
+        it, a word is double-quoted only when it holds whitespace (the one
+        quoting sh, Git Bash and PowerShell all take; `"python3" x.py` is a
+        PowerShell parse error), and the launcher's flag follows the word bare.
+        Production targets arrive bare (`python`, `python3`, `py -3`, the
+        DEF-636 absolute path); the quoted ones are the API's and this table's.
+        Before this a bare old name took a spaced target bare, the shape the
+        shell cuts, and the old swap wrote `"py -3" x.py`, a file no host has."""
+        assert cli._swap_interpreter_token(command, target) == expected
+
+    def test_the_exec_form_rewire_writes_the_target_bare(self):
+        """Exec form spawns ``command`` as one file name, so a quote there is
+        part of the name (`_venv.entry_argv`): a quoted target is written
+        without its quotes, and reported as written."""
+        entry = {"type": "command", "command": "python3", "args": ["${CLAUDE_PROJECT_DIR}/x.py"]}
+        assert cli._rewire_exec_entry(entry, '"/a b/python3"') == ("python3", "/a b/python3")
+        assert entry["command"] == "/a b/python3", entry
+        assert entry["args"] == ["${CLAUDE_PROJECT_DIR}/x.py"], entry
+
+    def test_doctor_prescribes_the_rewire_for_a_quoted_spaced_site(self, tmp_path, monkeypatch):
+        """DEF-620's loop, closed for this shape too: doctor reads the same
+        predicate and told the operator the rewire "will NOT fix this one"
+        for a site the rewire now fixes. The fixture's one spelling is exec
+        form at one site and quoted shell form at two, so the per-spelling
+        fold must keep it one word to its runner (exec form alone, folded
+        across the three, reads False)."""
+        from espalier import doctor as doctor_module
+
+        monkeypatch.setattr(doctor_module, "_remedy_py", lambda: "python3")
+        spaced = tmp_path / "with space"
+        spaced.mkdir()
+        missing = str(spaced / "bin" / "python3")  # resolves nowhere, on every host
+        path = _settings(spaced, missing)
+        issues = doctor_module._check_python_resolver(tmp_path, path)
+        assert issues, "a wired interpreter that resolves nowhere drew no issue"
+        joined = " ".join(issues)
+        assert "will NOT fix this one" not in joined, joined
+
+    def test_doctor_keeps_the_by_hand_remedy_where_one_site_of_the_spelling_is_unterminated(
+            self, tmp_path, monkeypatch):
+        """The fold's AND half: a hook quoted and terminated beside a statusLine
+        whose quote never closes read as ONE spelling (the shim puts the
+        interpreter last, so the unterminated token equals the terminated
+        one); the rewire fixes the hook and declines the statusLine, and
+        doctor's one sentence per spelling sends the operator to the hand edit
+        rather than to a rewire that leaves the statusLine broken (an OR fold
+        passed every other row here; code review)."""
+        from espalier import doctor as doctor_module
+
+        monkeypatch.setattr(doctor_module, "_remedy_py", lambda: "python3")
+        missing = str(tmp_path / "with space" / "bin" / "python3")
+        path = tmp_path / ".claude" / "settings.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({
+            "hooks": {"SessionStart": [{"hooks": [
+                {"type": "command", "command": f'"{missing}" tools/cc/hooks/session_start.py'}]}]},
+            "statusLine": {"type": "command",
+                           "command": f'. "${{CLAUDE_PROJECT_DIR}}/tools/cc/statusline.cmd" "{missing}'},
+        }), encoding="utf-8")
+        joined = " ".join(doctor_module._check_python_resolver(tmp_path, path))
+        assert "will NOT fix this one" in joined, joined
+
+    @pytest.mark.parametrize("command", [
+        pytest.param('"/x y/python3" x.py', id="quoted-spaced-dir-rewired"),
+        pytest.param('"py -3" x.py', id="quoted-launcher-and-flag-one-file-name-declined"),
+        pytest.param('"/x y/python3 -u" x.py', id="quoted-space-in-the-name-declined"),
+        pytest.param("/x y/python3 x.py", id="bare-spaced-cut-declined"),
+        pytest.param("python3 x.py", id="bare-rewirable"),
+    ])
+    def test_the_rewire_and_doctor_agree_on_every_shell_form_shape(self, tmp_path, command):
+        """DEF-620 was two readers of one file disagreeing about argv[0]. The
+        shape that decides a decline is read by `_wired_entry` for doctor and
+        by the rewire walk for itself, so each row asks both and the verdicts
+        must match; `"py -3" x.py` disagreed before this lane (the old swap
+        wrote that shape). An unterminated quote whose rest of line ends in
+        `.py` is skipped by doctor's suffix filter and declined by the rewire,
+        a known gap named in the ledger and not pinned here."""
+        entry = cli._wired_entry({"type": "command", "command": command}, ["x.py"])
+        doctor_says_rewirable = cli._is_rewirable_interpreter(
+            entry.argv[0], exec_form=entry.exec_form, cut=entry.cut, quoted=entry.quoted)
+        path = tmp_path / ".claude" / "settings.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"hooks": {"PreToolUse": [{"hooks": [
+            {"type": "command", "command": command}]}]}}), encoding="utf-8")
+        result = cli.rewire_interpreter_in_settings(path)
+        rewire_declines = any(c == command for _, c in result.declined)
+        assert doctor_says_rewirable == (not rewire_declines), (command, entry, result)
+
+    def test_every_engine_caller_of_the_predicate_passes_all_three_readings(self):
+        """A caller that leaves `quoted=` out gets the old whitespace refusal,
+        and a mutation dropping it at the disarmed-diagnosis site turned no
+        test red (failure-mode review), so every call in the engine is pinned
+        to pass the three readings, and the count is pinned so a fourth
+        caller is a decision, never a default."""
+        import ast
+        import inspect
+
+        from espalier import doctor as doctor_module
+
+        calls = []
+        for module in (cli, doctor_module):
+            for node in ast.walk(ast.parse(inspect.getsource(module))):
+                if isinstance(node, ast.Call):
+                    name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+                    if name == "_is_rewirable_interpreter":
+                        calls.append((module.__name__, node.lineno, sorted(k.arg or "" for k in node.keywords)))
+        assert len(calls) == 3, calls
+        for name, line, keywords in calls:
+            assert {"exec_form", "cut", "quoted"} <= set(keywords), (name, line, keywords)
+
+    def test_the_disarmed_fold_keeps_a_mixed_spelling_one_word(self, monkeypatch):
+        """`_not_python3_from_entries` folds a spelling's entries to the shape
+        that decides the remedy; a spelling exec form at one site and quoted
+        at another stays rewirable, and an unterminated quote standing alone
+        stays declined."""
+        monkeypatch.setattr(cli._doctor, "_interpreter_is_python3", lambda resolved, *flags: False)
+        entries = [
+            cli._wired_entry({"command": "/x y/python3", "args": ["x.py"]}, ["tools/cc/hooks/write_guard.py"]),
+            cli._wired_entry({"command": '"/x y/python3" tools/cc/hooks/session_start.py'},
+                             ["tools/cc/hooks/session_start.py"]),
+        ]
+        found = cli._not_python3_from_entries(entries)
+        assert set(found) == {"/x y/python3"}, found
+        shape = found["/x y/python3"]
+        assert shape.exec_form is False and shape.quoted is True, shape
+        assert cli._is_rewirable_interpreter(
+            shape.argv[0], exec_form=shape.exec_form, cut=shape.cut, quoted=shape.quoted)
+        alone = cli._not_python3_from_entries([cli._wired_entry({"command": '"/x y/python3 x.py'}, ["x.py"])])
+        (shape,) = alone.values()
+        assert shape.quoted is False, shape
+        assert not cli._is_rewirable_interpreter(
+            shape.argv[0], exec_form=shape.exec_form, cut=shape.cut, quoted=shape.quoted)
 
 
 class TestTheLauncherRewiresWithItsFlag:

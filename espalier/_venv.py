@@ -108,6 +108,28 @@ def interpreter_token(command: str) -> str:
     return cmd.split(None, 1)[0]
 
 
+def head_is_quoted(command: str) -> bool:
+    """Does a shell-form ``command`` open with a quote that closes? Then
+    :func:`interpreter_token` returned the quote's content whole, whitespace
+    and all, and that whitespace is the path's own
+    (``"C:\\Program Files\\Python39\\python.exe" x.py``): the head is one word
+    to the shell, as an exec-form ``command`` is to its spawn. An unterminated
+    quote returns the rest of the line as the token and reads False here, so
+    the token alone cannot tell the two apart; ``cli._is_rewirable_interpreter``
+    asks this before it refuses whitespace (DEF-4094). Exec form never asks:
+    its ``command`` is one file name, quotes included (:func:`entry_argv`).
+    The closing quote must end the word: glued to the next one
+    (``"/x y/python3"x.py``) the shell reads one word with the quotes removed,
+    a file no host has, so it reads False and stays declined as before
+    (failure-mode review).
+    """
+    cmd = (command or "").strip()
+    if cmd[:1] not in ("'", '"'):
+        return False
+    end = cmd.find(cmd[0], 1)
+    return end > 0 and (end + 1 == len(cmd) or cmd[end + 1].isspace())
+
+
 def entry_argv(command: object, args: object = None) -> tuple[str, list]:
     """``(argv[0], the words after it)`` of a settings.json hook entry.
 
@@ -463,3 +485,13 @@ def interpreter_site_token(command: str) -> str:
     if end < 0:
         return interpreter_token(command)
     return interpreter_token(command[end:])
+
+
+def interpreter_site_quoted(command: str) -> bool:
+    """Is the interpreter :func:`interpreter_site_token` reads from ``command``
+    in a terminated quote (:func:`head_is_quoted`) -- behind the Windows
+    statusline shim when the shim is the head? Both readers of a statusLine
+    take it from here beside the token, so neither reads a quoted spaced
+    interpreter as an unterminated one (DEF-4094)."""
+    end = statusline_shim_end(command)
+    return head_is_quoted(command if end < 0 else command[end:])
