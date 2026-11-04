@@ -127,14 +127,15 @@ def test_venv_python_parity_with_wheel_smoke(monkeypatch, platform):
 
 
 @pytest.mark.slow
-@pytest.mark.timeout(3000)  # TP-148 148-B: stage_source_checkout() spawns the
-# full non-slow suite as a child -- about ten minutes on the self-host box
+@pytest.mark.timeout(5400)  # TP-148 148-B: stage_source_checkout() spawns the
+# full non-slow suite as a child -- about twenty minutes on the self-host box
 # and about twice that on the release gate's ubuntu-latest runner (the
 # figure and its readings live in scripts/release_check.py), bounded INSIDE
 # the stage by `_SMOKE_BOUND_S` (twice the leg recorded there). This
 # outer timeout sits above the SUM of the stage's own bounds (the leg's derived
-# bound plus the stage's two fixed calls) -- the driven row below pins that
-# ordering, and moves this literal when the figure moves -- so a slow leg is
+# bound plus the stage's two fixed calls: 4354 + 420 = 4774 s at the 2177 s
+# figure of 2026-11-04) -- the driven row below pins that ordering, and moves
+# this literal when the figure moves (3000 at the 1153 s figure) -- so a slow leg is
 # reported by the stage as a FAIL with its
 # log (surfaced as a warning here), never by this wrapper as a bare timeout;
 # the global 60s thread-timeout (set for fast unit tests) would otherwise fire
