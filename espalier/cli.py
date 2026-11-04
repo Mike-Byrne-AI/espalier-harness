@@ -52,6 +52,8 @@ from espalier._text import os_error_text, pin_utf8_streams, plural, quoted_if_sp
 from espalier._venv import (
     entry_argv,
     exec_name_has_space,
+    head_is_quoted,
+    interpreter_site_quoted,
     interpreter_site_token,
     interpreter_token,
     names_a_python,
@@ -8950,6 +8952,17 @@ def _swap_interpreter_token(command: str, new_name: str) -> str:
     :func:`~espalier._venv.interpreter_token` returns the token WITHOUT its
     quotes, so the surrounding quotes are outside the replaced span --
     ``'"C:\\Program Files\\python.exe" x.py'`` keeps both quotes.
+
+    The target brings its own quoting (DEF-4094, once that quoted spaced head
+    was rewirable): ``new_name`` is read as a word and the launcher's flag
+    (:func:`_target_words`), the old name's quotes go with it, and the word is
+    written double-quoted only when it holds whitespace -- the one quoting sh,
+    Git Bash and PowerShell all take for a program word. ``"python3" x.py`` is
+    a PowerShell parse error (it runs a shell-form hook where Git Bash is
+    absent), ``"py -3"`` is a file no host has, and a bare spaced path is cut
+    by the shell (the DEF-636 absolute-path write arrives bare). Production
+    hands this ``python``, ``python3``, ``py -3`` or that absolute path, all
+    bare; a quoted target reaches it from the API and the tests alone.
     """
     head = interpreter_token(command)
     if not head:
@@ -8972,20 +8985,41 @@ def _swap_interpreter_token(command: str, new_name: str) -> str:
     if idx < 0:  # unreachable via the token readers, but never corrupt on a surprise
         return command
     end = idx + len(old)
+    word, flags = _target_words(new_name)
+    # The quotes around the old name, where a terminated quote put them (an
+    # unterminated one has no closing quote at `end`, and is declined upstream).
+    quoted = idx > 0 and command[idx - 1] in "\"'" and command[end:end + 1] == command[idx - 1]
     if is_python_launcher(old):
         # A quoted launcher path (`"C:/Windows/py.exe" -3 x.py`) puts its
         # closing quote between the token and the flag; the flag is still the
-        # launcher's, so the quotes go with it (a spaced new name is re-quoted).
-        quoted = idx > 0 and command[idx - 1] in "\"'" and command[end:end + 1] == command[idx - 1]
+        # launcher's, so the span takes the quotes and the flag together.
         after = end + 1 if quoted else end
         flag = re.match(r"\s+(\S+)", command[after:])
         if flag and LAUNCHER_VERSION_FLAG.fullmatch(flag.group(1)):
+            end = after + flag.end()
             if quoted:
                 idx -= 1
-                if any(ch.isspace() for ch in new_name) and len(interpreter_argv(new_name)) == 1:
-                    new_name = f'"{new_name}"'
-            end = after + flag.end()
-    return command[:idx] + new_name + command[end:]
+                quoted = False
+    if quoted:
+        idx -= 1
+        end += 1
+    return command[:idx] + " ".join([quoted_if_spaced(word), *flags]) + command[end:]
+
+
+def _target_words(target: str) -> tuple[str, list[str]]:
+    """``target`` as the interpreter word it names, bare of quotes, and the
+    launcher flag after it: a spelling that opens with a quote is read as a
+    shell head (``"C:/Program Files/py.exe" -3``,
+    :func:`~espalier._venv.entry_argv`), any other by the launcher split alone
+    (``py -3``; a bare spaced path is one word, never cut). The writers quote
+    the word for their own site: the shell-form swap when it holds whitespace,
+    the exec-form rewire never (DEF-4094)."""
+    spelling = target.strip()
+    if spelling[:1] in ("'", '"'):
+        head, rest = entry_argv(spelling)
+        return head, list(rest)
+    head, *flags = interpreter_argv(spelling)
+    return head, flags
 
 
 def _launcher_spelling_of(container: dict, key: str, token: str) -> str:
@@ -9019,19 +9053,22 @@ def _rewire_exec_entry(entry: dict, target: str) -> tuple[str, str] | None:
     Exec form keeps the interpreter in ``command`` and its arguments in
     ``args``, so the launcher's version flag lives in ``args``: rewiring away
     from ``py`` drops it, rewiring to ``py -3`` puts it first. Every other
-    argument is kept in order.
+    argument is kept in order. A quoted ``target`` is written without its
+    quotes (:func:`_target_words`): exec form spawns ``command`` as one file
+    name, so a quote there is part of the name and the entry cannot start
+    (``_venv.entry_argv``); the spelling reported is the one written.
     """
     old = _launcher_spelling_of(entry, "command", entry["command"])
     args = list(entry["args"])
     if len(interpreter_argv(old)) > 1:  # the launcher, its flag leading args
         args = args[1:]
-    head, *flags = interpreter_argv(target)
+    head, flags = _target_words(target)
     new_args = [*flags, *args]
     if head == entry["command"] and new_args == entry["args"]:
         return None
     entry["command"] = head
     entry["args"] = new_args
-    return old, target
+    return old, " ".join([head, *flags])
 
 
 def _same_file(a: str, b: str) -> bool:
@@ -9068,7 +9105,7 @@ def _is_python_interpreter_site(token: str) -> bool:
 
 
 def _is_rewirable_interpreter(
-    token: str, *, exec_form: bool = False, cut: bool = False,
+    token: str, *, exec_form: bool = False, cut: bool = False, quoted: bool = False,
 ) -> bool:
     """Is ``token`` a python-like name this may SAFELY replace?
 
@@ -9088,12 +9125,13 @@ def _is_rewirable_interpreter(
 
     One refusal, driven, not imagined (adversarial pass, 2026-09-03):
 
-    * **A token containing whitespace is refused.** argv[0] never has any; the
-      token only looks that way when ``interpreter_token`` hits an unterminated
-      quote and returns the rest of the line. Swapping then DELETED every
-      argument (``"python3 -u -m x hook`` -> ``"python3``) while the report
-      said "your args were preserved". An unclosed quote around a Windows path
-      with spaces is the likeliest hand-edit typo on this exact surface.
+    * **A token containing whitespace is refused** at a shell-form site whose
+      head is in no terminated quote. argv[0] has none there; the token only
+      looks that way when ``interpreter_token`` hits an unterminated quote and
+      returns the rest of the line. Swapping then DELETED every argument
+      (``"python3 -u -m x hook`` -> ``"python3``) while the report said "your
+      args were preserved". An unclosed quote around a Windows path with
+      spaces is the likeliest hand-edit typo on this exact surface.
 
     In exec form argv[0] is all of ``command`` (``_venv.entry_argv``), so a
     space in its DIRECTORY is a real path's (``C:\\Program Files\\...``) and
@@ -9101,6 +9139,19 @@ def _is_rewirable_interpreter(
     (:func:`_rewire_exec_entry`). A space in its FILE NAME (``py -3``,
     ``python -X utf8``) is refused: replacing that ``command`` whole would
     drop the words the operator meant as flags (DEF-968, both reviews).
+
+    A shell head in a TERMINATED quote (``quoted``, read from the command
+    string by ``_venv.head_is_quoted`` or ``interpreter_site_quoted``, since
+    the token alone cannot tell the two quotes apart) is one word to the
+    shell, as an exec-form ``command`` is to its spawn, and is read by the
+    exec rule: a space in its directory is the path's own
+    (``"C:\\Program Files\\Python39\\python.exe" x.py``, the shape
+    :func:`_swap_interpreter_token` kept both quotes for while this refused
+    it, so a below-floor interpreter stayed wired at a shell-form or
+    statusLine site the report counted as declined, DEF-4094), and a space in
+    its file name (``"python3 -u" x.py``) is a file no host has and is
+    refused. A caller that does not say leaves ``quoted`` False and the
+    whitespace refusal as it was.
 
     * **A shell head the shell cuts is refused** (``cut``): an unquoted
       spaced path (``/Users/me/Python Envs/py312/bin/python3 x.py``) runs its
@@ -9113,7 +9164,7 @@ def _is_rewirable_interpreter(
         return False
     if token.endswith((".py", ".sh")):
         return False
-    if exec_form:
+    if exec_form or quoted:
         return not exec_name_has_space(token)
     return not any(ch.isspace() for ch in token)
 
@@ -9247,16 +9298,21 @@ def rewire_interpreter_in_settings(
         # behind the Windows statusline shim (DEF-729). doctor's resolver check
         # reads the same helpers.
         exec_form = where != "statusLine" and isinstance(container.get("args"), list)
+        # A shell head in a terminated quote is one word to the shell, so its
+        # whitespace is the path's own (DEF-4094); read beside the token, since
+        # the token alone cannot tell it from an unterminated quote's.
         if where == "statusLine":
             token = interpreter_site_token(container[key])
+            quoted = interpreter_site_quoted(container[key])
         else:
             token = entry_argv(container[key], container.get("args"))[0]
+            quoted = not exec_form and head_is_quoted(container[key])
         # A shell head cut from an unquoted spaced Python path is a Python
         # site this must never rewrite (`_venv.shell_cut_path`).
         cut = not exec_form and where != "statusLine" and shell_cut_path(container[key]) is not None
         if not (_is_python_interpreter_site(token) or cut):
             continue  # not a Python site at all -- never ours to touch
-        if not _is_rewirable_interpreter(token, exec_form=exec_form, cut=cut):
+        if not _is_rewirable_interpreter(token, exec_form=exec_form, cut=cut, quoted=quoted):
             # A Python site we recognise but must not rewrite (an unterminated
             # quote, a shebang script, an exec name with a space in it, a cut
             # shell path). Counted, so the all-clear below cannot claim a site
@@ -9461,9 +9517,11 @@ class _WiredEntry(NamedTuple):
     ``None`` when ``command`` is not a string. ``argv`` is what a probe runs:
     the spelling split for the launcher, or the whole exec ``command`` unsplit
     when its file name holds a space (``py -3`` there is one file name, which
-    cannot start). ``exec_form`` and ``cut`` (an unquoted spaced Python path
-    the shell cuts, ``_venv.shell_cut_path``) decide what
-    ``--rewire-interpreter`` may touch.
+    cannot start). ``exec_form``, ``cut`` (an unquoted spaced Python path
+    the shell cuts, ``_venv.shell_cut_path``) and ``quoted`` (a shell head in
+    a terminated quote, one word to the shell, ``_venv.head_is_quoted``;
+    folded across a spelling's entries with ``exec_form`` as "one word to its
+    runner", DEF-4094) decide what ``--rewire-interpreter`` may touch.
     """
 
     spelling: str | None
@@ -9471,12 +9529,15 @@ class _WiredEntry(NamedTuple):
     exec_form: bool
     argv: tuple = ()
     cut: bool = False
+    quoted: bool = False
 
 
 class _NotPython3(NamedTuple):
     """One spelling the identity arm found not answering as a Python 3: what
     its head resolves to (or None), the deployed scripts wired through it, the
-    shape that decides its remedy (form, cut path, the argv probed), and, when
+    shape that decides its remedy (form, cut path, the argv probed, and
+    ``quoted``: a shell head in a terminated quote, folded with the form as
+    "one word to its runner", DEF-4094), and, when
     a probe never answered rather than answered against it, the clause that
     completes "which resolves to X" (its start, ``DEF-5014``, or its
     ``--version``, ``DEF-5015``); empty when it was refused on an answer."""
@@ -9487,6 +9548,7 @@ class _NotPython3(NamedTuple):
     cut: bool
     argv: tuple
     unconfirmed: str = ""
+    quoted: bool = False
 
 
 def _wired_entry(hook: dict, rels: list[str]) -> _WiredEntry:
@@ -9497,11 +9559,33 @@ def _wired_entry(hook: dict, rels: list[str]) -> _WiredEntry:
     if not isinstance(command, str):
         return _WiredEntry(None, rels, exec_form)
     token, _rest = entry_argv(command, args)
-    if exec_form and exec_name_has_space(token):
-        return _WiredEntry(token, rels, True, (token,))  # one file name: never split
+    quoted = not exec_form and head_is_quoted(command)
+    if (exec_form or quoted) and exec_name_has_space(token):
+        # One file name with a space in it -- `py -3` as an exec command, or
+        # `"py -3" x.py` quoted at a shell site: never split, so this reader
+        # and the rewire judge the word the runner looks for and decline it
+        # alike (the old swap wrote the quoted shape; code review, DEF-4094).
+        return _WiredEntry(token, rels, exec_form, (token,), quoted=quoted)
     spelling = _launcher_spelling_of(hook, "command", token) if token else ""
     cut = not exec_form and shell_cut_path(command) is not None
-    return _WiredEntry(spelling, rels, exec_form, tuple(interpreter_argv(spelling)) if spelling else (), cut)
+    return _WiredEntry(spelling, rels, exec_form, tuple(interpreter_argv(spelling)) if spelling else (),
+                       cut=cut, quoted=quoted)
+
+
+def _narrowest_shape(seen: _WiredEntry, entry: _WiredEntry) -> _WiredEntry:
+    """The shape of one spelling across two of its entries, the narrower
+    reading winning: exec form only while every entry is, a cut path once any
+    is, and one word to its runner (exec form, or a shell head in a terminated
+    quote) only while every entry is -- ``quoted`` carries that fold where the
+    forms are mixed and reads False where every entry is exec form, since
+    :func:`_is_rewirable_interpreter` reads the two together (DEF-4094: the
+    fixture shape is one spelling exec form at one site and quoted at two).
+    ``doctor._check_python_resolver`` folds through here too, so the two
+    readers cannot drift apart."""
+    exec_form = seen.exec_form and entry.exec_form
+    one_word = (seen.exec_form or seen.quoted) and (entry.exec_form or entry.quoted)
+    return seen._replace(exec_form=exec_form, cut=seen.cut or entry.cut,
+                         quoted=one_word and not exec_form)
 
 
 def _wired_espalier_entries(
@@ -9742,15 +9826,14 @@ def _not_python3_from_entries(
             continue
         bucket = failing.setdefault(token, [])
         bucket.extend(rel for rel in entry.rels if rel not in bucket)
-        # The narrowest shape per spelling decides the remedy: exec form only
-        # while every entry is, a cut path once any is.
+        # The narrowest shape per spelling decides the remedy (`_narrowest_shape`,
+        # the one fold both readers use).
         seen = shapes.get(token)
-        shapes[token] = entry if seen is None else seen._replace(
-            exec_form=seen.exec_form and entry.exec_form, cut=seen.cut or entry.cut)
+        shapes[token] = entry if seen is None else _narrowest_shape(seen, entry)
     return {
         token: _NotPython3(verdicts[token][0], sorted(rels), shapes[token].exec_form,
                            shapes[token].cut, shapes[token].argv or (token,),
-                           verdicts[token][2])
+                           verdicts[token][2], quoted=shapes[token].quoted)
         for token, rels in failing.items()
     }
 
@@ -10441,17 +10524,20 @@ def _disarmed_diagnosis_shape(repo_root: Path) -> tuple[str, list[str], bool]:
             cannot_start = _doctor._interpreter_start_failure([resolved, *flags])
             if cannot_start is not None:
                 found = f"resolves to {resolved} and answers as Python 3 but {cannot_start}"
-        if not _is_rewirable_interpreter(head, exec_form=first.exec_form, cut=first.cut):
+        if not _is_rewirable_interpreter(head, exec_form=first.exec_form, cut=first.cut,
+                                         quoted=first.quoted):
             # DEF-620's rule at this prescriber too: `--rewire-interpreter`
-            # DECLINES the `py` launcher, a shebang script and an unterminated
-            # quote, and then reports "nothing to rewire" -- a success-shaped
+            # DECLINES a shebang script, an unterminated quote and a quoted
+            # name with a space in it (the `py` launcher it rewires with its
+            # flag), and then reports "nothing to rewire" -- a success-shaped
             # sentence on a tree where every guard fails open (driven by the
             # DEF-727 failure-mode review). Ask the one predicate that decides,
             # as `doctor._check_python_resolver` does.
             remedy = (
                 f"`--rewire-interpreter` declines this command shape (an unquoted "
                 f"path with a space, an exec-form command with words after its "
-                f"name, a shebang script, an unterminated quote), so edit the "
+                f"name, a quoted name with a space in it, a shebang script, an "
+                f"unterminated quote), so edit the "
                 f"hook commands in .claude/settings.json by hand to an interpreter "
                 f"that answers as Python {floor_text()}+."
             )

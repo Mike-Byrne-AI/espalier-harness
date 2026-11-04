@@ -1476,8 +1476,9 @@ class TestEnforcementClaimBlockersComposeThreeOracles:
     @pytest.mark.skipif(sys.platform == "win32", reason="sh stub is POSIX")
     def test_a_shape_the_rewire_declines_gets_the_by_hand_remedy(self, tmp_path):
         """DEF-620's loop, closed at the new prescriber: `--rewire-interpreter`
-        declines a shebang script (and the `py` launcher, and an unterminated
-        quote) and reports "nothing to rewire" -- a success-shaped sentence on
+        declines a shebang script (and an unterminated quote, and a quoted name
+        with a space in it; the `py` launcher it rewires with its flag since
+        DEF-968) and reports "nothing to rewire" -- a success-shaped sentence on
         a tree where every guard fails open. The narration must not send the
         operator there (driven by the DEF-727 failure-mode review)."""
         from espalier.cli import _disarmed_diagnosis

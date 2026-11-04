@@ -19,7 +19,9 @@ from typing import Any
 
 from espalier import surface_contract
 from espalier._venv import (
+    exec_name_has_space,
     git_bash_path,
+    interpreter_site_quoted,
     interpreter_site_token,
     resolves_only_inside,
     statusline_shim_called,
@@ -1000,6 +1002,7 @@ def _check_python_resolver(
         _is_python_interpreter_site,
         _is_rewirable_interpreter,
         _launcher_spelling_of,
+        _narrowest_shape,
         _wired_entry,
     )
     # Per spelling, the shape the readers share (`cli._wired_entry`): the argv
@@ -1013,8 +1016,8 @@ def _check_python_resolver(
         if not token or "${" in token or token.endswith((".py", ".sh")):
             return
         seen = shapes.get(entry.spelling)
-        shapes[entry.spelling] = entry if seen is None else seen._replace(
-            exec_form=seen.exec_form and entry.exec_form, cut=seen.cut or entry.cut)
+        # The one fold both readers use (`cli._narrowest_shape`, DEF-4094).
+        shapes[entry.spelling] = entry if seen is None else _narrowest_shape(seen, entry)
 
     for event_hooks in hooks.values():
         if not isinstance(event_hooks, list):
@@ -1055,7 +1058,13 @@ def _check_python_resolver(
             # config that is fine.
             if token:
                 spelling = _launcher_spelling_of(status_line, "command", token)
-                _note(_WiredEntry(spelling, [], False, tuple(interpreter_argv(spelling))))
+                quoted = interpreter_site_quoted(status_cmd)
+                # A quoted word with a space in its name (`. "<shim>" "py -3"`)
+                # is one file name, never split, as `cli._wired_entry` reads it,
+                # so this reader and the rewire decline it alike (DEF-4094).
+                argv = (token,) if quoted and exec_name_has_space(token) else tuple(interpreter_argv(spelling))
+                _note(_WiredEntry(token if quoted and exec_name_has_space(token) else spelling, [], False,
+                                  argv, quoted=quoted))
 
     # The file name decides, as the rewire and SessionStart read it: a whole-
     # word test dropped every absolute path, a spaced exec-form one included,
@@ -1333,7 +1342,8 @@ def _check_python_resolver(
             # added to end. Ask the one predicate that decides, so the two
             # cannot drift.
             if not _is_rewirable_interpreter(
-                    head, exec_form=python_like[cmd].exec_form, cut=python_like[cmd].cut):
+                    head, exec_form=python_like[cmd].exec_form, cut=python_like[cmd].cut,
+                    quoted=python_like[cmd].quoted):
                 issues.append(
                     problem
                     + f"`{py} -m espalier init . "
@@ -1341,7 +1351,8 @@ def _check_python_resolver(
                     "command shapes that are not a bare interpreter (an "
                     "unquoted path with a space, which a shell cuts; an "
                     "exec-form command with words after its name, which "
-                    "belong in `args`; an unterminated quote; a shebang "
+                    "belong in `args`; a quoted name with a space in it; an "
+                    "unterminated quote; a shebang "
                     "script). Edit this command in .claude/settings.json by "
                     "hand."
                 )
