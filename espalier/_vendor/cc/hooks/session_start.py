@@ -52,6 +52,7 @@ import _hook_utils  # noqa: E402
 from _hook_utils import atomic_write_text, check_branch, is_self_host_repo, repo_name, surface_status, COLD_OPEN_FLAG  # noqa: E402
 import _integrity  # noqa: E402
 import _maintenance_mode  # noqa: E402
+import _paths  # noqa: E402  -- SoT for cc/ path strings, one directory up at tools/cc/_paths.py
 from _json_safe import decode_text_or_problem, os_error_text  # noqa: E402
 try:  # owner of "can /recall reach this catalog?"
     import _recall  # noqa: E402
@@ -2350,7 +2351,25 @@ def _hard_cut(text: str, budget: int, marker: str) -> str:
 
 # Marker for the single-runaway-entry fallback -- names what actually happened
 # (the NEWEST entry was truncated), distinct from the multi-entry "older dropped".
-_NEWEST_ENTRY_MARKER = "\n[newest entry truncated to budget -- pull cc/blueprints/latest.json]"
+# It points at the node the cut text came from: on a ``startup``/``clear`` start
+# the chain has advanced by the time the banner is read, so ``latest.json`` is
+# the new empty node and the prior node sits beside it under its id (DEF-4100);
+# ``_blueprint_node`` reads the id from the text's own ``Continuing from
+# session`` line and falls back to ``latest.json`` without one.
+_NEWEST_ENTRY_MARKER_FMT = "\n[newest entry truncated to budget -- pull {node}]"
+# The pointer's text is read by the operator and never opened here; the paths'
+# one owner is tools/cc/_paths.py.
+_NEWEST_ENTRY_MARKER = _NEWEST_ENTRY_MARKER_FMT.format(node=_paths.BLUEPRINT_LATEST_REL)
+_CONTINUING_FROM_RE = re.compile(r"^Continuing from session `([A-Za-z0-9_-]+)`", re.MULTILINE)
+
+
+def _blueprint_node(text: str) -> str:
+    """The node file the loaded blueprint text came from: ``cc/blueprints/<session
+    id>.json``, the id read from ``cmd_load``'s ``Continuing from session`` line
+    (the node ``_save`` writes beside ``latest.json``, the same file whether or
+    not the chain advanced since); ``latest.json`` when the line is absent."""
+    m = _CONTINUING_FROM_RE.search(text)
+    return f"{_paths.BLUEPRINTS_DIR_REL}/{m.group(1)}.json" if m else _paths.BLUEPRINT_LATEST_REL
 
 
 def _drop_whole_entries(text: str, budget: int, entry_re: "re.Pattern[str]", marker: str) -> str:
@@ -2387,36 +2406,54 @@ def _drop_whole_entries(text: str, budget: int, entry_re: "re.Pattern[str]", mar
 
 def _bound_blueprint_context(text: str, budget: "int | None" = None) -> str:
     """Bound the injected cross-session blueprint slice to its budget share by
-    dropping WHOLE trailing lines -- never slicing an entry mid-thought (cmd_load
-    renders each entry on one line with Next steps ABOVE the decisions, so the
-    drop sheds the OLDEST decisions first and keeps the curated handoff). The
-    NEWEST decision is NEVER dropped: if header+newest alone is over budget (a
-    runaway), it is byte-cut (head kept) so the section is never emitted empty.
-    The outer _MAX_CONTEXT_CHARS backstops the whole banner; ``budget`` lets
-    _build_context shrink the section below its share when the header and tail
-    leave less (DEF-674)."""
+    dropping WHOLE trailing lines, slicing an entry only as the last resort
+    (cmd_load renders each entry on one line with Next steps ABOVE the decisions,
+    so the drop sheds the OLDEST decisions first and keeps the curated handoff).
+    The FIRST entry is NEVER dropped: if header+first entry is over budget (a
+    runaway), or fits only without the marker, it is byte-cut (head kept) under
+    the marker naming the node, so the section is never emitted empty and a drop
+    is never silent. The outer _MAX_CONTEXT_CHARS backstops the whole banner;
+    ``budget`` lets _build_context shrink the section below its share when the
+    header and tail leave less (DEF-674)."""
     budget = _SOFT_BUDGETS["blueprint"] if budget is None else budget
+    node_marker = _NEWEST_ENTRY_MARKER_FMT.format(node=_blueprint_node(text))
     marker = "\n[blueprint context truncated]"
     if len(text.encode("utf-8")) <= budget:
         return text
     lines = text.split("\n")
+    # A text this function already byte-cut (the load's cut to the share, shrunk
+    # again by _fit_banner) ends with the node marker: dropped here as a trailing
+    # line, its pointer rides the marker this cut appends, so the fragment it cut
+    # mid-thought is never relabelled a whole-line drop.
+    if lines[-1].startswith("[newest entry truncated"):
+        lines.pop()
+        marker = node_marker
     mbytes = len(marker.encode("utf-8"))
-    # Floor: never drop below the header + the NEWEST decision (the first "- " line
-    # after the reordered "## Recent reasoning"), so the section is never emptied.
-    floor = 1
-    for i, ln in enumerate(lines):
-        if ln.startswith("## Recent reasoning"):
-            nd = next((j for j in range(i + 1, len(lines)) if lines[j].startswith("- ")), None)
-            if nd is not None:
-                floor = nd + 1
-            break
+    # Floor: never drop below the header + the FIRST entry line, under whichever
+    # heading cmd_load prints first (the curated handoff under "## What the prior
+    # session wants you to know", else the newest decision under "## Recent
+    # reasoning"), so the section is never emptied and the drop sheds the
+    # decisions, the Next steps pointer and the later fragments before it
+    # byte-cuts the first. Anchored on "## Recent reasoning", the heading cmd_load
+    # prints LAST, the floor sat below every fragment and the shrink fell through
+    # to the byte-cut, and a pre-cut text that had lost that heading had a
+    # one-line floor and dropped the whole first fragment (DEF-4101). The search
+    # starts at the first "## " heading: the header's session id and timestamp
+    # are printed unsanitized, and a line of theirs is never the floor.
+    first = next((j for j, ln in enumerate(lines) if ln.startswith("## ")), 0)
+    nd = next((j for j in range(first, len(lines)) if lines[j].startswith("- ")), None)
+    floor = nd + 1 if nd is not None else 1
     while len(lines) > floor and len("\n".join(lines).encode("utf-8")) + mbytes > budget:
         lines.pop()
     kept = "\n".join(lines)
     if len(kept.encode("utf-8")) + mbytes <= budget:
         return kept + marker
-    # Header + newest decision still over budget -> byte-cut (keep head + handoff).
-    return _hard_cut(kept, budget, _NEWEST_ENTRY_MARKER)
+    # Header + first entry over budget, or fitting only without the marker ->
+    # byte-cut (keep head) under the marker naming the node the text came from
+    # (DEF-4100); a kept text that fits alone is cut for the marker too, so a
+    # drop is never silent (_hard_cut returns a text under budget unmarked).
+    over = kept if len(kept.encode("utf-8")) > budget else kept + marker
+    return _hard_cut(over, budget, node_marker)
 
 
 def _load_blueprint(root: Path, advance_chain: bool) -> str:

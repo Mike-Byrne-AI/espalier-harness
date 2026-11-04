@@ -637,6 +637,21 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
+- **The banner's blueprint keeps its first fragment and points at the node that
+  holds the rest.** `tools/cc/hooks/session_start.py::_bound_blueprint_context`
+  anchored its floor on `## Recent reasoning`, the heading the loader prints
+  LAST, so with the curated handoff's fragments present the shrink fell through
+  to the byte-cut (the first fragment reached the window cut mid-thought) and a
+  pre-cut text that had lost the heading dropped every fragment (7 of the 16
+  newest dispatcher starts opened with no reasoning line). The floor is now the
+  header through the FIRST entry line, under whichever heading comes first
+  (`DEF-4101`). The byte-cut marker named `cc/blueprints/latest.json`, which on
+  a `startup` or `clear` start is the new empty node the chain just advanced
+  to; it now names the node the text came from, `cc/blueprints/<session
+  id>.json`, read from the text's own `Continuing from session` line, falling
+  back to `latest.json` without one (`DEF-4100`). Both from the banner pack's
+  findings, ruled defects on 2026-11-04.
+
 - **The release-readiness gate's not-slow leg figure moved to its runner's
   slowest reading again, and the job's wall now holds the derived bound.**
   `scripts/release_check.py::NOT_SLOW_LEG_MEASURED_S` read 1153 s (2026-10-05)
