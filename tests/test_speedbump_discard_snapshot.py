@@ -950,9 +950,19 @@ class TestARefusedStashIsNotACleanTree:
     def test_a_git_that_refuses_the_repository_is_not_a_missing_one(self, repo: Path, monkeypatch):
         """Dubious ownership (common on Windows, WSL and containers) makes
         every git call exit 128, as outside a repository; only git's own
-        words tell the two apart."""
+        words tell the two apart. GitHub's hosted runner images admit every
+        directory (`safe.directory = *`, system-wide on ubuntu and windows,
+        global on macos), which swallows the stressor and hands back a
+        snapshot: the row reads no config but the repository's own, and
+        proves git refuses before it asks."""
+        import os
         _add_intent(repo)
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+        monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
         monkeypatch.setenv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
+        refused = subprocess.run(["git", "-C", str(repo), "rev-parse", "--git-dir"], capture_output=True,
+                                 text=True, encoding="utf-8", errors="replace", env={**os.environ, "LC_ALL": "C"})
+        assert refused.returncode == 128 and "dubious ownership" in refused.stderr, refused
         self._refused_and_said(repo, "git reset --hard", "rev-parse")
 
     def test_a_stash_create_that_does_not_answer_is_never_a_clean_tree(self, repo: Path, monkeypatch):
