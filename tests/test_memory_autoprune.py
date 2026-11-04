@@ -14,6 +14,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -22,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._stubs import write_stub
 from tests._surface_expected import EXPECTED_MEMORY_MD_CAP
 
 
@@ -32,13 +34,11 @@ HOOK_PATH = (
 
 
 def _espalier_available() -> bool:
-    """True when ``espalier`` is invokable as either a PATH binary or a
-    ``python -m espalier.cli`` subprocess. Matches the hook's fallback
-    chain in ``_maybe_autoprune_memory``. The PATH binary may resolve
-    to a Python without the espalier module installed on dev machines
-    where multiple Pythons coexist (documented in docs/SHARP_EDGES.md
-    under "macOS python resolver gap"); in that case the
-    ``find_spec`` branch keeps the test runnable as long as the test
+    """True when ``espalier`` is invokable as this interpreter's module or as
+    a PATH binary, the two rungs of the hook's ladder in
+    ``_maybe_autoprune_memory`` (the module first since DEF-4091). The
+    ``find_spec`` branch keeps the tests runnable on a box whose PATH
+    binary resolves to a Python without the module, as long as the test
     interpreter itself can import espalier.
     """
     if importlib.util.find_spec("espalier") is not None:
@@ -100,7 +100,7 @@ def _session_dates(text: str) -> list[str]:
     return _SESSION_ROW_RE.findall(text)
 
 
-def _run_hook(repo_root: Path, rel_path: str) -> subprocess.CompletedProcess:
+def _run_hook(repo_root: Path, rel_path: str, *, path: str | None = None) -> subprocess.CompletedProcess:
     payload = json.dumps({
         "tool_name": "Write",
         "tool_input": {"file_path": rel_path},
@@ -108,6 +108,8 @@ def _run_hook(repo_root: Path, rel_path: str) -> subprocess.CompletedProcess:
     })
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = str(repo_root)
+    if path is not None:
+        env["PATH"] = path          # the PATH the hook's `espalier` ladder resolves on
     # The copy keeps conftest's per-test ESPALIER_AUDIT_DIR, so the hook's
     # audit rows land in the test's store: the store is per user, not per
     # repo, and with it popped they went to the operator's home store
@@ -613,3 +615,127 @@ class TestTheFragmentPruneOnAKeptOlderLoader:
         mod._check_session_log_fragment(fresh_repo, self.REL)
         said = " ".join(mod._hook_utils._ADVISORIES)
         assert self.REL in said and "no Session Log fragment was checked: SyntaxError: x" in said, said
+
+
+class TestTheLadderRunsTheWiredInterpretersEngineFirst:
+    """DEF-4091: the prune ladder tried the PATH ``espalier`` before this
+    interpreter's own module, so a stale ``espalier`` ahead on PATH (a prior
+    pipx or uv tool install, another project's activated venv) pruned the
+    tree's committed record with the wrong engine, or answered 0 and pruned
+    nothing, and the hook then read the file back still over cap and blamed
+    the permanent tables. TP-468 3-C's dirty-machine cell drove it: its stale
+    stub recorded ``memory prune --rows 37``. RED at d78cb4fe: the stub's
+    record held that one call and the file kept every line."""
+
+    @staticmethod
+    def _stale_espalier(bin_dir: Path, record: Path) -> Path:
+        """An ``espalier`` that answers an old version, appends each call to
+        ``record`` and exits 0 (3-C's stub), so a hook that runs it believes
+        the prune happened."""
+        bin_dir.mkdir(parents=True, exist_ok=True)
+        if os.name == "nt":
+            return write_stub(bin_dir / "espalier.cmd",
+                              f'@echo off\necho call %*>>"{record}"\necho espalier 0.1.0', crlf=True)
+        return write_stub(bin_dir / "espalier",
+                          f"#!/bin/sh\nprintf 'call %s\\n' \"$*\" >> {shlex.quote(str(record))}\n"
+                          "echo 'espalier 0.1.0'", crlf=False)
+
+    def test_a_stale_espalier_first_on_path_is_never_run_when_the_module_arm_prunes(self, fresh_repo):
+        """The module rung runs on this tree by construction: conftest ends the
+        session when the test interpreter's espalier is not this checkout's,
+        and the hook's self-host bridge puts the checkout on PYTHONPATH."""
+        record = fresh_repo / "stale-calls.txt"
+        stub = self._stale_espalier(fresh_repo / "stale bin", record)
+        path = os.pathsep.join([str(stub.parent), os.environ.get("PATH", "")])
+        # Pre-register the stressor, both halves: on the hook's PATH `espalier`
+        # IS the stub, and the stub run with the hook's argument shape records.
+        resolved = shutil.which("espalier", path=path)
+        assert resolved and Path(resolved).resolve() == stub.resolve(), resolved
+        subprocess.run([resolved, "memory", "prune", "--rows", "1", "--root", str(fresh_repo)],
+                       capture_output=True, timeout=30, check=True)
+        assert record.read_text(encoding="utf-8").startswith("call memory prune"), record.read_text(encoding="utf-8")
+        record.unlink()
+        memory_path = _make_over_cap_memory(fresh_repo)
+        before = len(memory_path.read_text(encoding="utf-8").splitlines())
+        result = _run_hook(fresh_repo, "ESPALIER_MEMORY.md", path=path)
+        assert result.returncode == 0, result.stderr
+        calls = record.read_text(encoding="utf-8") if record.is_file() else ""
+        assert not calls, f"the hook ran the stale espalier first on PATH:\n{calls}"
+        after = len(memory_path.read_text(encoding="utf-8").splitlines())
+        assert after <= EXPECTED_MEMORY_MD_CAP < before, (before, after, result.stdout, result.stderr)
+
+    @staticmethod
+    def _hook(monkeypatch):
+        """The hook loaded in-process under its own alias, its advisories kept."""
+        monkeypatch.syspath_prepend(str(HOOK_PATH.parent))
+        spec = importlib.util.spec_from_file_location("post_write_check_ladder", HOOK_PATH)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        monkeypatch.setattr(mod._hook_utils, "_ADVISORIES", [])
+        return mod
+
+    def test_a_wired_engine_that_refused_is_final_and_the_path_binary_is_not_tried(self, fresh_repo, monkeypatch):
+        """The wired engine ran the prune and refused: the warn carries its
+        words, and the PATH binary, whatever install answers the name, never
+        gets the file. Dies to: a fall-through on every non-zero rung."""
+        mod = self._hook(monkeypatch)
+        monkeypatch.setattr(shutil, "which", lambda name, *a, **k: "/stale/bin/espalier")
+        _make_over_cap_memory(fresh_repo)
+        calls: list[list[str]] = []
+
+        def run_bounded(cmd, **kw):
+            calls.append(list(cmd))
+            if cmd[0] == sys.executable:
+                # A stale `.pth` in the wired interpreter's site-packages speaks
+                # first on every start; the refusal that follows is the engine's.
+                return subprocess.CompletedProcess(
+                    cmd, 2, "", "ModuleNotFoundError: No module named 'oldproj'\n"
+                                "memory prune: the Session Log holds no row to archive\n")
+            pytest.fail("the PATH binary ran after the wired engine answered")
+
+        monkeypatch.setattr(mod._hook_utils, "run_bounded", run_bounded)
+        mod._maybe_autoprune_memory(fresh_repo, "ESPALIER_MEMORY.md")
+        assert [c[0] for c in calls] == [sys.executable], calls
+        said = " ".join(mod._hook_utils._ADVISORIES)
+        assert "autoprune failed" in said and "holds no row to archive" in said, said
+        # The remedy spells this interpreter's module, never the bare PATH name,
+        # with every flag the hook itself passed (a paste must not archive the
+        # row just written).
+        assert f"run `{sys.executable} -m espalier memory prune --rows " in said, said
+        assert f"--root {fresh_repo} --allow-empty --keep-newest 1` by hand" in said, said
+
+    @pytest.mark.parametrize("said,no_engine", [
+        ("/usr/bin/python3: No module named espalier", True),            # runpy, package absent
+        ("/usr/bin/python3: No module named espalier.cli", True),        # runpy, package present, cli absent
+        ("ModuleNotFoundError: No module named 'espalier'", True),       # the import system, quoted
+        ("ModuleNotFoundError: No module named 'espalier_plugin'", False),
+        ("ModuleNotFoundError: No module named 'tomli'", False),
+        ("ImportError: cannot import name 'main' from 'espalier.cli'", False),
+        ("memory prune: the Session Log holds no row to archive", False),
+    ], ids=["runpy-absent", "runpy-no-cli", "import-quoted", "a-plugin", "a-dependency", "a-broken-engine", "a-refusal"])
+    def test_the_no_engine_words_are_the_engines_own_name(self, monkeypatch, said, no_engine):
+        mod = self._hook(monkeypatch)
+        assert bool(mod._NO_ENGINE_RE.search(said)) is no_engine, said
+
+    def test_a_wired_interpreter_without_the_module_falls_through_to_the_path_binary(self, fresh_repo, monkeypatch):
+        """An install whose engine lives in a tool venv the wired interpreter
+        cannot import (pipx, uv tool): the module rung answers no module, the
+        PATH rung prunes, and the advisory is the success line."""
+        mod = self._hook(monkeypatch)
+        monkeypatch.setattr(shutil, "which", lambda name, *a, **k: "/tool/venv/bin/espalier")
+        memory_path = _make_over_cap_memory(fresh_repo)
+        calls: list[list[str]] = []
+
+        def run_bounded(cmd, **kw):
+            calls.append(list(cmd))
+            if cmd[0] == sys.executable:
+                return subprocess.CompletedProcess(cmd, 1, "", f"{sys.executable}: No module named espalier\n")
+            lines = memory_path.read_text(encoding="utf-8").splitlines()     # the tool venv's engine prunes
+            memory_path.write_text("\n".join(lines[:EXPECTED_MEMORY_MD_CAP]) + "\n", encoding="utf-8")
+            return subprocess.CompletedProcess(cmd, 0, "archived 1 row\n", "")
+
+        monkeypatch.setattr(mod._hook_utils, "run_bounded", run_bounded)
+        mod._maybe_autoprune_memory(fresh_repo, "ESPALIER_MEMORY.md")
+        assert [c[0] for c in calls] == [sys.executable, "/tool/venv/bin/espalier"], calls
+        said = " ".join(mod._hook_utils._ADVISORIES)
+        assert "autoprune:" in said and "failed" not in said, said

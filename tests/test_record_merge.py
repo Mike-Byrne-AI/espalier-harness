@@ -260,6 +260,75 @@ class TestMemoryCap:
                                      say=said.append) is False
         assert "no memory cap could be read" in said[0]
 
+    def test_the_prune_ladder_tries_this_interpreters_module_before_the_path_binary(self, rm, tmp_path, monkeypatch):
+        """DEF-4091: a stale ``espalier`` ahead on PATH ran the cap step's prune
+        with the wrong engine. The module of the interpreter running the merge
+        goes first, the PATH binary is the fallback, and no PATH binary is one
+        rung. RED at d78cb4fe: the PATH head came first."""
+        monkeypatch.setattr(rm.shutil, "which",
+                            lambda name, *a, **k: "/stale/bin/espalier" if name == "espalier" else None)
+        heads, _env = rm._prune_invocations(tmp_path)
+        assert heads == [[sys.executable, "-m", "espalier.cli"], ["/stale/bin/espalier"]], heads
+        monkeypatch.setattr(rm.shutil, "which", lambda name, *a, **k: None)
+        heads, _env = rm._prune_invocations(tmp_path)
+        assert heads == [[sys.executable, "-m", "espalier.cli"]], heads
+
+    def test_the_cap_step_falls_back_to_the_path_binary_when_the_module_arm_fails(self, rm, tmp_path, monkeypatch):
+        """An install whose engine lives in a tool venv the merge's interpreter
+        cannot import (pipx, uv tool): the module rung answers no module, the
+        PATH rung prunes, and nothing is said."""
+        root = self._tree(tmp_path, hook_cap=2, policy_cap=None)
+        (root / "ESPALIER_MEMORY.md").write_text("1\n2\n3\n", encoding="utf-8")
+        monkeypatch.setattr(rm.shutil, "which", lambda name, *a, **k: "/stale/bin/espalier")
+        calls: list[list[str]] = []
+
+        def run(argv, **kw):
+            calls.append(list(argv))
+            if argv[0] == sys.executable:
+                return 1, "", "No module named espalier"
+            return 0, "", ""
+
+        said: list[str] = []
+        assert rm.restore_memory_cap(root, new_rows=["3"], run=run, say=said.append) is True
+        assert [c[0] for c in calls] == [sys.executable, "/stale/bin/espalier"], calls
+        assert said == []
+
+    def test_a_wired_engine_that_refused_is_final_and_the_path_binary_is_not_a_second_opinion(
+        self, rm, tmp_path, monkeypatch,
+    ):
+        """The wired engine ran the prune and refused: the note carries its words
+        and the PATH binary, whatever install answers the name, never gets the
+        file. Dies to: a fall-through on every non-zero rung."""
+        root = self._tree(tmp_path, hook_cap=2, policy_cap=None)
+        (root / "ESPALIER_MEMORY.md").write_text("1\n2\n3\n", encoding="utf-8")
+        monkeypatch.setattr(rm.shutil, "which", lambda name, *a, **k: "/stale/bin/espalier")
+        calls: list[list[str]] = []
+
+        def run(argv, **kw):
+            calls.append(list(argv))
+            if argv[0] == sys.executable:
+                # a stale `.pth` speaks first on every start; the refusal is the engine's
+                return 2, "", "ModuleNotFoundError: No module named 'oldproj'\nmemory prune: the Session Log holds no row to archive"
+            pytest.fail("the PATH binary ran after the wired engine answered")
+
+        said: list[str] = []
+        assert rm.restore_memory_cap(root, new_rows=["3"], run=run, say=said.append) is False
+        assert [c[0] for c in calls] == [sys.executable], calls
+        assert len(said) == 1 and "holds no row to archive" in said[0], said
+        # the remedy spells this interpreter's module with the cap step's own flags, never the bare PATH name
+        assert f"`{sys.executable} -m espalier memory prune --rows 1 --root {root} --allow-empty --keep-newest 1`" in said[0], said
+
+    @pytest.mark.parametrize("said,no_engine", [
+        ("/usr/bin/python3: No module named espalier", True),
+        ("/usr/bin/python3: No module named espalier.cli", True),
+        ("ModuleNotFoundError: No module named 'espalier'", True),
+        ("ModuleNotFoundError: No module named 'espalier_plugin'", False),
+        ("ModuleNotFoundError: No module named 'tomli'", False),
+        ("memory prune: the Session Log holds no row to archive", False),
+    ], ids=["runpy-absent", "runpy-no-cli", "import-quoted", "a-plugin", "a-dependency", "a-refusal"])
+    def test_the_no_engine_words_are_the_engines_own_name(self, rm, said, no_engine):
+        assert bool(rm._NO_ENGINE_RE.search(said)) is no_engine, said
+
     # Reads the repository's own memory file (a doc, and one the release
     # export prunes): the contract slice, and the full tree only.
     @pytest.mark.contract

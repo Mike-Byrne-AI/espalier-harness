@@ -535,3 +535,53 @@ class TestWindowsShimResolution:
                                encoding="utf-8", errors="replace", timeout=45)
         assert not isinstance(got, hu.SpawnFailure), got
         assert got.returncode == 0, got.stderr
+
+
+class TestTheEngineIsSpawnedByModuleBeforeItsPathName:
+    """DEF-4091: every shipped site that resolves the harness's own CLI by its
+    PATH name (``which("espalier")``) builds its ladder with this interpreter's
+    module first: in the enclosing function the ``sys.executable`` read comes
+    before the ``which`` call, and nothing is inserted at the ladder's head.
+    Until that row the two sites tried the PATH binary first, and a stale
+    ``espalier`` ahead on PATH pruned the tree's record in the wired engine's
+    place. Derived by AST walk over ``tools/cc``, its hooks, ``scripts`` and the
+    engine's top-level modules (the byte-mirrors under ``espalier/`` are
+    folders, so a flat glob leaves them out); FLOOR: the two sites the row
+    named, so a walk that finds fewer broke or a site vanished unannounced."""
+
+    ENGINE_SITES_FLOOR = 2
+    ROOTS = ("tools/cc/*.py", "tools/cc/hooks/*.py", "scripts/*.py", "espalier/*.py")
+
+    @staticmethod
+    def _asks_path_for_espalier(call: ast.Call) -> bool:
+        fn = call.func
+        named = (isinstance(fn, ast.Attribute) and fn.attr == "which") or (isinstance(fn, ast.Name) and fn.id == "which")
+        return bool(named and call.args and isinstance(call.args[0], ast.Constant) and call.args[0].value == "espalier")
+
+    @classmethod
+    def _sites(cls) -> list[dict]:
+        repo = TOOLS_CC.parents[1]
+        out: list[dict] = []
+        for pattern in cls.ROOTS:
+            for path in sorted(checkout_glob(repo, pattern)):      # git's view: a worktree or a local script is not a site
+                tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+                for fn in ast.walk(tree):
+                    if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        continue
+                    asks = [n.lineno for n in ast.walk(fn) if isinstance(n, ast.Call) and cls._asks_path_for_espalier(n)]
+                    if not asks:
+                        continue
+                    reads = [n.lineno for n in ast.walk(fn) if isinstance(n, ast.Attribute) and n.attr == "executable"]
+                    inserts = [n.lineno for n in ast.walk(fn)
+                               if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "insert"]
+                    out.append({"file": path.relative_to(repo).as_posix(), "function": fn.name, "which": min(asks),
+                                "executable": min(reads) if reads else None, "inserts": inserts})
+        return out
+
+    @pytest.mark.contract      # a tree-wide sweep: the contract slice runs it on every tier
+    def test_every_site_reads_this_interpreter_before_asking_path_and_inserts_nothing_at_the_head(self):
+        sites = self._sites()
+        assert len(sites) >= self.ENGINE_SITES_FLOOR, sites
+        bad = [s for s in sites if s["executable"] is None or s["executable"] > s["which"] or s["inserts"]]
+        assert not bad, ("a site resolves `espalier` by its PATH name before this interpreter's module, "
+                         f"or inserts at the ladder's head (DEF-4091's class): {bad}")
