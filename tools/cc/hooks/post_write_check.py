@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -147,18 +148,36 @@ def _read_memory_text(memory_path: Path) -> str | None:
     return text
 
 
+#: An interpreter's own words for having no engine to run: runpy's for ``-m
+#: espalier.cli`` (unquoted, with or without ``.cli``) and the import system's
+#: (quoted). Bound to the engine's name, so a missing dependency of an engine
+#: that did start (a stale ``.pth``, a plugin) is a refusal, never a reason to
+#: try another install. ``tools/cc/record_merge.py`` keeps the same pattern.
+_NO_ENGINE_RE = re.compile(r"No module named '?espalier(\.cli)?'?(?![\w.])")
+
+
 def _maybe_autoprune_memory(repo_root: Path, rel_path: str) -> None:
     """If the just-written file is ESPALIER_MEMORY.md and now exceeds the cap,
     invoke ``espalier memory prune`` to archive the oldest Session Log
     row(s). Never blocks; says what it did in the hook's advisory, the
     additionalContext of its one JSON object (stderr keeps the debug copy).
 
-    Tries ``shutil.which("espalier")`` first (production speed), then
-    falls back to ``sys.executable -m espalier.cli`` for environments
-    where the PATH binary resolves to a Python without the espalier
-    module installed (documented in docs/SHARP_EDGES.md under "macOS
-    python resolver gap"). Subprocess only — no espalier IMPORT here,
-    per the ``tools/cc/`` isolation rule.
+    Runs this interpreter's own module first (``sys.executable -m
+    espalier.cli``): the hook runs under the interpreter Claude Code's
+    settings wired at ``init``, so its module is the engine installed for
+    this tree, and an ``espalier`` elsewhere on PATH, newer or older, is not
+    the engine of record. The PATH ``espalier`` is the one rung below it, for
+    an install whose engine lives in a tool venv the wired interpreter cannot
+    import (pipx, uv tool), and it runs only when the module rung answered
+    that it has no such module (``_NO_ENGINE_RE``, the engine's own name) or
+    raised (could not start, or timed out, as before); an engine that ran
+    and refused is final, since the PATH binary is whatever install answers
+    the name first, not a second opinion. Until DEF-4091 the PATH binary came
+    first "for production speed" (both rungs spawn a Python, so the order
+    bought none), and the dirty-machine cell's stale ``espalier`` pruned the
+    tree's record in the wired engine's place, or exited 0 and pruned
+    nothing. Subprocess only -- no espalier IMPORT here, per the
+    ``tools/cc/`` isolation rule.
     """
     import shutil
     import subprocess
@@ -178,11 +197,12 @@ def _maybe_autoprune_memory(repo_root: Path, rel_path: str) -> None:
         return
 
     excess = line_count - _MEMORY_MD_CAP + _AUTOPRUNE_HEADROOM
-    invocations: list[list[str]] = []
+    # This interpreter's module first, the PATH binary below it (the
+    # docstring says why, and when the lower rung runs).
+    invocations: list[list[str]] = [[sys.executable, "-m", "espalier.cli"]]
     espalier_bin = shutil.which("espalier")
     if espalier_bin is not None:
         invocations.append([espalier_bin])
-    invocations.append([sys.executable, "-m", "espalier.cli"])
 
     # Self-host bridge: when this hook lives co-located with an
     # ``espalier/`` source tree (the espalier-harness repo itself), add
@@ -223,7 +243,7 @@ def _maybe_autoprune_memory(repo_root: Path, rel_path: str) -> None:
             "--keep-newest", "1",
         ]
         try:
-            result = _hook_utils.run_bounded(  # spawn: ok the autoprune's own three-arm interpreter resolver and warning above; a reporter
+            result = _hook_utils.run_bounded(  # spawn: ok the autoprune's own two-rung engine ladder and warning above; a reporter
                 cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10, env=env
             )
         except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
@@ -282,11 +302,14 @@ def _maybe_autoprune_memory(repo_root: Path, rel_path: str) -> None:
         last_error = (
             f"rc={result.returncode} stderr={result.stderr.strip()}"
         )
+        if not _NO_ENGINE_RE.search(result.stderr or ""):
+            break   # the engine ran and refused: the PATH binary is not a second opinion
 
     _hook_utils.advise_warn(
         f"ESPALIER_MEMORY.md autoprune failed: {last_error} "
         f"(file remains at {line_count} lines, cap={_MEMORY_MD_CAP}; "
-        f"run `espalier memory prune --rows {excess}` manually)"
+        f"run `{sys.executable} -m espalier memory prune --rows {excess} --root {repo_root} "
+        f"--allow-empty --keep-newest 1` by hand)"
     )
 
 

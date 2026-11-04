@@ -48,16 +48,26 @@ the same tree). Any `from espalier ...` or `import espalier` causes
 `ModuleNotFoundError` at runtime.
 
 Inter-layer communication uses **subprocess only**. Example: the
-autoprune hook calls `espalier memory prune` via
-`subprocess.check_call(...)`, not via import. The fallback chain in
-`post_write_check.py::_maybe_autoprune_memory` is:
+autoprune hook runs `espalier memory prune` through
+`_hook_utils.run_bounded`, not via import. The ladder in
+`post_write_check.py::_maybe_autoprune_memory` (and in
+`record_merge.py::_prune_invocations`, the same ladder) is, since DEF-4091:
 
-1. `shutil.which("espalier")` — production speed (PATH binary).
-2. `sys.executable -m espalier.cli` — fallback for environments where
-   the PATH binary resolves to a Python without the espalier module
-   (the macOS python-resolver gap documented in SHARP_EDGES).
-3. PYTHONPATH self-host bridge — adds `<repo>/espalier` to
-   PYTHONPATH when the hook is colocated with the source tree.
+1. `sys.executable -m espalier.cli` — this interpreter's module: the hook
+   runs under the interpreter the settings wired, so its module is the
+   engine installed for this tree.
+2. `shutil.which("espalier")` — the PATH binary, run only where rung 1
+   answered that it has no such module (`_NO_ENGINE_RE`, the engine's own
+   name: an install in a tool venv the wired interpreter cannot import,
+   pipx or uv tool) or raised. An engine that ran and refused is final.
+   Until DEF-4091 this rung came first "for production speed" and a stale
+   `espalier` ahead on PATH pruned the record in the wired engine's place.
+3. PYTHONPATH self-host bridge — adds `<repo>` to PYTHONPATH when the hook
+   is colocated with the source tree.
+
+`tests/test_spawn_chokepoint.py::TestTheEngineIsSpawnedByModuleBeforeItsPathName`
+pins the order at every shipped site that resolves `espalier` by name; a
+third site copying the old order reds there by file and function.
 
 ## A sibling import is a loader contract, not a dependency
 

@@ -395,17 +395,29 @@ def memory_cap(root: Path) -> int | None:
     return int(m.group(1)) if m else None
 
 
+#: An interpreter's own words for having no engine to run (the autoprune hook's
+#: ``_NO_ENGINE_RE``, the same pattern): runpy's for ``-m espalier.cli`` and the
+#: import system's quoted form, bound to the engine's name so a missing
+#: dependency of an engine that did start is a refusal, never a second install.
+_NO_ENGINE_RE = re.compile(r"No module named '?espalier(\.cli)?'?(?![\w.])")
+
+
 def _prune_invocations(root: Path) -> tuple[list[list[str]], dict[str, str]]:
-    """The ``espalier`` CLI, tried as the PATH binary then as this interpreter's
-    module; the same ladder the autoprune hook climbs. Any inherited PYTHONPATH
-    is dropped (a second checkout open in another session must not answer for
+    """The ``espalier`` CLI, tried as this interpreter's module then as the PATH
+    binary; the same ladder the autoprune hook climbs (its docstring says why,
+    and when the PATH rung runs: only where the module rung answered that it
+    has no such module, ``_NO_ENGINE_RE``, or raised; an engine that ran and
+    refused is final). The interpreter is the one running the merge, the
+    operator's own ``python``, so an activated venv's engine is the engine of
+    record here. The PATH binary came first until DEF-4091, and a stale one
+    pruned the record in that engine's place. Any inherited PYTHONPATH is
+    dropped (a second checkout open in another session must not answer for
     this one) and, beside an ``espalier/`` source tree, that tree is put on it
     so the self-host repository runs its own engine."""
-    invocations: list[list[str]] = []
+    invocations: list[list[str]] = [[sys.executable, "-m", "espalier.cli"]]
     espalier_bin = shutil.which("espalier")
     if espalier_bin is not None:
         invocations.append([espalier_bin])
-    invocations.append([sys.executable, "-m", "espalier.cli"])
     env = os.environ.copy()
     env.pop("PYTHONPATH", None)
     if (root / "espalier" / "__init__.py").is_file():
@@ -477,9 +489,12 @@ def restore_memory_cap(root: Path, *, new_rows: list[str], run: Runner = run,
             pruned = True
             break
         last = err.strip() or f"rc={rc}"
+        if not _NO_ENGINE_RE.search(err):
+            break   # the engine ran and refused: the PATH binary is not a second opinion
     if not pruned:
-        say(f"note: {MEMORY} is {excess} line(s) over its cap of {cap} and `espalier memory prune` "
-            f"could not run ({last[:160]}): run it by hand, then amend the merge commit")
+        say(f"note: {MEMORY} is {excess} line(s) over its cap of {cap} and `{sys.executable} -m espalier memory prune "
+            f"--rows {excess} --root {root} --allow-empty --keep-newest {max(len(new_rows), 1)}` could not run "
+            f"({last[:160]}): run it by hand, then amend the merge commit")
         return False
     after = _read_memory(root, say)
     if after is not None:
