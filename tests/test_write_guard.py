@@ -21,7 +21,7 @@ import pytest
 from tests._guard_fixture import carry_protected_tree
 from tests._hook_assertions import assert_hook_allowed, assert_hook_denied
 from tests._hook_spawn import run_hook_through
-from tests._spaced_paths import CMD, PS, SH, fill, quoted
+from tests._spaced_paths import CMD, PS, SH, fill, quoted, skip_unless_plain
 from tests._symlink_support import requires_symlink
 
 HOOKS_DIR = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
@@ -1508,6 +1508,11 @@ class TestTheDirectoryAWriteRunsIn:
         # there fails, and the walk reads that from disk (the oracle)
         (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True)
         (tmp_path / "reports").mkdir()
+        if "cd $S" in cmd:
+            # the unquoted reference is the row's point, and a spaced temp root
+            # splits it at the blank (DEF-4095); the split itself is pinned by
+            # the always-spaced row below (DEF-1016)
+            skip_unless_plain(tempfile.gettempdir(), cmd)
         # each path as bash takes it, quoted only when spaced (DEF-5082)
         cmd = fill(cmd, "{abs}", str(tmp_path))
         # `{tmp}` is "a directory outside the checkout that exists on this host":
@@ -1571,8 +1576,9 @@ class TestTheDirectoryAWriteRunsIn:
         (tmp_path / "reports").mkdir()
         (tmp_path / "build").mkdir()
         # `/tmp` in the table stands for "a directory outside the checkout";
-        # on this host it is the temp root, which on Windows is not `/tmp`
-        cmd = cmd.replace("{tmp}", Path(tempfile.gettempdir()).as_posix())
+        # on this host it is the temp root, which on Windows is not `/tmp` --
+        # and which PowerShell takes as one word only when quoted (DEF-4095)
+        cmd = fill(cmd, "{tmp}", Path(tempfile.gettempdir()).as_posix(), PS)
         at = (None if cwd is None else Path(tempfile.gettempdir()) if cwd == "/tmp"
               else (Path(cwd) if cwd.startswith("/") else tmp_path / cwd))
         result = run_guard_from("PowerShell", cmd, tmp_path, at)
@@ -10015,9 +10021,15 @@ class TestPowerShellRecursiveRemoveTiersAgree:
         for i, switches in enumerate(self._SWITCHES[family]):
             for j, spelled in enumerate(self._TARGETS):
                 target = spelled.format(repo=repo.as_posix(), scratch=scratch.as_posix())
-                quoted = quotes[(i + j) % 3].format(target)
-                verb = f"{head} {switches} {quoted}{tail}"
-                command = self._SHAPES[(i + 2 * j) % 3].format(v=verb, t=quoted)
+                style = quotes[(i + j) % 3]
+                # the bare style spells each temp path as PowerShell takes it,
+                # quoted only when spaced: bare, a spaced path is two words,
+                # and the tiers read the first word where the exemption reads
+                # the whole target (DEF-4095); the quoted styles wrap it whole
+                word = (fill(fill(spelled, "{scratch}", scratch.as_posix(), PS), "{repo}", repo.as_posix(), PS)
+                        if style == "{}" else style.format(target))
+                verb = f"{head} {switches} {word}{tail}"
+                command = self._SHAPES[(i + 2 * j) % 3].format(v=verb, t=word)
                 asked += 1
                 if wg._ps_dangerous_reason(command, repo, cwd=repo) is not None:
                     continue
