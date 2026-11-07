@@ -1,0 +1,15 @@
+{
+ "id": "DEF-3036",
+ "subject": "scripts/red_after_merge_census.py",
+ "cmd": "python -c \"import io,sys,types,pathlib;sys.path.insert(0,'scripts');import red_after_merge_census as r,merge_cost_census as m,mail_latency_census as l,lane_overlap_census as o;X=lambda *a,**k:types.SimpleNamespace(returncode=1,stdout='',stderr='GraphQL: node limit exceeded');r.run_bounded=X;l.run_bounded=X;o.run_bounded=X;e=io.StringIO();so=sys.stdout;sys.stderr=e;sys.stdout=io.StringIO();r.main(['--limit','100']);sys.stderr=sys.__stderr__;sys.stdout=so;v=e.getvalue();a=int('signed in' in v and 'node limit' not in v);w=m.catch_up_rows([{'number':1,'headRefName':'x','commits':[]}],runner=lambda *x,**k:(1,'','HTTP 502'))[0];b=int(w['test_runs']==0 and not any('unread' in str(k) for k in w));c=int(l.read_refs(pathlib.Path('.'))[0]==[]);d=int(o._gh('pr','list')=='');print(a+b+c+d)\"",
+ "open_value": "4",
+ "why_not": null,
+ "inputs": [
+  "scripts/merge_cost_census.py",
+  "scripts/mail_latency_census.py",
+  "scripts/lane_overlap_census.py"
+ ],
+ "row_sha": "ee67068b877c",
+ "text_sha": "40772ca73f06",
+ "verified_2026_11_07": "OPEN (filed 2026-11-07; probe driven at filing here and in the export of HEAD ac719fc66966)"
+}

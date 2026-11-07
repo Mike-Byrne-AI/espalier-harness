@@ -550,7 +550,7 @@ Members derived by: the live ledger rows whose headline names what this pack's l
 
 | Item | Status | Evidence |
 |---|---|---|
-| `DEF-981` (three lanes livelock under the up-to-date rule) | **REACHED by the rule's removal, 2026-10-09** (live `strict=false`); its strike is due at Wave A's landing, with Wave D's second line as the condition under which it could return | 0-C's protection read |
+| `DEF-981` (three lanes livelock under the up-to-date rule) | **REACHED by the rule's removal, 2026-10-09** (live `strict=false`); **struck 2026-11-07** (due at Wave A's landing, it was not struck then), with Wave D's second line as the condition under which it could return | 0-C's protection read; the strike's closing text in `task-packs/ledger.d/DEF-981.md` |
 | `TP-478` 2-C, 2-D, 2-E and Wave 3 | **MOVED here** (Wave C; Wave 3's route (b) was already taken on 2026-10-09) | win-2 adds the pointer in `TP-478` when it ships 2-B, since its branch edits that file |
 | `TP-467` wave B | **MOVED here** (Wave B-2) | `TP-467` carries a pointer line |
 | The double-minted id (`DEF-1197` / `DEF-1198`, no row of its own) | **TO BE REACHED by Wave B-1** | the collision test |
