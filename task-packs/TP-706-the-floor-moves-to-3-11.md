@@ -871,7 +871,13 @@ end-of-life.
   0-A corrections), the review batch and this stamp; the alive SHA is the merge commit on `main`.
 - Suite: Wave 1: the full tier at `b87dd13d`, 28,041 passed and 4 failed, all the lane's own,
   fixed comment- and test-only; then the contract slice, 6,207 passed; post-merge proof run
-  42371595240 green on `8dd10c01`. Waves 2 and 3: SUITE_PENDING
+  42371595240 green on `8dd10c01`. Waves 2 and 3: the full tier at `9e3826a6`
+  (`scripts/proof_tier.py --base origin/main --run`): mypy and ruff clean; parallel leg 28,388
+  passed, 89 skipped, 3 xfailed and 7 failed, all the lane's own (a bench marker for the floor
+  sentence, two census entries, a doc line read as a test count, a rationale docstring, a
+  filesystem glob, a row choosing the first `__main__` block), fixed test-, doc- and
+  bench-only in the commit after it, the seven files re-run whole green; serial leg 2,522
+  passed, 12 skipped.
 - Earn-the-red: 2-C's stubbed-version row per hook red on the base hooks, and four drives under
   a real Python 3.10.21 gave the structured deny at rc 0 (a continued Stop passes); with each
   floor call removed under 3.10, `write_guard` and `plan_guard` deny as an internal error and

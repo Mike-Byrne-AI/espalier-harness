@@ -1711,7 +1711,7 @@ One import site keeps the next change to how `espalier/` reads TOML
 to one file. It did not keep the last one to one file: this section
 used to promise that dropping 3.10 would be "a one-line edit in
 `_compat.py`", and the floor's move from 3.10 to 3.11 (2026-11-07)
-cost a sweep of 24 code sites and 19 test sites, because readers outside the
+cost a sweep of 24 code sites and 19 more in the suite, because readers outside the
 shim had grown their own answers to a missing parser: regex readers,
 line scans, `tomli` retries. Budget the next floor move from that
 record, not from the shim. `tools/cc/` cannot import `espalier`, so its

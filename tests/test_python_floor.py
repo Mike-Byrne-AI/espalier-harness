@@ -2997,15 +2997,18 @@ def _statement_imports(node: ast.AST) -> set[str]:
 #: Every module a hook can import from its own folder or the tools folder
 #: above it: a sibling is any of these, underscored or not (`stop_gate` imports
 #: `ship`, whose top loads five more).
-_SIBLING_MODULES = frozenset(path.stem for folder in (HOOKS_DIR, HOOKS_DIR.parent)
-                             for path in folder.glob("*.py"))
+def _sibling_modules() -> frozenset:
+    from tests._live_tree import checkout_glob
+    return frozenset(path.stem for folder in (HOOKS_DIR, HOOKS_DIR.parent)
+                     for path in checkout_glob(folder, "*.py"))
 
 
 def _first_sibling_import(body: list) -> int | None:
     """The index of the first statement importing a sibling other than the
     start refusal."""
+    siblings = _sibling_modules()
     return next((i for i, node in enumerate(body)
-                 if any((name.startswith("_") or name.split(".")[0] in _SIBLING_MODULES)
+                 if any((name.startswith("_") or name.split(".")[0] in siblings)
                         and name not in ("_start_refusal", "__future__")
                         for name in _statement_imports(node))), None)
 

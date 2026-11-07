@@ -1,5 +1,5 @@
-"""``espalier/assets.py`` imports ``Traversable`` from ``importlib.resources.abc``
-directly: the module exists on every interpreter the floor (3.11) allows, and
+"""Pins that ``espalier/assets.py`` imports ``Traversable`` from ``importlib.resources.abc``
+directly, because the module exists on every interpreter the floor (3.11) allows, and
 ``importlib.abc.Traversable`` was removed in 3.14, so there is no second home to
 fall back to.
 """
