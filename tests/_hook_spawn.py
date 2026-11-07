@@ -244,7 +244,7 @@ class _Before:
         root = os.path.normcase(os.path.abspath(self.project))
         for tree in self.saved:
             here = os.path.normcase(os.path.abspath(tree))
-            if not here.startswith(root + os.sep):
+            if not here.replace("\\", "/").startswith(root.replace("\\", "/").rstrip("/") + "/"):
                 continue   # outside the project: the walk never reaches it
             while here != root:
                 parent = os.path.dirname(here)
