@@ -7,7 +7,8 @@
  "inputs": [
   "tools/cc/hooks/_bash_patterns.py"
  ],
- "row_sha": "b5023785b6a1",
- "text_sha": "e72fa5dce996",
- "verified_2026_10_31": "OPEN (filed 2026-10-31; probe driven at filing)"
+ "row_sha": "0e444a3765b5",
+ "text_sha": "fcc0356a3d75",
+ "verified_2026_10_31": "OPEN (filed 2026-10-31; probe driven at filing)",
+ "verified_2026_11_07": "STILL_OPEN (re-pinned value unchanged on 2026-11-07: widened with the wrapper spelling the dispatcher's note 3b86ac names; the probe and its value are unchanged) [changed: text]"
 }
