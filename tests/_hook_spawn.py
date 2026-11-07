@@ -18,15 +18,16 @@ Three limits keep the retry honest:
 - one retry per test row, so a row that spawns several times waits at most
   one bound longer than it did, and a second miss fails at once;
 - the retry starts from the state the first attempt began with (DEF-2030):
-  a missed attempt's whole process group is ended, then the files under the
+  a timed-out attempt's whole process group is ended (a budget refusal has
+  already exited), then the files under the
   project's ``.espalier-state`` and under the test's own audit directory
   (bytes and mtimes) are put back as they were saved before the first
   attempt, what the attempt added removed, so a speed bump's one-shot flag
   the miss wrote is never read as a re-issue, and a row that counts audit
   records never counts the missed attempt's. Anything else under the
   project (resolved as the hook resolves it: ``CLAUDE_PROJECT_DIR`` from the
-  env given, else the working directory) that the attempt changed means no
-  retry: session_start's blueprint chain and reflect_trigger's marker under
+  env given, else the working directory) that the attempt changed, an
+  interpreter's ``__pycache__`` apart, means no retry: session_start's blueprint chain and reflect_trigger's marker under
   ``cc/``, a marker at the project's root, and in the suite's own checkout,
   whose ``.espalier-state`` a live session writes too and which is never put
   back, everything. The real home audit log, which live sessions share, is
@@ -82,7 +83,7 @@ class HookSpawnRetried(UserWarning):
 
 
 def _end_the_group(proc: subprocess.Popen) -> None:
-    """End a missed attempt's whole process group, not the child alone: a
+    """End a timed-out attempt's whole process group, not the child alone: a
     grandchild left running (reflect_trigger's 25 s reflect spawn, a git a
     judgment started) could write state after the restore, and the retry would
     read it. POSIX: the child leads its own session, so its group is one
@@ -109,8 +110,9 @@ def _attempt(argv: list[str], *, statusline: bool, binary: bool, input: str | by
     # One wait per bound, each bound a module constant written at its call: the
     # suite contract holding every wait under its test's ceiling reads only that
     # (tests/test_test_suite_contract.py); a bound passed in would be unread.
-    group = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
-             else {"start_new_session": True})
+    # POSIX: the child leads its own session, so its group is one signal.
+    # Windows needs no flag: ``taskkill /T`` walks the parent-pid tree.
+    group = {} if os.name == "nt" else {"start_new_session": True}
     decoding = {} if binary else {"text": True, "encoding": "utf-8"}
     proc = subprocess.Popen(argv, stdin=subprocess.PIPE if input is not None else None,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, **decoding, **group, **kwargs)
@@ -119,7 +121,10 @@ def _attempt(argv: list[str], *, statusline: bool, binary: bool, input: str | by
             out, err = proc.communicate(input, timeout=STATUSLINE_S)
         else:
             out, err = proc.communicate(input, timeout=HOOK_S)
-    except subprocess.TimeoutExpired:
+    except BaseException:
+        # A timeout, and anything else that leaves the wait (an interrupt, the
+        # per-test ceiling's signal): the child and its group never outlive it,
+        # as subprocess.run's child never did.
         _end_the_group(proc)
         raise
     return subprocess.CompletedProcess(argv, proc.returncode, out, err)
@@ -247,7 +252,7 @@ class _Before:
                 here = parent
         for folder, names in self.toward.items():
             try:
-                self.on_the_way[folder] = set(os.listdir(folder)) - names
+                self.on_the_way[folder] = {os.path.normcase(n) for n in os.listdir(folder)} - names
             except OSError:
                 self.on_the_way[folder] = set()
         self.began_ns = time.time_ns()
@@ -262,19 +267,23 @@ class _Before:
         2026-11-07), and no hook writes within the tick its spawn began in."""
         skip = {os.path.normcase(os.path.abspath(t)) for t in self.saved}
         for dirpath, dirnames, filenames in os.walk(self.project):
-            dirnames[:] = [d for d in dirnames
-                           if os.path.normcase(os.path.abspath(os.path.join(dirpath, d))) not in skip]
+            # __pycache__ is the interpreter's own cache of a hook it imported,
+            # which no hook decision reads; .git stays walked (a checkout's
+            # git switch or index refresh is a change a retry would read).
+            dirnames[:] = [d for d in dirnames if d != "__pycache__"
+                           and os.path.normcase(os.path.abspath(os.path.join(dirpath, d))) not in skip]
             here = os.path.normcase(os.path.abspath(dirpath))
             if here in self.toward:
                 try:
-                    names = set(os.listdir(dirpath)) - self.toward[here]
+                    names = {os.path.normcase(n) for n in os.listdir(dirpath)} - self.toward[here]
                 except OSError:
                     names = set()
                 if names != self.on_the_way[here]:
                     return dirpath
             else:
                 try:
-                    if os.lstat(dirpath).st_mtime_ns > self.began_ns:
+                    if (os.lstat(dirpath).st_mtime_ns > self.began_ns
+                            and not self._a_new_cache_in(dirpath)):
                         return dirpath
                 except OSError:
                     pass
@@ -288,6 +297,15 @@ class _Before:
         return None
 
 
+    def _a_new_cache_in(self, folder: str) -> bool:
+        """Whether a ``__pycache__`` the attempt wrote explains the folder's
+        moved mtime (adding it moves its parent's)."""
+        try:
+            return os.lstat(os.path.join(folder, "__pycache__")).st_mtime_ns > self.began_ns
+        except OSError:
+            return False
+
+
 def _ready_for_the_retry(name: str, miss: str, before: _Before) -> list[str]:
     """Make the retry start from the state the missed attempt began with, or
     fail the row saying why it cannot (DEF-2030). Answers the names of the
@@ -297,18 +315,17 @@ def _ready_for_the_retry(name: str, miss: str, before: _Before) -> list[str]:
         pytest.fail(f"{name} missed ({miss}) after changing {changed}, outside what the restore puts "
                     f"back ({STATE_DIR} and the test's own audit directory, never in the suite's own "
                     "checkout); a retry would read it, so it is not retried.")
-    saved = before.saved
     put_back = []
-    for tree, before in saved.items():
+    for tree, as_saved in before.saved.items():
         try:
-            if _save(tree) == before:
+            if _save(tree) == as_saved:
                 continue
-            _restore(tree, before)
+            _restore(tree, as_saved)
             back = _save(tree)
         except OSError as exc:
             pytest.fail(f"{name} missed ({miss}) after changing {tree} in a way that could not be "
                         f"put back ({type(exc).__name__}: {exc}); so it is not retried.")
-        if back != before:
+        if back != as_saved:
             pytest.fail(f"{name} missed ({miss}) after changing {tree}, and putting it back did not "
                         "give the state it began with; so it is not retried.")
         put_back.append(tree.name)

@@ -314,7 +314,8 @@ def _cited_ids() -> list[str]:
 def test_the_nested_run_has_the_runner_to_itself():
     """DEF-4062: the run below spawns the write guard through the hook for
     rows whose judgment writes a speed bump's state, which
-    ``tests/_hook_spawn.py`` never retries on a miss, and runs rows of a
+    ``tests/_hook_spawn.py`` then never retried on a miss (since DEF-2030 it
+    retries from the state the first attempt began with), and runs rows of a
     file the full tier keeps off the parallel load. Beside that load on
     windows-latest one judgment outran the guard's budget (run 41217045122),
     so this file runs on the serial leg, where the nested run is alone."""

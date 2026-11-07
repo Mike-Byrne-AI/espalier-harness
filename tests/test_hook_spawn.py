@@ -65,6 +65,11 @@ if miss and mode.endswith("-cc"):
     cc.mkdir(parents=True, exist_ok=True)
     (cc / "latest.json").write_text("{}", encoding="utf-8")
     time.sleep(30)
+if miss and mode.endswith("-pycache"):
+    cache = project / "hooks" / "__pycache__"
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache / "sibling.cpython.pyc").write_bytes(b"x")
+    time.sleep(30)
 if miss and mode.endswith("-root"):
     (project / "reflect_ran.marker").write_text("x", encoding="utf-8")
     time.sleep(30)
@@ -236,6 +241,57 @@ class TestTheRetrysLimits:
         with pytest.raises(pytest.fail.Exception, match="outside what the restore puts back"):
             hs.run_hook_through(argv(mode), env=env, input="{}")
         assert runs() == 1
+
+    def test_a_miss_that_changed_nothing_retries_beside_a_folder_made_in_the_starts_tick(self, child, tmp_path):
+        """The walk refuses an mtime after the start, never at it: a folder
+        the row made just before the spawn shares the start's tick on Windows,
+        and a miss that changed nothing still retries beside it."""
+        argv, runs = child
+        project = tmp_path / "project"
+        (project / "made-just-now").mkdir(parents=True)
+        env = {**os.environ, "CLAUDE_PROJECT_DIR": str(project)}
+        with pytest.warns(hs.HookSpawnRetried):
+            result = hs.run_hook_through(argv("first-sleep"), env=env, input="{}")
+        assert (result.stdout.strip(), runs()) == ("answered", 2)
+
+    def test_a_hooks_bytecode_cache_is_no_change_a_retry_reads(self, child, tmp_path):
+        """A miss whose hook imported a sibling module wrote __pycache__ under
+        the project: the interpreter's own cache, which no hook decision
+        reads, so the miss still retries."""
+        argv, runs = child
+        project = tmp_path / "project"
+        (project / "hooks").mkdir(parents=True)
+        env = {**os.environ, "CLAUDE_PROJECT_DIR": str(project)}
+        with pytest.warns(hs.HookSpawnRetried):
+            result = hs.run_hook_through(argv("first-pycache"), env=env, input="{}")
+        assert (result.stdout.strip(), runs()) == ("answered", 2)
+
+    def test_an_interrupted_wait_leaves_no_child_running(self, child, monkeypatch):
+        """Whatever leaves the wait (an interrupt, the per-test ceiling's
+        signal) ends the child and its group, as subprocess.run's child was
+        ended, never only a timeout."""
+        argv, runs = child
+        spawned: list[subprocess.Popen] = []
+
+        class InterruptedOnce(subprocess.Popen):
+            def communicate(self, *args, **kwargs):
+                if spawned:
+                    return super().communicate(*args, **kwargs)
+                spawned.append(self)
+                deadline = time.monotonic() + 10
+                while runs() == 0 and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                raise KeyboardInterrupt
+
+        monkeypatch.setattr(hs.subprocess, "Popen", InterruptedOnce)
+        try:
+            with pytest.raises(KeyboardInterrupt):
+                hs.run_hook_through(argv("first-sleep"), env=None, input="{}")
+            assert spawned and spawned[0].poll() is not None, "the child outlived the interrupted wait"
+        finally:
+            for proc in spawned:
+                if proc.poll() is None:
+                    proc.kill()
 
     def test_the_project_is_the_working_directory_when_no_variable_names_it(self, child, tmp_path):
         """A hook with no CLAUDE_PROJECT_DIR resolves its project from its
