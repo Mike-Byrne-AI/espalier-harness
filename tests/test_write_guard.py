@@ -1028,10 +1028,15 @@ class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
         # with its suffix under Git for Windows' bash (DEF-1161's host read)
         bp = _bash_patterns_module()
         rx = re.compile(bp._CMD_POS_WRAPPER_SPELLED + r"[ \t]")
-        for word in ("command", "exec", "time"):
+        builtins = _roster_words(bp._CMD_POS_WRAPPER_BUILTINS)
+        assert builtins == ["command", "time", "exec"], builtins
+        for word in builtins:
             assert rx.fullmatch(word + " ") and not rx.fullmatch(word.upper() + " "), word
         binaries = _roster_words(bp._CMD_POS_WRAPPER_BINARIES)
-        assert sorted(binaries + ["command", "exec", "time"]) == sorted(_roster_words(bp._CMD_POS_WRAPPER))
+        # both halves read from the module, so a word added to either half
+        # alone reds here (the second review's mutant M3 added to the
+        # builtins only and passed a pin that spelled the builtins itself)
+        assert sorted(binaries + builtins) == sorted(_roster_words(bp._CMD_POS_WRAPPER))
         for word in binaries:
             assert rx.fullmatch(word.upper() + ".EXE ") and rx.fullmatch(word.capitalize() + " "), word
         assert bp._CMD_POS_WRAPPER_SPELLED in bp._CMD_POS_WRAP_RUN
@@ -1077,7 +1082,11 @@ class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
     #: run, a wrapper behind its directory, busybox's applet, and bash's
     #: `|&` (C76's failure-mode review, item 3).
     _LEADS = ["| /usr/bin/env xargs ", "| LC_ALL=C xargs ", "| env LC_ALL=C xargs ", "|& xargs ",
-              "| busybox xargs ", "| ~/bin/nice xargs "]
+              "| busybox xargs ", "| ~/bin/nice xargs ",
+              # a builtin's name in another case reads case-blind here: no
+              # shell's case rule runs at a carrier, and on a case-blind
+              # volume `TIME` finds /usr/bin/time (main walled it)
+              "| TIME xargs ", "| xargs COMMAND "]
 
     @pytest.mark.parametrize("word", _CARRIER_WORDS + [
         "sudo -u build xargs", "& 'C:/x/xargs.exe'", "& xargs", "&xargs",
@@ -1162,15 +1171,6 @@ class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
         # (the code review's N1: the lookahead survived its revert)
         _assert_zone_walled(shape.format(s=second), tmp_path)
 
-    def test_the_builtin_wrappers_keep_their_case_in_a_case_blind_reader(self):
-        # the loop and carrier readers compile IGNORECASE; `EXEC` is no
-        # command bash can run, so it opens no wrapper there (the review's N2)
-        bp = _bash_patterns_module()
-        body = 'for f in $(find tools/cc/hooks); do {w} mv "$f" /tmp/x; done'
-        assert bp._FOR_SUBST_REMOVE_RE.search(body.format(w="exec"))
-        assert not bp._FOR_SUBST_REMOVE_RE.search(body.format(w="EXEC"))
-        assert bp._FOR_SUBST_REMOVE_RE.search(body.format(w="ENV"))
-
     @pytest.mark.parametrize("wrapper", ["nice -n 19 ", "sudo -u build ", "/usr/bin/env ", "env LC_ALL=C "])
     @pytest.mark.parametrize("shape", _WRAPPED_SHAPES, ids=_WRAPPED_IDS)
     def test_a_wrapped_carrier_over_an_open_root_is_allowed(self, tmp_path, shape, wrapper):
@@ -1180,7 +1180,8 @@ class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
         assert_hook_allowed(_past_the_bump(open_root.format(w=wrapper), tmp_path))
 
     @pytest.mark.parametrize("wrapper", ["sudo -u build ", "timeout 60 ", "nice -n 19 ",
-                                         "/usr/bin/env ", "env LC_ALL=C "])
+                                         "/usr/bin/env ", "env LC_ALL=C ",
+                                         "C:\\Git\\usr\\bin\\env.exe ", "/a/env -i /a/env "])
     def test_a_wrapper_with_its_flags_behind_the_carrier_walls_on_the_powershell_tool(self, tmp_path, wrapper):
         (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True, exist_ok=True)
         _assert_zone_walled(f"find tools/cc/hooks | xargs {wrapper}rm -rf", tmp_path, _run_ps_guard)
@@ -1189,13 +1190,20 @@ class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
         # one home: an edit to the anchor's run reaches every carrier, and a
         # carrier that spells its own list again reds here
         bp = _bash_patterns_module()
-        assert bp._CMD_POS_WRAP_RUN in bp._CARRIER_WRAP_RUN
+        # the carrier's one wrapper is the anchor's run with its flag
+        # lookahead widened to a wrapper behind its directory, and nothing
+        # else (spelled out for the ReDoS gate's static reconstruction)
+        widened = bp._CMD_POS_WRAP_RUN.replace(
+            "(?!" + bp._CMD_POS_WRAPPER_SPELLED + r"[ \t])",
+            "(?!(?:" + bp._CARRIER_WRAP_DIR + ")?" + bp._CARRIER_WRAP_WORD + r"[ \t])", 1)
+        assert widened != bp._CMD_POS_WRAP_RUN
+        assert bp._CARRIER_WRAP_ONE == widened
+        assert bp._CARRIER_WRAP_ONE in bp._CARRIER_WRAP_RUN
         for name in ("_FIND_EXEC_VERB", "_PS_PIPE_CARRIER"):
             assert bp._CARRIER_WRAP_RUN in getattr(bp, name), name
         assert bp._FIND_EXEC_VERB in bp._LOOP_BODY_VERB
         assert bp._CMD_POS_VERB_PREFIX in bp._XARGS_CARRIER_TAIL
         assert bp._CMD_POS_VERB_PREFIX in bp._PIPED_CARRIER_WITNESS
-        assert bp._CMD_POS_WRAP_RUN in bp._PIPED_CARRIER_WITNESS
         assert bp._CARRIER_WRAP_RUN in bp._CARRIER_LEAD_RUN
         for name in ("_XARGS_CARRIER_TAIL", "_PIPED_CARRIER_WITNESS", "_PS_PIPE_CARRIER"):
             assert bp._CARRIER_LEAD_RUN in getattr(bp, name), name

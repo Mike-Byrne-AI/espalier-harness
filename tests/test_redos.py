@@ -890,10 +890,15 @@ _C52_BASH_ROWS = [
     ("piped_remove_carrier_lead_dir", _bash_patterns._PIPED_REMOVE_RE, "find . | /a/b/"),
     ("piped_remove_carrier_lead_assign", _bash_patterns._PIPED_REMOVE_RE, "find . |& A=1"),
     ("piped_remove_carrier_env_assign", _bash_patterns._PIPED_REMOVE_RE, "find . | xargs env A='x"),
-    # (a bare `-exec /a/env` flood is left out: it is quadratic through the
-    # reader on main itself, 1.5 s at 4 KB and 25 s at 16 KB measured
-    # 2026-11-07, spread across the anchor-led patterns, not the carrier's)
+    # a wrapper behind its directory, also a candidate flag argument of the
+    # flag before it: the carrier's flag lookahead declines it, or the run
+    # held write_guard past 15 s on 1.4 KB (C76's second failure-mode review;
+    # the bare `-exec /a/env` flood is pinned at the regex alone in
+    # test_carrier_directory_wrapper_flood_is_linear_at_the_regex)
     ("find_delete_action_wrapper_flag_dir", _bash_patterns._FIND_DELETE_ACTION_RE, "-exec nice -n /a/env"),
+    ("piped_remove_carrier_dir_flag", _bash_patterns._PIPED_REMOVE_RE, "find . | xargs /a/env -x"),
+    ("piped_remove_carrier_backslash_dir", _bash_patterns._PIPED_REMOVE_RE, "find . | xargs C:\\a\\env -x"),
+    ("piped_carrier_witness_dir_wrapper", _bash_patterns._PIPED_CARRIER_WITNESS_RE, "| /a/env"),
     ("piped_remove_carrier_flag_dir", _bash_patterns._PIPED_REMOVE_RE, "find . | xargs env -u /a/env"),
     ("piped_carrier_witness_short_name", _bash_patterns._PIPED_CARRIER_WITNESS_RE, "| C:\\A~1\\"),
     ("find_delete_action_wrapper_flags", _bash_patterns._FIND_DELETE_ACTION_RE, "-exec sudo -u x"),
@@ -950,6 +955,7 @@ _C52_PS_ROWS = [
     ("ps_piped_remove_bare_call_operator", _bash_patterns._PS_PIPED_REMOVE_RE, "gci . | &"),
     ("ps_piped_remove_carrier_lead_dir", _bash_patterns._PS_PIPED_REMOVE_RE, "gci . | /a/env"),
     ("ps_piped_remove_carrier_env_assign", _bash_patterns._PS_PIPED_REMOVE_RE, "gci . | xargs env A=1"),
+    ("ps_piped_remove_carrier_dir_flag", _bash_patterns._PS_PIPED_REMOVE_RE, "gci . | xargs /a/env -x"),
     ("ps_git_rm_mv", _bash_patterns._PS_GIT_RM_MV_RE, "git rm"),
     ("ps_compress_archive", _bash_patterns._PS_COMPRESS_ARCHIVE_RE, "Compress-Archive"),
     # the find family on the PowerShell tool (DEF-824): the head with its
@@ -2973,6 +2979,36 @@ def test_walker_scaling_judgement_routes_an_under_floor_sample_by_cause(
 ])
 def test_ps_interpreter_regex_still_matches(pattern, payload):
     assert pattern.search(payload) is not None, payload
+
+
+@pytest.mark.parametrize("pattern", [
+    # (not `_PIPED_REMOVE_RE`: its anchor reads this flood in 3.4 s at 30 KB
+    # on main as on the lane, the same filed-apart cost)
+    _bash_patterns._FIND_DELETE_ACTION_RE, _bash_patterns._PIPED_CARRIER_WITNESS_RE,
+    _bash_patterns._PS_PIPED_REMOVE_RE,
+], ids=["find-exec", "witness", "ps-piped"])
+def test_carrier_directory_wrapper_flood_is_linear_at_the_regex(pattern):
+    """C76: `-exec /a/env` repeated, at the regex alone. Each `/a/env` could
+    be the flag argument of the `-exec` before it or a wrapper step of its
+    own until the carrier's flag lookahead declined a wrapper behind its
+    directory (`_CARRIER_WRAP_ONE`): 34 s at 2 KB on the first draft, 15 ms
+    at 32 KB after. Not a chain row: the whole reader is quadratic on this
+    flood on main itself (7.7 s at 8 KB, measured 2026-11-07), a cost spread
+    across the anchor-led patterns that is filed apart. POSIX-only."""
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    payload = "find . | " + "-exec /a/env " * (_WORST_CASE_BODY_LEN // 13)
+    signal.signal(signal.SIGALRM, _alarm)
+    signal.setitimer(signal.ITIMER_REAL, _CI_SAFE_BUDGET_MS / 1000.0)
+    t = time.time()
+    try:
+        pattern.search(payload)
+        elapsed_ms = (time.time() - t) * 1000
+    except _Timeout:
+        pytest.fail(f"{pattern.pattern[:60]!r} exceeded {_CI_SAFE_BUDGET_MS}ms on the directory-wrapper flood")
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    assert elapsed_ms < _CI_SAFE_BUDGET_MS
 
 
 @pytest.mark.parametrize(

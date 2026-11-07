@@ -147,11 +147,13 @@ _CMD_POS_WRAPPER_BINARIES = (
 # A native binary's case and suffix; the rule is in its comment at the verb
 # arms below (DEF-1161). Defined here because the wrapper roster composes it.
 _EXE_SUFFIX = r"(?i:\.exe)?"
-#: The builtins are pinned case-sensitive with `(?-i:...)`, the module's
-#: rule for a shell word inside a regex compiled IGNORECASE (`(?-i:done)`):
-#: left bare, the loop and carrier readers took `EXEC` and `COMMAND`.
+#: The builtins stay bare, so a reader compiled IGNORECASE takes `TIME` and
+#: `COMMAND`: behind xargs or find's exec action no shell's case rule
+#: applies (execvp runs `/usr/bin/time` on a case-blind volume), and an
+#: unread wrapper is the unsafe side (C76's second failure-mode review: a
+#: `(?-i:...)` pin let `| TIME xargs mv` past where main walled it).
 _CMD_POS_WRAPPER_SPELLED = (
-    r"(?:(?-i:" + _CMD_POS_WRAPPER_BUILTINS + r")|(?i:" + _CMD_POS_WRAPPER_BINARIES + r")" + _EXE_SUFFIX + r")"
+    r"(?:" + _CMD_POS_WRAPPER_BUILTINS + r"|(?i:" + _CMD_POS_WRAPPER_BINARIES + r")" + _EXE_SUFFIX + r")"
 )
 # A leading redirection is a command-position prefix: `>/dev/null cp x zone/`
 # runs cp. Red-teamed; it denied at HEAD and the first anchor let it through.
@@ -1039,10 +1041,26 @@ _PS_NATIVE_VERB_PATH = r"(?:" + _CMD_POS_QUOTED_DIR + r"""|["']?(?:[^\s;|&"']*[/
 #: on `NAME=`, which no wrapper word or directory can, so it shares no
 #: input with the step after it.
 _CARRIER_WRAP_WORD = r"(?:" + _CMD_POS_WRAPPER_SPELLED + r"|(?i:busybox)" + _EXE_SUFFIX + r")"
-_CARRIER_WRAP_HEAD = r"(?:[\w.:~/-]*/(?=" + _CARRIER_WRAP_WORD + r"[ \t]))?"
+#: The directory takes either separator (Git for Windows' `C:\Git\usr\bin\
+#: env.exe` behind the PowerShell carrier runs env), and the step's one
+#: wrapper declines that directory-and-word as a flag argument, the token
+#: two arms could otherwise own (the ReDoS rule at `_CMD_POS_WRAP_RUN`):
+#: without it `-exec /a/env` repeated read each `/a/env` as an argument OR
+#: a step, and a 1.4 KB command held write_guard past 15 s (C76's second
+#: failure-mode review; main and the lane before the head took 0 ms).
+#: `_CARRIER_WRAP_ONE` is `_CMD_POS_WRAP_RUN` with that one lookahead
+#: widened, spelled out because the ReDoS gate reconstructs patterns from
+#: literals alone; the equality is pinned in tests/test_write_guard.py.
+_CARRIER_WRAP_DIR = r"[\w.:~/\\-]*[/\\]"
+_CARRIER_WRAP_HEAD = r"(?:" + _CARRIER_WRAP_DIR + r"(?=" + _CARRIER_WRAP_WORD + r"[ \t]))?"
+_CARRIER_WRAP_ONE = (
+    "(?:" + _CMD_POS_WRAPPER_SPELLED
+    + r"(?:[ \t]+(?:-[^\s;|&]+(?:[ \t]+(?!(?:" + _CARRIER_WRAP_DIR + r")?" + _CARRIER_WRAP_WORD
+    + r"[ \t])(?!\d)[^-\s;|&][^\s;|&]*)?|\d[^\s;|&]*))*[ \t]+)"
+)
 _CARRIER_WRAP_STEP = (
     _CARRIER_WRAP_HEAD
-    + r"(?:(?!(?i:xargs)\b)" + _CMD_POS_WRAP_RUN + r"|(?i:busybox)" + _EXE_SUFFIX + r"[ \t]+)"
+    + r"(?:(?!(?i:xargs)\b)" + _CARRIER_WRAP_ONE + r"|(?i:busybox)" + _EXE_SUFFIX + r"[ \t]+)"
     + r"(?:" + _CMD_POS_ENV_ASSIGN + r"){0,4}"
 )
 _CARRIER_WRAP_RUN = r"(?:" + _CARRIER_WRAP_STEP + r"){0,3}"
