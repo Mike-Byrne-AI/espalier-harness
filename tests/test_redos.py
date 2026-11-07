@@ -3048,6 +3048,42 @@ def test_ps_switch_value_run_linear_on_dash_bearing_values(label, seed):
     assert elapsed_ms < _CHAIN_CEILING_MS, f"{label} took {elapsed_ms:.1f}ms"
 
 
+@pytest.mark.parametrize("label,seed", [
+    # the cmdlet word in a valued parameter: the exec-quote arm opens a
+    # command position at each, and each walked to the statement's end
+    ("verb-flood", "Start-Process -Verb "),
+    ("alias-flood", "saps -Wait -Verb "),
+    ("working-directory-flood", "Start-Process pwsh -WorkingDirectory "),
+])
+def test_the_started_shell_reader_is_linear_on_an_opener_flood(label, seed):
+    """DEF-3011's reader (`ps_start_process_shell_launches`) walks a
+    started program's parameters from each cmdlet opener; unbounded, a
+    flood of the cmdlet word in parameter values was quadratic -- 1.2 s at
+    2000 openers for the reader, about 4 s on 20 KB for the four tiers --
+    where the walk is now bounded and an opener inside an earlier walk is
+    skipped (the code review, timed). Through the real entrypoints, under
+    the chain ceiling. POSIX-only (signal.alarm)."""
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    payload = seed * (_WORST_CASE_BODY_LEN // len(seed))
+    signal.signal(signal.SIGALRM, _alarm)
+    signal.setitimer(signal.ITIMER_REAL, _CHAIN_CEILING_MS / 1000.0)
+    t = time.time()
+    try:
+        raw, scan = _bash_patterns.powershell_scan_pair(payload)
+        list(_bash_patterns._ps_start_process_launches(raw, scan))   # uncached, so it runs
+        _candidate_paths_from_powershell(payload)
+        elapsed_ms = (time.time() - t) * 1000
+    except _Timeout:
+        pytest.fail(
+            f"the started-shell reader exceeded {_CHAIN_CEILING_MS}ms on a 30KB "
+            f"{label} (quadratic -- the bounded walk regressed)"
+        )
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    assert elapsed_ms < _CHAIN_CEILING_MS, f"{label} took {elapsed_ms:.1f}ms"
+
+
 @pytest.mark.parametrize("name,_pattern,verb", _VERB_EXTRACTION_REGEXES)
 def test_verb_extraction_regex_linear_through_chain(name, _pattern, verb):
     """End-to-end: a ~28KB repeated-verb command stays inside the chain ceiling through the real

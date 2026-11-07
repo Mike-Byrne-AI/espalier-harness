@@ -929,6 +929,11 @@ _PS_VALUED_WRAPPER_WRITES = [
     ("three-switches-two-values", f'powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "{_PS_HOOK_WRITE}"'),
     ("value-is-a-path", f'powershell -File C:\\x.ps1 -Command "{_PS_HOOK_WRITE}"'),
     ("value-with-exe-suffix", f'Start-Process -FilePath powershell.exe -Verb RunAs -ArgumentList "{_PS_HOOK_WRITE}"'),
+    # the array spelling, a declared limit until DEF-3011: the started
+    # shell's argument list is now read for its `-Command` program
+    # (`_bash_patterns.ps_start_process_shell_programs`)
+    ("array-arglist-double", f'Start-Process powershell -Verb RunAs -ArgumentList "-Command","{_PS_HOOK_WRITE}"'),
+    ("array-arglist-single", f"Start-Process powershell -Verb RunAs -ArgumentList '-Command','{_PS_HOOK_WRITE}'"),
 ]
 
 _PS_VALUELESS_WRAPPER_WRITES = [
@@ -955,8 +960,6 @@ _PS_DECLARED_LIMITS = [
     ("quoted-workingdirectory-value", f'Start-Process powershell -WorkingDirectory "C:\\Temp" -ArgumentList "{_PS_HOOK_WRITE}"'),
     ("quoted-filepath-value", f'Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList "{_PS_HOOK_WRITE}"'),
     ("equals-bound-arglist", f'Start-Process powershell -Verb RunAs -ArgumentList="{_PS_HOOK_WRITE}"'),
-    ("array-arglist-double", f'Start-Process powershell -Verb RunAs -ArgumentList "-Command","{_PS_HOOK_WRITE}"'),
-    ("array-arglist-single", f"Start-Process powershell -Verb RunAs -ArgumentList '-Command','{_PS_HOOK_WRITE}'"),
 ]
 
 _PS_WIDENED_MENTION_TRADE = [
@@ -1040,8 +1043,10 @@ class TestPowerShellReparsingWrapperCarriesASwitchValue:
     @pytest.mark.parametrize("cmd", [c for _, c in _PS_DECLARED_LIMITS],
                              ids=[i for i, _ in _PS_DECLARED_LIMITS])
     def test_the_declared_limits_are_pinned(self, cmd, tmp_path):
-        """A quoted value, an `=`-bound value and the array spelling end the
-        run before the payload, and the payload stays inert -- the fail-open
+        """A quoted value and an `=`-bound value end the run before the
+        payload, and a program handed to powershell.exe with no `-Command`
+        (its implicit command, which the started-shell reader declares
+        unread, DEF-3011) stays inert -- the fail-open
         direction, declared so nobody reads the close as the whole class.
         Detection for one of these must revise the skill and HOOKS.md, not
         just flip the row."""
