@@ -1,13 +1,14 @@
 {
  "id": "DEF-841",
- "subject": "bench/reachability_differential.py",
- "cmd": "python3 -c 'import ast,pathlib;print(sum(1 for p in [\"bench/reachability_differential.py\",\"bench/powershell_reachability_differential.py\"] for n in ast.walk(ast.parse(pathlib.Path(p).read_text(encoding=\"utf-8\"))) if isinstance(n,ast.FunctionDef) and n.name==\"assert_safe_to_execute\"))'",
- "open_value": "2",
+ "subject": "tools/cc/hooks/post_write_check.py",
+ "cmd": "python3 -c 'import json,os,pathlib,subprocess,sys,tempfile;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=pathlib.Path(T.name).resolve();R=t/\"project\";S=t/\"scratch\";R.mkdir();S.mkdir();q=chr(34);n=chr(10);row=\"r\"+\"m -rf \"+q+\"$V\"+q+\"/*\";(S/\"drive.py\").write_text(\"import subprocess\"+n+\"def run(shell, cmd):\"+n+\"    return subprocess.run([shell, \"+q+\"-c\"+q+\", cmd], timeout=20)\"+n+\"ROWS = [\"+repr(row)+\"]\"+n,encoding=\"utf-8\");(S/\"twin.py\").write_text(\"ROWS = [\"+repr(row)+\"]\"+n,encoding=\"utf-8\");e={k:v for k,v in os.environ.items() if not k.startswith((\"CLAUDE_\",\"ESPALIER_\"))};e.update(CLAUDE_PROJECT_DIR=str(R),ESPALIER_AUDIT_DIR=str(t/\"audit\"));h=lambda f:subprocess.run([sys.executable,\"tools/cc/hooks/post_write_check.py\"],input=json.dumps({\"session_id\":\"probe\",\"hook_event_name\":\"PostToolUse\",\"tool_name\":\"Edit\",\"cwd\":str(R),\"tool_input\":{\"file_path\":str(f),\"old_string\":\"ROWS = [\",\"new_string\":\"ROWS = [\"+repr(row)+\", \"},\"tool_response\":{\"filePath\":str(f)}}),capture_output=True,text=True,env=e,timeout=60);a=h(S/\"drive.py\");b=h(S/\"twin.py\");print(\"open=\"+str((not a.stdout.strip()) or bool(b.stdout.strip())),\"rc=\"+str(a.returncode)+\",\"+str(b.returncode))'",
+ "open_value": "open=True rc=0,0",
  "why_not": null,
- "row_sha": "1aacc59de963",
- "text_sha": "d9addb7cca75",
+ "row_sha": "1a4b265e9dd7",
+ "text_sha": "5600eedd5ec3",
  "verified_2026_09_17": "OPEN (filed 2026-09-17; probe driven at filing)",
  "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: 1-D 2026-09-20: the 1-B rewrite dropped the row's citation of its own drafted pack; restored so the active-pack orphan check resolves TP-450)",
  "verified_2026_09_21": "STILL_OPEN (re-pinned value unchanged on 2026-09-21: 1-H disposition recorded 2026-09-21: TP-450 ships at the root as forward work, execution post-cut; the probe's value (two definitions) is unchanged and the claim stands)",
- "verified_2026_09_22": "STILL_OPEN (re-pinned value unchanged on 2026-09-22: the pack this text cites landed 2026-09-22 and left the shipped locations; the mention is re-keyed to the pack's title and landing date so a public reader is not sent to a file the archive does not carry (the dangling-id gate's own message); value unchanged)"
+ "verified_2026_09_22": "STILL_OPEN (re-pinned value unchanged on 2026-09-22: the pack this text cites landed 2026-09-22 and left the shipped locations; the mention is re-keyed to the pack's title and landing date so a public reader is not sent to a file the archive does not carry (the dangling-id gate's own message); value unchanged)",
+ "verified_2026_11_06": "STILL_OPEN (re-pinned '2' -> 'open=True rc=0,0'; subject 'bench/reachability_differential.py' -> 'tools/cc/hooks/post_write_check.py' on 2026-11-06: re-scoped on the operator's ruling 20261104T065604Z-air-2e9498: the row's defect is now the missing write-time advisory, measured by driving the hook on the incident's Edit shape beside a twin (the probe's shape ruled by 20261107T024101Z-air-d26d85); the two-definition count it pinned moved with sub-task 2-A to DEF-5085) [changed: probe, open value, anchor, text, subject]"
 }

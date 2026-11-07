@@ -1,0 +1,13 @@
+{
+ "id": "DEF-5085",
+ "subject": "bench/reachability_differential.py",
+ "cmd": "python3 -c 'import ast,pathlib;print(sum(1 for p in [\"bench/reachability_differential.py\",\"bench/powershell_reachability_differential.py\"] for n in ast.walk(ast.parse(pathlib.Path(p).read_text(encoding=\"utf-8\"))) if isinstance(n,ast.FunctionDef) and n.name==\"assert_safe_to_execute\"))'",
+ "open_value": "2",
+ "why_not": null,
+ "inputs": [
+  "bench/powershell_reachability_differential.py"
+ ],
+ "row_sha": "d5164a0d7570",
+ "text_sha": "22568a61c6ed",
+ "verified_2026_11_06": "OPEN (filed 2026-11-06; probe driven at filing here and in the export of HEAD 140d9375bd45)"
+}
