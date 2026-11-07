@@ -2305,6 +2305,10 @@ def _speedbump_floods():
         "curl " + u + " " + "| " * 20000 + "x",
         "curl " + u + " " + "-o " * 15000 + "x",
         "curl " + u + " | " + "/a" * 20000 + "x",
+        # C76: a wrapper word after each separator of the hop's path, which
+        # the old `(?=<wrapper>\b)` head read at every `/env` (13.6 s at
+        # 32 KB on main, 13.5 ms since the head asks for a blank after it)
+        "curl " + u + " | " + "/env" * 8000 + "x",
         "curl " + u + " | " + "sudo " * 8000 + "x",
         "curl " + u + " " + "2>&1 " * 8000 + "| x",
         "curl " + u + " |\n" * 15000 + "x",

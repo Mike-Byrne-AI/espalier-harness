@@ -1496,8 +1496,10 @@ _FETCH_EXEC_PIPE_RE = re.compile(
     + r"){0,2048}\|(?!\|)){1,8}[ \t]*"
     # `_CMD_POS_WRAP_RUN` is ONE wrapper with its flags (the anchor stars it
     # inside a wider alternation); starred here, bounded, behind an optional
-    # path that must be followed by a wrapper word (`/usr/bin/env bash`).
-    r"(?:[\w./-]*/(?=" + _bash_patterns._CMD_POS_WRAPPER + r"\b))?"
+    # path that must be followed by a wrapper word (`/usr/bin/env bash`):
+    # the carriers' one home for it, which reads `~/bin/env` and a drive
+    # letter, and the roster in every spelling (C76, the code review's N4).
+    + _bash_patterns._CARRIER_WRAP_HEAD +
     r"(?:" + _bash_patterns._CMD_POS_WRAP_RUN + r"){0,4}"
     + _bash_patterns._CMD_POS_VERB_PREFIX + _FETCH_PIPE_TARGET,
     re.IGNORECASE,

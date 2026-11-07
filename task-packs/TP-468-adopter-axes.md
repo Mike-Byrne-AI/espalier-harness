@@ -1259,7 +1259,15 @@ total; it shrinks each review.
   as a lane per wave: 3-D and 3-F landed on `lane/adopter-axes-collectors`, 3-B on
   `lane/adopter-axes-wheel-smoke-stack`, 3-A's Store-stub half on
   `lane/adopter-axes-perturbed-cell` and 3-C on `lane/adopter-axes-dirty-machine-cell`,
-  2026-11-03; 3-A's spaced root is open)
+  2026-11-03; 3-A's spaced root landed with `DEF-5082`'s lane, `491dc47`, 2026-11-04,
+  which quoted the fixtures a spaced temp path broke and put the perturbed cell's parallel
+  leg under a spaced `--basetemp`; the perturbed cell is green on #486 and on every merge
+  from #489 to #503, red on #487 and #488 (cause unread; read 2026-11-07, `gh pr view`
+  per pull request). The registry reads that as an instrument, not a cell:
+  the perturbed cell is the one instrument that runs the suite at root `spaced` (none did
+  at `491dc47^`), while every root cell stays a declared gap, since no pytest node is
+  parametrised over the root axis, so `blind_axes()` prints `['session', 'root']` at
+  `d6a0321`, session by 0-D, below; `DEF-975` struck 2026-11-07 by the records lane, below)
 - Commits (foundation lane):
   - `b92ce7d` Task 0 record
   - `68689b5` 1-A
@@ -1729,6 +1737,22 @@ total; it shrinks each review.
   - Reach (dirty-machine lane): `DEF-937` is **CLOSED by 3-C** (struck by the verb; no probe
     to drive). `DEF-975` stays open on its session and root axes (its host axis closed by
     3-A, above).
+- **Records lane (2026-11-07, `lane/records-the-livelock-row-and-the-spaced-root`, the Air):
+  records only** (assign `20261107T093331Z-air-6323aa`; option B of request
+  `20261107T112958Z-air-work-95ffb4`, ruled with five amendments by ack
+  `20261107T114442Z-air-e9e0d9`).
+  - The State line above reads the spaced root as landed, from the registry at `d6a0321`.
+  - Reach (records lane): `DEF-975` is **CLOSED** (struck). Its probe was re-pinned first,
+    from the stack, host and session cells to the stack and host cells plus the CI-cell
+    clause read from the instruments (a hook-launching instrument at root `spaced`, and one
+    at a host the cells name). Driven: open at `491dc47^`, on the perturbed row's host set to
+    `both` and on its root set to `plain`; closed at the head. Root does not join as a cell:
+    no pytest node is parametrised over the root axis. Session closes on 0-D's measurement
+    by the dispatcher's ruling (the pass criterion's escape names an axis left at one value,
+    and session holds none) and stays declared blind in the registry. Named, not closed:
+    3-E's `newline=` arm, stopped by 0-E and carried by no row, and stack's earn-the-red,
+    unmeasured since 2-C's Node chain was never built. The State stays DRAFT: criterion 1
+    still reads the old builder probe, and the close-out is the dispatcher's later call.
 
 ## Appendix A — the census instrument
 
