@@ -4336,6 +4336,10 @@ def _prefix_run_tokens() -> list[str]:
     declined = _re.findall(r"[a-z]+", _bash_patterns._CMD_POS_WRAPPER_BUILTINS
                            + _bash_patterns._CMD_POS_SLASHED_DECLINED_BINARIES)
     tokens += [f"-x /a/{w} " for w in declined]
+    # the decline's case, suffix and blank: a lowercase-only, suffix-blind
+    # or space-only decline passed every other row (the code review's mutants)
+    tokens += [f"-x /a/{w.upper()}.EXE " for w in declined]
+    tokens += ["-x\t/a/env\t"]
     return tokens
 
 

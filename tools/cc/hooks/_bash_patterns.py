@@ -225,9 +225,14 @@ _CMD_POS_SLASHED_DECLINED_BINARIES = (
 )
 #: A word ending in a slashed wrapper name and a blank (`/a/env `,
 #: `*/bin/env `, `/usr/include/sudo `): the anchor's `(?<=/)` arm starts a
-#: wrapper run INSIDE every such word, at the name.
+#: wrapper run INSIDE every such word, at the name. A word opening on a
+#: quote (`'`, `"`, `$'`, `\'`) is not one: the verb prefix's quoted
+#: directory (`_CMD_POS_QUOTED_DIR`) spans blanks, so declining it let that
+#: arm swallow the next words and read another verb (`/usr/bin/sudo -D
+#: '/opt/env -x /o/cp' mv cc/x /tmp/y` went deny->allow; the code review,
+#: driven); those words stay quadratic (DEF-3052).
 _CMD_POS_SLASHED_WRAPPER_WORD = (
-    r"[^\s;|&]*/(?:" + _CMD_POS_WRAPPER_BUILTINS + r"|(?i:" + _CMD_POS_SLASHED_DECLINED_BINARIES
+    r"(?!\\?\$?[\x22'])[^\s;|&]*/(?:" + _CMD_POS_WRAPPER_BUILTINS + r"|(?i:" + _CMD_POS_SLASHED_DECLINED_BINARIES
     + r")" + _EXE_SUFFIX + r")[ \t]"
 )
 # ⚠ THE SLASHED ARM'S RUN DECLINES THAT WORD AS A FLAG'S ARGUMENT, A ReDoS

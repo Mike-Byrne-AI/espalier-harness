@@ -1275,16 +1275,41 @@ class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
         assert bp._CMD_POS_SLASHED_WRAP_RUN == derived
         assert "(?<=/)" + bp._CMD_POS_SLASHED_WRAP_RUN in bp._CMD_POS_NO_VERB
 
+    @staticmethod
+    def _carrier_heads(bp) -> set[str]:
+        """The carrier reader's head words, read from `_CARRIER_HEAD_RE`'s
+        `head` group (`eval`, `watch`, `script`, `su` today)."""
+        group = bp._CARRIER_HEAD_RE.pattern.split("(?P<head>", 1)[1].split(bp._EXE_SUFFIX, 1)[0]
+        return set(re.findall(r"[a-z]+", group.replace("(?i:", "")))
+
     def test_the_slashed_decline_is_the_roster_less_the_carrier_verbs(self):
-        # ruling 90c7c3: `watch` and `script` are carrier verbs as well as
-        # wrappers, and declining their slashed word handed `watch '<program>'`
-        # to a run that reads no carrier (11 secret-leg rows deny->allow); the
-        # rest of the roster is declined, a wrapper added later included
+        # ruling 90c7c3: a wrapper that is also a carrier verb (`watch`,
+        # `script`) stays out of the decline, because its declined slashed word
+        # became the verb and swallowed the carrier behind it (11 secret-leg
+        # rows deny->allow); the exclusion is read from the carrier reader, so
+        # a wrapper taught as a carrier later leaves the decline with it (the
+        # failure-mode review's mutant: `flock` in both, forced into the
+        # decline, lost `/usr/bin/sudo -D /opt/flock eval '<read>'`)
         bp = _bash_patterns_module()
         roster = re.findall(r"[a-z]+", bp._CMD_POS_WRAPPER_BINARIES)
+        carriers = self._carrier_heads(bp)
+        assert {"eval", "watch", "script", "su"} <= carriers
         declined = re.findall(r"[a-z]+", bp._CMD_POS_SLASHED_DECLINED_BINARIES)
-        assert declined == [w for w in roster if w not in ("watch", "script")]
+        assert sorted(declined) == sorted(w for w in roster if w not in carriers)
+        assert len(declined) == len(set(declined))
         assert bp._CMD_POS_WRAPPER_BUILTINS in bp._CMD_POS_SLASHED_WRAPPER_WORD
+        assert bp._CMD_POS_SLASHED_DECLINED_BINARIES in bp._CMD_POS_SLASHED_WRAPPER_WORD
+
+    def test_every_wrapper_carrier_keeps_its_program_behind_a_slashed_flag_argument(self, tmp_path):
+        # the hand-written rows below name `watch` and `script`; this one
+        # derives every wrapper that is also a carrier head, so a later one
+        # is read before it ships (an `eval` program, the leg the mutant lost)
+        bp = _bash_patterns_module()
+        both = sorted(set(re.findall(r"[a-z]+", bp._CMD_POS_WRAPPER_BINARIES)) & self._carrier_heads(bp))
+        assert both, "the roster and the carrier heads share no word: re-read this pin"
+        for name in both:
+            result = run_bash_guard(f"/usr/bin/sudo -D /opt/{name} eval 'cat .env'", tmp_path)
+            assert_hook_denied(result, contains_reason="Secret-path access blocked")
 
     @pytest.mark.parametrize("head", ["/usr/bin/", ""], ids=["slashed", "bare"])
     @pytest.mark.parametrize("command", [
@@ -1330,6 +1355,24 @@ class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
         # so the slashed arm keeps it rather than dropping it in one spelling
         (tmp_path / "cc").mkdir(parents=True, exist_ok=True)
         _assert_zone_walled(head + wrapped, tmp_path)
+
+    @pytest.mark.parametrize("command", [
+        "/usr/bin/sudo -D '/opt/env -x /o/cp' mv cc/x /tmp/y",
+        '/usr/bin/sudo -D "/opt/env -x /o/cp" mv cc/x /tmp/y',
+        "/usr/bin/env -C '/opt/env -x /o/cp' mv cc/x /tmp/y",
+        "/usr/bin/sudo -D '/opt/env -x /o/y' mv cc/x /tmp/y",
+    ], ids=["single-quoted", "double-quoted", "env-C", "control-no-verb-name"])
+    def test_a_quote_led_slashed_word_is_not_declined(self, tmp_path, command):
+        # the code review: the verb prefix's quoted directory spans blanks, so
+        # a declined quote-led word let that arm read `cp'` as the verb where
+        # the shell runs `mv` (deny->allow through the hook); a word opening
+        # on a quote is not declined, and its flood is DEF-3052
+        (tmp_path / "cc").mkdir(parents=True, exist_ok=True)
+        _assert_zone_walled(command, tmp_path)
+
+    def test_a_quote_led_slashed_word_keeps_the_carrier_secret_deny(self, tmp_path):
+        result = run_bash_guard("/usr/bin/sudo -D '/opt/env -x /o/script' watch 'cat .env'", tmp_path)
+        assert_hook_denied(result, contains_reason="Secret-path access blocked")
 
     @pytest.mark.parametrize("command", [
         "/usr/bin/env -a/env foo watch 'cat .env'", "/usr/bin/sudo -g/nice foo watch 'cat .env'",
