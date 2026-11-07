@@ -877,6 +877,16 @@ _C52_BASH_ROWS = [
     ("tail_loop_remove_inner_wrappers", _bash_patterns._TAIL_LOOP_REMOVE_RE, "done < <(env "),
     ("piped_remove_quoted_verb_path", _bash_patterns._PIPED_REMOVE_RE, 'find . | xargs "a b/'),
     ("piped_remove_escaped_verb_path", _bash_patterns._PIPED_REMOVE_RE, "find . | xargs a\\ "),
+    # C76 (DEF-3031, DEF-3032): the carrier word's own prefix, and the
+    # anchor's wrapper run with its flags behind each carrier
+    ("piped_remove_spelled_carrier_word", _bash_patterns._PIPED_REMOVE_RE, "find . | ~/a/"),
+    ("piped_remove_carrier_wrapper_flags", _bash_patterns._PIPED_REMOVE_RE, "find . | xargs nice -n 19"),
+    ("piped_remove_carrier_wrapper_flood", _bash_patterns._PIPED_REMOVE_RE, "sudo -u x"),
+    ("find_delete_action_wrapper_flags", _bash_patterns._FIND_DELETE_ACTION_RE, "-exec sudo -u x"),
+    ("piped_carrier_witness_wrappers", _bash_patterns._PIPED_CARRIER_WITNESS_RE, "| nice -n 19"),
+    ("piped_carrier_witness_prefix", _bash_patterns._PIPED_CARRIER_WITNESS_RE, "| ~/a/"),
+    ("loop_remove_body_assignments", _bash_patterns._LOOP_REMOVE_RE, "find . | while read f; do A=1"),
+    ("for_subst_remove_body_wrappers", _bash_patterns._FOR_SUBST_REMOVE_RE, "for f in $(find .); do env -i"),
     # DEF-837: the word-list head -- a repeated head (the later ones read as
     # WORDS behind the first, so the word run floods), a flood of heads each
     # on its own command position, an open double quote (the quoted-word
@@ -918,6 +928,10 @@ _C52_PS_ROWS = [
     # DEF-3028's sibling: this tool's native verb path behind the carrier,
     # its separator flood
     ("ps_piped_remove_backslash_verb_path", _bash_patterns._PS_PIPED_REMOVE_RE, "gci . | xargs a\\"),
+    # C76: the carrier word behind the call operator and a path, and the
+    # wrapper run with its flags behind it
+    ("ps_piped_remove_spelled_carrier_word", _bash_patterns._PS_PIPED_REMOVE_RE, "gci . | & 'a/"),
+    ("ps_piped_remove_carrier_wrapper_flags", _bash_patterns._PS_PIPED_REMOVE_RE, "gci . | xargs sudo -u x"),
     ("ps_git_rm_mv", _bash_patterns._PS_GIT_RM_MV_RE, "git rm"),
     ("ps_compress_archive", _bash_patterns._PS_COMPRESS_ARCHIVE_RE, "Compress-Archive"),
     # the find family on the PowerShell tool (DEF-824): the head with its
@@ -4198,6 +4212,10 @@ def _prefix_run_tokens() -> list[str]:
     # The shapes that actually blew up: a flag, and a flag with an argument.
     tokens += [f"{w} -i " for w in wrappers]
     tokens += [f"{w} -n 10 " for w in wrappers]
+    # C76 (DEF-3012, DEF-3030): the binary words in another case with their
+    # suffix, and the home-relative directory before a verb
+    tokens += [f"{w.upper()}.EXE " for w in wrappers]
+    tokens += ["~/a ", "~a/ ", "~/"]
     tokens += [f"{k} " for k in keywords]
     return tokens
 

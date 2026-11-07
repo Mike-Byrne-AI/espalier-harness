@@ -985,6 +985,154 @@ class TestBinaryVerbSpellingIsUniform:
         assert_hook_allowed(_past_the_bump(shape.format(h=head, root="build"), tmp_path))
 
 
+class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
+    """C76's four rows as one class (principle 18): a word at a command
+    position is read the same way wherever one opens -- the anchor, the
+    carrier word after a pipe, the program behind a carrier.
+
+    * DEF-3012: the binary wrapper words case-blind with their `.exe`
+      (`_bash_patterns._CMD_POS_WRAPPER_SPELLED`), `command`, `exec` and
+      `time` as spelled.
+    * DEF-3030: a leading `~` or `~user` on the anchor's verb directory.
+    * DEF-3031: the xargs word itself at its command position, in the tail,
+      its witness and the PowerShell carrier.
+    * DEF-3032: the anchor's wrapper run (flags and values included) behind
+      find's exec action, the xargs carrier and a loop body
+      (`_CARRIER_WRAP_RUN`), and an assignment run in the loop body.
+
+    Each row is driven through the hook beside its bare control, and the
+    open-root twin is allowed as its bare twin is. Fixtures move the hooks
+    to a scratch directory, or write into one, as text handed to the guard.
+    """
+
+    _HOOK = " tools/cc/hooks/x.py"
+
+    @pytest.mark.parametrize("wrapper", [
+        "ENV", "NOHUP", "nohup.exe", "Sudo", "Timeout.EXE 5", "/usr/bin/ENV", "STDBUF -o0",
+    ])
+    @pytest.mark.parametrize("write", ["cp /tmp/x", "tee -a"])
+    def test_a_wrapper_in_another_case_or_with_its_suffix_walls_like_the_plain_word(
+            self, tmp_path, wrapper, write):
+        plain = wrapper.rsplit("/", 1)[-1].lower().replace(".exe", "")
+        _assert_zone_walled(f"{plain} {write}{self._HOOK}", tmp_path)
+        _assert_zone_walled(f"{wrapper} {write}{self._HOOK}", tmp_path)
+
+    @pytest.mark.parametrize("wrapper", ["ENV", "nohup.exe", "Sudo -u build"])
+    def test_a_spelled_wrapper_over_an_open_root_is_allowed(self, tmp_path, wrapper):
+        (tmp_path / "build").mkdir()
+        assert_hook_allowed(run_bash_guard(f"{wrapper} tee -a build/x.py", tmp_path))
+
+    def test_the_builtin_wrappers_keep_their_case_and_the_binaries_lose_it(self):
+        # bash matches a builtin and a keyword case-sensitively, so `COMMAND`
+        # is a command bash cannot run; every binary word runs in any case
+        # with its suffix under Git for Windows' bash (DEF-1161's host read)
+        bp = _bash_patterns_module()
+        rx = re.compile(bp._CMD_POS_WRAPPER_SPELLED + r"[ \t]")
+        for word in ("command", "exec", "time"):
+            assert rx.fullmatch(word + " ") and not rx.fullmatch(word.upper() + " "), word
+        binaries = _roster_words(bp._CMD_POS_WRAPPER_BINARIES)
+        assert sorted(binaries + ["command", "exec", "time"]) == sorted(_roster_words(bp._CMD_POS_WRAPPER))
+        for word in binaries:
+            assert rx.fullmatch(word.upper() + ".EXE ") and rx.fullmatch(word.capitalize() + " "), word
+        assert bp._CMD_POS_WRAPPER_SPELLED in bp._CMD_POS_WRAP_RUN
+
+    @pytest.mark.parametrize("prefix", ["~/bin/", "~build/bin/", "~/.local/bin/"])
+    @pytest.mark.parametrize("write", ["tee -a", "cp /tmp/x", "chmod 600", "truncate -s0"])
+    def test_a_verb_behind_a_home_relative_directory_walls(self, tmp_path, prefix, write):
+        _assert_zone_walled(f"{write}{self._HOOK}", tmp_path)
+        _assert_zone_walled(f"{prefix}{write}{self._HOOK}", tmp_path)
+
+    @pytest.mark.parametrize("arm", sorted(k for k, v in TestQuotedVerbTailIsUniform._FIXTURES.items() if v))
+    def test_every_rostered_arm_reads_a_home_relative_verb(self, tmp_path, arm):
+        # the row's own measure: each zone-deny fixture of the quoted-verb
+        # roster respelled behind `~/bin/` (33 of 35 drew no deny before)
+        verb, bare = TestQuotedVerbTailIsUniform._FIXTURES[arm]
+        (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True, exist_ok=True)
+        _assert_zone_walled(bare, tmp_path)
+        _assert_zone_walled(_respelled(bare, verb, "~/bin/" + verb, inner=arm in _INNER_HEAD_ARMS), tmp_path)
+
+    @pytest.mark.parametrize("cmd", [
+        "echo ~/bin/tee -a tools/cc/hooks/x.py",     # an argument, not a command
+        "ls ~/bin/tee tools/cc/hooks/x.py",
+        'git commit -m "run ~/bin/tee -a on the log"',
+    ])
+    def test_a_home_relative_mention_stays_allowed(self, tmp_path, cmd):
+        assert_hook_allowed(run_bash_guard(cmd, tmp_path))
+
+    _CARRIER_WORDS = ['"xargs"', "'/usr/bin/xargs'", "/usr/bin/xargs", "\\xargs", "$'xargs'",
+                      "xargs.exe", "XARGS", "~/bin/xargs"]
+
+    @pytest.mark.parametrize("word", _CARRIER_WORDS)
+    def test_a_spelled_carrier_word_walls_like_the_bare_word(self, tmp_path, word):
+        _assert_zone_walled("find tools/cc/hooks | xargs mv -t /tmp/x", tmp_path)
+        _assert_zone_walled(f"find tools/cc/hooks | {word} mv -t /tmp/x", tmp_path)
+
+    @pytest.mark.parametrize("word", ['"xargs"', "/usr/bin/xargs", "XARGS"])
+    def test_a_spelled_carrier_word_over_an_open_root_is_allowed(self, tmp_path, word):
+        (tmp_path / "build").mkdir()
+        assert_hook_allowed(_past_the_bump("find build | xargs mv -t /tmp/x", tmp_path))
+        assert_hook_allowed(_past_the_bump(f"find build | {word} mv -t /tmp/x", tmp_path))
+
+    @pytest.mark.parametrize("word", _CARRIER_WORDS + ["sudo -u build xargs", "& 'C:/x/xargs.exe'"])
+    def test_the_witness_reads_every_word_the_tail_reads(self, word):
+        # a witness left narrow keeps the gate shut, and the readers never run
+        bp = _bash_patterns_module()
+        assert bp._PIPED_CARRIER_WITNESS_RE.search(f"find . | {word} mv -t /tmp/x"), word
+
+    @pytest.mark.parametrize("word", ["xargs.exe", "/usr/bin/xargs", "& '/usr/bin/xargs'", "XARGS"])
+    def test_a_spelled_carrier_word_walls_on_the_powershell_tool(self, tmp_path, word):
+        (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True, exist_ok=True)
+        _assert_zone_walled("find tools/cc/hooks | xargs rm -rf", tmp_path, _run_ps_guard)
+        _assert_zone_walled(f"find tools/cc/hooks | {word} rm -rf", tmp_path, _run_ps_guard)
+
+    _WRAPPED_SHAPES = [
+        "find tools/cc/hooks -exec {w}mv -t /tmp/x {{}} +",
+        "find tools/cc/hooks | xargs {w}mv -t /tmp/x",
+        'for f in $(find tools/cc/hooks); do {w}mv "$f" /tmp/x; done',
+        'find tools/cc/hooks | while read f; do {w}mv "$f" /tmp/x; done',
+    ]
+    _WRAPPED_IDS = ["exec", "xargs", "for-body", "read-body"]
+
+    @pytest.mark.parametrize("wrapper", [
+        "nice -n 19 ", "sudo -u build ", "timeout 60 ", "env -i ", "stdbuf -o0 ",
+        "busybox ", "doas ", "ENV ", "nice -n 5 nohup ",
+    ])
+    @pytest.mark.parametrize("shape", _WRAPPED_SHAPES, ids=_WRAPPED_IDS)
+    def test_a_wrapper_with_its_flags_behind_a_carrier_walls(self, tmp_path, shape, wrapper):
+        _assert_zone_walled(shape.format(w=""), tmp_path)
+        _assert_zone_walled(shape.format(w=wrapper), tmp_path)
+
+    @pytest.mark.parametrize("prefix", ["LC_ALL=C ", "A=1 B='x y' ", "LC_ALL=C nice -n 19 "])
+    @pytest.mark.parametrize("shape", _WRAPPED_SHAPES[2:], ids=_WRAPPED_IDS[2:])
+    def test_an_assignment_prefix_in_a_loop_body_walls(self, tmp_path, shape, prefix):
+        _assert_zone_walled(shape.format(w=prefix), tmp_path)
+
+    @pytest.mark.parametrize("wrapper", ["nice -n 19 ", "sudo -u build "])
+    @pytest.mark.parametrize("shape", _WRAPPED_SHAPES, ids=_WRAPPED_IDS)
+    def test_a_wrapped_carrier_over_an_open_root_is_allowed(self, tmp_path, shape, wrapper):
+        (tmp_path / "build").mkdir()
+        open_root = shape.replace("tools/cc/hooks", "build")
+        assert_hook_allowed(_past_the_bump(open_root.format(w=""), tmp_path))
+        assert_hook_allowed(_past_the_bump(open_root.format(w=wrapper), tmp_path))
+
+    @pytest.mark.parametrize("wrapper", ["sudo -u build ", "timeout 60 ", "nice -n 19 "])
+    def test_a_wrapper_with_its_flags_behind_the_carrier_walls_on_the_powershell_tool(self, tmp_path, wrapper):
+        (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True, exist_ok=True)
+        _assert_zone_walled(f"find tools/cc/hooks | xargs {wrapper}rm -rf", tmp_path, _run_ps_guard)
+
+    def test_the_carriers_read_one_wrapper_run(self):
+        # one home: an edit to the anchor's run reaches every carrier, and a
+        # carrier that spells its own list again reds here
+        bp = _bash_patterns_module()
+        assert bp._CMD_POS_WRAP_RUN in bp._CARRIER_WRAP_RUN
+        for name in ("_FIND_EXEC_VERB", "_PS_PIPE_CARRIER"):
+            assert bp._CARRIER_WRAP_RUN in getattr(bp, name), name
+        assert bp._FIND_EXEC_VERB in bp._LOOP_BODY_VERB
+        assert bp._CMD_POS_VERB_PREFIX in bp._XARGS_CARRIER_TAIL
+        assert bp._CMD_POS_VERB_PREFIX in bp._PIPED_CARRIER_WITNESS
+        assert bp._CMD_POS_WRAP_RUN in bp._PIPED_CARRIER_WITNESS
+
+
 class TestPowerShellQuotedVerbBehindTheCallOperator:
     """DEF-791 (§C49): the PowerShell twin of the class above.
 
@@ -9558,6 +9706,13 @@ def _recursive_delete_launch_forms() -> list[tuple[str, str, str]]:
     for word in _roster_words(bp._CMD_POS_WRAPPER):
         if word != "xargs":
             forms.append((f"ps-wrap-{word}", "PowerShell", word + " rm -r {t}"))
+    # DEF-3012 (C76): a binary wrapper word in another case or with its
+    # suffix before the native remove on the Bash tool, as Git for Windows'
+    # bash runs it (a path-qualified wrapper is left out: inside a quoted
+    # mention the `(?<=/)` anchor arm walls it in any case, the plain
+    # spelling included -- friction the anchor's comment accepts)
+    for k, word in enumerate(("ENV", "nohup.exe", "Sudo")):
+        forms.append((f"bash-wrap-{k}", "Bash", word + " rm -r {t}"))
     return forms
 
 
@@ -9608,7 +9763,7 @@ class TestEveryLaunchFormMeetsTheRecursiveDeleteWall:
             "env", "sudo", "doas", "command", "time", "nohup", "timeout", "xargs", "exec",
             "nice", "ionice", "stdbuf", "setsid", "strace", "ltrace", "watch", "script",
             "chrt", "taskset", "unbuffer", "torify", "proxychains"]
-        assert len(_LAUNCH_FORMS) == 73, len(_LAUNCH_FORMS)
+        assert len(_LAUNCH_FORMS) == 76, len(_LAUNCH_FORMS)
 
     def test_xargs_is_the_pipe_carrier_and_no_wrapper_on_the_powershell_tool(self):
         """`xargs` hands the remove verb its operands from the pipe on this
