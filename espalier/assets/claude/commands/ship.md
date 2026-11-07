@@ -308,8 +308,15 @@ Six shapes to recognise:
   commit, `git push`, then `rebind`.
 - **A required cell a lost runner ended** (`status` prints `required, runner
   lost:`) -- its runner ended it, not its tests: no hosted runner picked the
-  job up, or a step was cancelled mid-run with none failed. Auto-merge waits on
-  it forever, so re-run it once:
+  job up, a step was cancelled mid-run with none failed, or the disk filled
+  under the tests (`the disk filled:`), which the job's log alone shows: at
+  least as many of its steps as failed exited 3 with a pytest internal error
+  (`INTERNALERROR>`) naming `[Errno 122] Disk quota exceeded` or `[Errno 28]
+  No space left on device`, whatever count of tests it reports failed. The log
+  read needs gh 2.97.0 or later; an older gh prints `cause not read` saying
+  so. A full disk can be the lane's own doing, so a cell that fills it again
+  on the re-run is yours to read. Auto-merge waits on it forever, so re-run it
+  once:
 
   ```bash
   python tools/cc/ship.py rerun
@@ -327,7 +334,8 @@ Six shapes to recognise:
   lost a second time is yours -- read its log, or push. The match is on
   GitHub's own wording, so a cell with the right outline and notes it does not
   know prints `required red, cause not read:` with the command that shows
-  its log, never a guess either way.
+  its log, never a guess either way; so does a failed step whose log could not
+  be read.
 - **Conflicts with the base** (`CONFLICTING` on GitHub; `conflicts with
   <base>` in the banner) -- the server cannot make this merge, so `catch-up`
   below makes it here: the base merged in with the record files resolved by

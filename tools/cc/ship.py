@@ -3367,8 +3367,9 @@ def _rebind_then_rearm_own_clear(root: Path, branch: str, moved_from: str, *, aw
 
 #: A required cell ends red for one of two reasons: its tests (or a person)
 #: decided, or its runner never let them. Only the second is worth a re-run,
-#: and only the two shapes of it measured 2026-10-05 over sixty pull-request
-#: runs of the test workflow are recognised -- a positive list. A job no hosted
+#: and only the shapes of it measured are recognised -- a positive list: the
+#: two below, measured 2026-10-05 over sixty pull-request runs of the test
+#: workflow, and a full disk (``_DISK_ERRNOS``, 2026-11-03). A job no hosted
 #: runner picked up ends `cancelled`, annotated so (two heads that day). A job
 #: whose runner went away mid-step ends `failure` with a step `cancelled` and
 #: none `failure`, annotated "The operation was canceled." (#99's two cells,
@@ -3387,6 +3388,45 @@ _DECIDED_NOTES = (
     ("was canceled by", "cancelled by hand"),
     ("exceeded the maximum execution time", "it outran its timeout"),
 )
+#: A third shape the runner ends, and the one a failed step hides: measured
+#: 2026-11-03 on four required cells on GitHub's AWS-hosted pool (#464's
+#: `test (3.11)`, `test (3.14)` and `portability (ubuntu-latest)`, #470's
+#: `test (3.13)`), where the runner's temp disk filled mid-suite, pytest died
+#: of an internal error and the step exited 3 with 578 to 847 tests reported
+#: failed, while the same diff was green on the Azure pool. The job ends
+#: `failure` with a failed step, as a test red does, and its one note is the
+#: generic "Process completed with exit code 3.", so the job's log alone tells
+#: them apart. A section of the log runs from a step's `Run` group header to
+#: the runner's exit line for that step, never above the exit line before it;
+#: an exit line with no header in that span opens no section. A failed step is
+#: the runner's only when the sections that exited 3 (pytest's internal-error
+#: code, which the tier step passes through as its worst leg's) and hold an
+#: internal-error line naming one of these errnos number at least the failed
+#: steps the job API lists: counted, not matched step by step, since a
+#: continue-on-error step writes an exit line too while the API calls it a
+#: success. Anything else in a log that was read is the tests' verdict (a
+#: wrapper that remaps pytest's exit, or a disk error outside an internal
+#: error, reads so); a log that cannot be read is "cause not read". Since the
+#: suite's temp dir moved to the runner's root disk, a full disk may be the
+#: diff's own doing, so the words say the disk filled, not whose it was; the
+#: one re-run is the bound. The words printed are this table's, never the log's.
+_DISK_ERRNOS = (
+    ("[Errno 122]", "[Errno 122] Disk quota exceeded"),
+    ("[Errno 28]", "[Errno 28] No space left on device"),
+)
+_INTERNAL_ERROR = "INTERNALERROR>"
+_PYTEST_INTERNAL_EXIT = "3"
+#: The runner's own line ending a step that exited non-zero, and a step's
+#: header, each matched at the start of one log line (a timestamp, a space,
+#: the text), so a test's output that echoes a log never opens either.
+_STEP_EXIT_RE = re.compile(r"(?:\S+ )?##\[error\]Process completed with exit code (\d+)\.")
+_STEP_HEADER_RE = re.compile(r"(?:\S+ )?##\[group\]Run ")
+#: The first gh release whose `gh api` takes --allow-escape-sequences (its
+#: release notes, 2026-07-31); an older gh refuses the flag, and every job log
+#: holds the runner's colour codes, so a job log needs the flag. How much of
+#: gh's own refusal a reason quotes.
+_GH_LOG_FLOOR = "2.97.0"
+_GH_REASON_CHARS = 160
 #: An Actions job's link as `gh pr checks --json link` gives it: run, then job.
 _JOB_LINK_RE = re.compile(r"/actions/runs/(\d+)/job/(\d+)(?![0-9])")
 #: The required-check read's fields: the home's (tools/cc/_post_merge.py,
@@ -3418,8 +3458,11 @@ class _Reading:
 
 def _annotation_text(job_id: str, cwd: str) -> str | None:
     """A job's annotation messages, lower-cased and joined; None when they
-    cannot be read."""
-    rc, out, _ = _gh("api", f"repos/{{owner}}/{{repo}}/check-runs/{job_id}/annotations", cwd=cwd)
+    cannot be read (a read that outlives its wait included, as a log's)."""
+    try:
+        rc, out, _ = _gh("api", f"repos/{{owner}}/{{repo}}/check-runs/{job_id}/annotations", cwd=cwd)
+    except Refused:
+        return None
     if rc != 0:
         return None
     try:
@@ -3431,16 +3474,68 @@ def _annotation_text(job_id: str, cwd: str) -> str | None:
     return " ".join(str(r.get("message") or "") for r in rows if isinstance(r, dict)).lower()
 
 
+def _job_log(job_id: str, cwd: str) -> tuple[str | None, str]:
+    """A finished job's log and ``""``, or None and why it could not be read.
+    The jobs API serves it while the run's other jobs still go (`gh run view
+    --log` waits for the whole run). gh from ``_GH_LOG_FLOOR`` on refuses a
+    body holding an escape sequence without --allow-escape-sequences, and the
+    runner colours every log, so the flag is what makes the read answer; an
+    older gh refuses the flag, which the reason says, with the update."""
+    try:
+        rc, out, err = _gh("api", "--allow-escape-sequences",
+                           f"repos/{{owner}}/{{repo}}/actions/jobs/{job_id}/logs", cwd=cwd)
+    except Refused as exc:
+        return None, str(exc)
+    if rc == 0 and out.strip():
+        return out, ""
+    first = (err.strip().splitlines() or [f"gh exited {rc} with no log"])[0]
+    if "unknown flag" in first.lower():
+        return None, f"gh older than {_GH_LOG_FLOOR} cannot read a job's log: update gh"
+    return None, first.encode("ascii", "replace").decode("ascii")[:_GH_REASON_CHARS]
+
+
+def _runner_disk_full(log: str, failed_steps: int) -> str:
+    """The errno's words (``_DISK_ERRNOS``) when the log's full-disk sections
+    number at least the job's ``failed_steps`` (one or more), else ``""``."""
+    lines = log.splitlines()
+    found: list[str] = []
+    floor = -1  # the previous exit line: no section reaches above it
+    for end, line in enumerate(lines):
+        m = _STEP_EXIT_RE.match(line)
+        if m is None:
+            continue
+        above, floor = floor, end
+        if m.group(1) != _PYTEST_INTERNAL_EXIT:
+            continue
+        start = next((i for i in range(end - 1, above, -1) if _STEP_HEADER_RE.match(lines[i])), None)
+        if start is None:
+            continue
+        words = next((w for text in lines[start:end] if _INTERNAL_ERROR in text
+                      for needle, w in _DISK_ERRNOS if needle in text), "")
+        if words:
+            found.append(words)
+    return found[0] if failed_steps and len(found) >= failed_steps else ""
+
+
 def _classify(job: dict | None, cwd: str) -> tuple[str, str]:
     """``("lost", why)`` when the runner, not the tests, ended this finished
     job; ``("decided", what)`` when its tests or a person did; ``("unread",
     why)`` when this driver cannot place it. The notes are read only when the
-    steps leave the question open."""
+    steps leave the question open; a failed step's log is read for the one
+    runner shape a failed step hides (``_DISK_ERRNOS``)."""
     if job is None:
         return "unread", "its job is not in the run's latest attempt"
     conclusion = str(job.get("conclusion") or "").lower()
-    steps = {str(s.get("conclusion") or "").lower() for s in job.get("steps") or [] if isinstance(s, dict)}
+    each = [str(s.get("conclusion") or "").lower() for s in job.get("steps") or [] if isinstance(s, dict)]
+    steps = set(each)
     if conclusion == "failure" and "failure" in steps:
+        job_id = str(job.get("databaseId") or "")
+        log, why = _job_log(job_id, cwd) if job_id.isdigit() else (None, "the job has no id")
+        if log is None:
+            return "unread", f"a step failed and its log could not be read [{why}]"
+        words = _runner_disk_full(log, each.count("failure"))
+        if words:
+            return "lost", f"the disk filled: {words}"
         return "decided", "a step failed"
     if conclusion == "timed_out":
         return "decided", "it outran its timeout"
