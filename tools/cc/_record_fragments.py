@@ -573,14 +573,13 @@ def prune_session_log(root: Path, keep: int = SESSION_LOG_CAP, archive: str = AR
 #: deployed on every tree and a ``changelog.d/`` directory alone may be another
 #: tool's (scriv, towncrier), so the writer names a fragment only where
 #: ``espalier.toml`` says so (review of #179). Read as ship.py reads
-#: ``handoff_push``, by a line scan: the 3.10 floor has no tomllib.
+#: ``handoff_push``, with the stdlib's tomllib.
 CHANGELOG_FRAGMENTS_KEY = "changelog_fragments"
-_TOML_TABLE_HEADER_RE = re.compile(r"""^[ \t]*\[\[?[ \t]*[A-Za-z0-9_."'-][A-Za-z0-9_."' -]*\]\]?[ \t]*(#.*)?$""")
 
 
 def changelog_fragments_setting(root: Path) -> tuple[bool, str]:
     """``(on, how it was read)`` for ``changelog_fragments`` at the top level
-    of ``<root>/espalier.toml``. Only the bare word ``true`` turns it on; any
+    of ``<root>/espalier.toml``. Only the boolean ``true`` turns it on; any
     other reading is off, with the reason named, the contract of
     ``ship.handoff_push_setting`` (a test pins the two agreeing)."""
     return _top_level_switch(root, CHANGELOG_FRAGMENTS_KEY)
@@ -588,32 +587,63 @@ def changelog_fragments_setting(root: Path) -> tuple[bool, str]:
 
 def _top_level_switch(root: Path, key_name: str) -> tuple[bool, str]:
     """``(on, how it was read)`` for a top-level ``key_name = true`` in
-    ``<root>/espalier.toml``, by a line scan (the 3.10 floor has no tomllib):
-    the one reader for both fragment switches."""
+    ``<root>/espalier.toml``, read with tomllib: the one reader for both
+    fragment switches. A file tomllib cannot parse reads as off with the
+    parser's message, as ``ship.handoff_push_setting`` reads it."""
     try:
         text = decode((root / "espalier.toml").read_bytes())
     except FileNotFoundError:
         return False, f"there is no espalier.toml, so {key_name} is off (the default)"
     except OSError as exc:
         return False, f"espalier.toml could not be read ({exc.strerror or type(exc).__name__}), so {key_name} reads as off"
-    table = ""
-    for line in text.splitlines():
-        if _TOML_TABLE_HEADER_RE.match(line):
-            table = line.split("#", 1)[0].strip()
-            continue
-        key, sep, value = line.split("#", 1)[0].partition("=")
-        key = key.strip()
-        if len(key) >= 2 and key[0] == key[-1] and key[0] in "\"'":
-            key = key[1:-1]
-        if not sep or key != key_name:
-            continue
-        if table:
-            return False, f"espalier.toml sets {key_name} under {table}, where it is not the top-level setting, so it is off"
-        value = value.strip()
-        if value in ("true", "false"):
-            return value == "true", f"espalier.toml sets {key_name} = {value}"
-        return False, f"espalier.toml sets {key_name} = {value}, which is neither true nor false, so it reads as off"
+    import tomllib  # here, not at the top: the loader still imports below the floor, where the hooks say the floor
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        return False, f"espalier.toml could not be parsed ({exc}), so {key_name} reads as off"
+    if key_name in data:
+        value = data[key_name]
+        if isinstance(value, bool):
+            return value, f"espalier.toml sets {key_name} = {_toml_spelling(value)}"
+        return False, (f"espalier.toml sets {key_name} = {_toml_spelling(value)}, which is neither true nor false, "
+                       "so it reads as off")
+    under = _toml_table_holding(data, key_name)
+    if under:
+        return False, f"espalier.toml sets {key_name} under [{under}], where it is not the top-level setting, so it is off"
     return False, f"espalier.toml does not set {key_name}, so it is off (the default)"
+
+
+def _toml_spelling(value: object) -> str:
+    """``value`` as TOML spells it, so a message names what the file says: a
+    string keeps its quotes (``"true"``), a number reads as itself (``1``).
+    One of three copies, in ``ship.py``, ``_record_fragments.py`` and
+    ``mail.py``, which load no sibling for it (a test pins them equal)."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        import json  # here, not at the top: _record_fragments.py keeps it off its Session Log readers' path
+        return json.dumps(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_spelling(v) for v in value) + "]"
+    if isinstance(value, dict):
+        return "{" + ", ".join(f"{k} = {_toml_spelling(v)}" for k, v in value.items()) + "}"
+    iso = getattr(value, "isoformat", None)
+    return iso() if callable(iso) else str(value)
+
+
+def _toml_table_holding(table: dict, key: str, path: str = "") -> str:
+    """The dotted path of the first table below ``table`` that holds ``key``
+    (a nested table, an array of tables or an inline table), or ``""``.
+    One of three copies, in ``ship.py``, ``_record_fragments.py`` and
+    ``mail.py``, which load no sibling for it (a test pins them equal)."""
+    for name, value in table.items():
+        here = f"{path}.{name}" if path else name
+        for sub in value if isinstance(value, list) else [value]:
+            if isinstance(sub, dict):
+                found = here if key in sub else _toml_table_holding(sub, key, here)
+                if found:
+                    return found
+    return ""
 
 
 def changelog_fragments(root: Path) -> tuple[list[Path], list[str]]:

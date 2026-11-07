@@ -1323,20 +1323,48 @@ def overlapping_assignments(assignments: list[dict], *, classes: list[str] | tup
     return found
 
 
-#: A table header line, ``[name]`` or ``[[name]]``. The same shape as
-#: ship.py's ``_TOML_TABLE_HEADER_RE`` (ship loads this module, so this one
-#: cannot import it back); the 3.10 floor has no tomllib.
-_TOML_TABLE_HEADER_RE = re.compile(r"""^[ \t]*\[\[?[ \t]*[A-Za-z0-9_."'-][A-Za-z0-9_."' -]*\]\]?[ \t]*(#.*)?$""")
+def _toml_spelling(value: object) -> str:
+    """``value`` as TOML spells it, so a message names what the file says: a
+    string keeps its quotes (``"true"``), a number reads as itself (``1``).
+    One of three copies, in ``ship.py``, ``_record_fragments.py`` and
+    ``mail.py``, which load no sibling for it (a test pins them equal)."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        import json  # here, not at the top: _record_fragments.py keeps it off its Session Log readers' path
+        return json.dumps(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_spelling(v) for v in value) + "]"
+    if isinstance(value, dict):
+        return "{" + ", ".join(f"{k} = {_toml_spelling(v)}" for k, v in value.items()) + "}"
+    iso = getattr(value, "isoformat", None)
+    return iso() if callable(iso) else str(value)
+
+
+def _toml_table_holding(table: dict, key: str, path: str = "") -> str:
+    """The dotted path of the first table below ``table`` that holds ``key``
+    (a nested table, an array of tables or an inline table), or ``""``.
+    One of three copies, in ``ship.py``, ``_record_fragments.py`` and
+    ``mail.py``, which load no sibling for it (a test pins them equal)."""
+    for name, value in table.items():
+        here = f"{path}.{name}" if path else name
+        for sub in value if isinstance(value, list) else [value]:
+            if isinstance(sub, dict):
+                found = here if key in sub else _toml_table_holding(sub, key, here)
+                if found:
+                    return found
+    return ""
 
 
 def dispatcher_setting(root: Path) -> tuple[str | None, str]:
     """``(dispatcher, how it was read)``: the top-level ``dispatcher`` key of
-    ``<root>/espalier.toml``, a quoted machine name. No file, or no key, reads
-    as no dispatcher (every machine's assigns count: a lone operator's
-    default). A key that is present but unusable -- not a machine name, or a
-    file that exists and cannot be read -- answers :data:`DISPATCHER_UNUSABLE`,
-    which counts no assign: a broken team setting fails closed. ``how`` says
-    which, so a typo is visible instead of silently deciding."""
+    ``<root>/espalier.toml``, a quoted machine name, read with tomllib. No
+    file, or no key, reads as no dispatcher (every machine's assigns count: a
+    lone operator's default). A key that is present but unusable -- not a
+    machine name, or under a table -- or a file that exists and cannot be read
+    or parsed answers :data:`DISPATCHER_UNUSABLE`, which counts no assign: a
+    broken team setting fails closed. ``how`` says which, so a typo is visible
+    instead of silently deciding."""
     path = root / "espalier.toml"
     if not path.exists():
         return None, f"there is no espalier.toml, so no {DISPATCHER_KEY} is named and every machine's assigns count"
@@ -1348,23 +1376,22 @@ def dispatcher_setting(root: Path) -> tuple[str | None, str]:
     text, problem = decode_text_or_problem(raw)
     if problem:
         return DISPATCHER_UNUSABLE, f"espalier.toml: {problem}; no assign counts until it reads"
-    table = ""
-    for line in text.splitlines():
-        if _TOML_TABLE_HEADER_RE.match(line):
-            table = line.split("#", 1)[0].strip()
-            continue
-        key, sep, value = line.split("#", 1)[0].partition("=")
-        if not sep or key.strip().strip("\"'") != DISPATCHER_KEY:
-            continue
-        if table:
-            return DISPATCHER_UNUSABLE, (f"espalier.toml sets {DISPATCHER_KEY} under {table}, where it is not the "
-                                         "top-level setting, so no assign counts until it moves")
-        value = value.strip()
-        name = value[1:-1] if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'" else value
-        if _MACHINE_RE.match(name):
-            return name, f"espalier.toml sets {DISPATCHER_KEY} = {name}"
-        return DISPATCHER_UNUSABLE, (f"espalier.toml sets {DISPATCHER_KEY} = {value}, which is not a machine name "
-                                     "(lowercase letters, digits and hyphens), so no assign counts until it is")
+    import tomllib  # here, not at the top: the channel still imports below the floor, where the hooks say the floor
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        return DISPATCHER_UNUSABLE, f"espalier.toml could not be parsed ({exc}), so no assign counts until it parses"
+    if DISPATCHER_KEY in data:
+        value = data[DISPATCHER_KEY]
+        if isinstance(value, str) and _MACHINE_RE.fullmatch(value):
+            return value, f"espalier.toml sets {DISPATCHER_KEY} = {value}"
+        return DISPATCHER_UNUSABLE, (f"espalier.toml sets {DISPATCHER_KEY} = {_toml_spelling(value)}, which is not a "
+                                     "machine name (lowercase letters, digits and hyphens), so no assign counts "
+                                     "until it is")
+    under = _toml_table_holding(data, DISPATCHER_KEY)
+    if under:
+        return DISPATCHER_UNUSABLE, (f"espalier.toml sets {DISPATCHER_KEY} under [{under}], where it is not the "
+                                     "top-level setting, so no assign counts until it moves")
     return None, f"espalier.toml does not set {DISPATCHER_KEY}, so every machine's assigns count"
 
 

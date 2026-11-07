@@ -802,16 +802,46 @@ class TestHandoffPushSetting:
         on, how = ship.handoff_push_setting(tmp_path)
         assert on is expected and f"handoff_push = {value}" in how
 
-    @pytest.mark.parametrize("value", ['"true"', "yes", "1", "True"])
+    @pytest.mark.parametrize("value", ['"true"', "1", "'true'"])
     def test_a_value_that_is_not_true_or_false_reads_as_off_and_is_named(self, ship, tmp_path, value):
+        """Named as TOML spells it: a string keeps its quotes, a number reads as
+        itself (a literal string is named in TOML's basic quotes)."""
         _toml(tmp_path, f"handoff_push = {value}\n")
         on, how = ship.handoff_push_setting(tmp_path)
-        assert on is False and value in how and "neither true nor false" in how
+        assert on is False and value.replace("'", '"') in how and "neither true nor false" in how
+
+    @pytest.mark.parametrize("body", [
+        "handoff_push = yes\n", "handoff_push = True\n",
+        "handoff_push = true\nhandoff_push = true\n", "broken = [\nhandoff_push = true\n",
+    ], ids=["bare-yes", "bare-True", "key-twice", "unclosed-array"])
+    def test_a_file_tomllib_cannot_parse_reads_as_off_and_says_so(self, ship, tmp_path, body):
+        """TP-706 moved this reader from a line scan to tomllib. A bare word
+        (`yes`, `True`) is not TOML, so tomllib refuses the whole file where the
+        scan named the one value as neither true nor false; those two cases
+        moved here from the test above. Not a loosening: the push stays off, the
+        typo is still visible (the parser's message names its line and column),
+        and every other reader of espalier.toml, the engine's included, already
+        refuses that file. A key given twice and an unclosed array, which the
+        scan read past to `true` (on), are off here too."""
+        _toml(tmp_path, body)
+        on, how = ship.handoff_push_setting(tmp_path)
+        assert on is False and "could not be parsed" in how and "(at line " in how, how
 
     def test_a_key_under_a_table_is_not_the_setting_and_says_where_it_was(self, ship, tmp_path):
         _toml(tmp_path, "[tool.other]\nhandoff_push = true\n")
         on, how = ship.handoff_push_setting(tmp_path)
         assert on is False and "under [tool.other]" in how
+
+    @pytest.mark.parametrize("body,where", [
+        ("[tool.x.y]\nhandoff_push = true\n", "[tool.x.y]"),
+        ("[[plugins]]\nname = 'a'\n[[plugins]]\nhandoff_push = true\n", "[plugins]"),
+        ("tool = { handoff_push = true }\n", "[tool]"),
+        ("tool.handoff_push = true\n", "[tool]"),
+    ], ids=["nested-table", "array-of-tables", "inline-table", "dotted-key"])
+    def test_a_key_under_any_table_is_not_the_setting_and_names_its_path(self, ship, tmp_path, body, where):
+        _toml(tmp_path, body)
+        on, how = ship.handoff_push_setting(tmp_path)
+        assert on is False and f"under {where}" in how, how
 
     def test_a_nested_array_line_is_not_mistaken_for_a_table_header(self, ship, tmp_path):
         """Review, 2026-10-03: the first cut stopped at any line opening with `[`,

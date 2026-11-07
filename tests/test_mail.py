@@ -291,6 +291,36 @@ class TestAssignments:
         job = _msg(mail, "air", "assign", "", seat="win", lane="job-a", now=t)
         assert mail.live_assignments({"air": [job]}, mail.DISPATCHER_UNUSABLE) == []
 
+    @pytest.mark.parametrize("text,said", [
+        ('[tool.x.y]\ndispatcher = "air"\n', "under [tool.x.y]"),
+        ('[[seats]]\ndispatcher = "air"\n', "under [seats]"),
+        ('tool = { dispatcher = "air" }\n', "under [tool]"),
+        ("dispatcher = 1\n", "dispatcher = 1,"),
+        ('dispatcher = "air\\n"\n', 'dispatcher = "air\\n"'),
+    ], ids=["nested-table", "array-of-tables", "inline-table", "a-number", "a-trailing-newline"])
+    def test_an_unusable_setting_tomllib_reads_counts_no_assign(self, mail, tmp_path, text, said):
+        """TP-706 moved the reader to tomllib: a key under any table, or a value
+        that is not a machine name (spelled as TOML spells it), still fails
+        closed. Dies to: a nested table read as the top level, or a name with a
+        trailing newline matched by ``$``."""
+        (tmp_path / "espalier.toml").write_text(text, encoding="utf-8")
+        name, how = mail.dispatcher_setting(tmp_path)
+        assert name == mail.DISPATCHER_UNUSABLE and said in how, how
+
+    @pytest.mark.parametrize("text", [
+        "dispatcher = air\n", 'dispatcher = "air"\ndispatcher = "win"\n', 'x = [\ndispatcher = "air"\n',
+        "handoff_push = yes\n",
+    ], ids=["bare-word", "key-twice", "unclosed-array", "malformed-elsewhere"])
+    def test_a_file_tomllib_cannot_parse_counts_no_assign(self, mail, tmp_path, text):
+        """A file that exists and cannot be parsed is a team setting that cannot
+        be read: no assign counts, and ``how`` carries the parser's line and
+        column. Until TP-706 the line scan read the bare word ``air`` as the
+        dispatcher, and the first of two keys; every other reader of
+        espalier.toml, the engine's included, already refused these files."""
+        (tmp_path / "espalier.toml").write_text(text, encoding="utf-8")
+        name, how = mail.dispatcher_setting(tmp_path)
+        assert name == mail.DISPATCHER_UNUSABLE and "could not be parsed" in how and "(at line " in how, how
+
     def test_a_job_closes_when_its_seat_or_its_assigner_releases_it(self, mail):
         """The failure-mode review's major: only the dispatcher's ack closed an
         assign, so every finished job warned forever (the claims defect of
