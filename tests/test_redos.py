@@ -881,7 +881,21 @@ _C52_BASH_ROWS = [
     # anchor's wrapper run with its flags behind each carrier
     ("piped_remove_spelled_carrier_word", _bash_patterns._PIPED_REMOVE_RE, "find . | ~/a/"),
     ("piped_remove_carrier_wrapper_flags", _bash_patterns._PIPED_REMOVE_RE, "find . | xargs nice -n 19"),
-    ("piped_remove_carrier_wrapper_flood", _bash_patterns._PIPED_REMOVE_RE, "sudo -u x"),
+    # (the flood behind an enumerator head, so it reaches the carrier run:
+    # a bare `sudo -u x` flood only exercised the anchor, the code review)
+    ("piped_remove_carrier_wrapper_flood", _bash_patterns._PIPED_REMOVE_RE, "find . | xargs sudo -u x"),
+    # the review's item 3: a wrapper's directory, an assignment run behind a
+    # wrapper and before the carrier word, and bash's `|&`
+    ("piped_remove_carrier_wrapper_dir", _bash_patterns._PIPED_REMOVE_RE, "find . | xargs ~/a/env"),
+    ("piped_remove_carrier_lead_dir", _bash_patterns._PIPED_REMOVE_RE, "find . | /a/b/"),
+    ("piped_remove_carrier_lead_assign", _bash_patterns._PIPED_REMOVE_RE, "find . |& A=1"),
+    ("piped_remove_carrier_env_assign", _bash_patterns._PIPED_REMOVE_RE, "find . | xargs env A='x"),
+    # (a bare `-exec /a/env` flood is left out: it is quadratic through the
+    # reader on main itself, 1.5 s at 4 KB and 25 s at 16 KB measured
+    # 2026-11-07, spread across the anchor-led patterns, not the carrier's)
+    ("find_delete_action_wrapper_flag_dir", _bash_patterns._FIND_DELETE_ACTION_RE, "-exec nice -n /a/env"),
+    ("piped_remove_carrier_flag_dir", _bash_patterns._PIPED_REMOVE_RE, "find . | xargs env -u /a/env"),
+    ("piped_carrier_witness_short_name", _bash_patterns._PIPED_CARRIER_WITNESS_RE, "| C:\\A~1\\"),
     ("find_delete_action_wrapper_flags", _bash_patterns._FIND_DELETE_ACTION_RE, "-exec sudo -u x"),
     ("piped_carrier_witness_wrappers", _bash_patterns._PIPED_CARRIER_WITNESS_RE, "| nice -n 19"),
     ("piped_carrier_witness_prefix", _bash_patterns._PIPED_CARRIER_WITNESS_RE, "| ~/a/"),
@@ -932,6 +946,10 @@ _C52_PS_ROWS = [
     # wrapper run with its flags behind it
     ("ps_piped_remove_spelled_carrier_word", _bash_patterns._PS_PIPED_REMOVE_RE, "gci . | & 'a/"),
     ("ps_piped_remove_carrier_wrapper_flags", _bash_patterns._PS_PIPED_REMOVE_RE, "gci . | xargs sudo -u x"),
+    # the bare call operator before the carrier word, and the lead run
+    ("ps_piped_remove_bare_call_operator", _bash_patterns._PS_PIPED_REMOVE_RE, "gci . | &"),
+    ("ps_piped_remove_carrier_lead_dir", _bash_patterns._PS_PIPED_REMOVE_RE, "gci . | /a/env"),
+    ("ps_piped_remove_carrier_env_assign", _bash_patterns._PS_PIPED_REMOVE_RE, "gci . | xargs env A=1"),
     ("ps_git_rm_mv", _bash_patterns._PS_GIT_RM_MV_RE, "git rm"),
     ("ps_compress_archive", _bash_patterns._PS_COMPRESS_ARCHIVE_RE, "Compress-Archive"),
     # the find family on the PowerShell tool (DEF-824): the head with its
@@ -3519,7 +3537,11 @@ def _reconstruct_pattern(node: ast.expr, env: dict[str, ast.expr], depth: int = 
     string). Anything else — a genuinely dynamic interpolation, a non-string
     constant, an unresolved Name — raises so the gate forces an explicit review
     (it cannot prove the absence of a dot-star it cannot see)."""
-    if depth > 50:
+    # A runaway bound, not a budget: each `+` term of a left-nested chain is a
+    # level, and C76's carrier composition (the lead run over the wrapper
+    # steps over the roster) took `_TAIL_LOOP_REMOVE_RE` and the PowerShell
+    # piped reader past 50, both reconstructing whole at 100 (2026-11-07).
+    if depth > 100:
         raise _UnresolvablePattern("reconstruction too deep")
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value

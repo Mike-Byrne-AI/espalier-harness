@@ -132,19 +132,26 @@ _CMD_POS_WRAPPER = (
 #: a denied `env cp`); `command`, `exec` and `time` stay as spelled, a
 #: builtin and a keyword bash matches case-sensitively (the directory and
 #: loop readers' rule, `_EXE_SUFFIX`'s comment below). `_CMD_POS_WRAPPER`
-#: stays the bare roster the pins and the ReDoS population read; the two
-#: halves here are checked against it at import, so a word added to one
-#: and not the other refuses to load rather than reading one spelling.
+#: stays the bare roster the pins and the ReDoS population read. The two
+#: halves are literals, because the ReDoS gate reconstructs every compiled
+#: pattern statically from string literals (a derived `join` left 23
+#: patterns unprovable), and their sum is pinned to the roster by
+#: tests/test_write_guard.py::TestTheCommandPositionGrammarIsOneAcrossTheCarriers,
+#: not checked at import: a raise there on a one-sided edit would make
+#: write_guard refuse every tool call (C76's failure-mode review).
 _CMD_POS_WRAPPER_BUILTINS = r"(?:command|time|exec)"
 _CMD_POS_WRAPPER_BINARIES = (
     r"(?:env|sudo|doas|nohup|timeout|xargs|nice|ionice|stdbuf"
     r"|setsid|strace|ltrace|watch|script|chrt|taskset|unbuffer|torify|proxychains)"
 )
-if sorted(_CMD_POS_WRAPPER[3:-1].split("|")) != sorted(
-        _CMD_POS_WRAPPER_BUILTINS[3:-1].split("|") + _CMD_POS_WRAPPER_BINARIES[3:-1].split("|")):
-    raise RuntimeError("wrapper roster drift: _CMD_POS_WRAPPER and its spelled halves disagree")
+# A native binary's case and suffix; the rule is in its comment at the verb
+# arms below (DEF-1161). Defined here because the wrapper roster composes it.
+_EXE_SUFFIX = r"(?i:\.exe)?"
+#: The builtins are pinned case-sensitive with `(?-i:...)`, the module's
+#: rule for a shell word inside a regex compiled IGNORECASE (`(?-i:done)`):
+#: left bare, the loop and carrier readers took `EXEC` and `COMMAND`.
 _CMD_POS_WRAPPER_SPELLED = (
-    r"(?:" + _CMD_POS_WRAPPER_BUILTINS + r"|(?i:" + _CMD_POS_WRAPPER_BINARIES + r"(?:\.exe)?))"
+    r"(?:(?-i:" + _CMD_POS_WRAPPER_BUILTINS + r")|(?i:" + _CMD_POS_WRAPPER_BINARIES + r")" + _EXE_SUFFIX + r")"
 )
 # A leading redirection is a command-position prefix: `>/dev/null cp x zone/`
 # runs cp. Red-teamed; it denied at HEAD and the first anchor let it through.
@@ -346,7 +353,7 @@ _QUOTED_VERB_TAIL = r"""["']?"""
 # friction, the side the toolbelt fails on, as the rm segment already reads.
 # Never composed after a `[\w.-]*` head (the interpreter arms, which absorb
 # the suffix themselves), so no adjacent quantifier shares its input.
-_EXE_SUFFIX = r"(?i:\.exe)?"
+# (`_EXE_SUFFIX` itself is defined above the wrapper roster, which composes it.)
 _CMD_POS_NO_VERB = (
     r"(?:(?:^|" + _CMD_POS_SEP + ")" + _CMD_POS_WS + "(?:"
     + _CMD_POS_WRAP_RUN + "|" + _CMD_POS_ENV_ASSIGN
@@ -1020,9 +1027,31 @@ _PS_NATIVE_VERB_PATH = r"(?:" + _CMD_POS_QUOTED_DIR + r"""|["']?(?:[^\s;|&"']*[/
 #: home for find's exec action, the xargs carrier, the loop body and the
 #: PowerShell carrier; bounded, and each iteration opens on a word the
 #: others cannot (the anchor run's own one-parse rule).
-_CARRIER_WRAP_RUN = (
-    r"(?:(?!(?i:xargs)\b)" + _CMD_POS_WRAP_RUN + r"|(?i:busybox)" + _EXE_SUFFIX + r"[ \t]+){0,3}"
+#: Each word may stand behind a directory, as the anchor's `(?<=/)` arm
+#: reads `/usr/bin/env` (the `_speedbump` fetch hop's shape: the directory
+#: is taken only where a wrapper word follows it, so it never shares input
+#: with the verb's own path after a failed step), and each may be followed
+#: by an assignment run, as the anchor reads `env LC_ALL=C cp` (C76's
+#: failure-mode review: `-exec /usr/bin/env mv`, `xargs env LC_ALL=C mv`
+#: and their PowerShell twins drew no zone deny where the anchor walled
+#: both). `env` and `sudo` take the assignments; behind another wrapper
+#: the run is friction on a command that cannot run. An assignment opens
+#: on `NAME=`, which no wrapper word or directory can, so it shares no
+#: input with the step after it.
+_CARRIER_WRAP_WORD = r"(?:" + _CMD_POS_WRAPPER_SPELLED + r"|(?i:busybox)" + _EXE_SUFFIX + r")"
+_CARRIER_WRAP_HEAD = r"(?:[\w.:~/-]*/(?=" + _CARRIER_WRAP_WORD + r"[ \t]))?"
+_CARRIER_WRAP_STEP = (
+    _CARRIER_WRAP_HEAD
+    + r"(?:(?!(?i:xargs)\b)" + _CMD_POS_WRAP_RUN + r"|(?i:busybox)" + _EXE_SUFFIX + r"[ \t]+)"
+    + r"(?:" + _CMD_POS_ENV_ASSIGN + r"){0,4}"
 )
+_CARRIER_WRAP_RUN = r"(?:" + _CARRIER_WRAP_STEP + r"){0,3}"
+#: The run BEFORE the carrier word, at the command position after the pipe:
+#: a statement there, so an assignment run may open it (`| LC_ALL=C xargs
+#: mv`), then the same steps (`| /usr/bin/env xargs mv`, `| busybox xargs
+#: rm`, which runs the xargs applet). One home for the Bash tail, its
+#: witness and the PowerShell carrier.
+_CARRIER_LEAD_RUN = r"(?:" + _CMD_POS_ENV_ASSIGN + r"){0,4}" + _CARRIER_WRAP_RUN
 _FIND_EXEC_VERB = (
     _CARRIER_WRAP_RUN
     + r"\$?" + _NATIVE_VERB_PATH + r"(?:rm|unlink|rmdir|shred|mv)\b"
@@ -1208,10 +1237,14 @@ def _sweep_is_wipe(recursive: bool, files_only: bool, walks: bool, native: bool)
 #: the opener never reached the remove verb).
 _XARGS_VALUED = r"(?:[nIJPdsLEa]|-(?:max-args|replace|max-procs|delimiter|max-chars|max-lines|eof|arg-file))"
 #: The value is never a word the carrier's wrapper run opens on
-#: (`_CARRIER_WRAP_RUN`'s roster, derived, DEF-3032) nor the remove verb.
+#: (`_CARRIER_WRAP_RUN`'s roster, derived, DEF-3032) nor the remove verb,
+#: each as a whole word ended by a blank (the anchor run's rule): a word
+#: boundary let a value OPENING on one read as no value, so `xargs -a
+#: script.txt mv` lost its move and `xargs -a rm.list mv` read a delete
+#: (C76's failure-mode review, the regression it found).
 _XARGS_VALUE = (
-    r"[ \t]+(?!-)(?!(?:" + _CMD_POS_WRAPPER_SPELLED + r"|(?i:busybox)" + _EXE_SUFFIX + r")\b)"
-    r"(?!(?:rm|unlink|rmdir|shred|mv)\b)[^\s;|&-][^\s;|&]*"
+    r"[ \t]+(?!-)(?!(?:" + _CMD_POS_WRAPPER_SPELLED + r"|(?i:busybox)" + _EXE_SUFFIX + r")(?=[ \t]))"
+    r"(?!(?:rm|unlink|rmdir|shred|mv)" + _EXE_SUFFIX + r"(?=[ \t]))[^\s;|&-][^\s;|&]*"
 )
 _XARGS_SWITCH_RUN = (
     r"(?:[ \t]+(?:-" + _XARGS_VALUED + r"(?![^\s;|&])(?:" + _XARGS_VALUE + r")?"
@@ -1227,10 +1260,12 @@ _XARGS_SWITCH_RUN = (
 #: case and suffix (DEF-3031, C76): until this row `"xargs"`,
 #: `/usr/bin/xargs`, `\xargs` and `$'xargs'` feeding a move out of the
 #: hooks drew no zone deny where the bare word drew the wall. The witness
-#: below reads the same word, or its gate stays shut.
+#: below reads the same word, or its gate stays shut. The pipe may be
+#: bash's `|&` (stderr rides it too; the witness already took it), and
+#: the run before the word is `_CARRIER_LEAD_RUN`.
 _XARGS_WORD = _CMD_POS_VERB_PREFIX + r"\b(?i:xargs)" + _EXE_SUFFIX + r"\b(?!=)" + _QUOTED_VERB_TAIL
 _XARGS_CARRIER_TAIL = (
-    r"\|[ \t]*(?:" + _CMD_POS_WRAP_RUN + r")?"
+    r"\|&?[ \t]*" + _CARRIER_LEAD_RUN
     + _XARGS_WORD + _XARGS_SWITCH_RUN + r"[ \t]+"
 )
 #: Enumerator, one pipe ON THE LINE (bash continues a pipeline after a line
@@ -1277,8 +1312,14 @@ _PIPED_REMOVE_RE = re.compile(
 #: The wrapper run and the word as the tail reads them (DEF-3031, DEF-3032),
 #: and the PowerShell call operator, so one gate serves both tools: a
 #: superset costs a walk, a narrower gate hides the carrier.
+#: The word's directory is either tool's: the anchor's prefix, or the
+#: PowerShell head's unquoted path (`_PS_EXE_PREFIX`'s arm, defined far
+#: below, so spelled here), whose segments take a `~` mid-word -- an 8.3
+#: short name, `C:\PROGRA~1\Git\usr\bin\xargs.exe`, was read by the
+#: carrier and hidden by this gate (the code review's W1).
 _PIPED_CARRIER_WITNESS = (
-    r"\|[ \t\r\n]*(?:" + _CMD_POS_WRAP_RUN + r")*(?:&[ \t]*)?" + _CMD_POS_VERB_PREFIX + r"\bxargs\b"
+    r"\|[ \t\r\n]*" + _CARRIER_LEAD_RUN + r"(?:&[ \t]*)?"
+    + r"(?:" + _CMD_POS_VERB_PREFIX + r"|(?:[A-Za-z]:)?(?:[\w.~-]*[/\\])+)\bxargs\b"
 )
 _PIPED_CARRIER_WITNESS_RE = re.compile(_PIPED_CARRIER_WITNESS, re.IGNORECASE)
 #: ── The loop carrier (DEF-830) ───────────────────────────────────────────
@@ -9718,9 +9759,12 @@ _PS_ENUMERATE_VERB = r"(?:Get-ChildItem|gci|ls|dir|Get-Item|gi|find)"
 #: The carrier word at its command position takes the call operator and a
 #: path as every native head here does (`_PS_EXE_PREFIX`), with the
 #: binary's case and suffix, and the wrapper run behind it is the Bash
-#: carrier's one home (DEF-3031, DEF-3032).
+#: carrier's one home (DEF-3031, DEF-3032). The call operator before a
+#: BARE word too (`| & xargs`, `| &xargs`): `_PS_EXE_PREFIX` takes it only
+#: before a quote, and the gate already read both (C76's failure-mode
+#: review); the remove stage's own bare arm spells it the same way.
 _PS_PIPE_CARRIER = (
-    r"(?P<carrier>(?:" + _CMD_POS_WRAP_RUN + r")?" + _PS_EXE_PREFIX
+    r"(?P<carrier>" + _CARRIER_LEAD_RUN + r"(?:&[ \t]*)?" + _PS_EXE_PREFIX
     + r"\b(?i:xargs)" + _EXE_SUFFIX + r"\b(?!=)" + _QUOTED_VERB_TAIL + _XARGS_SWITCH_RUN
     + r"[ \t]+" + _CARRIER_WRAP_RUN
     + _PS_NATIVE_VERB_PATH + r")"
