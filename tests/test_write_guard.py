@@ -1259,20 +1259,32 @@ class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
         (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True, exist_ok=True)
         _assert_zone_walled(f"find tools/cc/hooks | xargs {wrapper}rm -rf", tmp_path, _run_ps_guard)
 
-    def test_the_slashed_arm_reads_the_anchor_run_less_the_slashed_word(self):
+    def test_the_slashed_arm_reads_the_anchor_run_less_the_slashed_argument(self):
         # DEF-3042: the anchor's `(?<=/)` arm runs a copy of `_CMD_POS_WRAP_RUN`
-        # whose three token arms decline a word ending in a slashed wrapper
-        # (that word holds its own start), and nothing else; an edit to the
-        # run lands in both or reds here (spelled out for the ReDoS gate)
+        # whose flag-ARGUMENT arm declines a word ending in a slashed wrapper
+        # (that word holds its own start), and nothing else: the flag and
+        # numeric arms keep the generic reading (ruling 90c7c3, DEF-3051); an
+        # edit to the run lands in both or reds here (spelled out for the
+        # ReDoS gate)
         bp = _bash_patterns_module()
         decline = "(?!" + bp._CMD_POS_SLASHED_WRAPPER_WORD + ")"
         derived = bp._CMD_POS_WRAP_RUN.replace(
-            r"(?:[ \t]+(?:-", r"(?:[ \t]+" + decline + r"(?:-", 1).replace(
             r"(?:[ \t]+(?!" + bp._CMD_POS_WRAPPER_SPELLED,
             r"(?:[ \t]+" + decline + "(?!" + bp._CMD_POS_WRAPPER_SPELLED, 1)
-        assert derived.count(decline) == 2
+        assert derived.count(decline) == 1
         assert bp._CMD_POS_SLASHED_WRAP_RUN == derived
         assert "(?<=/)" + bp._CMD_POS_SLASHED_WRAP_RUN in bp._CMD_POS_NO_VERB
+
+    def test_the_slashed_decline_is_the_roster_less_the_carrier_verbs(self):
+        # ruling 90c7c3: `watch` and `script` are carrier verbs as well as
+        # wrappers, and declining their slashed word handed `watch '<program>'`
+        # to a run that reads no carrier (11 secret-leg rows deny->allow); the
+        # rest of the roster is declined, a wrapper added later included
+        bp = _bash_patterns_module()
+        roster = re.findall(r"[a-z]+", bp._CMD_POS_WRAPPER_BINARIES)
+        declined = re.findall(r"[a-z]+", bp._CMD_POS_SLASHED_DECLINED_BINARIES)
+        assert declined == [w for w in roster if w not in ("watch", "script")]
+        assert bp._CMD_POS_WRAPPER_BUILTINS in bp._CMD_POS_SLASHED_WRAPPER_WORD
 
     @pytest.mark.parametrize("head", ["/usr/bin/", ""], ids=["slashed", "bare"])
     @pytest.mark.parametrize("command", [
@@ -1284,6 +1296,49 @@ class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
         # slashed run read no flags passed every wrapper row (DEF-3042's review)
         (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True, exist_ok=True)
         _assert_zone_walled(head + command, tmp_path)
+
+    @pytest.mark.parametrize("command", [
+        "/usr/bin/sudo -D /opt/watch su -c 'cat .env'",
+        "/usr/bin/env -C /opt/script watch 'cat .env'",
+        "/usr/bin/timeout -s /x/script 5 watch 'cat .env'",
+        "/usr/bin/sudo -D /opt/script eval 'cat .env'",
+        "/usr/bin/nice -n /x/watch script -c 'cat .env'",
+        "/usr/bin/nice -n /x/watch script -qc 'cat ~/.aws/credentials'",
+        "/usr/bin/xargs -a /x/script watch cat .env",
+        "/usr/bin/sudo -u /a/watch -D /opt/watch watch 'cat .env'",
+        "/usr/bin/env -C /opt/watch su -c 'cat .env'",
+        "/usr/bin/timeout -s /x/watch 5 eval 'cat .env'",
+        "/usr/bin/xargs -a /x/watch su -c 'cat ~/.aws/credentials'",
+    ])
+    def test_a_slashed_carrier_verb_as_a_flag_argument_keeps_the_secret_deny(self, command, tmp_path):
+        # ruling 90c7c3 (a): `watch` and `script` are carrier verbs as well as
+        # wrappers; a slashed decline that took them in let these through (77
+        # deny->allow on the lane's cross corpus, 11 on the verifier's), so
+        # the decline leaves them out and the carrier reader keeps the program
+        result = run_bash_guard(command, tmp_path)
+        assert_hook_denied(result, contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("head", ["/usr/bin/", "echo hi; /usr/bin/", ""], ids=["slashed", "after-sep", "bare"])
+    @pytest.mark.parametrize("wrapped", [
+        "env -a/env foo rm cc/x", "env -a/sudo foo rm cc/x",
+        "nohup -x/env foo rm cc/x", "sudo -g/nice foo rm cc/x",
+    ], ids=["env-glued-env", "env-glued-sudo", "nohup-glued-env", "sudo-glued-nice"])
+    def test_a_glued_slashed_flag_then_a_word_keeps_the_generic_reading(self, tmp_path, head, wrapped):
+        # ruling 90c7c3 (b): the generic flag-argument reading takes the word
+        # after a glued flag as its argument, here as for `env -i foo rm`; the
+        # over-read is one class with the glued and numeric floods (DEF-3051),
+        # so the slashed arm keeps it rather than dropping it in one spelling
+        (tmp_path / "cc").mkdir(parents=True, exist_ok=True)
+        _assert_zone_walled(head + wrapped, tmp_path)
+
+    @pytest.mark.parametrize("command", [
+        "/usr/bin/env -a/env foo watch 'cat .env'", "/usr/bin/sudo -g/nice foo watch 'cat .env'",
+    ])
+    def test_a_glued_slashed_flag_then_a_carrier_keeps_the_secret_deny(self, command, tmp_path):
+        # the same reading on the secret leg (12 deny->allow under the
+        # three-arm decline on the lane's cross corpus)
+        result = run_bash_guard(command, tmp_path)
+        assert_hook_denied(result, contains_reason="Secret-path access blocked")
 
     def test_the_carriers_read_one_wrapper_run(self):
         # one home: an edit to the anchor's run reaches every carrier, and a

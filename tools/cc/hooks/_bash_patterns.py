@@ -213,36 +213,48 @@ _CMD_POS_WRAP_RUN = (
     + r"(?:[ \t]+(?:-[^\s;|&]+(?:[ \t]+(?!" + _CMD_POS_WRAPPER_SPELLED
     + r"[ \t])(?!\d)[^-\s;|&][^\s;|&]*)?|\d[^\s;|&]*))*[ \t]+)"
 )
+#: The wrappers whose slashed word the slashed arm's run declines: the
+#: roster less `watch` and `script`, which are carrier verbs too, so a
+#: declined `/opt/watch` would hand `watch '<program>'` to a run that reads
+#: no carrier (90c7c3: eleven secret-leg rows went deny->allow). A literal,
+#: for the ReDoS gate; pinned to the roster by
+#: tests/test_write_guard.py::TestTheCommandPositionGrammarIsOneAcrossTheCarriers.
+_CMD_POS_SLASHED_DECLINED_BINARIES = (
+    r"(?:env|sudo|doas|nohup|timeout|xargs|nice|ionice|stdbuf"
+    r"|setsid|strace|ltrace|chrt|taskset|unbuffer|torify|proxychains)"
+)
 #: A word ending in a slashed wrapper name and a blank (`/a/env `,
-#: `*/bin/env `, `-I/usr/include/sudo `, `1/nice `): the anchor's `(?<=/)`
-#: arm starts a wrapper run INSIDE every such word, at the name.
-_CMD_POS_SLASHED_WRAPPER_WORD = r"[^\s;|&]*/" + _CMD_POS_WRAPPER_SPELLED + r"[ \t]"
-# ⚠ THE SLASHED ARM'S RUN DECLINES THAT WORD, A ReDoS FIX (DEF-3042). With
-# `_CMD_POS_WRAP_RUN` there, a flag's argument, a flag and a numeric word
-# could each be a slashed wrapper's word, so on `find build -exec /a/env
-# -exec /a/env ...` every `env` started a run that took every pair after
-# it to the end of the input before the verb failed: n starts of n tokens,
-# read about 4x per doubling by every `_CMD_POS` consumer (1.6 s at 4 KB in
-# the removed-or-relocated reader, the glued `-a/env` 3.4 s; `echo /a/env`,
-# `/a/envy` and `-exec env` broke the chain and read 2x). Declining the word
-# loses no reading, because the word holds its own `(?<=/)` start: the
-# later run reads the same wrapper, its flags and the verb behind it, so a
-# match ends where it ended and only starts later (33,014 commands, every
-# compiled pattern in the three guard modules: no end or group moved). Arm 1
-# keeps `_CMD_POS_WRAP_RUN`: its runs start at a separator, one per
-# separator, so the chain never re-reads. The carriers' `_CARRIER_WRAP_ONE`
-# declines the ARGUMENT arm alone, and its glued and numeric arms still read
-# such a word two ways against its bounded steps, which no decline fixes
-# without moving a reading (DEF-3046); this arm's assignment tail re-reads
-# a slashed value the same way (DEF-3047). Pinned by tests/test_redos.py's
-# walker floods (`_WALKER_FLOOD_MAKERS`) and the anchor's own prefix-run
-# row; its derivation from `_CMD_POS_WRAP_RUN` by tests/test_write_guard.py::
-# TestTheCommandPositionGrammarIsOneAcrossTheCarriers.
+#: `*/bin/env `, `/usr/include/sudo `): the anchor's `(?<=/)` arm starts a
+#: wrapper run INSIDE every such word, at the name.
+_CMD_POS_SLASHED_WRAPPER_WORD = (
+    r"[^\s;|&]*/(?:" + _CMD_POS_WRAPPER_BUILTINS + r"|(?i:" + _CMD_POS_SLASHED_DECLINED_BINARIES
+    + r")" + _EXE_SUFFIX + r")[ \t]"
+)
+# ⚠ THE SLASHED ARM'S RUN DECLINES THAT WORD AS A FLAG'S ARGUMENT, A ReDoS
+# FIX (DEF-3042). With `_CMD_POS_WRAP_RUN` there, on `find build -exec /a/env
+# -exec /a/env ...` every `env` started a run that took each later
+# `/a/env` as the flag's argument to the end of the input before the verb
+# failed: n starts of n tokens, about 4x per doubling in every `_CMD_POS`
+# consumer (1.6 s at 4 KB in the removed-or-relocated reader). Declining
+# the word there loses no reading, because the word holds its own `(?<=/)`
+# start: the later run reads the same wrapper, its flags and the verb, so a
+# match ends where it ended and only starts later. The decline is the
+# ARGUMENT arm's alone: in the flag arm (`-a/env`) and the numeric arm
+# (`1/nice`) it moved verdicts, because the generic flag-argument reading
+# takes the word after a glued flag as its argument (`/usr/bin/env -a/env
+# foo rm cc/x` denies, as `env -i foo rm cc/x` does), and that over-read is
+# a class of its own with those two floods (DEF-3051). `watch` and `script`
+# are left out of the decline (above), so their slashed floods stay
+# quadratic (DEF-3050). Arm 1 keeps `_CMD_POS_WRAP_RUN`: its runs start at
+# a separator, one per separator, so the chain never re-reads. The
+# assignment tail re-reads a slashed value the same way (DEF-3047). Pinned
+# by tests/test_redos.py's walker flood (`_WALKER_FLOOD_MAKERS`) and the
+# anchor's own prefix-run row; its derivation from `_CMD_POS_WRAP_RUN` by
+# tests/test_write_guard.py::TestTheCommandPositionGrammarIsOneAcrossTheCarriers.
 _CMD_POS_SLASHED_WRAP_RUN = (
     "(?:" + _CMD_POS_WRAPPER_SPELLED
-    + r"(?:[ \t]+(?!" + _CMD_POS_SLASHED_WRAPPER_WORD + r")(?:-[^\s;|&]+(?:[ \t]+(?!"
-    + _CMD_POS_SLASHED_WRAPPER_WORD + r")(?!" + _CMD_POS_WRAPPER_SPELLED
-    + r"[ \t])(?!\d)[^-\s;|&][^\s;|&]*)?|\d[^\s;|&]*))*[ \t]+)"
+    + r"(?:[ \t]+(?:-[^\s;|&]+(?:[ \t]+(?!" + _CMD_POS_SLASHED_WRAPPER_WORD + r")(?!"
+    + _CMD_POS_WRAPPER_SPELLED + r"[ \t])(?!\d)[^-\s;|&][^\s;|&]*)?|\d[^\s;|&]*))*[ \t]+)"
 )
 # An assignment prefix, ended where bash ends the word: at the first UNQUOTED
 # blank (DEF-848's lane). The value is a run of pieces -- a plain character,
