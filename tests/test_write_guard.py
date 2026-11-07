@@ -1983,7 +1983,9 @@ class TestReliefAppliesToAPlainCommandOnly:
                 assert shell.value.value is (not powershell), fn.name
         # 5 -> 6 on 2026-10-07: the forced PowerShell remove's reader
         # (`powershell_removal_lands_catastrophic`) takes the relief
-        assert sites == 6
+        # 6 -> 7 (DEF-3011): the started PowerShell program's placement
+        # (`placed_ps_start_process_ps_programs`) takes the command's relief
+        assert sites == 7
 
 
 class TestTheDirectoryADeleteRunsIn:
@@ -8369,6 +8371,11 @@ class TestCatastrophicRmFlagOrderIndependent:
             # transform the span readers consult, which never reaches a judge
             # and carries nothing a flag could change (the quoted-operand cut)
             "_statement_structure", "_wall_readings",
+            # `ps_start_process_shell_launches` (DEF-3011) is keyed on the raw
+            # text and its scan and returns each started shell's offset,
+            # grammar and program text: a reading the judges are handed,
+            # which carries no verdict a flag could change
+            "ps_start_process_shell_launches",
         ], memos
 
     @pytest.mark.parametrize("text, at, kind", [
@@ -12213,6 +12220,10 @@ class TestQuotedTargetSurvivesTheRoot:
         "_CMD_REMOVE_OPENER_RE": ("Bash", f'cmd //c rd /s /q "{_ZONE_DIR}"'),
         "_PS_CMD_REMOVE_OPENER_RE": (
             "PowerShell", f'cmd /c if exist "{_ZONE_DIR}" rd /s /q "{_ZONE_DIR}"'),
+        # DEF-3011: the program a started shell carries in its argument list,
+        # the quoted target inside it read from the raw text
+        "_PS_START_PROCESS_OPENER_RE": (
+            "PowerShell", f"Start-Process pwsh -ArgumentList \"-Command Set-Content '{_TARGET}' x\""),
         "_RENAME_RE": ("Bash", f"rename 's/x/y/' \"{_TARGET}\""),
         "_GIT_RM_MV_RE": ("Bash", f'git rm "{_TARGET}"'),
         "_GIT_CLEAN_RE": ("Bash", f'git clean -f "{_TARGET}"'),

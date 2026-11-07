@@ -285,7 +285,7 @@ read. The friction-layer scope:
   (`-Verb "RunAs"`) and an `=`-bound value (`-ArgumentList="..."`) end the run
   before the payload, which then stays inert, unless the list hands the
   started shell a `-Command` (or bash and sh a `-c`): that program is read by
-  the started-shell reader (`ps_start_process_shell_programs`, DEF-3011),
+  the started-shell reader (`ps_start_process_shell_programs`),
   the array spelling (`-ArgumentList "-Command","..."`) among them
 - PowerShell backtick line-continuation (`` ` `` before a newline) is joined
   after masking at every PowerShell entry point (write leg, symlink leg,

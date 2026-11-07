@@ -413,12 +413,24 @@ def _bash_reading(text: str) -> tuple[str, str]:
 
 
 @functools.lru_cache(maxsize=8)
+def _ps_scan_pair(command: str) -> tuple[str, str]:
+    """`_bash_patterns.powershell_scan_pair`, remembered across the call: the
+    started-program reader (DEF-3011) needs the raw twin beside the scan, and
+    asking the masker for it again cost the PowerShell git checkpoints a
+    second mask of every command -- the masker's per-span re-parse read is
+    linear only once (1,109 ms at 32 KB on a quote flood against 3 ms on
+    main, the serial cells' flood rows)."""
+    return _bash_patterns.powershell_scan_pair(command)
+
+
+@functools.lru_cache(maxsize=8)
 def _ps_scan_text(command: str) -> str:
     """`_bash_patterns.powershell_scan_text`, remembered across the call: the
     discard, release, force-push and clean checkpoints all scan the same
     PowerShell command, which cost four scans a call before (review,
-    2026-10-16)."""
-    return _bash_patterns.powershell_scan_text(command)
+    2026-10-16). The scan half of `_ps_scan_pair`, which
+    `powershell_scan_text` is by its own pin."""
+    return _ps_scan_pair(command)[1]
 
 
 def _ps_discard_readings(tool_input: dict) -> list[tuple[str, str | None, bool]]:
@@ -445,7 +457,7 @@ def _ps_started_program_scans(command: str) -> list[str]:
     PowerShell arms as the command it is: the started-shell twin of the
     literal a `powershell -Command "..."` hands them, which the masker keeps
     at a command position already."""
-    twin, scan = _bash_patterns.powershell_scan_pair(command)
+    twin, scan = _ps_scan_pair(command)
     return [_ps_scan_text(program)
             for program in _bash_patterns.ps_start_process_ps_programs(twin, scan)]
 
