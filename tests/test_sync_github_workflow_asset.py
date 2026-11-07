@@ -386,7 +386,9 @@ class TestBothAdvisoriesStateTheScriptsRefusalArms:
 def test_live_repo_is_in_parity():
     """The real tree, not a fixture -- the drift this script exists to catch."""
     assert (REPO / ASSET_REL).read_bytes() == (REPO / ROOT_REL).read_bytes(), (
-        "harness-guard workflow drifted; run scripts/sync_github_workflow_asset.py"
+        "harness-guard workflow drifted. A change made only to the root copy (a "
+        "Dependabot bump) is lost by a sync: re-apply it to the source "
+        f"{ASSET_REL} first, then run scripts/sync_github_workflow_asset.py"
     )
 
 

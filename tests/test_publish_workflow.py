@@ -11,7 +11,13 @@ Three contract classes:
   credentials).
 
 - ``TestUsesAreSHAPinned`` (§6 deliverable (a)): every `uses:` field in
-  publish.yml is SHA-pinned (40-char hex), with no exceptions. A
+  every workflow file this repository carries -- its own
+  ``.github/workflows/`` and the packaged ``harness-guard.yml`` that
+  ``install-ci`` copies into an adopter's repository -- is SHA-pinned
+  (40-char hex); a same-repository ``./`` reference is the one exception,
+  since it resolves in the commit that runs it. The check once read
+  publish.yml alone, so the steps of the copy every adopter runs were
+  gated by nothing. A
   commit-time placeholder escape hatch was carried here until every
   action -- including the release-critical pypa/gh-action-pypi-publish --
   was resolved to a real pin; it was then a live unused branch on the
@@ -37,7 +43,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from tests._live_tree import checkout_glob
+from tests._live_tree import checkout_glob, checkout_rglob
 
 yaml = pytest.importorskip("yaml")
 
@@ -45,7 +51,25 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 PUBLISH_YML = REPO_ROOT / ".github" / "workflows" / "publish.yml"
 RELEASE_YML = REPO_ROOT / ".github" / "workflows" / "release.yml"
 
+#: Every directory holding a workflow file this repository carries: its own,
+#: and the packaged copy `install-ci` deploys into an adopter's
+#: `.github/workflows/` (the source the root harness-guard.yml is generated
+#: from, so a pin moved in one and not the other reds the parity test too).
+WORKFLOW_DIRS = (
+    REPO_ROOT / ".github" / "workflows",
+    REPO_ROOT / "espalier" / "assets" / "github" / "workflows",
+)
+WORKFLOW_FILES = sorted(
+    p for d in WORKFLOW_DIRS for pattern in ("*.yml", "*.yaml") for p in checkout_glob(d, pattern)
+)
+
 SHA_PIN_RE = re.compile(r"^[0-9a-f]{40}$")
+#: A `uses:` key as the file's text spells it, a step's (after `- `) or a
+#: job's, and the reference it names; every reference spelled this way must be
+#: one the YAML walk read, so a key the walk cannot see is a red rather than
+#: an unchecked pin (an alias the walk reads twice, or a flow mapping the
+#: pattern does not spell, is still read and checked by the walk).
+_USES_REF_RE = re.compile(r"""^[ \t]*(?:-[ \t]+)?uses:[ \t]*["']?([^\s"'#]+)""", re.MULTILINE)
 
 
 def _load(path: Path) -> dict:
@@ -92,10 +116,14 @@ class TestPublishWorkflowShape:
 
 class TestUsesAreSHAPinned:
     def _collect_uses(self, doc: dict) -> list[str]:
+        """Every `uses:` value: each step's, and each job's (a reusable
+        workflow called from another repository is pinned like an action)."""
         results: list[str] = []
-        for job in doc.get("jobs", {}).values():
+        for job in (doc.get("jobs") or {}).values():
             if not isinstance(job, dict):
                 continue
+            if "uses" in job:
+                results.append(job["uses"])
             for step in job.get("steps", []) or []:
                 if isinstance(step, dict) and "uses" in step:
                     results.append(step["uses"])
@@ -109,9 +137,10 @@ class TestUsesAreSHAPinned:
         r"(?P<action>[\w./-]+) is SHA-pinned below to (?P<tag>v[\d.]+)\."
     )
 
+    @pytest.mark.contract
     def test_every_narrative_pin_mention_matches_its_uses_tag_comment(self) -> None:
         checked = 0
-        for wf in sorted(checkout_glob(PUBLISH_YML.parent, "*.yml")):
+        for wf in WORKFLOW_FILES:
             text = wf.read_text(encoding="utf-8")
             for m in self._NARRATIVE_PIN_RE.finditer(text):
                 uses = re.search(
@@ -134,14 +163,55 @@ class TestUsesAreSHAPinned:
         # regex stopped matching, not that the prose went away.
         assert checked >= 3, f"only {checked} narrative pin sentence(s) matched"
 
-    def test_every_uses_is_sha_pinned(self) -> None:
-        doc = _load(PUBLISH_YML)
-        uses = self._collect_uses(doc)
-        assert uses, "publish.yml has no steps with uses:"
+    @pytest.mark.contract
+    def test_the_pin_population_reads_every_workflow_directory(self) -> None:
+        # The parametrized check below passes over a file it never collected,
+        # so each directory must contribute one: the packaged copy's eleven
+        # steps sat unasserted while the check read publish.yml alone.
+        for d in WORKFLOW_DIRS:
+            assert any(p.parent == d for p in WORKFLOW_FILES), (
+                f"no workflow file read under {d.relative_to(REPO_ROOT).as_posix()}: "
+                "the SHA-pin check would pass over it without reading a step"
+            )
+        assert PUBLISH_YML in WORKFLOW_FILES
+        # WORKFLOW_DIRS is kept by hand, so every tracked YAML file spelling a
+        # `uses:` key must be in the population: a composite action under
+        # .github/actions/, say, holds pins this check would otherwise never read
+        # (and its runs.steps shape is one _collect_uses would need taught).
+        unread = sorted(
+            p.relative_to(REPO_ROOT).as_posix()
+            for pattern in ("*.yml", "*.yaml") for p in checkout_rglob(REPO_ROOT, pattern)
+            if p not in WORKFLOW_FILES and _USES_REF_RE.search(p.read_text(encoding="utf-8"))
+        )
+        assert not unread, (
+            "tracked YAML spelling `uses:` outside WORKFLOW_DIRS, so no SHA-pin check reads "
+            f"it: {unread}; add its directory (and teach _collect_uses its shape)"
+        )
+
+    @pytest.mark.contract
+    @pytest.mark.parametrize(
+        "workflow", WORKFLOW_FILES, ids=lambda p: p.relative_to(REPO_ROOT).as_posix()
+    )
+    def test_every_uses_is_sha_pinned(self, workflow: Path) -> None:
+        rel = workflow.relative_to(REPO_ROOT).as_posix()
+        text = workflow.read_text(encoding="utf-8")
+        uses = self._collect_uses(yaml.safe_load(text) or {})
+        # The per-file guard: every reference the text spells after a `uses:`
+        # key is one the walk read, so a key in a shape the walk does not know
+        # is a red here, never a pin that went unchecked (and a file with no
+        # action step is no gap).
+        missed = sorted(set(_USES_REF_RE.findall(text)) - set(uses))
+        assert not missed, (
+            f"{rel}: the text spells `uses:` {missed} and the step/job walk did not read "
+            "it; teach _collect_uses that shape (or, if that line sits inside a run: or "
+            "other block scalar, narrow _USES_REF_RE)"
+        )
         for ref in uses:
+            if ref.startswith("./"):
+                continue  # this repository's own workflow or action, at the running commit
             _action, _, version = ref.partition("@")
             assert SHA_PIN_RE.match(version), (
-                f"uses field {ref!r} is not SHA-pinned (40-char hex)"
+                f"{rel}: uses field {ref!r} is not SHA-pinned (40-char hex)"
             )
 
 
