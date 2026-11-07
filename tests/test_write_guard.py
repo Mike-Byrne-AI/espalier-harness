@@ -5566,6 +5566,105 @@ class TestGitBashDrivePrefix:
         )
         assert without.returncode != 1, without.returncode
 
+    # The functions that translate the Git Bash drive spelling before a
+    # compare: {file: {function: (the name its translated argument reads, the
+    # row that goes red when that call is dropped)}}, each row measured by a
+    # mutant per call on a scratch archive (2026-11-07). The name is pinned,
+    # not just "calls it": `_target_is_catastrophic` holds a second call, on
+    # `target` inside a component count it cannot change (`/c/x` and `C:/x`
+    # both count two), and a function-level pin stayed green with the call
+    # on `literal` dropped.
+    _TRANSLATING_FUNCTIONS = {
+        "_hook_utils.py": {
+            "_project_root_spelling": ("raw", "test_root_side_translates_a_git_bash_project_dir"),
+            "_clean_path_prefixes": ("cleaned",
+                                     "test_git_bash_spelling_of_a_protected_write_relativises_on_windows"),
+            "join_directory": ("spelled",
+                               "test_a_cd_to_a_git_bash_drive_spelling_lands_on_the_drive (3.12+)"),
+        },
+        "_bash_patterns.py": {
+            "below_a_temp_root": ("spelled", "tests/test_write_guard_root_reading.py"),
+            "_posix": ("path", "tests/test_speedbump_irreversible.py"),
+            "_target_is_catastrophic": ("literal",
+                                        "test_git_bash_drive_spelling_reaches_the_hard_tier_on_windows"),
+            "_drive_path_inside_the_repo_or_home": (
+                "site", "test_a_drive_path_inside_a_git_bash_spelled_root_is_inside_it"),
+        },
+    }
+
+    @staticmethod
+    def _translator_callers():
+        """Every `tools/cc` function whose own body calls `_msys_drive_to_windows`,
+        as {file name: {function: {names its calls' arguments read}}}, read by
+        AST from the live tree."""
+        import ast
+        callers: dict = {}
+        for path in sorted(HOOKS_DIR.parent.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for fn in ast.walk(tree):
+                if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                for node in ast.walk(fn):
+                    callee = getattr(node, "func", None) if isinstance(node, ast.Call) else None
+                    name = getattr(callee, "attr", None) or getattr(callee, "id", None)
+                    if name == "_msys_drive_to_windows":
+                        read = callers.setdefault(path.name, {}).setdefault(fn.name, set())
+                        read.update(n.id for a in node.args for n in ast.walk(a)
+                                    if isinstance(n, ast.Name))
+        return callers
+
+    def test_every_drive_translating_function_keeps_its_call_and_is_on_the_roster(self):
+        """The rule in docs/SHARP_EDGES.md "Path Normalization on Windows" --
+        a path normaliser translates the Git Bash drive spelling on both sides
+        of a compare -- held both ways at the census. A roster function that
+        loses its call is red here on every interpreter, where its behaviour
+        row may skip (`join_directory`'s needs 3.12+). A NEW caller is red
+        until it joins the roster, which names the row that earns its call:
+        the roster is the coverage census, so adding a translating function
+        without a behaviour row is a visible choice, not a silent one. A new
+        normaliser that never calls the translator at all is out of reach of
+        any static rule without data flow; its behaviour row is the guard."""
+        callers = self._translator_callers()
+        for file_name, functions in self._TRANSLATING_FUNCTIONS.items():
+            found = callers.get(file_name, {})
+            lost = sorted(
+                f"{fn}({arg})" for fn, (arg, _row) in functions.items()
+                if arg not in found.get(fn, set())
+            )
+            assert not lost, (
+                f"{file_name}: {lost} no longer pass that argument through "
+                "_msys_drive_to_windows; a Git Bash `/c/...` path there now "
+                "compares unequal to its drive spelling on Windows. Restore the "
+                "call, or drop the function from the roster with the reason it no "
+                "longer compares an agent's path."
+            )
+        unrostered = {
+            f"{f}::{fn}"
+            for f, fns in callers.items()
+            for fn in set(fns) - set(self._TRANSLATING_FUNCTIONS.get(f, {}))
+            if fn != "_msys_drive_to_windows"
+        }
+        assert not unrostered, (
+            f"{sorted(unrostered)} call _msys_drive_to_windows but are not on "
+            "_TRANSLATING_FUNCTIONS: add each with the row that goes red when "
+            "its call is dropped."
+        )
+
+    def test_a_drive_path_inside_a_git_bash_spelled_root_is_inside_it(self, monkeypatch):
+        """`_bash_patterns._drive_path_inside_the_repo_or_home` reads the root
+        through the drive translation, as its docstring says, so a checkout
+        two levels under a drive (`C:\\proj`) handed over as `/c/proj` still
+        contains `C:/proj/build`, and a delete of that build tree is not read
+        as a shallow system path. Without the call the root compares unequal
+        and the delete draws the speed-bump. A prefix that is only a string
+        prefix (`C:/projx`) stays outside."""
+        _emulate_windows_paths(monkeypatch)
+        bp = _bash_patterns_module()
+        for root in ("/c/proj", "C:/proj", "C:\\proj", "/C/proj/"):
+            assert bp._drive_path_inside_the_repo_or_home("C:/proj/build", root), root
+            assert not bp._drive_path_inside_the_repo_or_home("C:/projx/build", root), root
+        assert not bp._drive_path_inside_the_repo_or_home("D:/proj/build", "/c/proj")
+
 
 class TestWindowsPrefixSpellings:
     """DEF-935: the extended-length, device and loopback-share spellings of a
