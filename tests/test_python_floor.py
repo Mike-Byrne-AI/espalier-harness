@@ -1,4 +1,4 @@
-"""Tests for the >=3.10 interpreter floor — `espalier/_python_floor.py` and its
+"""Tests for the >=3.11 interpreter floor — `espalier/_python_floor.py` and its
 parity twin in `tools/cc/hooks/_hook_utils.py` (TP-448 Class 3 / DEF-636).
 
 Pins the defect that produced this module. `pyproject.toml` declares
@@ -98,7 +98,7 @@ class TestPythonFloor:
         for said in accepted_only_by_the_old_predicate:
             assert said.startswith("Python 3."), "case does not exercise the mutation"
             assert not _python_floor.meets_python_floor(said), (
-                f"{said!r} clears the floor -- the >=3.10 comparison is gone and "
+                f"{said!r} clears the floor -- the floor comparison is gone and "
                 f"the predicate has decayed back to startswith('Python 3.')"
             )
 
@@ -1015,7 +1015,7 @@ class TestAnInterpreterThatAnswersItsBannerAndCannotStart:
         assert "'python' resolves to" in warning, warning
         assert "cannot start" in warning and "No module named 'encodings'" in warning, warning
         assert "could be validated" in warning, (
-            f"a 3.10+ banner that cannot start is not a below-floor Python: {warning}"
+            f"a banner above the floor that cannot start is not a below-floor Python: {warning}"
         )
         assert "Microsoft Store" not in warning, (
             f"the later candidate's alias text displaced the first's evidence:\n{warning}"
@@ -1881,7 +1881,7 @@ class TestABannerThatNeverAnswers:
     def test_the_claims_remedy_names_a_mute_candidate(self, tmp_path, monkeypatch, capsys, mute):
         """Code re-check (S2d, unpinned): the claim's remedy over a wired word
         that is not a Python, beside a ``python3`` that never answered, says
-        doctor again, never "Put a Python 3.10+ on PATH"."""
+        doctor again, never "Put a Python 3.11+ on PATH"."""
         import argparse
 
         from espalier import cli

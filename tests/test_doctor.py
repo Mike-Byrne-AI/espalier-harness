@@ -930,7 +930,7 @@ class TestPythonResolverCheck:
         # question (TP-448 Class 3 / DEF-636): identity asks "is this a Python
         # 3", the floor asks "is it one this package runs on". `which` is
         # fabricated, so the real floor probe would execute the host's actual
-        # /usr/bin/python3 -- 3.9.6 on stock macOS, below the 3.10 floor. Left
+        # /usr/bin/python3 -- 3.9.6 on stock macOS, below the 3.11 floor. Left
         # unpatched this test passes on a 3.12 host and reds on a stock Mac:
         # the exact "means different things in different places" failure the
         # comment above was written about.
@@ -1080,7 +1080,7 @@ class TestPythonResolverCheck:
         # question (TP-448 Class 3 / DEF-636): identity asks "is this a Python
         # 3", the floor asks "is it one this package runs on". `which` is
         # fabricated, so the real floor probe would execute the host's actual
-        # /usr/bin/python3 -- 3.9.6 on stock macOS, below the 3.10 floor. Left
+        # /usr/bin/python3 -- 3.9.6 on stock macOS, below the 3.11 floor. Left
         # unpatched this test passes on a 3.12 host and reds on a stock Mac:
         # the exact "means different things in different places" failure the
         # comment above was written about.
@@ -1120,7 +1120,7 @@ class TestPythonResolverCheck:
         # question (TP-448 Class 3 / DEF-636): identity asks "is this a Python
         # 3", the floor asks "is it one this package runs on". `which` is
         # fabricated, so the real floor probe would execute the host's actual
-        # /usr/bin/python3 -- 3.9.6 on stock macOS, below the 3.10 floor. Left
+        # /usr/bin/python3 -- 3.9.6 on stock macOS, below the 3.11 floor. Left
         # unpatched this test passes on a 3.12 host and reds on a stock Mac:
         # the exact "means different things in different places" failure the
         # comment above was written about.

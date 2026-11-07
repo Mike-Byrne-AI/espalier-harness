@@ -4036,7 +4036,7 @@ def interpreter_meets_floor(name_or_path: str) -> bool:
     this runs no start-up probe (``DEF-915``), because ``--version`` is answered
     before an interpreter initialises and a spawn here is paid on SessionStart
     for every interpreter but the one running it. So it may WARN, never decide to WIRE: an interpreter that
-    prints a 3.10+ banner and cannot start passes it. Wiring is the engine's.
+    prints a banner at the floor or above and cannot start passes it. Wiring is the engine's.
     """
     if not name_or_path:
         return False
