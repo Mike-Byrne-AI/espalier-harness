@@ -2627,10 +2627,10 @@ Claude Code resolves `python` on the user's PATH and spawns it directly
 with each `args` entry passed verbatim. No shell, no tokenization, no
 platform-specific variable syntax.
 
-**Resolver requirement.** A Python 3.10+ interpreter must answer to
+**Resolver requirement.** A Python 3.11+ interpreter must answer to
 `python` or `python3` on PATH, or to the Windows launcher as `py -3`.
 `espalier.cli._detect_python_command` probes them in that order at init
-time (the launcher only when neither name answers 3.10+) and writes the
+time (the launcher only when neither name answers 3.11+) and writes the
 first that answers into the generated `.claude/settings.json`; the
 launcher is written as `command: py` with `-3` leading the `args`. No
 operator setup is required on the typical distributions:
@@ -2648,9 +2648,15 @@ operator setup is required on the typical distributions:
   some only `python3`. Init picks whichever is on PATH.
 - **macOS** — system / Homebrew Python is `python3`. Init picks
   `python3`; no manual symlink needed. Note the STOCK `/usr/bin/python3` is
-  3.9, below the 3.10 floor: init wires it (so the guards keep working) and
-  warns that blueprints, Gate 4 and subagent capture will not run until you
-  install a newer Python and re-run `espalier init . --rewire-interpreter`.
+  3.9, below the 3.11 floor.
+
+**Below the floor.** When the interpreter init would wire is below Python
+3.11, init refuses before it writes any file: it says the harness does not
+run on Python <the version it found> and to update to Python 3.11 or newer
+to install and use it. There is no reduced mode and no partial install.
+`espalier doctor .` and the SessionStart banner say the same of a tree
+already wired to one, and name the command to run after updating:
+`<python> -m espalier init . --rewire-interpreter`.
 
 If none of `python`, `python3` or `py -3` answers, init still writes
 `python` and warns. What you then see, on every hook fire, is Claude
@@ -2684,7 +2690,7 @@ Bash only) or behind `&` (PowerShell only); `espalier doctor .` names
 one written for the other shell, and `espalier init . --rewire-interpreter`
 puts either behind the dot, on request, writing a backup first.
 
-Install a Python 3.10+ (or put it on PATH), then run
+Install a Python 3.11+ (or put it on PATH), then run
 `espalier doctor .` — it names the wired interpreter and the exact
 command — and `espalier init . --rewire-interpreter`, which swaps the
 interpreter at every hook entry and the statusline, writing a backup

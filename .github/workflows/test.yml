@@ -59,7 +59,7 @@ jobs:
   # error, a shallow history, a dispatch with no PR base -- every one of those
   # reads as `full`, the tier that contains the other two. The `test` matrix
   # consumes the output through `needs` and defaults to `full` when the output
-  # is empty, so the five required cells always report whatever happens here.
+  # is empty, so the four required cells always report whatever happens here.
   tier:
     runs-on: ubuntu-latest
     outputs:
@@ -107,8 +107,8 @@ jobs:
     # (the last 16 runs to 2026-10-16).
     timeout-minutes: 75
     strategy:
-      # A LITERAL five-cell list, never a `${{ }}` expression: branch protection
-      # matches check-run names, the release checklist requires `test (3.10)`
+      # A LITERAL four-cell list, never a `${{ }}` expression: branch protection
+      # matches check-run names, the release checklist requires `test (3.11)`
       # ... `test (3.14)`, and tests/test_required_status_checks.py cannot model
       # a computed matrix. A required check that never reports does not fail a
       # PR, it parks it on "Expected -- waiting for status to be reported" with
@@ -116,11 +116,11 @@ jobs:
       #
       # Read every cell: a red in one interpreter must not cancel the other four
       # (the 2026-09-24 witness lost three clean-checkout cells to fail-fast on
-      # one runner-relative red, DEF-922). These five cells are the required
+      # one runner-relative red, DEF-922). These four cells are the required
       # status checks, so a cancelled cell is a check that never reports.
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
 
     steps:
       - name: Keep the temp dir on the runner's disk
@@ -261,7 +261,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
 
     steps:
       - name: Keep the temp dir on the runner's disk
@@ -284,7 +284,7 @@ jobs:
 
       - name: Install
         # Only where the leg has something to run: on the cheaper tiers the
-        # serial leg is empty and the script is stdlib, so five required cells
+        # serial leg is empty and the script is stdlib, so four required cells
         # skip the install on a docs-only pull request (failure-mode review).
         if: ${{ (needs.tier.outputs.tier || 'full') == 'full' }}
         run: pip install -e .[dev]
@@ -405,9 +405,9 @@ jobs:
   #  - NOT `clean-checkout`: that job exists to reproduce a fresh-contributor
   #    clone, which does not have ripgrep. Installing it there would destroy the
   #    very environment the job is there to represent.
-  #  - NOT `test`: that is a 5-interpreter matrix, and this parity is about two
+  #  - NOT `test`: that is a 4-interpreter matrix, and this parity is about two
   #    search backends agreeing, not about interpreter behaviour -- one runner
-  #    proves it, five just pay for it 5x.
+  #    proves it, four just pay for it 4x.
   # An apt-get in the `test` matrix would also exercise nothing on the cheaper
   # tiers: these tests carry the `slow` marker, which the contract slice never
   # selects, and the full tier's cells have no ripgrep to find.

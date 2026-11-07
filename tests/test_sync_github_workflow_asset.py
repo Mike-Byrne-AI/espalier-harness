@@ -394,4 +394,4 @@ def test_live_repo_is_in_parity():
 
 def test_script_is_importable_without_side_effects():
     assert SCRIPT.is_file()
-    assert sys.version_info >= (3, 10)
+    assert sys.version_info >= (3, 11)

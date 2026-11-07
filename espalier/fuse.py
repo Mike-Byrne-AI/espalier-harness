@@ -942,6 +942,14 @@ def cmd_fuse(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    # A fusion runs init, which wires the resolver's interpreter: one below
+    # the floor is refused before the first copy, never after a half-built
+    # fusion (the 2026-11-07 ruling; init would refuse inside it).
+    if not getattr(args, "no_init", False) or getattr(args, "wire_hooks", False):
+        from espalier.cli import _refuse_below_floor_wiring
+        refused = _refuse_below_floor_wiring("fuse")
+        if refused is not None:
+            return refused
     try:
         report = fuse_repos(
             host, out,

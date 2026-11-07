@@ -949,7 +949,7 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # TP-453 2-B: every "declared limit" sentence in the shipped guard
             # docs cites a pytest node id that resolves and collects.
             "test_declared_limits_contract",
-            # TP-448 Class 3: pins the >=3.10 interpreter floor, its two-copy
+            # TP-448 Class 3: pins the interpreter floor, its two-copy
             # parity across the no-import boundary, and its derivation from
             # pyproject's requires-python.
             "test_python_floor",

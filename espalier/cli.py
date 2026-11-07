@@ -32,6 +32,7 @@ from espalier._python_floor import (
     START_PROBE_SECONDS,
     START_PROBE_TRIES,
     banner_unanswered_of,
+    does_not_run_sentence,
     floor_text,
     interpreter_argv,
     interpreter_banner,
@@ -822,21 +823,24 @@ _INTERPRETER_WARNING_EMITTED = False
 def _warn_interpreter_below_floor(
     probe: "tuple[str, str, str]", mute: "tuple[str, str] | None" = None,
 ) -> None:
-    """Say, once and loudly, that the wired interpreter is too OLD.
+    """Say, once and loudly, that the interpreter the resolver found is too OLD.
 
     Distinct from :func:`_warn_interpreter_unvalidated`, because the state and
-    the remedy are different: there IS a working Python 3 here, the blocking
-    guards WILL run, and what is dead is the blueprint chain, Gate 4 finalize
-    and subagent-reasoning capture (``tools/cc/cognitive_blueprint.py`` is
-    3.10+ ``match`` syntax). Telling this operator "no interpreter could be
-    validated" sends them hunting for a missing install they already have.
+    the remedy are different: there IS a Python 3 here, and the harness does
+    not run on it. Telling this operator "no interpreter could be validated"
+    sends them hunting for a missing install they already have. A command
+    that would WRITE this answer into a tree refuses instead
+    (:func:`_refuse_below_floor_wiring`), and this warning stays silent while
+    it asks, so the sentence is said once; the read-only callers (doctor, the
+    remedy spelling) hear it here with the re-wire for after the update.
     """
     global _INTERPRETER_WARNING_EMITTED
+    if _BELOW_FLOOR_REFUSING:
+        return
     if _INTERPRETER_WARNING_EMITTED:
         return
     _INTERPRETER_WARNING_EMITTED = True
     name, resolved, said = probe
-    floor = floor_text()
     # `python -m espalier`, not a bare `espalier`: in a FUSION the engine is
     # vendored and the console script does not exist. And spelled with the
     # remedy answer, never `name` -- the candidate that just failed the floor
@@ -858,23 +862,65 @@ def _warn_interpreter_below_floor(
         )
     else:
         after = f"After upgrading, re-wire with `{remedy} -m espalier init . --rewire-interpreter`."
-    # A candidate whose banner never answered (DEF-5015) may be the Python of
-    # the floor this host already has: said, so "install" is not the only
-    # reading.
-    unheard = (
-        f" {mute[0]!r} ({mute[1]}) did not answer `--version` in time here; if "
-        f"it is a Python {floor}+, run doctor when the host is less loaded "
-        f"before installing one." if mute is not None else "")
     print(
-        f"WARNING: {name!r} ({resolved}) reports {said}, which is BELOW the "
-        f"Python {floor} this package requires. Wiring it anyway so the "
-        f"blocking guards keep working -- a name that does not resolve would "
-        f"disarm them entirely. What will NOT work until you install Python "
-        f"{floor} or newer: the blueprint chain, Gate 4 finalize, and "
-        f"subagent-reasoning capture. SessionStart will say 'No active "
-        f"blueprint' every session." + unheard + " " + after,
+        "WARNING: " + does_not_run_sentence(said, f" ({name} at {resolved})")
+        + _unheard_beside(mute) + " " + after,
         file=sys.stderr,
     )
+
+
+def _unheard_beside(mute: "tuple[str, str] | None") -> str:
+    """The clause for a candidate whose banner never answered (DEF-5015)
+    beside a below-floor one: it may be the Python of the floor this host
+    already has, so "update" is not the only reading. Empty without one."""
+    if mute is None:
+        return ""
+    return (f" {mute[0]!r} ({mute[1]}) did not answer `--version` in time here; "
+            f"if it is a Python {floor_text()}+, run doctor when the host is less "
+            f"loaded before installing one.")
+
+
+#: The resolver's answer from its latest call when that answer is a Python 3
+#: below the floor -- ``((name, path, banner), mute)``, ``mute`` the first
+#: candidate whose banner never answered or None -- else None. Read by
+#: :func:`_refuse_below_floor_wiring`, which clears it before it asks.
+_BELOW_FLOOR_ANSWER: "tuple[tuple[str, str, str], tuple[str, str] | None] | None" = None
+#: True while :func:`_refuse_below_floor_wiring` asks the resolver, so the
+#: resolver's below-floor warning does not say the refusal's sentence twice.
+_BELOW_FLOOR_REFUSING = False
+
+
+def _refuse_below_floor_wiring(verb: str) -> "int | None":
+    """Exit status 1, after one sentence on stderr, when the interpreter
+    ``verb`` would wire into a tree is a Python 3 below the floor; else None.
+
+    The operator's ruling of 2026-11-07 on the 2026-09-03 decision that wired
+    such an interpreter with a warning: a dropped Python is dropped, never run
+    in a reduced mode. So every command that writes the resolver's answer into
+    a tree (``init``, ``upgrade``, ``merge-settings``, ``fuse``) asks here
+    before its first write and refuses -- no partial install, no prompt, no
+    fallback offered. The read-only callers (``doctor``, the remedy spelling)
+    still get the resolver's answer and its warning. ``--rewire-interpreter``
+    already refuses a below-floor target on its own (``REWIRE_NO_TARGET``).
+    """
+    global _BELOW_FLOOR_ANSWER, _BELOW_FLOOR_REFUSING
+    # Cleared first: a resolver a test or a caller has replaced never sets it,
+    # and a value left by an earlier call is no answer about this one.
+    _BELOW_FLOOR_ANSWER = None
+    _BELOW_FLOOR_REFUSING = True
+    try:
+        _detect_python_command()
+    finally:
+        _BELOW_FLOOR_REFUSING = False
+    if _BELOW_FLOOR_ANSWER is None:
+        return None
+    (name, resolved, said), mute = _BELOW_FLOOR_ANSWER
+    print(
+        f"[{verb}] FAIL: " + does_not_run_sentence(said, f" ({name} at {resolved})")
+        + " Nothing was written." + _unheard_beside(mute),
+        file=sys.stderr,
+    )
+    return 1
 
 
 def _warn_interpreter_unvalidated(
@@ -1084,8 +1130,9 @@ def _detect_python_command() -> str:
     # what the warning quotes (the "first INFORMATIVE probe" of DEF-804).
     first_failure: tuple[str, str, str] | None = None
     # A working Python 3 that is BELOW the floor -- preferred over the
-    # literal 'python' fallback, because a name that does not resolve
-    # disarms every guard while an old one merely disables blueprints.
+    # literal 'python' fallback as the ANSWER, so the read-only callers name
+    # what this host has; a command that would write it refuses instead
+    # (`_refuse_below_floor_wiring`, the 2026-11-07 ruling).
     below_floor: tuple[str, str, str] | None = None
     for candidate in RESOLVER_CANDIDATES:
         path = shutil.which(candidate)
@@ -1110,9 +1157,9 @@ def _detect_python_command() -> str:
         # dies importing `encodings` (the row's drive, 2026-09-22, uv's 3.10.21).
         # Wired on the banner, every hook exits outside {0, 2} and every
         # blocking guard fails OPEN while init reports success. Both accepting
-        # branches below wire on the banner -- the floor-clearing return and
-        # the below-floor fallback, whose warning promises working guards --
-        # so the probe runs before either. Its evidence is a real answer from
+        # branches below answer on the banner -- the floor-clearing return and
+        # the below-floor answer, which every writing command reads and refuses
+        # on (`_refuse_below_floor_wiring`) -- so the probe runs before either. Its evidence is a real answer from
         # the candidate, so it is the FIRST-informative evidence like a
         # banner (DEF-804's order), not the last-resort `first_failure` kept
         # for a probe that said nothing.
@@ -1123,7 +1170,7 @@ def _detect_python_command() -> str:
                     first_probe = (candidate, path, f"{version_str} to --version, and {cannot_start}")
                 continue
         # THE FLOOR, not merely "is it a Python 3" (DEF-636). `pyproject.toml`
-        # says `requires-python = ">=3.10"`, and stock `/usr/bin/python3` on
+        # declares a `requires-python` floor, and stock `/usr/bin/python3` on
         # macOS is 3.9.6 -- which passed the old `startswith("Python 3.")` test,
         # got written into 13 hook-command sites, and killed every consumer of
         # `tools/cc/cognitive_blueprint.py` (3.10+ `match` syntax) silently.
@@ -1159,7 +1206,10 @@ def _detect_python_command() -> str:
         # OPEN. That trades "blueprints dead, enforcement intact" for
         # "enforcement dead", which is the worse half of the trade on the one
         # property this product is sold on. Operator decision, 2026-09-03: wire
-        # it and warn loudly.
+        # it and warn loudly. Superseded 2026-11-07 (the floor's move to 3.11):
+        # a dropped Python is dropped, so it is still the ANSWER here (read-only
+        # callers name it, and it never falls through to the literal), but no
+        # command writes it -- `_refuse_below_floor_wiring` refuses first.
         #
         # A Python 2 banner PARSES too, and a gate that asked only whether
         # `parse_python_version` returned something admitted it here: on the
@@ -1196,9 +1246,31 @@ def _detect_python_command() -> str:
     # candidate like a bare name, after them.
     if mute is None and banner_unanswered_of(LAUNCHER_CANDIDATE) is not None:
         mute = (LAUNCHER_CANDIDATE, shutil.which(interpreter_argv(LAUNCHER_CANDIDATE)[0]) or "")
+    # A launcher that answers a Python 3 BELOW the floor is the third spelling
+    # of the below-floor state, and the bare-name loop above never sees it. On
+    # a host whose two names are Store aliases and whose `py -3` is a 3.10,
+    # leaving it unrecorded fell through to the literal "python" -- wired into
+    # every hook site at rc 0, every guard failing open -- where the refusal
+    # below must fire instead (the TP-706 Wave 1 failure-mode review, driven:
+    # the engine before the floor moved wired `py -3`, this one wired
+    # `python` twelve times). A launcher whose `-3` cannot start is not one.
+    if below_floor is None and not launcher:
+        head, *flags = interpreter_argv(LAUNCHER_CANDIDATE)
+        launcher_path = shutil.which(head)
+        if launcher_path:
+            said = interpreter_banner([launcher_path, *flags])
+            if (said and is_below_floor_python3(said)
+                    and interpreter_start_failure([launcher_path, *flags]) is None):
+                below_floor = (LAUNCHER_CANDIDATE, launcher_path, said)
     if last_resort is not None:
         return last_resort
     if below_floor is not None:
+        # Returned, so the read-only callers can name it; recorded, so every
+        # command that would WRITE it refuses instead (the 2026-11-07 ruling:
+        # `_refuse_below_floor_wiring`). Set before the warning, whose remedy
+        # spelling asks this resolver again and records the same answer.
+        global _BELOW_FLOOR_ANSWER
+        _BELOW_FLOOR_ANSWER = (below_floor, mute)
         _warn_interpreter_below_floor(below_floor, mute)
         return below_floor[0]
     if mute is not None:
@@ -7723,6 +7795,11 @@ def cmd_init(args: argparse.Namespace) -> int:
     refused = _refuse_unreadable_harness_root(repo_root, "init")
     if refused is not None:
         return refused
+    # Before any write, the dry run's preview included: an interpreter below
+    # the floor is refused, never wired (the 2026-11-07 ruling).
+    refused = _refuse_below_floor_wiring("init")
+    if refused is not None:
+        return refused
 
     config = _load_config(repo_root, args)
 
@@ -10701,6 +10778,11 @@ def cmd_merge_settings(args: argparse.Namespace) -> int:
     repo_root = _resolve_repo_arg(args.repo)
     if repo_root is None:
         return 2
+    # The merge writes the resolver's interpreter into the hook entries: one
+    # below the floor is refused first, as in init (the 2026-11-07 ruling).
+    refused = _refuse_below_floor_wiring("merge-settings")
+    if refused is not None:
+        return refused
     settings_path = repo_root / ".claude" / "settings.json"
     profile = getattr(args, "profile", None) or installed_settings_profile(repo_root)
     repaired = False
@@ -10726,9 +10808,10 @@ def cmd_merge_settings(args: argparse.Namespace) -> int:
         add_allows=bool(getattr(args, "add_allows", False)),
     )
     if result.status == MERGE_NO_FILE:
-        # Detect the interpreter lazily -- only on the error branches that print a
-        # hint, never on the MERGE_WIRED/ALREADY success path (keeps the common
-        # case free of the subprocess probe _detect_python_command spawns).
+        # The below-floor gate at the top of this verb probes the interpreter on
+        # every run, the MERGE_WIRED/ALREADY success path included (a dropped
+        # Python is refused before any write); the hint here spells the remedy
+        # only on the error branches.
         print(
             f"merge-settings: no {settings_path} found. Run "
             f"`{_remedy_py()} -m espalier init {args.repo}` to create a fully-wired settings.json.",
@@ -11260,6 +11343,11 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         )
         return 1
     refused = _refuse_unreadable_harness_root(repo_root, "upgrade")
+    if refused is not None:
+        return refused
+    # As in init: an interpreter below the floor is refused before the plan
+    # is read or written, the dry run included (the 2026-11-07 ruling).
+    refused = _refuse_below_floor_wiring("upgrade")
     if refused is not None:
         return refused
     # The body check before the stamp's, as in init: the build line's preview
@@ -15574,9 +15662,9 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Opt in to swapping a below-floor Python interpreter in an "
              "existing .claude/settings.json. Espalier requires Python "
-             f"{floor_text()}+; a settings.json wired to an older one (stock "
-             "/usr/bin/python3 is 3.9 on macOS) leaves the blocking guards "
-             "working while the blueprint chain dies silently every session. "
+             f"{floor_text()}+ and does not run on an older one (stock "
+             "/usr/bin/python3 is 3.9 on macOS): update Python, then run this "
+             "to point a settings.json wired to the old one at the new one. "
              "This changes ONLY the interpreter name at the front of each hook "
              "command -- your args, permissions and every other key are "
              "preserved -- and keeps a .bak of the file first. Interpreters that already "

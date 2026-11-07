@@ -181,7 +181,7 @@ def test_the_running_interpreter_wired_is_silent_on_a_loaded_host(tmp_path, monk
     timed out. Its version is read from sys.version_info now."""
     if " " in sys.executable:
         pytest.skip("an exec-form name with a space is the unstartable branch, not this one")
-    if tuple(sys.version_info[:2]) < (3, 10):
+    if tuple(sys.version_info[:2]) < (3, 11):
         pytest.skip("below the floor, the warning is right")
     ss, said = _on_a_loaded_host(monkeypatch)
     _write_settings(tmp_path, sys.executable, ["x.py"])

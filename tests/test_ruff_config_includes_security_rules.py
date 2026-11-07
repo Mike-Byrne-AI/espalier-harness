@@ -116,3 +116,41 @@ def test_per_file_ignores_match_allowlist():
         + "\n  ".join(drift)
     )
 
+
+
+# The files the "update Python" message runs through on a host below the
+# floor, each with the oldest syntax it must parse under: the five the update
+# deny runs through, at py310 (the operator's 1-G ruling of 2026-11-07,
+# nothing wider), and `espalier/__init__.py`, the engine's own floor sentence,
+# at py39 (air's ruling on request 79c59b: stock macOS python3 is 3.9.6, and a
+# `match` there would kill the sentence on it). A below-floor interpreter
+# compiles a file before running a line of it, so one construct newer than
+# the target in any of them turns the message into a SyntaxError (for a deny
+# hook, an exit 1, which Claude Code reads as non-blocking). ruff takes its
+# syntax target from `requires-python`, so without this table `ruff check .`
+# stops refusing that syntax everywhere the day the floor moves.
+FLOOR_MESSAGE_SYNTAX_TARGETS = {
+    "tools/cc/hooks/_start_refusal.py": "py310",
+    "tools/cc/hooks/write_guard.py": "py310",
+    "tools/cc/hooks/plan_guard.py": "py310",
+    "tools/cc/hooks/config_guard.py": "py310",
+    "tools/cc/hooks/stop_gate.py": "py310",
+    "espalier/__init__.py": "py39",
+}
+
+
+def test_the_floor_message_files_keep_their_syntax_targets():
+    """Strength, not text: an entry may join the table, none of these may
+    leave it or move off its target, and each names a file that exists (a
+    renamed hook would otherwise leave a key that matches nothing)."""
+    table = (tomllib.loads(_pyproject_text()).get("tool", {}).get("ruff", {})
+             .get("per-file-target-version", {}))
+    drift = [f"{path}: {table.get(path)!r}, want {want!r}"
+             for path, want in sorted(FLOOR_MESSAGE_SYNTAX_TARGETS.items())
+             if table.get(path) != want]
+    drift += [f"{path}: no such file" for path in sorted(FLOOR_MESSAGE_SYNTAX_TARGETS)
+              if not (REPO_ROOT / path).is_file()]
+    assert not drift, (
+        "[tool.ruff] per-file-target-version no longer holds the floor "
+        "message's files at their targets:\n  " + "\n  ".join(drift)
+    )

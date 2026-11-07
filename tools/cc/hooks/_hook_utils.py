@@ -4002,13 +4002,13 @@ def interpreter_is_python3(name_or_path: str) -> bool:
 
 
 #: The minimum Python this package declares in ``pyproject.toml``
-#: (``requires-python = ">=3.10"``). Byte-parity twin of
+#: (``requires-python = ">=3.11"``). Byte-parity twin of
 #: ``espalier._python_floor.MIN_PYTHON`` -- duplicated because ``tools/cc/`` may
 #: not import espalier, and NOT derivable at runtime: these hooks run inside an
 #: ADOPTER's tree, where the only ``pyproject.toml`` is the adopter's own and
 #: says nothing about espalier's floor. Pinned by
 #: ``tests/test_python_floor.py::TestTwoCopyParity``.
-MIN_PYTHON: tuple = (3, 10)
+MIN_PYTHON: tuple = (3, 11)
 
 #: Same shape as the engine-side ``_VERSION_RE``. Tolerates a missing patch level
 #: (``Python 3.10``) and a pre-release suffix (``Python 3.14.0rc1``).
@@ -4058,7 +4058,7 @@ def is_python3_banner(version_output: str) -> bool:
 
 
 def floor_text() -> str:
-    """``"3.10"`` -- parity twin of ``espalier._python_floor.floor_text``.
+    """``"3.11"`` -- parity twin of ``espalier._python_floor.floor_text``.
 
     One renderer per tree, so an operator-facing message can never quote a
     floor the code does not enforce.

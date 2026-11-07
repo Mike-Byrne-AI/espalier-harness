@@ -53,7 +53,7 @@ else the fingerprint's detected command; the stderr line names which -- whole (t
 targeted form is `/implement-task` step 5's `FILE` line):
 
 ```bash
-PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys, espalier; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ with espalier answered to python3, python or py -3' >&2; exit 1; }
+PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys, espalier; sys.exit(sys.version_info < (3, 11))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.11+ with espalier answered to python3, python or py -3' >&2; exit 1; }
 TEST=$($PY -c "import sys; sys.stdout.reconfigure(encoding='utf-8', errors='replace'); from espalier.harness_config import preflight_command; print(preflight_command('test'))") || exit 1
 [ -n "$TEST" ] || { { [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ]; } && command -v pytest >/dev/null 2>&1 && TEST='pytest -q' && echo 'test gate: pytest -q (the PATH fallback: nothing declared or detected)' >&2; }
 if [ -n "$TEST" ]; then eval "$TEST" || exit 1; else echo 'NO TEST GATE RAN - declare [extra_actions] test in espalier.toml' >&2; exit 1; fi

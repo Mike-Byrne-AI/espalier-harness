@@ -3200,7 +3200,7 @@ def _warn_if_hook_interpreter_unresolved(root: Path) -> None:
                 # FLOOR, not identity (DEF-636). A wired 3.9 answers as
                 # Python 3, so the identity probe blessed it while every
                 # consumer of cognitive_blueprint.py (3.10+ `match`) was
-                # dead. The guards keep working, which is why nothing
+                # dead. The guards kept running on it, which is why nothing
                 # visibly failed and this warning never fired.
                 # The launcher WITH its version flag (`py -3`), as doctor and the
                 # rewire read it: a bare `py` asks the launcher's default.
@@ -3240,15 +3240,21 @@ def _warn_if_hook_interpreter_unresolved(root: Path) -> None:
         # not resolve to a working Python 3" about a working 3.9 sends the
         # operator hunting for a missing install they already have.
         if interpreter_is_python3(interp):
+            # The engine's `_python_floor.does_not_run_sentence`, spelled here
+            # because a hook cannot import espalier (the 2026-11-07 ruling: a
+            # dropped Python is dropped; every surface says the same words).
+            # The banner is read by name through getattr, so a kept older
+            # `_hook_utils.py` without the helper costs the version, never the
+            # banner.
+            banner_of = getattr(_hook_utils, "_interpreter_banner", None)
+            said = (banner_of(interp) or "") if banner_of is not None else ""
+            spelled = re.search(r"Python\s+(\d+\.\d+(?:\.\d+)?[A-Za-z0-9]*)", said)
+            found = spelled.group(1) if spelled else f"older than {floor_text()}"
             _hook_utils.advise(
-                f"[WARN] wired hook interpreter `{interp}` IS a Python 3 but is "
-                f"older than the {floor_text()} this harness requires -- the "
-                "blocking guards keep working, so nothing visibly fails, while "
-                "the blueprint chain, Gate 4 finalize and subagent-reasoning "
-                "capture raise SyntaxError every session. That is why this "
-                "session may say 'No active blueprint' no matter how often you "
-                f"hand off. Install Python {floor_text()} or newer and re-wire "
-                "the hooks to it. Run `espalier doctor .` for details.",
+                f"[WARN] wired hook interpreter `{interp}` IS a Python 3, and "
+                f"is below the floor. The harness does not run on Python {found}. "
+                f"Update to Python {floor_text()} or newer to install and use it. "
+                "Then re-wire the hooks to it. Run `espalier doctor .` for details.",
             )
             continue
         _hook_utils.advise(

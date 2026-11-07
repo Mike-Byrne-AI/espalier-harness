@@ -76,7 +76,7 @@ differs fails the run, unless each side reads the tier its own host's table
 expects (the host-keyed rows 4B-6, 4B-3 and 4D-3), which prints apart as a
 declared host difference.
 
-Stdlib only. Works on 3.10+.
+Stdlib only. Works on 3.11+.
 """
 from __future__ import annotations
 

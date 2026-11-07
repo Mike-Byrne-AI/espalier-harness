@@ -36,7 +36,7 @@ as written, and `init` prints the matching `[tool.ruff]` exclude for the
 adopter's own runs). The line printed on stderr names the gate that ran and
 where it was declared; report it.
 ```bash
-PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys, espalier; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ with espalier answered to python3, python or py -3' >&2; exit 1; }
+PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys, espalier; sys.exit(sys.version_info < (3, 11))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.11+ with espalier answered to python3, python or py -3' >&2; exit 1; }
 LINT=$($PY -c "import sys; sys.stdout.reconfigure(encoding='utf-8', errors='replace'); from espalier.harness_config import preflight_command; print(preflight_command('lint'))") || exit 1
 if [ -n "$LINT" ]; then
   eval "$LINT" || exit 1
@@ -97,7 +97,7 @@ one is a pass of something else.
 if [ -f scripts/proof_tier.py ]; then   # Espalier-Harness tree: its tier script
   python scripts/proof_tier.py --run --tier full   # Espalier-Harness tree: the full tier, one receipt
 else
-  PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys, espalier; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ with espalier answered to python3, python or py -3' >&2; exit 1; }
+  PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys, espalier; sys.exit(sys.version_info < (3, 11))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.11+ with espalier answered to python3, python or py -3' >&2; exit 1; }
   for action in test build; do
     CMD=$($PY -c "import sys; sys.stdout.reconfigure(encoding='utf-8', errors='replace'); from espalier.harness_config import preflight_command; print(preflight_command('$action'))") || exit 1
     [ -n "$CMD" ] || { [ "$action" = test ] && { [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ]; } && command -v pytest >/dev/null 2>&1 && CMD='pytest -q' && echo '/preflight test gate: pytest -q (the PATH fallback: nothing declared or detected)' >&2; }
@@ -150,7 +150,7 @@ Then relaunch and re-run this step.
 ## Step 4: Release gate (Tier 1 — Espalier-Harness self-host only)
 ```bash
 if [ -f espalier/surface_contract.py ]; then   # Espalier-Harness tree: the engine's own surface contract
-  PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ answered to python3, python or py -3' >&2; exit 1; }
+  PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys; sys.exit(sys.version_info < (3, 11))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.11+ answered to python3, python or py -3' >&2; exit 1; }
   if $PY -c "import sys; from pathlib import Path; from espalier.surface_contract import is_self_host_repo; sys.exit(0 if is_self_host_repo(Path('.')) else 1)" 2>/dev/null; then
     $PY -m espalier pre-release . --skip-tests --skip-parity
   else
@@ -238,7 +238,7 @@ the two commands in step: same surfaces, same dispatch-together rule, same readi
 ## Step 7: Pin check (advisory — Espalier-Harness self-host only)
 ```bash
 if [ -f scripts/verify_pins.py ]; then   # Espalier-Harness tree: its pin check
-  PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ answered to python3, python or py -3' >&2; exit 1; }
+  PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys; sys.exit(sys.version_info < (3, 11))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.11+ answered to python3, python or py -3' >&2; exit 1; }
   $PY scripts/verify_pins.py || true    # Espalier-Harness tree: the `|| true` is deliberate -- see below
 else
   echo 'Pin check is Espalier-Harness self-host tooling - skipping (not in this repo).'
@@ -285,7 +285,7 @@ costs about Step 2's runtime on each side.
 # The ledger file marks a repository that keeps one; the checker reads its rows
 # through the ledger's view, row files under task-packs/ledger.d/ included.
 if [ -f task-packs/FORWARD_LEDGER.md ] && [ -f tools/cc/check_ledger_probes.py ]; then
-  PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ answered to python3, python or py -3' >&2; exit 1; }
+  PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys; sys.exit(sys.version_info < (3, 11))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.11+ answered to python3, python or py -3' >&2; exit 1; }
   $PY tools/cc/check_ledger_probes.py || true   # advisory; see below
 else
   echo 'No forward ledger in this repository - skipping the ledger claim check.'
