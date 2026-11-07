@@ -213,6 +213,33 @@ _CMD_POS_WRAP_RUN = (
     + r"(?:[ \t]+(?:-[^\s;|&]+(?:[ \t]+(?!" + _CMD_POS_WRAPPER_SPELLED
     + r"[ \t])(?!\d)[^-\s;|&][^\s;|&]*)?|\d[^\s;|&]*))*[ \t]+)"
 )
+#: A word ending in a slashed wrapper name and a blank (`/a/env `,
+#: `*/bin/env `, `-I/usr/include/sudo `, `1/nice `): the anchor's `(?<=/)`
+#: arm starts a wrapper run INSIDE every such word, at the name.
+_CMD_POS_SLASHED_WRAPPER_WORD = r"[^\s;|&]*/" + _CMD_POS_WRAPPER_SPELLED + r"[ \t]"
+# ⚠ THE SLASHED ARM'S RUN DECLINES THAT WORD, A ReDoS FIX (DEF-3042). With
+# `_CMD_POS_WRAP_RUN` there, a flag's argument, a flag and a numeric word
+# could each be a slashed wrapper's word, so on `find build -exec /a/env
+# -exec /a/env ...` every `env` started a run that took every pair after
+# it to the end of the input before the verb failed: n starts of n tokens,
+# read about 4x per doubling by every `_CMD_POS` consumer (1.6 s at 4 KB in
+# the removed-or-relocated reader, the glued `-a/env` 3.4 s; `echo /a/env`,
+# `/a/envy` and `-exec env` broke the chain and read 2x). Declining the word
+# loses no reading, because the word holds its own `(?<=/)` start: the
+# later run reads the same wrapper, its flags and the verb behind it, so a
+# match ends where it ended and only starts later (33,014 commands, every
+# compiled pattern in the three guard modules: no end or group moved). Arm 1
+# keeps `_CMD_POS_WRAP_RUN`: its runs start at a separator, one per
+# separator, so the chain never re-reads; the carriers' `_CARRIER_WRAP_ONE`
+# declines the argument arm the same way for the same flood. Pinned by
+# tests/test_redos.py's walker floods (`_WALKER_FLOOD_MAKERS`) and the
+# anchor's own prefix-run row.
+_CMD_POS_SLASHED_WRAP_RUN = (
+    "(?:" + _CMD_POS_WRAPPER_SPELLED
+    + r"(?:[ \t]+(?!" + _CMD_POS_SLASHED_WRAPPER_WORD + r")(?:-[^\s;|&]+(?:[ \t]+(?!"
+    + _CMD_POS_SLASHED_WRAPPER_WORD + r")(?!" + _CMD_POS_WRAPPER_SPELLED
+    + r"[ \t])(?!\d)[^-\s;|&][^\s;|&]*)?|\d[^\s;|&]*))*[ \t]+)"
+)
 # An assignment prefix, ended where bash ends the word: at the first UNQUOTED
 # blank (DEF-848's lane). The value is a run of pieces -- a plain character,
 # a backslash and the character it escapes, a lone `$`, an ANSI-C `$'...'`,
@@ -363,7 +390,7 @@ _CMD_POS_NO_VERB = (
     + "|" + _CMD_POS_NEGATE
     + "|" + _CMD_POS_REDIRECT
     + "|" + _CMD_POS_EXEC_QUOTE + ")*"
-    + r"|(?<=/)" + _CMD_POS_WRAP_RUN + "(?:" + _CMD_POS_ENV_ASSIGN + ")*"
+    + r"|(?<=/)" + _CMD_POS_SLASHED_WRAP_RUN + "(?:" + _CMD_POS_ENV_ASSIGN + ")*"
     + "|" + _CMD_POS_EXEC_QUOTE + ")"
 )
 # ⚠ THE WRAPPER ARM WAS NARROWED FROM `\b` TO `(?<=/)` ON 2026-08-26, and the

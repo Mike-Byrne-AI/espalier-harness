@@ -1674,6 +1674,15 @@ _WALKER_FLOOD_MAKERS = [
     # the quoted arm's WIDTH, not only the count: a 400-character quoted word
     # per carrier (the regression the failure-mode review found sat at 256)
     ("quoted_long_word_carrier_run", lambda n: ('find "' + 'a&' * 200 + '" | xargs rm -rf; ') * (n // 424)),
+    # DEF-3042: a dash word then a slashed wrapper name, repeated. The
+    # anchor's `(?<=/)` arm started a wrapper run at every `env` and took
+    # every pair after it (as a flag's argument, a glued flag, a numeric
+    # word) to the end before the verb failed: 1.6 s at 4 KB in the
+    # removed-or-relocated reader, about 4x per doubling, while every flood
+    # above read linear. The first is the row's probe, byte for byte.
+    ("slashed_wrapper_flag_argument_run", lambda n: "find build" + " -exec /a/env" * ((n - 17) // 13) + " -print"),
+    ("slashed_wrapper_glued_flag_run", lambda n: "echo" + " -a/env" * ((n - 4) // 7)),
+    ("slashed_wrapper_numeric_word_run", lambda n: "echo" + " 1/nice" * ((n - 4) // 7)),
 ]
 
 _WALKER_FLOODS = [(label, make(_WALKER_FLOOD_LEN)) for label, make in _WALKER_FLOOD_MAKERS]
@@ -4317,6 +4326,14 @@ def _prefix_run_tokens() -> list[str]:
     tokens += [f"{w.upper()}.EXE " for w in wrappers]
     tokens += ["~/a ", "~a/ ", "~/"]
     tokens += [f"{k} " for k in keywords]
+    # DEF-3042: a word ending in a slashed wrapper name, in each of the
+    # wrapper run's three token arms -- a flag's argument, a glued flag, a
+    # numeric word. The `(?<=/)` arm starts a run inside every such word, and
+    # until its run declined the word each start read to the end (quadratic,
+    # not exponential: the budget's 30 KB is what makes it red)
+    tokens += [f"-x /a/{w} " for w in wrappers]
+    tokens += [f"-a/{w} " for w in wrappers]
+    tokens += [f"1/{w} " for w in wrappers]
     return tokens
 
 
