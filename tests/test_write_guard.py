@@ -809,6 +809,31 @@ class TestQuotedVerbTailIsUniform:
                 f"{arm} does not read the fetch verb in {cmd!r}")
             assert _speedbump_fires(sb, reader, arm, "Bash", cmd, tmp_path), cmd
 
+    def test_the_inner_fetch_position_is_the_anchors_run_stopped_at_an_opener(self):
+        # DEF-3033: the inner position reads the anchor's wrapper run with
+        # the opener characters added to its token classes and nothing else
+        # (spelled out for the ReDoS gate, as the carriers' run is), so a
+        # roster or structure edit to the anchor's run reds here until it
+        # reaches this copy; and each substitution arm composes the anchor
+        # once, at its outer head: the lane's first cut composed it a second
+        # time inside the substitution and read cubic on a failing match
+        # (`"env -i bash <( " * 400`: 26.6 s at 6 KB, the code review)
+        bp = _bash_patterns_module()
+        sb = _speedbump_module()
+        stopped = (bp._CMD_POS_WRAP_RUN.replace(r"[^\s;|&]", r"[^\s;|&(`]")
+                   .replace(r"[^-\s;|&]", r"[^-\s;|&(`]"))
+        assert stopped != bp._CMD_POS_WRAP_RUN
+        assert sb._FETCH_INNER_WRAP_ONE == stopped
+        assert bp._CARRIER_WRAP_HEAD in sb._FETCH_INNER_POS
+        assert bp._CMD_POS_VERB_PREFIX in sb._FETCH_INNER_POS
+        assert bp._CMD_POS_NO_VERB not in sb._FETCH_INNER_POS
+        for arm in ("_FETCH_EXEC_PROCSUB_RE", "_FETCH_EXEC_SUBST_RE"):
+            pattern = getattr(sb, arm).pattern
+            assert pattern.count(bp._CMD_POS_NO_VERB) == 1, arm
+            assert pattern.endswith(sb._FETCH_INNER_POS + sb._FETCH_HEAD), arm
+        # the pipe arm's head is the same fetch head, at the anchor
+        assert sb._FETCH_EXEC_PIPE_RE.pattern.startswith(bp._CMD_POS + sb._FETCH_HEAD)
+
 
 class TestBinaryVerbSpellingIsUniform:
     """DEF-1161, its class widened (air ff9ddb): a native binary's verb as a
