@@ -4374,6 +4374,46 @@ def test_cmd_pos_linear_on_repeated_prefix_run(token):
     )
 
 
+@pytest.mark.parametrize("arm,unit", [
+    ("_FETCH_EXEC_PROCSUB_RE", "env -i bash <( "),
+    ("_FETCH_EXEC_SUBST_RE", 'env -i bash -c "$('),
+], ids=["procsub", "subst"])
+def test_the_fetch_arms_inner_position_does_not_compound_the_anchor(arm, unit):
+    """DEF-3033: the speed bump's substitution arms read the fetch verb at a
+    second command position behind their opener. Composing the whole
+    `_CMD_POS` there read cubic on a failing match, because the anchor's
+    redirect target (`<` then `(`) and wrapper flag argument (`-c` then
+    `"$(`) carry one inner attempt across every later opener: at 150 repeats
+    about 1.6 and 2.8 s against the base arms' 37 and 62 ms (the dispatcher's
+    verifier on the Air, 8c1237, measured 3.9 and 6.6 s at 200). The narrowed
+    inner run (`_speedbump._FETCH_INNER_POS`) reads both quadratic at about
+    1.5 times the base, which the outer anchor alone costs (DEF-3044); this
+    size is one the base clears and the full composition does not.
+    """
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    import _speedbump
+
+    probe = unit * 150 + "x"
+    rx = getattr(_speedbump, arm)
+    signal.signal(signal.SIGALRM, _alarm)
+    signal.setitimer(signal.ITIMER_REAL, _CI_SAFE_BUDGET_MS / 1000.0)
+    t = time.time()
+    try:
+        rx.search(probe)
+    except _Timeout:
+        pytest.fail(
+            f"{arm} exceeded {_CI_SAFE_BUDGET_MS}ms on {unit!r} * 150: the inner "
+            "position compounds the outer anchor again"
+        )
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    elapsed_ms = (time.time() - t) * 1000
+    assert elapsed_ms < _CI_SAFE_BUDGET_MS, (
+        f"{arm} took {elapsed_ms:.1f}ms on {unit!r} * 150 (budget {_CI_SAFE_BUDGET_MS}ms)"
+    )
+
+
 def test_reconstructor_resolves_a_sibling_module_fragment(tmp_path):
     """A cross-module fragment reference must RESOLVE, not fail closed.
 

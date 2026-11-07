@@ -286,7 +286,9 @@ _CMD_POS_NEGATE = r"(?:![ \t]+)"
 # catches exceptions, not a wedged regex -- and this fragment fronts every
 # command-position consumer on the PreToolUse path, so it would stall every tool
 # call. CONSUMERS: the extraction regexes in this module PLUS `_speedbump`'s
-# four git checkpoints, which import `_CMD_POS` across the module boundary --
+# git checkpoints and fetch-and-run arms (the substitution arms read a
+# narrower inner run behind their opener, `_speedbump._FETCH_INNER_POS`,
+# DEF-3033), which import `_CMD_POS` across the module boundary --
 # a dependency no file-overlap scan can see, and the reason the count is
 # described rather than written as a number here (the previous wording said
 # THIRTEEN and was stale on the day it landed).
