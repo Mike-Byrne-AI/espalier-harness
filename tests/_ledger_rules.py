@@ -228,7 +228,11 @@ TEXT_OVER_OWN_SUBJECT = {
     # reads identical bytes, the curated-name pin reads the hook's own pattern,
     # an unscripted mirror row reads as a diagnosis).
     "DEF-417h", "DEF-418b",
-    "DEF-424b", "DEF-424g", "DEF-437",
+    "DEF-424b", "DEF-424g",
+    # DEF-437 and its co-id LG-12 left on 2026-11-07 with their row, and DEF-485
+    # with its own (struck by lane ci-the-action-bumps-reach-the-packaged-workflow:
+    # the dependabot entry names the packaged harness-guard source, held by a test
+    # over the mirror registry; the SHA-pin check reads every workflow file).
     # DEF-438 and DEF-439 left on 2026-11-02 with their rows (struck by lane
     # the-pre-flight-derives-each-demand-from-its-enforcer, the C30 class: the
     # two harness-guard advisories carry one refusal statement held to the
@@ -238,7 +242,7 @@ TEXT_OVER_OWN_SUBJECT = {
     # gate-populations-derive-from-the-live-source, the C37 class-fix: the
     # README's skip list is a generated region; the status guard reads the
     # gate_details spelling; their probes keyed on the old text's spelling).
-    "DEF-450", "DEF-476", "DEF-483", "DEF-485", "DEF-488",
+    "DEF-450", "DEF-476", "DEF-483", "DEF-488",
     # DEF-519 and DEF-593 left on 2026-10-08 with their rows (struck by lane
     # ledger-oldest-c: contract rule 2 names the live gate; the index parser
     # names the rows it cannot read).
@@ -305,7 +309,8 @@ TEXT_OVER_OWN_SUBJECT = {
     #: set on 2026-10-31: struck by lane first-contact-diagnostics-read-the-adopters-tree
     #: (their fenced commands, the /analyze coverage loop and the dead-config pass,
     #: now census the adopter's tree), so their probes retired with them.
-    "LG-12",
+    #: LG-12 left this set on 2026-11-07 with DEF-437's row (its co-id; the note
+    #: beside DEF-437's slot above names the lane).
     #: DEF-5058 (filed 2026-11-02 by lane c75-wave-3, re-keyed the same day when this
     #: ratchet caught its first probe, which counted the NEW reader's name and so
     #: closed on a "see read_ledger_trend" pointer): the deliverable IS the seed

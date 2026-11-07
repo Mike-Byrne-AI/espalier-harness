@@ -37,6 +37,7 @@ else:  # Python 3.10 fallback
     import tomli as tomllib  # type: ignore[no-redef]
 
 from espalier.doctor import _LOAD_BEARING_EXTERNAL_TOOLS
+from espalier.mirror_registry import MIRROR_ROWS
 
 
 def _dev_extras_packages() -> set[str]:
@@ -335,6 +336,41 @@ def test_dependabot_bumps_each_finding_gate_in_a_pull_request_of_its_own():
     assert not grouped, (
         "add each finding gate to the group's exclude-patterns in .github/dependabot.yml, so its "
         "bump is a pull request of its own: " + ", ".join(grouped)
+    )
+
+
+@pytest.mark.contract
+def test_dependabot_names_each_packaged_workflow_source_as_the_re_apply_target():
+    """The github-actions updater reads the root .github/workflows/ alone, so its
+    bump of a workflow generated from a packaged source lands on the generated
+    copy, and the parity test reds until a merger carries it to the source. The
+    entry names each such source and its sync, so the merger is pointed there."""
+    sources = [
+        r for r in MIRROR_ROWS
+        if r.is_inverted and any(m.startswith(".github/workflows/") for m in r.mirrors)
+    ]
+    assert sources, (
+        "no mirror row generates a root workflow from a packaged source: if that is "
+        "true now, retire this test and the pointer in .github/dependabot.yml with it"
+    )
+    text = (REPO_ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+    entries = re.split(r"(?m)^(?=[ \t]*-[ \t]+package-ecosystem:)", text)
+    actions_entries = [
+        e for e in entries
+        if re.match(r"""[ \t]*-[ \t]+package-ecosystem:[ \t]*["']?github-actions\b""", e)
+    ]
+    assert len(actions_entries) == 1, (
+        f"expected one github-actions entry in .github/dependabot.yml, found "
+        f"{len(actions_entries)}: each one that reads .github/workflows/ needs the pointer"
+    )
+    (entry,) = actions_entries
+    missing = [
+        f"{r.sot} (sync: {r.sync})" for r in sources
+        if r.sot not in entry or (r.sync is not None and r.sync not in entry)
+    ]
+    assert not missing, (
+        "name each packaged source and its sync in the github-actions entry of "
+        ".github/dependabot.yml as the place a bot bump is re-applied: " + ", ".join(missing)
     )
 
 

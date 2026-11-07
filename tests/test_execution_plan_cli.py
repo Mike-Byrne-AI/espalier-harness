@@ -302,6 +302,43 @@ class TestClaimOverlapPreflight:
         assert mod._step_fields('s; files: "/x/with space/c.py", d.py (new, moved); classes: C1') == (
             ["/x/with space/c.py", "d.py"], ["C1"])
 
+    def test_a_parenthesised_folder_is_part_of_the_path_and_a_note_is_not(self):
+        """A route-group folder (`app/(group)/page.tsx`, the Next.js and
+        SvelteKit convention) written bare, as every tool prints it, is one
+        entry: a parenthesised span glued to the word is part of the path,
+        whole, at the path's start too, bare or quoted, and so is a file
+        name's (`x(1).py`) and, by design, a note glued to a path
+        (`a.py(new)`: none of the 190 step fields in the 32 plans read for
+        this fix glued one). A span standing as a word of its own is a note,
+        at the entry's start or after the path, commas and all; a call after
+        a symbol's `::` ends the word; an entry opening with a parenthesis
+        nothing closes is no entry. Dies to: every parenthesised span
+        stripped as a note, which read the bare spelling as its folder
+        (`app/`) and a leading group as an absolute path (`/page.tsx`); to
+        the leading-parenthesis refusal run on a quoted path, which dropped
+        `"(group)/page.tsx"` whole; to a call after `::` kept as part of the
+        symbol; to a glued span cut at a space inside it, or a call's tail
+        spliced onto the symbol (code review, driven); and to every glued
+        span read as a note, a mutant the rows above left green
+        (failure-mode review, driven)."""
+        mod = _load_plan_module()
+        assert mod._field_entries("app/(group)/page.tsx") == ["app/(group)/page.tsx"]
+        assert mod._field_entries("app/(group), x(1), a.py(new)") == ["app/(group)", "x(1)", "a.py(new)"]
+        assert mod._field_entries("a/(b c)/d.py, (a b)/c.py, a/(b, c)/e.py") == [
+            "a/(b c)/d.py", "(a b)/c.py", "a/(b, c)/e.py"]
+        assert mod._field_entries("a.py::f(x)y, (x)::g()") == ["a.py::f", "(x)::g"]
+        assert mod._field_entries("src/routes/(app)/+page.svelte, (marketing)/about/page.tsx") == [
+            "src/routes/(app)/+page.svelte", "(marketing)/about/page.tsx"]
+        assert mod._field_entries('"(group)/page.tsx", `(a b)/c.py::f`') == ["(group)/page.tsx", "(a b)/c.py::f"]
+        assert mod._field_entries("app/(group)/page.tsx (new, moved), (new) b.py, c.py (see d.py), (gone)") == [
+            "app/(group)/page.tsx", "b.py", "c.py"]
+        assert mod._field_entries("a/(g)/b.py::f(), c.py::C.m(x, y), d.py::g") == [
+            "a/(g)/b.py::f", "c.py::C.m", "d.py::g"]
+        assert mod._field_entries("x(1).py, (new, b.py") == ["x(1).py", "b.py"]
+        assert mod._step_fields("s; files: app/(group)/page.tsx, docs/x.md (new); classes: C1") == (
+            ["app/(group)/page.tsx", "docs/x.md"], ["C1"])
+        assert mod._step_symbols("s; symbols: app/(g)/p.py::f(), q.py::h") == ["app/(g)/p.py::f", "q.py::h"]
+
     def test_a_typed_symbol_warning_outlives_a_channel_that_cannot_be_read(self, monkeypatch, tmp_path):
         """The typo is about the plan's own text, not the channel. Dies to: the warning computed
         where a failed mail read drops it with the claim warnings."""

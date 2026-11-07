@@ -409,6 +409,48 @@ def test_other_extraction_regex_linear_on_long_input(name, pattern):
         )
 
 
+# post_write_check's write-time advisory (TP-450) runs its delete pattern over
+# every string constant of a .py file Claude writes, up to the hook's 128 KiB
+# read cap. The dot-star sweep above cannot see this pattern's risk: the
+# census's flag class `[A-Za-z]*[rRf][A-Za-z]*` was quadratic on a long flag run
+# (6, 24 and 97 ms at 1k, 2k and 4k letters), so the hook re-spells the run with
+# a lookahead and this hand-added pin holds it linear: one hostile run per
+# quantifier the pattern holds.
+_DRIVER_DELETE_RUNS = {
+    "a flag run holding r, no space after it": "rm -" + "r" * _WORST_CASE_BODY_LEN,
+    "a flag run with no r, R or f": "rm -" + "x" * _WORST_CASE_BODY_LEN + " ",
+    "a whitespace run after the flags": "rm -rf " + " " * _WORST_CASE_BODY_LEN,
+    "a word run after the variable sign": "rm -rf $" + "a" * _WORST_CASE_BODY_LEN,
+    "repeated delete heads": ("rm -r " * _WORST_CASE_BODY_LEN)[:_WORST_CASE_BODY_LEN],
+    "repeated open variables": ('rm -rf "$V' * _WORST_CASE_BODY_LEN)[:_WORST_CASE_BODY_LEN],
+}
+
+
+@pytest.mark.parametrize("name,payload", sorted(_DRIVER_DELETE_RUNS.items()))
+def test_driver_delete_regex_linear_on_a_hostile_run(name, payload):
+    """``post_write_check._DRIVER_DELETE_RE`` finishes each hostile run within
+    ``_CI_SAFE_BUDGET_MS`` (the census's own spelling took 5.5 s on the flag
+    run at this length, measured 2026-11-07, so two such constants in one file
+    would pass the hook's 10 s timeout)."""
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    from post_write_check import _DRIVER_DELETE_RE  # noqa: E402
+
+    signal.signal(signal.SIGALRM, _alarm)
+    signal.setitimer(signal.ITIMER_REAL, _CI_SAFE_BUDGET_MS / 1000.0)
+    t = time.time()
+    try:
+        _DRIVER_DELETE_RE.findall(payload)
+        elapsed_ms = (time.time() - t) * 1000
+    except _Timeout:
+        pytest.fail(f"the driver delete pattern exceeded {_CI_SAFE_BUDGET_MS}ms on {name}")
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    assert elapsed_ms < _CI_SAFE_BUDGET_MS, (
+        f"the driver delete pattern took {elapsed_ms:.1f}ms on {name} (budget {_CI_SAFE_BUDGET_MS}ms)"
+    )
+
+
 # The external-pin quote check normalises whole upstream pages (DEF-744), so
 # its rules face page-sized input: one hostile run per rule, of the characters
 # that rule consumes.
@@ -3000,6 +3042,42 @@ def test_ps_switch_value_run_linear_on_dash_bearing_values(label, seed):
         pytest.fail(
             f"the PowerShell switch/value run exceeded {_CHAIN_CEILING_MS}ms on a "
             f"30KB {label} run (exponential -- the DEF-717 lookahead regressed)"
+        )
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    assert elapsed_ms < _CHAIN_CEILING_MS, f"{label} took {elapsed_ms:.1f}ms"
+
+
+@pytest.mark.parametrize("label,seed", [
+    # the cmdlet word in a valued parameter: the exec-quote arm opens a
+    # command position at each, and each walked to the statement's end
+    ("verb-flood", "Start-Process -Verb "),
+    ("alias-flood", "saps -Wait -Verb "),
+    ("working-directory-flood", "Start-Process pwsh -WorkingDirectory "),
+])
+def test_the_started_shell_reader_is_linear_on_an_opener_flood(label, seed):
+    """DEF-3011's reader (`ps_start_process_shell_launches`) walks a
+    started program's parameters from each cmdlet opener; unbounded, a
+    flood of the cmdlet word in parameter values was quadratic -- 1.2 s at
+    2000 openers for the reader, about 4 s on 20 KB for the four tiers --
+    where the walk is now bounded and an opener inside an earlier walk is
+    skipped (the code review, timed). Through the real entrypoints, under
+    the chain ceiling. POSIX-only (signal.alarm)."""
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    payload = seed * (_WORST_CASE_BODY_LEN // len(seed))
+    signal.signal(signal.SIGALRM, _alarm)
+    signal.setitimer(signal.ITIMER_REAL, _CHAIN_CEILING_MS / 1000.0)
+    t = time.time()
+    try:
+        raw, scan = _bash_patterns.powershell_scan_pair(payload)
+        list(_bash_patterns._ps_start_process_launches(raw, scan))   # uncached, so it runs
+        _candidate_paths_from_powershell(payload)
+        elapsed_ms = (time.time() - t) * 1000
+    except _Timeout:
+        pytest.fail(
+            f"the started-shell reader exceeded {_CHAIN_CEILING_MS}ms on a 30KB "
+            f"{label} (quadratic -- the bounded walk regressed)"
         )
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)

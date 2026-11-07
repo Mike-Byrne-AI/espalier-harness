@@ -5,7 +5,7 @@
 [![PyPI](https://img.shields.io/pypi/v/espalier-harness.svg?include_prereleases)](https://pypi.org/project/espalier-harness/)
 [![Status: pre-release](https://img.shields.io/badge/status-pre--release-orange.svg)](#try-it)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/Mike-Byrne-AI/espalier-harness/blob/main/LICENSE)
-[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg)](#requirements)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg)](#requirements)
 
 **Status:** beta, pre-1.0; the PyPI badge carries the current version. Built
 by Mike Byrne and used daily on this repository, which is governed by the
@@ -42,9 +42,9 @@ to `main`.
 
 ## Try it
 
-You need Python 3.10+ and [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
-Install from PyPI (no third-party dependencies from 3.11 on; one, `tomli`,
-on 3.10), then `init` inside the repo you want governed. macOS ships only
+You need Python 3.11+ and [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
+Install from PyPI (no third-party dependencies), then `init` inside the repo
+you want governed. macOS ships only
 `python3`, so type `python3` for the `python -m …` lines:
 
 ```bash
@@ -693,7 +693,8 @@ rules at the permission layer, `write_guard.py` at the hook layer,
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.11+. The harness does not run on Python 3.10 or older: update
+  Python to install and use it.
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (CLI)
 
 ## Security

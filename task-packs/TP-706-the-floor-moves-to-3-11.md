@@ -171,14 +171,17 @@ the required status checks on `main` (measured 2026-11-04:
    its negative literal "Install Python 3.10 or newer first", which goes vacuous at a new
    floor unless it is derived from `floor_text()`;
    `tests/test_session_start_interpreter_warn.py`, `tests/test_sync_github_workflow_asset.py`);
-   **the syntax gate kept**: `[tool.ruff] per-file-target-version` pinning `tools/cc/`'s
-   files to `py310` so `ruff check .` keeps refusing 3.11-only syntax where the floor's
-   voice must still parse (1-G); **`init`'s below-floor arm** in `espalier/cli.py` changed
+   **the syntax gate kept**: `[tool.ruff] per-file-target-version` pinning the five files
+   the update deny runs through to `py310` (the 2026-11-07 ruling, 1-G) so `ruff check .`
+   keeps refusing 3.11-only syntax where the floor's voice must still parse (1-G); **`init`'s below-floor arm** in `espalier/cli.py` changed
    to the operator's Task 0 ruling, with its pinned test and the four surfaces that repeat
-   the sentence (1-H); **the engine's own floor message** at the CLI entry in
-   `espalier/cli.py`, before any import that needs 3.11, so a 3.10 host running a `git
+   the sentence (1-H); **the engine's own floor message** as the first statement of
+   `espalier/__init__.py` (amended 2026-11-07 by air's ack `7128b9` on request `79c59b`:
+   a 3.10 host compiles a whole module before it runs a line, so a check inside
+   `cli.py` never prints once `cli.py` takes 3.11 syntax), so a 3.10 host running a `git
    pull`'d clone reads the floor and not a traceback (1-H); a changelog fragment; one
-   `README.md` sentence naming the last release that allowed 3.10.
+   `README.md` sentence saying the harness needs Python 3.11 or newer (ruling `320c24`:
+   no pointer to the last release that allowed 3.10).
 2. **Wave 2 — the shims.** The Reach roster to zero: `espalier/_compat.py` imports
    `tomllib` alone (the name stays as the one import site, so `docs/CONVENTIONS.md`'s rule
    stays true); the five callers' `is None` arms go (`espalier/config.py`,
@@ -406,26 +409,39 @@ pins the count), and after 0-B the live read
 (`gh api .../protection/required_status_checks --jq '.contexts | length'`) equals the
 checklist's count.
 
-**1-G The syntax gate kept** *(fix shape, driven by the reviewer in the per-hook form
-`{"tools/cc/hooks/*.py" = "py310"}`, which brought both reported errors back; the wider
-glob is untested):* in `pyproject.toml`, `[tool.ruff] per-file-target-version =
-{"tools/cc/**/*.py" = "py310"}`, so `ruff check .` keeps refusing 3.11-only syntax under
-`tools/cc/` while the rest of the tree may use it. Pinned by a row in
-`tests/test_ruff_config_includes_security_rules.py` (or the floor tests) that reads the
-table and asserts the `tools/cc/` entry at `py310`: strength, not text, so a second entry
-may join and none may leave. Why not `ast.parse(feature_version=(3, 10))`: driven on
-3.14.7 it rejects `except*` but accepts `def f(*a: *Ts)` and `a[*b]`, both 3.11 syntax,
-and it is syntax-only.
+**1-G The syntax gate kept** *(amended to the operator's ruling of 2026-11-07, ack
+`2d7cd1` on request `92e8d7`: option A, the five paths the "update Python" deny runs
+through, nothing wider; the rest of `tools/cc/` may use 3.11 syntax):* in
+`pyproject.toml`, `[tool.ruff] per-file-target-version` holds
+`tools/cc/hooks/_start_refusal.py`, `write_guard.py`, `plan_guard.py`, `config_guard.py`
+and `stop_gate.py` at `py310`, so `ruff check .` keeps refusing 3.11-only syntax in
+those files while the rest of the tree may use it. Pinned by
+`tests/test_ruff_config_includes_security_rules.py::test_the_update_deny_files_keep_a_py310_syntax_target`,
+which reads the table and asserts each entry at `py310` and its file present: strength,
+not text, so an entry may join and none may leave. Driven at the Wave 1 lane
+(2026-11-07, ruff 0.17.3, a scratch copy of the layout): with no table both planted
+errors (`except*`, `def f(*a: *Ts)`) pass everywhere at `>=3.11`; with the table each
+reds at all five paths and at none outside them; the row reds with one entry removed.
+The engine's floor sentence (1-H) adds a sixth entry, `espalier/__init__.py` at `py39`
+(air's ack `7128b9`), pinned in the same row. Why not `ast.parse(feature_version=(3, 10))`: driven on 3.14.7 it rejects `except*` but
+accepts `def f(*a: *Ts)` and `a[*b]`, both 3.11 syntax, and it is syntax-only.
 
 **1-H `init`'s below-floor arm and the engine's floor sentence** *(fix shape, untested;
 the operator's Task 0 ruling decides the arm):* `espalier/cli.py`'s "Wiring it anyway"
 branch becomes the ruled shape, its pinned test in `tests/test_python_floor.py` moves with
 it, and a new row asserts the new wording from a below-floor stub (nothing reds on the old
 wording, since it interpolates the floor); `doctor`, `tools/cc/hooks/session_start.py`,
-`docs/CHEAT-SHEET.md` and `docs/HOOKS.md` say the same sentence. The CLI entry in
-`espalier/cli.py` checks `sys.version_info` against `MIN_PYTHON` before any import that
-needs 3.11 and prints the floor and the remedy; refuted if `"$(uv python find 3.10)" -m
-espalier --version` in a checkout prints a traceback from `espalier/_compat.py` instead.
+`docs/CHEAT-SHEET.md` and `docs/HOOKS.md` say the same sentence. *(amended 2026-11-07,
+air's ack `7128b9` on request `79c59b`, driven by a fresh verifier on uv 3.10.21 and
+3.11.16:)* the first statement of `espalier/__init__.py` after its docstring and
+`__future__` import compares `sys.version_info` with a literal floor (pinned to
+`MIN_PYTHON` by the parity row) and raises `SystemExit` with the sentence, so every entry
+that imports the package (`-m espalier`, `-m espalier.cli`, the console script) prints it
+with rc 1 and no traceback; `espalier/__init__.py` holds a `py39` ruff target (stock macOS
+`python3` is 3.9.6, which a `match` statement would kill silently), a statement-order row
+keeps the check first, and a CI row stubs `sys.version_info` in a subprocess so the
+sentence is proved in every cell; refuted if `"$(uv python find 3.10)" -m espalier
+--version` in a checkout prints a traceback instead.
 
 **1-F The fragment and the last-3.10 sentence.** A `changelog.d/` fragment (the
 `_record_fragments.py` convention); one README sentence under Requirements: "the last
@@ -494,7 +510,7 @@ spelled with an interpreter that can run it, and a 3.10-only host has none, so t
 says "install Python 3.11 or newer, then `espalier init . --rewire-interpreter`" (the
 verb as `docs/CHEAT-SHEET.md` spells it, with its `.`). The floor it compares against is a
 third literal copy, pinned to the other two by `tests/test_python_floor.py::TestTwoCopyParity`
-(which becomes a three-copy parity; the repo's own pattern is
+(which becomes a four-copy parity with Wave 1's `espalier/__init__.py` literal; the repo's own pattern is
 `test_launcher_version_flag_four_copy_parity`), since `_hook_utils` is exactly the module
 that may not import. The drive: `uv python install 3.10`, then
 
@@ -649,7 +665,7 @@ executing seat's read are for those.)
   `tests/test_front_door_numbers.py`, `tests/test_interpreter_hosts.py` and
   `tests/test_mypy_config_stays_near_strict.py` keeps its strength: a pinned literal moves
   to the new floor, none is deleted, none is loosened to a range, and the two-copy parity
-  becomes a three-copy parity (2-C) rather than a weaker one.
+  becomes a four-copy parity (Wave 1's `espalier/__init__.py` literal, then 2-C) rather than a weaker one.
 - After Wave 1: the four workflow files hold four-cell literal matrices (`clean-checkout.yml`
   one `3.11` cell); the live required set on `main` (the `gh api` read in the Motivation)
   holds exactly the eleven names `docs/RELEASE_CHECKLIST.md` lists; `pip install .` under a
@@ -657,9 +673,10 @@ executing seat's read are for those.)
   resolver line at all fifteen sites equals `shell_resolver_line()`'s output; the three
   mirror syncs leave no diff (`tests/test_vendor_cc_parity.py` and the `.claude` parity
   tests green).
-- After Wave 1: `ruff check .` with a scratch `except*` under `tools/cc/hooks/` reds and
-  the same under `espalier/` does not (the per-file target holds where it must and nowhere
-  else); the row pinning the `[tool.ruff]` entry reds when the entry is removed; `init`
+- After Wave 1: `ruff check .` with a scratch `except*` in one of the five ruled files (1-G)
+  reds, a scratch `match` in `espalier/__init__.py` reds (its `py39` target), and the same
+  constructs elsewhere under `tools/cc/` or `espalier/` do not (the per-file target holds
+  where it must and nowhere else); the row pinning the `[tool.ruff]` entry reds when the entry is removed; `init`
   under a below-floor stub prints the ruled wording and its row reds on the old sentence;
   `"$(uv python find 3.10)" -m espalier --version` in a checkout prints the floor sentence,
   not a traceback; the negative literal in `tests/test_python_floor.py` reads the floor

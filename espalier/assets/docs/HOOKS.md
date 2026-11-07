@@ -1672,10 +1672,16 @@ it) is read through to its quoted payload, and a switch's bare
 value between the two (`-Verb RunAs`, `-ExecutionPolicy Bypass`,
 `-WindowStyle Hidden`) is crossed, so an elevated or policy-bypassed write
 is caught like the bare one. A value that is itself a quoted string
-(`-Verb "RunAs"`), an `=`-bound value (`-ArgumentList="..."`) or the array
-spelling (`-ArgumentList "-Command","..."`) ends the run before the payload,
-which then stays inert -- a declared limit, pinned by
-`tests/test_write_guard_command_position.py::TestPowerShellReparsingWrapperCarriesASwitchValue::test_the_declared_limits_are_pinned`.
+(`-Verb "RunAs"`) or an `=`-bound value (`-ArgumentList="..."`) ends the run
+before the payload, which then stays inert -- a declared limit, pinned by
+`tests/test_write_guard_command_position.py::TestPowerShellReparsingWrapperCarriesASwitchValue::test_the_declared_limits_are_pinned`
+-- unless the argument list hands the started shell its program: a
+`Start-Process` of powershell or pwsh with `-Command` in the list, or of
+bash or sh with `-c`, as one string or the array spelling
+(`-ArgumentList "-Command","..."`), is read for that program, which meets
+every tier its direct form meets. powershell.exe's implicit
+command (a program with no `-Command` before it) and a list given before
+the program stay unread, declared and pinned beside it.
 
 Reads of secret-bearing paths -- dotenv files (a dotenv TEMPLATE, the
 `.env.example`, `.env.sample`, `.env.template` or `.env.dist` a repo commits
@@ -1693,8 +1699,10 @@ of a string is read as a program too: Bash `eval`, `watch`, `script -c` and
 `su -c`; PowerShell `Invoke-Expression` / `iex`, `pwsh -Command`, `cmd /c`,
 `[scriptblock]::Create` and a `$(...)` subexpression, including a string
 bound to a variable earlier in the same command (`$c = 'gc .env';
-iex $c`). A carrier named inside quotes is data. Not read as a program: a
-`Start-Process` argument list, the colon-bound `-Command:'...'`, a glued
+iex $c`), and the program a `Start-Process` of powershell, pwsh, bash or sh
+carries after the started shell's `-Command` or `-c`. A carrier
+named inside quotes is data. Not read as a program: any other `Start-Process`
+argument list, the colon-bound `-Command:'...'`, a glued
 `cmd /c"..."`, and the words after a quoted program (`cmd /c "type" .env`).
 A PowerShell statement that opens with a quoted string is read as the
 command its first word names, which is what refuses a string piped into
@@ -1965,6 +1973,21 @@ validates the result:
   memory's first lines (a hand merge through Bash reaches no write hook)
 - After every Bash or PowerShell call → compares the protected files with
   the session's previous check (below)
+- On Espalier's own source tree only, any `.py` file a Write or an Edit just
+  left, wherever it sits (a scratchpad file included) → reads it from disk
+  and, when the file hands built text to a shell (a `subprocess` call running
+  `[shell, "-c", cmd]` on a command it builds, or `shell=True` on one) and a
+  string in it holds a recursive delete of a variable beside a glob, says so
+  once a session for that file and delete, with the line: the shape of the
+  scratch driver behind the harness's 2026-09-17 incident, where an unset
+  variable turned the glob into the filesystem root. Claude is told to ask the
+  guard's classifier about such a row and never run it, and the operator is
+  told on their own line. Not on an adopter's tree: the shape's calibration is
+  this repository's own transcripts and files (record
+  `posttooluse_incident_driver_shape`). It reads the census's spellings
+  only: a list handed to a wrapper or held in a variable, PowerShell flags
+  before `-Command`, or a shell found by a call or at another path is not
+  read, so its silence is not a clean bill
 
 **The protected files after a shell call.** A shell call can change a
 protected file without naming it -- a formatter run over the whole tree, a
@@ -2604,10 +2627,10 @@ Claude Code resolves `python` on the user's PATH and spawns it directly
 with each `args` entry passed verbatim. No shell, no tokenization, no
 platform-specific variable syntax.
 
-**Resolver requirement.** A Python 3.10+ interpreter must answer to
+**Resolver requirement.** A Python 3.11+ interpreter must answer to
 `python` or `python3` on PATH, or to the Windows launcher as `py -3`.
 `espalier.cli._detect_python_command` probes them in that order at init
-time (the launcher only when neither name answers 3.10+) and writes the
+time (the launcher only when neither name answers 3.11+) and writes the
 first that answers into the generated `.claude/settings.json`; the
 launcher is written as `command: py` with `-3` leading the `args`. No
 operator setup is required on the typical distributions:
@@ -2625,9 +2648,15 @@ operator setup is required on the typical distributions:
   some only `python3`. Init picks whichever is on PATH.
 - **macOS** — system / Homebrew Python is `python3`. Init picks
   `python3`; no manual symlink needed. Note the STOCK `/usr/bin/python3` is
-  3.9, below the 3.10 floor: init wires it (so the guards keep working) and
-  warns that blueprints, Gate 4 and subagent capture will not run until you
-  install a newer Python and re-run `espalier init . --rewire-interpreter`.
+  3.9, below the 3.11 floor.
+
+**Below the floor.** When the interpreter init would wire is below Python
+3.11, init refuses before it writes any file: it says the harness does not
+run on Python <the version it found> and to update to Python 3.11 or newer
+to install and use it. There is no reduced mode and no partial install.
+`espalier doctor .` and the SessionStart banner say the same of a tree
+already wired to one, and name the command to run after updating:
+`<python> -m espalier init . --rewire-interpreter`.
 
 If none of `python`, `python3` or `py -3` answers, init still writes
 `python` and warns. What you then see, on every hook fire, is Claude
@@ -2661,7 +2690,7 @@ Bash only) or behind `&` (PowerShell only); `espalier doctor .` names
 one written for the other shell, and `espalier init . --rewire-interpreter`
 puts either behind the dot, on request, writing a backup first.
 
-Install a Python 3.10+ (or put it on PATH), then run
+Install a Python 3.11+ (or put it on PATH), then run
 `espalier doctor .` — it names the wired interpreter and the exact
 command — and `espalier init . --rewire-interpreter`, which swaps the
 interpreter at every hook entry and the statusline, writing a backup
@@ -2832,6 +2861,7 @@ inside a window of twenty.
 | `stop_blocked_handoff` | pause | Gate 5 blocked the Stop: nothing in flight and the branch holds commits its upstream does not, made this session, on a repository whose `espalier.toml` sets `handoff_push = true`; once per commit (the flag `.espalier-state/handoff_gate_said` holds the HEAD it judged, seeded at SessionStart); `details.ahead` is the count, never the branch or the plan's title |
 | `stop_held_handoff` | report | Gate 5 held the lane instead of blocking: the push would open a pull request and this seat has another one open (one open pull request per seat); once per held HEAD (`.espalier-state/handoff_gate_hold`, re-checked every five minutes, and the block returns once none is open); `details.ahead` is the commit count and `details.open` the pull requests held against, never the branch |
 | `post_shell_zone_change` | report | after a Bash or PowerShell call, protected files changed that nothing accounts for (`post_write_check`, "The protected files after a shell call"); `details` names them by kind (`changed`, `added`, `removed`, twenty each at most) with their `count`, the same kinds suffixed `_between_calls` for what landed before the call began, and the `tool` |
+| `posttooluse_incident_driver_shape` | report | on Espalier's own source tree, a `.py` file a Write or an Edit just left hands built text to a shell and holds a recursive delete of a variable beside a glob (`post_write_check`); once a session for each file and delete |
 | `hook_layer_failed_open_stack_table` | fail-open | the hook layer could not read `tools/cc/_stack_table.py` (absent, a `SyntaxError`, or older than the hooks) and every gate runs on `_hook_utils`'s pinned copy of its projections; written once a session where a root is known, by the two source gates at their root and by the reporters' `repo_name`, with the fault in `details` |
 | `stop_blocked_internal_error` | pause | the Stop hook crashed and re-blocked the Stop fail-closed (the loop signal lets the continuation's Stop through; a persistent crash re-blocks on the first Stop of every later turn until its cause is fixed); `details.rule` is the internal-error reason's name, `details.error` the exception's class |
 

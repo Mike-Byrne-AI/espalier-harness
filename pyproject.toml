@@ -8,23 +8,20 @@ version = "0.8.0b2"
 description = "A Claude Code workflow harness for solo founders and small teams — keeps your coding agent on the rails with plan-gated changes, cross-session memory, per-step proof, and seatbelt hooks"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [{name = "Mike Byrne", email = "mbbyrne.byrne@gmail.com"}]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Quality Assurance",
 ]
-dependencies = [
-    "tomli>=2.0; python_version < '3.11'",
-]
+dependencies = []
 
 [project.optional-dependencies]
 dev = [
@@ -140,14 +137,14 @@ markers = [
 files = ["tools/cc/hooks"]
 # The full proof tier runs this gate in every `test (3.x)` cell of a pull
 # request since 2026-09-25, so it targets the OLDEST supported interpreter
-# everywhere rather than whichever one is running: a 3.10-only typeshed red
+# everywhere rather than whichever one is running: a floor-only typeshed red
 # then reproduces on every cell and on every local run, never on one
 # required cell alone. `platform` is pinned for the same reason: with none,
 # mypy checks under the host's `sys.platform`, and on Windows typeshed hides
 # `os.getuid` and `fcntl`, which the hooks guard at runtime, so the gate redded
 # there on correct code. The cost: a `sys.platform == "win32"` arm is unreachable
 # to mypy on every host, as it already was in every CI cell.
-python_version = "3.10"
+python_version = "3.11"
 platform = "linux"
 disallow_untyped_defs = true
 warn_no_return = true
@@ -163,6 +160,21 @@ ignore_missing_imports = true
 # (E/W/UP/SIM/C4/PERF/PIE/RUF*) and auto-fix sweeps are deliberately
 # excluded — each deserves its own scoped pack (TP-148+).
 exclude = ["dist", "build", ".venv", "venv", "tests/fixtures"]
+# The one syntax floor the tree keeps below `requires-python`. A host on an
+# interpreter older than the floor that still runs the hooks (a hand copy, or
+# a clone kept current by `git pull`; pip refuses the package) compiles a hook
+# file before it runs a line of it, so one 3.11-only construct in a file the
+# "update Python" deny runs through turns that deny into a SyntaxError and an
+# exit 1, which Claude Code reads as non-blocking. These files stay parseable
+# on 3.10 so the deny still speaks; the rest of the tree takes the floor's
+# syntax. `espalier/__init__.py` is the sixth for the same reason, held at
+# py39: it holds the engine's own floor sentence, which every entry runs before
+# anything else in the package is compiled, and the oldest Python a host
+# commonly has is stock macOS python3 3.9.6 (`espalier/_python_floor.py`'s
+# docstring), so a `match` statement there would turn the sentence into a
+# SyntaxError. Pinned by tests/test_ruff_config_includes_security_rules.py
+# (entries may join, none may leave or move).
+per-file-target-version = { "tools/cc/hooks/_start_refusal.py" = "py310", "tools/cc/hooks/write_guard.py" = "py310", "tools/cc/hooks/plan_guard.py" = "py310", "tools/cc/hooks/config_guard.py" = "py310", "tools/cc/hooks/stop_gate.py" = "py310", "espalier/__init__.py" = "py39" }
 
 [tool.ruff.lint]
 # Pinned set: bugs, security, and a small number of B-class correctness

@@ -852,7 +852,7 @@ arm fires), and `DEF-934` carries the CI test that pins it, since the
 descend into symlinked directories on CPython 3.10–3.12 (`recurse_symlinks` only
 became default-`False` at 3.13). On an adopter tree with a directory-symlink
 **loop**, the first recursive walk raises `OSError(ELOOP)`; on a plain dir
-symlink it silently inflates / double-counts. The engine supports 3.10+, so this
+symlink it silently inflates / double-counts. The engine supports 3.11+, so this
 is a live first-run crash, not a theoretical one.
 
 **How you hit it:** Calling a bare `rglob` / recursive `glob` on a path that may
@@ -2215,7 +2215,7 @@ so:
 - No absolute interpreter paths (Claude Code resolves `python` on PATH
   on every supported OS).
 
-**Resolver requirement.** A Python 3.10+ interpreter must answer to
+**Resolver requirement.** A Python 3.11+ interpreter must answer to
 ``python`` or ``python3`` on PATH, or to the Windows launcher as
 ``py -3``. ``espalier init`` probes them at init time and writes the
 first that answers into the generated `.claude/settings.json` (see

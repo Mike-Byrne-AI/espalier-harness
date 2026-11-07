@@ -33,7 +33,7 @@ from espalier._integrity_bridge import load_integrity_module
 from espalier._text import plural
 from espalier._python_floor import (
     BANNER_PROBE_SECONDS, BANNER_PROBE_TRIES, START_PROBE_SECONDS, START_PROBE_TRIES,
-    START_TOO_SLOW, floor_text, interpreter_argv,
+    START_TOO_SLOW, does_not_run_sentence, floor_text, interpreter_argv,
     interpreter_banner, meets_python_floor,
     interpreter_banner_unanswered, interpreter_banner_within, interpreter_meets_floor,
     interpreter_start_failure, interpreter_start_failure_within,
@@ -554,9 +554,9 @@ def _interpreter_is_python3(path: "str | None", *flags: str) -> bool:
     banner = interpreter_banner([path, *flags])
     # Through the ONE banner rule, not `startswith("Python 3.")`: the floor
     # parser searches anywhere in the output, and a banner with a line before
-    # it split the two readings -- `init` then called one interpreter both
-    # "below-floor, guards keep working" and "not Python 3, guards fail OPEN"
-    # in one run (DEF-727 review). The hook-side twin reads through its own
+    # it split the two readings -- `init` then called one interpreter both a
+    # working below-floor Python 3 and "not Python 3, guards fail OPEN" in one
+    # run (DEF-727 review). The hook-side twin reads through its own
     # parity copy of the same rule.
     return banner is not None and is_python3_banner(banner)
 
@@ -1138,11 +1138,8 @@ def _check_python_resolver(
                     problem = (
                         f"hook interpreter `{cmd}` resolves to `{resolved}` and IS "
                         f"Python 3 (its `--version` answered only after more than "
-                        f"{BANNER_PROBE_SECONDS} s), but is older than the "
-                        f"{floor_text()} this package requires: the blueprint chain, "
-                        f"Gate 4 finalize and subagent-reasoning capture spawn a file "
-                        f"that raises SyntaxError every session. Install Python "
-                        f"{floor_text()} or newer and re-wire the hooks to it. "
+                        f"{BANNER_PROBE_SECONDS} s), and is below the floor. "
+                        f"{does_not_run_sentence(late)} Then re-wire the hooks to it. "
                     )
                 elif late_start is not None and not late_start.startswith(START_TOO_SLOW):
                     problem = (
@@ -1274,14 +1271,13 @@ def _check_python_resolver(
                     # offers "symlink cmd -> python3", which on a 3.9-only host
                     # makes the breakage permanent. Here the only real fix is
                     # a newer interpreter.
+                    # The one sentence every surface says (the 2026-11-07
+                    # ruling: a dropped Python is dropped), then the re-wire.
                     problem = (
                         f"hook interpreter `{cmd}` resolves to `{resolved}` and IS "
-                        f"Python 3, but is older than the {floor_text()} this "
-                        f"package requires. The blocking guards keep working, so "
-                        f"nothing visibly fails -- while the blueprint chain, Gate 4 "
-                        f"finalize and subagent-reasoning capture spawn a file that "
-                        f"raises SyntaxError every session. Install Python "
-                        f"{floor_text()} or newer and re-wire the hooks to it. "
+                        f"Python 3, and is below the floor. "
+                        f"{does_not_run_sentence(interpreter_banner([resolved, *flags]) or '')} "
+                        f"Then re-wire the hooks to it. "
                     )
             elif _interpreter_start_unconfirmed([resolved, *flags]) is None:
                 continue  # resolves, is Python 3, clears the floor, starts.

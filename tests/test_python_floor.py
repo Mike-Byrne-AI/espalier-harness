@@ -64,10 +64,12 @@ def _load_tools_cc(name: str):
 # the whole defect: a TRUE Python 3 that this package does not run on.
 FLOOR_CASES = [
     ("Python 3.14.0", True),
-    ("Python 3.10.0", True),
-    ("Python 3.10", True),
+    ("Python 3.11.0", True),
+    ("Python 3.11", True),
     ("Python 3.14.0rc1", True),
     ("Python 4.0.0", True),
+    ("Python 3.10.12", False),  # the dropped floor: a Python 3 this package no longer runs on
+    ("Python 3.10", False),
     ("Python 3.9.6", False),
     ("Python 3.9", False),
     ("Python 3.0.1", False),
@@ -136,7 +138,8 @@ BELOW_FLOOR_CASES = [
     ("Python 3.9.6", True),
     ("Python 3.9", True),
     ("Python 3.0.1", True),
-    ("Python 3.10.0", False),   # clears the floor: not below it
+    ("Python 3.10.12", True),   # the dropped floor
+    ("Python 3.11.0", False),   # clears the floor: not below it
     ("Python 3.14.0", False),
     ("Python 4.0.0", False),
     ("Python 2.7.18", False),   # the defect: parses, is not a Python 3
@@ -222,6 +225,22 @@ class TestTwoCopyParity:
         assert _hook_utils().MIN_PYTHON == tuple(_python_floor.MIN_PYTHON), (
             "the hook-side floor and the engine-side floor disagree; a hook "
             "would bless an interpreter the engine refuses, or the reverse"
+        )
+
+    def test_package_entry_floor_is_the_third_copy(self):
+        """`espalier/__init__.py` holds the engine's own floor sentence, which
+        must run before `_python_floor` (or anything else) is compiled, so it
+        spells the floor as a literal: the third copy. Read from the source
+        with ast rather than by importing the package, whose import already
+        ran under this interpreter and so tests nothing about the literal."""
+        tree = ast.parse((REPO_ROOT / "espalier" / "__init__.py").read_text(encoding="utf-8"))
+        floors = [ast.literal_eval(node.value) for node in tree.body
+                  if isinstance(node, ast.Assign)
+                  and any(isinstance(t, ast.Name) and t.id == "_FLOOR" for t in node.targets)]
+        assert floors == [tuple(_python_floor.MIN_PYTHON)], (
+            f"espalier/__init__.py's _FLOOR is {floors!r}, the floor is "
+            f"{tuple(_python_floor.MIN_PYTHON)!r}: the package entry would let a "
+            f"below-floor interpreter on, or turn a supported one away"
         )
 
     @pytest.mark.parametrize("version_output,expected", IDENTITY_CASES)
@@ -377,14 +396,19 @@ class TestFloorAtTheThreeDecisionSites:
             f"outside {{0, 2}}, and every blocking guard fails OPEN."
         )
         assert got == "python3", (
-            "the below-floor interpreter that DOES resolve is the right answer "
-            "here; guards keep working and only blueprints are lost"
+            "the below-floor interpreter that DOES resolve is still the ANSWER "
+            "(the read-only callers name it); no command writes it -- "
+            "TestADroppedPythonIsRefusedBeforeAnyWrite pins the refusal"
         )
         warning = capsys.readouterr().err
-        assert "3.10" in warning, f"the warning must name the floor: {warning!r}"
-        assert "blueprint" in warning.lower(), (
-            f"the warning must name what actually breaks, not just the "
-            f"version: {warning!r}"
+        # The 2026-11-07 ruling: the one sentence, naming the version found
+        # and the floor, and never the 2026-09-03 promise that it is wired.
+        assert "The harness does not run on Python 3.9.6 (python3 at " in warning, warning
+        assert (f"Update to Python {_python_floor.floor_text()} or newer to install "
+                f"and use it.") in warning, warning
+        assert "anyway" not in warning and "keep working" not in warning, (
+            f"the warning still promises a wired, working below-floor "
+            f"interpreter: {warning!r}"
         )
 
         self._stub(tmp_path, "python3", "Python 3.14.0")
@@ -748,7 +772,7 @@ class TestFloorAtTheThreeDecisionSites:
         issues = doctor_module._check_python_resolver(tmp_path, settings)
         joined = " ".join(issues)
         assert issues, "a below-floor interpreter was reported as healthy"
-        assert "3.10" in joined, f"the finding must name the floor: {joined!r}"
+        assert _python_floor.floor_text() in joined, f"the finding must name the floor: {joined!r}"
         assert "IS Python 3" in joined, (
             f"the finding must not claim it is not a Python 3 -- it is, and the "
             f"remedy differs: {joined!r}"
@@ -1870,12 +1894,23 @@ class TestABannerThatNeverAnswers:
         self._host(tmp_path, monkeypatch, mute, working=("python", "python3"),
                    modes={"python": "py39", "python3": "timeout"})
         target = TestAStartProbeThatNeverAnswers._adopter(tmp_path, monkeypatch)
+        # init refuses the 3.9 before writing (the 2026-11-07 ruling) and says
+        # the mute python3 may be the Python the floor needs.
+        capsys.readouterr()
+        assert cli.cmd_init(argparse.Namespace(repo=str(target), config=None)) == 1
+        refusal = capsys.readouterr().err
+        assert "does not run on Python 3.9" in refusal and "'python3'" in refusal, refusal
+        assert "before installing one" in refusal, refusal
+        assert not (target / ".claude").exists(), "init wrote a tree it refused"
+        # The rest is about a tree wired BEFORE the floor moved: modelled by
+        # letting the setup init past the refusal.
+        monkeypatch.setattr(cli, "_refuse_below_floor_wiring", lambda verb: None)
         assert cli.cmd_init(argparse.Namespace(repo=str(target), config=None)) == 0
         TestAStartProbeThatNeverAnswers._wire(target, "python")
         capsys.readouterr()
         assert cli._report_interpreter_rewire(target / ".claude" / "settings.json") == cli.REWIRE_NO_TARGET
         report = capsys.readouterr().err
-        assert "Install Python 3.10 or newer first" not in report and "before installing" in report, report
+        assert f"Install Python {_python_floor.floor_text()} or newer first" not in report and "before installing" in report, report
         result = doctor.run_doctor_check(target)
         assert not any("neither name answers as one now" in s for s in result["next_steps"]), (
             result["next_steps"])
@@ -1991,7 +2026,7 @@ class TestABannerThatNeverAnswers:
         assert "Install Python" not in report and "before installing" in report, report
 
     @pytest.mark.parametrize("mode, cannot_start, says", [
-        ("patient39", False, "older than"),
+        ("patient39", False, "does not run on Python 3.9"),
         ("patient", True, "cannot start"),
     ])
     def test_a_late_banner_is_still_read_for_the_floor_and_the_start(
@@ -2159,13 +2194,19 @@ class TestSessionStartWarnDistinguishesTheTwoFailures:
         # Python whether it is one (DEF-1024), so `py39` would go unasked.
         warn = self._drive(tmp_path, self._stub(tmp_path, "python39", "Python 3.9.6"))
         assert warn, "a wired 3.9 produced no warning at all"
-        assert "IS a Python 3" in warn and "3.10" in warn, warn
+        assert "IS a Python 3" in warn and _python_floor.floor_text() in warn, warn
         assert "does not resolve to a working Python 3" not in warn, (
             f"a working 3.9 was described as not being a Python 3: {warn}"
         )
-        assert "No active blueprint" in warn, (
-            f"the warning must name the symptom the operator actually sees: {warn}"
-        )
+        # The one sentence every surface says (the 2026-11-07 ruling), with the
+        # version the banner spelled, then the re-wire: never the 2026-09-03
+        # promise that the guards keep working on it. Built by the engine's own
+        # renderer for the same banner, never spelled here: the hook cannot
+        # import it and spells the words by hand, so a reworded engine
+        # sentence reds this row until the banner says it too.
+        assert _python_floor.does_not_run_sentence("Python 3.9.6") in warn, warn
+        assert "re-wire the hooks" in warn, warn
+        assert "keep working" not in warn, warn
 
     @pytest.mark.skipif(sys.platform == "win32", reason="sh stub is POSIX")
     def test_non_python_keeps_the_fail_open_words(self, tmp_path):
@@ -2438,3 +2479,280 @@ class TestTheTwinsAgreeOnAProbeThatNeverAnswers:
         assert asked == [[str(link)]], asked
         assert doctor._interpreter_is_python3(sys.executable) is True
         assert asked == [[str(link)]], "the running interpreter is read, never asked"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="sh stub is POSIX")
+class TestADroppedPythonIsRefusedBeforeAnyWrite:
+    """The operator's ruling of 2026-11-07, on the floor's move to 3.11: a
+    dropped Python is dropped, never run in a reduced mode. When the only
+    interpreter a command would wire is a Python 3 below the floor, every
+    command that writes the resolver's answer into a tree (``init``, its dry
+    run, ``upgrade``, ``merge-settings``, ``fuse``) refuses BEFORE it writes a
+    single file, says plainly that the harness does not run on the version it
+    found and to update to the floor or newer, and offers no fallback.
+
+    This replaces the 2026-09-03 decision (wire it and warn, "so the blocking
+    guards keep working"), which was right while a below-floor interpreter
+    could still run the hooks. Driven as a real subprocess, PATH holding only
+    the stub and git, with the conforming stub as the control
+    (``TestAPythonTwoHostIsToldTheTruth::test_the_same_stub_answering_as_a_conforming_python_prints_the_claim``).
+    """
+
+    VERBS = [
+        pytest.param(["init", "{target}"], id="init"),
+        pytest.param(["init", "{target}", "--dry-run"], id="init-dry-run"),
+        pytest.param(["upgrade", "{target}"], id="upgrade"),
+        pytest.param(["upgrade", "{target}", "--execute"], id="upgrade-execute"),
+        pytest.param(["merge-settings", "{target}"], id="merge-settings"),
+        pytest.param(["fuse", "{target}", "--out", "{out}"], id="fuse"),
+    ]
+
+    @staticmethod
+    def _tree(root: Path) -> set[str]:
+        return {p.relative_to(root).as_posix() for p in root.rglob("*")
+                if ".git" not in p.relative_to(root).parts}
+
+    @pytest.mark.parametrize("banner, found", [
+        ("Python 3.10.12", "3.10.12"),
+        ("Python 3.9.6", "3.9.6"),
+    ])
+    @pytest.mark.parametrize("argv", VERBS)
+    def test_a_below_floor_host_is_refused_before_any_write(self, tmp_path, argv, banner, found):
+        target, env = TestAPythonTwoHostIsToldTheTruth._host(tmp_path, banner)
+        out_dir = tmp_path / "fused"
+        before = self._tree(target)
+        words = [w.format(target=target, out=out_dir) for w in argv]
+        result = subprocess.run(
+            [sys.executable, "-m", "espalier.cli", *words],
+            capture_output=True, text=True, timeout=50, env=env, encoding="utf-8",
+        )
+        said = result.stdout + result.stderr
+        assert result.returncode == 1, said
+        stub = tmp_path / "bin" / "python"
+        assert (f"The harness does not run on Python {found} (python at {stub}). "
+                f"Update to Python {_python_floor.floor_text()} or newer to install "
+                f"and use it. Nothing was written.") in result.stderr, said
+        assert self._tree(target) == before, (
+            f"{words[0]} wrote into a tree it refused: "
+            f"{sorted(self._tree(target) - before)}")
+        assert not out_dir.exists(), f"fuse built a fusion it refused:\n{said}"
+        assert "anyway" not in said and "keep working" not in said, said
+
+    def test_the_gate_lets_a_floor_host_through_and_says_nothing(self, tmp_path, monkeypatch, capsys):
+        """CONTROL, in-process: the same stub answering as a conforming Python
+        is not refused and the gate prints nothing, so a refusal above cannot
+        come from the gate refusing everything."""
+        from espalier import cli
+
+        stub = write_stub(tmp_path / "python", "#!/bin/sh\necho 'Python 3.14.0'\n")
+        monkeypatch.setenv("PATH", str(stub.parent))
+        monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", False, raising=False)
+        capsys.readouterr()
+        assert cli._refuse_below_floor_wiring("init") is None
+        assert "does not run on Python" not in capsys.readouterr().err
+
+    def test_a_below_floor_launcher_behind_two_store_aliases_is_refused(self, tmp_path):
+        """The resolver's third spelling (the Wave 1 failure-mode review,
+        driven on real 3.10): both bare names are Store aliases and `py -3`
+        answers a Python below the floor. Recorded by the bare-name loop only,
+        it fell through to the literal `python`, which init wired into every
+        hook site at rc 0 -- every guard failing open -- while the engine
+        before the floor moved had wired `py -3`."""
+        import shutil as _shutil
+
+        stubs = tmp_path / "bin"
+        stubs.mkdir()
+        alias = ("#!/bin/sh\necho 'Python was not found; run without arguments "
+                 "to install from the Microsoft Store' >&2\nexit 49\n")
+        write_stub(stubs / "python", alias)
+        write_stub(stubs / "python3", alias)
+        launcher = write_stub(stubs / "py", "#!/bin/sh\necho 'Python 3.10.12'\n")
+        git = _shutil.which("git")
+        assert git, "git is needed to drive init"
+        (stubs / "git").symlink_to(git)
+        target = tmp_path / "adopter"
+        target.mkdir()
+        (target / "README.md").write_text("# adopter\n", encoding="utf-8")
+        subprocess.check_call(["git", "init", "--quiet"], cwd=str(target))
+        env = dict(os.environ)
+        env["PATH"] = str(stubs)
+        before = self._tree(target)
+        result = subprocess.run(
+            [sys.executable, "-m", "espalier.cli", "init", str(target)],
+            capture_output=True, text=True, timeout=50, env=env, encoding="utf-8",
+        )
+        said = result.stdout + result.stderr
+        assert result.returncode == 1, said
+        assert (f"The harness does not run on Python 3.10.12 (py -3 at {launcher}). "
+                f"Update to Python {_python_floor.floor_text()} or newer to install "
+                f"and use it. Nothing was written.") in result.stderr, said
+        assert self._tree(target) == before, (
+            f"init wrote into a tree it refused: {sorted(self._tree(target) - before)}")
+
+
+class TestTheEngineSaysTheFloorFirst:
+    """`espalier/__init__.py`'s floor sentence (air's ruling on request
+    79c59b, 2026-11-07): every entry imports the package before
+    `espalier.cli`, so the check there is what a host below the floor reads,
+    never a traceback from a module that needs a newer interpreter."""
+
+    #: What may stand above the check: the docstring, the `__future__`
+    #: import, `import sys` (the check reads it) and the `_FLOOR` literal.
+    @staticmethod
+    def _allowed_above_the_check(node: ast.stmt, index: int) -> bool:
+        if index == 0 and isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+            return isinstance(node.value.value, str)
+        if isinstance(node, ast.ImportFrom):
+            return node.module == "__future__"
+        if isinstance(node, ast.Import):
+            return [alias.name for alias in node.names] == ["sys"]
+        if isinstance(node, ast.Assign):
+            return ([getattr(t, "id", None) for t in node.targets] == ["_FLOOR"]
+                    and isinstance(node.value, ast.Tuple))
+        return False
+
+    def test_the_check_is_the_first_statement_that_does_anything(self):
+        """Ruff reads syntax only: an import placed above the check (one that
+        pulls a module needing the floor) parses on 3.9 and still kills the
+        sentence with a traceback. So the order is read here, with ast."""
+        tree = ast.parse((REPO_ROOT / "espalier" / "__init__.py").read_text(encoding="utf-8"))
+        checks = [i for i, node in enumerate(tree.body)
+                  if isinstance(node, ast.If) and "sys.version_info" in ast.unparse(node.test)]
+        assert checks, "espalier/__init__.py has no `sys.version_info` check"
+        above = tree.body[:checks[0]]
+        strays = [ast.unparse(node) for i, node in enumerate(above)
+                  if not self._allowed_above_the_check(node, i)]
+        assert not strays, (
+            f"espalier/__init__.py runs {strays!r} before its floor check: on a "
+            f"host below the floor that line runs first and can raise instead "
+            f"of the sentence"
+        )
+
+    def test_a_below_floor_version_reads_the_sentence_and_exits_1(self):
+        """Every CI cell runs this (a real 3.10 row would only skip there): the
+        version is stubbed before the package is imported from this checkout.
+        The control is the same command unstubbed, which imports cleanly."""
+        floor = _python_floor.floor_text()
+        stubbed = subprocess.run(
+            [sys.executable, "-c",
+             "import sys; sys.version_info = (3, 10, 21, 'final', 0); import espalier"],
+            cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=50, encoding="utf-8",
+        )
+        assert stubbed.returncode == 1, (stubbed.returncode, stubbed.stdout, stubbed.stderr)
+        assert (f"espalier-harness does not run on Python 3.10.21. Update to Python "
+                f"{floor} or newer to install and use it.") in stubbed.stderr, stubbed.stderr
+        assert "Traceback" not in stubbed.stderr, stubbed.stderr
+        control = subprocess.run(
+            [sys.executable, "-c", "import espalier"],
+            cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=50, encoding="utf-8",
+        )
+        assert control.returncode == 0, (control.stdout, control.stderr)
+
+    @staticmethod
+    def _import_as(version: "tuple[int, int, int]") -> subprocess.CompletedProcess:
+        stub = f"({version[0]}, {version[1]}, {version[2]}, 'final', 0)"
+        return subprocess.run(
+            [sys.executable, "-c", f"import sys; sys.version_info = {stub}; import espalier"],
+            cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=50, encoding="utf-8",
+        )
+
+    def test_the_boundary_is_the_floor_itself(self):
+        """Derived from `MIN_PYTHON`, never spelled, so the next floor move
+        keeps testing its own boundary: exactly the floor imports, the minor
+        below it refuses. A `<=` written for `<` reds here on any interpreter,
+        not only on the floor's own CI cell."""
+        major, minor = _python_floor.MIN_PYTHON
+        at_floor = self._import_as((major, minor, 0))
+        assert at_floor.returncode == 0, (
+            f"Python {major}.{minor}.0 is the floor and was refused: {at_floor.stderr}")
+        below = self._import_as((major, minor - 1, 0))
+        assert below.returncode == 1, (below.returncode, below.stderr)
+        assert (f"espalier-harness does not run on Python {major}.{minor - 1}.0. Update to "
+                f"Python {_python_floor.floor_text()} or newer") in below.stderr, below.stderr
+
+    def test_the_check_names_nothing_but_sys_and_the_floor(self):
+        """The order row reads what stands ABOVE the check; this reads the
+        check itself. A refactor that renders the sentence through
+        `_python_floor.does_not_run_sentence` would sit below every import
+        rule and still import a module that must parse on the old
+        interpreter. So the `if` may name `sys`, `_FLOOR`, `SystemExit` and
+        builtins, and reach attributes only through `sys`."""
+        import builtins
+
+        tree = ast.parse((REPO_ROOT / "espalier" / "__init__.py").read_text(encoding="utf-8"))
+        check = next(node for node in tree.body
+                     if isinstance(node, ast.If) and "sys.version_info" in ast.unparse(node.test))
+        allowed = {"sys", "_FLOOR", "SystemExit"} | set(dir(builtins))
+        strays = sorted({node.id for node in ast.walk(check)
+                         if isinstance(node, ast.Name) and node.id not in allowed})
+        assert not strays, (
+            f"espalier/__init__.py's floor check names {strays}: on a host below "
+            f"the floor anything it reaches beyond sys and the literal can raise "
+            f"before the sentence"
+        )
+
+
+class TestTheRetiredWiringPromiseIsGone:
+    """The 2026-09-03 decision wired a below-floor interpreter "so the blocking
+    guards keep working"; the 2026-11-07 ruling dropped it (a dropped Python is
+    refused before any write). The promise was repeated in six surfaces and
+    the pack's hand list named five (the Wave 1 failure-mode review found the
+    sixth in `init --help`), so the retired phrases are read across the live
+    code and docs here rather than remembered. Record surfaces are left out
+    (`tests/test_doc_source_citations.py::_RECORD_SURFACE_DOCS`)."""
+
+    RETIRED = (
+        "wiring it anyway",
+        "guards keep working",
+        "guards working while",
+        "keep the blocking guards working",
+        "leaves the blocking guards working",
+    )
+    #: path -> why that file may still carry one. Every live promise was
+    #: reworded in the Wave 1 lane; what is left quotes the old output as a
+    #: record.
+    ALLOWED: dict[str, str] = {
+        "docs/FAILURE_MODES.md": (
+            "the 'two classifiers of one string' entry quotes, in the past "
+            "tense, what `init` printed about one interpreter in the DEF-727 "
+            "incident: a record of the old output, not a present promise"
+        ),
+    }
+
+    @staticmethod
+    def _surfaces() -> list[Path]:
+        from tests._live_tree import checkout_glob, checkout_rglob
+        from tests.test_doc_source_citations import _RECORD_SURFACE_DOCS
+
+        files = [p for p in checkout_rglob(REPO_ROOT / "espalier", "*.py")
+                 if not {"_vendor", "assets"} & set(p.relative_to(REPO_ROOT / "espalier").parts)]
+        files += sorted(checkout_glob(REPO_ROOT / "tools" / "cc" / "hooks", "*.py"))
+        files += [REPO_ROOT / "README.md"]
+        files += [p for p in sorted(checkout_glob(REPO_ROOT / "docs", "*.md"))
+                  if p.relative_to(REPO_ROOT).as_posix() not in _RECORD_SURFACE_DOCS]
+        return files
+
+    @staticmethod
+    def _flattened(text: str) -> str:
+        # A phrase wrapped across comment or prose lines still reads as one.
+        return re.sub(r"\s*\n\s*(?:#+|//)?\s*", " ", text).lower()
+
+    def hits(self, files: list[Path]) -> list[str]:
+        found = []
+        for path in files:
+            text = self._flattened(path.read_text(encoding="utf-8"))
+            rel = path.relative_to(REPO_ROOT).as_posix()
+            found += [f"{rel}: {phrase!r}" for phrase in self.RETIRED
+                      if phrase in text and rel not in self.ALLOWED]
+        return found
+
+    def test_no_live_surface_promises_working_guards_below_the_floor(self):
+        files = self._surfaces()
+        assert len(files) > 50, f"the census read too little to mean anything: {len(files)} files"
+        found = self.hits(files)
+        assert not found, (
+            "a live surface still says a below-floor interpreter is wired so the "
+            "guards keep working; the 2026-11-07 ruling refuses it before any "
+            "write (say espalier/_python_floor.py::does_not_run_sentence's words, "
+            "or add the file to ALLOWED with the reason):\n  " + "\n  ".join(found)
+        )

@@ -2486,14 +2486,51 @@ def _notes_key(job_id: int) -> tuple[str, ...]:
     return ("gh", "api", f"repos/{{owner}}/{{repo}}/check-runs/{job_id}/annotations")
 
 
+def _log_key(job_id: int) -> tuple[str, ...]:
+    return ("gh", "api", "--allow-escape-sequences", f"repos/{{owner}}/{{repo}}/actions/jobs/{job_id}/logs")
+
+
+#: One step's lines in a job log, as the runner writes them: the `Run` group
+#: header, the script it echoes in colour (every real log holds these escape
+#: codes), the step's output, then the runner's own line for a non-zero exit.
+def _step_lines(*body: str, exit_code: int | None = 3,
+                cmd: str = 'python scripts/proof_tier.py --run --tier "$TIER" --leg parallel') -> list[str]:
+    tail = [] if exit_code is None else [f"##[error]Process completed with exit code {exit_code}."]
+    return [f"##[group]Run {cmd}", f"\x1b[36;1m{cmd}\x1b[0m", "shell: /usr/bin/bash -e {0}", "##[endgroup]",
+            *body, *tail]
+
+
+def _log(*steps: list[str]) -> tuple[int, str, str]:
+    """A job log as the jobs API serves it: each line a timestamp, a space,
+    then the text; the runner's set-up lines first and its clean-up after."""
+    lines = ["Current runner version: '2.329.0'", *(line for step in steps for line in step),
+             "Post job cleanup.", "Cleaning up orphan processes"]
+    return (0, "".join(f"2026-11-03T08:15:{i % 60:02d}.0000000Z {t}\n" for i, t in enumerate(lines)), "")
+
+
+#: The pytest lines of #464's `test (3.11)` (job 125797900989, 2026-11-03,
+#: an AWS-hosted runner), cut to the ones the read keys on: an xdist worker's
+#: internal error carrying the quota errno, then the controller's summary.
+QUOTA = "INTERNALERROR> E             OSError: [Errno 122] Disk quota exceeded"
+NO_SPACE = "INTERNALERROR> OSError: [Errno 28] No space left on device"
+DISK_FULL_BODY = ("......FINTERNALERROR> Traceback (most recent call last):", QUOTA,
+                  "INTERNALERROR> AssertionError: ('tests/test_init_worktree_include.py::TestTheWrite', <WorkerController gw1>)",
+                  "578 failed, 9446 passed, 35 skipped, 2 xfailed, 6 warnings, 54 errors in 684.96s (0:11:24)",
+                  "proof: FAIL (worst exit 3) -- 3 of 3 command(s) ran")
+TEST_RED_LOG = _log(_step_lines(
+    "FAILED tests/test_x.py::TestY::test_z - AssertionError: assert 1 == 2",
+    "1 failed, 27080 passed in 640.12s (0:10:40)", exit_code=1))
+
+
 def _rerun_answers(root, checks: list[dict], runs: dict[str, tuple] | None = None,
                    notes: dict[int, tuple] | None = None, rerun=(0, "", ""), base=None,
-                   pr: dict | None = None) -> dict:
+                   pr: dict | None = None, logs: dict[int, tuple] | None = None) -> dict:
     """What `rerun` and `status` read: the required checks (gh exits 1 on a
-    red), one `gh run view` per run a red cell links to, and the annotations
-    of a job only when its steps leave the question open. A read the table
-    does not plan is an unplanned spawn, so a row that leaves a job's notes
-    out also pins that they were never fetched."""
+    red), one `gh run view` per run a red cell links to, the annotations of a
+    job only when its steps leave the question open, and the log of a job
+    whose step failed. A read the table does not plan is an unplanned spawn,
+    so a row that leaves a job's notes or log out also pins that they were
+    never fetched."""
     answers = base if base is not None else _reads(root)
     answers.update({
         _list_key("lane/x", "open"): _rows(pr or _pr()),
@@ -2504,6 +2541,8 @@ def _rerun_answers(root, checks: list[dict], runs: dict[str, tuple] | None = Non
         answers[("gh", "run", "view", run_id)] = view
     for job_id, answer in (notes or {}).items():
         answers[_notes_key(job_id)] = answer
+    for job_id, answer in (logs or {}).items():
+        answers[_log_key(job_id)] = answer
     return answers
 
 
@@ -2571,19 +2610,24 @@ class TestRerun:
         assert spawns.mutations == []
 
     def test_a_failed_step_is_decided_and_its_notes_are_never_read(self, ship, tmp_path):
+        # Its log is read (the one runner shape a failed step can hide is in
+        # the log alone), and a test red there decides.
         spawns = _arm(ship, _rerun_answers(
             tmp_path,
             [_check("test (3.11)", "fail", 11)],
-            {RUN_ID: _run_view(_job(11, "test (3.11)", "failure", ("success", "failure")))}))
+            {RUN_ID: _run_view(_job(11, "test (3.11)", "failure", ("success", "failure")))},
+            logs={11: TEST_RED_LOG}))
         with pytest.raises(ship.Refused, match=r"a required red its tests decided: test \(3\.11\)"):
             ship.rerun()
+        assert spawns.count(_log_key(11)) == 1
         assert spawns.mutations == []
 
     def test_a_failed_step_then_a_cancelled_cleanup_step_is_decided(self, ship, tmp_path):
         # The `"failure" not in steps` guard: an `if: always()` step cancelled
         # after a real failure, with the generic cancel note, is a verdict.
         spawns = _arm(ship, _one_lost_cell(tmp_path, view=_run_view(
-            _job(11, "test (3.11)", "failure", ("success", "failure", "cancelled")))))
+            _job(11, "test (3.11)", "failure", ("success", "failure", "cancelled"))),
+            logs={11: TEST_RED_LOG}))
         with pytest.raises(ship.Refused, match=r"a required red its tests decided: test \(3\.11\)"):
             ship.rerun()
         assert spawns.mutations == []
@@ -2648,7 +2692,8 @@ class TestRerun:
         # `--failed` re-runs every failed job in the run: a lint red that is not
         # required would be retried too, and a flaky one would come back green.
         spawns = _arm(ship, _one_lost_cell(tmp_path, view=_run_view(
-            _lost_mid_step(), _job(14, "lint", "failure", ("success", "failure")))))
+            _lost_mid_step(), _job(14, "lint", "failure", ("success", "failure"))),
+            logs={14: TEST_RED_LOG}))
         with pytest.raises(ship.Refused, match=r"also holds lint \(a step failed\)") as exc:
             ship.rerun()
         assert f"gh run rerun {RUN_ID} --job 11" in str(exc.value)
@@ -2660,7 +2705,7 @@ class TestRerun:
             [_check("test (3.11)", "fail", 11), _check("verify", "fail", 31, run_id=OTHER_RUN)],
             {RUN_ID: _run_view(_lost_mid_step()),
              OTHER_RUN: _run_view(_job(31, "verify", "failure", ("failure",)))},
-            {11: _notes(LOST_MID_STEP)}))
+            {11: _notes(LOST_MID_STEP)}, logs={31: TEST_RED_LOG}))
         with pytest.raises(ship.Refused, match="a required red its tests decided: verify") as exc:
             ship.rerun()
         assert "a rebind does not" in str(exc.value)
@@ -2738,7 +2783,7 @@ class TestStatusNamesTheCellsALostRunnerEnded:
             {RUN_ID: _run_view(_lost_mid_step()),
              OTHER_RUN: _run_view(_job(31, "verify", "failure", ("failure",)))},
             {11: _notes(LOST_MID_STEP)},
-            base=_status_answers(tmp_path)))
+            base=_status_answers(tmp_path), logs={31: TEST_RED_LOG}))
         assert ship.status() == 0
         out = capsys.readouterr().out
         assert "required red: verify -- fix, push, rebind" in out
@@ -2752,6 +2797,164 @@ class TestStatusNamesTheCellsALostRunnerEnded:
         out = capsys.readouterr().out
         assert "required red, cause not read: test (3.11)" in out
         assert "fix, push, rebind" not in out
+
+
+#: The steps of a suite job whose tier step failed: set-up, checkout, the
+#: tier, clean-up (a continue-on-error step the job ignores reads `success`).
+DISK_FULL_STEPS = ("success", "success", "failure", "success")
+
+
+def _disk_full_cell(tmp_path, *, log=None, steps=DISK_FULL_STEPS, view=None, **kw) -> dict:
+    """#464's shape: one required cell whose tier step failed because the
+    runner's disk filled, its log planned for the read."""
+    return _rerun_answers(
+        tmp_path, [_check("test (3.11)", "fail", 11), _check("test (3.12)", "pass", 12)],
+        {RUN_ID: view or _run_view(_job(11, "test (3.11)", "failure", steps), _job(12, "test (3.12)", "success"))},
+        logs={11: log or _log(_step_lines(*DISK_FULL_BODY))}, **kw)
+
+
+class TestAFullRunnerDiskIsTheRunnersRed:
+    """A required cell whose step failed because the runner's disk filled
+    (#464's three cells and #470's one, 2026-11-03, each on GitHub's
+    AWS-hosted pool) is the runner's red, read from the job's log: `status`
+    names it with `rerun`, and `rerun` re-runs it once. A failed step whose
+    log does not carry that shape is its tests' verdict; one whose log cannot
+    be read is a red whose cause was not read, never a verdict."""
+
+    @pytest.mark.parametrize("line, words", [
+        (QUOTA, "[Errno 122] Disk quota exceeded"),
+        (NO_SPACE, "[Errno 28] No space left on device"),
+    ], ids=["quota", "no-space"])
+    def test_status_names_it_with_the_verb_that_re_runs_it(self, ship, tmp_path, capsys, line, words):
+        spawns = _arm(ship, _disk_full_cell(
+            tmp_path, log=_log(_step_lines("....F", line, "12 failed, 30 passed in 9.00s")),
+            base=_status_answers(tmp_path)))
+        assert ship.status() == 0
+        out = capsys.readouterr().out
+        assert (f"required, runner lost: test (3.11) (the disk filled: {words}) -- "
+                f"`ship.py rerun` re-runs run {RUN_ID} once") in out
+        assert "fix, push, rebind" not in out
+        assert spawns.count(_notes_key(11)) == 0
+        assert spawns.mutations == []
+
+    def test_rerun_re_runs_it_once(self, ship, tmp_path, capsys):
+        spawns = _arm(ship, _disk_full_cell(tmp_path))
+        assert ship.rerun() == 0
+        assert spawns.matching(("gh", "run", "rerun")) == [["gh", "run", "rerun", RUN_ID, "--failed"]]
+        assert (f"re-ran run {RUN_ID} once: test (3.11) (the disk filled: "
+                "[Errno 122] Disk quota exceeded)") in capsys.readouterr().out
+        # Spelled out, not through _log_key: gh from 2.97.0 refuses a body
+        # holding an escape sequence without the flag, and every job log holds
+        # the runner's colour codes, so a read without it answers nothing.
+        assert ["gh", "api", "--allow-escape-sequences",
+                "repos/{owner}/{repo}/actions/jobs/11/logs"] in spawns.calls
+
+    def test_a_finished_cell_is_read_while_its_run_still_goes(self, ship, tmp_path, capsys):
+        # The jobs API serves a finished job's log mid-run (measured 2026-11-01
+        # on run 41338895031), when `status` is most often read: a test red
+        # there is decided at once, and a full disk waits for the run to end.
+        _arm(ship, _disk_full_cell(tmp_path, log=TEST_RED_LOG, view=_run_view(
+            _job(11, "test (3.11)", "failure", DISK_FULL_STEPS), status="in_progress"),
+            base=_status_answers(tmp_path)))
+        assert ship.status() == 0
+        assert "required red: test (3.11) -- fix, push, rebind" in capsys.readouterr().out
+        _arm(ship, _disk_full_cell(tmp_path, view=_run_view(
+            _job(11, "test (3.11)", "failure", DISK_FULL_STEPS), status="in_progress"),
+            base=_status_answers(tmp_path)))
+        assert ship.status() == 0
+        out = capsys.readouterr().out
+        assert f"run {RUN_ID} is still running; run rerun once it finishes" in out
+        assert "fix, push, rebind" not in out
+
+    def test_the_errno_far_above_the_runners_exit_line_is_still_read(self, ship, tmp_path):
+        # portability (ubuntu-latest), job 125797834705: the step's first
+        # pytest run died of the quota at line 608, a second run printed its
+        # own failures, and the runner's exit line came at 2580.
+        second_run = [f"E       OSError: [Errno 122] Disk quota exceeded ({i})" for i in range(2000)]
+        spawns = _arm(ship, _disk_full_cell(tmp_path, log=_log(_step_lines(
+            *DISK_FULL_BODY, *second_run, "45 failed, 2190 passed, 51 skipped in 312.40s (0:05:12)"))))
+        assert ship.rerun() == 0
+        assert spawns.count(("gh", "run", "rerun")) == 1
+
+    def test_a_failed_step_the_job_ignores_beside_it_holds_nothing(self, ship, tmp_path):
+        # test.yml's disk-reading steps carry continue-on-error: one that exits
+        # non-zero writes the runner's exit line, but the job API calls the
+        # step a success, so it is not a failed step to account for.
+        spawns = _arm(ship, _disk_full_cell(tmp_path, log=_log(
+            _step_lines("findmnt: cannot read the mount table", exit_code=1, cmd='echo "image: $ImageOS"'),
+            _step_lines(*DISK_FULL_BODY))))
+        assert ship.rerun() == 0
+        assert spawns.count(("gh", "run", "rerun")) == 1
+
+    def test_a_disk_full_cell_already_re_run_is_named_as_yours(self, ship, tmp_path, capsys):
+        _arm(ship, _disk_full_cell(tmp_path, view=_run_view(
+            _job(11, "test (3.11)", "failure", DISK_FULL_STEPS), attempt=2), base=_status_answers(tmp_path)))
+        assert ship.status() == 0
+        out = capsys.readouterr().out
+        assert ("required, runner lost: test (3.11) (the disk filled: "
+                "[Errno 122] Disk quota exceeded): ") in out
+        assert "already re-run (attempt 2)" in out
+        assert "fix, push, rebind" not in out
+
+    @pytest.mark.parametrize("log, steps", [
+        (_log(_step_lines(*DISK_FULL_BODY[:-1], "proof: FAIL (worst exit 1)", exit_code=1)), DISK_FULL_STEPS),
+        (_log(_step_lines("INTERNALERROR> KeyError: 'gw1'", "proof: FAIL (worst exit 3)")), DISK_FULL_STEPS),
+        (_log(_step_lines("E       OSError: [Errno 122] Disk quota exceeded", "1 failed in 3.00s")),
+         DISK_FULL_STEPS),
+        (_log(_step_lines(QUOTA, exit_code=None, cmd="python -m pytest tests/test_a.py"),
+              _step_lines("INTERNALERROR> KeyError: 'gw1'")), DISK_FULL_STEPS),
+        (_log(_step_lines(*DISK_FULL_BODY), _step_lines("Found 1 error.", exit_code=1, cmd="ruff check .")),
+         ("success", "failure", "failure")),
+        (_log(_step_lines(*DISK_FULL_BODY)), ("success", "failure", "failure")),
+        (_log(_step_lines("E         - INTERNALERROR> OSError: [Errno 28] No space left on device",
+                          "E         - ##[error]Process completed with exit code 3.",
+                          "1 failed, 27080 passed in 640.12s (0:10:40)", exit_code=1)), DISK_FULL_STEPS),
+        (_log([QUOTA, "##[error]Process completed with exit code 3."]), DISK_FULL_STEPS),
+        (_log(_step_lines(QUOTA, exit_code=1), [QUOTA, "##[error]Process completed with exit code 3."]),
+         DISK_FULL_STEPS),
+    ], ids=["the-errno-but-exit-1", "an-internal-error-of-another-kind", "the-errno-outside-an-internal-error",
+            "the-errno-in-a-step-that-passed", "a-second-failed-step-of-another-kind",
+            "a-second-failed-step-the-log-does-not-account-for", "a-test-diff-that-echoes-a-log",
+            "an-exit-line-with-no-step-header", "no-header-between-it-and-the-exit-line-above"])
+    def test_a_look_alike_is_its_tests_verdict(self, ship, tmp_path, capsys, log, steps):
+        _arm(ship, _disk_full_cell(tmp_path, log=log, steps=steps, base=_status_answers(tmp_path)))
+        assert ship.status() == 0
+        out = capsys.readouterr().out
+        assert "required red: test (3.11) -- fix, push, rebind" in out
+        assert "runner lost" not in out
+
+    @pytest.mark.parametrize("answer, why", [
+        ((1, "", "HTTP 404: Not Found\n"), "HTTP 404: Not Found"),
+        ((0, "", ""), "gh exited 0 with no log"),
+        ((1, "", "unknown flag: --allow-escape-sequences\n\nUsage:  gh api <endpoint> [flags]\n"),
+         "gh older than 2.97.0 cannot read a job's log: update gh"),
+    ], ids=["gh-refused", "empty", "a-gh-older-than-the-flag"])
+    def test_a_log_that_cannot_be_read_is_a_red_whose_cause_was_not_read(self, ship, tmp_path, capsys, answer, why):
+        # gh's own reason rides the line, so a gh too old to read job logs is
+        # told apart from a blip and says what to do.
+        _arm(ship, _disk_full_cell(tmp_path, log=answer, base=_status_answers(tmp_path)))
+        assert ship.status() == 0
+        out = capsys.readouterr().out
+        assert (f"required red, cause not read: test (3.11) (a step failed and its log could not be read "
+                f"[{why}]: gh run view {RUN_ID} --job 11 --log)") in out
+        assert "fix, push, rebind" not in out
+
+    def test_rerun_refuses_a_cell_whose_log_cannot_be_read(self, ship, tmp_path):
+        spawns = _arm(ship, _disk_full_cell(tmp_path, log=(1, "", "HTTP 502")))
+        with pytest.raises(ship.Refused, match="a required red whose cause was not read"):
+            ship.rerun()
+        assert spawns.mutations == []
+
+    def test_a_log_read_that_outlives_its_wait_is_not_read_never_a_crash(self, ship, monkeypatch):
+        def outlived(*args, **kw):
+            raise ship.Refused("gh api took longer than 60s")
+        monkeypatch.setattr(ship, "_gh", outlived)
+        job = _job(11, "test (3.11)", "failure", DISK_FULL_STEPS)
+        assert ship._classify(job, ".") == (
+            "unread", "a step failed and its log could not be read [gh api took longer than 60s]")
+        # The notes' read, its sibling, follows the same rule.
+        lost = _job(11, "test (3.11)", "failure", ("success", "cancelled"))
+        assert ship._classify(lost, ".") == ("unread", "its notes could not be read")
 
 
 # ── release ──────────────────────────────────────────────────────────────────

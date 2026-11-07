@@ -14,8 +14,8 @@ The three spellings that never report, all of which have shipped here:
    ``espalier/cli.py`` and ``docs/INSTALL-CI.md``;
 2. the workflow FILE slug (``harness-guard``) -- the surviving instance this
    contract was written against, in the pre-launch branch-protection step;
-3. a MATRIX job's bare id (``test``) -- ``test.yml``'s ``test`` job is a 5-cell
-   ``python-version`` matrix, so its check runs are ``test (3.10)`` … ``test
+3. a MATRIX job's bare id (``test``) -- ``test.yml``'s ``test`` job is a 4-cell
+   ``python-version`` matrix, so its check runs are ``test (3.11)`` … ``test
    (3.14)``. The bare name looks correct, resolves to a real job id, and still
    never reports. This is the spelling a job-id-membership check would miss,
    which is why the resolver below models matrices and job-level ``name:``
@@ -112,7 +112,10 @@ _FENCE = re.compile(r"^\s*```")
 #
 # Re-measured 2026-09-30 by the reproducer below, after the release checklist gained
 # the five `test-serial` cells: 15 (was 10).
-_FLOOR = 15
+#
+# Re-measured 2026-11-07 by the same reproducer, after the floor moved to 3.11 and
+# the checklist dropped `test (3.10)` and `test-serial (3.10)`: 13 (was 15).
+_FLOOR = 13
 
 # The surfaces that instruct TODAY. A hand-written list is correct *here* and nowhere
 # else in this file: this is a must-not-go-silent WITNESS, not a population. The floor
@@ -795,7 +798,7 @@ class TestTheTierGateCannotParkThePullRequest:
         assert "--leg serial" in runs["test-serial"] and "--leg parallel" not in runs["test-serial"]
         assert "--heavy" not in runs["test"] and "--heavy" not in runs["test-serial"]
         assert jobs["test"]["strategy"]["matrix"] == jobs["test-serial"]["strategy"]["matrix"]
-        assert jobs["test"]["strategy"]["matrix"]["python-version"] == ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        assert jobs["test"]["strategy"]["matrix"]["python-version"] == ["3.11", "3.12", "3.13", "3.14"]
 
     def test_no_required_cell_can_turn_a_red_tier_green(self):
         """The disk reads beside the parallel leg carry continue-on-error so they
@@ -860,7 +863,7 @@ class TestTheTierGateCannotParkThePullRequest:
         job = clean["jobs"]["clean-checkout"]
         assert "clean-tier" in str(job["if"]) and job["needs"] == "clean-tier"
         assert "tier" in clean["jobs"]["clean-tier"]["outputs"]
-        assert job["strategy"]["matrix"]["python-version"] == ["3.10"], "the floor interpreter, one cell"
+        assert job["strategy"]["matrix"]["python-version"] == ["3.11"], "the floor interpreter, one cell"
         run = next(s["run"] for s in job["steps"] if "proof_tier.py --run" in (s.get("run") or ""))
         assert "--heavy" in run, "the heavy stages' one CI home"
 

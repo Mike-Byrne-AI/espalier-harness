@@ -110,7 +110,7 @@ replaces the default `-rfE` and hides the failed names from the summary).
 
 ```bash
 # 0. The gate: HEAD in a fresh clone, the floor interpreter and this one (exit 70 = the gate refused)
-python scripts/fresh_clone_gate.py --python 3.10 --python "$(command -v python3)"
+python scripts/fresh_clone_gate.py --python 3.11 --python "$(command -v python3)"
 ```
 
 ```bash
@@ -205,7 +205,7 @@ git stash               # if any in-progress work
 rm -rf dist/ build/
 
 # 1b. The gate: the full tier in a fresh clone of HEAD, per interpreter (Tier 3 step 0)
-python scripts/fresh_clone_gate.py --python 3.10 --python "$(command -v python3)"
+python scripts/fresh_clone_gate.py --python 3.11 --python "$(command -v python3)"
 
 # 2. Run the full ladder (no opt-in exports: the matrix strips them from every child that would act on them)
 python scripts/final_release_matrix.py
@@ -428,15 +428,16 @@ Settings → Environments → New environment → `pypi`. Configure:
 ### Action SHA pin
 
 `.github/workflows/publish.yml` pins the publish action to a 40-char commit
-SHA rather than a floating tag:
-`pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33` (v1.14.2).
+SHA rather than a floating tag: its `pypa/gh-action-pypi-publish@<sha>` line,
+with the release named in the `# vX.Y.Z` comment beside it (read the pin
+there; a copy here would age with every bump).
 `tests/test_publish_workflow.py::TestUsesAreSHAPinned`
 enforces that the `uses:` ref is a 40-char SHA, so a regression to a floating
 tag fails CI. To re-pin to a newer action release, resolve its tag to a SHA and
 substitute it:
 
 ```bash
-gh api repos/pypa/gh-action-pypi-publish/commits/v1.14.2 --jq '.sha'
+gh api repos/pypa/gh-action-pypi-publish/commits/v1.x.y --jq '.sha'
 # Substitute the printed SHA into publish.yml (and update the tag comment
 # beside it, plus every narrative "is SHA-pinned below to vX" sentence in
 # that file: tests/test_publish_workflow.py::TestUsesAreSHAPinned binds each
@@ -700,9 +701,9 @@ Sequence (each step verifies the previous):
      pull request that conflicts with `main` is still merged locally by
      `/ship`'s catch-up verb, record files resolved by shape.
    - Required status checks: `verify`, `benchmark`, `freshness`,
-     `test (3.10)`, `test (3.11)`, `test (3.12)`, `test (3.13)`,
-     `test (3.14)`, `test-serial (3.10)`, `test-serial (3.11)`,
-     `test-serial (3.12)`, `test-serial (3.13)`, `test-serial (3.14)`.
+     `test (3.11)`, `test (3.12)`, `test (3.13)`, `test (3.14)`,
+     `test-serial (3.11)`, `test-serial (3.12)`, `test-serial (3.13)`,
+     `test-serial (3.14)`.
      **(after step 5)**
    - Those are **check-run** names, which GitHub derives from **jobs** — not
      from the workflow, not from its filename, and not from a matrix job's bare
@@ -834,7 +835,7 @@ Sequence (each step verifies the previous):
    `add -A`, a force-add of whatever the archive's own `.gitignore` withholds,
    one commit, and a tracked-equals-on-disk check), so the matrix sees what
    this manual run sees. Keep this run: it is the second witness, and an
-   unfixed red here is a red `test (3.10)` required check on the public repo's
+   unfixed red here is a red `test (3.11)` required check on the public repo's
    first push. The porcelain line after it is the matrix's tracked-equals-on-disk
    check in prose. ⚠ *Verify at M3:* if the suite legitimately writes runtime
    files on the seeded tree, this line must name the expected droppings instead

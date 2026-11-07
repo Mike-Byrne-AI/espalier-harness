@@ -4,10 +4,11 @@
 > `python`, so the `python ...` commands below fail with `command not found`
 > unless you substitute `python3`. (`espalier init` pins the detected
 > interpreter in `.claude/settings.json`, so the hooks themselves are
-> unaffected either way.) Stock macOS `python3` is 3.9, BELOW the 3.10 Espalier
-> needs: init wires it so the blocking guards keep working, but blueprints and
-> Gate 4 stay dead until you install 3.10+ and run
-> `espalier init . --rewire-interpreter`.
+> unaffected either way.) Stock macOS `python3` is 3.9, BELOW the 3.11 Espalier
+> needs: `init` refuses before it writes any file, saying the harness does not
+> run on Python 3.9 and to update to Python 3.11 or newer to install and use
+> it. `doctor` and the SessionStart banner say the same of a tree already wired
+> to one; after updating, run `espalier init . --rewire-interpreter`.
 
 ## Harness Lifecycle
 ```
@@ -137,7 +138,7 @@ espalier merge-settings <repo>    # wire hooks into an existing .claude/settings
 espalier merge-settings <repo> --add-allows   # also append the profile's allow rules your file lacks (append-only; reported without the flag)
 espalier merge-settings <repo> --repair       # also rewrite espalier's OWN hook entries doctor finds dead (no interpreter, missing from its event, wrong event, narrowed matcher, shell form); entries that do not name espalier's scripts are untouched and every removal is listed; keeps a .bak of the file
 espalier init <repo> --wire-hooks # one-shot: arm hooks even when a settings.json already exists (opt-in; same flag on `fuse`)
-espalier init . --rewire-interpreter # swap a below-floor Python (needs 3.10+) in an existing settings.json; changes only the interpreter name, and on Windows puts a bare or & statusLine head behind a dot; keeps a .bak of the file
+espalier init . --rewire-interpreter # swap a below-floor Python (needs 3.11+) in an existing settings.json; changes only the interpreter name, and on Windows puts a bare or & statusLine head behind a dot; keeps a .bak of the file
 espalier upgrade .                # re-deploy a stale harness in place (dry-run by default; --execute to apply)
 espalier upgrade . --execute --allow-rollback   # write this engine's bytes over a tree a later release deployed (refused without the flag; init, install-ci and fingerprint take it too)
 espalier doctor <repo>            # pre-flight health check; works on uninitialized repos
@@ -224,7 +225,7 @@ python -c "import json, sys; sys.stdout.reconfigure(encoding='utf-8', errors='re
 ```bash
 # release tooling: Espalier source repo only -- not deployed by init
 python scripts/build_release_archive.py    # deterministic .zip
-python scripts/fresh_clone_gate.py --python 3.10 --python "$(command -v python3)"  # Tier 3 step 0: the full tier in a fresh clone of HEAD, per interpreter; alone on the box; exit 70 = the gate refused
+python scripts/fresh_clone_gate.py --python 3.11 --python "$(command -v python3)"  # Tier 3 step 0: the full tier in a fresh clone of HEAD, per interpreter; alone on the box; exit 70 = the gate refused
 python scripts/final_release_matrix.py     # pre-tag proof matrix — 6 stages, every stage must PASS
 python scripts/release_check.py --validate-archive <path/to.zip>  # dual-witness on external ZIP
 espalier pre-release . --output dist/espalier.zip   # gate + clean zip

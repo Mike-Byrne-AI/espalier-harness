@@ -282,9 +282,11 @@ read. The friction-layer scope:
   -Verb RunAs -ArgumentList "..."`, `powershell -ExecutionPolicy Bypass
   -Command "..."` and `-WindowStyle Hidden` before the payload open the
   command position. Declared limits, pinned: a value that is a QUOTED string
-  (`-Verb "RunAs"`), an `=`-bound value (`-ArgumentList="..."`) and the array
-  spelling (`-ArgumentList "-Command","..."`) end the run before the payload,
-  which then stays inert
+  (`-Verb "RunAs"`) and an `=`-bound value (`-ArgumentList="..."`) end the run
+  before the payload, which then stays inert, unless the list hands the
+  started shell a `-Command` (or bash and sh a `-c`): that program is read by
+  the started-shell reader (`ps_start_process_shell_programs`),
+  the array spelling (`-ArgumentList "-Command","..."`) among them
 - PowerShell backtick line-continuation (`` ` `` before a newline) is joined
   after masking at every PowerShell entry point (write leg, symlink leg,
   hard-deny tier, speed bump), so a path split across lines is read whole

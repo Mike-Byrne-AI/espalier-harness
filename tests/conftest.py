@@ -825,6 +825,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # post_write_check over scratch trees.
             "test_zone_watch",
             "test_zone_writes",
+            # TP-450: post_write_check's write-time advisory on the 2026-09-17
+            # incident's driver shape; drives the hook over scratch trees.
+            "test_post_write_delete_advisory",
             # TP-330 — the three everyday enforcement denials append an audit record.
             "test_governance_audit_log",
             # TP-332 — /status --explain resolver, pinned to the enforcement predicates.
@@ -946,7 +949,7 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # TP-453 2-B: every "declared limit" sentence in the shipped guard
             # docs cites a pytest node id that resolves and collects.
             "test_declared_limits_contract",
-            # TP-448 Class 3: pins the >=3.10 interpreter floor, its two-copy
+            # TP-448 Class 3: pins the interpreter floor, its two-copy
             # parity across the no-import boundary, and its derivation from
             # pyproject's requires-python.
             "test_python_floor",
@@ -1625,6 +1628,9 @@ _SLOW_FILES: set[str] = {
     # Three pytest children, each loading the suite's conftest (0.25 s
     # apiece on the self-host box, 2026-11-01).
     "test_nested_temp",
+    # Drives post_write_check as a real child once per row (eighteen rows),
+    # each on a scratch file outside a self-host-shaped project root.
+    "test_post_write_delete_advisory",
     # Drives SessionStart, the PostToolUse hooks, the Stop gate, post_compact
     # and subagent_stop as real children in scratch trees: the advisory has to
     # be found in the process's own stdout JSON or audit record.

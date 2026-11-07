@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """PostToolUse hook — validates writes to harness infrastructure files.
 
-Advisory only (always exits 0). Prints warnings to stderr.
+Advisory only (always exits 0): its findings ride the one JSON object it prints.
 Triggers on: .claude/settings.json, .claude/agents/*.md, .claude/commands/*.md,
              tools/cc/**/*.py, root .md files (CLAUDE.md, ESPALIER_MEMORY.md, etc.)
+On the harness's own tree it also reads any .py file a Write or an Edit just
+left, wherever the file sits, for the 2026-09-17 incident's driver shape
+(``driver_shape_advisory``).
 """
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
@@ -772,6 +776,148 @@ def record_file_marker_advisory(tool_name: str, tool_input: dict, root: Path) ->
     ]
 
 
+# --- The 2026-09-17 incident's driver shape (self-host only) ------------------
+#
+# docs/incidents/2026-09-17-real-shell-fixture-wipe.md: a scratch driver,
+# written by the Write tool and grown by Edits, ran a fixture row holding a
+# variable it never bound; the shell read the empty variable beside a glob as
+# the filesystem root, and a recursive delete ran for twenty seconds. The driver
+# imported neither bench module, so the conditions there (rules 1 and 2) never
+# saw it, and it sat in no checkout, so no tree scanner did either. This is the
+# word at the write, 28 s before that run: two predicates over the written
+# file's syntax tree, frozen from the census that calibrated them (over every
+# .py Write and Edit in this repository's Mac transcripts they fire on the
+# incident's two Edits alone, and on no tracked file). Asked of an Edit's payload alone they fire on neither of those Edits
+# (the row went in by an Edit that added no shell call), so the file is read
+# from disk. A string or a comment never satisfies predicate 1, so a guard
+# test's fixture text, both halves in strings, stays silent. Self-host only: the
+# calibration is this repository's; an adopter tree's false fires are unmeasured.
+_DRIVER_SHELLS = frozenset({"bash", "sh", "zsh", "pwsh", "powershell", "/bin/bash", "/bin/sh", "/bin/zsh"})
+_DRIVER_SPAWNS = frozenset({"run", "Popen", "call", "check_output", "check_call"})
+_DRIVER_SHELL_FLAGS = ("-c", "-Command")
+# Predicate 2, rule 2's glob beside a variable: a delete whose flags hold r, R
+# or f, then within twenty characters a $NAME or ${NAME}, quoted or not, an
+# optional '/', then '*'. The census spelled the flag run [A-Za-z]*[rRf][A-Za-z]*,
+# which backtracks quadratically on a long run (97 ms at 4,000 letters); the
+# lookahead reads the run once and accepts the same strings, since either way
+# the whole run must hold r, R or f and end at whitespace
+# (tests/test_post_write_delete_advisory.py holds the two equal,
+# tests/test_redos.py holds this one linear).
+_DRIVER_DELETE_RE = re.compile(
+    r"\brm\s+-(?=[A-Za-z]*[rRf])[A-Za-z]+\s+[^\n]{0,20}?[\"']?\$\{?\w+\}?[\"']?/?\*"
+)
+# A larger file is not read. The census's largest judged state was 79 KB, none
+# of 3,122 past 128 KiB, so the cap bounds the parse every .py write pays (about
+# 20 ms here) without losing a measured driver, and keeps a chain of binary
+# operators under half the depth past which a 3.10 parse dies with no exception
+# to catch (about 135,000 levels, measured on macOS 2026-11-07); 3.11 and later
+# raise RecursionError, which the caller's umbrella catches.
+_DRIVER_READ_CAP = 128 * 1024
+
+
+def _text_of(node: ast.AST) -> "str | None":
+    """A string constant's value, else None."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _runs_a_shell_on_built_text(tree: ast.AST) -> bool:
+    """Predicate 1: a ``subprocess`` call (one of ``_DRIVER_SPAWNS``) that
+    hands a shell text no literal spells: a first argument listing at least
+    three items -- a name or one of ``_DRIVER_SHELLS``, then ``-c`` or
+    ``-Command``, then anything but a string constant -- or ``shell=True``
+    beside a first argument that is not a string constant. The census measured
+    this reading's precision, not its recall, and these spellings are not read
+    (declared limits): an aliased or bare-name import of subprocess; flags
+    before ``-Command`` (PowerShell's own usual order); a list handed to a
+    wrapper function, or held in a variable; a shell head that is a call
+    (``shutil.which(...)``) or a path outside ``_DRIVER_SHELLS``. Predicate 2
+    has no PowerShell delete spelling, so the ``pwsh`` heads fire only beside
+    a POSIX delete row."""
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not (isinstance(func, ast.Attribute) and func.attr in _DRIVER_SPAWNS
+                and isinstance(func.value, ast.Name) and func.value.id == "subprocess"):
+            continue
+        if not node.args:
+            continue
+        first = node.args[0]
+        if isinstance(first, (ast.List, ast.Tuple)) and len(first.elts) >= 3:
+            head, flag, text = first.elts[0], first.elts[1], first.elts[2]
+            head_named = isinstance(head, ast.Name) or _text_of(head) in _DRIVER_SHELLS
+            if head_named and _text_of(flag) in _DRIVER_SHELL_FLAGS and _text_of(text) is None:
+                return True
+        for keyword in node.keywords:
+            if (keyword.arg == "shell" and isinstance(keyword.value, ast.Constant)
+                    and keyword.value.value is True and _text_of(first) is None):
+                return True
+    return False
+
+
+def _first_delete_beside_a_glob(tree: ast.AST) -> "tuple[int, str] | None":
+    """Predicate 2: the earliest line holding a string constant with rule 2's
+    glob beside a variable, and the text that matched; None where no string
+    constant holds one."""
+    found: "tuple[int, str] | None" = None
+    for node in ast.walk(tree):
+        text = _text_of(node)
+        if text is None:
+            continue
+        match = _DRIVER_DELETE_RE.search(text)
+        line_no = getattr(node, "lineno", 0)
+        if match and (found is None or line_no < found[0]):
+            found = (line_no, match.group(0))
+    return found
+
+
+def driver_shape_advisory(data: dict, tool_name: str, tool_input: dict, root: Path,
+                          operator: "list[str]") -> None:
+    """Tell Claude, once per file and delete text a session, that a Write or
+    an Edit has just left a ``.py`` file holding the 2026-09-17 incident's
+    driver shape (both predicates above), and the operator the same, on their
+    own line. The file is read from disk as Python reads it (a coding cookie
+    or a byte-order mark honoured), wherever it sits: the incident's driver was
+    a scratchpad file, outside every checkout. The caller gates this to the
+    self-host tree and wraps it, so a file that cannot be read, decoded or
+    parsed draws no word; the next write reads it again."""
+    if tool_name not in ("Write", "Edit"):
+        return
+    file_path = tool_input.get("file_path")
+    if not isinstance(file_path, str) or not file_path.endswith(".py"):
+        return
+    path = Path(file_path)
+    if not path.is_absolute():
+        path = (_hook_utils.payload_cwd(data, root) or root) / path
+    if path.stat().st_size > _DRIVER_READ_CAP:
+        return
+    tree = ast.parse(path.read_bytes())
+    if not _runs_a_shell_on_built_text(tree):
+        return
+    found = _first_delete_beside_a_glob(tree)
+    if found is None:
+        return
+    line_no, literal = found
+    # A subagent and its parent each hear it once (the key carries the agent).
+    ident = "\0".join((str(path).replace("\\", "/"), literal, str(data.get("agent_id") or "")))
+    digest = hashlib.sha256(ident.encode("utf-8", errors="replace")).hexdigest()[:16]
+    spoke = _say_once_to_claude(
+        root, data.get("session_id"), f"driver-shape-{digest}", "posttooluse_incident_driver_shape",
+        f"{file_path}, line {line_no}: a string holds a recursive delete "
+        "of a variable beside a glob, and this file hands built text to a shell -- the shape "
+        "of the 2026-09-17 incident (docs/incidents/2026-09-17-real-shell-fixture-wipe.md, "
+        "rules 1 and 2), where an unset variable turned the glob into the filesystem root. "
+        "Do not run this file with that row in it; ask the guard's classifier about the row "
+        "in-process instead (a subagent: put this in your final reply).")
+    if spoke:
+        operator.append(
+            f"espalier: Claude just wrote {file_path} (line {line_no}) in the shape of the "
+            "2026-09-17 incident: a recursive delete of a variable beside a glob, in a file "
+            "that hands built text to a shell. Claude has been told not to run it.")
+
+
 # The three deployed body kinds under .claude/ -- ONE tuple, read by both the
 # harness-file gate and the placeholder dispatch below. The two used to spell
 # the agents-plus-commands pair by hand, twice, and neither learned the third
@@ -1128,10 +1274,11 @@ def _zone_names(unaccounted: dict, only: "list[str] | None" = None) -> str:
     return text + (f"; and {more} more" if more > 0 else "")
 
 
-def _say_once_to_claude(root: Path, sid: object, key: str, event_type: str, line: str) -> None:
+def _say_once_to_claude(root: Path, sid: object, key: str, event_type: str, line: str) -> bool:
     """A once-a-session notice Claude reads (``advise``) as well as the
     record ``say_once`` writes: an exit-0 hook's stderr reaches no one. Keyed
-    by session, so a sibling session's notice does not silence this one's."""
+    by session, so a sibling session's notice does not silence this one's.
+    True when this call told Claude, so a caller can tell the operator once too."""
     full_key = f"{key}-{_hook_utils.safe_session_id(sid) or 'nosid'}"
     flag = root / _hook_utils.STATE_DIR / (_hook_utils.ONCE_FLAG_PREFIX + full_key)
     try:
@@ -1141,6 +1288,7 @@ def _say_once_to_claude(root: Path, sid: object, key: str, event_type: str, line
     if not said:
         _hook_utils.advise_warn(line)
     _hook_utils.say_once(root, full_key, "post_write_check", event_type, line)
+    return not said
 
 
 def _zone_check(data: dict, tool_name: str, tool_input: dict, root: Path, operator: list[str]) -> None:
@@ -1327,6 +1475,21 @@ def _check(data: dict, payloads: list[str], operator: "list[str] | None" = None)
     # Observe-only, best-effort, never affects the return value.
     if _hook_utils.is_self_host_repo(root):
         _observe_born_weak(root, rel_path, base=base)
+
+    # The 2026-09-17 incident's driver shape, read from disk (self-host only).
+    # Before the harness-file gate below, which skips every file outside the
+    # harness's own paths: the incident's driver was a scratchpad file.
+    if self_host:
+        try:
+            driver_shape_advisory(data, tool_name, tool_input, root, operator)
+        # fail-open: ok deliberate -- a file that cannot be read, decoded or parsed (a mid-edit state, a deep expression the parser refuses) draws no word; the next write reads it again
+        except (OSError, SyntaxError, ValueError, RecursionError, MemoryError):  # noqa: S110
+            pass
+        except Exception as exc:  # noqa: BLE001 -- a defect in the advisory itself is said, and never costs the checks below
+            _say_once_to_claude(
+                root, data.get("session_id"), "driver-shape-failed", "posttooluse_failed_open_driver_shape",
+                f"post_write_check: the 2026-09-17 driver-shape check failed ({type(exc).__name__}), "
+                "so it said nothing about this write; the next write runs it again")
 
     # The Session Log fragment's read-back runs before the gate below, which
     # reads a fragment as neither harness file nor root doc; never on a

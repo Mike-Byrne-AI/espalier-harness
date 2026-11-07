@@ -16,6 +16,16 @@ updates:
         update-types: ["minor", "patch"]
   - package-ecosystem: "github-actions"
     directory: "/"
+    # This updater reads .github/workflows/ and never espalier/assets/, and one
+    # file it bumps is generated: .github/workflows/harness-guard.yml is a copy
+    # of espalier/assets/github/workflows/harness-guard.yml, the workflow
+    # `espalier install-ci` gives every adopter. A bump of it is re-applied to
+    # that source, then `python3 scripts/sync_github_workflow_asset.py` runs;
+    # tests/test_package_resource_parity.py stays red until the two agree. The
+    # re-apply is a human commit, which the bot-only allowance in
+    # tools/cc/ci_guard.py never covers: carry the bump in a lane of its own and
+    # close the bot's pull request, or push onto it and bind the approval marker
+    # to its title (`python3 tools/cc/ship.py rebind`).
     schedule:
       interval: "weekly"
     # Same policy for action version bumps. Actions are SHA-pinned, so a

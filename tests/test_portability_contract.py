@@ -1620,6 +1620,8 @@ class TestRemediesSpellTheRemedyInterpreter:
             "writes the value into settings.json",
         ("espalier/cli.py", "rewire_interpreter_in_settings", "_detect_python_command"):
             "the rewire target is what settings.json will carry",
+        ("espalier/cli.py", "_refuse_below_floor_wiring", "_detect_python_command"):
+            "refuses before any write when the value settings.json would carry is below the floor",
         ("espalier/cli.py", "_unwired_gate_diagnosis", "_detect_python_command"):
             "four hand-edit sentences name the value to write (the `written` local)",
         ("espalier/doctor.py", "_resolver_hint", "_detect_python_command"):
