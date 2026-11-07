@@ -1060,6 +1060,11 @@ class TestPowerShellQuotedVerbBehindTheCallOperator:
         "_PS_DOTNET_INFO_ATTR_ASSIGN_RE": None,
         # cmd.exe's own recursive deletes (DEF-1151): `& 'cmd'` runs cmd
         "_PS_CMD_REMOVE_OPENER_RE": ("cmd", "cmd /c rd /s /q ."),
+        # a shell started with its program in the argument list (DEF-3011):
+        # `& 'Start-Process'` starts it as the bare cmdlet does
+        "_PS_START_PROCESS_OPENER_RE": (
+            "Start-Process",
+            "Start-Process powershell -ArgumentList '-Command Set-Content tools/cc/hooks/x.py x'"),
         # write_guard's own anchored records (the canon is two modules --
         # failure-mode review, 2026-09-13): the two Remove-Item hard-tier
         # records this lane gave the tail
@@ -9739,6 +9744,230 @@ class TestEveryLaunchFormMeetsTheRecursiveDeleteWall:
         the existing readers' and are asked only at the wall above."""
         _id, tool, template = form
         assert self._hook_verdict(tool, template, case, tmp_path) == self._ORDINARY[case]
+
+
+def _ps_tier_verdicts(command: str, project: Path) -> tuple[bool, bool, bool, bool]:
+    """``(wall, zone, secret, nudge)`` for a PowerShell-tool command, each
+    tier asked in-process from the project root: the hard tier
+    (`write_guard._ps_dangerous_reason`), the protected-zone check, the
+    secret-path check (each a structured deny on stdout) and the CP-RMRF
+    speed bump's predicate (`_speedbump._pred_rmrf`)."""
+    import contextlib
+    import io
+
+    wg = _load_write_guard()
+    import _speedbump
+
+    def denies(call) -> bool:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = call()
+        return code == 2 or '"deny"' in out.getvalue()
+
+    return (
+        wg._ps_dangerous_reason(command, project, cwd=project) is not None,
+        denies(lambda: wg.check_powershell_for_protected_mutations(command, project, cwd=project)),
+        denies(lambda: wg.check_secret_path_access("PowerShell", {"command": command}, project)),
+        bool(_speedbump._pred_rmrf("PowerShell", {"command": command}, project)),
+    )
+
+
+def _started_shell_cases(ps_launches, ps_programs, bash_launches, bash_programs):
+    """``(id, launch, program, direct form)`` for each launch spelling
+    crossed with each program of its grammar."""
+    return (
+        [(f"ps-{lid}-{pid}", launch, program, f'powershell -Command "{program}"')
+         for lid, launch in ps_launches for pid, program in ps_programs]
+        + [(f"bash-{lid}-{pid}", launch, program, f"bash -c '{program}'")
+           for lid, launch in bash_launches for pid, program in bash_programs])
+
+
+class TestAShellStartedByStartProcessMeetsItsDirectFormsTiers:
+    """DEF-3011: a `Start-Process` of powershell, pwsh, bash or sh with its
+    program in the argument list draws, on every tier of the PowerShell
+    tool, the verdict the same program draws handed to that shell directly
+    (`powershell -Command "..."`, `bash -c '...'`), and a double-quoted
+    mention of it draws none. Until 2026-11-07 the argument list was read
+    for cmd alone (`_bash_patterns.start_process_cmd_line`, DEF-1071 (e)),
+    so the checkout's own delete, a hook's overwrite and a secret's read met
+    no tier through any of these spellings, the elevation idiom
+    (`-Verb RunAs`) among them. A DIFFERENTIAL, not a table of verdicts: the
+    direct form is the oracle, so a tier that changes its reading of the
+    program moves both sides. Each row is a test fixture for a friction
+    guard, handed to the classifier as text and never run."""
+
+    #: The programs, by the grammar that runs them: a delete of the
+    #: checkout (the wall), of a source directory (the nudge, on the
+    #: PowerShell grammar) and of a roster build directory (nothing), a
+    #: protected write (the zone check), a secret read, and a benign one.
+    _PS_PROGRAMS = [
+        ("delete-checkout", "Remove-Item -Recurse -Force ."),
+        ("delete-source", "Remove-Item -Recurse -Force src"),
+        ("delete-build", "Remove-Item -Recurse -Force build"),
+        ("write-hook", "Set-Content tools/cc/hooks/write_guard.py x"),
+        ("read-secret", "Get-Content .env"),
+        ("benign", "Get-ChildItem"),
+    ]
+    _BASH_PROGRAMS = [
+        ("delete-checkout", "rm -rf ."),
+        ("delete-source", "rm -rf src"),
+        ("write-hook", "echo x > tools/cc/hooks/write_guard.py"),
+        ("read-secret", "cat .env"),
+        ("benign", "ls -la"),
+    ]
+    #: The launch spellings; ``{p}`` is the program. The array forms are
+    #: joined by blanks, unquoted, as the cmdlet hands them over, and read
+    #: whole (`_bash_patterns._posix_cli_program`'s over-capture reading).
+    _PS_LAUNCHES = [
+        ("string", "Start-Process powershell -ArgumentList '-NoProfile -Command {p}'"),
+        ("array", "Start-Process pwsh -ArgumentList '-c','{p}'"),
+        ("subexpression", "Start-Process pwsh -ArgumentList @('-NoProfile','-Command','{p}')"),
+        ("positional", "Start-Process pwsh '-Command {p}'"),
+        ("by-file-name", "Start-Process powershell.exe -ArgumentList '-Command {p}'"),
+        ("by-path", "Start-Process C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe "
+                    "-ArgumentList '-Command {p}'"),
+        ("file-path", "Start-Process -FilePath pwsh -ArgumentList '-Command {p}'"),
+        ("file-path-positional-list", "Start-Process -FilePath pwsh '-Command {p}'"),
+        ("run-as", "Start-Process powershell -Verb RunAs -ArgumentList '-Command {p}'"),
+        ("run-as-switches", "Start-Process pwsh -Verb RunAs -Wait -WindowStyle Hidden '-c','{p}'"),
+        ("alias", "saps pwsh -ArgumentList '-Command {p}'"),
+        ("module-qualified",
+         "Microsoft.PowerShell.Management\\Start-Process pwsh -ArgumentList '-c','{p}'"),
+        ("quoted-program", "Start-Process powershell -ArgumentList '-Command \"{p}\"'"),
+        ("after-a-statement", "Get-Date; Start-Process pwsh -ArgumentList '-c','{p}'"),
+        ("reparsed", "powershell -Command \"Start-Process pwsh -ArgumentList '-c','{p}'\""),
+    ]
+    _BASH_LAUNCHES = [
+        ("array", "Start-Process bash -ArgumentList '-c','{p}'"),
+        ("string", "Start-Process bash -ArgumentList '-c \"{p}\"'"),
+        ("sh-cluster", "Start-Process sh -ArgumentList '-lc','{p}'"),
+        ("by-path", "Start-Process C:/Git/bin/bash.exe -ArgumentList '-c','{p}'"),
+        ("run-as", "Start-Process bash -Verb RunAs -ArgumentList '-c \"{p}\"'"),
+        ("single-quoted-program", "Start-Process bash -ArgumentList \"-c '{p}'\""),
+    ]
+    _CASES = _started_shell_cases(_PS_LAUNCHES, _PS_PROGRAMS, _BASH_LAUNCHES, _BASH_PROGRAMS)
+
+    @staticmethod
+    def _project(tmp_path: Path) -> Path:
+        (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True)
+        (tmp_path / "tools" / "cc" / "hooks" / "write_guard.py").write_text("x", encoding="utf-8")
+        (tmp_path / ".env").write_text("x", encoding="utf-8")
+        return tmp_path
+
+    def test_the_direct_forms_draw_the_tiers_the_rows_are_about(self, tmp_path):
+        """The oracle side, pinned: the direct forms walls the checkout's
+        delete, nudge the source delete on the PowerShell grammar, deny the
+        hook write and the secret read, and leave the rest alone, so a
+        differential that agrees with them is about something."""
+        project = self._project(tmp_path)
+        got = {pid: _ps_tier_verdicts(f'powershell -Command "{program}"', project)
+               for pid, program in self._PS_PROGRAMS}
+        assert got == {
+            "delete-checkout": (True, False, False, False),
+            "delete-source": (False, False, False, True),
+            "delete-build": (False, False, False, False),
+            "write-hook": (False, True, False, False),
+            "read-secret": (False, False, True, False),
+            "benign": (False, False, False, False),
+        }
+        got = {pid: _ps_tier_verdicts(f"bash -c '{program}'", project)
+               for pid, program in self._BASH_PROGRAMS}
+        assert got == {
+            "delete-checkout": (True, False, False, False),
+            # the soft tier on this tool reads no bash program, direct or
+            # started: a nudge the Bash tool gives and this one does not
+            "delete-source": (False, False, False, False),
+            "write-hook": (False, True, False, False),
+            "read-secret": (False, False, True, False),
+            "benign": (False, False, False, False),
+        }
+
+    @pytest.mark.parametrize("case", _CASES, ids=[c[0] for c in _CASES])
+    def test_the_started_shell_draws_its_direct_forms_verdict(self, case, tmp_path):
+        _id, launch, program, direct = case
+        project = self._project(tmp_path)
+        assert _ps_tier_verdicts(launch.format(p=program), project) == _ps_tier_verdicts(
+            direct, project)
+
+    _MENTIONS = [c for c in _CASES if '"' not in c[1] and "-module-qualified-" not in c[0]]
+
+    @pytest.mark.parametrize("case", _MENTIONS, ids=[c[0] for c in _MENTIONS])
+    def test_a_double_quoted_mention_draws_no_tier(self, case, tmp_path):
+        """The masker keeps a double-quoted string, so the command position
+        is what refuses the cmdlet word in one (`_PS_START_PROCESS_OPENER_RE`,
+        as cmd's opener does): a mention holding a separator too, the
+        `after-a-statement` rows, which a first draft of the lane searched
+        unanchored and walled."""
+        _id, launch, program, _direct = case
+        project = self._project(tmp_path)
+        command = 'Write-Output "' + launch.format(p=program) + '"'
+        assert _ps_tier_verdicts(command, project) == (False, False, False, False)
+
+    def test_a_module_qualified_mention_is_the_anchors_declared_limit(self):
+        """A declared limit of the shared command position, not of this
+        reader: inside a double-quoted string, a module-qualified head
+        (`Microsoft.PowerShell.Management\\Start-Process`) is read at a
+        command position from its second dotted word, by cmd's opener
+        (`_PS_CMD_REMOVE_OPENER_RE`) as by this one, so such a mention is read
+        as the launch it names -- the friction direction. Pinned on both
+        openers: the day the anchor refuses it this reds, and the mention
+        rows above take the module-qualified spelling."""
+        bp = _bash_patterns_module()
+        for head, opener in (("Start-Process pwsh -c x", bp._PS_START_PROCESS_OPENER_RE),
+                             ("cmd /c x", bp._PS_CMD_REMOVE_OPENER_RE)):
+            command = 'Write-Output "Microsoft.PowerShell.Management\\' + head + '"'
+            assert opener.search(bp.powershell_scan_text(command)) is not None, command
+
+    def test_the_three_rows_of_the_ledger_probe_meet_the_wall_through_the_hook(self, tmp_path):
+        """The row's own three spellings and the elevation idiom, through
+        the real hook from the checkout root: each is refused, and its
+        double-quoted mention is not."""
+        rows = [
+            "Start-Process powershell -ArgumentList '-NoProfile -Command Remove-Item -Recurse -Force .'",
+            "Start-Process pwsh -ArgumentList '-c','Remove-Item -Recurse -Force .'",
+            "Start-Process bash -ArgumentList '-c','rm -rf .'",
+            "Start-Process powershell -Verb RunAs -ArgumentList '-Command Set-Content "
+            "tools/cc/hooks/write_guard.py x'",
+        ]
+        for row in rows:
+            assert _delete_verdict(run_guard_from("PowerShell", row, tmp_path, None)) == "wall", row
+            mention = 'Write-Output "' + row + '"'
+            assert _delete_verdict(run_guard_from("PowerShell", mention, tmp_path, None)) == "allow", row
+
+    #: (id, command, what the reader yields): the reader's own branches.
+    _READER = [
+        ("array-bare-program", "Start-Process bash -ArgumentList '-c','rm -rf x'",
+         [("bash", "rm -rf x")]),
+        ("quoted-program-and-name", "Start-Process bash -ArgumentList '-c \"rm -rf x\" name'",
+         [("bash", "rm -rf x")]),
+        ("option-value", "Start-Process bash -ArgumentList '-o','pipefail','-c','rm -rf x'",
+         [("bash", "rm -rf x")]),
+        ("escaped-quote",
+         "Start-Process pwsh -ArgumentList '-c \"Write-Output \\\"a b\\\"\"'",
+         [("ps", 'Write-Output "a b"')]),
+        ("command-rest", "Start-Process pwsh -ArgumentList '-NoLogo','-Command','Get-Date','-x'",
+         [("ps", "Get-Date -x")]),
+        # nothing to read: the file is the program, no program is given, a
+        # script operand comes first, the program is no shell, and cmd's is
+        # its own reader's
+        ("file-switch", "Start-Process pwsh -ArgumentList '-File x.ps1 -Command Get-Date'", []),
+        ("no-command", "Start-Process powershell -ArgumentList '-NoProfile'", []),
+        ("script-operand", "Start-Process bash -ArgumentList 'run.sh','-c','rm -rf x'", []),
+        ("not-a-shell", "Start-Process notepad -ArgumentList '-c','x'", []),
+        ("cmd", "Start-Process cmd -ArgumentList '/c rd /s /q x'", []),
+        ("mention", "Write-Output \"Start-Process pwsh -ArgumentList '-c','x'\"", []),
+        # declared limits, pinned: powershell.exe's implicit -Command (a bare
+        # first word) and an argument list given before the program
+        ("implicit-command", "Start-Process powershell 'Remove-Item -Recurse -Force x'", []),
+        ("list-before-program", "Start-Process -ArgumentList '-c','x' -FilePath pwsh", []),
+    ]
+
+    @pytest.mark.parametrize("row", _READER, ids=[r[0] for r in _READER])
+    def test_the_reader_yields_the_program_each_shell_runs(self, row):
+        _id, command, want = row
+        bp = _bash_patterns_module()
+        raw, scan = bp.powershell_scan_pair(command)
+        assert list(bp.ps_start_process_shell_programs(raw, scan)) == want
 
 
 class TestTheCmdDeleteReaderReadsEachBranch:

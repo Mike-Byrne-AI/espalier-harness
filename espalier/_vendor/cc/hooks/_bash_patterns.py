@@ -10836,9 +10836,15 @@ def _ps_shell_program_bodies(command: str, scan: str) -> Iterator[str]:
     (DEF-637): the quoted `-c` operand, opener on ``scan``, body from the raw
     ``command`` at the same offsets and unescaped the way PowerShell hands it
     over; the same length guard as the interpreter arm. The yielded text is
-    what bash receives, so the Bash extractor runs its own masker on it."""
+    what bash receives, so the Bash extractor runs its own masker on it.
+    Then the program a ``Start-Process`` of bash or sh carries in its
+    argument list (DEF-3011, `ps_start_process_shell_programs`), so every
+    consumer of this reader reads that launch form too."""
     if len(scan) != len(command):
         scan = command
+    for grammar, program in ps_start_process_shell_programs(command, scan):
+        if grammar == "bash":
+            yield program
     for m in _PS_BASH_DASH_C_RE.finditer(scan):
         # By the literal's OWN kind, not `_ps_unescape_program`'s
         # all-four-forms fold: inside a single-quoted PowerShell string `""`
@@ -10876,9 +10882,10 @@ def _ps_literal_text(command: str, m: "re.Match[str]") -> str:
 # PowerShell legs' one pre-pass (`_expand_simple_ps_var_assignments`) has
 # inlined, with that pre-pass's declared limits. `cmd`
 # and `pwsh` also take the bare rest of the statement. `Invoke-Command` and
-# `Start-Process` are on the roster and yield nothing here: the first takes
-# a script block, whose statements the leg's cut already reads, and the
-# second an argument list, a declared miss. Also not read here: a string
+# `Start-Process` are on the roster: the first yields nothing here, since it
+# takes a script block, whose statements the leg's cut already reads, and
+# the second an argument list, read for powershell and pwsh by
+# `ps_start_process_ps_programs` (DEF-3011). Also not read here: a string
 # piped into a carrier (`'...' | iex`), one joined with `+`, the colon-bound
 # `-Command:'...'`, a glued `cmd /c"..."`, and the words after a quoted
 # program (`cmd /c "type" .env` reads `type` alone); the secret leg's old
@@ -10990,6 +10997,9 @@ def _ps_carrier_program_bodies(command: str, scan: str) -> Iterator[str]:
         if program:
             read_to = end
             yield program
+    # a powershell or pwsh started by Start-Process runs the program its
+    # argument list carries (DEF-3011)
+    yield from ps_start_process_ps_programs(command, scan)
     closers = ps_paren_closers(scan)
     read_to = 0
     for m in _PS_SUBEXPRESSION_RE.finditer(scan):
@@ -12140,9 +12150,25 @@ def start_process_cmd_line(text: str, opener: "re.Match[str]") -> tuple[int, str
     ``Start-Process cmd ...`` mentioned inside one is found by the opener,
     and reading its argument list would wall a mention."""
     word = _PS_START_PROCESS_RE.search(text, opener.start(), opener.end())
-    if word is None:
+    if word is None or not _ps_start_process_starts_statement(text, word.start()):
         return None
-    k = word.start() - 1
+    got = ps_start_process_arguments(text, opener.end())
+    if got is None:
+        return None
+    start = _cmd_program_at(got[1], 0)
+    return None if start is None else (got[0], got[1][start:])
+
+
+def _ps_start_process_starts_statement(text: str, at: int) -> bool:
+    """Whether the ``Start-Process`` word at ``at`` starts a statement: the
+    text's start, a separator, a group, an assignment, or the opening quote of
+    a program a reparsing shell runs; behind a module qualifier too. The
+    masker keeps a double-quoted string, so a ``Start-Process cmd ...``
+    mentioned inside one is found by cmd's opener, and reading its argument
+    list would wall a mention (DEF-1071 (e), `start_process_cmd_line`). The
+    shells' reader anchors the cmdlet word itself instead
+    (`_PS_START_PROCESS_OPENER_RE`)."""
+    k = at - 1
     # a module-qualified name starts where its module does
     # (`Microsoft.PowerShell.Management\Start-Process`, the failure-mode review)
     if k >= 0 and text[k] == "\\":
@@ -12151,17 +12177,208 @@ def start_process_cmd_line(text: str, opener: "re.Match[str]") -> tuple[int, str
             k -= 1
     while k >= 0 and text[k] in " \t":
         k -= 1
-    if k >= 0 and text[k] not in ";|&({=\n\r" and not (
-            text[k] in "\"'" and _ps_span_is_reparsed(text, k)):
-        # a mention -- but the opening quote of a program a reparsing shell
-        # runs is a statement start (`powershell -Command "Start-Process
-        # cmd ..."` walled on the Bash tool and passed here, the review)
-        return None
-    got = ps_start_process_arguments(text, opener.end())
-    if got is None:
-        return None
-    start = _cmd_program_at(got[1], 0)
-    return None if start is None else (got[0], got[1][start:])
+    # a mention -- but the opening quote of a program a reparsing shell runs
+    # is a statement start (`powershell -Command "Start-Process cmd ..."`
+    # walled on the Bash tool and passed here, the review)
+    return k < 0 or text[k] in ";|&({=\n\r" or (
+        text[k] in "\"'" and _ps_span_is_reparsed(text, k))
+
+
+# ── A shell started by Start-Process with its program in the argument list
+# (DEF-3011) ────────────────────────────────────────────────────────────────
+#: The shells whose program the process-start cmdlet's argument list carries,
+#: by the grammar that program is read with. cmd has its own reader
+#: (`start_process_cmd_line`, DEF-1071 (e)), which reads cmd's own builtins.
+_PS_START_PROCESS_SHELLS = {"powershell": "ps", "pwsh": "ps", "bash": "bash", "sh": "bash"}
+#: The process-start cmdlet's FilePath parameter by its alias (any prefix of
+#: the name reads as it too: no other parameter of the cmdlet begins `f`).
+_PS_START_PROCESS_FILEPATH_ALIASES = frozenset({"pspath"})
+#: PowerShell's `-File` switch by any prefix: the file is the program, and
+#: what follows it is the script's arguments.
+_PS_CLI_FILE_SWITCH_RE = re.compile(r"[-/]f(?:i(?:l(?:e)?)?)?", re.IGNORECASE)
+#: The process-start cmdlet as a command word, by name or alias, behind a
+#: module qualifier too: the anchored opener of the shells it starts. The
+#: masker keeps a double-quoted string, so the command position is what
+#: refuses a mention there -- one holding a separator included, which the
+#: raw statement-start check alone reads as a statement (the lane's own
+#: draft did) -- as cmd's opener refuses it (`_PS_CMD_REMOVE_OPENER_RE`).
+#: A POSIX shell's `-c` is the carrier reader's cluster rule
+#: (`_CARRIER_C_CLUSTER_RE`), the same shells' program from their own argv.
+_PS_START_PROCESS_OPENER_RE = re.compile(
+    _PS_CMD_POS + _PS_EXE_PREFIX + r"(?:Start-Process|saps)" + _QUOTED_VERB_TAIL + r"(?=[ \t]|$)",
+    re.IGNORECASE,
+)
+#: A POSIX shell's options that take the next word as their value.
+_POSIX_CLI_VALUED = frozenset({"-o", "+o", "-O", "+O", "--rcfile", "--init-file"})
+
+
+def _ps_start_process_program(text: str, at: int) -> tuple[str, int] | None:
+    """``(program, offset)`` for a ``Start-Process`` word ending at ``at``:
+    the program it starts -- ``-FilePath`` (any prefix, or its alias) or the
+    first positional word, as PowerShell binds them -- and the offset its
+    argument list is read from by `ps_start_process_arguments`: the cmdlet's
+    end where the program is bound by name (the first positional is then the
+    argument list), else just past the program word. None when an argument
+    list comes before the program, or none is named: a declared limit, read
+    as no program (DEF-3011). Linear: one pass."""
+    i, n = at, len(text)
+    while i < n:
+        while i < n and text[i] in " \t":
+            i += 1
+        if i >= n or text[i] in ";|&\n\r":
+            return None
+        if text[i] == "-" and i + 1 < n and text[i + 1].isalpha():
+            j = i + 1
+            while j < n and text[j].isalnum():
+                j += 1
+            low = text[i + 1:j].lower()
+            bound = j < n and text[j] == ":"
+            i = j + 1 if bound else j
+            if "argumentlist".startswith(low) or low == "args":
+                return None
+            if low in _PS_START_PROCESS_FILEPATH_ALIASES or "filepath".startswith(low):
+                while i < n and text[i] in " \t":
+                    i += 1
+                return _ps_word_at(text, i)[0], at
+            if bound or _ps_start_process_takes_value(low):
+                while i < n and text[i] in " \t":
+                    i += 1
+                _value, i = _ps_word_at(text, i)
+            continue
+        return _ps_word_at(text, i)
+    return None
+
+
+def _process_argv(line: str, *, single_quotes: bool) -> list[tuple[str, bool]]:
+    """``(word, quoted)`` for each word a process parses from its command
+    line ``line``: blanks separate, a double quote groups, and ``\\"`` is a
+    quote inside a word (the Windows C runtime's rule, which powershell.exe
+    and pwsh read); ``single_quotes`` lets a single quote group too, as Git
+    for Windows' bash and sh read a command line a Windows process hands
+    them. ``quoted`` is whether any of the word was in quotes. Linear."""
+    words: list[tuple[str, bool]] = []
+    cur: list[str] = []
+    have = quoted = False
+    quote = ""
+    i, n = 0, len(line)
+    while i < n:
+        c = line[i]
+        if c == "\\" and quote != "'":
+            j = i
+            while j < n and line[j] == "\\":
+                j += 1
+            have = True
+            if j < n and line[j] == '"':
+                cur.append("\\" * ((j - i) // 2))
+                if (j - i) % 2:
+                    cur.append('"')       # an odd run escapes the quote
+                    j += 1
+            else:
+                cur.append(line[i:j])     # backslashes before anything else are literal
+            i = j
+            continue
+        if quote:
+            if c == quote:
+                quote = ""
+            else:
+                cur.append(c)
+        elif c == '"' or (single_quotes and c == "'"):
+            quote, have, quoted = c, True, True
+        elif c in " \t":
+            if have:
+                words.append(("".join(cur), quoted))
+                cur, have, quoted = [], False, False
+        else:
+            cur.append(c)
+            have = True
+        i += 1
+    if have:
+        words.append(("".join(cur), quoted))
+    return words
+
+
+def _ps_cli_program(line: str) -> str:
+    """The program powershell.exe or pwsh runs from its command line
+    ``line``: every word after ``-Command`` (any prefix, ``-c``) joined by
+    blanks, as the shell joins them; empty where ``-File`` comes first or no
+    ``-Command`` is given (powershell.exe's implicit command, a bare first
+    word, is a declared limit, as the carrier reader declares it for the
+    same shells)."""
+    words = _process_argv(line, single_quotes=False)
+    for k, (word, _quoted) in enumerate(words):
+        if _SHELL_COMMAND_SWITCH_RE.fullmatch(word):
+            return " ".join(w for w, _q in words[k + 1:])
+        if _PS_CLI_FILE_SWITCH_RE.fullmatch(word):
+            return ""
+    return ""
+
+
+def _posix_cli_program(line: str) -> str:
+    """The program bash or sh runs from its command line ``line``: the word
+    after ``-c`` (alone or ending a cluster), past the options before it.
+    Where that word was bare -- an array argument list, ``'-c','rm -rf x'``,
+    which the cmdlet joins by blanks unquoted -- the rest of the line: the
+    shell itself runs the first word alone there, with the rest as its
+    positional parameters, and the rest is read as the program the author
+    wrote, the over-capture direction (DEF-3011). Empty where a script
+    operand comes first."""
+    words = _process_argv(line, single_quotes=True)
+    k = 0
+    while k < len(words):
+        word = words[k][0]
+        if not word.startswith(("-", "+")):
+            return ""
+        if _CARRIER_C_CLUSTER_RE.fullmatch(word):
+            if k + 1 >= len(words):
+                return ""
+            program, was_quoted = words[k + 1]
+            return program if was_quoted else " ".join(w for w, _q in words[k + 1:])
+        k += 2 if word in _POSIX_CLI_VALUED else 1
+    return ""
+
+
+def ps_start_process_shell_programs(raw: str, scan: str) -> Iterator[tuple[str, str]]:
+    """``(grammar, program)`` for every shell a ``Start-Process`` statement
+    starts with its program in the argument list (DEF-3011): ``"ps"`` for
+    powershell and pwsh (by name, path or with ``.exe``), the words after
+    ``-Command``; ``"bash"`` for bash and sh, the program after ``-c``. The
+    cmdlet word is found at a command position of ``scan``
+    (`_PS_START_PROCESS_OPENER_RE`, which refuses a mention in a string and
+    takes the call operator's quoted verb); the program it starts and the
+    argument list (`ps_start_process_arguments`, joined as the process
+    receives it) are read from ``raw`` at the same offsets, then parsed by
+    the started shell's own command-line rules. The length guard of the
+    readers above. A started program that is none of these yields nothing,
+    and cmd is `start_process_cmd_line`'s."""
+    if len(scan) != len(raw):
+        scan = raw
+    low_scan = scan.lower()
+    if "saps" not in low_scan and "start-process" not in low_scan:
+        return
+    for opener in _PS_START_PROCESS_OPENER_RE.finditer(scan):
+        got = _ps_start_process_program(raw, opener.end())
+        if got is None:
+            continue
+        name = re.split(r"[/\\]", got[0])[-1].lower()
+        grammar = _PS_START_PROCESS_SHELLS.get(name[:-4] if name.endswith(".exe") else name)
+        if grammar is None:
+            continue
+        args = ps_start_process_arguments(raw, got[1])
+        if args is None:
+            continue
+        program = _ps_cli_program(args[1]) if grammar == "ps" else _posix_cli_program(args[1])
+        if program.strip():
+            yield grammar, program
+
+
+def ps_start_process_ps_programs(raw: str, scan: str) -> Iterator[str]:
+    """The PowerShell programs of `ps_start_process_shell_programs` (its
+    bash programs reach every consumer through `_ps_shell_program_bodies`):
+    read one level down with the PowerShell grammar, under the consumer's
+    own depth bound."""
+    for grammar, program in ps_start_process_shell_programs(raw, scan):
+        if grammar == "ps":
+            yield program
 
 
 def _cmd_outer_words(text: str, start: int, stop: int, *, bash: bool) -> list[str]:
@@ -15484,6 +15701,10 @@ def _candidate_paths_from_powershell(command: str, _depth: int = 0) -> list[str]
     if _depth < _PS_STDIN_MAX_DEPTH:
         for program in _ps_shell_program_bodies(raw, command):
             paths.extend(_candidate_paths_from_bash(program, _depth + 1))
+        # a PowerShell program a Start-Process of powershell or pwsh carries
+        # in its argument list (DEF-3011), re-read as the piped one is
+        for program in ps_start_process_ps_programs(raw, command):
+            paths.extend(_candidate_paths_from_powershell(program, _depth + 1))
     return paths
 
 
@@ -15638,6 +15859,9 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
     if _depth < _PS_STDIN_MAX_DEPTH:
         for program in _ps_shell_program_bodies(raw, scan):
             out.extend(iter_removed_or_relocated_operands(program, _depth + 1))
+        # DEF-3011: a Start-Process of powershell or pwsh, as the piped one
+        for program in ps_start_process_ps_programs(raw, scan):
+            out.extend(iter_ps_removed_or_relocated_operands(program, _depth + 1))
     return out
 
 

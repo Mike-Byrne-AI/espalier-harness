@@ -872,8 +872,18 @@ def _pred_gitclean(tool_name: str, tool_input: dict, root: Path, cwd: Path | Non
 #: the two-names-one-roster drift the move exists to remove.
 
 
-def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = None) -> bool:
+def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = None,
+               _depth: int = 0) -> bool:
     if tool_name == "PowerShell":
+        # A PowerShell program a Start-Process of powershell or pwsh carries
+        # in its argument list (DEF-3011) gets the nudge its own command
+        # would, one level down; a catastrophic target there is the hard
+        # tier's, which reads the same program.
+        if _depth < _bash_patterns._PS_STDIN_MAX_DEPTH:
+            twin, scan = _bash_patterns.powershell_scan_pair(str(tool_input.get("command", "")))
+            for program in _bash_patterns.ps_start_process_ps_programs(twin, scan):
+                if _pred_rmrf(tool_name, {"command": program}, root, cwd, _depth + 1):
+                    return True
         # The middle rung write_guard.check_powershell now falls through to.
         # Same three-way shape as the Bash arm below: the hard tier keeps
         # absolute/globbed/qualified/unparseable targets (bar a literal path

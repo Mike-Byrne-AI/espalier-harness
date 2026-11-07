@@ -2770,6 +2770,12 @@ class TestCommandPositionClassClose:
             "FLAG -- the `-Command` prefix of `pwsh` and `Invoke-Expression`, "
             "fullmatched against one switch word past an anchored `_PS_CARRIER_RE` "
             "head (DEF-1131).",
+        # ── DEF-3011: the started shell's own command-line readers -- the
+        # cmdlet word that starts it must start a statement first ──
+        "_bash_patterns._PS_CLI_FILE_SWITCH_RE":
+            "FLAG -- powershell's `-File` by any prefix, fullmatched against one word "
+            "of the command line an anchored `_PS_START_PROCESS_OPENER_RE` match hands "
+            "the shell it starts (DEF-3011).",
         "_bash_patterns._PS_SUBEXPRESSION_RE":
             "SYNTAX TOKEN -- the `$(` of a subexpression, found on the masked scan "
             "(the masker blanks one inside a single-quoted string); its program "
