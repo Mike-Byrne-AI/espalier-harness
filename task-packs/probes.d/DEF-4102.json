@@ -1,0 +1,14 @@
+{
+ "id": "DEF-4102",
+ "subject": "tools/cc/hooks/session_start.py",
+ "cmd": "python3 -c 'import contextlib, io, sys, tempfile, pathlib; sys.path.insert(0, \"tools/cc/hooks\"); import post_write_check as p, session_start as s; t = tempfile.TemporaryDirectory(); d = pathlib.Path(t.name); k = (\"probe-sid\", \"driver-shape-probe\", \"posttooluse_incident_driver_shape\", \"x\"); o = io.StringIO(); c = contextlib.redirect_stdout(o); e = contextlib.redirect_stderr(o); c.__enter__(); e.__enter__(); p._say_once_to_claude(d, *k); s._clean_state_flags(d, \"compact\"); a = p._say_once_to_claude(d, *k); e.__exit__(None, None, None); c.__exit__(None, None, None); print(a)'",
+ "open_value": "False",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/post_write_check.py",
+  "tools/cc/hooks/_reinject.py"
+ ],
+ "row_sha": "4013c2b9b2a1",
+ "text_sha": "bb5f24f122a1",
+ "verified_2026_11_07": "OPEN (filed 2026-11-07; probe driven at filing here and in the export of HEAD c7ca1eae1087)"
+}
