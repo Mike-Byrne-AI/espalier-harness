@@ -14,14 +14,18 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 import pytest
 
 from tests import _hook_spawn as hs
 
 # A child that counts its runs in the file it is given, then behaves by
-# ``mode``: answer, sleep past the bound, print the budget's refusal, leave a
-# file under the project's .espalier-state, or take 4.5 s every time; the
+# ``mode``: answer, sleep past the bound, print the budget's refusal, take
+# 4.5 s every time, or (``-state``) write a one-shot flag under the project's
+# .espalier-state, change one file there and remove another, then sleep past
+# the bound, and answer with what it read there, as a speed bump reads its
+# flag (``-cc``: write under the project's cc/ and sleep past the bound); the
 # ``first-`` modes miss on the first run only.
 _CHILD = r'''
 import os, sys, time
@@ -30,13 +34,46 @@ counter, mode = sys.argv[1], sys.argv[2]
 with open(counter, "a", encoding="utf-8") as fh:
     fh.write("x")
 runs = len(open(counter, encoding="utf-8").read())
+project = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
 miss = mode.startswith("always-") or (mode.startswith("first-") and runs == 1)
 if mode == "slow":
     time.sleep(4.5)
-if miss and mode.endswith("-state"):
-    state = Path(os.environ["CLAUDE_PROJECT_DIR"]) / ".espalier-state"
-    state.mkdir(parents=True, exist_ok=True)
-    (state / "one-shot-flag").write_text("x", encoding="utf-8")
+if mode.endswith("-state"):
+    state = project / ".espalier-state"
+    kept, gone, flag = state / "kept", state / "gone", state / "one-shot-flag"
+    if miss:
+        state.mkdir(parents=True, exist_ok=True)
+        flag.write_text("x", encoding="utf-8")
+        if kept.exists():
+            kept.write_text("after", encoding="utf-8")
+        if gone.exists():
+            gone.unlink()
+        time.sleep(30)
+    print("re-issue" if flag.exists() else "first issue",
+          kept.read_text(encoding="utf-8") if kept.exists() else "-", gone.exists())
+    sys.exit(0)
+if mode.endswith("-audit"):
+    log = Path(os.environ["ESPALIER_AUDIT_DIR"]) / "repo-day.log"
+    with open(log, "a", encoding="utf-8") as fh:
+        fh.write("{}\n")
+    if miss:
+        time.sleep(30)
+    print(len(log.read_text(encoding="utf-8").splitlines()))
+    sys.exit(0)
+if miss and mode.endswith("-cc"):
+    cc = project / "cc" / "blueprints"
+    cc.mkdir(parents=True, exist_ok=True)
+    (cc / "latest.json").write_text("{}", encoding="utf-8")
+    time.sleep(30)
+if miss and mode.endswith("-root"):
+    (project / "reflect_ran.marker").write_text("x", encoding="utf-8")
+    time.sleep(30)
+if miss and mode.endswith("-grandchild"):
+    late = ("import pathlib, sys, time; time.sleep(4); p = pathlib.Path(sys.argv[1]); "
+            "p.mkdir(parents=True, exist_ok=True); (p / 'late').write_text('x')")
+    import subprocess
+    subprocess.Popen([sys.executable, "-c", late, str(project / ".espalier-state")],
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(30)
 if miss and mode.endswith("sleep"):
     time.sleep(30)
@@ -59,6 +96,10 @@ def child(tmp_path, monkeypatch):
     monkeypatch.setattr(hs, "HOOK_S", 3.0)
     monkeypatch.setattr(hs, "STATUSLINE_S", 3.0)
     monkeypatch.setattr(hs, "_RETRIED", set())
+    # A row with no project of its own resolves the working directory, this
+    # checkout, where a live session's writes would refuse every retry.
+    (tmp_path / "quiet").mkdir()
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path / "quiet"))
     counters = []
 
     def argv(mode, counter="runs.txt"):
@@ -132,17 +173,108 @@ class TestTheRetrysLimits:
             hs.run_hook_through(argv("first-sleep", "two.txt"), env=None, input="{}")
         assert (runs("one.txt"), runs("two.txt")) == (2, 1)
 
-    def test_a_miss_that_left_state_is_not_retried(self, child, tmp_path):
-        """A speed bump's one-shot flag written before the miss would make the
-        retry read as a re-issue and answer differently; such a miss fails,
-        saying why, instead of being retried."""
+    def test_a_miss_that_left_state_is_retried_from_the_state_it_began_with(self, child, tmp_path):
+        """A speed bump's one-shot flag the miss wrote would make the retry
+        read as a re-issue: the state the first attempt began with is put back
+        first (bytes and mtimes, what it added removed, what it removed
+        written back), so the retry answers as the first attempt would have
+        (DEF-2030)."""
+        argv, runs = child
+        project = tmp_path / "project"
+        state = project / ".espalier-state"
+        state.mkdir(parents=True)
+        (state / "kept").write_text("before", encoding="utf-8")
+        (state / "gone").write_text("x", encoding="utf-8")
+        aged = 1_600_000_000_000_000_000
+        os.utime(state / "kept", ns=(aged, aged))
+        env = {**os.environ, "CLAUDE_PROJECT_DIR": str(project)}
+        with pytest.warns(hs.HookSpawnRetried, match="from the .espalier-state it began with"):
+            result = hs.run_hook_through(argv("first-state"), env=env, input="{}")
+        assert (result.stdout.split(), runs()) == (["first", "issue", "before", "True"], 2)
+        assert (state / "kept").stat().st_mtime_ns == aged
+        assert sorted(p.name for p in state.iterdir()) == ["gone", "kept"]
+
+    def test_a_state_tree_the_miss_created_is_gone_before_the_retry(self, child, tmp_path):
         argv, runs = child
         project = tmp_path / "project"
         project.mkdir()
         env = {**os.environ, "CLAUDE_PROJECT_DIR": str(project)}
-        with pytest.raises(pytest.fail.Exception, match="leaving state under .espalier-state"):
+        with pytest.warns(hs.HookSpawnRetried):
+            result = hs.run_hook_through(argv("first-state"), env=env, input="{}")
+        assert (result.stdout.split(), runs()) == (["first", "issue", "-", "False"], 2)
+        assert not (project / ".espalier-state").exists()
+
+    def test_a_row_counting_audit_records_never_counts_the_missed_attempts(self, child):
+        """A judgment's audit record is read by no hook decision, but a row
+        that counts records reads it: the test's own audit directory is put
+        back too, so the retry's record is the only one."""
+        argv, runs = child
+        with pytest.warns(hs.HookSpawnRetried, match="from the audit it began with"):
+            result = hs.run_hook_through(argv("first-audit"), env=dict(os.environ), input="{}")
+        assert (result.stdout.strip(), runs()) == ("1", 2)
+
+    def test_the_real_home_audit_log_is_never_put_back(self, monkeypatch, tmp_path):
+        """Live sessions write the real home's audit log too: a child whose
+        audit directory is that one, or under the suite's checkout, has it left
+        alone; a row's own directory is the one put back."""
+        monkeypatch.delenv("ESPALIER_AUDIT_DIR")
+        home_var = "USERPROFILE" if os.name == "nt" else "HOME"
+        assert hs._audit_dir({home_var: str(hs.Path.home())}) is None
+        assert hs._audit_dir({"ESPALIER_AUDIT_DIR": str(hs.SUITE_CHECKOUT / "audit")}) is None
+        assert hs._audit_dir({home_var: str(tmp_path)}) == tmp_path / ".espalier" / "audit"
+
+    @pytest.mark.parametrize("mode", ["first-cc", "first-root"], ids=["cc-blueprint", "root-marker"])
+    def test_a_miss_that_changed_the_project_elsewhere_is_not_retried(self, child, tmp_path, mode):
+        """The restore reaches .espalier-state and the audit directory alone:
+        session_start's blueprint chain under cc/, or a marker at the
+        project's root, changed by the miss would be read by the retry, so
+        such a miss fails, saying why, instead of being retried."""
+        argv, runs = child
+        project = tmp_path / "project"
+        project.mkdir()
+        env = {**os.environ, "CLAUDE_PROJECT_DIR": str(project)}
+        with pytest.raises(pytest.fail.Exception, match="outside what the restore puts back"):
+            hs.run_hook_through(argv(mode), env=env, input="{}")
+        assert runs() == 1
+
+    def test_the_project_is_the_working_directory_when_no_variable_names_it(self, child, tmp_path):
+        """A hook with no CLAUDE_PROJECT_DIR resolves its project from its
+        working directory, and so does the restore."""
+        argv, runs = child
+        project = tmp_path / "project"
+        project.mkdir()
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
+        with pytest.warns(hs.HookSpawnRetried, match="from the .espalier-state it began with"):
+            result = hs.run_hook_through(argv("first-state"), env=env, input="{}", cwd=str(project))
+        assert (result.stdout.split(), runs()) == (["first", "issue", "-", "False"], 2)
+
+    def test_a_grandchild_of_the_missed_attempt_writes_nothing_after_the_restore(self, child, tmp_path):
+        """A process the missed attempt started (a reflect spawn, a git) would
+        write after the restore and the retry would read it: the attempt's
+        whole process group is ended at the miss."""
+        argv, runs = child
+        project = tmp_path / "project"
+        project.mkdir()
+        env = {**os.environ, "CLAUDE_PROJECT_DIR": str(project)}
+        with pytest.warns(hs.HookSpawnRetried):
+            hs.run_hook_through(argv("first-grandchild"), env=env, input="{}")
+        time.sleep(3)   # past the grandchild's 4 s from its start, which began before the 3 s miss
+        assert not (project / ".espalier-state" / "late").exists()
+        assert runs() == 2
+
+    def test_the_suites_own_checkout_is_never_put_back(self, child, tmp_path, monkeypatch):
+        """A live session's hooks write the suite's own checkout's
+        .espalier-state too, so a miss that left state there fails as before,
+        and what lies there is left as the miss left it."""
+        argv, runs = child
+        project = tmp_path / "project"
+        project.mkdir()
+        monkeypatch.setattr(hs, "SUITE_CHECKOUT", project.resolve())
+        env = {**os.environ, "CLAUDE_PROJECT_DIR": str(project)}
+        with pytest.raises(pytest.fail.Exception, match="outside what the restore puts back"):
             hs.run_hook_through(argv("first-state"), env=env, input="{}")
         assert runs() == 1
+        assert (project / ".espalier-state" / "one-shot-flag").is_file()
 
     def test_the_statusline_keeps_its_own_bound(self, child, monkeypatch):
         """The statusline's 5 s is its prompt-delay check: a statusline as slow
