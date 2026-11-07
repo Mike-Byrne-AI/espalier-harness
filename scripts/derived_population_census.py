@@ -1747,8 +1747,15 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "than passing.",
     ),
     "tests/test_write_guard.py": (
-        47, "529507a7ee4ee366ff94ee5093fff774b443622e17655a26495420315a2017c5",
+        49, "fb82cf2c397dca1a9f2d03a6aca973abc92632577475c4cccca5c1bc8e60f8bb",
         "CORRECT_BY_REMEDY",
+        "GREW 47 -> 49 on 2026-11-07 (the fetch arms' inner position, DEF-3033): "
+        "TestQuotedVerbTailIsUniform::test_a_prefixed_fetch_verb_inside_a_substitution_bumps "
+        "walks a fixed pair (the bare control and its respelled twin) and, for each, "
+        "searches the arm over `_speedbump_readings` with `any`, the eight existing rows' "
+        "shape: each asserts the arm matches at least one of its checkpoint's readings, so "
+        "a narrowed reading set can only red it; its red was earned at the base (14 of 18 "
+        "rows). "
         "GREW 37 -> 47 on 2026-11-03 (the speed bump's quoted-verb lane, DEF-5080): "
         "both quoted-verb rosters' `test_a_quoted_verb_bumps_like_the_bare_verb` search "
         "an arm over `_speedbump_readings` (eight rows: each asserts the arm matches at "

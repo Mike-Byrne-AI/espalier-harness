@@ -1,0 +1,10 @@
+{
+ "id": "DEF-3045",
+ "subject": "tools/cc/hooks/_speedbump.py",
+ "cmd": "python -c \"import sys,time;sys.path.insert(0,'tools/cc/hooks');import _speedbump as s;t=time.perf_counter();list(s._scan_texts({'command':'env -i bash <( '*200+'x'}));print(int(time.perf_counter()-t>0.15))\"",
+ "open_value": "1",
+ "why_not": null,
+ "row_sha": "3bb6e40f2ce4",
+ "text_sha": "01b39a8c92b0",
+ "verified_2026_11_07": "OPEN (filed 2026-11-07; probe driven at filing here and in the export of HEAD ad3afa4f7b21)"
+}

@@ -790,6 +790,60 @@ class TestQuotedVerbTailIsUniform:
             f"{arm} does not read the verb in quotes")
         assert _speedbump_fires(sb, reader, arm, "Bash", quoted, tmp_path)
 
+    #: DEF-3033: the two fetch-and-run arms a substitution feeds hold a second
+    #: command position, the fetch verb inside it, which reads the whole anchor
+    #: as the loop openers' inner head does (DEF-3028): the quote pair, `$'...'`,
+    #: a leading backslash, a directory prefix quoted or not, a wrapper word and
+    #: an assignment prefix, each beside the bare control.
+    @pytest.mark.parametrize("spelling", [
+        '"curl"', "'curl'", "$'curl'", "\\curl", "/usr/bin/curl", '"/usr/bin/curl"',
+        "command curl", "env curl", "LC_ALL=C curl",
+    ])
+    @pytest.mark.parametrize("arm", ["_FETCH_EXEC_PROCSUB_RE", "_FETCH_EXEC_SUBST_RE"])
+    def test_a_prefixed_fetch_verb_inside_a_substitution_bumps(self, tmp_path, arm, spelling):
+        sb = _speedbump_module()
+        _verb, bare, reader = self._SPEEDBUMP_FIXTURES[arm]
+        rx = getattr(sb, arm)
+        for cmd in (bare, _respelled(bare, "curl", spelling, inner=True)):
+            assert any(rx.search(text) for text in _speedbump_readings(sb, reader, "Bash", cmd)), (
+                f"{arm} does not read the fetch verb in {cmd!r}")
+            assert _speedbump_fires(sb, reader, arm, "Bash", cmd, tmp_path), cmd
+
+    def test_the_inner_fetch_position_is_the_anchors_run_stopped_at_an_opener(self):
+        # DEF-3033: the inner position reads the anchor's wrapper run with
+        # the opener characters added to its token classes and nothing else
+        # (spelled out for the ReDoS gate, as the carriers' run is), so a
+        # roster or structure edit to the anchor's run reds here until it
+        # reaches this copy; and each substitution arm composes the anchor
+        # once, at its outer head: the lane's first cut composed it a second
+        # time inside the substitution and read cubic on a failing match
+        # (`"env -i bash <( " * 400`: 26.6 s at 6 KB, the code review)
+        bp = _bash_patterns_module()
+        sb = _speedbump_module()
+        stopped = (bp._CMD_POS_WRAP_RUN.replace(r"[^\s;|&]", r"[^\s;|&(`]")
+                   .replace(r"[^-\s;|&]", r"[^-\s;|&(`]"))
+        assert stopped != bp._CMD_POS_WRAP_RUN
+        assert sb._FETCH_INNER_WRAP_ONE == stopped
+        # the assignment's value is the anchor's unquoted pieces (a plain
+        # character, an escaped one, a lone `$`) with the openers added to
+        # the plain class and to the `$` lookahead, and nothing else
+        unquoted = r"""[^\s;|&'"$\\]|\\.|\$(?!')"""
+        assert bp._ASSIGN_VALUE.startswith("(?:" + unquoted + "|")
+        assert bp._CMD_POS_ENV_ASSIGN == r"(?:[A-Za-z_]\w*=" + bp._ASSIGN_VALUE + r"[ \t]+)"
+        assert sb._FETCH_INNER_ASSIGN == (
+            r"(?:[A-Za-z_]\w*=(?:"
+            + unquoted.replace(r"$\\]", r"$\\(`]").replace(r"(?!')", r"(?![('`])")
+            + r")*[ \t]+)")
+        assert bp._CARRIER_WRAP_HEAD in sb._FETCH_INNER_POS
+        assert bp._CMD_POS_VERB_PREFIX in sb._FETCH_INNER_POS
+        assert bp._CMD_POS_NO_VERB not in sb._FETCH_INNER_POS
+        for arm in ("_FETCH_EXEC_PROCSUB_RE", "_FETCH_EXEC_SUBST_RE"):
+            pattern = getattr(sb, arm).pattern
+            assert pattern.count(bp._CMD_POS_NO_VERB) == 1, arm
+            assert pattern.endswith(sb._FETCH_INNER_POS + sb._FETCH_HEAD), arm
+        # the pipe arm's head is the same fetch head, at the anchor
+        assert sb._FETCH_EXEC_PIPE_RE.pattern.startswith(bp._CMD_POS + sb._FETCH_HEAD)
+
 
 class TestBinaryVerbSpellingIsUniform:
     """DEF-1161, its class widened (air ff9ddb): a native binary's verb as a
