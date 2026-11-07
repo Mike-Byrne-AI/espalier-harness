@@ -1068,8 +1068,16 @@ _CARRIER_WRAP_RUN = r"(?:" + _CARRIER_WRAP_STEP + r"){0,3}"
 #: a statement there, so an assignment run may open it (`| LC_ALL=C xargs
 #: mv`), then the same steps (`| /usr/bin/env xargs mv`, `| busybox xargs
 #: rm`, which runs the xargs applet). One home for the Bash tail, its
-#: witness and the PowerShell carrier.
-_CARRIER_LEAD_RUN = r"(?:" + _CMD_POS_ENV_ASSIGN + r"){0,4}" + _CARRIER_WRAP_RUN
+#: witness and the PowerShell carrier. Before the carrier `xargs` is a
+#: wrapper like any other (`| xargs xargs mv` runs the inner one with the
+#: outer's operands), so the lead's steps take it, as the tail's old
+#: `_CMD_POS_WRAP_RUN` did (the code review of 597abd35: the shared step's
+#: xargs guard dropped that wall); bounded at three steps.
+_CARRIER_LEAD_STEP = (
+    _CARRIER_WRAP_HEAD + r"(?:" + _CARRIER_WRAP_ONE + r"|(?i:busybox)" + _EXE_SUFFIX + r"[ \t]+)"
+    + r"(?:" + _CMD_POS_ENV_ASSIGN + r"){0,4}"
+)
+_CARRIER_LEAD_RUN = r"(?:" + _CMD_POS_ENV_ASSIGN + r"){0,4}(?:" + _CARRIER_LEAD_STEP + r"){0,3}"
 _FIND_EXEC_VERB = (
     _CARRIER_WRAP_RUN
     + r"\$?" + _NATIVE_VERB_PATH + r"(?:rm|unlink|rmdir|shred|mv)\b"
@@ -1336,7 +1344,7 @@ _PIPED_REMOVE_RE = re.compile(
 #: short name, `C:\PROGRA~1\Git\usr\bin\xargs.exe`, was read by the
 #: carrier and hidden by this gate (the code review's W1).
 _PIPED_CARRIER_WITNESS = (
-    r"\|[ \t\r\n]*" + _CARRIER_LEAD_RUN + r"(?:&[ \t]*)?"
+    r"\|&?[ \t\r\n]*" + _CARRIER_LEAD_RUN + r"(?:&[ \t]*)?"
     + r"(?:" + _CMD_POS_VERB_PREFIX + r"|(?:[A-Za-z]:)?(?:[\w.~-]*[/\\])+)\bxargs\b"
 )
 _PIPED_CARRIER_WITNESS_RE = re.compile(_PIPED_CARRIER_WITNESS, re.IGNORECASE)

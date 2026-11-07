@@ -1086,7 +1086,11 @@ class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
               # a builtin's name in another case reads case-blind here: no
               # shell's case rule runs at a carrier, and on a case-blind
               # volume `TIME` finds /usr/bin/time (main walled it)
-              "| TIME xargs ", "| xargs COMMAND "]
+              "| TIME xargs ", "| xargs COMMAND ",
+              # xargs is a wrapper BEFORE the carrier: the inner one runs
+              # with the outer's operands (main walled it; the code review
+              # of 597abd35 found the shared step's xargs guard dropped it)
+              "| xargs xargs ", "| xargs -n 1 xargs ", "|& env xargs "]
 
     @pytest.mark.parametrize("word", _CARRIER_WORDS + [
         "sudo -u build xargs", "& 'C:/x/xargs.exe'", "& xargs", "&xargs",
@@ -1098,6 +1102,19 @@ class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
         # a witness left narrow keeps the gate shut, and the readers never run
         bp = _bash_patterns_module()
         assert bp._PIPED_CARRIER_WITNESS_RE.search(f"find . | {word} mv -t /tmp/x"), word
+
+    @pytest.mark.parametrize("lead", _LEADS)
+    def test_the_witness_reads_every_lead_the_tail_reads(self, lead):
+        # `|&` then a lead: the witness took `|&` only before an empty lead,
+        # so `find / |& env xargs <wipe>` was read by the zone tier and
+        # hidden from the hard tier (the code review of 597abd35)
+        bp = _bash_patterns_module()
+        assert bp._PIPED_CARRIER_WITNESS_RE.search(f"find . {lead}mv -t /tmp/x"), lead
+
+    @pytest.mark.parametrize("lead", ["| xargs xargs ", "|& env xargs ", "| xargs -n 1 xargs "])
+    def test_the_hard_tier_reads_a_lead_before_the_carrier(self, lead):
+        bp = _bash_patterns_module()
+        assert bp.has_catastrophic_piped_remove(f"find / {lead}" + "r" + "m -" + "rf")
 
     def test_the_powershell_hard_tier_reads_a_short_name_carrier(self):
         bp = _bash_patterns_module()
@@ -1130,7 +1147,9 @@ class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
         command = f"find tools/cc/hooks | xargs -a {value} mv -t /tmp/x"
         _assert_zone_walled(command, tmp_path)
         reason = _guard_reason(_past_the_bump(command, tmp_path))
-        assert "move" in reason, reason
+        # the verb the reason opens with: every zone reason ends naming a
+        # move, so a bare "move" passed on a delete (the code review)
+        assert "Bash move of protected" in reason, reason
         (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True, exist_ok=True)
         _assert_zone_walled(f"find tools/cc/hooks | xargs -a {value} rm -rf", tmp_path, _run_ps_guard)
 
@@ -1204,7 +1223,9 @@ class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
         assert bp._FIND_EXEC_VERB in bp._LOOP_BODY_VERB
         assert bp._CMD_POS_VERB_PREFIX in bp._XARGS_CARRIER_TAIL
         assert bp._CMD_POS_VERB_PREFIX in bp._PIPED_CARRIER_WITNESS
-        assert bp._CARRIER_WRAP_RUN in bp._CARRIER_LEAD_RUN
+        # the lead's step is the carrier step without its xargs guard
+        assert bp._CARRIER_WRAP_HEAD + "(?:" + bp._CARRIER_WRAP_ONE in bp._CARRIER_LEAD_STEP
+        assert bp._CARRIER_LEAD_STEP in bp._CARRIER_LEAD_RUN
         for name in ("_XARGS_CARRIER_TAIL", "_PIPED_CARRIER_WITNESS", "_PS_PIPE_CARRIER"):
             assert bp._CARRIER_LEAD_RUN in getattr(bp, name), name
         # the speed bump's fetch hop reads a wrapper's directory from the
