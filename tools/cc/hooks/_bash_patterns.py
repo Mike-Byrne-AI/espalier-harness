@@ -213,6 +213,57 @@ _CMD_POS_WRAP_RUN = (
     + r"(?:[ \t]+(?:-[^\s;|&]+(?:[ \t]+(?!" + _CMD_POS_WRAPPER_SPELLED
     + r"[ \t])(?!\d)[^-\s;|&][^\s;|&]*)?|\d[^\s;|&]*))*[ \t]+)"
 )
+#: The wrappers whose slashed word the slashed arm's run declines: the
+#: roster less `watch` and `script`, which are carrier verbs too, so a
+#: declined `/opt/watch` would hand `watch '<program>'` to a run that reads
+#: no carrier (90c7c3: eleven secret-leg rows went deny->allow). A literal,
+#: for the ReDoS gate; pinned to the roster by
+#: tests/test_write_guard.py::TestTheCommandPositionGrammarIsOneAcrossTheCarriers.
+_CMD_POS_SLASHED_DECLINED_BINARIES = (
+    r"(?:env|sudo|doas|nohup|timeout|xargs|nice|ionice|stdbuf"
+    r"|setsid|strace|ltrace|chrt|taskset|unbuffer|torify|proxychains)"
+)
+#: A word ending in a slashed wrapper name and a blank (`/a/env `,
+#: `*/bin/env `, `/usr/include/sudo `): the anchor's `(?<=/)` arm starts a
+#: wrapper run INSIDE every such word, at the name. A word holding a quote
+#: anywhere is not one: the verb prefix's quoted directory
+#: (`_CMD_POS_QUOTED_DIR`) spans blanks, so declining a quote-led word let
+#: that arm swallow the next words and read another verb (`/usr/bin/sudo -D
+#: '/opt/env -x /o/cp' mv cc/x /tmp/y` went deny->allow; the code review,
+#: driven), and declining a word quoted after its first character
+#: (`x='/opt/nohup /o/cp'`) moved 72 verdicts the other way, a base
+#: fail-open closed by accident (DEF-3053); those words keep the base
+#: reading and stay quadratic (DEF-3052).
+_CMD_POS_SLASHED_WRAPPER_WORD = (
+    r"(?![^\s;|&]*[\x22'])[^\s;|&]*/(?:" + _CMD_POS_WRAPPER_BUILTINS + r"|(?i:" + _CMD_POS_SLASHED_DECLINED_BINARIES
+    + r")" + _EXE_SUFFIX + r")[ \t]"
+)
+# ⚠ THE SLASHED ARM'S RUN DECLINES THAT WORD AS A FLAG'S ARGUMENT, A ReDoS
+# FIX (DEF-3042). With `_CMD_POS_WRAP_RUN` there, on `find build -exec /a/env
+# -exec /a/env ...` every `env` started a run that took each later
+# `/a/env` as the flag's argument to the end of the input before the verb
+# failed: n starts of n tokens, about 4x per doubling in every `_CMD_POS`
+# consumer (1.6 s at 4 KB in the removed-or-relocated reader). Declining
+# the word there loses no reading, because the word holds its own `(?<=/)`
+# start: the later run reads the same wrapper, its flags and the verb, so a
+# match ends where it ended and only starts later. The decline is the
+# ARGUMENT arm's alone: in the flag arm (`-a/env`) and the numeric arm
+# (`1/nice`) it moved verdicts, because the generic flag-argument reading
+# takes the word after a glued flag as its argument (`/usr/bin/env -a/env
+# foo rm cc/x` denies, as `env -i foo rm cc/x` does), and that over-read is
+# a class of its own with those two floods (DEF-3051). `watch` and `script`
+# are left out of the decline (above), so their slashed floods stay
+# quadratic (DEF-3050). Arm 1 keeps `_CMD_POS_WRAP_RUN`: its runs start at
+# a separator, one per separator, so the chain never re-reads. The
+# assignment tail re-reads a slashed value the same way (DEF-3047). Pinned
+# by tests/test_redos.py's walker flood (`_WALKER_FLOOD_MAKERS`) and the
+# anchor's own prefix-run row; its derivation from `_CMD_POS_WRAP_RUN` by
+# tests/test_write_guard.py::TestTheCommandPositionGrammarIsOneAcrossTheCarriers.
+_CMD_POS_SLASHED_WRAP_RUN = (
+    "(?:" + _CMD_POS_WRAPPER_SPELLED
+    + r"(?:[ \t]+(?:-[^\s;|&]+(?:[ \t]+(?!" + _CMD_POS_SLASHED_WRAPPER_WORD + r")(?!"
+    + _CMD_POS_WRAPPER_SPELLED + r"[ \t])(?!\d)[^-\s;|&][^\s;|&]*)?|\d[^\s;|&]*))*[ \t]+)"
+)
 # An assignment prefix, ended where bash ends the word: at the first UNQUOTED
 # blank (DEF-848's lane). The value is a run of pieces -- a plain character,
 # a backslash and the character it escapes, a lone `$`, an ANSI-C `$'...'`,
@@ -365,7 +416,7 @@ _CMD_POS_NO_VERB = (
     + "|" + _CMD_POS_NEGATE
     + "|" + _CMD_POS_REDIRECT
     + "|" + _CMD_POS_EXEC_QUOTE + ")*"
-    + r"|(?<=/)" + _CMD_POS_WRAP_RUN + "(?:" + _CMD_POS_ENV_ASSIGN + ")*"
+    + r"|(?<=/)" + _CMD_POS_SLASHED_WRAP_RUN + "(?:" + _CMD_POS_ENV_ASSIGN + ")*"
     + "|" + _CMD_POS_EXEC_QUOTE + ")"
 )
 # ⚠ THE WRAPPER ARM WAS NARROWED FROM `\b` TO `(?<=/)` ON 2026-08-26, and the

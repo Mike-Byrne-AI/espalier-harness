@@ -1674,6 +1674,15 @@ _WALKER_FLOOD_MAKERS = [
     # the quoted arm's WIDTH, not only the count: a 400-character quoted word
     # per carrier (the regression the failure-mode review found sat at 256)
     ("quoted_long_word_carrier_run", lambda n: ('find "' + 'a&' * 200 + '" | xargs rm -rf; ') * (n // 424)),
+    # DEF-3042: a dash word then a slashed wrapper name, repeated. The
+    # anchor's `(?<=/)` arm started a wrapper run at every `env` and took
+    # each later `/a/env` as the flag's argument to the end before the verb
+    # failed: 1.6 s at 4 KB in the removed-or-relocated reader, about 4x per
+    # doubling, while every flood above read linear. The row's probe, byte
+    # for byte. The glued (`-a/env`) and numeric (`1/nice`) spellings and the
+    # slashed `watch`/`script` are still quadratic, by ruling, and are rows
+    # (DEF-3051, DEF-3050), so they are not floods here yet.
+    ("slashed_wrapper_flag_argument_run", lambda n: "find build" + " -exec /a/env" * ((n - 17) // 13) + " -print"),
 ]
 
 _WALKER_FLOODS = [(label, make(_WALKER_FLOOD_LEN)) for label, make in _WALKER_FLOOD_MAKERS]
@@ -4317,6 +4326,20 @@ def _prefix_run_tokens() -> list[str]:
     tokens += [f"{w.upper()}.EXE " for w in wrappers]
     tokens += ["~/a ", "~a/ ", "~/"]
     tokens += [f"{k} " for k in keywords]
+    # DEF-3042: a flag whose argument ends in a slashed wrapper name. The
+    # `(?<=/)` arm starts a run inside every such word, and until its run
+    # declined the word as a flag's argument each start read to the end
+    # (quadratic, not exponential: the budget's 30 KB is what makes it red).
+    # Derived from the declined roster, which leaves out `watch` and
+    # `script` (carrier verbs, DEF-3050); the glued and numeric arms are
+    # DEF-3051's.
+    declined = _re.findall(r"[a-z]+", _bash_patterns._CMD_POS_WRAPPER_BUILTINS
+                           + _bash_patterns._CMD_POS_SLASHED_DECLINED_BINARIES)
+    tokens += [f"-x /a/{w} " for w in declined]
+    # the decline's case, suffix and blank: a lowercase-only, suffix-blind
+    # or space-only decline passed every other row (the code review's mutants)
+    tokens += [f"-x /a/{w.upper()}.EXE " for w in declined]
+    tokens += ["-x\t/a/env\t"]
     return tokens
 
 
