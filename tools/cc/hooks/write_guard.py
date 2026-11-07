@@ -2628,11 +2628,16 @@ def _ps_dangerous_reason_here(
                 return reason
         # A PowerShell program a Start-Process of powershell or pwsh carries
         # in its argument list (DEF-3011) meets these same tiers, one level
-        # down; its bash twin is among the programs above.
-        for program in _bash_patterns.ps_start_process_ps_programs(raw, command):
-            reason = _ps_dangerous_reason(program, root, _depth + 1, cwd=cwd)
-            if reason:
-                return reason
+        # down, from each directory its statement may run in (the cmdlet
+        # starts it in the current location); its bash twin is among the
+        # programs above.
+        for program, bases in _bash_patterns.placed_ps_start_process_ps_programs(
+                raw, str(root) if root else None, cwd or root):
+            places: list[Path | None] = [Path(b) for b in bases if b is not None]
+            for base in places or [cwd]:
+                reason = _ps_dangerous_reason(program, root, _depth + 1, cwd=base)
+                if reason:
+                    return reason
     return None
 
 

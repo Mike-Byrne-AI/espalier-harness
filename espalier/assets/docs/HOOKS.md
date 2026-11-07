@@ -1672,10 +1672,16 @@ it) is read through to its quoted payload, and a switch's bare
 value between the two (`-Verb RunAs`, `-ExecutionPolicy Bypass`,
 `-WindowStyle Hidden`) is crossed, so an elevated or policy-bypassed write
 is caught like the bare one. A value that is itself a quoted string
-(`-Verb "RunAs"`), an `=`-bound value (`-ArgumentList="..."`) or the array
-spelling (`-ArgumentList "-Command","..."`) ends the run before the payload,
-which then stays inert -- a declared limit, pinned by
-`tests/test_write_guard_command_position.py::TestPowerShellReparsingWrapperCarriesASwitchValue::test_the_declared_limits_are_pinned`.
+(`-Verb "RunAs"`) or an `=`-bound value (`-ArgumentList="..."`) ends the run
+before the payload, which then stays inert -- a declared limit, pinned by
+`tests/test_write_guard_command_position.py::TestPowerShellReparsingWrapperCarriesASwitchValue::test_the_declared_limits_are_pinned`
+-- unless the argument list hands the started shell its program: a
+`Start-Process` of powershell or pwsh with `-Command` in the list, or of
+bash or sh with `-c`, as one string or the array spelling
+(`-ArgumentList "-Command","..."`), is read for that program, which meets
+every tier its direct form meets. powershell.exe's implicit
+command (a program with no `-Command` before it) and a list given before
+the program stay unread, declared and pinned beside it.
 
 Reads of secret-bearing paths -- dotenv files (a dotenv TEMPLATE, the
 `.env.example`, `.env.sample`, `.env.template` or `.env.dist` a repo commits
@@ -1693,8 +1699,10 @@ of a string is read as a program too: Bash `eval`, `watch`, `script -c` and
 `su -c`; PowerShell `Invoke-Expression` / `iex`, `pwsh -Command`, `cmd /c`,
 `[scriptblock]::Create` and a `$(...)` subexpression, including a string
 bound to a variable earlier in the same command (`$c = 'gc .env';
-iex $c`). A carrier named inside quotes is data. Not read as a program: a
-`Start-Process` argument list, the colon-bound `-Command:'...'`, a glued
+iex $c`), and the program a `Start-Process` of powershell, pwsh, bash or sh
+carries after the started shell's `-Command` or `-c`. A carrier
+named inside quotes is data. Not read as a program: any other `Start-Process`
+argument list, the colon-bound `-Command:'...'`, a glued
 `cmd /c"..."`, and the words after a quoted program (`cmd /c "type" .env`).
 A PowerShell statement that opens with a quoted string is read as the
 command its first word names, which is what refuses a string piped into

@@ -435,7 +435,19 @@ def _ps_discard_readings(tool_input: dict) -> list[tuple[str, str | None, bool]]
     readings: list[tuple[str, str | None, bool]] = [(scan, None, False)]
     for body in _bash_patterns._ps_shell_program_bodies(raw, scan):
         readings.append((*_bash_reading(body), True))
+    readings.extend((text, None, False) for text in _ps_started_program_scans(str(raw)))
     return readings
+
+
+def _ps_started_program_scans(command: str) -> list[str]:
+    """The scan text of each PowerShell program a ``Start-Process`` of
+    powershell or pwsh carries in its argument list (DEF-3011), read by the
+    PowerShell arms as the command it is: the started-shell twin of the
+    literal a `powershell -Command "..."` hands them, which the masker keeps
+    at a command position already."""
+    twin, scan = _bash_patterns.powershell_scan_pair(command)
+    return [_ps_scan_text(program)
+            for program in _bash_patterns.ps_start_process_ps_programs(twin, scan)]
 
 
 def _discard_readings(tool_name: str, tool_input: dict) -> list[tuple[str, str | None, bool]]:
@@ -464,12 +476,15 @@ def _git_checkpoint_readings(tool_name: str, tool_input: dict) -> list[tuple[str
     on the PowerShell tool its own scan text, read by the PowerShell twins so a
     literal stays data. A program the PowerShell tool hands to `bash -c` is
     not read here: the tool-keyed carve-out in the module docstring, kept for
-    these three (air, 2026-10-16), whose one exception is CP-DISCARD. Empty for
-    any other tool."""
+    these three (air, 2026-10-16), whose one exception is CP-DISCARD. A
+    PowerShell program a ``Start-Process`` of powershell or pwsh carries is
+    read beside it, by the same PowerShell twins (DEF-3011). Empty for any
+    other tool."""
     if tool_name == "Bash":
         return [(text, True) for text in _scan_texts(tool_input)]
     if tool_name == "PowerShell":
-        return [(_ps_scan_text(str(tool_input.get("command", ""))), False)]
+        command = str(tool_input.get("command", ""))
+        return [(text, False) for text in (_ps_scan_text(command), *_ps_started_program_scans(command))]
     return []
 
 
@@ -880,10 +895,12 @@ def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = 
         # would, one level down; a catastrophic target there is the hard
         # tier's, which reads the same program.
         if _depth < _bash_patterns._PS_STDIN_MAX_DEPTH:
-            twin, scan = _bash_patterns.powershell_scan_pair(str(tool_input.get("command", "")))
-            for program in _bash_patterns.ps_start_process_ps_programs(twin, scan):
-                if _pred_rmrf(tool_name, {"command": program}, root, cwd, _depth + 1):
-                    return True
+            for program, bases in _bash_patterns.placed_ps_start_process_ps_programs(
+                    str(tool_input.get("command", "")), str(root), cwd or root):
+                places: list[Path | None] = [Path(b) for b in bases if b is not None]
+                for base in places or [cwd]:
+                    if _pred_rmrf(tool_name, {"command": program}, root, base, _depth + 1):
+                        return True
         # The middle rung write_guard.check_powershell now falls through to.
         # Same three-way shape as the Bash arm below: the hard tier keeps
         # absolute/globbed/qualified/unparseable targets (bar a literal path
@@ -1568,10 +1585,14 @@ def _pred_fetchexec(tool_name: str, tool_input: dict, root: Path, cwd: Path | No
         # The joined scan text, like `_pred_rmrf`'s PowerShell arm: masked, and
         # backtick continuations folded, so `irm ...` + backtick-newline +
         # `| iex` is one statement here too; then the bare pipe continuation.
-        cmd = _PIPE_CONTINUATION_RE.sub(
-            "| ", _bash_patterns.powershell_scan_text(tool_input.get("command", "")))
-        return bool(_PS_FETCH_EXEC_PIPE_RE.search(cmd)
-                    or _PS_FETCH_EXEC_WRAP_RE.search(cmd))
+        # A program a Start-Process of powershell or pwsh carries is read
+        # beside it (DEF-3011).
+        command = str(tool_input.get("command", ""))
+        for text in (_bash_patterns.powershell_scan_text(command), *_ps_started_program_scans(command)):
+            cmd = _PIPE_CONTINUATION_RE.sub("| ", text)
+            if _PS_FETCH_EXEC_PIPE_RE.search(cmd) or _PS_FETCH_EXEC_WRAP_RE.search(cmd):
+                return True
+        return False
     if tool_name != "Bash":
         return False
     for text in _scan_texts(tool_input):
@@ -2485,6 +2506,50 @@ def _ps_absolute_parts(token: str) -> list[str]:
     return out
 
 
+def _ps_remove_item_snapshot_candidates(command: str, at: Path) -> list[Path]:
+    """The candidate paths `_removal_snapshot_targets` reads from one
+    PowerShell command's `Remove-Item` invocations (and aliases), each placed
+    in its own statement's directory from ``at``: the command's own, and
+    each program a ``Start-Process`` of powershell or pwsh carries, read from
+    where it starts (DEF-3011)."""
+    candidates: list[Path] = []
+    try:
+        text, statements = _bash_patterns.powershell_directory_chain(
+            command, directory_exists(at, bash=False))
+    except Exception:  # noqa: BLE001 -- the walk is advisory; a fault degrades to the start
+        text, statements = _bash_patterns.powershell_scan_text(command), []
+    for m in _bash_patterns._PS_REMOVE_ITEM_RE.finditer(text):
+        here = m.start("args")
+        dirs = next((ds for s, e, ds in statements if s <= here < e), (".",))
+        bases = [join_directory(at, d, bash=False) for d in dirs]
+        args = m.group("args")
+        # quote-aware, as the wall's reader splits the same span (the
+        # lane's review): a quoted target with a space is ONE target
+        for tok in _bash_patterns._ps_removal_target_tokens(
+                args, tokens=_bash_patterns._ps_operand_tokens(args)):
+            elements = [tok]
+            if "$" not in tok and "`" not in tok:
+                # a wildcard is read as the directory it expands in, as
+                # the Bash arm reads one (the review's item 10), each
+                # element of an array on its own; PowerShell has no brace
+                # lists, so only the pattern cut applies
+                bare = tok.replace('"', "").replace("'", "").replace("\\", "/")
+                if any(ch in bare for ch in "*?["):
+                    elements = [_snapshot_spellings(e, braces=False)[0]
+                                for e in bare.split(",") if e]
+            for element in elements:
+                parts = _bash_patterns._ps_removal_token_targets(element)
+                if parts is None:
+                    # DEF-842: a recursive remove without the force switch
+                    # reaches the nudge with an absolute target too (the
+                    # force form walls one), so the promise reads a plain
+                    # absolute spelling as the Bash arm reads one; the
+                    # checkout test below keeps only what lies inside.
+                    parts = _ps_absolute_parts(element)
+                candidates.extend(join_directory(base, part, bash=False) for part in parts for base in bases)
+    return candidates
+
+
 def _removal_snapshot_targets(
     tool_name: str, tool_input: dict, root: Path, cwd: Path | None = None,
 ) -> list[str]:
@@ -2531,40 +2596,11 @@ def _removal_snapshot_targets(
                                   for p in joined_directories(base, path, bash=True))
     else:
         command = _bash_patterns._expand_simple_ps_var_assignments(command)   # DEF-801's twin
-        try:
-            text, statements = _bash_patterns.powershell_directory_chain(
-                command, directory_exists(at, bash=False))
-        except Exception:  # noqa: BLE001 -- the walk is advisory; a fault degrades to the start
-            text, statements = _bash_patterns.powershell_scan_text(command), []
-        for m in _bash_patterns._PS_REMOVE_ITEM_RE.finditer(text):
-            here = m.start("args")
-            dirs = next((ds for s, e, ds in statements if s <= here < e), (".",))
-            bases = [join_directory(at, d, bash=False) for d in dirs]
-            args = m.group("args")
-            # quote-aware, as the wall's reader splits the same span (the
-            # lane's review): a quoted target with a space is ONE target
-            for tok in _bash_patterns._ps_removal_target_tokens(
-                    args, tokens=_bash_patterns._ps_operand_tokens(args)):
-                elements = [tok]
-                if "$" not in tok and "`" not in tok:
-                    # a wildcard is read as the directory it expands in, as
-                    # the Bash arm reads one (the review's item 10), each
-                    # element of an array on its own; PowerShell has no brace
-                    # lists, so only the pattern cut applies
-                    bare = tok.replace('"', "").replace("'", "").replace("\\", "/")
-                    if any(ch in bare for ch in "*?["):
-                        elements = [_snapshot_spellings(e, braces=False)[0]
-                                    for e in bare.split(",") if e]
-                for element in elements:
-                    parts = _bash_patterns._ps_removal_token_targets(element)
-                    if parts is None:
-                        # DEF-842: a recursive remove without the force switch
-                        # reaches the nudge with an absolute target too (the
-                        # force form walls one), so the promise reads a plain
-                        # absolute spelling as the Bash arm reads one; the
-                        # checkout test below keeps only what lies inside.
-                        parts = _ps_absolute_parts(element)
-                    candidates.extend(join_directory(base, part, bash=False) for part in parts for base in bases)
+        candidates.extend(_ps_remove_item_snapshot_candidates(command, at))
+        for program, bases in _bash_patterns.placed_ps_start_process_ps_programs(
+                command, str(root), at):
+            for base in [Path(b) for b in bases if b is not None] or [at]:
+                candidates.extend(_ps_remove_item_snapshot_candidates(program, base))
         scan = _bash_patterns.powershell_scan_text(command)
         for body in _bash_patterns._ps_shell_program_bodies(command, scan):
             for operand, bases in _placed_rm_operands(body, at):
