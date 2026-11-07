@@ -201,9 +201,8 @@ TIMEOUT_NEAR_SERIAL_FILES: tuple[str, ...] = (
 #: The cited-pin run: one nested pytest child over the docs' cited rows. On
 #: 2026-11-01 it carried four rows of ``tests/test_speedbump_irreversible.py``
 #: (a wall-clock file above) and 39 write-guard rows whose hook judgment writes
-#: a speed bump's state, which ``tests/_hook_spawn.py`` then did not retry after
-#: a miss that left state (DEF-2014's carve-out; since DEF-2030 it retries from
-#: the state the first attempt began with). Beside the parallel leg on
+#: a speed bump's state, which ``tests/_hook_spawn.py`` does not retry after a
+#: miss that left state (DEF-2014's carve-out). Beside the parallel leg on
 #: windows-latest one such judgment outran the guard's 3.5 s budget and redded
 #: the leg (run 41217045122, 2026-10-31, DEF-4062); on the full tier's serial
 #: leg the child has the runner to itself (74 s alone on the Windows seat). Not
