@@ -95,7 +95,7 @@ is the table working: it prints apart, as a declared host difference naming
 both expectations, lands in the receipt's ``host_differences`` and does not fail
 the run (DEF-2024).
 
-Stdlib only. Works on 3.10+.
+Stdlib only. Works on 3.11+.
 """
 from __future__ import annotations
 

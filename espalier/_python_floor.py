@@ -1,6 +1,6 @@
 """The minimum Python this package runs on, and the one parser that reads it.
 
-``pyproject.toml`` declares ``requires-python = ">=3.10"``. Nothing enforced
+``pyproject.toml`` declares ``requires-python = ">=3.11"``. Nothing enforced
 it before this module existed: three interpreter probes tested only
 ``.startswith("Python 3.")``, so on a host whose ``python3`` is stock
 ``/usr/bin/python3`` -- 3.9.6 on every macOS through Sequoia -- ``init`` wrote
@@ -44,7 +44,7 @@ import re
 
 #: The floor ``pyproject.toml`` declares. Parity-pinned twin in
 #: ``tools/cc/hooks/_hook_utils.py``; keep both in step with ``requires-python``.
-MIN_PYTHON: tuple[int, int] = (3, 10)
+MIN_PYTHON: tuple[int, int] = (3, 11)
 
 # `python --version` prints `Python 3.14.0`; older builds print it to stderr,
 # which is why every caller passes `stdout or stderr`. Tolerate a missing patch
@@ -79,6 +79,28 @@ def parse_python_version(version_output: str) -> tuple[int, int] | None:
     return int(match.group(1)), int(match.group(2))
 
 
+#: The version as a banner spells it (``3.10.12``, ``3.9``, ``3.14.0rc1``).
+_SPELLED_VERSION_RE = re.compile(r"Python\s+(\d+\.\d+(?:\.\d+)?[A-Za-z0-9]*)")
+
+
+def does_not_run_sentence(banner: str, where: str = "") -> str:
+    """The one sentence every surface says about an interpreter below the
+    floor (the operator's ruling of 2026-11-07: a dropped Python is dropped,
+    never run in a reduced mode): the harness does not run on it, update.
+
+    ``banner`` is the interpreter's ``--version`` answer, read for the version
+    it spells; ``where`` names it (``" (python3 at /usr/bin/python3)"``).
+    ``init`` and every other command that would wire it refuse with this
+    before writing anything; ``doctor`` and the SessionStart banner
+    (``tools/cc/hooks/session_start.py``, which cannot import this and spells
+    the same words) say it of an interpreter already wired, then the re-wire.
+    """
+    match = _SPELLED_VERSION_RE.search(banner or "")
+    found = match.group(1) if match else f"older than {floor_text()}"
+    return (f"The harness does not run on Python {found}{where}. Update to Python "
+            f"{floor_text()} or newer to install and use it.")
+
+
 def meets_python_floor(version_output: str) -> bool:
     """True when ``version_output`` reports at least :data:`MIN_PYTHON`.
 
@@ -103,8 +125,8 @@ def is_python3_banner(version_output: str) -> bool:
     probes tested ``startswith("Python 3.")`` on the stripped output while the
     floor parser searched anywhere in it, so a banner with a line before it (a
     wrapper that echoes, a sitecustomize notice) read as a Python 3 to the floor
-    and as not one to identity -- and ``init`` said "the blocking guards keep
-    working" and "each guard fails OPEN" about the same interpreter in one run
+    and as not one to identity -- and ``init`` called the same interpreter both
+    a working below-floor Python and one whose every guard fails OPEN in one run
     (driven by the ``DEF-727`` failure-mode review). ``Python 4.0`` is not a
     Python 3 under either reading; the floor decides what to do with it.
     """
@@ -611,7 +633,7 @@ def interpreter_meets_floor(name_or_path: str | None) -> bool:
 
 
 def floor_text() -> str:
-    """``"3.10"`` -- for interpolation into operator-facing messages.
+    """``"3.11"`` -- for interpolation into operator-facing messages.
 
     One renderer, so a message can never quote a floor the code does not
     enforce. Every emitted string naming the minimum reads it from here rather

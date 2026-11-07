@@ -95,7 +95,7 @@ class TestNativeFlavour:
     def test_the_old_default_launcher_disagrees_with_its_flag(self, tmp_path):
         bin_dir = hosts.build_old_default_launcher(tmp_path)
         assert _run_native(bin_dir, "py", "--version").stdout.strip() == "Python 3.9.6"
-        got = _run_native(bin_dir, "py", "-3", "-c", "import sys; print(sys.version_info >= (3, 10))")
+        got = _run_native(bin_dir, "py", "-3", "-c", "import sys; print(sys.version_info >= (3, 11))")
         assert (got.returncode, got.stdout.strip()) == (0, "True"), got
 
     def test_an_unknown_shape_is_refused(self, tmp_path):

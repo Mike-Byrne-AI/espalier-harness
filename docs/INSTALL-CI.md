@@ -16,8 +16,8 @@ it would need an admin-scope GitHub token and hide the opt-in moment.
 ## 1. Install the workflow + guard script
 
 > **Interpreter note.** The commands below spell `python`. A stock macOS ships only
-> `python3` (and it is 3.9; Espalier requires 3.10+), while many Windows installs ship
-> only `python`. Use whichever both resolves AND reports 3.10+
+> `python3` (and it is 3.9; Espalier requires 3.11+), while many Windows installs ship
+> only `python`. Use whichever both resolves AND reports 3.11+
 > (`<name> --version`); on a stock macOS `python3` resolves but is 3.9.
 > `espalier doctor .` checks this for you.
 

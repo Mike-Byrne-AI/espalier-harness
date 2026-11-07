@@ -76,13 +76,13 @@ done
 [[ -d "$PACKDIR" ]] || { echo "error: $PACKDIR/ not found - run from repo root." >&2; exit 2; }
 
 # The interpreter every python step below runs: the first of python3, python and
-# py -3 that ANSWERS a Python 3.10+ (the canonical resolver line,
+# py -3 that ANSWERS a Python 3.11+ (the canonical resolver line,
 # tests/_interpreter_hosts.py::shell_resolver_line). A name that only resolves is
 # not enough: where python3 is a Store alias stub every step spelled python3
 # failed. After the argument checks, so usage and --dry-run answer as before; the
 # scope gate's espalier import is still its own errored-probe advisory when the
 # answering interpreter lacks it. $PY stays unquoted so `py -3` runs as two words.
-PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ answered to python3, python or py -3' >&2; exit 1; }
+PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys; sys.exit(sys.version_info < (3, 11))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.11+ answered to python3, python or py -3' >&2; exit 1; }
 
 # Build the per-pack claude invocation once. --max-budget-usd is appended ONLY when a
 # budget is set (via --budget N or PACK_CHAIN_BUDGET); "none"/"0" are explicit no-cap

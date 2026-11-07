@@ -61,7 +61,7 @@ def test_mypy_config_keeps_near_strict_flags():
     # typeshed hides `os.getuid` and `fcntl`: the hooks guard both at runtime, so
     # the gate reds there on code that is correct, and a line that is red on every
     # run on one host teaches that host to skip it.
-    assert cfg.get("python_version") == "3.10", (
+    assert cfg.get("python_version") == "3.11", (
         f"[tool.mypy] python_version must stay the oldest supported interpreter, "
         f"got {cfg.get('python_version')!r}"
     )

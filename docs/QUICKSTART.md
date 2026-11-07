@@ -9,7 +9,7 @@ assumes you have an existing repo and Claude Code installed.
 ## Install from PyPI and govern your repo in place
 
 Espalier-Harness ships on PyPI as `espalier-harness` — pure Python, zero
-third-party deps, Python 3.10+. Install the engine, then run `init` inside
+third-party deps, Python 3.11+. Install the engine, then run `init` inside
 the repo you want governed: it deploys the harness into that repo (hooks,
 agents, commands, skills, seeded docs) and the engine stays where `pip` put
 it. The hooks it deploys are standalone scripts that never import the
@@ -323,7 +323,7 @@ was denied; restored, it ran).
 - **Type `python`, not `python3`.** Most Windows installs ship only `python`,
   and Windows 11 can carry a `python3.exe` App Execution Alias that resolves
   but is not an interpreter. `init` probes `python` first and wires whichever
-  name both resolves and reports 3.10+, rejecting a name that only prints a
+  name both resolves and reports 3.11+, rejecting a name that only prints a
   Store prompt; `python -m espalier doctor .` names the wired interpreter and
   warns when it is a Python 2 shim or resolves only inside a venv. Use the
   `python -m espalier <command>` spelling throughout — pip's `Scripts`

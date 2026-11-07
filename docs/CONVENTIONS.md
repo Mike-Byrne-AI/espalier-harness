@@ -1549,7 +1549,7 @@ limit on Windows runners.
 directory symlinks on CPython < 3.13 (`recurse_symlinks` only became
 default-`False` at 3.13), so on an adopter tree with a directory-symlink
 **loop** they raise `OSError(ELOOP)` on the first-run fingerprint / scan
-path — and the engine supports 3.10+. Never call a bare `rglob` /
+path — and the engine supports 3.11+. Never call a bare `rglob` /
 recursive `glob` on a path that may be an adopter tree. Two copies of the
 helper, same split as the atomic-write idiom above (scanners and hooks
 cannot import from `espalier/`):
