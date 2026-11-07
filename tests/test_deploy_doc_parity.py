@@ -115,6 +115,15 @@ _ALLOWED_UNDEPLOYED_DOC_REFS: dict[str, str] = {
         "tier on sp.is_file(), deliberately NOT on repo identity, because an "
         "adopter who writes their own principles SHOULD get them back from /recall"
     ),
+    # The 2026-09-17 incident record, named in post_write_check's write-time
+    # advisory on the incident's driver shape (TP-450). The advisory runs on
+    # the self-host tree alone: its one caller in ``_check`` gates on
+    # is_self_host_repo, and tests/test_post_write_delete_advisory.py holds an
+    # adopter tree silent, so the deployed copy's literal is never printed.
+    "docs/incidents/2026-09-17-real-shell-fixture-wipe.md": (
+        "harness-internal incident record; named only by post_write_check's "
+        "driver-shape advisory, whose caller gates it on is_self_host_repo"
+    ),
     "docs/STANDING_PRINCIPLES.aliases.md": (
         "machine-facing retrieval aliases for the principles tier (document "
         "expansion). Same gate and same reason as its parent: _load_principle_aliases "
