@@ -919,6 +919,35 @@ _C52_BASH_ROWS = [
     ("tail_loop_remove_inner_wrappers", _bash_patterns._TAIL_LOOP_REMOVE_RE, "done < <(env "),
     ("piped_remove_quoted_verb_path", _bash_patterns._PIPED_REMOVE_RE, 'find . | xargs "a b/'),
     ("piped_remove_escaped_verb_path", _bash_patterns._PIPED_REMOVE_RE, "find . | xargs a\\ "),
+    # C76 (DEF-3031, DEF-3032): the carrier word's own prefix, and the
+    # anchor's wrapper run with its flags behind each carrier
+    ("piped_remove_spelled_carrier_word", _bash_patterns._PIPED_REMOVE_RE, "find . | ~/a/"),
+    ("piped_remove_carrier_wrapper_flags", _bash_patterns._PIPED_REMOVE_RE, "find . | xargs nice -n 19"),
+    # (the flood behind an enumerator head, so it reaches the carrier run:
+    # a bare `sudo -u x` flood only exercised the anchor, the code review)
+    ("piped_remove_carrier_wrapper_flood", _bash_patterns._PIPED_REMOVE_RE, "find . | xargs sudo -u x"),
+    # the review's item 3: a wrapper's directory, an assignment run behind a
+    # wrapper and before the carrier word, and bash's `|&`
+    ("piped_remove_carrier_wrapper_dir", _bash_patterns._PIPED_REMOVE_RE, "find . | xargs ~/a/env"),
+    ("piped_remove_carrier_lead_dir", _bash_patterns._PIPED_REMOVE_RE, "find . | /a/b/"),
+    ("piped_remove_carrier_lead_assign", _bash_patterns._PIPED_REMOVE_RE, "find . |& A=1"),
+    ("piped_remove_carrier_env_assign", _bash_patterns._PIPED_REMOVE_RE, "find . | xargs env A='x"),
+    # a wrapper behind its directory, also a candidate flag argument of the
+    # flag before it: the carrier's flag lookahead declines it, or the run
+    # held write_guard past 15 s on 1.4 KB (C76's second failure-mode review;
+    # the bare `-exec /a/env` flood is pinned at the regex alone in
+    # test_carrier_directory_wrapper_flood_is_linear_at_the_regex)
+    ("find_delete_action_wrapper_flag_dir", _bash_patterns._FIND_DELETE_ACTION_RE, "-exec nice -n /a/env"),
+    ("piped_remove_carrier_dir_flag", _bash_patterns._PIPED_REMOVE_RE, "find . | xargs /a/env -x"),
+    ("piped_remove_carrier_backslash_dir", _bash_patterns._PIPED_REMOVE_RE, "find . | xargs C:\\a\\env -x"),
+    ("piped_carrier_witness_dir_wrapper", _bash_patterns._PIPED_CARRIER_WITNESS_RE, "| /a/env"),
+    ("piped_remove_carrier_flag_dir", _bash_patterns._PIPED_REMOVE_RE, "find . | xargs env -u /a/env"),
+    ("piped_carrier_witness_short_name", _bash_patterns._PIPED_CARRIER_WITNESS_RE, "| C:\\A~1\\"),
+    ("find_delete_action_wrapper_flags", _bash_patterns._FIND_DELETE_ACTION_RE, "-exec sudo -u x"),
+    ("piped_carrier_witness_wrappers", _bash_patterns._PIPED_CARRIER_WITNESS_RE, "| nice -n 19"),
+    ("piped_carrier_witness_prefix", _bash_patterns._PIPED_CARRIER_WITNESS_RE, "| ~/a/"),
+    ("loop_remove_body_assignments", _bash_patterns._LOOP_REMOVE_RE, "find . | while read f; do A=1"),
+    ("for_subst_remove_body_wrappers", _bash_patterns._FOR_SUBST_REMOVE_RE, "for f in $(find .); do env -i"),
     # DEF-837: the word-list head -- a repeated head (the later ones read as
     # WORDS behind the first, so the word run floods), a flood of heads each
     # on its own command position, an open double quote (the quoted-word
@@ -960,6 +989,15 @@ _C52_PS_ROWS = [
     # DEF-3028's sibling: this tool's native verb path behind the carrier,
     # its separator flood
     ("ps_piped_remove_backslash_verb_path", _bash_patterns._PS_PIPED_REMOVE_RE, "gci . | xargs a\\"),
+    # C76: the carrier word behind the call operator and a path, and the
+    # wrapper run with its flags behind it
+    ("ps_piped_remove_spelled_carrier_word", _bash_patterns._PS_PIPED_REMOVE_RE, "gci . | & 'a/"),
+    ("ps_piped_remove_carrier_wrapper_flags", _bash_patterns._PS_PIPED_REMOVE_RE, "gci . | xargs sudo -u x"),
+    # the bare call operator before the carrier word, and the lead run
+    ("ps_piped_remove_bare_call_operator", _bash_patterns._PS_PIPED_REMOVE_RE, "gci . | &"),
+    ("ps_piped_remove_carrier_lead_dir", _bash_patterns._PS_PIPED_REMOVE_RE, "gci . | /a/env"),
+    ("ps_piped_remove_carrier_env_assign", _bash_patterns._PS_PIPED_REMOVE_RE, "gci . | xargs env A=1"),
+    ("ps_piped_remove_carrier_dir_flag", _bash_patterns._PS_PIPED_REMOVE_RE, "gci . | xargs /a/env -x"),
     ("ps_git_rm_mv", _bash_patterns._PS_GIT_RM_MV_RE, "git rm"),
     ("ps_compress_archive", _bash_patterns._PS_COMPRESS_ARCHIVE_RE, "Compress-Archive"),
     # the find family on the PowerShell tool (DEF-824): the head with its
@@ -2985,6 +3023,36 @@ def test_ps_interpreter_regex_still_matches(pattern, payload):
     assert pattern.search(payload) is not None, payload
 
 
+@pytest.mark.parametrize("pattern", [
+    # (not `_PIPED_REMOVE_RE`: its anchor reads this flood in 3.4 s at 30 KB
+    # on main as on the lane, the same filed-apart cost)
+    _bash_patterns._FIND_DELETE_ACTION_RE, _bash_patterns._PIPED_CARRIER_WITNESS_RE,
+    _bash_patterns._PS_PIPED_REMOVE_RE,
+], ids=["find-exec", "witness", "ps-piped"])
+def test_carrier_directory_wrapper_flood_is_linear_at_the_regex(pattern):
+    """C76: `-exec /a/env` repeated, at the regex alone. Each `/a/env` could
+    be the flag argument of the `-exec` before it or a wrapper step of its
+    own until the carrier's flag lookahead declined a wrapper behind its
+    directory (`_CARRIER_WRAP_ONE`): 34 s at 2 KB on the first draft, 15 ms
+    at 32 KB after. Not a chain row: the whole reader is quadratic on this
+    flood on main itself (7.7 s at 8 KB, measured 2026-11-07), a cost spread
+    across the anchor-led patterns that is filed apart. POSIX-only."""
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    payload = "find . | " + "-exec /a/env " * (_WORST_CASE_BODY_LEN // 13)
+    signal.signal(signal.SIGALRM, _alarm)
+    signal.setitimer(signal.ITIMER_REAL, _CI_SAFE_BUDGET_MS / 1000.0)
+    t = time.time()
+    try:
+        pattern.search(payload)
+        elapsed_ms = (time.time() - t) * 1000
+    except _Timeout:
+        pytest.fail(f"{pattern.pattern[:60]!r} exceeded {_CI_SAFE_BUDGET_MS}ms on the directory-wrapper flood")
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    assert elapsed_ms < _CI_SAFE_BUDGET_MS
+
+
 @pytest.mark.parametrize(
     "name,pattern,verb", _VERB_EXTRACTION_REGEXES + _PS_VERB_EXTRACTION_REGEXES,
 )
@@ -3547,7 +3615,11 @@ def _reconstruct_pattern(node: ast.expr, env: dict[str, ast.expr], depth: int = 
     string). Anything else — a genuinely dynamic interpolation, a non-string
     constant, an unresolved Name — raises so the gate forces an explicit review
     (it cannot prove the absence of a dot-star it cannot see)."""
-    if depth > 50:
+    # A runaway bound, not a budget: each `+` term of a left-nested chain is a
+    # level, and C76's carrier composition (the lead run over the wrapper
+    # steps over the roster) took `_TAIL_LOOP_REMOVE_RE` and the PowerShell
+    # piped reader past 50, both reconstructing whole at 100 (2026-11-07).
+    if depth > 100:
         raise _UnresolvablePattern("reconstruction too deep")
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
@@ -4240,6 +4312,10 @@ def _prefix_run_tokens() -> list[str]:
     # The shapes that actually blew up: a flag, and a flag with an argument.
     tokens += [f"{w} -i " for w in wrappers]
     tokens += [f"{w} -n 10 " for w in wrappers]
+    # C76 (DEF-3012, DEF-3030): the binary words in another case with their
+    # suffix, and the home-relative directory before a verb
+    tokens += [f"{w.upper()}.EXE " for w in wrappers]
+    tokens += ["~/a ", "~a/ ", "~/"]
     tokens += [f"{k} " for k in keywords]
     return tokens
 

