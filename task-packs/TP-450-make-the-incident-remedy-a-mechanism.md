@@ -187,8 +187,10 @@ Run read-only, from a scratchpad copy of the appendix's code, never executing a
 row (incident rules 1 and 2; a fixture is asked of the predicates as text):
 
 1. **Transcripts already read.** Every `.py` Write and Edit in every Claude Code
-   project folder on the Air whose name starts with this clone's slug
-   (`-Users-mikebyrne-Developer-espalier`; the sessions and their `subagents/`).
+   project folder on the Air whose name starts with this clone's slug (Claude
+   Code names a project folder for the checkout's absolute path, each `/` read as
+   `-`; the main checkout's, its worktrees' and the pre-rename clone's all share
+   it; the sessions and their `subagents/`).
    Reconstruct each file's full state per (transcript, path) from its Write and
    the Edits after it, and judge the state after each operation; an Edit whose
    base is not in the transcript is counted unreconstructable, never guessed.
