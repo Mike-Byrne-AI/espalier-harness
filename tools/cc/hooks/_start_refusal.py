@@ -26,7 +26,10 @@ call each hook makes under ``__main__``, never at this module's load
 so a check here would answer a SessionStart with a PreToolUse deny). Its
 top-level imports are held to names an old interpreter has
 (``tests/test_python_floor.py``), since an import that fails there silences the
-refusal.
+refusal. ``session_start`` makes the reporter's call, :func:`banner_below_floor`,
+the same way and for the same reason: below the floor its siblings read
+``espalier.toml`` through ``tomllib``, which the old interpreter lacks, and the
+crash took the whole banner with it, the floor's warning included.
 
 Stdlib-only. Zero ``espalier`` imports -- runs standalone alongside the rest of
 ``tools/cc/hooks/``.
@@ -106,13 +109,25 @@ BELOW_FLOOR = (
     " refused until then."
 )
 
+#: The SessionStart banner below :data:`_FLOOR` (TP-706, the ruling on request
+#: 881ed0): the floor said before any sibling imports or any ``espalier.toml``
+#: read, and nothing else read, since a dropped Python is dropped, never run in
+#: a reduced mode. The middle two sentences are ``does_not_run_sentence``'s
+#: words with its ``where``; ``{floor}`` is the floor.
+BELOW_FLOOR_BANNER = (
+    "[WARN] {hook} cannot run here. The harness does not run on Python {found}{where}."
+    " Update to Python {floor} or newer to install and use it. Then re-wire the hooks"
+    " to it: `espalier doctor .` names the wired interpreter. Until then every deny"
+    " hook refuses the calls it judges, and this banner reads nothing else."
+)
+
 #: The module's operator-facing templates. Declaring the registry puts every
 #: string constant here under the portability contract's rule (e), as
 #: ``_denial_reasons``'s does; unlike that module's, these carry no Don't/Do
 #: pair, which only its registry asks.
 _OPERATOR_FACING_TEMPLATES: tuple[str, ...] = (
     "HELPER_SKEW", "SIBLING_RAISED", "SIBLING_RAISED_UNPLACED", "WEDGE_RESTORE_CONTEXT",
-    "BELOW_FLOOR",
+    "BELOW_FLOOR", "BELOW_FLOOR_BANNER",
 )
 
 #: The Bash command words a restore may not contain: a separator, a pipe, a
@@ -593,6 +608,42 @@ def refuse_below_floor(hook: str, event: str) -> None:
         output = {"hookSpecificOutput": {
             "hookEventName": event, "permissionDecision": "deny", "permissionDecisionReason": reason}}
     sys.stdout.write(json.dumps(output) + "\n")
+    sys.stdout.flush()
+    raise SystemExit(0)
+
+
+def banner_below_floor(hook: str) -> None:
+    """Return at once on an interpreter at or above :data:`_FLOOR`; below it,
+    emit the short SessionStart banner saying the floor and exit 0 (TP-706).
+
+    ``session_start`` calls this under ``__main__`` before its first sibling
+    import, so no ``espalier.toml`` reader (each imports ``tomllib`` when it
+    reads) and no sibling that fails on the old interpreter is reached, and the
+    warning is the banner rather than a line a crash drops with it. A reporter's
+    shape: ``additionalContext``, never a decision. The record is the crash
+    guard's composed type with ``details.skew`` naming the cause, as
+    :func:`refuse_below_floor`'s is, so no roster grows. Standard library only
+    on this path, and nothing on stderr."""
+    if tuple(sys.version_info[:2]) >= _FLOOR:
+        return
+    import json
+
+    found = ".".join(str(part) for part in tuple(sys.version_info[:3]))
+    where = f" (at {sys.executable})" if sys.executable else ""
+    try:
+        warning = BELOW_FLOOR_BANNER.format(hook=hook, found=found, where=where,
+                                            floor="%d.%d" % _FLOOR)
+    # fail-open: ok text-fallback the banner still goes out, in plain words
+    except Exception:  # noqa: BLE001
+        warning = ("[WARN] " + str(hook) + " cannot run here: the harness does not run on this"
+                   " Python. Update to Python " + ".".join(str(part) for part in _FLOOR)
+                   + " or newer to install and use it.")
+    _record("sessionstart_failed_open_crash",
+            {"hook": hook, "skew": "below floor", "python": found})
+    context = ("=== Espalier-Harness === SessionStart (short: Python " + found
+               + " is below the floor) ===\n" + warning)
+    sys.stdout.write(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "SessionStart", "additionalContext": context}}) + "\n")
     sys.stdout.flush()
     raise SystemExit(0)
 

@@ -66,8 +66,11 @@ owner, _, name = target.rpartition(".")
 if name:
     setattr(_zone_watch if owner == "_zone_watch" else ss, name, stall_for)
 src = Path(ss.__file__).read_text(encoding="utf-8")
+# The `__main__` block that starts the hook (it calls main); the floor's block
+# above the imports is another (TP-706), and this interpreter is above it.
 block = next(n for n in ast.parse(src).body if isinstance(n, ast.If)
-             and getattr(getattr(n.test, "left", None), "id", "") == "__name__")
+             and getattr(getattr(n.test, "left", None), "id", "") == "__name__"
+             and any(isinstance(c, ast.Call) and getattr(c.func, "id", "") == "main" for c in ast.walk(n)))
 exec(compile(ast.Module(body=block.body, type_ignores=[]), ss.__file__, "exec"), vars(ss))
 '''
 
@@ -254,10 +257,12 @@ class TestTheBudgetsFitTheWall:
         argument there, which no subprocess row above would catch if the wall
         were also armed in-process."""
         tree = ast.parse((HOOKS_DIR / "session_start.py").read_text(encoding="utf-8"))
-        block = next(n for n in tree.body if isinstance(n, ast.If)
-                     and getattr(getattr(n.test, "left", None), "id", "") == "__name__")
-        calls = [n for n in ast.walk(block) if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "main"]
-        assert calls and [getattr(a, "id", "") for a in calls[0].args] == ["_LOAD_T0"], ast.dump(block)
+        blocks = [n for n in tree.body if isinstance(n, ast.If)
+                  and getattr(getattr(n.test, "left", None), "id", "") == "__name__"]
+        calls = [c for n in blocks for c in ast.walk(n)
+                 if isinstance(c, ast.Call) and getattr(c.func, "id", "") == "main"]
+        assert len(calls) == 1, [ast.dump(n) for n in blocks]
+        assert [getattr(a, "id", "") for a in calls[0].args] == ["_LOAD_T0"], ast.dump(calls[0])
 
 
 class TestTheWallMechanism:

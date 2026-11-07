@@ -48,6 +48,20 @@ _LOAD_T0 = time.monotonic()
 
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent.parent))
+# Below the supported Python floor, the banner is the floor's warning alone,
+# said before any sibling imports (TP-706, the ruling on request 881ed0): the
+# siblings read espalier.toml through tomllib, which the old interpreter lacks,
+# and that crash took the whole banner, the warning with it. Under `__main__`
+# only, so an in-process importer reads no banner; the start refusal is the
+# stdlib-only module the deny hooks import first for the same call.
+if __name__ == "__main__":
+    try:
+        import _start_refusal  # noqa: E402
+    # fail-open: ok deliberate -- a start refusal that cannot import costs this check alone; the banner builds as before
+    except Exception:  # noqa: BLE001, S110
+        pass
+    else:
+        _start_refusal.banner_below_floor("session_start")
 import _hook_utils  # noqa: E402
 from _hook_utils import atomic_write_text, check_branch, is_self_host_repo, repo_name, surface_status, COLD_OPEN_FLAG  # noqa: E402
 import _integrity  # noqa: E402

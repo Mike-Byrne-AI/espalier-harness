@@ -2893,6 +2893,59 @@ class TestTheDenyHooksSayTheFloor:
         assert run.stdout == "imported\n", run.stdout
 
 
+class TestTheBannerSaysTheFloor:
+    """TP-706, the ruling on request 881ed0: below the floor the SessionStart
+    banner is the floor's warning alone, said before any sibling imports. The
+    siblings read espalier.toml through tomllib, which the old interpreter
+    lacks; before the block, driven under a real 3.10.21 on a copy of the
+    checkout wired to it, the crash took the whole banner, the warning with it.
+    Here the version is stubbed, so every CI cell reads what a below-floor host
+    would, and the base without the block builds the full banner and reds."""
+
+    def test_a_below_floor_start_gives_the_floor_banner_alone(self, tmp_path):
+        major, minor = _python_floor.MIN_PYTHON
+        found = f"{major}.{minor - 1}.21"
+        payload = {"session_id": "floor", "source": "startup", "cwd": str(tmp_path),
+                   "hook_event_name": "SessionStart"}
+        run = _run_hook_as("session_start", (major, minor - 1, 21), payload, tmp_path)
+        assert run.returncode == 0, (run.returncode, run.stdout, run.stderr)
+        assert run.stderr == "", run.stderr
+        out = json.loads(run.stdout)
+        assert set(out) == {"hookSpecificOutput"}, out
+        spec = out["hookSpecificOutput"]
+        assert set(spec) == {"hookEventName", "additionalContext"}, spec
+        assert spec["hookEventName"] == "SessionStart", spec
+        lines = spec["additionalContext"].splitlines()
+        assert lines[0] == f"=== Espalier-Harness === SessionStart (short: Python {found} is below the floor) ===", lines
+        assert len(lines) == 2, lines
+        assert lines[1].startswith("[WARN] session_start cannot run here. "), lines
+        sentence = _python_floor.does_not_run_sentence(f"Python {found}", f" (at {sys.executable})")
+        assert sentence in lines[1], lines
+
+    def test_the_banner_boundary_is_the_floor_itself(self, monkeypatch, capsys):
+        """Derived from `MIN_PYTHON`: exactly the floor returns, the minor
+        below gives the banner. In process, with the record captured, so
+        nothing is written to this checkout's audit log."""
+        refusal = _start_refusal_module()
+        records: list = []
+        monkeypatch.setattr(refusal, "_record", lambda kind, details: records.append((kind, details)))
+        major, minor = _python_floor.MIN_PYTHON
+        monkeypatch.setattr(sys, "version_info", (major, minor, 0, "final", 0))
+        assert refusal.banner_below_floor("session_start") is None
+        assert capsys.readouterr().out == "" and records == []
+        monkeypatch.setattr(sys, "version_info", (major, minor - 1, 99, "final", 0))
+        with pytest.raises(SystemExit) as exited:
+            refusal.banner_below_floor("session_start")
+        monkeypatch.undo()
+        assert exited.value.code == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["hookSpecificOutput"]["hookEventName"] == "SessionStart", out
+        assert "permissionDecision" not in out["hookSpecificOutput"], out
+        assert records == [("sessionstart_failed_open_crash",
+                            {"hook": "session_start", "skew": "below floor",
+                             "python": f"{major}.{minor - 1}.99"})], records
+
+
 #: `_start_refusal.py`'s top-level imports, each a name every interpreter down
 #: to the oldest one the refusal must speak to has (TP-706 2-D). An import
 #: added there is added here knowingly: `import tomllib`, `from datetime import
@@ -2904,15 +2957,44 @@ START_REFUSAL_IMPORTS = frozenset({
 })
 
 
-def _top_level_import_strays(source: str) -> list[str]:
+def _top_level_import_strays_in(body: list, allowed: frozenset) -> list[str]:
     strays = []
-    for node in ast.parse(source).body:
+    for node in body:
         if isinstance(node, ast.Import):
-            strays += [alias.name for alias in node.names if (alias.name, None) not in START_REFUSAL_IMPORTS]
+            strays += [alias.name for alias in node.names if (alias.name, None) not in allowed]
         elif isinstance(node, ast.ImportFrom):
             strays += [f"{node.module}.{alias.name}" for alias in node.names
-                       if (node.module, alias.name) not in START_REFUSAL_IMPORTS]
+                       if (node.module, alias.name) not in allowed]
     return strays
+
+
+def _top_level_import_strays(source: str) -> list[str]:
+    return _top_level_import_strays_in(ast.parse(source).body, START_REFUSAL_IMPORTS)
+
+
+def _statement_imports(node: ast.AST) -> set[str]:
+    """Every module a statement imports, anywhere inside it."""
+    return {alias.name for sub in ast.walk(node) if isinstance(sub, ast.Import)
+            for alias in sub.names} | {
+        sub.module or "" for sub in ast.walk(node) if isinstance(sub, ast.ImportFrom)}
+
+
+def _first_sibling_import(body: list) -> int | None:
+    """The index of the first statement importing a sibling other than the
+    start refusal."""
+    return next((i for i, node in enumerate(body)
+                 if any(name.startswith("_") and name not in ("_start_refusal", "__future__")
+                        for name in _statement_imports(node))), None)
+
+
+def _main_guard_calls(body: list, func: str, args: list) -> list[int]:
+    """The indices of the `if __name__ == "__main__"` statements that call
+    ``func`` with exactly ``args``."""
+    return [i for i, node in enumerate(body) if isinstance(node, ast.If)
+            and ast.unparse(node.test).replace("'", '"') == '__name__ == "__main__"'
+            and any(isinstance(sub, ast.Call) and ast.unparse(sub.func) == func
+                    and [ast.literal_eval(arg) for arg in sub.args] == args
+                    for sub in ast.walk(node))]
 
 
 def _floor_call_order(source: str, hook: str, event: str) -> str | None:
@@ -2920,21 +3002,10 @@ def _floor_call_order(source: str, hook: str, event: str) -> str | None:
     event)` under `__main__`, after the statement importing `_start_refusal`
     and before the first statement importing any other sibling; else what is
     wrong."""
-    def imports(node: ast.AST) -> set[str]:
-        return {alias.name for sub in ast.walk(node) if isinstance(sub, (ast.Import, ast.ImportFrom))
-                for alias in sub.names if isinstance(sub, ast.Import)} | {
-            sub.module or "" for sub in ast.walk(node) if isinstance(sub, ast.ImportFrom)}
-
     body = ast.parse(source).body
-    start = next((i for i, node in enumerate(body) if "_start_refusal" in imports(node)), None)
-    sibling = next((i for i, node in enumerate(body)
-                    if any(name.startswith("_") and name not in ("_start_refusal", "__future__")
-                           for name in imports(node))), None)
-    calls = [i for i, node in enumerate(body) if isinstance(node, ast.If)
-             and ast.unparse(node.test).replace("'", '"') == '__name__ == "__main__"'
-             and any(isinstance(sub, ast.Call) and ast.unparse(sub.func) == "_start_refusal.refuse_below_floor"
-                     and [ast.literal_eval(arg) for arg in sub.args] == [hook, event]
-                     for sub in ast.walk(node))]
+    start = next((i for i, node in enumerate(body) if "_start_refusal" in _statement_imports(node)), None)
+    sibling = _first_sibling_import(body)
+    calls = _main_guard_calls(body, "_start_refusal.refuse_below_floor", [hook, event])
     if start is None:
         return "no statement imports _start_refusal"
     if not calls:
@@ -2942,6 +3013,40 @@ def _floor_call_order(source: str, hook: str, event: str) -> str | None:
     if not start < calls[0] < (sibling if sibling is not None else len(body)):
         return (f"the floor call is statement {calls[0]}; it must come after the _start_refusal "
                 f"import ({start}) and before the first other sibling import ({sibling})")
+    return None
+
+
+#: The standard-library names `session_start.py` imports before its floor
+#: block (TP-706, the ruling on request 881ed0), each one Python 3.10 has. An
+#: import that fails there fails before the banner can say the floor, so a
+#: name added above the block is added here knowingly.
+SESSION_START_PRE_FLOOR_IMPORTS = frozenset({
+    ("__future__", "annotations"), ("enum", None), ("importlib.util", None), ("json", None),
+    ("os", None), ("re", None), ("shutil", None), ("subprocess", None), ("sys", None),
+    ("tempfile", None), ("textwrap", None), ("threading", None), ("time", None),
+    ("datetime", "datetime"), ("datetime", "timezone"), ("pathlib", "Path"),
+    ("typing", "Any"), ("typing", "Callable"),
+})
+
+
+def _banner_floor_order(source: str) -> str | None:
+    """None when `session_start`'s module body imports the start refusal and
+    calls `banner_below_floor("session_start")` in one `__main__` block that
+    comes before its first other sibling import, with only the pinned names
+    imported above that block; else what is wrong."""
+    body = ast.parse(source).body
+    calls = _main_guard_calls(body, "_start_refusal.banner_below_floor", ["session_start"])
+    if not calls:
+        return "no `if __name__ == '__main__'` calls banner_below_floor('session_start')"
+    if "_start_refusal" not in _statement_imports(body[calls[0]]):
+        return "the floor block does not import _start_refusal itself"
+    sibling = _first_sibling_import(body)
+    if sibling is not None and not calls[0] < sibling:
+        return (f"the floor block is statement {calls[0]}; it must come before the first "
+                f"other sibling import ({sibling})")
+    strays = _top_level_import_strays_in(body[:calls[0]], SESSION_START_PRE_FLOOR_IMPORTS)
+    if strays:
+        return f"imports above the floor block not pinned as Python 3.10 names: {strays}"
     return None
 
 
@@ -2972,6 +3077,25 @@ class TestTheFloorVoiceStaysReachable:
         assert call in source, f"{hook}.py's floor call is not in the shape this row mutates"
         moved = source.replace(call, "", 1) + "\n" + call
         assert _floor_call_order(moved, hook, event) is not None
+
+    def test_the_banner_says_the_floor_before_any_sibling(self):
+        """The reporter's half (the ruling on request 881ed0): below the floor
+        the banner's siblings read espalier.toml through tomllib, so the floor
+        block comes before them, with only pinned 3.10 names imported above."""
+        source = (HOOKS_DIR / "session_start.py").read_text(encoding="utf-8")
+        wrong = _banner_floor_order(source)
+        assert wrong is None, f"session_start.py: {wrong}"
+        # The mutations: the block moved below the first sibling import, and a
+        # name 3.10 lacks imported above it, each red.
+        sibling = "import _hook_utils  # noqa: E402\n"
+        start = source.index('if __name__ == "__main__":\n    try:\n        import _start_refusal')
+        end = source.index(sibling)
+        assert start < end, "session_start.py's floor block is not in the shape this row mutates"
+        block = source[start:end]
+        moved = source[:start] + sibling + block + source[end + len(sibling):]
+        assert _banner_floor_order(moved) is not None
+        planted = source.replace("import enum\n", "import enum\nfrom datetime import UTC\n", 1)
+        assert planted != source and _banner_floor_order(planted) is not None
 
     def test_the_five_files_type_check_against_python_3_10(self, tmp_path):
         """The 3.10 import check Wave 1 retired when mypy's target moved to

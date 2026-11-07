@@ -76,6 +76,10 @@ HOOK_EVENT_CONTRACTS: tuple[StringContract, ...] = (
         expected_value="SessionStart",
         sources=(
             ("tools/cc/hooks/session_start.py", _HOOK_EVENT_NAME_RE),
+            # TP-706: the banner below the floor, which session_start emits
+            # through the start refusal before any sibling imports
+            # (`_start_refusal.banner_below_floor`).
+            ("tools/cc/hooks/_start_refusal.py", _HOOK_EVENT_NAME_RE),
         ),
     ),
     # TP-163: the two new reporter hooks emit hookEventName too. Without
