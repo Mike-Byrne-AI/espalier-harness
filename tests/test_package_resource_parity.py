@@ -211,10 +211,13 @@ class TestRootMirrorParity:
         assert root_path.is_file(), "root .github/workflows/harness-guard.yml missing"
         pkg_bytes = _normalize(package_node.read_bytes())
         root_bytes = _normalize(root_path.read_bytes())
+        from espalier.mirror_registry import row
+
+        src = row("harness-guard")
         assert pkg_bytes == root_bytes, (
-            "harness-guard.yml differs from package SoT — sync "
-            "espalier/assets/github/workflows/harness-guard.yml → "
-            ".github/workflows/harness-guard.yml"
+            f"{src.mirrors[0]} differs from its source {src.sot}. A change made only "
+            f"to the root copy (a Dependabot bump) is lost by a sync: re-apply it to "
+            f"{src.sot} first, then run `{src.sync}`"
         )
 
 

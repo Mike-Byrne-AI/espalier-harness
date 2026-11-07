@@ -428,15 +428,16 @@ Settings → Environments → New environment → `pypi`. Configure:
 ### Action SHA pin
 
 `.github/workflows/publish.yml` pins the publish action to a 40-char commit
-SHA rather than a floating tag:
-`pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33` (v1.14.2).
+SHA rather than a floating tag: its `pypa/gh-action-pypi-publish@<sha>` line,
+with the release named in the `# vX.Y.Z` comment beside it (read the pin
+there; a copy here would age with every bump).
 `tests/test_publish_workflow.py::TestUsesAreSHAPinned`
 enforces that the `uses:` ref is a 40-char SHA, so a regression to a floating
 tag fails CI. To re-pin to a newer action release, resolve its tag to a SHA and
 substitute it:
 
 ```bash
-gh api repos/pypa/gh-action-pypi-publish/commits/v1.14.2 --jq '.sha'
+gh api repos/pypa/gh-action-pypi-publish/commits/v1.x.y --jq '.sha'
 # Substitute the printed SHA into publish.yml (and update the tag comment
 # beside it, plus every narrative "is SHA-pinned below to vX" sentence in
 # that file: tests/test_publish_workflow.py::TestUsesAreSHAPinned binds each
