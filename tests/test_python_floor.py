@@ -2721,13 +2721,14 @@ class TestTheRetiredWiringPromiseIsGone:
 
     @staticmethod
     def _surfaces() -> list[Path]:
+        from tests._live_tree import checkout_glob, checkout_rglob
         from tests.test_doc_source_citations import _RECORD_SURFACE_DOCS
 
-        files = [p for p in (REPO_ROOT / "espalier").rglob("*.py")
+        files = [p for p in checkout_rglob(REPO_ROOT / "espalier", "*.py")
                  if not {"_vendor", "assets"} & set(p.relative_to(REPO_ROOT / "espalier").parts)]
-        files += sorted((REPO_ROOT / "tools" / "cc" / "hooks").glob("*.py"))
+        files += sorted(checkout_glob(REPO_ROOT / "tools" / "cc" / "hooks", "*.py"))
         files += [REPO_ROOT / "README.md"]
-        files += [p for p in sorted((REPO_ROOT / "docs").glob("*.md"))
+        files += [p for p in sorted(checkout_glob(REPO_ROOT / "docs", "*.md"))
                   if p.relative_to(REPO_ROOT).as_posix() not in _RECORD_SURFACE_DOCS]
         return files
 

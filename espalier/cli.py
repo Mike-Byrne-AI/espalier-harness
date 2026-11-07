@@ -1251,9 +1251,9 @@ def _detect_python_command() -> str:
     # a host whose two names are Store aliases and whose `py -3` is a 3.10,
     # leaving it unrecorded fell through to the literal "python" -- wired into
     # every hook site at rc 0, every guard failing open -- where the refusal
-    # below must fire instead (the TP-706 Wave 1 failure-mode review, driven:
-    # the engine before the floor moved wired `py -3`, this one wired
-    # `python` twelve times). A launcher whose `-3` cannot start is not one.
+    # below must fire instead (driven on a launcher-only host: without this
+    # branch the literal `python` was wired twelve times). A launcher whose
+    # `-3` cannot start is not one.
     if below_floor is None and not launcher:
         head, *flags = interpreter_argv(LAUNCHER_CANDIDATE)
         launcher_path = shutil.which(head)
