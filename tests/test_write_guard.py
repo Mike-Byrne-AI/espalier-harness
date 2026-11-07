@@ -1217,6 +1217,13 @@ class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
             "(?!(?:" + bp._CARRIER_WRAP_DIR + ")?" + bp._CARRIER_WRAP_WORD + r"[ \t])", 1)
         assert widened != bp._CMD_POS_WRAP_RUN
         assert bp._CARRIER_WRAP_ONE == widened
+        # the carriers' assignment is the anchor's with its quoted arms
+        # stopped at a newline (an operand span never crosses a statement)
+        one_line = (bp._CMD_POS_ENV_ASSIGN.replace(r"[^'\\]", r"[^'\\\n]")
+                    .replace(r"'[^']*'", r"'[^'\n]*'").replace(r'[^"\\]', r'[^"\\\n]'))
+        assert one_line != bp._CMD_POS_ENV_ASSIGN
+        assert bp._CARRIER_ENV_ASSIGN == one_line
+        assert bp._CMD_POS_ENV_ASSIGN not in bp._LOOP_BODY_VERB
         assert bp._CARRIER_WRAP_ONE in bp._CARRIER_WRAP_RUN
         for name in ("_FIND_EXEC_VERB", "_PS_PIPE_CARRIER"):
             assert bp._CARRIER_WRAP_RUN in getattr(bp, name), name

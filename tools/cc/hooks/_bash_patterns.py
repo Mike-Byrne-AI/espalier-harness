@@ -1040,6 +1040,16 @@ _PS_NATIVE_VERB_PATH = r"(?:" + _CMD_POS_QUOTED_DIR + r"""|["']?(?:[^\s;|&"']*[/
 #: the run is friction on a command that cannot run. An assignment opens
 #: on `NAME=`, which no wrapper word or directory can, so it shares no
 #: input with the step after it.
+#: The assignment a carrier step, the lead and a loop body read: the
+#: anchor's `_CMD_POS_ENV_ASSIGN` with each quoted arm stopped at a newline,
+#: because these sit inside an operand span, which never crosses a
+#: statement boundary (tests/test_speedbump_irreversible.py::
+#: TestCommandPositionClassClose); a quoted value spanning lines there is a
+#: declared limit. Spelled out for the ReDoS gate's static reconstruction;
+#: the correspondence is pinned in tests/test_write_guard.py.
+_CARRIER_ENV_ASSIGN = (
+    r"""(?:[A-Za-z_]\w*=(?:[^\s;|&'"$\\]|\\.|\$(?!')|\$'(?:[^'\\\n]|\\.)*'|'[^'\n]*'|"(?:[^"\\\n]|\\.)*")*[ \t]+)"""
+)
 _CARRIER_WRAP_WORD = r"(?:" + _CMD_POS_WRAPPER_SPELLED + r"|(?i:busybox)" + _EXE_SUFFIX + r")"
 #: The directory takes either separator (Git for Windows' `C:\Git\usr\bin\
 #: env.exe` behind the PowerShell carrier runs env), and the step's one
@@ -1061,7 +1071,7 @@ _CARRIER_WRAP_ONE = (
 _CARRIER_WRAP_STEP = (
     _CARRIER_WRAP_HEAD
     + r"(?:(?!(?i:xargs)\b)" + _CARRIER_WRAP_ONE + r"|(?i:busybox)" + _EXE_SUFFIX + r"[ \t]+)"
-    + r"(?:" + _CMD_POS_ENV_ASSIGN + r"){0,4}"
+    + r"(?:" + _CARRIER_ENV_ASSIGN + r"){0,4}"
 )
 _CARRIER_WRAP_RUN = r"(?:" + _CARRIER_WRAP_STEP + r"){0,3}"
 #: The run BEFORE the carrier word, at the command position after the pipe:
@@ -1075,9 +1085,9 @@ _CARRIER_WRAP_RUN = r"(?:" + _CARRIER_WRAP_STEP + r"){0,3}"
 #: xargs guard dropped that wall); bounded at three steps.
 _CARRIER_LEAD_STEP = (
     _CARRIER_WRAP_HEAD + r"(?:" + _CARRIER_WRAP_ONE + r"|(?i:busybox)" + _EXE_SUFFIX + r"[ \t]+)"
-    + r"(?:" + _CMD_POS_ENV_ASSIGN + r"){0,4}"
+    + r"(?:" + _CARRIER_ENV_ASSIGN + r"){0,4}"
 )
-_CARRIER_LEAD_RUN = r"(?:" + _CMD_POS_ENV_ASSIGN + r"){0,4}(?:" + _CARRIER_LEAD_STEP + r"){0,3}"
+_CARRIER_LEAD_RUN = r"(?:" + _CARRIER_ENV_ASSIGN + r"){0,4}(?:" + _CARRIER_LEAD_STEP + r"){0,3}"
 _FIND_EXEC_VERB = (
     _CARRIER_WRAP_RUN
     + r"\$?" + _NATIVE_VERB_PATH + r"(?:rm|unlink|rmdir|shred|mv)\b"
@@ -1419,7 +1429,7 @@ _LOOP_SEP = r"(?:;|\n|&&|\|\|)"
 #: statement. Bounded; an assignment opens on `NAME=`, which no wrapper
 #: word or path the verb's own head opens on can, so the run shares no
 #: input with it.
-_LOOP_BODY_VERB = r"(?:" + _CMD_POS_ENV_ASSIGN + r"){0,4}" + _FIND_EXEC_VERB
+_LOOP_BODY_VERB = r"(?:" + _CARRIER_ENV_ASSIGN + r"){0,4}" + _FIND_EXEC_VERB
 _LOOP_BODY_STATEMENT = (
     r"(?!" + _LOOP_BODY_VERB + r")(?!(?-i:done)\b)[^\s;|&][^\n;|&]{0,199}" + _LOOP_SEP + r"[ \t\n]{0,64}"
 )
