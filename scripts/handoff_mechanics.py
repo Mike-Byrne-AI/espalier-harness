@@ -88,8 +88,7 @@ def goal_snapshot_off(root: Path) -> bool:
     """``goal_snapshot = false`` at the top of ``espalier.toml``: the opt-out
     handoff step 7 checks first. Read as the doctor probe in ``espalier/cli.py``
     reads it: one ``tomllib`` read of the top-level key, and a file that is
-    absent, unreadable or not TOML reads as on (TP-706: at the 3.11 floor the
-    line scan that stood in for a missing parser is gone)."""
+    absent, unreadable or not TOML reads as on."""
     try:
         data = tomllib.loads((root / "espalier.toml").read_bytes().decode("utf-8"))
     except (OSError, ValueError):

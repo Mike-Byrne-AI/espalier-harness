@@ -1980,8 +1980,7 @@ def declared_relief_agents(root: Path, *, hook: str) -> dict[str, str]:
 
     out: dict[str, str] = {}
     for key, flag in RELIEF_AGENT_KEYS.items():
-        # The one hook-side reader, so a hook interpreter with no TOML parser
-        # still reads the key through its regex arm.
+        # The one hook-side reader of the key.
         raw = read_toml_string_list(root, key, on_error=_malformed)
         if raw is None:
             continue

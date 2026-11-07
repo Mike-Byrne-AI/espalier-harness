@@ -184,7 +184,7 @@ def _config_flag_is_true(repo_root: Path, key: str) -> bool:
     if not cfg.is_file():
         return False
     try:
-        data = tomllib.loads(cfg.read_text(encoding="utf-8"))
+        data = tomllib.loads(cfg.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError) as exc:  # UnicodeDecodeError and TOMLDecodeError are ValueErrors
         raise RecordError(
             f"{CONFIG_REL} at {repo_root} could not be read as TOML ({exc}), so whether it sets "

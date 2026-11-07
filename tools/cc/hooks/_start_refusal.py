@@ -19,7 +19,7 @@ refuses in its place, naming this file, and ``write_guard``'s lets through the
 one restore of it to HEAD.
 
 It is also where a deny hook below the supported Python floor says so
-(:func:`refuse_below_floor`, TP-706): the one module every deny hook reaches
+(:func:`refuse_below_floor`): the one module every deny hook reaches
 before any sibling, so the floor is spelled here as a literal and checked by a
 call each hook makes under ``__main__``, never at this module's load
 (``_denial_reasons`` imports this module, and ``session_start`` imports that,
@@ -98,9 +98,8 @@ WEDGE_RESTORE_CONTEXT = (
 #: ``_hook_utils`` is the module that may not import on an interpreter below it.
 _FLOOR = (3, 11)
 
-#: A deny hook run by an interpreter below :data:`_FLOOR` (TP-706, the
-#: operator's ruling of 2026-11-07: a dropped Python is dropped, never run in a
-#: reduced mode). The middle two sentences are
+#: A deny hook run by an interpreter below :data:`_FLOOR`: a dropped Python is
+#: dropped, never run in a reduced mode. The middle two sentences are
 #: ``espalier/_python_floor.py::does_not_run_sentence``'s words, which every
 #: surface says; ``{found}`` is the running version, ``{floor}`` the floor.
 BELOW_FLOOR = (
@@ -109,8 +108,7 @@ BELOW_FLOOR = (
     " refused until then."
 )
 
-#: The SessionStart banner below :data:`_FLOOR` (TP-706, the ruling on request
-#: 881ed0): the floor said before any sibling imports or any ``espalier.toml``
+#: The SessionStart banner below :data:`_FLOOR`: the floor said before any sibling imports or any ``espalier.toml``
 #: read, and nothing else read, since a dropped Python is dropped, never run in
 #: a reduced mode. The middle two sentences are ``does_not_run_sentence``'s
 #: words with its ``where``; ``{floor}`` is the floor.
@@ -569,7 +567,7 @@ def refuse_on_helper_skew(hook: str, event: str, exc: BaseException) -> NoReturn
 
 def refuse_below_floor(hook: str, event: str) -> None:
     """Return at once on an interpreter at or above :data:`_FLOOR`; below it,
-    emit the structured refusal saying the floor and exit 0 (TP-706).
+    emit the structured refusal saying the floor and exit 0.
 
     Each deny hook calls this under ``__main__``, right after importing this
     module and before its siblings, so the refusal names the floor and never a
@@ -614,7 +612,7 @@ def refuse_below_floor(hook: str, event: str) -> None:
 
 def banner_below_floor(hook: str) -> None:
     """Return at once on an interpreter at or above :data:`_FLOOR`; below it,
-    emit the short SessionStart banner saying the floor and exit 0 (TP-706).
+    emit the short SessionStart banner saying the floor and exit 0.
 
     ``session_start`` calls this under ``__main__`` before its first sibling
     import, so no ``espalier.toml`` reader (each imports ``tomllib`` when it

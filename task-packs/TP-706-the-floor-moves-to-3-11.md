@@ -607,10 +607,11 @@ the index and the sections to one key set and the struck rows keep their class t
 `DEF-900`'s row gets the note that `python -P` (3.11+) is now a route for the parity gates'
 `cwd` problem, re-read, not closed, through `repin --reason`: the row's text hash is its
 claim (`TestTextShaIsTheClaim`), so a note written any other way reads as a stale row. The
-pack's own §3 row in `task-packs/FORWARD_LEDGER.md` leaves with the merge *(corrected
+pack's own §3 row in `task-packs/FORWARD_LEDGER.md` is struck closed with the merge, in the
+form the file's other closed packs take (`~~TP-706~~`, CLOSED and the date) *(corrected
 2026-11-07: this said "moves to LANDED wording", which the ledger's rule 3 forbids, since
-`LANDED` there is a sweep marker and `TestLandedRowLingering` reds on a row left behind; the
-record is this pack's Landing)*.
+`LANDED` there is a sweep marker; the row stays because a root pack needs a reference, and
+it is the one reference to `TP-704`; the record is this pack's Landing)*.
 
 **3-B The convention.** `docs/CONVENTIONS.md`'s "`tomllib` import goes through
 `espalier._compat`" section keeps its rule (one import site) and replaces "dropping 3.10
@@ -861,10 +862,40 @@ and the arms outlive the users they were written for. Measured here as 24 code s
 end-of-life.
 
 ## Landing
-- State: DRAFT
-- Commits:
-- Suite:
-- Earn-the-red:
-- Red-team:
-- Reach:
-- Date:
+- State: LANDED
+- Commits: Wave 1, `lane/build-the-floor-moves-to-3-11`: `b25951e0` (the floor) and `5061bf38`
+  (the census through git, the tier's carve-out fix), merged as `8dd10c01` (#504). Waves 2 and 3,
+  `lane/build-the-shims-go-the-hooks-speak-the-floor`: `16f64535` (2-B/2-C hooks), `ff924ae8`
+  (2-A engine), `152aca48` (the tools' readers), `a0309429` (the banner says the floor),
+  `d6d0e55b` (Wave 3 records), `9a68e64e` (the suite contracts' spawn budgets), `1eea1a47` (the
+  0-A corrections), the review batch and this stamp; the alive SHA is the merge commit on `main`.
+- Suite: Wave 1: the full tier at `b87dd13d`, 28,041 passed and 4 failed, all the lane's own,
+  fixed comment- and test-only; then the contract slice, 6,207 passed; post-merge proof run
+  42371595240 green on `8dd10c01`. Waves 2 and 3: SUITE_PENDING
+- Earn-the-red: 2-C's stubbed-version row per hook red on the base hooks, and four drives under
+  a real Python 3.10.21 gave the structured deny at rc 0 (a continued Stop passes); with each
+  floor call removed under 3.10, `write_guard` and `plan_guard` deny as an internal error and
+  `config_guard` and `stop_gate` let the call through. 2-D's rows red on their scratch
+  mutations (a module-top `import tomllib`, the call moved below the siblings, `typing.Self`).
+  2-E red on a `git add -N` shim fixture, 2-G on a scratch module-top import. The banner: a real
+  3.10.21 on a copy of the checkout with `espalier.toml` and `.claude/settings.json` wired to it
+  crashed at `152aca48` (stdout empty, `ModuleNotFoundError: No module named 'tomllib'`), and
+  with the fix said only: "[WARN] session_start cannot run here. The harness does not run on
+  Python 3.10.21 (at <path>). Update to Python 3.11 or newer to install and use it. Then re-wire
+  the hooks to it: `espalier doctor .` names the wired interpreter. Until then every deny hook
+  refuses the calls it judges, and this banner reads nothing else." `goal_snapshot_off`'s three
+  parity rows red on the old line scan. The review batch's rows each carry their planted red.
+- Red-team: Wave 1: code-reviewer APPROVE; failure-mode-reviewer's one BLOCKER (a below-floor
+  `py -3` behind two Store aliases wired the literal `python`) fixed in one batch. Waves 2 and 3:
+  the 0-A review's four WARNs folded (marked above); code-reviewer APPROVE (3 MINOR, 2 NIT);
+  failure-mode-reviewer REQUEST CHANGES (1 MAJOR, 5 MINOR, 3 NIT), every 4-A error holding in the
+  tree, one fix batch: the refusal's function-body imports pinned, the floor call required as an
+  unconditional statement with a maintenance-mode behaviour row, any `tools/cc` module counted as a
+  sibling, the deny hooks read from the canonical roster and tied to ruff's py310 table,
+  `session_start.py` parsed as 3.10, stale no-parser prose corrected, `record_snapshot` reading
+  `utf-8-sig`.
+- Reach: Oracle A 5 of 44 version-reporting downloads on 3.10 (11.4%, under the one-fifth stop);
+  Oracle B unread on every tree but the Air, named unread, never clear; the fallback spellings 29
+  lines in 24 files at `8dd10c01`, zero at the head (2-E's row); 0-B: 11 required checks read
+  back (ack `445e93`).
+- Date: 2026-11-07

@@ -1700,7 +1700,7 @@ Adding or changing a hook matcher: update `CANONICAL_HOOK_WIRING` once;
 
 ## `tomllib` import goes through `espalier._compat`
 
-Python 3.11 is the floor (`TP-706`), so `espalier/_compat.py` imports
+Python 3.11 is the floor, so `espalier/_compat.py` imports
 the stdlib `tomllib` and nothing else. Callers still write:
 
 ```python
@@ -1710,8 +1710,8 @@ from espalier._compat import tomllib
 One import site keeps the next change to how `espalier/` reads TOML
 to one file. It did not keep the last one to one file: this section
 used to promise that dropping 3.10 would be "a one-line edit in
-`_compat.py`", and it cost `TP-706` a sweep of 24 code sites and 19
-test sites (the count in its Motivation), because readers outside the
+`_compat.py`", and the floor's move from 3.10 to 3.11 (2026-11-07)
+cost a sweep of 24 code sites and 19 test sites, because readers outside the
 shim had grown their own answers to a missing parser: regex readers,
 line scans, `tomli` retries. Budget the next floor move from that
 record, not from the shim. `tools/cc/` cannot import `espalier`, so its

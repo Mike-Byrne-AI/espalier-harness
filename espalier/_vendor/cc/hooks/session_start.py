@@ -49,11 +49,14 @@ _LOAD_T0 = time.monotonic()
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent.parent))
 # Below the supported Python floor, the banner is the floor's warning alone,
-# said before any sibling imports (TP-706, the ruling on request 881ed0): the
-# siblings read espalier.toml through tomllib, which the old interpreter lacks,
-# and that crash took the whole banner, the warning with it. Under `__main__`
-# only, so an in-process importer reads no banner; the start refusal is the
-# stdlib-only module the deny hooks import first for the same call.
+# said before any sibling imports: the siblings read espalier.toml through
+# tomllib, which the old interpreter lacks, and that crash took the whole
+# banner, the warning with it. Under `__main__` only, so an in-process importer
+# reads no banner; the start refusal is the stdlib-only module the deny hooks
+# import first for the same call. This file is outside ruff's py310 table, so
+# two things reach the old interpreter unchecked by ruff: syntax only newer
+# interpreters parse (tests/test_python_floor.py parses this file as 3.10) and
+# a newer-only name imported on the way to this block (pinned there too).
 if __name__ == "__main__":
     try:
         import _start_refusal  # noqa: E402
@@ -3249,8 +3252,8 @@ def _warn_if_hook_interpreter_unresolved(root: Path) -> None:
         # TWO failures share this warning and they need different words.
         # "Not a Python 3 at all" and "a Python 3 below the
         # floor" have different consequences AND different remedies: the first
-        # breaks the guards, the second leaves them working while the blueprint
-        # chain dies, and a `python3` shim fixes only the first. Saying "does
+        # breaks the guards, the second has every deny hook refuse with the
+        # floor's sentence, and a `python3` shim fixes only the first. Saying "does
         # not resolve to a working Python 3" about a working 3.9 sends the
         # operator hunting for a missing install they already have.
         if interpreter_is_python3(interp):

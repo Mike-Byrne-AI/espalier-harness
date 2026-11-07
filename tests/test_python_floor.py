@@ -33,6 +33,7 @@ from pathlib import Path
 import pytest
 
 from espalier import _python_floor
+from espalier.harness_config import GOVERNANCE_BLOCKING_HOOKS
 from tests._cut_start import skip_if_cut
 from tests._stubs import write_stub
 from tests._wait_budget import scaled
@@ -2775,15 +2776,12 @@ class TestTheRetiredWiringPromiseIsGone:
         )
 
 
-#: The four deny hooks and the event each answers (TP-706 2-C). Each says the
-#: floor itself, before any sibling imports, when an interpreter below it runs
-#: the hook.
-DENY_HOOKS = (
-    ("write_guard", "PreToolUse"),
-    ("plan_guard", "PreToolUse"),
-    ("config_guard", "ConfigChange"),
-    ("stop_gate", "Stop"),
-)
+#: The deny hooks and the event each answers (TP-706 2-C), read from the
+#: canonical roster, so a blocking hook declared later gets every floor row the
+#: day it is declared. Each says the floor itself, before any sibling imports,
+#: when an interpreter below it runs the hook.
+DENY_HOOKS = tuple((script.removesuffix(".py"), event)
+                   for script, event in GOVERNANCE_BLOCKING_HOOKS.items())
 #: The five files the floor's refusal runs through, the files pyproject.toml's
 #: [tool.ruff] per-file-target-version holds at py310 (the 2026-11-07 ruling).
 FLOOR_VOICE_FILES = ("_start_refusal",) + tuple(hook for hook, _ in DENY_HOOKS)
@@ -2800,7 +2798,7 @@ def _deny_payload(event: str, cwd: Path, *, continued: bool = False) -> dict:
 
 
 def _run_hook_as(hook: str, version: "tuple[int, int, int]", payload: dict,
-                 cwd: Path) -> subprocess.CompletedProcess:
+                 cwd: Path, env_extra: "dict[str, str] | None" = None) -> subprocess.CompletedProcess:
     """Run a deny hook as Claude Code does (as `__main__`, the payload on
     stdin) with `sys.version_info` stubbed first, so every CI cell reads what
     a below-floor host would (a real old-interpreter row would only skip
@@ -2812,6 +2810,7 @@ def _run_hook_as(hook: str, version: "tuple[int, int, int]", payload: dict,
             f"runpy.run_path({path!r}, run_name='__main__')")
     env = {k: v for k, v in os.environ.items() if k != "ESPALIER_MAINTENANCE_MODE"}
     env["CLAUDE_PROJECT_DIR"] = str(cwd)
+    env.update(env_extra or {})
     return subprocess.run([sys.executable, "-c", code], input=json.dumps(payload), cwd=str(cwd),
                           capture_output=True, text=True, timeout=scaled(50), encoding="utf-8",
                           env=env)
@@ -2849,6 +2848,20 @@ class TestTheDenyHooksSayTheFloor:
             reason = out["reason"]
         assert reason.startswith(f"{hook} cannot run here. "), reason
         assert _python_floor.does_not_run_sentence(f"Python {major}.{minor - 1}.21") in reason, reason
+
+    @pytest.mark.parametrize("hook,event", DENY_HOOKS)
+    def test_maintenance_mode_does_not_lift_the_floor(self, hook, event, tmp_path):
+        """The floor is not friction: maintenance mode lifts the zone and plan
+        checks, and below the floor the refusal still answers, since a dropped
+        Python is never run in a reduced mode."""
+        major, minor = _python_floor.MIN_PYTHON
+        run = _run_hook_as(hook, (major, minor - 1, 21), _deny_payload(event, tmp_path), tmp_path,
+                           env_extra={"ESPALIER_MAINTENANCE_MODE": "1"})
+        assert run.returncode == 0, (run.returncode, run.stdout, run.stderr)
+        out = json.loads(run.stdout)
+        reason = (out["hookSpecificOutput"]["permissionDecisionReason"] if event == "PreToolUse"
+                  else out["reason"])
+        assert reason.startswith(f"{hook} cannot run here. "), out
 
     def test_a_stop_continued_after_the_refusal_goes_through(self, tmp_path):
         """A pause, never a lockout: the protocol's loop signal lets the next
@@ -2981,22 +2994,89 @@ def _statement_imports(node: ast.AST) -> set[str]:
         sub.module or "" for sub in ast.walk(node) if isinstance(sub, ast.ImportFrom)}
 
 
+#: Every module a hook can import from its own folder or the tools folder
+#: above it: a sibling is any of these, underscored or not (`stop_gate` imports
+#: `ship`, whose top loads five more).
+_SIBLING_MODULES = frozenset(path.stem for folder in (HOOKS_DIR, HOOKS_DIR.parent)
+                             for path in folder.glob("*.py"))
+
+
 def _first_sibling_import(body: list) -> int | None:
     """The index of the first statement importing a sibling other than the
     start refusal."""
     return next((i for i, node in enumerate(body)
-                 if any(name.startswith("_") and name not in ("_start_refusal", "__future__")
+                 if any((name.startswith("_") or name.split(".")[0] in _SIBLING_MODULES)
+                        and name not in ("_start_refusal", "__future__")
                         for name in _statement_imports(node))), None)
+
+
+def _unconditional_calls(body: list) -> list[ast.Call]:
+    """The calls a block makes as statements of its own, through a `try`'s
+    body and its `else` (which guard an import, not a condition) and never
+    into an `if` or a loop, so a floor call nested under a second condition is
+    not one."""
+    calls: list[ast.Call] = []
+    for stmt in body:
+        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
+            calls.append(stmt.value)
+        elif isinstance(stmt, ast.Try):
+            calls += _unconditional_calls(stmt.body) + _unconditional_calls(stmt.orelse)
+    return calls
 
 
 def _main_guard_calls(body: list, func: str, args: list) -> list[int]:
     """The indices of the `if __name__ == "__main__"` statements that call
-    ``func`` with exactly ``args``."""
+    ``func`` with exactly ``args``, unconditionally inside the block."""
     return [i for i, node in enumerate(body) if isinstance(node, ast.If)
             and ast.unparse(node.test).replace("'", '"') == '__name__ == "__main__"'
-            and any(isinstance(sub, ast.Call) and ast.unparse(sub.func) == func
-                    and [ast.literal_eval(arg) for arg in sub.args] == args
-                    for sub in ast.walk(node))]
+            and any(ast.unparse(call.func) == func
+                    and [ast.literal_eval(arg) for arg in call.args] == args
+                    for call in _unconditional_calls(node.body))]
+
+
+#: Names the refusal's own functions import on the old interpreter, beyond the
+#: module's top-level set.
+FLOOR_PATH_IMPORTS = frozenset({("json", None)})
+
+
+def _unguarded_import_strays(body: list, allowed: frozenset) -> list[str]:
+    """Imports in ``body`` outside ``allowed``, skipping a `try` whose handler
+    catches every exception (a best-effort step that cannot stop the
+    refusal) and nested definitions."""
+    strays: list[str] = []
+    for node in body:
+        if isinstance(node, ast.Try) and any(
+                handler.type is None or ast.unparse(handler.type) in ("Exception", "BaseException")
+                for handler in node.handlers):
+            continue
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            strays += _top_level_import_strays_in([node], allowed)
+        elif not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            for field in ("body", "orelse", "finalbody", "handlers"):
+                strays += _unguarded_import_strays(
+                    [n for n in getattr(node, field, []) if isinstance(n, ast.AST)], allowed)
+    return strays
+
+
+def _floor_path_import_strays(source: str) -> list[str]:
+    """``function: module`` for each import the refusal runs below the floor
+    that is not a pinned 3.10 name: inside `refuse_below_floor`,
+    `banner_below_floor` and every module function they reach by name."""
+    funcs = {node.name: node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)}
+    allowed = START_REFUSAL_IMPORTS | FLOOR_PATH_IMPORTS
+    seen: set[str] = set()
+    todo = ["refuse_below_floor", "banner_below_floor"]
+    strays: list[str] = []
+    while todo:
+        name = todo.pop()
+        if name in seen or name not in funcs:
+            continue
+        seen.add(name)
+        strays += [f"{name}: {stray}" for stray in _unguarded_import_strays(funcs[name].body, allowed)]
+        todo += [node.func.id for node in ast.walk(funcs[name])
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)]
+    assert {"refuse_below_floor", "banner_below_floor"} <= seen, "the refusal's entry points moved"
+    return strays
 
 
 def _floor_call_order(source: str, hook: str, event: str) -> str | None:
@@ -3069,6 +3149,24 @@ class TestTheFloorVoiceStaysReachable:
         for planted in ("import tomllib\n", "from datetime import UTC\n", "from typing import Self\n"):
             assert _top_level_import_strays(planted + source), planted
 
+    def test_the_refusal_path_imports_only_what_an_old_interpreter_has(self):
+        """The import half inside the functions: a name the old interpreter
+        lacks, imported in the refusal or a helper it reaches, is an exit 1
+        with empty stdout there, and ruff and the 3.10 mypy row pass it."""
+        source = (HOOKS_DIR / "_start_refusal.py").read_text(encoding="utf-8")
+        strays = _floor_path_import_strays(source)
+        assert not strays, (
+            f"the below-floor refusal imports {strays}; add a name to FLOOR_PATH_IMPORTS "
+            f"only if Python 3.10 has it, or guard a best-effort step with a broad except"
+        )
+        # Earn the red on every run: a planted import in an entry point and in a
+        # helper it reaches is caught; the guarded audit record is not.
+        for func in ("def refuse_below_floor", "def banner_below_floor", "def _read_payload"):
+            start = source.index(func)
+            at = source.index("    import json\n", start)
+            planted = source[:at] + "    import tomllib\n" + source[at:]
+            assert _floor_path_import_strays(planted), func
+
     @pytest.mark.parametrize("hook,event", DENY_HOOKS)
     def test_each_deny_hook_says_the_floor_before_any_sibling(self, hook, event):
         source = (HOOKS_DIR / f"{hook}.py").read_text(encoding="utf-8")
@@ -3079,6 +3177,11 @@ class TestTheFloorVoiceStaysReachable:
         assert call in source, f"{hook}.py's floor call is not in the shape this row mutates"
         moved = source.replace(call, "", 1) + "\n" + call
         assert _floor_call_order(moved, hook, event) is not None
+        # A sibling without an underscore imported above the call reds, and so
+        # does the call nested under a second condition.
+        assert _floor_call_order(source.replace(call, "import ship\n" + call, 1), hook, event) is not None
+        nested = call.replace("    _start_refusal", "    if not os.environ.get('X'):\n        _start_refusal")
+        assert _floor_call_order(source.replace(call, nested, 1), hook, event) is not None
 
     def test_the_banner_says_the_floor_before_any_sibling(self):
         """The reporter's half (the ruling on request 881ed0): below the floor
@@ -3113,6 +3216,26 @@ class TestTheFloorVoiceStaysReachable:
         )
         assert run.returncode == 0, run.stdout + run.stderr
 
+    def test_the_floor_voice_files_are_ruffs_py310_table(self):
+        """Ruff's per-file py310 target is the syntax half of these rows, so
+        its table and the files the refusal runs through are one set: a deny
+        hook added to the roster without its ruff line is named here."""
+        import tomllib
+        config = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        table = config["tool"]["ruff"]["per-file-target-version"]
+        py310 = {path for path, target in table.items() if target == "py310"}
+        assert py310 == {f"tools/cc/hooks/{name}.py" for name in FLOOR_VOICE_FILES}, py310
+
+    def test_session_start_parses_as_python_3_10(self):
+        """The banner's file is outside ruff's py310 table, and a below-floor
+        interpreter parses the whole file before its floor block runs, so
+        syntax only newer interpreters read loses the banner to a SyntaxError."""
+        source = (HOOKS_DIR / "session_start.py").read_text(encoding="utf-8")
+        ast.parse(source, feature_version=(3, 10))
+        planted = source + "\ntry:\n    pass\nexcept* ValueError:\n    pass\n"
+        with pytest.raises(SyntaxError):
+            ast.parse(planted, feature_version=(3, 10))
+
 
 #: The fallback spellings a parser shim takes when the stdlib TOML module may be
 #: missing (TP-706 2-E), assembled from fragments so this file's own source
@@ -3124,6 +3247,7 @@ _STDLIB = _BASE + "lib"     # the standard library module
 _FALLBACK_SPELLINGS = re.compile("|".join((
     r"import " + _SHIM + r"\b",
     _SHIM + r" as " + _STDLIB,
+    r"from " + _SHIM + r"\b",
     _STDLIB + r" = None",
     _STDLIB + r" is None",
     _STDLIB + r" is not None",
@@ -3186,7 +3310,8 @@ class TestTheFloorHasNoParserShims:
         backport, stdlib = "".join(["t", "o", "m", "l", "i"]), "".join(["t", "o", "m", "l", "l", "i", "b"])
         for planted in (f"try:\n    import {backport}\n", f"import {backport} as {stdlib}\n",
                         f"{stdlib} = None\n", f"if {stdlib} is None:\n",
-                        f"if {stdlib} is not None:\n", f"if _{stdlib} is None:\n"):
+                        f"if {stdlib} is not None:\n", f"if _{stdlib} is None:\n",
+                        f"from {backport} import loads\n"):
             assert _FALLBACK_SPELLINGS.search(planted), planted
         assert not _FALLBACK_SPELLINGS.search("parser = _hook_utils._toml_parser()\n")
 

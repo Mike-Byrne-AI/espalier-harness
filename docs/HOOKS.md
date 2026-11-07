@@ -1065,8 +1065,7 @@ first; the dangerous-command catch is a secondary slip-catcher):
      off for the session. An entry that is not a list of strings, is absolute,
      or would cover the whole tree protects nothing and SAYS so, once a
      session (a stderr line and a `config_zone_ignored` audit record); so
-     does a key name one letter off, and a zone read by the no-parser
-     fallback on an old interpreter. `/status --explain <path>` reports both
+     does a key name one letter off. `/status --explain <path>` reports both
      zones.
 
    The prefixes are read relative to the checkout that contains the path.
@@ -2446,7 +2445,7 @@ same for the checks the flag switches off in them
 |---------|--------|
 | `ESPALIER_STOP_GATE=light` (default) | Skip gate 1 (pytest). Run hygiene gates 2-3 only. |
 | `ESPALIER_STOP_GATE=full` | Run gate 1 (the test gate; the row below says what it runs) before hygiene gates. **Caution:** Stop fires on every turn, not just end-of-session. If set permanently, the test command runs on every turn. A pytest file list runs under the hook interpreter, so pytest must be installed for that form: on a Windows host wired to the launcher (`py -3`, a system Python) while your pytest lives in a virtualenv, the gate skips with a note (`stop_failed_open_pytest_missing`) until you install pytest for that interpreter or set `ESPALIER_STOP_GATE_TEST_CMD`. |
-| `ESPALIER_STOP_GATE_TEST_CMD=<command>` | The command gate 1 runs as *your* suite, as an argv at the repository root without a shell (a non-zero exit, a timeout or a command that cannot start blocks the Stop; an entry carrying shell syntax -- `&&`, `||`, a pipe, `;`, a redirection, `$(` -- is refused before the spawn, once a session per command, with the shape named: one program per entry, each started at the root, so `test = ["npm run build", "npm test"]` where a shell line would chain them). It is the first of three sources: without it, under `full`, gate 1 runs the `test` entry under `[extra_actions]` in `espalier.toml` (read on every Stop; the hook interpreter needs Python 3.11+ or `tomli` to read it), else the test command detected from the repository's own files (`npm test`, `go test ./...`, `cargo test`, a bare `pytest -q`), and a pytest tree holding the harness default test files runs only those. `doctor` and the SessionStart banner say which one runs here (gate 1's own stderr line is a debug-log copy). A Gate 1 that skips -- nothing declared or detected and no default file here, no fingerprint test path exists, pytest timed out or could not run, the override splits to nothing, the fingerprint is unreadable, the mode is misspelt -- records `stop_failed_open_*` once a session, so `/status --log` counts it. |
+| `ESPALIER_STOP_GATE_TEST_CMD=<command>` | The command gate 1 runs as *your* suite, as an argv at the repository root without a shell (a non-zero exit, a timeout or a command that cannot start blocks the Stop; an entry carrying shell syntax -- `&&`, `||`, a pipe, `;`, a redirection, `$(` -- is refused before the spawn, once a session per command, with the shape named: one program per entry, each started at the root, so `test = ["npm run build", "npm test"]` where a shell line would chain them). It is the first of three sources: without it, under `full`, gate 1 runs the `test` entry under `[extra_actions]` in `espalier.toml` (read on every Stop), else the test command detected from the repository's own files (`npm test`, `go test ./...`, `cargo test`, a bare `pytest -q`), and a pytest tree holding the harness default test files runs only those. `doctor` and the SessionStart banner say which one runs here (gate 1's own stderr line is a debug-log copy). A Gate 1 that skips -- nothing declared or detected and no default file here, no fingerprint test path exists, pytest timed out or could not run, the override splits to nothing, the fingerprint is unreadable, the mode is misspelt -- records `stop_failed_open_*` once a session, so `/status --log` counts it. |
 | `ESPALIER_MAINTENANCE_MODE=1` | Skip gates 2 and 3 (hygiene friction). Gate 1 (pytest, if opted in), gate 5 (the handoff gate: continuity, not friction) and gate 4 (blueprint finalize) still run. One advisory audit record per session says so (`stop_bypassed_maintenance_mode`; `/status --log` counts it). |
 
 Set the stop gate mode for a single session:
@@ -2654,9 +2653,11 @@ operator setup is required on the typical distributions:
 3.11, init refuses before it writes any file: it says the harness does not
 run on Python <the version it found> and to update to Python 3.11 or newer
 to install and use it. There is no reduced mode and no partial install.
-`espalier doctor .` and the SessionStart banner say the same of a tree
-already wired to one, and name the command to run after updating:
-`<python> -m espalier init . --rewire-interpreter`.
+`espalier doctor .` says the same of a tree already wired to one, and
+names the command to run after updating:
+`<python> -m espalier init . --rewire-interpreter`. The SessionStart
+banner, run by that interpreter, says the floor's sentence alone and
+points at `espalier doctor .`.
 
 If none of `python`, `python3` or `py -3` answers, init still writes
 `python` and warns. What you then see, on every hook fire, is Claude

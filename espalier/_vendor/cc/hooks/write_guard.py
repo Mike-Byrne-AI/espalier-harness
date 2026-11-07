@@ -121,7 +121,7 @@ except Exception as _floor:  # noqa: BLE001 -- the start refusal itself cannot i
     sys.stdout.flush()
     raise SystemExit(0) from None
 # Below the supported Python floor, say the floor before any sibling imports
-# and fails on the old interpreter under another name (TP-706); under
+# and fails on the old interpreter under another name; under
 # `__main__` only, so an in-process importer is never answered with a deny.
 if __name__ == "__main__":
     _start_refusal.refuse_below_floor("write_guard", "PreToolUse")
