@@ -24,17 +24,13 @@ from __future__ import annotations
 
 import importlib.util
 import re
-import sys
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # Python 3.10 fallback
-    import tomli as tomllib  # type: ignore[no-redef]
+import tomllib
 
 from espalier.doctor import _LOAD_BEARING_EXTERNAL_TOOLS
 from espalier.mirror_registry import MIRROR_ROWS

@@ -1139,8 +1139,6 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             "test_selfcheck_tests_parity",
             # seed of the selfcheck host-agnostic engine-integrity truth set
             "test_engine_imports",
-            # no bare module-level `import tomllib` (breaks Python 3.10 collection)
-            "test_tomllib_import_contract",
             # TP-364 — every task-packs/Deferred/ pack is pinned to a
             # FORWARD_LEDGER.md row (folder<->ledger completeness contract;
             # self-host-gated, sibling of test_doc_test_citations).

@@ -494,9 +494,10 @@ def emit_advisories(event: str, leading: Sequence[str] = (), operator: Sequence[
 def _project_name_from_pyproject(text: str) -> str | None:
     """Extract project.name from pyproject.toml text via stdlib regex.
 
-    Mirrors `espalier.surface_contract._project_name_from_pyproject` but
-    avoids the `tomllib`/`tomli` import to keep `tools/cc/` third-party-free
-    and stdlib-only on 3.10. Scans for `name = "..."` (or single-quoted)
+    Mirrors `espalier.surface_contract._project_name_from_pyproject` with a
+    line scan rather than a `tomllib` parse: `is_self_host_repo` runs on the
+    per-tool-call path, which keeps the parser's import off it (the reason
+    `_toml_parser` binds on first use). Scans for `name = "..."` (or single-quoted)
     inside `[project]` or `[tool.poetry]` sections only — a dependency line
     like `dependencies = ["espalier-harness>=1.0"]` is not matched because
     it's neither in a target section nor a `name = ...` line.
@@ -732,117 +733,43 @@ _TOML_PARSER: Any = _UNBOUND
 
 
 def _toml_parser() -> Any:
-    """``tomllib`` (3.11+), else ``tomli``, else ``None`` -- bound on first use,
-    so the import stays off the per-tool-call path of a tree with no
-    espalier.toml (every PreToolUse('*') hook fire re-imports this module)."""
+    """The standard library's ``tomllib``, imported on first use and never at
+    this module's top: the import stays off the per-tool-call path of a tree
+    with no espalier.toml (every PreToolUse('*') hook fire re-imports this
+    module), and this module still imports on an interpreter below the floor,
+    where the SessionStart banner says the floor (the deny hooks say it before
+    they import this module: ``_start_refusal.refuse_below_floor``)."""
     global _TOML_PARSER
     if _TOML_PARSER is _UNBOUND:
-        try:
-            import tomllib as parser  # type: ignore[import-not-found]
-        except ImportError:  # fail-open: ok deliberate -- no TOML parser importable: the regex arm of read_toml_string_list serves the key
-            try:
-                import tomli as parser  # type: ignore[no-redef]
-            except ImportError:
-                parser = None  # type: ignore[assignment]
-        _TOML_PARSER = parser
+        import tomllib
+
+        _TOML_PARSER = tomllib
     return _TOML_PARSER
 
 
-def read_toml_table(
-    root: Path, *, parser: Any = _UNBOUND, on_error: Callable[[str], None] | None = None,
-) -> dict | None:
+def read_toml_table(root: Path, *, on_error: Callable[[str], None] | None = None) -> dict | None:
     """The parsed top-level table of ``<root>/espalier.toml``: ``None`` when the
-    file is absent, no parser is importable, or the file is malformed -- in
-    which case ``on_error`` (the caller's channel) is told why, with the
-    exception rendered through ``os_error_text``. ``parser`` is injectable so a
-    caller can pass its own binding (``plan_guard._tomllib``, which its tests
-    monkeypatch to force the regex arm of ``read_toml_string_list``). Never
-    raises."""
-    if parser is _UNBOUND:
-        parser = _toml_parser()
-    if parser is None:
-        return None
+    file is absent or malformed -- in which case ``on_error`` (the caller's
+    channel) is told why, with the exception rendered through
+    ``os_error_text``. Never raises."""
     try:
-        try:
-            with open(root / "espalier.toml", "rb") as fh:
-                data = parser.load(fh)
-        except TypeError:
-            # tomli below 1.1 types load() for a text handle and raises on
-            # the binary one (DEF-871: measured on CPython 3.10 with tomli
-            # 1.0.4, where any espalier.toml sent every source write to
-            # plan_guard's crash handler; 1.2.3 reads the binary handle).
-            # Read it the way that parser wants rather than let the error
-            # reach the caller's crash handler. A TypeError from the retry
-            # is a parser that takes neither handle: the arm below reports
-            # it through on_error and returns None, so this never raises.
-            with open(root / "espalier.toml", encoding="utf-8") as fh:
-                data = parser.load(fh)
+        with open(root / "espalier.toml", "rb") as fh:
+            data = _toml_parser().load(fh)
     except FileNotFoundError:  # fail-open: ok deliberate -- an absent espalier.toml is not a fault
         return None
     # fail-open: ok deliberate -- the caller's channel (on_error) is told when the caller bound one; plan_guard's re-read binds none because its first read already spoke
-    except (OSError, ValueError, TypeError) as exc:  # TOMLDecodeError is a ValueError
+    except (OSError, ValueError) as exc:  # TOMLDecodeError is a ValueError
         if on_error is not None:
             on_error(os_error_text(exc))
         return None
     return data if isinstance(data, dict) else None
 
 
-def _regex_extract_string_list(text: str, key: str) -> list[str] | None:
-    """Best-effort stdlib fallback for a flat ``key = ["a", "b"]`` list when no
-    TOML parser is importable (a Python < 3.11 hook interpreter without
-    ``tomli``): full-line ``#`` comments are stripped, then the one flat key is
-    recovered by regex. It does not reimplement TOML -- table-scoped or
-    duplicate keys and quote/bracket characters inside a value can diverge
-    from a real parse. ``None`` when the key is absent."""
-    text = re.sub(r"(?m)^\s*#.*$", "", text)
-    # Only the top-level region: stop at the first table header, so a
-    # table-scoped key is not read as top-level. Anchored at line start, so
-    # `unprotected_paths = [...]` and a key inside a trailing comment do not
-    # match -- this arm now creates DENIES (the adopter zones), and an
-    # over-match on a no-parser host is a false deny on user-owned code.
-    header = re.search(r"(?m)^[ \t]*\[", text)
-    if header is not None:
-        text = text[: header.start()]
-    m = re.search(r"(?m)^[ \t]*" + re.escape(key) + r"[ \t]*=[ \t]*\[(.*?)\]", text, re.DOTALL)
-    if m is None:
-        return None
-    return re.findall(r"""["']([^"']*)["']""", m.group(1))
-
-
-def _regex_extract_scalar(text: str, key: str) -> object | None:
-    """``_regex_extract_string_list``'s twin for a flat scalar ``key = value``
-    when no TOML parser is importable: the same comment strip and the same
-    top-level cut, then the one value typed as TOML would type it -- ``true``
-    and ``false`` to a bool, an integer literal to an int, a quoted string to
-    its text. Any other spelling (a float, a date, a bare word) and an absent
-    key read as ``None``: this arm does not reimplement TOML, so it does not
-    guess."""
-    text = re.sub(r"(?m)^\s*#.*$", "", text)
-    header = re.search(r"(?m)^[ \t]*\[", text)
-    if header is not None:
-        text = text[: header.start()]
-    m = re.search(r"(?m)^[ \t]*" + re.escape(key) + r"[ \t]*=[ \t]*([^\n#]*)", text)
-    if m is None:
-        return None
-    value = m.group(1).strip()
-    if value in ("true", "false"):
-        return value == "true"
-    if re.fullmatch(r"[+-]?\d+(?:_\d+)*", value):
-        return int(value.replace("_", ""))
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-        return value[1:-1]
-    return None
-
-
-def _read_toml_flat(
-    root: Path, key: str, *, fallback: Callable[[str, str], object | None],
-    parser: Any, on_error: Callable[[str], None] | None,
-) -> object | None:
+def _read_toml_flat(root: Path, key: str, *, on_error: Callable[[str], None] | None) -> object | None:
     """The one body behind ``read_toml_string_list`` and ``read_toml_scalar``:
-    the three arms (``tomllib``, ``tomli``, and ``fallback`` over the raw text
-    when neither imports) for the RAW value of a flat top-level ``key`` in
-    ``<root>/espalier.toml``; ``None`` when the file or the key is absent or
-    the file is malformed (then ``on_error`` was told why). Never raises."""
+    the RAW value of a flat top-level ``key`` in ``<root>/espalier.toml``;
+    ``None`` when the file or the key is absent or the file is malformed (then
+    ``on_error`` was told why). Never raises."""
     config_path = root / "espalier.toml"
     try:
         present = config_path.is_file()
@@ -854,49 +781,37 @@ def _read_toml_flat(
         return None
     if not present:
         return None
-    if parser is _UNBOUND:
-        parser = _toml_parser()
-    if parser is None:
-        try:
-            text = config_path.read_text(encoding="utf-8", errors="replace")
-        except OSError as exc:  # fail-open: ok deliberate -- the caller's channel (on_error) is told when the caller bound one
-            if on_error is not None:
-                on_error(os_error_text(exc))
-            return None
-        return fallback(text, key)
-    data = read_toml_table(root, parser=parser, on_error=on_error)
+    data = read_toml_table(root, on_error=on_error)
     if data is None:
         return None
     return data.get(key)
 
 
 def read_toml_string_list(
-    root: Path, key: str, *, parser: Any = _UNBOUND, on_error: Callable[[str], None] | None = None,
+    root: Path, key: str, *, on_error: Callable[[str], None] | None = None,
 ) -> object | None:
     """The RAW value of the flat top-level ``key`` in ``<root>/espalier.toml``:
     ``None`` when the file or the key is absent, or the file is malformed (then
     ``on_error`` was told why). No validation -- the value is whatever TOML
     parsed, so the ``isinstance(raw, list)`` check and any entry validator stay
-    with the caller, which is why the annotation is ``object``. Three arms:
-    ``tomllib``, ``tomli``, and the regex fallback when neither imports. The
-    hook-side reader of a FLAT key; ``plan_guard`` and ``write_guard`` both
-    route through it, and ``stop_gate`` reads its ``[extra_actions]`` table through
+    with the caller, which is why the annotation is ``object``. The hook-side
+    reader of a FLAT key; ``plan_guard`` and ``write_guard`` both route through
+    it, and ``stop_gate`` reads its ``[extra_actions]`` table through
     ``read_toml_table`` beside it (since 2026-10-08). Never raises."""
-    return _read_toml_flat(root, key, fallback=_regex_extract_string_list, parser=parser, on_error=on_error)
+    return _read_toml_flat(root, key, on_error=on_error)
 
 
 def read_toml_scalar(
-    root: Path, key: str, *, parser: Any = _UNBOUND, on_error: Callable[[str], None] | None = None,
+    root: Path, key: str, *, on_error: Callable[[str], None] | None = None,
 ) -> object | None:
-    """``read_toml_string_list`` for a flat top-level SCALAR ``key``: the same
-    three arms, the regex fallback replaced by its scalar twin
-    (``_regex_extract_scalar``). The RAW value, untyped -- the caller checks
-    ``isinstance`` -- or ``None`` when the file or the key is absent or the
-    file is malformed (``on_error`` told why). The hook-side reader of the
-    opt-in bits (``handoff_context_threshold``, ``handoff_push_on``);
+    """``read_toml_string_list`` for a flat top-level SCALAR ``key``. The RAW
+    value, untyped -- the caller checks ``isinstance`` -- or ``None`` when the
+    file or the key is absent or the file is malformed (``on_error`` told
+    why). The hook-side reader of the opt-in bits
+    (``handoff_context_threshold``, ``handoff_push_on``);
     ``ship.py::handoff_push_setting`` is the driver's own reader of
     ``handoff_push``, which also says how it read it. Never raises."""
-    return _read_toml_flat(root, key, fallback=_regex_extract_scalar, parser=parser, on_error=on_error)
+    return _read_toml_flat(root, key, on_error=on_error)
 
 
 #: The context size, in tokens, at which ``task_router`` asks the session to
@@ -1067,24 +982,12 @@ def adopter_protected_prefixes(root: Path) -> tuple[tuple[str, str], ...]:
     else:
         _ADOPTER_ZONES_MEMO.pop(memo_key, None)
 
-    parser = _toml_parser()
-    table: dict | None = None
-    if parser is not None:
-        # One parse per call, not one per key: this runs on every mutating
-        # tool call, once per extracted path (the 2-A code review measured it).
-        table = read_toml_table(root, parser=parser, on_error=_unreadable)
+    # One parse per call, not one per key: this runs on every mutating tool
+    # call, once per extracted path (the 2-A code review measured it).
+    table = read_toml_table(root, on_error=_unreadable)
     out: list[tuple[str, str]] = []
     for key, kind in ADOPTER_ZONE_KEYS:
-        if parser is not None:
-            raw = table.get(key) if table is not None else None
-        else:
-            raw = read_toml_string_list(root, key, parser=None, on_error=_unreadable)
-            if raw is not None:
-                say_once(
-                    root, f"zone-{key}-degraded-reader", "write_guard", "config_zone_degraded_reader",
-                    f"espalier.toml: {key} read by the no-parser regex fallback (Python < 3.11 "
-                    "without tomli); a zone it recovers may differ from a real parse",
-                )
+        raw = table.get(key) if table is not None else None
         if raw is None:
             continue
         if not isinstance(raw, list) or not all(isinstance(entry, str) for entry in raw):

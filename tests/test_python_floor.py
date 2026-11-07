@@ -243,6 +243,22 @@ class TestTwoCopyParity:
             f"below-floor interpreter on, or turn a supported one away"
         )
 
+    def test_start_refusal_floor_is_the_fourth_copy(self):
+        """`tools/cc/hooks/_start_refusal.py` is the module each deny hook
+        imports first and alone, so its floor check cannot read
+        `_hook_utils.MIN_PYTHON` (the module that may not import below the
+        floor) and spells the floor as a literal: the fourth copy (TP-706
+        2-C). Read with ast, as the third is."""
+        tree = ast.parse((HOOKS_DIR / "_start_refusal.py").read_text(encoding="utf-8"))
+        floors = [ast.literal_eval(node.value) for node in tree.body
+                  if isinstance(node, ast.Assign)
+                  and any(isinstance(t, ast.Name) and t.id == "_FLOOR" for t in node.targets)]
+        assert floors == [tuple(_python_floor.MIN_PYTHON)], (
+            f"_start_refusal.py's _FLOOR is {floors!r}, the floor is "
+            f"{tuple(_python_floor.MIN_PYTHON)!r}: the deny hooks would refuse a "
+            f"supported interpreter, or let a dropped one judge calls"
+        )
+
     @pytest.mark.parametrize("version_output,expected", IDENTITY_CASES)
     def test_banner_identity_two_copy_parity(self, version_output, expected):
         hook_side = _hook_utils().is_python3_banner(version_output)
@@ -2756,3 +2772,318 @@ class TestTheRetiredWiringPromiseIsGone:
             "write (say espalier/_python_floor.py::does_not_run_sentence's words, "
             "or add the file to ALLOWED with the reason):\n  " + "\n  ".join(found)
         )
+
+
+#: The four deny hooks and the event each answers (TP-706 2-C). Each says the
+#: floor itself, before any sibling imports, when an interpreter below it runs
+#: the hook.
+DENY_HOOKS = (
+    ("write_guard", "PreToolUse"),
+    ("plan_guard", "PreToolUse"),
+    ("config_guard", "ConfigChange"),
+    ("stop_gate", "Stop"),
+)
+#: The five files the floor's refusal runs through, the files pyproject.toml's
+#: [tool.ruff] per-file-target-version holds at py310 (the 2026-11-07 ruling).
+FLOOR_VOICE_FILES = ("_start_refusal",) + tuple(hook for hook, _ in DENY_HOOKS)
+
+
+def _deny_payload(event: str, cwd: Path, *, continued: bool = False) -> dict:
+    if event == "PreToolUse":
+        return {"hook_event_name": event, "tool_name": "Write", "cwd": str(cwd),
+                "tool_input": {"file_path": "x.py", "content": ""}}
+    if event == "ConfigChange":
+        return {"hook_event_name": event, "source": "project", "cwd": str(cwd),
+                "file_path": ".claude/settings.json"}
+    return {"hook_event_name": event, "stop_hook_active": continued, "cwd": str(cwd)}
+
+
+def _run_hook_as(hook: str, version: "tuple[int, int, int]", payload: dict,
+                 cwd: Path) -> subprocess.CompletedProcess:
+    """Run a deny hook as Claude Code does (as `__main__`, the payload on
+    stdin) with `sys.version_info` stubbed first, so every CI cell reads what
+    a below-floor host would (a real old-interpreter row would only skip
+    there). The project root is a scratch directory, so the refusal's
+    best-effort audit record lands there and never in this checkout."""
+    path = str(HOOKS_DIR / f"{hook}.py")
+    stub = f"({version[0]}, {version[1]}, {version[2]}, 'final', 0)"
+    code = (f"import runpy, sys; sys.version_info = {stub}; sys.argv = [{path!r}]; "
+            f"runpy.run_path({path!r}, run_name='__main__')")
+    env = {k: v for k, v in os.environ.items() if k != "ESPALIER_MAINTENANCE_MODE"}
+    env["CLAUDE_PROJECT_DIR"] = str(cwd)
+    return subprocess.run([sys.executable, "-c", code], input=json.dumps(payload), cwd=str(cwd),
+                          capture_output=True, text=True, timeout=50, encoding="utf-8", env=env)
+
+
+def _start_refusal_module():
+    if str(HOOKS_DIR) not in sys.path:
+        sys.path.insert(0, str(HOOKS_DIR))
+    import _start_refusal  # type: ignore[import-not-found]
+    return _start_refusal
+
+
+class TestTheDenyHooksSayTheFloor:
+    """TP-706 2-C: a deny hook run by an interpreter below the floor answers
+    with the structured refusal naming the floor (the one sentence,
+    `_python_floor.does_not_run_sentence`'s words), never a sibling's import
+    error and never an exit 1, which the hook protocol reads as non-blocking.
+    The base before 2-C ran the hooks below the floor and judged the call, so
+    every row here reds on it."""
+
+    @pytest.mark.parametrize("hook,event", DENY_HOOKS)
+    def test_a_below_floor_interpreter_is_refused_with_the_floor(self, hook, event, tmp_path):
+        major, minor = _python_floor.MIN_PYTHON
+        run = _run_hook_as(hook, (major, minor - 1, 21), _deny_payload(event, tmp_path), tmp_path)
+        assert run.returncode == 0, (run.returncode, run.stdout, run.stderr)
+        assert "Traceback" not in run.stderr, run.stderr
+        out = json.loads(run.stdout)
+        if event == "PreToolUse":
+            decision = out["hookSpecificOutput"]
+            assert decision["hookEventName"] == event, out
+            assert decision["permissionDecision"] == "deny", out
+            reason = decision["permissionDecisionReason"]
+        else:
+            assert out["decision"] == "block", out
+            reason = out["reason"]
+        assert reason.startswith(f"{hook} cannot run here. "), reason
+        assert _python_floor.does_not_run_sentence(f"Python {major}.{minor - 1}.21") in reason, reason
+
+    def test_a_stop_continued_after_the_refusal_goes_through(self, tmp_path):
+        """A pause, never a lockout: the protocol's loop signal lets the next
+        Stop end the turn."""
+        major, minor = _python_floor.MIN_PYTHON
+        run = _run_hook_as("stop_gate", (major, minor - 1, 21),
+                           _deny_payload("Stop", tmp_path, continued=True), tmp_path)
+        assert run.returncode == 0, (run.returncode, run.stdout, run.stderr)
+        assert run.stdout == "", run.stdout
+
+    def test_the_boundary_is_the_floor_itself(self, monkeypatch, capsys):
+        """Derived from `MIN_PYTHON`: exactly the floor returns, the minor
+        below refuses. In process, with the record captured, so nothing is
+        written to this checkout's audit log."""
+        refusal = _start_refusal_module()
+        records: list = []
+        monkeypatch.setattr(refusal, "_record", lambda kind, details: records.append((kind, details)))
+        major, minor = _python_floor.MIN_PYTHON
+        monkeypatch.setattr(sys, "version_info", (major, minor, 0, "final", 0))
+        assert refusal.refuse_below_floor("write_guard", "PreToolUse") is None
+        assert capsys.readouterr().out == "" and records == []
+        monkeypatch.setattr(sys, "version_info", (major, minor - 1, 99, "final", 0))
+        with pytest.raises(SystemExit) as exited:
+            refusal.refuse_below_floor("write_guard", "PreToolUse")
+        monkeypatch.undo()
+        assert exited.value.code == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["hookSpecificOutput"]["permissionDecision"] == "deny", out
+        assert records == [("pretooluse_blocked_internal_error",
+                            {"hook": "write_guard", "skew": "below floor",
+                             "python": f"{major}.{minor - 1}.99"})], records
+
+    def test_importing_the_refusal_below_the_floor_says_nothing(self):
+        """The check is a call each hook makes, never this module's load:
+        `_denial_reasons` imports it, and `session_start` imports that, so a
+        load-time check would answer a SessionStart with a PreToolUse deny."""
+        major, minor = _python_floor.MIN_PYTHON
+        code = (f"import sys; sys.version_info = ({major}, {minor - 1}, 21, 'final', 0); "
+                f"sys.path.insert(0, {str(HOOKS_DIR)!r}); "
+                "import _start_refusal, _denial_reasons; print('imported')")
+        run = subprocess.run([sys.executable, "-c", code], cwd=str(REPO_ROOT), capture_output=True,
+                             text=True, timeout=50, encoding="utf-8")
+        assert run.returncode == 0, (run.returncode, run.stdout, run.stderr)
+        assert run.stdout == "imported\n", run.stdout
+
+
+#: `_start_refusal.py`'s top-level imports, each a name every interpreter down
+#: to the oldest one the refusal must speak to has (TP-706 2-D). An import
+#: added there is added here knowingly: `import tomllib`, `from datetime import
+#: UTC` or `from typing import Self` parse everywhere and pass ruff's py310
+#: target, and each kills the refusal on the interpreter it exists for.
+START_REFUSAL_IMPORTS = frozenset({
+    ("__future__", "annotations"), ("sys", None), ("types", None),
+    ("pathlib", "Path"), ("typing", "NoReturn"),
+})
+
+
+def _top_level_import_strays(source: str) -> list[str]:
+    strays = []
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.Import):
+            strays += [alias.name for alias in node.names if (alias.name, None) not in START_REFUSAL_IMPORTS]
+        elif isinstance(node, ast.ImportFrom):
+            strays += [f"{node.module}.{alias.name}" for alias in node.names
+                       if (node.module, alias.name) not in START_REFUSAL_IMPORTS]
+    return strays
+
+
+def _floor_call_order(source: str, hook: str, event: str) -> str | None:
+    """None when the hook's module body calls `refuse_below_floor(hook,
+    event)` under `__main__`, after the statement importing `_start_refusal`
+    and before the first statement importing any other sibling; else what is
+    wrong."""
+    def imports(node: ast.AST) -> set[str]:
+        return {alias.name for sub in ast.walk(node) if isinstance(sub, (ast.Import, ast.ImportFrom))
+                for alias in sub.names if isinstance(sub, ast.Import)} | {
+            sub.module or "" for sub in ast.walk(node) if isinstance(sub, ast.ImportFrom)}
+
+    body = ast.parse(source).body
+    start = next((i for i, node in enumerate(body) if "_start_refusal" in imports(node)), None)
+    sibling = next((i for i, node in enumerate(body)
+                    if any(name.startswith("_") and name not in ("_start_refusal", "__future__")
+                           for name in imports(node))), None)
+    calls = [i for i, node in enumerate(body) if isinstance(node, ast.If)
+             and ast.unparse(node.test).replace("'", '"') == '__name__ == "__main__"'
+             and any(isinstance(sub, ast.Call) and ast.unparse(sub.func) == "_start_refusal.refuse_below_floor"
+                     and [ast.literal_eval(arg) for arg in sub.args] == [hook, event]
+                     for sub in ast.walk(node))]
+    if start is None:
+        return "no statement imports _start_refusal"
+    if not calls:
+        return f"no `if __name__ == '__main__'` calls refuse_below_floor({hook!r}, {event!r})"
+    if not start < calls[0] < (sibling if sibling is not None else len(body)):
+        return (f"the floor call is statement {calls[0]}; it must come after the _start_refusal "
+                f"import ({start}) and before the first other sibling import ({sibling})")
+    return None
+
+
+class TestTheFloorVoiceStaysReachable:
+    """TP-706 2-D. The refusal speaks only if everything it runs through
+    imports on the old interpreter: the syntax half is ruff's per-file py310
+    target (Wave 1's 1-G); these rows are the import half and the order."""
+
+    def test_the_refusal_module_imports_only_what_an_old_interpreter_has(self):
+        source = (HOOKS_DIR / "_start_refusal.py").read_text(encoding="utf-8")
+        strays = _top_level_import_strays(source)
+        assert not strays, (
+            f"_start_refusal.py imports {strays} at its top; below the floor that can "
+            f"fail before the refusal speaks (add it to START_REFUSAL_IMPORTS only if "
+            f"Python 3.10 has it)"
+        )
+        # Earn the red on every run: each shape the row exists for is caught.
+        for planted in ("import tomllib\n", "from datetime import UTC\n", "from typing import Self\n"):
+            assert _top_level_import_strays(planted + source), planted
+
+    @pytest.mark.parametrize("hook,event", DENY_HOOKS)
+    def test_each_deny_hook_says_the_floor_before_any_sibling(self, hook, event):
+        source = (HOOKS_DIR / f"{hook}.py").read_text(encoding="utf-8")
+        wrong = _floor_call_order(source, hook, event)
+        assert wrong is None, f"{hook}.py: {wrong}"
+        # The mutation: the call moved below the sibling block reds.
+        call = f'if __name__ == "__main__":\n    _start_refusal.refuse_below_floor("{hook}", "{event}")\n'
+        assert call in source, f"{hook}.py's floor call is not in the shape this row mutates"
+        moved = source.replace(call, "", 1) + "\n" + call
+        assert _floor_call_order(moved, hook, event) is not None
+
+    def test_the_five_files_type_check_against_python_3_10(self, tmp_path):
+        """The 3.10 import check Wave 1 retired when mypy's target moved to
+        3.11 (air's note 000030): a `from typing import Self` atop a deny hook
+        passes ruff's py310 table and mypy at 3.11, and under a real 3.10 is
+        an exit 1 with empty stdout. Its own cache directory, never the
+        checkout's, which the tier's own mypy line writes."""
+        files = [str(HOOKS_DIR / f"{name}.py") for name in FLOOR_VOICE_FILES]
+        run = subprocess.run(
+            [sys.executable, "-m", "mypy", "--python-version", "3.10", "--follow-imports=silent",
+             "--cache-dir", str(tmp_path / "mypy-cache"), *files],
+            cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=300, encoding="utf-8",
+        )
+        assert run.returncode == 0, run.stdout + run.stderr
+
+
+#: The fallback spellings a parser shim takes when the stdlib TOML module may be
+#: missing (TP-706 2-E), assembled from fragments so this file's own source
+#: never matches them. Never the shared reader's name (`_toml_parser`), which
+#: stays and which `stop_gate` imported by name.
+_BASE = "tom" + "l"
+_SHIM = _BASE + "i"         # the third-party backport
+_STDLIB = _BASE + "lib"     # the standard library module
+_FALLBACK_SPELLINGS = re.compile("|".join((
+    r"import " + _SHIM + r"\b",
+    _SHIM + r" as " + _STDLIB,
+    _STDLIB + r" = None",
+    _STDLIB + r" is None",
+    _STDLIB + r" is not None",
+)))
+#: The three regenerated mirror trees: their sources are walked where they live.
+_MIRROR_TREES = ("espalier/_vendor/", "espalier/assets/", "examples/dogfooding/")
+
+
+def _python_sources() -> list[Path]:
+    from tests._live_tree import checkout_rglob
+
+    return sorted(path for path in checkout_rglob(REPO_ROOT, "*.py")
+                  if not path.relative_to(REPO_ROOT).as_posix().startswith(_MIRROR_TREES))
+
+
+def _module_top_imports(source: str, module: str) -> list[int]:
+    """Lines of every statement that imports ``module`` when the file is
+    loaded: the module body, through its top-level ``if``/``try``/``with``
+    blocks and class bodies (which run at import), never a function body."""
+    found: list[int] = []
+
+    def walk(body: list) -> None:
+        for node in body:
+            if isinstance(node, ast.Import) and any(a.name.split(".")[0] == module for a in node.names):
+                found.append(node.lineno)
+            elif isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == module:
+                found.append(node.lineno)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue
+            else:
+                for field in ("body", "orelse", "finalbody", "handlers"):
+                    walk([n for n in getattr(node, field, []) if isinstance(n, ast.AST)])
+
+    walk(ast.parse(source).body)
+    return found
+
+
+class TestTheFloorHasNoParserShims:
+    """TP-706 2-E and 2-G. At a 3.11 floor every interpreter the package allows
+    has the stdlib TOML module, so the fallback arms are gone (their own tests
+    went with them) and these rows keep them gone: the spellings across the
+    tracked Python sources, and the one placement that would silence the
+    hooks below the floor."""
+
+    def test_no_tracked_python_file_spells_a_parser_fallback(self):
+        files = _python_sources()
+        assert len(files) > 500, f"the walk read too little to mean anything: {len(files)} files"
+        hits = []
+        for path in files:
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if _FALLBACK_SPELLINGS.search(line):
+                    hits.append(f"{path.relative_to(REPO_ROOT).as_posix()}:{number}: {line.strip()}")
+        assert not hits, (
+            "a fallback for a missing stdlib TOML module came back; every supported "
+            "interpreter has it (TP-706):\n  " + "\n  ".join(hits)
+        )
+        # Earn the red on every run: each spelling the row exists for is caught.
+        # The planted lines spell the two names by character, never from the
+        # fragments above, so a fragment that spells the wrong module reds here.
+        backport, stdlib = "".join(["t", "o", "m", "l", "i"]), "".join(["t", "o", "m", "l", "l", "i", "b"])
+        for planted in (f"try:\n    import {backport}\n", f"import {backport} as {stdlib}\n",
+                        f"{stdlib} = None\n", f"if {stdlib} is None:\n",
+                        f"if {stdlib} is not None:\n", f"if _{stdlib} is None:\n"):
+            assert _FALLBACK_SPELLINGS.search(planted), planted
+        assert not _FALLBACK_SPELLINGS.search("parser = _hook_utils._toml_parser()\n")
+
+    def test_no_tools_cc_module_imports_the_toml_parser_at_its_top(self):
+        """Every hook and tool imports on an interpreter below the floor, so the
+        deny hooks and the banner can say the floor: the parser is imported
+        inside the reading function, never when the module loads."""
+        modules = [path for path in _python_sources()
+                   if path.relative_to(REPO_ROOT).as_posix().startswith("tools/cc/")]
+        assert len(modules) > 40, f"the walk read too little to mean anything: {len(modules)} files"
+        parser = "".join(["t", "o", "m", "l", "l", "i", "b"])  # by character (the row above says why)
+        assert parser == _STDLIB
+        hits = [f"{path.relative_to(REPO_ROOT).as_posix()}:{line}"
+                for path in modules
+                for line in _module_top_imports(path.read_text(encoding="utf-8"), parser)]
+        assert not hits, (
+            f"a tools/cc module imports {parser} when it loads, so it cannot import "
+            f"below the floor and its hook cannot say the floor: move the import "
+            f"inside the reading function:\n  " + "\n  ".join(hits)
+        )
+        # Earn the red on every run: the top, a top-level try, and a class
+        # body are caught; a function body is not.
+        assert _module_top_imports(f"import {parser}\n", parser) == [1]
+        assert _module_top_imports(f"try:\n    import {parser}\nexcept ImportError:\n    pass\n", parser) == [2]
+        assert _module_top_imports(f"class C:\n    from {parser} import loads\n", parser) == [2]
+        assert _module_top_imports(f"def read():\n    import {parser}\n", parser) == []

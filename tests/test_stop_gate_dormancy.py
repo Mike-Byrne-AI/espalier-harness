@@ -309,11 +309,6 @@ def node_tree_template(tmp_path_factory):
     return build_adopter_tree(tmp_path_factory.mktemp("node-template") / "t", stack="node")
 
 
-def _toml_parser_available() -> bool:
-    sys.path.insert(0, str(HOOKS_DIR))
-    import _hook_utils
-    return _hook_utils._toml_parser() is not None
-
 
 class TestTheDetectedCommandRunsEndToEnd:
     """DEF-949 step 4, measured on an init'd Node tree (Task 0 of the lane's
@@ -402,9 +397,6 @@ class TestTheDetectedCommandRunsEndToEnd:
         assert "planted_red" not in reason, "the fingerprint's command ran where the override should have"
 
     def test_a_declared_extra_actions_test_wins_over_the_fingerprint(self, tmp_path, node_tree_template):
-        if not _toml_parser_available():
-            import pytest as _pytest
-            _pytest.skip("no TOML parser for the hook interpreter (3.10 without tomli)")
         tree = self._node_tree(tmp_path, node_tree_template)
         _npm_stub(tmp_path / "bin", red=True)
         cmd = f'"{sys.executable}" -c "import sys; sys.exit(5)"'
@@ -430,9 +422,6 @@ class TestTheDeclaredTestCommand:
         return tmp_path
 
     def test_a_declared_list_is_what_runs_and_where_it_came_from(self, tmp_path, monkeypatch):
-        if not _toml_parser_available():
-            import pytest as _pytest
-            _pytest.skip("no TOML parser for the hook interpreter")
         monkeypatch.delenv("ESPALIER_STOP_GATE_TEST_CMD", raising=False)
         root = self._tree(tmp_path, '[extra_actions]\ntest = ["make check", "make lint"]\n')
         rt = _load_stop_gate()._resolve_core_tests(root)
@@ -441,9 +430,6 @@ class TestTheDeclaredTestCommand:
         assert "espalier.toml" in rt.note and "ESPALIER_STOP_GATE_TEST_CMD" in rt.note, rt.note
 
     def test_the_override_outranks_the_declared_command(self, tmp_path, monkeypatch):
-        if not _toml_parser_available():
-            import pytest as _pytest
-            _pytest.skip("no TOML parser for the hook interpreter")
         monkeypatch.setenv("ESPALIER_STOP_GATE_TEST_CMD", "go test ./...")
         root = self._tree(tmp_path, '[extra_actions]\ntest = ["make check"]\n')
         rt = _load_stop_gate()._resolve_core_tests(root)
@@ -451,9 +437,6 @@ class TestTheDeclaredTestCommand:
         assert rt.commands == ("go test ./...",) and rt.env_cmd == "go test ./..."
 
     def test_a_string_where_a_list_belongs_is_ignored_and_said_once(self, tmp_path, monkeypatch):
-        if not _toml_parser_available():
-            import pytest as _pytest
-            _pytest.skip("no TOML parser for the hook interpreter")
         monkeypatch.delenv("ESPALIER_STOP_GATE_TEST_CMD", raising=False)
         root = self._tree(tmp_path, '[extra_actions]\ntest = "npm test"\n')
         mod = _load_stop_gate()
@@ -466,9 +449,6 @@ class TestTheDeclaredTestCommand:
         assert len(_records("stop_failed_open_toml_test_shape")) == 1, "once a session"
 
     def test_a_file_that_will_not_parse_is_said_once_and_the_detected_command_runs(self, tmp_path, monkeypatch):
-        if not _toml_parser_available():
-            import pytest as _pytest
-            _pytest.skip("no TOML parser for the hook interpreter")
         monkeypatch.delenv("ESPALIER_STOP_GATE_TEST_CMD", raising=False)
         root = self._tree(tmp_path, "[extra_actions\ntest = [\n")
         mod = _load_stop_gate()
@@ -513,25 +493,6 @@ class TestTheDeclaredTestCommand:
         assert "also-typo" in json.loads(capsys.readouterr().out)["reason"]
         assert mod._run_command_gate(tmp_path, both, source="espalier.toml") == 0
         assert len(_records("stop_blocked_pytest")) == 2
-
-    def test_no_toml_parser_says_once_when_the_key_is_declared(self, tmp_path, monkeypatch):
-        """Python 3.10 without tomli: the table cannot be read. A declared key
-        is found by regex and said once; a skeleton with the key commented out
-        says nothing. Either way the detected command runs."""
-        monkeypatch.delenv("ESPALIER_STOP_GATE_TEST_CMD", raising=False)
-        mod = _load_stop_gate()
-        monkeypatch.setattr(mod._hook_utils, "_TOML_PARSER", None)
-        mod._hook_utils._SAID_THIS_PROCESS.clear()
-        root = self._tree(tmp_path, '# [extra_actions]\n# test = ["npm test"]\n')
-        rt = mod._resolve_core_tests(root)
-        assert rt.status == "ok_detected" and rt.source == "fingerprint", rt
-        assert not _records("stop_failed_open_toml_no_parser")
-        (root / "espalier.toml").write_text('[extra_actions]\ntest = ["make check"]\n', encoding="utf-8")
-        rt = mod._resolve_core_tests(root)
-        assert rt.status == "ok_detected" and rt.source == "fingerprint" and rt.commands == ("npm test",), rt
-        assert len(_records("stop_failed_open_toml_no_parser")) == 1
-        mod._resolve_core_tests(root)
-        assert len(_records("stop_failed_open_toml_no_parser")) == 1, "once a session"
 
     def test_each_declared_command_runs_in_order_and_the_first_red_blocks(self, tmp_path, monkeypatch, capsys):
         """`test = ["npm run build", "npm test"]`: both run, in order; a red second

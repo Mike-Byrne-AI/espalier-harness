@@ -18,6 +18,16 @@ catch-alls. If this module itself cannot import, each hook's own last resort
 refuses in its place, naming this file, and ``write_guard``'s lets through the
 one restore of it to HEAD.
 
+It is also where a deny hook below the supported Python floor says so
+(:func:`refuse_below_floor`, TP-706): the one module every deny hook reaches
+before any sibling, so the floor is spelled here as a literal and checked by a
+call each hook makes under ``__main__``, never at this module's load
+(``_denial_reasons`` imports this module, and ``session_start`` imports that,
+so a check here would answer a SessionStart with a PreToolUse deny). Its
+top-level imports are held to names an old interpreter has
+(``tests/test_python_floor.py``), since an import that fails there silences the
+refusal.
+
 Stdlib-only. Zero ``espalier`` imports -- runs standalone alongside the rest of
 ``tools/cc/hooks/``.
 """
@@ -78,12 +88,31 @@ WEDGE_RESTORE_CONTEXT = (
     " cannot start, its refusal names what raised next."
 )
 
+#: The supported Python floor, the fourth copy: ``espalier/_python_floor.py``'s
+#: and ``_hook_utils.py``'s ``MIN_PYTHON`` and ``espalier/__init__.py``'s
+#: ``_FLOOR`` are the others, pinned equal by
+#: ``tests/test_python_floor.py::TestTwoCopyParity``. A literal, because
+#: ``_hook_utils`` is the module that may not import on an interpreter below it.
+_FLOOR = (3, 11)
+
+#: A deny hook run by an interpreter below :data:`_FLOOR` (TP-706, the
+#: operator's ruling of 2026-11-07: a dropped Python is dropped, never run in a
+#: reduced mode). The middle two sentences are
+#: ``espalier/_python_floor.py::does_not_run_sentence``'s words, which every
+#: surface says; ``{found}`` is the running version, ``{floor}`` the floor.
+BELOW_FLOOR = (
+    "{hook} cannot run here. The harness does not run on Python {found}. Update to"
+    " Python {floor} or newer to install and use it. Every call this hook judges is"
+    " refused until then."
+)
+
 #: The module's operator-facing templates. Declaring the registry puts every
 #: string constant here under the portability contract's rule (e), as
 #: ``_denial_reasons``'s does; unlike that module's, these carry no Don't/Do
 #: pair, which only its registry asks.
 _OPERATOR_FACING_TEMPLATES: tuple[str, ...] = (
     "HELPER_SKEW", "SIBLING_RAISED", "SIBLING_RAISED_UNPLACED", "WEDGE_RESTORE_CONTEXT",
+    "BELOW_FLOOR",
 )
 
 #: The Bash command words a restore may not contain: a separator, a pipe, a
@@ -512,6 +541,51 @@ def refuse_on_helper_skew(hook: str, event: str, exc: BaseException) -> NoReturn
                   + "), and its text could not be composed. Read the error from a terminal;"
                   " every call this hook judges is refused until then.")
     _record(f"{event.lower()}_blocked_internal_error", details)
+    output: dict
+    if event in ("ConfigChange", "Stop"):
+        output = {"decision": "block", "reason": reason}
+    else:
+        output = {"hookSpecificOutput": {
+            "hookEventName": event, "permissionDecision": "deny", "permissionDecisionReason": reason}}
+    sys.stdout.write(json.dumps(output) + "\n")
+    sys.stdout.flush()
+    raise SystemExit(0)
+
+
+def refuse_below_floor(hook: str, event: str) -> None:
+    """Return at once on an interpreter at or above :data:`_FLOOR`; below it,
+    emit the structured refusal saying the floor and exit 0 (TP-706).
+
+    Each deny hook calls this under ``__main__``, right after importing this
+    module and before its siblings, so the refusal names the floor and never a
+    sibling that failed on the old interpreter, and a module that imports a
+    deny hook (``session_start`` reaches ``stop_gate``) is never answered
+    with another event's decision. ``event`` picks the shape as
+    :func:`refuse_on_helper_skew`'s does: ``PreToolUse`` a ``permissionDecision:
+    deny``, ``ConfigChange`` and ``Stop`` ``{"decision": "block"}``, and a Stop
+    the protocol continued after the last block (``stop_hook_active``) exits 0
+    with nothing, a pause, never a lockout. No call is let through: a restore
+    to HEAD repairs nothing here. The record is the crash guard's composed type
+    with ``details.skew`` naming the cause, as the skew refusal's is, so no
+    roster grows. Standard library only on this path, and nothing on stderr."""
+    if tuple(sys.version_info[:2]) >= _FLOOR:
+        return
+    import json
+
+    if event == "Stop":
+        payload = _read_payload()
+        if payload is not None and payload.get("stop_hook_active"):
+            raise SystemExit(0)
+    found = ".".join(str(part) for part in tuple(sys.version_info[:3]))
+    try:
+        reason = BELOW_FLOOR.format(hook=hook, found=found, floor="%d.%d" % _FLOOR)
+    # fail-open: ok text-fallback the refusal still goes out, in plain words
+    except Exception:  # noqa: BLE001
+        reason = (str(hook) + " cannot run here: the harness does not run on this Python."
+                  " Update to Python " + ".".join(str(part) for part in _FLOOR)
+                  + " or newer to install and use it.")
+    _record(f"{event.lower()}_blocked_internal_error",
+            {"hook": hook, "skew": "below floor", "python": found})
     output: dict
     if event in ("ConfigChange", "Stop"):
         output = {"decision": "block", "reason": reason}

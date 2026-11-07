@@ -2893,7 +2893,7 @@ def _report_integrity_state(root: Path) -> str:
             # no command is printed rather than a broken one (DEF-636).
             py = _hook_utils.python_command_hint()
             how = (f"`{py} -m espalier integrity refresh .`" if py
-                   else "`-m espalier integrity refresh .` under a Python 3.10 or newer")
+                   else f"`-m espalier integrity refresh .` under a Python {_hook_utils.floor_text()} or newer")
             return f"no manifest in this worktree (per checkout, gitignored)  ->  from its root, run {how}"
         return "no manifest (run `espalier init .`)"
     if not ok and _integrity.is_protocol_mismatch(mismatched):

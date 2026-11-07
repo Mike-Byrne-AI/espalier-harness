@@ -203,12 +203,6 @@ class TestBenchResultsParity:
         a manual checklist item that gets missed). Failure message
         is the exact command an operator runs to fix it.
         """
-        if tomllib is None:
-            pytest.skip(
-                "tomllib unavailable (Python <3.11 without tomli installed); "
-                "install tomli to run this version-stamp parity test"
-            )
-
         pyproject_path = REPO_ROOT / "pyproject.toml"
         pyproject_text = pyproject_path.read_text(encoding="utf-8")
         pyproject_data = tomllib.loads(pyproject_text)

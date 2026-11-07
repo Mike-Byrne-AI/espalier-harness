@@ -381,7 +381,6 @@ def _dev_extra_distributions() -> frozenset[str]:
     """The distribution names of ``[project.optional-dependencies].dev``, lower-cased."""
     from espalier._compat import tomllib
 
-    assert tomllib is not None, "neither tomllib nor tomli; the contract cannot read pyproject"
     data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
     dists: set[str] = set()
     for spec in data["project"]["optional-dependencies"]["dev"]:

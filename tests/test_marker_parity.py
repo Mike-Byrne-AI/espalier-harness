@@ -101,15 +101,7 @@ def _parse_pyproject_markers() -> frozenset[str]:
     """Read pyproject.toml [tool.pytest.ini_options].markers; extract the
     TAXONOMY marker names -- each 'name: description' string's name, minus
     the plugin-owned declarations (``PLUGIN_OWNED_MARKERS``).
-
-    Raises RuntimeError if neither tomllib nor tomli is available
-    (Py 3.10 without tomli) — matches espalier/config.py pattern.
     """
-    if tomllib is None:
-        raise RuntimeError(
-            "Install tomli for Python < 3.11; espalier._compat.tomllib "
-            "returned None (no tomllib stdlib + no tomli fallback)."
-        )
     data = tomllib.loads(
         (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )
