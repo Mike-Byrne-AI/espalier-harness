@@ -518,10 +518,12 @@ two parse errors the census caught, and 1-A widens that to `except Exception`.
 
 ## Landing
 
-- State: DRAFT
-- Commits:
-- Suite:
-- Earn-the-red:
-- Red-team:
-- Reach:
-- Date:
+- State: LANDED
+- Commits: `ab056c1` (the advisory, its rows, the descriptions, the incident note), `b3f6304` (`DEF-841` struck), `4ebd120` (the review batch); `main` merged in at `a4790f5` and `867ff07`; this Landing.
+- Task 0 (at `0b6e193`, the appendix code loaded verbatim, text only): slug folders (case-insensitive, 3,475 transcript files) 11,558 `.py` Write/Edit operations, 1,712 states rebuilt and judged, 9,743 unreconstructable, 4 unparsed: 2 fires, the incident's Edits (`30c71df3`, 05:11:19Z and 05:11:27Z); payload alone 0; tracked tree 828 files, 0; held out by date (after `cc0b914c`) 29 operations, 2 judged, 0 fires: thin, not a pass; held out by folder (every other project folder) 1,409 judged, 0 fires; item 6's three shapes fire. Item 5 (Windows) unmeasured: no Windows seat idle (the dispatcher's ack `20261107T062332Z-air-101a02`).
+- Suite: the full tier at `867ff07` with `--base origin/main`: mypy clean (28 files), ruff clean, 27,998 passed / 90 skipped / 3 xfailed (30:30), then 2,347 passed / 12 skipped (11:06); rc 0. Archive probe of the new test file on a release export: 18 passed.
+- Earn-the-red: at the base hook the 8 fire and once rows red by assertion (silent), the 8 silent rows green; the six named mutations each red their row by assertion (drop the file read, drop the non-literal test, read a regex instead of the tree, a bare name only as the head, drop the self-host gate, drop the umbrella); the census spelling of predicate 2 reds the ReDoS flag-run row (5.5 s at 30k letters). `DEF-841`'s probe `open=True` at the base, `open=False` at the head; its guard (the payload-only Edit row) red at the base by AssertionError.
+- Red-team: code-reviewer APPROVE (a 400,000-string fuzz found the two delete spellings match identically); failure-mode-reviewer APPROVE-WITH-NOTES, 0 blockers; one fix batch (`4ebd120`). Not folded, placed by the dispatcher at this pack's merge (note `20261107T072242Z-air-2eb3f0`): (1) the once flag survives a compaction, so a session that compacts between the advisory and the run never hears it again (§C27, a new site beside `_reinject.COMPACT_CLEARED_RULES`; the fix a prefix clear); (2) predicate 1's recall is unmeasured: 13 of 17 spawn spellings the reviewer asked are unread (declared in the predicate's docstring and `docs/HOOKS.md`); the widening wants a census under `scripts/` and a pin on the three roster constants; (3) the tracked tree's zero rests on `tests/test_write_guard.py`'s PowerShell spawns listing flags before `-Command`; a row only with the census re-raise.
+- Deviations: the three adopter-facing hook descriptions (`espalier/cli.py`'s table, `espalier/harness_config.py`'s reason, `examples/CLAUDE.template.md`) are left as they are, still true on an adopter tree (1-A's leave-it-out option); the deep-expression row is a unary chain the parser refuses with MemoryError on 3.10 to 3.14, not a RecursionError row, because 3.10 dies with no exception on a binary chain past about 135,000 levels (measured on macOS) and the 128 KiB cap keeps that out of reach; the operator line is adopted; the incident doc is allowlisted in `tests/test_deploy_doc_parity.py`, named only behind the self-host gate; the advisory's own faults past a read or parse error are said once with a record (`posttooluse_failed_open_driver_shape`) rather than swallowed; the rows live in a test file of their own.
+- Reach: `DEF-841` CLOSED (struck); the incident's cause, a scratch driver written by Write or Edit, REACHED (advisory); a driver written by a shell or a notebook tool NOT REACHED; `DEF-5085` NOT CLAIMED; rules 3 and 4 NOT CLAIMED.
+- Date: 2026-11-07

@@ -409,6 +409,48 @@ def test_other_extraction_regex_linear_on_long_input(name, pattern):
         )
 
 
+# post_write_check's write-time advisory (TP-450) runs its delete pattern over
+# every string constant of a .py file Claude writes, up to the hook's 128 KiB
+# read cap. The dot-star sweep above cannot see this pattern's risk: the
+# census's flag class `[A-Za-z]*[rRf][A-Za-z]*` was quadratic on a long flag run
+# (6, 24 and 97 ms at 1k, 2k and 4k letters), so the hook re-spells the run with
+# a lookahead and this hand-added pin holds it linear: one hostile run per
+# quantifier the pattern holds.
+_DRIVER_DELETE_RUNS = {
+    "a flag run holding r, no space after it": "rm -" + "r" * _WORST_CASE_BODY_LEN,
+    "a flag run with no r, R or f": "rm -" + "x" * _WORST_CASE_BODY_LEN + " ",
+    "a whitespace run after the flags": "rm -rf " + " " * _WORST_CASE_BODY_LEN,
+    "a word run after the variable sign": "rm -rf $" + "a" * _WORST_CASE_BODY_LEN,
+    "repeated delete heads": ("rm -r " * _WORST_CASE_BODY_LEN)[:_WORST_CASE_BODY_LEN],
+    "repeated open variables": ('rm -rf "$V' * _WORST_CASE_BODY_LEN)[:_WORST_CASE_BODY_LEN],
+}
+
+
+@pytest.mark.parametrize("name,payload", sorted(_DRIVER_DELETE_RUNS.items()))
+def test_driver_delete_regex_linear_on_a_hostile_run(name, payload):
+    """``post_write_check._DRIVER_DELETE_RE`` finishes each hostile run within
+    ``_CI_SAFE_BUDGET_MS`` (the census's own spelling took 5.5 s on the flag
+    run at this length, measured 2026-11-07, so two such constants in one file
+    would pass the hook's 10 s timeout)."""
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    from post_write_check import _DRIVER_DELETE_RE  # noqa: E402
+
+    signal.signal(signal.SIGALRM, _alarm)
+    signal.setitimer(signal.ITIMER_REAL, _CI_SAFE_BUDGET_MS / 1000.0)
+    t = time.time()
+    try:
+        _DRIVER_DELETE_RE.findall(payload)
+        elapsed_ms = (time.time() - t) * 1000
+    except _Timeout:
+        pytest.fail(f"the driver delete pattern exceeded {_CI_SAFE_BUDGET_MS}ms on {name}")
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    assert elapsed_ms < _CI_SAFE_BUDGET_MS, (
+        f"the driver delete pattern took {elapsed_ms:.1f}ms on {name} (budget {_CI_SAFE_BUDGET_MS}ms)"
+    )
+
+
 # The external-pin quote check normalises whole upstream pages (DEF-744), so
 # its rules face page-sized input: one hostile run per rule, of the characters
 # that rule consumes.

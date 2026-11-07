@@ -141,3 +141,20 @@ which is why the remedy is a discipline note and a memory entry rather than a
 guard change. The guard behaved correctly throughout: it had already classified
 the loop-carrier spelling as a soft-tier nudge, which is the DEF-830 finding the
 lane set out to record.
+
+## Note, 2026-11-07: a word at the write for rule 2's glob shape
+
+Appended; the record above stands as written. Rules 1 and 2 now have a
+mechanism beside the discipline, for the shape that caused this incident. On the
+harness's own tree, `tools/cc/hooks/post_write_check.py` reads any `.py` file a
+Write or an Edit has just left, wherever the file sits (this incident's driver
+sat in a scratchpad, outside every checkout), and when the file hands built text
+to a shell and a string in it holds a recursive delete of a variable beside a
+glob, it tells Claude, naming the file, the line, rules 1 and 2 and the route
+(ask the guard's classifier about the row; never run it), and tells the
+operator on their own line, once a session for that file and delete. Read over
+this repository's Mac transcripts it speaks on this incident's two Edits, the
+first about 28 seconds before the run, and nowhere else, and on no tracked
+file. It is advisory: it does not stop a run, and it is not a guard change. The
+literal is rule 2's glob beside a variable only; `$`, `~` and a leading `/` on
+an operand stay discipline. Rules 3 and 4 are unchanged, and stay discipline.

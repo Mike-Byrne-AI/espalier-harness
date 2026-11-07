@@ -1973,6 +1973,21 @@ validates the result:
   memory's first lines (a hand merge through Bash reaches no write hook)
 - After every Bash or PowerShell call → compares the protected files with
   the session's previous check (below)
+- On Espalier's own source tree only, any `.py` file a Write or an Edit just
+  left, wherever it sits (a scratchpad file included) → reads it from disk
+  and, when the file hands built text to a shell (a `subprocess` call running
+  `[shell, "-c", cmd]` on a command it builds, or `shell=True` on one) and a
+  string in it holds a recursive delete of a variable beside a glob, says so
+  once a session for that file and delete, with the line: the shape of the
+  scratch driver behind the harness's 2026-09-17 incident, where an unset
+  variable turned the glob into the filesystem root. Claude is told to ask the
+  guard's classifier about such a row and never run it, and the operator is
+  told on their own line. Not on an adopter's tree: the shape's calibration is
+  this repository's own transcripts and files (record
+  `posttooluse_incident_driver_shape`). It reads the census's spellings
+  only: a list handed to a wrapper or held in a variable, PowerShell flags
+  before `-Command`, or a shell found by a call or at another path is not
+  read, so its silence is not a clean bill
 
 **The protected files after a shell call.** A shell call can change a
 protected file without naming it -- a formatter run over the whole tree, a
@@ -2840,6 +2855,7 @@ inside a window of twenty.
 | `stop_blocked_handoff` | pause | Gate 5 blocked the Stop: nothing in flight and the branch holds commits its upstream does not, made this session, on a repository whose `espalier.toml` sets `handoff_push = true`; once per commit (the flag `.espalier-state/handoff_gate_said` holds the HEAD it judged, seeded at SessionStart); `details.ahead` is the count, never the branch or the plan's title |
 | `stop_held_handoff` | report | Gate 5 held the lane instead of blocking: the push would open a pull request and this seat has another one open (one open pull request per seat); once per held HEAD (`.espalier-state/handoff_gate_hold`, re-checked every five minutes, and the block returns once none is open); `details.ahead` is the commit count and `details.open` the pull requests held against, never the branch |
 | `post_shell_zone_change` | report | after a Bash or PowerShell call, protected files changed that nothing accounts for (`post_write_check`, "The protected files after a shell call"); `details` names them by kind (`changed`, `added`, `removed`, twenty each at most) with their `count`, the same kinds suffixed `_between_calls` for what landed before the call began, and the `tool` |
+| `posttooluse_incident_driver_shape` | report | on Espalier's own source tree, a `.py` file a Write or an Edit just left hands built text to a shell and holds a recursive delete of a variable beside a glob (`post_write_check`); once a session for each file and delete |
 | `hook_layer_failed_open_stack_table` | fail-open | the hook layer could not read `tools/cc/_stack_table.py` (absent, a `SyntaxError`, or older than the hooks) and every gate runs on `_hook_utils`'s pinned copy of its projections; written once a session where a root is known, by the two source gates at their root and by the reporters' `repo_name`, with the fault in `details` |
 | `stop_blocked_internal_error` | pause | the Stop hook crashed and re-blocked the Stop fail-closed (the loop signal lets the continuation's Stop through; a persistent crash re-blocks on the first Stop of every later turn until its cause is fixed); `details.rule` is the internal-error reason's name, `details.error` the exception's class |
 
