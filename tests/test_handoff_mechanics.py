@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from tests._live_tree import copy_checkout, live_tree_skip_names
+from tests._wait_budget import scaled
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = REPO_ROOT / "scripts" / "handoff_mechanics.py"
@@ -117,7 +118,7 @@ class TestTheHelpers:
         assert any(off_expr in row["code"] for row in cli._ONBOARDING_ROWS), "the probe's reading moved"
         probe = "import pathlib,re;" + cli._PROBE_CONFIG + off_expr + "print(off)"
         run = subprocess.run([sys.executable, "-c", probe], cwd=str(tmp_path), capture_output=True,
-                             text=True, timeout=60, encoding="utf-8")
+                             text=True, timeout=scaled(50), encoding="utf-8")
         assert run.returncode == 0, run.stderr
         assert run.stdout.strip() == str(off), (text, run.stdout)
 

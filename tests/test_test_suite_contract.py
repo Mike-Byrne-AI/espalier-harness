@@ -3766,7 +3766,10 @@ _PRIVATE_HOOK_RUNNERS: dict[str, int] = {
     "test_plan_guard.py": 3,
     "test_plan_guard_adopter_config.py": 1,
     "test_post_compact_capture.py": 1,
-    "test_python_floor.py": 1,
+    # 2: `_run_hook_as` stubs `sys.version_info` before it runs the deny hook as
+    # `__main__` under `runpy`, so every CI cell reads a below-floor host;
+    # `run_hook` spawns the script itself and has no seam to stub it first.
+    "test_python_floor.py": 2,
     "test_quickstart_doctor_example.py": 1,
     "test_reflect_trigger_plan_bridge.py": 1,
     "test_reinject.py": 1,

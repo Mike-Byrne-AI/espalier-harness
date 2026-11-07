@@ -35,6 +35,7 @@ import pytest
 from espalier import _python_floor
 from tests._cut_start import skip_if_cut
 from tests._stubs import write_stub
+from tests._wait_budget import scaled
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -2812,7 +2813,8 @@ def _run_hook_as(hook: str, version: "tuple[int, int, int]", payload: dict,
     env = {k: v for k, v in os.environ.items() if k != "ESPALIER_MAINTENANCE_MODE"}
     env["CLAUDE_PROJECT_DIR"] = str(cwd)
     return subprocess.run([sys.executable, "-c", code], input=json.dumps(payload), cwd=str(cwd),
-                          capture_output=True, text=True, timeout=50, encoding="utf-8", env=env)
+                          capture_output=True, text=True, timeout=scaled(50), encoding="utf-8",
+                          env=env)
 
 
 def _start_refusal_module():
@@ -2888,7 +2890,7 @@ class TestTheDenyHooksSayTheFloor:
                 f"sys.path.insert(0, {str(HOOKS_DIR)!r}); "
                 "import _start_refusal, _denial_reasons; print('imported')")
         run = subprocess.run([sys.executable, "-c", code], cwd=str(REPO_ROOT), capture_output=True,
-                             text=True, timeout=50, encoding="utf-8")
+                             text=True, timeout=scaled(50), encoding="utf-8")
         assert run.returncode == 0, (run.returncode, run.stdout, run.stderr)
         assert run.stdout == "imported\n", run.stdout
 
@@ -3107,7 +3109,7 @@ class TestTheFloorVoiceStaysReachable:
         run = subprocess.run(
             [sys.executable, "-m", "mypy", "--python-version", "3.10", "--follow-imports=silent",
              "--cache-dir", str(tmp_path / "mypy-cache"), *files],
-            cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=300, encoding="utf-8",
+            cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=scaled(50), encoding="utf-8",
         )
         assert run.returncode == 0, run.stdout + run.stderr
 
