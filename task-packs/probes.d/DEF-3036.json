@@ -1,0 +1,15 @@
+{
+ "id": "DEF-3036",
+ "subject": "scripts/red_after_merge_census.py",
+ "cmd": "python -c \"import io,sys,types,pathlib;sys.path.insert(0,'scripts');import red_after_merge_census as r,merge_cost_census as m,mail_latency_census as l;r.run_bounded=lambda *a,**k:types.SimpleNamespace(returncode=1,stdout='',stderr='GraphQL: node limit exceeded');e=io.StringIO();o=sys.stdout;sys.stderr=e;sys.stdout=io.StringIO();r.main(['--limit','100']);sys.stderr=sys.__stderr__;sys.stdout=o;v=e.getvalue();a=int('signed in' in v and 'node limit' not in v);w=m.catch_up_rows([{'number':1,'headRefName':'x','commits':[]}],runner=lambda *x,**k:(1,'','HTTP 502'))[0];b=int(w['test_runs']==0 and not any('unread' in str(k) for k in w));M,D,F=l.read_fixture(pathlib.Path('tests/fixtures/mail_latency/refs-2026-10-15T0220Z.json'));d=l.report(M,D,[(None,F)],F,F)['windows'][0];c=int(isinstance(d.get('past_the_hour'),int) and not any(('past' in k or 'hour' in k) and isinstance(x,list) for k,x in d.items()));print(a+b+c)\"",
+ "open_value": "3",
+ "why_not": null,
+ "inputs": [
+  "scripts/merge_cost_census.py",
+  "scripts/mail_latency_census.py",
+  "tests/fixtures/mail_latency/refs-2026-10-15T0220Z.json"
+ ],
+ "row_sha": "23a23db2e969",
+ "text_sha": "89f5af718c3a",
+ "verified_2026_11_07": "OPEN (filed 2026-11-07; probe driven at filing here and in the export of HEAD 4a2a9a528258)"
+}

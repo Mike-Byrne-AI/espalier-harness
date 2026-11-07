@@ -1,0 +1,13 @@
+{
+ "id": "DEF-3038",
+ "subject": "tools/cc/board.py",
+ "cmd": "python -c \"import sys;sys.path.insert(0,'tools/cc');import board;A=lambda i,l:{'id':'a'+i,'type':'assign','from':'air','at':'2026-11-07T00:00:0'+i+'Z','re':{'seat':'s','lane':l}};C={'id':'20261107T000003Z-air-c0ffee','type':'request','from':'air','at':'2026-11-07T00:00:03Z','re':{},'text':'OPERATOR CALL: x'};T={'id':'20261107T000004Z-s-5709ed','type':'request','from':'s','at':'2026-11-07T00:00:04Z','re':{'lane':'lane/b'},'text':'stopped: the open operator call 20261107T000003Z-air-c0ffee'};L=[x for x in board.render({'read_at':'t','dispatcher':{'name':'air'},'assignments':[A('1','lane/a'),A('2','lane/b')],'seats':{'rows':[{'name':'s','last_mail':{'age_s':60}}]},'asks':[C,T]}).splitlines() if 'under two:' in x];print(int(bool(L) and 's (' not in L[0]))\"",
+ "open_value": "1",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/mail.py"
+ ],
+ "row_sha": "e70469175d9b",
+ "text_sha": "30f339e5821e",
+ "verified_2026_11_07": "OPEN (filed 2026-11-07; probe driven at filing here and in the export of HEAD 4a2a9a528258)"
+}
