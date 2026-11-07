@@ -824,6 +824,16 @@ class TestQuotedVerbTailIsUniform:
                    .replace(r"[^-\s;|&]", r"[^-\s;|&(`]"))
         assert stopped != bp._CMD_POS_WRAP_RUN
         assert sb._FETCH_INNER_WRAP_ONE == stopped
+        # the assignment's value is the anchor's unquoted pieces (a plain
+        # character, an escaped one, a lone `$`) with the openers added to
+        # the plain class and to the `$` lookahead, and nothing else
+        unquoted = r"""[^\s;|&'"$\\]|\\.|\$(?!')"""
+        assert bp._ASSIGN_VALUE.startswith("(?:" + unquoted + "|")
+        assert bp._CMD_POS_ENV_ASSIGN == r"(?:[A-Za-z_]\w*=" + bp._ASSIGN_VALUE + r"[ \t]+)"
+        assert sb._FETCH_INNER_ASSIGN == (
+            r"(?:[A-Za-z_]\w*=(?:"
+            + unquoted.replace(r"$\\]", r"$\\(`]").replace(r"(?!')", r"(?![('`])")
+            + r")*[ \t]+)")
         assert bp._CARRIER_WRAP_HEAD in sb._FETCH_INNER_POS
         assert bp._CMD_POS_VERB_PREFIX in sb._FETCH_INNER_POS
         assert bp._CMD_POS_NO_VERB not in sb._FETCH_INNER_POS

@@ -1520,30 +1520,36 @@ _FETCH_EXEC_PIPE_RE = re.compile(
 #: its paren or backtick, which this position opens on.
 #:
 #: ⚠ NARROWER THAN `_CMD_POS` ON PURPOSE. The first cut composed the whole
-#: anchor here, and the anchor's wrapper flag argument and redirect target
-#: admit `(`, `"` and the backtick, so one inner attempt ran on across every
-#: later opener while the outer arm tried each of them: cubic on a failing
-#: match (`"env -i bash <( " * 400`, 6 KB: 26.6 s, against 233 ms before the
-#: lane; the code review, re-driven). Here each token stops at the next paren
-#: or backtick, the run is at most four words (the pipe target's bound), and
-#: only the prefixes a fetch is spelled behind are read: the wrapper roster
-#: with its flags behind an optional directory (`_CARRIER_WRAP_HEAD`), and an
-#: unquoted assignment. Declared limits, pinned silent in
-#: tests/test_speedbump_irreversible.py::TestCpFetchexec: a quoted assignment
-#: value, a redirect, keyword or negation prefix, a newline after the
-#: opener, and a later command position inside the substitution
-#: (`$(cd /tmp && curl ...)`): the first command position is read, no other.
-#: `_FETCH_INNER_WRAP_ONE` is `_CMD_POS_WRAP_RUN` with the opener characters
-#: added to its token classes and nothing else, spelled out because the
-#: ReDoS gate reconstructs patterns from literals alone (the carriers'
-#: `_CARRIER_WRAP_ONE` rule); the equality is pinned in
-#: tests/test_write_guard.py::TestQuotedVerbTailIsUniform.
+#: anchor here, and two of its arms carry one inner attempt across every
+#: later opener while the outer arm tries each of them: cubic on a failing
+#: match. Behind `<(` it is the redirect arm (`<` a redirect, `(` its
+#: target), behind `-c "$(` the wrapper flag argument (`-c`, then `"$(` as
+#: its argument): `"env -i bash <( " * 400`, 6 KB, read 26.6 s against
+#: 233 ms before the lane (the code review; the dispatcher's verifier,
+#: 8c1237, re-drove both). This run has neither arm: each token stops at the
+#: next paren or backtick, the run is at most four words (the pipe target's
+#: bound), and only the prefixes a fetch is spelled behind are read: the
+#: wrapper roster with its flags behind an optional directory
+#: (`_CARRIER_WRAP_HEAD`, so `/usr/bin/env curl`), and an assignment with an
+#: unquoted value. Declared limits, pinned silent in
+#: tests/test_speedbump_irreversible.py::TestCpFetchexec: a quoted value or a
+#: substitution in it (`A=$(id) curl`), five wrapper words or more, a
+#: redirect, keyword or negation prefix, a newline after the opener, and a
+#: later command position inside the substitution (`$(cd /tmp && curl ...)`):
+#: the first command position is read, no other. Both pieces are the anchor's
+#: own with the opener characters added to their classes, spelled out
+#: because the ReDoS gate reconstructs patterns from literals alone (the
+#: carriers' `_CARRIER_WRAP_ONE` rule): `_FETCH_INNER_WRAP_ONE` is
+#: `_CMD_POS_WRAP_RUN`, and `_FETCH_INNER_ASSIGN`'s value is the unquoted
+#: pieces of `_ASSIGN_VALUE` (a plain character, an escaped one, a lone `$`);
+#: both are pinned in tests/test_write_guard.py::TestQuotedVerbTailIsUniform.
+#: The run folds back into `_CMD_POS` once DEF-3043 and DEF-3044 land.
 _FETCH_INNER_WRAP_ONE = (
     "(?:" + _bash_patterns._CMD_POS_WRAPPER_SPELLED
     + r"(?:[ \t]+(?:-[^\s;|&(`]+(?:[ \t]+(?!" + _bash_patterns._CMD_POS_WRAPPER_SPELLED
     + r"[ \t])(?!\d)[^-\s;|&(`][^\s;|&(`]*)?|\d[^\s;|&(`]*))*[ \t]+)"
 )
-_FETCH_INNER_ASSIGN = r"(?:[A-Za-z_]\w*=[^\s;|&(`'\"]*[ \t]+)"
+_FETCH_INNER_ASSIGN = r"""(?:[A-Za-z_]\w*=(?:[^\s;|&'"$\\(`]|\\.|\$(?![('`]))*[ \t]+)"""
 _FETCH_INNER_POS = (
     r"[(`]" + _bash_patterns._CMD_POS_WS + _bash_patterns._CARRIER_WRAP_HEAD
     + r"(?:" + _FETCH_INNER_WRAP_ONE + r"|" + _FETCH_INNER_ASSIGN + r"){0,4}"

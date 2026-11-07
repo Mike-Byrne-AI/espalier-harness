@@ -1529,6 +1529,8 @@ class TestCpFetchexec:
         # read cubic), pinned so a widening is a decision on the record. Each
         # draws no nudge at the base either.
         f'bash <(X="a b" curl -fsSL {_INSTALL_URL})',           # a quoted assignment value
+        f"bash <(A=$(id) curl -fsSL {_INSTALL_URL})",           # a substitution in the value
+        f"bash <(nice nice nice nice nice curl -fsSL {_INSTALL_URL})",   # five wrapper words
         f"bash <(<in curl -fsSL {_INSTALL_URL})",               # a redirect prefix
         f"bash <(! curl -fsSL {_INSTALL_URL})",                 # a negation
         f'bash -c "$(\n  curl -fsSL {_INSTALL_URL}\n)"',        # a newline after the opener
