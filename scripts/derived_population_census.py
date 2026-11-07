@@ -766,9 +766,12 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "tests/test_exemplar_parity.py:168 — `assert set(_reinject.EXEMPLAR_MAP) == expected` (hand-wr...",
     ),
     "tests/test_external_tool_contract.py": (
-        2, "7aaf438edf8e1975e94235b67574de8ca4df1a9b3a42cc3ae5f218f5b02f6f6d",
+        3, "ed160978073a5d561c39a2df2c7034e4e23e6445088a3c7e3c597d8a901d8be7",
         "MIXED",
-        "tests/test_adopter_message_hints.py:34 — `_LOAD_BEARING_EXTERNAL_TOOLS['ruff']` KeyErrors if ...",
+        "tests/test_adopter_message_hints.py:34 — `_LOAD_BEARING_EXTERNAL_TOOLS['ruff']` KeyErrors if ..."
+        " 2026-11-07, verdict kept: the added MIRROR_ROWS row (the dependabot pointer test) selects the"
+        " inverted rows whose mirror is a root workflow, so a new one joins without a hand edit, and an"
+        " emptied selection reds on the test's own non-empty assert rather than passing vacuously.",
     ),
     # 1 row(s), shapes: for-plain
     "tests/test_final_release_matrix.py": (
