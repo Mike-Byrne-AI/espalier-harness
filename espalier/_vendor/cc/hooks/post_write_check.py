@@ -827,9 +827,14 @@ def _runs_a_shell_on_built_text(tree: ast.AST) -> bool:
     hands a shell text no literal spells: a first argument listing at least
     three items -- a name or one of ``_DRIVER_SHELLS``, then ``-c`` or
     ``-Command``, then anything but a string constant -- or ``shell=True``
-    beside a first argument that is not a string constant. An aliased or
-    bare-name import of subprocess is not read (a declared limit of the
-    measured reading)."""
+    beside a first argument that is not a string constant. The census measured
+    this reading's precision, not its recall, and these spellings are not read
+    (declared limits): an aliased or bare-name import of subprocess; flags
+    before ``-Command`` (PowerShell's own usual order); a list handed to a
+    wrapper function, or held in a variable; a shell head that is a call
+    (``shutil.which(...)``) or a path outside ``_DRIVER_SHELLS``. Predicate 2
+    has no PowerShell delete spelling, so the ``pwsh`` heads fire only beside
+    a POSIX delete row."""
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -895,7 +900,8 @@ def driver_shape_advisory(data: dict, tool_name: str, tool_input: dict, root: Pa
     if found is None:
         return
     line_no, literal = found
-    ident = "\0".join((str(path), literal))
+    # A subagent and its parent each hear it once (the key carries the agent).
+    ident = "\0".join((str(path).replace("\\", "/"), literal, str(data.get("agent_id") or "")))
     digest = hashlib.sha256(ident.encode("utf-8", errors="replace")).hexdigest()[:16]
     spoke = _say_once_to_claude(
         root, data.get("session_id"), f"driver-shape-{digest}", "posttooluse_incident_driver_shape",
@@ -904,7 +910,7 @@ def driver_shape_advisory(data: dict, tool_name: str, tool_input: dict, root: Pa
         "of the 2026-09-17 incident (docs/incidents/2026-09-17-real-shell-fixture-wipe.md, "
         "rules 1 and 2), where an unset variable turned the glob into the filesystem root. "
         "Do not run this file with that row in it; ask the guard's classifier about the row "
-        "in-process instead.")
+        "in-process instead (a subagent: put this in your final reply).")
     if spoke:
         operator.append(
             f"espalier: Claude just wrote {file_path} (line {line_no}) in the shape of the "
@@ -1474,11 +1480,16 @@ def _check(data: dict, payloads: list[str], operator: "list[str] | None" = None)
     # Before the harness-file gate below, which skips every file outside the
     # harness's own paths: the incident's driver was a scratchpad file.
     if self_host:
-        # fail-open: ok deliberate -- a file that cannot be read, decoded or parsed (a mid-edit state, a deep expression's RecursionError) draws no word, and this advisory never costs the checks below
         try:
             driver_shape_advisory(data, tool_name, tool_input, root, operator)
-        except Exception:  # noqa: BLE001, S110 -- advisory; the next write reads the file again
+        # fail-open: ok deliberate -- a file that cannot be read, decoded or parsed (a mid-edit state, a deep expression the parser refuses) draws no word; the next write reads it again
+        except (OSError, SyntaxError, ValueError, RecursionError, MemoryError):  # noqa: S110
             pass
+        except Exception as exc:  # noqa: BLE001 -- a defect in the advisory itself is said, and never costs the checks below
+            _say_once_to_claude(
+                root, data.get("session_id"), "driver-shape-failed", "posttooluse_failed_open_driver_shape",
+                f"post_write_check: the 2026-09-17 driver-shape check failed ({type(exc).__name__}), "
+                "so it said nothing about this write; the next write runs it again")
 
     # The Session Log fragment's read-back runs before the gate below, which
     # reads a fragment as neither harness file nor root doc; never on a

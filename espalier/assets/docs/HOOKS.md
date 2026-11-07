@@ -1984,7 +1984,10 @@ validates the result:
   guard's classifier about such a row and never run it, and the operator is
   told on their own line. Not on an adopter's tree: the shape's calibration is
   this repository's own transcripts and files (record
-  `posttooluse_incident_driver_shape`)
+  `posttooluse_incident_driver_shape`). It reads the census's spellings
+  only: a list handed to a wrapper or held in a variable, PowerShell flags
+  before `-Command`, or a shell found by a call or at another path is not
+  read, so its silence is not a clean bill
 
 **The protected files after a shell call.** A shell call can change a
 protected file without naming it -- a formatter run over the whole tree, a

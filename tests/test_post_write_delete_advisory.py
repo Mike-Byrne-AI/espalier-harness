@@ -263,7 +263,14 @@ class TestTheTrackedTreeDrawsNoWord:
     @pytest.mark.contract
     def test_no_python_file_in_the_checkout_holds_the_shape(self):
         """The next file that holds both halves is seen at its commit, whoever
-        wrote it; a file that does not parse is skipped, as the hook skips it."""
+        wrote it; a file that does not parse is skipped, as the hook skips it.
+
+        The zero is narrower than it looks: tests/test_write_guard.py already
+        holds the delete text in fixture strings, and its PowerShell spawns
+        list flags before -Command, which predicate 1 does not read. A red here
+        on a file that runs no such row means the predicates need tightening,
+        a re-raise with a census; never exempt the file (the advisory would
+        then speak on every edit of it, and be learned to ignore)."""
         hook = _load_hook()
         read, fires = 0, []
         for path in checkout_glob(REPO_ROOT, "**/*.py"):
