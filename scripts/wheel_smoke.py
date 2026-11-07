@@ -35,12 +35,12 @@ import errno
 import importlib.util
 import json
 import os
-import re
 import shutil
 import stat
 import subprocess
 import sys
 import tempfile
+import tomllib
 import types
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -429,29 +429,26 @@ def run_cli(venv_dir: Path, *args: str, cwd: Path | None = None) -> str:
 
 
 def _read_pyproject_version(pyproject: Path) -> str:
-    """Extract ``project.version`` from a ``pyproject.toml`` using only the stdlib.
+    """Read ``project.version`` from a ``pyproject.toml`` with the stdlib ``tomllib``.
 
     The wheel_smoke script is stdlib-only on purpose (it must run from a bare
-    checkout or a fresh wheel-install venv with no third-party deps). ``tomllib``
-    is stdlib only on Python 3.11+, but the project supports 3.10, and ``tomli``
-    would be a third-party dep — both are off the table here. So scan the single
-    ``version`` key out of the top-level ``[project]`` table by hand rather than
-    parse the whole document.
+    checkout or a fresh wheel-install venv with no third-party deps).
     """
-    in_project = False
-    for raw in pyproject.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        header = re.match(r"\[([^\]]+)\]", line)
-        if header:
-            in_project = header.group(1).strip() == "project"
-            continue
-        if in_project:
-            # Standalone stdlib-only version parse — intentionally NOT derived from
-            # espalier.version_surfaces. This smoke test validates the BUILT wheel; deriving
-            # "expected" from the wheel-under-test's own code would defeat the parity check.
-            m = re.match(r"""version\s*=\s*["']([^"']*)["']""", line)
-            if m and m.group(1):
-                return m.group(1)
+    # Standalone stdlib-only version parse — intentionally NOT derived from
+    # espalier.version_surfaces. This smoke test validates the BUILT wheel; deriving
+    # "expected" from the wheel-under-test's own code would defeat the parity check.
+    try:
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except ValueError as exc:  # strict decode: a structured answer (DEF-829)
+        raise SmokeFailure(format_failure(
+            f"pyproject.toml at {pyproject} is not UTF-8 TOML ({exc})",
+            "the wheel cannot be version-checked without a canonical source - "
+            "check that pyproject.toml decodes and parses",
+        )) from exc
+    project = data.get("project")
+    version = project.get("version") if isinstance(project, dict) else None
+    if isinstance(version, str) and version:
+        return version
     raise SmokeFailure(format_failure(
         f"pyproject.toml at {pyproject} has no [project].version",
         "the wheel cannot be version-checked without a canonical source - "

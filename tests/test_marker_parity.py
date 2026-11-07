@@ -53,11 +53,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-# tomllib lives in stdlib from Py 3.11+; repo declares
-# `requires-python = ">=3.10"`, so bare `import tomllib` would crash
-# Py 3.10 at collection. Use espalier._compat.tomllib (try tomllib,
-# fall back to tomli, expose None if neither — caller raises).
-# Established pattern: tests/test_bench_results_parity.py:25.
 import pytest
 
 from espalier._compat import tomllib

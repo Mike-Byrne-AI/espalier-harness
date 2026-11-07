@@ -1824,8 +1824,6 @@ def discover_self_host_surface(repo_root: Path) -> dict[str, list[str]]:
 
 
 def _project_name_from_pyproject(text: str) -> str | None:
-    if _tomllib is None:
-        return None
     try:
         data = _tomllib.loads(text)
     except (ValueError, OSError):

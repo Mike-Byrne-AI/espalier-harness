@@ -147,7 +147,7 @@ Every skip that fires belongs to exactly one of these classes:
 
 | Class | Reachable where | Example |
 |---|---|---|
-| interpreter-gated | another Python leg of the `test` matrix | `tests/test_assets.py` |
+| interpreter-gated | another Python leg of the `test` matrix | `tests/test_rmtree.py` |
 | tool-gated | the single job that installs the tool | `tests/test_scope_walker.py` → `ripgrep-parity` |
 | session-state-gated | when a live state flag is present; each has an **unconditional twin** carrying the actual contract | `tests/test_state_file_flag_parity.py` |
 | deliberate | nowhere, on purpose — a documented archeology skip whose load moved elsewhere | `tests/test_corpus_count_parity.py` |

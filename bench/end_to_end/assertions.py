@@ -739,17 +739,13 @@ def _tool_uses_in_order(transcript: Transcript) -> list[tuple[int, dict[str, Any
     return out
 
 
-#: A time's fractional seconds, which Python 3.10's fromisoformat takes only as
-#: 3 or 6 digits.
-_FRACTION = re.compile(r"\.(\d+)")
-
-
 def _epoch(stamp: Any) -> float | None:
     """An ISO time (the CLI's `...Z`, a plan's `+00:00`, a naive one read as
-    UTC) as epoch seconds, its fraction cut or padded to microseconds."""
+    UTC) as epoch seconds; ``fromisoformat`` reads a fraction of any length,
+    cut to microseconds."""
     if not isinstance(stamp, str) or not stamp.strip():
         return None
-    text = _FRACTION.sub(lambda m: "." + (m.group(1) + "000000")[:6], stamp.strip().replace("Z", "+00:00"), count=1)
+    text = stamp.strip().replace("Z", "+00:00")
     try:
         when = datetime.fromisoformat(text)
     except ValueError:

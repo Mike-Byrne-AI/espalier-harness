@@ -563,6 +563,16 @@ class TestVersionParityAssertions:
         with pytest.raises(wheel_smoke.SmokeFailure):
             wheel_smoke._read_pyproject_version(pyproject)
 
+    @pytest.mark.parametrize("data", [
+        b'[project]\nversion = "0.8.0a1"\n[broken\n',
+        b'[project]\nversion = "0.8.0a1"\n# caf\xe9\n',
+    ], ids=["malformed", "not UTF-8"])
+    def test_read_pyproject_version_names_a_file_it_cannot_parse(self, tmp_path, data):
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_bytes(data)
+        with pytest.raises(wheel_smoke.SmokeFailure, match="is not UTF-8 TOML"):
+            wheel_smoke._read_pyproject_version(pyproject)
+
     def test_version_parity_raises_on_cli_mismatch(self, tmp_path, monkeypatch):
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text('[project]\nname = "x"\nversion = "0.8.0a1"\n', encoding="utf-8")

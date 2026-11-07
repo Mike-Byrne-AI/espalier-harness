@@ -580,7 +580,7 @@ class TestNoRepeatOf:
             changed=True, plan_created="2026-10-14T12:00:02+00:00", plan_status="in_progress")) == VERDICT_WARN
 
     def test_times_with_any_fraction_parse(self):
-        """Python 3.10's fromisoformat takes 3 or 6 fractional digits only.
+        """A time reads whatever the number of its fractional digits.
         Dies to: a CLI that writes 2 or 4 turning every deny unstamped."""
         from bench.end_to_end.assertions import _epoch
 

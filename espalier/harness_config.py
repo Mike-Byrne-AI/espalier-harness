@@ -437,12 +437,7 @@ def _detect_formatter_section(pyproject_path: Path) -> str | None:
     relevant ``[tool.<name>]`` block — caller falls through to "no
     formatter hook needed," matching the prior fail-safe behavior.
     """
-    try:
-        from espalier._compat import tomllib
-    except ImportError:
-        return None
-    if tomllib is None:
-        return None
+    from espalier._compat import tomllib
     try:
         data = tomllib.loads(pyproject_path.read_bytes().decode("utf-8"))
     except (OSError, tomllib.TOMLDecodeError, UnicodeDecodeError):

@@ -760,8 +760,6 @@ def _ml_signal_dep_imports(repo_root: Path) -> bool:
     if not pyproject.exists():
         return False
     from espalier._compat import tomllib
-    if tomllib is None:
-        return False
     try:
         data = tomllib.loads(_safe_text(pyproject))
     except (ValueError, OSError):
