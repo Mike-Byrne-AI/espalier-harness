@@ -346,9 +346,12 @@ class TestTheFixtureHandsOnTheBuild:
         """The lazy path builds inside a test, so its spawns end under the 60 s
         ceiling. The hook's build is outside every ceiling, with every worker at
         once: at 50 s all four windows-latest workers' `git add -A` took the whole
-        bound (run 38890464527), where 120 s let every build finish."""
+        bound (run 38890464527), where 120 s let every build finish, and at 180 s
+        they took it again (run 39143193815, 2026-10-18: the build failed before
+        the first test and its 63 requesters errored), so the bound stands above
+        that one (DEF-2044)."""
         assert conftest._BUILD_LAZY_STEP_TIMEOUT_S < 60
-        assert conftest._BUILD_HOOK_STEP_TIMEOUT_S > 120
+        assert conftest._BUILD_HOOK_STEP_TIMEOUT_S > 180
 
 
 class TestNoUnitModuleBuildsTheTree:
