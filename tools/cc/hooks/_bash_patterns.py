@@ -230,10 +230,14 @@ _CMD_POS_SLASHED_WRAPPER_WORD = r"[^\s;|&]*/" + _CMD_POS_WRAPPER_SPELLED + r"[ \
 # match ends where it ended and only starts later (33,014 commands, every
 # compiled pattern in the three guard modules: no end or group moved). Arm 1
 # keeps `_CMD_POS_WRAP_RUN`: its runs start at a separator, one per
-# separator, so the chain never re-reads; the carriers' `_CARRIER_WRAP_ONE`
-# declines the argument arm the same way for the same flood. Pinned by
-# tests/test_redos.py's walker floods (`_WALKER_FLOOD_MAKERS`) and the
-# anchor's own prefix-run row.
+# separator, so the chain never re-reads. The carriers' `_CARRIER_WRAP_ONE`
+# declines the ARGUMENT arm alone, and its glued and numeric arms still read
+# such a word two ways against its bounded steps, which no decline fixes
+# without moving a reading (DEF-3046); this arm's assignment tail re-reads
+# a slashed value the same way (DEF-3047). Pinned by tests/test_redos.py's
+# walker floods (`_WALKER_FLOOD_MAKERS`) and the anchor's own prefix-run
+# row; its derivation from `_CMD_POS_WRAP_RUN` by tests/test_write_guard.py::
+# TestTheCommandPositionGrammarIsOneAcrossTheCarriers.
 _CMD_POS_SLASHED_WRAP_RUN = (
     "(?:" + _CMD_POS_WRAPPER_SPELLED
     + r"(?:[ \t]+(?!" + _CMD_POS_SLASHED_WRAPPER_WORD + r")(?:-[^\s;|&]+(?:[ \t]+(?!"

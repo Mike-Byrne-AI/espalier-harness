@@ -1205,6 +1205,32 @@ class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
         (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True, exist_ok=True)
         _assert_zone_walled(f"find tools/cc/hooks | xargs {wrapper}rm -rf", tmp_path, _run_ps_guard)
 
+    def test_the_slashed_arm_reads_the_anchor_run_less_the_slashed_word(self):
+        # DEF-3042: the anchor's `(?<=/)` arm runs a copy of `_CMD_POS_WRAP_RUN`
+        # whose three token arms decline a word ending in a slashed wrapper
+        # (that word holds its own start), and nothing else; an edit to the
+        # run lands in both or reds here (spelled out for the ReDoS gate)
+        bp = _bash_patterns_module()
+        decline = "(?!" + bp._CMD_POS_SLASHED_WRAPPER_WORD + ")"
+        derived = bp._CMD_POS_WRAP_RUN.replace(
+            r"(?:[ \t]+(?:-", r"(?:[ \t]+" + decline + r"(?:-", 1).replace(
+            r"(?:[ \t]+(?!" + bp._CMD_POS_WRAPPER_SPELLED,
+            r"(?:[ \t]+" + decline + "(?!" + bp._CMD_POS_WRAPPER_SPELLED, 1)
+        assert derived.count(decline) == 2
+        assert bp._CMD_POS_SLASHED_WRAP_RUN == derived
+        assert "(?<=/)" + bp._CMD_POS_SLASHED_WRAP_RUN in bp._CMD_POS_NO_VERB
+
+    @pytest.mark.parametrize("head", ["/usr/bin/", ""], ids=["slashed", "bare"])
+    @pytest.mark.parametrize("command", [
+        "nice -n 19 mv tools/cc/hooks/a.py b", "sudo -u me cp x tools/cc/hooks/a.py",
+        "env -i tee tools/cc/hooks/a.py", "timeout 60 cp x tools/cc/hooks/a.py",
+    ], ids=["nice-flag-arg", "sudo-flag-arg", "env-flag", "timeout-numeric"])
+    def test_a_slashed_wrapper_with_its_flags_walls_like_the_bare_one(self, tmp_path, head, command):
+        # the slashed arm's own flags, which no other row read: a mutant whose
+        # slashed run read no flags passed every wrapper row (DEF-3042's review)
+        (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True, exist_ok=True)
+        _assert_zone_walled(head + command, tmp_path)
+
     def test_the_carriers_read_one_wrapper_run(self):
         # one home: an edit to the anchor's run reaches every carrier, and a
         # carrier that spells its own list again reds here
