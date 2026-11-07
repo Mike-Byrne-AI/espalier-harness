@@ -49,7 +49,7 @@ For one bounded change, one main proof path, or a small localized edit.
 
 2. **Present plan and wait for approval.** List what changes, in what order, and what test proves each change.
 
-3. **Create a one-step execution plan** (after approval, before source writes; `create` warns on stderr when a step's `files:`, `classes:` or `symbols:` meet another machine's live claim on the mail channel -- advisory, `/inbox` has the body). A path holding a space goes whole in double quotes or backticks in those fields, with `::name` inside the quotes or glued to the closing one: a bare one is read as two entries, and a comma, `;` or `|` ends an entry:
+3. **Create a one-step execution plan** (after approval, before source writes; `create` warns on stderr when a step's `files:`, `classes:` or `symbols:` meet another machine's live claim on the mail channel -- advisory, `/inbox` has the body). A path holding a space goes whole in double quotes or backticks in those fields, with `::name` inside the quotes or glued to the closing one: a bare one is read as two entries, and a comma, `;` or `|` ends an entry. A note in parentheses goes after a space (`a.py (new)`), since one glued to the path is part of it (`app/(group)/page.tsx`):
    ```bash
    python tools/cc/execution_plan.py create \
      --task "<task description>" \

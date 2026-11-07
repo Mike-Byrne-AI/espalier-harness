@@ -289,8 +289,8 @@ def _step_fields(steps: str) -> tuple[list[str], list[str]]:
 
 
 #: The marks an entry may open with, read whole to the matching close: a path
-#: holding a space (or a comma, or a parenthesis) is one entry quoted and two
-#: words bare.
+#: holding a space or a comma is one entry quoted and two bare (a
+#: parenthesised folder glued to the path reads whole either way).
 _ENTRY_MARKS = "`'\""
 
 
@@ -298,14 +298,14 @@ def _field_entries(value: str) -> list[str]:
     """The entries of one field's value: the first token of each
     comma-separated entry, quotes and backticks stripped. An entry that
     opens with a quote or a backtick is read whole to its closing mark, so a
-    path holding a space, a parenthesis or a comma, quoted as its author
-    types it under such a directory (`"/x/with space/a.py::f"`), is one
+    path holding a space or a comma, quoted as its author types it under
+    such a directory (`"/x/with space/a.py::f"`), is one
     entry and not its first word; a `::name` glued to the closing mark
     (`"/x/with space/a.py"::f`, the shell's way of quoting) is part of the
     entry, any other text after the mark is dropped, and an unterminated
     mark keeps the first-word reading. A note in parentheses, commas and
-    all, is not an entry (nor a call's parentheses after a symbol,
-    `path::f()`)."""
+    all, is not an entry; a bare entry's first word is read by
+    ``_bare_word``, which tells a note from a parenthesised folder."""
     out: list[str] = []
     i, n = 0, len(value)
     while i <= n:
@@ -320,12 +320,47 @@ def _field_entries(value: str) -> list[str]:
                 tok += tail.split()[0].strip(_ENTRY_MARKS)
         else:
             end = _entry_end(value, i)
-            entry = re.sub(r"\([^)]*\)", " ", value[i:end])
-            tok = entry.strip().strip(_ENTRY_MARKS).split(" ")[0].strip().strip(_ENTRY_MARKS)
-        if tok and not tok.startswith("("):
+            tok = _bare_word(value[i:end].strip().strip(_ENTRY_MARKS)).strip(_ENTRY_MARKS)
+        if tok:
             out.append(tok)
         i = end + 1
     return out
+
+
+def _bare_word(text: str) -> str:
+    """The first word of a bare entry. A parenthesised span standing as a
+    word of its own (the entry's start or whitespace before it, whitespace
+    or the entry's end after it) is a note and skipped; one glued to the
+    word is part of it whole, a space or a comma inside included: a
+    route-group folder (`app/(group)/page.tsx`, `(group)/page.tsx`) or a
+    file name's (`x(1).py`). After the word's `::` a span is a call's, and
+    ends the word (`path::f()` reads `path::f`). A word that opens with a
+    parenthesis nothing closes is a note's opener, and no entry. Each pass
+    reads one character or jumps past a closed span, so the read is linear."""
+    last = text.rfind(")")
+    word, symbol = "", False
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c.isspace():
+            if word:
+                break
+            i += 1
+            continue
+        if c == "(" and last > i:
+            if symbol:
+                break
+            close = text.find(")", i + 1)
+            if word or not (close + 1 == n or text[close + 1].isspace()):
+                word += text[i:close + 1]
+            i = close + 1
+            continue
+        if c == "(" and not word:
+            return ""
+        symbol = symbol or (c == ":" and word.endswith(":"))
+        word += c
+        i += 1
+    return word
 
 
 def _entry_end(value: str, start: int) -> int:
