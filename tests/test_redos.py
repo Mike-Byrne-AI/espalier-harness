@@ -4340,6 +4340,28 @@ def _prefix_run_tokens() -> list[str]:
     # or space-only decline passed every other row (the code review's mutants)
     tokens += [f"-x /a/{w.upper()}.EXE " for w in declined]
     tokens += ["-x\t/a/env\t"]
+    # DEF-3043: a wrapper flag beside a word another arm of the star owns.
+    # Each token above repeats one arm's word alone, so the pair -- read as
+    # the flag's argument OR as that arm's word -- went unseen while each
+    # pair doubled per repeat. Composed for every wrapper with every head
+    # the star's other arms open on (the keywords and the exec openers read
+    # from their own fragments), with a flag after it (the exception that
+    # keeps the read), and a digit-led redirect after a bare wrapper (the
+    # numeric arm's twin).
+    shells = _re.findall(r"\(\?:([a-z|]+)\)\?sh", _bash_patterns._CMD_POS_EXEC_QUOTE)
+    assert shells, "the exec opener's shell roster moved: re-read this derivation"
+    heads = ["A=1", "A=/x", ">a", "<a", "2>a", "!", "eval"] + list(keywords)
+    heads += ["sh -c"] + [f"{s}sh -c" for s in shells[0].split("|")]
+    tokens += [f"{w} -i {h} " for w in wrappers for h in heads]
+    tokens += [f"{w} -i {h} -x " for w in ("env", "sudo") for h in heads]
+    tokens += [f"{w} -i {h} 5 " for w in ("env", "sudo") for h in heads]
+    tokens += [f"{w} 2>a " for w in wrappers] + ["env 2>a -x ", "/a/env -i A=1 ", "/a/sudo -u A=1 -x "]
+    # DEF-3044 and DEF-3053: the argument's pieces -- quoted spans, an
+    # escape, a one-level substitution glued and before a flag, a brace --
+    # each crossing a separator or a blank with no second start reading on
+    tokens += [f"env -i {p} " for p in ("'a b'", '"a b"', "$'a b'", "a\\ b", '"a;b"', "$(a)/x",
+                                        "`a`.x", "${a}x", "x{a}y", "$(a b)/x")]
+    tokens += ["env -i $(a) -x ", "env -i `a b` -x ", "env -i {} -x ", ">$(a)/x ", ">`a`.x "]
     return tokens
 
 
@@ -4378,6 +4400,56 @@ def test_cmd_pos_linear_on_repeated_prefix_run(token):
         f"_CMD_POS took {elapsed_ms:.1f}ms on a {token!r} run "
         f"(budget {_CI_SAFE_BUDGET_MS}ms)"
     )
+
+
+def _separator_flood_units() -> list[str]:
+    """DEF-3044: every separator character the anchor starts at, glued to
+    every token run that could carry a read across it -- a redirect target,
+    a glued flag, a flag's argument, a numeric, the slashed run's flag -- with
+    no blank, so every start inside the flood is a fresh read. The prefix-run
+    rows above repeat tokens that end in a blank, one start each, which is
+    why `"<(" * n` (quadratic, 475 ms at 8 KB) went unmeasured. Derived from
+    `_CMD_POS_SEP`'s own class, so a separator added there enrols by itself.
+    """
+    import re as _re
+    import _bash_patterns
+
+    seps = sorted(set(_re.sub(r"\\[nr]", "", _re.search(r"\[([^\]]+)\]", _bash_patterns._CMD_POS_SEP).group(1)))
+                  - set(";&|") | set("{}"))
+    assert {"(", ")", "`", "{", "}"} <= set(seps), seps
+    runs = ["<", ">", "2>a", "env -x", "nice 1", "/env -x", "env -i a", "env -i $(a)/", ">$(a)/", "sudo -u 'a'"]
+    units = [r + s for s in seps for r in runs] + [s + r for s in seps for r in runs]
+    # A brace glued after a flag is no start (a brace opens a position at a
+    # word's start only), so `"/env -x{" * n` is a glued flag holding a
+    # slashed wrapper, read again from every `/`: DEF-3051's open flood, not
+    # this row's, which a paren or a backtick here does reach.
+    return [u for u in units if not ("/env -x" in u and ("{" in u or "}" in u))]
+
+
+@pytest.mark.parametrize("unit", _separator_flood_units())
+def test_cmd_pos_linear_on_a_separator_flood(unit):
+    """`_CMD_POS` stays linear on a flood of separators glued to a token run:
+    no run crosses a separator except a quoted span or a one-level
+    substitution, so each start's read ends at the next one."""
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    import _bash_patterns
+
+    probe = (unit * (_WORST_CASE_BODY_LEN // len(unit) + 1))[:_WORST_CASE_BODY_LEN]
+    rx = re.compile(_bash_patterns._CMD_POS + r"zzz\b")
+    signal.signal(signal.SIGALRM, _alarm)
+    signal.setitimer(signal.ITIMER_REAL, _CI_SAFE_BUDGET_MS / 1000.0)
+    t = time.time()
+    try:
+        rx.search(probe)
+    except _Timeout:
+        pytest.fail(f"_CMD_POS exceeded {_CI_SAFE_BUDGET_MS}ms on a {unit!r} flood: a token run "
+                    "crosses a separator again, and each start inside it reads to the end")
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    elapsed_ms = (time.time() - t) * 1000
+    assert elapsed_ms < _CI_SAFE_BUDGET_MS, (
+        f"_CMD_POS took {elapsed_ms:.1f}ms on a {unit!r} flood (budget {_CI_SAFE_BUDGET_MS}ms)")
 
 
 @pytest.mark.parametrize("arm,unit", [
@@ -4635,7 +4707,7 @@ def test_the_nested_run_the_gate_once_carried_is_caught_by_these_rows():
     import _bash_patterns as bp
 
     nested = bp._CMD_POS_REDIRECT.replace(
-        r"[^\s;|&\"'])+[ \t]+", r"[^\s;|&\"']+)+[ \t]+")
+        r"[^\s;|&\"'()`])*[ \t]+", r"[^\s;|&\"'()`]+)*[ \t]+")
     assert nested != bp._CMD_POS_REDIRECT, "the live fragment is not the single-character form"
     anchor = bp._CMD_POS.replace(bp._CMD_POS_REDIRECT, nested)
     rx = re.compile(anchor + r"zzz\b")

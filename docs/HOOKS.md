@@ -1472,7 +1472,15 @@ a value the expansion cannot read -- a command substitution or a `$` reference
 inside it, a parameter expansion, an array, a second assignment in one
 statement, a value that runs on past its quotes -- that the shell later runs
 through `eval` or `-c` is not refused unless its own text puts the verb at a
-command position. The operand a verb
+command position. A wrapper's flag argument and a redirect target are read as
+the shell splits them -- a quoted span, a backslash escape, a brace and a
+one-level command substitution are each part of the word, so `sudo -u 'a b'
+mv`, `env -C $(pwd)/x mv` and `>$(mktemp)/x cp` reach the verb. The read
+stops at a substitution holding a separator (`$(cd a; pwd)/x`), a nested
+one, and one followed directly by a letter, a digit, `_`, `!`, `<` or `>`
+(`$(pwd)x`): a verb right after such a word draws no wall, since reading
+them would let a long generated command hold the guard in quadratic time.
+The operand a verb
 REMOVES or RELOCATES is read beside the written one, on both shells and
 through an interpreter literal: a delete of it, a move of it out of the
 zone, a rename within it, a `find` that removes under it, a `git clean`

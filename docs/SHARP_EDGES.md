@@ -6562,3 +6562,37 @@ PATH with the count derived from the kit file), `bench/own_clear/drive.py` (a pt
 real marker writer: PASS 2026-10-26 in 27 s) and `reports/own-clear-probe-2026-10-26/` on
 the Air (the probe mod, its logs and the pty driver). `tools/cc/mods/own-clear/README.md`
 has the measured facts.
+
+## A command-position token run that crosses a separator is read again from every start inside it
+
+**What it is:** the anchor every command-position reader shares
+(`tools/cc/hooks/_bash_patterns.py::_CMD_POS`) is searched from every position, and each
+character of `_CMD_POS_SEP` opens a fresh start. A token run that admits one of those
+characters -- a redirect target, a wrapper flag, its argument, a numeric -- is read again,
+to its end, from every start inside it, so a flood of them reads in quadratic time
+(`"<(" * n`: 475 ms at 8 KB, fourfold per doubling; the speed bump's fetch arms 5.8 s at
+30 KB), and a hook that outlives Claude Code's timeout lets the call run unjudged. Two arms
+owning one token (a flag's argument or an assignment, `env -i A=1`) is the exponential
+sibling (DEF-3043, DEF-3044, both closed by the lane that wrote this entry).
+
+**How you hit it:** widening a token class with `(`, `)`, a backtick, or a brace that can
+stand first in a word, or adding a piece that ends on one with text after it that an arm of
+the anchor opens on: a backtick span is its own next opener (``"`env -i " * n`` read
+quadratic under the lane's first substitution piece), and a substitution with a letter
+glued after it lets the start after its closing paren read a wrapper run to the end
+(`"env -i $(a)env " * n`: 113 -> 402 ms at 4 -> 8 KB).
+
+**How to avoid it:** keep every bare class free of the separator characters, and let a
+piece cross one only where the start after it dies at once: a quoted span; a one-level
+substitution (`_CMD_POS_SUBST`) before a glued character that opens no arm, or, as a flag's
+whole argument, before a flag. A **declared limit** follows, pinned by
+`tests/test_write_guard.py::TestTheWrapperRunReadsEachTokenOnce::test_the_declared_limit_of_the_substitution_piece_stays_a_limit`,
+which reds the day a reader takes these: a substitution holding a separator
+(`env -C $(cd a; pwd)/x mv`), a nested one, and one followed directly by a letter, a digit,
+`_`, `!`, `<` or `>` (`$(pwd)x`), in a flag's argument or a redirect target, do not carry
+the read past themselves, so the verb after such a word draws no wall.
+
+**Backed by:** `tests/test_redos.py::test_cmd_pos_linear_on_a_separator_flood` (every
+separator glued to every token run, derived from `_CMD_POS_SEP`) and
+`tests/test_redos.py::test_cmd_pos_linear_on_repeated_prefix_run` (each wrapper flag beside
+every head the anchor's other arms open on).

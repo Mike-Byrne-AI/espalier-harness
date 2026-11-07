@@ -1,0 +1,10 @@
+{
+ "id": "DEF-3055",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c \"import sys,time,re;sys.path.insert(0,'tools/cc/hooks');import _bash_patterns as b;r=re.compile(b._CMD_POS+'zzz');t=time.perf_counter();r.search('A=('*4000);print(int(time.perf_counter()-t>0.15))\"",
+ "open_value": "1",
+ "why_not": null,
+ "row_sha": "414d8af2f45d",
+ "text_sha": "629f027ba0d3",
+ "verified_2026_11_07": "OPEN (filed 2026-11-07; probe driven at filing here and in the export of HEAD cb7106d97b50)"
+}

@@ -179,8 +179,27 @@ _CMD_POS_WRAPPER_SPELLED = (
 # `[&|]?` admits `>|` (the clobber spelling); its `&` branch is reached only
 # by `_speedbump`, whose masked text is not ampersand-neutralised -- the
 # extractor blanks `>&` before any anchored arm runs.
+# ⚠ THE BARE CHARACTER STOPS AT A PAREN, A BRACE AND A BACKTICK (DEF-3044).
+# Each of them is a `_CMD_POS_SEP` start, so a target that admitted them was
+# read again from every start inside it: `"<(" * n` (`<` a redirect, `(` its
+# target) read 475 ms at 8 KB, fourfold per doubling. A brace stays out of the
+# first character only: past it a brace opens no position (`_CMD_POS_SEP`), so
+# `>log{1}.txt` keeps its read. A one-level substitution is a piece of its own
+# (`_CMD_POS_SUBST`), taken only before a glued character that opens no arm of
+# the anchor (`>$(mktemp)/x`): the start after its closing paren then dies at
+# once. An unglued one needs no piece, since that start reads on itself
+# (`>$(mktemp) cp`). The rule for every token run is at `_CMD_POS_WRAP_RUN`.
+#: A one-level command substitution: no paren, brace, backtick or separator
+#: inside, so it crosses one start and holds none of its own.
+_CMD_POS_SUBST = r"(?:\$\([^(){}`;|&\n]*\)|`[^(){}`;|&\n]*`)"
+#: The substitution before a glued character that opens no arm of the anchor
+#: (not a word character, `!`, `<`, `>`, a separator or a blank): a letter
+#: there would let the start after the closing paren read a wrapper run to the
+#: end again (`"env -i $(a)env " * n`: 113 -> 402 ms at 4 -> 8 KB).
+_CMD_POS_SUBST_GLUED = _CMD_POS_SUBST + r"(?=[^\s\w!<>(){}`;|&])"
 _CMD_POS_REDIRECT = (
-    r"(?:[0-9]?[<>]{1,2}[&|]?[ \t]*(?:\"[^\"\n]*\"|'[^'\n]*'|[^\s;|&\"'])+[ \t]+)"
+    r"(?:[0-9]?[<>]{1,2}[&|]?[ \t]*(?:\"[^\"\n]*\"|'[^'\n]*'|" + _CMD_POS_SUBST_GLUED + r"|[^\s;|&\"'(){}`])"
+    r"(?:\"[^\"\n]*\"|'[^'\n]*'|" + _CMD_POS_SUBST_GLUED + r"|[^\s;|&\"'()`])*[ \t]+)"
 )
 # ⚠ Every token run below is `[^\s;|&]`, never `\S`. `\S` matches `;`, so a
 # greedy `\S*` run scans PAST the command separator to end-of-input and then
@@ -203,15 +222,103 @@ _CMD_POS_REDIRECT = (
 # the parse deterministic: each token has exactly one arm that can own it.
 # After: 5.3 ms at 2000 repetitions, and 29 accept/reject shapes are unchanged.
 #
+# ⚠ EVERY TOKEN HAS ONE OWNER, NOT JUST THOSE TWO (DEF-3043). The argument arm
+# also read each word another arm of `_CMD_POS_NO_VERB`'s star opens on -- an
+# assignment, a redirect, a keyword, `!`, `eval`, `sh -c` -- and the numeric
+# arm a digit-led redirect, so `env -i A=1` and `env 2>a` each parsed two ways
+# (`"env -i A=1 " * 16`, 177 bytes: 157 ms, doubling per repeat; `"env 2>a " *
+# 20`: 1.6 s). Such a word is declined as the argument
+# (`_CMD_POS_WRAP_ARG_OWNED`, `_CMD_POS_WRAP_ARG_BEFORE_FLAG`), except where a
+# flag or a numeric follows it (`_CMD_POS_WRAP_NEXT`): its own arm dies on a
+# flag, so the two readings never meet again, and `sudo -u A=1 -E mv` keeps
+# the read base had. A wrapper word, a digit and `sh -c` never take that
+# exception, because their arms do go on past a flag. A digit-led redirect
+# stays in the run on the same terms (`sudo 2>/dev/null -E mv`), and `{}` (an
+# xargs placeholder, a separator at a word's start) is an argument only before
+# a flag. The argument's two alternatives are kept disjoint by that one
+# lookahead: positive in the first, negative in the second.
+#
+# ⚠ NO TOKEN RUN CROSSES A SEPARATOR (DEF-3044). Every `_CMD_POS_SEP` character
+# is a fresh start, so a run that admits one is read again from each start
+# inside it (`"env -x(" * 1200`: 593 ms at 8 KB, fourfold per doubling; the
+# speed bump's fetch arms 5.8 s at 30 KB). The flag, its argument and the
+# numeric stop at a paren and a backtick, and a brace is a separator only at a
+# word's start (`_CMD_POS_SEP`), so a word keeps one after its first character
+# (`env -C ${HOME}/w`). Two pieces cross a separator with no second start
+# reading on: a quoted span (`_WRAP_ARG_QUOTES`, `_ASSIGN_VALUE`'s pieces with
+# a newline excluded), which lets `sudo -u 'a b' mv` and `sudo -u "$(id -un)"
+# mv` reach the verb (DEF-3053: a quoted argument holding a blank hid it); and
+# `_CMD_POS_SUBST`, taken before a glued character that opens no arm
+# (`$(pwd)/x`) or, as the whole argument, before a flag (`sudo -u $(id -un) -E
+# mv`). Anywhere else the separator after it opens the position itself
+# (`sudo -u $(id -un) mv`). What neither reads is a declared limit in
+# docs/HOOKS.md: a nested substitution, a separator inside one, a letter glued
+# after one.
+#
 # This fragment fronts every command-position consumer, and a wedged regex is a
 # HANG — write_guard's `except BaseException` catches exceptions, not a hang, so
 # the PreToolUse call never returns. Budgeted by
 # tests/test_redos.py::test_cmd_pos_linear_on_repeated_prefix_run, whose token
-# list is DERIVED from the arms below so a future wrapper enrols by itself.
+# list is DERIVED from the arms below so a future wrapper enrols by itself, and
+# by tests/test_redos.py::test_cmd_pos_linear_on_a_separator_flood.
+#: The quoted pieces of a flag's argument; `_ASSIGN_VALUE`'s, each quoted arm
+#: stopped at a newline, and a quote with no closer on its line read as the
+#: plain character base read it as (the shell runs nothing on that line, and
+#: reading the quote as text keeps base's verdict there; a closer decides
+#: which piece takes it, so the two never share a quote).
+_WRAP_ARG_QUOTES = (
+    r"\"(?:[^\"\\\n]|\\.)*\"|'[^'\n]*'|\$'(?:[^'\\\n]|\\.)*'"
+    r"|\"(?!(?:[^\"\\\n]|\\.)*\")|'(?![^'\n]*')"
+)
+#: Each piece opens on a character no other piece or the bare class opens on:
+#: a lone `$` never before a paren or a closable ANSI-C quote, an escape never
+#: of a paren or a backtick (the bare class takes neither `$` nor a backslash).
+_WRAP_ARG_PIECES = _WRAP_ARG_QUOTES + r"|\$(?!\()(?!'(?:[^'\\\n]|\\.)*')|\\[^\n()`]"
+#: The argument word with a substitution only before a glued character...
+_CMD_POS_WRAP_ARG_WORD = (
+    r"(?:" + _WRAP_ARG_PIECES + r"|" + _CMD_POS_SUBST_GLUED + r"|[^-\s;|&(){}`\"'$\\])"
+    r"(?:" + _WRAP_ARG_PIECES + r"|" + _CMD_POS_SUBST_GLUED + r"|[^\s;|&()`\"'$\\])*"
+)
+#: ...and with one at the word's end too, read only where a flag follows.
+_CMD_POS_WRAP_ARG_WORD_ANY = (
+    r"(?:" + _WRAP_ARG_PIECES + r"|" + _CMD_POS_SUBST + r"(?=[^\w!<>(){}`;|&])|[^-\s;|&(){}`\"'$\\])"
+    r"(?:" + _WRAP_ARG_PIECES + r"|" + _CMD_POS_SUBST + r"(?=[^\w!<>(){}`;|&])|[^\s;|&()`\"'$\\])*"
+)
+#: Words whose own arm goes on past a flag: never an argument. Every
+#: digit-led word is the numeric arm's (a digit-led redirect stays in the run
+#: before a flag, below), so reading `2>a` as an argument too was the 2^n
+#: again (`"env -i 2>a -x " * n`, the lane's own review).
+_CMD_POS_WRAP_ARG_OWNED = r"(?:" + _CMD_POS_WRAPPER_SPELLED + r"[ \t]|\d|(?:ba|z|k|da)?sh[ \t]+-c)"
+#: Words whose own arm dies on a flag: an argument only before one. The
+#: keyword roster is `_CMD_POS_KEYWORD`'s, defined below; pinned equal in
+#: tests/test_write_guard.py::TestTheWrapperRunReadsEachTokenOnce.
+_CMD_POS_WRAP_ARG_BEFORE_FLAG = (
+    r"(?:[A-Za-z_]\w*=|[<>]|(?:then|do|else|elif|if|while|until)[ \t]|![ \t]|eval[ \t])"
+)
+_CMD_POS_WRAP_NEXT = r"[ \t]+(?:-[^\s;|&()`]|(?!\d[<>])\d)"
+_CMD_POS_WRAP_ARG = (
+    r"(?!" + _CMD_POS_WRAP_ARG_OWNED + r")(?:" + _CMD_POS_WRAP_ARG_WORD_ANY + r"(?=" + _CMD_POS_WRAP_NEXT + r")"
+    + r"|(?!" + _CMD_POS_WRAP_ARG_BEFORE_FLAG + r")" + _CMD_POS_WRAP_ARG_WORD + r"(?!" + _CMD_POS_WRAP_NEXT + r")"
+    + r"|\{\}(?=" + _CMD_POS_WRAP_NEXT + r"))"
+)
 _CMD_POS_WRAP_RUN = (
     "(?:" + _CMD_POS_WRAPPER_SPELLED
-    + r"(?:[ \t]+(?:-[^\s;|&]+(?:[ \t]+(?!" + _CMD_POS_WRAPPER_SPELLED
-    + r"[ \t])(?!\d)[^-\s;|&][^\s;|&]*)?|\d[^\s;|&]*))*[ \t]+)"
+    + r"(?:[ \t]+(?:-[^\s;|&()`]+(?:[ \t]+" + _CMD_POS_WRAP_ARG
+    + r")?|(?!\d[<>])\d[^\s;|&()`]*|(?=\d[<>])\d[^\s;|&()`]*(?=" + _CMD_POS_WRAP_NEXT + r")))*[ \t]+)"
+)
+#: The argument of a run whose star holds an assignment run and nothing else
+#: (the slashed arm): only a wrapper word, a digit and an assignment compete.
+_WRAP_STEP_NEXT = r"[ \t]+[-\d]"
+_WRAP_STEP_ARG = (
+    r"(?!" + _CMD_POS_WRAPPER_SPELLED + r"[ \t])(?!\d)(?:" + _CMD_POS_WRAP_ARG_WORD_ANY + r"(?=" + _WRAP_STEP_NEXT + r")"
+    + r"|(?![A-Za-z_]\w*=)" + _CMD_POS_WRAP_ARG_WORD + r"(?!" + _WRAP_STEP_NEXT + r")"
+    + r"|\{\}(?=" + _WRAP_STEP_NEXT + r"))"
+)
+#: A carrier step's argument: base's classes (a step is bounded and opens on
+#: no separator, so neither rule above is needed there) with the quoted pieces.
+_CARRIER_WRAP_ARG_WORD = (
+    r"(?:" + _WRAP_ARG_QUOTES + r"|\$(?!'(?:[^'\\\n]|\\.)*')|\\.|[^-\s;|&\"'$\\])"
+    r"(?:" + _WRAP_ARG_QUOTES + r"|\$(?!'(?:[^'\\\n]|\\.)*')|\\.|[^\s;|&\"'$\\])*"
 )
 #: The wrappers whose slashed word the slashed arm's run declines: the
 #: roster less `watch` and `script`, which are carrier verbs too, so a
@@ -259,10 +366,15 @@ _CMD_POS_SLASHED_WRAPPER_WORD = (
 # by tests/test_redos.py's walker flood (`_WALKER_FLOOD_MAKERS`) and the
 # anchor's own prefix-run row; its derivation from `_CMD_POS_WRAP_RUN` by
 # tests/test_write_guard.py::TestTheCommandPositionGrammarIsOneAcrossTheCarriers.
+# Its token runs stop at a separator as the anchor's do (a slashed start opens
+# after any `/`, so `"/env -x(" * n` was quadratic, DEF-3044), and its argument
+# is `_WRAP_STEP_ARG`: this arm's star holds an assignment run alone, so an
+# assignment is the one word it declines beside a wrapper word and a digit
+# (DEF-3043), and a redirect or a keyword stays readable as an argument.
 _CMD_POS_SLASHED_WRAP_RUN = (
     "(?:" + _CMD_POS_WRAPPER_SPELLED
-    + r"(?:[ \t]+(?:-[^\s;|&]+(?:[ \t]+(?!" + _CMD_POS_SLASHED_WRAPPER_WORD + r")(?!"
-    + _CMD_POS_WRAPPER_SPELLED + r"[ \t])(?!\d)[^-\s;|&][^\s;|&]*)?|\d[^\s;|&]*))*[ \t]+)"
+    + r"(?:[ \t]+(?:-[^\s;|&()`]+(?:[ \t]+(?!" + _CMD_POS_SLASHED_WRAPPER_WORD + r")" + _WRAP_STEP_ARG
+    + r")?|\d[^\s;|&()`]*))*[ \t]+)"
 )
 # An assignment prefix, ended where bash ends the word: at the first UNQUOTED
 # blank (DEF-848's lane). The value is a run of pieces -- a plain character,
@@ -344,7 +456,12 @@ _CMD_POS_EXEC_QUOTE = r"(?:\b(?:eval|(?:ba|z|k|da)?sh[ \t]+-c)[ \t]*(?:[\"'][ \t
 # bare `:` in the run let `http://x/cp` and `key:value/cp` open a command
 # position bash never runs (code review). Both quoted arms are bounded and
 # every adjacent quantifier pair is mutually exclusive, for the ReDoS gate.
-_CMD_POS_SEP = r"[;&|\n\r(){}`]"
+# A brace opens a position only at a word's start, after a blank, a separator
+# or the input's start (DEF-3044): bash reads `{` and `}` as reserved words
+# only there, and inside a word they are text (`${HOME}/w`, `a{1,2}`). Read
+# anywhere, a word's brace was a start the token runs had to stop at, and
+# `env -C ${HOME}/w mv` lost its verb with the separator-free runs.
+_CMD_POS_SEP = r"(?:[;&|\n\r()`]|(?<![^\s;&|(){}`])[{}])"
 _CMD_POS_WS = r"[ \t\r\v\f]*"
 #: The quoted-directory arm, named so the native remove verb behind a
 #: carrier reads it from here (`_NATIVE_VERB_PATH`, DEF-3028's sibling);
@@ -1111,15 +1228,19 @@ _CARRIER_WRAP_WORD = r"(?:" + _CMD_POS_WRAPPER_SPELLED + r"|(?i:busybox)" + _EXE
 #: without it `-exec /a/env` repeated read each `/a/env` as an argument OR
 #: a step, and a 1.4 KB command held write_guard past 15 s (C76's second
 #: failure-mode review; main and the lane before the head took 0 ms).
-#: `_CARRIER_WRAP_ONE` is `_CMD_POS_WRAP_RUN` with that one lookahead
-#: widened, spelled out because the ReDoS gate reconstructs patterns from
-#: literals alone; the equality is pinned in tests/test_write_guard.py.
+#: `_CARRIER_WRAP_ONE` is the anchor's run as it stood before DEF-3043 and
+#: DEF-3044, with that one lookahead widened and the argument read as
+#: `_CARRIER_WRAP_ARG_WORD` (a quoted span holding a blank, DEF-3053): a step
+#: is bounded at three and opens on no separator, so neither of the anchor's
+#: newer rules is needed here, and `-exec env -C $(pwd)/x mv` keeps its read.
+#: Spelled out because the ReDoS gate reconstructs patterns from literals
+#: alone; the composition is pinned in tests/test_write_guard.py.
 _CARRIER_WRAP_DIR = r"[\w.:~/\\-]*[/\\]"
 _CARRIER_WRAP_HEAD = r"(?:" + _CARRIER_WRAP_DIR + r"(?=" + _CARRIER_WRAP_WORD + r"[ \t]))?"
 _CARRIER_WRAP_ONE = (
     "(?:" + _CMD_POS_WRAPPER_SPELLED
     + r"(?:[ \t]+(?:-[^\s;|&]+(?:[ \t]+(?!(?:" + _CARRIER_WRAP_DIR + r")?" + _CARRIER_WRAP_WORD
-    + r"[ \t])(?!\d)[^-\s;|&][^\s;|&]*)?|\d[^\s;|&]*))*[ \t]+)"
+    + r"[ \t])(?!\d)" + _CARRIER_WRAP_ARG_WORD + r")?|\d[^\s;|&]*))*[ \t]+)"
 )
 _CARRIER_WRAP_STEP = (
     _CARRIER_WRAP_HEAD

@@ -1543,12 +1543,11 @@ _FETCH_EXEC_PIPE_RE = re.compile(
 #: `_CMD_POS_WRAP_RUN`, and `_FETCH_INNER_ASSIGN`'s value is the unquoted
 #: pieces of `_ASSIGN_VALUE` (a plain character, an escaped one, a lone `$`);
 #: both are pinned in tests/test_write_guard.py::TestQuotedVerbTailIsUniform.
-#: The run folds back into `_CMD_POS` once DEF-3043 and DEF-3044 land.
-_FETCH_INNER_WRAP_ONE = (
-    "(?:" + _bash_patterns._CMD_POS_WRAPPER_SPELLED
-    + r"(?:[ \t]+(?:-[^\s;|&(`]+(?:[ \t]+(?!" + _bash_patterns._CMD_POS_WRAPPER_SPELLED
-    + r"[ \t])(?!\d)[^-\s;|&(`][^\s;|&(`]*)?|\d[^\s;|&(`]*))*[ \t]+)"
-)
+#: Since DEF-3043 and DEF-3044 the anchor's run itself stops at every opener,
+#: so the wrapper piece is that run; the position as a whole stays narrowed
+#: while `_bash_patterns._ASSIGN_VALUE` (the anchor's assignment) still
+#: carries a run across an opener.
+_FETCH_INNER_WRAP_ONE = _bash_patterns._CMD_POS_WRAP_RUN
 _FETCH_INNER_ASSIGN = r"""(?:[A-Za-z_]\w*=(?:[^\s;|&'"$\\(`]|\\.|\$(?![('`]))*[ \t]+)"""
 _FETCH_INNER_POS = (
     r"[(`]" + _bash_patterns._CMD_POS_WS + _bash_patterns._CARRIER_WRAP_HEAD

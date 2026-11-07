@@ -2399,8 +2399,11 @@ def _speedbump_floods():
         # the Windows box, linear, 2026-11-07; the nested `eval "$(eval "`
         # read 55 ms under the lane's first cut, which composed the whole
         # anchor there). The chain that made that cut cubic (`"env -i bash <(
-        # " * n`) is not here: the outer anchor alone reads it in quadratic
-        # time on main (DEF-3044), so a flood at the cap reds every arm.
+        # " * n`) read quadratic in the outer anchor alone until DEF-3044
+        # (5.8 s at 30 KB; 19 ms since its token runs stop at a separator),
+        # so it is here now, with the `-c "$(` twin (10.4 s, 22 ms).
+        "env -i bash <( " * 2000,
+        'env -i bash -c "$(' * 2000,
         "bash <(" + "sudo " * 8000 + "x",
         'bash -c "$(' + "A=1 " * 8000 + "x",
         'eval "$(' * 6000 + "x",

@@ -817,13 +817,14 @@ class TestQuotedVerbTailIsUniform:
         # reaches this copy; and each substitution arm composes the anchor
         # once, at its outer head: the lane's first cut composed it a second
         # time inside the substitution and read cubic on a failing match
-        # (`"env -i bash <( " * 400`: 26.6 s at 6 KB, the code review)
+        # (`"env -i bash <( " * 400`: 26.6 s at 6 KB, the code review).
+        # Since DEF-3044 the anchor's run stops at every opener itself, so
+        # the inner piece is that run, not a copy of it
         bp = _bash_patterns_module()
         sb = _speedbump_module()
-        stopped = (bp._CMD_POS_WRAP_RUN.replace(r"[^\s;|&]", r"[^\s;|&(`]")
-                   .replace(r"[^-\s;|&]", r"[^-\s;|&(`]"))
-        assert stopped != bp._CMD_POS_WRAP_RUN
-        assert sb._FETCH_INNER_WRAP_ONE == stopped
+        assert sb._FETCH_INNER_WRAP_ONE == bp._CMD_POS_WRAP_RUN
+        for opener in ("(", "`"):
+            assert re.search(r"\[\^[^\]]*" + re.escape(opener), bp._CMD_POS_WRAP_ARG_WORD), opener
         # the assignment's value is the anchor's unquoted pieces (a plain
         # character, an escaped one, a lone `$`) with the openers added to
         # the plain class and to the `$` lookahead, and nothing else
@@ -1265,12 +1266,17 @@ class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
         # (that word holds its own start), and nothing else: the flag and
         # numeric arms keep the generic reading (ruling 90c7c3, DEF-3051); an
         # edit to the run lands in both or reds here (spelled out for the
-        # ReDoS gate)
+        # ReDoS gate). Since DEF-3043 the argument is `_WRAP_STEP_ARG` (this
+        # arm's star holds an assignment run alone, so only an assignment
+        # competes beside a wrapper word and a digit) and the numeric arm
+        # keeps a digit-led redirect, which no redirect arm here could own
         bp = _bash_patterns_module()
         decline = "(?!" + bp._CMD_POS_SLASHED_WRAPPER_WORD + ")"
-        derived = bp._CMD_POS_WRAP_RUN.replace(
-            r"(?:[ \t]+(?!" + bp._CMD_POS_WRAPPER_SPELLED,
-            r"(?:[ \t]+" + decline + "(?!" + bp._CMD_POS_WRAPPER_SPELLED, 1)
+        split_numeric = (r"(?!\d[<>])\d[^\s;|&()`]*|(?=\d[<>])\d[^\s;|&()`]*(?="
+                         + bp._CMD_POS_WRAP_NEXT + ")")
+        assert split_numeric in bp._CMD_POS_WRAP_RUN
+        derived = (bp._CMD_POS_WRAP_RUN.replace(bp._CMD_POS_WRAP_ARG, decline + bp._WRAP_STEP_ARG, 1)
+                   .replace(split_numeric, r"\d[^\s;|&()`]*", 1))
         assert derived.count(decline) == 1
         assert bp._CMD_POS_SLASHED_WRAP_RUN == derived
         assert "(?<=/)" + bp._CMD_POS_SLASHED_WRAP_RUN in bp._CMD_POS_NO_VERB
@@ -1387,13 +1393,18 @@ class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
         # one home: an edit to the anchor's run reaches every carrier, and a
         # carrier that spells its own list again reds here
         bp = _bash_patterns_module()
-        # the carrier's one wrapper is the anchor's run with its flag
-        # lookahead widened to a wrapper behind its directory, and nothing
-        # else (spelled out for the ReDoS gate's static reconstruction)
-        widened = bp._CMD_POS_WRAP_RUN.replace(
-            "(?!" + bp._CMD_POS_WRAPPER_SPELLED + r"[ \t])",
-            "(?!(?:" + bp._CARRIER_WRAP_DIR + ")?" + bp._CARRIER_WRAP_WORD + r"[ \t])", 1)
-        assert widened != bp._CMD_POS_WRAP_RUN
+        # the carrier's one wrapper is the anchor's roster with its flags,
+        # values and numerics as the anchor read them before DEF-3043 and
+        # DEF-3044 (a step is bounded and opens on no separator, so neither
+        # newer rule is needed here), its flag lookahead widened to a wrapper
+        # behind its directory and its argument the quoted-span word of
+        # DEF-3053, and nothing else (spelled out for the ReDoS gate's static
+        # reconstruction)
+        widened = (
+            "(?:" + bp._CMD_POS_WRAPPER_SPELLED
+            + r"(?:[ \t]+(?:-[^\s;|&]+(?:[ \t]+(?!(?:" + bp._CARRIER_WRAP_DIR + r")?" + bp._CARRIER_WRAP_WORD
+            + r"[ \t])(?!\d)" + bp._CARRIER_WRAP_ARG_WORD + r")?|\d[^\s;|&]*))*[ \t]+)"
+        )
         assert bp._CARRIER_WRAP_ONE == widened
         # the carriers' assignment is the anchor's with its quoted arms
         # stopped at a newline (an operand span never crosses a statement)
@@ -1855,6 +1866,126 @@ class TestDiscoveredCommandHead:
     ])
     def test_a_discovered_command_that_is_not_invoked_stays_allowed(self, tmp_path, tool, cmd):
         assert_hook_allowed(run_guard_from(tool, cmd, tmp_path, None))
+
+
+class TestTheWrapperRunReadsEachTokenOnce:
+    """DEF-3043, DEF-3044 and DEF-3053 as one class: the anchor's wrapper run
+    reads each token one way and no token past a separator, in linear time
+    (the floods are `tests/test_redos.py`'s), and reads every word bash takes
+    as a flag's argument -- a quoted span, a one-level substitution, a brace
+    -- so the verb behind it stands at a command position.
+
+    * DEF-3043: a word another arm of the anchor owns is declined as a flag's
+      argument, and stays the argument where a flag or a numeric follows it,
+      the read base had (the rows below the first parametrize are walls on
+      base too: they hold that read through the decline).
+    * DEF-3044: the token runs stop at a paren and a backtick, and a brace
+      is a separator only at a word's start; the readings a separator-free
+      run would lose come back through the pieces below.
+    * DEF-3053: a quoted argument holding a blank (four spellings in its
+      row, two slashed) hid the verb from the zone leg. The secret leg reads
+      no wrapper at all, quoted or not (`sudo cat .env` allows on base and
+      here): its verb is each statement's first word, DEF-1025's row.
+
+    Each wall stands beside its bare control; the open-root twin and the
+    declared limits are allowed rows.
+    """
+
+    _ZONE = "mv tools/cc/hooks/x.py /tmp/y"
+
+    @pytest.fixture(autouse=True)
+    def _hooks_dir(self, tmp_path):
+        (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True, exist_ok=True)
+
+    @pytest.mark.parametrize("prefix", [
+        "sudo -u A=1 -E ", "sudo -u >log -E ", "env -i then -u X ", "sudo -u ! -E ",
+        "sudo -u eval -E ", "sudo 2>/dev/null -E ", "nice -n 2>/dev/null 5 ", "xargs -I {} -t ",
+        "/usr/bin/sudo -u A=1 -E ", "/usr/bin/sudo -u >log -E ", "/usr/bin/sudo -u ! ",
+    ])
+    def test_a_word_another_arm_owns_stays_the_argument_before_a_flag(self, tmp_path, prefix):
+        _assert_zone_walled(self._ZONE, tmp_path)
+        _assert_zone_walled(prefix + self._ZONE, tmp_path)
+
+    #: DEF-3053's four spellings first (the row's two plain rows and its two
+    #: assignment-shaped slashed rows), then each piece the argument reads.
+    _QUOTED = [
+        "sudo -u 'a b' ", "env -C '/tmp/a b' ",
+        "/usr/bin/doas -u x='/opt/nohup /o/cp' ", '/usr/bin/nohup -D x="/a/ENV /o/cp" ',
+        'sudo -u "a b" ', 'sudo -u "a;b" ', "sudo -u 'a|b' ", 'env -C "a\\"b c" ',
+        "env -C $'/tmp/a b' ", "sudo -u a\\ b ", 'sudo -u "$(id -un)" ', "sudo -u 'a b' -E ",
+        "/usr/bin/sudo -u 'a b' ", "/usr/bin/env -C '/tmp/a b' ",
+    ]
+
+    @pytest.mark.parametrize("prefix", _QUOTED)
+    def test_a_quoted_argument_reaches_the_verb(self, tmp_path, prefix):
+        _assert_zone_walled(self._ZONE, tmp_path)
+        _assert_zone_walled(prefix + self._ZONE, tmp_path)
+
+    @pytest.mark.parametrize("prefix", [
+        "sudo -u $(id -un) ", "sudo -u $(id -un) -E ", "sudo -u $(id -un) -- ", "sudo -u $(id -un) 5 ",
+        "sudo -u `id -u` -E ", "env -C $(pwd)/x ", "env -C `pwd`/x ", "env -C $(pwd)/x -- ",
+        "env -C $(dirname a)/x -i ", "env -C $(pwd).d ", "env -C $(pwd)-old ", "env -C $(pwd):x ",
+        "/usr/bin/sudo -u $(id -un) -E ", "/usr/bin/env -C $(pwd)/x ", "sudo -u $(id) A=1 ",
+        ">$(mktemp)/x ", ">`mktemp`.log ", ">$(mktemp) ", ">$(mktemp)-x ", "env -i >$(mktemp)/x ",
+    ])
+    def test_a_one_level_substitution_reaches_the_verb(self, tmp_path, prefix):
+        _assert_zone_walled(self._ZONE, tmp_path)
+        _assert_zone_walled(prefix + self._ZONE, tmp_path)
+
+    @pytest.mark.parametrize("prefix", [
+        "env -C ${HOME}/w ", "env -C x{a,b}y ", "sudo -u ${USER} -E ", ">log{1}.txt ",
+        "env -C ${HOME}/w -i ", "/usr/bin/env -C ${HOME}/w ",
+    ])
+    def test_a_word_holding_a_brace_reaches_the_verb(self, tmp_path, prefix):
+        _assert_zone_walled(self._ZONE, tmp_path)
+        _assert_zone_walled(prefix + self._ZONE, tmp_path)
+
+    @pytest.mark.parametrize("prefix", [
+        "sudo -u 'a b' ", "env -C $(pwd)/x ", "sudo -u A=1 -E ", ">$(mktemp)/x ", "env -C ${HOME}/w ",
+    ])
+    def test_over_an_open_root_the_same_prefix_is_allowed(self, tmp_path, prefix):
+        assert_hook_allowed(run_bash_guard(prefix + "mv /tmp/a /tmp/b", tmp_path))
+
+    @pytest.mark.parametrize("prefix", [
+        "env -C $(dirname $(pwd))/x ",    # a nested substitution
+        "env -C $(cd a; pwd)/x ",         # a separator inside it
+        "env -C $(pwd)x ",                # a letter glued on after it (walled on base)
+        "env -C `pwd`_x ",
+        ">$(dirname $(pwd))/x ",          # the redirect target's twin
+    ])
+    def test_the_declared_limit_of_the_substitution_piece_stays_a_limit(self, tmp_path, prefix):
+        # declared in docs/HOOKS.md: the piece reads one level with no
+        # separator, brace, paren or backtick inside, and is taken where the
+        # start after its closing paren dies at once (a glued character that
+        # opens no arm of the anchor, or, for an argument, a flag after it);
+        # a glued letter would let that start read a wrapper run again,
+        # quadratic (`"env -i $(a)env " * n`: 113 -> 402 ms at 4 -> 8 KB);
+        # the day a reader takes these, this row reds and the sentence is
+        # rewritten on purpose
+        _assert_zone_walled(self._ZONE, tmp_path)
+        assert_hook_allowed(run_bash_guard(prefix + self._ZONE, tmp_path))
+
+    def test_the_runs_share_one_argument_grammar(self):
+        # spelled out for the ReDoS gate (literals and module-level names
+        # only), pinned here: the anchor's run, the slashed run and the
+        # carrier step read one argument word; the anchor's run declines
+        # every head of the star's other arms (the keyword roster and the
+        # exec openers read from their own fragments), and the slashed run,
+        # followed by an assignment run alone, declines a wrapper word, a
+        # digit and an assignment; the speed bump's inner fetch position is
+        # the anchor's run itself
+        bp = _bash_patterns_module()
+        sb = _speedbump_module()
+        assert bp._CMD_POS_KEYWORD + r"[ \t]" in bp._CMD_POS_WRAP_ARG_BEFORE_FLAG
+        assert "(?:ba|z|k|da)?sh[ \\t]+-c" in bp._CMD_POS_EXEC_QUOTE
+        assert "(?:ba|z|k|da)?sh[ \\t]+-c" in bp._CMD_POS_WRAP_ARG_OWNED
+        assert bp._CMD_POS_WRAP_ARG in bp._CMD_POS_WRAP_RUN
+        assert bp._WRAP_STEP_ARG in bp._CMD_POS_SLASHED_WRAP_RUN
+        for arg in (bp._CMD_POS_WRAP_ARG, bp._WRAP_STEP_ARG):
+            assert bp._CMD_POS_WRAP_ARG_WORD in arg and bp._CMD_POS_WRAP_ARG_WORD_ANY in arg
+        assert bp._WRAP_ARG_QUOTES in bp._CARRIER_WRAP_ARG_WORD
+        assert bp._CARRIER_WRAP_ARG_WORD in bp._CARRIER_WRAP_ONE
+        assert sb._FETCH_INNER_WRAP_ONE == bp._CMD_POS_WRAP_RUN
 
 
 class TestTheDirectoryAWriteRunsIn:
