@@ -38,6 +38,13 @@
   anyway rested on hooks that could still run on 3.10, which after Wave 2 they cannot); the
   branch-protection edit, which is GitHub-side and the operator's hand (0-B); whether Wave
   2 rides the same release as Wave 1 or the one after (Sub-task ordering).
+- Executed by the seat `air-work`: Wave 1 on `lane/build-the-floor-moves-to-3-11` (#504,
+  merged 2026-11-07 as `8dd10c01`); Waves 2 and 3 on
+  `lane/build-the-shims-go-the-hooks-speak-the-floor` (the dispatcher's assign
+  `20261107T113820Z-air-bcfd9d`). Wave 2's 0-A review (code-reviewer: no BLOCK, four WARNs)
+  was folded in just in time, each marked *(0-A, 2026-11-07)* below; the dispatcher's rulings
+  on that lane are `20261107T131309Z-air-b4bfb8` (the banner's floor warning survives, 2-C)
+  and `20261107T183723Z-air-2a3cad` (§C59 stays in place, empty, 3-A).
 
 ## Motivation
 
@@ -475,7 +482,8 @@ silence the SessionStart banner's own below-floor warning, and `plan_guard.py`'s
 is removed in favour of the shared reader rather than made unconditional (made
 unconditional it is an exit 1 the protocol reads as non-blocking: 4-A(d)).
 `_hook_utils::_toml_parser` returns `tomllib`;
-`::_regex_extract_string_list`, `::_read_toml_flat`'s no-parser arm, `::read_toml_table`'s
+`::_regex_extract_string_list` and its twin `::_regex_extract_scalar` *(0-A, 2026-11-07:
+the twin this list missed)*, `::_read_toml_flat`'s no-parser arm, `::read_toml_table`'s
 `tomli` retry and `::adopter_protected_prefixes`' degraded-reader message go;
 `::_project_name_from_pyproject` and `ci_guard::_ci_project_name_from_pyproject` become
 one `tomllib` read of `[project].name` or keep their text read with the 3.10 comment gone
@@ -527,6 +535,17 @@ an editable install current by `git pull`, since `pip` refuses the package on 3.
 `Requires-Python` (driven once in Wave 2 and recorded in Landing); the voice is for that
 host.
 
+*(0-A, 2026-11-07, and the ruling `b4bfb8`):* the SessionStart banner's own below-floor
+warning had no such call. Driven under a real Python 3.10.21 on a copy of the checkout with
+`espalier.toml` and a `.claude/settings.json` wired to it, `session_start` computed the
+warning, then crashed at `import tomllib` on the path from `_recall.indexed_sources` to
+`_toml_parser` and delivered no banner (stdout empty, the crash on stderr). `session_start`
+now imports `_start_refusal` under `__main__` before any sibling and calls
+`banner_below_floor`, whose banner is the floor's warning alone; a row in
+`tests/test_python_floor.py` pins the block's place and the standard-library names above it.
+No gate catches a run-time import of a 3.11-only name on the banner's path, nor 3.11-only
+syntax in `session_start.py` itself, which is outside ruff's five-file py310 table.
+
 **2-D The import allowlist** *(fix shape, untested; its own fixture is the refuter):* the
 syntax half of "the voice stays reachable" is 1-G's ruff target. The other half is
 imports: `ast.parse` and ruff both pass `import tomllib`, `from datetime import UTC` or
@@ -549,9 +568,12 @@ not None` -- the fallback spellings alone, never `_toml_parser`, which 2-B keeps
 been red forever). Written in Python `re` over the file list, not `grep`/`xargs`, since
 the Windows leg runs it; and driven once on an extracted release archive before the
 matrix does (`python3 scripts/archive_probe.py -- tests/test_python_floor.py -q -p
-no:cacheprovider`, `tests/CLAUDE.md` item 5), since it reads the tree. The one fixture
-string that matches today (`tests/test_test_suite_contract.py`, a quoted example) is
-reworded or allowlisted by the row with its reason. Earn the red: a scratch file carrying
+no:cacheprovider`, `tests/CLAUDE.md` item 5), since it reads the tree. *(0-A, 2026-11-07:
+the count.)* At the lane's base (`8dd10c01`) the spellings match 29 lines in 24 files, not
+one fixture string: 8 in the engine, 3 in `scripts/`, 4 in two hooks and 14 in 13 test
+files, each an arm 2-A, 2-B or 2-F removes (`tests/test_test_suite_contract.py`'s is an
+`assert tomllib is not None`, not a quoted example). The pattern also matches its own
+spelling, so the row assembles it from fragments and its source never matches. Earn the red: a scratch file carrying
 `import tomli` under `try`, `git add -N`'d, must red the row (the population is the index,
 so an untracked file is invisible to it). The no-parser arms themselves are gone by their
 own tests, not by this row: it pins the spellings, the tests pin the behaviour.
@@ -560,6 +582,14 @@ own tests, not by this row: it pins the spellings, the tests pin the behaviour.
 surviving the floor (a venv built from a venv, a text read of `pyproject.toml`) stays with
 its 3.10 wording removed. `pytest -q -m contract tests/test_marker_taxonomy.py` style
 checks and `test_marker_taxonomy` itself stay green.
+
+**2-G The module-top row** *(0-A, 2026-11-07: 2-B's rule had no row)*: 2-B's one rule, no
+module under `tools/cc/` imports `tomllib` at its top, is pinned in
+`tests/test_python_floor.py::TestTheFloorHasNoParserShims` by an AST walk over every
+`tools/cc/` module: the module body, through its top-level `if`, `try` and `with` blocks and
+class bodies, never a function body. At the base it names `plan_guard.py:96` and `:99`, the
+inline import 2-B removes. Earn the red: a scratch `tools/cc/` module with a module-top
+`import tomllib` reds it by name.
 
 ### Wave 3 — the records (rides Wave 2's lane, or its own)
 
@@ -570,11 +600,17 @@ move, so `ledger_row.py strike` refuses both at the head. So the lane first `rep
 with a probe that moves with the fix -- reads `pyproject.toml`'s `[project].dependencies`
 for the `tomli` marker from a subject other than the probe's own file, under the verb's
 rules (`memory/parallel-work-protocol.md` item 8 puts the row, the probe and the fix in one
-lane) -- and strikes them after Wave 1 lands the removal. §C59 retires with its two rows.
+lane) -- and strikes them after Wave 1 lands the removal. §C59 retires with its two rows
+*(the ruling `2a3cad`: retired by its strikes, its index row and section left in place with
+an empty Members table, as §C58 sits, since `tests/test_forward_ledger_completeness.py` pins
+the index and the sections to one key set and the struck rows keep their class tag)*.
 `DEF-900`'s row gets the note that `python -P` (3.11+) is now a route for the parity gates'
 `cwd` problem, re-read, not closed, through `repin --reason`: the row's text hash is its
 claim (`TestTextShaIsTheClaim`), so a note written any other way reads as a stale row. The
-pack's own §3 row in `task-packs/FORWARD_LEDGER.md` moves to LANDED wording with the merge.
+pack's own §3 row in `task-packs/FORWARD_LEDGER.md` leaves with the merge *(corrected
+2026-11-07: this said "moves to LANDED wording", which the ledger's rule 3 forbids, since
+`LANDED` there is a sweep marker and `TestLandedRowLingering` reds on a row left behind; the
+record is this pack's Landing)*.
 
 **3-B The convention.** `docs/CONVENTIONS.md`'s "`tomllib` import goes through
 `espalier._compat`" section keeps its rule (one import site) and replaces "dropping 3.10
