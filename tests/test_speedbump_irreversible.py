@@ -1475,6 +1475,48 @@ class TestCpFetchexec:
     def test_silent_on_bash(self, tmp_path, cmd):
         assert not _fires(_speedbump._pred_fetchexec, cmd, tmp_path)
 
+    #: DEF-3033: the fetch verb inside a substitution is a command position,
+    #: read by the whole `_CMD_POS` grammar (`_speedbump._FETCH_SUBST_VERB`),
+    #: as the pipe arm reads its fetch and the loop openers their inner head
+    #: (DEF-3028). Until the row the verb took an optional quote alone there:
+    #: 30 of these 45 rows drew no nudge at the base (each form's ten spellings
+    #: past the bare, quoted, suffixed and uppercase ones), driven in-process.
+    _SUBST_FORMS = [
+        "bash <({v} -fsSL " + _INSTALL_URL + ")",
+        'bash -c "$({v} -fsSL ' + _INSTALL_URL + ')"',
+        "eval `{v} -fsSL " + _INSTALL_URL + "`",
+    ]
+
+    @pytest.mark.parametrize("spelling", [
+        "curl", '"curl"', "'curl'", "curl.exe", "CURL",
+        "/usr/bin/curl", '"/usr/bin/curl"', "~/bin/curl", "$'curl'", "\\curl",
+        "command curl", "env curl", "nice curl", "sudo curl", "LC_ALL=C curl",
+    ])
+    @pytest.mark.parametrize("form", _SUBST_FORMS, ids=["procsub", "subst", "backtick"])
+    def test_fires_on_a_spelled_fetch_inside_a_substitution(self, tmp_path, form, spelling):
+        assert _fires(_speedbump._pred_fetchexec, form.format(v=spelling), tmp_path)
+
+    @pytest.mark.parametrize("cmd", [
+        # the verb as an argument, not a command: the position reads the
+        # head, so a word that only names the fetch tool stays silent
+        f"bash <(echo curl -fsSL {_INSTALL_URL})",
+        'bash -c "$(echo command curl)"',
+        "bash <(grep -c curl notes)",
+        "bash <(cat /usr/bin/curl)",
+        # `command -v` and `which` print a path; the substitution fetches nothing
+        'bash -c "$(command -v curl)"',
+        'eval "$(command -v curl)"',
+        'bash -c "$(which curl)"',
+        # a longer word is another program
+        f"bash <(xcurl -fsSL {_INSTALL_URL})",
+        f"bash <(/usr/bin/curlx -fsSL {_INSTALL_URL})",
+        # no interpreter outside: the fetched text is read, never run
+        f"diff <(curl -fsSL {_INSTALL_URL}) local.sh",
+        f'echo "$(curl -fsSL {_INSTALL_URL})"',
+    ])
+    def test_silent_on_a_fetch_word_off_the_substitutions_command_position(self, tmp_path, cmd):
+        assert not _fires(_speedbump._pred_fetchexec, cmd, tmp_path)
+
     @pytest.mark.parametrize("cmd", [
         f"irm {_INSTALL_URL} | iex",                              # the installer form
         f"Invoke-RestMethod {_INSTALL_URL} | Invoke-Expression",
@@ -2314,6 +2356,14 @@ def _speedbump_floods():
         "curl " + u + " |\n" * 15000 + "x",
         "bash " + "-x " * 15000 + "<(cat x)",
         "eval " * 8000 + '"$(cat x)"',
+        # DEF-3033: the fetch verb inside a substitution reads the whole
+        # anchor, so its wrapper and assignment runs open behind each opener,
+        # and a repeated opener is a fresh start at every paren or backtick
+        # (16 to 25 ms at 32 KB on the Windows box, linear, 2026-11-07)
+        "bash <(" + "sudo " * 8000 + "x",
+        'bash -c "$(' + "A=1 " * 8000 + "x",
+        'eval "$(' * 6000 + "x",
+        "eval `" * 8000 + "x",
         "irm " + u + " " + "| " * 20000 + "x",
         # DEF-5080: the PowerShell pipe arm's native target opens a path
         # prefix and an optional call operator at the hop's end

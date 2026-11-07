@@ -1505,14 +1505,27 @@ _FETCH_EXEC_PIPE_RE = re.compile(
     re.IGNORECASE,
 )
 
+#: The fetch verb inside a substitution is a command position, read by the
+#: whole `_CMD_POS` grammar as the loop openers read their inner enumerator
+#: head (`_bash_patterns._FOR_SUBST_REMOVE_RE`): each opener below stops
+#: before its paren or backtick, which `_CMD_POS_SEP` holds, so a wrapper
+#: word (`command curl`), an assignment prefix, a quote, `$'...'`, a leading
+#: backslash and a directory prefix (`/usr/bin/curl`) all reach the verb, as
+#: they reach it in the pipe arm. Until DEF-3033 the verb took an optional
+#: quote alone there, so those spellings drew no nudge where the bare verb
+#: drew one.
+_FETCH_SUBST_VERB = (
+    _bash_patterns._CMD_POS + _FETCH_VERB + _bash_patterns._EXE_SUFFIX + r"\b"
+    + _bash_patterns._QUOTED_VERB_TAIL
+)
+
 # `bash <(curl ...)`, `source <(curl ...)`, `. <(wget -qO- ...)`, `python3
 # <(curl ...)`: the interpreter (or `source` / `.`) at command position with a
 # fetch inside a process substitution among its arguments.
 _FETCH_EXEC_PROCSUB_RE = re.compile(
     _bash_patterns._CMD_POS + r"(?:" + _FETCH_INTERPRETER + r"|source|\.)"
     + _bash_patterns._QUOTED_VERB_TAIL   # the verb in quotes (DEF-5080)
-    # the fetch in quotes inside the substitution (DEF-5080)
-    + r"(?:[ \t]+-[^\s;&|]+){0,8}[ \t]+<\([ \t]*[\"']?" + _FETCH_VERB + r"\b",
+    + r"(?:[ \t]+-[^\s;&|]+){0,8}[ \t]+<(?=\()" + _FETCH_SUBST_VERB,
     re.IGNORECASE,
 )
 
@@ -1525,8 +1538,7 @@ _FETCH_EXEC_SUBST_RE = re.compile(
     + r"(?:eval" + _bash_patterns._QUOTED_VERB_TAIL
     + r"|(?:" + _FETCH_SHELL + r"|python[0-9.]*)" + _bash_patterns._QUOTED_VERB_TAIL
     + r"[ \t]+-[A-Za-z]*c\b)"
-    # the fetch in quotes inside the substitution (DEF-5080)
-    r"[ \t]+[\"']?(?:\$\(|`)[ \t]*[\"']?" + _FETCH_VERB + r"\b",
+    r"[ \t]+[\"']?(?:\$(?=\()|(?=`))" + _FETCH_SUBST_VERB,
     re.IGNORECASE,
 )
 

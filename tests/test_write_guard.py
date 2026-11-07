@@ -790,6 +790,25 @@ class TestQuotedVerbTailIsUniform:
             f"{arm} does not read the verb in quotes")
         assert _speedbump_fires(sb, reader, arm, "Bash", quoted, tmp_path)
 
+    #: DEF-3033: the two fetch-and-run arms a substitution feeds hold a second
+    #: command position, the fetch verb inside it, which reads the whole anchor
+    #: as the loop openers' inner head does (DEF-3028): the quote pair, `$'...'`,
+    #: a leading backslash, a directory prefix quoted or not, a wrapper word and
+    #: an assignment prefix, each beside the bare control.
+    @pytest.mark.parametrize("spelling", [
+        '"curl"', "'curl'", "$'curl'", "\\curl", "/usr/bin/curl", '"/usr/bin/curl"',
+        "command curl", "env curl", "LC_ALL=C curl",
+    ])
+    @pytest.mark.parametrize("arm", ["_FETCH_EXEC_PROCSUB_RE", "_FETCH_EXEC_SUBST_RE"])
+    def test_a_prefixed_fetch_verb_inside_a_substitution_bumps(self, tmp_path, arm, spelling):
+        sb = _speedbump_module()
+        _verb, bare, reader = self._SPEEDBUMP_FIXTURES[arm]
+        rx = getattr(sb, arm)
+        for cmd in (bare, _respelled(bare, "curl", spelling, inner=True)):
+            assert any(rx.search(text) for text in _speedbump_readings(sb, reader, "Bash", cmd)), (
+                f"{arm} does not read the fetch verb in {cmd!r}")
+            assert _speedbump_fires(sb, reader, arm, "Bash", cmd, tmp_path), cmd
+
 
 class TestBinaryVerbSpellingIsUniform:
     """DEF-1161, its class widened (air ff9ddb): a native binary's verb as a
