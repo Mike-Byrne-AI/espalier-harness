@@ -2815,12 +2815,15 @@ def _copy_isolated_tree(src: Path, dst: Path) -> Path:
 #: four windows-latest workers' ``git add -A`` took the whole bound together
 #: (run 38890464527, the per-worker report below), where 120 s had let every
 #: build finish (run 38874132596). At 180 s the four adds took the whole bound
-#: again (run 39143193815, 2026-10-18: 63 errors before the first test), where
-#: they ran 85 to 130 s on other days (run 42392160365: 85.4 to 85.6 s each), so
-#: the bound is twice that one: it ends a hung git, and the leg's own job limit
-#: (240 min) stays far above it; the near-bound warning below now fires past
-#: 180 s, where the builds failed (DEF-2044). The wait-budget contract leaves a
-#: hook pytest calls outside any item uncharged, as it does module-level code.
+#: again (run 39143193815, 2026-10-18: the build failed before the first test,
+#: and its 63 requesters errored), so their true time there is unread; they
+#: completed in 85 to 130 s on other days (run 42392160365: 85.4 to 85.6 s
+#: each). The bound is twice that 180 s: it ends a stalled git, and the leg's own
+#: job limit (240 min) stays far above it. The near-bound warning below now
+#: fires past 180 s, where the builds failed, not past 90 s; a drift under that
+#: still shows in the per-worker build line the summary always prints
+#: (DEF-2044). The wait-budget contract leaves a hook pytest calls outside any
+#: item uncharged, as it does module-level code.
 _BUILD_HOOK_STEP_TIMEOUT_S = 360
 #: The lazy path (no hook ran) builds inside a test, so each of its spawns, the
 #: git steps and ``espalier init`` alike, stays below the suite's 60 s ceiling.
