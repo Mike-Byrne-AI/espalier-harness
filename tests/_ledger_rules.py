@@ -316,10 +316,10 @@ TEXT_OVER_OWN_SUBJECT = {
     "DEF-5058",
     #: DEF-3034 (filed 2026-11-07 from the dispatcher's 11-04 run review): the
     #: deliverable IS Core Rule 10's cell-time sentence in CLAUDE.md, a rule the
-    #: seats read, with no code behind it to parse. The probe reads the figure
-    #: the sentence states and is open while its upper bound sits under the
-    #: suspect line, so a pointer or a changelog line leaves it open; a
-    #: re-measured figure closes it, which is the fix. The DEF-933 shape: same
+    #: seats read, with no code behind it to parse. The probe reads the
+    #: suspect line the sentence states and is open while it sits under the
+    #: slowest green cell, so a pointer or a changelog line leaves it open; a
+    #: re-measured line closes it, which is the fix. The DEF-933 shape: same
     #: reason, earns the slot.
     "DEF-3034",
 }
