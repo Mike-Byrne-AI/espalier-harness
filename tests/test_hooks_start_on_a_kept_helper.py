@@ -285,10 +285,11 @@ class Cell:
     hook: str
     event: str
     name: str | None
-    kind: str        # "deny-hook" (a floor name gone) | "degraded" (a budget name gone) | "reporter" | "intact" | "planted" | "raised" | "syntax" | "floor" (a floor module raising)
+    kind: str        # "deny-hook" (a floor name gone) | "degraded" (a budget name gone) | "reporter" | "intact" | "planted" | "raised" | "syntax" | "floor" (a floor module raising) | "body" (the hook's own module body raising)
     rc: int
     stdout: str
     stderr: str
+    audit: str = ""  # the cell's audit records, read before its tree goes
 
 
 def _copy_cc(root: Path) -> None:
@@ -317,6 +318,22 @@ def _floor_rel(name: str) -> str:
     return "tools/cc/_json_safe.py" if name == "_json_safe" else f"tools/cc/hooks/{name}.py"
 
 
+#: write_guard's block that splits the hook process from its judging child.
+_SPLIT = 'if __name__ == "__main__":\n    if sys.argv[1:2] == [_JUDGE_FLAG]:\n'
+
+
+def _plant_in_the_body(path: Path, text: str, before: str | None = None) -> None:
+    """Put ``text`` into a hook's own module body: before ``before`` (one
+    place in the file), else before its last ``__main__`` block."""
+    source = path.read_text(encoding="utf-8")
+    if before is None:
+        at = source.rindex('\nif __name__ == "__main__":\n')
+    else:
+        assert source.count(before) == 1, f"{path.name}: the plant's place moved"
+        at = source.index(before)
+    path.write_text(source[:at] + text + source[at:], encoding="utf-8")
+
+
 def _cell(base: Path, job: tuple[str, str, str | None, str], allowance: RetryAllowance) -> Cell:
     hook, event, name, kind = job
     root = base / f"{kind}-{hook[:-3]}-{name or 'none'}"
@@ -331,11 +348,21 @@ def _cell(base: Path, job: tuple[str, str, str | None, str], allowance: RetryAll
         sibling = root / "tools" / "cc" / "hooks" / f"{name}.py"
         tail = "\nraise KeyError(1)\n" if kind == "raised" else "\ndef (:\n"
         sibling.write_bytes(sibling.read_bytes() + tail.encode("utf-8"))
+    elif kind == "body":
+        # Before the hook's last `__main__` block (each ends in a
+        # `raise SystemExit(...main(...))`, so a raise placed after it never
+        # runs); `split` is write_guard's other place, before the block that
+        # splits the hook process from its judging child, after the
+        # module-level constants the hard bound reads.
+        _plant_in_the_body(root / "tools" / "cc" / "hooks" / hook, _RAISE, before=_SPLIT if name == "split" else None)
     elif name is not None:
         _skew(root, name)
     run = _run_hook(root, hook, event, allowance=allowance)
+    records = root / "audit"
+    audit = "".join(p.read_text(encoding="utf-8", errors="replace")
+                    for p in (sorted(records.iterdir()) if records.is_dir() else []) if p.is_file())
     shutil.rmtree(root, ignore_errors=True)
-    return Cell(hook, event, name, kind, run.returncode, run.stdout, run.stderr)
+    return Cell(hook, event, name, kind, run.returncode, run.stdout, run.stderr, audit)
 
 
 @pytest.fixture(scope="module")
@@ -352,6 +379,9 @@ def cells(tmp_path_factory) -> list[Cell]:
         jobs.append((hook, event, "_integrity", "planted"))
         jobs.append((hook, event, "_integrity", "raised"))
         jobs.append((hook, event, "_integrity", "syntax"))
+        jobs.append((hook, event, None, "body"))
+        if hook == "write_guard.py":
+            jobs.append((hook, event, "split", "body"))
         for name in FLOOR_PLANTS:
             jobs.append((hook, event, name, "floor"))
     for hook, event in reporter_hooks().items():
@@ -457,7 +487,7 @@ class TestTheDerivation:
                 for n in ast.walk(stmt)
                 if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == HELPER
             }
-            assert helper_attrs(tree) >= module_level and (hook == "config_guard.py" or len(helper_attrs(tree)) > len(module_level)), hook
+            assert helper_attrs(tree) >= module_level and len(helper_attrs(tree)) > len(module_level), hook
 
 
 # ── a deny hook on a kept helper ──────────────────────────────────────────────
@@ -467,6 +497,53 @@ class TestADenyHookOnAKeptHelper:
     def test_no_cell_exits_one(self, cells):
         ones = [_summary(c) for c in cells if c.rc == 1]
         assert not ones, ones
+        # A raise in a hook's own module body, after its siblings imported, is
+        # the start refusal too: named as the body's, never as an import, with
+        # no upgrade offered or ruled out, and recorded as the body's.
+        body = [c for c in cells if c.kind == "body"]
+        assert {c.hook for c in body} == set(deny_hooks()), sorted(c.hook for c in body)
+        for c in body:
+            reason = _reason(c)
+            assert c.rc == 0 and _is_refusal(c), _summary(c)
+            assert f"tools/cc/hooks/{c.hook} raised KeyError" in reason, reason
+            assert "while the hook's own module body ran" in reason, reason
+            assert "imported its siblings" not in reason and "upgrade" not in reason, reason
+            assert '"skew": "module body"' in c.audit, (c.hook, c.audit[-400:])
+
+    def test_a_raise_past_the_module_body_is_never_named_as_the_bodys(self, tmp_path):
+        # The module-body refusal ends where the body does (`body_done`). A
+        # raise escaping `main` once it has read the payload keeps the hook's
+        # own handling: a body refusal there could not read the Stop loop
+        # signal (a lockout, driven by the code review). And nothing after
+        # write_guard's parent writes a decision adds a second document. Both
+        # keep today's exit, so they are judged on what they print, apart from
+        # the cells, which assert every exit.
+        for hook, event in sorted(deny_hooks().items()):
+            root = tmp_path / f"main-{hook[:-3]}"
+            _copy_cc(root)
+            path = root / "tools" / "cc" / "hooks" / hook
+            source = path.read_text(encoding="utf-8")
+            main = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name == "main")
+            guard = next(n for n in main.body if isinstance(n, ast.Try))
+            lines = source.splitlines(keepends=True)
+            lines.insert(guard.lineno - 1, "    sys.stdin.read()\n    raise KeyError(1)\n")
+            path.write_text("".join(lines), encoding="utf-8")
+            run = _run_hook(root, hook, event)
+            audit = _audit_text(root / "audit")
+            assert "module body" not in run.stdout, (hook, run.stdout)
+            assert '"skew": "module body"' not in audit, (hook, audit[-400:])
+        root = tmp_path / "relay"
+        _copy_cc(root)
+        (root / ".env").write_text("TOKEN=x\n", encoding="utf-8")
+        relay = "        sys.stdout.buffer.write(out)\n        sys.stdout.flush()\n"
+        guard_file = root / "tools" / "cc" / "hooks" / "write_guard.py"
+        source = guard_file.read_text(encoding="utf-8")
+        assert source.count(relay) == 1, "the parent's relay moved; update this plant with it"
+        guard_file.write_text(source.replace(relay, relay + "        raise KeyError(1)\n"), encoding="utf-8")
+        run = _run_payload(root, "write_guard.py", {"tool_name": "Read", "tool_input": {"file_path": ".env"}},
+                           root / "audit")
+        documents = [line for line in run.stdout.splitlines() if line.strip().startswith("{")]
+        assert len(documents) == 1 and '"permissionDecision": "deny"' in documents[0], (run.stdout, run.stderr[-400:])
 
     def test_every_cell_keeps_one_channel(self, cells):
         # Exit 0 with stdout its own channel (a decision, a reporter's context,
@@ -556,9 +633,15 @@ _WEDGE_PLANTS = {
     "seam": ("../_json_safe.py", _RAISE),
     "renamed": ("_maintenance_mode.py", "\ndel relaunch_hint\n"),
     "refusal": (f"{REFUSAL}.py", _RAISE),
+    # a raise in write_guard's own module body, after its imports: put in
+    # before its last `__main__` block, never appended (an appended raise
+    # comes after the one that ends the process, and never runs)
+    "body": ("write_guard.py", _RAISE),
 }
+#: The plants put into the hook's own body rather than appended.
+_IN_THE_BODY = frozenset({"body"})
 #: The plants whose table rows run both ways (``unread`` lets nothing through).
-_BOTH_WAYS = ("raised", "kept", "crash", "floor", "helper", "seam", "renamed", "refusal")
+_BOTH_WAYS = ("raised", "kept", "crash", "floor", "helper", "seam", "renamed", "refusal", "body")
 #: The plant whose pass saves no copy, by the words its context says it in:
 #: the start refusal itself is what failed (DEF-3008).
 _NO_COPY = {"refusal": "No copy of the file was saved first"}
@@ -656,6 +739,9 @@ _RESTORE_TABLE: list[tuple[str, dict, bool]] = [
     # a call the last resort cannot read is no restore
     ("refusal", {"tool_name": "Bash", "tool_input": {}}, False),
     ("unread", _bash(f"git restore --source=HEAD -- tools/cc/hooks/{HELPER}.py"), False),
+    # a raise in the guard's own module body: its own restore passes, with its copy
+    ("body", _bash("git restore --source=HEAD -- tools/cc/hooks/write_guard.py"), True),
+    ("body", _bash(f"git restore {_UNRELATED}"), False),
 ]
 
 
@@ -675,6 +761,9 @@ def _plant(root: Path, plant: str) -> None:
     _copy_cc(root)
     name, text = _WEDGE_PLANTS[plant]
     target = root / "tools" / "cc" / "hooks" / name
+    if plant in _IN_THE_BODY:
+        _plant_in_the_body(target, text)
+        return
     target.write_bytes(target.read_bytes() + text.encode("utf-8"))
 
 
@@ -814,15 +903,19 @@ class TestAFloorThatRaisesIsRefused:
             assert "`espalier upgrade --execute .`" in reason, reason
             assert reason.endswith("Every call this hook judges is refused until then."), reason
 
-    @pytest.mark.parametrize("plant", [REASONS, REFUSAL])
+    @pytest.mark.parametrize("plant", [REASONS, REFUSAL, "body"])
     def test_a_stop_refused_at_start_lets_the_loop_signal_through(self, plant, tmp_path):
         # The protocol's loop signal: the Stop a start refusal blocked is
         # continued with stop_hook_active set, and that one goes through, so a
         # broken start pauses a Stop once and never locks it (the
-        # failure-mode review: both refusals re-blocked it).
+        # failure-mode review: both refusals re-blocked it). `body`: a raise
+        # in the Stop hook's own module body, refused the same way.
         root = tmp_path / f"loop-{plant}"
         _copy_cc(root)
-        _append(root, _floor_rel(plant), _RAISE)
+        if plant == "body":
+            _plant_in_the_body(root / "tools" / "cc" / "hooks" / "stop_gate.py", _RAISE)
+        else:
+            _append(root, _floor_rel(plant), _RAISE)
         runs = {}
         for active in (False, True):
             runs[active] = subprocess.run(
@@ -867,7 +960,9 @@ class TestAFloorThatRaisesIsRefused:
         # The class, read from the source: a module-level import of a sibling
         # outside every `try` is one whose failure is exit 1, and so is one
         # under a `try` that catches less than Exception (the `_json_safe`
-        # shape under the helper: a KeyError passes `except ImportError`).
+        # shape under the helper: a KeyError passes `except ImportError`). An
+        # `if TYPE_CHECKING:` body never runs, so only its `else` is read
+        # (write_guard's type-only imports of the pattern path, DEF-946).
         bare: list[str] = []
 
         def visit(stmts: list[ast.stmt]) -> None:
@@ -876,6 +971,8 @@ class TestAFloorThatRaisesIsRefused:
                     bare.extend(a.name for a in s.names if _is_sibling(a.name))
                 elif isinstance(s, ast.ImportFrom) and s.module and _is_sibling(s.module):
                     bare.append(s.module)
+                elif isinstance(s, ast.If) and isinstance(s.test, ast.Name) and s.test.id == "TYPE_CHECKING":
+                    visit(s.orelse)
                 elif isinstance(s, (ast.If, ast.With)):
                     visit(s.body)
                     visit(getattr(s, "orelse", []))
@@ -968,7 +1065,14 @@ class TestTheOneRestoreAWedgedGuardLetsThrough:
         reason = _output(refused)["permissionDecisionReason"]
         assert "takes `say_once` from tools/cc/hooks/_hook_utils.py" in reason, reason
         assert "espalier upgrade --execute" in reason, reason
-        assert "(or the same command for the file you edited, if it is tools/cc/hooks/_hook_utils.py or " in reason, reason
+        # Both files: the taker's restore first, then the helper as the file you
+        # edited. Which file takes the name first is an import-order fact (the
+        # eager name read, since the pattern modules load on first use, DEF-946).
+        assert "(or the same command for the file you edited, if it is tools/cc/hooks/_hook_utils.py" in reason, reason
+        assert "`git restore --source=HEAD -- tools/cc/hooks/_hook_utils.py`" not in reason, reason
+        # The taker is write_guard itself: its eager helper-name read runs
+        # before any pattern module loads, so the restore it names first is its own.
+        assert "git restore --source=HEAD -- tools/cc/hooks/write_guard.py" in reason, reason
 
     def test_a_quoted_shell_operator_refuses_even_where_the_path_would_match(self, tmp_path):
         # The operator check is its own refusal, not the operand count's: a
@@ -1081,9 +1185,8 @@ def _new_module(root: Path) -> str:
     return "tools/cc/hooks/_speedbump.py"
 
 
-def _merge_conflict(root: Path) -> str:
+def _merge_conflict(root: Path, rel: str = "tools/cc/hooks/_reinject.py") -> str:
     # A merge that conflicts in a hook file leaves markers, a SyntaxError.
-    rel = "tools/cc/hooks/_reinject.py"
     for branch, text in (("side", "\nSIDE = 1\n"), ("main", "\nSIDE = 2\n")):
         if branch == "side":
             assert _git(root, "switch", "-q", "-c", "side").returncode == 0
@@ -1108,8 +1211,15 @@ def _floor_name_gone(root: Path) -> str:
     return "tools/cc/hooks/_maintenance_mode.py"
 
 
+def _pattern_merge_conflict(root: Path) -> str:
+    # The same markers in a module the guard loads on first use: a SyntaxError
+    # raised at that load, which the crash guard reads by its filename.
+    return _merge_conflict(root, "tools/cc/hooks/_speedbump.py")
+
+
 _SCENARIOS = {"staged": _staged_name_error, "circular": _circular, "new-module": _new_module,
-              "merge-conflict": _merge_conflict, "floor": _floor_raises, "floor-name-gone": _floor_name_gone}
+              "merge-conflict": _merge_conflict, "pattern-merge-conflict": _pattern_merge_conflict,
+              "floor": _floor_raises, "floor-name-gone": _floor_name_gone}
 
 
 @pytest.mark.timeout(_CELLS_CEILING_S)
@@ -1119,15 +1229,27 @@ class TestTheNamedRestoreRepairsTheGuard:
     guard starts again. The table above judges the hook's JSON; this is the
     oracle that the command it names is the repair."""
 
+    #: The scenarios that break `_bash_patterns` or `_speedbump`, which the
+    #: guard loads on a mutation's first use (DEF-946): a read-only call passes
+    #: while they are broken, so the file can be read, and a mutation meets the
+    #: crash guard, which names the file and lets the same restore through.
+    _ON_THE_PATTERN_PATH = frozenset({"staged", "circular", "new-module", "pattern-merge-conflict"})
+    _MUTATION = {"tool_name": "Edit", "tool_input": {"file_path": "notes.txt", "old_string": "a", "new_string": "b"}}
+
     @pytest.mark.parametrize("scenario", sorted(_SCENARIOS))
     def test_the_command_the_refusal_names_repairs_the_wedge(self, tmp_path, scenario):
         root = tmp_path / scenario
         _committed_copy(root)
         edited = _SCENARIOS[scenario](root)
         audit = root / "audit"
-        refused = _run_payload(root, "write_guard.py", _NOOP_INPUT["PreToolUse"], audit)
+        on_the_path = scenario in self._ON_THE_PATTERN_PATH
+        payload = self._MUTATION if on_the_path else _NOOP_INPUT["PreToolUse"]
+        refused = _run_payload(root, "write_guard.py", payload, audit)
         reason = json.loads(refused.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
-        assert "cannot start" in reason and edited in reason, reason
+        assert ("internal error" if on_the_path else "cannot start") in reason and edited in reason, reason
+        if on_the_path:
+            read = _run_payload(root, "write_guard.py", _NOOP_INPUT["PreToolUse"], audit)
+            assert read.returncode == 0 and not read.stdout.strip(), (read.stdout, read.stderr[-300:])
         command = f"git restore --source=HEAD -- {edited}"
         assert "`git restore --source=HEAD -- " in reason, reason
         passed = _run_payload(root, "write_guard.py", _bash(command), audit)
@@ -1135,7 +1257,7 @@ class TestTheNamedRestoreRepairsTheGuard:
         assert "permissionDecision" not in out and "was let through" in out["additionalContext"], out
         ran = _git(root, *command.split()[1:])
         assert ran.returncode == 0, ran.stderr
-        judged = _run_payload(root, "write_guard.py", _NOOP_INPUT["PreToolUse"], audit)
+        judged = _run_payload(root, "write_guard.py", payload, audit)
         assert judged.returncode == 0 and "deny" not in judged.stdout, (judged.stdout, judged.stderr[-300:])
 
     def test_the_last_resorts_command_repairs_it_from_any_directory(self, tmp_path):
@@ -1195,20 +1317,30 @@ class TestTheGuardIsReachable:
 
     def test_the_pre_fix_shape_exits_one_so_the_detector_can_red(self, tmp_path):
         # Earn the red: disarm write_guard's guard on a copy (the handler call
-        # becomes a bare re-raise, the bare-import shape this lane replaced) and
-        # delete a floor name; the hook dies with exit 1 -- exactly what
-        # test_no_cell_exits_one exists to catch.
-        root = tmp_path / "prefix"
-        _copy_cc(root)
-        hook = root / "tools" / "cc" / "hooks" / "write_guard.py"
-        text = hook.read_text(encoding="utf-8")
+        # becomes a bare re-raise, the bare-import shape this lane replaced, and
+        # the module-body exception hook is not installed) and delete a floor
+        # name; the hook dies with exit 1 -- exactly what test_no_cell_exits_one
+        # exists to catch. Then the body cells' red: the exception hook alone
+        # disarmed and a raise planted in the hook's own body, exit 1 again.
+        hooked = '    _start_refusal.refuse_on_body_raise("write_guard", "PreToolUse")\n'
         armed = '    if __name__ != "__main__":\n        raise\n    _start_refusal.refuse_on_helper_skew("write_guard", "PreToolUse", _skew)\n'
-        assert text.count(armed) == 1, "the guard's shape moved; update this control with it"
-        hook.write_text(text.replace(armed, "    raise\n"), encoding="utf-8")
-        _skew(root, "payload_cwd")
-        run = _run_hook(root, "write_guard.py", "PreToolUse")
-        assert run.returncode == 1, (run.returncode, run.stdout, run.stderr)
-        assert run.stdout.strip() == "", run.stdout
+        for shape in ("import", "body"):
+            root = tmp_path / f"prefix-{shape}"
+            _copy_cc(root)
+            hook = root / "tools" / "cc" / "hooks" / "write_guard.py"
+            text = hook.read_text(encoding="utf-8")
+            assert text.count(armed) == 1 and text.count(hooked) == 1, "the guard's shape moved; update this control with it"
+            text = text.replace(hooked, "")
+            if shape == "import":
+                text = text.replace(armed, "    raise\n")
+                _skew(root, "payload_cwd")
+            else:
+                at = text.rindex('\nif __name__ == "__main__":\n')
+                text = text[:at] + _RAISE + text[at:]
+            hook.write_text(text, encoding="utf-8")
+            run = _run_hook(root, "write_guard.py", "PreToolUse")
+            assert run.returncode == 1, (shape, run.returncode, run.stdout, run.stderr)
+            assert run.stdout.strip() == "", (shape, run.stdout)
 
     def test_the_last_resort_disarmed_exits_one_so_the_floor_cells_can_red(self, tmp_path):
         # Earn the last resort's red (DEF-3008): on a copy, its handler becomes

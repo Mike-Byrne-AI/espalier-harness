@@ -94,6 +94,32 @@ needed some forty module-level re-exports. The module-top `try`/`except` keeps
 every import at module scope, and its handler refuses only under `__main__`,
 so an in-process importer still sees the real error.
 
+One exception, by measure: `write_guard`'s two pattern modules,
+`_bash_patterns` and `_speedbump` (about two thirds of a read-only call's
+cost), import on first use, from `_load_the_pattern_path`, never at the top.
+Every module-level line built from them is an `@_on_the_pattern_path` step,
+binding its name under a `global`; every function that reads such a name calls
+the loader first; and nothing that runs at import (a module-level statement, a
+class body, a default, a decorator) or a module-level lambda reads one, since a
+read there is a NameError when the judging child imports the file, which
+wedges the guard (the module-body refusal below: every call refused until the
+file is restored). `tests/test_write_guard.py::TestThePatternPath`
+reads all three from the source, and the floor's helper names stay in the eager
+module-top read, so a kept helper still refuses at the start.
+
+An exception that escapes a deny hook's module body after those imports is
+refused too, never exit 1: each hook, under `__main__` and before the guarded
+`try`, installs `_start_refusal.refuse_on_body_raise` as `sys.excepthook`, and
+`raise SystemExit(0)` inside an exception hook exits 0 (3.11 to 3.14). The
+module body only: `_start_refusal.body_done()` puts the old hook back at the top
+of each hook's last `__main__` block, before `main` (which has read the payload
+by then, so a body refusal past it would miss the Stop loop signal), and in
+`write_guard`'s parent before it writes a decision. A raise past the body is
+`main`'s crash guard's, as before. A plant that tests it goes before the hook's
+last `__main__` block: each ends by raising `SystemExit` with `main`'s result
+(`plan_guard` and `write_guard` through `int(main(...))`), so a raise placed
+after it never runs.
+
 ## Maintenance mode — parent-shell launch only
 
 `ESPALIER_MAINTENANCE_MODE=1` bypasses friction-only checks (write_guard

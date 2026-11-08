@@ -4765,6 +4765,18 @@ class TestDoctorNamesAHookThatCannotStart:
         lines = self._start_lines(result)
         assert len(lines) == 1 and "post_compact.py" in lines[0] and "SyntaxError" in lines[0], lines
 
+    def test_a_pattern_module_that_raises_names_the_guard_that_loads_it(self, tmp_path):
+        # write_guard imports its two pattern modules on first use, not at its
+        # top, so an import alone reads a broken one as a hook that starts; the
+        # probe runs the guard's loader too, and names the guard.
+        tree = self._init_tree(tmp_path)
+        pattern = tree / "tools" / "cc" / "hooks" / "_speedbump.py"
+        pattern.write_text(pattern.read_text(encoding="utf-8") + "\nraise KeyError(9)\n", encoding="utf-8")
+        result = run_doctor_check(tree, skip_self_host=True)
+        lines = self._start_lines(result)
+        guard = [ln for ln in lines if ln.split(" -- ", 1)[0].endswith("/write_guard.py")]
+        assert len(guard) == 1 and "KeyError" in guard[0], lines
+
     def test_dropping_the_call_reads_the_skewed_tree_as_healthy(self, tmp_path, monkeypatch):
         # The mutation the pack names, earned in-suite: with the check gone the
         # two dead hooks are invisible to doctor again.

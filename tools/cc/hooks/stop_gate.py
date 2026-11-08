@@ -103,9 +103,11 @@ except Exception as _floor:  # noqa: BLE001 -- the start refusal itself cannot i
     sys.stdout.flush()
     raise SystemExit(0) from None
 # Below the supported Python floor, say the floor first (write_guard.py says
-# why); a Stop the protocol continued after that block goes through.
+# why); a Stop the protocol continued after that block goes through. Then a
+# raise that escapes this module's body is the start refusal (the same pass).
 if __name__ == "__main__":
     _start_refusal.refuse_below_floor("stop_gate", "Stop")
+    _start_refusal.refuse_on_body_raise("stop_gate", "Stop")
 try:
     import _hook_utils  # noqa: E402
     import _denial_reasons  # noqa: E402
@@ -2193,4 +2195,5 @@ def _run_main() -> int:
 
 
 if __name__ == "__main__":
+    _start_refusal.body_done()  # the module body ends here: a raise past it is main's crash guard's
     raise SystemExit(main())

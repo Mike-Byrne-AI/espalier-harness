@@ -582,7 +582,7 @@ DANGEROUS_PS_PATTERN_FALLBACK = (
 
 WRITE_GUARD_INTERNAL_ERROR = (
     "write_guard internal error; failing closed."
-    " Re-issue once; if every call is denied the guard is wedged: `/status --log` counts it, and the repair is made from a terminal outside this session."
+    " Re-issue once; if the next mutation is denied the same way the guard is wedged (a read-only call may still pass): `/status --log` counts it, and the repair is made from a terminal outside this session."
 )
 
 # write_guard's own time budget ran out before its judgment did (DEF-1160).
@@ -1079,7 +1079,8 @@ _OPERATOR_FACING_TEMPLATES: tuple[str, ...] = (
 #: file's contents), as the record never carries it either.
 WRITE_GUARD_CRASHED_AT = (
     "write_guard internal error ({error} at {file}:{line}); failing closed. Re-issue"
-    " once. If every call is denied the guard is wedged, and if {file} is being"
+    " once. If the next mutation is denied the same way the guard is wedged (a"
+    " read-only call may still pass, so the file can be read), and if {file} is being"
     " edited, restore it to HEAD: {restore}. Otherwise `/status --log` counts it and"
     " the repair is made from a terminal outside this session."
 )

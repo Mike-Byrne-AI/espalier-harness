@@ -3418,6 +3418,9 @@ class TestCommandPositionClassClose:
         import _bash_patterns
         import write_guard
 
+        # The guard binds its pattern names on first use (DEF-946): a census of
+        # `vars(write_guard)` taken before that sees none of them.
+        write_guard._load_the_pattern_path()
         seen, found = set(), {}
         for mod in (_bash_patterns, _speedbump, write_guard):
             for name, obj in vars(mod).items():
@@ -4045,6 +4048,7 @@ class TestCommandPositionClassClose:
         import _bash_patterns
         import write_guard
 
+        write_guard._load_the_pattern_path()   # its pattern names bind on first use (DEF-946)
         verb_re = _re.compile(r"\b(?:" + "|".join(cls._COMMAND_VERBS) + r")\b")
         found = {}
         for mod in (_speedbump, _bash_patterns, write_guard):
