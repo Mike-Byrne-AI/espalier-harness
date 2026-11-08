@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._cmd_pos_anchor import is_bash_anchored
+from tests._cmd_pos_anchor import bash_anchors, is_bash_anchored
 from tests._spaced_paths import PS, fill, quoted
 
 HOOKS_DIR = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
@@ -3535,7 +3535,9 @@ class TestCommandPositionClassClose:
         import _bash_patterns
 
         out: list[str] = []
-        tail = rx.pattern.replace(_bash_patterns._CMD_POS_NO_VERB, "")
+        tail = rx.pattern
+        for anchor in bash_anchors(_bash_patterns):
+            tail = tail.replace(anchor, "")
         if rx.flags & _re.DOTALL:
             out.append(f"{name}: compiled with re.DOTALL, so `.` reaches past a newline")
         tail = _re.sub(r"\(\?<?[=!](?:\\.|[^()])*\)", "()", tail)
