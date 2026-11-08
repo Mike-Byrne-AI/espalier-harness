@@ -20,14 +20,10 @@ import pytest
 
 import ast
 import re
-import sys
 from pathlib import Path
 from tests._live_tree import checkout_rglob
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # pragma: no cover -- 3.10 fallback (espalier supports >=3.10)
-    import tomli as tomllib  # type: ignore[no-redef]
+import tomllib
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 # The shipped workflow asset; byte-identical to the root .github/ copy

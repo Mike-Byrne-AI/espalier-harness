@@ -104,6 +104,9 @@ _DENY_REASON_MARKERS: tuple[str, ...] = (
     "config_guard internal error",
     # stop_gate fail-CLOSED umbrella re-blocks on internal crash.
     "stop_gate internal error",
+    # Below the supported Python floor: each deny hook's refusal and the
+    # SessionStart banner say the floor's one sentence.
+    "does not run on Python",
 )
 
 

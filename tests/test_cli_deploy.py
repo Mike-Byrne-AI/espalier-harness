@@ -3721,12 +3721,12 @@ class TestOnboardingProbesDoNotWalk:
         builders[state]()
 
     @staticmethod
-    def _harness_reads(rid: str, root: Path, *, no_parser: bool = False) -> str:
+    def _harness_reads(rid: str, root: Path) -> str:
         """The row's verdict as the harness's own readers give it: the plan
-        gate's key reader for ONB-6 (its regex arm with ``no_parser``); the
-        engine's config loader and the goal's decoder for ONB-1, with the row's
-        section rule; doctor's untouched-seed check for ONB-7, an undecodable
-        stub edited as the redeploy decision keeps it."""
+        gate's key reader for ONB-6; the engine's config loader and the goal's
+        decoder for ONB-1, with the row's section rule; doctor's untouched-seed
+        check for ONB-7, an undecodable stub edited as the redeploy decision
+        keeps it."""
         import importlib.util
         import re
         import warnings
@@ -3745,9 +3745,7 @@ class TestOnboardingProbesDoNotWalk:
 
         if rid == "ONB-6":
             _hook_utils = load("hooks/_hook_utils.py")
-            kwargs = {"parser": None} if no_parser else {}
-            return str(not isinstance(
-                _hook_utils.read_toml_string_list(root, "plan_exempt_prefixes", **kwargs), list))
+            return str(not isinstance(_hook_utils.read_toml_string_list(root, "plan_exempt_prefixes"), list))
         if rid == "ONB-7":
             def untouched(path: Path) -> bool:
                 try:
@@ -3774,11 +3772,11 @@ class TestOnboardingProbesDoNotWalk:
         return str(not joined.strip() or re.search(r"\(not set\b", joined) is not None)
 
     @staticmethod
-    def _probe(rid: str, root: Path, prelude: str = "") -> tuple[int, str, str]:
+    def _probe(rid: str, root: Path) -> tuple[int, str, str]:
         from espalier.cli import _ONBOARDING_ROWS
 
         code = next(r["code"] for r in _ONBOARDING_ROWS if r["id"] == rid)
-        run = subprocess.run([sys.executable, "-c", prelude + code], cwd=root, capture_output=True,
+        run = subprocess.run([sys.executable, "-c", code], cwd=root, capture_output=True,
                              text=True, encoding="utf-8", timeout=45)
         return run.returncode, run.stdout.strip(), run.stderr
 
@@ -3800,27 +3798,6 @@ class TestOnboardingProbesDoNotWalk:
         (failure-mode review, 2026-10-11)."""
         self._build(tmp_path, state)
         assert self._harness_reads(rid, tmp_path) == prints
-
-    #: Hides both TOML parsers from the probe, as on a Python 3.10 host
-    #: without ``tomli``: ``importlib.util.find_spec`` returns None for a name
-    #: ``sys.modules`` maps to None.
-    _NO_PARSER = "import sys;sys.modules['tomllib']=None;sys.modules['tomli']=None;"
-
-    @pytest.mark.parametrize("state", [s for r, s, _ in _TRUTH_TABLE if r == "ONB-6"])
-    def test_without_a_parser_onb6_reads_as_the_hooks_regex_arm_does(self, tmp_path, state):
-        self._build(tmp_path, state)
-        rc, out, err = self._probe("ONB-6", tmp_path, self._NO_PARSER)
-        assert (rc, out) == (0, self._harness_reads("ONB-6", tmp_path, no_parser=True)), err
-
-    @pytest.mark.parametrize("toml,prints", [
-        ("goal_snapshot = false\n", "False"),
-        ('[extra_actions]\ntest = ["make"]\ngoal_snapshot = false\n', "True"),
-        ("# goal_snapshot = false\n", "True"),
-    ])
-    def test_without_a_parser_onb1_reads_the_key_above_the_first_table(self, tmp_path, toml, prints):
-        (tmp_path / "espalier.toml").write_bytes(toml.encode("utf-8"))
-        rc, out, err = self._probe("ONB-1", tmp_path, self._NO_PARSER)
-        assert (rc, out) == (0, prints), err
 
     def test_the_truth_table_holds_every_coded_row_open_and_closed(self):
         """A row that gains a probe joins the table with an open and a closed

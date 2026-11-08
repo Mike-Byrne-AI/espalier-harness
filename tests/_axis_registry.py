@@ -256,7 +256,7 @@ def stdlib_shadowing(axes: tuple[str, ...] = AXES) -> list[str]:
     in every proving function, where ``hasattr(os, "geteuid")`` reads False and
     ``getattr(os, "name", "posix")`` the default, silently, with no lint rule
     watching (the platform axis was nearly named ``os``, 2026-10-26). The list
-    is the interpreter's own (3.10 and later, the suite's floor), never a
+    is the interpreter's own (3.11 and later, the suite's floor), never a
     hand-kept one."""
     return [axis for axis in axes if axis in sys.stdlib_module_names]
 

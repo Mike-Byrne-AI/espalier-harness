@@ -40,7 +40,7 @@ Why each control exists (every one was measured, not assumed):
 Usage::
 
     python3 scripts/fresh_clone_gate.py                      # this interpreter (its base install when run from a venv)
-    python3 scripts/fresh_clone_gate.py --python 3.10 --python /opt/homebrew/bin/python3.14
+    python3 scripts/fresh_clone_gate.py --python 3.11 --python /opt/homebrew/bin/python3.14
     python3 scripts/fresh_clone_gate.py --keep --scratch /path/to/scratch
 
 A bare ``--python`` version resolves through ``uv python find``. Every spec is
@@ -324,9 +324,9 @@ def dirty_paths(root: Path) -> list[str]:
 
 def default_interpreter() -> Path:
     """This interpreter -- or its base install when this process is itself a
-    venv python. On CPython 3.10 a venv's ``sys._base_executable`` is the venv's
-    own python, so a venv built FROM a venv python gets ``home = <that venv>/bin``
-    and cannot import anything (measured 2026-09-22); 3.11+ record the base."""
+    venv python, so the default leg builds its venv from the install itself,
+    never from whichever venv launched the gate (the usage line's promise,
+    held by ``test_the_default_interpreter_is_a_base_install``)."""
     if sys.prefix == sys.base_prefix:
         return Path(sys.executable)
     major, minor = sys.version_info[:2]
@@ -411,15 +411,13 @@ def make_venv(exe: Path, venv_dir: Path) -> Path:
     if proc.returncode != 0:
         raise GateRefusal(f"{exe} -m venv failed: {(proc.stderr or proc.stdout).strip()[-300:]}")
     vpy = venv_python(venv_dir)
-    # Can the venv's python START? A venv built from a venv python on CPython
-    # 3.10 answers `--version` and cannot import anything (its `home` points
-    # at the parent venv); name that cause, not ensurepip's symptom.
+    # Can the venv's python START? A venv whose python answers `--version` and
+    # cannot import anything is named as that, not as ensurepip's symptom below.
     start = subprocess.run([str(vpy), "-c", "import sys"], capture_output=True, text=True, encoding="utf-8", errors="replace")
     if start.returncode != 0:
         raise GateRefusal(
             f"the venv at {venv_dir} cannot start ({(start.stderr or start.stdout).strip()[-160:]}); "
-            f"built from {exe} -- a venv built from a venv python on CPython < 3.11 has no stdlib; "
-            f"pass the base interpreter"
+            f"built from {exe}"
         )
     # Bytes, never decoded: only the return code says whether pip is there
     # (a version banner is a structured answer; decoding it tolerantly would

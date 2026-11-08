@@ -18,10 +18,6 @@ from pathlib import Path
 
 import pytest
 
-# pyproject declares requires-python >= 3.10 but tomllib is stdlib only from
-# 3.11. Use the project compat shim so 3.10 hosts (with tomli installed) don't
-# crash at test-collection time. None when neither parser is available — the
-# version-stamp test below skips in that case.
 from espalier._compat import tomllib
 from tests._live_tree import checkout_glob
 
@@ -203,12 +199,6 @@ class TestBenchResultsParity:
         a manual checklist item that gets missed). Failure message
         is the exact command an operator runs to fix it.
         """
-        if tomllib is None:
-            pytest.skip(
-                "tomllib unavailable (Python <3.11 without tomli installed); "
-                "install tomli to run this version-stamp parity test"
-            )
-
         pyproject_path = REPO_ROOT / "pyproject.toml"
         pyproject_text = pyproject_path.read_text(encoding="utf-8")
         pyproject_data = tomllib.loads(pyproject_text)
@@ -266,21 +256,3 @@ class TestSummaryHasReadingGloss:
             "not interpret absolute numerators."
         )
 
-
-class TestTomllibCompatShim:
-    """Pin: this module must use the espalier._compat shim, never `import tomllib`.
-
-    pyproject.toml declares `requires-python = ">=3.10"` but stdlib `tomllib`
-    only exists from 3.11. A bare `import tomllib` crashes test collection on
-    any Python 3.10 CI matrix row, killing every parity test in this file.
-    The fix is the established shim in espalier/_compat.py.
-    """
-
-    def test_no_bare_tomllib_import_in_this_module(self):
-        source = Path(__file__).read_text(encoding="utf-8")
-        bare = re.findall(r"^\s*import\s+tomllib\b", source, re.MULTILINE)
-        assert not bare, (
-            "Bare `import tomllib` found in tests/test_bench_results_parity.py "
-            "— crashes on Python 3.10. Use `from espalier._compat import tomllib` "
-            "(the shim falls back to `tomli` on 3.10)."
-        )

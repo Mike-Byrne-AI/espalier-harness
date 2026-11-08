@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from tests._live_tree import copy_checkout, live_tree_skip_names
+from tests._wait_budget import scaled
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = REPO_ROOT / "scripts" / "handoff_mechanics.py"
@@ -87,6 +88,42 @@ class TestTheHelpers:
     def test_summary_body_state_names_the_missing_hand_step(self, hm, text, expect):
         state = hm.summary_body_state(text)
         assert state == "ok" if expect == "ok" else expect in state
+
+    #: ``espalier.toml`` texts and whether ``goal_snapshot`` reads as off. The
+    #: quoted key, the duplicate key and the broken table are where the line
+    #: scan this reader replaced (TP-706) and a TOML read disagree.
+    GOAL_SNAPSHOT_TEXTS = (
+        ("goal_snapshot = false\n", True),
+        ("goal_snapshot = false  # off\n", True),
+        ('"goal_snapshot" = false\n', True),
+        ("goal_snapshot = true\n", False),
+        ('goal_snapshot = "false"\n', False),
+        ("[table]\ngoal_snapshot = false\n", False),
+        ("goal_snapshot = false\ngoal_snapshot = false\n", False),
+        ("goal_snapshot = false\n[broken\n", False),
+    )
+
+    @pytest.mark.parametrize("text,off", GOAL_SNAPSHOT_TEXTS)
+    def test_goal_snapshot_off_reads_the_file_as_the_doctor_probe_does(self, hm, tmp_path, text, off):
+        """The docstring's claim, held: the handoff's opt-out reads as the
+        doctor's ONB-1 probe (`espalier/cli.py`'s `_PROBE_CONFIG` and its
+        `off=` expression) reads the same file."""
+        import subprocess
+
+        from espalier import cli
+
+        (tmp_path / "espalier.toml").write_text(text, encoding="utf-8")
+        assert hm.goal_snapshot_off(tmp_path) is off, text
+        off_expr = "off=k.get('goal_snapshot') is False;"
+        assert any(off_expr in row["code"] for row in cli._ONBOARDING_ROWS), "the probe's reading moved"
+        probe = "import pathlib,re;" + cli._PROBE_CONFIG + off_expr + "print(off)"
+        run = subprocess.run([sys.executable, "-c", probe], cwd=str(tmp_path), capture_output=True,
+                             text=True, timeout=scaled(50), encoding="utf-8")
+        assert run.returncode == 0, run.stderr
+        assert run.stdout.strip() == str(off), (text, run.stdout)
+
+    def test_goal_snapshot_off_without_a_file_reads_as_on(self, hm, tmp_path):
+        assert hm.goal_snapshot_off(tmp_path) is False
 
 
 class TestAFragmentRowIsCheckedBeforeAnythingMoves:

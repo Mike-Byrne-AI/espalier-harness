@@ -59,7 +59,6 @@ import hashlib
 import io
 import json
 import os
-import re
 import statistics
 import subprocess
 import sys
@@ -103,6 +102,10 @@ except Exception as _floor:  # noqa: BLE001 -- the start refusal itself cannot i
         " is refused until then.")}) + "\n")
     sys.stdout.flush()
     raise SystemExit(0) from None
+# Below the supported Python floor, say the floor first (write_guard.py says
+# why); a Stop the protocol continued after that block goes through.
+if __name__ == "__main__":
+    _start_refusal.refuse_below_floor("stop_gate", "Stop")
 try:
     import _hook_utils  # noqa: E402
     import _denial_reasons  # noqa: E402
@@ -116,7 +119,7 @@ try:
         "CODE_REVIEWED", "DOCS_REFRESHED", "HANDOFF_GATE_FLAG", "HANDOFF_GATE_HOLD", "HANDOFF_GATE_HOLD_RECHECK_S",
         "ONCE_FLAG_PREFIX",
         "OPERATOR_RELIEF_AGENT",
-        "OPERATOR_RELIEF_NOTE_MIN_CHARS", "RELIEF_FLAGS", "STATE_DIR", "SpawnFailure", "_toml_parser",
+        "OPERATOR_RELIEF_NOTE_MIN_CHARS", "RELIEF_FLAGS", "STATE_DIR", "SpawnFailure",
         "atomic_write_text", "floor_text", "has_active_plan", "lane_upstream", "lock_file", "origin_default_ref",
         "plan_completion",
         "python_command_hint", "read_stdin_safely", "read_toml_table",
@@ -344,26 +347,6 @@ def _read_fingerprint_test_commands(repo_root: Path) -> list:
     return cmds if isinstance(cmds, list) else []
 
 
-def _toml_text_declares_test(root: Path) -> bool:
-    """Whether ``espalier.toml`` carries a ``test`` key under ``[extra_actions]``,
-    read by regex for the host with no TOML parser: full-line comments dropped,
-    the table's region taken up to the next header. Best-effort, and only ever
-    used to SAY that the key could not be read -- never to run it."""
-    try:
-        toml_text = (root / "espalier.toml").read_text(encoding="utf-8", errors="replace")
-    except OSError:  # fail-open: ok deliberate -- no file, or an unreadable one: there is no key to say anything about, and the detected command runs
-        return False
-    toml_text = re.sub(r"(?m)^\s*#.*$", "", toml_text)
-    header = re.search(r"(?m)^[ \t]*\[extra_actions\][ \t]*$", toml_text)
-    if header is None:
-        return False
-    region = toml_text[header.end():]
-    nxt = re.search(r"(?m)^[ \t]*\[", region)
-    if nxt is not None:
-        region = region[: nxt.start()]
-    return re.search(r"(?m)^[ \t]*test[ \t]*=", region) is not None
-
-
 def _declared_test_commands(root: Path) -> tuple[str, ...]:
     """``[extra_actions] test`` from ``<root>/espalier.toml`` -- the declared
     test command ``/preflight`` already runs -- as a tuple, or ``()`` when the
@@ -372,21 +355,8 @@ def _declared_test_commands(root: Path) -> tuple[str, ...]:
     non-empty strings is ignored and SAID once a session
     (``stop_failed_open_toml_test_shape``): a setting that does nothing is the
     defect. A file that will not parse is said once too, and the detected
-    command runs. Read through ``_hook_utils.read_toml_table`` (``tomllib``,
-    or ``tomli`` on 3.10); with neither importable the table cannot be read,
-    the detected command runs, and a key the file carries (found by regex)
-    is said once -- a setting that does nothing with nobody told is the
-    defect, and the docs say the key needs 3.11+ or tomli.
+    command runs. Read through ``_hook_utils.read_toml_table`` (``tomllib``).
     """
-    if _hook_utils._toml_parser() is None:
-        if _toml_text_declares_test(root):
-            _hook_utils.say_once(
-                root, "gate1-toml-no-parser", "stop_gate", "stop_failed_open_toml_no_parser",
-                "espalier.toml declares [extra_actions] test, but this interpreter has no TOML "
-                "parser (tomllib is Python 3.11+; install tomli below it), so Gate 1 uses the "
-                "detected command",
-            )
-        return ()
     table = _hook_utils.read_toml_table(root, on_error=lambda problem: _hook_utils.say_once(
         root, "gate1-toml", "stop_gate", "stop_failed_open_toml_unreadable",
         f"espalier.toml could not be parsed ({problem}); Gate 1 uses the detected command",
