@@ -931,6 +931,20 @@ doctor` names a wired hook that cannot start. Maintenance mode (the friction
 bypass below) does not lift this refusal -- the guard runs before that gate is
 read, and the PreToolUse guard matches every tool.
 
+**Two siblings load on first use.** `write_guard`'s two largest siblings,
+`_bash_patterns.py` and `_speedbump.py`, serve only the Bash, PowerShell and
+checkpoint judgments. A read-only call (a tool outside `MUTATION_TOOLS` that is
+not an MCP write: `Read`, `Grep`, `Glob`, `TodoWrite`) returns after the
+kill-switch scan and the secret-path check, which read neither, so both import
+on a mutation's first use rather than at the hook's start, and a read-only call
+never pays their import. The helper names they take from
+`_hook_utils.py` are still read at the start, so a kept helper is refused the
+same way on every call. A broken `_bash_patterns.py` or `_speedbump.py` is
+therefore a crash, not a failure to start: a read-only call passes, so the file
+can be read, and a mutation meets the crash guard (`write_guard internal error
+(<error> at <file>:<line>)`), which names the same files and lets the same one
+restore through.
+
 **The floor starts or refuses too.** Until 2026-10-16 the floor of that guard
 -- `_hook_utils.py`, with `tools/cc/_json_safe.py` under it, and
 `_denial_reasons.py`, with `_maintenance_mode.py` under it -- imported outside
@@ -2786,7 +2800,8 @@ dispatch. The two hooks short-circuit the read-only path differently
 immediately for a non-mutation tool — it runs no kill-switch scan.
 `write_guard.py` runs the always-on kill-switch scan on every dispatch
 FIRST (that every-dispatch firing IS the guarantee), then returns 0
-for tools not in `MUTATION_TOOLS` and not an MCP write. The behavior is the
+for tools not in `MUTATION_TOOLS` and not an MCP write, having imported
+neither `_bash_patterns` nor `_speedbump`. The behavior is the
 contract; line numbers drift with surface edits, so none are pinned here.
 
 Matcher strings are sourced from `espalier.harness_config.CANONICAL_HOOK_WIRING`
