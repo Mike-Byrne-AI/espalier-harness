@@ -27,6 +27,7 @@ from pathlib import Path
 import pytest
 
 from tests._git_oracle import _git_env
+from tests._hook_spawn import not_a_budget_miss
 from tests._interpreter_hosts import HOOK_PYTHON
 from tests._wait_budget import scaled
 
@@ -952,9 +953,13 @@ def _wedge_restore(wt: Path) -> tuple[bytes, list[Path]]:
     env.update(CLAUDE_PROJECT_DIR=str(wt), PYTHONDONTWRITEBYTECODE="1")
     payload = {"tool_name": "Bash", "cwd": str(wt),
                "tool_input": {"command": "git restore --source=HEAD -- tools/cc/hooks/_reinject.py"}}
-    guard = subprocess.run([HOOK_PYTHON, str(wt / "tools" / "cc" / "hooks" / "write_guard.py")],
-                           input=json.dumps(payload), capture_output=True, text=True, encoding="utf-8",
-                           errors="replace", cwd=wt, env=env, timeout=scaled(50))
+    # The parent's deadline runs before the sibling-import guard (DEF-2057),
+    # so a budget refusal can reach this restore: read apart, never retried,
+    # since twice this bound does not fit the ceiling.
+    guard = not_a_budget_miss(subprocess.run(
+        [HOOK_PYTHON, str(wt / "tools" / "cc" / "hooks" / "write_guard.py")],
+        input=json.dumps(payload), capture_output=True, text=True, encoding="utf-8",
+        errors="replace", cwd=wt, env=env, timeout=scaled(50)))
     assert guard.returncode == 0, guard.stderr
     copies = sorted(wt.rglob("*.py.txt"))
     _git(wt, "restore", "--source=HEAD", "--", "tools/cc/hooks/_reinject.py")
