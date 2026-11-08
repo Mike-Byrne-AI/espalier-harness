@@ -3788,7 +3788,9 @@ _PRIVATE_HOOK_RUNNERS: dict[str, int] = {
     "test_stop_gate_dormancy.py": 1,
     "test_subagent_stop.py": 2,
     "test_task_router.py": 4,
-    "test_write_guard.py": 14,
+    # 14 -> 15: TestThePatternPath's driver runs `_run_main` in a fresh interpreter
+    # and reads its `sys.modules` there, which no stdin-fed runner can.
+    "test_write_guard.py": 15,
     "test_write_guard_time_budget.py": 1,
     "test_xdist_never_ran.py": 1,
     "test_zone_watch.py": 1,
