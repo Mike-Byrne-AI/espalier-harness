@@ -385,19 +385,41 @@ class TestTheMailIsReadBeforeThePullRequests:
 
     _BUDGET_SECONDS = 1.5
 
-    def _start(self, tmp_path, monkeypatch, *, read_prs, fetch_mail, share=None, spent=None):
+    @staticmethod
+    def _reached(seen: dict, key: str, phase: str):
+        """``seen[key]``, which a fake sets only when the start reaches
+        ``phase``: a phase the budget skipped (the 0.2 s floor every read here
+        keeps) is a named failure, never a KeyError that reads as the clip
+        being wrong (#509's Windows leg, run 42413047496)."""
+        assert key in seen, f"the start never reached the {phase}, so the row judged nothing: {seen}"
+        return seen[key]
+
+    @staticmethod
+    def _hook(monkeypatch):
+        """The hook module, with its folder on the path first: a row that read
+        a constant before its start imported it bare, which held only after
+        an earlier row of the class had imported it (alone, a
+        ModuleNotFoundError)."""
+        monkeypatch.syspath_prepend(str(HOOKS_DIR.parent))
+        monkeypatch.syspath_prepend(str(HOOKS_DIR))
+        import session_start
+
+        return session_start
+
+    def _start(self, tmp_path, monkeypatch, *, read_prs, fetch_mail, share=None, spent=None, caps=None):
         """One in-process start; ``share`` patches the mail's share, ``spent``
-        starts the hook's clock that many seconds ago (kept as ``self.hook_start``)."""
+        starts the hook's clock that many seconds ago (kept as ``self.hook_start``),
+        and ``caps`` sets the pull-request block's budget and the mail's
+        share and caps to that many seconds, so the hook's budget is the one
+        clip that can bind."""
         import time
 
         repo = _tree(tmp_path)
         monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
         monkeypatch.setenv("ESPALIER_SESSION_CATCH_UP", "0")
-        monkeypatch.syspath_prepend(str(HOOKS_DIR.parent))
-        monkeypatch.syspath_prepend(str(HOOKS_DIR))
         import types
 
-        import session_start as ss
+        ss = self._hook(monkeypatch)
 
         win = {"id": "20261101T000000Z-win-aaaaaa", "from": "win", "type": "note", "text": "the fixture hang", "re": {}}
         job = {"id": "20261101T000000Z-air-bbbbbb", "from": "air", "type": "assign", "text": "",
@@ -419,6 +441,10 @@ class TestTheMailIsReadBeforeThePullRequests:
         monkeypatch.setattr(ss, "_read_merged_prs", read_prs)
         monkeypatch.setattr(ss, "_read_merge_rules", lambda *args, **kwargs: ("", -1, ""))
         monkeypatch.setattr(ss, "_engine_line", lambda *args, **kwargs: "")
+        if caps is not None:
+            for name in ("_PR_BLOCK_BUDGET_SECONDS", "_MAIL_SHARE_SECONDS",
+                         "_MAIL_FETCH_CAP_SECONDS", "_MAIL_READ_CAP_SECONDS"):
+                monkeypatch.setattr(ss, name, caps)
         if share is not None:
             monkeypatch.setattr(ss, "_MAIL_SHARE_SECONDS", share)
         monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"source": "resume", "session_id": "t-def5051"})))
@@ -485,14 +511,24 @@ class TestTheMailIsReadBeforeThePullRequests:
             return ""
 
         self._start(tmp_path, monkeypatch, read_prs=gh, fetch_mail=hung_fetch, share=0.5)
-        start, timeout = seen["fetch"]
+        start, timeout = self._reached(seen, "fetch", "mail fetch")
         assert timeout <= 0.5, timeout
-        assert seen["gh"] - start <= 0.5 + 0.3, (start, seen["gh"])
+        assert self._reached(seen, "gh", "pull-request reads") - start <= 0.5 + 0.3, (start, seen)
+
+    # What the start has left of the hook's budget when its clock starts: room
+    # for everything before the network reads on a loaded runner (more than
+    # 0.8 s of it on #509's Windows leg, where a second left skipped the
+    # fetch), and under the caps the row lifts, which never bind.
+    _LEFT_SECONDS = 4.0
+    _NEVER_BINDS_SECONDS = 60.0
 
     def test_both_deadlines_stop_at_the_hooks_budget(self, tmp_path, monkeypatch):
         """Must-deny: a start that has already spent most of the hook's budget
         (a slow catch-up, or a fresh start's child) gives the mail and the pull
-        requests only what is left of it. Dies to: either deadline unclipped."""
+        requests only what is left of it. The block's budget and the mail's
+        share and caps are lifted past what is left, so the hook's budget is
+        the one clip that binds, and the start keeps enough of it to reach both
+        reads on a slow runner. Dies to: either deadline unclipped."""
         import time
 
         seen: dict = {}
@@ -505,10 +541,9 @@ class TestTheMailIsReadBeforeThePullRequests:
             seen.setdefault("pr", deadline)
             return ""
 
-        import session_start as ss
-
-        budget = ss._HOOK_BUDGET_SECONDS
-        self._start(tmp_path, monkeypatch, read_prs=gh, fetch_mail=fetch, spent=budget - 1.0)
+        budget = self._hook(monkeypatch)._HOOK_BUDGET_SECONDS
+        self._start(tmp_path, monkeypatch, read_prs=gh, fetch_mail=fetch,
+                    spent=budget - self._LEFT_SECONDS, caps=self._NEVER_BINDS_SECONDS)
         limit = self.hook_start + budget + 0.05
-        assert seen["fetch_ends"] <= limit, (seen, limit)
-        assert seen["pr"] <= limit, (seen, limit)
+        assert self._reached(seen, "fetch_ends", "mail fetch") <= limit, (seen, limit)
+        assert self._reached(seen, "pr", "pull-request reads") <= limit, (seen, limit)
