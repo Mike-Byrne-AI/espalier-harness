@@ -4,7 +4,8 @@
 (``espalier/cli.py::_deploy_managed_py``, its ``skipped_user_file`` answer) and
 regenerates the siblings beside it, so a regenerated script can take a name the
 kept copy lacks. Until DEF-5087 every ship driver verb, ``--help`` included,
-then ended in a traceback naming an attribute. These rows drive the driver from
+then ended in a traceback naming an attribute. These rows pin the named refusal
+and guard against its drift back: they drive the driver from
 a copy of ``tools/cc`` with one name gone from a sibling (the row's probe), and
 read the one reader every refusal of this shape goes through
 (``tools/cc/hooks/_start_refusal.py::_missing_sibling_name``) on the shapes it

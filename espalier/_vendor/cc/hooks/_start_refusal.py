@@ -638,6 +638,7 @@ def refuse_kept_siblings(script: str, code: int = 1) -> None:
         except Exception:  # noqa: BLE001
             before(kind, exc, tb)
             return
+        # voice: cli a script's own refusal, on the terminal that ran it (never a hook's exit-0 path)
         sys.stderr.write(text + "\n")
         sys.stderr.flush()
         raise SystemExit(code)
