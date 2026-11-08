@@ -250,10 +250,14 @@ def _bound_the_judging_child() -> None:
 # Below the supported Python floor, say the floor before any sibling imports
 # and fails on the old interpreter under another name; under
 # `__main__` only, so an in-process importer is never answered with a deny.
-# Then the hard bound: the hook process answers through a judging child (or,
-# where none can start, judges itself); the child caps its CPU and judges.
+# Then an exception that escapes this module's body below is the start
+# refusal, not an exit 1 (in the judging child, and in a hook process that
+# judges itself). Then the hard bound: the hook process answers through a
+# judging child (or, where none can start, judges itself); the child caps its
+# CPU and judges.
 if __name__ == "__main__":
     _start_refusal.refuse_below_floor("write_guard", "PreToolUse")
+    _start_refusal.refuse_on_body_raise("write_guard", "PreToolUse")
     if sys.argv[1:2] == [_JUDGE_FLAG]:
         _bound_the_judging_child()
     else:

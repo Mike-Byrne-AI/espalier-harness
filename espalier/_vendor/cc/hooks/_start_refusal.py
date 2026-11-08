@@ -80,6 +80,20 @@ SIBLING_RAISED_UNPLACED = (
     " tools/cc/ is on its traceback. Read the error from a terminal and repair the"
     " file it names. Every call this hook judges is refused until then."
 )
+#: The two above for an exception that escaped the hook's own module body after
+#: its siblings imported (:func:`refuse_on_body_raise`). No upgrade is offered
+#: and none is ruled out: the file may be a sibling an upgrade kept, which the
+#: kept-helper test does not read.
+BODY_RAISED = (
+    "{hook} cannot start: {file} raised {error} at line {line} while the hook's own"
+    " module body ran, after its siblings imported. Restore the file to HEAD: {restore}."
+    " Every call this hook judges is refused until then."
+)
+BODY_RAISED_UNPLACED = (
+    "{hook} cannot start: its module body raised {error} and no file under tools/cc/"
+    " is on the traceback. Read the error from a terminal and repair the file it"
+    " names. Every call this hook judges is refused until then."
+)
 #: The context of the one call a wedged PreToolUse hook lets through (DEF-4025):
 #: a Bash call that is one command, a restore to HEAD of a file the refusal
 #: names. No ``permissionDecision`` goes with it, so the operator's permission
@@ -124,8 +138,8 @@ BELOW_FLOOR_BANNER = (
 #: ``_denial_reasons``'s does; unlike that module's, these carry no Don't/Do
 #: pair, which only its registry asks.
 _OPERATOR_FACING_TEMPLATES: tuple[str, ...] = (
-    "HELPER_SKEW", "SIBLING_RAISED", "SIBLING_RAISED_UNPLACED", "WEDGE_RESTORE_CONTEXT",
-    "BELOW_FLOOR", "BELOW_FLOOR_BANNER",
+    "HELPER_SKEW", "SIBLING_RAISED", "SIBLING_RAISED_UNPLACED", "BODY_RAISED",
+    "BODY_RAISED_UNPLACED", "WEDGE_RESTORE_CONTEXT", "BELOW_FLOOR", "BELOW_FLOOR_BANNER",
 )
 
 #: The Bash command words a restore may not contain: a separator, a pipe, a
@@ -475,10 +489,32 @@ def crash_refusal(reading: _SkewReading | None, error: str,
         return None
 
 
-def refuse_on_helper_skew(hook: str, event: str, exc: BaseException) -> NoReturn:
+def refuse_on_body_raise(hook: str, event: str) -> None:
+    """Under ``__main__``, before the guarded sibling imports: an exception that
+    escapes the hook's own module body (a module-level line that raises, a read
+    of a name a sibling no longer binds) is the same structured refusal as a
+    failed sibling import, never the exit 1 the protocol reads as non-blocking.
+    Installed as ``sys.excepthook``, which the interpreter calls for an uncaught
+    exception before it exits; the refusal ends in ``SystemExit(0)``, which exits
+    0 from there (driven on 3.10 to 3.14). An ``Exception`` alone is refused, as
+    the guarded imports catch; anything else keeps the default. A syntax error
+    in the hook file itself never reaches it, since that file never runs."""
+    def _refuse(kind: type[BaseException], exc: BaseException, tb: types.TracebackType | None) -> None:
+        if not isinstance(exc, Exception):
+            sys.__excepthook__(kind, exc, tb)
+            return
+        refuse_on_helper_skew(hook, event, exc, at="module body")
+
+    sys.excepthook = _refuse
+
+
+def refuse_on_helper_skew(hook: str, event: str, exc: BaseException, *, at: str = "sibling import") -> NoReturn:
     """Emit the fail-closed refusal for a deny hook whose sibling import failed
     at module top, then exit 0: the structured channel, where an exit 1 would be
-    read as non-blocking. ``event`` picks the decision shape -- ``PreToolUse``
+    read as non-blocking. ``at`` is where it failed: ``"sibling import"``, or
+    ``"module body"`` for an exception :func:`refuse_on_body_raise` caught after
+    the imports, whose text names no import and offers no upgrade beyond the
+    kept-helper test's; the record's ``details.skew`` carries it. ``event`` picks the decision shape -- ``PreToolUse``
     emits ``hookSpecificOutput.permissionDecision: deny``, ``ConfigChange`` and
     ``Stop`` the Stop-style ``{"decision": "block"}``. The text names the file
     that raised and its line, and offers the upgrade only on the kept-old-helper
@@ -530,7 +566,8 @@ def refuse_on_helper_skew(hook: str, event: str, exc: BaseException) -> NoReturn
         from _json_safe import os_error_text  # type: ignore[import-not-found]
     except Exception:  # noqa: BLE001 -- fail-open: ok text-fallback the refusal still goes out, with the plain text
         os_error_text = str  # type: ignore[assignment]
-    details: dict = {"hook": hook, "error": type(exc).__name__, "skew": "sibling import"}
+    body = at == "module body"
+    details: dict = {"hook": hook, "error": type(exc).__name__, "skew": at}
     # The text is composed under a catch-all: an escape here would be the
     # exit 1 this refusal exists to replace (DEF-1176), so a template that
     # cannot format falls back to plain words that cannot raise.
@@ -544,13 +581,15 @@ def refuse_on_helper_skew(hook: str, event: str, exc: BaseException) -> NoReturn
             details["cause"] = "kept helper"
         elif reading is not None and reading.file is not None:
             details["cause"] = "raised"
-            reason = SIBLING_RAISED.format(hook=hook, file=reading.rel(reading.file), error=error,
-                                           line=reading.line, restore=_restore_clause(reading, lets_through))
+            reason = (BODY_RAISED if body else SIBLING_RAISED).format(
+                hook=hook, file=reading.rel(reading.file), error=error,
+                line=reading.line, restore=_restore_clause(reading, lets_through))
         else:
-            reason = SIBLING_RAISED_UNPLACED.format(hook=hook, error=error)
+            reason = (BODY_RAISED_UNPLACED if body else SIBLING_RAISED_UNPLACED).format(hook=hook, error=error)
     # fail-open: ok text-fallback the refusal still goes out, in plain words
     except Exception:  # noqa: BLE001
-        reason = (str(hook) + " cannot start: a sibling import failed (" + type(exc).__name__
+        reason = (str(hook) + " cannot start: " + ("its module body raised" if body else "a sibling import failed")
+                  + " (" + type(exc).__name__
                   + "), and its text could not be composed. Read the error from a terminal;"
                   " every call this hook judges is refused until then.")
     _record(f"{event.lower()}_blocked_internal_error", details)

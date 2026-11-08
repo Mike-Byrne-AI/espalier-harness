@@ -282,10 +282,11 @@ class Cell:
     hook: str
     event: str
     name: str | None
-    kind: str        # "deny-hook" (a floor name gone) | "degraded" (a budget name gone) | "reporter" | "intact" | "planted" | "raised" | "syntax" | "floor" (a floor module raising)
+    kind: str        # "deny-hook" (a floor name gone) | "degraded" (a budget name gone) | "reporter" | "intact" | "planted" | "raised" | "syntax" | "floor" (a floor module raising) | "body" (the hook's own module body raising)
     rc: int
     stdout: str
     stderr: str
+    audit: str = ""  # the cell's audit records, read before its tree goes
 
 
 def _copy_cc(root: Path) -> None:
@@ -326,11 +327,21 @@ def _cell(base: Path, job: tuple[str, str, str | None, str]) -> Cell:
         sibling = root / "tools" / "cc" / "hooks" / f"{name}.py"
         tail = "\nraise KeyError(1)\n" if kind == "raised" else "\ndef (:\n"
         sibling.write_bytes(sibling.read_bytes() + tail.encode("utf-8"))
+    elif kind == "body":
+        # Before the hook's last `__main__` block: each ends in
+        # `raise SystemExit(main())`, so a raise placed after it never runs.
+        own = root / "tools" / "cc" / "hooks" / hook
+        text = own.read_text(encoding="utf-8")
+        at = text.rindex('\nif __name__ == "__main__":\n')
+        own.write_text(text[:at] + _RAISE + text[at:], encoding="utf-8")
     elif name is not None:
         _skew(root, name)
     run = _run_hook(root, hook, event)
+    records = root / "audit"
+    audit = "".join(p.read_text(encoding="utf-8", errors="replace")
+                    for p in (sorted(records.iterdir()) if records.is_dir() else []) if p.is_file())
     shutil.rmtree(root, ignore_errors=True)
-    return Cell(hook, event, name, kind, run.returncode, run.stdout, run.stderr)
+    return Cell(hook, event, name, kind, run.returncode, run.stdout, run.stderr, audit)
 
 
 @pytest.fixture(scope="module")
@@ -347,6 +358,7 @@ def cells(tmp_path_factory) -> list[Cell]:
         jobs.append((hook, event, "_integrity", "planted"))
         jobs.append((hook, event, "_integrity", "raised"))
         jobs.append((hook, event, "_integrity", "syntax"))
+        jobs.append((hook, event, None, "body"))
         for name in FLOOR_PLANTS:
             jobs.append((hook, event, name, "floor"))
     for hook, event in reporter_hooks().items():
@@ -451,7 +463,7 @@ class TestTheDerivation:
                 for n in ast.walk(stmt)
                 if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == HELPER
             }
-            assert helper_attrs(tree) >= module_level and (hook == "config_guard.py" or len(helper_attrs(tree)) > len(module_level)), hook
+            assert helper_attrs(tree) >= module_level and len(helper_attrs(tree)) > len(module_level), hook
 
 
 # ── a deny hook on a kept helper ──────────────────────────────────────────────
@@ -460,6 +472,18 @@ class TestADenyHookOnAKeptHelper:
     def test_no_cell_exits_one(self, cells):
         ones = [_summary(c) for c in cells if c.rc == 1]
         assert not ones, ones
+        # A raise in a hook's own module body, after its siblings imported, is
+        # the start refusal too: named as the body's, never as an import, with
+        # no upgrade offered or ruled out, and recorded as the body's.
+        body = [c for c in cells if c.kind == "body"]
+        assert {c.hook for c in body} == set(deny_hooks()), sorted(c.hook for c in body)
+        for c in body:
+            reason = _reason(c)
+            assert c.rc == 0 and _is_refusal(c), _summary(c)
+            assert f"tools/cc/hooks/{c.hook} raised KeyError" in reason, reason
+            assert "while the hook's own module body ran" in reason, reason
+            assert "imported its siblings" not in reason and "upgrade" not in reason, reason
+            assert '"skew": "module body"' in c.audit, (c.hook, c.audit[-400:])
 
     def test_every_cell_keeps_one_channel(self, cells):
         # Exit 0 with stdout its own channel (a decision, a reporter's context,
@@ -1207,20 +1231,30 @@ class TestTheGuardIsReachable:
 
     def test_the_pre_fix_shape_exits_one_so_the_detector_can_red(self, tmp_path):
         # Earn the red: disarm write_guard's guard on a copy (the handler call
-        # becomes a bare re-raise, the bare-import shape this lane replaced) and
-        # delete a floor name; the hook dies with exit 1 -- exactly what
-        # test_no_cell_exits_one exists to catch.
-        root = tmp_path / "prefix"
-        _copy_cc(root)
-        hook = root / "tools" / "cc" / "hooks" / "write_guard.py"
-        text = hook.read_text(encoding="utf-8")
+        # becomes a bare re-raise, the bare-import shape this lane replaced, and
+        # the module-body exception hook is not installed) and delete a floor
+        # name; the hook dies with exit 1 -- exactly what test_no_cell_exits_one
+        # exists to catch. Then the body cells' red: the exception hook alone
+        # disarmed and a raise planted in the hook's own body, exit 1 again.
+        hooked = '    _start_refusal.refuse_on_body_raise("write_guard", "PreToolUse")\n'
         armed = '    if __name__ != "__main__":\n        raise\n    _start_refusal.refuse_on_helper_skew("write_guard", "PreToolUse", _skew)\n'
-        assert text.count(armed) == 1, "the guard's shape moved; update this control with it"
-        hook.write_text(text.replace(armed, "    raise\n"), encoding="utf-8")
-        _skew(root, "payload_cwd")
-        run = _run_hook(root, "write_guard.py", "PreToolUse")
-        assert run.returncode == 1, (run.returncode, run.stdout, run.stderr)
-        assert run.stdout.strip() == "", run.stdout
+        for shape in ("import", "body"):
+            root = tmp_path / f"prefix-{shape}"
+            _copy_cc(root)
+            hook = root / "tools" / "cc" / "hooks" / "write_guard.py"
+            text = hook.read_text(encoding="utf-8")
+            assert text.count(armed) == 1 and text.count(hooked) == 1, "the guard's shape moved; update this control with it"
+            text = text.replace(hooked, "")
+            if shape == "import":
+                text = text.replace(armed, "    raise\n")
+                _skew(root, "payload_cwd")
+            else:
+                at = text.rindex('\nif __name__ == "__main__":\n')
+                text = text[:at] + _RAISE + text[at:]
+            hook.write_text(text, encoding="utf-8")
+            run = _run_hook(root, "write_guard.py", "PreToolUse")
+            assert run.returncode == 1, (shape, run.returncode, run.stdout, run.stderr)
+            assert run.stdout.strip() == "", (shape, run.stdout)
 
     def test_the_last_resort_disarmed_exits_one_so_the_floor_cells_can_red(self, tmp_path):
         # Earn the last resort's red (DEF-3008): on a copy, its handler becomes

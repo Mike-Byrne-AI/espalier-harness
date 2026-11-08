@@ -1263,8 +1263,8 @@ def _render_guard_pattern_classify(tool_name: str, tool_input: dict, root: Path)
         + (" In write_guard.py, a pattern built from `_bash_patterns` (or from a name a step "
            "binds) goes in an `@_on_the_pattern_path` step under a `global`, never at module "
            "level: the pattern modules load on first use, so a module-level read of one is a "
-           "NameError when the judging child imports the file, an exit 1 that lets every call "
-           "through unjudged (tests/test_write_guard.py::TestThePatternPath)."
+           "NameError when the judging child imports the file, which wedges the guard: every "
+           "call refused until the file is restored (tests/test_write_guard.py::TestThePatternPath)."
            if in_write_guard else "")
     )
 

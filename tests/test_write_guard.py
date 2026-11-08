@@ -17831,8 +17831,8 @@ class TestThePatternPath:
     def test_nothing_run_at_import_reads_a_bound_name(self, clean_run):
         # A module-level statement, a class body, a default or a decorator runs
         # when the judging child imports the file, before any loader: a read of
-        # a bound name there is a NameError, an exit 1 the protocol reads as an
-        # allow for every call. A lambda's body cannot call the loader first.
+        # a bound name there is a NameError that wedges the guard (the module-body
+        # refusal: every call refused). A lambda's body cannot call the loader first.
         bound, tree = self._bound(clean_run), self._the_source()
         early, lambdas = [], []
         for stmt in tree.body:

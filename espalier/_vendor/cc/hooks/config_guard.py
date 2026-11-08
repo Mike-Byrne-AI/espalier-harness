@@ -63,9 +63,11 @@ except Exception as _floor:  # noqa: BLE001 -- the start refusal itself cannot i
         " is refused until then.")}) + "\n")
     sys.stdout.flush()
     raise SystemExit(0) from None
-# Below the supported Python floor, say the floor first (write_guard.py says why).
+# Below the supported Python floor, say the floor first (write_guard.py says
+# why); then a raise that escapes this module's body is the start refusal.
 if __name__ == "__main__":
     _start_refusal.refuse_below_floor("config_guard", "ConfigChange")
+    _start_refusal.refuse_on_body_raise("config_guard", "ConfigChange")
 try:
     import _hook_utils  # noqa: E402
     import _denial_reasons  # noqa: E402
