@@ -170,8 +170,12 @@ def load_json_dict_safe(source: Any, *, default: Any = _MISSING) -> Any:
 
 def quoted_if_spaced(path: str) -> str:
     """``path`` double-quoted when it carries whitespace, else unchanged --
-    the one quoting every shell this repo targets accepts for a program word,
-    and the one a pasted path needs to survive as one argument. A double
+    the one quoting a pasted path needs to survive as one ARGUMENT in
+    PowerShell, cmd and the POSIX shells. As a PROGRAM word it serves cmd and
+    the POSIX shells only: PowerShell refuses a quoted first word, and its
+    ``& "<path>"`` is a syntax error to bash (DEF-2060). It quotes whitespace
+    alone: a ``$`` stays live inside double quotes in PowerShell and bash, and
+    an ``&`` in an unspaced path is left bare. A double
     quote INSIDE the path is not escaped: it is illegal in a Windows filename
     (the platform this quoting is for) and rare enough on POSIX that a
     shell-specific escape would cost more than it saves."""

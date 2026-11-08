@@ -69,6 +69,7 @@ from espalier.scanners.freshness import (
 )
 from espalier._atomic_io import atomic_write_text, lock_file, unlock_file
 from espalier._spawn import run_no_stdin
+from espalier._text import quoted_if_spaced
 
 __all__ = [
     "Fragment",
@@ -401,8 +402,8 @@ def _pin_fragment_locked(
                     f"bound is correct, then re-run with force=True "
                     f"(CLI: --force). If the prior bound is no longer "
                     f"correct (e.g., the claim moved), prefer "
-                    f"`espalier freshness unpin {fragment_id} && "
-                    f"espalier freshness pin {fragment_id}` over "
+                    f"`espalier freshness unpin {quoted_if_spaced(fragment_id)} && "
+                    f"espalier freshness pin {quoted_if_spaced(fragment_id)}` over "
                     f"--force — unpin makes the rebind auditable in "
                     f"git history."
                     + (
