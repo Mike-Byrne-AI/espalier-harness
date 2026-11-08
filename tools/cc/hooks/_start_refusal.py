@@ -87,7 +87,9 @@ SIBLING_RAISED_UNPLACED = (
 BODY_RAISED = (
     "{hook} cannot start: {file} raised {error} at line {line} while the hook's own"
     " module body ran, after its siblings imported. Restore the file to HEAD: {restore}."
-    " Every call this hook judges is refused until then."
+    " If the file already matches HEAD, a restore changes nothing: the committed line"
+    " raises on this machine, so repair it from a terminal. Every call this hook judges"
+    " is refused until then."
 )
 BODY_RAISED_UNPLACED = (
     "{hook} cannot start: its module body raised {error} and no file under tools/cc/"
@@ -489,6 +491,11 @@ def crash_refusal(reading: _SkewReading | None, error: str,
         return None
 
 
+#: The exception hook in place before :func:`refuse_on_body_raise` installed
+#: its own, held for :func:`body_done` to put back.
+_HOOK_BEFORE_THE_BODY: list = []
+
+
 def refuse_on_body_raise(hook: str, event: str) -> None:
     """Under ``__main__``, before the guarded sibling imports: an exception that
     escapes the hook's own module body (a module-level line that raises, a read
@@ -496,16 +503,32 @@ def refuse_on_body_raise(hook: str, event: str) -> None:
     failed sibling import, never the exit 1 the protocol reads as non-blocking.
     Installed as ``sys.excepthook``, which the interpreter calls for an uncaught
     exception before it exits; the refusal ends in ``SystemExit(0)``, which exits
-    0 from there (driven on 3.10 to 3.14). An ``Exception`` alone is refused, as
+    0 from there (driven on 3.11 to 3.14). An ``Exception`` alone is refused, as
     the guarded imports catch; anything else keeps the default. A syntax error
-    in the hook file itself never reaches it, since that file never runs."""
+    in the hook file itself never reaches it, since that file never runs. The
+    module body alone: :func:`body_done` takes it off before ``main`` runs, so a
+    raise past the body keeps the hook's own handling (``main``'s crash guard)
+    and is never named as the body's."""
     def _refuse(kind: type[BaseException], exc: BaseException, tb: types.TracebackType | None) -> None:
         if not isinstance(exc, Exception):
             sys.__excepthook__(kind, exc, tb)
             return
         refuse_on_helper_skew(hook, event, exc, at="module body")
 
+    if not _HOOK_BEFORE_THE_BODY:
+        _HOOK_BEFORE_THE_BODY.append(sys.excepthook)
     sys.excepthook = _refuse
+
+
+def body_done() -> None:
+    """The module body has ended: put back the exception hook that was in place
+    before :func:`refuse_on_body_raise`. Each deny hook calls it at the top of
+    its last ``__main__`` block, before ``main``, which has read the payload by
+    the time anything escapes it (so a body refusal there would miss the Stop
+    loop signal); ``write_guard``'s parent calls it before it writes a decision,
+    so nothing after one adds a second. Idempotent; nothing installed, nothing done."""
+    if _HOOK_BEFORE_THE_BODY:
+        sys.excepthook = _HOOK_BEFORE_THE_BODY.pop()
 
 
 def refuse_on_helper_skew(hook: str, event: str, exc: BaseException, *, at: str = "sibling import") -> NoReturn:

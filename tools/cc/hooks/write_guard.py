@@ -124,6 +124,17 @@ except Exception as _floor:  # noqa: BLE001 -- the start refusal itself cannot i
     sys.stdout.flush()
     raise SystemExit(0) from None
 
+# Below the supported Python floor, say the floor before any sibling imports
+# and fails on the old interpreter under another name; under `__main__` only,
+# so an in-process importer is never answered with a deny. Then, from here to
+# the last `__main__` block, an exception that escapes this module's body is
+# the start refusal, not an exit 1 (in the judging child, and in a hook process
+# that judges itself); `_start_refusal.body_done` ends that before `main` runs
+# and before the parent writes a child's decision.
+if __name__ == "__main__":
+    _start_refusal.refuse_below_floor("write_guard", "PreToolUse")
+    _start_refusal.refuse_on_body_raise("write_guard", "PreToolUse")
+
 # ── The hard bound (DEF-3048) ────────────────────────────────────────────────
 #
 # The thread budget below cannot answer for a judgment sitting in one long
@@ -207,6 +218,9 @@ def _answer_from_a_judging_child() -> None:
     # fail-open: ok deliberate -- a child that started and whose answer was lost is refused below, never judged twice
     except Exception as exc:  # noqa: BLE001
         answer, lost = None, type(exc).__name__
+    # A decision is written below (the child's, or the deadline's): from here a
+    # raise is no start refusal, which would add a second document after it.
+    _start_refusal.body_done()
     if answer is not None:
         code, out, err = answer
         sys.stdout.buffer.write(out)
@@ -247,17 +261,9 @@ def _bound_the_judging_child() -> None:
         pass
 
 
-# Below the supported Python floor, say the floor before any sibling imports
-# and fails on the old interpreter under another name; under
-# `__main__` only, so an in-process importer is never answered with a deny.
-# Then an exception that escapes this module's body below is the start
-# refusal, not an exit 1 (in the judging child, and in a hook process that
-# judges itself). Then the hard bound: the hook process answers through a
-# judging child (or, where none can start, judges itself); the child caps its
-# CPU and judges.
+# The hard bound: the hook process answers through a judging child (or, where
+# none can start, judges itself); the child caps its CPU and judges.
 if __name__ == "__main__":
-    _start_refusal.refuse_below_floor("write_guard", "PreToolUse")
-    _start_refusal.refuse_on_body_raise("write_guard", "PreToolUse")
     if sys.argv[1:2] == [_JUDGE_FLAG]:
         _bound_the_judging_child()
     else:
@@ -3821,6 +3827,8 @@ def _run_main(data: dict | None = None) -> int:
 
 
 if __name__ == "__main__":
+    # The module body ends here: a raise past it is main's crash guard's.
+    _start_refusal.body_done()
     # The budget's clock starts at the hook's first line, and a refusal ends
     # the process (it never waits for the judgment it gave up on).
     raise SystemExit(int(main(started=_HOOK_STARTED, exit_on_budget=True)))  # coerce the truthy-zero sentinel to a plain 0

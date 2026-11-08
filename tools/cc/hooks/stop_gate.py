@@ -2195,4 +2195,5 @@ def _run_main() -> int:
 
 
 if __name__ == "__main__":
+    _start_refusal.body_done()  # the module body ends here: a raise past it is main's crash guard's
     raise SystemExit(main())
