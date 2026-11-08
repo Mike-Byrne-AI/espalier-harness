@@ -17,6 +17,7 @@ import importlib.util
 import os
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 
@@ -40,31 +41,92 @@ CC_MANAGED_DOCS: tuple[str, ...] = (
 )
 
 
-def _repo_root() -> Path:
-    """Resolve the repo root for tools/cc storage operations.
+#: The deploy marker the walk-up looks for: the hooks directory every Espalier
+#: tree carries, Python or not. It was the ``pyproject.toml`` + ``tools/cc``
+#: pair, which a non-Python adopter's tree never matched, so a subdirectory
+#: launch there resolved to the subdirectory (DEF-664).
+_ROOT_MARKER: tuple[str, ...] = ("tools", "cc", "hooks")
 
-    Priority:
-      1. ``$CLAUDE_PROJECT_DIR`` — set by Claude Code (the same mechanism the
-         hook scripts use).
-      2. Walk up from cwd for the ``pyproject.toml`` + ``tools/cc/`` marker
-         pair. This parent-ascend fallback is why callers use this rather than
-         ``_hook_utils.resolve_project_root`` (which is env-only): a subdir
-         launch with no ``CLAUDE_PROJECT_DIR`` still resolves correctly.
-      3. ``Path.cwd()`` as last resort.
+#: The Windows gate on the drive translation: a name, so a POSIX test can set it.
+_ON_WINDOWS: bool = os.name == "nt"
 
-    Single owner for the byte-identical walk-up cognitive_blueprint._repo_root
-    and execution_plan._plan_path previously duplicated. NOT the same heuristic
-    as scripts/build_release_archive.py (that uses a pyproject.toml + espalier/
-    marker pair — a deliberately separate offline-build resolver).
+
+def _translate_drive(raw: str) -> str:
+    """The hooks' Git Bash drive translation, for the top-level tools that
+    cannot import from ``hooks/``: ``_hook_utils._msys_drive_to_windows``,
+    reached only on Windows and only for a POSIX-spelled value (``/c/...``),
+    so a native value never pays for loading the hook module. A hook process's
+    own ``_hook_utils`` is reused when it is loaded; otherwise ``hooks_module``
+    loads it (about 15 ms). The value comes back unchanged when it cannot be
+    loaded: a top-level tool's root is no deny compare, and the hooks pass
+    their own translator to ``project_root_spelling``."""
+    if not _ON_WINDOWS or not raw.startswith("/"):
+        return raw
+    hook_utils = sys.modules.get("_hook_utils") or hooks_module("_hook_utils")
+    if hook_utils is None or not callable(getattr(hook_utils, "_msys_drive_to_windows", None)):
+        return raw
+    return hook_utils._msys_drive_to_windows(raw)
+
+
+def project_root_spelling(translate: Callable[[str], str] | None = None) -> str:
+    """``CLAUDE_PROJECT_DIR`` as a string ``Path`` can resolve: the one
+    repo-root resolver the hooks, the top-level tools and the statusline read
+    (DEF-664; before it, three spellings disagreed on a Git Bash value and on
+    an unset one).
+
+      1. The variable, when non-empty, through ``translate``: the hooks pass
+         their ``_msys_drive_to_windows``; the default is ``_translate_drive``.
+      2. Unset or empty: walk up from the working directory to the nearest
+         directory holding ``tools/cc/hooks`` (``_ROOT_MARKER``), so a
+         subdirectory launch with no variable still finds its root.
+      3. ``"."`` as the last resort.
+
+    It warns on stderr when the value is empty (Claude Code always sets it,
+    so an empty one is a hand-run launch whose env was ignored), and when an
+    unset value finds no marker and falls to the bare working directory,
+    where a hook's state would land somewhere nothing reads it. A plain
+    print, never a recorded flag, which would write state under the very root
+    it warns about. Silent when the walk-up finds the root: that is every hand
+    run of a ``tools/cc`` script inside a tree, where the answer is right.
+    On an exit-0 hook the line reaches Claude Code's debug log only.
     """
-    env = os.environ.get("CLAUDE_PROJECT_DIR")
-    if env:
-        return Path(env).resolve()
-    cur = Path.cwd().resolve()
+    raw = os.environ.get("CLAUDE_PROJECT_DIR")
+    if raw:
+        return (translate or _translate_drive)(raw)
+    if raw == "":
+        # voice: debug-log Claude Code always sets the variable; an empty one is a hand-run launch
+        print(
+            "[WARN] espalier: CLAUDE_PROJECT_DIR is empty; resolving the root "
+            "from the current working directory. Set it explicitly to remove "
+            "this warning.",
+            file=sys.stderr,
+        )
+    try:
+        cur = Path.cwd().resolve()
+    except OSError:  # a working directory deleted under the process
+        return "."
     for candidate in (cur, *cur.parents):
-        if (candidate / "pyproject.toml").exists() and (candidate / "tools" / "cc").is_dir():
-            return candidate
-    return cur
+        if candidate.joinpath(*_ROOT_MARKER).is_dir():
+            return str(candidate)
+    if raw is None:
+        # voice: debug-log a hand-run launch outside any tree; Claude Code always sets the variable
+        print(
+            "[WARN] espalier: CLAUDE_PROJECT_DIR is unset and no directory at or "
+            "above the current one holds tools/cc/hooks; falling back to the "
+            "current working directory. Set it explicitly to remove this warning.",
+            file=sys.stderr,
+        )
+    return "."
+
+
+def _repo_root() -> Path:
+    """The repo root for tools/cc storage operations: ``project_root_spelling``
+    resolved. The single owner for the walk-up ``cognitive_blueprint._repo_root``
+    and ``execution_plan._plan_path`` once duplicated. NOT the same heuristic as
+    scripts/build_release_archive.py (that uses a pyproject.toml + espalier/
+    marker pair -- a deliberately separate offline-build resolver).
+    """
+    return Path(project_root_spelling()).resolve()
 
 
 #: The Windows wait for a refused replace, the count and backoff of

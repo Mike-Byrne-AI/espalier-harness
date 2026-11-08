@@ -44,6 +44,7 @@ Stdlib only, by design: it runs in every project on the machine.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import sys
@@ -123,10 +124,33 @@ def missing_wiring(session_dir: Path) -> str | None:
             f"{SESSION_START_SCRIPT}")
 
 
+def _translated(raw: str) -> str:
+    """``raw`` through the harness's one drive translation
+    (``tools/cc/_paths.py::_translate_drive``, which reaches the hooks'
+    ``_msys_drive_to_windows`` on Windows for a ``/c/...`` value), from the
+    checkout this script sits in, so a session directory exported from Git
+    Bash walks up from the drive path the hooks would read (DEF-664). The
+    value comes back unchanged when that ``_paths.py`` cannot be loaded (this
+    script copied somewhere alone): the canary then reads it raw, as before."""
+    module = sys.modules.get("_paths")
+    if module is None:
+        path = Path(__file__).resolve().parent.parent / "tools" / "cc" / "_paths.py"
+        try:
+            spec = importlib.util.spec_from_file_location("_canary_paths", path)
+            if spec is None or spec.loader is None:
+                return raw
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        except Exception:  # noqa: BLE001 -- fail-open: ok deliberate -- a reporter that must never fail the session start; the raw value is the old read
+            return raw
+    translate = getattr(module, "_translate_drive", None)
+    return translate(raw) if callable(translate) else raw
+
+
 def _session_dir(stdin_text: str, environ: "dict[str, str]") -> Path:
     project = environ.get("CLAUDE_PROJECT_DIR")
     if project:
-        return Path(project)
+        return Path(_translated(project))
     try:
         payload = json.loads(stdin_text) if stdin_text.strip() else {}
     except ValueError:

@@ -73,6 +73,18 @@ except ImportError:  # pragma: no cover - a tools/cc/_json_safe.py that predates
         import subprocess
         return subprocess.run(  # spawn: ok the bounded spawn's fallback, for a _json_safe.py that predates it
             args, timeout=timeout, input=input, capture_output=capture_output, check=check, **kwargs)
+# The one repo-root resolver `_project_root_spelling` delegates to (DEF-664),
+# guarded the same way and wider: a kept `_paths.py` that predates it, or one
+# that raises at import, leaves `_project_root_spelling` on its own rule below
+# -- the drive translation included, since an untranslated root fails open on
+# a deny compare -- never an import crash that takes every hook down.
+_shared_root_spelling: Any = None
+try:
+    import _paths as _root_paths  # noqa: E402
+    _shared_root_spelling = getattr(_root_paths, "project_root_spelling", None)
+# fail-open: ok deliberate -- a kept or broken _paths.py degrades to the local rule below
+except Exception:  # noqa: BLE001  # pragma: no cover
+    _shared_root_spelling = None
 
 # shutil / subprocess / tempfile are imported lazily inside the three functions
 # that use them (host_orientation_line, check_branch, atomic_write_text). All
@@ -377,7 +389,16 @@ def _project_root_spelling() -> str:
     from ``resolve_project_root`` so the translation is pinned on a POSIX
     test host without constructing a ``WindowsPath``. A native
     ``C:\\<home>\\...`` value passes through untouched.
+
+    The rule itself is ``tools/cc/_paths.py::project_root_spelling``, the one
+    resolver the top-level tools and the statusline read too (DEF-664): this
+    function hands it the hooks' own translator, read here at call time so a
+    patched one is honoured. The body below is the degrade for a kept older
+    ``_paths.py`` without it (the guarded import above), keeping today's rule
+    and its translation.
     """
+    if _shared_root_spelling is not None:
+        return str(_shared_root_spelling(translate=_msys_drive_to_windows))
     raw = os.environ.get("CLAUDE_PROJECT_DIR")
     if raw is None or raw == "":
         if raw == "":
