@@ -1563,8 +1563,15 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "roster: the registry is the canon and a member that stops answering reds.",
     ),
     "tests/test_speedbump_irreversible.py": (
-        14, "436c0049b7ee9c5c69df80cfd76a233760c1633d76e461d3f0f5997532bc5ab9",
+        15, "a18a674f4c38e3e55b9b1a7ab678d8f8d7cff4785e3625fe4fe2f51a222e82ec",
         "MIXED",
+        "GREW 14 -> 15 on 2026-11-08 (the cd tracker's narrowed anchor, `_CMD_POS_IN_SHELL`): "
+        "the newline-span census strips every bash anchor before judging a pattern's tail, "
+        "reading them from `tests/_cmd_pos_anchor.py::bash_anchors`, the one predicate every "
+        "census shares. CORRECT under 18.4, and it fails loud: an anchor left out of that "
+        "tuple stays in the tail with its own separator class and reds the census, never "
+        "passes it. The file stays MIXED, verdict kept on purpose, for the exact-set "
+        "assertion below. "
         "GREW 13 -> 14 on 2026-09-16 (DEF-832, the program operand as one shell word): "
         "the derived pin that every program-operand opener carries the `word` group under "
         "its declared flag regime iterates `_INLINE_PROGRAM_RES` (the inline openers' "
