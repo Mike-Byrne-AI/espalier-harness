@@ -522,12 +522,14 @@ def run_tree_to_deadline(
     try:
         proc = subprocess.Popen(args, **kwargs)  # spawn: ok the tree-bounded spawn itself
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
-        raise TreeStartError(f"{type(exc).__name__}: {exc}") from exc
-    job = _kill_on_close_job(proc) if os.name == "nt" else None
+        raise TreeStartError(type(exc).__name__) from exc  # the cause carries the detail
+    job = None
     # The feeder owns the input; `communicate` sees no stdin and only reads.
     stdin, proc.stdin = proc.stdin, None
-    threading.Thread(target=_feed, args=(stdin, input), daemon=True).start()
     try:
+        if os.name == "nt":
+            job = _kill_on_close_job(proc)
+        threading.Thread(target=_feed, args=(stdin, input), daemon=True).start()
         out, err = proc.communicate(timeout=max(0.0, deadline - time.monotonic()))  # spawn: ok its own deadline
     except subprocess.TimeoutExpired:
         end = time.monotonic() + TREE_DRAIN_SECONDS
@@ -588,7 +590,8 @@ def _end_the_tree_now(proc: Any, job: Any, end: float) -> None:
 def _kill_on_close_job(proc: Any) -> "int | None":
     """A Windows job object holding ``proc``, set to kill every process in it
     when its last handle closes, as its handle; ``None`` where one cannot be
-    made or assigned (the tree kill then falls back to ``taskkill /T``). The
+    made or assigned (the kill's ``taskkill /T`` walk still runs; only the
+    close-time backstop is lost). The
     handle is never closed here: it closes with this process, which is the
     backstop that ends the tree when this process is ended from outside."""
     try:
@@ -624,6 +627,6 @@ def _kill_on_close_job(proc: Any) -> "int | None":
                 and kernel32.AssignProcessToJobObject(job, int(proc._handle))):
             return int(job)
         kernel32.CloseHandle(job)
-    except (OSError, AttributeError, ValueError, TypeError):  # fail-open: ok deliberate -- no job object: the tree kill falls back to taskkill /T, and only the backstop is lost
+    except (ImportError, OSError, AttributeError, ValueError, TypeError):  # fail-open: ok deliberate -- no job object: the kill's taskkill /T walk still runs, and only the close-time backstop is lost
         pass
     return None

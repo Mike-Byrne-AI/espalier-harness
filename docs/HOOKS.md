@@ -1743,9 +1743,9 @@ from the hook's start (`HARD_DEADLINE_S`) it kills the child and every
 process the child started (the child's own session on POSIX; on Windows
 `taskkill /T` walks the tree while its parents are alive, then a job object
 that kills on close ends what is left in it), writes the same deny, and is
-gone by 4.6 s from the hook's start (`EXIT_BY_S`), whatever its own
-`pretooluse_blocked_time_budget` record, written after the deny, is still
-doing. A child that started and whose answer was lost is refused the same
+gone by 4.6 s from the hook's start (`EXIT_BY_S`, the deny's own write of a
+few milliseconds aside), whatever its own `pretooluse_blocked_time_budget`
+record, written after the deny, is still doing. A child that started and whose answer was lost is refused the same
 way, never judged a second time. The child
 also caps its own CPU time at 10 s on POSIX, for a child whose parent was
 ended from outside. An ordinary call finishes in a small fraction of either

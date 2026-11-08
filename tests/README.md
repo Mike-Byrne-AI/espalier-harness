@@ -198,7 +198,15 @@ documented* below. The classification is the durable part.
         --ignore=tests/test_speedbump_irreversible.py \
         --ignore=tests/test_hooks.py \
         --ignore=tests/test_write_guard_time_budget.py \
+        --ignore=tests/test_guard_metamorphic.py \
+        --ignore=tests/test_powershell_reachability_differential.py \
+        --ignore=tests/test_declared_limits_contract.py \
+        --ignore=tests/test_axis_registry.py \
+        --ignore=tests/test_verify_pins.py \
         --ignore=tests/test_documented_claims.py
+
+(the serial files are `scripts/proof_tier.py::SERIAL_FILES`, its one home;
+`python scripts/proof_tier.py` prints the lines the tier runs.)
 
 `-n auto` uses one worker per CPU (`os.cpu_count()` when psutil is absent, so 8
 on the self-host Air). `PYTEST_XDIST_AUTO_NUM_WORKERS=<n>` in the environment

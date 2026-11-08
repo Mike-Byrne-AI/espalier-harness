@@ -47,6 +47,7 @@ from pathlib import Path
 import pytest
 
 from tests._live_tree import checkout_glob
+from tests._wait_budget import scaled
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -84,11 +85,17 @@ _DENY_AFTER_DRAIN_S = 0.1
 #: before the first line (about 45 ms on the Air, a bare interpreter 43 ms on
 #: Windows by DEF-946's figure, more under load) and the exit itself.
 _OUTSIDE_THE_HOOKS_CLOCK_S = 0.4
-#: The wall-clock rule's pairing (tests/test_proof_tier.py), empty: this file
-#: asserts no speed claim. Its one bound is the hook protocol's 5 s timeout over
-#: the parent's 4.0 s designed deadline, exempt on its own line, since no floor
-#: ten times under it can exist; it runs on the serial leg, alone on the box.
-_WALL_CLOCK_FLOORS: dict[str, tuple[str, str, float]] = {}
+#: How far past the parent's deadline the strike row's whole run may land: the
+#: part of the answer's time that scales with the box (the interpreter's start
+#: before the hook's first line, the kill, the deny, the exit), measured idle on
+#: the Air at about 80 ms (4.06 and 4.08 s runs, 2026-11-07). The deadline itself
+#: is designed, not measured, and the ceiling plus the deadline is pinned at or
+#: under the wired timeout (`TestTheBudgetSitsBelowTheWiring`).
+_OVERRUN_FLOOR_MS = 80
+_OVERRUN_CEILING_MS = 1000
+_WALL_CLOCK_FLOORS: dict[str, tuple[str, str, int]] = {
+    "_OVERRUN_CEILING_MS": ("_OVERRUN_FLOOR_MS", "2026-11-07", 80),
+}
 #: The tiny budget the injected rows run under.
 _TINY_BUDGET_S = 0.05
 #: How long a row waits on an event before it calls the run broken. Never the
@@ -269,6 +276,8 @@ class TestTheBudgetSitsBelowTheWiring:
         after_kill = write_guard.HARD_DEADLINE_S + _json_safe.TREE_DRAIN_SECONDS + _DENY_AFTER_DRAIN_S
         assert after_kill <= write_guard.EXIT_BY_S, (
             f"the kill, the drain and the deny need {after_kill:.2f} s, past the exit point {write_guard.EXIT_BY_S} s")
+        assert write_guard.HARD_DEADLINE_S + _OVERRUN_CEILING_MS / 1000 <= timeout, (
+            "the strike row's overrun ceiling reaches past the wired timeout")
         assert write_guard.EXIT_BY_S + _OUTSIDE_THE_HOOKS_CLOCK_S <= timeout, (
             f"the exit point {write_guard.EXIT_BY_S} s leaves under {_OUTSIDE_THE_HOOKS_CLOCK_S} s below the wired"
             f" {timeout} s timeout")
@@ -651,7 +660,10 @@ class TestOneLongCallInTheJudgmentIsRefusedInTime:
             decision = decisions[0]["hookSpecificOutput"]
             assert decision["permissionDecision"] == "deny", decision
             assert "could not finish judging this command within its" in decision["permissionDecisionReason"]
-            assert elapsed < timeout, f"the deny landed at {elapsed:.2f} s, past the wired {timeout} s timeout"  # wall-clock-exempt: the hook protocol's timeout, not a speed claim
+            overrun_ms = (elapsed - write_guard.HARD_DEADLINE_S) * 1000
+            assert overrun_ms < _OVERRUN_CEILING_MS, (
+                f"the deny landed at {elapsed:.2f} s, {overrun_ms:.0f} ms past the {write_guard.HARD_DEADLINE_S} s"
+                f" deadline (ceiling {_OVERRUN_CEILING_MS} ms, floor {_OVERRUN_FLOOR_MS} ms; wired timeout {timeout} s)")
             # The parent's refusal is audited, inside its exit point (DEF-803's
             # visibility class: a deny /status --log never counts).
             refusals = [r for r in _audit_records() if r["event_type"] == "pretooluse_blocked_time_budget"]
@@ -831,7 +843,8 @@ class TestTheHookAnswersThroughItsJudgingChild:
         assert [d["hookSpecificOutput"]["permissionDecision"] for d in decisions] == ["deny"], out
         assert b"judging child could not start" not in err, err
         refusals = [r for r in _audit_records() if r["event_type"] == "pretooluse_blocked_time_budget"]
-        assert [r["details"].get("bound") for r in refusals] == ["child"], refusals
+        assert [(r["details"].get("bound"), r["details"].get("fault")) for r in refusals] == [
+            ("child", "RuntimeError")], refusals
 
     @pytest.mark.skipif(os.name == "nt", reason="a closed fd 0 across an exec is POSIX's shape")
     def test_a_stdin_the_parent_cannot_read_still_meets_the_kill_switch_gate(self, tmp_path):
@@ -845,7 +858,7 @@ class TestTheHookAnswersThroughItsJudgingChild:
         closes_stdin = "import os, sys; os.close(0); os.execv(sys.executable, [sys.executable, sys.argv[1]])"
         env = dict(os.environ, CLAUDE_PROJECT_DIR=str(tmp_path))
         result = subprocess.run([sys.executable, "-c", closes_stdin, str(HOOKS_DIR / "write_guard.py")],
-                                capture_output=True, timeout=30, env=env)
+                                capture_output=True, timeout=scaled(30), env=env)
         assert result.returncode == 0, (result.returncode, result.stderr)
         decisions = _decisions(result.stdout.decode("utf-8"))
         assert [d["hookSpecificOutput"]["permissionDecision"] for d in decisions] == ["deny"], result.stdout

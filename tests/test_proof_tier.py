@@ -1534,10 +1534,7 @@ class TestTheRecallSlice:
 # box it would read 136, the derived ceiling 1360, and the runner would red
 # again). A bound a row must NOT satisfy -- a must-trip witness whose pass IS
 # the alarm -- opts out on its own line with `# wall-clock-exempt: <reason>`,
-# and the exemption census below is exact. So does a ceiling that is an
-# outside protocol's fixed figure rather than a speed claim (DEF-3048: Claude
-# Code discards a hook's output past its 5 s timeout, so a red there is the
-# product failing on that box, never a floor measured on a faster one).
+# and the exemption census below is exact.
 
 _WALL_CLOCK_PAIRING = "_WALL_CLOCK_FLOORS"
 _WALL_CLOCK_EXEMPT = "# wall-clock-exempt:"
@@ -1562,14 +1559,13 @@ _WALL_CLOCK_HIGH_WATER: dict[tuple[str, str], float] = {
     ("tests/test_speedbump_irreversible.py", "_SPEEDBUMP_CI_SAFE_MS"): 500,
     ("tests/test_speedbump_irreversible.py", "_SPEEDBUMP_GIT_CEILING_MS"): 80,
     ("tests/test_hooks.py", "_ENV_PREFIX_CEILING_MS"): 1000,
+    ("tests/test_write_guard_time_budget.py", "_OVERRUN_CEILING_MS"): 1000,
 }
 #: The exemption census, EXACT: (file, enclosing function). A marker is the
 #: cheapest way to silence the rule, so every one is enrolled here with the
 #: row that carries it, and an unenrolled one reds.
 _WALL_CLOCK_EXEMPTIONS: frozenset[tuple[str, str]] = frozenset({
     ("tests/test_redos.py", "test_the_nested_run_the_gate_once_carried_is_caught_by_these_rows"),
-    ("tests/test_write_guard_time_budget.py",
-     "test_the_deny_lands_under_the_wired_timeout_and_the_judgments_tree_ends"),
 })
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 

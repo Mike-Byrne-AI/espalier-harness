@@ -146,9 +146,11 @@ _JUDGE_FLAG = "--judge"
 #: +30 ms on the Air), so a judgment that budget can refuse is refused by the
 #: child, with its own record, before this kill.
 HARD_DEADLINE_S = 4.0
-#: When the parent is gone, from the hook's first line, whatever the kill, the
-#: drain, the deny or the audit record is doing: the record gets only what is
-#: left before it. It sits 0.4 s under the wired 5 s timeout for what Claude
+#: When the parent is gone, from the hook's first line, whatever the drain or
+#: the audit record is doing: the record gets only what is left before it. The
+#: deny's own import and write between them are not cut (milliseconds), so the
+#: designed worst case leaves the 0.4 s below and no more. It sits 0.4 s under
+#: the wired 5 s timeout for what Claude
 #: Code's clock counts outside this one: the interpreter's start before the
 #: first line, and the exit itself.
 EXIT_BY_S = 4.6
@@ -161,11 +163,11 @@ _CHILD_CPU_SECONDS = 10
 _NO_JUDGING_CHILD: str | None = None
 
 
-def _judge_in_this_process(payload: bytes, why: BaseException) -> None:
-    """No child ran: put the payload back on stdin for the in-process judgment,
-    which `main` says once."""
+def _judge_in_this_process(payload: bytes, why: str) -> None:
+    """No child ran (``why`` names the error's type): put the payload back on
+    stdin for the in-process judgment, which `main` says once."""
     global _NO_JUDGING_CHILD
-    _NO_JUDGING_CHILD = type(why).__name__
+    _NO_JUDGING_CHILD = why
     sys.stdin = io.TextIOWrapper(io.BytesIO(payload), encoding="utf-8")
 
 
@@ -190,18 +192,20 @@ def _answer_from_a_judging_child() -> None:
         flags: list[str] = getattr(subprocess, "_args_from_interpreter_flags", list)()
     # fail-open: ok deliberate -- no child: the hook process judges under its thread budget, and main says so once
     except Exception as exc:  # noqa: BLE001 -- a helper that cannot load keeps the judgment, never an allow
-        _judge_in_this_process(payload, exc)
+        _judge_in_this_process(payload, type(exc).__name__)
         return
+    lost: str | None = None
     try:
         answer = run_tree_to_deadline(  # spawn: ok the judging child, killed with its tree at the deadline
             [sys.executable, *flags, str(Path(__file__).resolve()), _JUDGE_FLAG],
             deadline=_HOOK_STARTED + HARD_DEADLINE_S, input=payload,
         )
     except TreeStartError as exc:  # fail-open: ok deliberate -- no child started: the hook process judges under its thread budget, and main says so once
-        _judge_in_this_process(payload, exc.__cause__ or exc)
+        _judge_in_this_process(payload, type(exc.__cause__ or exc).__name__)
         return
-    except Exception:  # noqa: BLE001 -- fail-open: ok deliberate a child that started and whose answer was lost is refused below, never judged twice
-        answer = None
+    # fail-open: ok deliberate -- a child that started and whose answer was lost is refused below, never judged twice
+    except Exception as exc:  # noqa: BLE001
+        answer, lost = None, type(exc).__name__
     if answer is not None:
         code, out, err = answer
         sys.stdout.buffer.write(out)
@@ -221,7 +225,8 @@ def _answer_from_a_judging_child() -> None:
     sys.stdout.flush()
     record = threading.Thread(target=_start_refusal._record, daemon=True, args=(
         "pretooluse_blocked_time_budget",
-        {"hook": "write_guard", "budget_s": HARD_DEADLINE_S, "bound": "child", "bytes": len(payload)}))
+        {"hook": "write_guard", "budget_s": HARD_DEADLINE_S, "bound": "child", "bytes": len(payload),
+         **({"fault": lost} if lost else {})}))
     record.start()
     record.join(max(0.0, _HOOK_STARTED + EXIT_BY_S - time.monotonic()))
     os._exit(0)
@@ -3101,8 +3106,9 @@ JUDGMENT_BUDGET_S = 3.5
 #: would have judged in milliseconds included. That reverses the trade this
 #: window once made (left uncapped, so such a box still answered an ordinary
 #: call, and a slow judgment's refusal landed after the timeout had let the
-#: call through): on that box a refused ordinary call costs a retry, where a
-#: late answer let a call through unjudged.
+#: call through): on that box an ordinary call is refused, with a reason that
+#: asks for shorter commands the box's start-up earned and the command did not,
+#: where a late answer let a call through unjudged.
 MIN_JUDGMENT_WINDOW_S = 0.5
 #: The worker thread's name, so a test can find and join a judgment it gave up on.
 JUDGMENT_THREAD_NAME = "write_guard-judgment"
