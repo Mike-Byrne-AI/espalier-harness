@@ -5843,7 +5843,8 @@ class TestGitBashDrivePrefix:
             self, monkeypatch, capsys, drive, tool):
         """`_clean_path_prefixes`, the chokepoint every tool's zone check
         normalises through: a write into `tools/cc/` spelled `/c/repo/...`
-        is denied as its native spelling is."""
+        is denied as its native spelling is. The shell rows quote the target
+        where it holds a space (a spaced basetemp: the perturbed leg's)."""
         wg = _import_write_guard()
         root = drive / "repo"
         leaf = "/tools/cc/hooks/x.py"
@@ -5856,10 +5857,11 @@ class TestGitBashDrivePrefix:
                 rc = wg.check_write_edit(
                     {"file_path": target, "old_string": "a", "new_string": "b"}, root)
             elif tool == "Bash":
-                rc = wg.check_bash_for_protected_mutations(f"echo x > {target}", root, cwd=root)
+                rc = wg.check_bash_for_protected_mutations(
+                    f"echo x > {quoted(target, SH)}", root, cwd=root)
             else:
                 rc = wg.check_powershell_for_protected_mutations(
-                    f"Set-Content -Path {target} -Value x", root, cwd=root)
+                    f"Set-Content -Path {quoted(target, PS)} -Value x", root, cwd=root)
             return bool(rc)
         assert self._verdicts(monkeypatch, capsys, drive, judge) == (True, True, False)
 
@@ -5890,7 +5892,8 @@ class TestGitBashDrivePrefix:
         verdicts = self._verdicts(
             monkeypatch, capsys, drive,
             lambda checkout: bool(wg.check_bash_for_protected_mutations(
-                f"cd {checkout} && echo x > tools/cc/hooks/x.py", root, cwd=drive / "elsewhere")))
+                f"cd {quoted(checkout, SH)} && echo x > tools/cc/hooks/x.py", root,
+                cwd=drive / "elsewhere")))
         assert verdicts == (True, True, False)
 
     def test_a_git_bash_spelled_project_dir_is_the_project(self, monkeypatch, drive):
