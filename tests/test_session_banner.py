@@ -2500,9 +2500,9 @@ class TestOpenPRsLine:
         # The read answered with a required red: it is named, with the remedy.
         asked: list[int] = []
 
-        def one_required(number: int) -> list[str]:
+        def one_required(number: int):
             asked.append(number)
-            return ["verify"]
+            return mod._RequiredHold(["verify"], [])
 
         lines = [ln.strip() for ln in mod._open_prs_line(_PR_LISTING, required_reader=one_required).splitlines()]
         assert lines[1] == (
@@ -2514,7 +2514,8 @@ class TestOpenPRsLine:
         assert asked == [27]
         # The read answered that no red is required: GitHub holds it for
         # something else, and the tail says so rather than "it merges".
-        lines = [ln.strip() for ln in mod._open_prs_line(_PR_LISTING, required_reader=lambda n: []).splitlines()]
+        lines = [ln.strip() for ln in mod._open_prs_line(
+            _PR_LISTING, required_reader=lambda n: mod._RequiredHold([], [])).splitlines()]
         assert lines[1].endswith(
             "auto-merge armed but GitHub is holding it (blocked): no red is required, "
             "so a review or a required check that has not reported"
@@ -2550,7 +2551,103 @@ class TestOpenPRsLine:
             ]), stderr="")
 
         monkeypatch.setattr(mod.subprocess, "run", fake_run)
-        assert mod._gh_pr_required_reds(tmp_path, 27, None) == ["test (3.11)", "verify"]
+        assert mod._gh_pr_required_reds(tmp_path, 27, None) == mod._RequiredHold(["test (3.11)", "verify"], [])
+
+    _HEAD = "3f9be2932" + "0" * 31
+    _FRESHNESS = {"name": "freshness", "bucket": "cancel",
+                  "link": "https://github.com/o/r/actions/runs/42452013919/job/128643084948"}
+    _RUNS = {"workflow_runs": [
+        {"id": 42452020852, "workflow_id": 366642379, "created_at": "2026-11-08T05:45:40Z", "status": "in_progress"},
+        {"id": 42452013919, "workflow_id": 366642379, "created_at": "2026-11-08T05:45:34Z", "status": "completed"},
+    ]}
+
+    def _fake_gh(self, mod, monkeypatch, runs_answer):
+        calls: list[list[str]] = []
+
+        def fake_run(argv, **kw):
+            calls.append(list(argv))
+            if argv[:3] == ["gh", "pr", "checks"]:
+                return subprocess.CompletedProcess(argv, 1, stdout=json.dumps([self._FRESHNESS]), stderr="")
+            if isinstance(runs_answer, BaseException):
+                raise runs_answer
+            return subprocess.CompletedProcess(argv, 0, stdout=json.dumps(runs_answer), stderr="")
+
+        monkeypatch.setattr(mod.subprocess, "run", fake_run)
+        return calls
+
+    def test_a_cancel_a_newer_run_of_its_workflow_supersedes_is_handed_back_as_a_wait(self, monkeypatch, tmp_path):
+        """DEF-3035: #519's freshness, cancelled at the re-bind's title edit
+        by a newer Harness Guard run on the same head. Dies to: the cell
+        handed back as a required red, or the runs read never made."""
+        mod = _load()
+        calls = self._fake_gh(mod, monkeypatch, self._RUNS)
+        assert mod._gh_pr_required_reds(tmp_path, 519, None, self._HEAD) == mod._RequiredHold([], ["freshness"])
+        assert [c for c in calls if c[:2] == ["gh", "api"]] == [
+            ["gh", "api", f"repos/{{owner}}/{{repo}}/actions/runs?head_sha={self._HEAD}&per_page=100"]]
+
+    def test_a_runs_read_the_block_cannot_afford_or_that_fails_leaves_the_cell_red(self, monkeypatch, tmp_path):
+        """The merged read after the open rows keeps its share of the block's
+        deadline: a runs read that would eat into it is not made, and one that
+        times out answers nothing. Either way the cell stays red, as before
+        the rule. Dies to: the runs read starving the `Merged:` line, or a
+        skipped read read as a wait."""
+        import time as _time
+        mod = _load()
+        calls = self._fake_gh(mod, monkeypatch, self._RUNS)
+        tight = _time.monotonic() + mod._PR_CHECKS_CAP_SECONDS + 1.0
+        assert mod._gh_pr_required_reds(tmp_path, 519, tight, self._HEAD) == mod._RequiredHold(["freshness"], [])
+        assert not [c for c in calls if c[:2] == ["gh", "api"]], "no runs read past the merged read's share"
+        self._fake_gh(mod, monkeypatch, subprocess.TimeoutExpired(["gh"], 2.0))
+        assert mod._gh_pr_required_reds(tmp_path, 519, None, self._HEAD) == mod._RequiredHold(["freshness"], [])
+
+    def test_a_hold_that_is_only_superseded_cells_reads_as_the_wait(self):
+        """Dies to: the blocked tail saying no red is required (a review), or
+        naming the cell a required red to fix, over a cell that holds the
+        merge until the newer run reports."""
+        mod = _load()
+        row = json.dumps([{
+            "number": 519, "state": "OPEN", "headRefName": "lane/519", "headRefOid": self._HEAD,
+            "baseRefName": "main", "isDraft": False, "mergeStateStatus": "BLOCKED",
+            "autoMergeRequest": {"mergeMethod": "MERGE"},
+            "statusCheckRollup": [{"name": "freshness", "status": "COMPLETED", "conclusion": "CANCELLED"},
+                                  {"name": "verify", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+        }])
+        asked: list[int] = []
+
+        def reader(number: int):
+            asked.append(number)
+            return mod._RequiredHold([], ["freshness"])
+
+        line = mod._open_prs_line(row, required_reader=reader)
+        assert line.endswith("1 red (freshness); auto-merge armed; waiting on the newer run of freshness"), line
+        assert asked == [519]
+        assert "no red is required" not in line and "required check red" not in line
+
+    def test_the_open_line_hands_each_rows_head_to_its_required_read(self, monkeypatch, tmp_path):
+        """The production path: the listing asks for each row's head, and the
+        row's required read takes it to the runs read. Dies to: the head left
+        out of the listing's fields or never threaded (no runs read, the cell
+        left red)."""
+        mod = _load()
+        assert "headRefOid" in mod._PR_FIELDS.split(",")
+        row = [{"number": 519, "state": "OPEN", "headRefName": "lane/519", "headRefOid": self._HEAD,
+                "baseRefName": "main", "isDraft": False, "mergeStateStatus": "BLOCKED",
+                "autoMergeRequest": {"mergeMethod": "MERGE"},
+                "statusCheckRollup": [{"name": "freshness", "status": "COMPLETED", "conclusion": "CANCELLED"}]}]
+        calls = self._fake_gh(mod, monkeypatch, self._RUNS)
+        real = mod.subprocess.run
+
+        def listing_then_reads(argv, **kw):
+            if argv[:3] == ["gh", "pr", "list"]:
+                calls.append(list(argv))
+                return subprocess.CompletedProcess(argv, 0, stdout=json.dumps(row), stderr="")
+            return real(argv, **kw)
+
+        monkeypatch.setattr(mod.subprocess, "run", listing_then_reads)
+        line = mod._open_prs_line(root=tmp_path)
+        assert line.endswith("auto-merge armed; waiting on the newer run of freshness"), line
+        assert [c for c in calls if c[:2] == ["gh", "api"]] == [
+            ["gh", "api", f"repos/{{owner}}/{{repo}}/actions/runs?head_sha={self._HEAD}&per_page=100"]]
 
     def test_the_required_read_is_spent_only_on_rendered_rows_and_only_while_affordable(self):
         """Three rows with a red must not starve the `Merged:` line that reads
@@ -2568,9 +2665,9 @@ class TestOpenPRsLine:
             rows.append(row)
         asked: list[int] = []
 
-        def reader(number: int) -> list[str]:
+        def reader(number: int):
             asked.append(number)
-            return ["verify"]
+            return mod._RequiredHold(["verify"], [])
 
         line = mod._open_prs_line(json.dumps(rows), required_reader=reader)
         assert asked == [41, 42, 43], "only the rendered rows earn the read"
@@ -2796,7 +2893,7 @@ class TestOpenPRsLine:
         assert mod._merged_prs_line(root=tmp_path, local_has_commit=_has_c95a).startswith("#30 ")
         assert len(calls) == 3
         argv, kw = calls[1]
-        assert argv == ["gh", "pr", "checks", "27", "--required", "--json", "name,bucket"]
+        assert argv == ["gh", "pr", "checks", "27", "--required", "--json", "name,bucket,link"]
         assert kw["timeout"] == mod._PR_CHECKS_CAP_SECONDS <= 2 and kw["cwd"] == str(tmp_path)
         calls = [calls[0], calls[2]]
         for (argv, kw), state, limit in zip(calls, ("open", "merged"), (mod._OPEN_PR_LIMIT, mod._MERGED_PR_ROWS)):
@@ -2890,7 +2987,7 @@ class TestOpenPRsLine:
         unread = mod._open_prs_line(row, required_reader=lambda n: None)
         assert unread.endswith("auto-merge armed; waiting on 1 running; could not read which reds are "
                                "required: gh pr checks 41 --required"), unread
-        answered = mod._open_prs_line(row, required_reader=lambda n: [])
+        answered = mod._open_prs_line(row, required_reader=lambda n: mod._RequiredHold([], []))
         assert answered.endswith("auto-merge armed; waiting on 1 running"), "control: the read answered none"
 
     def test_builders_never_spawn_gh(self, monkeypatch, tmp_path):

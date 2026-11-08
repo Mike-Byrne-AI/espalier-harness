@@ -41,7 +41,9 @@ and its own words (a Windows red sat in GitHub's record for six hours on
   ``status`` and the banner's ``Open PRs:`` line; ``held_by`` and
   ``waiting_on`` are what a blocked row says it waits on (DEF-4063: the
   board made no such read and printed one fixed phrase for every blocked
-  pull request).
+  pull request). A cancelled required cell a newer run of its workflow on
+  the same head supersedes is a wait on that run, never a red to fix
+  (``superseded_runs``, DEF-3035).
 
 Standard library only, zero ``espalier`` imports: the hook loads this by
 path under a private alias; the driver and the board import it as a sibling.
@@ -63,10 +65,15 @@ NO_VERDICT = frozenset({"CANCELLED", "STALE"})
 #: The ``gh pr checks`` buckets that hold a merge: a cancelled required cell
 #: holds it as surely as a failed one (a job no runner picked up reads cancel).
 RED_BUCKETS = frozenset({"fail", "cancel"})
-#: The fields one required-check read asks for: each check's name and its
-#: ``gh pr checks`` bucket. The ship driver adds ``link``, to tell a cell its
-#: tests decided from one a lost runner ended.
-REQUIRED_FIELDS = "name,bucket"
+#: The fields one required-check read asks for: each check's name, its ``gh
+#: pr checks`` bucket and its link, which names the Actions run and job a cell
+#: ran as. The run tells a cancelled cell a newer run of its workflow
+#: superseded from a red (``read_required``, DEF-3035, at every reader); the
+#: job lets the ship driver tell a cell its tests decided from one a lost
+#: runner ended. One read carries all three, never a second.
+REQUIRED_FIELDS = "name,bucket,link"
+#: A check's link when it names an Actions job: the run id, then the job id.
+JOB_LINK_RE = re.compile(r"/actions/runs/(\d+)/job/(\d+)(?![0-9])")
 #: The fields one merged listing carries for these readers.
 MERGED_FIELDS = "number,mergedAt,statusCheckRollup"
 #: The fields the Session Log debt readers ask for (the board's ``records:``
@@ -203,16 +210,25 @@ def _default_gh(cwd: object) -> Gh:
     return run
 
 
-def read_required(number: object, gh: Gh, fields: str = REQUIRED_FIELDS) -> dict | None:
+def read_required(number: object, gh: Gh, fields: str = REQUIRED_FIELDS, *, head: str = "",
+                  runs: Gh | None = None) -> dict | None:
     """The one ``gh pr checks <number> --required`` read: ``{"red", "running",
-    "rows"}``, the answer's rows whose bucket holds a merge (``RED_BUCKETS``),
-    those still running (``pending``), and every row; None when the answer is
-    not a list, which is "could not read", never green (a repository with no
-    required checks answers rc=1 with no JSON). ``gh`` takes the arguments
-    after ``gh`` and returns the parsed JSON or None; ``gh pr checks`` exits 1
-    when a check failed and 8 while one is pending, the two states this read
-    exists for, so a runner hands back the JSON whatever the exit code. A
-    runner's own refusals reach the caller, as ``read_merged``'s do."""
+    "superseded", "rows"}``, the answer's rows whose bucket holds a merge
+    (``RED_BUCKETS``) less those a newer run supersedes, those still running
+    (``pending``), the cancelled ones a newer run of their workflow on the
+    pull request's head supersedes (``superseded_runs``: a wait on that run,
+    never a red), and every row; None when the answer is not a list, which is
+    "could not read", never green (a repository with no required checks
+    answers rc=1 with no JSON). ``gh`` takes the arguments after ``gh`` and
+    returns the parsed JSON or None; ``gh pr checks`` exits 1 when a check
+    failed and 8 while one is pending, the two states this read exists for,
+    so a runner hands back the JSON whatever the exit code. A runner's own
+    refusals reach the caller, as ``read_merged``'s do.
+
+    ``runs`` makes the one runs read of ``head`` (``runs_on_head``), only
+    when a cancelled row names an Actions run: a reader like ``gh`` that
+    answers None where it cannot or may not read (its budget, its errors:
+    the caller's), and a cancelled row then stays red, as before."""
     answer = gh(["pr", "checks", str(number), "--required", "--json", fields])
     if not isinstance(answer, list):
         return None
@@ -221,8 +237,74 @@ def read_required(number: object, gh: Gh, fields: str = REQUIRED_FIELDS) -> dict
     def bucket(row: dict) -> str:
         return str(row.get("bucket") or "").lower()
 
-    return {"red": [r for r in rows if bucket(r) in RED_BUCKETS],
-            "running": [r for r in rows if bucket(r) == "pending"], "rows": rows}
+    def run_of(row: dict) -> str:
+        m = JOB_LINK_RE.search(str(row.get("link") or ""))
+        return m.group(1) if m else ""
+
+    red = [r for r in rows if bucket(r) in RED_BUCKETS]
+    cancelled = {run_of(r) for r in red if bucket(r) == "cancel"} - {""}
+    newer: set[str] = set()
+    if cancelled and head and runs is not None:
+        newer = superseded_runs(cancelled, runs(runs_on_head(head)))
+    superseded = [r for r in red if bucket(r) == "cancel" and run_of(r) in newer]
+    return {"red": [r for r in red if r not in superseded],
+            "running": [r for r in rows if bucket(r) == "pending"], "superseded": superseded, "rows": rows}
+
+
+def runs_on_head(head: str) -> list[str]:
+    """The arguments after ``gh`` of the one runs read ``read_required``
+    makes: the newest hundred workflow runs on commit ``head``, every event
+    (a newer run of any event that runs the job reports the check), in the
+    REST shape ``superseded_runs`` reads."""
+    return ["api", f"repos/{{owner}}/{{repo}}/actions/runs?head_sha={head}&per_page=100"]
+
+
+def superseded_runs(cancelled: set[str], answer: object) -> set[str]:
+    """Of ``cancelled`` (the runs cancelled required cells ran in), those a
+    newer run of the same workflow on the same head supersedes: the listing
+    (``runs_on_head``'s answer) holds the run, and another run with its
+    ``workflow_id``, created after it (``created_at``, then the id on a tie),
+    that has not completed. The cell holds the merge until that run's job
+    reports, so its readers word it as a wait on that run, never as a red to
+    fix, push and re-bind (DEF-3035: a seat that followed the board to
+    ``status`` after a re-bind was told to push, which would cancel the newer
+    run in turn).
+
+    The newer run is the rule, not GitHub's concurrency note: a cell
+    cancelled before it starts carries none. #519's ``freshness`` (job
+    128643084948, head 3f9be29, 2026-11-08) has no annotation; the Harness
+    Guard run that superseded it (42452020852, created 05:45:40Z) shares
+    workflow 366642379 with the cancelled run (42452013919, created
+    05:45:34Z), and freshness carried no note in 37 of its 38 supersedes
+    read that week, while verify carried it in 37 of 37. Nor is a newer
+    check run of the same name: it appeared after the cancel in every window
+    read, while the newer workflow run existed before it. A newer run that
+    has completed supersedes nothing (it skipped the job, so a wait would
+    never end); a run the listing does not hold, an answer that is not the
+    REST shape, a lost runner's cancel, a timeout's and a hand cancel (none
+    has a newer run) stay red, so the ship driver still offers the re-run."""
+    if not isinstance(answer, dict):
+        return set()
+    listed = [run for run in answer.get("workflow_runs") or [] if isinstance(run, dict)]
+
+    def order(run: dict) -> tuple[str, int]:
+        ident = run.get("id")
+        return str(run.get("created_at") or ""), ident if isinstance(ident, int) else -1
+
+    def going(run: dict) -> bool:
+        status = str(run.get("status") or "").lower()
+        return bool(status) and status != "completed"
+
+    found: set[str] = set()
+    for run in listed:
+        ident = str(run.get("id"))
+        workflow = run.get("workflow_id")
+        if ident not in cancelled or workflow is None or not run.get("created_at"):
+            continue
+        if any(other is not run and other.get("workflow_id") == workflow and going(other)
+               and order(other) > order(run) for other in listed):
+            found.add(ident)
+    return found
 
 
 def waiting_on(running: int) -> str:
@@ -231,19 +313,33 @@ def waiting_on(running: int) -> str:
     return f"waiting on {running} running"
 
 
-def held_by(red: list[str], running: list[str]) -> str:
+def held_by(red: list[str], running: list[str], superseded: list[str] | tuple[str, ...] = ()) -> str:
     """What holds a pull request GitHub reports as BLOCKED, from its
     required-check read: the required reds by name (three, then a count),
-    which hold it whatever still runs beside them; else ``waiting_on`` the
-    required cells still running; else nothing required is red or running,
-    so a review or a required check that has not reported holds it. 7-bit
-    ASCII."""
+    which hold it whatever still runs beside them; else the wait --
+    ``waiting_on`` the required cells still running, and ``newer_run_of``
+    the cells a newer run supersedes (DEF-3035); else nothing required is
+    red or running, so a review or a required check that has not reported
+    holds it. 7-bit ASCII."""
     if red:
-        names = ", ".join(ascii_(n) for n in red[:3]) + (f", and {len(red) - 3} more" if len(red) > 3 else "")
-        return f"required {'check' if len(red) == 1 else 'checks'} red ({names})"
+        return f"required {'check' if len(red) == 1 else 'checks'} red ({_names(red)})"
+    if superseded:
+        return (f"{waiting_on(len(running))} and " if running else "waiting on ") + newer_run_of(superseded)
     if running:
         return waiting_on(len(running))
     return "no required check is red or running, so a review or a required check that has not reported holds it"
+
+
+def newer_run_of(superseded: list[str] | tuple[str, ...]) -> str:
+    """The wait a superseded cell holds a merge on, by name (three, then a
+    count): ``the newer run of freshness``. The banner keeps it literal and
+    a test pins the two equal, as ``waiting_on``. 7-bit ASCII."""
+    return f"the newer {'run' if len(superseded) == 1 else 'runs'} of {_names(superseded)}"
+
+
+def _names(names: list[str] | tuple[str, ...]) -> str:
+    """At most three names, ASCII, then how many more."""
+    return ", ".join(ascii_(n) for n in names[:3]) + (f", and {len(names) - 3} more" if len(names) > 3 else "")
 
 
 def by_merge_desc(merged: list[dict]) -> list[dict]:

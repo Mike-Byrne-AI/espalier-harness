@@ -40,7 +40,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, NamedTuple
 
 # The clock at module load, before the sibling imports below: a script start's
 # wall counts them (DEF-3015, `_WALL_SECONDS`).
@@ -733,7 +733,7 @@ _OPEN_PR_LIMIT = 10              # open PRs are few; the line renders the first 
 _MERGED_PR_ROWS = 5              # the most recent merges, each asked about once
 _PR_RENDER_ROWS = 3              # per line, then "and N more": the header is never clipped
 _PR_FIELDS = (
-    "number,state,headRefName,baseRefName,isDraft,mergeStateStatus,autoMergeRequest,"
+    "number,state,headRefName,headRefOid,baseRefName,isDraft,mergeStateStatus,autoMergeRequest,"
     "statusCheckRollup,mergeCommit,mergedAt"
 )
 # The check-state sets (green, running, no verdict, the `gh pr checks` buckets
@@ -821,9 +821,19 @@ class _Unanswered(enum.Enum):
 _NOT_ANSWERED = _Unanswered.NOT_ANSWERED
 
 
-def _gh_pr_required_reds(root: Path, number: int, deadline: float | None) -> list[str] | None:
+class _RequiredHold(NamedTuple):
+    """One blocked row's required-check read: the required checks that are
+    red, and the cancelled ones a newer run of their workflow on the head
+    supersedes (a wait on that run, never a red: DEF-3035)."""
+
+    red: list[str]
+    superseded: list[str]
+
+
+def _gh_pr_required_reds(root: Path, number: int, deadline: float | None, head: str = "") -> _RequiredHold | None:
     """The names of the REQUIRED checks that are red on pull request ``number``
-    (failed or cancelled: either holds the merge),
+    (failed or cancelled: either holds the merge), and apart from them the
+    cancelled ones a newer run of their workflow on ``head`` supersedes,
     from the one `gh pr checks <n> --required` read (``read_required`` in
     tools/cc/_post_merge.py, the board's and the ship driver's too), made only
     when the tally already has a red (the listing carries no is-required flag,
@@ -832,7 +842,13 @@ def _gh_pr_required_reds(root: Path, number: int, deadline: float | None) -> lis
     two states this read exists for -- so stdout is parsed whenever it is JSON,
     whatever the exit code. None only when the read could not be made or
     answered (no budget left, no `gh`, a timeout, unparseable output); the
-    caller names that in the tail instead of guessing which red holds."""
+    caller names that in the tail instead of guessing which red holds.
+
+    On a row holding a cancelled required cell the module makes one runs
+    read of ``head`` (``superseded_runs``): each read's timeout is cut to the
+    block's deadline when it starts, and the runs read is made only while the
+    block can still afford the merged read after it (``_PR_READ_CAP_SECONDS``),
+    so a cell whose runs read is not made or not answered stays red."""
     timeout = _seconds_left(deadline, _PR_CHECKS_CAP_SECONDS)
     if timeout <= 0.2:
         return None
@@ -840,23 +856,37 @@ def _gh_pr_required_reds(root: Path, number: int, deadline: float | None) -> lis
     if post_merge is None:  # fail-open: ok deliberate -- the read and its buckets live in the module; without it the tail says the required reds could not be read, and the block's gate has voiced the absence
         return None
 
-    def gh(args: list[str]) -> object:
+    def gh_within(args: list[str], seconds: float) -> object:
         result = _hook_utils.run_bounded(  # spawn: ok a reporter: a gh that cannot run costs the required-red name in one tail, never the line; a missing gh is named by the load-bearing-tool warning
             ["gh", *args],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=timeout, cwd=str(root),
+            timeout=seconds, cwd=str(root),
         )
-        return json.loads(result.stdout or "")  # json-dict-safe: ok a LIST of rows; read_required isinstance-checks the answer and each row
+        return json.loads(result.stdout or "")  # json-dict-safe: ok a LIST of rows or the runs listing; the module isinstance-checks each answer and row
+
+    def gh(args: list[str]) -> object:
+        return gh_within(args, max(0.2, _seconds_left(deadline, _PR_CHECKS_CAP_SECONDS)))
+
+    def runs(args: list[str]) -> object:
+        spare = (_PR_CHECKS_CAP_SECONDS if deadline is None
+                 else min(_PR_CHECKS_CAP_SECONDS, deadline - time.monotonic() - _PR_READ_CAP_SECONDS))
+        if spare <= 0.2:
+            return None   # the merged read after it keeps its share; the cancelled cells stay red
+        try:
+            return gh_within(args, spare)
+        except (OSError, subprocess.SubprocessError, ValueError):  # fail-open: ok deliberate -- a runs read that cannot run, answer in time or parse leaves its cancelled cells red, as before the rule, and ship.py status (named in the tail) makes its own
+            return None
 
     try:
-        reading = post_merge.read_required(number, gh)
+        reading = post_merge.read_required(number, gh, head=head, runs=runs)
     except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- a reporter that cannot run gh says so in the tail (could not read which reds are required); a missing gh is named by the load-bearing-tool warning
         return None
     except ValueError:  # fail-open: ok deliberate -- unparseable output is named in the tail (could not read which reds are required), never read as no required red
         return None
     if reading is None:  # fail-open: ok deliberate -- an answer that is not a list is named in the tail (could not read which reds are required), never read as no required red
         return None
-    return sorted(_ascii(str(row.get("name") or "?")) for row in reading["red"])
+    return _RequiredHold(sorted(_ascii(str(row.get("name") or "?")) for row in reading["red"]),
+                         sorted(_ascii(str(row.get("name") or "?")) for row in reading.get("superseded") or []))
 
 
 # The base branch's merge rules: the read and the rendering live in
@@ -1415,14 +1445,18 @@ def _latest_run_per_check(rows: list) -> list:
     return post_merge.latest_run_per_check(rows)
 
 
-def _pr_summary(pr: dict, required_red: list[str] | None = None) -> str:
+def _pr_summary(pr: dict, required_red: list[str] | None = None,
+                superseded: list[str] | tuple[str, ...] = ()) -> str:
     """One open pull request as the banner names it: number, head branch, the
     check tally (red checks by name, at most three; one row per check, its
     latest run), a conflict or behind-base note, and what auto-merge will do
     about it. ``required_red`` is the answer of the required-checks read for a
     row with a red (the names that are red AND required; ``[]`` when none is;
     ``None`` when the read could not be made), so a merge GitHub reports as
-    blocked names what holds it instead of guessing."""
+    blocked names what holds it instead of guessing; ``superseded`` names the
+    required cells that read cancelled because a newer run of their workflow
+    on the head supersedes them, which hold it as a wait (DEF-3035). The
+    tally counts such a cell red, as the listing gives it: its own rule."""
     rollup = pr.get("statusCheckRollup")
     rows = _latest_run_per_check(rollup if isinstance(rollup, list) else [])
     outcomes = [(_check_outcome(r), r) for r in rows]
@@ -1492,6 +1526,17 @@ def _pr_summary(pr: dict, required_red: list[str] | None = None) -> str:
                     f"{'check' if len(required_red) == 1 else 'checks'} red "
                     f"({_check_names(required_red)}); tools/cc/ship.py status tells a test red "
                     f"(fix, push, re-bind) from a lost runner (rerun)")
+        elif superseded:
+            # The read answered and no required cell is red: a cancelled one a
+            # newer run of its workflow on this head supersedes holds the
+            # merge only until that run's job reports (DEF-3035: a re-bind's
+            # title edit re-runs Harness Guard, and a push made on a "fix"
+            # would cancel the newer run in turn). _post_merge.held_by's
+            # words, kept literal like the running tail and pinned equal in
+            # tests/test_post_merge.py.
+            wait = f"waiting on {running} running and " if running else "waiting on "
+            tail = (f"auto-merge armed; {wait}the newer {'run' if len(superseded) == 1 else 'runs'} "
+                    f"of {_check_names(list(superseded))}")
         elif running:
             # _post_merge.waiting_on's words, which the board's blocked row
             # prints (DEF-4063); kept literal here so the row renders without
@@ -1529,7 +1574,7 @@ def _open_prs_line(
     listing: str | None = None,
     root: Path | None = None,
     deadline: float | None = None,
-    required_reader: Callable[[int], list[str] | None] | None = None,
+    required_reader: Callable[[int], _RequiredHold | None] | None = None,
 ) -> str:
     """The banner's `Open PRs:` value -- one open pull request per line, the
     first on the label's line and the rest aligned under it -- or '' when the
@@ -1537,21 +1582,23 @@ def _open_prs_line(
     answer in time. ``listing`` is for tests; production passes ``root`` and
     the block's ``deadline`` and the line reads `gh` itself, under the same
     deadline as the one extra read a row with a red earns (`gh pr checks
-    --required`, ``_gh_pr_required_reds``); ``required_reader`` is that read,
+    --required`, ``_gh_pr_required_reds``, with the runs read of the row's
+    head a cancelled required cell earns); ``required_reader`` is that read,
     injectable so the tests count it."""
     if listing is None:
         listing = _read_open_prs(root if root is not None else Path.cwd(), deadline)
         if listing is None:
             return _OPEN_PRS_UNREAD
+    prs = [pr for pr in _prs(listing) if _pr_state(pr) == "OPEN"]
     if required_reader is None and root is not None:
         base = root
+        heads = {pr.get("number"): str(pr.get("headRefOid") or "") for pr in prs}
 
-        def required_reader(number: int) -> list[str] | None:
-            return _gh_pr_required_reds(base, number, deadline)
-    prs = [pr for pr in _prs(listing) if _pr_state(pr) == "OPEN"]
+        def required_reader(number: int) -> _RequiredHold | None:
+            return _gh_pr_required_reds(base, number, deadline, heads.get(number, ""))
     rows = []
     for i, pr in enumerate(prs):
-        reds = None
+        hold = None
         # The read is spent only on a row the line will render (the rest
         # fold into "and N more") and only while the block can still afford
         # the merged read that follows it: three rows with a red must not
@@ -1559,8 +1606,8 @@ def _open_prs_line(
         affordable = deadline is None or (deadline - time.monotonic()) > (
             _PR_READ_CAP_SECONDS + _PR_CHECKS_CAP_SECONDS)
         if required_reader is not None and i < _PR_RENDER_ROWS and affordable and _pr_has_red(pr):
-            reds = required_reader(int(pr["number"]))
-        rows.append(_pr_summary(pr, reds))
+            hold = required_reader(int(pr["number"]))
+        rows.append(_pr_summary(pr, None if hold is None else hold.red, () if hold is None else hold.superseded))
     return _render_rows(rows)
 
 

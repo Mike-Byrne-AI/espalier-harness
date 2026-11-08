@@ -3406,8 +3406,12 @@ _OPERATION_CANCELED = "the operation was canceled"
 #: the two above: a run a newer one superseded, a hand cancellation, and a job
 #: that outran its `timeout-minutes` (which carries "The operation was
 #: canceled." too, and would otherwise read as a lost runner).
+#: Why ``_classify`` calls a cancelled job decided when its note says a newer
+#: run superseded it: the one reason ``_read_required`` re-reads, since the
+#: runs read is the rule and the note at most its second signal (DEF-3035).
+_SUPERSEDED_BY_NOTE = "a newer run superseded it"
 _DECIDED_NOTES = (
-    ("higher priority waiting request", "a newer run superseded it"),
+    ("higher priority waiting request", _SUPERSEDED_BY_NOTE),
     ("was canceled by", "cancelled by hand"),
     ("exceeded the maximum execution time", "it outran its timeout"),
 )
@@ -3451,11 +3455,9 @@ _STEP_HEADER_RE = re.compile(r"(?:\S+ )?##\[group\]Run ")
 _GH_LOG_FLOOR = "2.97.0"
 _GH_REASON_CHARS = 160
 #: An Actions job's link as `gh pr checks --json link` gives it: run, then job.
-_JOB_LINK_RE = re.compile(r"/actions/runs/(\d+)/job/(\d+)(?![0-9])")
-#: The required-check read's fields: the home's (tools/cc/_post_merge.py,
-#: whose ``read_required`` splits the buckets), and each cell's link, which
-#: names the job a red cell ran as.
-_REQUIRED_FIELDS = _post_merge.REQUIRED_FIELDS + ",link"
+#: The home's (tools/cc/_post_merge.py, whose ``read_required`` asks for the
+#: link and reads the run from it, DEF-3035), so the two never drift.
+_JOB_LINK_RE = _post_merge.JOB_LINK_RE
 #: A finished job's conclusions that hold nothing, in the REST spelling.
 _JOB_GREEN = frozenset(s.lower() for s in _CHECK_GREEN)
 
@@ -3468,8 +3470,11 @@ class _Reading:
     driver could not place, each with why and the command that shows its log.
     ``rerunnable``: run id -> the cells one re-run of that run retries.
     ``held``: lost cells the driver will not re-run now, each line saying why
-    and what to do instead. ``pending``: still running. `status` prints this
-    and `rerun` acts on it, so the two never disagree."""
+    and what to do instead. ``pending``: still running. ``superseded``:
+    cancelled cells a newer run of their workflow on this head supersedes
+    (``_post_merge.superseded_runs``), a wait on that run, never a red to fix
+    or re-run (DEF-3035). `status` prints this and `rerun` acts on it, so the
+    two never disagree."""
 
     def __init__(self) -> None:
         self.decided: list[str] = []
@@ -3477,6 +3482,7 @@ class _Reading:
         self.rerunnable: dict[str, list[str]] = {}
         self.held: list[str] = []
         self.pending: list[str] = []
+        self.superseded: list[str] = []
 
 
 def _annotation_text(job_id: str, cwd: str) -> str | None:
@@ -3582,11 +3588,18 @@ def _job_name(job: dict) -> str:
     return str(job.get("name") or "?")
 
 
-def _read_required(number: str, cwd: str, merge_state: str = "") -> _Reading | None:
+def _read_required(number: str, cwd: str, merge_state: str = "", head: str = "") -> _Reading | None:
     """The pull request's required checks as a ``_Reading``, or None when the
     answer could not be read -- a repository with no required checks at all
     answers rc=1 with no JSON, the common adopter posture, and that is "could
     not read", not a red.
+
+    ``head`` is the pull request's head commit, whose runs tell a cancelled
+    cell a newer run supersedes (``_post_merge.superseded_runs``): a wait,
+    never a red (DEF-3035). Where that read could not be made and the cell's
+    note says a newer run superseded it, the cell is unread, never decided:
+    the note alone is not the rule (a cell cancelled before it starts
+    carries none), and "fix, push, rebind" would cancel the newer run.
 
     A lost cell is offered for a re-run only when its whole run can take one
     -- finished, never re-run (GitHub's attempt counter is the bound, so
@@ -3595,14 +3608,26 @@ def _read_required(number: str, cwd: str, merge_state: str = "") -> _Reading | N
     flaky decided one included -- and only when nothing else holds the merge:
     a decided or unread red, another lost run that is held, or a lane behind
     or in conflict with its base, where catch-up re-runs every cell anyway."""
+    answered: list[bool] = []
+
+    def runs(args: list[str]) -> object:
+        try:
+            answer = _gh_json(*args, cwd=cwd)
+        except Refused:
+            answer = None
+        answered.append(isinstance(answer, dict))
+        return answer
+
     try:
-        required = _post_merge.read_required(number, lambda args: _gh_json(*args, cwd=cwd), fields=_REQUIRED_FIELDS)
+        required = _post_merge.read_required(number, lambda args: _gh_json(*args, cwd=cwd), head=head, runs=runs)
     except Refused:
         return None
     if required is None:
         return None
+    runs_read = any(answered)
     reading = _Reading()
     reading.pending.extend(str(row.get("name") or "?") for row in required["running"])
+    reading.superseded.extend(sorted(str(row.get("name") or "?") for row in required["superseded"]))
     by_run: dict[str, list[tuple[str, str]]] = {}
     for row in required["red"]:
         name = str(row.get("name") or "?")
@@ -3627,6 +3652,10 @@ def _read_required(number: str, cwd: str, merge_state: str = "") -> _Reading | N
             kind, why = _classify(by_id.get(job_id), cwd)
             if kind == "lost":
                 lost.append((f"{name} ({why})", job_id))
+            elif kind == "decided" and why == _SUPERSEDED_BY_NOTE and not runs_read:
+                where = f"gh api {' '.join(_post_merge.runs_on_head(head)[1:])}" if head else "no head commit was read"
+                reading.unread.append(f"{name} (its note says a newer run superseded it, and the runs on its "
+                                      f"head could not be read to confirm the wait: {where})")
             elif kind == "decided":
                 reading.decided.append(name)
             else:
@@ -3678,6 +3707,14 @@ def _read_required(number: str, cwd: str, merge_state: str = "") -> _Reading | N
     return reading
 
 
+def _superseded_wait(cells: list[str]) -> str:
+    """The words ``status`` and ``rerun`` give the cells a newer run of their
+    workflow on this head supersedes: a wait, never a fix (DEF-3035)."""
+    one = len(cells) == 1
+    return (f"{', '.join(cells)} -- a newer run of {'its' if one else 'their'} workflow on this head reports "
+            f"{'it' if one else 'them'}; wait for that run, nothing to fix or re-run")
+
+
 def rerun(dry_run: bool = False) -> int:
     """Re-run, once, the required cells a lost runner ended.
 
@@ -3690,7 +3727,8 @@ def rerun(dry_run: bool = False) -> int:
     branch = current_branch()
     pr = _require_open_pr(branch)
     number = str(pr["number"])
-    reading = _read_required(number, str(root), str(pr.get("mergeStateStatus") or "").upper())
+    reading = _read_required(number, str(root), str(pr.get("mergeStateStatus") or "").upper(),
+                             str(pr.get("headRefOid") or ""))
     if reading is None:
         raise Refused(f"could not read #{number}'s required checks: nothing re-run")
     stops: list[str] = []
@@ -3704,6 +3742,8 @@ def rerun(dry_run: bool = False) -> int:
         raise Refused(f"#{number}: " + "; ".join(stops) + " -- nothing re-run")
     if not reading.rerunnable:
         still = f"; {len(reading.pending)} still running" if reading.pending else ""
+        if reading.superseded:
+            still += f"; {_superseded_wait(reading.superseded)}"
         _say(f"#{number}: no required cell was ended by a lost runner{still} -- nothing to re-run")
         return 0
     for run_id, labels in sorted(reading.rerunnable.items()):
@@ -3732,7 +3772,8 @@ def status() -> int:
     _say(f"#{number} {pr.get('state')} merge-state={pr.get('mergeStateStatus')} auto-merge {armed} head={str(pr.get('headRefOid', ''))[:7]}")
     _say(f"title: {pr.get('title')}")
     if pr.get("state") == "OPEN":
-        reading = _read_required(number, str(root), str(pr.get("mergeStateStatus") or "").upper())
+        reading = _read_required(number, str(root), str(pr.get("mergeStateStatus") or "").upper(),
+                                 str(pr.get("headRefOid") or ""))
         if reading is None:
             _say("could not read which checks are required")
         else:
@@ -3744,7 +3785,9 @@ def status() -> int:
                 _say(f"required, runner lost: {', '.join(labels)} -- `ship.py rerun` re-runs run {run_id} once")
             for line in reading.held:
                 _say(f"required, runner lost: {line}")
-            if not (reading.decided or reading.unread or reading.rerunnable or reading.held):
+            if reading.superseded:
+                _say(f"required, superseded: {_superseded_wait(reading.superseded)}")
+            if not (reading.decided or reading.unread or reading.rerunnable or reading.held or reading.superseded):
                 _say("no required check is red")
         stale = stale_base_line(root, str(pr.get("baseRefName") or default_branch()), {**pr, "headRefName": branch})
         if stale:

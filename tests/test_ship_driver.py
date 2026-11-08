@@ -2552,20 +2552,28 @@ TEST_RED_LOG = _log(_step_lines(
     "1 failed, 27080 passed in 640.12s (0:10:40)", exit_code=1))
 
 
+def _head_runs_key(head: str = HEAD) -> tuple[str, ...]:
+    return ("gh", "api", f"repos/{{owner}}/{{repo}}/actions/runs?head_sha={head}&per_page=100")
+
+
 def _rerun_answers(root, checks: list[dict], runs: dict[str, tuple] | None = None,
                    notes: dict[int, tuple] | None = None, rerun=(0, "", ""), base=None,
-                   pr: dict | None = None, logs: dict[int, tuple] | None = None) -> dict:
+                   pr: dict | None = None, logs: dict[int, tuple] | None = None,
+                   head_runs: tuple | None = None) -> dict:
     """What `rerun` and `status` read: the required checks (gh exits 1 on a
-    red), one `gh run view` per run a red cell links to, the annotations of a
-    job only when its steps leave the question open, and the log of a job
-    whose step failed. A read the table does not plan is an unplanned spawn,
-    so a row that leaves a job's notes or log out also pins that they were
-    never fetched."""
+    red), the runs on the head when a cancelled cell names one (DEF-3035;
+    ``head_runs``, by default a listing that holds none, so no cell is
+    superseded), one `gh run view` per run a red cell links to, the
+    annotations of a job only when its steps leave the question open, and the
+    log of a job whose step failed. A read the table does not plan is an
+    unplanned spawn, so a row that leaves a job's notes or log out also pins
+    that they were never fetched."""
     answers = base if base is not None else _reads(root)
     answers.update({
         _list_key("lane/x", "open"): _rows(pr or _pr()),
         ("gh", "pr", "checks"): (1, json.dumps(checks), "some checks were not successful"),
         ("gh", "run", "rerun"): rerun,
+        _head_runs_key(str((pr or _pr())["headRefOid"])): head_runs or (0, json.dumps({"workflow_runs": []}), ""),
     })
     for run_id, view in (runs or {}).items():
         answers[("gh", "run", "view", run_id)] = view
@@ -2770,6 +2778,72 @@ class TestRerun:
         _arm(ship, _one_lost_cell(tmp_path, rerun=(1, "", "HTTP 403: Resource not accessible by integration")))
         with pytest.raises(ship.Refused, match="gh run rerun .* failed: HTTP 403"):
             ship.rerun()
+
+
+def _newer_run(status: str = "queued") -> tuple[int, str, str]:
+    """The runs on the head when a newer run of the cancelled cell's workflow
+    is still going: #519's shape on 2026-11-08 (the re-bind's title edit)."""
+    return (0, json.dumps({"workflow_runs": [
+        {"id": int(OTHER_RUN) + 9, "workflow_id": 366642379, "created_at": "2026-11-08T05:45:40Z", "status": status},
+        {"id": int(RUN_ID), "workflow_id": 366642379, "created_at": "2026-11-08T05:45:34Z", "status": "completed"},
+    ]}), "")
+
+
+class TestASupersededCellIsAWait:
+    """DEF-3035: a cancelled required cell a newer run of its workflow on this
+    head supersedes is a wait on that run. `status` said "fix, push, rebind"
+    for it (#498's verify, 2026-11-07), `rerun` refused it as a decided red,
+    and a push made on that word cancels the newer run in turn."""
+
+    def _superseded(self, tmp_path, head_runs=None, notes=None, **kw) -> dict:
+        return _rerun_answers(
+            tmp_path, [_check("verify", "cancel", 11), _check("lint", "pass", 12)],
+            {RUN_ID: _run_view(_job(11, "verify", "cancelled", ("cancelled",)))},
+            notes if notes is not None else {11: _notes(SUPERSEDED)},
+            head_runs=head_runs or _newer_run(), **kw)
+
+    def test_status_names_the_wait_never_a_red_to_fix(self, ship, tmp_path, capsys):
+        """Dies to: the cell under `required red ... fix, push, rebind`, `no
+        required check is red` over a cell that still holds the merge, or its
+        job read (the runs read settles it)."""
+        spawns = _arm(ship, self._superseded(tmp_path, base=_status_answers(tmp_path)))
+        assert ship.status() == 0
+        out = capsys.readouterr().out
+        assert ("required, superseded: verify -- a newer run of its workflow on this head reports it; "
+                "wait for that run, nothing to fix or re-run") in out, out
+        assert "required red" not in out and "no required check is red" not in out
+        assert spawns.count(("gh", "run", "view")) == 0 and spawns.mutations == []
+        assert spawns.count(_head_runs_key()) == 1
+
+    def test_rerun_is_not_refused_and_re_runs_nothing(self, ship, tmp_path, capsys):
+        """Dies to: the refusal "a required red its tests decided" for a wait,
+        or a re-run spawned for it."""
+        spawns = _arm(ship, self._superseded(tmp_path))
+        assert ship.rerun() == 0
+        out = capsys.readouterr().out
+        assert ("no required cell was ended by a lost runner; verify -- a newer run of its workflow on this "
+                "head reports it; wait for that run, nothing to fix or re-run -- nothing to re-run") in out, out
+        assert spawns.mutations == []
+
+    def test_a_note_the_runs_read_could_not_confirm_is_unread_not_decided(self, ship, tmp_path, capsys):
+        """The note alone is not the rule (a cell cancelled before it starts
+        carries none), and "fix, push, rebind" would cancel the newer run.
+        Dies to: the cell decided when the runs on its head were not read."""
+        _arm(ship, self._superseded(tmp_path, head_runs=(1, "", "HTTP 502: Bad Gateway"),
+                                    base=_status_answers(tmp_path)))
+        assert ship.status() == 0
+        out = capsys.readouterr().out
+        assert ("required red, cause not read: verify (its note says a newer run superseded it, and the runs on "
+                "its head could not be read to confirm the wait: gh api repos/{owner}/{repo}/actions/runs?"
+                f"head_sha={HEAD}&per_page=100)") in out, out
+        assert "fix, push, rebind" not in out
+
+    def test_a_newer_run_that_completed_supersedes_nothing(self, ship, tmp_path, capsys):
+        """It skipped the job, so the wait would never end: the cell stays a
+        decided red. Dies to: a completed run read as one still to report."""
+        _arm(ship, self._superseded(tmp_path, head_runs=_newer_run("completed"), base=_status_answers(tmp_path)))
+        assert ship.status() == 0
+        assert "required red: verify -- fix, push, rebind" in capsys.readouterr().out
 
 
 class TestStatusNamesTheCellsALostRunnerEnded:
