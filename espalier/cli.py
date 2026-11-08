@@ -10809,7 +10809,7 @@ def cmd_merge_settings(args: argparse.Namespace) -> int:
         # only on the error branches.
         print(
             f"merge-settings: no {settings_path} found. Run "
-            f"`{_remedy_py()} -m espalier init {args.repo}` to create a fully-wired settings.json.",
+            f"`{_remedy_py()} -m espalier init {quoted_if_spaced(args.repo)}` to create a fully-wired settings.json.",
             file=sys.stderr,
         )
         return 1
@@ -10824,7 +10824,7 @@ def cmd_merge_settings(args: argparse.Namespace) -> int:
     if result.status == MERGE_PARSE_ERROR:
         print(
             f"merge-settings: could not parse {settings_path}: {result.detail}. "
-            f"Fix it (or rm it and run `{_remedy_py()} -m espalier init {args.repo}`).",
+            f"Fix it (or rm it and run `{_remedy_py()} -m espalier init {quoted_if_spaced(args.repo)}`).",
             file=sys.stderr,
         )
         return 1
@@ -12393,7 +12393,7 @@ def cmd_audit(args: argparse.Namespace) -> int:
     print(
         f"Audit failed: {plural(report['summary']['errors'], 'error')}, "
         f"{plural(report['summary']['warnings'], 'warning')}. Address the findings "
-        f"above, then re-run: {_remedy_py()} -m espalier audit {args.repo}",
+        f"above, then re-run: {_remedy_py()} -m espalier audit {quoted_if_spaced(args.repo)}",
         file=sys.stderr,
     )
     return 1
@@ -12418,7 +12418,7 @@ def cmd_selfcheck(args: argparse.Namespace) -> int:
             print(
                 f"selfcheck --contracts: {repo_root} is not initialized for "
                 "Espalier-Harness, and the contracts read the deployed tree. "
-                f"Run `{py} -m espalier init {repo_root}` first.",
+                f"Run `{py} -m espalier init {quoted_if_spaced(str(repo_root))}` first.",
                 file=sys.stderr,
             )
             return 2
@@ -14230,7 +14230,7 @@ def cmd_scope_check(args: argparse.Namespace) -> int:
         print("Recommendation:")
         print("  Either expand Scope (in) to cover the out-of-scope files,")
         print("  or proceed with test-driven discovery via:")
-        print(f"    {_remedy_py()} -m espalier scope-check {pack_path} \\")
+        print(f"    {_remedy_py()} -m espalier scope-check {quoted_if_spaced(str(pack_path))} \\")
         print("        --accept-scope-gap '<reason>'")
         return 2
 
@@ -14287,7 +14287,7 @@ def cmd_surface_impact(args: argparse.Namespace) -> int:
         print("Recommendation:")
         print("  Bundle the obligations above into the execution plan up front,")
         print("  or acknowledge them via:")
-        print(f"    {_remedy_py()} -m espalier surface-impact {pack_path} \\")
+        print(f"    {_remedy_py()} -m espalier surface-impact {quoted_if_spaced(str(pack_path))} \\")
         print("        --accept-surface-gap '<reason>'")
         return 2
 
@@ -16484,7 +16484,7 @@ def _maybe_nudge_source_checkout(args: "argparse.Namespace") -> None:
         print(
             "espalier: this repo ships the harness but governance is NOT active "
             "on this machine (no .claude/settings.json -- it is per-machine and "
-            f"gitignored). Run `{_remedy_py()} -m espalier init {repo}` to wire the hooks.",
+            f"gitignored). Run `{_remedy_py()} -m espalier init {quoted_if_spaced(str(repo))}` to wire the hooks.",
             file=sys.stderr,
         )
 
