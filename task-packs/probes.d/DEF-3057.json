@@ -1,0 +1,13 @@
+{
+ "id": "DEF-3057",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c 'import json,os,subprocess,sys;D=chr(36);S=[D+\"U mv cc/x /tmp/y\",\"sudo \"+D+\"{U} mv cc/x /tmp/y\"];E={k:v for k,v in os.environ.items() if not k.startswith(\"ESPALIER\")};O=[subprocess.run([sys.executable,\"tools/cc/hooks/write_guard.py\"],input=json.dumps({\"session_id\":\"probe\",\"hook_event_name\":\"PreToolUse\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":c}}),capture_output=True,text=True,env=E,timeout=60).stdout for c in S];X=[o for o in O if \"deny\" in o and \"protected harness\" not in o];print(sum(\"deny\" not in o for o in O)) if not X else sys.exit(\"another deny: \"+X[0][:200])'",
+ "open_value": "2",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/write_guard.py"
+ ],
+ "row_sha": "68ffab9dd3ad",
+ "text_sha": "957bf66ba89f",
+ "verified_2026_11_07": "OPEN (filed 2026-11-07; probe driven at filing here and in the export of HEAD fbd1b08a7533)"
+}

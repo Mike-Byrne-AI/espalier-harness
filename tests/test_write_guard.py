@@ -1955,6 +1955,19 @@ class TestTheWrapperRunReadsEachTokenOnce:
         # the twin: the current shell's own cd re-bases what follows
         assert_hook_allowed(run_bash_guard(f"{head}cd /tmp && {self._ZONE}", tmp_path))
 
+    @pytest.mark.parametrize("command", [
+        "eval cd /tmp && {z}", "\\cd /tmp && {z}", "'cd' /tmp && {z}", "! cd /tmp; {z}",
+        "{{ cd /tmp; {z}; }}", "command -p cd /tmp && {z}", "time -p cd /tmp && {z}", "cd -- /tmp && {z}",
+    ])
+    def test_every_current_shell_cd_spelling_still_moves_the_later_statement(self, tmp_path, command):
+        # ruling 1bb010 (5): the tracker's narrowed anchor keeps each spelling
+        # base re-based on -- eval, `!` and the group sit in other parts of
+        # the anchor than the run it narrowed, the escape and the quote in the
+        # verb prefix. A cd as an `if` or `while` test re-bases nothing on
+        # base either (the over-deny side, measured at both trees), so it is
+        # not a row here
+        assert_hook_allowed(run_bash_guard(command.format(z=self._ZONE), tmp_path))
+
     @pytest.mark.parametrize("prefix", [
         "sudo -u 'a b' ", "env -C $(pwd)/x ", "sudo -u A=1 -E ", ">$(mktemp)/x ", "env -C ${HOME}/w ",
     ])
