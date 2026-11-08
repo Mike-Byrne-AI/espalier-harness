@@ -302,6 +302,28 @@ class TestTheRosterReadsTheBase:
         text = board.render(board.collect(root, fetch=False, run_=run))
         assert "checks:   added (main, advisory): red since ddddddd (run 9) (no green among the runs read)" in text, text
         assert self._NOTE not in text, text
+        # Read at the ref as last fetched, which this checks line says itself.
+        assert "          (push workflows listed at origin/main, as last fetched (--no-fetch))" in text, text
+
+    def test_the_roster_is_read_after_the_base_fetch(self, board, monkeypatch, tmp_path):
+        """Dies to: the roster read before ``collect`` fetches the base, so a
+        workflow merged since the last fetch waits a whole board read more
+        (every other row reads an ``update-ref``'d ref with ``fetch=False``;
+        the failure-mode review's mutant moved the fetch below the checks
+        section and 216 board tests stayed green)."""
+        origin, tip = _workflows_behind_their_base(tmp_path)
+        clone = tmp_path / "clone"
+        _git(tmp_path, "clone", "-q", "--no-hardlinks", str(origin), str(clone))
+        # The clone checks out the origin's lane (its first commit); its
+        # origin/main is put back there, a base as last fetched before the merge.
+        _git(clone, "update-ref", "refs/remotes/origin/main", _git(clone, "rev-parse", "HEAD"))
+        assert "added.yml" not in board.base_run_workflows(clone, "main", run_=board.run)[0], "precondition"
+        _stub(monkeypatch, board)
+        run = _gh_and_git(board, {"pr list": [], "run list": _GREEN_RUNS, "run list added.yml": self._RED})
+        text = board.render(board.collect(clone, fetch=True, run_=run))
+        assert "added.yml" in _workflow_reads(run), _workflow_reads(run)
+        assert "checks:   added (main, advisory): red since ddddddd (run 9)" in text, text
+        assert _git(clone, "rev-parse", "refs/remotes/origin/main") == tip
 
     def test_a_workflow_deleted_on_the_base_is_not_read_while_the_checkout_keeps_it(self, board, monkeypatch,
                                                                                     tmp_path):
@@ -363,6 +385,25 @@ class TestTheRosterReadsTheBase:
         roster, why = board.base_run_workflows(root, "main", run_=listing((128, "", "fatal: not a tree object")))
         assert roster == {"gone.yml": False}
         assert "origin/main" in why and "fatal: not a tree object" in why, why
+
+    def test_a_fallback_over_an_empty_roster_is_still_said(self, board, monkeypatch, tmp_path):
+        """Dies to: the note kept off when the checkout holds no push
+        workflow, so a failed listing prints "none red" over a base whose push
+        workflows went unread (both reviews: the case DEF-5084 names, silent)."""
+        root, _tip = _workflows_behind_their_base(tmp_path)
+        (root / ".github" / "workflows" / "gone.yml").unlink()
+        _stub_channel(monkeypatch, board)
+        gh = _gh_and_git(board, {"pr list": [], "run list": _GREEN_RUNS})
+
+        def run(argv, **kw):
+            if argv[:2] == ["git", "ls-tree"]:
+                return 128, "", "fatal: not a tree object"
+            return gh(argv, **kw)
+
+        collected = board.collect(root, fetch=False, run_=run)
+        assert collected["post_merge_checks"]["base_runs"] == {}
+        text = board.render(collected)
+        assert self._NOTE + "git ls-tree on origin/main failed (fatal: not a tree object))" in text, text
 
     def test_a_file_git_does_not_give_stays_on_the_roster(self, board, tmp_path):
         """Dies to: a workflow whose text git did not hand over (a killed or

@@ -360,7 +360,7 @@ def base_run_workflows(root: Path, base: str, *, run_: Runner = run, deadline: f
     and why, which the checks line says. The base's, so a push workflow
     merged there is read at the next board read and one deleted there is
     read no more, whatever commit this checkout sits on; as last fetched
-    (``collect`` fetches it first, and the ledger line says when that fetch
+    (``collect`` fetches it first, and the checks line says when that fetch
     failed or was skipped). A file whose text cannot be read is on the
     roster, superseding nothing: the read decides. No folder, no roster: a
     tree without workflows spawns no gh read. The git reads take their
@@ -440,7 +440,10 @@ def _roster_files_in_checkout(root: Path) -> dict[str, str | None]:
     the base's cannot be listed. No folder, no files."""
     folder = Path(root) / WORKFLOWS_DIR
     try:
-        names = sorted(p.name for p in folder.iterdir() if p.suffix in WORKFLOW_SUFFIXES and p.is_file())
+        # The suffixes spelled out on the listing's own line (WORKFLOW_SUFFIXES):
+        # the hidden-name contract reads a listing over "workflows" that names
+        # no .yml as a .claude kind's.
+        names = sorted(p.name for p in folder.iterdir() if p.suffix in (".yml", ".yaml") and p.is_file())
     except OSError:
         return {}
     files: dict[str, str | None] = {}
@@ -737,7 +740,7 @@ def read_stale_section(root: Path, base: str, prs: list[dict], strict: bool | No
 
 def fetch_base(root: Path, base: str, *, run_: Runner = run) -> tuple[bool, str]:
     """``origin/<base>`` brought up to GitHub's, once per read, for the stale
-    check and the ledger count alike (with no pull request armed nothing else
+    check, the ledger count and the base-run roster alike (with no pull request armed nothing else
     would refresh it): ``(True, "")``, or ``(False, why)`` when the fetch
     failed and the base stays as last fetched, which the ledger line says."""
     try:
@@ -1553,6 +1556,9 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run, now: datetime
         pm.update(read_ruling(by_machine, dispatcher, how, pm.get("run_id"), red_runs=pm.get("red_runs") or [],
                               mail_unread=board.get("mail_unread") or "", mail_note=board.get("mail_note") or ""))
     try:
+        # After the base fetch: the base-run roster is origin/<base>'s
+        # workflow files, so a push workflow merged since the last fetch is
+        # read on this one only because the fetch came first.
         board["post_merge_checks"] = read_post_merge_checks(root, base=base, run_=run_, read_at=board["read_at"])
     except Unresolvable as exc:
         board["post_merge_checks"] = {"unread": str(exc)}
@@ -1998,10 +2004,17 @@ def render(board: dict) -> str:
         texts = list(pmc.get("lines") or ["unread (no merged pull requests read)"])
         if pmc.get("log_note"):
             texts.append(f"({pmc['log_note']})")
-        if pmc.get("roster_fallback") and pmc.get("base_runs"):
+        fetched = board.get("base_fetch") or {}
+        if pmc.get("roster_fallback"):
             # The roster came from the working tree: a workflow the base added
             # since this checkout's commit is on no line, one it deleted is.
+            # Said even over an empty roster, whose "none red" covers no base run.
             texts.append(f"(push workflows listed from this working tree: {pmc['roster_fallback']})")
+        elif pmc.get("base_runs") and fetched.get("state") in ("skipped", "failed"):
+            # Read at origin/<base> as last fetched: said here too, since the
+            # ledger line says it only when its own read is at the ref.
+            why = "--no-fetch" if fetched.get("state") == "skipped" else f"the fetch failed: {fetched.get('problem')}"
+            texts.append(f"(push workflows listed at origin/{board.get('base') or 'main'}, as last fetched ({why}))")
         for i, text in enumerate(texts):
             lines.append(("checks:   " if i == 0 else "          ") + text)
     prs = board.get("open_prs")

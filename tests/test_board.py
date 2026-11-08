@@ -50,8 +50,9 @@ def _gh(answers: dict[str, object]):
 
     def run(argv, **kw):
         calls.append(list(argv))
-        if argv[:2] == ["git", "rev-parse"]:
-            # The base-run roster's first question: these trees are no git
+        if argv[:4] == ["git", "rev-parse", "--verify", "--quiet"] and argv[4].startswith("refs/remotes/origin/"):
+            # The base-run roster's first question, by its exact shape (any
+            # other git call stays an unexpected one): these trees are no git
             # repository, so no origin/<base>, and the roster is the checkout's
             # (tests/test_board_ledger_base.py reads the base over real git).
             return 1, "", ""
