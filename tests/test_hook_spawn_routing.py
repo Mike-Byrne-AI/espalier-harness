@@ -54,11 +54,10 @@ _EXEMPT = {
 #: write_guard spawns by hand whose result no budget refusal can reach, each
 #: with its reason. Not checked for liveness: with the up-to-date rule off, a
 #: lane that routes or renames the spawn would merge clean and red main.
-_UNREAD_SITES = {
-    ("test_checkout_sync.py", "_wedge_restore"):
-        "write_guard answers the wedge restore from its start refusal at import (a sibling it "
-        "imports raises), before main() starts the budget",
-}
+#: Empty since DEF-2057: test_checkout_sync.py::_wedge_restore sat here ("before
+#: main() starts the budget"), stale since #519 put the parent's deadline before
+#: the sibling-import guard.
+_UNREAD_SITES: dict[tuple[str, str], str] = {}
 
 
 def _number(node: ast.AST | None) -> float | None:
@@ -81,13 +80,13 @@ class Spawn(NamedTuple):
     function: str
     bound: float | None
     write_guard: bool  # the statusline otherwise
-    read: bool  # the spawning function hands its result to not_a_budget_miss
+    read: bool  # the spawning function hands it to a budget reader (_READERS)
 
 
 def hook_spawns(path: Path) -> list[Spawn]:
     """Each spawn in ``path`` that runs write_guard or the statusline by hand,
     at any bound or none: its bound, which of the two it runs, and whether the
-    function that spawns it hands the result to ``not_a_budget_miss`` (the
+    function that spawns it hands it to a budget reader (``_READERS``: the
     spawn written inside that call, or the last value bound to a name the
     call is given). The argv is a list or tuple, written in the call or bound
     to a name; the script is its first element past the interpreter's flags.
@@ -109,6 +108,10 @@ def hook_spawns(path: Path) -> list[Spawn]:
                 if isinstance(t, ast.Name):
                     module_values.setdefault(t.id, []).append(n.value)
     module_binds = {name: " ".join(ast.unparse(v) for v in values) for name, values in module_values.items()}
+
+    def is_spawn_ref(node: ast.expr) -> bool:
+        """``subprocess.run`` (any spawn function), or one imported bare."""
+        return getattr(node, "attr", None) in _SPAWNS or (isinstance(node, ast.Name) and node.id in imported)
 
     def names_write_guard(decorator: ast.expr) -> bool:
         text = ast.unparse(decorator)
@@ -160,11 +163,15 @@ def hook_spawns(path: Path) -> list[Spawn]:
                         if isinstance(n, ast.Name) and (value := last_bound(n.id, c.lineno)) is not None:
                             read_values.add(id(value))
         for call in ast.walk(fn):
-            if not (isinstance(call, ast.Call) and owner.get(id(call)) is fn and (
-                    getattr(call.func, "attr", None) in _SPAWNS
-                    or (isinstance(call.func, ast.Name) and call.func.id in imported))):
+            if not (isinstance(call, ast.Call) and owner.get(id(call)) is fn):
+                continue
+            partial = _callee(call) == "partial" and bool(call.args) and is_spawn_ref(call.args[0])
+            if not (partial or getattr(call.func, "attr", None) in _SPAWNS
+                    or (isinstance(call.func, ast.Name) and call.func.id in imported)):
                 continue
             argv = call.args[0] if call.args else next((k.value for k in call.keywords if k.arg == "args"), None)
+            if partial:  # partial(subprocess.run, argv, ...): the argv is its second argument
+                argv = call.args[1] if len(call.args) > 1 else None
             if isinstance(argv, ast.Name):
                 argv = last_bound(argv.id, call.lineno) or (module_values.get(argv.id) or [None])[-1]
             if not (isinstance(argv, (ast.List, ast.Tuple)) and len(argv.elts) >= 2):
@@ -198,8 +205,8 @@ def bare_spawns_of_the_class(path: Path) -> list[str]:
 
 def refusals_read_as_verdicts(path: Path) -> list[str]:
     """``line function`` for each write_guard spawn in ``path`` by hand, at any
-    bound or none, whose result the spawning function never hands to
-    ``not_a_budget_miss``."""
+    bound or none, that the spawning function never hands to a budget reader
+    (``_READERS``)."""
     return [f"{s.line} {s.function}" for s in hook_spawns(path) if s.write_guard and not s.read]
 
 
@@ -211,8 +218,8 @@ def test_every_write_guard_and_statusline_spawn_routes_through_the_helper():
     }
     assert not stray, (
         "run these through tests._hook_spawn.run_hook_through (DEF-2014), or give them a "
-        f"bound past {hs.HOOK_S:.0f} s with the reason and hand a write_guard result to "
-        f"not_a_budget_miss: {stray}")
+        f"bound past {hs.HOOK_S:.0f} s with the reason and write a write_guard spawn inside "
+        f"retry_a_budget_miss or hand its result to not_a_budget_miss: {stray}")
 
 
 def test_every_bare_write_guard_spawn_reads_the_budgets_refusal_apart():
@@ -221,8 +228,9 @@ def test_every_bare_write_guard_spawn_reads_the_budgets_refusal_apart():
     loaded windows-latest runner redded an ALLOW row as SOFT
     (``test_guard_false_positives.py::_decide``, run 41439992695) and a
     must-deny row passed on a judgment that never finished. The function that
-    spawns hands the result to ``not_a_budget_miss``, or the spawn goes
-    through ``run_hook_through``; a site no refusal can reach says why."""
+    spawns writes the spawn inside ``retry_a_budget_miss`` or hands the result
+    to ``not_a_budget_miss`` (DEF-2057), or the spawn goes through
+    ``run_hook_through``; a site no refusal can reach says why."""
     stray = {
         path.name: rows
         for path in checkout_glob(TESTS, "test_*.py")
@@ -239,11 +247,12 @@ def test_the_read_population_is_not_empty():
     """The second pin's non-vacuity: the spawns that hand their result over,
     counted the same way, must be there. 2026-11-03: 6 to 5, when the
     launcher-only write_guard row moved onto the shared wired launcher, which
-    the next test pins."""
+    the next test pins. 2026-11-08: 5 to 6, when the checkout-sync wedge
+    restore left _UNREAD_SITES for not_a_budget_miss (DEF-2057)."""
     read = sum(1 for path in checkout_glob(TESTS, "test_*.py") if path.name not in _EXEMPT
                for spawn in hook_spawns(path) if spawn.write_guard and spawn.read)
-    assert read >= 5, (
-        f"{read} write_guard spawns hand their result to not_a_budget_miss, under the floor of 5: "
+    assert read >= 6, (
+        f"{read} write_guard spawns hand their result to a budget reader, under the floor of 6: "
         "if one now goes through run_hook_through, lower the floor to the count left, never to 0")
 
 
@@ -395,12 +404,22 @@ def test_the_refusal_pin_sees_each_shape_it_holds(tmp_path):
         "def annotated():\n"
         "    r: object = subprocess.run([sys.executable, str(HOOK)], timeout=45)\n"
         "    return not_a_budget_miss(r)\n"
+        "def inner_def():\n"
+        "    def go():\n"
+        "        return subprocess.run([sys.executable, str(HOOK)], timeout=45)\n"
+        "    return retry_a_budget_miss(go)\n"
+        "def by_partial():\n"
+        "    import functools\n"
+        "    return functools.partial(subprocess.run, [sys.executable, str(HOOK)], timeout=45)()\n"
+        "def partial_retried():\n"
+        "    import functools\n"
+        "    return retry_a_budget_miss(functools.partial(subprocess.run, [sys.executable, str(HOOK)], timeout=45))\n"
         "def imported_in_process():\n"
         "    subprocess.run([sys.executable, '-c', 'import write_guard'], timeout=45)\n",
         encoding="utf-8")
     assert [row.split()[1] for row in refusals_read_as_verdicts(sample)] == [
         "longer", "unbounded", "top_level", "runner", "handed_by_a_caller",
-        "argv_name", "flags", "loop", "from_import", "tuple_argv", "reused"]
+        "argv_name", "flags", "loop", "from_import", "tuple_argv", "reused", "by_partial", "go"]
 
 
 def test_the_budget_refusal_phrase_is_write_guards_and_only_its():
@@ -416,6 +435,68 @@ def test_the_budget_refusal_phrase_is_write_guards_and_only_its():
     holders = [p.name for p in sorted(checkout_glob(HOOKS, "*.py"))
                if hs.BUDGET_REFUSAL in p.read_text(encoding="utf-8")]
     assert holders == ["_denial_reasons.py"], holders
+
+
+def untied_retries(path: Path) -> list[str]:
+    """``line`` for each ``retry_a_budget_miss`` call in ``path`` whose spawn
+    is a lambda over a spawn call, where the reader's ``env=`` or ``cwd=`` is
+    not spelled as the spawn's: the restore resolves the project from the
+    reader's pair, so a pair that drifts from the spawn's puts back the wrong
+    tree, or the suite's own checkout (the red-team on DEF-2057)."""
+    out = []
+    for call in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if not (isinstance(call, ast.Call) and _callee(call) == "retry_a_budget_miss" and call.args
+                and isinstance(call.args[0], ast.Lambda) and isinstance(call.args[0].body, ast.Call)):
+            continue
+        spawn = {k.arg: ast.unparse(k.value) for k in call.args[0].body.keywords if k.arg in ("env", "cwd")}
+        reader = {k.arg: ast.unparse(k.value) for k in call.keywords if k.arg in ("env", "cwd")}
+        if spawn.get("env", "None") != reader.get("env") or spawn.get("cwd") != reader.get("cwd"):
+            out.append(str(call.lineno))
+    return out
+
+
+def test_every_retried_spawn_names_its_own_project_to_the_restore():
+    sites = [p for p in [*checkout_glob(TESTS, "test_*.py"), TESTS / "_hook_runner.py"]
+             if "retry_a_budget_miss(lambda" in p.read_text(encoding="utf-8")]
+    assert sites, "no retried spawn to read: the pin polices nothing"
+    stray = {p.name: rows for p in sites if (rows := untied_retries(p))}
+    assert not stray, f"pass retry_a_budget_miss the spawn's own env= and cwd=: {stray}"
+
+
+def test_the_tie_pin_sees_a_drifted_pair(tmp_path):
+    sample = tmp_path / "test_sample.py"
+    sample.write_text(
+        "def tied(env, root):\n"
+        "    return retry_a_budget_miss(lambda: subprocess.run(['x'], env=env, cwd=root), env=env, cwd=root)\n"
+        "def no_env(env):\n"
+        "    return retry_a_budget_miss(lambda: subprocess.run(['x'], env=env), env=None)\n"
+        "def other_cwd(env, root):\n"
+        "    return retry_a_budget_miss(lambda: subprocess.run(['x'], env=env, cwd=root), env=env, cwd='elsewhere')\n"
+        "def inherits(env):\n"
+        "    return retry_a_budget_miss(lambda: subprocess.run(['x']), env=None)\n",
+        encoding="utf-8")
+    assert untied_retries(sample) == ["4", "6"]
+
+
+def test_the_parents_fallback_refusal_is_read_by_its_own_phrase():
+    """DEF-2057: where the parent cannot import ``_denial_reasons`` at its
+    deadline (the floor plants, a renamed reasons module), it refuses in plain
+    words that never hold ``BUDGET_REFUSAL``, so a must-deny row read that
+    refusal as its verdict. The readers know it by ``BUDGET_FALLBACK``, pinned
+    here to the fallback's own string in ``_answer_from_a_judging_child`` and
+    to no other hook file."""
+    tree = ast.parse((HOOKS / "write_guard.py").read_text(encoding="utf-8"))
+    answer = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_answer_from_a_judging_child")
+    handlers = [h for t in ast.walk(answer) if isinstance(t, ast.Try) for h in t.handlers
+                if any(isinstance(n, ast.Name) and n.id == "reason" for s in h.body for n in ast.walk(s))]
+    fallback = ["".join(v.value for v in n.values if isinstance(v, ast.Constant)) if isinstance(n, ast.JoinedStr)
+                else n.value for h in handlers for n in ast.walk(h)
+                if isinstance(n, ast.JoinedStr) or (isinstance(n, ast.Constant) and isinstance(n.value, str))]
+    assert any(hs.BUDGET_FALLBACK in text for text in fallback), fallback
+    assert not any(hs.BUDGET_REFUSAL in text for text in fallback), fallback
+    holders = [p.name for p in sorted(checkout_glob(HOOKS, "*.py"))
+               if hs.BUDGET_FALLBACK in p.read_text(encoding="utf-8")]
+    assert holders == ["write_guard.py"], holders
 
 
 def _names_deny(node: ast.AST) -> bool:

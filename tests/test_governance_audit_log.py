@@ -31,7 +31,7 @@ import pytest
 
 from _site_path import site_path
 from tests._live_tree import checkout_glob
-from tests._hook_spawn import retry_a_budget_miss, run_hook_through
+from tests._hook_spawn import not_a_budget_miss, run_hook_through
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -1737,11 +1737,11 @@ class TestMaintenanceBypassIsRecorded:
         if maintenance:
             env["ESPALIER_MAINTENANCE_MODE"] = "1"
         env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
-        return retry_a_budget_miss(lambda: subprocess.run(
+        return not_a_budget_miss(subprocess.run(
             [sys.executable, str(HOOKS_DIR / script)],
             input=json.dumps(payload),
             capture_output=True, text=True, timeout=45, env=env, encoding="utf-8",
-        ), env=env)
+        ))
 
     def _run_stop(self, tmp_path: Path, *, maintenance: bool) -> subprocess.CompletedProcess:
         return self._run("stop_gate.py", {"stop_hook_active": False}, tmp_path, maintenance=maintenance)
