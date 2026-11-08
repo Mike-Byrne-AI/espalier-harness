@@ -938,8 +938,7 @@ ship driver reads the same test: `tools/cc/ship.py` loads `_start_refusal.py`
 by path before its siblings, so a kept sibling it reads is one refusal on
 stderr naming the file, the line that read it and the repair, exit 1, never a
 traceback. The other scripts under `tools/cc/` do not install it yet, so a
-kept sibling still ends one of them in a traceback after the upgrade named
-it. Any other
+kept sibling still ends one of them in a traceback. Any other
 raise names no upgrade, which would regenerate the
 file under edit (a sibling raising at import was blamed on the helper twice,
 2026-10-14 and 10-16). The two budget names (`spawn_timeout`,
@@ -951,7 +950,8 @@ block, which the protocol's loop signal lets through on the next Stop),
 helper (and, for any other kept `tools/cc/` file, the names and call keywords
 the regenerated scripts take that it lacks; a name read under an import guard
 that runs on, an `AttributeError` guard, a `hasattr` check or a `getattr`
-default is left out, and one under a start guard that refuses is not), and `espalier
+default is left out, and one under a start guard that refuses is not; a name
+read through a loader that is handed the module's name is not read yet), and `espalier
 doctor` names a wired hook that cannot start (for `write_guard`, a broken one of
 the two siblings below that it loads on first use too). Maintenance mode (the friction
 bypass below) does not lift this refusal -- the guard runs before that gate is

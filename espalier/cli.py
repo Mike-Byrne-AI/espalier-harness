@@ -7438,14 +7438,22 @@ def _sibling_takes(cc_src: Path) -> tuple[dict[str, dict[str, set[str]]], dict[s
     binds = {path.stem: _module_level_bindings(tree) for path, tree in trees.items()}
     names: dict[str, dict[str, set[str]]] = {}
     keywords: dict[str, dict[str, dict[str, set[str]]]] = {}
+    # A take the packaged module does not bind itself is no take: the release
+    # would be broken without it, so it is a misread (a local shadowing a
+    # module, a parameter handed a module at one call and a dict at another),
+    # and naming it would warn about a kept copy that matches the packaged one.
     for path, tree in trees.items():
         rel = "tools/cc/" + path.relative_to(cc_src).as_posix()
         file_names, file_keywords = _sibling_reads(tree, modules, path.stem, binds)
         for module, taken in file_names.items():
             for name in taken:
+                if module in binds and name not in binds[module]:
+                    continue
                 names.setdefault(module, {}).setdefault(name, set()).add(rel)
         for module, calls in file_keywords.items():
             for func, passed in calls.items():
+                if module in binds and func not in binds[module]:
+                    continue
                 for keyword in passed:
                     keywords.setdefault(module, {}).setdefault(func, {}).setdefault(keyword, set()).add(rel)
     return names, keywords
@@ -7505,8 +7513,9 @@ def _kept_sibling_skew_lines(repo_root: Path, kept: list[str], command: str) -> 
         if len(lacks) > _KEPT_SIBLING_SHOWN:
             shown.append(f"and {len(lacks) - _KEPT_SIBLING_SHOWN} more")
         lines.append(
-            f"kept {rel} lacks what the regenerated scripts take from it: {'; '.join(shown)} -- each stops "
-            "at that read until it is repaired: restore its `# espalier:managed` marker line and run "
+            f"kept {rel} lacks what the regenerated scripts take from it: {'; '.join(shown)} -- each fails "
+            "at that read (a stop, or a lost line where the read is guarded) until it is repaired: restore "
+            "its `# espalier:managed` marker line and run "
             f"{command}")
     return lines
 

@@ -964,6 +964,21 @@ class TestAWedgedGuardNamesWhatRaised:
         read = _run_payload(root, "write_guard.py", _NOOP_INPUT["PreToolUse"], audit)
         assert read.returncode == 0 and not read.stdout.strip(), (read.stdout, read.stderr[-300:])
 
+    def test_a_kept_reasons_module_without_the_template_keeps_the_placed_text(self, tmp_path):
+        # The fix batch's failure-mode review: a kept _denial_reasons.py from
+        # before the kept-file template is the likeliest kept file on this
+        # path, and a bare read of the template raised into the catch-all,
+        # whose text names no file, no line and no restore. It keeps the
+        # placed crash text instead.
+        root = tmp_path / "kept-reasons"
+        _copy_cc(root)
+        _append(root, "tools/cc/hooks/_bash_patterns.py", "\ndel has_catastrophic_recursive_rm\n")
+        _append(root, "tools/cc/hooks/_denial_reasons.py", "\ndel WRITE_GUARD_CRASHED_ON_A_KEPT_FILE\n")
+        refused = _run_payload(root, "write_guard.py", _bash("touch notes.txt"), root / "audit")
+        reason = json.loads(refused.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+        assert reason.startswith("write_guard internal error (AttributeError at tools/cc/hooks/write_guard.py:"), reason
+        assert "`git restore --source=HEAD -- tools/cc/hooks/write_guard.py`" in reason, reason
+
     def test_a_sibling_that_raises_at_import_is_named_and_the_upgrade_is_not(self, cells):
         # The row's probe shape, on every deny hook: a sibling's module body
         # raises. The refusal names the file, its line and the exception, and
