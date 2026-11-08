@@ -178,7 +178,14 @@ reports as blocked says what holds it: `... 1 running; auto-merge armed;
 waiting on 1 running` while checks run, and with a red `... 1 red (verify);
 auto-merge armed but held: required check red (verify); tools/cc/ship.py status
 tells a test red (fix, push, re-bind) from a lost runner (rerun)` (a cancelled
-required cell counts red, as a failed one does)
+required cell counts red, as a failed one does, unless a newer run of its
+workflow on the row's head is still going: then the tally marks it, `1 red
+(freshness [superseded])`, and the tail is the wait,
+`auto-merge armed; waiting on the newer run of freshness`, read from one more
+bounded read of the runs on the head, made only while the `Merged:` read after
+it keeps its share of the deadline; a re-bind's title edit re-runs Harness
+Guard and cancels the run going, and a push made on a "fix" would cancel the
+newer run in turn)
 -- the listing carries no is-required flag, so a row with a red earns one
 more bounded read, `gh pr checks <n> --required`, and the tail names the
 required reds it answers with, `... but GitHub is holding it (blocked): no red is required, so a review or a
