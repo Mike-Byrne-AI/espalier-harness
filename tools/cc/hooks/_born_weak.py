@@ -26,6 +26,10 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent))
 import _hook_utils  # noqa: E402
 
+# The torn-line heal, read with a degrade the way the siblings read
+# STATE_WRITE_LOCK: a kept `_hook_utils.py` that predates it appends as before.
+_own_line = getattr(_hook_utils, "own_line", None) or (lambda path, line: line)
+
 
 # ---------------------------------------------------------------------------
 # Born-weak co-occurrence OBSERVER (autoimmune-regression instrument).
@@ -238,7 +242,7 @@ def bw_log_observation(root: Path, record: dict, *, now: datetime | None = None)
 
     def _append() -> None:
         with log_path.open("a", encoding="utf-8") as fh:
-            fh.write(line)
+            fh.write(_own_line(log_path, line))
 
     lock_path = state / (_BW_LOG_NAME + ".lock")
     # Acquire the lock in its OWN try so the unlocked fallback fires ONLY when
