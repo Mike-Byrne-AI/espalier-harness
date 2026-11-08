@@ -60,6 +60,9 @@ from espalier.harness_config import CANONICAL_HOOK_WIRING, GOVERNANCE_BLOCKING_H
 from tests._hook_spawn import not_a_budget_miss
 from tests._live_tree import checkout_glob, copy_checkout
 
+# timeout-exempt: headroom, not cost -- the module-scoped `cells` fixture lands in the first `cells` test each xdist worker runs, 21 to 48 s of its 60 s ceiling across 19 Linux full-tier cells (2026-11-07/08, DEF-2056); the module itself stays in the fast slice
+pytestmark = pytest.mark.timeout(180)
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CC_DIR = REPO_ROOT / "tools" / "cc"
 HOOKS_DIR = CC_DIR / "hooks"

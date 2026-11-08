@@ -915,6 +915,9 @@ class TestLiveTreeWalkRatchet:
     def _pending() -> Counter:
         return Counter(s.key for s in live_tree_census.unrouted_sites())
 
+    # 21 to 47 s of the ini's 60 s across 19 Linux full-tier cells (2026-11-07/08,
+    # DEF-2056); its sibling below already carries 240.
+    @pytest.mark.timeout(240)
     def test_the_census_reads_every_tests_module_and_sees_the_measured_members(self):
         """Non-vacuity, by name: the modules it must read are read, its own two
         files are not, and the sites the first lane routed are found AS routed --
