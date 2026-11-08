@@ -17643,3 +17643,121 @@ class TestWriteGuardFailOpenVoice:
         assert "[write_guard] stdin was not a JSON object (JSONDecodeError)" in err, err
         assert "hunter2" not in err
         assert self._records(home, "pretooluse_failed_open_bad_stdin") == 1
+
+
+# ── The pattern path (DEF-946) ───────────────────────────────────────────────
+
+#: Runs `_run_main` in a fresh interpreter (a pytest worker's `sys.modules`
+#: already holds both pattern modules) on each payload in argv[2], in order, and
+#: prints one line: per call its rc, its stdout and which of the two modules
+#: `sys.modules` holds after it, then the names the module gained over the run.
+_PATTERN_PATH_DRIVER = r"""
+import contextlib, io, json, sys
+sys.path.insert(0, sys.argv[1])
+import write_guard as wg
+before = set(vars(wg))
+calls = []
+for payload in json.loads(sys.argv[2]):
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        rc = wg._run_main(payload)
+    calls.append({"rc": rc, "out": out.getvalue(),
+                  "loaded": [m for m in ("_bash_patterns", "_speedbump") if m in sys.modules]})
+print("RESULT " + json.dumps({"calls": calls, "bound": sorted(set(vars(wg)) - before)}))
+"""
+
+
+def _drive_the_pattern_path(root: Path, payloads: list[dict]) -> dict:
+    from tests._wait_budget import scaled
+
+    env = os.environ.copy()
+    env["CLAUDE_PROJECT_DIR"] = str(root)
+    env.pop("ESPALIER_MAINTENANCE_MODE", None)
+    run = subprocess.run(
+        [sys.executable, "-c", _PATTERN_PATH_DRIVER, str(HOOKS_DIR), json.dumps(payloads)],
+        capture_output=True, text=True, encoding="utf-8", env=env, cwd=str(root), timeout=scaled(45),
+    )
+    assert run.returncode == 0, run.stderr[-2000:]
+    line = next(x for x in reversed(run.stdout.splitlines()) if x.startswith("RESULT "))
+    return json.loads(line[len("RESULT "):])
+
+
+class TestThePatternPath:
+    """DEF-946: a read-only tool's call imports neither `_bash_patterns` nor
+    `_speedbump` (about two thirds of such a call's cost), while every deny it
+    owes still fires; and every function that reads a name the pattern path
+    binds loads the path first. Structural, never a wall-clock threshold: the
+    first four read `sys.modules` in a fresh interpreter, the last reads the
+    source against the names a real load bound."""
+
+    _READ_ONLY = (
+        {"tool_name": "Read", "tool_input": {"file_path": "notes.txt"}},
+        {"tool_name": "Grep", "tool_input": {"pattern": "x", "path": "."}},
+        {"tool_name": "Glob", "tool_input": {"pattern": "*.txt"}},
+        {"tool_name": "TodoWrite", "tool_input": {"todos": []}},
+    )
+
+    @pytest.fixture(scope="class")
+    @classmethod
+    def clean_run(cls, tmp_path_factory) -> dict:
+        root = tmp_path_factory.mktemp("pattern-path")
+        (root / ".env").write_text("TOKEN=x\n", encoding="utf-8")
+        return _drive_the_pattern_path(root, [
+            *cls._READ_ONLY,
+            {"tool_name": "Read", "tool_input": {"file_path": ".env"}},
+            {"tool_name": "Bash", "tool_input": {"command": "rm -rf /"}},
+        ])
+
+    def test_a_read_only_call_loads_neither_pattern_module(self, clean_run):
+        for payload, call in zip(self._READ_ONLY, clean_run["calls"]):
+            assert call == {"rc": 0, "out": "", "loaded": []}, (payload["tool_name"], call)
+
+    def test_the_secret_read_deny_fires_with_both_unloaded(self, clean_run):
+        call = clean_run["calls"][len(self._READ_ONLY)]
+        assert call["loaded"] == [] and '"permissionDecision": "deny"' in call["out"], call
+
+    def test_a_dangerous_bash_call_loads_both_and_is_denied(self, clean_run):
+        call = clean_run["calls"][len(self._READ_ONLY) + 1]
+        assert call["loaded"] == ["_bash_patterns", "_speedbump"], call
+        assert '"permissionDecision": "deny"' in call["out"], call
+
+    def test_the_kill_switch_deny_fires_with_both_unloaded(self, tmp_path):
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_text(json.dumps({"disableAllHooks": True}), encoding="utf-8")
+        (call,) = _drive_the_pattern_path(tmp_path, [self._READ_ONLY[0]])["calls"]
+        assert call["loaded"] == [] and "kill-switch" in call["out"], call
+        assert '"permissionDecision": "deny"' in call["out"], call
+
+    def test_every_reader_of_a_bound_name_loads_the_path_first(self, clean_run):
+        # The names are the ones a real load bound (the fresh interpreter's
+        # before-and-after of `vars(write_guard)`), never a list kept here; the
+        # floor keeps a load that bound nothing from passing on an empty set.
+        import ast
+
+        bound = set(clean_run["bound"])
+        assert {"_bash_patterns", "_speedbump", "DANGEROUS_BASH_PATTERNS", "_REDIRECT_RE"} <= bound, sorted(bound)
+        tree = ast.parse((HOOKS_DIR / "write_guard.py").read_text(encoding="utf-8"))
+        exempt = {"_load_the_pattern_path", "__getattr__"} | {
+            node.name for node in tree.body if isinstance(node, ast.FunctionDef)
+            and any(isinstance(d, ast.Name) and d.id == "_on_the_pattern_path" for d in node.decorator_list)
+        }
+
+        def reads(node: ast.AST) -> set[str]:
+            return {n.id for n in ast.walk(node) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)} & bound
+
+        def loads(stmt: ast.stmt) -> bool:
+            return (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)
+                    and isinstance(stmt.value.func, ast.Name) and stmt.value.func.id == "_load_the_pattern_path")
+
+        readers, late = 0, []
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) or fn.name in exempt or not reads(fn):
+                continue
+            readers += 1
+            first_read = next(i for i, stmt in enumerate(fn.body) if reads(stmt))
+            if not any(loads(stmt) for stmt in fn.body[:first_read]):
+                late.append(f"{fn.name} (line {fn.lineno}) reads {sorted(reads(fn))}")
+        assert readers >= 20, f"{readers} readers found: the walk or the bound names regressed"
+        assert late == [], (
+            "these functions read a name the pattern path binds before calling "
+            f"_load_the_pattern_path(): {late}; a read-only call never loads it, so the name is unbound")
