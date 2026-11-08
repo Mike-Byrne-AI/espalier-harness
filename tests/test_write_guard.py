@@ -20,7 +20,7 @@ import pytest
 
 from tests._guard_fixture import carry_protected_tree
 from tests._hook_assertions import assert_hook_allowed, assert_hook_denied
-from tests._hook_spawn import run_hook_through
+from tests._hook_spawn import BUDGET_FALLBACK, BUDGET_REFUSAL, holds_a_budget_refusal, run_hook_through
 from tests._spaced_paths import CMD, PS, SH, fill, quoted, skip_unless_plain
 from tests._symlink_support import requires_symlink
 
@@ -2100,14 +2100,39 @@ def _delete_verdict(result: subprocess.CompletedProcess) -> str:
     # outran the budget (a slow runner) fails here by name, never as a wall.
     # The spawn helper retries a refusal and fails a second one itself
     # (tests/_hook_spawn.py), so this is the backstop for a result read here
-    # from any other spawn.
-    if "could not finish judging" in out:
+    # from any other spawn. Both refusals: the child's template, and the
+    # parent's plain-words fallback at its deadline, which never holds the
+    # template's phrase (DEF-2058).
+    if holds_a_budget_refusal(out):
         pytest.fail(f"write_guard ran out of its time budget, so no tier judged this row: {out[:200]}")
     if result.returncode == 2 or '"permissionDecision": "deny"' in out:
         return "wall"     # either shell's hard tier, each with its own reason text
     assert result.returncode == 0 and not out.strip(), (
         result.returncode, out, result.stderr)
     return "allow"
+
+
+class TestTheDeleteVerdictReadsEveryBudgetRefusal:
+    """DEF-2058: ``_delete_verdict`` knew the child's budget refusal alone, so
+    the parent's plain-words fallback at its deadline (no
+    ``_denial_reasons`` to import) fell through to the deny test and read as
+    ``wall``: a must-wall row passed on a judgment that never ran. Either
+    refusal fails the row by name."""
+
+    @staticmethod
+    def _decision(text: str) -> subprocess.CompletedProcess:
+        out = json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse", "permissionDecision": "deny",
+            "permissionDecisionReason": text}}) + "\n"
+        return subprocess.CompletedProcess(["write_guard.py"], 0, stdout=out, stderr="")
+
+    @pytest.mark.parametrize("phrase", [BUDGET_REFUSAL, BUDGET_FALLBACK], ids=["template", "fallback"])
+    def test_a_budget_refusal_fails_the_row(self, phrase):
+        with pytest.raises(pytest.fail.Exception, match="ran out of its time budget"):
+            _delete_verdict(self._decision(f"Command blocked: write_guard {phrase} judged this command."))
+
+    def test_a_judged_deny_is_still_a_wall(self):
+        assert _delete_verdict(self._decision("Dangerous command blocked: a judged deny.")) == "wall"
 
 
 class TestReliefAppliesToAPlainCommandOnly:
