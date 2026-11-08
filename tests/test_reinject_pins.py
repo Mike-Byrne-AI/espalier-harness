@@ -182,6 +182,16 @@ class TestGuardPatternClassify:
                               "content": 'import re\n_X: "re.Pattern[str]" = re.compile("x")\n'}, root)
         assert "_UNANCHORED_BY_DESIGN" in out
 
+    def test_a_step_bound_compile_under_a_global_fires_too(self, tmp_path):
+        # write_guard binds the patterns it builds from `_bash_patterns` inside
+        # the steps its loader runs once: a module-level name written one level
+        # in, under a `global` (a function's own local, beside it, stays silent).
+        root = self._root(tmp_path, "write_guard.py")
+        step = ("@_on_the_pattern_path\ndef _build_the_x() -> None:\n"
+                '    global _X_RE\n    _X_RE = re.compile(_bash_patterns._QUOTED_SPAN)\n')
+        out = _fire("Edit", {"file_path": "tools/cc/hooks/write_guard.py", "new_string": step}, root)
+        assert "`_X_RE`" in out and "_UNANCHORED_BY_DESIGN" in out, out
+
     def test_silent_on_an_indented_compile_and_off_the_walked_modules(self, tmp_path):
         root = self._root(tmp_path, "write_guard.py", "_reinject.py")
         assert "_UNANCHORED_BY_DESIGN" not in _fire(
@@ -228,7 +238,7 @@ class TestGuardPatternClassify:
         found = TestCommandPositionClassClose._all_module_patterns()
         assert len(found) >= 55, "the contract's population collapsed; this pin would pass vacuously"
         seen = {
-            mod: {m.group("name") for m in _reinject._MODULE_LEVEL_COMPILE_RE.finditer(
+            mod: {m.group("name") for m in _reinject._module_level_compile_matches(
                 (HOOKS_DIR / f"{mod}.py").read_text(encoding="utf-8"))}
             for mod in _reinject._GUARD_PATTERN_MODULES
         }

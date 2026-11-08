@@ -994,14 +994,27 @@ _PIPE_SPLIT_RE = re.compile(r"""split\(\s*['"]\|['"]""")
 #: pattern it can reconstruct statically).
 _GUARD_PATTERN_MODULES: tuple[str, ...] = ("_bash_patterns", "_speedbump", "write_guard")
 _GUARD_PATTERN_MODULE_RE = re.compile(r"(^|/)tools/cc/hooks/(?:_bash_patterns|_speedbump|write_guard)\.py$")
-#: A name bound to `re.compile(`, annotated or not, at column 0 or one level in:
-#: write_guard binds the patterns it builds from `_bash_patterns` inside steps
-#: its loader runs once (each under a `global`), so they are module-level names
-#: written one level in. Every span is bounded and each pair of neighbours is
-#: disjoint (ReDoS class 5).
+#: A name bound to `re.compile(`, annotated or not, at column 0 or one level in.
+#: Every span is bounded and each pair of neighbours is disjoint (ReDoS class 5).
+#: A binding one level in is a module-level name only where a `global` declares
+#: it (`_STEP_GLOBAL_RE`): write_guard binds the patterns it builds from
+#: `_bash_patterns` inside steps its loader runs once, each under a `global`;
+#: any other is a function's local, which no census walks.
 _MODULE_LEVEL_COMPILE_RE = re.compile(
-    r"(?m)^(?:[ ]{4})?(?P<name>[A-Za-z_]\w{0,80})[ \t]*(?::[^=\n]{0,120})?=[ \t]*re\.compile\("
+    r"(?m)^(?P<indent>(?:[ ]{4})?)(?P<name>[A-Za-z_]\w{0,80})[ \t]*(?::[^=\n]{0,120})?=[ \t]*re\.compile\("
 )
+#: A `global` statement one level in, and the names it declares.
+_STEP_GLOBAL_RE = re.compile(r"(?m)^[ ]{4}global[ \t]+(?P<names>[A-Za-z_][\w, \t]{0,400})$")
+
+
+def _module_level_compile_matches(text: str) -> "list[re.Match[str]]":
+    """The bindings ``text`` makes at module level to `re.compile(`: at column
+    0, or one level in under a `global` in the same text that declares the name."""
+    declared = {n.strip() for g in _STEP_GLOBAL_RE.finditer(text) for n in g.group("names").split(",")}
+    return [m for m in _MODULE_LEVEL_COMPILE_RE.finditer(text)
+            if not m.group("indent") or m.group("name") in declared]
+
+
 #: Where a top-level statement ends: a newline before a column-0 character that
 #: cannot continue a bracketed expression (a column-0 comment ends it too).
 _NEXT_TOP_LEVEL_RE = re.compile(r"\n(?=[^\s)\]}])")
@@ -1182,7 +1195,7 @@ def _unanchored_new_bindings(new: str, old: str) -> list[str]:
     or a genuinely new pattern later in the session draws nothing (driven by
     the failure-mode review, 2026-10-03)."""
     names: list[str] = []
-    for m in _MODULE_LEVEL_COMPILE_RE.finditer(new):
+    for m in _module_level_compile_matches(new):
         end = _NEXT_TOP_LEVEL_RE.search(new, m.end())
         statement = new[m.start():end.start() if end else len(new)]
         if "_CMD_POS" in statement or (old and statement.strip() in old):
