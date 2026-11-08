@@ -1109,11 +1109,19 @@ class TestUpgradeNamesTheKeptHelperSkew:
                  if ln.strip() != "# espalier:managed"]
         kept.write_text("".join(lines) + "\ndel JOB_LINK_RE\n\n\ndef read_required(number, gh, fields=''):\n"
                         "    return None\n", encoding="utf-8")
-        for extra in ((), ("--execute",)):
-            run = self._upgrade(target, *extra)
-            assert run.returncode == 0, (extra, run.stderr)
-            named = [ln for ln in run.stdout.splitlines() if "kept tools/cc/_post_merge.py lacks" in ln]
-            assert len(named) == 1, (extra, run.stdout)
+        init = [sys.executable, "-m", "espalier.cli", "init", str(target)]
+        # A re-run of init keeps the file the same way, so it names the skew
+        # too, on its dry run and its real run (the review round's FM 5).
+        for verb, run in (("upgrade", lambda: self._upgrade(target)),
+                          ("upgrade --execute", lambda: self._upgrade(target, "--execute")),
+                          ("init --dry-run", lambda: subprocess.run(
+                              [*init, "--dry-run"], capture_output=True, text=True, timeout=45, encoding="utf-8")),
+                          ("init", lambda: subprocess.run(
+                              init, capture_output=True, text=True, timeout=45, encoding="utf-8"))):
+            done = run()
+            assert done.returncode == 0, (verb, done.stderr)
+            named = [ln for ln in done.stdout.splitlines() if "kept tools/cc/_post_merge.py lacks" in ln]
+            assert len(named) == 1, (verb, done.stdout)
             assert "`JOB_LINK_RE` (tools/cc/ship.py)" in named[0], named
             assert "`read_required` without `head=`, `runs=`" in named[0], named
             assert "tools/cc/hooks/session_start.py" in named[0], named
@@ -1141,3 +1149,48 @@ class TestUpgradeNamesTheKeptHelperSkew:
         names, keywords = _sibling_takes(cc)
         assert names["_b"] == {"hard": {"tools/cc/a.py"}, "via_path": {"tools/cc/hooks/h.py"}}
         assert keywords["_b"] == {"via_path": {"k": {"tools/cc/hooks/h.py"}}}
+
+    def test_the_walker_reads_every_binding_shape_and_no_guarded_read(self):
+        # The DEF-5087 review round: the walker was blind to a walrus, an
+        # annotated binding, the first branch of a conditional, a chained call
+        # on the loader and a module handed to a parameter, and read a store,
+        # a hasattr-checked read, an AttributeError-guarded read and a start
+        # guard that refuses (a take, never a degrade) the wrong way.
+        import ast
+
+        from espalier.cli import _sibling_reads
+        source = (
+            "import _b\n"
+            "import importlib.util\n"
+            "try:\n    from _b import refused\nexcept Exception:\n    refuse_on_helper_skew('h', 'e', None)\n"
+            "try:\n    from _b import reraised\nexcept ImportError:\n    raise\n"
+            "try:\n    from _b import moved\nexcept ModuleNotFoundError:\n    moved = None\n"
+            "try:\n    from _b import fallback\nexcept ImportError:\n"
+            "    def fallback():\n        raise OSError('fallback')\n"
+            "def _load():\n    return importlib.util.spec_from_file_location('x', '_c.py')\n"
+            "def walrus():\n    if (m := _load()) is not None:\n        return m.by_walrus\n"
+            "def annotated():\n    m: object = _load()\n    return m.by_annotation\n"
+            "def branch(c):\n    m = _load() if c else None\n    n = None if c else _load()\n"
+            "    return m.by_body, n.by_orelse\n"
+            "def chained():\n    return _load().by_chain(kw=1)\n"
+            "def takes(mod):\n    return mod.by_parameter\n"
+            "def hands():\n    return takes(_load())\n"
+            "def guarded():\n    if hasattr(_b, 'checked'):\n        return _b.checked\n"
+            "    try:\n        return _b.caught\n    except AttributeError:\n        return None\n"
+            "def broad():\n    try:\n        return _b.broad\n    except Exception:\n        return None\n"
+            "def store():\n    _b.stored = 1\n"
+            # The fix batch's own review: a hasattr check guards the name and
+            # never the signature; a parameter named like a module is not it;
+            # a raise under an if degrades the runs it does not end.
+            "def signed():\n    if hasattr(_b, 'signed'):\n        return _b.signed(timeout=1)\n"
+            "def shadowed(_b):\n    return _b.shadow\n"
+            "def subscripted():\n    d = {}\n    d[_b.keyed()] = 1\n    return _b.after\n"
+            "try:\n    from _b import conditional\nexcept ImportError as exc:\n"
+            "    if exc.name != '_b':\n        raise\n    conditional = None\n"
+        )
+        binds = {"_b": set(), "_c": set()}
+        names, keywords = _sibling_reads(ast.parse(source), {"_b", "_c", "h"}, "h", binds)
+        assert names["_b"] == {"refused", "reraised", "moved", "broad", "keyed", "after"}, names
+        assert names["_c"] == {"by_walrus", "by_annotation", "by_body", "by_orelse", "by_chain",
+                               "by_parameter"}, names
+        assert keywords == {"_c": {"by_chain": {"kw"}}, "_b": {"signed": {"timeout"}}}, keywords

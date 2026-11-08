@@ -97,6 +97,12 @@ from typing import Callable, NamedTuple
 # standard library alone), loaded by path before any sibling, since any of them
 # may be the kept one; a reader that will not load leaves the traceback.
 if __name__ == "__main__":
+    # The refusal below writes a path to stderr: both streams take UTF-8 first,
+    # inline, since the layer's pin lives in a sibling that may be the kept one.
+    for _stream in (sys.stdout, sys.stderr):
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+
     def _name_a_kept_sibling() -> None:
         import importlib.util
         path = Path(__file__).resolve().parent / "hooks" / "_start_refusal.py"
@@ -104,8 +110,15 @@ if __name__ == "__main__":
         if spec is None or spec.loader is None:
             return
         reader = importlib.util.module_from_spec(spec)
+        # Registered before exec, as every by-path load here is: a module the
+        # interpreter cannot find by name breaks dataclass and pickle reads.
+        sys.modules[spec.name] = reader
         spec.loader.exec_module(reader)
-        reader.refuse_kept_siblings("ship.py")
+        # A kept _start_refusal.py from before DEF-5087 has no reader: the
+        # traceback stays, as before, and nothing else is changed.
+        refuse = getattr(reader, "refuse_kept_siblings", None)
+        if callable(refuse):
+            refuse("ship.py")
 
     try:
         _name_a_kept_sibling()

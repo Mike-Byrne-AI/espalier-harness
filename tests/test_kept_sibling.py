@@ -13,7 +13,6 @@ must not read as a kept file.
 # slow-exempt: four ship.py --help children over copied tools/cc trees, each under a second
 from __future__ import annotations
 
-import ast
 import importlib.util
 import shutil
 import subprocess
@@ -79,7 +78,9 @@ class TestTheShipDriverOnAKeptSibling:
         name, _text, taken = _PLANTS[plant]
         assert run.returncode == 1, (run.returncode, run.stderr[-600:])
         assert "Traceback" not in run.stderr, run.stderr[-600:]
-        assert run.stderr.startswith("ship.py cannot run:"), run.stderr[-600:]
+        assert run.stderr.startswith("ship.py cannot run: tools/cc/"), run.stderr[-600:]
+        taker = run.stderr[len("ship.py cannot run: "):].split(" takes `", 1)[0]
+        assert taker.rsplit(":", 1)[1].isdigit(), taker   # the file and its line (the review's NIT 8)
         assert f"`{taken}`" in run.stderr
         assert f"from tools/cc/{name}, which lacks it" in run.stderr
         assert f"If an upgrade kept {name} as yours" in run.stderr
@@ -88,13 +89,44 @@ class TestTheShipDriverOnAKeptSibling:
         assert f"tools/cc/{name}" in run.stderr.split("restore the edited file to HEAD:", 1)[1]
         assert run.stdout == ""
 
+    @pytest.mark.parametrize("where", ["module", "call"])
+    def test_a_read_in_a_call_says_the_script_stopped(self, tmp_path, where):
+        # A read in a call the script made has run part of it, so "cannot run"
+        # would mislead; the module body's read has not (the review's NIT 8).
+        cc = tmp_path / "tools" / "cc"
+        (cc / "hooks").mkdir(parents=True)
+        shutil.copy2(CC_DIR / "hooks" / "_start_refusal.py", cc / "hooks" / "_start_refusal.py")
+        (cc / "_kept.py").write_text("present = 1\n", encoding="utf-8")
+        read = "_kept.absent" if where == "module" else "None"
+        (cc / "probe.py").write_text(
+            "import importlib.util, sys\nfrom pathlib import Path\n"
+            "spec = importlib.util.spec_from_file_location('_probe_refusal', Path(__file__).parent / 'hooks' / '_start_refusal.py')\n"
+            "reader = importlib.util.module_from_spec(spec); sys.modules[spec.name] = reader; spec.loader.exec_module(reader)\n"
+            "reader.refuse_kept_siblings('probe.py')\n"
+            "sys.path.insert(0, str(Path(__file__).parent))\nimport _kept\n"
+            f"AT_IMPORT = {read}\n"
+            "def main():\n    return _kept.absent\n"
+            "main()\n", encoding="utf-8")
+        run = subprocess.run([sys.executable, str(cc / "probe.py")], cwd=str(tmp_path), capture_output=True,
+                             text=True, encoding="utf-8", errors="replace", timeout=scaled(30))
+        outcome = "cannot run" if where == "module" else "stopped"
+        line = 8 if where == "module" else 10
+        assert run.returncode == 1 and "Traceback" not in run.stderr, run.stderr[-600:]
+        assert run.stderr.startswith(
+            f"probe.py {outcome}: tools/cc/probe.py:{line} takes `absent` from tools/cc/_kept.py, which lacks it"
+        ), run.stderr[-600:]
+
     def test_the_intact_copy_prints_its_usage(self, tmp_path):
+        # A control: it passes on the code before DEF-5087 too, and reds if the
+        # reader's install ever costs the intact driver its usage.
         run = _drive(tmp_path, None)
         assert run.returncode == 0, run.stderr[-600:]
         assert run.stdout.startswith("usage: ship.py"), run.stdout[:200]
         assert run.stderr == ""
 
     def test_a_sibling_that_raises_otherwise_keeps_its_traceback(self, tmp_path):
+        # A control: it passes on the code before DEF-5087 too, and reds if the
+        # reader ever swallows a raise that is not a kept file's.
         run = _drive(tmp_path, "raised")
         assert run.returncode == 1, run.stderr[-600:]
         assert "Traceback" in run.stderr and "KeyError: 1" in run.stderr, run.stderr[-600:]
@@ -168,26 +200,21 @@ def _banner() -> types.ModuleType:
     return module
 
 
-def _reads_of_the_loaded_module(source: str) -> dict[str, set[str]]:
-    """``{name: keywords}``: every ``<v>.<name>`` read, and the keywords of each
-    ``<v>.<name>(...)`` call, where ``<v>`` is bound from ``_load_post_merge()``
-    in the same function -- the reads the block's table must cover."""
-    reads: dict[str, set[str]] = {}
-    for fn in ast.walk(ast.parse(source)):
-        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        bound = {
-            n.targets[0].id for n in ast.walk(fn)
-            if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name)
-            and isinstance(n.value, ast.Call) and isinstance(n.value.func, ast.Name)
-            and n.value.func.id == "_load_post_merge"
-        }
-        for n in ast.walk(fn):
-            if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id in bound:
-                reads.setdefault(n.attr, set())
-            if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-                    and isinstance(n.func.value, ast.Name) and n.func.value.id in bound):
-                reads.setdefault(n.func.attr, set()).update(k.arg for k in n.keywords if k.arg)
+def _reads_of_the_loaded_module() -> dict[str, set[str]]:
+    """``{name: keywords}``: what the banner takes from ``_post_merge``, read by
+    the upgrade's own walker (``espalier/cli.py::_sibling_reads``: a walrus, an
+    annotated binding, a chained ``_load_post_merge().<name>`` and a module
+    handed to a parameter included), so the table and the upgrade's reading
+    cannot see different reads (the failure-mode review on DEF-5087)."""
+    from espalier.cli import _sibling_takes
+
+    banner = "tools/cc/hooks/session_start.py"
+    names, keywords = _sibling_takes(CC_DIR)
+    reads = {name: set() for name, takers in names.get("_post_merge", {}).items() if banner in takers}
+    for func, passed in keywords.get("_post_merge", {}).items():
+        for keyword, takers in passed.items():
+            if banner in takers:
+                reads.setdefault(func, set()).add(keyword)
     return reads
 
 
@@ -209,8 +236,7 @@ def _older_post_merge(**overrides: object) -> types.ModuleType:
 
 class TestTheBannerOnAKeptPostMerge:
     def test_the_reads_table_is_every_read_the_block_makes(self):
-        source = (CC_DIR / "hooks" / "session_start.py").read_text(encoding="utf-8")
-        found = _reads_of_the_loaded_module(source)
+        found = _reads_of_the_loaded_module()
         assert len(found) >= 4, found   # the floor at authoring: four names, one call with keywords
         table = _banner()._POST_MERGE_READS
         assert {name: set(kw) for name, kw in table.items()} == found

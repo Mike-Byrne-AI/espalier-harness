@@ -936,7 +936,10 @@ not repair it) -- it names that file and the upgrade repair (restore its
 `# espalier:managed` marker line, then `espalier upgrade --execute .`). The
 ship driver reads the same test: `tools/cc/ship.py` loads `_start_refusal.py`
 by path before its siblings, so a kept sibling it reads is one refusal on
-stderr naming the file and the repair, exit 1, never a traceback. Any other
+stderr naming the file, the line that read it and the repair, exit 1, never a
+traceback. The other scripts under `tools/cc/` do not install it yet, so a
+kept sibling still ends one of them in a traceback after the upgrade named
+it. Any other
 raise names no upgrade, which would regenerate the
 file under edit (a sibling raising at import was blamed on the helper twice,
 2026-10-14 and 10-16). The two budget names (`spawn_timeout`,
@@ -944,10 +947,11 @@ file under edit (a sibling raising at import was blamed on the helper twice,
 helper missing only those judges on. `plan_guard.py`, `config_guard.py` and
 `stop_gate.py` carry the same guard (the Stop gate's refusal is the Stop-style
 block, which the protocol's loop signal lets through on the next Stop),
-`upgrade` names the missing names when it keeps the helper (and, for any other
-kept `tools/cc/` file, the names and call keywords the regenerated scripts
-take that it lacks, a name read under an import guard or a `getattr` default
-left out), and `espalier
+`upgrade` and a re-run of `init` name the missing names when they keep the
+helper (and, for any other kept `tools/cc/` file, the names and call keywords
+the regenerated scripts take that it lacks; a name read under an import guard
+that runs on, an `AttributeError` guard, a `hasattr` check or a `getattr`
+default is left out, and one under a start guard that refuses is not), and `espalier
 doctor` names a wired hook that cannot start (for `write_guard`, a broken one of
 the two siblings below that it loads on first use too). Maintenance mode (the friction
 bypass below) does not lift this refusal -- the guard runs before that gate is
@@ -966,7 +970,10 @@ same way on every call. A broken `_bash_patterns.py` or `_speedbump.py` is
 therefore a crash, not a failure to start: a read-only call passes, so the file
 can be read, and a mutation meets the crash guard (`write_guard internal error
 (<error> at <file>:<line>)`), which names the same files and lets the same one
-restore through.
+restore through. Where the name read there is one a kept, older
+`_bash_patterns.py` lacks, the crash guard names that file and the upgrade
+repair as the start refusal does (until 2026-11-08 it said to restore
+`write_guard.py`).
 
 **The floor starts or refuses too.** Until 2026-10-16 the floor of that guard
 -- `_hook_utils.py`, with `tools/cc/_json_safe.py` under it, and

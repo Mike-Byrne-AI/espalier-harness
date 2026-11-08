@@ -3600,6 +3600,10 @@ def _judge(seen: list[dict] | None = None) -> int:
                 named = _start_refusal.crash_refusal(reading, error_type, data is not None)
                 if named is not None:
                     crash_reason = _denial_reasons.WRITE_GUARD_CRASHED_AT.format(**named[0])
+                    if "kept" in named[0]:
+                        # A name a kept, older sibling lacks (DEF-5087): the
+                        # file and the upgrade repair, never only a restore.
+                        crash_reason = _denial_reasons.WRITE_GUARD_CRASHED_ON_A_KEPT_FILE.format(**named[0])
                     crash_details = named[1]
         except BaseException:  # noqa: BLE001 -- best-effort; never mask the deny
             passed = None

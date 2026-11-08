@@ -210,8 +210,11 @@ def _missing_sibling_name(exc: BaseException, cc_dir: Path) -> tuple[str, Path] 
     alias included), then checked against the module, so an error raised for
     any other reason never reads as a kept file, and neither does a module
     still running its own body (a circular import names a name not yet bound).
-    Until DEF-5087 it read ``_hook_utils`` alone, and a kept older sibling of
-    any other name was told the upgrade would not repair it."""
+    A typo in the read (``_hook_utils.nmae``) reads as kept too, since the
+    module lacks that name as well: the refusal it feeds offers both repairs,
+    and the second (restore the edited file to HEAD) is that one's. Until
+    DEF-5087 it read ``_hook_utils`` alone, and a kept older sibling of any
+    other name was told the upgrade would not repair it."""
     module: object = None
     name: object = None
     if isinstance(exc, ImportError) and isinstance(exc.name, str):
@@ -504,14 +507,24 @@ def crash_refusal(reading: _SkewReading | None, error: str,
     placed. The guard formats the template at its deny site, so the
     deny-marker contract reads the reason there. ``read_payload`` is whether
     the guard read the call before it crashed: a crash in the read lets
-    nothing through, so its text offers the terminal alone. Never raises."""
+    nothing through, so its text offers the terminal alone. Where the
+    kept-old-file test holds (a name read on the pattern path's first use that
+    a kept ``_bash_patterns.py`` lacks), the fields also carry ``name``,
+    ``kept`` and ``kept_name``, and the guard formats
+    ``_denial_reasons.WRITE_GUARD_CRASHED_ON_A_KEPT_FILE`` with the upgrade
+    repair instead (the failure-mode review on DEF-5087: it was told to restore
+    ``write_guard.py``). Never raises."""
     try:
         if reading is None or reading.file is None:
             return None
         rel = reading.rel(reading.file)
         fields = {"error": error, "file": rel, "line": reading.line,
                   "restore": _restore_clause(reading, read_payload)}
-        return fields, {"file": rel, "line": reading.line}
+        details: dict = {"file": rel, "line": reading.line}
+        if reading.missing is not None and reading.kept is not None:
+            fields.update(name=reading.missing, kept=reading.rel(reading.kept), kept_name=reading.kept.name)
+            details.update(cause="kept helper", kept=reading.rel(reading.kept))
+        return fields, details
     # fail-open: ok text-fallback today's unplaced text goes out
     except Exception:  # noqa: BLE001
         return None
@@ -564,9 +577,12 @@ def body_done() -> None:
 #: (``espalier/cli.py::_deploy_managed_py``, its ``skipped_user_file``). Until
 #: DEF-5087 every ship driver verb, ``--help`` included, ended in a traceback
 #: naming an attribute (driven 2026-11-08 at main 2062663). The fields are
-#: ``HELPER_SKEW``'s; no call is let through, since a script judges nothing.
+#: ``HELPER_SKEW``'s, ``{taker}`` with its line where one is placed, and
+#: ``{outcome}`` says whether the script had begun (``stopped``: the read was in
+#: a call the script made) or not (``cannot run``: an import, a module-level
+#: read); no call is let through, since a script judges nothing.
 SCRIPT_KEPT_SIBLING = (
-    "{script} cannot run: {taker} takes `{name}` from {kept}, which lacks it ({error})."
+    "{script} {outcome}: {taker} takes `{name}` from {kept}, which lacks it ({error})."
     " If an upgrade kept {kept_name} as yours (no managed marker) and regenerated the"
     " rest: restore its `# espalier:managed` marker line and run `espalier upgrade"
     " --execute .` (the upgrade then replaces it with the packaged version, and its"
@@ -589,14 +605,33 @@ def refuse_kept_siblings(script: str, code: int = 1) -> None:
     loads this module by path, so it reaches it with no sibling on the way."""
     before = sys.excepthook
 
+    def _begun(tb: types.TracebackType | None) -> bool:
+        """Did the read happen in a call the script made, not while its module
+        body ran? A frame of the script's own file in a function says so. The
+        outermost frame is the script's module body (``__main__``'s
+        ``__file__`` reads as None by the time the hook runs, driven on 3.14)."""
+        if tb is None:
+            return False
+        own = tb.tb_frame.f_code.co_filename
+        tb = tb.tb_next
+        while tb is not None:
+            code = tb.tb_frame.f_code
+            if code.co_name != "<module>" and code.co_filename == own:
+                return True
+            tb = tb.tb_next
+        return False
+
     def _refuse(kind: type[BaseException], exc: BaseException, tb: types.TracebackType | None) -> None:
         reading = wedge_reading(exc) if isinstance(exc, Exception) else None
         if reading is None or reading.missing is None or reading.kept is None:
             before(kind, exc, tb)
             return
         try:
+            taker = script
+            if reading.file is not None:
+                taker = reading.rel(reading.file) + (f":{reading.line}" if reading.line else "")
             text = SCRIPT_KEPT_SIBLING.format(
-                script=script, taker=reading.rel(reading.file) if reading.file is not None else script,
+                script=script, outcome="stopped" if _begun(tb) else "cannot run", taker=taker,
                 name=reading.missing, kept=reading.rel(reading.kept), kept_name=reading.kept.name,
                 error=f"{type(exc).__name__}: {exc}", restore=_restore_clause(reading, False))
         # fail-open: ok text-fallback the traceback is the account a refusal that cannot be composed leaves

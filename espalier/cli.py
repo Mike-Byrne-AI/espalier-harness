@@ -7179,75 +7179,275 @@ def _kept_helper_skew_lines(
 _KEPT_SIBLING_SHOWN = 6
 
 
-def _catches_import_error(handler: ast.ExceptHandler) -> bool:
-    """Does ``handler`` catch an ``ImportError`` (by name, a parent, or bare)?"""
-    if handler.type is None:
+#: The handlers that make an import a degrade: a name a module lacks raises a
+#: plain ``ImportError``, so these (a bare ``except`` too, keyed ``""``) catch
+#: it, and ``ModuleNotFoundError`` alone does not (``stop_gate``'s ship import).
+_IMPORT_DEGRADES = frozenset({"ImportError", "Exception", "BaseException", ""})
+#: The handlers that make an attribute read a degrade: ``AttributeError`` by
+#: name alone. A broad ``except Exception`` around a read is a crash guard that
+#: loses what the read was for (the banner's pull-request lines went that way,
+#: DEF-5087), so a read under one stays a take.
+_ATTRIBUTE_DEGRADES = frozenset({"AttributeError"})
+
+
+def _handler_runs_on(handler: ast.ExceptHandler, caught: frozenset[str]) -> bool:
+    """Does ``handler`` catch one of ``caught`` (by name, or bare where ``""``
+    is among them) and run on? A handler that raises anywhere in it, or calls
+    ``exit``, ``_exit`` or a ``refuse*`` function, ends the run: the deny hooks'
+    start guard (``except Exception: _start_refusal.refuse_on_helper_skew``)
+    refuses every call, so a name it guards is a take, never a degrade (the
+    failure-mode review on DEF-5087: read as a degrade, a kept ``_hook_contract``
+    lacking a name ``stop_gate`` takes printed nothing at upgrade). Only the
+    handler's own top-level statements count: a raise under an ``if`` ends
+    some runs and degrades the rest, and a fallback the handler defines
+    (``_hook_utils``'s ``lock_file`` stand-in) raises when it is called, never
+    when it is defined."""
+    for node in handler.body:
+        if isinstance(node, ast.Raise):
+            return False
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
+            func = node.value.func
+            called = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
+            if called.startswith("refuse") or called in {"exit", "_exit"}:
+                return False
+    named = [] if handler.type is None else (
+        handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type])
+    spelled = {n.id for n in named if isinstance(n, ast.Name)} if named else {""}
+    return bool(spelled & caught)
+
+
+def _sibling_reads(
+    tree: ast.Module, modules: set[str], own: str, binds: dict[str, set[str]],
+) -> tuple[dict[str, set[str]], dict[str, dict[str, set[str]]]]:
+    """What one ``tools/cc/`` source takes from its siblings: ``(names,
+    keywords)``, ``names[module]`` the names it reads and
+    ``keywords[module][function]`` the keywords it passes. The one walker
+    :func:`_sibling_takes` and the banner's table pin
+    (``tests/test_kept_sibling.py``) both read through, so the two cannot see
+    different reads.
+
+    A module is reached by ``from <module> import``, by ``import <module>``,
+    or by path: a function that calls ``spec_from_file_location`` with
+    ``<module>.py`` among its constants is a loader. A name holds a module
+    when it is bound from one -- an assignment, an annotated one or a walrus,
+    either branch of a conditional or an ``or`` -- or when it is the parameter
+    a call in this file passes a module to (to a fixed point), and a
+    function's own parameter or assigned name shadows a module from outside
+    unless the function binds a module to it; a read is ``<name>.<attr>`` or
+    ``<loader>().<attr>`` (chained), a load and never a store. Not a take,
+    since the script runs on without it: a ``from`` import under a handler
+    that catches an ``ImportError`` and runs on (:func:`_handler_runs_on`), a
+    read under one that catches an ``AttributeError``, a read of a name the
+    same function checks with ``hasattr`` (the name only: the keywords a call
+    passes stay takes, since the check never reads a signature), and
+    ``getattr(<module>, "<name>", <default>)``. A loader
+    naming more than one module gives each read to the ones whose ``binds``
+    hold the name."""
+    funcs = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    by_name = {fn.name: fn for fn in funcs}
+    loaders: dict[str, frozenset[str]] = {}
+    for fn in funcs:
+        if any(isinstance(n, ast.Attribute) and n.attr == "spec_from_file_location" for n in ast.walk(fn)):
+            loaded = frozenset(c.value[:-3] for c in ast.walk(fn) if isinstance(c, ast.Constant)
+                               and isinstance(c.value, str) and c.value.endswith(".py")
+                               and c.value[:-3] in modules and c.value[:-3] != own)
+            if loaded:
+                loaders[fn.name] = loaded
+    aliases: dict[str, frozenset[str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                if a.name in modules and a.name != own:
+                    aliases[a.asname or a.name] = aliases.get(a.asname or a.name, frozenset()) | {a.name}
+    enclosing: dict[int, ast.AST] = {}
+
+    def index(node: ast.AST, owner: ast.AST) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                enclosing[id(child)] = owner
+                index(child, child)
+            else:
+                index(child, owner)
+
+    index(tree, tree)
+
+    def own_nodes(scope: ast.AST) -> list[ast.AST]:
+        """The nodes ``scope`` runs itself: a nested function's body is its own scope."""
+        out: list[ast.AST] = []
+        todo = list(ast.iter_child_nodes(scope))
+        while todo:
+            node = todo.pop()
+            out.append(node)
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                todo.extend(ast.iter_child_nodes(node))
+        return out
+
+    params: dict[int, dict[str, frozenset[str]]] = {}
+    local: dict[int, dict[str, frozenset[str]]] = {}
+    # The names a function binds itself (its parameters, and the targets it
+    # assigns): such a name shadows a module of the same name from outside, so
+    # it holds a module only where the function binds one to it (``def f(mail)``
+    # beside ``import mail`` reads ``mail.x`` as the parameter's).
+    shadows: dict[int, set[str]] = {}
+
+    def bound_names(target: ast.expr) -> set[str]:
+        """The names a target binds: a name, or one inside an unpacking -- never
+        one a subscript or attribute target merely reads (``d[sync.f(p)] = v``)."""
+        if isinstance(target, ast.Name):
+            return {target.id}
+        if isinstance(target, (ast.Tuple, ast.List)):
+            return set().union(*(bound_names(e) for e in target.elts))
+        if isinstance(target, ast.Starred):
+            return bound_names(target.value)
+        return set()
+
+    for fn in funcs:
+        own_names = {a.arg for a in [*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs]}
+        own_names |= {a.arg for a in (fn.args.vararg, fn.args.kwarg) if a is not None}
+        for node in own_nodes(fn):
+            targets = (node.targets if isinstance(node, ast.Assign)
+                       else [node.target] if isinstance(node, (ast.AnnAssign, ast.NamedExpr, ast.For)) else [])
+            for target in targets:
+                own_names |= bound_names(target)
+        shadows[id(fn)] = own_names
+
+    def env_of(scope: ast.AST) -> dict[str, frozenset[str]]:
+        chain = [scope]
+        while id(chain[-1]) in enclosing:
+            chain.append(enclosing[id(chain[-1])])
+        env = dict(aliases)
+        for s in reversed(chain):
+            for name in shadows.get(id(s), ()):
+                env.pop(name, None)
+            for bound in (params.get(id(s), {}), local.get(id(s), {})):
+                for key, mods in bound.items():
+                    env[key] = env.get(key, frozenset()) | mods
+        return env
+
+    def modules_of(expr: ast.expr, env: dict[str, frozenset[str]]) -> frozenset[str]:
+        if isinstance(expr, ast.IfExp):
+            return modules_of(expr.body, env) | modules_of(expr.orelse, env)
+        if isinstance(expr, ast.BoolOp):
+            return frozenset().union(*(modules_of(v, env) for v in expr.values))
+        if isinstance(expr, ast.NamedExpr):
+            return modules_of(expr.value, env)
+        if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name):
+            return loaders.get(expr.func.id, frozenset())
+        if isinstance(expr, ast.Name):
+            return env.get(expr.id, frozenset())
+        return frozenset()
+
+    def grow(into: dict[str, frozenset[str]], key: str, mods: frozenset[str]) -> bool:
+        if not mods or mods <= into.get(key, frozenset()):
+            return False
+        into[key] = into.get(key, frozenset()) | mods
         return True
-    names = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
-    return any(isinstance(n, ast.Name) and n.id in {"ImportError", "ModuleNotFoundError", "Exception",
-                                                    "BaseException"} for n in names)
+
+    scopes: list[ast.AST] = [tree, *funcs]
+    scope_nodes = {id(scope): own_nodes(scope) for scope in scopes}
+    for _ in range(8):   # each round carries a binding one call further; the banner's chains are two deep
+        changed = False
+        for scope in scopes:
+            env = env_of(scope)
+            bound = local.setdefault(id(scope), {})
+            for node in scope_nodes[id(scope)]:
+                if isinstance(node, ast.Assign):
+                    targets, value = node.targets, node.value
+                elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)) and node.value is not None:
+                    targets, value = [node.target], node.value
+                else:
+                    targets, value = [], None
+                if value is not None:
+                    mods = modules_of(value, env)
+                    for target in targets:
+                        if isinstance(target, ast.Name):
+                            changed |= grow(bound, target.id, mods)
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in by_name:
+                    callee = by_name[node.func.id]
+                    into = params.setdefault(id(callee), {})
+                    positional = [a.arg for a in [*callee.args.posonlyargs, *callee.args.args]]
+                    for param, arg in zip(positional, node.args):
+                        if isinstance(arg, ast.Starred):
+                            break
+                        changed |= grow(into, param, modules_of(arg, env))
+                    for kw in node.keywords:
+                        if kw.arg:
+                            changed |= grow(into, kw.arg, modules_of(kw.value, env))
+        if not changed:
+            break
+
+    import_degrade: set[int] = set()
+    attribute_degrade: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Try):
+            under = {id(n) for s in node.body for n in ast.walk(s)}
+            if any(_handler_runs_on(h, _IMPORT_DEGRADES) for h in node.handlers):
+                import_degrade |= under
+            if any(_handler_runs_on(h, _ATTRIBUTE_DEGRADES) for h in node.handlers):
+                attribute_degrade |= under
+
+    def pick(mods: frozenset[str], name: str) -> frozenset[str]:
+        held = frozenset(m for m in mods if name in binds.get(m, ()))
+        return held or mods
+
+    names: dict[str, set[str]] = {}
+    keywords: dict[str, dict[str, set[str]]] = {}
+    for scope in scopes:
+        env = env_of(scope)
+        nodes = scope_nodes[id(scope)]
+        checked = {
+            (m, c.args[1].value) for c in nodes
+            if isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == "hasattr"
+            and len(c.args) == 2 and isinstance(c.args[1], ast.Constant) and isinstance(c.args[1].value, str)
+            for m in modules_of(c.args[0], env)
+        }
+        for node in nodes:
+            if (isinstance(node, ast.ImportFrom) and node.level == 0 and node.module in modules
+                    and node.module != own and id(node) not in import_degrade):
+                names.setdefault(node.module, set()).update(a.name for a in node.names if a.name != "*")
+            elif (isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load)
+                    and id(node) not in attribute_degrade):
+                for m in pick(modules_of(node.value, env), node.attr):
+                    if (m, node.attr) not in checked:
+                        names.setdefault(m, set()).add(node.attr)
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and id(node) not in attribute_degrade):
+                # A hasattr check guards the name, never its signature: a kept
+                # copy that has the function without a keyword passes the check
+                # and raises at the call, so the keywords stay takes.
+                passed = {k.arg for k in node.keywords if k.arg}
+                for m in pick(modules_of(node.func.value, env), node.func.attr) if passed else ():
+                    keywords.setdefault(m, {}).setdefault(node.func.attr, set()).update(passed)
+    return names, keywords
 
 
 def _sibling_takes(cc_src: Path) -> tuple[dict[str, dict[str, set[str]]], dict[str, dict[str, dict[str, set[str]]]]]:
     """``(names, keywords)`` the packaged ``tools/cc/`` sources take from each
     sibling module, by stem: ``names[module][name]`` and
     ``keywords[module][function][keyword]`` are the sources (``tools/cc/...``)
-    that take each. A take is a ``from <module> import <name>`` outside a
-    ``try`` that catches ``ImportError`` (inside one it is a degrade: the
-    script runs on without it), a read of ``<alias>.<name>`` where the alias
-    is an ``import <module>`` or a variable a function binds from a loader
-    that loads ``<module>.py`` by path (``spec_from_file_location``, the
-    banner's six sites), and the keywords a call ``<alias>.<function>(...)``
-    passes. ``getattr(<alias>, "<name>", <default>)`` is a degrade and no
-    take. Read from the packaged sources, so it moves with the release."""
-    modules = {p.stem for p in [*cc_src.glob("*.py"), *(cc_src / "hooks").glob("*.py")]} - {"__init__"}
-    names: dict[str, dict[str, set[str]]] = {}
-    keywords: dict[str, dict[str, dict[str, set[str]]]] = {}
-    for path in sorted([*cc_src.glob("*.py"), *(cc_src / "hooks").glob("*.py")]):
-        rel = "tools/cc/" + path.relative_to(cc_src).as_posix()
+    that take each, read by :func:`_sibling_reads`. Read from the packaged
+    sources, so it moves with the release."""
+    paths = sorted([*cc_src.glob("*.py"), *(cc_src / "hooks").glob("*.py")])
+    modules = {p.stem for p in paths} - {"__init__"}
+    trees: dict[Path, ast.Module] = {}
+    for path in paths:
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            trees[path] = ast.parse(path.read_text(encoding="utf-8"))
         except (SyntaxError, OSError, UnicodeDecodeError):
             continue
-        degrades = {id(n) for t in ast.walk(tree) if isinstance(t, ast.Try)
-                    and any(_catches_import_error(h) for h in t.handlers)
-                    for s in t.body for n in ast.walk(s) if isinstance(n, ast.ImportFrom)}
-        loaders = {
-            fn.name: str(c.value)[:-3] for fn in ast.walk(tree) if isinstance(fn, ast.FunctionDef)
-            and any(isinstance(n, ast.Attribute) and n.attr == "spec_from_file_location" for n in ast.walk(fn))
-            for c in ast.walk(fn) if isinstance(c, ast.Constant) and isinstance(c.value, str)
-            and c.value.endswith(".py") and c.value[:-3] in modules
-        }
-        aliases = {(a.asname or a.name): a.name for n in ast.walk(tree) if isinstance(n, ast.Import)
-                   for a in n.names if a.name in modules and a.name != path.stem}
-        scopes: list[tuple[ast.AST, dict[str, str]]] = [(tree, aliases)]
-        for fn in ast.walk(tree):
-            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            bound: dict[str, str] = {}
-            for n in ast.walk(fn):
-                if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
-                    value = n.value.orelse if isinstance(n.value, ast.IfExp) else n.value
-                    if (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
-                            and value.func.id in loaders):
-                        bound[n.targets[0].id] = loaders[value.func.id]
-            if bound:
-                scopes.append((fn, bound))
-        for node in ast.walk(tree):
-            if (isinstance(node, ast.ImportFrom) and node.level == 0 and node.module in modules
-                    and node.module != path.stem and id(node) not in degrades):
-                for a in node.names:
-                    names.setdefault(node.module, {}).setdefault(a.name, set()).add(rel)
-        for scope, alias_of in scopes:
-            for node in ast.walk(scope):
-                if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id in alias_of:
-                    names.setdefault(alias_of[node.value.id], {}).setdefault(node.attr, set()).add(rel)
-                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                        and isinstance(node.func.value, ast.Name) and node.func.value.id in alias_of):
-                    for k in node.keywords:
-                        if k.arg:
-                            (keywords.setdefault(alias_of[node.func.value.id], {})
-                             .setdefault(node.func.attr, {}).setdefault(k.arg, set()).add(rel))
+    binds = {path.stem: _module_level_bindings(tree) for path, tree in trees.items()}
+    names: dict[str, dict[str, set[str]]] = {}
+    keywords: dict[str, dict[str, dict[str, set[str]]]] = {}
+    for path, tree in trees.items():
+        rel = "tools/cc/" + path.relative_to(cc_src).as_posix()
+        file_names, file_keywords = _sibling_reads(tree, modules, path.stem, binds)
+        for module, taken in file_names.items():
+            for name in taken:
+                names.setdefault(module, {}).setdefault(name, set()).add(rel)
+        for module, calls in file_keywords.items():
+            for func, passed in calls.items():
+                for keyword in passed:
+                    keywords.setdefault(module, {}).setdefault(func, {}).setdefault(keyword, set()).add(rel)
     return names, keywords
 
 
@@ -7510,6 +7710,11 @@ def _print_init_summary(
             )
         for line in _kept_user_files_lines(
                 list(result.get('skipped_user_files', [])), preview=False):
+            print("  " + line)
+        # A re-run of init keeps an unmarked managed file as upgrade does, so
+        # it names what the regenerated scripts take that the kept copy lacks
+        # (the failure-mode review on DEF-5087: only upgrade said it).
+        for line in _kept_helper_skew_lines(repo_root, list(result.get('skipped_user_files', []))):
             print("  " + line)
         for line in _slash_name_shadow_lines(repo_root, preview=False):
             print("  " + line)
@@ -8038,6 +8243,8 @@ def cmd_init(args: argparse.Namespace) -> int:
         # keeps (field trial, 2026-10-01).
         surface = preview_managed_surface(repo_root, goal_snapshot=config.goal_snapshot)
         for line in _kept_user_files_lines(surface["skipped_user_files"], preview=True):
+            print(f"[dry-run] {line}")
+        for line in _kept_helper_skew_lines(repo_root, list(surface["skipped_user_files"])):
             print(f"[dry-run] {line}")
         # And what it replaces, by name: the preview named what init keeps and
         # never what it overwrites, so an edited marked body went unnamed until

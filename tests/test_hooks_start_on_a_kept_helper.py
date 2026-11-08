@@ -261,6 +261,25 @@ def _top_level_nodes(stmts: list[ast.stmt]):
                         if not isinstance(c, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)))
 
 
+def import_time_reads(hook: str) -> dict[str, set[str]]:
+    """``{sibling: names}``: every name the hook reads from a sibling while its
+    module body runs -- ``from <sibling> import <name>``, or ``<sibling>.<name>``
+    -- the helper and the start refusal included."""
+    found: dict[str, set[str]] = {}
+    aliases: dict[str, str] = {}
+    nodes = list(_top_level_nodes(_parse(hook[:-3]).body))
+    for node in nodes:
+        if isinstance(node, ast.Import):
+            aliases.update({a.asname or a.name: a.name for a in node.names if _is_sibling(a.name)})
+        elif isinstance(node, ast.ImportFrom) and node.module and _is_sibling(node.module):
+            found.setdefault(node.module, set()).update(a.name for a in node.names)
+    for node in nodes:
+        if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                and node.value.id in aliases):
+            found.setdefault(aliases[node.value.id], set()).add(node.attr)
+    return found
+
+
 def kept_sibling_reads(hook: str) -> dict[str, str]:
     """``{sibling: name}``: for each sibling other than the helper and the start
     refusal (which each deny hook imports first and alone) that the hook reads
@@ -275,20 +294,8 @@ def kept_sibling_reads(hook: str) -> dict[str, str]:
     Discovered from the hook's source, so a sibling the hook starts reading at
     import joins the cells the day it does."""
     skip = {HELPER, REFUSAL}
-    found: dict[str, set[str]] = {}
-    aliases: dict[str, str] = {}
-    nodes = list(_top_level_nodes(_parse(hook[:-3]).body))
-    for node in nodes:
-        if isinstance(node, ast.Import):
-            aliases.update({a.asname or a.name: a.name for a in node.names if _is_sibling(a.name)})
-        elif isinstance(node, ast.ImportFrom) and node.module and _is_sibling(node.module):
-            found.setdefault(node.module, set()).update(a.name for a in node.names)
-    for node in nodes:
-        if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
-                and node.value.id in aliases):
-            found.setdefault(aliases[node.value.id], set()).add(node.attr)
     out: dict[str, str] = {}
-    for sibling, names in sorted(found.items()):
+    for sibling, names in sorted(import_time_reads(hook).items()):
         if sibling in skip:
             continue
         own = {n.id for n in ast.walk(_parse(sibling)) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
@@ -539,6 +546,21 @@ class TestTheDerivation:
                for p in checkout_glob(HOOKS_DIR, "*.py")}
         per = {k: v for k, v in per.items() if v}
         assert len(per) >= 13 and len(set().union(*per.values())) >= 40, (len(per), len(set().union(*per.values())))
+
+    def test_the_upgrade_reads_every_name_a_deny_hook_takes_at_import(self):
+        # The failure-mode review on DEF-5087: the upgrade's walker read each
+        # deny hook's start guard (`except Exception:` then the refusal) as a
+        # degrade, so a kept sibling lacking a name a hook takes at import was
+        # named by nothing at upgrade while the hook refused every call (a kept
+        # _hook_contract.py lacking STOP_INNER_BUDGET; stop_gate). Every such
+        # name, of every sibling, must be a take the upgrade reads.
+        from espalier.cli import _sibling_takes
+        names, _keywords = _sibling_takes(HOOKS_DIR.parent)
+        pairs = [(hook, sibling, name) for hook in sorted(deny_hooks())
+                 for sibling, taken in sorted(import_time_reads(hook).items()) for name in sorted(taken)]
+        assert len(pairs) >= 60, pairs   # the floor at authoring (68): the four hooks' module-top takes
+        missed = [p for p in pairs if f"tools/cc/hooks/{p[0]}" not in names.get(p[1], {}).get(p[2], set())]
+        assert not missed, missed
 
     def test_the_floor_is_wider_than_the_module_level_reads(self):
         # The gap the failure-mode review drove (2026-10-10): the function-level
@@ -919,6 +941,29 @@ def _output(run: Restore) -> dict:
 
 @pytest.mark.timeout(_CELLS_CEILING_S)
 class TestAWedgedGuardNamesWhatRaised:
+    def test_a_name_a_kept_pattern_module_lacks_names_it_on_the_first_mutation(self, tmp_path):
+        # The failure-mode review on DEF-5087: write_guard loads _bash_patterns
+        # on a mutation's first use, so a kept older copy lacking a name read
+        # there met the crash guard, which said "restore write_guard.py". The
+        # name is one the module binds and never reads itself (an older copy
+        # lacks the name, not the code around it); a read-only call still passes.
+        root = tmp_path / "kept-patterns"
+        _copy_cc(root)
+        _append(root, "tools/cc/hooks/_bash_patterns.py", "\ndel has_catastrophic_recursive_rm\n")
+        audit = root / "audit"
+        refused = _run_payload(root, "write_guard.py", _bash("touch notes.txt"), audit)
+        out = json.loads(refused.stdout)["hookSpecificOutput"]
+        reason = out["permissionDecisionReason"]
+        assert refused.returncode == 0 and out["permissionDecision"] == "deny", (refused.stdout, refused.stderr[-300:])
+        assert reason.startswith("write_guard internal error (AttributeError at tools/cc/hooks/write_guard.py:"), reason
+        assert ("takes `has_catastrophic_recursive_rm` from tools/cc/hooks/_bash_patterns.py, which lacks it"
+                in reason), reason
+        assert "If an upgrade kept _bash_patterns.py as yours" in reason, reason
+        assert "`espalier upgrade --execute .`" in reason and "tools/cc/hooks/_bash_patterns.py" in reason, reason
+        assert '"kept": "tools/cc/hooks/_bash_patterns.py"' in _audit_text(audit), _audit_text(audit)[-400:]
+        read = _run_payload(root, "write_guard.py", _NOOP_INPUT["PreToolUse"], audit)
+        assert read.returncode == 0 and not read.stdout.strip(), (read.stdout, read.stderr[-300:])
+
     def test_a_sibling_that_raises_at_import_is_named_and_the_upgrade_is_not(self, cells):
         # The row's probe shape, on every deny hook: a sibling's module body
         # raises. The refusal names the file, its line and the exception, and
