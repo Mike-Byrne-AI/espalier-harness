@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from espalier._spawn import run_no_stdin
+from espalier._text import quoted_if_spaced
 
 
 def _git_branch(repo_root: Path) -> str:
@@ -23,10 +24,12 @@ def build_worktree_plan(repo_root: Path) -> dict:
         {"name": "lane-2-feature", "branch": f"{base_branch}-lane-feature"},
         {"name": "lane-3-review", "branch": f"{base_branch}-lane-review"},
     ]
+    # The root is the reader's checkout and may hold a space (a Windows user
+    # folder): quoted, it stays one word in PowerShell, cmd and POSIX shells.
     commands = [
-        f"git -C {repo_root.resolve()} worktree add ../{root_name}-lane-control -b {base_branch}-lane-control",
-        f"git -C {repo_root.resolve()} worktree add ../{root_name}-lane-feature -b {base_branch}-lane-feature",
-        f"git -C {repo_root.resolve()} worktree add ../{root_name}-lane-review -b {base_branch}-lane-review",
+        f"git -C {quoted_if_spaced(str(repo_root.resolve()))} worktree add ../{root_name}-lane-control -b {base_branch}-lane-control",
+        f"git -C {quoted_if_spaced(str(repo_root.resolve()))} worktree add ../{root_name}-lane-feature -b {base_branch}-lane-feature",
+        f"git -C {quoted_if_spaced(str(repo_root.resolve()))} worktree add ../{root_name}-lane-review -b {base_branch}-lane-review",
     ]
     return {"repo_root": str(repo_root.resolve()), "base_branch": base_branch, "lanes": lanes, "commands": commands}
 

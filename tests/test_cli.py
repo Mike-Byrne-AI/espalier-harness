@@ -32,6 +32,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests._live_tree import checkout_rglob
+
 
 def _ns(**kwargs) -> argparse.Namespace:
     """Build a Namespace with sensible defaults for any cmd_* function."""
@@ -1638,3 +1640,167 @@ class TestWriteSeedLabelsAndDryRun:
         assert second == preview
         assert f"refresh (seed drift): {rel}" in capsys.readouterr().err
         assert not (tmp_path / rel).read_text(encoding="utf-8").endswith("older\n")
+
+
+def _spaced_dir(tmp_path: Path, name: str = "my repo") -> Path:
+    path = tmp_path / name
+    path.mkdir()
+    return path
+
+
+class TestPasteReadyRemediesQuoteASpacedPath:
+    """Seven remedies print an ``-m espalier <verb> <path>`` for the reader to
+    paste, and the path is the reader's own checkout or pack. A space in it made
+    two words of one, so the pasted verb read a truncated path. Driven on
+    Windows 11 in PowerShell, cmd and Git Bash: a double-quoted path argument is
+    one word in all three, and a bare spaced one breaks in all three. Each row
+    puts its slot behind a spaced path; the class's last row pins the
+    population, so a new slot that prints a path bare reds here."""
+
+    def test_merge_settings_without_a_file_quotes_the_repo(self, tmp_path, monkeypatch, capsys):
+        from espalier import cli
+        repo = _spaced_dir(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(cli, "_refuse_below_floor_wiring", lambda verb: None)
+        rc = cli.cmd_merge_settings(_ns(repo=str(repo), profile=None, repair=False, add_allows=False))
+        err = capsys.readouterr().err
+        assert rc == 1, err
+        assert f'-m espalier init "{repo}"`' in err
+
+    def test_merge_settings_on_an_unparsable_file_quotes_the_repo(self, tmp_path, monkeypatch, capsys):
+        from espalier import cli
+        repo = _spaced_dir(tmp_path)
+        (repo / ".claude").mkdir()
+        (repo / ".claude" / "settings.json").write_text("{not json", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(cli, "_refuse_below_floor_wiring", lambda verb: None)
+        rc = cli.cmd_merge_settings(_ns(repo=str(repo), profile=None, repair=False, add_allows=False))
+        err = capsys.readouterr().err
+        assert rc == 1, err
+        assert "could not parse" in err
+        assert f'-m espalier init "{repo}"`' in err
+
+    def test_a_failed_audit_quotes_the_repo_in_its_rerun(self, tmp_path, monkeypatch, capsys):
+        from espalier import cli, repo_mode
+        repo = _spaced_dir(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(repo_mode, "detect_repo_mode", lambda root: repo_mode.REPO_MODE_INITIALIZED_CONSUMER)
+        monkeypatch.setattr(cli, "run_cc_surface_gate",
+                            lambda root: {"status": "fail", "summary": {"errors": 1, "warnings": 0}})
+        rc = cli.cmd_audit(_ns(repo=str(repo)))
+        err = capsys.readouterr().err
+        assert rc == 1, err
+        assert err.rstrip().endswith(f'-m espalier audit "{repo}"'), err
+
+    def test_selfcheck_contracts_on_an_uninitialized_tree_quotes_the_root(self, tmp_path, monkeypatch, capsys):
+        from espalier import cli
+        repo = _spaced_dir(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        rc = cli.cmd_selfcheck(_ns(repo=str(repo), contracts=True))
+        err = capsys.readouterr().err
+        assert rc == 2, err
+        assert f'-m espalier init "{repo.resolve()}"`' in err
+
+    def test_the_source_checkout_nudge_quotes_the_repo(self, tmp_path, monkeypatch, capsys):
+        from espalier import cli, repo_mode
+        repo = _spaced_dir(tmp_path)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(cli, "_stream_isatty", lambda stream: True)
+        monkeypatch.setattr(repo_mode, "detect_repo_mode", lambda root: repo_mode.REPO_MODE_SOURCE_CHECKOUT)
+        cli._maybe_nudge_source_checkout(_ns(func=lambda a: 0, repo=str(repo)))
+        err = capsys.readouterr().err
+        assert "governance is NOT active" in err
+        assert f'-m espalier init "{repo}"`' in err
+
+    def test_scope_check_quotes_a_spaced_pack_in_its_gap_remedy(self, tmp_path, monkeypatch, capsys):
+        from espalier.cli import cmd_scope_check
+        repo = tmp_path / "repo"
+        (repo / "src").mkdir(parents=True)
+        (repo / "src" / "a.py").write_text("TARGET_SYMBOL_DEF = 'x'\n", encoding="utf-8")
+        (repo / "other").mkdir()
+        (repo / "other" / "consumer.py").write_text("from src.a import TARGET_SYMBOL_DEF\n", encoding="utf-8")
+        pack = _spaced_dir(tmp_path, "my packs") / "TP-99-gap.md"
+        pack.write_text(
+            "# TP-99 — gap\n\n## Scope (in)\n\n- `src/a.py`\n\n## Scope (out)\n\nnothing\n\n"
+            "## Affected symbols\n\n### Changed semantics\n- `TARGET_SYMBOL_DEF` — see test\n",
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        rc = cmd_scope_check(_ns(repo=str(repo), pack_path=str(pack), matrix="docs/SURFACE_SUPPORT_MATRIX.md",
+                                 no_ripgrep=True, max_refs_per_file=3, accept_scope_gap=None))
+        out = capsys.readouterr().out
+        assert rc != 0, out
+        assert "--accept-scope-gap" in out, out
+        assert f'-m espalier scope-check "{pack.resolve()}" \\' in out
+
+    def test_surface_impact_quotes_a_spaced_pack_in_its_gap_remedy(self, tmp_path, monkeypatch, capsys):
+        from espalier.cli import cmd_surface_impact
+        pack = _spaced_dir(tmp_path, "my packs") / "TP-999-fixture.md"
+        pack.write_text(
+            "# TP-999 — fixture\n\n## Affected symbols\n\n### Added-paths\n- `.claude/commands/foo.md`\n\n"
+            "### Changed-semantics\n- (none)\n\n### Removed-paths\n- (none)\n\n### Renamed\n- (none)\n",
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+        rc = cmd_surface_impact(argparse.Namespace(repo=str(tmp_path), pack_path=str(pack), accept_surface_gap=None))
+        out = capsys.readouterr().out
+        assert rc == 2, out
+        assert f'-m espalier surface-impact "{pack.resolve()}" \\' in out
+
+    def test_an_unspaced_path_is_printed_bare(self, tmp_path, monkeypatch, capsys):
+        """No quotes where none are needed (one slot stands for the helper)."""
+        from espalier import cli
+        repo = tmp_path / "plainrepo"
+        repo.mkdir()
+        if any(ch.isspace() for ch in str(repo)):
+            pytest.skip("this host's temp root itself holds whitespace")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(cli, "_refuse_below_floor_wiring", lambda verb: None)
+        cli.cmd_merge_settings(_ns(repo=str(repo), profile=None, repair=False, add_allows=False))
+        assert f"-m espalier init {repo}`" in capsys.readouterr().err
+
+    def test_no_command_slot_in_the_engine_interpolates_a_path_bare(self):
+        """The population: in every engine module (the vendored mirror apart), a
+        literal ending in a command's path slot -- ``git -C ``, or ``espalier``
+        and its verb words, then any flags (``espalier upgrade --execute ``),
+        after ``-m ``, a backtick or a line's start -- is followed by a
+        ``quoted_if_spaced(...)`` call, never a bare value. Ten slots in seven
+        functions read bare before this class; a new one reds here, named.
+        Prose that merely ends in "espalier <word> " ("rewrote 3 espalier hook
+        entries") is not a command and is not read. Out of sight, said plainly:
+        a command built by ``.format``, ``%``, ``+`` or a join."""
+        import ast
+        import re
+        root = Path(__file__).resolve().parent.parent / "espalier"
+        command_slot = re.compile(
+            r"(?:\bgit -C |(?:^|-m |`)espalier(?: [a-z][a-z-]*)+ (?:--?[a-z][a-z-]* )*)$", re.MULTILINE)
+
+        def tagged(text: str) -> bool:
+            return command_slot.search(text) is not None
+
+        # The reader is proven on the spellings it must and must not see.
+        for seen in ("x -m espalier init ", "`espalier upgrade --execute ", "espalier integrity refresh ",
+                     "git -C ", "Run:\n-m espalier audit "):
+            assert tagged(seen), seen
+        for unseen in ("rewrote 3 espalier hook ", "-m espalier init \"", "the espalier ", "x"):
+            assert not tagged(unseen), unseen
+
+        bare: list[str] = []
+        slots = 0
+        for path in sorted(checkout_rglob(root, "*.py")):
+            if "_vendor" in path.relative_to(root).parts:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.JoinedStr):
+                    continue
+                for lead, value in zip(node.values, node.values[1:]):
+                    if not (isinstance(lead, ast.Constant) and isinstance(lead.value, str)
+                            and isinstance(value, ast.FormattedValue) and tagged(lead.value)):
+                        continue
+                    slots += 1
+                    call = value.value
+                    if not (isinstance(call, ast.Call) and getattr(call.func, "id", None) == "quoted_if_spaced"):
+                        bare.append(f"{path.relative_to(root.parent).as_posix()}:{node.lineno}: {ast.unparse(call)}")
+        assert slots >= 10, f"the population shrank to {slots}: the reader no longer sees the slots"
+        assert not bare, "a paste-ready command slot prints a path bare:\n  " + "\n  ".join(bare)

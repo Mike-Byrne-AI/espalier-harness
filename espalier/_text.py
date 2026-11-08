@@ -56,8 +56,15 @@ def plural(n: int, singular: str, plural_form: str | None = None) -> str:
 
 def quoted_if_spaced(path: str) -> str:
     """``path`` double-quoted when it carries whitespace, else unchanged --
-    the one quoting every shell this repo targets accepts for a program word,
-    and the one a pasted path needs to survive as one argument. A double
+    the one quoting a pasted path needs to survive as one ARGUMENT in every
+    shell this repo targets: PowerShell, cmd and the POSIX shells (driven on
+    Windows 11 with ``git -C "<spaced dir>"``; the bare spelling broke in all
+    three). As a PROGRAM word it serves cmd and the POSIX shells only:
+    PowerShell reads a quoted first word as a string and refuses the line, and
+    its call operator ``& "<path>"`` is in turn a syntax error to bash, so no
+    one spelling of a spaced program runs in all of them (DEF-2060). It quotes
+    whitespace alone: a ``$`` stays live inside double quotes in PowerShell
+    and bash, and an ``&`` in an unspaced path is left bare. A double
     quote INSIDE the path is not escaped: it is illegal in a Windows filename
     (the platform this quoting is for) and rare enough on POSIX that a
     shell-specific escape would cost more than it saves."""
