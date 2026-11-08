@@ -1,10 +1,14 @@
 {
  "id": "DEF-945",
  "subject": "espalier/cli.py",
- "cmd": "python3 -c \"import argparse,espalier.cli as c;p=c.build_parser();s=[a for a in p._actions if isinstance(a,argparse._SubParsersAction)][0];o=lambda n:sorted(x for a in s.choices[n]._actions for x in a.option_strings if x not in ('-h','--help'));print((o('install-ci'),'--no-ci' in o('fuse'),'pull_request' in c.INSTALL_CI_INSTRUCTIONS))\"",
- "open_value": "(['--config'], False, False)",
+ "cmd": "python3 -c \"import argparse,ast,pathlib,espalier.cli as c;p=c.build_parser();s=[a for a in p._actions if isinstance(a,argparse._SubParsersAction)][0];o=lambda n:[x for a in s.choices[n]._actions for x in a.option_strings];k=lambda f:any((isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr=='get' and n.args and isinstance(n.args[0],ast.Constant) and 'trigger' in str(n.args[0].value)) or (isinstance(n,ast.Subscript) and isinstance(n.slice,ast.Constant) and 'trigger' in str(n.slice.value)) for n in ast.walk(ast.parse(pathlib.Path(f).read_text(encoding='utf-8'))));print(('--no-ci' in o('fuse'),'pull_request' in c.INSTALL_CI_INSTRUCTIONS,any('trigger' in x for x in o('install-ci')) or k('espalier/cli.py') or k('espalier/fuse.py')))\"",
+ "open_value": "(False, False, False)",
  "why_not": null,
- "row_sha": "9427ddc18d15",
- "text_sha": "e46a87b21b60",
- "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
+ "row_sha": "790739758873",
+ "text_sha": "06b755c5c0ae",
+ "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)",
+ "inputs": [
+  "espalier/fuse.py"
+ ],
+ "verified_2026_11_07": "STILL_OPEN (re-pinned \"(['--config'], False, False)\" -> '(False, False, False)'; inputs None -> ['espalier/fuse.py'] on 2026-11-07: install-ci gained --allow-rollback, a downgrade override, which moved the option list; fuse still has no --no-ci, the banner names no pull_request and no install-ci option names a trigger, so the claim stands; probe re-pointed at those three (assign ec4b8e's two, plus the trigger half in either fix shape, option or toml key, per ack e113e1)) [changed: probe, open value, text, inputs]"
 }
