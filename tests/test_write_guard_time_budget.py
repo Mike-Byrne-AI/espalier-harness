@@ -18,8 +18,18 @@ when the budget landed (the struck ledger row and the CHANGELOG carry the
 numbers), and the property it rests on -- the judgment hands the interpreter
 lock to the waiting thread between its many short calls -- is measured, not
 pinned.
+
+That property fails for one long call: a compiled pattern's search holds the
+lock for its whole call, so the budget's thread wakes only when it ends
+(DEF-3048). The hook process is now a thin parent that answers through a
+judging child and kills the child's tree at ``HARD_DEADLINE_S``. The rows from
+``TestOneLongCallInTheJudgmentIsRefusedInTime`` on run the real hook as a
+process, a ``sitecustomize`` seam standing in for the slow or failing part:
+the strike row (one long search, refused under the wired timeout), the relay
+(the child's answer goes out byte for byte), the fallback where no child can
+start, and the child's own CPU cap.
 """
-# slow-exempt: two short children -- one hook-shaped process with a stuck judgment, one fresh-process module census -- about a second each
+# slow-exempt: short hook-shaped children -- a stuck judgment, the relay, fallback and CPU-cap rows (a fraction of a second each), the strike row (about 4 s: the deadline it proves), one fresh-process module census
 from __future__ import annotations
 
 import ast
@@ -30,10 +40,14 @@ import subprocess
 import sys
 import textwrap
 import threading
+import time
 import types
 from pathlib import Path
 
 import pytest
+
+from tests._live_tree import checkout_glob
+from tests._wait_budget import scaled
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -54,6 +68,34 @@ _MARGIN_UNDER_TIMEOUT_S = 1.0
 #: the same box (interpreter, import, judgment), and the budget stays ten times
 #: above it so a slow runner never refuses an ordinary call.
 _BUDGET_FLOOR_S = 3.0
+#: The least the parent's deadline sits above the child's budget, so the
+#: child's own refusal (its audit record the full one) lands before the
+#: parent's kill: the spawn puts the child's first line a parent start later
+#: (the thin parent priced +40 to +67 ms a call on Windows 3.11.9, win's ack
+#: 20261108T021335Z-win-ad53a7 to air's b7fb07; about +30 ms on the Air), and
+#: the child's refusal costs tens of milliseconds idle. The rest is a loaded
+#: box's.
+_CHILD_LEAD_S = 0.4
+#: What the parent spends between the drain and its exit point at the least:
+#: the deny's import and write (milliseconds), with the rest of the window the
+#: audit record's.
+_DENY_AFTER_DRAIN_S = 0.1
+#: The least the parent's exit point leaves under the wired timeout, for what
+#: Claude Code's clock counts outside the hook's own: the interpreter's start
+#: before the first line (about 45 ms on the Air, a bare interpreter 43 ms on
+#: Windows by DEF-946's figure, more under load) and the exit itself.
+_OUTSIDE_THE_HOOKS_CLOCK_S = 0.4
+#: How far past the parent's deadline the strike row's whole run may land: the
+#: part of the answer's time that scales with the box (the interpreter's start
+#: before the hook's first line, the kill, the deny, the exit), measured idle on
+#: the Air at about 80 ms (4.06 and 4.08 s runs, 2026-11-07). The deadline itself
+#: is designed, not measured, and the ceiling plus the deadline is pinned at or
+#: under the wired timeout (`TestTheBudgetSitsBelowTheWiring`).
+_OVERRUN_FLOOR_MS = 80
+_OVERRUN_CEILING_MS = 1000
+_WALL_CLOCK_FLOORS: dict[str, tuple[str, str, int]] = {
+    "_OVERRUN_CEILING_MS": ("_OVERRUN_FLOOR_MS", "2026-11-07", 80),
+}
 #: The tiny budget the injected rows run under.
 _TINY_BUDGET_S = 0.05
 #: How long a row waits on an event before it calls the run broken. Never the
@@ -217,6 +259,28 @@ class TestTheBudgetSitsBelowTheWiring:
         )
         assert write_guard.JUDGMENT_BUDGET_S >= _BUDGET_FLOOR_S
         assert 0 < write_guard.MIN_JUDGMENT_WINDOW_S < write_guard.JUDGMENT_BUDGET_S
+
+    def test_the_hard_bound_orders_its_times_under_the_wired_timeout(self):
+        """DEF-3048's parent: the child's budget refuses first, the kill and the
+        drain end before the exit point, and the exit point leaves room under
+        the wired timeout for what Claude Code's clock counts outside the
+        hook's own. Raising the deadline toward the timeout, or the budget to
+        the deadline, reds here, where the strike row's one idle run would not."""
+        from espalier.harness_config import CANONICAL_HOOK_WIRING
+
+        import _json_safe
+
+        timeout = CANONICAL_HOOK_WIRING["write_guard.py"]["timeout"]
+        lead = write_guard.HARD_DEADLINE_S - write_guard.JUDGMENT_BUDGET_S
+        assert lead >= _CHILD_LEAD_S, f"the child's budget refuses only {lead:.2f} s before the parent's kill"
+        after_kill = write_guard.HARD_DEADLINE_S + _json_safe.TREE_DRAIN_SECONDS + _DENY_AFTER_DRAIN_S
+        assert after_kill <= write_guard.EXIT_BY_S, (
+            f"the kill, the drain and the deny need {after_kill:.2f} s, past the exit point {write_guard.EXIT_BY_S} s")
+        assert write_guard.HARD_DEADLINE_S + _OVERRUN_CEILING_MS / 1000 <= timeout, (
+            "the strike row's overrun ceiling reaches past the wired timeout")
+        assert write_guard.EXIT_BY_S + _OUTSIDE_THE_HOOKS_CLOCK_S <= timeout, (
+            f"the exit point {write_guard.EXIT_BY_S} s leaves under {_OUTSIDE_THE_HOOKS_CLOCK_S} s below the wired"
+            f" {timeout} s timeout")
 
     def test_the_hook_process_counts_from_its_first_line_and_exits_on_a_refusal(self):
         tree = ast.parse((HOOKS_DIR / "write_guard.py").read_text(encoding="utf-8"))
@@ -496,6 +560,327 @@ class TestTheHookProcessExitsWithoutWaiting:
         assert "pretooluse_blocked_time_budget" in _types()
 
 
+#: A ``sitecustomize`` that stalls the judgment the way DEF-3048 was driven. The
+#: payload's parse (``_hook_utils.read_stdin_safely`` calls ``json.loads`` in the
+#: judging thread) first starts a sleeping grandchild and records its pid,
+#: written whole and renamed into place. Then it runs ONE compiled-pattern
+#: search that backtracks for far longer than any bound here. A search holds the
+#: interpreter lock for its whole call, so the thread waiting on the budget
+#: cannot wake; only a bound outside the judging process can answer in time. It
+#: fires on the marker in the command alone, so nothing else in any process the
+#: hook starts is slowed.
+_STALL_SITE = textwrap.dedent('''
+    import json, os, re, subprocess, sys
+    _loads = json.loads
+    def _stalling_loads(text, *args, **kwargs):
+        if isinstance(text, str) and "STALL-IN-ONE-C-CALL" in text:
+            sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+            part = os.environ["STALL_PID_FILE"] + ".tmp"
+            with open(part, "w", encoding="utf-8") as fh:
+                fh.write(str(sleeper.pid))
+            os.replace(part, os.environ["STALL_PID_FILE"])
+            re.match(r"(a+)+$", "a" * 40 + "!")
+        return _loads(text, *args, **kwargs)
+    json.loads = _stalling_loads
+''')
+
+#: The strike row's bound on the hook process: it ends only a run the hook
+#: never answers (the unbounded judgment's search outlasts it many times over),
+#: three wired timeouts, so a deny that lands late reads as late, not as hung.
+_UNANSWERED_RUN_BOUND_S = 15.0
+
+
+def _pid_alive(pid: int) -> bool:
+    """Whether ``pid`` names a running process (Windows: ``tasklist``; POSIX: signal 0)."""
+    if os.name == "nt":
+        listed = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH", "/FO", "CSV"],
+                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
+        return f'"{pid}"' in listed.stdout
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _end_the_sleeper(pid_file: Path) -> None:
+    """Teardown: end the one sleeper the stalled judgment started, by the pid it
+    recorded, where it is still alive. It is the only process this ends."""
+    try:
+        pid = int(pid_file.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return
+    if _pid_alive(pid):
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/F", "/PID", str(pid)], stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=10)
+        else:
+            import signal
+            os.kill(pid, signal.SIGKILL)
+
+
+class TestOneLongCallInTheJudgmentIsRefusedInTime:
+    """DEF-3048: the thread budget alone answered at the length of the call in
+    flight, past the wired timeout, which let the call through unjudged. A
+    judgment sitting in one long lock-holding call is now refused before the
+    timeout, and the processes it started end with it."""
+
+    def test_the_deny_lands_under_the_wired_timeout_and_the_judgments_tree_ends(self, tmp_path):
+        from espalier.harness_config import CANONICAL_HOOK_WIRING
+
+        timeout = CANONICAL_HOOK_WIRING["write_guard.py"]["timeout"]
+        site = tmp_path / "site"
+        site.mkdir()
+        (site / "sitecustomize.py").write_text(_STALL_SITE, encoding="utf-8")
+        pid_file = tmp_path / "sleeper.pid"
+        env = dict(os.environ, CLAUDE_PROJECT_DIR=str(tmp_path), PYTHONPATH=str(site),
+                   STALL_PID_FILE=str(pid_file))
+        payload = _payload("Bash", {"command": "echo STALL-IN-ONE-C-CALL"})
+        assert _UNANSWERED_RUN_BOUND_S > timeout, "the run's bound must leave the wired timeout room to fail"
+        try:
+            started = time.monotonic()
+            try:
+                result = subprocess.run(
+                    [sys.executable, str(HOOKS_DIR / "write_guard.py")], input=json.dumps(payload),
+                    capture_output=True, text=True, encoding="utf-8", timeout=_UNANSWERED_RUN_BOUND_S, env=env,
+                )
+            except subprocess.TimeoutExpired:
+                # The defect itself, failed by name: the unbounded judgment
+                # never answers, and Claude Code would have let the call
+                # through at its timeout (a bare TimeoutExpired reads as a row
+                # that never reached its assertion).
+                pytest.fail(f"the hook gave no answer within {_UNANSWERED_RUN_BOUND_S} s, so Claude Code's"
+                            f" {timeout} s timeout would let the call through unjudged")
+            elapsed = time.monotonic() - started
+            assert pid_file.is_file(), ("the seam never fired: the judgment did not stall", result.stderr)
+            sleeper = int(pid_file.read_text(encoding="utf-8").strip())
+            assert result.returncode == 0, (result.returncode, result.stderr)
+            decisions = _decisions(result.stdout)
+            assert len(decisions) == 1, result.stdout
+            decision = decisions[0]["hookSpecificOutput"]
+            assert decision["permissionDecision"] == "deny", decision
+            assert "could not finish judging this command within its" in decision["permissionDecisionReason"]
+            overrun_ms = (elapsed - write_guard.HARD_DEADLINE_S) * 1000
+            assert overrun_ms < _OVERRUN_CEILING_MS, (
+                f"the deny landed at {elapsed:.2f} s, {overrun_ms:.0f} ms past the {write_guard.HARD_DEADLINE_S} s"
+                f" deadline (ceiling {_OVERRUN_CEILING_MS} ms, floor {_OVERRUN_FLOOR_MS} ms; wired timeout {timeout} s)")
+            # The parent's refusal is audited, inside its exit point (DEF-803's
+            # visibility class: a deny /status --log never counts).
+            refusals = [r for r in _audit_records() if r["event_type"] == "pretooluse_blocked_time_budget"]
+            assert [r["details"].get("bound") for r in refusals] == ["child"], refusals
+            gone_by = time.monotonic() + 5.0
+            while _pid_alive(sleeper) and time.monotonic() < gone_by:
+                time.sleep(0.05)
+            assert not _pid_alive(sleeper), "the judgment's grandchild outlived the refusal"
+        finally:
+            _end_the_sleeper(pid_file)
+
+
+def _run_the_hook(root: Path, payload: dict, *, judge: bool = False, site: Path | None = None,
+                  extra_env: dict | None = None) -> tuple[int, bytes, bytes]:
+    """The real hook as a process, bytes in and bytes out: as Claude Code starts
+    it, or (``judge``) as its parent starts the judging child. ``site`` holds a
+    ``sitecustomize`` the row needs in every process the run starts."""
+    env = dict(os.environ, CLAUDE_PROJECT_DIR=str(root), **(extra_env or {}))
+    if site is not None:
+        env["PYTHONPATH"] = str(site)
+    argv = [sys.executable, str(HOOKS_DIR / "write_guard.py")] + ([write_guard._JUDGE_FLAG] if judge else [])
+    result = subprocess.run(argv, input=json.dumps(payload).encode("utf-8"), capture_output=True,
+                            timeout=30, env=env)
+    return result.returncode, result.stdout, result.stderr
+
+
+def _site(tmp_path: Path, body: str) -> Path:
+    """A directory holding ``body`` as its ``sitecustomize``."""
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "sitecustomize.py").write_text(body, encoding="utf-8")
+    return site
+
+
+#: A ``sitecustomize`` that stands in for the judging child: in a process
+#: started with the judge flag it writes the bytes and ends with the code the
+#: row names, before any of the guard's own code runs. The hook process itself
+#: (no flag) runs as it is, so what the row reads is the parent's relay alone.
+_STAND_IN_CHILD_SITE = textwrap.dedent('''
+    import os, sys
+    if sys.argv[1:2] == ["--judge"]:
+        os.write(1, bytes.fromhex(os.environ["RELAY_OUT"]))
+        os.write(2, bytes.fromhex(os.environ["RELAY_ERR"]))
+        if os.environ["RELAY_CODE"] == "signal":
+            import signal
+            signal.raise_signal(signal.SIGKILL)
+        os._exit(int(os.environ["RELAY_CODE"]))
+''')
+
+#: A ``sitecustomize`` that makes the judging child's first helper import fail,
+#: so the child answers with the start refusal; the hook process is untouched.
+_NO_HELPERS_IN_THE_CHILD_SITE = textwrap.dedent('''
+    import sys
+    if sys.argv[1:2] == ["--judge"]:
+        sys.modules["_hook_utils"] = None
+''')
+
+#: A ``sitecustomize`` under which no judging child can start: the spawn of a
+#: command carrying the judge flag raises ``OSError``, the shape of a spawn the
+#: box refuses. Every other spawn (git, for one) runs as it is.
+_NO_JUDGING_CHILD_SITE = textwrap.dedent('''
+    import subprocess
+    _Popen = subprocess.Popen
+    class _NoJudgingChild(_Popen):
+        def __init__(self, args, *rest, **kwargs):
+            if "--judge" in list(args):
+                raise OSError("this row starts no judging child")
+            super().__init__(args, *rest, **kwargs)
+    subprocess.Popen = _NoJudgingChild
+''')
+
+#: A ``sitecustomize`` under which the judging child starts and its answer is
+#: lost: in the hook process (no judge flag) the read of the child's output
+#: raises once the child is running. The child itself runs as it is.
+_LOST_ANSWER_SITE = textwrap.dedent('''
+    import subprocess, sys
+    if sys.argv[1:2] != ["--judge"]:
+        def _lost(self, *args, **kwargs):
+            raise RuntimeError("this row loses the judging child's answer")
+        subprocess.Popen.communicate = _lost
+''')
+
+#: A ``sitecustomize`` that records the CPU cap of the process parsing the
+#: payload (the judging child: the parent passes the payload's bytes through
+#: unparsed), written whole and renamed into place, on the marker alone.
+_READ_THE_CPU_CAP_SITE = textwrap.dedent('''
+    import json, os
+    _loads = json.loads
+    def _reading_loads(text, *args, **kwargs):
+        if isinstance(text, str) and "READ-THE-CPU-CAP" in text:
+            import resource
+            part = os.environ["CPU_CAP_FILE"] + ".tmp"
+            with open(part, "w", encoding="utf-8") as fh:
+                fh.write(" ".join(str(n) for n in resource.getrlimit(resource.RLIMIT_CPU)))
+            os.replace(part, os.environ["CPU_CAP_FILE"])
+        return _loads(text, *args, **kwargs)
+    json.loads = _reading_loads
+''')
+
+
+class TestTheHookAnswersThroughItsJudgingChild:
+    """DEF-3048's parent changes how the verdict reaches Claude Code, never what
+    it is: the judging child's stdout, stderr and exit code go out byte for
+    byte; where no child can start, the hook process judges as it did before
+    the bound and says so once; and the child caps its own CPU time, the
+    backstop for a child whose parent was ended from outside."""
+
+    @pytest.mark.parametrize(("code", "out", "err"), [
+        (0, b'{"hookSpecificOutput": {"hookEventName": "PreToolUse"}}\n', b""),
+        (2, b"", b"blocked in plain words\r\n"),
+        (1, b"no newline at the end, and a byte no codec reads: \xff", b"Traceback (most recent call last):\n"),
+    ], ids=["a decision on stdout", "a plain block", "a crash"])
+    def test_the_childs_streams_and_code_go_out_byte_for_byte(self, tmp_path, code, out, err):
+        site = _site(tmp_path, _STAND_IN_CHILD_SITE)
+        answer = _run_the_hook(tmp_path, _payload(), site=site, extra_env={
+            "RELAY_OUT": out.hex(), "RELAY_ERR": err.hex(), "RELAY_CODE": str(code)})
+        assert answer == (code, out, err), answer
+
+    @pytest.mark.skipif(os.name == "nt", reason="a POSIX signal ends the stand-in child")
+    def test_a_child_ended_by_a_signal_answers_as_a_crashed_hook_did(self, tmp_path):
+        # Exit 1, which the protocol reads as a non-blocking error: a hook
+        # process killed by a signal let the call through before the bound
+        # too. Failing closed instead is DEC-41, the operator's call.
+        site = _site(tmp_path, _STAND_IN_CHILD_SITE)
+        answer = _run_the_hook(tmp_path, _payload(), site=site, extra_env={
+            "RELAY_OUT": b"partial".hex(), "RELAY_ERR": "".encode().hex(), "RELAY_CODE": "signal"})
+        assert answer == (1, b"partial", b""), answer
+
+    @pytest.mark.parametrize("case", ["an allow", "a zone deny", "a start refusal"])
+    def test_the_hook_answers_as_its_judging_child_does(self, tmp_path, case):
+        site = _site(tmp_path, _NO_HELPERS_IN_THE_CHILD_SITE) if case == "a start refusal" else None
+        answers = []
+        # Each run in a fresh root of its own, so state one run writes (a
+        # said-once flag) cannot change the other's answer; the roots' names
+        # are the one difference, and they are read as one name.
+        for name, judge in (("run-a", False), ("run-b", True)):
+            root = tmp_path / name
+            root.mkdir()
+            payload = (_payload("Bash", {"command": "git status"}) if case == "an allow" else
+                       _payload("Write", {"file_path": str(root / ".claude" / "settings.json"), "content": "x"}))
+            code, out, err = _run_the_hook(root, payload, judge=judge, site=site)
+            answers.append((code, out.replace(name.encode(), b"run-x"), err.replace(name.encode(), b"run-x")))
+        hook, child = answers
+        assert hook == child, (hook, child)
+        code, out, _err = hook
+        assert code == 0, hook
+        decisions = [d["hookSpecificOutput"] for d in _decisions(out.decode("utf-8"))]
+        denies = [d for d in decisions if d.get("permissionDecision") == "deny"]
+        if case == "an allow":
+            assert not denies, decisions
+        else:
+            assert len(denies) == 1, decisions
+        if case == "a start refusal":
+            assert "cannot start" in denies[0]["permissionDecisionReason"], denies
+
+    def test_where_no_child_can_start_the_hook_judges_itself_and_says_so(self, tmp_path):
+        site = _site(tmp_path, _NO_JUDGING_CHILD_SITE)
+        payload = _payload("Write", {"file_path": str(tmp_path / ".claude" / "settings.json"), "content": "x"})
+        code, out, err = _run_the_hook(tmp_path, payload, site=site)
+        assert code == 0, (code, err)
+        decisions = _decisions(out.decode("utf-8"))
+        assert len(decisions) == 1, out
+        assert decisions[0]["hookSpecificOutput"]["permissionDecision"] == "deny", decisions
+        assert b"judging child could not start (OSError)" in err, err
+        records = [r for r in _audit_records() if r["event_type"] == "pretooluse_failed_open_time_budget"]
+        assert [r["details"].get("fault") for r in records] == ["OSError"], records
+
+    def test_a_child_whose_answer_is_lost_is_refused_never_judged_again(self, tmp_path):
+        """Only a child that never started is judged in the hook process; one
+        that started and whose answer was lost is refused. Its judgment may
+        have spent a one-shot nudge, which a second judgment would read as the
+        re-issue and let through."""
+        site = _site(tmp_path, _LOST_ANSWER_SITE)
+        code, out, err = _run_the_hook(tmp_path, _payload("Bash", {"command": "git status"}), site=site)
+        assert code == 0, (code, err)
+        decisions = _decisions(out.decode("utf-8"))
+        assert [d["hookSpecificOutput"]["permissionDecision"] for d in decisions] == ["deny"], out
+        assert b"judging child could not start" not in err, err
+        refusals = [r for r in _audit_records() if r["event_type"] == "pretooluse_blocked_time_budget"]
+        assert [(r["details"].get("bound"), r["details"].get("fault")) for r in refusals] == [
+            ("child", "RuntimeError")], refusals
+
+    @pytest.mark.skipif(os.name == "nt", reason="a closed fd 0 across an exec is POSIX's shape")
+    def test_a_stdin_the_parent_cannot_read_still_meets_the_kill_switch_gate(self, tmp_path):
+        """The parent reads stdin before any helper loads; one it cannot read
+        (fd 0 closed, so ``sys.stdin`` is None) goes back to the in-process
+        judgment, whose reader records it and whose kill-switch gate still
+        denies -- never the traceback's exit 1, which the protocol reads as a
+        non-blocking error and lets the call through."""
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_text('{"disableAllHooks": true}\n', encoding="utf-8")
+        closes_stdin = "import os, sys; os.close(0); os.execv(sys.executable, [sys.executable, sys.argv[1]])"
+        env = dict(os.environ, CLAUDE_PROJECT_DIR=str(tmp_path))
+        result = subprocess.run([sys.executable, "-c", closes_stdin, str(HOOKS_DIR / "write_guard.py")],
+                                capture_output=True, timeout=scaled(30), env=env)
+        assert result.returncode == 0, (result.returncode, result.stderr)
+        decisions = _decisions(result.stdout.decode("utf-8"))
+        assert [d["hookSpecificOutput"]["permissionDecision"] for d in decisions] == ["deny"], result.stdout
+        assert "pretooluse_failed_open_bad_stdin" in _types(), _types()
+
+    @pytest.mark.skipif(os.name == "nt", reason="no RLIMIT_CPU on Windows: the job object is the backstop there")
+    def test_the_judging_child_caps_its_own_cpu_time(self, tmp_path):
+        import resource
+
+        site = _site(tmp_path, _READ_THE_CPU_CAP_SITE)
+        cap_file = tmp_path / "cpu.cap"
+        code, out, err = _run_the_hook(tmp_path, _payload("Bash", {"command": "echo READ-THE-CPU-CAP"}),
+                                       site=site, extra_env={"CPU_CAP_FILE": str(cap_file)})
+        assert code == 0, (code, err)
+        assert cap_file.is_file(), ("the seam never fired: no process parsed the payload", err)
+        soft, hard = (int(n) for n in cap_file.read_text(encoding="utf-8").split())
+        _ours, our_hard = resource.getrlimit(resource.RLIMIT_CPU)
+        cap = write_guard._CHILD_CPU_SECONDS
+        assert hard == our_hard, (hard, our_hard)
+        assert soft == (cap if our_hard == resource.RLIM_INFINITY else min(cap, our_hard)), (soft, hard)
+
+
 def _modules_the_guard_reaches() -> list[Path]:
     """The ``tools/cc`` and ``tools/cc/hooks`` modules loaded once write_guard
     has imported and judged a call of each tool family -- derived in a fresh
@@ -663,6 +1048,131 @@ class TestNoTornStateOnARefusal:
         writer.join(_EVENT_CEILING_S)
         assert landed.is_set()
         assert _types() == ["test_record"]
+
+
+#: What a writer killed mid-append leaves at a log's end: a record cut off,
+#: with no newline after it.
+_TORN = '{"event_type": "cut_off_mid_rec'
+
+#: The hook-side appends that need no heal, each with why: what a torn line
+#: costs there is nothing a later record loses.
+_APPENDS_THAT_NEED_NO_HEAL = {
+    "post_compact.py::_capture_compact_summary": "each append opens with a blank line of its own",
+    "stop_gate.py::_mark_spawn_failure_reported": (
+        "read by whitespace split: a digest a tear loses is told again, the safe direction"),
+}
+
+
+def _after_a_tear(log: Path, append) -> list[str]:
+    """The log's lines once ``append`` ran on a log ending in a torn record."""
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_bytes(_TORN.encode("utf-8"))
+    append()
+    return log.read_text(encoding="utf-8").splitlines()
+
+
+def _appends_that_skip_the_heal(path: Path) -> list[str]:
+    """``file::function`` for each function in ``path`` that opens a file for
+    append and never names ``own_line`` (the helper, or a module's guarded
+    alias of it), unless declared in :data:`_APPENDS_THAT_NEED_NO_HEAL`."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    out: list[str] = []
+    funcs = [f for f in ast.walk(tree) if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    for call in ast.walk(tree):
+        if not (isinstance(call, ast.Call) and _append_mode(call)):
+            continue
+        owner = min((f for f in funcs if f.lineno <= call.lineno <= (f.end_lineno or f.lineno)),
+                    key=lambda f: (f.end_lineno or f.lineno) - f.lineno, default=None)
+        where = f"{path.name}::{owner.name if owner else '<module>'}"
+        heals = owner is not None and any(
+            (isinstance(n, ast.Name) and n.id.lstrip("_").lower() == "own_line")
+            or (isinstance(n, ast.Attribute) and n.attr.lstrip("_").lower() == "own_line")
+            for n in ast.walk(owner))
+        if not heals and where not in _APPENDS_THAT_NEED_NO_HEAL:
+            out.append(where)
+    return out
+
+
+class TestATornLineLosesOnlyItself:
+    """DEF-1160's lock keeps the in-process refusal from cutting an append off
+    mid-line, and no lock can stop a kill from outside: write_guard's parent
+    ends its judging child at the deadline wherever it is (DEF-3048), and
+    Claude Code ends any hook at its wired timeout. A record cut off with no
+    newline then swallowed the next record appended after it -- the parent's
+    own time-budget record first among them. Each line-record append now starts
+    a line of its own after a torn one, so the torn record is the only loss
+    (the readers skip a line that does not parse)."""
+
+    def test_an_audit_record_after_a_torn_line_reads_whole(self, guard_root):
+        import _integrity
+
+        lines = _after_a_tear(_integrity.audit_path(guard_root), lambda: _integrity.append_audit(
+            guard_root, {"event_type": "after_the_tear", "details": {}}, quiet=True))
+        assert lines[0] == _TORN, lines
+        assert json.loads(lines[-1])["event_type"] == "after_the_tear", lines
+        assert [json.loads(ln)["event_type"] for ln in _integrity.tail_audit(guard_root)] == ["after_the_tear"]
+
+    def test_a_telemetry_record_after_a_torn_line_reads_whole(self, tmp_path):
+        lines = _after_a_tear(tmp_path / "state" / "t.jsonl", lambda: _hook_utils._append_jsonl(
+            tmp_path / "state", "t.jsonl", {"event": "after_the_tear"}))
+        assert lines[0] == _TORN, lines
+        assert json.loads(lines[-1])["event"] == "after_the_tear", lines
+
+    def test_a_born_weak_observation_after_a_torn_line_reads_whole(self, tmp_path):
+        import _born_weak
+
+        lines = _after_a_tear(tmp_path / _hook_utils.STATE_DIR / _born_weak._BW_LOG_NAME,
+                              lambda: _born_weak.bw_log_observation(tmp_path, {"event": "after_the_tear"}))
+        assert lines[0] == _TORN, lines
+        assert json.loads(lines[-1])["event"] == "after_the_tear", lines
+
+    def test_a_discard_snapshot_after_a_torn_line_reads_whole(self, tmp_path):
+        import _speedbump
+
+        def git(*args: str) -> None:
+            subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True, timeout=30)
+
+        git("init", "-q", ".")
+        git("config", "user.email", "t@t")
+        git("config", "user.name", "t")
+        (tmp_path / "file.py").write_text("committed\n", encoding="utf-8")
+        git("add", ".")
+        git("commit", "-qm", "init")
+        (tmp_path / "file.py").write_text("uncommitted\n", encoding="utf-8")
+        taken: list[str | None] = []
+        lines = _after_a_tear(tmp_path / _speedbump.SNAPSHOT_LOG, lambda: taken.append(
+            _speedbump.snapshot_discard("Bash", {"command": "git checkout file.py"}, tmp_path)))
+        assert taken[0], "no snapshot taken for a dirty tree, so the case did not run"
+        assert lines[0] == _TORN, lines
+        # The deny text sends the operator to the log's last line for the sha.
+        assert lines[-1].split("\t")[1] == taken[0], lines
+
+    def test_every_hook_side_append_heals_a_torn_line(self):
+        skipped = [w for p in sorted(checkout_glob(HOOKS_DIR, "*.py")) for w in _appends_that_skip_the_heal(p)]
+        assert not skipped, (
+            f"{skipped} open a file for append without own_line: a record a killed writer cut off "
+            "swallows the next one. Write the line through own_line (under the lock the append "
+            "already holds), or declare why a torn line costs nothing there in _APPENDS_THAT_NEED_NO_HEAL.")
+
+    def test_the_census_names_an_append_that_skips_the_heal(self, tmp_path):
+        planted = tmp_path / "planted.py"
+        planted.write_text(textwrap.dedent("""
+            def heals(path, line):
+                with open(path, "a", encoding="utf-8") as fh:
+                    fh.write(own_line(path, line))
+
+            def skips(path, line):
+                with open(path, "a", encoding="utf-8") as fh:
+                    fh.write(line)
+        """), encoding="utf-8")
+        assert _appends_that_skip_the_heal(planted) == ["planted.py::skips"]
+
+    def test_every_declared_exemption_still_names_an_append(self):
+        live = {f"{p.name}::{f.name}" for p in checkout_glob(HOOKS_DIR, "*.py")
+                for f in ast.walk(ast.parse(p.read_text(encoding="utf-8")))
+                if isinstance(f, ast.FunctionDef)
+                and any(isinstance(c, ast.Call) and _append_mode(c) for c in ast.walk(f))}
+        assert set(_APPENDS_THAT_NEED_NO_HEAL) <= live, set(_APPENDS_THAT_NEED_NO_HEAL) - live
 
 
 class TestASlowGitCostsItsSnapshotNotTheCall:

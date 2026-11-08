@@ -1738,11 +1738,40 @@ def say_bad_stdin(root: Path, hook: str, event_type: str, data: dict) -> None:
 #: or cut off. ORDER: take this INSIDE a file lock, never around one -- the
 #: refusal writes its own audit record (the file lock, then this) holding
 #: nothing, and only then takes this alone, so a writer that waited on a file
-#: lock while holding this could deadlock the refusal until the hook's
-#: timeout let the call through.
+#: lock while holding this could deadlock the child's refusal until the
+#: parent's kill at write_guard's ``HARD_DEADLINE_S`` refused the call in its
+#: place, with the thinner record. That kill ends the child between any two
+#: instructions, inside a line too: ``own_line`` starts the next append on a
+#: line of its own after one it cut.
 #: A hook with no budget never contends for it; an uncontended acquire costs
 #: well under a microsecond.
+#: No lock stops a kill from outside the process: write_guard's parent ends its
+#: judging child at the deadline wherever it is (DEF-3048), and Claude Code ends
+#: any hook at its wired timeout. So each line-record append also writes its
+#: line through :func:`own_line`, and a record such a kill cut off is the only
+#: one lost.
 STATE_WRITE_LOCK = threading.RLock()
+
+
+def own_line(path: Path, line: str) -> str:
+    """``line`` as an append to ``path`` writes it to start a line of its own:
+    after a newline when ``path`` ends inside a line, else as it is.
+
+    A writer killed mid-append leaves its record cut off with no newline, and
+    the next record appended ran into it and was lost with it (the readers
+    skip a line that does not parse). Call it under the lock that serializes
+    the file's appenders, so the end it reads is the end the line lands on.
+    Never raises: a file that cannot be read (not yet made, or refused) takes
+    the line as it is. ``tests/test_write_guard_time_budget.py`` holds every
+    hook-side append to it."""
+    try:
+        with open(path, "rb") as fh:
+            if fh.seek(0, os.SEEK_END) == 0:
+                return line
+            fh.seek(-1, os.SEEK_END)
+            return line if fh.read(1) == b"\n" else "\n" + line
+    except OSError:  # fail-open: ok deliberate -- an unreadable or absent log takes the line as it is, as every append did before
+        return line
 
 #: The monotonic time by which this process's judgment must be done, while a
 #: time budget runs it (``write_guard.main`` sets it before its worker starts
@@ -2813,9 +2842,11 @@ def _append_jsonl(state_dir: Path, name: str, record: dict) -> None:
         def _append() -> None:
             # The line goes out whole under STATE_WRITE_LOCK (inside the file
             # lock below): write_guard's budget refusal ends the process only
-            # between lines, never inside one (its reinject telemetry lands here).
+            # between lines (its reinject telemetry lands here). The parent's
+            # kill at the hard deadline can cut one, so the line starts on a
+            # line of its own after a torn one (`own_line`).
             with STATE_WRITE_LOCK, log_path.open("a", encoding="utf-8") as fh:
-                fh.write(line)
+                fh.write(own_line(log_path, line))
 
         # Acquire the lock in its OWN try so the unlocked fallback fires ONLY when
         # lock acquisition fails (flock-less FS / unwritable lock / a lock Windows
