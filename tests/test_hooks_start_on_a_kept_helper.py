@@ -57,10 +57,10 @@ from pathlib import Path
 import pytest
 
 from espalier.harness_config import CANONICAL_HOOK_WIRING, GOVERNANCE_BLOCKING_HOOKS
-from tests._hook_spawn import not_a_budget_miss
+from tests._hook_spawn import retry_a_budget_miss
 from tests._live_tree import checkout_glob, copy_checkout
 
-# timeout-exempt: headroom, not cost -- the module-scoped `cells` fixture lands in the first `cells` test each xdist worker runs, 21 to 48 s of the ini's 60 s across 19 Linux full-tier cells (2026-11-07/08, DEF-2056), so each class whose tests request it carries this ceiling; the module stays in the fast slice and its other tests keep the ini's
+# timeout-exempt: headroom, not cost -- the module-scoped `cells` fixture lands in the first `cells` test each xdist worker runs, 21 to 48 s of the ini's 60 s across 19 Linux full-tier cells (2026-11-07/08, DEF-2056), so each class whose tests request it carries this ceiling, and so does the class requesting the `restores` pool, whose spawns retry a budget miss once per copy (DEF-2057); the module stays in the fast slice and its other tests keep the ini's
 _CELLS_CEILING_S = 180
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -297,12 +297,13 @@ def _copy_cc(root: Path) -> None:
 
 def _run_hook(root: Path, hook: str, event: str, timeout: int = 45) -> subprocess.CompletedProcess:
     payload = {"hook_event_name": event, "session_id": "kept-helper", "cwd": str(root), **_NOOP_INPUT.get(event, {})}
-    return not_a_budget_miss(subprocess.run(
+    env = {**_ENV, "CLAUDE_PROJECT_DIR": str(root), "ESPALIER_AUDIT_DIR": str(root / "audit"),
+           "ESPALIER_STOP_GATE": "light"}
+    return retry_a_budget_miss(lambda: subprocess.run(
         [sys.executable, str(root / "tools" / "cc" / "hooks" / hook)], input=json.dumps(payload),
         cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
-        env={**_ENV, "CLAUDE_PROJECT_DIR": str(root), "ESPALIER_AUDIT_DIR": str(root / "audit"),
-             "ESPALIER_STOP_GATE": "light"},
-    ))
+        env=env,
+    ), env=env, cwd=str(root))
 
 
 def _skew(root: Path, *names: str) -> None:
@@ -676,12 +677,13 @@ def _plant(root: Path, plant: str) -> None:
 
 
 def _run_payload(root: Path, hook: str, payload: dict, audit: Path) -> subprocess.CompletedProcess:
-    return not_a_budget_miss(subprocess.run(
+    env = {**_ENV, "CLAUDE_PROJECT_DIR": str(root), "ESPALIER_AUDIT_DIR": str(audit)}
+    return retry_a_budget_miss(lambda: subprocess.run(
         [sys.executable, str(root / "tools" / "cc" / "hooks" / hook)],
         input=json.dumps({"hook_event_name": "PreToolUse", "session_id": "wedged", "cwd": str(root), **payload}),
         cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45,
-        env={**_ENV, "CLAUDE_PROJECT_DIR": str(root), "ESPALIER_AUDIT_DIR": str(audit)},
-    ))
+        env=env,
+    ), env=env, cwd=str(root))
 
 
 def _taker(run: subprocess.CompletedProcess) -> str:
@@ -903,6 +905,7 @@ class TestAFloorThatRaisesIsRefused:
         assert top and not _sibling_imports(ast.Module(body=top, type_ignores=[])), [ast.dump(n) for n in top]
 
 
+@pytest.mark.timeout(_CELLS_CEILING_S)
 class TestTheOneRestoreAWedgedGuardLetsThrough:
     def test_the_table_is_both_polarities_on_each_plant(self):
         assert set(_WEDGE_PLANTS) == set(_BOTH_WAYS) | {"unread"}

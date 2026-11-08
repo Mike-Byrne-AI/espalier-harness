@@ -47,14 +47,15 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from tests._cut_start import skip_if_cut
-from tests._hook_spawn import not_a_budget_miss, run_hook_through
+from tests._hook_spawn import retry_a_budget_miss, run_hook_through
 from tests._interpreter_hosts import HOOK_PYTHON
 
 HOOKS_DIR = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
 
 #: One wired launch's bound: past ``tests/_hook_spawn.py::HOOK_S``, so the
-#: result goes through ``not_a_budget_miss`` (a write_guard budget refusal is a
-#: miss, never a verdict), and under the 60 s per-test ceiling.
+#: spawn goes through ``retry_a_budget_miss`` (a write_guard budget refusal is a
+#: miss, never a verdict, retried once from the state it began with), and under
+#: the 60 s per-test ceiling.
 WIRED_S = 45
 
 #: The launcher's version flag ``init`` writes ahead of the hook script when
@@ -168,9 +169,9 @@ def run_hook_as_wired(
             env.pop(key, None)
         else:
             env[key] = value
-    return not_a_budget_miss(subprocess.run(
+    return retry_a_budget_miss(lambda: subprocess.run(
         [command, *(a.replace("${CLAUDE_PROJECT_DIR}", root) for a in hook["args"])],
         input=json.dumps({"hook_event_name": event, "cwd": root, **payload}),
         cwd=root, env=env, capture_output=True, text=True, encoding="utf-8",
         errors="replace", timeout=WIRED_S,
-    ))
+    ), env=env, cwd=root)

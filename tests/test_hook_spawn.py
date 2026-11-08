@@ -82,6 +82,15 @@ if miss and mode.endswith("-grandchild"):
     time.sleep(30)
 if miss and mode.endswith("sleep"):
     time.sleep(30)
+if mode.endswith("-flagbudget"):
+    flag = project / ".espalier-state" / "one-shot-flag"
+    if miss:
+        flag.parent.mkdir(parents=True, exist_ok=True)
+        flag.write_text("x", encoding="utf-8")
+        print('{"reason": "Command blocked: write_guard could not finish judging this command"}')
+        sys.exit(0)
+    print("re-issue" if flag.exists() else "first issue")
+    sys.exit(0)
 if miss and mode.endswith("budget"):
     print('{"reason": "Command blocked: write_guard could not finish judging this command"}')
     sys.exit(0)
@@ -101,6 +110,7 @@ def child(tmp_path, monkeypatch):
     monkeypatch.setattr(hs, "HOOK_S", 3.0)
     monkeypatch.setattr(hs, "STATUSLINE_S", 3.0)
     monkeypatch.setattr(hs, "_RETRIED", set())
+    monkeypatch.setattr(hs, "_BUDGET_RETRIED", set())
     # A row with no project of its own resolves the working directory, this
     # checkout, where a live session's writes would refuse every retry.
     (tmp_path / "quiet").mkdir()
@@ -383,3 +393,84 @@ class TestALongerBoundReadsTheRefusalApart:
             hs.not_a_budget_miss(refused)
         uncaptured = subprocess.CompletedProcess(self.ARGV, 0)
         assert hs.not_a_budget_miss(uncaptured) is uncaptured
+
+
+def _spawn(argv: list[str], env: dict | None = None):
+    # A bound past the child's 3 s helper bound, as the long-bound sites keep
+    # theirs past HOOK_S; written at the call, as the suite contract reads it.
+    return lambda: subprocess.run(argv, input="{}", capture_output=True, text=True, encoding="utf-8",
+                                  env=env, timeout=10)
+
+
+class TestALongerBoundRetriesTheRefusalOnce:
+    """A spawn past the helper's bound is written inside ``retry_a_budget_miss``
+    (DEF-2057): the budget's refusal, which comes back within the parent's
+    deadline, is retried once from the state the first attempt began with; a
+    timeout is not retried; any other answer, a deny included, is the first
+    attempt's; a second refusal fails the row naming both. Before it, the
+    kept-helper module's pooled fixtures failed on one refusal and errored
+    every test that requested them (#516, job 128669691983)."""
+
+    def test_a_refusal_then_an_answer_returns_the_answer_and_warns(self, child):
+        argv, runs = child
+        with pytest.warns(hs.HookSpawnRetried, match="budget's refusal"):
+            result = hs.retry_a_budget_miss(_spawn(argv("first-budget")))
+        assert (result.stdout.strip(), runs()) == ("answered", 2)
+
+    def test_an_answer_on_the_first_attempt_is_returned_with_no_retry(self, child):
+        argv, runs = child
+        result = hs.retry_a_budget_miss(_spawn(argv("answer")))
+        assert (result.returncode, result.stdout.strip(), runs()) == (0, "answered", 1)
+
+    def test_two_refusals_fail_the_row_naming_both(self, child):
+        argv, runs = child
+        with pytest.raises(pytest.fail.Exception, match="budget refusal on both attempts"):
+            hs.retry_a_budget_miss(_spawn(argv("always-budget")))
+        assert runs() == 2
+
+    def test_a_deny_is_never_retried(self, child):
+        argv, runs = child
+        result = hs.retry_a_budget_miss(_spawn(argv("deny")))
+        assert (result.returncode, runs()) == (2, 1)
+
+    def test_a_timeout_is_not_retried(self, child):
+        argv, runs = child
+        sleeper = argv("first-sleep")
+        with pytest.raises(subprocess.TimeoutExpired):
+            hs.retry_a_budget_miss(lambda: subprocess.run(sleeper, input="{}", capture_output=True, text=True,
+                                                          timeout=2))
+        assert runs() == 1
+
+    def test_the_retry_starts_from_the_state_the_first_attempt_began_with(self, child, tmp_path):
+        """A one-shot flag the refused attempt wrote would read as a re-issue:
+        the project's .espalier-state is put back first (DEF-2030)."""
+        argv, runs = child
+        project = tmp_path / "project"
+        project.mkdir()
+        env = {**os.environ, "CLAUDE_PROJECT_DIR": str(project)}
+        with pytest.warns(hs.HookSpawnRetried, match="from the .espalier-state it began with"):
+            result = hs.retry_a_budget_miss(_spawn(argv("first-flagbudget"), env), env=env)
+        assert (result.stdout.strip(), runs()) == ("first issue", 2)
+        assert not (project / ".espalier-state").exists()
+
+    def test_one_retry_per_row_in_one_project(self, child):
+        argv, runs = child
+        with pytest.warns(hs.HookSpawnRetried):
+            hs.retry_a_budget_miss(_spawn(argv("first-budget", "one.txt")))
+        with pytest.raises(pytest.fail.Exception, match="spent its one retry"):
+            hs.retry_a_budget_miss(_spawn(argv("first-budget", "two.txt")))
+        assert (runs("one.txt"), runs("two.txt")) == (2, 1)
+
+    def test_each_project_a_row_spawns_in_gets_its_own_retry(self, child, tmp_path):
+        """A module fixture spawning on a thread pool, one fresh copy of the
+        tree per job, shares one row: each copy keeps its retry, so one
+        stalled job does not error every test that requests the fixture."""
+        argv, runs = child
+        for name in ("a", "b"):
+            project = tmp_path / name
+            project.mkdir()
+            env = {**os.environ, "CLAUDE_PROJECT_DIR": str(project)}
+            with pytest.warns(hs.HookSpawnRetried):
+                result = hs.retry_a_budget_miss(_spawn(argv("first-budget", f"{name}.txt"), env), env=env)
+            assert result.stdout.strip() == "answered"
+        assert (runs("a.txt"), runs("b.txt")) == (2, 2)

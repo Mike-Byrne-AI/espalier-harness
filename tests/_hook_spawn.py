@@ -40,13 +40,18 @@ counts (``tests/conftest.py::pytest_terminal_summary``). The budget itself is
 the hook's and is not touched here: it fails closed by design.
 
 A write_guard spawn that keeps a bound past ``HOOK_S`` does not come here: a
-retry under that bound would carry its row past the suite's per-test ceiling.
-The budget refuses at 3.5 s whatever the bound, and its refusal is a deny on
-the decision channel, so such a spawn hands its result to
-``not_a_budget_miss``, which fails the row as the miss it is: never an ALLOW
-row redded as a wrong answer, nor a must-deny row passed on a judgment that
-never finished (DEF-5066). ``tests/test_hook_spawn_routing.py`` derives both
-populations from the tree.
+retry of a timeout under that bound would carry its row past the suite's
+per-test ceiling. The budget refuses within the parent's 4.0 s deadline
+whatever the bound, and its refusal is a deny on the decision channel, so such
+a spawn is written inside ``retry_a_budget_miss``, which retries that refusal
+alone, once, from the state the first attempt began with (it costs one more
+spawn, never a second long wait), and fails the row as the miss it is when the
+retry is refused too: never an ALLOW row redded as a wrong answer, nor a
+must-deny row passed on a judgment that never finished (DEF-5066). Until
+DEF-2057 such spawns failed on the first refusal through
+``not_a_budget_miss``, which stays as the reader for a result the row cannot
+spawn again. ``tests/test_hook_spawn_routing.py`` derives both populations
+from the tree.
 """
 from __future__ import annotations
 
@@ -55,6 +60,7 @@ import signal
 import subprocess
 import time
 import warnings
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -332,20 +338,78 @@ def _ready_for_the_retry(name: str, miss: str, before: _Before) -> list[str]:
     return put_back
 
 
+def _budget_refused(result: subprocess.CompletedProcess) -> bool:
+    out = result.stdout if isinstance(result.stdout, str) else (result.stdout or b"").decode("utf-8", "replace")
+    return BUDGET_REFUSAL in (out or "")
+
+
+def _script(result: subprocess.CompletedProcess) -> str:
+    return next((str(a) for a in reversed(result.args) if str(a).endswith(".py")), str(result.args))
+
+
 def not_a_budget_miss(result: subprocess.CompletedProcess) -> subprocess.CompletedProcess:
     """``result`` as it came, unless write_guard's budget refused the call:
     then the row fails as a miss, never read as the verdict it looks like.
     For a spawn whose bound is past ``HOOK_S`` (the module docstring); it
     spawns nothing and reads the finished result only."""
-    out = result.stdout if isinstance(result.stdout, str) else (result.stdout or b"").decode("utf-8", "replace")
-    if BUDGET_REFUSAL in (out or ""):
-        script = next((str(a) for a in reversed(result.args) if str(a).endswith(".py")), str(result.args))
+    if _budget_refused(result):
+        script = _script(result)
         pytest.fail(
             f"{script} answered with write_guard's budget refusal ({BUDGET_REFUSAL!r}): a miss, not a "
             f"verdict. This spawn keeps a bound past the helper's {HOOK_S:.0f} s, where a retry would "
             "overrun the per-test ceiling, so it is not retried: a stalled runner misses now and "
             "then, a judgment slow every time misses on every runner.")
     return result
+
+
+#: The (row, project) pairs that have spent their one budget retry.
+_BUDGET_RETRIED: set[tuple[str, str]] = set()
+
+
+def retry_a_budget_miss(
+    spawn: Callable[[], subprocess.CompletedProcess], *, env: dict | None = None, cwd: str | None = None,
+) -> subprocess.CompletedProcess:
+    """``spawn()``'s result, with one retry when write_guard's budget refused
+    the call, for a spawn whose bound is past ``HOOK_S``. A timeout is not
+    retried and raises as before: under a bound that long a second wait could
+    run past the per-test ceiling. A budget refusal comes back within the
+    parent's ``HARD_DEADLINE_S`` (``tools/cc/hooks/write_guard.py``, 4.0 s),
+    so a retry costs that and one more spawn. ``env`` and ``cwd`` are the
+    spawn's own, which name the project the restore reads (DEF-2030), and the
+    retry starts from the state the first attempt began with, or the row fails
+    saying why it cannot. Any other answer, a deny included, is the first
+    attempt's. A second refusal fails the row naming both.
+
+    One retry for each test row and project tree. A row that spawns in one
+    project several times waits at most one more spawn. A module fixture that
+    spawns on a thread pool, one fresh copy of the tree for each job,
+    gets one retry per copy, so one stalled job does not error every test
+    that requests the fixture (``tests/test_hooks_start_on_a_kept_helper.py``,
+    whose classes carry a ceiling for it)."""
+    before = _Before(env, cwd)
+    began = time.monotonic()
+    first = spawn()
+    if not _budget_refused(first):
+        return first
+    name = Path(_script(first)).name
+    miss = f"the budget's refusal after {time.monotonic() - began:.1f} s"
+    key = (_row(), os.path.normcase(os.path.abspath(before.project)))
+    if key in _BUDGET_RETRIED:
+        pytest.fail(f"{name} missed ({miss}) and this row has spent its one retry in {before.project}.")
+    put_back = _ready_for_the_retry(name, miss, before)
+    _BUDGET_RETRIED.add(key)
+    began = time.monotonic()
+    second = spawn()
+    if _budget_refused(second):
+        pytest.fail(
+            f"{name} answered with write_guard's budget refusal on both attempts: {miss}, then after "
+            f"{time.monotonic() - began:.1f} s. A stalled runner misses once; a judgment slow every "
+            "time misses every time, on every runner.")
+    began_with = f", from the {' and '.join(put_back)} it began with" if put_back else ""
+    warnings.warn(HookSpawnRetried(
+        f"{name}: the first attempt missed ({miss}); the retry answered in "
+        f"{time.monotonic() - began:.1f} s{began_with}"), stacklevel=2)
+    return second
 
 
 def _row() -> str:

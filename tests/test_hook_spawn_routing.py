@@ -12,11 +12,13 @@ parameters, in a module that names write_guard (the generic hook runners). A
 script's binding is read in the spawning function, else at the module's top
 level (``HOOK = ... / "write_guard.py"`` hid ``_decide`` from this pin until
 DEF-5066). Spawns with a longer bound, or none, keep it (they have the slack
-the 15 s rows lacked) and are not retried; but write_guard's budget refuses at
-3.5 s whatever the bound, and its refusal is a deny on the decision channel,
-so the second pin derives every write_guard spawn by hand at any bound the
-same way and holds the function that spawns it to hand the result to
-``not_a_budget_miss``, which fails the row as a miss instead of a verdict.
+the 15 s rows lacked) and a timeout is not retried; but write_guard's budget
+refuses within its 4.0 s deadline whatever the bound, and its refusal is a
+deny on the decision channel, so the second pin derives every write_guard
+spawn by hand at any bound the same way and holds the function that spawns it
+to write the spawn inside ``retry_a_budget_miss`` (one retry of the refusal,
+DEF-2057) or hand the result to ``not_a_budget_miss``; either fails the row as
+a miss instead of a verdict.
 The bench pin holds the same line under bench/ (DEF-5071), keyed on the
 reading rather than the spawn: a function that compares a value with ``deny``
 reads the refusal apart through ``bench/run_benchmark.py``'s reader.
@@ -39,6 +41,10 @@ BENCH = TESTS.parent / "bench"
 _BENCH_BUDGET_READERS = {"judged_within_budget", "budget_refused"}
 
 _SPAWNS = {"run", "Popen", "check_output", "check_call"}
+#: tests/_hook_spawn.py's readers of the budget's refusal: the one that
+#: retries it, the spawn written inside its call (DEF-2057), and the one that
+#: reads a finished result.
+_READERS = {"retry_a_budget_miss", "not_a_budget_miss"}
 _NAMES = re.compile(r"write_guard|statusline|STATUSLINE")
 #: Modules whose write_guard spawns stay bare, each with its reason.
 _EXEMPT = {
@@ -147,7 +153,7 @@ def hook_spawns(path: Path) -> list[Spawn]:
         inside: set[int] = set()
         read_values: set[int] = set()
         for c in ast.walk(fn):
-            if isinstance(c, ast.Call) and _callee(c) == "not_a_budget_miss" and owner.get(id(c)) is fn:
+            if isinstance(c, ast.Call) and _callee(c) in _READERS and owner.get(id(c)) is fn:
                 for a in [*c.args, *(k.value for k in c.keywords)]:
                     for n in ast.walk(a):
                         inside.add(id(n))
@@ -224,8 +230,9 @@ def test_every_bare_write_guard_spawn_reads_the_budgets_refusal_apart():
             row for row in refusals_read_as_verdicts(path) if (path.name, row.split()[1]) not in _UNREAD_SITES])
     }
     assert not stray, (
-        "hand each result to tests._hook_spawn.not_a_budget_miss in the function that spawns "
-        f"it, or route the spawn through run_hook_through (DEF-5066): {stray}")
+        "write each spawn inside tests._hook_spawn.retry_a_budget_miss (or hand its result to "
+        "not_a_budget_miss) in the function that spawns it, or route the spawn through "
+        f"run_hook_through (DEF-5066, DEF-2057): {stray}")
 
 
 def test_the_read_population_is_not_empty():
@@ -249,7 +256,7 @@ def test_the_wired_launcher_reads_the_budgets_refusal_apart():
     tree = ast.parse((TESTS / "_hook_runner.py").read_text(encoding="utf-8"))
     launcher = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "run_hook_as_wired")
     spawns = [c for c in ast.walk(launcher) if isinstance(c, ast.Call) and getattr(c.func, "attr", None) in _SPAWNS]
-    read = {id(n) for c in ast.walk(launcher) if isinstance(c, ast.Call) and _callee(c) == "not_a_budget_miss"
+    read = {id(n) for c in ast.walk(launcher) if isinstance(c, ast.Call) and _callee(c) in _READERS
             for n in ast.walk(c)}
     assert len(spawns) == 1, f"run_hook_as_wired spawns {len(spawns)} times; the pin reads one"
     assert id(spawns[0]) in read, (
@@ -336,7 +343,7 @@ def test_the_refusal_pin_sees_each_shape_it_holds(tmp_path):
         "import subprocess, sys\n"
         "from subprocess import run\n"
         "from tests import _hook_spawn as hs\n"
-        "from tests._hook_spawn import not_a_budget_miss\n"
+        "from tests._hook_spawn import not_a_budget_miss, retry_a_budget_miss\n"
         "HOOKS_DIR = None\n"
         "HOOK = HOOKS_DIR / 'write_guard.py'\n"
         "def longer():\n"
@@ -354,6 +361,8 @@ def test_the_refusal_pin_sees_each_shape_it_holds(tmp_path):
         "    return result\n"
         "def caller():\n"
         "    return not_a_budget_miss(handed_by_a_caller())\n"
+        "def retried():\n"
+        "    return retry_a_budget_miss(lambda: subprocess.run([sys.executable, str(HOOK)], timeout=45))\n"
         "def wrapped():\n"
         "    return not_a_budget_miss(subprocess.run([sys.executable, str(HOOK)], timeout=45))\n"
         "def by_name():\n"
