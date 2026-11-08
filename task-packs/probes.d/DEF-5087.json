@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5087",
+ "subject": "tools/cc/ship.py",
+ "cmd": "python3 -c \"import pathlib,shutil,subprocess,sys,tempfile;d=tempfile.TemporaryDirectory();t=pathlib.Path(d.name)/'cc';shutil.copytree('tools/cc',t,ignore=shutil.ignore_patterns('__pycache__'));open(t/'_post_merge.py','a').write(chr(10)+'del CHECK_GREEN'+chr(10));r=subprocess.run([sys.executable,str(t/'ship.py'),'--help'],capture_output=True,text=True,timeout=60);print('Traceback' in r.stderr);d.cleanup()\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "b3ddc84318a8",
+ "text_sha": "1c2c3124fd81",
+ "verified_2026_11_08": "OPEN (filed 2026-11-08; probe driven at filing here and in the export of HEAD 08f5d13438b1)"
+}
