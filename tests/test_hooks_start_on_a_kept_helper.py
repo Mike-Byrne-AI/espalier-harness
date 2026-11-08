@@ -1074,9 +1074,8 @@ def _new_module(root: Path) -> str:
     return "tools/cc/hooks/_speedbump.py"
 
 
-def _merge_conflict(root: Path) -> str:
+def _merge_conflict(root: Path, rel: str = "tools/cc/hooks/_reinject.py") -> str:
     # A merge that conflicts in a hook file leaves markers, a SyntaxError.
-    rel = "tools/cc/hooks/_reinject.py"
     for branch, text in (("side", "\nSIDE = 1\n"), ("main", "\nSIDE = 2\n")):
         if branch == "side":
             assert _git(root, "switch", "-q", "-c", "side").returncode == 0
@@ -1101,8 +1100,15 @@ def _floor_name_gone(root: Path) -> str:
     return "tools/cc/hooks/_maintenance_mode.py"
 
 
+def _pattern_merge_conflict(root: Path) -> str:
+    # The same markers in a module the guard loads on first use: a SyntaxError
+    # raised at that load, which the crash guard reads by its filename.
+    return _merge_conflict(root, "tools/cc/hooks/_speedbump.py")
+
+
 _SCENARIOS = {"staged": _staged_name_error, "circular": _circular, "new-module": _new_module,
-              "merge-conflict": _merge_conflict, "floor": _floor_raises, "floor-name-gone": _floor_name_gone}
+              "merge-conflict": _merge_conflict, "pattern-merge-conflict": _pattern_merge_conflict,
+              "floor": _floor_raises, "floor-name-gone": _floor_name_gone}
 
 
 class TestTheNamedRestoreRepairsTheGuard:
@@ -1115,7 +1121,7 @@ class TestTheNamedRestoreRepairsTheGuard:
     #: guard loads on a mutation's first use (DEF-946): a read-only call passes
     #: while they are broken, so the file can be read, and a mutation meets the
     #: crash guard, which names the file and lets the same restore through.
-    _ON_THE_PATTERN_PATH = frozenset({"staged", "circular", "new-module"})
+    _ON_THE_PATTERN_PATH = frozenset({"staged", "circular", "new-module", "pattern-merge-conflict"})
     _MUTATION = {"tool_name": "Edit", "tool_input": {"file_path": "notes.txt", "old_string": "a", "new_string": "b"}}
 
     @pytest.mark.parametrize("scenario", sorted(_SCENARIOS))
