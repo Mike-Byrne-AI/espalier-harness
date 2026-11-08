@@ -1763,8 +1763,14 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "than passing.",
     ),
     "tests/test_write_guard.py": (
-        49, "fb82cf2c397dca1a9f2d03a6aca973abc92632577475c4cccca5c1bc8e60f8bb",
+        50, "adc9c905e3c57c5159b2ccbc037eb7063392235df4e892aafb6b18ffdd2f9023",
         "CORRECT_BY_REMEDY",
+        "GREW 49 -> 50 on 2026-11-08 (the read-only fast path's fix batch, DEF-946): "
+        "TestQuotedVerbTailIsUniform::test_write_guard_holds_no_anchored_arm_of_its_own "
+        "now loads the pattern path by name and counts the compiled patterns in "
+        "`vars(write_guard)` against a floor of 30 (10 bound at import, 36 after the "
+        "load): the row is that floor, which exists to red an unloaded walk, so a shrink "
+        "can only red it; its red was earned with the load call removed. "
         "GREW 47 -> 49 on 2026-11-07 (the fetch arms' inner position, DEF-3033): "
         "TestQuotedVerbTailIsUniform::test_a_prefixed_fetch_verb_inside_a_substitution_bumps "
         "walks a fixed pair (the bare control and its respelled twin) and, for each, "

@@ -962,6 +962,9 @@ class TestTheOneRestoreAWedgedGuardLetsThrough:
         # eager name read, since the pattern modules load on first use, DEF-946).
         assert "(or the same command for the file you edited, if it is tools/cc/hooks/_hook_utils.py" in reason, reason
         assert "`git restore --source=HEAD -- tools/cc/hooks/_hook_utils.py`" not in reason, reason
+        # The taker is write_guard itself: its eager helper-name read runs
+        # before any pattern module loads, so the restore it names first is its own.
+        assert "git restore --source=HEAD -- tools/cc/hooks/write_guard.py" in reason, reason
 
     def test_a_quoted_shell_operator_refuses_even_where_the_path_would_match(self, tmp_path):
         # The operator check is its own refusal, not the operand count's: a

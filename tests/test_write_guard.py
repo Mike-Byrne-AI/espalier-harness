@@ -618,6 +618,12 @@ class TestQuotedVerbTailIsUniform:
         import sys
         sys.path.insert(0, str(HOOKS_DIR))
         import write_guard as wg
+        # The patterns built from `_bash_patterns` bind on the pattern path's
+        # load, so the walk below loads it first, by name; the floor keeps an
+        # unloaded walk (10 patterns bound at import, 36 after) from passing.
+        wg._load_the_pattern_path()
+        walked = sum(isinstance(v, re.Pattern) for v in vars(wg).values())
+        assert walked >= 30, f"{walked} patterns in write_guard's namespace: the pattern path did not load"
         bp = wg._bash_patterns   # the module object write_guard reads, not a second copy
         shared = {id(v) for v in vars(bp).values() if isinstance(v, re.Pattern)}
         for name, registry in vars(wg).items():
@@ -17672,6 +17678,9 @@ def _drive_the_pattern_path(root: Path, payloads: list[dict]) -> dict:
 
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = str(root)
+    # The denies this drive owes write audit records: into the run's own
+    # folder, never the operator's ~/.espalier/audit/.
+    env["ESPALIER_AUDIT_DIR"] = str(root / "audit")
     env.pop("ESPALIER_MAINTENANCE_MODE", None)
     run = subprocess.run(
         [sys.executable, "-c", _PATTERN_PATH_DRIVER, str(HOOKS_DIR), json.dumps(payloads)],
@@ -17728,36 +17737,140 @@ class TestThePatternPath:
         assert call["loaded"] == [] and "kill-switch" in call["out"], call
         assert '"permissionDecision": "deny"' in call["out"], call
 
-    def test_every_reader_of_a_bound_name_loads_the_path_first(self, clean_run):
+    @staticmethod
+    def _the_source():
+        import ast
+
+        tree = ast.parse((HOOKS_DIR / "write_guard.py").read_text(encoding="utf-8"))
+        # Annotations are left out of every read below because this file defers
+        # them (never evaluated at runtime); the skip stands on this import.
+        assert any(isinstance(s, ast.ImportFrom) and s.module == "__future__"
+                   and any(a.name == "annotations" for a in s.names) for s in tree.body), (
+            "write_guard.py no longer defers its annotations; the contract below skips them")
+        return tree
+
+    @staticmethod
+    def _bound(clean_run) -> set[str]:
         # The names are the ones a real load bound (the fresh interpreter's
         # before-and-after of `vars(write_guard)`), never a list kept here; the
         # floor keeps a load that bound nothing from passing on an empty set.
-        import ast
-
         bound = set(clean_run["bound"])
         assert {"_bash_patterns", "_speedbump", "DANGEROUS_BASH_PATTERNS", "_REDIRECT_RE"} <= bound, sorted(bound)
-        tree = ast.parse((HOOKS_DIR / "write_guard.py").read_text(encoding="utf-8"))
-        exempt = {"_load_the_pattern_path", "__getattr__"} | {
-            node.name for node in tree.body if isinstance(node, ast.FunctionDef)
-            and any(isinstance(d, ast.Name) and d.id == "_on_the_pattern_path" for d in node.decorator_list)
-        }
+        return bound
 
-        def reads(node: ast.AST) -> set[str]:
-            return {n.id for n in ast.walk(node) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)} & bound
+    @staticmethod
+    def _steps(tree) -> list:
+        import ast
+
+        return [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                and any(isinstance(d, ast.Name) and d.id == "_on_the_pattern_path" for d in node.decorator_list)]
+
+    @staticmethod
+    def _reads(node, bound: set[str], *, at_import: bool = False, lambdas: list | None = None) -> set[str]:
+        """The names in ``bound`` that ``node`` loads, its annotations left out.
+        ``at_import``: only what runs where ``node`` stands -- a function's or a
+        lambda's body runs later (its decorators and defaults do not), an
+        ``if TYPE_CHECKING:`` body never; each lambda met there is added to
+        ``lambdas``, since its body cannot call the loader first."""
+        import ast
+
+        out: set[str] = set()
+        stack = [node]
+        while stack:
+            n = stack.pop()
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id in bound:
+                out.add(n.id)
+            if at_import and isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                stack += [*n.decorator_list, *n.args.defaults, *(d for d in n.args.kw_defaults if d is not None)]
+                continue
+            if at_import and isinstance(n, ast.Lambda):
+                stack += [*n.args.defaults, *(d for d in n.args.kw_defaults if d is not None)]
+                if lambdas is not None:
+                    lambdas.append(n)
+                continue
+            if at_import and isinstance(n, ast.If) and isinstance(n.test, ast.Name) and n.test.id == "TYPE_CHECKING":
+                stack += n.orelse
+                continue
+            for field, value in ast.iter_fields(n):
+                if field in ("annotation", "returns"):
+                    continue
+                if isinstance(value, ast.AST):
+                    stack.append(value)
+                elif isinstance(value, list):
+                    stack += [v for v in value if isinstance(v, ast.AST)]
+        return out
+
+    def test_every_reader_of_a_bound_name_loads_the_path_first(self, clean_run):
+        import ast
+
+        bound, tree = self._bound(clean_run), self._the_source()
+        exempt = {"_load_the_pattern_path", "__getattr__"} | {step.name for step in self._steps(tree)}
 
         def loads(stmt: ast.stmt) -> bool:
             return (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)
                     and isinstance(stmt.value.func, ast.Name) and stmt.value.func.id == "_load_the_pattern_path")
 
+        # A function's own body is what runs when it is called; its decorators
+        # and defaults run where it is defined (the import-time test's).
         readers, late = 0, []
         for fn in ast.walk(tree):
-            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) or fn.name in exempt or not reads(fn):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) or fn.name in exempt:
+                continue
+            body_reads = [self._reads(stmt, bound) for stmt in fn.body]
+            first_read = next((i for i, names in enumerate(body_reads) if names), None)
+            if first_read is None:
                 continue
             readers += 1
-            first_read = next(i for i, stmt in enumerate(fn.body) if reads(stmt))
             if not any(loads(stmt) for stmt in fn.body[:first_read]):
-                late.append(f"{fn.name} (line {fn.lineno}) reads {sorted(reads(fn))}")
+                late.append(f"{fn.name} (line {fn.lineno}) reads {sorted(set().union(*body_reads))}")
         assert readers >= 20, f"{readers} readers found: the walk or the bound names regressed"
         assert late == [], (
             "these functions read a name the pattern path binds before calling "
             f"_load_the_pattern_path(): {late}; a read-only call never loads it, so the name is unbound")
+
+    def test_nothing_run_at_import_reads_a_bound_name(self, clean_run):
+        # A module-level statement, a class body, a default or a decorator runs
+        # when the judging child imports the file, before any loader: a read of
+        # a bound name there is a NameError, an exit 1 the protocol reads as an
+        # allow for every call. A lambda's body cannot call the loader first.
+        bound, tree = self._bound(clean_run), self._the_source()
+        early, lambdas = [], []
+        for stmt in tree.body:
+            names = self._reads(stmt, bound, at_import=True, lambdas=lambdas)
+            if names:
+                early.append(f"line {stmt.lineno} reads {sorted(names)}")
+        readers = [f"line {fn.lineno} reads {sorted(names)}" for fn in lambdas
+                   if (names := self._reads(fn.body, bound))]
+        assert early == [], (
+            f"these run at import and read a name the pattern path binds: {early}; build it in an "
+            "@_on_the_pattern_path step (or read it inside a function that loads the path first)")
+        assert readers == [], (
+            f"these lambdas read a name the pattern path binds: {readers}; make each a function "
+            "that calls _load_the_pattern_path() before its first read")
+
+    def test_every_name_a_step_binds_is_unbound_until_the_load(self, clean_run):
+        # A placeholder bound at import (`_X: T | None = None`) that a step then
+        # rebinds is missing from the load's before-and-after, so its readers
+        # escape the two tests above while reading None; and a bare annotation
+        # the load never binds is a NameError at its first read.
+        import ast
+
+        bound, tree = self._bound(clean_run), self._the_source()
+        declared = {name for step in self._steps(tree) for node in ast.walk(step)
+                    if isinstance(node, ast.Global) for name in node.names}
+        assert declared, "no step declares a global: the walk regressed"
+        # The re-exports step binds by name through globals(), from this tuple.
+        (reexports,) = [s.value for s in tree.body if isinstance(s, ast.Assign)
+                        and [getattr(t, "id", None) for t in s.targets] == ["_PATTERN_REEXPORTS"]]
+        declared |= {e.value for e in reexports.elts if isinstance(e, ast.Constant)}
+        placeholders = sorted(declared - bound)
+        bare = []
+        for stmt in tree.body:
+            body = stmt.body if (isinstance(stmt, ast.If) and isinstance(stmt.test, ast.Name)
+                                 and stmt.test.id == "TYPE_CHECKING") else [stmt]
+            bare += [s.target.id for s in body if isinstance(s, ast.AnnAssign) and s.value is None
+                     and isinstance(s.target, ast.Name) and s.target.id not in bound]
+        assert placeholders == [], (
+            f"bound at import, then rebound by a step: {placeholders}; drop the module-level binding "
+            "(a bare annotation, or the TYPE_CHECKING block, gives the type checker its view)")
+        assert bare == [], f"annotated at module level but never bound by the load: {sorted(bare)}"
