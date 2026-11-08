@@ -1196,6 +1196,14 @@ first; the dangerous-command catch is a secondary slip-catcher):
    resolves onto one, a variable, a glob and a `..` step stay the wall,
    pinned by
    `tests/test_write_guard.py::TestPowerShellScratchRootRung::test_everything_else_absolute_is_still_the_wall`.
+   The temp variables are the exception: `$env:TEMP`, `$env:TMP` or
+   `$env:TMPDIR` with a literal path below it is read as the value the hook
+   inherits, where the command sets none of the three (an assignment, the
+   `env:` drive by path, the name as a string) and runs no script or
+   module that could, so `-Force $env:TEMP\x` steps off the wall as the
+   literal path below the same root does, and draws the one nudge a
+   variable draws (2026-11-07; until then it walled as unreadable); a
+   comma array of such paths stays the wall.
    A forced remove of several targets is judged element by element, each
    by the rule it meets (on the roster, plainly relative, or a literal path
    below a scratch root), so a build directory and its own scratch in one
@@ -1237,9 +1245,16 @@ first; the dangerous-command catch is a secondary slip-catcher):
    `rm -rf /tmp/*`, the same deletion, keeps the nudge (narrow the walk
    with `-name` or `-path`, or root it below), a declared limit
    (`tests/test_write_guard.py::TestAScratchRootItselfIsTheWall::test_a_sweep_reads_its_walk_root_as_the_root_itself`).
-   The root spelled by its variable (`"$TMPDIR"`, `$env:TEMP` without
-   `-Force`) is not read, and keeps the nudge, a declared limit
-   (`tests/test_write_guard.py::TestAScratchRootItselfIsTheWall::test_a_root_spelled_by_its_variable_is_not_read`). A
+   The root spelled by its variable is the root (`"$TMPDIR"`, `${TEMP}`,
+   `"${TMPDIR:?}"`, `"${TMPDIR:-/tmp}"`, `$env:TEMP`, cmd's `%TEMP%`, forced
+   or not; until 2026-11-07 the unforced spellings drew the nudge), the
+   variable read as the value the hook inherits from the session; unset or
+   relative, it is read as any other variable, and so is one the command
+   sets itself (`export TMPDIR=$(mktemp -d)` before its own cleanup), whose
+   value is not the inherited one. The sweeps do not take that last
+   reading: a walk rooted at a temp variable the command sets walls as the
+   inherited root (spell the path, or bind another name), a declared limit
+   (`tests/test_write_guard.py::TestAScratchRootItselfIsTheWall::test_a_sweep_reads_a_variable_the_command_sets_by_its_inherited_value`). A
    sibling of the nested one there is scratch to the rule, a declared limit
    (`tests/test_speedbump_irreversible.py::TestCpRmrfTempRoots::test_a_temp_directory_nested_below_a_temp_root_is_never_scratch`).
    A checkout deeper inside the target is not looked for, a declared limit
