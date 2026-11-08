@@ -4178,6 +4178,7 @@ def _derived_extraction_regexes() -> list[tuple[str, "re.Pattern[str]"]]:
 
     import write_guard as _wg  # noqa: E402
 
+    _wg._load_the_pattern_path()   # its pattern names bind on first use (DEF-946)
     found: dict[str, "re.Pattern[str]"] = {}
     for module in (_bash_patterns, _wg):
         for attr, value in vars(module).items():
