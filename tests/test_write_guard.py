@@ -10244,8 +10244,11 @@ class TestAScratchRootItselfIsTheWall:
         assert not self._walls(command, tool), command
 
     def test_a_forced_remove_below_a_bound_variable_keeps_the_wall(self, monkeypatch):
-        """The forced-remove sentence in docs/HOOKS.md (a variable stays the
-        wall there): the forced PowerShell remove's rung that lifts the wall
+        """A gap, filed as DEF-2055 (an over-refusal with a fix shape: a
+        scope model for the PowerShell pre-pass), and the forced-remove
+        sentence in docs/HOOKS.md (a variable stays the wall there): this
+        row pins today's wall until that lane. The forced PowerShell remove's
+        rung that lifts the wall
         below a scratch root reads the command as typed, never through the
         binding pre-pass, which models no
         PowerShell scope (a name bound inside `& { }` is unset after it, so
