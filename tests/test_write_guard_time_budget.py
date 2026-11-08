@@ -46,6 +46,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._live_tree import checkout_glob
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
 if str(HOOKS_DIR) not in sys.path:
@@ -65,6 +67,28 @@ _MARGIN_UNDER_TIMEOUT_S = 1.0
 #: the same box (interpreter, import, judgment), and the budget stays ten times
 #: above it so a slow runner never refuses an ordinary call.
 _BUDGET_FLOOR_S = 3.0
+#: The least the parent's deadline sits above the child's budget, so the
+#: child's own refusal (its audit record the full one) lands before the
+#: parent's kill: the spawn puts the child's first line a parent start later
+#: (the thin parent priced +40 to +67 ms a call on Windows 3.11.9, win's ack
+#: 20261108T021335Z-win-ad53a7 to air's b7fb07; about +30 ms on the Air), and
+#: the child's refusal costs tens of milliseconds idle. The rest is a loaded
+#: box's.
+_CHILD_LEAD_S = 0.4
+#: What the parent spends between the drain and its exit point at the least:
+#: the deny's import and write (milliseconds), with the rest of the window the
+#: audit record's.
+_DENY_AFTER_DRAIN_S = 0.1
+#: The least the parent's exit point leaves under the wired timeout, for what
+#: Claude Code's clock counts outside the hook's own: the interpreter's start
+#: before the first line (about 45 ms on the Air, a bare interpreter 43 ms on
+#: Windows by DEF-946's figure, more under load) and the exit itself.
+_OUTSIDE_THE_HOOKS_CLOCK_S = 0.4
+#: The wall-clock rule's pairing (tests/test_proof_tier.py), empty: this file
+#: asserts no speed claim. Its one bound is the hook protocol's 5 s timeout over
+#: the parent's 4.0 s designed deadline, exempt on its own line, since no floor
+#: ten times under it can exist; it runs on the serial leg, alone on the box.
+_WALL_CLOCK_FLOORS: dict[str, tuple[str, str, float]] = {}
 #: The tiny budget the injected rows run under.
 _TINY_BUDGET_S = 0.05
 #: How long a row waits on an event before it calls the run broken. Never the
@@ -228,6 +252,26 @@ class TestTheBudgetSitsBelowTheWiring:
         )
         assert write_guard.JUDGMENT_BUDGET_S >= _BUDGET_FLOOR_S
         assert 0 < write_guard.MIN_JUDGMENT_WINDOW_S < write_guard.JUDGMENT_BUDGET_S
+
+    def test_the_hard_bound_orders_its_times_under_the_wired_timeout(self):
+        """DEF-3048's parent: the child's budget refuses first, the kill and the
+        drain end before the exit point, and the exit point leaves room under
+        the wired timeout for what Claude Code's clock counts outside the
+        hook's own. Raising the deadline toward the timeout, or the budget to
+        the deadline, reds here, where the strike row's one idle run would not."""
+        from espalier.harness_config import CANONICAL_HOOK_WIRING
+
+        import _json_safe
+
+        timeout = CANONICAL_HOOK_WIRING["write_guard.py"]["timeout"]
+        lead = write_guard.HARD_DEADLINE_S - write_guard.JUDGMENT_BUDGET_S
+        assert lead >= _CHILD_LEAD_S, f"the child's budget refuses only {lead:.2f} s before the parent's kill"
+        after_kill = write_guard.HARD_DEADLINE_S + _json_safe.TREE_DRAIN_SECONDS + _DENY_AFTER_DRAIN_S
+        assert after_kill <= write_guard.EXIT_BY_S, (
+            f"the kill, the drain and the deny need {after_kill:.2f} s, past the exit point {write_guard.EXIT_BY_S} s")
+        assert write_guard.EXIT_BY_S + _OUTSIDE_THE_HOOKS_CLOCK_S <= timeout, (
+            f"the exit point {write_guard.EXIT_BY_S} s leaves under {_OUTSIDE_THE_HOOKS_CLOCK_S} s below the wired"
+            f" {timeout} s timeout")
 
     def test_the_hook_process_counts_from_its_first_line_and_exits_on_a_refusal(self):
         tree = ast.parse((HOOKS_DIR / "write_guard.py").read_text(encoding="utf-8"))
@@ -607,7 +651,11 @@ class TestOneLongCallInTheJudgmentIsRefusedInTime:
             decision = decisions[0]["hookSpecificOutput"]
             assert decision["permissionDecision"] == "deny", decision
             assert "could not finish judging this command within its" in decision["permissionDecisionReason"]
-            assert elapsed < timeout, f"the deny landed at {elapsed:.2f} s, past the wired {timeout} s timeout"
+            assert elapsed < timeout, f"the deny landed at {elapsed:.2f} s, past the wired {timeout} s timeout"  # wall-clock-exempt: the hook protocol's timeout, not a speed claim
+            # The parent's refusal is audited, inside its exit point (DEF-803's
+            # visibility class: a deny /status --log never counts).
+            refusals = [r for r in _audit_records() if r["event_type"] == "pretooluse_blocked_time_budget"]
+            assert [r["details"].get("bound") for r in refusals] == ["child"], refusals
             gone_by = time.monotonic() + 5.0
             while _pid_alive(sleeper) and time.monotonic() < gone_by:
                 time.sleep(0.05)
@@ -673,6 +721,17 @@ _NO_JUDGING_CHILD_SITE = textwrap.dedent('''
                 raise OSError("this row starts no judging child")
             super().__init__(args, *rest, **kwargs)
     subprocess.Popen = _NoJudgingChild
+''')
+
+#: A ``sitecustomize`` under which the judging child starts and its answer is
+#: lost: in the hook process (no judge flag) the read of the child's output
+#: raises once the child is running. The child itself runs as it is.
+_LOST_ANSWER_SITE = textwrap.dedent('''
+    import subprocess, sys
+    if sys.argv[1:2] != ["--judge"]:
+        def _lost(self, *args, **kwargs):
+            raise RuntimeError("this row loses the judging child's answer")
+        subprocess.Popen.communicate = _lost
 ''')
 
 #: A ``sitecustomize`` that records the CPU cap of the process parsing the
@@ -759,6 +818,38 @@ class TestTheHookAnswersThroughItsJudgingChild:
         assert b"judging child could not start (OSError)" in err, err
         records = [r for r in _audit_records() if r["event_type"] == "pretooluse_failed_open_time_budget"]
         assert [r["details"].get("fault") for r in records] == ["OSError"], records
+
+    def test_a_child_whose_answer_is_lost_is_refused_never_judged_again(self, tmp_path):
+        """Only a child that never started is judged in the hook process; one
+        that started and whose answer was lost is refused. Its judgment may
+        have spent a one-shot nudge, which a second judgment would read as the
+        re-issue and let through."""
+        site = _site(tmp_path, _LOST_ANSWER_SITE)
+        code, out, err = _run_the_hook(tmp_path, _payload("Bash", {"command": "git status"}), site=site)
+        assert code == 0, (code, err)
+        decisions = _decisions(out.decode("utf-8"))
+        assert [d["hookSpecificOutput"]["permissionDecision"] for d in decisions] == ["deny"], out
+        assert b"judging child could not start" not in err, err
+        refusals = [r for r in _audit_records() if r["event_type"] == "pretooluse_blocked_time_budget"]
+        assert [r["details"].get("bound") for r in refusals] == ["child"], refusals
+
+    @pytest.mark.skipif(os.name == "nt", reason="a closed fd 0 across an exec is POSIX's shape")
+    def test_a_stdin_the_parent_cannot_read_still_meets_the_kill_switch_gate(self, tmp_path):
+        """The parent reads stdin before any helper loads; one it cannot read
+        (fd 0 closed, so ``sys.stdin`` is None) goes back to the in-process
+        judgment, whose reader records it and whose kill-switch gate still
+        denies -- never the traceback's exit 1, which the protocol reads as a
+        non-blocking error and lets the call through."""
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_text('{"disableAllHooks": true}\n', encoding="utf-8")
+        closes_stdin = "import os, sys; os.close(0); os.execv(sys.executable, [sys.executable, sys.argv[1]])"
+        env = dict(os.environ, CLAUDE_PROJECT_DIR=str(tmp_path))
+        result = subprocess.run([sys.executable, "-c", closes_stdin, str(HOOKS_DIR / "write_guard.py")],
+                                capture_output=True, timeout=30, env=env)
+        assert result.returncode == 0, (result.returncode, result.stderr)
+        decisions = _decisions(result.stdout.decode("utf-8"))
+        assert [d["hookSpecificOutput"]["permissionDecision"] for d in decisions] == ["deny"], result.stdout
+        assert "pretooluse_failed_open_bad_stdin" in _types(), _types()
 
     @pytest.mark.skipif(os.name == "nt", reason="no RLIMIT_CPU on Windows: the job object is the backstop there")
     def test_the_judging_child_caps_its_own_cpu_time(self, tmp_path):
@@ -1044,7 +1135,7 @@ class TestATornLineLosesOnlyItself:
         assert lines[-1].split("\t")[1] == taken[0], lines
 
     def test_every_hook_side_append_heals_a_torn_line(self):
-        skipped = [w for p in sorted(HOOKS_DIR.glob("*.py")) for w in _appends_that_skip_the_heal(p)]
+        skipped = [w for p in sorted(checkout_glob(HOOKS_DIR, "*.py")) for w in _appends_that_skip_the_heal(p)]
         assert not skipped, (
             f"{skipped} open a file for append without own_line: a record a killed writer cut off "
             "swallows the next one. Write the line through own_line (under the lock the append "
@@ -1064,7 +1155,7 @@ class TestATornLineLosesOnlyItself:
         assert _appends_that_skip_the_heal(planted) == ["planted.py::skips"]
 
     def test_every_declared_exemption_still_names_an_append(self):
-        live = {f"{p.name}::{f.name}" for p in HOOKS_DIR.glob("*.py")
+        live = {f"{p.name}::{f.name}" for p in checkout_glob(HOOKS_DIR, "*.py")
                 for f in ast.walk(ast.parse(p.read_text(encoding="utf-8")))
                 if isinstance(f, ast.FunctionDef)
                 and any(isinstance(c, ast.Call) and _append_mode(c) for c in ast.walk(f))}

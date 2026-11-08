@@ -1738,8 +1738,11 @@ def say_bad_stdin(root: Path, hook: str, event_type: str, data: dict) -> None:
 #: or cut off. ORDER: take this INSIDE a file lock, never around one -- the
 #: refusal writes its own audit record (the file lock, then this) holding
 #: nothing, and only then takes this alone, so a writer that waited on a file
-#: lock while holding this could deadlock the refusal until the hook's
-#: timeout let the call through.
+#: lock while holding this could deadlock the child's refusal until the
+#: parent's kill at write_guard's ``HARD_DEADLINE_S`` refused the call in its
+#: place, with the thinner record. That kill ends the child between any two
+#: instructions, inside a line too: ``own_line`` starts the next append on a
+#: line of its own after one it cut.
 #: A hook with no budget never contends for it; an uncontended acquire costs
 #: well under a microsecond.
 #: No lock stops a kill from outside the process: write_guard's parent ends its
@@ -2839,7 +2842,9 @@ def _append_jsonl(state_dir: Path, name: str, record: dict) -> None:
         def _append() -> None:
             # The line goes out whole under STATE_WRITE_LOCK (inside the file
             # lock below): write_guard's budget refusal ends the process only
-            # between lines, never inside one (its reinject telemetry lands here).
+            # between lines (its reinject telemetry lands here). The parent's
+            # kill at the hard deadline can cut one, so the line starts on a
+            # line of its own after a torn one (`own_line`).
             with STATE_WRITE_LOCK, log_path.open("a", encoding="utf-8") as fh:
                 fh.write(own_line(log_path, line))
 

@@ -226,6 +226,31 @@ class TestTheTreeBoundEndsEveryProcessAtTheDeadline:
         assert returned_first, "the call waited for the holder's sleep"
         assert answer is not None and answer[0] == 0 and b"decided" in answer[1], answer
 
+    def test_a_child_that_never_reads_its_input_does_not_hold_the_deadline(self, tmp_path):
+        """The input goes in from a thread of its own: a payload larger than
+        the pipe, which the child never reads, holds no write past the
+        deadline. CPython 3.11 and 3.12 write ``communicate``'s input on
+        Windows before the timed joins, so this row reds there on that shape;
+        POSIX writes the input through the selector, green on either."""
+        js = _load_json_safe()
+        done = tmp_path / "sleeper.done"
+        sleeps = f"import time; time.sleep({HOLD_SECONDS}); open({str(done)!r}, 'w').write('done')"
+        answer = js.run_tree_to_deadline([sys.executable, "-c", sleeps], deadline=time.monotonic() + CAP_SECONDS,
+                                         input=b"x" * (4 << 20))
+        assert not done.exists(), "the call waited for the child's sleep: its unread input set the bound"
+        assert answer is None, answer
+
+    def test_a_child_that_cannot_start_raises_the_start_error(self, tmp_path):
+        """A caller tells a child that never ran (judge in its place) from one
+        that ran and was lost (never judge twice) by this type alone; it stays
+        an ``OSError`` for a caller that catches the spawn's own error."""
+        js = _load_json_safe()
+        with pytest.raises(js.TreeStartError) as caught:
+            js.run_tree_to_deadline([str(tmp_path / "no-such-program")], deadline=time.monotonic() + CAP_SECONDS,
+                                    input=b"")
+        assert isinstance(caught.value, OSError)
+        assert isinstance(caught.value.__cause__, OSError), caught.value.__cause__
+
 
 def _load_script(rel: str):
     """A ``scripts/`` module by path, registered so its dataclasses resolve."""

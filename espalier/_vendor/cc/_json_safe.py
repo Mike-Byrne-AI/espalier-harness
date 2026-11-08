@@ -466,10 +466,17 @@ def _end_tree(proc: "subprocess.Popen[Any]", end: float) -> None:
         pass
 
 
-#: How long :func:`run_tree_to_deadline` gives the drain and the reap once the
-#: tree is killed. The kill is immediate (``killpg``, ``TerminateJobObject``),
-#: so this is the pipes' close, not a wait on any survivor.
+#: How long :func:`run_tree_to_deadline` gives the kill, the drain and the
+#: reap once its deadline has passed: one budget from the moment of the kill,
+#: which a Windows tree walk and the pipes' close share, so nothing there
+#: waits past the deadline plus this.
 TREE_DRAIN_SECONDS = 0.25
+
+
+class TreeStartError(OSError):
+    """:func:`run_tree_to_deadline` could not start its child at all. Nothing
+    after the start raises it, so a caller can tell a child that never ran
+    from one that ran and whose answer was lost."""
 
 
 def run_tree_to_deadline(
@@ -477,71 +484,101 @@ def run_tree_to_deadline(
 ) -> "tuple[int, bytes, bytes] | None":
     """Run ``args`` until ``deadline`` (a ``time.monotonic()`` value) and return
     its ``(returncode, stdout, stderr)``; at the deadline end the child and
-    every process below it and return ``None``.
+    every process below it and return ``None``. A child that cannot start at
+    all raises :class:`TreeStartError`.
 
     For a parent that must answer by a fixed time whatever its child is doing:
     ``write_guard``'s judgment runs in such a child, because a compiled
     pattern's search holds the interpreter lock for its whole call, so no
     thread in the judging process can answer by a deadline (DEF-3048). Nothing
-    here waits past ``deadline`` plus :data:`TREE_DRAIN_SECONDS`.
+    here waits past ``deadline`` plus :data:`TREE_DRAIN_SECONDS`. The input
+    goes in from a thread of its own, never through ``communicate``: on Windows
+    CPython 3.11 and 3.12 write ``communicate``'s input before the timed
+    joins, so a child that has not read a payload larger than the pipe holds
+    that write past any timeout.
 
     The tree: on POSIX the child starts in a session of its own and the kill is
     ``killpg`` with ``SIGKILL`` (which also takes the git a judgment started).
     On Windows the child goes into a job object that kills its processes when
     its last handle closes, so the tree also ends with this process, however
-    this process ends; the kill is ``TerminateJobObject``, and a job object
-    that could not be made falls back to :func:`_end_tree` (``taskkill /T``).
-    A child the job could not hold, or that started a process before it was
-    assigned, is the fallback's. A child that exited on its own while a process
-    it left still held a pipe is answered with what it wrote, once the kill
-    has closed that pipe.
+    this process ends. The kill walks the tree first (:func:`_end_tree`,
+    ``taskkill /T``) while every parent in it is still alive, which reaches a
+    process the child started before it was assigned to the job (a venv's
+    ``python.exe`` redirector starts the real interpreter at once), then ends
+    what is left in the job with ``TerminateJobObject``. A child that exited on
+    its own while a process it left still held a pipe is answered with what it
+    wrote, once the kill has closed that pipe.
 
     Lives here, beside :func:`run_bounded`, as the other home a raw timed spawn
     may stand in (``tests/test_spawn_chokepoint.py``'s ``BOUNDED_HOME``).
     """
     import subprocess
+    import threading
 
     kwargs: dict[str, Any] = {"stdin": subprocess.PIPE, "stdout": subprocess.PIPE,
                               "stderr": subprocess.PIPE, "env": env}
     if os.name != "nt":
         kwargs["start_new_session"] = True
-    proc = subprocess.Popen(args, **kwargs)  # spawn: ok the tree-bounded spawn itself
-    job = _kill_on_close_job(proc) if os.name == "nt" else None
     try:
-        out, err = proc.communicate(input, timeout=max(0.0, deadline - time.monotonic()))  # spawn: ok its own deadline
+        proc = subprocess.Popen(args, **kwargs)  # spawn: ok the tree-bounded spawn itself
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        raise TreeStartError(f"{type(exc).__name__}: {exc}") from exc
+    job = _kill_on_close_job(proc) if os.name == "nt" else None
+    # The feeder owns the input; `communicate` sees no stdin and only reads.
+    stdin, proc.stdin = proc.stdin, None
+    threading.Thread(target=_feed, args=(stdin, input), daemon=True).start()
+    try:
+        out, err = proc.communicate(timeout=max(0.0, deadline - time.monotonic()))  # spawn: ok its own deadline
     except subprocess.TimeoutExpired:
+        end = time.monotonic() + TREE_DRAIN_SECONDS
         ended_alone = proc.poll() is not None
-        _end_the_tree_now(proc, job)
+        _end_the_tree_now(proc, job, end)
         try:
-            out, err = proc.communicate(timeout=TREE_DRAIN_SECONDS)  # spawn: ok the drain after the kill
+            out, err = proc.communicate(timeout=max(0.0, end - time.monotonic()))  # spawn: ok the drain after the kill
         except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- a pipe the kill could not close; the deadline still holds and the call is answered as unfinished
             return None
         return (proc.returncode, out, err) if ended_alone else None
-    except BaseException:  # noqa: BLE001 -- Ctrl-C or a write error mid-call: the tree ends, then the error goes on
-        _end_the_tree_now(proc, job)
+    except BaseException:  # noqa: BLE001 -- Ctrl-C or a read error mid-call: the tree ends, then the error goes on
+        _end_the_tree_now(proc, job, time.monotonic() + TREE_DRAIN_SECONDS)
         raise
     return proc.returncode, out, err
 
 
-def _end_the_tree_now(proc: Any, job: Any) -> None:
-    """Kill ``proc`` and every process below it at once: ``killpg`` of its own
-    session on POSIX, ``TerminateJobObject`` on Windows, else ``taskkill /T``."""
-    if os.name != "nt":
-        import signal
-
+def _feed(pipe: "IO[bytes] | None", data: bytes) -> None:
+    """Write ``data`` to a child's stdin and close it, from a thread of its own.
+    A child that closed its stdin or ended first is answered by its exit or by
+    the deadline, never by this write."""
+    if pipe is None:
+        return
+    try:
+        pipe.write(data)
+    except (OSError, ValueError):  # fail-open: ok deliberate -- the child closed its stdin or ended; its exit or the deadline decides
+        pass
+    finally:
         try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except OSError:  # fail-open: ok deliberate -- the group is already gone; the kill below covers a child outside it
+            pipe.close()
+        except (OSError, ValueError):  # fail-open: ok deliberate -- a pipe already broken has nothing left to send
             pass
-    elif job is not None:
-        import ctypes
 
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        if kernel32.TerminateJobObject(ctypes.c_void_p(job), 1):
-            return
-        _end_tree(proc, time.monotonic() + TREE_DRAIN_SECONDS)
-    else:
-        _end_tree(proc, time.monotonic() + TREE_DRAIN_SECONDS)
+
+def _end_the_tree_now(proc: Any, job: Any, end: float) -> None:
+    """Kill ``proc`` and every process below it, by ``end``: ``killpg`` of its
+    own session on POSIX; on Windows the tree walk (``taskkill /T``, then the
+    child itself) while every parent in the tree is alive, then
+    ``TerminateJobObject`` for whatever the walk left in the job."""
+    if os.name == "nt":
+        _end_tree(proc, end)
+        if job is not None:
+            import ctypes
+
+            ctypes.WinDLL("kernel32", use_last_error=True).TerminateJobObject(ctypes.c_void_p(job), 1)
+        return
+    import signal
+
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except OSError:  # fail-open: ok deliberate -- the group is already gone; the kill below covers a child outside it
+        pass
     try:
         proc.kill()
     except OSError:  # fail-open: ok deliberate -- the child already ended

@@ -1740,17 +1740,22 @@ sitting in one long compiled-pattern search holds the interpreter lock for
 the whole call, so the wait can end long past the timeout (40.4 s under
 0.8 s calls, measured on the Air). The parent is the hard bound: at 4.0 s
 from the hook's start (`HARD_DEADLINE_S`) it kills the child and every
-process the child started (the child's own session on POSIX, a job object
-that kills on close on Windows, `taskkill /T` where none can be made),
-writes the same deny, and exits, its own `pretooluse_blocked_time_budget`
-record written only in the 0.4 s it leaves itself after the deny. The child
+process the child started (the child's own session on POSIX; on Windows
+`taskkill /T` walks the tree while its parents are alive, then a job object
+that kills on close ends what is left in it), writes the same deny, and is
+gone by 4.6 s from the hook's start (`EXIT_BY_S`), whatever its own
+`pretooluse_blocked_time_budget` record, written after the deny, is still
+doing. A child that started and whose answer was lost is refused the same
+way, never judged a second time. The child
 also caps its own CPU time at 10 s on POSIX, for a child whose parent was
 ended from outside. An ordinary call finishes in a small fraction of either
 bound; the second interpreter adds its start to every call (about 30 ms on
-the Air, Python 3.14). Where no child can start, the hook process judges the
-call itself under the 3.5 s budget alone and says so once
-(`pretooluse_failed_open_time_budget`, the record a judgment thread that
-cannot start also writes). A git the judgment asks (the discard snapshot, a
+the Air, Python 3.14; +40 to +67 ms on Windows, Python 3.11). Where no child
+can start, the hook process judges the call itself under the 3.5 s budget
+alone and says so once (`pretooluse_failed_open_time_budget`, the record a
+judgment thread that cannot start also writes); a stdin the parent cannot
+read is judged in the hook process too, where the reader records it and the
+kill-switch gate still runs. A git the judgment asks (the discard snapshot, a
 dirty-tree check) is given only the budget that is left, so on a large repo
 or a cold cache a slow git costs its snapshot, said once, and the call is
 still judged. Inside the child, a state write the judgment has in flight

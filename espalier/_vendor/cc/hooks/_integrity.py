@@ -1808,7 +1808,10 @@ DENIAL_EVENT_TYPES = frozenset({
     "pretooluse_blocked_secret_path",
     "pretooluse_blocked_internal_error",
     # write_guard's judgment outran its time budget and the call was refused
-    # (DEF-1160); ``details.tool`` names the tool, never the command.
+    # (DEF-1160); ``details.tool`` names the tool, never the command. The
+    # parent's refusal at the hard deadline (DEF-3048) never parsed the call,
+    # so its record carries ``details.bound`` ("child") and ``details.bytes``
+    # (the payload's length) in place of the tool.
     "pretooluse_blocked_time_budget",
     "configchange_blocked_kill_switch",
     # A project settings change that unwires a governance gate the

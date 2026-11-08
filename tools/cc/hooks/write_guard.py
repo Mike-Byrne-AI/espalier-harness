@@ -78,9 +78,11 @@ from pathlib import Path
 from typing import Any, Callable, NamedTuple
 
 # The hook's own start, read before the pattern modules import (about a
-# quarter of a second of a call here): the time budget below counts from this
-# line in the hook process, because Claude Code's timeout counts from the
-# spawn, not from main().
+# quarter of a second of a call here). In the hook process Claude Code starts,
+# the parent's deadline and exit (`HARD_DEADLINE_S`, `EXIT_BY_S`) count from
+# this line, because Claude Code's timeout counts from the spawn, not from
+# main(); in the judging child it is the child's own first line, a spawn later,
+# and its thread budget counts from there.
 _HOOK_STARTED = time.monotonic()
 
 # Co-located helper modules -- same zero-espalier-import pattern as other hooks.
@@ -131,19 +133,25 @@ except Exception as _floor:  # noqa: BLE001 -- the start refusal itself cannot i
 # payload, runs this file again as a judging child under `_JUDGE_FLAG`, and
 # answers with the child's verdict byte for byte, or, at `HARD_DEADLINE_S` from
 # its first line, kills the child's whole tree and refuses the call (a cancelled
-# hook's output is discarded, so the deny goes out and the process exits first;
-# its audit record follows only while time is left). The child judges exactly
-# as the hook process did before, its thread budget included, so a judgment
-# that budget can refuse is refused by it, with its own record.
+# hook's output is discarded, so the deny goes out first and the process is gone
+# by `EXIT_BY_S`; its audit record gets only the time left before that). The
+# child judges exactly as the hook process did before, its thread budget
+# included, so a judgment that budget can refuse is refused by it, with its own
+# record.
 #: The flag the parent starts its judging child with.
 _JUDGE_FLAG = "--judge"
-#: The parent's deadline, from the hook's first line: above the child's own
-#: budget (`JUDGMENT_BUDGET_S` from the child's first line, a spawn later), and
-#: a second under the wired 5 s timeout for the kill, the deny and the exit.
+#: The parent's deadline, from the hook's first line: half a second above the
+#: child's own budget (`JUDGMENT_BUDGET_S` from the child's first line, a spawn
+#: later: the thin parent priced +40 to +67 ms a call on Windows 3.11.9, about
+#: +30 ms on the Air), so a judgment that budget can refuse is refused by the
+#: child, with its own record, before this kill.
 HARD_DEADLINE_S = 4.0
-#: How long the parent's audit record may take once the deny is out; the
-#: process exits at this point whatever the record is doing.
-_AUDIT_AFTER_DENY_S = 0.4
+#: When the parent is gone, from the hook's first line, whatever the kill, the
+#: drain, the deny or the audit record is doing: the record gets only what is
+#: left before it. It sits 0.4 s under the wired 5 s timeout for what Claude
+#: Code's clock counts outside this one: the interpreter's start before the
+#: first line, and the exit itself.
+EXIT_BY_S = 4.6
 #: The CPU seconds a judging child may spend (POSIX): the backstop for a child
 #: whose parent was ended from outside before its deadline (its own session
 #: takes it out of that kill). An ordinary judgment spends well under one.
@@ -153,24 +161,47 @@ _CHILD_CPU_SECONDS = 10
 _NO_JUDGING_CHILD: str | None = None
 
 
+def _judge_in_this_process(payload: bytes, why: BaseException) -> None:
+    """No child ran: put the payload back on stdin for the in-process judgment,
+    which `main` says once."""
+    global _NO_JUDGING_CHILD
+    _NO_JUDGING_CHILD = type(why).__name__
+    sys.stdin = io.TextIOWrapper(io.BytesIO(payload), encoding="utf-8")
+
+
 def _answer_from_a_judging_child() -> None:
     """The parent: answer with a judging child's verdict, or refuse at the
-    deadline, and exit; return only where no child could be started, with the
-    payload put back on stdin for the in-process judgment."""
-    global _NO_JUDGING_CHILD
-    payload = sys.stdin.buffer.read()
+    deadline, and exit. It returns only where no child ran: a stdin it cannot
+    read (the in-process judgment then meets the same stdin and answers it, its
+    record and the kill-switch gate included), or a child that could not start
+    (the payload is put back on stdin, and `main` says so once). A child that
+    started is never judged again in this process: its judgment may already
+    have spent a one-shot nudge, which a second judgment reads as the re-issue."""
     try:
+        payload = sys.stdin.buffer.read()
+    except (OSError, ValueError, AttributeError):  # fail-open: ok deliberate -- an unreadable stdin is the in-process judgment's to answer, with read_stdin_safely's record and the kill-switch gate
+        return
+    try:
+        import subprocess
+
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # tools/cc for _json_safe
-        from _json_safe import run_tree_to_deadline  # type: ignore[import-not-found]
+        from _json_safe import TreeStartError, run_tree_to_deadline  # type: ignore[import-not-found]
+        # The parent's interpreter flags (-X utf8, -E, -I, -B) carry to the child.
+        flags: list[str] = getattr(subprocess, "_args_from_interpreter_flags", list)()
+    # fail-open: ok deliberate -- no child: the hook process judges under its thread budget, and main says so once
+    except Exception as exc:  # noqa: BLE001 -- a helper that cannot load keeps the judgment, never an allow
+        _judge_in_this_process(payload, exc)
+        return
+    try:
         answer = run_tree_to_deadline(  # spawn: ok the judging child, killed with its tree at the deadline
-            [sys.executable, str(Path(__file__).resolve()), _JUDGE_FLAG],
+            [sys.executable, *flags, str(Path(__file__).resolve()), _JUDGE_FLAG],
             deadline=_HOOK_STARTED + HARD_DEADLINE_S, input=payload,
         )
-    # fail-open: ok deliberate -- no child: the hook process judges under its thread budget, and main says so once
-    except Exception as exc:  # noqa: BLE001 -- any failure to start the child keeps the judgment, never an allow
-        _NO_JUDGING_CHILD = type(exc).__name__
-        sys.stdin = io.TextIOWrapper(io.BytesIO(payload), encoding="utf-8")
+    except TreeStartError as exc:  # fail-open: ok deliberate -- no child started: the hook process judges under its thread budget, and main says so once
+        _judge_in_this_process(payload, exc.__cause__ or exc)
         return
+    except Exception:  # noqa: BLE001 -- fail-open: ok deliberate a child that started and whose answer was lost is refused below, never judged twice
+        answer = None
     if answer is not None:
         code, out, err = answer
         sys.stdout.buffer.write(out)
@@ -192,7 +223,7 @@ def _answer_from_a_judging_child() -> None:
         "pretooluse_blocked_time_budget",
         {"hook": "write_guard", "budget_s": HARD_DEADLINE_S, "bound": "child", "bytes": len(payload)}))
     record.start()
-    record.join(_AUDIT_AFTER_DENY_S)
+    record.join(max(0.0, _HOOK_STARTED + EXIT_BY_S - time.monotonic()))
     os._exit(0)
 
 
@@ -3053,8 +3084,10 @@ def _deny_mcp(
 # long Bash and PowerShell lists: the judgment drops the interpreter lock
 # between its many short calls; one long uninterruptible call delays the wake
 # by its own length, which is the case the parent's kill answers), and the
-# refusal's audit record and a state write in flight (milliseconds). Driven end to end here, the hook process
-# exits 2 at about 3.6 s from the spawn. An ordinary call judges in
+# refusal's audit record and a state write in flight (milliseconds). Driven end
+# to end before the parent, the refusal (exit 0, the deny on stdout) landed at
+# about 3.6 s from the spawn; the child's lands a spawn later, inside the
+# parent's half second above it. An ordinary call judges in
 # milliseconds and costs about 0.3 s in all here, so the budget sits more
 # than ten times above it. `tests/test_write_guard_time_budget.py` pins the
 # budget at least a second under the wiring's timeout.
@@ -3062,10 +3095,14 @@ JUDGMENT_BUDGET_S = 3.5
 #: The least time a judgment gets once `main` starts it, so a start-up a
 #: loaded box ran long (the import alone past the budget) does not refuse an
 #: ordinary call outright; capped at the budget so a test's tiny budget stays
-#: tiny. Left uncapped above on purpose: once start-up alone runs past about
-#: 4 s, a slow judgment's refusal can land after the timeout has let the call
-#: through, but a cap there would refuse every ordinary call on that box,
-#: which judges in milliseconds and still answers in time.
+#: tiny. The parent's `HARD_DEADLINE_S` caps it from above since DEF-3048: a
+#: child whose start-up alone runs past about 3.9 s after the parent's first
+#: line is killed at the deadline and the call refused, an ordinary call that
+#: would have judged in milliseconds included. That reverses the trade this
+#: window once made (left uncapped, so such a box still answered an ordinary
+#: call, and a slow judgment's refusal landed after the timeout had let the
+#: call through): on that box a refused ordinary call costs a retry, where a
+#: late answer let a call through unjudged.
 MIN_JUDGMENT_WINDOW_S = 0.5
 #: The worker thread's name, so a test can find and join a judgment it gave up on.
 JUDGMENT_THREAD_NAME = "write_guard-judgment"
@@ -3182,8 +3219,9 @@ def _end_the_refused_call(streams: _HeldStreams, *, exit_now: bool) -> None:
     deadlock-free order ``_hook_utils.STATE_WRITE_LOCK`` requires. Here the
     state-write lock is taken and kept: a write the worker has in flight
     finishes first, and the worker starts no other, so the exit never lands
-    inside one (a write that hangs holds the refusal with it, and the timeout
-    then lets the call through, as it did before the budget). Then the deny
+    inside one (a write that hangs holds the child's refusal with it, until
+    the parent's kill at ``HARD_DEADLINE_S`` refuses the call in its place; in
+    process there is no parent, and the hang holds the caller). Then the deny
     is flushed and, in the hook process, ``os._exit(0)`` -- the exit never
     waits for the judgment. In process (a test, a probe) the lock is let go
     and the caller returns the deny's sentinel."""
@@ -3201,8 +3239,9 @@ def main(*, started: float | None = None, exit_on_budget: bool = False) -> int:
     """Public entry-point: the judgment (`_judge`) in a worker thread, under
     the time budget.
 
-    ``started`` is when the budget's clock started -- the hook's first line
-    (``_HOOK_STARTED``) in the hook process; the call itself by default.
+    ``started`` is when the budget's clock started -- the first line
+    (``_HOOK_STARTED``) of the process that judges: the judging child, or the
+    hook process where no child could start; the call itself by default.
     ``exit_on_budget`` ends the process on a refusal (the ``__main__`` block
     sets it); an in-process caller gets the deny's sentinel back instead and
     keeps running, with a refused judgment's worker left to finish on its
