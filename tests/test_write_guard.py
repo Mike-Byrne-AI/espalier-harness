@@ -14622,6 +14622,10 @@ class TestAGluedBraceEndsThePowerShellOperand:
         assert self._candidates("Bash", f"echo x > {self.S}}}") == [f"{self.S}}}"]
 
 
+# The class-scoped `verdicts` fixture spawns the guard per row and root shape and
+# lands in the first row's setup: 16.5 to 59.3 s of the ini's 60 s across 19
+# Linux full-tier cells (2026-11-07/08, DEF-2056).
+@pytest.mark.timeout(180)
 class TestAMetacharacterRootIsReadWhole:
     """A project root whose name carries `&` or `;` -- `R&D`, `a;b` -- is read
     by every delete reader as the shell reads it: the quoted operand whole,
