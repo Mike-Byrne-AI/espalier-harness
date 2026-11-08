@@ -15,11 +15,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from espalier.verify_landing import (
     DRIFTED,
     LANDED,
     OWED,
     LandingEntry,
+    LandingUnreadable,
     _extract_path_tokens,
     classify_against,
     classify_landing,
@@ -284,10 +287,63 @@ class TestClassifyLandingEndToEnd:
         assert status["src/drifted.py"] == DRIFTED
         assert status["src/owed.py"] == OWED
 
-    def test_non_git_directory_degrades_not_crashes(self, tmp_path):
-        # git calls fail in a non-repo -> empty sets -> everything OWED, no raise.
-        entries = classify_landing(FIXTURE_PACK, tmp_path)
-        assert entries and all(e.status == OWED for e in entries)
+
+class TestATreeGitCannotReadIsRefusedNotOwed:
+    """DEF-906: a --repo git cannot read refuses by name; a subdirectory reads its top.
+
+    Before the fix `_git_lines` returned [] on every failure, so a non-git or
+    zero-commit --repo classified every claim OWED at exit 0, and a
+    subdirectory --repo read a prefix-relative listing that no repo-relative
+    claim matched. GIT_CEILING_DIRECTORIES keeps git from finding a repository
+    above tmp_path on a host whose temp folder sits inside a checkout.
+    """
+
+    def test_a_non_git_directory_is_refused_by_name(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        with pytest.raises(LandingUnreadable, match="not a git work tree"):
+            classify_landing(FIXTURE_PACK, plain)
+
+    def test_a_repo_with_no_commit_is_refused_by_name(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+        repo = _init_repo(tmp_path)
+        with pytest.raises(LandingUnreadable, match="no commit"):
+            classify_landing(FIXTURE_PACK, repo)
+
+    def test_a_subdirectory_reads_the_work_tree_top(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+        repo = _seed_repo(tmp_path)
+        at_top = {e.path: e.status for e in classify_landing(FIXTURE_PACK, repo)}
+        at_sub = {e.path: e.status for e in classify_landing(FIXTURE_PACK, repo / "src")}
+        assert at_sub == at_top
+        assert at_sub["src/landed.py"] == LANDED
+        assert at_sub["src/drifted.py"] == DRIFTED
+        assert at_sub["src/owed.py"] == OWED
+
+    def test_the_cli_exits_2_with_no_table_on_a_non_git_repo(self, tmp_path):
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        pack = tmp_path / "pack.md"
+        pack.write_text(FIXTURE_PACK, encoding="utf-8")
+        env = dict(os.environ)
+        env["PYTHONPATH"] = str(REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+        env["GIT_CEILING_DIRECTORIES"] = str(tmp_path)
+        for extra in ([], ["--json"]):
+            result = subprocess.run(
+                [sys.executable, "-m", "espalier", "verify-landing",
+                 str(pack), "--repo", str(plain), *extra],
+                cwd=str(REPO_ROOT), env=env, capture_output=True, text=True, timeout=30,
+                encoding="utf-8",
+            )
+            assert result.returncode == 2, (extra, result.stdout, result.stderr)
+            assert "cannot read the git state of" in result.stdout, extra
+            assert "not a git work tree" in result.stdout, extra
+            assert OWED not in result.stdout and "owed" not in result.stdout, extra
+            assert "Traceback" not in result.stderr, extra
+
+
+class TestClassifyLandingCli:
 
     def test_cli_subcommand_json(self, tmp_path):
         repo = _seed_repo(tmp_path)

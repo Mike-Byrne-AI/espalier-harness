@@ -14659,9 +14659,12 @@ def cmd_verify_landing(args: argparse.Namespace) -> int:
     Advisory: exits 0 (after a clean parse) with a LANDED/DRIFTED/OWED table;
     exits 1 when the pack file cannot be read (missing, or not valid UTF-8 — a
     clean message, never a traceback); exits 2 when ``--repo`` is not an
-    existing directory (the shared repo-arg precondition guard).
+    existing directory (the shared repo-arg precondition guard), and when git
+    cannot read its state (not a work tree, no commit, a failed read), with
+    the reason and no table: an all-OWED table there would report a landing
+    failure that is not there. A subdirectory of a work tree is read at its top.
     """
-    from espalier.verify_landing import classify_landing, render_table
+    from espalier.verify_landing import LandingUnreadable, classify_landing, render_table
 
     repo = _resolve_repo_arg(args.repo)
     if repo is None:
@@ -14676,7 +14679,11 @@ def cmd_verify_landing(args: argparse.Namespace) -> int:
         print(f"FAIL: cannot read pack file {pack_path}: {os_error_text(exc)}")
         return 1
 
-    entries = classify_landing(pack_text, repo)
+    try:
+        entries = classify_landing(pack_text, repo)
+    except LandingUnreadable as exc:
+        print(f"FAIL: cannot read the git state of {repo}: {exc}")
+        return 2
     if args.json:
         print(
             json.dumps(

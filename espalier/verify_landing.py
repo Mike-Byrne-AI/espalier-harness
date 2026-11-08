@@ -181,9 +181,14 @@ def classify_against(
     return [_classify_token(t, tracked, modified) for t in _extract_path_tokens(pack_text)]
 
 
-def _git_lines(repo: Path, *args: str) -> list[str]:
+class LandingUnreadable(Exception):
+    """git could not read the ``--repo``'s state, so no claim can be classified."""
+
+
+def _git_lines(repo: Path, *args: str) -> list[str] | None:
     """Run ``git <args>`` in ``repo`` and return non-empty stdout lines, or
-    ``[]`` on any git failure (advisory tool — never raise)."""
+    ``None`` on any git failure, so a failure never reads as an empty answer
+    (an empty HEAD listing is ``[]``)."""
     try:
         out = run_no_stdin(
             ["git", *args],
@@ -194,15 +199,36 @@ def _git_lines(repo: Path, *args: str) -> list[str]:
             timeout=30,
         ).stdout
     except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired, ValueError):
-        return []
+        return None
     return [ln for ln in out.splitlines() if ln]
 
 
 def classify_landing(pack_text: str, repo: Path) -> list[LandingEntry]:
-    """Classify a pack's claimed paths against the git state of ``repo``."""
-    tracked = set(_git_lines(repo, "ls-tree", "-r", "--name-only", "HEAD"))
-    modified = set(_git_lines(repo, "diff", "--name-only", "HEAD"))
-    return classify_against(pack_text, tracked, modified)
+    """Classify a pack's claimed paths against the git state of ``repo``.
+
+    ``repo`` may be any folder inside a work tree: both reads run at the work
+    tree's top, since claims are repo-relative and ``git ls-tree`` lists a
+    subdirectory's tree relative to it. A folder git cannot read -- not in a
+    work tree, a HEAD naming no commit, or a read that fails -- raises
+    :class:`LandingUnreadable` with the reason, never an empty set: an empty
+    set classifies every claim OWED, a landing failure that is not there.
+    """
+    top_lines = _git_lines(repo, "rev-parse", "--show-toplevel")
+    if not top_lines:
+        raise LandingUnreadable(
+            "not a git work tree (git rev-parse --show-toplevel failed there; "
+            "or git is not on PATH)"
+        )
+    top = Path(top_lines[0])
+    if not _git_lines(top, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"):
+        raise LandingUnreadable("HEAD names no commit (a repository with no commit yet)")
+    tracked = _git_lines(top, "ls-tree", "-r", "--name-only", "HEAD")
+    if tracked is None:
+        raise LandingUnreadable("git ls-tree -r --name-only HEAD failed")
+    modified = _git_lines(top, "diff", "--name-only", "HEAD")
+    if modified is None:
+        raise LandingUnreadable("git diff --name-only HEAD failed")
+    return classify_against(pack_text, set(tracked), set(modified))
 
 
 def render_table(entries: list[LandingEntry]) -> str:
