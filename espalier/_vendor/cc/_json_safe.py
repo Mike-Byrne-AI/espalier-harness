@@ -464,3 +464,129 @@ def _end_tree(proc: "subprocess.Popen[Any]", end: float) -> None:
         proc.kill()
     except OSError:  # fail-open: ok deliberate -- the child already ended
         pass
+
+
+#: How long :func:`run_tree_to_deadline` gives the drain and the reap once the
+#: tree is killed. The kill is immediate (``killpg``, ``TerminateJobObject``),
+#: so this is the pipes' close, not a wait on any survivor.
+TREE_DRAIN_SECONDS = 0.25
+
+
+def run_tree_to_deadline(
+    args: "list[str]", *, deadline: float, input: bytes, env: "dict[str, str] | None" = None,
+) -> "tuple[int, bytes, bytes] | None":
+    """Run ``args`` until ``deadline`` (a ``time.monotonic()`` value) and return
+    its ``(returncode, stdout, stderr)``; at the deadline end the child and
+    every process below it and return ``None``.
+
+    For a parent that must answer by a fixed time whatever its child is doing:
+    ``write_guard``'s judgment runs in such a child, because a compiled
+    pattern's search holds the interpreter lock for its whole call, so no
+    thread in the judging process can answer by a deadline (DEF-3048). Nothing
+    here waits past ``deadline`` plus :data:`TREE_DRAIN_SECONDS`.
+
+    The tree: on POSIX the child starts in a session of its own and the kill is
+    ``killpg`` with ``SIGKILL`` (which also takes the git a judgment started).
+    On Windows the child goes into a job object that kills its processes when
+    its last handle closes, so the tree also ends with this process, however
+    this process ends; the kill is ``TerminateJobObject``, and a job object
+    that could not be made falls back to :func:`_end_tree` (``taskkill /T``).
+    A child the job could not hold, or that started a process before it was
+    assigned, is the fallback's. A child that exited on its own while a process
+    it left still held a pipe is answered with what it wrote, once the kill
+    has closed that pipe.
+
+    Lives here, beside :func:`run_bounded`, as the other home a raw timed spawn
+    may stand in (``tests/test_spawn_chokepoint.py``'s ``BOUNDED_HOME``).
+    """
+    import subprocess
+
+    kwargs: dict[str, Any] = {"stdin": subprocess.PIPE, "stdout": subprocess.PIPE,
+                              "stderr": subprocess.PIPE, "env": env}
+    if os.name != "nt":
+        kwargs["start_new_session"] = True
+    proc = subprocess.Popen(args, **kwargs)  # spawn: ok the tree-bounded spawn itself
+    job = _kill_on_close_job(proc) if os.name == "nt" else None
+    try:
+        out, err = proc.communicate(input, timeout=max(0.0, deadline - time.monotonic()))  # spawn: ok its own deadline
+    except subprocess.TimeoutExpired:
+        ended_alone = proc.poll() is not None
+        _end_the_tree_now(proc, job)
+        try:
+            out, err = proc.communicate(timeout=TREE_DRAIN_SECONDS)  # spawn: ok the drain after the kill
+        except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- a pipe the kill could not close; the deadline still holds and the call is answered as unfinished
+            return None
+        return (proc.returncode, out, err) if ended_alone else None
+    except BaseException:  # noqa: BLE001 -- Ctrl-C or a write error mid-call: the tree ends, then the error goes on
+        _end_the_tree_now(proc, job)
+        raise
+    return proc.returncode, out, err
+
+
+def _end_the_tree_now(proc: Any, job: Any) -> None:
+    """Kill ``proc`` and every process below it at once: ``killpg`` of its own
+    session on POSIX, ``TerminateJobObject`` on Windows, else ``taskkill /T``."""
+    if os.name != "nt":
+        import signal
+
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:  # fail-open: ok deliberate -- the group is already gone; the kill below covers a child outside it
+            pass
+    elif job is not None:
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        if kernel32.TerminateJobObject(ctypes.c_void_p(job), 1):
+            return
+        _end_tree(proc, time.monotonic() + TREE_DRAIN_SECONDS)
+    else:
+        _end_tree(proc, time.monotonic() + TREE_DRAIN_SECONDS)
+    try:
+        proc.kill()
+    except OSError:  # fail-open: ok deliberate -- the child already ended
+        pass
+
+
+def _kill_on_close_job(proc: Any) -> "int | None":
+    """A Windows job object holding ``proc``, set to kill every process in it
+    when its last handle closes, as its handle; ``None`` where one cannot be
+    made or assigned (the tree kill then falls back to ``taskkill /T``). The
+    handle is never closed here: it closes with this process, which is the
+    backstop that ends the tree when this process is ended from outside."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _Basic(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                        ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD),
+                        ("SchedulingClass", wintypes.DWORD)]
+
+        class _Extended(ctypes.Structure):
+            _fields_ = [("BasicLimitInformation", _Basic), ("IoInfo", ctypes.c_ulonglong * 6),
+                        ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                        ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.restype = ctypes.c_void_p
+        kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        kernel32.SetInformationJobObject.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+        kernel32.AssignProcessToJobObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        kernel32.TerminateJobObject.argtypes = [ctypes.c_void_p, wintypes.UINT]
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+        info = _Extended()
+        info.BasicLimitInformation.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        extended_limit_information = 9
+        if (kernel32.SetInformationJobObject(job, extended_limit_information, ctypes.byref(info), ctypes.sizeof(info))
+                and kernel32.AssignProcessToJobObject(job, int(proc._handle))):
+            return int(job)
+        kernel32.CloseHandle(job)
+    except (OSError, AttributeError, ValueError, TypeError):  # fail-open: ok deliberate -- no job object: the tree kill falls back to taskkill /T, and only the backstop is lost
+        pass
+    return None

@@ -30,6 +30,7 @@ import subprocess
 import sys
 import textwrap
 import threading
+import time
 import types
 from pathlib import Path
 
@@ -494,6 +495,103 @@ class TestTheHookProcessExitsWithoutWaiting:
             decision["permissionDecisionReason"])
         assert "could not finish judging" not in result.stderr
         assert "pretooluse_blocked_time_budget" in _types()
+
+
+#: A ``sitecustomize`` that stalls the judgment the way DEF-3048 was driven. The
+#: payload's parse (``_hook_utils.read_stdin_safely`` calls ``json.loads`` in the
+#: judging thread) first starts a sleeping grandchild and records its pid,
+#: written whole and renamed into place. Then it runs ONE compiled-pattern
+#: search that backtracks for far longer than any bound here. A search holds the
+#: interpreter lock for its whole call, so the thread waiting on the budget
+#: cannot wake; only a bound outside the judging process can answer in time. It
+#: fires on the marker in the command alone, so nothing else in any process the
+#: hook starts is slowed.
+_STALL_SITE = textwrap.dedent('''
+    import json, os, re, subprocess, sys
+    _loads = json.loads
+    def _stalling_loads(text, *args, **kwargs):
+        if isinstance(text, str) and "STALL-IN-ONE-C-CALL" in text:
+            sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+            part = os.environ["STALL_PID_FILE"] + ".tmp"
+            with open(part, "w", encoding="utf-8") as fh:
+                fh.write(str(sleeper.pid))
+            os.replace(part, os.environ["STALL_PID_FILE"])
+            re.match(r"(a+)+$", "a" * 40 + "!")
+        return _loads(text, *args, **kwargs)
+    json.loads = _stalling_loads
+''')
+
+
+def _pid_alive(pid: int) -> bool:
+    """Whether ``pid`` names a running process (Windows: ``tasklist``; POSIX: signal 0)."""
+    if os.name == "nt":
+        listed = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH", "/FO", "CSV"],
+                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
+        return f'"{pid}"' in listed.stdout
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _end_the_sleeper(pid_file: Path) -> None:
+    """Teardown: end the one sleeper the stalled judgment started, by the pid it
+    recorded, where it is still alive. It is the only process this ends."""
+    try:
+        pid = int(pid_file.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return
+    if _pid_alive(pid):
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/F", "/PID", str(pid)], stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=10)
+        else:
+            import signal
+            os.kill(pid, signal.SIGKILL)
+
+
+class TestOneLongCallInTheJudgmentIsRefusedInTime:
+    """DEF-3048: the thread budget alone answered at the length of the call in
+    flight, past the wired timeout, which let the call through unjudged. A
+    judgment sitting in one long lock-holding call is now refused before the
+    timeout, and the processes it started end with it."""
+
+    def test_the_deny_lands_under_the_wired_timeout_and_the_judgments_tree_ends(self, tmp_path):
+        from espalier.harness_config import CANONICAL_HOOK_WIRING
+
+        timeout = CANONICAL_HOOK_WIRING["write_guard.py"]["timeout"]
+        site = tmp_path / "site"
+        site.mkdir()
+        (site / "sitecustomize.py").write_text(_STALL_SITE, encoding="utf-8")
+        pid_file = tmp_path / "sleeper.pid"
+        env = dict(os.environ, CLAUDE_PROJECT_DIR=str(tmp_path), PYTHONPATH=str(site),
+                   STALL_PID_FILE=str(pid_file))
+        payload = _payload("Bash", {"command": "echo STALL-IN-ONE-C-CALL"})
+        try:
+            started = time.monotonic()
+            # The subprocess bound only ends a run the hook never answers: the
+            # unbounded judgment's search outlasts it many times over.
+            result = subprocess.run(
+                [sys.executable, str(HOOKS_DIR / "write_guard.py")], input=json.dumps(payload),
+                capture_output=True, text=True, encoding="utf-8", timeout=timeout * 3, env=env,
+            )
+            elapsed = time.monotonic() - started
+            assert pid_file.is_file(), ("the seam never fired: the judgment did not stall", result.stderr)
+            sleeper = int(pid_file.read_text(encoding="utf-8").strip())
+            assert result.returncode == 0, (result.returncode, result.stderr)
+            decisions = _decisions(result.stdout)
+            assert len(decisions) == 1, result.stdout
+            decision = decisions[0]["hookSpecificOutput"]
+            assert decision["permissionDecision"] == "deny", decision
+            assert "could not finish judging this command within its" in decision["permissionDecisionReason"]
+            assert elapsed < timeout, f"the deny landed at {elapsed:.2f} s, past the wired {timeout} s timeout"
+            gone_by = time.monotonic() + 5.0
+            while _pid_alive(sleeper) and time.monotonic() < gone_by:
+                time.sleep(0.05)
+            assert not _pid_alive(sleeper), "the judgment's grandchild outlived the refusal"
+        finally:
+            _end_the_sleeper(pid_file)
 
 
 def _modules_the_guard_reaches() -> list[Path]:

@@ -171,6 +171,62 @@ class TestTheTimeoutIsABound:
         )
 
 
+def _load_json_safe():
+    spec = importlib.util.spec_from_file_location("json_safe_for_tree_bound", str(TOOLS_CC / "_json_safe.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class TestTheTreeBoundEndsEveryProcessAtTheDeadline:
+    """``_json_safe.run_tree_to_deadline``, the spawn ``write_guard``'s parent
+    answers through (DEF-3048): at the deadline the child and every process
+    below it end, and nothing waits past the deadline on a pipe a grandchild
+    holds. The same order oracle as the rest of the module: the call returns
+    before the holder's ``done`` marker exists."""
+
+    def test_at_the_deadline_the_call_answers_none_and_the_grandchild_ends(self, tmp_path):
+        js = _load_json_safe()
+        argv, pidfile, done = _holder(tmp_path)
+        try:
+            answer = js.run_tree_to_deadline(argv, deadline=time.monotonic() + CAP_SECONDS, input=b"")
+            returned_first = not done.exists()
+            assert pidfile.exists(), "the holder never started inside the deadline, so the case did not run"
+            holder = int(pidfile.read_text(encoding="utf-8").strip())
+            gone_by = time.monotonic() + 5.0
+            while _alive(holder) and time.monotonic() < gone_by:
+                time.sleep(0.05)
+            holder_alive = _alive(holder)
+        finally:
+            _end_holder(pidfile)
+        assert answer is None, answer
+        assert returned_first, "the call waited for the holder's sleep: the grandchild set the bound"
+        assert not holder_alive, "the call answered but the grandchild outlived the tree kill"
+
+    def test_a_child_that_ends_in_time_is_answered_with_its_code_and_both_streams(self, tmp_path):
+        js = _load_json_safe()
+        echo = "import sys; sys.stdout.write(sys.stdin.read()); sys.stderr.write('e'); sys.exit(2)"
+        answer = js.run_tree_to_deadline([sys.executable, "-c", echo], deadline=time.monotonic() + 30,
+                                         input=b'{"x": 1}')
+        assert answer == (2, b'{"x": 1}', b"e"), answer
+
+    def test_a_child_that_ended_while_its_grandchild_held_the_pipe_keeps_its_answer(self, tmp_path):
+        js = _load_json_safe()
+        pidfile, done = tmp_path / "holder.pid", tmp_path / "holder.done"
+        body = (f"import os, time; open({str(pidfile)!r}, 'w').write(str(os.getpid())); "
+                f"time.sleep({HOLD_SECONDS}); open({str(done)!r}, 'w').write('done')")
+        leaves = (f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {body!r}]); "
+                  "print('decided', flush=True); sys.exit(0)")
+        try:
+            answer = js.run_tree_to_deadline([sys.executable, "-c", leaves],
+                                             deadline=time.monotonic() + CAP_SECONDS, input=b"")
+            returned_first = not done.exists()
+        finally:
+            _end_holder(pidfile)
+        assert returned_first, "the call waited for the holder's sleep"
+        assert answer is not None and answer[0] == 0 and b"decided" in answer[1], answer
+
+
 def _load_script(rel: str):
     """A ``scripts/`` module by path, registered so its dataclasses resolve."""
     name = "_bound_" + rel.replace("/", "_").removesuffix(".py")

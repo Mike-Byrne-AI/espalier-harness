@@ -120,11 +120,107 @@ except Exception as _floor:  # noqa: BLE001 -- the start refusal itself cannot i
     sys.stdout.write(json.dumps({"hookSpecificOutput": _out}) + "\n")
     sys.stdout.flush()
     raise SystemExit(0) from None
+
+# ── The hard bound (DEF-3048) ────────────────────────────────────────────────
+#
+# The thread budget below cannot answer for a judgment sitting in one long
+# compiled-pattern search: the search holds the interpreter lock for its whole
+# call, so the waiting thread wakes only when it ends (40.4 s under 0.8 s calls,
+# measured on the Air), and Claude Code lets a call through once the hook runs
+# past its 5 s timeout. So the hook process is a thin parent: it reads the
+# payload, runs this file again as a judging child under `_JUDGE_FLAG`, and
+# answers with the child's verdict byte for byte, or, at `HARD_DEADLINE_S` from
+# its first line, kills the child's whole tree and refuses the call (a cancelled
+# hook's output is discarded, so the deny goes out and the process exits first;
+# its audit record follows only while time is left). The child judges exactly
+# as the hook process did before, its thread budget included, so a judgment
+# that budget can refuse is refused by it, with its own record.
+#: The flag the parent starts its judging child with.
+_JUDGE_FLAG = "--judge"
+#: The parent's deadline, from the hook's first line: above the child's own
+#: budget (`JUDGMENT_BUDGET_S` from the child's first line, a spawn later), and
+#: a second under the wired 5 s timeout for the kill, the deny and the exit.
+HARD_DEADLINE_S = 4.0
+#: How long the parent's audit record may take once the deny is out; the
+#: process exits at this point whatever the record is doing.
+_AUDIT_AFTER_DENY_S = 0.4
+#: The CPU seconds a judging child may spend (POSIX): the backstop for a child
+#: whose parent was ended from outside before its deadline (its own session
+#: takes it out of that kill). An ordinary judgment spends well under one.
+_CHILD_CPU_SECONDS = 10
+#: Why no judging child could be started, when none could: the judgment then
+#: runs in the hook process itself, as before the bound, and `main` says so once.
+_NO_JUDGING_CHILD: str | None = None
+
+
+def _answer_from_a_judging_child() -> None:
+    """The parent: answer with a judging child's verdict, or refuse at the
+    deadline, and exit; return only where no child could be started, with the
+    payload put back on stdin for the in-process judgment."""
+    global _NO_JUDGING_CHILD
+    payload = sys.stdin.buffer.read()
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # tools/cc for _json_safe
+        from _json_safe import run_tree_to_deadline  # type: ignore[import-not-found]
+        answer = run_tree_to_deadline(  # spawn: ok the judging child, killed with its tree at the deadline
+            [sys.executable, str(Path(__file__).resolve()), _JUDGE_FLAG],
+            deadline=_HOOK_STARTED + HARD_DEADLINE_S, input=payload,
+        )
+    # fail-open: ok deliberate -- no child: the hook process judges under its thread budget, and main says so once
+    except Exception as exc:  # noqa: BLE001 -- any failure to start the child keeps the judgment, never an allow
+        _NO_JUDGING_CHILD = type(exc).__name__
+        sys.stdin = io.TextIOWrapper(io.BytesIO(payload), encoding="utf-8")
+        return
+    if answer is not None:
+        code, out, err = answer
+        sys.stdout.buffer.write(out)
+        sys.stdout.flush()
+        if err:
+            sys.stderr.buffer.write(err)
+            sys.stderr.flush()
+        os._exit(code if 0 <= code <= 255 else 1)  # a child ended by a signal fails open, as a crashed hook did
+    try:
+        import _denial_reasons  # type: ignore[import-not-found]
+        reason = _denial_reasons.WRITE_GUARD_TIME_BUDGET.format(budget=HARD_DEADLINE_S)
+    except Exception:  # noqa: BLE001 -- fail-open: ok text-fallback the refusal still goes out, in plain words
+        reason = (f"Command blocked: write_guard could not finish judging this command within its"
+                  f" {HARD_DEADLINE_S} s time budget, so the call is refused rather than let through unjudged.")
+    sys.stdout.write(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}) + "\n")
+    sys.stdout.flush()
+    record = threading.Thread(target=_start_refusal._record, daemon=True, args=(
+        "pretooluse_blocked_time_budget",
+        {"hook": "write_guard", "budget_s": HARD_DEADLINE_S, "bound": "child", "bytes": len(payload)}))
+    record.start()
+    record.join(_AUDIT_AFTER_DENY_S)
+    os._exit(0)
+
+
+def _bound_the_judging_child() -> None:
+    """The child: cap its own CPU time (POSIX), so a child whose parent was
+    ended from outside cannot spin on; on Windows the parent's job object is
+    the backstop."""
+    try:
+        import resource
+
+        _soft, hard = resource.getrlimit(resource.RLIMIT_CPU)
+        cap = _CHILD_CPU_SECONDS if hard == resource.RLIM_INFINITY else min(_CHILD_CPU_SECONDS, hard)
+        resource.setrlimit(resource.RLIMIT_CPU, (cap, hard))
+    except (ImportError, ValueError, OSError):  # fail-open: ok deliberate -- no resource module (Windows) or a cap the box refuses: the parent's deadline kill still ends the tree
+        pass
+
+
 # Below the supported Python floor, say the floor before any sibling imports
 # and fails on the old interpreter under another name; under
 # `__main__` only, so an in-process importer is never answered with a deny.
+# Then the hard bound: the hook process answers through a judging child (or,
+# where none can start, judges itself); the child caps its CPU and judges.
 if __name__ == "__main__":
     _start_refusal.refuse_below_floor("write_guard", "PreToolUse")
+    if sys.argv[1:2] == [_JUDGE_FLAG]:
+        _bound_the_judging_child()
+    else:
+        _answer_from_a_judging_child()
 # Everything else this hook needs from its siblings imports under one guard,
 # the floor too since DEF-3008: `_hook_utils` (with tools/cc/_json_safe.py
 # under it) and `_denial_reasons` (with `_maintenance_mode` under it) imported
@@ -3123,6 +3219,13 @@ def main(*, started: float | None = None, exit_on_budget: bool = False) -> int:
     under its umbrella, as it did before the budget (never an exit the
     protocol reads as an allow).
     """
+    if _NO_JUDGING_CHILD is not None:
+        _hook_utils.say_once(
+            _root_or_dot(), f"judging-child-{_NO_JUDGING_CHILD}", "write_guard",
+            "pretooluse_failed_open_time_budget",
+            f"judging child could not start ({_NO_JUDGING_CHILD}); the hard bound is off, the thread budget judges alone",
+            fault=_NO_JUDGING_CHILD,
+        )
     begun = time.monotonic()
     clock = begun if started is None else started
     deadline = max(clock + JUDGMENT_BUDGET_S, begun + min(MIN_JUDGMENT_WINDOW_S, JUDGMENT_BUDGET_S))
