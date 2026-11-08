@@ -3110,7 +3110,7 @@ SESSION_START_PRE_FLOOR_IMPORTS = frozenset({
     ("os", None), ("re", None), ("shutil", None), ("subprocess", None), ("sys", None),
     ("tempfile", None), ("textwrap", None), ("threading", None), ("time", None),
     ("datetime", "datetime"), ("datetime", "timezone"), ("pathlib", "Path"),
-    ("typing", "Any"), ("typing", "Callable"),
+    ("typing", "Any"), ("typing", "Callable"), ("typing", "NamedTuple"),
 })
 
 
