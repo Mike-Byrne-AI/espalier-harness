@@ -1063,3 +1063,40 @@ class TestPowerShellReparsingWrapperCarriesASwitchValue:
         separator, which is the edit the module comment names as the one
         that turns the friction fix into a fail-open."""
         assert_hook_denied(_run_ps_guard(cmd, tmp_path))
+
+
+#: The anchor family's ruled limits (operator call 031924, ruled (A),
+#: 2026-11-08; the rows DEF-3049 and DEF-3053 struck to them). Each limit sits
+#: beside its control, the same program one step inside the contract, which
+#: the zone check denies: a control that stops denying means the reader went
+#: quiet, and the limit's allow beside it proves nothing.
+_ANCHOR_FAMILY_LIMITS = [
+    ("slashed_wrapper_then_a_second_wrapper", "/usr/bin/env sudo mv cc/x /tmp/y"),
+    ("sudo_flag_value_quoted_around_a_blank", "sudo -u 'a b' mv cc/x /tmp/y"),
+    ("env_flag_value_quoted_around_a_blank", "env -C '/tmp/a b' mv cc/x /tmp/y"),
+]
+_ANCHOR_FAMILY_CONTROLS = [
+    ("bare_wrapper_then_a_second_wrapper", "env sudo mv cc/x /tmp/y"),
+    ("sudo_flag_value_unquoted", "sudo -u ab mv cc/x /tmp/y"),
+    ("env_flag_value_unquoted", "env -C /tmp/ab mv cc/x /tmp/y"),
+]
+
+
+class TestTheAnchorFamilyLimits:
+    """A wrapper chain past one level, spelled with a slashed first wrapper,
+    and a quoted wrapper argument holding a blank hide the verb from the
+    command-position anchor (docs/HOOKS.md, the coverage contract's ruled
+    limits). The operator ruled them limits rather than grow the anchor: the
+    readers that followed them added their cost to every guard call. The day
+    a reader follows one, its row reds and the contract's sentence is
+    rewritten on purpose."""
+
+    @pytest.mark.parametrize("cmd", [c for _, c in _ANCHOR_FAMILY_LIMITS],
+                             ids=[i for i, _ in _ANCHOR_FAMILY_LIMITS])
+    def test_the_ruled_limits_are_pinned_as_allows(self, cmd, tmp_path):
+        assert_hook_allowed(run_bash_guard(cmd, tmp_path))
+
+    @pytest.mark.parametrize("cmd", [c for _, c in _ANCHOR_FAMILY_CONTROLS],
+                             ids=[i for i, _ in _ANCHOR_FAMILY_CONTROLS])
+    def test_each_limit_s_control_one_step_inside_is_denied(self, cmd, tmp_path):
+        assert_hook_denied(run_bash_guard(cmd, tmp_path))

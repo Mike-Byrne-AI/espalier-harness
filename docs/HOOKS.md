@@ -1911,8 +1911,9 @@ spellings of them are work:
   variable bound to a literal earlier in the same command is inlined before the
   read, so a literal operand reached through one is inside too. Deeper literal
   wrappers are read today (two and three levels, on and across both shells,
-  driven 2026-10-11) without being promised; a change there is re-measured and
-  re-recorded, never written down as a limit.
+  driven 2026-10-11) without being promised; a spelling of one the readers
+  miss is a ruled limit (below), never filed unless a real session records the
+  slip, and the readers are not grown to follow it.
 - **Outside it, on the three jobs, the answer is the conservative one, never
   silence:** an operand the reader cannot resolve is not read as its value. A
   recursive delete through a variable with no literal binding, a command
@@ -1923,11 +1924,8 @@ spellings of them are work:
   force push to an unresolvable remote draws its nudge
   (`tests/test_write_guard.py::TestTheCoverageContract::test_an_unresolvable_operand_on_a_kept_job_draws_the_conservative_verdict`).
   A conservative refusal that goes quiet is a defect, not a limit.
-- **Outside it, and seen by no reader.** An encoded program is a declared
-  limit, pinned at allow by
-  `tests/test_write_guard.py::TestTheCoverageContract::test_the_forms_no_reader_sees_are_pinned_as_allows`.
-  A script file whose contents are the program is a declared limit, pinned at
-  allow by the same row,
+- **Outside it, and seen by no reader.** An encoded program and a script file
+  whose contents are the program are declared limits, each pinned at allow by
   `tests/test_write_guard.py::TestTheCoverageContract::test_the_forms_no_reader_sees_are_pinned_as_allows`.
   A program assembled from pieces nothing in the command binds to a literal is
   a declared limit, pinned at allow by
@@ -1935,6 +1933,20 @@ spellings of them are work:
   (bound pieces are inlined and read). A program held in a variable is a
   declared limit pinned by
   `tests/test_write_guard.py::TestCrossShellRouting::test_bash_tool_declared_limits_are_pinned`.
+- **Outside it by ruling (2026-11-08), so the family is not filed again.** A
+  wrapper chain past one level and a wrapper flag's quoted value are declared
+  limits: a slashed wrapper before a second wrapper (`/usr/bin/env sudo mv ...`)
+  and a flag value quoted around a blank (`sudo -u 'a b' mv ...`,
+  `env -C '/tmp/a b' mv ...`) hide the verb, each pinned at allow beside its
+  denied control by
+  `tests/test_write_guard_command_position.py::TestTheAnchorFamilyLimits::test_the_ruled_limits_are_pinned_as_allows`.
+  A crafted input that makes a reader's search outrun the hook's timeout is
+  outside the contract too: Claude Code cancels the hook and the call runs
+  unjudged, and no reader is rebuilt to bound such an input. Following either
+  shape grew the readers' cost on every guard call, so neither changes a
+  reader unless a real session records the slip (the last bullet's rule). One
+  level of a program handed to a shell as a quoted string (`bash -c '...'`,
+  `pwsh -Command "..."`) is not this shape; it stays in the contract above.
 - The protected-zone write is not one of the three jobs. Its path check lets an
   unresolvable operand through, and the after-check reports the write when it
   lands, for the zones it watches

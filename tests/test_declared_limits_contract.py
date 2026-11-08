@@ -259,6 +259,13 @@ class TestTheSentenceSplitter:
 #: HOOKS 31 -> 30 on 2026-11-07: the time budget's limit closed (DEF-3048). A
 #: state write that hangs no longer holds the refusal until the timeout lets
 #: the call through; the parent's kill at its hard deadline refuses it.
+#: HOOKS 30 -> 31 -> 30 on 2026-11-08: the anchor family's ruled limits
+#: (operator call 031924, ruled (A)), one declaring sentence for a wrapper
+#: chain past one level and a quoted wrapper argument, pinned in
+#: `TestTheAnchorFamilyLimits` (its timeout sentence is a scope statement with
+#: nothing a row can red on); and the encoded program and the script file,
+#: two sentences citing the same row, joined into one, which keeps the seeded
+#: docs at the ceiling `scripts/sync_asset_docs.py` holds.
 _CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 30, "docs/SHARP_EDGES.md": 4}
 
 
