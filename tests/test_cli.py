@@ -1724,9 +1724,10 @@ class TestPasteReadyRemediesQuoteASpacedPath:
             encoding="utf-8",
         )
         monkeypatch.chdir(tmp_path)
-        cmd_scope_check(_ns(repo=str(repo), pack_path=str(pack), matrix="docs/SURFACE_SUPPORT_MATRIX.md",
-                            no_ripgrep=True, max_refs_per_file=3, accept_scope_gap=None))
+        rc = cmd_scope_check(_ns(repo=str(repo), pack_path=str(pack), matrix="docs/SURFACE_SUPPORT_MATRIX.md",
+                                 no_ripgrep=True, max_refs_per_file=3, accept_scope_gap=None))
         out = capsys.readouterr().out
+        assert rc != 0, out
         assert "--accept-scope-gap" in out, out
         assert f'-m espalier scope-check "{pack.resolve()}" \\' in out
 
@@ -1758,19 +1759,29 @@ class TestPasteReadyRemediesQuoteASpacedPath:
 
     def test_no_command_slot_in_the_engine_interpolates_a_path_bare(self):
         """The population: in every engine module (the vendored mirror apart), a
-        literal ending in a command's path slot -- ``git -C ``, or ``espalier
-        <verb> `` after ``-m ``, a backtick or the literal's start -- is followed
-        by a ``quoted_if_spaced(...)`` call, never a bare value. Ten slots in
-        seven functions read bare before this class; a new one reds here, named.
+        literal ending in a command's path slot -- ``git -C ``, or ``espalier``
+        and its verb words, then any flags (``espalier upgrade --execute ``),
+        after ``-m ``, a backtick or a line's start -- is followed by a
+        ``quoted_if_spaced(...)`` call, never a bare value. Ten slots in seven
+        functions read bare before this class; a new one reds here, named.
         Prose that merely ends in "espalier <word> " ("rewrote 3 espalier hook
-        entries") is not a command and is not read."""
+        entries") is not a command and is not read. Out of sight, said plainly:
+        a command built by ``.format``, ``%``, ``+`` or a join."""
         import ast
         import re
         root = Path(__file__).resolve().parent.parent / "espalier"
-        command_slot = re.compile(r"(?:\bgit -C |(?:^|-m |`)espalier [a-z][a-z-]* )$")
+        command_slot = re.compile(
+            r"(?:\bgit -C |(?:^|-m |`)espalier(?: [a-z][a-z-]*)+ (?:--?[a-z][a-z-]* )*)$", re.MULTILINE)
 
         def tagged(text: str) -> bool:
             return command_slot.search(text) is not None
+
+        # The reader is proven on the spellings it must and must not see.
+        for seen in ("x -m espalier init ", "`espalier upgrade --execute ", "espalier integrity refresh ",
+                     "git -C ", "Run:\n-m espalier audit "):
+            assert tagged(seen), seen
+        for unseen in ("rewrote 3 espalier hook ", "-m espalier init \"", "the espalier ", "x"):
+            assert not tagged(unseen), unseen
 
         bare: list[str] = []
         slots = 0

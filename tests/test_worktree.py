@@ -181,15 +181,19 @@ class TestBuildWorktreePlan:
         """The real oracle: each command's ``git -C <root>`` prefix, as printed,
         handed to this host's default shell (cmd on Windows, sh elsewhere) with a
         read-only verb in place of ``worktree add``, lands in the spaced root."""
+        import os
         import subprocess
         spaced = tmp_path / "my project"
         spaced.mkdir()
         _init_git_repo(spaced, branch="main")
+        # An inherited GIT_DIR or GIT_WORK_TREE (pytest run from a git hook)
+        # would point rev-parse at the outer repository instead.
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
         for cmd in build_worktree_plan(spaced)["commands"]:
             prefix = cmd.split(" worktree add ", 1)[0]
             # The shell IS the oracle: the printed text must survive its word split.
             proc = subprocess.run(f"{prefix} rev-parse --show-toplevel", shell=True,  # noqa: S602
-                                  capture_output=True, text=True, timeout=60)
+                                  capture_output=True, text=True, timeout=60, env=env)
             assert proc.returncode == 0, (cmd, proc.stderr)
             assert Path(proc.stdout.strip()).resolve() == spaced.resolve(), (cmd, proc.stdout)
 

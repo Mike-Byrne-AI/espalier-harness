@@ -9028,8 +9028,9 @@ def _swap_interpreter_token(command: str, new_name: str) -> str:
     The target brings its own quoting (DEF-4094, once that quoted spaced head
     was rewirable): ``new_name`` is read as a word and the launcher's flag
     (:func:`_target_words`), the old name's quotes go with it, and the word is
-    written double-quoted only when it holds whitespace -- the one quoting sh,
-    Git Bash and PowerShell all take for a program word. ``"python3" x.py`` is
+    written double-quoted only when it holds whitespace -- a program word sh
+    and Git Bash take, and PowerShell refuses (driven on Windows 11; DEF-2060
+    holds the PowerShell reach of that spaced head). ``"python3" x.py`` is
     a PowerShell parse error (it runs a shell-form hook where Git Bash is
     absent), ``"py -3"`` is a file no host has, and a bare spaced path is cut
     by the shell (the DEF-636 absolute-path write arrives bare). Production
@@ -10809,7 +10810,7 @@ def cmd_merge_settings(args: argparse.Namespace) -> int:
         # only on the error branches.
         print(
             f"merge-settings: no {settings_path} found. Run "
-            f"`{_remedy_py()} -m espalier init {quoted_if_spaced(args.repo)}` to create a fully-wired settings.json.",
+            f"`{_remedy_py()} -m espalier init {quoted_if_spaced(str(args.repo))}` to create a fully-wired settings.json.",
             file=sys.stderr,
         )
         return 1
@@ -10824,7 +10825,7 @@ def cmd_merge_settings(args: argparse.Namespace) -> int:
     if result.status == MERGE_PARSE_ERROR:
         print(
             f"merge-settings: could not parse {settings_path}: {result.detail}. "
-            f"Fix it (or rm it and run `{_remedy_py()} -m espalier init {quoted_if_spaced(args.repo)}`).",
+            f"Fix it (or rm it and run `{_remedy_py()} -m espalier init {quoted_if_spaced(str(args.repo))}`).",
             file=sys.stderr,
         )
         return 1
@@ -12393,7 +12394,7 @@ def cmd_audit(args: argparse.Namespace) -> int:
     print(
         f"Audit failed: {plural(report['summary']['errors'], 'error')}, "
         f"{plural(report['summary']['warnings'], 'warning')}. Address the findings "
-        f"above, then re-run: {_remedy_py()} -m espalier audit {quoted_if_spaced(args.repo)}",
+        f"above, then re-run: {_remedy_py()} -m espalier audit {quoted_if_spaced(str(args.repo))}",
         file=sys.stderr,
     )
     return 1
