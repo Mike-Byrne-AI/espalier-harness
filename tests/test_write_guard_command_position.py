@@ -618,6 +618,28 @@ class TestRedTeamCommandPositionEvasion:
         pytest.param(f"echo hi;\x0bcp /tmp/x {PROTECTED_FILE}", id="vertical-tab"),
         pytest.param(f"echo hi;\x0ccp /tmp/x {PROTECTED_FILE}", id="form-feed"),
         pytest.param(f">/dev/null cp /tmp/x {PROTECTED_FILE}", id="leading-redirect"),
+        # a leading descriptor dup or close: the zone readers judge masked text,
+        # where `2>&1` reads `2> 1` and `2>&-` reads `2> -`, a target after a blank
+        pytest.param(f"2>&1 cp /tmp/x {PROTECTED_FILE}", id="leading-descriptor-dup"),
+        pytest.param(f">/dev/null 2>&1 cp /tmp/x {PROTECTED_FILE}", id="leading-redirect-then-dup"),
+        pytest.param(f"echo hi; 2>&- cp /tmp/x {PROTECTED_FILE}", id="leading-descriptor-close"),
+        # the same at every other position the star reads a redirect (air
+        # fbb531): after a wrapper (an unnumbered dup, a close; a numbered dup
+        # there is the run's own numeric read), after a flag, an assignment,
+        # `!`, a keyword and `eval`
+        pytest.param(f"nice >&2 cp /tmp/x {PROTECTED_FILE}", id="wrapper-then-unnumbered-dup"),
+        pytest.param(f"sudo 2>&- cp /tmp/x {PROTECTED_FILE}", id="wrapper-then-close"),
+        pytest.param(f"env -i >&2 cp /tmp/x {PROTECTED_FILE}", id="wrapper-flag-then-unnumbered-dup"),
+        pytest.param(f"nice >&2 2>&1 cp /tmp/x {PROTECTED_FILE}", id="wrapper-then-two-dups"),
+        pytest.param(f"A=1 2>&1 cp /tmp/x {PROTECTED_FILE}", id="assignment-then-dup"),
+        pytest.param(f"! 2>&1 cp /tmp/x {PROTECTED_FILE}", id="negation-then-dup"),
+        pytest.param(f"if true; then 2>&1 cp /tmp/x {PROTECTED_FILE}; fi", id="keyword-then-dup"),
+        pytest.param(f"eval 2>&1 cp /tmp/x {PROTECTED_FILE}", id="eval-then-dup"),
+        # a digit-led redirect whose target holds a substitution, inside a
+        # wrapper run before a flag (the run's word stopped at the paren)
+        pytest.param(f"sudo -u root 2>$(mktemp)/x -E cp /tmp/x {PROTECTED_FILE}", id="wrapper-subst-redirect-flag"),
+        pytest.param(f"env 2>`mktemp`/x -i cp /tmp/x {PROTECTED_FILE}", id="wrapper-backtick-redirect-flag"),
+        pytest.param(f"/usr/bin/env 2>$(mktemp)/x -i cp /tmp/x {PROTECTED_FILE}", id="slashed-wrapper-subst-redirect-flag"),
         # wrappers outside the first vocabulary
         pytest.param(f"setsid cp /tmp/x {PROTECTED_FILE}", id="wrapper-setsid"),
         pytest.param(f"strace -f cp /tmp/x {PROTECTED_FILE}", id="wrapper-strace"),
@@ -639,6 +661,21 @@ class TestRedTeamCommandPositionEvasion:
     ])
     def test_evasion_shape_is_still_denied(self, command, tmp_path):
         assert_hook_denied(run_bash_guard(command, tmp_path))
+
+    @pytest.mark.parametrize("command", [
+        pytest.param("2>&1 cp /tmp/x build/out.log", id="leading-descriptor-dup"),
+        pytest.param(">/dev/null 2>&1 cp /tmp/x build/out.log", id="leading-redirect-then-dup"),
+        pytest.param("echo hi; 2>&- cp /tmp/x build/out.log", id="leading-descriptor-close"),
+        pytest.param("nice >&2 cp /tmp/x build/out.log", id="wrapper-then-unnumbered-dup"),
+        pytest.param("env -i >&2 cp /tmp/x build/out.log", id="wrapper-flag-then-unnumbered-dup"),
+        pytest.param("A=1 2>&1 cp /tmp/x build/out.log", id="assignment-then-dup"),
+        pytest.param("sudo -u root 2>$(mktemp)/x -E cp /tmp/x build/out.log", id="wrapper-subst-redirect-flag"),
+    ])
+    def test_leading_descriptor_twin_outside_the_zone_is_allowed(self, command, tmp_path):
+        """The must-allow twins of the descriptor rows above: the same lexical
+        route to an unprotected target, so a fix that reads the dup cannot
+        widen into denying every command that opens on one."""
+        assert_hook_allowed(run_bash_guard(command, tmp_path))
 
     @pytest.mark.parametrize("command", [
         pytest.param(f"ln -s /tmp/evil {BLUEPRINT} 2>/dev/null", id="trailing-redirect"),

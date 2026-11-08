@@ -197,10 +197,43 @@ _CMD_POS_SUBST = r"(?:\$\([^(){}`;|&\n]*\)|`[^(){}`;|&\n]*`)"
 #: there would let the start after the closing paren read a wrapper run to the
 #: end again (`"env -i $(a)env " * n`: 113 -> 402 ms at 4 -> 8 KB).
 _CMD_POS_SUBST_GLUED = _CMD_POS_SUBST + r"(?=[^\s\w!<>(){}`;|&])"
-_CMD_POS_REDIRECT = (
-    r"(?:[0-9]?[<>]{1,3}[&|]?(?:[ \t]+(?:\"[^\"\n]*\"|'[^'\n]*'|" + _CMD_POS_SUBST_GLUED + r"|\$(?!\{[ \t\n|])|[^\s;|&\"'(){}`$<>0-9-])"
+# ⚠ A DIGIT-LED OR `-` TARGET AFTER A BLANK IS A WHOLE WORD. The zone readers
+# judge ampersand-neutralised text, where `2>&1` reads `2> 1` and `2>&-` reads
+# `2> -`: refusing a digit or `-` after the blank lost every leading descriptor
+# dup before a verb (`2>&1 rm <zone>`, `>/dev/null 2>&1 cp x <zone>`; base
+# denied, driven). Such a target is taken only as a word that ends at a blank
+# and holds no `<` or `>`, so it never runs into the next operator, and a bare
+# `-` only alone, so a flag-shaped word stays out as the reviewers' batch put it.
+# ⚠ ONLY WHERE NO WRAPPER RUN STANDS BEFORE IT (`_CMD_POS_REDIRECT_LEAD`). After
+# a wrapper the run's numeric arm already reads `2>` and its `1` (`nice 2>&1
+# rm`), so a redirect that took the spaced digit too gave each `nice 2>&1 ` two
+# parses: `"nice 2>&1 " * n` read 7 ms / 143 ms / 4.4 s / 141 s at n = 5 / 10 /
+# 15 / 20 on the first cut. The plain `_CMD_POS_REDIRECT` keeps refusing a
+# digit or `-` after the blank, and `_CMD_POS_NO_VERB` reads it after a wrapper.
+_CMD_POS_REDIRECT_SPACED_WORD = r"[0-9][^\s;|&\"'()`$<>]*(?=[ \t])|-(?=[ \t])"
+#: The redirect's operator up to its spaced target's alternatives, the
+#: redirect with its optional descriptor digit, and from its bare target on.
+_CMD_POS_REDIRECT_OP = (
+    r"[<>]{1,3}[&|]?(?:[ \t]+(?:\"[^\"\n]*\"|'[^'\n]*'|" + _CMD_POS_SUBST_GLUED + r"|\$(?!\{[ \t\n|])|"
+)
+_CMD_POS_REDIRECT_HEAD = r"(?:[0-9]?" + _CMD_POS_REDIRECT_OP
+_CMD_POS_REDIRECT_TAIL = (
+    r"[^\s;|&\"'(){}`$<>0-9-])"
     r"|\"[^\"\n]*\"|'[^'\n]*'|" + _CMD_POS_SUBST_GLUED + r"|\$(?!\{[ \t\n|])|[^\s;|&\"'()`$<>])"
     r"(?:\"[^\"\n]*\"|'[^'\n]*'|" + _CMD_POS_SUBST_GLUED + r"|\$(?!\{[ \t\n|])|[^\s;|&\"'()`$])*[ \t]+)"
+)
+_CMD_POS_REDIRECT = _CMD_POS_REDIRECT_HEAD + _CMD_POS_REDIRECT_TAIL
+#: The redirect where no wrapper run stands before it: the spaced target may
+#: also be a digit-led word or a lone `-` (a descriptor dup, masked).
+_CMD_POS_REDIRECT_LEAD = _CMD_POS_REDIRECT_HEAD + _CMD_POS_REDIRECT_SPACED_WORD + "|" + _CMD_POS_REDIRECT_TAIL
+#: The first redirect after a wrapper run: every spaced target but a
+#: digit-led one after a descriptor digit (`2> 1`), which the run's own
+#: digit-redirect and numeric arms read (`nice 2>&1 rm`). A close (`2> -`)
+#: is no run's (a lone `-` is not `_CMD_POS_WRAP_NEXT`), and an unnumbered
+#: dup (`> 1`) no longer a flag's argument (`_CMD_POS_WRAP_ARG`).
+_CMD_POS_REDIRECT_AFTER_WRAP = (
+    r"(?:(?:[0-9]" + _CMD_POS_REDIRECT_OP + r"-(?=[ \t])|" + _CMD_POS_REDIRECT_TAIL
+    + r"|(?:" + _CMD_POS_REDIRECT_OP + _CMD_POS_REDIRECT_SPACED_WORD + "|" + _CMD_POS_REDIRECT_TAIL + ")"
 )
 # ⚠ Every token run below is `[^\s;|&]`, never `\S`. `\S` matches `;`, so a
 # greedy `\S*` run scans PAST the command separator to end-of-input and then
@@ -297,15 +330,24 @@ _CMD_POS_WRAP_ARG_BEFORE_FLAG = (
     r"(?:[A-Za-z_]\w*=|[<>]|(?:then|do|else|elif|if|while|until)[ \t]|![ \t]|eval(?![\w=!<>]))"
 )
 _CMD_POS_WRAP_NEXT = r"[ \t]+(?:-[^\s;|&()`]|(?!\d[<>])\d)"
+#: A bare operator before a spaced digit-led word: an unnumbered descriptor
+#: dup (`> 1`, masked `>&1`), `_CMD_POS_REDIRECT_AFTER_WRAP`'s. Read as a
+#: flag's argument too, `"env -i > 5 " * n` parsed two ways a repeat.
+_CMD_POS_WRAP_ARG_DUP = r"[<>]{1,3}[&|]?[ \t]+[0-9][^\s;|&\"'()`$<>]*[ \t]"
 _CMD_POS_WRAP_ARG = (
-    r"(?!" + _CMD_POS_WRAP_ARG_OWNED + r")(?:" + _CMD_POS_WRAP_ARG_WORD_ANY + r"(?=" + _CMD_POS_WRAP_NEXT + r")"
+    r"(?!" + _CMD_POS_WRAP_ARG_OWNED + r")(?!" + _CMD_POS_WRAP_ARG_DUP + r")(?:" + _CMD_POS_WRAP_ARG_WORD_ANY + r"(?=" + _CMD_POS_WRAP_NEXT + r")"
     + r"|(?!" + _CMD_POS_WRAP_ARG_BEFORE_FLAG + r")" + _CMD_POS_WRAP_ARG_WORD + r"(?!" + _CMD_POS_WRAP_NEXT + r")"
     + r")"
 )
+#: A digit-led word's rest in a run: a one-level substitution is a piece of
+#: its own (`2>$(mktemp)/x -E mv`, `2>\`mktemp\` -E mv`), taken where no word
+#: character follows it, so the start after its closing paren dies at once;
+#: stopping at the paren lost all 28 such rows base walled (air fbb531).
+_CMD_POS_WRAP_DIGIT_RUN = r"(?:" + _CMD_POS_SUBST + r"(?=[^\w!<>(){}`;|&])|[^\s;|&()`])*"
 _CMD_POS_WRAP_RUN = (
     "(?:" + _CMD_POS_WRAPPER_SPELLED
     + r"(?:[ \t]+(?:-[^\s;|&()`]+(?:[ \t]+" + _CMD_POS_WRAP_ARG
-    + r")?|(?!\d[<>])\d[^\s;|&()`]*|(?=\d[<>])\d[^\s;|&()`]*(?=" + _CMD_POS_WRAP_NEXT + r")))*[ \t]+)"
+    + r")?|(?!\d[<>])\d[^\s;|&()`]*|(?=\d[<>])\d" + _CMD_POS_WRAP_DIGIT_RUN + r"(?=" + _CMD_POS_WRAP_NEXT + r")))*[ \t]+)"
 )
 #: One wrapper with base's argument rule -- only a wrapper word and a digit
 #: declined, a digit-led redirect read by the numeric arm -- and the
@@ -318,7 +360,7 @@ _CMD_POS_WRAP_RUN = (
 _CMD_POS_WRAP_ONE_LOOSE = (
     "(?:" + _CMD_POS_WRAPPER_SPELLED
     + r"(?:[ \t]+(?:-[^\s;|&()`]+(?:[ \t]+(?!" + _CMD_POS_WRAPPER_SPELLED + r"[ \t])(?!\d)" + _CMD_POS_WRAP_ARG_WORD
-    + r")?|\d[^\s;|&()`]*))*[ \t]+)"
+    + r")?|\d" + _CMD_POS_WRAP_DIGIT_RUN + r"))*[ \t]+)"
 )
 #: The argument of a run whose star holds an assignment run and nothing else
 #: (the slashed arm): only a wrapper word, a digit and an assignment compete.
@@ -388,7 +430,7 @@ _CMD_POS_SLASHED_WRAPPER_WORD = (
 _CMD_POS_SLASHED_WRAP_RUN = (
     "(?:" + _CMD_POS_WRAPPER_SPELLED
     + r"(?:[ \t]+(?:-[^\s;|&()`]+(?:[ \t]+(?!" + _CMD_POS_SLASHED_WRAPPER_WORD + r")" + _WRAP_STEP_ARG
-    + r")?|\d[^\s;|&()`]*))*[ \t]+)"
+    + r")?|\d" + _CMD_POS_WRAP_DIGIT_RUN + r"))*[ \t]+)"
 )
 # An assignment prefix, ended where bash ends the word: at the first UNQUOTED
 # blank (DEF-848's lane). The value is a run of pieces -- a plain character,
@@ -549,13 +591,19 @@ _QUOTED_VERB_TAIL = r"""["']?"""
 # Never composed after a `[\w.-]*` head (the interpreter arms, which absorb
 # the suffix themselves), so no adjacent quantifier shares its input.
 # (`_EXE_SUFFIX` itself is defined above the wrapper roster, which composes it.)
+# The star's redirects belong to the item before them: the first after a
+# wrapper run is `_CMD_POS_REDIRECT_AFTER_WRAP`'s, every other one (the
+# statement's start, after an assignment, a keyword, `!`, an opener or that
+# first one) `_CMD_POS_REDIRECT_LEAD`'s. The run never reads past a token
+# that a redirect follows (`_CMD_POS_WRAP_NEXT` is a flag or a plain digit),
+# so each redirect has one owner and no two forms read one token twice.
 _CMD_POS_NO_VERB = (
-    r"(?:(?:^|" + _CMD_POS_SEP + ")" + _CMD_POS_WS + "(?:"
-    + _CMD_POS_WRAP_RUN + "|" + _CMD_POS_ENV_ASSIGN
+    r"(?:(?:^|" + _CMD_POS_SEP + ")" + _CMD_POS_WS + "(?:" + _CMD_POS_REDIRECT_LEAD + ")*(?:"
+    + _CMD_POS_WRAP_RUN + "(?:" + _CMD_POS_REDIRECT_AFTER_WRAP + "(?:" + _CMD_POS_REDIRECT_LEAD + ")*)?"
+    + "|(?:" + _CMD_POS_ENV_ASSIGN
     + "|" + _CMD_POS_KEYWORD + r"[ \t]+"
     + "|" + _CMD_POS_NEGATE
-    + "|" + _CMD_POS_REDIRECT
-    + "|" + _CMD_POS_EXEC_QUOTE + ")*"
+    + "|" + _CMD_POS_EXEC_QUOTE + ")(?:" + _CMD_POS_REDIRECT_LEAD + ")*)*"
     + r"|(?<=/)" + _CMD_POS_SLASHED_WRAP_RUN + "(?:" + _CMD_POS_ENV_ASSIGN + ")*"
     + "|" + _CMD_POS_EXEC_QUOTE + ")"
 )
@@ -7739,7 +7787,7 @@ _CMD_POS_IN_SHELL = (
     + _CMD_POS_SHELL_WORDS + "|" + _CMD_POS_ENV_ASSIGN
     + "|" + _CMD_POS_KEYWORD + r"[ \t]+"
     + "|" + _CMD_POS_NEGATE
-    + "|" + _CMD_POS_REDIRECT
+    + "|" + _CMD_POS_REDIRECT_LEAD
     + "|" + _CMD_POS_EXEC_QUOTE + ")*"
     + "|" + _CMD_POS_EXEC_QUOTE + ")"
     # an escape, an ANSI-C or a plain quote, never a directory: a

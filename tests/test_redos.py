@@ -4372,6 +4372,22 @@ def _prefix_run_tokens() -> list[str]:
     # doubled operator (`>>` then `x`, or `>` then `>x`: `">>a " * 22`, 3.4 s)
     tokens += ["env 2> -C ", "env -i > -x ", "env 2>> -x ", "env 2> 5 ", "sudo -u a 2> -E ", "env -i > 5 "]
     tokens += [">>a ", "2>>/dev/null ", "<<a ", "<<<a ", ">>|a "]
+    # #516's leading descriptor dups and closes, in the MASKED spelling the
+    # zone readers judge (`2>&1` reads `2> 1`; these rows feed raw text and
+    # never mask): a spaced digit-led or lone `-` target at every position
+    # the star reads a redirect -- the statement's start, after each
+    # wrapper (the run's own numeric arms read `2> 1` there), after a flag
+    # (`> 1` was the flag's argument too), after the first redirect, an
+    # assignment, `!`, a keyword and `eval` -- and a substitution in a
+    # digit-led word of the run (air fbb531)
+    dups = ["2> 1", "> 1", "2> -", "> -", "1> 2", "> 12"]
+    tokens += [f"{d} " for d in dups]
+    tokens += [f"{w} {d} " for w in wrappers for d in dups]
+    tokens += [f"{w} -i {d} " for w in ("env", "sudo") for d in dups]
+    tokens += [f"{w} -i {d} -x " for w in ("env", "sudo") for d in dups]
+    tokens += [f"{h} {d} " for h in ["A=1", "!", "eval"] + list(keywords) for d in ("2> 1", "> 1")]
+    tokens += ["nice > 1 2> 1 ", "nice 2> 1 > 2 ", "nice 2>a -n 2> 1 ", "sudo -u > 1 ", "env -u > 12 -i "]
+    tokens += ["env 2>$(a)/x -E ", "env 2>`a`/x -E ", "env 2>$(a) -E ", "/a/env 2>$(a)/x -E ", "nice 2>$(a)/x 5 "]
     return tokens
 
 
@@ -4428,6 +4444,9 @@ def _separator_flood_units() -> list[str]:
                   - set(";&|") | set("{}"))
     assert {"(", ")", "`", "{", "}"} <= set(seps), seps
     runs = ["<", ">", "2>a", "env -x", "nice 1", "/env -x", "env -i a", "env -i $(a)/", ">$(a)/", "sudo -u 'a'"]
+    # #516's spaced digit target (masked) and the run's digit-led word with
+    # a substitution in it
+    runs += ["2> 1", "nice 2> 1", "A=1 2> 1", "env 2>$(a)/x", "/env 2>$(a)/"]
     units = [r + s for s in seps for r in runs] + [s + r for s in seps for r in runs]
     # A brace glued after a flag is no start (a brace opens a position at a
     # word's start only), so `"/env -x{" * n` is a glued flag holding a
