@@ -1,9 +1,13 @@
-"""Contract tests that pin the board's ledger line (``tools/cc/board.py``) to the
-base branch's tip: it counts the live rows there, through the base tree's own
-generator and fragment loader, so a checkout that stops moving reads what the
-base holds while every other board line reads GitHub or the base live
-(DEF-3006). Without this the line drifts silently: seen 2026-10-14, a checkout
-on a merged branch read 274 all day while main held 279.
+"""Contract tests that pin the board's two reads of the base branch's tree
+(``tools/cc/board.py``) to its tip, so a checkout that stops moving reads what
+the base holds while every other board line reads GitHub or the base live.
+
+The ledger line counts the live rows there, through the base tree's own
+generator and fragment loader (DEF-3006). Without this the line drifts
+silently: seen 2026-10-14, a checkout on a merged branch read 274 all day
+while main held 279. The checks line's base-run roster lists the base's
+workflow files (DEF-5084): a push workflow merged to main mid-window is read
+at the next board read, not at the reading seat's next catch-up.
 
 Real git is the oracle for what a ref holds, so each case builds a scratch
 repository whose checkout sits behind ``origin/main``; GitHub and the mail
@@ -20,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.test_board import _GREEN_RUNS, _stub_channel
+from tests.test_board import _GREEN_RUNS, _gh, _run, _stub_channel
 from tests.test_generate_ledger_regions import _ledger
 from tests.test_ledger_fragments import _row_file
 from tests._live_tree import copy_checkout
@@ -218,6 +222,175 @@ class TestTheLedgerLineReadsTheBase:
         text = board.render(board.collect(root, fetch=False, run_=_runner(board, [])))
         assert "ledger:   unread (the archive of origin/main could not be read: ReadError: planted" in text, text
         assert "open PRs:" in text
+
+
+def _workflow(tail: str = "") -> bytes:
+    return f"name: w\non:\n  push:\n    branches: [main]\n  workflow_dispatch:\n{tail}".encode("utf-8")
+
+
+#: A concurrency whose cancel a newer push's run supersedes (one group per
+#: workflow and ref), as release.yml's is.
+_SUPERSEDING = "concurrency:\n  group: ${{ github.workflow }}-${{ github.ref }}\n  cancel-in-progress: true\n"
+
+
+def _workflows_behind_their_base(tmp_path: Path) -> tuple[Path, str]:
+    """A checkout on a branch one commit behind ``origin/main`` in its
+    workflow files. Both commits hold the post-merge proof and a
+    pull-request-only workflow; the first holds ``gone.yml``, which the second
+    deletes; the second adds ``added.yml`` (a concurrency that supersedes),
+    ``crlf.yml`` (a BOM and CRLF line ends, stored as written) and a folder
+    named like a workflow. The checkout holds the first commit."""
+    root = tmp_path / "work"
+    root.mkdir()
+    _git(root, "init", "-q", "-b", "main")
+    for key, value in (("user.email", "t@example.com"), ("user.name", "t"), ("core.autocrlf", "false")):
+        _git(root, "config", key, value)
+    workflows = root / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "post-merge.yml").write_bytes(_workflow())
+    (workflows / "test.yml").write_bytes(b"on:\n  pull_request:\n    branches: [main]\n")
+    (workflows / "gone.yml").write_bytes(_workflow())
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "the first workflows")
+    _git(root, "branch", "lane")
+    (workflows / "gone.yml").unlink()
+    (workflows / "added.yml").write_bytes(_workflow(_SUPERSEDING))
+    (workflows / "crlf.yml").write_bytes(b"\xef\xbb\xbf" + _workflow().replace(b"\n", b"\r\n"))
+    (workflows / "folder.yml").mkdir()
+    (workflows / "folder.yml" / "inner.yml").write_bytes(_workflow())
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "one added, one deleted")
+    tip = _git(root, "rev-parse", "HEAD")
+    _git(root, "update-ref", "refs/remotes/origin/main", tip)
+    _git(root, "switch", "-q", "lane")
+    return root, tip
+
+
+def _gh_and_git(board, answers: dict):
+    """GitHub answered by ``tests/test_board.py``'s fixture runner (its calls
+    recorded on ``.calls``); git runs for real through the board's own spawn."""
+    gh = _gh(answers)
+
+    def run(argv, **kw):
+        if Path(argv[0]).name.lower().startswith("gh"):
+            return gh(argv, **kw)
+        return board.run(argv, **kw)
+
+    run.calls = gh.calls  # type: ignore[attr-defined]
+    return run
+
+
+def _workflow_reads(run) -> list[str]:
+    return sorted(c[c.index("--workflow") + 1] for c in run.calls if c[1:3] == ["run", "list"] and "--workflow" in c)
+
+
+class TestTheRosterReadsTheBase:
+    """The base-run roster is the workflow files at ``origin/<base>``, the
+    checkout's only where the clone cannot list them, and the line says so."""
+
+    _RED = [dict(_run("completed", "failure", "d" * 40), databaseId=9)]
+    _NOTE = "          (push workflows listed from this working tree: "
+
+    def test_a_workflow_added_on_the_base_is_read_before_the_checkout_holds_it(self, board, monkeypatch, tmp_path):
+        """Dies to: the roster listed from the working tree, which a checkout
+        behind its base reads without the new workflow, so its red shows on
+        no line until the reading seat catches up (the defect)."""
+        root, _tip = _workflows_behind_their_base(tmp_path)
+        assert not (root / ".github" / "workflows" / "added.yml").exists(), "precondition: the checkout is behind"
+        _stub_channel(monkeypatch, board)
+        run = _gh_and_git(board, {"pr list": [], "run list": _GREEN_RUNS, "run list added.yml": self._RED})
+        text = board.render(board.collect(root, fetch=False, run_=run))
+        assert "checks:   added (main, advisory): red since ddddddd (run 9) (no green among the runs read)" in text, text
+        assert self._NOTE not in text, text
+
+    def test_a_workflow_deleted_on_the_base_is_not_read_while_the_checkout_keeps_it(self, board, monkeypatch,
+                                                                                    tmp_path):
+        """Dies to: a workflow the base no longer holds read from the working
+        tree (a checkout behind the deletion reads a ghost, and a lane that
+        deletes one stops reading it on its own board), or a pull-request
+        workflow, a folder or the post-merge proof read onto the roster."""
+        root, _tip = _workflows_behind_their_base(tmp_path)
+        assert (root / ".github" / "workflows" / "gone.yml").is_file(), "precondition: the checkout keeps it"
+        _stub_channel(monkeypatch, board)
+        run = _gh_and_git(board, {"pr list": [], "run list": _GREEN_RUNS, "run list gone.yml": self._RED})
+        text = board.render(board.collect(root, fetch=False, run_=run))
+        assert "gone" not in text, text
+        assert _workflow_reads(run) == ["added.yml", "crlf.yml", "post-merge.yml"], _workflow_reads(run)
+
+    def test_the_bases_files_are_decoded_as_the_checkouts_are(self, board, tmp_path):
+        """Dies to: a BOM or CRLF line ends at the base hiding a push trigger
+        the checkout's read sees, a superseding concurrency lost, or the
+        post-merge proof or a folder read (a spawn for each)."""
+        root, _tip = _workflows_behind_their_base(tmp_path)
+        calls: list[list[str]] = []
+
+        def run(argv, **kw):
+            calls.append(list(argv))
+            return board.run(argv, **kw)
+
+        assert board.base_run_workflows(root, "main", run_=run) == ({"added.yml": True, "crlf.yml": False}, "")
+        # added, crlf and the pull-request workflow, whose text alone says it is one.
+        assert len([c for c in calls if c[1:3] == ["cat-file", "blob"]]) == 3, calls
+
+    def test_a_missing_base_ref_reads_the_checkout_and_the_line_says_so(self, board, monkeypatch, tmp_path):
+        """Dies to: a silent fallback (the working tree's roster printed as if
+        it were the base's), or no roster at all on a clone without the ref."""
+        root, _tip = _workflows_behind_their_base(tmp_path)
+        _git(root, "update-ref", "-d", "refs/remotes/origin/main")
+        _stub_channel(monkeypatch, board)
+        run = _gh_and_git(board, {"pr list": [], "run list": _GREEN_RUNS, "run list gone.yml": self._RED})
+        text = board.render(board.collect(root, fetch=False, run_=run))
+        assert "checks:   gone (main, advisory): red since ddddddd (run 9)" in text, text
+        assert self._NOTE + "origin/main is not in this clone)" in text, text
+
+    def test_a_listing_git_does_not_give_reads_the_checkout_and_says_why(self, board, tmp_path):
+        """Dies to: a failed or killed listing read as an empty roster, every
+        base-run line gone silent under a label that reads as the base's."""
+        root, _tip = _workflows_behind_their_base(tmp_path)
+
+        def listing(answer):
+            def run(argv, **kw):
+                if argv[1] == "ls-tree":
+                    if isinstance(answer, Exception):
+                        raise answer
+                    return answer
+                return board.run(argv, **kw)
+            return run
+
+        roster, why = board.base_run_workflows(root, "main", run_=listing(board.Unresolvable("git ls-tree took longer than 15s")))
+        assert roster == {"gone.yml": False}
+        assert "origin/main" in why and "git ls-tree took longer than 15s" in why, why
+        roster, why = board.base_run_workflows(root, "main", run_=listing((128, "", "fatal: not a tree object")))
+        assert roster == {"gone.yml": False}
+        assert "origin/main" in why and "fatal: not a tree object" in why, why
+
+    def test_a_file_git_does_not_give_stays_on_the_roster(self, board, tmp_path):
+        """Dies to: a workflow whose text git did not hand over (a killed or
+        failed read) dropped from the roster instead of read by its gh read,
+        as an unreadable file in the checkout is."""
+        root, _tip = _workflows_behind_their_base(tmp_path)
+        answers = iter([board.Unresolvable("git cat-file took longer than 15s"), (128, "", "fatal: bad object")])
+
+        def run(argv, **kw):
+            if argv[1] == "cat-file":
+                answer = next(answers, None)
+                if isinstance(answer, Exception):
+                    raise answer
+                if answer is not None:
+                    return answer
+            return board.run(argv, **kw)
+
+        assert board.base_run_workflows(root, "main", run_=run) == ({"added.yml": False, "crlf.yml": False}, "")
+
+    def test_a_spent_budget_starts_no_git_read_and_says_so(self, board, tmp_path):
+        """Dies to: the roster's git reads started past the base-run budget
+        the gh reads share, or the fallback taken in silence."""
+        root, _tip = _workflows_behind_their_base(tmp_path)
+        calls: list[list[str]] = []
+        roster, why = board.base_run_workflows(root, "main", run_=lambda argv, **kw: calls.append(argv),
+                                               deadline=10.0, clock=lambda: 10.0)
+        assert calls == [] and roster == {"gone.yml": False}
+        assert "no time was left" in why and "origin/main" in why, why
 
 
 class TestTheChildsContract:
