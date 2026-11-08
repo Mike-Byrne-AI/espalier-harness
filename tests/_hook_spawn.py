@@ -352,13 +352,19 @@ def _ready_for_the_retry(name: str, miss: str, before: _Before) -> list[str]:
     return put_back
 
 
-def _budget_refused(result: subprocess.CompletedProcess) -> bool:
-    """write_guard refused the call because its judgment outran the budget:
-    the child's message (``BUDGET_REFUSAL``) or the parent's fallback at its
-    deadline (``BUDGET_FALLBACK``), which a must-deny row would otherwise read
-    as its verdict."""
-    out = result.stdout if isinstance(result.stdout, str) else (result.stdout or b"").decode("utf-8", "replace")
+def holds_a_budget_refusal(out: str) -> bool:
+    """``out`` holds write_guard's refusal of a judgment that outran the
+    budget: the child's message (``BUDGET_REFUSAL``) or the parent's fallback
+    at its deadline (``BUDGET_FALLBACK``), which a must-deny row would
+    otherwise read as its verdict. The one test-side home of the pair: a
+    reader outside this module calls it rather than naming the phrases
+    (DEF-2058)."""
     return BUDGET_REFUSAL in (out or "") or BUDGET_FALLBACK in (out or "")
+
+
+def _budget_refused(result: subprocess.CompletedProcess) -> bool:
+    out = result.stdout if isinstance(result.stdout, str) else (result.stdout or b"").decode("utf-8", "replace")
+    return holds_a_budget_refusal(out)
 
 
 def _script(result: subprocess.CompletedProcess) -> str:
