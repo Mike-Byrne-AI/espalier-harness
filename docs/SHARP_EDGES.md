@@ -843,8 +843,9 @@ refusal (a directory without its write bit) is what this host can produce and
 what `tests/test_rmtree.py` drives on both sides of the rule; the Windows
 attribute itself was witnessed on 2026-09-26 on 3.12 to 3.14 (walk 4: `os.chmod`
 sets the real read-only attribute, the bare call refuses, the helper's `onexc`
-arm fires), and `DEF-934` carries the CI test that pins it, since the
-`windows-latest` cell runs the suite and this file's Windows arm still skips there.
+arm fires), and `tests/test_rmtree.py::TestTheWindowsAttribute` pins all three
+on Windows, in `portability.yml`'s `windows-latest` cell (3.12, the `onexc` arm),
+which runs on a pull request that changes Python and is not a required check.
 
 ## `Path.rglob` / recursive `Path.glob` follows directory symlinks on CPython < 3.13
 
