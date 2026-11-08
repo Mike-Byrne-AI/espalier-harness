@@ -5628,7 +5628,8 @@ class TestGitBashDrivePrefix:
             "def pytest_unconfigure(config):\n    _legacy.__exit__(None, None, None)\n",
             encoding="utf-8")
         node_ids = [f"tests/test_write_guard.py::{name}" for name in sorted(emulated)]
-        run = subprocess.run(
+        from tests._tree_spawn import run_tree_bounded
+        run = run_tree_bounded(
             [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "legacy_floor_plugin",
              "--tb=no", *node_ids],
             capture_output=True, text=True, encoding="utf-8", timeout=45, cwd=str(repo),
@@ -5683,7 +5684,8 @@ class TestGitBashDrivePrefix:
         # down and leaves an orphan pytest (the red team, 2026-09-22). The
         # outer session's PYTEST_ADDOPTS is not inherited: a `--tb=native`
         # there changes the inner output this row parses.
-        return subprocess.run(
+        from tests._tree_spawn import run_tree_bounded
+        return run_tree_bounded(
             [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
              f"--rootdir={where}", "-c", os.devnull, str(where / "test_emu_fail.py")],
             capture_output=True, text=True, encoding="utf-8", timeout=45, cwd=str(where),

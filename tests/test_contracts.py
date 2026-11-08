@@ -1771,12 +1771,13 @@ class TestReadmeHookCount:
 _SUBPROCESS_TEXT_FUNCS = {"run", "check_output", "Popen", "call", "check_call"}
 #: The spawn wrappers that take ``subprocess.run``'s own keywords
 #: (``_hook_utils.spawn_checked``; ``_json_safe.run_bounded``, which every timed
-#: spawn in tools/cc routes through since 2026-10-13; the engine's
+#: spawn in tools/cc routes through since 2026-10-13, and its tree-ending
+#: sibling ``_json_safe.run_tree_bounded``; the engine's
 #: ``_spawn.run_no_stdin``, every engine spawn's since DEF-928): a decode one makes is the
 #: decode ``run`` makes, so both contracts below read them as spawns. Matched by
 #: bare name or attribute (``_hook_utils.run_bounded``). Held equal to the
 #: scanners' copies by ``TestSpawnWrappersReadEverywhere``.
-_SPAWN_WRAPPERS = frozenset({"spawn_checked", "run_bounded", "run_no_stdin"})
+_SPAWN_WRAPPERS = frozenset({"spawn_checked", "run_bounded", "run_tree_bounded", "run_no_stdin"})
 
 
 def _spawn_call_name(f: ast.expr) -> str | None:
@@ -1882,7 +1883,12 @@ _BOUNDED_SPAWN_HOMES = (
     "espalier/_spawn.py",
     "espalier/scanners/freshness.py",
 )
-_BOUNDED_SPAWN_ENTRY = "run_bounded"
+#: The bounded spawn's entry points. Each is compared, closed over, in every
+#: home that defines it: ``run_bounded`` is in all three; the tree-ending pair
+#: is in ``tools/cc`` alone until the engine takes its copy, which this then
+#: holds equal the day it lands (a home may lack an entry, never differ in it).
+_BOUNDED_SPAWN_ENTRIES = ("run_bounded", "run_tree_bounded", "communicate_tree_bounded")
+_BOUNDED_SPAWN_ENTRY = _BOUNDED_SPAWN_ENTRIES[0]
 _BUILTIN_NAMES = frozenset(dir(__import__("builtins")))
 
 
@@ -1937,15 +1943,15 @@ def _describe_binding(node: ast.AST | None, name: str) -> str | None:
     return ast.dump(node)
 
 
-def _bounded_spawn_parts(rel: str) -> dict[str, str | None]:
-    """Everything ``run_bounded`` reaches in ``rel``'s module, closed over:
-    the entry point, each helper and constant it reads, and each import those
+def _bounded_spawn_parts(rel: str, entry: str = _BOUNDED_SPAWN_ENTRY) -> dict[str, str | None]:
+    """Everything ``entry`` reaches in ``rel``'s module, closed over: the
+    entry point, each helper and constant it reads, and each import those
     read, as comparable text. Derived from the code, so a helper factored out
     of the body, or an import a copy drops, is compared too."""
     tree = ast.parse((REPO_ROOT / rel).read_text(encoding="utf-8"))
     bindings = _module_bindings(tree)
     parts: dict[str, str | None] = {}
-    todo = [_BOUNDED_SPAWN_ENTRY]
+    todo = [entry]
     while todo:
         name = todo.pop()
         if name in parts:
@@ -1965,21 +1971,49 @@ class TestTheBoundedSpawnTwins:
 
     def test_the_closure_is_the_known_one(self):
         """The derivation's own floor: today ``run_bounded`` reaches its two
-        helpers, the grace constant and three imports. A closure that shrank
-        means the walk broke, not that the code got simpler."""
+        helpers, the grace constant and three imports, and ``run_tree_bounded``
+        reaches the tree walk, the shared ``ps`` spelling and the Windows job.
+        A closure that shrank means the walk broke, not that the code got
+        simpler."""
         assert set(_bounded_spawn_parts(_BOUNDED_SPAWN_HOMES[0])) >= {
             "run_bounded", "_is_stdlib_run", "_end_tree", "SPAWN_KILL_GRACE_SECONDS", "os", "sys", "time"}
+        assert set(_bounded_spawn_parts(_BOUNDED_SPAWN_HOMES[0], "run_tree_bounded")) >= {
+            "run_tree_bounded", "_is_stdlib_run", "_communicate_or_end_the_tree", "_end_the_whole_tree",
+            "_process_table", "parse_process_table", "PS_TABLE_ARGV", "_below", "_kill_on_close_job",
+            "_end_the_tree_now", "_terminate_job", "_end_tree", "SPAWN_KILL_GRACE_SECONDS", "os", "sys", "time"}
 
     def test_the_copies_are_equal(self):
         source, *copies = _BOUNDED_SPAWN_HOMES
-        want = _bounded_spawn_parts(source)
-        for rel in copies:
-            got = _bounded_spawn_parts(rel)
-            drifted = sorted(name for name in {*want, *got} if got.get(name) != want.get(name))
-            assert not drifted, (
-                f"{rel} differs from {source} in {drifted}: change every copy in "
-                f"_BOUNDED_SPAWN_HOMES together (docstrings may differ, code may not)"
-            )
+        for entry in _BOUNDED_SPAWN_ENTRIES:
+            want = _bounded_spawn_parts(source, entry)
+            assert want[entry] is not None, f"{source} no longer defines {entry}"
+            for rel in copies:
+                got = _bounded_spawn_parts(rel, entry)
+                if got[entry] is None:
+                    continue  # this home has no copy of the entry yet; it may lack one, never differ
+                drifted = sorted(name for name in {*want, *got} if got.get(name) != want.get(name))
+                assert not drifted, (
+                    f"{rel}'s {entry} differs from {source}'s in {drifted}: change every copy in "
+                    f"_BOUNDED_SPAWN_HOMES together (docstrings may differ, code may not)"
+                )
+
+    def test_a_home_that_takes_a_tree_entry_is_compared(self, tmp_path, monkeypatch):
+        """The per-entry walk's own control: an engine home that defines
+        ``run_tree_bounded`` with a body one token apart from the ``tools/cc``
+        copy's is read as drifted, where a home without one is passed."""
+        src = (REPO_ROOT / _BOUNDED_SPAWN_HOMES[0]).read_text(encoding="utf-8")
+        old = "    return _communicate_or_end_the_tree(proc, input, timeout, job)\n"
+        assert old in src, old
+        (tmp_path / "espalier" / "scanners").mkdir(parents=True)
+        (tmp_path / "espalier" / "_spawn.py").write_bytes(
+            src.replace(old, old.replace("job)", "None)"), 1).encode("utf-8"))
+        (tmp_path / "espalier" / "scanners" / "freshness.py").write_bytes(b"def run_bounded():\n    pass\n")
+        monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
+        forked = _bounded_spawn_parts("espalier/_spawn.py", "communicate_tree_bounded")
+        absent = _bounded_spawn_parts("espalier/scanners/freshness.py", "communicate_tree_bounded")
+        monkeypatch.undo()
+        assert forked != _bounded_spawn_parts(_BOUNDED_SPAWN_HOMES[0], "communicate_tree_bounded")
+        assert absent == {"communicate_tree_bounded": None}, absent
 
     def test_the_parity_reads_a_one_token_change(self, tmp_path, monkeypatch):
         """The comparison's own control: a copy whose grace constant or whose
@@ -2106,24 +2140,33 @@ def _marker_problems(root: Path, sites: list[dict]) -> list[str]:
     return problems
 
 
+#: The names a copy of the bounded spawn defines: each entry point, and the
+#: Windows tree kill every entry reaches.
+_BOUNDED_SPAWN_NAMES = (*_BOUNDED_SPAWN_ENTRIES, "_end_tree")
+
+
 def _bounded_spawn_defined_outside_its_homes(root: Path, rels: list[str]) -> list[str]:
-    """Each census file that defines ``run_bounded`` or ``_end_tree`` -- at top
-    level, in an ``except ImportError`` fallback, anywhere -- but is not one of
-    the homes the twin test compares: a fourth copy nobody holds equal."""
+    """Each census file that defines a bounded spawn (``_BOUNDED_SPAWN_NAMES``)
+    -- at top level, in an ``except ImportError`` fallback, anywhere -- but is
+    not one of the homes the twin test compares: a fourth copy nobody holds
+    equal."""
     homes = {rel for rel, _ in _BOUNDED_SPAWN_OWN}
     out = []
     for rel in rels:
         tree = ast.parse((root / rel).read_text(encoding="utf-8"))
         if rel not in homes and any(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-                                    and n.name in ("run_bounded", "_end_tree") for n in ast.walk(tree)):
+                                    and n.name in _BOUNDED_SPAWN_NAMES for n in ast.walk(tree)):
             out.append(rel)
     return out
 
 
 #: Loads each named file by path in a child whose working directory is not the
-#: checkout, and prints where the ``run_bounded`` it bound was compiled from.
-#: The checkout's root goes on ``sys.path``, as ``python -m bench...`` from the
-#: root puts it, so a package import resolves; the working directory does not.
+#: checkout, and prints, for each bounded spawn it binds (``run_bounded``,
+#: ``run_tree_bounded``), where the function was compiled from and the name it
+#: was defined under: a script that binds ``run_tree_bounded`` to
+#: ``run_bounded`` names the right file and the wrong function. The checkout's
+#: root goes on ``sys.path``, as ``python -m bench...`` from the root puts it,
+#: so a package import resolves; the working directory does not.
 _ORIGIN_PROBE = (
     "import importlib.util, json, sys\n"
     "sys.path.insert(0, sys.argv[1])\n"
@@ -2135,9 +2178,10 @@ _ORIGIN_PROBE = (
     "    sys.modules[name] = mod\n"
     "    try:\n"
     "        spec.loader.exec_module(mod)\n"
-    "        out[rel] = mod.run_bounded.__code__.co_filename\n"
+    "        bound = [(n, getattr(mod, n)) for n in ('run_bounded', 'run_tree_bounded') if hasattr(mod, n)]\n"
+    "        out[rel] = [[n, f.__code__.co_filename, f.__code__.co_name] for n, f in bound] or [['', 'binds no bounded spawn', '']]\n"
     "    except BaseException as exc:\n"
-    "        out[rel] = 'load failed: ' + type(exc).__name__ + ': ' + str(exc)\n"
+    "        out[rel] = [['', 'load failed: ' + type(exc).__name__ + ': ' + str(exc), '']]\n"
     "print(json.dumps(out))\n"
 )
 
@@ -2277,7 +2321,8 @@ class TestEveryTimedSpawnOutsideToolsCcIsBounded:
             "a raw subprocess call with a timeout (or the ** splat that can carry one) "
             "waits on any grandchild holding its pipe on Windows, past its cap; call "
             "run_bounded (espalier/_spawn.py in the engine; tools/cc/_json_safe.py loaded "
-            "by path in scripts/, bench/ and tools/), or mark a call that holds no pipe "
+            "by path in scripts/, bench/ and tools/), or run_tree_bounded for a child that "
+            "is a tree (a pytest, a script that runs one), or mark a call that holds no pipe "
             "`# spawn: ok <reason>`:\n  "
             + "\n  ".join(f"{s['path']}:{s['lineno']} in {s['function']}" for s in stray)
         )
@@ -2325,9 +2370,12 @@ class TestEveryTimedSpawnOutsideToolsCcIsBounded:
                         errors="replace", timeout=45)  # about 1 s measured; under the 60 s ceiling
         assert child.returncode == 0, child.stderr
         want = os.path.normcase(str((REPO_ROOT / "tools" / "cc" / "_json_safe.py").resolve()))
-        wrong = {rel: origin for rel, origin in json.loads(child.stdout).items()
-                 if os.path.normcase(origin) != want}
-        assert not wrong, f"these bind a run_bounded that is not {want}: {wrong}"
+        wrong = {rel: origins for rel, origins in json.loads(child.stdout).items()
+                 if any(os.path.normcase(origin) != want or defined != bound
+                        for bound, origin, defined in origins)}
+        assert not wrong, (
+            f"these bind a bounded spawn that is not {want}'s function of that name "
+            f"([bound name, compiled from, defined as]): {wrong}")
 
     def test_the_census_reads_each_shape_it_rules_on(self, tmp_path):
         """The census's own control, on a planted tree: a raw timed spawn in the
@@ -2374,6 +2422,192 @@ class TestEveryTimedSpawnOutsideToolsCcIsBounded:
         assert sorted(_marker_problems(tmp_path, sites)) == [
             "bench/bare.py:3: the marker gives no reason",
             "bench/piped.py:4: marked, but probe asks for a pipe"]
+
+
+# ---------------------------------------------------------------------------
+# A timed pytest ends its whole tree (DEF-1179)
+# ---------------------------------------------------------------------------
+
+#: The calls whose timeout ends the child's whole tree (``tools/cc/_json_safe.py``;
+#: the suite takes the first and the last through ``tests/_tree_spawn.py``).
+_TREE_ENDERS = frozenset({"run_tree_bounded", "run_tree_to_deadline", "communicate_tree_bounded"})
+#: The calls a timed pytest site may name: subprocess's own, every wrapper, the
+#: tree-ending ones, and any function its own module defines (a ``_run``).
+_TREE_SITE_SPAWNS = frozenset({"run", "Popen", "call", "check_output", "check_call"}) | _SPAWN_WRAPPERS | _TREE_ENDERS
+#: Named debt: each timed pytest site that still kills its child alone at the
+#: timeout, by ``path::function``, with the ledger row that retires it and why
+#: it is not routed yet. An entry that names no such site any more reds below:
+#: re-key it to where the spawn went, and drop it only once that site ends its
+#: tree.
+_TREE_SITE_DEBT = {
+    "espalier/pre_release.py::run_pre_release_check": (
+        "DEF-5090: the engine cannot import tools/cc, so its tree-ending twin goes in "
+        "espalier/_spawn.py beside run_bounded, and this leg (the whole not-heavy suite) takes it then"),
+    "espalier/refresh_externals.py::run_bound_tests": (
+        "DEF-5090: the engine cannot import tools/cc; the bound pins' pytest takes espalier/_spawn.py's "
+        "tree-ending twin with the same row"),
+    "tools/cc/hooks/stop_gate.py::_gate_pytest": (
+        "DEF-5091: a hook. Gate 1 (opt-in, ESPALIER_STOP_GATE=full) runs the adopter's pytest here, and "
+        "the override or declared test command in _run_one_command (an argv handed in, which this "
+        "ratchet cannot read), both through _hook_utils.spawn_checked, the hooks' one spawn chokepoint, "
+        "which has no tree-ending form yet"),
+    "tools/cc/ledger_row.py::_run_guard": (
+        "DEF-5092: strike --guard's one-node pytest, at the head and at the base, through "
+        "check_ledger_probes' run_bounded rather than the tree-ending run_tree_bounded beside it"),
+}
+
+
+def _call_name(fn: ast.expr) -> str | None:
+    return fn.id if isinstance(fn, ast.Name) else fn.attr if isinstance(fn, ast.Attribute) else None
+
+
+def _holds_pytest(node: ast.AST) -> bool:
+    return any(isinstance(n, ast.Constant) and n.value == "pytest" for n in ast.walk(node))
+
+
+def _timed_pytest_sites(root: Path, rels: list[str]) -> list[tuple[str, int, str, bool]]:
+    """``(path, line, path::function, ends the tree)`` for each timed spawn of a
+    pytest in ``rels``: a call with a ``timeout``-named keyword, or a ``**``
+    splat that can carry one, to a spawn (``_TREE_SITE_SPAWNS``, or a function
+    its module defines), whose argv holds the string ``"pytest"`` -- inline,
+    or through a name, a subscript or a call while its function holds one. It
+    ends the tree where it calls one of ``_TREE_ENDERS``, or a function of its
+    module that calls one. Not read (each routed by hand, where one exists): a
+    pytest argv handed in through a parameter, or built in another module or
+    at module level; a spawn wrapper defined in another module; a timeout
+    passed by position; ``pytest`` written into one word (``-mpytest``); a
+    script child that runs a pytest of its own; and a ``Popen`` waited on
+    elsewhere."""
+    out = []
+    for rel in rels:
+        tree = ast.parse((root / rel).read_text(encoding="utf-8"))
+        local: dict[str, list[ast.AST]] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                local.setdefault(node.name, []).append(node)
+        enders = {name for name, defs in local.items()
+                  if any(isinstance(c, ast.Call) and _call_name(c.func) in _TREE_ENDERS
+                         for d in defs for c in ast.walk(d))}
+
+        def visit(node: ast.AST, qual: tuple[str, ...], fn: ast.AST | None) -> None:
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    visit(child, (*qual, child.name), fn if isinstance(child, ast.ClassDef) else child)
+                    continue
+                if isinstance(child, ast.Call) and any(k.arg is None or "timeout" in k.arg for k in child.keywords):
+                    name = _call_name(child.func)
+                    argv = child.args[0] if child.args else next(
+                        (k.value for k in child.keywords if k.arg in ("args", "cmd", "argv")), None)
+                    named = (argv is not None and not isinstance(argv, (ast.List, ast.Tuple))
+                             and fn is not None and _holds_pytest(fn))
+                    if (name in _TREE_SITE_SPAWNS or name in local) and argv is not None and (
+                            _holds_pytest(argv) or named):
+                        out.append((rel, child.lineno, "::".join((rel, *qual)),
+                                    name in _TREE_ENDERS or name in enders))
+                visit(child, qual, fn)
+
+        visit(tree, (), None)
+    return out
+
+
+def _tree_site_files() -> list[str]:
+    """The ratchet's population, derived from git: the timed-spawn census's
+    files (``_census_files``: every tracked production ``.py`` outside
+    ``tools/cc`` and the engine's byte mirrors, so a new top-level directory
+    is read the day it lands), plus every tracked ``.py`` under ``tools/cc/``
+    and ``tests/``. Not read: a test-named file outside ``tests/``, which the
+    census leaves out by name."""
+    from tests._git_oracle import require_tracked_paths
+
+    tracked = require_tracked_paths(REPO_ROOT, "*.py", minimum=500, what="tracked .py")
+    return sorted({*_census_files(), *(rel for rel in tracked if rel.startswith(("tools/cc/", "tests/")))})
+
+
+class TestEveryTimedPytestEndsItsWholeTree:
+    """A timed spawn of a pytest -- in the tracked Python ``_tree_site_files``
+    derives from git: ``scripts/``, ``bench/``, the suite, ``tools/`` and the
+    engine -- ends the child's whole tree at its timeout: ``run_bounded`` and
+    ``subprocess.run`` kill the child alone on POSIX, and the pytest's xdist
+    workers, hooks and git ran on at parent 1 (DEF-1179:
+    ``scripts/verify_pins.py``'s inner pytest left them beside its temp
+    clone). Each site calls ``run_tree_bounded`` (``tools/cc/_json_safe.py``,
+    loaded by path; ``tests/_tree_spawn.py`` in the suite), or a function of
+    its module that does, or is named debt in ``_TREE_SITE_DEBT`` with the
+    ledger row that retires it. The ratchet is keyed on the string
+    ``"pytest"`` and reads one module at a time, so the shapes
+    ``_timed_pytest_sites`` names as not read are routed by hand: a script
+    child that runs a pytest of its own (``tests/test_verify_pins.py``'s runs
+    of the script), a planned step (``scripts/host_check.py::run_step``,
+    pinned by ``tests/test_host_check.py``), a held ``Popen``
+    (``tests/test_box_lock.py``), and Gate 1's handed-in test command
+    (``tools/cc/hooks/stop_gate.py::_run_one_command``, in its neighbour's
+    debt entry). A debt site that moves out of the read shapes reads as stale,
+    the same as a fixed one: re-key the entry to where the spawn went."""
+
+    def test_no_timed_pytest_kills_its_child_alone(self):
+        sites = _timed_pytest_sites(REPO_ROOT, _tree_site_files())
+        stray = [f"{where}:{line}" for rel, line, where, ends in sites if not ends and where not in _TREE_SITE_DEBT]
+        assert not stray, (
+            "a timed spawn of a pytest kills only the child at its timeout on POSIX, and the "
+            "pytest's workers, hooks and git run on at parent 1: call run_tree_bounded "
+            "(tools/cc/_json_safe.py loaded by path; tests/_tree_spawn.py in the suite), or name "
+            "the site in _TREE_SITE_DEBT with why:\n  " + "\n  ".join(stray))
+
+    def test_every_named_debt_is_a_live_site(self):
+        sites = _timed_pytest_sites(REPO_ROOT, _tree_site_files())
+        live = {where for _rel, _line, where, ends in sites if not ends}
+        stale = sorted(set(_TREE_SITE_DEBT) - live)
+        assert not stale, (
+            f"these _TREE_SITE_DEBT entries name no untreed timed pytest this ratchet reads any more: {stale}. "
+            "A site that moved (a renamed function, a spawn moved into a helper, a wrapper renamed) reads "
+            "the same as a fixed one: re-key the entry to where the spawn went; drop it only if that site "
+            "now ends its tree (it calls run_tree_bounded), and leave its ledger row for the strike")
+
+    def test_the_ratchet_reads_each_shape_it_rules_on(self, tmp_path):
+        planted = {
+            "scripts/raw.py": "import subprocess, sys\ndef leg():\n    subprocess.run([sys.executable, '-m', 'pytest'], timeout=5)\n",
+            "scripts/named.py": ("import sys\ndef leg():\n    cmd = [sys.executable, '-m', 'pytest']\n"
+                                 "    run_bounded(cmd, timeout=5)\n"),
+            "scripts/tree.py": "def leg():\n    run_tree_bounded(['pytest'], timeout=5)\n",
+            "scripts/wrapped.py": ("def _run(cmd, timeout):\n    return run_tree_bounded(cmd, timeout=timeout)\n"
+                                   "def leg():\n    _run(['pytest'], timeout=5)\n"),
+            "scripts/wrapped_plain.py": ("def _run(cmd, timeout):\n    return run_bounded(cmd, timeout=timeout)\n"
+                                         "def leg():\n    _run(['pytest'], timeout=5)\n"),
+            "scripts/git.py": "import subprocess\ndef leg():\n    subprocess.run(['git', 'log'], timeout=5)\n",
+            "tests/test_x.py": ("import subprocess, sys\nclass TestX:\n    def test_y(self):\n"
+                                "        subprocess.run([sys.executable, '-m', 'pytest'], timeout=5)\n"),
+            "espalier/e.py": "def _run_command(a, b, timeout_seconds):\n    pass\ndef leg():\n    _run_command(['python', '-m', 'pytest'], 1, timeout_seconds=5)\n",
+            "bench/splat.py": ("import subprocess, sys\ndef leg(**kw):\n"
+                               "    subprocess.run([sys.executable, '-m', 'pytest'], **kw)\n"),
+            "bench/splat_git.py": "import subprocess\ndef leg(**kw):\n    subprocess.run(['git', 'log'], **kw)\n",
+        }
+        for rel, src in planted.items():
+            (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / rel).write_bytes(src.encode("ascii"))
+        got = sorted((where, ends) for _rel, _line, where, ends in _timed_pytest_sites(tmp_path, list(planted)))
+        assert got == [
+            ("bench/splat.py::leg", False),
+            ("espalier/e.py::leg", False),
+            ("scripts/named.py::leg", False),
+            ("scripts/raw.py::leg", False),
+            ("scripts/tree.py::leg", True),
+            ("scripts/wrapped.py::leg", True),
+            ("scripts/wrapped_plain.py::leg", False),
+            ("tests/test_x.py::TestX::test_y", False),
+        ], got
+
+    def test_the_population_is_the_tracked_tree_not_a_root_list(self):
+        """The population's own control: derived from git, it holds a file in
+        each directory a timed pytest can stand in (``bench/`` and the
+        top-level ``tools/`` among them, which a hand-kept root list left
+        out) and none of the engine's byte mirrors."""
+        files = set(_tree_site_files())
+        want = {"bench/end_to_end/runner.py", "tools/review_agent_audit.py", "tools/cc/ledger_row.py",
+                "tools/cc/hooks/stop_gate.py", "tests/test_verify_pins.py", "scripts/verify_pins.py",
+                "espalier/pre_release.py"}
+        assert want <= files, sorted(want - files)
+        mirrored = sorted(rel for rel in files if rel.startswith(("espalier/_vendor/", "espalier/assets/")))
+        assert not mirrored, mirrored[:5]
 
 # The scan surface is DERIVED from `git ls-files` (the repo's tracked-code
 # source of truth), NOT a hardcoded root list — so a NEW dir that ships to or

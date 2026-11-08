@@ -341,8 +341,10 @@ def _lock_byte(fh: IO[Any], flags: int, *, unlock: bool) -> bool:
     return True
 
 
-#: What :func:`run_bounded` adds to a timeout on Windows: one deadline for the
-#: tree kill, the drain of what was written and the reap of the child.
+#: What :func:`run_bounded` adds to a timeout on Windows, and
+#: :func:`run_tree_bounded` (and :func:`communicate_tree_bounded`) on every
+#: OS: one deadline for the tree kill, the drain of what was written and the
+#: reap of the child.
 SPAWN_KILL_GRACE_SECONDS = 2.0
 
 
@@ -372,7 +374,10 @@ def run_bounded(
     Everywhere else this IS ``subprocess.run``: on POSIX, where ``run`` only
     waits for the killed child; with no ``timeout``; and where
     ``subprocess.run`` has been replaced (a test's fake: :func:`_is_stdlib_run`),
-    since the bound belongs to a real process tree and a fake has none.
+    since the bound belongs to a real process tree and a fake has none. So on
+    POSIX the timeout kills the child alone and what it started runs on: for a
+    child that is itself a tree (a pytest, a script that runs one) call
+    :func:`run_tree_bounded`, whose timeout ends the whole tree on every OS.
 
     Three edges, each as ``run`` has it or narrower. A child that exited while
     a grandchild it detached still holds the pipe ends in ``TimeoutExpired``
@@ -468,6 +473,280 @@ def _end_tree(proc: "subprocess.Popen[Any]", end: float) -> None:
         proc.kill()
     except OSError:  # fail-open: ok deliberate -- the child already ended
         pass
+
+
+def run_tree_bounded(
+    args: Any, *, timeout: float | None = None, input: Any = None,
+    capture_output: bool = False, check: bool = False, **kwargs: Any,
+) -> "subprocess.CompletedProcess[Any]":
+    """:func:`run_bounded`, whose timeout ends the child's whole tree on every OS.
+
+    For a child that is itself a tree of work -- a pytest that spawns hooks and
+    git, a script that runs a pytest of its own -- where ``subprocess.run``'s
+    kill of the child alone leaves the rest running at parent 1 on POSIX
+    (``scripts/verify_pins.py``'s inner pytest, and the suite's runs of that
+    script). At the timeout, and on any exception while it waits (a Ctrl-C, or
+    the per-test ceiling's), the child and every process below it are ended,
+    and ``TimeoutExpired`` (or that exception) is raised. The kill, the drain
+    of what was written and the reap share :data:`SPAWN_KILL_GRACE_SECONDS`.
+    ``TimeoutExpired`` carries what the drain read, decoded as the call asked:
+    a ``str`` under ``text=True``, where ``run`` on POSIX carries ``bytes``;
+    where the drain itself times out (a holder the walk missed keeps its pipe),
+    it carries what the first wait read, as ``bytes`` on POSIX, as ``run``'s
+    does.
+
+    The child starts in no session or process group of its own, so the kill of
+    any ancestor's group still reaches the whole tree: a session at this level
+    would hide everything below it from the group kills of
+    ``scripts/fresh_clone_gate.py`` and ``scripts/archive_probe.py``, and a
+    group kill does not reach into another session, so groups compose at one
+    level only. So ``start_new_session``, ``process_group`` and ``preexec_fn``
+    are refused on POSIX, and the kill walks the tree instead, which composes
+    at any depth. On Windows the child goes into the kill-on-close job object
+    :func:`run_tree_to_deadline` uses (:func:`_kill_on_close_job`), and the
+    kill is :func:`_end_the_tree_now`: ``taskkill /T`` while every parent in
+    the tree is alive, then ``TerminateJobObject``. The job also outlives a
+    child that exits on its own: on Windows what that child left running stays
+    in the job and is ended when the caller exits (the job's handle, one per
+    call, closes with the caller), where on POSIX it runs on. On POSIX
+    (:func:`_end_the_whole_tree`) it reads the process table (``ps``), stops
+    the child and every process below it, reads again until a read finds none
+    it has not already tried to stop, then kills each one, and the group of each process in
+    the tree that leads one (never the caller's), which takes what a nested
+    session (a :func:`run_tree_to_deadline` below) left behind its leader.
+
+    Three edges. A process whose parent and group leader both ended before the
+    walk is no longer below the child or in a group the walk knows, and runs
+    on; if it holds a pipe, the drain still ends at the grace and the call
+    returns. Where ``ps`` cannot answer, the kill is of the child, and of its
+    group where it leads one. And a test that replaces ``subprocess.run``
+    reaches it as is (:func:`_is_stdlib_run`): a stand-in has no tree.
+    """
+    import subprocess
+
+    if sys.platform != "win32":
+        held = [name for name, given in (("start_new_session", bool(kwargs.get("start_new_session"))),
+                                         ("process_group", kwargs.get("process_group") is not None),
+                                         ("preexec_fn", kwargs.get("preexec_fn") is not None)) if given]
+        if held:
+            raise ValueError(
+                f"run_tree_bounded refuses {', '.join(held)}: its child starts in the caller's own "
+                "process group so an ancestor's group kill (scripts/fresh_clone_gate.py's, "
+                "scripts/archive_probe.py's) still reaches the tree, and its own kill walks the tree")
+    if not _is_stdlib_run(subprocess.run, subprocess):
+        return subprocess.run(args, timeout=timeout, input=input,  # spawn: ok a test's stand-in for run, which has no tree
+                              capture_output=capture_output, check=check, **kwargs)
+    if input is not None:
+        if kwargs.get("stdin") is not None:
+            raise ValueError("stdin and input arguments may not both be used.")
+        kwargs["stdin"] = subprocess.PIPE
+    if capture_output:
+        if kwargs.get("stdout") is not None or kwargs.get("stderr") is not None:
+            raise ValueError("stdout and stderr arguments may not be used with capture_output.")
+        kwargs["stdout"] = subprocess.PIPE
+        kwargs["stderr"] = subprocess.PIPE
+    proc = subprocess.Popen(args, **kwargs)  # spawn: ok the tree-bounded run itself
+    job = _kill_on_close_job(proc) if sys.platform == "win32" else None
+    stdout, stderr = _communicate_or_end_the_tree(proc, input, timeout, job)
+    retcode = proc.wait()  # communicate() returned, so it reaped the child: this answers at once
+    if check and retcode:
+        raise subprocess.CalledProcessError(retcode, proc.args, output=stdout, stderr=stderr)
+    return subprocess.CompletedProcess(proc.args, retcode, stdout, stderr)
+
+
+def communicate_tree_bounded(proc: Any, input: Any = None, *, timeout: float | None = None) -> "tuple[Any, Any]":
+    """``proc.communicate(input, timeout=timeout)`` for a ``Popen`` the caller
+    holds, whose timeout, and any exception while it waits, ends ``proc``'s
+    whole tree as :func:`run_tree_bounded`'s does, then raises.
+    ``communicate`` alone raises at its timeout and leaves the child and all
+    it started running. For a child the caller had to start itself (it reads
+    one pipe on a thread of its own while the child runs); a child started
+    here goes through :func:`run_tree_bounded`. On Windows ``proc`` goes into
+    the kill-on-close job object at entry (:func:`_kill_on_close_job`), so the
+    kill is ``taskkill /T`` then the job, as :func:`run_tree_bounded`'s is; a
+    process ``proc`` started before this call is reached by the ``taskkill``
+    walk alone. Start ``proc`` in the caller's own process group: a child in
+    a session of its own is ended here through its group, but that session
+    hides the whole tree from every ancestor's group kill
+    (``scripts/fresh_clone_gate.py``'s, ``scripts/archive_probe.py``'s), the
+    reason :func:`run_tree_bounded` refuses one."""
+    job = _kill_on_close_job(proc) if sys.platform == "win32" else None
+    return _communicate_or_end_the_tree(proc, input, timeout, job)
+
+
+def _communicate_or_end_the_tree(proc: Any, input: Any, timeout: "float | None", job: Any) -> "tuple[Any, Any]":
+    """``proc``'s output by ``timeout``; at the timeout, or on any exception
+    while it waits, its whole tree ended (:func:`_end_the_whole_tree`), and
+    the drain and the reap held to one grace from the kill."""
+    import subprocess
+
+    try:
+        return proc.communicate(input, timeout=timeout)  # spawn: ok the tree-bounded wait itself
+    except subprocess.TimeoutExpired as exc:
+        end = time.monotonic() + SPAWN_KILL_GRACE_SECONDS
+        _end_the_whole_tree(proc, end, job)
+        try:
+            exc.stdout, exc.stderr = proc.communicate(timeout=max(0.05, end - time.monotonic()))  # spawn: ok the drain after the tree kill
+        except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- a holder the walk missed keeps its pipe; the bound holds and the TimeoutExpired below says what happened
+            pass
+        try:
+            proc.wait(timeout=max(0.05, end - time.monotonic()))
+        except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- a child that outlives SIGKILL is the OS's now
+            pass
+        raise
+    except BaseException:  # noqa: BLE001 -- Ctrl-C or the per-test ceiling mid-wait: the tree ends under the grace and the error goes on, where run's own handler kills the child alone
+        end = time.monotonic() + SPAWN_KILL_GRACE_SECONDS
+        _end_the_whole_tree(proc, end, job)
+        try:
+            proc.wait(timeout=max(0.05, end - time.monotonic()))
+        except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- a child that outlives SIGKILL is the OS's now; the original error is the one to raise
+            pass
+        raise
+
+
+def _end_the_whole_tree(proc: Any, end: float, job: Any = None) -> None:
+    """End ``proc`` and every process below it by ``end``, from no group of
+    its own.
+
+    Windows: :func:`_end_the_tree_now` (``taskkill /T`` by pid, then the job),
+    or the job alone once ``proc`` is reaped, since its pid may then name
+    another process. POSIX: the walk runs only while ``proc`` is unreaped and
+    the table names this process as its parent (a reaped pid may already be
+    another process's). It stops the child and each process below it, reads
+    again until a read finds none it has not tried, each read bounded by
+    ``end``, then kills every process it stopped, and the group of each one
+    that leads a group other than the caller's. A pid joins the stopped set
+    just before its stop and leaves it when the stop fails, so a stop that
+    failed widens nothing, and an exception mid-walk, even one landing just
+    after a stop, still kills every process that may be stopped. Where the
+    first read found no table, an unreaped child that leads its own group is
+    ended through it; where the table named another parent, nothing but
+    ``proc.kill()`` runs, since a group the pid leads may be another
+    process's. The child's own state is read from ``returncode``, never
+    ``poll()``, which would reap an exited child and hand its children to
+    parent 1 before the walk could read them below it. Last,
+    ``proc.kill()``, which ``Popen`` itself skips for a reaped child."""
+    if sys.platform == "win32":
+        if proc.returncode is None:
+            _end_the_tree_now(proc, job, end)
+        elif job is not None:
+            _terminate_job(job)
+        return
+    import signal
+
+    me, my_group = os.getpid(), os.getpgid(0)
+    tried: set[int] = set()
+    stopped: set[int] = set()
+    leaders: set[int] = set()
+    walked = unread = False
+    try:
+        while proc.returncode is None and time.monotonic() < end:
+            read = _process_table(end)
+            if read is None:
+                unread = not walked
+                break
+            if read.get(proc.pid, (None, None))[0] != me:
+                break
+            walked = True
+            new = _below(proc.pid, read) - tried - {me}
+            if not new:
+                break
+            for pid in new:
+                tried.add(pid)
+                leads = read[pid][1] == pid
+                # Recorded before the stop, so an interrupt landing just after
+                # it still finds the pid in the set the kill below reads.
+                stopped.add(pid)
+                if leads:
+                    leaders.add(pid)
+                try:
+                    os.kill(pid, signal.SIGSTOP)
+                except OSError:  # fail-open: ok deliberate -- it ended between the read and the stop, or is not ours to stop; it leaves both sets
+                    stopped.discard(pid)
+                    leaders.discard(pid)
+    finally:
+        for pid in stopped:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:  # fail-open: ok deliberate -- it already ended
+                pass
+        if unread and proc.returncode is None:
+            try:
+                if os.getpgid(proc.pid) == proc.pid:
+                    leaders.add(proc.pid)
+            except OSError:  # fail-open: ok deliberate -- the child already ended
+                pass
+        for group in leaders - {my_group}:
+            try:
+                os.killpg(group, signal.SIGKILL)
+            except OSError:  # fail-open: ok deliberate -- the group already ended
+                pass
+        try:
+            proc.kill()
+        except OSError:  # fail-open: ok deliberate -- the child already ended
+            pass
+
+
+#: The process-table read: every process's pid, parent pid and process group,
+#: no header, each column its own ``-o`` (POSIX reads the text after ``=`` as
+#: the header for the rest of its argument, so ``pid=,ppid=,pgid=`` is one
+#: column where a ps follows that, BusyBox's among them). One spelling for
+#: this module's walk and ``checkout_sync._parent_map``, parsed by
+#: :func:`parse_process_table`.
+PS_TABLE_ARGV = ("ps", "-A", "-o", "pid=", "-o", "ppid=", "-o", "pgid=")
+
+
+def parse_process_table(text: str) -> "dict[int, tuple[int, int]] | None":
+    """``ps`` output in the :data:`PS_TABLE_ARGV` shape as ``pid -> (ppid,
+    pgid)``; ``None`` for a table with no rows, which no host has (the reader
+    is in it), never ``{}``, which reads as a host with no processes."""
+    table: "dict[int, tuple[int, int]]" = {}
+    for line in text.splitlines():
+        cells = line.split()
+        if len(cells) == 3 and all(c.isdigit() for c in cells):
+            table[int(cells[0])] = (int(cells[1]), int(cells[2]))
+    return table or None
+
+
+def _process_table(end: float) -> "dict[int, tuple[int, int]] | None":
+    """Every process as ``pid -> (ppid, pgid)``, read from ``ps`` by ``end``
+    (``/bin/ps`` first, so no PATH entry can stand in for it); ``None`` where
+    it cannot be read. Every pid in it is real: a test that hands the walk a
+    table of its own makes the walk signal those pids, so it replaces the
+    module's ``os`` with a recorder too."""
+    import shutil
+    import subprocess
+
+    ps = "/bin/ps" if os.path.exists("/bin/ps") else shutil.which("ps")
+    if not ps:
+        return None
+    try:
+        # The shared spelling, its program name first; ``executable`` is the
+        # program that runs.
+        out = subprocess.run(  # spawn: ok the tree walk's table read -- no input, its own timeout
+            ["ps", *PS_TABLE_ARGV[1:]], executable=ps,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=max(0.05, end - time.monotonic()),
+        )
+    except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- the kill of the child alone still runs
+        return None
+    if out.returncode != 0:
+        return None
+    return parse_process_table(out.stdout)
+
+
+def _below(root: int, table: "dict[int, tuple[int, int]]") -> "set[int]":
+    """``root`` and every process below it in ``table``, by parent pid."""
+    children: "dict[int, list[int]]" = {}
+    for pid, (ppid, _group) in table.items():
+        children.setdefault(ppid, []).append(pid)
+    tree, todo = {root}, [root]
+    while todo:
+        for child in children.get(todo.pop(), ()):
+            if child not in tree:
+                tree.add(child)
+                todo.append(child)
+    return tree
 
 
 #: How long :func:`run_tree_to_deadline` gives the kill, the drain and the
@@ -576,9 +855,7 @@ def _end_the_tree_now(proc: Any, job: Any, end: float) -> None:
     if os.name == "nt":
         _end_tree(proc, end)
         if job is not None:
-            import ctypes
-
-            ctypes.WinDLL("kernel32", use_last_error=True).TerminateJobObject(ctypes.c_void_p(job), 1)
+            _terminate_job(job)
         return
     import signal
 
@@ -590,6 +867,15 @@ def _end_the_tree_now(proc: Any, job: Any, end: float) -> None:
         proc.kill()
     except OSError:  # fail-open: ok deliberate -- the child already ended
         pass
+
+
+def _terminate_job(job: Any) -> None:
+    """End every process in the Windows job object ``job`` (a handle from
+    :func:`_kill_on_close_job`); the handle stays open, as that function
+    says."""
+    import ctypes
+
+    ctypes.WinDLL("kernel32", use_last_error=True).TerminateJobObject(ctypes.c_void_p(job), 1)
 
 
 def _kill_on_close_job(proc: Any) -> "int | None":

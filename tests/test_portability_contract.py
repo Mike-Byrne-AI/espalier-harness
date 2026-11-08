@@ -2949,8 +2949,10 @@ _ARGV_ROOTS = ("espalier", "tools", "scripts", "tests", "bench")
 _ARGV_EXEMPT = ("tests/fixtures/", "espalier/_vendor/")
 _SPAWN_CALLS = frozenset({"run", "Popen", "check_output", "check_call", "call"})
 #: The harness's own bounded spawns (docs/CONVENTIONS.md: tools/cc spawns go
-#: through them), read by name wherever they are called from.
-_BOUNDED_SPAWNS = frozenset({"run_bounded", "spawn_checked"})
+#: through them), read by name wherever they are called from: the hooks'
+#: chokepoint and every argv-first spawn ``tools/cc/_json_safe.py`` defines
+#: (``TestSpawnsNameTheirInterpreter::test_every_bounded_spawn_is_read_by_name``).
+_BOUNDED_SPAWNS = frozenset({"run_bounded", "run_tree_bounded", "run_tree_to_deadline", "spawn_checked"})
 _BARE_INTERPRETERS = frozenset({"python", "python3"})
 
 
@@ -3026,6 +3028,17 @@ class TestSpawnsNameTheirInterpreter:
     (``tests/test_check_ledger_probes.py::TestProbeShapesAreRatcheted::
     test_no_new_probe_spawns_a_literal_interpreter_inside_its_program``),
     the one home of that arm."""
+
+    def test_every_bounded_spawn_is_read_by_name(self):
+        """A spawn routed onto a bounded spawn the reader does not name leaves
+        the population unread (four timed runs moved onto ``run_tree_bounded``
+        and out of view, DEF-1179)."""
+        from tests._tree_spawn import bounded_spawn_names
+
+        missing = sorted(bounded_spawn_names() - _BOUNDED_SPAWNS)
+        assert not missing, (
+            f"tools/cc/_json_safe.py defines bounded spawns {missing} that _BOUNDED_SPAWNS does "
+            "not read: a bare interpreter spawned through one goes unseen")
 
     def test_no_spawn_opens_with_a_bare_interpreter(self):
         hits = [f"{path.relative_to(REPO_ROOT).as_posix()}:{lineno}: [{name!r}, ...]"
