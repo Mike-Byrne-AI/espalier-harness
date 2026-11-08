@@ -1722,24 +1722,44 @@ longer emits (see `CLAUDE.md`'s hook table for why).
 **The time budget.** Claude Code cancels a hook at its wired `timeout` (5 s
 for this one), and a cancelled PreToolUse command hook does not block: the
 call goes on through the normal permission flow
-(`docs/external/cc-hook-protocol.md`, "Timeouts"). So `write_guard` judges
-every call, on every tool and under maintenance mode too, within its own
-budget of 3.5 s from the hook's start (`JUDGMENT_BUDGET_S` in
-`tools/cc/hooks/write_guard.py`). An ordinary call finishes in a small
-fraction of that and sees no change. A judgment still running when the
-budget runs out -- a long generated list of paths is the shape that gets
-there -- is denied the way the guard denies any call, one deny decision on
-stdout whose reason tells the agent the guard could not finish judging the
-command in time and to split it into shorter commands (batches of a hundred
-or two paths), and it writes one `pretooluse_blocked_time_budget` record
-that `/status --log` counts. A git the judgment asks (the discard snapshot, a dirty-tree check)
-is given only the budget that is left, so on a large repo or a cold cache a
-slow git costs its snapshot, said once, and the call is still judged. A
-state write the judgment has in flight finishes before the hook
-exits, so a refusal never leaves a torn line in a log; a write that hangs
-holds the refusal with it until the timeout lets the call through, a
-declared limit, pinned by
-`tests/test_write_guard_time_budget.py::TestASlowJudgmentIsRefused::test_the_refusal_waits_for_a_state_write_in_flight`.
+(`docs/external/cc-hook-protocol.md`, "Timeouts"). So `write_guard` answers
+every call, on every tool and under maintenance mode too, inside two bounds.
+The hook process is a thin parent: it reads the payload, runs the guard
+again as a judging child, and answers with the child's verdict byte for
+byte (its output, its error text and its exit code; a child ended by a
+signal exits 1, which fails open as a crashed hook does). The child judges
+within a budget of 3.5 s from its own start (`JUDGMENT_BUDGET_S` in
+`tools/cc/hooks/write_guard.py`). A judgment still running when that budget
+runs out -- a long generated list of paths is the shape that gets there --
+is denied the way the guard denies any call, one deny decision on stdout
+whose reason tells the agent the guard could not finish judging the command
+in time and to split it into shorter commands (batches of a hundred or two
+paths), and it writes one `pretooluse_blocked_time_budget` record that
+`/status --log` counts. That budget is a thread's wait, and a judgment
+sitting in one long compiled-pattern search holds the interpreter lock for
+the whole call, so the wait can end long past the timeout (40.4 s under
+0.8 s calls, measured on the Air). The parent is the hard bound: at 4.0 s
+from the hook's start (`HARD_DEADLINE_S`) it kills the child and every
+process the child started (the child's own session on POSIX, a job object
+that kills on close on Windows, `taskkill /T` where none can be made),
+writes the same deny, and exits, its own `pretooluse_blocked_time_budget`
+record written only in the 0.4 s it leaves itself after the deny. The child
+also caps its own CPU time at 10 s on POSIX, for a child whose parent was
+ended from outside. An ordinary call finishes in a small fraction of either
+bound; the second interpreter adds its start to every call (about 30 ms on
+the Air, Python 3.14). Where no child can start, the hook process judges the
+call itself under the 3.5 s budget alone and says so once
+(`pretooluse_failed_open_time_budget`, the record a judgment thread that
+cannot start also writes). A git the judgment asks (the discard snapshot, a
+dirty-tree check) is given only the budget that is left, so on a large repo
+or a cold cache a slow git costs its snapshot, said once, and the call is
+still judged. Inside the child, a state write the judgment has in flight
+finishes before the child's refusal exits, pinned by
+`tests/test_write_guard_time_budget.py::TestASlowJudgmentIsRefused::test_the_refusal_waits_for_a_state_write_in_flight`;
+a write still in flight at the parent's deadline is killed with the child,
+and a line it cut off loses only itself: every line-record append of the
+hooks starts on a line of its own after a torn one (`own_line` in
+`tools/cc/hooks/_hook_utils.py`), and the readers skip a torn line.
 
 **What you see when blocked:**
 
@@ -2851,7 +2871,7 @@ inside a window of twenty.
 | `pretooluse_blocked_kill_switch` | refusal | a tool call is denied because a kill-switch is set |
 | `pretooluse_blocked_secret_path` | refusal | a read of a secret-bearing path (a dotenv file, a `secrets/` directory, a credentials file) is denied — for Read/Edit/Grep, and for a Bash or PowerShell command that would print it |
 | `pretooluse_blocked_internal_error` | refusal | `write_guard` or `plan_guard` crashed and denied the call fail-closed; `details.hook` names which, `details.error` the exception's class (never its message); one record per denied call while the hook stays wedged, so the tail fills with them and the by-type line above it is where every other type's count survives |
-| `pretooluse_blocked_time_budget` | refusal | `write_guard`'s judgment was still running when its time budget ran out, and the call was denied rather than let through when Claude Code's timeout cancelled the hook; `details.tool` names the tool, `details.budget_s` the budget and `details.chars` the command's length, never its text |
+| `pretooluse_blocked_time_budget` | refusal | `write_guard`'s judgment was still running when its time budget ran out, and the call was denied rather than let through when Claude Code's timeout cancelled the hook. From the judging child, `details.tool` names the tool, `details.budget_s` the budget and `details.chars` the command's length, never its text; from the parent at its hard deadline (the child killed with its tree), `details.bound` is `child`, `details.budget_s` the deadline and `details.bytes` the payload's length |
 | `configchange_blocked_kill_switch` | refusal | a settings change that would arm a kill-switch is denied |
 | `configchange_blocked_unwired` | refusal | a project settings change that would unwire a governance gate the session runs is denied; `details.findings` names the gates |
 | `configchange_blocked_internal_error` | refusal | `config_guard` crashed and blocked the settings change fail-closed; `details.hook`, `details.error` as above |

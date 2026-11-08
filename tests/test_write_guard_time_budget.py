@@ -586,10 +586,18 @@ class TestOneLongCallInTheJudgmentIsRefusedInTime:
         assert _UNANSWERED_RUN_BOUND_S > timeout, "the run's bound must leave the wired timeout room to fail"
         try:
             started = time.monotonic()
-            result = subprocess.run(
-                [sys.executable, str(HOOKS_DIR / "write_guard.py")], input=json.dumps(payload),
-                capture_output=True, text=True, encoding="utf-8", timeout=_UNANSWERED_RUN_BOUND_S, env=env,
-            )
+            try:
+                result = subprocess.run(
+                    [sys.executable, str(HOOKS_DIR / "write_guard.py")], input=json.dumps(payload),
+                    capture_output=True, text=True, encoding="utf-8", timeout=_UNANSWERED_RUN_BOUND_S, env=env,
+                )
+            except subprocess.TimeoutExpired:
+                # The defect itself, failed by name: the unbounded judgment
+                # never answers, and Claude Code would have let the call
+                # through at its timeout (a bare TimeoutExpired reads as a row
+                # that never reached its assertion).
+                pytest.fail(f"the hook gave no answer within {_UNANSWERED_RUN_BOUND_S} s, so Claude Code's"
+                            f" {timeout} s timeout would let the call through unjudged")
             elapsed = time.monotonic() - started
             assert pid_file.is_file(), ("the seam never fired: the judgment did not stall", result.stderr)
             sleeper = int(pid_file.read_text(encoding="utf-8").strip())

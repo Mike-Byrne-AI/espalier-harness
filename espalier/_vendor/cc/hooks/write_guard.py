@@ -3043,15 +3043,17 @@ def _deny_mcp(
 # under a budget, and the main thread refuses the call when the budget runs
 # out first. Every tool the guard judges goes through `main`, so through it.
 #
-# THE BUDGET, 3.5 s, counted from the hook's first line in the hook process.
-# The 1.5 s left under the 5 s timeout covers what the clock cannot see and
-# what the refusal costs: the spawn and the interpreter's start before the
+# THE BUDGET, 3.5 s, counted from the first line of the process that judges:
+# the judging child, a spawn after the hook's own start, whose parent refuses
+# at `HARD_DEADLINE_S` from that start (the hard bound, at the top of this
+# file). The 1.5 s left under the 5 s timeout covers what the clock cannot see
+# and what the refusal costs: the spawn and the interpreter's start before the
 # first line (about 45 ms of a bare interpreter here, more under a shell or
 # a loaded box), the wake of the waiting thread (under 10 ms, measured on the
 # long Bash and PowerShell lists: the judgment drops the interpreter lock
-# between its many short calls; one long uninterruptible call would delay
-# the wake by its own length), and the refusal's audit record and a state
-# write in flight (milliseconds). Driven end to end here, the hook process
+# between its many short calls; one long uninterruptible call delays the wake
+# by its own length, which is the case the parent's kill answers), and the
+# refusal's audit record and a state write in flight (milliseconds). Driven end to end here, the hook process
 # exits 2 at about 3.6 s from the spawn. An ordinary call judges in
 # milliseconds and costs about 0.3 s in all here, so the budget sits more
 # than ten times above it. `tests/test_write_guard_time_budget.py` pins the
