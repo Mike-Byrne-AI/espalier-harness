@@ -9866,7 +9866,6 @@ class TestPowerShellScratchRootRung:
         r"Remove-Item -Recurse -Force C:\tmp\*",
         r"Remove-Item -Recurse -Force C:\tmp\x\..\..\Windows",
         r"Remove-Item -Recurse -Force C:\tmp\x,C:\Windows",
-        r"Remove-Item -Recurse -Force $env:TEMP\x",           # a variable is unread (DEF-2049)
         r"Remove-Item -Recurse -Force C:\Windows\Temp\x",
         r"Remove-Item -Recurse -Force C:\tmpfoo\x",
         r"Remove-Item -Recurse -Force C:\tmp\x; Remove-Item -Recurse -Force C:\Windows",
@@ -9917,6 +9916,16 @@ class TestPowerShellScratchRootRung:
         for _ in range(2):
             result = _run_ps_guard_with_temp(command, tmp_path, self.TEMP)
             assert_hook_denied(result, contains_reason="blocked")
+
+    def test_a_forced_remove_below_the_temp_variable_draws_one_nudge(self, tmp_path):
+        """Below the TEMP the environment names, spelled through it: off the
+        wall, read as its value (DEF-2049; a WALL row until 2026-11-07, an
+        unreadable target), and asked once by the bump, whose quiet
+        carve-out reads literal paths alone."""
+        command = r"Remove-Item -Recurse -Force $env:TEMP\x"
+        first = _run_ps_guard_with_temp(command, tmp_path, self.TEMP)
+        assert_hook_denied(first, contains_reason="Speed-bump")
+        assert_hook_allowed(_run_ps_guard_with_temp(command, tmp_path, self.TEMP))
 
     def test_the_checkout_below_a_scratch_root_is_still_the_wall(self, tmp_path):
         """Below a scratch root by the environment and the checkout itself:
@@ -10159,23 +10168,132 @@ class TestAScratchRootItselfIsTheWall:
         assert not self._walls(
             "find /tmp -mindepth 1 -maxdepth 1 -name 'claude-*' -exec rm -rf {} +", "Bash")
 
-    def test_a_root_spelled_by_its_variable_is_not_read(self, monkeypatch):
-        """A declared limit (docs/HOOKS.md): the reader resolves no
-        variable, so a root spelled by its variable is not the root it
-        names and keeps the nudge, never the wall -- the Bash tool's
-        `"$TMPDIR"` and the PowerShell tool's unforced `$env:TEMP`, where
-        the literal spelling of the same root walls. The day a reader
-        resolves the variable (DEF-2049) this row reds and the sentence is
-        rewritten."""
+    #: A root spelled through ``TEMP``, ``TMP`` or ``TMPDIR`` (DEF-2049):
+    #: quoted or bare, braced or not, a trailing separator, a parent step,
+    #: each variable, and the environment drive's spellings on the
+    #: PowerShell tool with the force switch and without.
+    VARIABLE_ROOTS = [
+        ("Bash", RM + '"$TMPDIR"'),
+        ("Bash", RM + "$TMPDIR"),
+        ("Bash", RM + "${TMPDIR}"),
+        ("Bash", RM + '"$TMPDIR/"'),
+        ("Bash", RM + '"$TMPDIR/.."'),
+        ("Bash", RM + "$TEMP"),
+        ("Bash", RM + '"$TMP"'),
+        ("Bash", RM + '"${TMPDIR:?}"'),
+        ("Bash", RM + '"${TMPDIR:-/tmp}"'),
+        ("Bash", RM + '"${TMPDIR%/}"'),
+        ("Bash", "cmd //c rd /s /q %TEMP%"),
+        ("PowerShell", "cmd /c rd /s /q %TEMP%"),
+        ("PowerShell", "cmd /c rd /s /q %temp%"),
+        ("PowerShell", "Remove-Item -Recurse $env:TEMP"),
+        ("PowerShell", 'Remove-Item -Recurse "${env:TMP}"'),
+        ("PowerShell", "Remove-Item -Recurse $env:TMPDIR\\"),
+        ("PowerShell", RI + "$env:TEMP"),
+    ]
+
+    @pytest.mark.parametrize("tool, command", VARIABLE_ROOTS,
+                             ids=[f"{t}:{c}" for t, c in VARIABLE_ROOTS])
+    def test_a_root_spelled_by_its_variable_is_the_root(self, tool, command, monkeypatch):
+        """The variable is read as the value this process inherits, so the
+        root it names is the root (DEF-2049): until 2026-11-07 the readers
+        resolved no temp variable, and `"$TMPDIR"` on the Bash tool or an
+        unforced `$env:TEMP` drew the nudge, one re-issue from taking the
+        per-user temp directory, where the literal spelling walled."""
+        self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
+        assert self._walls(command, tool), command
+
+    def test_below_a_root_spelled_by_its_variable_is_scratch(self, monkeypatch):
+        """A literal tail below the variable's value is scratch on every
+        reader, the forced PowerShell remove included, which walled it as an
+        unreadable target (DEF-2049); the speed bump still asks once of a
+        variable spelling, since its carve-out reads literal paths alone."""
         monkeypatch.syspath_prepend(str(HOOKS_DIR))
         import _speedbump as sb
         self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
         repo = Path.home() / "scratch-root-no-such-repo"
-        for tool, command in (("Bash", self.RM + '"$TMPDIR"'),
-                              ("PowerShell", "Remove-Item -Recurse $env:TEMP")):
+        for tool, command in (("Bash", self.RM + '"$TMPDIR/x"'),
+                              ("Bash", self.RM + "$TEMP/x"),
+                              ("PowerShell", "Remove-Item -Recurse $env:TEMP\\x"),
+                              ("PowerShell", self.RI + "$env:TEMP\\x"),
+                              ("PowerShell", self.RI + '"${env:TMP}/a b"')):
             assert not self._walls(command, tool), command
             assert sb._pred_rmrf(tool, {"command": command}, repo), command
-        assert self._walls(self.RM + "/tmp/job-1", "Bash")
+
+    @pytest.mark.parametrize("tool, command, env", [
+        ("Bash", RM + '"$TMPDIR"', {}),
+        ("Bash", RM + '"${TMPDIR:?}"', {}),
+        ("Bash", RM + '"$TMPDIR"', {"TMPDIR": "tmp/job-1"}),
+        ("Bash", RM + '"$TMPDIRS"', {"TMPDIR": "/tmp/job-1"}),
+        ("PowerShell", "Remove-Item -Recurse $TEMP", {"TEMP": "C:/tmp/job-1"}),
+    ], ids=["unset", "unset-guarded", "relative", "another-name", "a-session-variable"])
+    def test_a_variable_with_no_root_to_read_keeps_the_nudge(self, tool, command, env, monkeypatch):
+        """Unset, a relative value, another name, and PowerShell's own
+        session variable (not the environment's) name no root: read as any
+        other variable, the nudge."""
+        self._env(monkeypatch, **env)
+        assert not self._walls(command, tool), command
+
+    @pytest.mark.parametrize("command", [
+        "$env:TEMP = 'D:\\other'; " + RI + "$env:TEMP\\x",
+        "Set-Item env:TEMP D:\\other; " + RI + "$env:TEMP\\x",
+        "[Environment]::SetEnvironmentVariable('TEMP', 'D:\\other'); " + RI + "$env:TEMP\\x",
+        ". ./setup.ps1; " + RI + "$env:TEMP\\x",
+    ], ids=["assigned", "set-item", "dotnet", "dot-sourced"])
+    def test_a_forced_remove_below_a_variable_the_command_sets_is_the_wall(
+            self, command, monkeypatch):
+        """The one reading that lifts a wall reads the inherited value only
+        where the command names that variable nowhere else: a value the
+        command sets before the remove is not the inherited one, so the
+        target stays unread, as it was."""
+        self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
+        assert self._walls(command, "PowerShell"), command
+
+    def test_an_unset_variable_is_read_by_its_default(self, monkeypatch):
+        """`${TMPDIR:-/tmp}` with TMPDIR unset expands the default, a root."""
+        self._env(monkeypatch)
+        assert self._walls(self.RM + '"${TMPDIR:-/tmp}"', "Bash")
+
+    def test_a_variable_the_command_sets_is_not_the_inherited_one(self, monkeypatch):
+        """A command that sets the variable itself expands its own value, not
+        the inherited one, so the remove readers leave it unread, the
+        reading it had before (the code review, driven: a script pointing
+        TMPDIR at its own `mktemp -d` directory met a wall no re-issue
+        clears). Read per text at the two classifier entries the hard tier
+        and the speed bump both call with that text, so one answer serves
+        both tiers."""
+        self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
+        for tool, command in (
+                ("Bash", "export TMPDIR=$(mktemp -d); make test; " + self.RM + '"$TMPDIR"'),
+                ("Bash", "TMPDIR=/tmp/job-1/sub; " + self.RM + '"$TMPDIR"'),
+                ("PowerShell", "$env:TEMP = 'C:/tmp/job-1/sub'; Remove-Item -Recurse $env:TEMP")):
+            assert not self._walls(command, tool), command
+
+    def test_a_sweep_reads_a_variable_the_command_sets_by_its_inherited_value(self, monkeypatch):
+        """A declared limit (docs/HOOKS.md): the sweep readers (a `find` with
+        a delete action, an enumerator piped into a remove) do not take the
+        per-text reading, so a walk rooted at a temp variable the command
+        sets walls as the inherited root (an over-refusal: spell the path,
+        or bind another name)."""
+        self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
+        assert self._walls("export TMPDIR=/tmp/job-1/sub; find \"$TMPDIR\" -delete", "Bash")
+
+    def test_a_brace_spelling_below_the_variable_reaches_the_checkout(self, monkeypatch):
+        """The brace reader's mid-name probe reads the variable as the
+        target judge does, so a brace that completes the checkout's name
+        below it walls as the literal spelling does (the code review)."""
+        self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
+        wg = _load_write_guard()
+        repo = Path("C:/tmp/job-1/work/repo")
+        for command in (self.RM + "C:/tmp/job-1/work/rep{o,}", self.RM + "$TEMP/work/rep{o,}"):
+            assert wg._bash_dangerous_reason(command, repo, cwd=repo) is not None, command
+
+    def test_a_forced_remove_below_a_variable_that_vets_out_is_the_wall(self, monkeypatch):
+        """The value is a scratch root only where `_vetted_scratch_values`
+        vets it: a TEMP that names the home directory is no scratch root, so
+        the forced remove below it keeps the wall."""
+        self._env(monkeypatch, TEMP=Path.home().as_posix())
+        assert self._walls(self.RI + "$env:TEMP\\x", "PowerShell")
 
     @pytest.mark.parametrize("value, path, below", [
         ("C:/tmp/job-1", "C:/tmp/job-1", False),
@@ -10202,7 +10320,9 @@ class TestAScratchRootItselfIsTheWall:
             env[var] = "C:/tmp/job-1"
         for tool, command in (("Bash", self.RM + "/tmp"),
                               ("Bash", self.RM + "C:/tmp/job-1"),
-                              ("PowerShell", self.RI + "C:\\tmp\\job-1")):
+                              ("PowerShell", self.RI + "C:\\tmp\\job-1"),
+                              ("Bash", self.RM + '"$TMPDIR"'),
+                              ("PowerShell", "Remove-Item -Recurse $env:TEMP")):
             payload = json.dumps({"tool_name": tool, "tool_input": {"command": command}})
             for _ in range(2):
                 result = run_hook_through([sys.executable, str(script)], input=payload, env=env)
