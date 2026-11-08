@@ -110,9 +110,15 @@ module-top read, so a kept helper still refuses at the start.
 An exception that escapes a deny hook's module body after those imports is
 refused too, never exit 1: each hook, under `__main__` and before the guarded
 `try`, installs `_start_refusal.refuse_on_body_raise` as `sys.excepthook`, and
-`raise SystemExit(0)` inside an exception hook exits 0 (3.10 to 3.14). A plant
-that tests it goes before the hook's last `__main__` block: all four end in
-`raise SystemExit(main())`, so a raise placed after it never runs.
+`raise SystemExit(0)` inside an exception hook exits 0 (3.11 to 3.14). The
+module body only: `_start_refusal.body_done()` puts the old hook back at the top
+of each hook's last `__main__` block, before `main` (which has read the payload
+by then, so a body refusal past it would miss the Stop loop signal), and in
+`write_guard`'s parent before it writes a decision. A raise past the body is
+`main`'s crash guard's, as before. A plant that tests it goes before the hook's
+last `__main__` block: each ends by raising `SystemExit` with `main`'s result
+(`plan_guard` and `write_guard` through `int(main(...))`), so a raise placed
+after it never runs.
 
 ## Maintenance mode — parent-shell launch only
 

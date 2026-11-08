@@ -984,8 +984,13 @@ raised (not an import), neither offers nor rules out an upgrade (the
 kept-helper test alone offers one), records `details.skew: "module body"`
 (`"sibling import"` for the guarded imports), lets `write_guard`'s one restore
 through and the Stop hook's loop signal pass. `write_guard`'s judging child
-carries it, and so does a hook process that judges itself. A syntax error in
-the hook file itself is outside it: that file never runs.
+carries it, and so does a hook process that judges itself. It covers the
+module body only: `_start_refusal.body_done()` takes it off at the top of each
+hook's last `__main__` block, before `main` runs, and in `write_guard`'s parent
+before it writes a decision, so a raise that escapes `main` stays `main`'s crash
+guard's (unchanged), never named as the body's, and nothing after a decision
+adds a second one. A syntax error in the hook file itself is outside it: that
+file never runs.
 
 **One call gets through a wedged guard.** A wedged guard used to refuse the
 call that would repair it, so the operator restored the file from a terminal
