@@ -41,7 +41,7 @@ the in-process import of a skewed copy raises (the ``__name__`` gate); and the
 pre-fix shape, the guard disarmed by text surgery on a copy, exits 1 -- the red
 this contract was written to catch, earned against the detector it uses.
 """
-# slow-exempt: about a hundred short hook subprocesses from per-cell copies of tools/cc on a thread pool, once per module, measured 2026-10-10: 10.6 s for the module on the Air, 6.4 s of it the cells
+# slow-exempt: about a hundred short hook subprocesses from per-cell copies of tools/cc on a thread pool, once per module, measured 2026-10-10: 10.6 s for the module on the Air, 6.4 s of it the cells; on loaded Linux CI cells the cells fixture alone took 21 to 48 s (2026-11-07/08, DEF-2056)
 from __future__ import annotations
 
 import ast
@@ -57,8 +57,11 @@ from pathlib import Path
 import pytest
 
 from espalier.harness_config import CANONICAL_HOOK_WIRING, GOVERNANCE_BLOCKING_HOOKS
-from tests._hook_spawn import not_a_budget_miss
+from tests._hook_spawn import RetryAllowance, retry_a_budget_miss
 from tests._live_tree import checkout_glob, copy_checkout
+
+# timeout-exempt: headroom, not cost -- the module-scoped `cells` fixture lands in the first `cells` test each xdist worker runs, 21 to 48 s of the ini's 60 s across 19 Linux full-tier cells (2026-11-07/08, DEF-2056), so each class whose tests request it carries this ceiling, and so does each class whose rows reach `_run_payload` or `_run_hook`, whose 45 s spawn retries a budget refusal once and so needs twice that under the ceiling less 10 s (DEF-2057, pinned in tests/test_test_suite_contract.py); the module stays in the fast slice and its other tests keep the ini's
+_CELLS_CEILING_S = 180
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CC_DIR = REPO_ROOT / "tools" / "cc"
@@ -293,14 +296,16 @@ def _copy_cc(root: Path) -> None:
     copy_checkout(CC_DIR, root / "tools" / "cc", ignore=shutil.ignore_patterns("__pycache__"))
 
 
-def _run_hook(root: Path, hook: str, event: str, timeout: int = 45) -> subprocess.CompletedProcess:
+def _run_hook(root: Path, hook: str, event: str, timeout: int = 45,
+              allowance: RetryAllowance | None = None) -> subprocess.CompletedProcess:
     payload = {"hook_event_name": event, "session_id": "kept-helper", "cwd": str(root), **_NOOP_INPUT.get(event, {})}
-    return not_a_budget_miss(subprocess.run(
+    env = {**_ENV, "CLAUDE_PROJECT_DIR": str(root), "ESPALIER_AUDIT_DIR": str(root / "audit"),
+           "ESPALIER_STOP_GATE": "light"}
+    return retry_a_budget_miss(lambda: subprocess.run(
         [sys.executable, str(root / "tools" / "cc" / "hooks" / hook)], input=json.dumps(payload),
         cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
-        env={**_ENV, "CLAUDE_PROJECT_DIR": str(root), "ESPALIER_AUDIT_DIR": str(root / "audit"),
-             "ESPALIER_STOP_GATE": "light"},
-    ))
+        env=env,
+    ), env=env, cwd=str(root), allowance=allowance)
 
 
 def _skew(root: Path, *names: str) -> None:
@@ -329,7 +334,7 @@ def _plant_in_the_body(path: Path, text: str, before: str | None = None) -> None
     path.write_text(source[:at] + text + source[at:], encoding="utf-8")
 
 
-def _cell(base: Path, job: tuple[str, str, str | None, str]) -> Cell:
+def _cell(base: Path, job: tuple[str, str, str | None, str], allowance: RetryAllowance) -> Cell:
     hook, event, name, kind = job
     root = base / f"{kind}-{hook[:-3]}-{name or 'none'}"
     _copy_cc(root)
@@ -352,7 +357,7 @@ def _cell(base: Path, job: tuple[str, str, str | None, str]) -> Cell:
         _plant_in_the_body(root / "tools" / "cc" / "hooks" / hook, _RAISE, before=_SPLIT if name == "split" else None)
     elif name is not None:
         _skew(root, name)
-    run = _run_hook(root, hook, event)
+    run = _run_hook(root, hook, event, allowance=allowance)
     records = root / "audit"
     audit = "".join(p.read_text(encoding="utf-8", errors="replace")
                     for p in (sorted(records.iterdir()) if records.is_dir() else []) if p.is_file())
@@ -382,8 +387,9 @@ def cells(tmp_path_factory) -> list[Cell]:
     for hook, event in reporter_hooks().items():
         for name in sorted(BUDGET_NAMES):
             jobs.append((hook, event, name, "reporter"))
+    allowance = RetryAllowance()  # the build's budget retries, shared by its threads (DEF-2057)
     with ThreadPoolExecutor(max_workers=6) as pool:
-        return list(pool.map(lambda j: _cell(base, j), jobs))
+        return list(pool.map(lambda j: _cell(base, j, allowance), jobs))
 
 
 def _decision(cell: Cell) -> dict | None:
@@ -486,6 +492,7 @@ class TestTheDerivation:
 
 # ── a deny hook on a kept helper ──────────────────────────────────────────────
 
+@pytest.mark.timeout(_CELLS_CEILING_S)
 class TestADenyHookOnAKeptHelper:
     def test_no_cell_exits_one(self, cells):
         ones = [_summary(c) for c in cells if c.rc == 1]
@@ -585,6 +592,7 @@ class TestADenyHookOnAKeptHelper:
             assert "upgrade --execute" not in _reason(c), _reason(c)
 
 
+@pytest.mark.timeout(_CELLS_CEILING_S)
 class TestAReporterOnTheBudgetSkew:
     def test_every_reporter_starts_and_exits_zero(self, cells):
         # The realistic skew only (the two budget names): a reporter's death is
@@ -759,13 +767,15 @@ def _plant(root: Path, plant: str) -> None:
     target.write_bytes(target.read_bytes() + text.encode("utf-8"))
 
 
-def _run_payload(root: Path, hook: str, payload: dict, audit: Path) -> subprocess.CompletedProcess:
-    return not_a_budget_miss(subprocess.run(
+def _run_payload(root: Path, hook: str, payload: dict, audit: Path,
+                 allowance: RetryAllowance | None = None) -> subprocess.CompletedProcess:
+    env = {**_ENV, "CLAUDE_PROJECT_DIR": str(root), "ESPALIER_AUDIT_DIR": str(audit)}
+    return retry_a_budget_miss(lambda: subprocess.run(
         [sys.executable, str(root / "tools" / "cc" / "hooks" / hook)],
         input=json.dumps({"hook_event_name": "PreToolUse", "session_id": "wedged", "cwd": str(root), **payload}),
         cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45,
-        env={**_ENV, "CLAUDE_PROJECT_DIR": str(root), "ESPALIER_AUDIT_DIR": str(audit)},
-    ))
+        env=env,
+    ), env=env, cwd=str(root), allowance=allowance)
 
 
 def _taker(run: subprocess.CompletedProcess) -> str:
@@ -789,6 +799,7 @@ def _audit_text(audit: Path) -> str:
 @pytest.fixture(scope="module")
 def restores(tmp_path_factory) -> list[Restore]:
     base = tmp_path_factory.mktemp("wedged")
+    allowance = RetryAllowance()  # the build's budget retries, shared by its threads (DEF-2057)
 
     def one(job: tuple[int, tuple[str, dict, bool]]) -> Restore:
         i, (plant, payload, passes) = job
@@ -798,9 +809,10 @@ def restores(tmp_path_factory) -> list[Restore]:
         if "cwd" in payload:  # a row's cwd is relative to its own copy
             payload = {**payload, "cwd": str(root / payload["cwd"])}
         if "{taker}" in payload["tool_input"].get("command", ""):
-            taker = _taker(_run_payload(root, "write_guard.py", _NOOP_INPUT["PreToolUse"], root / "taker"))
+            taker = _taker(_run_payload(root, "write_guard.py", _NOOP_INPUT["PreToolUse"], root / "taker",
+                                        allowance))
             payload = _bash(payload["tool_input"]["command"].replace("{taker}", taker))
-        run = _run_payload(root, "write_guard.py", payload, audit)
+        run = _run_payload(root, "write_guard.py", payload, audit, allowance)
         result = Restore(plant, payload, passes, run.returncode, run.stdout, run.stderr,
                          _wedge_copies(root), _audit_text(audit))
         shutil.rmtree(root, ignore_errors=True)
@@ -816,6 +828,7 @@ def _output(run: Restore) -> dict:
     return json.loads(text)["hookSpecificOutput"]
 
 
+@pytest.mark.timeout(_CELLS_CEILING_S)
 class TestAWedgedGuardNamesWhatRaised:
     def test_a_sibling_that_raises_at_import_is_named_and_the_upgrade_is_not(self, cells):
         # The row's probe shape, on every deny hook: a sibling's module body
@@ -853,6 +866,7 @@ class TestAWedgedGuardNamesWhatRaised:
                 assert "run from a terminal" in _reason(c), (c.hook, _reason(c))
 
 
+@pytest.mark.timeout(_CELLS_CEILING_S)
 class TestAFloorThatRaisesIsRefused:
     """DEF-3008: the floor of the guard -- the helper, with
     ``tools/cc/_json_safe.py`` under it, and the reasons module, with
@@ -993,6 +1007,7 @@ class TestAFloorThatRaisesIsRefused:
         assert top and not _sibling_imports(ast.Module(body=top, type_ignores=[])), [ast.dump(n) for n in top]
 
 
+@pytest.mark.timeout(_CELLS_CEILING_S)
 class TestTheOneRestoreAWedgedGuardLetsThrough:
     def test_the_table_is_both_polarities_on_each_plant(self):
         assert set(_WEDGE_PLANTS) == set(_BOTH_WAYS) | {"unread"}
@@ -1207,6 +1222,7 @@ _SCENARIOS = {"staged": _staged_name_error, "circular": _circular, "new-module":
               "floor": _floor_raises, "floor-name-gone": _floor_name_gone}
 
 
+@pytest.mark.timeout(_CELLS_CEILING_S)
 class TestTheNamedRestoreRepairsTheGuard:
     """End to end, with real git: the refusal names a restore of the edited
     file, the wedged guard lets that command through, git runs it, and the
@@ -1269,6 +1285,7 @@ class TestTheNamedRestoreRepairsTheGuard:
 
 # ── the guard is reachable, and earns its red ────────────────────────────────
 
+@pytest.mark.timeout(_CELLS_CEILING_S)
 class TestTheGuardIsReachable:
     @pytest.mark.parametrize("hook", sorted(deny_hooks()))
     def test_the_hook_imports_under_both_spellings_on_the_intact_tree(self, hook):

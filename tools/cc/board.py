@@ -46,7 +46,7 @@ import tarfile
 import tempfile
 import time
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable
 
 # Sibling helpers, reached through the script's own directory (all ship in the
@@ -93,6 +93,14 @@ REQUIRED_BUDGET_SECONDS = 30.0
 #: with many push workflows cannot hold the board. A workflow past it says
 #: it was not read.
 BASE_RUN_BUDGET_SECONDS = 30.0
+#: The roster's git reads (``base_run_workflows``) take their timeouts from the
+#: same budget, ahead of the gh reads; past the point where less than this is
+#: left, no git read starts (a local read answers in tens of milliseconds, a
+#: cold Windows spawn in a few hundred).
+GIT_READ_FLOOR_SECONDS = 1.0
+#: Where GitHub reads a repository's workflows from, and the names it reads there.
+WORKFLOWS_DIR = ".github/workflows"
+WORKFLOW_SUFFIXES = (".yml", ".yaml")
 #: gh's words (rc=1, no JSON) when no check, or no required check, has
 #: reported on the pull request's branch.
 _NO_CHECKS_REPORTED = ("no required checks reported", "no checks reported")
@@ -204,38 +212,55 @@ def read_open_prs(root: Path, *, run_: Runner = run) -> list[dict]:
 def read_required_section(root: Path, prs: list[dict], *, run_: Runner = run,
                           clock: Callable[[], float] = time.monotonic) -> None:
     """Each pull request GitHub reports as BLOCKED (a draft is not read) gets
-    ``required``: the names of its required checks that are red and those
-    still running, from the one ``gh pr checks --required`` read
-    (``_post_merge.read_required``, the driver's and the banner's too), or
+    ``required``: the names of its required checks that are red, those still
+    running and those a newer run of their workflow on its head supersedes
+    (a wait, never a red: DEF-3035), from the one ``gh pr checks --required``
+    read (``_post_merge.read_required``, the driver's and the banner's too)
+    and, on a row holding a cancelled cell, the one runs read of its head; or
     ``{"unread": why}``. The list read carries no check status, so without
     this the row could only say a check or a review holds it (DEF-4063).
-    Bounded as REQUIRED_READ_ROWS and REQUIRED_BUDGET_SECONDS say; one read
-    that fails costs only its row."""
+    Bounded as REQUIRED_READ_ROWS and REQUIRED_BUDGET_SECONDS say, each read's
+    timeout cut to the budget left when it starts; a runs read the budget
+    cannot afford is not made, and its cancelled cells stay red. One read
+    that fails costs only its row (the runs read only the wait)."""
     start, made = clock(), 0
+
+    def left() -> float:
+        return REQUIRED_BUDGET_SECONDS - (clock() - start)
+
+    def gh(args: list[str]) -> object:
+        return _gh_json(root, *args, run_=run_, timeout=max(0.1, min(GH_TIMEOUT, left())))
+
+    def runs(args: list[str]) -> object:
+        if left() <= 3.0:   # the floor below: a read that would time out, not answer
+            return None
+        try:
+            return gh(args)
+        except Exception:  # noqa: BLE001 -- the runs read costs only the wait: its cancelled cells stay red
+            return None
+
     for pr in prs:
         if str(pr.get("mergeStateStatus") or "").upper() != "BLOCKED" or pr.get("isDraft"):
             continue
-        left = REQUIRED_BUDGET_SECONDS - (clock() - start)
         if made >= REQUIRED_READ_ROWS:
             pr["required"] = {"unread": f"the board reads the first {REQUIRED_READ_ROWS} blocked rows' checks"}
             continue
-        if left <= 3.0:   # below a gh read's own latency: it would time out, not answer
+        if left() <= 3.0:   # below a gh read's own latency: it would time out, not answer
             pr["required"] = {"unread": f"the {REQUIRED_BUDGET_SECONDS:.0f} s budget for these reads was spent"}
             continue
         made += 1
-        timeout = min(GH_TIMEOUT, left)
         try:
-            reading = _post_merge.read_required(
-                pr["number"], lambda args, t=timeout: _gh_json(root, *args, run_=run_, timeout=t))
+            reading = _post_merge.read_required(pr["number"], gh, head=str(pr.get("headRefOid") or ""), runs=runs)
             pr["required"] = ({"unread": "gh pr checks answered something other than a list"} if reading is None
                               else {key: [_ascii(str(r.get("name") or "?")) for r in reading[key]]
-                                    for key in ("red", "running")})
+                                    for key in ("red", "running", "superseded")})
         except Unresolvable as exc:
             # gh's answer when no required check has reported (a repository
             # that requires a review alone, or a head whose checks have not
             # registered yet) is an answer: nothing required is red or running.
             none = any(words in str(exc) for words in _NO_CHECKS_REPORTED)
-            pr["required"] = {"red": [], "running": []} if none else {"unread": " ".join(str(exc).split())}
+            pr["required"] = ({"red": [], "running": [], "superseded": []} if none
+                              else {"unread": " ".join(str(exc).split())})
         except Exception as exc:  # noqa: BLE001 -- one row's read costs its row, never the board
             pr["required"] = {"unread": " ".join(f"{type(exc).__name__}: {os_error_text(exc)}".split())}
 
@@ -309,15 +334,19 @@ def read_post_merge_checks(root: Path, *, base: str = "main", run_: Runner = run
     state. A red the merge combination itself makes is the base's post-merge
     proof's (``read_post_merge``). One ``gh pr list`` read, whose failure is
     this section's ``unread``, never another's; one ``gh run list`` read for
-    each workflow, inside BASE_RUN_BUDGET_SECONDS, whose failure is that
-    workflow's own line, never the section's."""
+    each workflow, inside BASE_RUN_BUDGET_SECONDS (the roster's git reads
+    first, from the same budget), whose failure is that workflow's own line,
+    never the section's. ``roster_fallback`` is "" when the roster was read
+    at ``origin/<base>``, else why it is the checkout's."""
     merged = _post_merge.read_merged(root, RUN_WINDOW, gh=lambda args: _gh_json(root, *args, run_=run_))
     oldest = _post_merge.oldest_merge(merged)
     checks = _post_merge.transitions(merged)
     logged, note = _log_first_mentions(root, checks, oldest, read_at)
     base_runs: dict[str, dict] = {}
     start = clock()
-    for workflow, supersedes in base_run_workflows(root, base).items():
+    roster, roster_fallback = base_run_workflows(root, base, run_=run_, deadline=start + BASE_RUN_BUDGET_SECONDS,
+                                                 clock=clock)
+    for workflow, supersedes in roster.items():
         left = BASE_RUN_BUDGET_SECONDS - (clock() - start)
         if left <= 3.0:   # below a gh read's own latency: it would time out, not answer
             base_runs[workflow] = {"unread": f"the {BASE_RUN_BUDGET_SECONDS:.0f} s budget for these reads was spent"}
@@ -331,37 +360,118 @@ def read_post_merge_checks(root: Path, *, base: str = "main", run_: Runner = run
             "lines": _post_merge.board_lines(checks, window=len(merged), oldest=oldest, new=logged,
                                              base_runs=base_runs, base=base),
             "reds": _post_merge.reds(checks), "new": sorted(logged), "logged": len(logged), "log_note": note,
-            "base_runs": base_runs}
+            "base_runs": base_runs, "roster_fallback": roster_fallback}
 
 
-def base_run_workflows(root: Path, base: str) -> dict[str, bool]:
-    """The roster of base-run workflows, derived from the checkout: each file
-    under ``.github/workflows/`` (``.yml`` or ``.yaml``) whose triggers run it
-    on a push to ``base`` (``_post_merge.pushes_to``), the post-merge proof
-    apart (``read_post_merge`` reads it for the base line and its revert
-    rule), in name order, each mapped to whether its concurrency cancels a
-    run a newer one supersedes (``_post_merge.cancels_superseded``). A file
-    that cannot be read is on the roster, superseding nothing: the read
-    decides. No folder, no roster: an adopter tree without workflows spawns
-    nothing. The checkout's files, not the base's: a checkout behind its
-    base reads the roster as of its own commit (DEF-5084)."""
-    folder = Path(root) / ".github" / "workflows"
+def base_run_workflows(root: Path, base: str, *, run_: Runner = run, deadline: float | None = None,
+                       clock: Callable[[], float] = time.monotonic) -> tuple[dict[str, bool], str]:
+    """The roster of base-run workflows, derived from the base's own files at
+    ``origin/<base>`` (``_roster_files_at``): each file directly under
+    ``.github/workflows/`` (``.yml`` or ``.yaml``) whose triggers run it on a
+    push to ``base`` (``_post_merge.pushes_to``), the post-merge proof apart
+    (``read_post_merge`` reads it for the base line and its revert rule), in
+    name order, each mapped to whether its concurrency cancels a run a newer
+    one supersedes (``_post_merge.cancels_superseded``); with "" beside it,
+    or, where the base's files could not be listed (no such ref in this
+    clone, a listing git did not give, no time left), the checkout's files
+    and why, which the checks line says. The base's, so a push workflow
+    merged there is read at the next board read and one deleted there is
+    read no more, whatever commit this checkout sits on; as last fetched
+    (``collect`` fetches it first, and the checks line says when that fetch
+    failed or was skipped). A file whose text cannot be read is on the
+    roster, superseding nothing: the read decides. No folder, no roster: a
+    tree without workflows spawns no gh read. The git reads take their
+    timeouts from ``deadline`` (``clock``'s reading), none past it."""
+    files, fallback = _roster_files_at(root, f"origin/{base}", run_=run_, deadline=deadline, clock=clock)
+    if files is None:
+        files = _roster_files_in_checkout(root)
+    roster: dict[str, bool] = {}
+    for name, text in sorted(files.items()):
+        if text is None:
+            roster[name] = False
+        elif _post_merge.pushes_to(text, base):
+            roster[name] = _post_merge.cancels_superseded(text)
+    return roster, fallback
+
+
+def _roster_files_at(root: Path, ref: str, *, run_: Runner, deadline: float | None,
+                     clock: Callable[[], float]) -> tuple[dict[str, str | None] | None, str]:
+    """``ref``'s workflow files, the post-merge proof apart: each regular file
+    directly under ``.github/workflows/`` named for a workflow, mapped to its
+    text as the checkout's read decodes it (UTF-8 with replacement, newlines
+    folded by the runner's text mode, a leading BOM dropped), or None where
+    git did not hand it over in time; with "". ``(None, why)`` where ``ref``
+    is not in this clone or its folder could not be listed. One ``git
+    rev-parse``, one ``git ls-tree`` and one ``git cat-file`` per file, never
+    a batch read (the runner refuses lines on stdin, which Windows re-lines),
+    each timed from what ``deadline`` leaves, at most GH_TIMEOUT."""
+    env = _git_env()
+
+    def left() -> float:
+        return GH_TIMEOUT if deadline is None else min(GH_TIMEOUT, deadline - clock())
+
+    spent = f"no time was left to list {ref}'s workflow files"
     try:
+        timeout = left()   # one reading for each git read: its check and its timeout
+        if timeout <= GIT_READ_FLOOR_SECONDS:
+            return None, spent
+        sha = _ref_commit(root, ref, run_=run_, timeout=timeout, env=env)
+        if not sha:
+            return None, f"{ref} is not in this clone"
+        timeout = left()
+        if timeout <= GIT_READ_FLOOR_SECONDS:
+            return None, spent
+        rc, out, err = run_(["git", "ls-tree", "-z", "--full-tree", sha, "--", WORKFLOWS_DIR + "/"],
+                            cwd=str(root), timeout=timeout, env=env)
+    except Unresolvable as exc:
+        return None, f"git did not list {ref}'s workflow files ({exc})"
+    if rc != 0:
+        lines = (err.strip() or out.strip()).splitlines()
+        return None, f"git ls-tree on {ref} failed ({(lines[-1] if lines else f'exit {rc}')[:160]})"
+    files: dict[str, str | None] = {}
+    for record in out.split("\0"):
+        # "<mode> <type> <object>\t<path>": a regular file's mode is 100644 or
+        # 100755 (a link's is 120000, a folder's type is tree).
+        meta, tab, path = record.partition("\t")
+        fields = meta.split()
+        name = PurePosixPath(path).name
+        if (not tab or len(fields) != 3 or fields[1] != "blob" or not fields[0].startswith("100")
+                or PurePosixPath(name).suffix not in WORKFLOW_SUFFIXES or name == POST_MERGE_WORKFLOW):
+            continue
+        files[name] = None
+        timeout = left()
+        if timeout <= GIT_READ_FLOOR_SECONDS:
+            continue
+        try:
+            rc, text, _err = run_(["git", "cat-file", "blob", fields[2]], cwd=str(root), timeout=timeout, env=env)
+        except Unresolvable:
+            continue
+        if rc == 0:
+            files[name] = text.removeprefix("\ufeff")
+    return files, ""
+
+
+def _roster_files_in_checkout(root: Path) -> dict[str, str | None]:
+    """The checkout's workflow files, the post-merge proof apart, each mapped
+    to its text (None where it cannot be read): the roster's fallback where
+    the base's cannot be listed. No folder, no files."""
+    folder = Path(root) / WORKFLOWS_DIR
+    try:
+        # The suffixes spelled out on the listing's own line (WORKFLOW_SUFFIXES):
+        # the hidden-name contract reads a listing over "workflows" that names
+        # no .yml as a .claude kind's.
         names = sorted(p.name for p in folder.iterdir() if p.suffix in (".yml", ".yaml") and p.is_file())
     except OSError:
         return {}
-    roster: dict[str, bool] = {}
+    files: dict[str, str | None] = {}
     for name in names:
         if name == POST_MERGE_WORKFLOW:
             continue
         try:
-            text = (folder / name).read_text(encoding="utf-8-sig", errors="replace")
+            files[name] = (folder / name).read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
-            roster[name] = False
-            continue
-        if _post_merge.pushes_to(text, base):
-            roster[name] = _post_merge.cancels_superseded(text)
-    return roster
+            files[name] = None
+    return files
 
 
 def read_base_runs(root: Path, base: str, workflow: str, *, run_: Runner = run, timeout: float = GH_TIMEOUT,
@@ -369,14 +479,12 @@ def read_base_runs(root: Path, base: str, workflow: str, *, run_: Runner = run, 
     """The newest verdict of ``workflow``'s push runs on ``base``
     (``_post_merge.base_run_verdict`` over one ``gh run list`` bounded by
     ``timeout``, ``supersedes`` passed through), or ``{"verdict": "absent"}``
-    on a repository without the workflow: a checkout that does not hold the
-    file spawns nothing, and one that does reads gh's not-found text as the
-    same state (a workflow a lane adds, before it reaches the default
-    branch). The ``push`` event alone: a dispatched run never clears a red,
+    where gh says the repository has no such workflow (one the roster read
+    from the checkout, a lane's before it reaches the default branch, or a
+    base other than the default branch). The roster decides which workflows
+    are read. The ``push`` event alone: a dispatched run never clears a red,
     the next push run does. Any other failed read is a named
     ``Unresolvable``, the caller's to keep to the workflow's own line."""
-    if not (Path(root) / ".github" / "workflows" / workflow).is_file():
-        return {"verdict": "absent"}
     try:
         runs = _gh_json(root, "run", "list", "--workflow", workflow, "--branch", base, "--event", "push",
                         "--limit", str(RUN_WINDOW), "--json",
@@ -543,6 +651,14 @@ def _read_base_archive(archive: Path, modules: Path) -> tuple[str, list[tuple[st
     return ledger_text, rows, names
 
 
+def _ref_commit(root: Path, ref: str, *, run_: Runner, timeout: float, env: dict[str, str]) -> str:
+    """The commit a remote-tracking ``ref`` (``origin/<base>``) names, or ""
+    where this clone has no such ref: the base's tree reads' first question."""
+    rc, out, _err = run_(["git", "rev-parse", "--verify", "--quiet", f"refs/remotes/{ref}^{{commit}}"],
+                         cwd=str(root), timeout=timeout, env=env)
+    return out.strip() if rc == 0 else ""
+
+
 def read_ledger_at_base(root: Path, base: str, *, run_: Runner = run) -> dict | None:
     """The ledger's live member rows at ``origin/<base>``, as
     ``{"ref", "sha", "live"}`` (``live`` None where the base keeps no ledger),
@@ -554,9 +670,7 @@ def read_ledger_at_base(root: Path, base: str, *, run_: Runner = run) -> dict | 
     and a child interpreter counts the base's ledger with the base's own
     generator and fragment loader."""
     ref, env = f"origin/{base}", _git_env()
-    rc, out, _err = run_(["git", "rev-parse", "--verify", "--quiet", f"refs/remotes/{ref}^{{commit}}"],
-                         cwd=str(root), timeout=GH_TIMEOUT, env=env)
-    sha = out.strip() if rc == 0 else ""
+    sha = _ref_commit(root, ref, run_=run_, timeout=GH_TIMEOUT, env=env)
     if not sha:
         return None
     rc, out, err = run_(["git", "ls-tree", "-r", "-z", "--name-only", sha, "--", *BASE_COUNT_PATHS],
@@ -643,7 +757,7 @@ def read_stale_section(root: Path, base: str, prs: list[dict], strict: bool | No
 
 def fetch_base(root: Path, base: str, *, run_: Runner = run) -> tuple[bool, str]:
     """``origin/<base>`` brought up to GitHub's, once per read, for the stale
-    check and the ledger count alike (with no pull request armed nothing else
+    check, the ledger count and the base-run roster alike (with no pull request armed nothing else
     would refresh it): ``(True, "")``, or ``(False, why)`` when the fetch
     failed and the base stays as last fetched, which the ledger line says."""
     try:
@@ -1459,6 +1573,9 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run, now: datetime
         pm.update(read_ruling(by_machine, dispatcher, how, pm.get("run_id"), red_runs=pm.get("red_runs") or [],
                               mail_unread=board.get("mail_unread") or "", mail_note=board.get("mail_note") or ""))
     try:
+        # After the base fetch: the base-run roster is origin/<base>'s
+        # workflow files, so a push workflow merged since the last fetch is
+        # read on this one only because the fetch came first.
         board["post_merge_checks"] = read_post_merge_checks(root, base=base, run_=run_, read_at=board["read_at"])
     except Unresolvable as exc:
         board["post_merge_checks"] = {"unread": str(exc)}
@@ -1503,7 +1620,9 @@ def _pr_meaning(pr: dict) -> str:
             meaning = (f"blocked: its required checks were not read ({required['unread']}): "
                        f"gh pr checks {pr.get('number')} --required")
         else:
-            meaning = f"blocked: {_post_merge.held_by(required.get('red') or [], required.get('running') or [])}"
+            # A cancelled cell a newer run supersedes is a wait on it (DEF-3035).
+            meaning = "blocked: " + _post_merge.held_by(required.get("red") or [], required.get("running") or [],
+                                                        required.get("superseded") or [])
             if required.get("red"):
                 # A red cell is a test's verdict or a lost runner's; only the
                 # driver's read on the lane tells them apart (the banner says so too).
@@ -1904,6 +2023,17 @@ def render(board: dict) -> str:
         texts = list(pmc.get("lines") or ["unread (no merged pull requests read)"])
         if pmc.get("log_note"):
             texts.append(f"({pmc['log_note']})")
+        fetched = board.get("base_fetch") or {}
+        if pmc.get("roster_fallback"):
+            # The roster came from the working tree: a workflow the base added
+            # since this checkout's commit is on no line, one it deleted is.
+            # Said even over an empty roster, whose "none red" covers no base run.
+            texts.append(f"(push workflows listed from this working tree: {pmc['roster_fallback']})")
+        elif pmc.get("base_runs") and fetched.get("state") in ("skipped", "failed"):
+            # Read at origin/<base> as last fetched: said here too, since the
+            # ledger line says it only when its own read is at the ref.
+            why = "--no-fetch" if fetched.get("state") == "skipped" else f"the fetch failed: {fetched.get('problem')}"
+            texts.append(f"(push workflows listed at origin/{board.get('base') or 'main'}, as last fetched ({why}))")
         for i, text in enumerate(texts):
             lines.append(("checks:   " if i == 0 else "          ") + text)
     prs = board.get("open_prs")

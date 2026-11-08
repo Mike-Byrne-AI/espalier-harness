@@ -229,8 +229,13 @@ is read on its own, and one that cannot be read says so on its own line:
   the merge, the red run's finish, the read time), so red-to-first-mention
   is derived from a record; a red that has held since before the window is
   never a first mention; a failed append is a note under the line, and the
-  section still renders. For each workflow file in the checkout's
-  `.github/workflows/` whose triggers run it on a push to the base (`on:
+  section still renders. For each workflow file in `.github/workflows/` at
+  `origin/<base>` (fetched first, so a workflow merged there since this
+  checkout's commit is read and one deleted there is not; under `--no-fetch`
+  or a failed fetch a line under the section says the base is as last
+  fetched; the checkout's files, with a line saying so and why, where the
+  clone has no such ref or git could not list it in time) whose
+  triggers run it on a push to the base (`on:
   push`, or a `push` whose branch filters take the base; a push of tags alone
   does not count), the post-merge proof apart since the base line above reads
   it, the line also carries that workflow's newest push-run verdict, which the
@@ -262,11 +267,17 @@ is read on its own, and one that cannot be read says so on its own line:
   (which holds only under the up-to-date rule). A blocked one says what holds
   it, from one `gh pr checks <n> --required` read: the required checks that
   are red by name, else `waiting on N running` (N of the required checks;
-  the banner's `Open PRs:` line counts every check), else that nothing required
-  is red or running (a review, or a required check that has not reported).
-  A read that fails says so and names that command. The reads are bounded
-  (`REQUIRED_READ_ROWS` and `REQUIRED_BUDGET_SECONDS` in `tools/cc/board.py`),
-  and a blocked row past either says it was not read. With that rule off, an
+  the banner's `Open PRs:` line counts every check) and `the newer run of
+  <check>` for a cancelled required cell a newer run of its workflow on the
+  pull request's head is still going (a re-bind's title edit re-runs Harness
+  Guard and cancels the run going: a wait, never a red to fix), else that
+  nothing required is red or running (a review, or a required check that has
+  not reported). A cancelled cell is read that way from one more read, the
+  runs on the head, made only for a row holding one; a cell that read cannot
+  confirm stays red. A read that fails says so and names that command. The
+  reads are bounded (`REQUIRED_READ_ROWS` and `REQUIRED_BUDGET_SECONDS` in
+  `tools/cc/board.py`), each cut to the budget left as it starts, and a
+  blocked row past either says it was not read. With that rule off, an
   armed one whose base has moved
   near its files since its CI ran -- a path both changed, or a Python module
   one import away -- gets a `stale:` line under it: its seat runs `catch-up`,

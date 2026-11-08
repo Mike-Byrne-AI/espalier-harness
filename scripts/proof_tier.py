@@ -197,9 +197,13 @@ WALL_CLOCK_SERIAL_FILES: tuple[str, ...] = (
 #: leg they run at their serial duration. Same one-home rule as the wall-clock
 #: list above: the recipe ignores both lists in the parallel leg and runs both
 #: serially after it; the PowerShell gate skips wherever ``pwsh`` is absent.
+#: The sdist benchmark (DEF-2056): the shipped runner over the whole corpus,
+#: 75 to 232 s alone on ubuntu-latest and 138 to 300+ s on the parallel leg,
+#: where it crossed its 300 s ceiling in 7 of 19 Linux cells (2026-11-07/08).
 TIMEOUT_NEAR_SERIAL_FILES: tuple[str, ...] = (
     "tests/test_guard_metamorphic.py",
     "tests/test_powershell_reachability_differential.py",
+    "tests/test_wheel_payload.py",
 )
 
 #: The cited-pin run: one nested pytest child over the docs' cited rows. On

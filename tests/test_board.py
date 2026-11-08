@@ -50,6 +50,12 @@ def _gh(answers: dict[str, object]):
 
     def run(argv, **kw):
         calls.append(list(argv))
+        if argv[:4] == ["git", "rev-parse", "--verify", "--quiet"] and argv[4].startswith("refs/remotes/origin/"):
+            # The base-run roster's first question, by its exact shape (any
+            # other git call stays an unexpected one): these trees are no git
+            # repository, so no origin/<base>, and the roster is the checkout's
+            # (tests/test_board_ledger_base.py reads the base over real git).
+            return 1, "", ""
         key = " ".join(argv[1:3]) if argv[1] != "api" else ("api compare" if "/compare/" in argv[2] else argv[2])
         if key == "run list" and "--workflow" in argv and argv[argv.index("--workflow") + 1] != "post-merge.yml":
             # The advisory Windows leg's read, keyed by its workflow; a fixture
@@ -232,7 +238,7 @@ class TestOpenPullRequests:
     # `blocked: a required check or a review holds it` for #380 at 17:05Z and
     # 17:30Z on 2026-10-31 while every tier cell ran on the rebuilt head and
     # none was red, and the dispatcher ran `gh pr checks` by hand to tell.
-    _REQUIRED_ARGV = ["gh", "pr", "checks", "7", "--required", "--json", "name,bucket"]
+    _REQUIRED_ARGV = ["gh", "pr", "checks", "7", "--required", "--json", "name,bucket,link"]
 
     @staticmethod
     def _blocked(number: int = 7, armed: bool = True) -> dict:
@@ -268,6 +274,75 @@ class TestOpenPullRequests:
         text = board.render(board.collect(tmp_path, run_=run, now=_NOW))
         assert "#7 lane/7 [no seat's claim names this branch]: blocked: waiting on 9 running; auto-merge armed" \
                in text, text
+
+    _HEAD = "3f9be2932" + "0" * 31
+    _RUNS_PATH = f"repos/{{owner}}/{{repo}}/actions/runs?head_sha={_HEAD}&per_page=100"
+    _FRESHNESS = {"name": "freshness", "bucket": "cancel",
+                  "link": "https://github.com/o/r/actions/runs/42452013919/job/128643084948"}
+    _RUNS = {"workflow_runs": [
+        {"id": 42452020852, "workflow_id": 366642379, "created_at": "2026-11-08T05:45:40Z", "status": "in_progress"},
+        {"id": 42452013919, "workflow_id": 366642379, "created_at": "2026-11-08T05:45:34Z", "status": "completed"},
+    ]}
+
+    def test_a_cancel_a_newer_run_supersedes_is_a_wait_on_it_never_a_red(self, board, tmp_path):
+        """DEF-3035: #519's freshness at 05:46Z on 2026-11-08, cancelled when
+        the re-bind's title edit started a newer Harness Guard run on the same
+        head. The row said `required check red` and pointed the seat at
+        `status`, minutes before the newer run's job went green. Dies to: the
+        cell read as a red, the pointer to `status` printed over a wait, the
+        row's head not handed to the read, or a second checks read (the runs
+        read is the one more)."""
+        pr = dict(self._blocked(519), headRefOid=self._HEAD)
+        checks = [self._FRESHNESS, {"name": "test (3.13)", "bucket": "pending", "link": ""}]
+        run = _gh({"pr checks": {"519": checks}, self._RUNS_PATH: self._RUNS})
+        board.read_required_section(tmp_path, [pr], run_=run, clock=lambda: 0.0)
+        line = board._pr_line(dict(pr, seat=""))
+        assert "blocked: waiting on 1 running and the newer run of freshness; auto-merge armed" in line, line
+        assert "ship.py status` tells" not in line and "red" not in line, line
+        assert len([c for c in run.calls if c[1:3] == ["pr", "checks"]]) == 1
+        assert [c for c in run.calls if c[1:2] == ["api"]] == [["gh", "api", self._RUNS_PATH]]
+        # The collect path hands the open-PR listing's head to the read: the
+        # listing asks for headRefOid (read_open_prs), and the read takes it.
+        import inspect
+        assert "headRefOid" in inspect.getsource(board.read_open_prs)
+
+    def test_a_runs_read_the_budget_cannot_afford_is_not_made_and_the_cell_stays_red(self, board, tmp_path):
+        """The board's reads share one budget, each read's timeout cut to what
+        is left as it starts; the runs read, a row's second, is made only
+        above the same floor. Dies to: a read started with the budget spent,
+        a runs read's timeout fixed at the row's start, or a skipped read
+        read as a wait."""
+        calls: list[tuple[list[str], float]] = []
+
+        def run(argv, **kw):
+            calls.append((list(argv), kw["timeout"]))
+            if argv[1:3] == ["pr", "checks"]:
+                return 1, json.dumps([self._FRESHNESS]), ""
+            return 0, json.dumps(self._RUNS), ""
+
+        # start, the row's check, the checks read's timeout, then the runs
+        # read's floor check with 2 s of the budget left.
+        clock = iter([0.0, 0.0, 0.0, board.REQUIRED_BUDGET_SECONDS - 2.0])
+        prs = [dict(self._blocked(519), headRefOid=self._HEAD)]
+        board.read_required_section(tmp_path, prs, run_=run, clock=lambda: next(clock))
+        assert prs[0]["required"] == {"red": ["freshness"], "running": [], "superseded": []}
+        assert [argv[1] for argv, _ in calls] == ["pr"]
+        # With the budget there, the runs read runs on what is left of it.
+        calls.clear()
+        clock = iter([0.0, 0.0, 0.0, 20.0, 20.0])
+        board.read_required_section(tmp_path, prs, run_=run, clock=lambda: next(clock))
+        assert prs[0]["required"] == {"red": [], "running": [], "superseded": ["freshness"]}
+        assert [t for _, t in calls] == [board.GH_TIMEOUT, board.REQUIRED_BUDGET_SECONDS - 20.0]
+        # A runs read that fails costs only the wait: the cell stays red.
+        calls.clear()
+
+        def failing(argv, **kw):
+            if argv[1:3] == ["pr", "checks"]:
+                return 1, json.dumps([self._FRESHNESS]), ""
+            return 1, "", "HTTP 502: Bad Gateway"
+
+        board.read_required_section(tmp_path, prs, run_=failing, clock=lambda: 0.0)
+        assert prs[0]["required"] == {"red": ["freshness"], "running": [], "superseded": []}
 
     def test_a_blocked_row_with_nothing_red_or_running_names_a_review(self, board, monkeypatch, tmp_path):
         """Every required check passed and GitHub still holds it: a review, or
@@ -345,10 +420,14 @@ class TestOpenPullRequests:
 
         board.read_required_section(tmp_path, prs, run_=run, clock=lambda: 0.0)
         assert len(timeouts) == cap and all(0 < t <= board.GH_TIMEOUT for t in timeouts)
-        assert all(pr["required"] == {"red": ["guard"], "running": []} for pr in prs[:cap])
+        assert all(pr["required"] == {"red": ["guard"], "running": [], "superseded": []} for pr in prs[:cap])
         assert all("first" in pr["required"]["unread"] for pr in prs[cap:]), prs[cap:]
         # The budget: a clock past it before the third read stops the walk there.
-        ticks = iter([0.0, 0.0, 1.0, board.REQUIRED_BUDGET_SECONDS + 1] + [board.REQUIRED_BUDGET_SECONDS + 1] * cap)
+        # The clock is read at the start, then twice a row: the row's budget
+        # check, and the read's timeout as it starts (DEF-3035: a row can make
+        # a second read, so each takes what is left when it starts).
+        ticks = iter([0.0, 0.0, 0.0, 1.0, 1.0, board.REQUIRED_BUDGET_SECONDS + 1]
+                     + [board.REQUIRED_BUDGET_SECONDS + 1] * cap)
         prs = [self._blocked(n) for n in range(1, 5)]
         timeouts.clear()
         board.read_required_section(tmp_path, prs, run_=run, clock=lambda: next(ticks))
@@ -358,7 +437,7 @@ class TestOpenPullRequests:
         assert "blocked: its required checks were not read (" in line and "gh pr checks 4 --required" in line
         # Each read's timeout is what is left: reads costing 12 s each leave the
         # third 6 s, and the fourth starts with the budget spent.
-        clock = iter([0.0, 0.0, 12.0, 24.0, 36.0])
+        clock = iter([0.0, 0.0, 0.0, 12.0, 12.0, 24.0, 24.0, 36.0])
         prs = [self._blocked(n) for n in range(1, 5)]
         timeouts.clear()
         board.read_required_section(tmp_path, prs, run_=run, clock=lambda: next(clock))
@@ -974,7 +1053,9 @@ class TestChecksLine:
         dropped instead of named."""
         self._leg_in_checkout(tmp_path, name="a.yml")
         self._leg_in_checkout(tmp_path, name="b.yml")
-        ticks = iter([0.0, board.BASE_RUN_BUDGET_SECONDS - 10.0, board.BASE_RUN_BUDGET_SECONDS - 1.0])
+        # The start, the roster's one git question (no origin/<base> here),
+        # then one reading before each gh read.
+        ticks = iter([0.0, 0.0, board.BASE_RUN_BUDGET_SECONDS - 10.0, board.BASE_RUN_BUDGET_SECONDS - 1.0])
         inner = _gh({"pr list merged": [], "run list a.yml": [dict(_run("completed", "failure", "d" * 40), databaseId=9)]})
         timeouts: dict[str, float] = {}
 
@@ -991,12 +1072,20 @@ class TestChecksLine:
         assert "b (main, advisory): unread (the 30 s budget for these reads was spent)" in got["lines"]
         assert not [c for c in run.calls if "b.yml" in c]
 
-    def test_the_roster_is_derived_from_the_checkouts_workflow_files(self, board, monkeypatch, tmp_path):
-        """Dies to: the post-merge proof on the roster (its own line holds the
-        revert rule), a .yaml file missed, a folder or another extension read,
-        a file that cannot be decoded dropping off, or a tree with no
-        workflows folder raising."""
-        assert board.base_run_workflows(tmp_path, "main") == {}
+    def test_the_fallback_roster_is_derived_from_the_checkouts_workflow_files(self, board, monkeypatch, tmp_path):
+        """Where the clone has no origin/<base> the roster is the checkout's,
+        and the reason rides beside it. Dies to: the post-merge proof on the
+        roster (its own line holds the revert rule), a .yaml file missed, a
+        folder or another extension read, a file that cannot be decoded
+        dropping off, or a tree with no workflows folder raising."""
+        no_ref = _gh({})
+
+        def roster(base: str) -> dict:
+            got, why = board.base_run_workflows(tmp_path, base, run_=no_ref)
+            assert why == f"origin/{base} is not in this clone", why
+            return got
+
+        assert roster("main") == {}
         self._leg_in_checkout(tmp_path, name="post-merge.yml")
         self._leg_in_checkout(tmp_path, name="cut.yaml", body=self._SUPERSEDING)
         self._leg_in_checkout(tmp_path, name="other.yml", base="develop")
@@ -1004,8 +1093,8 @@ class TestChecksLine:
         (workflows / "notes.md").write_text("on: push\n", encoding="utf-8")
         (workflows / "folder.yml").mkdir()
         (workflows / "binary.yml").write_bytes(b"on: push\n\xff\xfe")
-        assert board.base_run_workflows(tmp_path, "main") == {"binary.yml": False, "cut.yaml": True}
-        assert board.base_run_workflows(tmp_path, "develop") == {"binary.yml": False, "other.yml": False}
+        assert roster("main") == {"binary.yml": False, "cut.yaml": True}
+        assert roster("develop") == {"binary.yml": False, "other.yml": False}
         # A BOM ahead of the first line's `on:` is read through, and a file
         # that cannot be read at all stays on the roster (the read decides).
         (workflows / "bom.yml").write_bytes(b"\xef\xbb\xbfon:\n  push:\n    branches: [main]\n")
@@ -1018,8 +1107,7 @@ class TestChecksLine:
             return real(path, *args, **kwargs)
 
         monkeypatch.setattr(Path, "read_text", read_text)
-        assert board.base_run_workflows(tmp_path, "main") == {"binary.yml": False, "bom.yml": False, "cut.yaml": True,
-                                                              "locked.yml": False}
+        assert roster("main") == {"binary.yml": False, "bom.yml": False, "cut.yaml": True, "locked.yml": False}
 
     def test_a_section_reader_out_of_step_costs_the_section_never_the_board(self, board, monkeypatch, tmp_path):
         """Dies to: a sibling module kept at another version (a name one reads
