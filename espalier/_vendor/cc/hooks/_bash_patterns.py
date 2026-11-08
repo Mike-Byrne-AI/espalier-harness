@@ -2730,7 +2730,9 @@ _BOUND_VARIABLE_VALUE_RE = re.compile(
 )
 
 
-def _followed_variable_value(command: str, at: int, bindings: dict[str, str]) -> str | None:
+def _followed_variable_value(
+    command: str, at: int, bindings: dict[str, str], seen: "set[str] | frozenset[str]" = frozenset(),
+) -> str | None:
     """The value the walls bind for an assignment whose value starts at
     ``at`` and is wholly one variable the removal readers read
     (`_BOUND_VARIABLE_VALUE_RE`), or ``None``, which unbinds the name as
@@ -2747,18 +2749,32 @@ def _followed_variable_value(command: str, at: int, bindings: dict[str, str]) ->
     with an operator after such a binding unbinds. The value must END where
     the match ends (`_bound_value`'s rule for the walls: `D=$TMPDIR/sub` or
     `D="$TMPDIR"x` runs past it and stays unbound, DEF-1173's record), and a
-    single-quoted value is the literal text, which this never matches."""
+    single-quoted value is the literal text, which this never matches.
+
+    Three more refusals, each a binding that does not hold where the name
+    is read (the failure-mode review, measured): the assignment must end
+    its statement (a `;`, `&&`, `||`, a newline, a closing paren or the
+    end), so a prefix assignment (`D=$HOME rm -rf "$D"`, where bash expands
+    `$D` first) and a pipeline or background stage (`D=$TMPDIR | cat`, a
+    subshell) are not followed; and a variable this command assigned a
+    computed value earlier (``seen``, not in ``bindings``:
+    `export TMPDIR=$(mktemp -d); D="$TMPDIR"`) is that value, never the
+    inherited one, so the sweep readers, which do not take the per-text
+    reading `_TEMP_VARS_SET` gives the remove readers, never meet it."""
     m = _BOUND_VARIABLE_VALUE_RE.match(command, at)
     if m is None:
         return None
     end = m.end()
-    if end < len(command) and command[end] not in " \t\r\n;&|)":
+    rest = command[end:].lstrip(" \t")
+    if rest and rest[0] not in ";\r\n)" and not rest.startswith(("&&", "||")):
         return None
     name, op = m.group("n") or m.group("b"), m.group("op")
     if name == "HOME" and op is not None:
         return None  # the home reader reads no operator spelling
     if name in bindings:
         return None if op is not None else bindings[name]
+    if name in seen:
+        return None  # assigned a computed value earlier in this command
     if op is None:
         return "${" + name + "}"
     return command[m.start() + len(m.group("q")):end - len(m.group("q"))]
@@ -2864,7 +2880,9 @@ def _bound_value(lit: "re.Match[str]", command: str, wall: bool) -> str | None:
 
 #: Every `NAME=` at a statement start, literal value or not: the sites the
 #: sequential pre-pass walks. One that `_VAR_ASSIGN_RE` also matches binds;
-#: any other unbinds the name (its value is computed, so a later reference
+#: in the walls' reading so does one whose value is wholly a variable the
+#: removal readers read (`_followed_variable_value`); any other unbinds the
+#: name (its value is computed, so a later reference
 #: is unknown rather than stale -- a stale binding is the only way this
 #: pre-pass could REFUSE a write that lands elsewhere).
 _VAR_ANY_ASSIGN_RE = re.compile(_BINDING_START + _DECL_BUILTIN_PREFIX + _BINDING_NAME + "=")
@@ -5759,7 +5777,10 @@ def _expand_simple_var_assignments(command: str, *, wall: bool = False) -> str:
     the line won for every reference and that spelling allowed; the
     PowerShell twin `_expand_simple_ps_var_assignments` was written
     sequential and this one was brought level, DEF-801's lane). A later
-    assignment with a computed value unbinds the name. Anything fancier --
+    assignment with a computed value unbinds the name -- bar, in the walls'
+    mode, a value that is wholly a temp variable or the home, bound to that
+    variable's braced reference (`_followed_variable_value`, which also
+    names the bindings it declines). Anything fancier --
     `$(...)`, `${VAR:-default}`, arithmetic expansion, a second assignment in
     one statement -- is intentionally not handled. The expander is
     best-effort: ambiguous cases
@@ -5804,6 +5825,10 @@ def _expand_simple_var_assignments(command: str, *, wall: bool = False) -> str:
     events.sort(key=lambda event: (event[0], event[1]))
     out: list[str] = []
     bindings: dict[str, str] = {}
+    # every name a site assigned so far, literal or computed: a variable the
+    # command assigned is never followed to its inherited value
+    # (`_followed_variable_value`); not journaled, so a scope only adds names
+    seen: set[str] = set()
     journal: list[tuple[str, str | None]] = []
     marks: list[int] = []
     at = 0
@@ -5852,7 +5877,8 @@ def _expand_simple_var_assignments(command: str, *, wall: bool = False) -> str:
             at = site.end()
             # the walls follow a value that is wholly one read variable
             bind(site.group(1),
-                 _followed_variable_value(command, site.end(), bindings) if wall else None)
+                 _followed_variable_value(command, site.end(), bindings, seen) if wall else None)
+        seen.add(site.group(1))
     try:
         piece, grown = _substitute_bash_refs(command[at:], bindings, grown)
     except _ExpansionTooLarge:
@@ -15823,29 +15849,41 @@ _PS_VAR_ASSIGN_RE = re.compile(
     r"(?:^|[;\r\n{]|&&|\|\|)[ \t]*"
     r"\$([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*"
     r"('(?:[^']|'')*'|\"[^\"$`]*\""
-    # a value that is wholly a temp variable's environment read, bare or
-    # double-quoted (`_ps_bound_env_read`); the third arm's `$` after the
-    # quote is the class the second excludes
-    r"|(?i:\"\$(?:\{env:(?:TEMP|TMP|TMPDIR)\}|env:(?:TEMP|TMP|TMPDIR)(?![A-Za-z0-9_]))\""
-    r"|\$(?:\{env:(?:TEMP|TMP|TMPDIR)\}|env:(?:TEMP|TMP|TMPDIR)(?![A-Za-z0-9_]))))"
+    # a value that is wholly a temp or home variable's read, bare or
+    # double-quoted (`_ps_bound_env_read`), ending its statement with no
+    # pipe or `&` after it (`$d = $env:TEMP | Join-Path ...` binds the
+    # pipeline's output); the third arm's `$` after the quote is the class
+    # the second excludes
+    r"|(?i:\"" + r"\$(?:\{(?:HOME|env:(?:TEMP|TMP|TMPDIR|HOME|USERPROFILE|HOMEPATH))\}"
+    r"|(?:HOME|env:(?:TEMP|TMP|TMPDIR|HOME|USERPROFILE|HOMEPATH))(?![A-Za-z0-9_]))" + r"\""
+    r"|\$(?:\{(?:HOME|env:(?:TEMP|TMP|TMPDIR|HOME|USERPROFILE|HOMEPATH))\}"
+    r"|(?:HOME|env:(?:TEMP|TMP|TMPDIR|HOME|USERPROFILE|HOMEPATH))(?![A-Za-z0-9_])))"
+    r"(?=[ \t]*(?:$|[;\r\n#}])))"
     r"(?=[ \t]*(?:$|[;\r\n|&#}]))"
+)
+#: A bound value `_ps_bound_env_read` reads as a variable, quotes off.
+_PS_BOUND_READ_RE = re.compile(
+    r"\$(?:\{(?P<b>HOME|env:(?:TEMP|TMP|TMPDIR|HOME|USERPROFILE|HOMEPATH))\}"
+    r"|(?P<n>HOME|env:(?:TEMP|TMP|TMPDIR|HOME|USERPROFILE|HOMEPATH))(?![A-Za-z0-9_]))\Z",
+    re.IGNORECASE,
 )
 
 
 def _ps_bound_env_read(literal: str) -> str | None:
-    """The braced environment read (`${env:TEMP}`) a binding's value names
-    where it is wholly a temp variable's read (`_PS_VAR_ASSIGN_RE`'s third
-    and fourth arms), else ``None``: a quoted literal, bound as its text.
+    """The braced read (`${env:TEMP}`, `${HOME}`) a binding's value names
+    where it is wholly a temp or home variable's read (`_PS_VAR_ASSIGN_RE`'s
+    third and fourth arms, `_PS_BOUND_READ_RE`), else ``None``: a quoted
+    literal, bound as its text.
     Braced, so `${d}x` stays a sibling and never another variable's name;
     the typed case is kept, as `_temp_var_target`'s lookup keeps it. The
     reference is the variable, so every reader reads it as it reads the
     variable spelled in place: `$d = $env:TEMP; Remove-Item -Recurse $d`
     walls as `Remove-Item -Recurse $env:TEMP` does, and a forced remove of
     a literal tail below it is below the root (603f72's class)."""
-    m = _TEMP_VAR_PS_RE.match(literal[1:-1] if literal.startswith('"') else literal)
+    m = _PS_BOUND_READ_RE.match(literal[1:-1] if literal.startswith('"') else literal)
     if m is None:
         return None
-    return "${env:" + (m.group("b") or m.group("n")) + "}"
+    return "${" + (m.group("b") or m.group("n")) + "}"
 #: A `$name` / `${name}` reference; the lookahead refuses a scope qualifier.
 _PS_VAR_REF_RE = re.compile(
     r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))(?![A-Za-z0-9_:])"

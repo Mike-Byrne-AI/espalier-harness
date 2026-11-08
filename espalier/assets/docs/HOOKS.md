@@ -1256,14 +1256,18 @@ first; the dangerous-command catch is a secondary slip-catcher):
    command sets itself (`export TMPDIR=$(mktemp -d)` before its own cleanup), whose
    value is not the inherited one. The sweeps do not take that last
    reading: a walk rooted at a temp variable the command sets walls as the
-   inherited root (spell the path, or bind another name), a declared limit
-   (`tests/test_write_guard.py::TestAScratchRootItselfIsTheWall::test_a_sweep_reads_a_variable_the_command_sets_by_its_inherited_value`).
-   A name bound to that variable, or to the home, is the root too
-   (`D="$TMPDIR"; rm -rf "$D"`, `D=${HOME}`, `$d = $env:TEMP`): the walls
-   follow a binding whose value is wholly such a variable, and a value that
-   runs past it (`D=$TMPDIR/sub`) or is single-quoted is not followed. A
+   inherited root (spell the path, or bind another name to the new
+   directory, `T=$(mktemp -d)`), a declared limit
+   (`tests/test_write_guard.py::TestAScratchRootItselfIsTheWall::test_a_sweep_reads_a_variable_the_command_sets_by_its_inherited_value`). A
    sibling of the nested one there is scratch to the rule, a declared limit
    (`tests/test_speedbump_irreversible.py::TestCpRmrfTempRoots::test_a_temp_directory_nested_below_a_temp_root_is_never_scratch`).
+   A name bound to a temp variable the session set, or to the home, is the
+   root too (`D="$TMPDIR"; rm -rf "$D"`, `D=${HOME}`, `$d = $env:TEMP`,
+   `$h = $HOME`): the walls follow an assignment that ends its statement
+   and whose value is wholly such a variable. A value that runs past it
+   (`D=$TMPDIR/sub`), a single-quoted one, a prefix assignment or a
+   pipeline stage, and a variable the command assigns itself are not
+   followed.
    A checkout deeper inside the target is not looked for, a declared limit
    (`tests/test_speedbump_irreversible.py::TestCpRmrfTempRoots::test_a_checkout_deeper_inside_the_target_is_a_declared_limit`).
    The forced PowerShell remove reads a relative target where the command

@@ -10216,6 +10216,8 @@ class TestAScratchRootItselfIsTheWall:
         ("PowerShell", "$d = $env:TEMP; Remove-Item -Recurse $d"),
         ("PowerShell", '$d = "${env:TMP}"; Remove-Item -Recurse "$d"'),
         ("PowerShell", "$d = $env:TEMP; " + RI + "$d"),
+        ("PowerShell", "$h = $HOME; Remove-Item -Recurse $h"),
+        ("PowerShell", '$h = "$env:USERPROFILE"; Remove-Item -Recurse $h'),
     ]
 
     @pytest.mark.parametrize("tool, command", BOUND_VARIABLE_ROOTS,
@@ -10270,10 +10272,17 @@ class TestAScratchRootItselfIsTheWall:
         ("Bash", 'HOME=/tmp/job-1/h; D="$HOME"; ' + RM + '"$D"'),
         ("PowerShell", "$d = $env:TEMPS; Remove-Item -Recurse $d"),
         ("PowerShell", "$env:TEMP = 'C:/tmp/job-1/sub'; $d = $env:TEMP; Remove-Item -Recurse $d"),
+        ("Bash", 'D=$HOME ' + RM + '"$D"'),
+        ("Bash", "D=$TMPDIR | cat; " + RM + '"$D"'),
+        ("Bash", '( D="$TMPDIR" ); ' + RM + '"$D"'),
+        ("Bash", 'export TMPDIR=$(mktemp -d); D="$TMPDIR"; find "$D" -delete'),
+        ("PowerShell", "$d = $env:TEMP | Join-Path -ChildPath build; Remove-Item -Recurse $d"),
     ], ids=["runs-past-its-literal", "a-tail-in-the-value", "single-quoted", "another-name",
             "home-by-default", "the-command-binds-it", "the-command-sets-it",
             "the-command-binds-the-home", "ps-another-name",
-            "ps-the-command-sets-it"])
+            "ps-the-command-sets-it", "a-prefix-assignment", "a-pipeline-stage",
+            "a-subshell-scope", "a-sweep-of-a-variable-the-command-sets",
+            "ps-a-pipeline-value"])
     def test_a_value_that_is_not_wholly_a_read_variable_is_not_followed(
             self, tool, command, monkeypatch):
         """Only a value that is wholly one variable the readers read is
