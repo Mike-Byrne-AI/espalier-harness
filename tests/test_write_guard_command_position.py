@@ -289,7 +289,10 @@ _EXEC_WRITE_SHAPES: dict[str, str] = {
 #: prefix group, so `(?:ba|z|k|da)?sh` is FIVE spellings rather than four
 #: members. `_live_alternation` cannot read it and must not be widened until
 #: it can: this constant gets its own extractor.
-_EXEC_QUOTE_SHAPE = re.compile(r"\(\?:eval\|\(\?:([a-z|]+)\)\?sh\[")
+#: `eval` carries its glued-word guard (`evalenv` and `evalA=1` are no eval:
+#: reading them as one gave a glued word two parses, DEF-3043's lane), spelled
+#: here so a change to that guard reds this pin on purpose.
+_EXEC_QUOTE_SHAPE = re.compile(r"\(\?:eval\(\?!\[\\w=!<>\]\)\|\(\?:([a-z|]+)\)\?sh\[")
 
 
 def _load_bash_patterns():

@@ -18,6 +18,7 @@ from types import ModuleType
 
 import pytest
 
+from tests._cmd_pos_anchor import is_bash_anchored
 from tests._guard_fixture import carry_protected_tree
 from tests._hook_assertions import assert_hook_allowed, assert_hook_denied
 from tests._hook_spawn import run_hook_through
@@ -628,7 +629,7 @@ class TestQuotedVerbTailIsUniform:
         own = sorted(
             name for name, value in vars(wg).items()
             if isinstance(value, re.Pattern) and id(value) not in shared
-            and (bp._CMD_POS_NO_VERB in value.pattern or bp._PS_CMD_POS_SEP in value.pattern)
+            and (is_bash_anchored(value.pattern, bp) or bp._PS_CMD_POS_SEP in value.pattern)
         )
         assert own == [], (
             f"write_guard binds anchored arms no roster walks: {own}; define each in "
@@ -1990,12 +1991,13 @@ class TestTheWrapperRunReadsEachTokenOnce:
         "{{ cd /tmp; {z}; }}", "command -p cd /tmp && {z}", "time -p cd /tmp && {z}", "cd -- /tmp && {z}",
     ])
     def test_every_current_shell_cd_spelling_still_moves_the_later_statement(self, tmp_path, command):
-        # ruling 1bb010 (5): the tracker's narrowed anchor keeps each spelling
+        # ack 1a9932 (5): the tracker's narrowed anchor keeps each spelling
         # base re-based on -- eval, `!` and the group sit in other parts of
         # the anchor than the run it narrowed, the escape and the quote in the
         # verb prefix. A cd as an `if` or `while` test re-bases nothing on
-        # base either (the over-deny side, measured at both trees), so it is
-        # not a row here
+        # base either (measured at both trees), so it is not a keep-row here:
+        # friction for this fixture, a false allow where a cd into a zone is
+        # followed by a relative delete, one of DEF-3059's spellings
         assert_hook_allowed(run_bash_guard(command.format(z=self._ZONE), tmp_path))
 
     @pytest.mark.parametrize("prefix", [
@@ -12886,7 +12888,7 @@ class TestQuotedTargetSurvivesTheRoot:
         anchored = {
             name for name, value in vars(bp).items()
             if isinstance(value, re.Pattern)
-            and (bp._CMD_POS_NO_VERB in value.pattern or bp._PS_CMD_POS in value.pattern)
+            and (is_bash_anchored(value.pattern, bp) or bp._PS_CMD_POS in value.pattern)
         }
         assert len(anchored) >= 40, f"the anchored roster collapsed: {sorted(anchored)}"
         unanchored = {n for n in TestQuotedTargetSurvivesTheRoot._UNANCHORED if hasattr(bp, n)}

@@ -7,7 +7,7 @@
  "inputs": [
   "tools/cc/hooks/write_guard.py"
  ],
- "row_sha": "68ffab9dd3ad",
- "text_sha": "957bf66ba89f",
- "verified_2026_11_07": "OPEN (filed 2026-11-07; probe driven at filing here and in the export of HEAD fbd1b08a7533)"
+ "row_sha": "3e0290c43826",
+ "text_sha": "c154d6332e4e",
+ "verified_2026_11_07": "STILL_OPEN (re-pinned value unchanged on 2026-11-07: the ruling's label: ack 1a9932, not its request 1bb010 (note b94acf (5))) [changed: text]"
 }

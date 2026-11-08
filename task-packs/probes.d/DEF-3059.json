@@ -7,7 +7,7 @@
  "inputs": [
   "tools/cc/hooks/write_guard.py"
  ],
- "row_sha": "93b635fa1ccd",
- "text_sha": "2c1c727d5e33",
- "verified_2026_11_07": "OPEN (filed 2026-11-07; probe driven at filing here and in the export of HEAD fbd1b08a7533)"
+ "row_sha": "f81bd0393791",
+ "text_sha": "f26f7cf1030a",
+ "verified_2026_11_07": "STILL_OPEN (re-pinned value unchanged on 2026-11-07: the if/while test spelling joins the row (note b94acf (4))) [changed: text]"
 }

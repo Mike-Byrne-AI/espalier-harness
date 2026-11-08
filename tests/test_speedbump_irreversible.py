@@ -27,6 +27,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._cmd_pos_anchor import is_bash_anchored
 from tests._spaced_paths import PS, fill, quoted
 
 HOOKS_DIR = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
@@ -3399,12 +3400,8 @@ class TestCommandPositionClassClose:
     def _is_anchored(rx) -> bool:
         import _bash_patterns
 
-        # `_CMD_POS_IN_SHELL` is the cd tracker's anchor (ruling 6344f9):
-        # the same separator-anchored start with the current shell's own
-        # words in place of the wrapper run, so a quoted mention is no more
-        # an invocation there than under `_CMD_POS`
-        return (_bash_patterns._CMD_POS_NO_VERB in rx.pattern
-                or _bash_patterns._CMD_POS_IN_SHELL in rx.pattern
+        # both bash anchors, the cd tracker's included (tests/_cmd_pos_anchor.py)
+        return (is_bash_anchored(rx.pattern, _bash_patterns)
                 or _bash_patterns._PS_CMD_POS_SEP in rx.pattern)
 
     def test_every_pattern_is_anchored_or_classified(self):
@@ -3513,9 +3510,9 @@ class TestCommandPositionClassClose:
 
         found = TestCommandPositionClassClose._all_module_patterns()
         anchored = {n: rx for n, rx in found.items()
-                    if _bash_patterns._CMD_POS_NO_VERB in rx.pattern}
+                    if is_bash_anchored(rx.pattern, _bash_patterns)}
         for entry in write_guard.DANGEROUS_BASH_PATTERNS:
-            if _bash_patterns._CMD_POS_NO_VERB in entry.pattern.pattern:
+            if is_bash_anchored(entry.pattern.pattern, _bash_patterns):
                 anchored[f"write_guard.DANGEROUS_BASH_PATTERNS[{entry.pid}]"] = entry.pattern
         return anchored
 
@@ -4084,7 +4081,7 @@ class TestCommandPositionClassClose:
         anchored_but_exempt = sorted(
             name for name in self._ANCHOR_EXEMPT
             if name in found
-            and (_bash_patterns._CMD_POS_NO_VERB in found[name].pattern
+            and (is_bash_anchored(found[name].pattern, _bash_patterns)
                  or _bash_patterns._PS_CMD_POS_SEP in found[name].pattern)
         )
         assert anchored_but_exempt == [], (
