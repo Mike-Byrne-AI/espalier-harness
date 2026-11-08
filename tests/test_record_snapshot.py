@@ -494,12 +494,33 @@ class TestExclusionConfigIsFailClosed:
         assert rs.main(["--repo-root", str(repo), "--no-content-exclusions"]) == 0
 
     def test_a_commented_out_key_does_not_arm_the_refusal(self, repo):
-        """Line-scan, not a TOML parser -- so pin that a commented key reads as
-        absent rather than as set. Documents the limit instead of hiding it."""
+        """A commented key reads as absent rather than as set."""
         (repo / rs.CONFIG_REL).write_text(
             f"# {rs.REQUIRES_EXCLUSIONS_KEY} = true\n", encoding="utf-8"
         )
         assert rs.repo_requires_exclusions(repo) is False
+
+    def test_a_key_under_a_table_does_not_arm_the_refusal(self, repo):
+        """A top-level key, read with ``tomllib``: under a ``[table]`` it is that
+        table's -- the limit the constant's comment declares."""
+        (repo / rs.CONFIG_REL).write_text(
+            f"[extra_actions]\n{rs.REQUIRES_EXCLUSIONS_KEY} = true\n", encoding="utf-8"
+        )
+        assert rs.repo_requires_exclusions(repo) is False
+
+    @pytest.mark.parametrize("data", [
+        b"record_requires_exclusions = true\n[broken\n",
+        b"# caf\xe9\nrecord_requires_exclusions = true\n",
+    ], ids=["malformed", "not UTF-8"])
+    def test_a_config_that_cannot_be_parsed_refuses_rather_than_reading_off(self, repo, data):
+        """Both keys read here guard the publishing direction, so a file whose
+        policy cannot be read is a refusal naming the file, never "key absent"."""
+        assert rs.REQUIRES_EXCLUSIONS_KEY.encode() in data
+        (repo / rs.CONFIG_REL).write_bytes(data)
+        with pytest.raises(rs.RecordError, match="could not be read as TOML"):
+            rs.repo_requires_exclusions(repo)
+        assert rs.main(["--repo-root", str(repo), "--no-content-exclusions"]) == 2
+        assert rs._record_tip(repo) is None
 
 
 class TestWrapAndCaseTolerance:

@@ -47,6 +47,7 @@ import os
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 _HERE = Path(__file__).resolve()
@@ -86,13 +87,13 @@ def linked_worktree_main(root: Path) -> Path | None:
 def goal_snapshot_off(root: Path) -> bool:
     """``goal_snapshot = false`` at the top of ``espalier.toml``: the opt-out
     handoff step 7 checks first. Read as the doctor probe in ``espalier/cli.py``
-    reads it (a top-level key, so a line above any ``[table]``)."""
+    reads it: one ``tomllib`` read of the top-level key, and a file that is
+    absent, unreadable or not TOML reads as on."""
     try:
-        text = (root / "espalier.toml").read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+        data = tomllib.loads((root / "espalier.toml").read_bytes().decode("utf-8"))
+    except (OSError, ValueError):
         return False
-    head = re.split(r"(?m)^[ \t]*\[", text, maxsplit=1)[0]
-    return re.search(r"(?m)^[ \t]*goal_snapshot[ \t]*=[ \t]*false\b", head) is not None
+    return data.get("goal_snapshot") is False
 
 
 def operator_root(root: Path) -> Path | None:

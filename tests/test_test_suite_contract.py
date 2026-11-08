@@ -381,7 +381,6 @@ def _dev_extra_distributions() -> frozenset[str]:
     """The distribution names of ``[project.optional-dependencies].dev``, lower-cased."""
     from espalier._compat import tomllib
 
-    assert tomllib is not None, "neither tomllib nor tomli; the contract cannot read pyproject"
     data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
     dists: set[str] = set()
     for spec in data["project"]["optional-dependencies"]["dev"]:
@@ -3767,7 +3766,10 @@ _PRIVATE_HOOK_RUNNERS: dict[str, int] = {
     "test_plan_guard.py": 3,
     "test_plan_guard_adopter_config.py": 1,
     "test_post_compact_capture.py": 1,
-    "test_python_floor.py": 1,
+    # 2: `_run_hook_as` stubs `sys.version_info` before it runs the deny hook as
+    # `__main__` under `runpy`, so every CI cell reads a below-floor host;
+    # `run_hook` spawns the script itself and has no seam to stub it first.
+    "test_python_floor.py": 2,
     "test_quickstart_doctor_example.py": 1,
     "test_reflect_trigger_plan_bridge.py": 1,
     "test_reinject.py": 1,

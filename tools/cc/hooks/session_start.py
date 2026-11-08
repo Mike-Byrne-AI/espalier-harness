@@ -48,6 +48,23 @@ _LOAD_T0 = time.monotonic()
 
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).parent.parent))
+# Below the supported Python floor, the banner is the floor's warning alone,
+# said before any sibling imports: the siblings read espalier.toml through
+# tomllib, which the old interpreter lacks, and that crash took the whole
+# banner, the warning with it. Under `__main__` only, so an in-process importer
+# reads no banner; the start refusal is the stdlib-only module the deny hooks
+# import first for the same call. This file is outside ruff's py310 table, so
+# two things reach the old interpreter unchecked by ruff: syntax only newer
+# interpreters parse (tests/test_python_floor.py parses this file as 3.10) and
+# a newer-only name imported on the way to this block (pinned there too).
+if __name__ == "__main__":
+    try:
+        import _start_refusal  # noqa: E402
+    # fail-open: ok deliberate -- a start refusal that cannot import costs this check alone; the banner builds as before
+    except Exception:  # noqa: BLE001, S110
+        pass
+    else:
+        _start_refusal.banner_below_floor("session_start")
 import _hook_utils  # noqa: E402
 from _hook_utils import atomic_write_text, check_branch, is_self_host_repo, repo_name, surface_status, COLD_OPEN_FLAG  # noqa: E402
 import _integrity  # noqa: E402
@@ -2893,7 +2910,7 @@ def _report_integrity_state(root: Path) -> str:
             # no command is printed rather than a broken one (DEF-636).
             py = _hook_utils.python_command_hint()
             how = (f"`{py} -m espalier integrity refresh .`" if py
-                   else "`-m espalier integrity refresh .` under a Python 3.10 or newer")
+                   else f"`-m espalier integrity refresh .` under a Python {_hook_utils.floor_text()} or newer")
             return f"no manifest in this worktree (per checkout, gitignored)  ->  from its root, run {how}"
         return "no manifest (run `espalier init .`)"
     if not ok and _integrity.is_protocol_mismatch(mismatched):
@@ -3235,8 +3252,8 @@ def _warn_if_hook_interpreter_unresolved(root: Path) -> None:
         # TWO failures share this warning and they need different words.
         # "Not a Python 3 at all" and "a Python 3 below the
         # floor" have different consequences AND different remedies: the first
-        # breaks the guards, the second leaves them working while the blueprint
-        # chain dies, and a `python3` shim fixes only the first. Saying "does
+        # breaks the guards, the second has every deny hook refuse with the
+        # floor's sentence, and a `python3` shim fixes only the first. Saying "does
         # not resolve to a working Python 3" about a working 3.9 sends the
         # operator hunting for a missing install they already have.
         if interpreter_is_python3(interp):

@@ -42,10 +42,7 @@ import pytest
 
 from tests._live_tree import checkout_glob
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # pragma: no cover -- 3.10 fallback (espalier supports >=3.10)
-    import tomli as tomllib  # type: ignore[no-redef]
+import tomllib
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RESULTS = REPO_ROOT / "bench" / "RESULTS.md"

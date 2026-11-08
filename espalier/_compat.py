@@ -1,12 +1,6 @@
-"""Compatibility shims for cross-version stdlib support."""
+"""The one import site for ``tomllib`` in ``espalier/`` (stdlib on 3.11+, the floor)."""
 from __future__ import annotations
 
-try:
-    import tomllib
-except ModuleNotFoundError:
-    try:
-        import tomli as tomllib  # type: ignore[no-redef]
-    except ModuleNotFoundError:
-        tomllib = None  # type: ignore[assignment]
+import tomllib
 
 __all__ = ["tomllib"]

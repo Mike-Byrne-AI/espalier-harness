@@ -373,9 +373,25 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "CORRECT_BY_PROPERTY",
         "tests/test_proofs.py:493 (test_a_recommendation_with_no_body_is_not_warned, 2026-09-12, DEF-766) derives the bodiless optional agents from harness_config.OPTIONAL_AGENTS minus asset_inventory.packaged_agent_names(); the derived list is asserted non-empty before use (an empty one reds with a retire-this-case message) and one member is driven through run_cc_surface_gate, so a population that shrinks to nothing is loud, not green",
     ),
-    "tests/test_python_floor.py": (
-        1, "50f73a6fd385544587e109006590a56e98413f143e0773270d172d926b9fdb61",
+    "tests/test_handoff_mechanics.py": (
+        2, "e13e4b58b929c4c220e923e6e5d58ebbba8276ab2b60765aa9b812fde6b0cbbf",
         "CORRECT_BY_SHAPE",
+        "Not the 18.4 shape (2026-11-07). Both rows are one statement: `any(off_expr in "
+        "row['code'] for row in cli._ONBOARDING_ROWS)` asserts the doctor probe's reading of "
+        "`goal_snapshot` still appears in some onboarding row, the anchor the parity rows beside "
+        "it drive; it asserts nothing per member, and an empty or shrunk roster makes the `any` "
+        "False and reds, so no member can go missing unnoticed.",
+    ),
+    "tests/test_python_floor.py": (
+        2, "1b4a3998a05e90d9500ec810dceaf85bc41495ce77d4cd31eba4a13abb1e9fcd",
+        "MIXED_WITH_PRIOR_PASS",
+        "Two rows, two verdicts (2026-11-07). (1) CORRECT_BY_REMEDY: `DENY_HOOKS` is derived "
+        "from `harness_config.GOVERNANCE_BLOCKING_HOOKS`, the canonical roster, so a deny hook "
+        "declared later gets every floor row; a hook dropped from the roster leaves the rows with "
+        "it, and reds one row over, where test_the_floor_voice_files_are_ruffs_py310_table holds "
+        "the floor files equal to ruff's py310 table (the dropped file's line stays there), and "
+        "tests/test_hook_event_contracts.py pins the roster to the canonical wiring. "
+        "(2) CORRECT_BY_SHAPE, the earlier row: "
         "Not the 18.4 shape. The row RE-DERIVES an expected value -- "
         "`floor_text()` must equal `'.'.join(str(p) for p in MIN_PYTHON)` -- "
         "rather than enumerating a roster and asserting each member is safe, so "

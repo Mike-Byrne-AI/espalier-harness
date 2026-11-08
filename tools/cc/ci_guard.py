@@ -381,7 +381,7 @@ def _plural(n: int, singular: str) -> str:
 def _ci_project_name_from_pyproject(text: str) -> str | None:
     """Extract project.name via stdlib regex. Mirror of _hook_utils's twin.
 
-    Avoids tomllib/tomli to stay stdlib-only on 3.10. Only `name = ...` lines
+    A line scan, as the twin's is, so both read the name the same way. Only `name = ...` lines
     inside `[project]` / `[tool.poetry]` match, so a dependency line such as
     `dependencies = ["espalier-harness>=1.0"]` is not picked up.
     """

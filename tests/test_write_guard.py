@@ -5933,6 +5933,272 @@ class TestGitBashDrivePrefix:
         )
         assert without.returncode != 1, without.returncode
 
+    # The functions that translate the Git Bash drive spelling before a
+    # compare: {file: {function: (the name its translated argument reads, the
+    # row that goes red when that call is dropped)}}, each row measured by a
+    # mutant per call on a scratch archive (2026-11-07). The name is pinned,
+    # not just "calls it": `_target_is_catastrophic` holds a second call, on
+    # `target` inside a component count it cannot change (`/c/x` and `C:/x`
+    # both count two), and a function-level pin stayed green with the call
+    # on `literal` dropped.
+    _TRANSLATING_FUNCTIONS = {
+        "_hook_utils.py": {
+            "_project_root_spelling": ("raw", "test_a_git_bash_spelled_project_dir_is_the_project"),
+            "_clean_path_prefixes": ("cleaned",
+                                     "test_a_git_bash_spelled_write_reaches_the_zone_on_every_tool, "
+                                     "test_a_git_bash_spelled_source_write_needs_the_plan"),
+            "join_directory": ("spelled",
+                               "test_a_cd_to_a_git_bash_spelled_checkout_carries_a_relative_write"),
+        },
+        "_bash_patterns.py": {
+            "below_a_temp_root": ("spelled", "test_a_git_bash_spelled_temp_path_is_scratch"),
+            "_posix": ("path", "TestWindowsPrefixSpellings::"
+                               "test_the_delete_tier_reads_the_prefix_spelling_as_the_drive"),
+            "_target_is_catastrophic": ("literal",
+                                        "tests/test_write_guard_root_reading.py::TestDriveDepthParity::"
+                                        "test_the_git_bash_spelling_goes_through_the_drive_translation"),
+            "_drive_path_inside_the_repo_or_home": (
+                "site", "test_the_repo_or_home_read_translates_its_own_root_and_home"),
+        },
+    }
+
+    @staticmethod
+    def _translator_callers():
+        """Every `tools/cc` function whose own body calls `_msys_drive_to_windows`,
+        as {file name: {function: {names its calls' arguments read}}}, read by
+        AST from the live tree."""
+        import ast
+        from tests._live_tree import checkout_rglob
+        callers: dict = {}
+        for path in sorted(checkout_rglob(HOOKS_DIR.parent, "*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for fn in ast.walk(tree):
+                if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                for node in ast.walk(fn):
+                    callee = getattr(node, "func", None) if isinstance(node, ast.Call) else None
+                    name = getattr(callee, "attr", None) or getattr(callee, "id", None)
+                    if name == "_msys_drive_to_windows":
+                        read = callers.setdefault(path.name, {}).setdefault(fn.name, set())
+                        read.update(n.id for a in node.args for n in ast.walk(a)
+                                    if isinstance(n, ast.Name))
+        return callers
+
+    def test_every_drive_translating_function_keeps_its_call_and_is_on_the_roster(self):
+        """The rule in docs/SHARP_EDGES.md "Path Normalization on Windows" --
+        a path normaliser translates the Git Bash drive spelling on both sides
+        of a compare -- held both ways at the census. A roster function that
+        loses its call is red here on every interpreter, where its behaviour
+        row may skip (`join_directory`'s needs 3.12+). A NEW caller is red
+        until it joins the roster, which names the row that earns its call:
+        the roster is the coverage census, so adding a translating function
+        without a behaviour row is a visible choice, not a silent one. A new
+        normaliser that never calls the translator at all is out of reach of
+        any static rule without data flow; its behaviour row is the guard."""
+        callers = self._translator_callers()
+        for file_name, functions in self._TRANSLATING_FUNCTIONS.items():
+            found = callers.get(file_name, {})
+            lost = sorted(
+                f"{fn}({arg})" for fn, (arg, _row) in functions.items()
+                if arg not in found.get(fn, set())
+            )
+            assert not lost, (
+                f"{file_name}: {lost} no longer pass that argument through "
+                "_msys_drive_to_windows; a Git Bash `/c/...` path there now "
+                "compares unequal to its drive spelling on Windows. Restore the "
+                "call, or drop the function from the roster with the reason it no "
+                "longer compares an agent's path."
+            )
+        unrostered = {
+            f"{f}::{fn}"
+            for f, fns in callers.items()
+            for fn in set(fns) - set(self._TRANSLATING_FUNCTIONS.get(f, {}))
+            if fn != "_msys_drive_to_windows"
+        }
+        assert not unrostered, (
+            f"{sorted(unrostered)} call _msys_drive_to_windows but are not on "
+            "_TRANSLATING_FUNCTIONS: add each with the row that goes red when "
+            "its call is dropped."
+        )
+
+    # -- The differential: each verdict-producing reader, one payload spelled
+    # both ways, driven in-process on every host with a STAND-IN translator.
+    # The real one returns early off Windows, so on a POSIX cell both
+    # spellings would fall to one default verdict and a same-verdict assert
+    # would prove nothing; the stand-in maps `/c` onto a place whose verdict
+    # differs from the default, and each row also asserts the default with
+    # the translation swapped for identity, so a row that stops reaching the
+    # translator reads red on its own. Two stand-ins, by what the reader
+    # consumes: a real directory for the readers that resolve a path, a
+    # drive-letter spelling for the string readers that key on `X:`.
+
+    @staticmethod
+    def _translate_with(monkeypatch, translator):
+        """Patch the translator on every loaded copy of `_hook_utils`: the
+        bare and package spellings are two module objects (tests/CLAUDE.md),
+        and each caller reads the one it imported."""
+        _bash_patterns_module()
+        _import_write_guard()
+        for name in ("_hook_utils", "tools.cc.hooks._hook_utils"):
+            mod = sys.modules.get(name)
+            if mod is not None:
+                monkeypatch.setattr(mod, "_msys_drive_to_windows", translator)
+
+    @staticmethod
+    def _onto(drive: Path):
+        """The stand-in for the resolving readers: `/c/...` onto ``drive``."""
+        anchor = drive.as_posix().rstrip("/")
+
+        def to_dir(path: str) -> str:
+            m = re.match(r"^/[cC](?=/|$)", path)
+            return anchor + (path[2:] or "/") if m else path
+        return to_dir
+
+    @staticmethod
+    def _to_drive_letter(path: str) -> str:
+        """The stand-in for the string readers: the real translation's
+        output on a Windows host, `/c/x` as `C:/x`."""
+        m = re.match(r"^/([A-Za-z])(?=/|$)", path)
+        return f"{m.group(1).upper()}:" + (path[2:] or "/") if m else path
+
+    @pytest.fixture
+    def drive(self, tmp_path):
+        """A real directory standing in for drive C, holding the checkout."""
+        drive = tmp_path.resolve() / "drive"
+        (drive / "repo" / "tools" / "cc" / "hooks").mkdir(parents=True)
+        (drive / "repo" / "src").mkdir()
+        (drive / "elsewhere").mkdir()
+        return drive
+
+    def _verdicts(self, monkeypatch, capsys, drive, judge):
+        """``judge(spelling)`` for the native spelling, then the Git Bash one
+        through the stand-in, then the Git Bash one through identity."""
+        native = judge((drive / "repo").as_posix())
+        self._translate_with(monkeypatch, self._onto(drive))
+        spelled = judge("/c/repo")
+        self._translate_with(monkeypatch, lambda p: p)
+        identity = judge("/c/repo")
+        capsys.readouterr()
+        return native, spelled, identity
+
+    @pytest.mark.parametrize("tool", ["Write", "Edit", "Bash", "PowerShell"])
+    def test_a_git_bash_spelled_write_reaches_the_zone_on_every_tool(
+            self, monkeypatch, capsys, drive, tool):
+        """`_clean_path_prefixes`, the chokepoint every tool's zone check
+        normalises through: a write into `tools/cc/` spelled `/c/repo/...`
+        is denied as its native spelling is. The shell rows quote the target
+        where it holds a space (a spaced basetemp: the perturbed leg's)."""
+        wg = _import_write_guard()
+        root = drive / "repo"
+        leaf = "/tools/cc/hooks/x.py"
+
+        def judge(checkout: str) -> bool:
+            target = checkout + leaf
+            if tool == "Write":
+                rc = wg.check_write_edit({"file_path": target, "content": "x"}, root)
+            elif tool == "Edit":
+                rc = wg.check_write_edit(
+                    {"file_path": target, "old_string": "a", "new_string": "b"}, root)
+            elif tool == "Bash":
+                rc = wg.check_bash_for_protected_mutations(
+                    f"echo x > {quoted(target, SH)}", root, cwd=root)
+            else:
+                rc = wg.check_powershell_for_protected_mutations(
+                    f"Set-Content -Path {quoted(target, PS)} -Value x", root, cwd=root)
+            return bool(rc)
+        assert self._verdicts(monkeypatch, capsys, drive, judge) == (True, True, False)
+
+    def test_a_git_bash_spelled_source_write_needs_the_plan(self, monkeypatch, capsys, drive):
+        """plan_guard's in-repo test reads the same chokepoint: a source
+        write spelled `/c/repo/src/...` with no plan is refused as its native
+        spelling is, where a path outside the checkout needs none."""
+        sys.path.insert(0, str(HOOKS_DIR))
+        try:
+            import plan_guard  # type: ignore
+        finally:
+            sys.path.pop(0)
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(drive / "audit"))
+        root = drive / "repo"
+        verdicts = self._verdicts(
+            monkeypatch, capsys, drive,
+            lambda checkout: bool(plan_guard._check_path(checkout + "/src/app.py", root)))
+        assert verdicts == (True, True, False)
+
+    def test_a_cd_to_a_git_bash_spelled_checkout_carries_a_relative_write(
+            self, monkeypatch, capsys, drive):
+        """`join_directory`, the directory chain: `cd /c/repo` then a write by
+        a relative name lands in the checkout's zone, from a shell that
+        started outside it (the 2026-09-24 windows-latest rows, on every
+        host)."""
+        wg = _import_write_guard()
+        root = drive / "repo"
+        verdicts = self._verdicts(
+            monkeypatch, capsys, drive,
+            lambda checkout: bool(wg.check_bash_for_protected_mutations(
+                f"cd {quoted(checkout, SH)} && echo x > tools/cc/hooks/x.py", root,
+                cwd=drive / "elsewhere")))
+        assert verdicts == (True, True, False)
+
+    def test_a_git_bash_spelled_project_dir_is_the_project(self, monkeypatch, drive):
+        """`_project_root_spelling`, the root side of every compare: a
+        `CLAUDE_PROJECT_DIR` exported from Git Bash resolves to the checkout."""
+        hu = _import_hook_utils()
+        root = drive / "repo"
+        self._translate_with(monkeypatch, self._onto(drive))
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", "/c/repo")
+        assert hu.resolve_project_root() == root
+        self._translate_with(monkeypatch, lambda p: p)
+        assert hu.resolve_project_root() != root
+
+    @pytest.mark.parametrize("target,scratch", [("/c/Temp/x", True), ("/c/tmp/run-1", True),
+                                                ("/c/Temp", False)])
+    def test_a_git_bash_spelled_temp_path_is_scratch(self, monkeypatch, target, scratch):
+        """`below_a_temp_root` on the Bash tool: a path below a drive-root
+        temp spelled `/c/Temp/...` is scratch the delete speed-bump passes;
+        the temp root itself never is."""
+        bp = _bash_patterns_module()
+        self._translate_with(monkeypatch, self._to_drive_letter)
+        assert bp.below_a_temp_root(target, "C:/myapp", bash=True) is scratch, target
+        self._translate_with(monkeypatch, lambda p: p)
+        assert bp.below_a_temp_root(target, "C:/myapp", bash=True) is False, target
+
+    @pytest.mark.parametrize("side", ["root", "home"])
+    def test_a_drive_path_inside_a_git_bash_spelled_root_or_home_is_not_shallow(
+            self, monkeypatch, side):
+        """`_drive_path_inside_the_repo_or_home` translates the ROOT and the
+        HOME, not the payload: a checkout or home two levels under a drive
+        handed over as `/c/...` still contains `C:/<it>/build`, so a delete of
+        that build tree is not walled as a shallow system path. `C:/projx`, a
+        string prefix only, stays outside and walled."""
+        bp = _bash_patterns_module()
+        if side == "home":
+            monkeypatch.setenv("HOME", "/c/proj")
+            monkeypatch.setenv("USERPROFILE", "/c/proj")
+            root = "C:/myapp"
+        else:
+            root = "/c/proj"
+        self._translate_with(monkeypatch, self._to_drive_letter)
+        assert bp.has_catastrophic_recursive_rm("rm -r C:/proj/build", root) is False
+        assert bp.has_catastrophic_recursive_rm("rm -r C:/projx/build", root) is True
+        self._translate_with(monkeypatch, lambda p: p)
+        assert bp.has_catastrophic_recursive_rm("rm -r C:/proj/build", root) is True
+
+    @pytest.mark.parametrize("side", ["root", "home"])
+    def test_the_repo_or_home_read_translates_its_own_root_and_home(self, monkeypatch, side):
+        """The row above composes: on the whole command an earlier reader
+        settles `C:/proj/build` before this helper is asked, so the helper's
+        own call dropped left that row green (a mutant, 2026-11-07). This row
+        asks the helper directly, the one place its translation decides."""
+        bp = _bash_patterns_module()
+        for var in ("HOME", "USERPROFILE"):
+            monkeypatch.setenv(var, "/c/proj" if side == "home" else "/home/anyone")
+        root = "/c/proj" if side == "root" else None
+        self._translate_with(monkeypatch, self._to_drive_letter)
+        assert bp._drive_path_inside_the_repo_or_home("C:/proj/build", root) is True
+        assert bp._drive_path_inside_the_repo_or_home("C:/projx/build", root) is False
+        self._translate_with(monkeypatch, lambda p: p)
+        assert bp._drive_path_inside_the_repo_or_home("C:/proj/build", root) is False
+
 
 class TestWindowsPrefixSpellings:
     """DEF-935: the extended-length, device and loopback-share spellings of a
@@ -9843,7 +10109,6 @@ class TestPowerShellScratchRootRung:
         r"Remove-Item -Recurse -Force C:\tmp\*",
         r"Remove-Item -Recurse -Force C:\tmp\x\..\..\Windows",
         r"Remove-Item -Recurse -Force C:\tmp\x,C:\Windows",
-        r"Remove-Item -Recurse -Force $env:TEMP\x",           # a variable is unread (DEF-2049)
         r"Remove-Item -Recurse -Force C:\Windows\Temp\x",
         r"Remove-Item -Recurse -Force C:\tmpfoo\x",
         r"Remove-Item -Recurse -Force C:\tmp\x; Remove-Item -Recurse -Force C:\Windows",
@@ -9894,6 +10159,16 @@ class TestPowerShellScratchRootRung:
         for _ in range(2):
             result = _run_ps_guard_with_temp(command, tmp_path, self.TEMP)
             assert_hook_denied(result, contains_reason="blocked")
+
+    def test_a_forced_remove_below_the_temp_variable_draws_one_nudge(self, tmp_path):
+        """Below the TEMP the environment names, spelled through it: off the
+        wall, read as its value (DEF-2049; a WALL row until 2026-11-07, an
+        unreadable target), and asked once by the bump, whose quiet
+        carve-out reads literal paths alone."""
+        command = r"Remove-Item -Recurse -Force $env:TEMP\x"
+        first = _run_ps_guard_with_temp(command, tmp_path, self.TEMP)
+        assert_hook_denied(first, contains_reason="Speed-bump")
+        assert_hook_allowed(_run_ps_guard_with_temp(command, tmp_path, self.TEMP))
 
     def test_the_checkout_below_a_scratch_root_is_still_the_wall(self, tmp_path):
         """Below a scratch root by the environment and the checkout itself:
@@ -10136,23 +10411,132 @@ class TestAScratchRootItselfIsTheWall:
         assert not self._walls(
             "find /tmp -mindepth 1 -maxdepth 1 -name 'claude-*' -exec rm -rf {} +", "Bash")
 
-    def test_a_root_spelled_by_its_variable_is_not_read(self, monkeypatch):
-        """A declared limit (docs/HOOKS.md): the reader resolves no
-        variable, so a root spelled by its variable is not the root it
-        names and keeps the nudge, never the wall -- the Bash tool's
-        `"$TMPDIR"` and the PowerShell tool's unforced `$env:TEMP`, where
-        the literal spelling of the same root walls. The day a reader
-        resolves the variable (DEF-2049) this row reds and the sentence is
-        rewritten."""
+    #: A root spelled through ``TEMP``, ``TMP`` or ``TMPDIR`` (DEF-2049):
+    #: quoted or bare, braced or not, a trailing separator, a parent step,
+    #: each variable, and the environment drive's spellings on the
+    #: PowerShell tool with the force switch and without.
+    VARIABLE_ROOTS = [
+        ("Bash", RM + '"$TMPDIR"'),
+        ("Bash", RM + "$TMPDIR"),
+        ("Bash", RM + "${TMPDIR}"),
+        ("Bash", RM + '"$TMPDIR/"'),
+        ("Bash", RM + '"$TMPDIR/.."'),
+        ("Bash", RM + "$TEMP"),
+        ("Bash", RM + '"$TMP"'),
+        ("Bash", RM + '"${TMPDIR:?}"'),
+        ("Bash", RM + '"${TMPDIR:-/tmp}"'),
+        ("Bash", RM + '"${TMPDIR%/}"'),
+        ("Bash", "cmd //c rd /s /q %TEMP%"),
+        ("PowerShell", "cmd /c rd /s /q %TEMP%"),
+        ("PowerShell", "cmd /c rd /s /q %temp%"),
+        ("PowerShell", "Remove-Item -Recurse $env:TEMP"),
+        ("PowerShell", 'Remove-Item -Recurse "${env:TMP}"'),
+        ("PowerShell", "Remove-Item -Recurse $env:TMPDIR\\"),
+        ("PowerShell", RI + "$env:TEMP"),
+    ]
+
+    @pytest.mark.parametrize("tool, command", VARIABLE_ROOTS,
+                             ids=[f"{t}:{c}" for t, c in VARIABLE_ROOTS])
+    def test_a_root_spelled_by_its_variable_is_the_root(self, tool, command, monkeypatch):
+        """The variable is read as the value this process inherits, so the
+        root it names is the root (DEF-2049): until 2026-11-07 the readers
+        resolved no temp variable, and `"$TMPDIR"` on the Bash tool or an
+        unforced `$env:TEMP` drew the nudge, one re-issue from taking the
+        per-user temp directory, where the literal spelling walled."""
+        self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
+        assert self._walls(command, tool), command
+
+    def test_below_a_root_spelled_by_its_variable_is_scratch(self, monkeypatch):
+        """A literal tail below the variable's value is scratch on every
+        reader, the forced PowerShell remove included, which walled it as an
+        unreadable target (DEF-2049); the speed bump still asks once of a
+        variable spelling, since its carve-out reads literal paths alone."""
         monkeypatch.syspath_prepend(str(HOOKS_DIR))
         import _speedbump as sb
         self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
         repo = Path.home() / "scratch-root-no-such-repo"
-        for tool, command in (("Bash", self.RM + '"$TMPDIR"'),
-                              ("PowerShell", "Remove-Item -Recurse $env:TEMP")):
+        for tool, command in (("Bash", self.RM + '"$TMPDIR/x"'),
+                              ("Bash", self.RM + "$TEMP/x"),
+                              ("PowerShell", "Remove-Item -Recurse $env:TEMP\\x"),
+                              ("PowerShell", self.RI + "$env:TEMP\\x"),
+                              ("PowerShell", self.RI + '"${env:TMP}/a b"')):
             assert not self._walls(command, tool), command
             assert sb._pred_rmrf(tool, {"command": command}, repo), command
-        assert self._walls(self.RM + "/tmp/job-1", "Bash")
+
+    @pytest.mark.parametrize("tool, command, env", [
+        ("Bash", RM + '"$TMPDIR"', {}),
+        ("Bash", RM + '"${TMPDIR:?}"', {}),
+        ("Bash", RM + '"$TMPDIR"', {"TMPDIR": "tmp/job-1"}),
+        ("Bash", RM + '"$TMPDIRS"', {"TMPDIR": "/tmp/job-1"}),
+        ("PowerShell", "Remove-Item -Recurse $TEMP", {"TEMP": "C:/tmp/job-1"}),
+    ], ids=["unset", "unset-guarded", "relative", "another-name", "a-session-variable"])
+    def test_a_variable_with_no_root_to_read_keeps_the_nudge(self, tool, command, env, monkeypatch):
+        """Unset, a relative value, another name, and PowerShell's own
+        session variable (not the environment's) name no root: read as any
+        other variable, the nudge."""
+        self._env(monkeypatch, **env)
+        assert not self._walls(command, tool), command
+
+    @pytest.mark.parametrize("command", [
+        "$env:TEMP = 'D:\\other'; " + RI + "$env:TEMP\\x",
+        "Set-Item env:TEMP D:\\other; " + RI + "$env:TEMP\\x",
+        "[Environment]::SetEnvironmentVariable('TEMP', 'D:\\other'); " + RI + "$env:TEMP\\x",
+        ". ./setup.ps1; " + RI + "$env:TEMP\\x",
+    ], ids=["assigned", "set-item", "dotnet", "dot-sourced"])
+    def test_a_forced_remove_below_a_variable_the_command_sets_is_the_wall(
+            self, command, monkeypatch):
+        """The one reading that lifts a wall reads the inherited value only
+        where the command names that variable nowhere else: a value the
+        command sets before the remove is not the inherited one, so the
+        target stays unread, as it was."""
+        self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
+        assert self._walls(command, "PowerShell"), command
+
+    def test_an_unset_variable_is_read_by_its_default(self, monkeypatch):
+        """`${TMPDIR:-/tmp}` with TMPDIR unset expands the default, a root."""
+        self._env(monkeypatch)
+        assert self._walls(self.RM + '"${TMPDIR:-/tmp}"', "Bash")
+
+    def test_a_variable_the_command_sets_is_not_the_inherited_one(self, monkeypatch):
+        """A command that sets the variable itself expands its own value, not
+        the inherited one, so the remove readers leave it unread, the
+        reading it had before (the code review, driven: a script pointing
+        TMPDIR at its own `mktemp -d` directory met a wall no re-issue
+        clears). Read per text at the two classifier entries the hard tier
+        and the speed bump both call with that text, so one answer serves
+        both tiers."""
+        self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
+        for tool, command in (
+                ("Bash", "export TMPDIR=$(mktemp -d); make test; " + self.RM + '"$TMPDIR"'),
+                ("Bash", "TMPDIR=/tmp/job-1/sub; " + self.RM + '"$TMPDIR"'),
+                ("PowerShell", "$env:TEMP = 'C:/tmp/job-1/sub'; Remove-Item -Recurse $env:TEMP")):
+            assert not self._walls(command, tool), command
+
+    def test_a_sweep_reads_a_variable_the_command_sets_by_its_inherited_value(self, monkeypatch):
+        """A declared limit (docs/HOOKS.md): the sweep readers (a `find` with
+        a delete action, an enumerator piped into a remove) do not take the
+        per-text reading, so a walk rooted at a temp variable the command
+        sets walls as the inherited root (an over-refusal: spell the path,
+        or bind another name)."""
+        self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
+        assert self._walls("export TMPDIR=/tmp/job-1/sub; find \"$TMPDIR\" -delete", "Bash")
+
+    def test_a_brace_spelling_below_the_variable_reaches_the_checkout(self, monkeypatch):
+        """The brace reader's mid-name probe reads the variable as the
+        target judge does, so a brace that completes the checkout's name
+        below it walls as the literal spelling does (the code review)."""
+        self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
+        wg = _load_write_guard()
+        repo = Path("C:/tmp/job-1/work/repo")
+        for command in (self.RM + "C:/tmp/job-1/work/rep{o,}", self.RM + "$TEMP/work/rep{o,}"):
+            assert wg._bash_dangerous_reason(command, repo, cwd=repo) is not None, command
+
+    def test_a_forced_remove_below_a_variable_that_vets_out_is_the_wall(self, monkeypatch):
+        """The value is a scratch root only where `_vetted_scratch_values`
+        vets it: a TEMP that names the home directory is no scratch root, so
+        the forced remove below it keeps the wall."""
+        self._env(monkeypatch, TEMP=Path.home().as_posix())
+        assert self._walls(self.RI + "$env:TEMP\\x", "PowerShell")
 
     @pytest.mark.parametrize("value, path, below", [
         ("C:/tmp/job-1", "C:/tmp/job-1", False),
@@ -10179,7 +10563,9 @@ class TestAScratchRootItselfIsTheWall:
             env[var] = "C:/tmp/job-1"
         for tool, command in (("Bash", self.RM + "/tmp"),
                               ("Bash", self.RM + "C:/tmp/job-1"),
-                              ("PowerShell", self.RI + "C:\\tmp\\job-1")):
+                              ("PowerShell", self.RI + "C:\\tmp\\job-1"),
+                              ("Bash", self.RM + '"$TMPDIR"'),
+                              ("PowerShell", "Remove-Item -Recurse $env:TEMP")):
             payload = json.dumps({"tool_name": tool, "tool_input": {"command": command}})
             for _ in range(2):
                 result = run_hook_through([sys.executable, str(script)], input=payload, env=env)

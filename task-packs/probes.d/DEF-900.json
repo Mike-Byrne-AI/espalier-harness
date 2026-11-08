@@ -6,5 +6,6 @@
  "why_not": null,
  "row_sha": "a3030146aa84",
  "text_sha": "593a9ac8cbbc",
- "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)"
+ "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)",
+ "verified_2026_11_07": "STILL_OPEN (re-pinned value unchanged on 2026-11-07: Re-read for TP-706, not closed: the floor is 3.11 (requires-python >=3.11 since the floor moved), so the row's 'a safe-path interpreter flag is no route' no longer holds. python -P (3.11+) keeps the working directory off sys.path and is now a third fix shape beside an explicit cwd= or the installed console script. The probe still finds the venv launches with no cwd=, so the claim stands.) [changed: none]"
 }

@@ -1700,18 +1700,24 @@ Adding or changing a hook matcher: update `CANONICAL_HOOK_WIRING` once;
 
 ## `tomllib` import goes through `espalier._compat`
 
-Python 3.11+ ships `tomllib` in the stdlib; pre-3.11 needs the
-`tomli` backport. `espalier/_compat.py` exposes the resolved module
-as `tomllib`, so callers write:
+Python 3.11 is the floor, so `espalier/_compat.py` imports
+the stdlib `tomllib` and nothing else. Callers still write:
 
 ```python
 from espalier._compat import tomllib
 ```
 
-Direct `import tomllib` in `espalier/` raises `ModuleNotFoundError`
-on older interpreters. Tests and runtime alike route through the
-shim so dropping 3.10 support later is a one-line edit in
-`_compat.py`, not a sweep across every TOML reader.
+One import site keeps the next change to how `espalier/` reads TOML
+to one file. It did not keep the last one to one file: this section
+used to promise that dropping 3.10 would be "a one-line edit in
+`_compat.py`", and the floor's move from 3.10 to 3.11 (2026-11-07)
+cost a sweep of 24 code sites and 19 more in the suite, because readers outside the
+shim had grown their own answers to a missing parser: regex readers,
+line scans, `tomli` retries. Budget the next floor move from that
+record, not from the shim. `tools/cc/` cannot import `espalier`, so its
+readers import `tomllib` inside the function that reads, never at a
+module's top: below the floor the module still imports, and the deny
+hooks and the banner say the floor (`tests/test_python_floor.py`).
 
 ## `espalier.toml` adopter customization
 

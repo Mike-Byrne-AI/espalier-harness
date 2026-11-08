@@ -105,13 +105,9 @@ _MARKER_RE = re.compile(r" *" + MARKER + r"@[0-9a-fA-F]{7,40}(?![A-Za-z0-9])")
 #: The espalier.toml key that lets /handoff push the lane. Absent is OFF: a
 #: push is outward-facing, so a repository opts in (two field-trial adopters
 #: found that nothing but the agent's vigilance told a new user /handoff
-#: pushes). Declared in espalier/config.py::FOREIGN_KEYS. Read by a top-level
-#: line scan, as scripts/record_snapshot.py reads its flags, so this script
-#: stays stdlib-only on the 3.10 floor, which has no tomllib.
+#: pushes). Declared in espalier/config.py::FOREIGN_KEYS. Read with the
+#: stdlib's tomllib (:func:`handoff_push_setting`).
 HANDOFF_PUSH_KEY = "handoff_push"
-#: A table header line, `[name]` or `[[name]]`: not merely a line opening with `[`,
-#: which a nested array element inside a multi-line value also does.
-_TOML_TABLE_HEADER_RE = re.compile(r"""^[ \t]*\[\[?[ \t]*[A-Za-z0-9_."'-][A-Za-z0-9_."' -]*\]\]?[ \t]*(#.*)?$""")
 
 DEFAULT_TIMEOUT = 60.0
 #: Waits are bounded and polled; a wait that ends without its condition says so.
@@ -547,9 +543,12 @@ def memory_problem(root: Path) -> str:
 def handoff_push_setting(root: Path) -> tuple[bool, str]:
     """``(on, how it was read)`` for ``handoff_push`` in ``<root>/espalier.toml``.
 
-    Only the bare word ``true`` turns it on. Any other value reads as off and is
-    named in ``how``, so a typo is visible instead of silently deciding; a key
-    under a ``[table]`` header is not the top-level setting."""
+    Only the boolean ``true`` turns it on. Any other value reads as off and is
+    named in ``how`` as TOML spells it, so a typo is visible instead of silently
+    deciding; a key under a table is not the top-level setting, and a file
+    tomllib cannot parse reads as off with the parser's message (the engine
+    refuses that file too). ``_record_fragments._top_level_switch`` reads its
+    two switches by the same contract (a test pins the two agreeing)."""
     cfg = root / "espalier.toml"
     try:
         raw = cfg.read_bytes()
@@ -560,35 +559,59 @@ def handoff_push_setting(root: Path) -> tuple[bool, str]:
     text, problem = decode_text_or_problem(raw)
     if problem:
         return False, f"espalier.toml: {problem}; {HANDOFF_PUSH_KEY} reads as off"
-    table = ""        # the header the scan is under; "" is the top level
-    under = ""        # a table the key was found under, which is not the setting
-    near = ""         # a top-level key one spelling away (`handoff-push`, `Handoff_Push`)
-    for line in text.splitlines():
-        if _TOML_TABLE_HEADER_RE.match(line):
-            table = line.split("#", 1)[0].strip()
-            continue
-        key, sep, value = line.split("#", 1)[0].partition("=")
-        if not sep:
-            continue
-        key = key.strip()
-        if len(key) >= 2 and key[0] == key[-1] and key[0] in "\"'":
-            key = key[1:-1]   # a quoted key is the same key
-        if key == HANDOFF_PUSH_KEY and table:
-            under = under or table
-        elif key == HANDOFF_PUSH_KEY:
-            value = value.strip()
-            if value in ("true", "false"):
-                return value == "true", f"espalier.toml sets {HANDOFF_PUSH_KEY} = {value}"
-            return False, (f"espalier.toml sets {HANDOFF_PUSH_KEY} = {value}, which is neither true nor "
-                           "false, so it reads as off")
-        elif not table and key.replace("-", "_").lower() == HANDOFF_PUSH_KEY:
-            near = near or key
+    import tomllib  # here, not at the top: the driver still imports below the floor, where the hooks say the floor
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        return False, f"espalier.toml could not be parsed ({exc}), so {HANDOFF_PUSH_KEY} reads as off"
+    if HANDOFF_PUSH_KEY in data:
+        value = data[HANDOFF_PUSH_KEY]
+        if isinstance(value, bool):
+            return value, f"espalier.toml sets {HANDOFF_PUSH_KEY} = {_toml_spelling(value)}"
+        return False, (f"espalier.toml sets {HANDOFF_PUSH_KEY} = {_toml_spelling(value)}, which is neither true "
+                       "nor false, so it reads as off")
+    under = _toml_table_holding(data, HANDOFF_PUSH_KEY)
     if under:
-        return False, (f"espalier.toml sets {HANDOFF_PUSH_KEY} under {under}, where it is not the "
+        return False, (f"espalier.toml sets {HANDOFF_PUSH_KEY} under [{under}], where it is not the "
                        "top-level setting, so it is off")
+    # a top-level key one spelling away (`handoff-push`, `Handoff_Push`)
+    near = next((k for k in data if k.replace("-", "_").lower() == HANDOFF_PUSH_KEY), "")
     if near:
         return False, f"espalier.toml sets {near}, not {HANDOFF_PUSH_KEY}, so it is off (the default)"
     return False, f"espalier.toml does not set {HANDOFF_PUSH_KEY}, so it is off (the default)"
+
+
+def _toml_spelling(value: object) -> str:
+    """``value`` as TOML spells it, so a message names what the file says: a
+    string keeps its quotes (``"true"``), a number reads as itself (``1``).
+    One of three copies, in ``ship.py``, ``_record_fragments.py`` and
+    ``mail.py``, which load no sibling for it (a test pins them equal)."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        import json  # here, not at the top: _record_fragments.py keeps it off its Session Log readers' path
+        return json.dumps(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_spelling(v) for v in value) + "]"
+    if isinstance(value, dict):
+        return "{" + ", ".join(f"{k} = {_toml_spelling(v)}" for k, v in value.items()) + "}"
+    iso = getattr(value, "isoformat", None)
+    return iso() if callable(iso) else str(value)
+
+
+def _toml_table_holding(table: dict, key: str, path: str = "") -> str:
+    """The dotted path of the first table below ``table`` that holds ``key``
+    (a nested table, an array of tables or an inline table), or ``""``.
+    One of three copies, in ``ship.py``, ``_record_fragments.py`` and
+    ``mail.py``, which load no sibling for it (a test pins them equal)."""
+    for name, value in table.items():
+        here = f"{path}.{name}" if path else name
+        for sub in value if isinstance(value, list) else [value]:
+            if isinstance(sub, dict):
+                found = here if key in sub else _toml_table_holding(sub, key, here)
+                if found:
+                    return found
+    return ""
 
 
 #: Where a handoff writes its row since the Session Log became one file per

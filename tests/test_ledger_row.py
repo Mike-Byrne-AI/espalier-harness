@@ -2153,16 +2153,48 @@ class TestIdsAreMintedFromTheSeatsBlock:
         ('[id_blocks]\nwin = { DEF = "2000-2999" }  # one {brace} in a comment\n', True),
         ("[id_blocks]\n'win' = { DEF = \"2000-2999\" }\n", True),
         ('[id_blocks]\nwin = { DEF = "2000-2999" }\n[later]\nx = { y = 1 }\n', True),
+        ('﻿[id_blocks]\nwin = { DEF = "2000-2999" }\n', True),
         ('[id_blocks.win]\nDEF = "2000-2999"\n', False),
         ('[id_blocks]\nwin = { DEF = "2000-2099", DEF = "2100-2199" }\n', False),
-    ], ids=["comment-brace", "single-quoted-key", "table-after", "dotted-header", "kind-twice"])
+        ('[id_blocks]\nwin = { DEF = "2000-2999" }\nwin = { DEF = "2000-2999" }\n', False),
+        ('[[id_blocks]]\nwin = { DEF = "2000-2999" }\n', False),
+        ('[id_blocks]\nwin = "2000-2999"\n', False),
+        ('[id_blocks]\nwin = { DEF = 2000 }\n', False),
+        ('[id_blocks]\nwin = { DEF = "2999-2000" }\n', False),
+        ('[id_blocks]\nwin = { DEF = "2000-2999", BUG = "1-9" }\n', False),
+    ], ids=["comment-brace", "single-quoted-key", "table-after", "byte-order-mark", "dotted-header", "kind-twice",
+            "seat-twice", "array-of-tables", "not-a-table", "not-a-string", "low-above-high", "unknown-kind"])
     def test_the_table_scan_edges(self, lr, tmp_path, table, ok):
+        """The byte-order mark row is new with TP-706's tomllib read: the line
+        scan missed a header behind the mark and read no table (minting off)."""
         (tmp_path / "espalier.toml").write_text(table, encoding="utf-8")
         if ok:
             assert lr.read_id_blocks(tmp_path) == {"win": {"DEF": (2000, 2999)}}
         else:
             with pytest.raises(lr.MintRefused):
                 lr.read_id_blocks(tmp_path)
+
+    @pytest.mark.parametrize("text", [
+        'handoff_push = yes\n[id_blocks]\nwin = { DEF = "2000-2999" }\n',
+        "handoff_push = yes\n",
+    ], ids=["with-the-table", "without-the-table"])
+    def test_a_file_tomllib_cannot_parse_is_refused_by_name_never_read_as_no_blocks(self, lr, tmp_path, text):
+        """TP-706: the blocks are read with tomllib, which refuses the whole file
+        for one bad value elsewhere in it. Whether the table is there cannot be
+        known, so the read refuses by name with the parser's line and column
+        rather than answering ``None`` (no table: minting off, explicit ids
+        unchecked). Dies to: the parse error swallowed as no blocks."""
+        (tmp_path / "espalier.toml").write_text(text, encoding="utf-8")
+        with pytest.raises(lr.MintRefused, match=r"could not be parsed \(.*at line 1, column"):
+            lr.read_id_blocks(tmp_path)
+
+    def test_a_file_tomllib_cannot_parse_refuses_an_explicit_id_by_name(self, lr, tmp_path, monkeypatch, capsys):
+        t = _seat_tree(tmp_path, blocks='handoff_push = yes\n' + _BLOCKS)
+        monkeypatch.setattr(lr, "_MAIL", _seat_channel(_mail_module(), "win"))
+        assert _file_minted(lr, t, rid=("DEF-2005",)) == 2
+        assert "could not be parsed" in capsys.readouterr().err
+        assert _mint(lr, t, "DEF") == 2
+        assert "could not be parsed" in capsys.readouterr().err
 
 
 class TestTheRecordLivesInTheClonesGitDirectory:

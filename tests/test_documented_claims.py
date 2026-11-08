@@ -1244,10 +1244,7 @@ class TestVersionConsistency:
         history).
         """
         import subprocess
-        if sys.version_info >= (3, 11):
-            import tomllib
-        else:  # pragma: no cover -- 3.10 fallback
-            import tomli as tomllib  # type: ignore[no-redef]
+        import tomllib
 
         pyproject = tomllib.loads(
             (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")

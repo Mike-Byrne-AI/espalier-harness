@@ -17,16 +17,9 @@ The package resource root is ``espalier/assets/`` with this layout::
 from __future__ import annotations
 
 from importlib.resources import files
+from importlib.resources.abc import Traversable
 
 from espalier._safe_walk import is_hidden_name
-try:
-    # ``importlib.resources.abc`` landed in 3.11; ``requires-python`` is >=3.10.
-    # Try the modern location first so 3.11-3.14 (where ``importlib.abc.Traversable``
-    # was *removed* in 3.14) keep using it; fall back to ``importlib.abc`` only on
-    # 3.10, where that branch still carries ``Traversable``. Order is load-bearing.
-    from importlib.resources.abc import Traversable
-except ImportError:  # pragma: no cover - exercised on Python 3.10 only
-    from importlib.abc import Traversable  # type: ignore[no-redef]
 
 __all__ = [
     "AssetNotFound",

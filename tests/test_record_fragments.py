@@ -374,24 +374,62 @@ class TestTheChangelogWriterNeedsTheOptIn:
         assert rf.changelog_fragments_setting(REPO_ROOT) == (
             True, "espalier.toml sets changelog_fragments = true")
 
-    @pytest.mark.parametrize("body", [
-        None, "", "KEY = true\n", "KEY = false\n", 'KEY = "true"\n', "KEY = yes\n",
-        "[table]\nKEY = true\n", "other = 1\nKEY = true  # on\n", "'KEY' = true\n",
-    ])
-    def test_it_reads_as_ship_reads_handoff_push(self, rf, tmp_path, monkeypatch, body):
-        """The same contract as ``ship.handoff_push_setting``, one reader per
-        key: only the bare word ``true``, at the top level, is on."""
+    #: Files tomllib refuses: a bare word, a key given twice, an unclosed array.
+    _MALFORMED = ("KEY = yes\n", "KEY = True\n", "KEY = true\nKEY = true\n", "broken = [\nKEY = true\n")
+
+    @staticmethod
+    def _ship(monkeypatch):
         monkeypatch.syspath_prepend(str(TOOLS_CC))
         spec = importlib.util.spec_from_file_location("_ship_for_the_opt_in", TOOLS_CC / "ship.py")
         ship = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = ship
         spec.loader.exec_module(ship)
+        return ship
+
+    @staticmethod
+    def _both(rf, ship, tmp_path, body):
         a, b = tmp_path / "a", tmp_path / "b"
         for root, key in ((a, rf.CHANGELOG_FRAGMENTS_KEY), (b, ship.HANDOFF_PUSH_KEY)):
             root.mkdir()
             if body is not None:
                 (root / "espalier.toml").write_text(body.replace("KEY", key), encoding="utf-8")
-        assert rf.changelog_fragments_setting(a)[0] is ship.handoff_push_setting(b)[0]
+        return rf.changelog_fragments_setting(a), ship.handoff_push_setting(b)
+
+    @pytest.mark.parametrize("body", [
+        None, "", "KEY = true\n", "KEY = false\n", 'KEY = "true"\n', "KEY = 1\n",
+        "[table]\nKEY = true\n", "[[table]]\nKEY = true\n", "t = { KEY = true }\n",
+        "other = 1\nKEY = true  # on\n", "'KEY' = true\n", *_MALFORMED,
+    ])
+    def test_it_reads_as_ship_reads_handoff_push(self, rf, tmp_path, monkeypatch, body):
+        """The same contract as ``ship.handoff_push_setting``, one reader per
+        key: only the boolean ``true``, at the top level, is on; a file tomllib
+        cannot parse is off for both."""
+        mine, ships = self._both(rf, self._ship(monkeypatch), tmp_path, body)
+        assert mine[0] is ships[0]
+
+    @pytest.mark.parametrize("body", _MALFORMED)
+    def test_a_file_tomllib_cannot_parse_is_off_and_said_alike(self, rf, tmp_path, monkeypatch, body):
+        """TP-706: both readers parse with tomllib, so a malformed file is off for
+        both, each saying it could not be parsed with the parser's line and
+        column. Until then the scans read `KEY = true` past a duplicate or an
+        unclosed array as on, and named a bare word as neither true nor false."""
+        mine, ships = self._both(rf, self._ship(monkeypatch), tmp_path, body)
+        for on, how in (mine, ships):
+            assert on is False and "could not be parsed" in how and "(at line " in how, how
+
+    def test_the_three_toml_helper_copies_are_one_text(self, rf, monkeypatch):
+        """``ship.py``, ``mail.py`` and this loader each carry the two tomllib
+        helpers (none loads a sibling for them); the copies must not drift.
+        Dies to: one copy edited alone."""
+        import inspect
+        ship = self._ship(monkeypatch)
+        spec = importlib.util.spec_from_file_location("_mail_for_the_helper_copies", TOOLS_CC / "mail.py")
+        mail = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mail
+        spec.loader.exec_module(mail)
+        for name in ("_toml_spelling", "_toml_table_holding"):
+            texts = {inspect.getsource(getattr(m, name)) for m in (rf, ship, mail)}
+            assert len(texts) == 1, name
 
 
 class TestFragmentDirectories:

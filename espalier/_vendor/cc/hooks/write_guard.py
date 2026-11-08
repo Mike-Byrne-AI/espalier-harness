@@ -120,6 +120,11 @@ except Exception as _floor:  # noqa: BLE001 -- the start refusal itself cannot i
     sys.stdout.write(json.dumps({"hookSpecificOutput": _out}) + "\n")
     sys.stdout.flush()
     raise SystemExit(0) from None
+# Below the supported Python floor, say the floor before any sibling imports
+# and fails on the old interpreter under another name; under
+# `__main__` only, so an in-process importer is never answered with a deny.
+if __name__ == "__main__":
+    _start_refusal.refuse_below_floor("write_guard", "PreToolUse")
 # Everything else this hook needs from its siblings imports under one guard,
 # the floor too since DEF-3008: `_hook_utils` (with tools/cc/_json_safe.py
 # under it) and `_denial_reasons` (with `_maintenance_mode` under it) imported
