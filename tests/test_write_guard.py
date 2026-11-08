@@ -828,7 +828,10 @@ class TestQuotedVerbTailIsUniform:
         # TestTheWrapperRunReadsEachTokenOnce's fetch rows
         bp = _bash_patterns_module()
         sb = _speedbump_module()
-        assert sb._FETCH_INNER_WRAP_ONE == bp._CMD_POS_WRAP_ONE_LOOSE
+        # composed by its own name: a short alias of it is an alias miss
+        # (tests/test_sister_site_probe_ceilings.py, ceiling 0)
+        assert "(?:" + bp._CMD_POS_WRAP_ONE_LOOSE + "|" + sb._FETCH_INNER_ASSIGN + "){0,4}" in sb._FETCH_INNER_POS
+        assert not hasattr(sb, "_FETCH_INNER_WRAP_ONE")
         # every bare class of the loose run -- flag, argument word, numeric --
         # excludes both openers (a re-admitted paren in the flag or numeric
         # arm would carry an inner attempt across every later opener again)

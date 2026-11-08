@@ -1540,7 +1540,7 @@ _FETCH_EXEC_PIPE_RE = re.compile(
 #: the first command position is read, no other. Both pieces are the anchor's
 #: own with the opener characters added to their classes, spelled out
 #: because the ReDoS gate reconstructs patterns from literals alone (the
-#: carriers' `_CARRIER_WRAP_ONE` rule): `_FETCH_INNER_WRAP_ONE` is
+#: carriers' `_CARRIER_WRAP_ONE` rule): the wrapper piece is
 #: `_CMD_POS_WRAP_RUN`, and `_FETCH_INNER_ASSIGN`'s value is the unquoted
 #: pieces of `_ASSIGN_VALUE` (a plain character, an escaped one, a lone `$`);
 #: both are pinned in tests/test_write_guard.py::TestQuotedVerbTailIsUniform.
@@ -1550,11 +1550,10 @@ _FETCH_EXEC_PIPE_RE = re.compile(
 #: run to take a word the anchor's run declines); the position as a whole
 #: stays narrowed while `_bash_patterns._ASSIGN_VALUE` (the anchor's
 #: assignment) still carries a run across an opener.
-_FETCH_INNER_WRAP_ONE = _bash_patterns._CMD_POS_WRAP_ONE_LOOSE
 _FETCH_INNER_ASSIGN = r"""(?:[A-Za-z_]\w*=(?:[^\s;|&'"$\\(`]|\\.|\$(?![('`]))*[ \t]+)"""
 _FETCH_INNER_POS = (
     r"[(`]" + _bash_patterns._CMD_POS_WS + _bash_patterns._CARRIER_WRAP_HEAD
-    + r"(?:" + _FETCH_INNER_WRAP_ONE + r"|" + _FETCH_INNER_ASSIGN + r"){0,4}"
+    + r"(?:" + _bash_patterns._CMD_POS_WRAP_ONE_LOOSE + r"|" + _FETCH_INNER_ASSIGN + r"){0,4}"
     + _bash_patterns._CMD_POS_VERB_PREFIX
 )
 
