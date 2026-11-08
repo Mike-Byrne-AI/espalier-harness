@@ -1114,7 +1114,8 @@ class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
         _assert_zone_walled(f"{write}{self._HOOK}", tmp_path)
         _assert_zone_walled(f"{prefix}{write}{self._HOOK}", tmp_path)
 
-    @pytest.mark.parametrize("arm", sorted(k for k, v in TestQuotedVerbTailIsUniform._FIXTURES.items() if v))
+    @pytest.mark.parametrize("arm", sorted(k for k, v in TestQuotedVerbTailIsUniform._FIXTURES.items()
+                                           if v and k != "_DIR_VERB_RE"))
     def test_every_rostered_arm_reads_a_home_relative_verb(self, tmp_path, arm):
         # the row's own measure: each zone-deny fixture of the quoted-verb
         # roster respelled behind `~/bin/` (33 of 35 drew no deny before)
@@ -1122,6 +1123,15 @@ class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
         (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True, exist_ok=True)
         _assert_zone_walled(bare, tmp_path)
         _assert_zone_walled(_respelled(bare, verb, "~/bin/" + verb, inner=arm in _INNER_HEAD_ARMS), tmp_path)
+
+    def test_a_home_relative_cd_moves_no_later_statement(self, tmp_path):
+        # the directory-verb arm is out of the walk above: a directory before
+        # `cd` names the external binary, run in a child, so the write after
+        # it lands where the shell already stood (ruling 6344f9; the
+        # `/usr/bin/` head in TestTheWrapperRunReadsEachTokenOnce is its twin)
+        (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True, exist_ok=True)
+        _assert_zone_walled("cd tools/cc && echo x > hooks/x.py", tmp_path)
+        assert_hook_allowed(run_bash_guard("~/bin/cd tools/cc && echo x > hooks/x.py", tmp_path))
 
     @pytest.mark.parametrize("cmd", [
         "echo ~/bin/tee -a tools/cc/hooks/x.py",     # an argument, not a command
