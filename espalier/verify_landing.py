@@ -28,7 +28,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from espalier._spawn import run_no_stdin
+from espalier._text import os_error_text
 from espalier.pack_manifest import _live_text, _looks_like_path, _section_body
+from espalier.zone_writes import _GIT_LOCATION_VARS
 
 LANDED = "LANDED"
 DRIFTED = "DRIFTED"
@@ -188,19 +190,15 @@ class LandingUnreadable(Exception):
     """git could not read the ``--repo``'s state, so no claim can be classified."""
 
 
-#: The variables that would point git at another repository than ``--repo``
-#: (``espalier/zone_writes.py::_GIT_LOCATION_VARS``): a run from inside a git
-#: hook inherits them, and the read would then classify that repository.
-_GIT_LOCATION_VARS = frozenset({"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
-                                "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"})
-
-
 def _git_read(repo: Path, *args: str) -> tuple[list[str] | None, str]:
     """Run ``git <args>`` in ``repo``: ``(non-empty stdout lines, "")``, or
     ``(None, why)`` on any failure, ``why`` being git's last stderr line or the
     spawn error. A failure never reads as an empty answer (an empty HEAD
     listing is ``[]``). ``core.quotePath=false`` prints a non-ASCII path as
-    written, where git would quote it and no claim would match it."""
+    written, where git would quote it and no claim would match it. The
+    variables that would point git at another repository than ``repo``
+    (``_GIT_LOCATION_VARS``) are dropped: a run from inside a git hook
+    inherits them, and the read would classify that repository."""
     env = {k: v for k, v in os.environ.items() if k not in _GIT_LOCATION_VARS}
     try:
         out = run_no_stdin(
@@ -218,7 +216,7 @@ def _git_read(repo: Path, *args: str) -> tuple[list[str] | None, str]:
     except subprocess.TimeoutExpired:
         return None, "git did not answer within 30 s"
     except (OSError, ValueError) as exc:
-        return None, f"git could not be run: {exc}"
+        return None, f"git could not be run: {os_error_text(exc)}"
     return [ln for ln in out.splitlines() if ln], ""
 
 

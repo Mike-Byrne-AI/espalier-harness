@@ -29,6 +29,7 @@ from espalier.verify_landing import (
     read_landing,
     render_table,
 )
+from tests._wait_budget import scaled
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -353,7 +354,7 @@ class TestATreeGitCannotReadIsRefusedNotOwed:
         result = subprocess.run(
             [sys.executable, "-m", "espalier", "verify-landing",
              str(pack), "--repo", str(repo / "src")],
-            cwd=str(REPO_ROOT), env=env, capture_output=True, text=True, timeout=30,
+            cwd=str(REPO_ROOT), env=env, capture_output=True, text=True, timeout=scaled(30),
             encoding="utf-8",
         )
         assert result.returncode == 0, result.stderr
@@ -373,7 +374,7 @@ class TestATreeGitCannotReadIsRefusedNotOwed:
             result = subprocess.run(
                 [sys.executable, "-m", "espalier", "verify-landing",
                  str(pack), "--repo", str(plain), *extra],
-                cwd=str(REPO_ROOT), env=env, capture_output=True, text=True, timeout=30,
+                cwd=str(REPO_ROOT), env=env, capture_output=True, text=True, timeout=scaled(30),
                 encoding="utf-8",
             )
             assert result.returncode == 2, (extra, result.stdout, result.stderr)
