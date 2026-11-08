@@ -101,10 +101,18 @@ Every module-level line built from them is an `@_on_the_pattern_path` step,
 binding its name under a `global`; every function that reads such a name calls
 the loader first; and nothing that runs at import (a module-level statement, a
 class body, a default, a decorator) or a module-level lambda reads one, since a
-read there is a NameError when the judging child imports the file: an exit 1
-that lets every call through unjudged. `tests/test_write_guard.py::TestThePatternPath`
+read there is a NameError when the judging child imports the file, which
+wedges the guard (the module-body refusal below: every call refused until the
+file is restored). `tests/test_write_guard.py::TestThePatternPath`
 reads all three from the source, and the floor's helper names stay in the eager
 module-top read, so a kept helper still refuses at the start.
+
+An exception that escapes a deny hook's module body after those imports is
+refused too, never exit 1: each hook, under `__main__` and before the guarded
+`try`, installs `_start_refusal.refuse_on_body_raise` as `sys.excepthook`, and
+`raise SystemExit(0)` inside an exception hook exits 0 (3.10 to 3.14). A plant
+that tests it goes before the hook's last `__main__` block: all four end in
+`raise SystemExit(main())`, so a raise placed after it never runs.
 
 ## Maintenance mode — parent-shell launch only
 

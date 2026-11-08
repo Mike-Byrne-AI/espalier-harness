@@ -758,9 +758,10 @@ Requires an active execution plan before Claude can write to project
 source files. If Claude tries to write `src/app.py` without first
 creating a plan via `/implement-task`, the write is denied.
 
-Like `write_guard`, it starts or refuses: a sibling import that fails is a
-structured deny naming the file that raised and the repair, never an exit 1 the
-protocol reads as non-blocking (`write_guard`, "It starts or refuses").
+Like `write_guard`, it starts or refuses: a sibling import that fails, or an
+exception its own module body raises after them, is a structured deny naming the
+file that raised and the repair, never an exit 1 the protocol reads as
+non-blocking (`write_guard`, "It starts or refuses").
 
 **What you see when blocked:**
 
@@ -969,6 +970,22 @@ is `espalier upgrade --execute .` from a terminal. When `_hook_utils.py`, or
 through with its copy but without a record, which the helper writes. On the
 Stop hook each of these refusals lets the protocol's loop signal through, so a
 broken start pauses a Stop once and never locks it.
+
+**So does the hook's own module body.** Past its guarded imports each deny hook
+runs top-level statements of its own (at `main` 8e86fd4, functions, classes and
+the `__main__` block left out: `write_guard` 95, `plan_guard` 21, `config_guard`
+3, `stop_gate` 37), and 45 of `write_guard`'s read a sibling other than
+`_hook_utils.py`, whose names the guard never pre-checks. One that raised was
+exit 1, every call unjudged. Now each hook, under `__main__` and before its
+guarded imports, installs `_start_refusal.refuse_on_body_raise` as the
+interpreter's exception hook, so an exception escaping its module body is the
+same refusal: it names the file and line that raised, says the module body
+raised (not an import), neither offers nor rules out an upgrade (the
+kept-helper test alone offers one), records `details.skew: "module body"`
+(`"sibling import"` for the guarded imports), lets `write_guard`'s one restore
+through and the Stop hook's loop signal pass. `write_guard`'s judging child
+carries it, and so does a hook process that judges itself. A syntax error in
+the hook file itself is outside it: that file never runs.
 
 **One call gets through a wedged guard.** A wedged guard used to refuse the
 call that would repair it, so the operator restored the file from a terminal
@@ -1940,9 +1957,10 @@ dangerous-command denials use their own reason channels.
 
 **Event:** ConfigChange · **Can block:** Yes (project/local/user settings)
 
-Like `write_guard`, it starts or refuses: a sibling import that fails is the
-Stop-style block naming the file that raised and the repair, never an exit 1
-(`write_guard`, "It starts or refuses").
+Like `write_guard`, it starts or refuses: a sibling import that fails, or an
+exception its own module body raises after them, is the Stop-style block naming
+the file that raised and the repair, never an exit 1 (`write_guard`, "It starts
+or refuses").
 
 Fires when Claude Code modifies settings. Scans the incoming settings
 for kill-switch patterns. If found in project, local, or user settings,
