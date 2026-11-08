@@ -3399,7 +3399,12 @@ class TestCommandPositionClassClose:
     def _is_anchored(rx) -> bool:
         import _bash_patterns
 
+        # `_CMD_POS_IN_SHELL` is the cd tracker's anchor (ruling 6344f9):
+        # the same separator-anchored start with the current shell's own
+        # words in place of the wrapper run, so a quoted mention is no more
+        # an invocation there than under `_CMD_POS`
         return (_bash_patterns._CMD_POS_NO_VERB in rx.pattern
+                or _bash_patterns._CMD_POS_IN_SHELL in rx.pattern
                 or _bash_patterns._PS_CMD_POS_SEP in rx.pattern)
 
     def test_every_pattern_is_anchored_or_classified(self):
