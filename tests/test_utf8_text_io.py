@@ -900,6 +900,10 @@ def _grown_entries(current: dict[str, int], base: dict[str, int]) -> list[str]:
 
 
 @pytest.mark.contract
+# The census walk is read once a process (`live_tree_sites`, an lru_cache), so
+# whichever of this class's tests a worker reaches first pays it: 21 to 47 s of
+# the ini's 60 s across 19 Linux full-tier cells (2026-11-07/08, DEF-2056).
+@pytest.mark.timeout(240)
 class TestLiveTreeWalkRatchet:
     """The live-tree walk ratchet (DEF-2013). A contract over this tree's text
     reads git's view of the checkout (``tests/_live_tree.py``); a walk that
@@ -915,9 +919,6 @@ class TestLiveTreeWalkRatchet:
     def _pending() -> Counter:
         return Counter(s.key for s in live_tree_census.unrouted_sites())
 
-    # 21 to 47 s of the ini's 60 s across 19 Linux full-tier cells (2026-11-07/08,
-    # DEF-2056); its sibling below already carries 240.
-    @pytest.mark.timeout(240)
     def test_the_census_reads_every_tests_module_and_sees_the_measured_members(self):
         """Non-vacuity, by name: the modules it must read are read, its own two
         files are not, and the sites the first lane routed are found AS routed --
