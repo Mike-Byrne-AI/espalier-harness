@@ -11780,6 +11780,10 @@ def powershell_removal_is_below_a_scratch_root(
     if not invocations:
         return False
     asked = 0
+    # A temp variable is read as the value this process inherits (DEF-2049)
+    # only where the command sets none: a value it sets is not that one, and
+    # this rung lifts a wall
+    inherited = not _ps_command_sets_a_temp_var(raw)
     for m in invocations:
         args = raw[m.start("args"):m.end("args")]
         tokens = _ps_removal_target_tokens(
@@ -11790,10 +11794,13 @@ def powershell_removal_is_below_a_scratch_root(
             if "," in tok:
                 return False
             path = _ps_unquote(tok).replace("\\", "/")
-            if not _is_scratch_literal(path):
+            read = (_temp_var_target(path, powershell=True) if inherited else None) or path
+            if not _is_scratch_literal(read):
                 return False
-            if _target_is_catastrophic(path, root):
+            if _target_is_catastrophic(read, root):
                 return False
+            # the quiet carve-out below asks the spelling as typed, so a
+            # variable keeps the one nudge it draws on the other readers
             if quiet:
                 asked += 1
                 if asked > TEMP_CARVE_MAX or not below_a_temp_root(path, root, bash=False):
@@ -12842,6 +12849,12 @@ def _cmd_target(token: str) -> str:
         lambda m: _CMD_FIXED_VARS.get((m.group(1) or "").lower())
         or "$" + (m.group(1) or m.group(2) or m.group(3)), t)
     t = t.replace("\\", "/")
+    # a temp variable alone is the directory it names (DEF-2049), read here
+    # so the Bash and PowerShell tools judge one text (cmd's names are not
+    # case-sensitive); a path below it stays a variable, as on both tools
+    temp = re.fullmatch(r"\$(TEMP|TMP|TMPDIR)/?", t, re.IGNORECASE)
+    if temp is not None:
+        t = _temp_var_target("$" + temp.group(1).upper(), powershell=False) or t
     head = "//" if t.startswith("//") else ""
     return head + re.sub(r"/{2,}", "/", t[len(head):])
 
@@ -13099,6 +13112,11 @@ def _ps_unforced_target_is_catastrophic(part: str, root: str | None, base: str |
         part = "." + part[pwd.end():]
     elif pwd and not part[pwd.end():].strip("/*"):
         return True                        # from nowhere: as a bare wildcard is
+    # a temp variable is the directory it names (DEF-2049), so its root
+    # walls as the literal root does; unset or relative, it stays a variable
+    temp = _temp_var_target(part, powershell=True)
+    if temp is not None:
+        part = temp
     if "$" in part:
         return False
     return _ps_sweep_root_is_catastrophic(part, root, base)
@@ -13180,7 +13198,16 @@ def powershell_recursive_removal_is_catastrophic(
         return False
     inlined = _expand_simple_ps_var_assignments(command)
     readings = (command,) if inlined == command else (command, inlined)
-    return any(_ps_unforced_lands_catastrophic(text, root, cwd) for text in readings)
+    # a temp variable this command sets is read as unread (DEF-2049): the
+    # speed bump defers on this same call with this same text; cmd's names
+    # (`set TEMP=...` in a `cmd /c` program) are bash's bare-name test
+    _TEMP_VARS_SET.append(
+        _TEMP_VARS_SET[-1] or _ps_command_sets_a_temp_var(command)
+        or _BASH_TEMP_VAR_NAME_RE.search(_PS_TEMP_VAR_READ_RE.sub("", command)) is not None)
+    try:
+        return any(_ps_unforced_lands_catastrophic(text, root, cwd) for text in readings)
+    finally:
+        _TEMP_VARS_SET.pop()
 
 
 def _ps_unforced_lands_catastrophic(
@@ -13556,6 +13583,102 @@ _HOME_PREFIX_RE = re.compile(r"^(?:~|\$\{HOME\}|\$HOME)(?=/|$)")
 #: in, which the caller's ``base`` already is -- the one variable besides the
 #: home whose value the guard knows without the shell.
 _PWD_PREFIX_RE = re.compile(r"^(?:\$\{PWD\}|\$PWD)(?=/|$)")
+#: A temp variable at the head of a removal target (DEF-2049): `$TEMP`,
+#: `$TMP` or `$TMPDIR`, braced or not, by bash's spelling (case-sensitive),
+#: and the environment drive's on the PowerShell tool (`$env:TEMP`,
+#: `${env:TEMP}`, any case; the lookup keeps the typed case, so on a POSIX
+#: host, whose environment is case-sensitive, `$env:temp` names nothing).
+#: Only to a separator or the end, so `$TMPDIRS` is another name. Bash's
+#: braced form also takes the expansions that still name the variable's
+#: value where it is set (`${TMPDIR:?}`, `${TMPDIR:-/tmp}`, `${TMPDIR=x}`, the
+#: ShellCheck-safe spellings) and the trailing-separator strip `${TMPDIR%/}`.
+_TEMP_VAR_BASH_RE = re.compile(
+    r"^\$(?:\{(?P<b>TEMP|TMP|TMPDIR)(?:(?P<op>:?[-=?])(?P<word>[^}]*)|%%?/)?\}"
+    r"|(?P<n>TEMP|TMP|TMPDIR)(?![A-Za-z0-9_]))")
+_TEMP_VAR_PS_RE = re.compile(
+    r"^\$(?:\{env:(?P<b>TEMP|TMP|TMPDIR)\}|env:(?P<n>TEMP|TMP|TMPDIR)(?![A-Za-z0-9_]))",
+    re.IGNORECASE)
+_ABSOLUTE_VALUE_RE = re.compile(r"^(?:[A-Za-z]:)?/")
+#: A PowerShell command that names a temp variable by anything but a read of
+#: its environment-drive spelling (`_PS_TEMP_VAR_READ_RE`, removed first):
+#: an assignment (`$env:TEMP = ...`, the compound operators too), the drive
+#: by path (`Set-Item env:TEMP`, `Env:\TEMP`), or the name as a string (a
+#: .NET call's `'TEMP'`). A path component named `tmp` or `Temp` is none.
+_PS_TEMP_VAR_READ_RE = re.compile(
+    r"\$(?:\{env:(?:TEMP|TMP|TMPDIR)\}|env:(?:TEMP|TMP|TMPDIR)(?![A-Za-z0-9_]))"
+    r"(?!\s*(?:[-+*/%]|\?\?)?=)", re.IGNORECASE)
+_PS_TEMP_VAR_NAME_RE = re.compile(
+    r"env:[\\/]?(?:TEMP|TMP|TMPDIR)(?![A-Za-z0-9_])|(['\"])(?:TEMP|TMP|TMPDIR)\1", re.IGNORECASE)
+#: A PowerShell command that runs code which can set the session's
+#: environment where the guard does not read it: a dot-sourced or invoked
+#: script (`. ./setup.ps1`, `& ./x.ps1`), or a module import.
+_PS_RUNS_UNREAD_CODE_RE = re.compile(
+    r"(?:^|[;{(|&\n]\s*)\.\s+\S|\.ps1\b|\b(?:Import-Module|ipmo)\b", re.IGNORECASE)
+#: A Bash text that names a temp variable by anything but an expansion: an
+#: assignment (`TMPDIR=...`, `export TMPDIR=...`), `read`, `unset`, a `for`
+#: variable -- every way bash sets one spells the bare name (cmd's `set TEMP=`
+#: too; its `%TEMP%` read is no setting).
+_BASH_TEMP_VAR_NAME_RE = re.compile(r"(?<![A-Za-z0-9_${%])(?:TEMP|TMP|TMPDIR)(?![A-Za-z0-9_])")
+#: Whether the text the classifier is judging sets a temp variable itself
+#: (DEF-2049), the top of a stack pushed by the two classifier entries the
+#: hard tier and the speed bump both call with the same text
+#: (`has_catastrophic_recursive_rm`, `powershell_recursive_removal_is_catastrophic`),
+#: so the two tiers read one answer for one text. Set, a temp variable stays
+#: unread: the value the command expands is not the one this process
+#: inherits (`export TMPDIR=$(mktemp -d)` then its cleanup).
+_TEMP_VARS_SET: list[bool] = [False]
+
+
+def _temp_var_target(part: str, *, powershell: bool) -> str | None:
+    """``part`` (separator-normalised, quotes removed) with a leading temp
+    variable (`_TEMP_VAR_BASH_RE`, `_TEMP_VAR_PS_RE`) read as the value this
+    process inherits, or None where none leads it or its value names no
+    absolute path (unset, empty, relative): then the variable stays unread,
+    as any other is.
+
+    ⚠ WHY (DEF-2049). The readers resolved no temp variable, so the root
+    spelled by one was not the root to the wall: `rm -rf "$TMPDIR"` drew the
+    nudge, one re-issue from taking a Mac's per-user temp directory, where
+    `rm -rf /var/folders/<x>/T` walled, and a forced PowerShell remove below
+    `$env:TEMP` walled as an unreadable target where the literal path below
+    the same root passed. The value read is the hook's, inherited from the
+    session that launched the shell; a text that sets the variable itself
+    expands its own value, so the two classifier entries leave it unread
+    there (`_TEMP_VARS_SET`), and the one reader that lifts a wall by it
+    (`powershell_removal_is_below_a_scratch_root`) asks
+    `_ps_command_sets_a_temp_var` first."""
+    m = (_TEMP_VAR_PS_RE if powershell else _TEMP_VAR_BASH_RE).match(part)
+    if m is None or _TEMP_VARS_SET[-1]:
+        return None
+    tail = part[m.end():]
+    if tail and not tail.startswith("/"):
+        return None
+    found = m.groupdict()
+    inherited = os.environ.get(found["b"] or found["n"])
+    op = found.get("op")
+    if op and (inherited is None or (op.startswith(":") and not inherited)):
+        # unset (or empty, with the colon): `?` stops the shell before the
+        # remove runs; `-` and `=` expand the word in its place
+        if op.endswith("?"):
+            return None
+        inherited = found["word"]
+    value = (inherited or "").replace("\\", "/")
+    if not _ABSOLUTE_VALUE_RE.match(value):
+        return None
+    out = value.rstrip("/") + tail
+    # the root of a drive or of the filesystem keeps its separator
+    if not out or (len(out) == 2 and out[1] == ":"):
+        out += "/"
+    return out
+
+
+def _ps_command_sets_a_temp_var(raw: str) -> bool:
+    """The PowerShell command names ``TEMP``, ``TMP`` or ``TMPDIR`` by
+    anything but a read of `$env:` (`_PS_TEMP_VAR_READ_RE`), or runs code
+    the guard does not read (`_PS_RUNS_UNREAD_CODE_RE`), so the value a
+    remove expands may not be the one this process inherits (DEF-2049)."""
+    return (_PS_TEMP_VAR_NAME_RE.search(_PS_TEMP_VAR_READ_RE.sub("", raw)) is not None
+            or _PS_RUNS_UNREAD_CODE_RE.search(raw) is not None)
 
 
 def _posix(path: str) -> str:
@@ -13693,6 +13816,12 @@ def _target_is_catastrophic(
     match = _HOME_PREFIX_RE.match(norm)
     expanded = (os.path.expanduser("~") + norm[match.end():]) if match else norm
     expanded = expanded.replace("\\", "/")
+    # A temp variable is the directory it names (DEF-2049), as `$HOME` is:
+    # the root spelled by it walls as the literal root does (rule a2 below).
+    # Unset or relative, it stays a variable, the soft tier's.
+    temp = None if match else _temp_var_target(expanded, powershell=False)
+    if temp is not None:
+        expanded = temp
     # `$PWD` is the directory the command runs in (DEF-843): until 2026-09-18
     # it was read as a relative name inside that directory, so the checkout
     # removed through `$PWD` from its root drew the nudge where its plain
@@ -13934,6 +14063,8 @@ def _brace_prefix_completes_a_site(prefix: str, root: str | None, base: str | No
     p = ((os.path.expanduser("~") + prefix[m.end():]) if m else prefix).replace("\\", "/")
     if _PWD_PREFIX_RE.match(p):
         return True
+    # a temp variable is read as `_target_is_catastrophic` reads it (DEF-2049)
+    p = (None if m else _temp_var_target(p, powershell=False)) or p
     if not (p.startswith("/") or _DRIVE_OR_UNC_ABSOLUTE_RE.match(p)):
         if base is None:
             return False
@@ -14527,10 +14658,16 @@ def has_catastrophic_recursive_rm(
     judged by the same rules (`has_catastrophic_cmd_remove`), so every
     consumer of this classifier -- the hard tier, the speed bump's deferral
     -- reads them with the rm forms."""
-    return (
-        _bash_sweep_walk(command, root, cwd, _rm_lands_catastrophic)
-        or has_catastrophic_cmd_remove(command, root, cwd)
-    )
+    # a temp variable this text sets is read as unread (DEF-2049): the speed
+    # bump defers on this same call with this same text, so both read it so
+    _TEMP_VARS_SET.append(_TEMP_VARS_SET[-1] or _BASH_TEMP_VAR_NAME_RE.search(command) is not None)
+    try:
+        return (
+            _bash_sweep_walk(command, root, cwd, _rm_lands_catastrophic)
+            or has_catastrophic_cmd_remove(command, root, cwd)
+        )
+    finally:
+        _TEMP_VARS_SET.pop()
 
 
 def _rm_lands_catastrophic(
