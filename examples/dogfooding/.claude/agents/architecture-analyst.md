@@ -351,7 +351,7 @@ When reviewing a specific change:
 1. **Identify the layer.** Which layer does the changed file belong to?
 2. **Check import direction.** Does the file import only from allowed layers?
 3. **Check isolation contracts.** If the layer carries an isolation rule (stdlib-only, zero-imports-from-X), does this change preserve it?
-4. **Check hook exit codes.** If in a hook directory, does the governance path use only exit 0 with JSON on stdout? The channel-XOR rule forbids returning a non-zero exit code while also writing JSON to stdout (Claude Code ignores the JSON in that case).
+4. **Check hook exit codes.** If in a hook directory, does each governance decision use one channel: exit 0 with JSON on stdout, or exit 2 with plain text on stderr? Claude Code reads stdout JSON on every exit code, so a hook that mixes them still has its JSON read: an exit-2 block stands whatever the JSON says, and on exit 1 a decision JSON alone decides while no JSON lets the action through, unless the hook sets `onFailure: "block"`. The one-channel rule is Claude Code's advice, kept so each decision has one source; see "Hook exit code contract" above.
 5. **Check path normalization.** Does path handling normalize separators before comparison?
 6. **Check for circular imports.** Would this change introduce a cycle?
 7. **Check JSON contract.** If a hook blocks, does it emit valid JSON on stdout?
