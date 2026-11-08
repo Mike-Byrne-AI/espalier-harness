@@ -14662,7 +14662,8 @@ def cmd_verify_landing(args: argparse.Namespace) -> int:
     existing directory (the shared repo-arg precondition guard), and when git
     cannot read its state (not a work tree, no commit, a failed read), with
     the reason and no table: an all-OWED table there would report a landing
-    failure that is not there. A subdirectory of a work tree is read at its top.
+    failure that is not there. A subdirectory of a work tree reads the whole
+    tree; a bare repository reads HEAD alone.
     """
     from espalier.verify_landing import LandingUnreadable, classify_landing, render_table
 
@@ -16699,7 +16700,8 @@ def build_parser() -> argparse.ArgumentParser:
             "extract the backticked path tokens, and classify each against the "
             "repo's git state: LANDED (tracked in HEAD, clean), DRIFTED (tracked "
             "but changed in the working tree), or OWED (not in HEAD). Advisory "
-            "tool — prints a table and exits 0; it does not gate. HEAD-only."
+            "tool — prints a table and exits 0; it does not gate. HEAD-only. "
+            "A folder git cannot read exits 2 with the reason and no table."
         ),
     )
     p_landing.add_argument("pack_path", help="path to the pack markdown file")

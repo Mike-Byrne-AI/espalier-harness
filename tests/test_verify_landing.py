@@ -339,12 +339,68 @@ class TestATreeGitCannotReadIsRefusedNotOwed:
             assert result.returncode == 2, (extra, result.stdout, result.stderr)
             assert "cannot read the git state of" in result.stdout, extra
             assert "not a git work tree" in result.stdout, extra
-            assert OWED not in result.stdout and "owed" not in result.stdout, extra
+            # The table's header and summary, never the echoed path (a temp
+            # folder can hold any word).
+            assert "landing check" not in result.stdout, extra
+            assert " owed" not in result.stdout.replace(str(plain), ""), extra
             assert "Traceback" not in result.stderr, extra
+
+    def test_a_failed_listing_or_diff_is_refused_not_owed(self, tmp_path, monkeypatch):
+        import espalier.verify_landing as vl
+
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+        repo = _seed_repo(tmp_path)
+        real = vl._git_read
+        for verb in ("ls-tree", "diff"):
+            def failing(r, *args, _verb=verb):
+                if args and args[0] == _verb:
+                    return None, "simulated failure"
+                return real(r, *args)
+
+            monkeypatch.setattr(vl, "_git_read", failing)
+            with pytest.raises(LandingUnreadable, match=f"{verb}.*simulated failure"):
+                classify_landing(FIXTURE_PACK, repo)
+
+    def test_an_empty_tree_commit_reads_every_claim_owed(self, tmp_path, monkeypatch):
+        # An empty listing that git answered is a real answer, not a failure.
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+        repo = _init_repo(tmp_path)
+        _git(repo, "commit", "-q", "--allow-empty", "-m", "empty")
+        entries = classify_landing(FIXTURE_PACK, repo)
+        assert entries and all(e.status == OWED for e in entries)
+
+    def test_a_non_ascii_claim_matches_its_tracked_file(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+        repo = _init_repo(tmp_path)
+        (repo / "src").mkdir()
+        (repo / "src" / "café.py").write_text("x = 1\n", encoding="utf-8")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "seed")
+        pack = "## Files touched\n- `src/café.py`\n"
+        assert [e.status for e in classify_landing(pack, repo)] == [LANDED]
+
+    def test_a_bare_repository_reads_head_alone(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+        repo = _seed_repo(tmp_path)
+        bare = tmp_path / "bare.git"
+        _git(tmp_path, "clone", "-q", "--bare", str(repo), str(bare))
+        status = {e.path: e.status for e in classify_landing(FIXTURE_PACK, bare)}
+        assert status["src/landed.py"] == LANDED
+        assert status["src/drifted.py"] == LANDED  # no work tree: nothing drifts
+        assert status["src/owed.py"] == OWED
+
+    def test_an_inherited_git_dir_does_not_redirect_the_read(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+        repo = _seed_repo(tmp_path)
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        monkeypatch.setenv("GIT_DIR", str(repo / ".git"))
+        monkeypatch.setenv("GIT_WORK_TREE", str(repo))
+        with pytest.raises(LandingUnreadable, match="not a git work tree"):
+            classify_landing(FIXTURE_PACK, plain)
 
 
 class TestClassifyLandingCli:
-
     def test_cli_subcommand_json(self, tmp_path):
         repo = _seed_repo(tmp_path)
         pack = tmp_path / "pack.md"

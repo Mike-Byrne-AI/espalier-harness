@@ -10,7 +10,9 @@ uses), and classifies each against the repository's git state:
     OWED     — not tracked in ``HEAD`` (the pack claims the file; it isn't there)
 
 This is an **advisory** tool — it prints a table and exits 0; it does not gate;
-it reads landing truth back from git. It is HEAD-only; a
+it reads landing truth back from git. A folder git cannot read is refused
+(``LandingUnreadable``; the CLI exits 2 with the reason and no table), since an
+all-OWED table there would report a landing failure that is not there. It is HEAD-only; a
 ``--check-working-tree`` mode (untracked-but-present) is a deliberate follow-up.
 
 Zero ``tools/cc`` import (espalier-only), per the isolation rule.
@@ -18,6 +20,7 @@ Zero ``tools/cc`` import (espalier-only), per the isolation rule.
 from __future__ import annotations
 
 import fnmatch
+import os
 import re
 import subprocess
 from collections import Counter
@@ -185,49 +188,74 @@ class LandingUnreadable(Exception):
     """git could not read the ``--repo``'s state, so no claim can be classified."""
 
 
-def _git_lines(repo: Path, *args: str) -> list[str] | None:
-    """Run ``git <args>`` in ``repo`` and return non-empty stdout lines, or
-    ``None`` on any git failure, so a failure never reads as an empty answer
-    (an empty HEAD listing is ``[]``)."""
+#: The variables that would point git at another repository than ``--repo``
+#: (``espalier/zone_writes.py::_GIT_LOCATION_VARS``): a run from inside a git
+#: hook inherits them, and the read would then classify that repository.
+_GIT_LOCATION_VARS = frozenset({"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+                                "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"})
+
+
+def _git_read(repo: Path, *args: str) -> tuple[list[str] | None, str]:
+    """Run ``git <args>`` in ``repo``: ``(non-empty stdout lines, "")``, or
+    ``(None, why)`` on any failure, ``why`` being git's last stderr line or the
+    spawn error. A failure never reads as an empty answer (an empty HEAD
+    listing is ``[]``). ``core.quotePath=false`` prints a non-ASCII path as
+    written, where git would quote it and no claim would match it."""
+    env = {k: v for k, v in os.environ.items() if k not in _GIT_LOCATION_VARS}
     try:
         out = run_no_stdin(
-            ["git", *args],
+            ["git", "-c", "core.quotePath=false", *args],
             cwd=str(repo),
+            env=env,
             capture_output=True,
             text=True, encoding="utf-8", errors="replace",
             check=True,
             timeout=30,
         ).stdout
-    except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired, ValueError):
-        return None
-    return [ln for ln in out.splitlines() if ln]
+    except subprocess.CalledProcessError as exc:
+        lines = [ln.strip() for ln in (exc.stderr or "").splitlines() if ln.strip()]
+        return None, lines[-1] if lines else f"git exited {exc.returncode}"
+    except subprocess.TimeoutExpired:
+        return None, "git did not answer within 30 s"
+    except (OSError, ValueError) as exc:
+        return None, f"git could not be run: {exc}"
+    return [ln for ln in out.splitlines() if ln], ""
 
 
 def classify_landing(pack_text: str, repo: Path) -> list[LandingEntry]:
     """Classify a pack's claimed paths against the git state of ``repo``.
 
-    ``repo`` may be any folder inside a work tree: both reads run at the work
-    tree's top, since claims are repo-relative and ``git ls-tree`` lists a
-    subdirectory's tree relative to it. A folder git cannot read -- not in a
-    work tree, a HEAD naming no commit, or a read that fails -- raises
-    :class:`LandingUnreadable` with the reason, never an empty set: an empty
-    set classifies every claim OWED, a landing failure that is not there.
+    ``repo`` may be any folder inside a work tree: the listing is the whole
+    tree's (``ls-tree --full-tree``), since claims are repo-relative and a
+    plain ``ls-tree`` lists a subdirectory's tree relative to it, and
+    ``diff --name-only`` names paths from the top already. A bare repository
+    is read against HEAD alone (nothing can be DRIFTED). A folder git cannot
+    read -- not in a repository, a HEAD naming no commit, a read that fails --
+    raises :class:`LandingUnreadable` with the reason, git's own message
+    included, never an empty set: an empty set classifies every claim OWED,
+    a landing failure that is not there.
     """
-    top_lines = _git_lines(repo, "rev-parse", "--show-toplevel")
-    if not top_lines:
-        raise LandingUnreadable(
-            "not a git work tree (git rev-parse --show-toplevel failed there; "
-            "or git is not on PATH)"
-        )
-    top = Path(top_lines[0])
-    if not _git_lines(top, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"):
-        raise LandingUnreadable("HEAD names no commit (a repository with no commit yet)")
-    tracked = _git_lines(top, "ls-tree", "-r", "--name-only", "HEAD")
+    shape, why = _git_read(repo, "rev-parse", "--is-bare-repository", "--is-inside-work-tree")
+    if shape is None:
+        raise LandingUnreadable(f"not a git work tree ({why})")
+    bare = shape[:1] == ["true"]
+    if not bare and shape[1:2] != ["true"]:
+        raise LandingUnreadable("not a git work tree (inside a repository's .git folder?)")
+    head, why = _git_read(repo, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+    if not head:
+        # --quiet: an unborn branch exits 1 with no message, so only a spawn or
+        # timeout failure has a reason worth adding.
+        detail = "" if not why or why.startswith("git exited") else f" ({why})"
+        raise LandingUnreadable(f"the checked-out branch has no commit{detail}")
+    tracked, why = _git_read(repo, "ls-tree", "-r", "--full-tree", "--name-only", "HEAD")
     if tracked is None:
-        raise LandingUnreadable("git ls-tree -r --name-only HEAD failed")
-    modified = _git_lines(top, "diff", "--name-only", "HEAD")
-    if modified is None:
-        raise LandingUnreadable("git diff --name-only HEAD failed")
+        raise LandingUnreadable(f"git ls-tree -r --full-tree --name-only HEAD failed ({why})")
+    modified: list[str] = []
+    if not bare:
+        diff, why = _git_read(repo, "diff", "--name-only", "HEAD")
+        if diff is None:
+            raise LandingUnreadable(f"git diff --name-only HEAD failed ({why})")
+        modified = diff
     return classify_against(pack_text, set(tracked), set(modified))
 
 

@@ -637,13 +637,6 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Fixed
 
-- **`espalier verify-landing` refuses a folder git cannot read instead of
-  reporting every claim owed.** Pointed at a folder outside any work tree, or a
-  repository with no commit, it printed every claimed path as `OWED` at exit 0,
-  since a failed git read returned the same empty list as an empty `HEAD`; it
-  now exits 2 naming the reason, with no table. Pointed at a subdirectory, it
-  read `git ls-tree`'s prefix-relative listing, which no repo-relative claim
-  matched; it now reads the work tree's top.
 - **The banner's blueprint keeps its first fragment and points at the node that
   holds the rest.** `tools/cc/hooks/session_start.py::_bound_blueprint_context`
   anchored its floor on `## Recent reasoning`, the heading the loader prints
