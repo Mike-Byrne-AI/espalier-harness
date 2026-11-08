@@ -243,20 +243,6 @@ class TestLoadConfig:
         assert config.default_profile == "workflow"
         assert not any("default_profile" in str(rec.message) for rec in w)
 
-    def test_warns_when_no_toml_parser(self, tmp_path, monkeypatch):
-        """When tomllib is None and a config file exists, returns default and warns."""
-        (tmp_path / "espalier.toml").write_text('lane_count = 9\n', encoding="utf-8")
-        import espalier.config as config_mod
-        monkeypatch.setattr(config_mod, "tomllib", None)
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            config = load_config(tmp_path)
-        assert isinstance(config, HarnessConfig)
-        assert config.lane_count == 3  # default, not 9
-        assert len(w) == 1
-        assert "no TOML parser" in str(w[0].message).lower() or \
-               "tomli" in str(w[0].message).lower()
-
 
 class TestTheHookReadKnobs:
     """``source_extensions``, ``code_review_agents`` and ``docs_refresh_agents``

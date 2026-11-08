@@ -68,8 +68,7 @@ The hook-side reader is
 `_load_adopter_exempt_prefixes` wraps it), which validates the entries,
 keeps the misspelled-schema advisory and hands the deny the one line that
 says what it did with the key; the
-reading itself (tomllib, tomli, or the stdlib regex fallback when no
-parser is importable) is the shared `_hook_utils.read_toml_string_list`,
+reading itself (tomllib) is the shared `_hook_utils.read_toml_string_list`,
 which `write_guard`'s adopter-zone reader (`protected_paths`,
 `generated_paths`) routes through too. The
 espalier-side mirror is `HarnessConfig.plan_exempt_prefixes` in

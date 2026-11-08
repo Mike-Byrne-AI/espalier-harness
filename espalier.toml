@@ -74,10 +74,11 @@ dispatcher = "air"
 # take the lowest free number of this seat's block, so two seats filing from one
 # base never mint one id. A seat is `git config espalier.machine`; a clone that
 # names none mints from `_unnamed`, which no machine name can spell. One seat per
-# line, an inline table, because the reader is a line scan (the 3.10 floor has
-# no tomllib); ranges of one kind may not overlap, and the reader refuses if they
-# do. The operator approved these blocks on 2026-10-09; a new seat gets the next
-# free block from the dispatcher. A table, so it stays last in this file.
+# line, an inline table, so a seat's whole block reads and diffs on the line that
+# names it (the reader refuses an [id_blocks.<seat>] table); ranges of one kind
+# may not overlap, and the reader refuses if they do. The operator approved these
+# blocks on 2026-10-09; a new seat gets the next free block from the dispatcher.
+# A table, so it stays last in this file.
 [id_blocks]
 win = { DEF = "2000-2999", INV = "100-199", TP = "500-599" }
 win-2 = { DEF = "3000-3999", INV = "200-299", TP = "600-699" }

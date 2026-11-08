@@ -78,11 +78,11 @@ def _opt_in(root: Path) -> None:
     (root / "espalier.toml").write_text("ledger_fragments = true\n", encoding="utf-8")
 
 
-def _file(lr, t, rid: str, *, after: str | None = "DEF-2") -> int:
+def _file(lr, t, rid: str, *pre: str, after: str | None = "DEF-2") -> int:
     root = t["ledger"].parents[1]
     (root / "site").write_text("", encoding="utf-8")
     where = ["--after", after] if after else []
-    return lr.main(_args(t, "--root", str(root), "file", rid, "--section", "C1", *where,
+    return lr.main(_args(t, "--root", str(root), *pre, "file", rid, "--section", "C1", *where,
                          "--anchor", f"a/{rid}", "--text-file", str(t["body"]),
                          "--severity", "nit", "--subject", "site", "--why-not", "no local oracle"))
 
@@ -423,6 +423,7 @@ class TestTheSetting:
         ("[table]\nledger_fragments = true\n", False),
         ("changelog_fragments = true\n", False),
         ("", False),
+        ("ledger_fragments = true\nledger_fragments = true\n", False),   # tomllib refuses the file
     ])
     def test_only_a_top_level_bare_true_turns_it_on(self, frag, tmp_path, toml, on):
         (tmp_path / "espalier.toml").write_text(toml, encoding="utf-8")
@@ -695,10 +696,12 @@ class TestTheWritersRefuseAndSayWhatTheyMeet:
         assert written == ["ledger.d", "probes.d"], written
 
     def test_a_setting_written_but_not_read_as_on_is_said(self, lr, tmp_path, capsys):
-        """``= True`` reads as off: the filing goes into the file, and says so.
-        Dies to: the reason dropped."""
+        """``= "true"`` (a string) reads as off: the filing goes into the file,
+        and says so. Dies to: the reason dropped. (``= True`` was the case
+        until TP-706; it is not TOML, so tomllib refuses the file, and
+        ``TestTheSettingNoteNamesEachMisreading`` holds it.)"""
         t = _build_tree(tmp_path)
-        (tmp_path / "espalier.toml").write_text("ledger_fragments = True\n", encoding="utf-8")
+        (tmp_path / "espalier.toml").write_text('ledger_fragments = "true"\n', encoding="utf-8")
         assert _file(lr, t, "DEF-3") == 0
         err = capsys.readouterr().err
         assert "neither true nor false" in err and "this row goes into FORWARD_LEDGER.md" in err
@@ -1497,11 +1500,14 @@ class TestTheMergeHoldsTheRosterToo:
 
 
 class TestTheSettingNoteNamesEachMisreading:
-    """``file_row``'s note keys on three phrases of the setting reader's; each
-    must reach the operator. Dies to: a phrase the reader no longer says."""
+    """``file_row``'s note keys on four phrases of the setting reader's; each
+    must reach the operator. Dies to: a phrase the reader no longer says.
+    ``= True`` read as neither true nor false until TP-706 moved the reader to
+    tomllib, which refuses that file: it is the could-not-be-parsed test now,
+    and a string stands for the value that is neither."""
 
     @pytest.mark.parametrize("toml, phrase", [
-        ("ledger_fragments = True\n", "neither true nor false"),
+        ('ledger_fragments = "true"\n', "neither true nor false"),
         ("[harness]\nledger_fragments = true\n", "not the top-level setting"),
     ])
     def test_a_setting_written_but_not_read_as_on_is_said(self, lr, tmp_path, capsys, toml, phrase):
@@ -1510,6 +1516,20 @@ class TestTheSettingNoteNamesEachMisreading:
         assert _file(lr, t, "DEF-3") == 0
         err = capsys.readouterr().err
         assert phrase in err and "this row goes into FORWARD_LEDGER.md" in err, err
+
+    def test_a_setting_file_tomllib_cannot_parse_is_said_at_the_refusal_and_past_it(self, lr, tmp_path, capsys):
+        """``= True`` is not TOML. The id blocks are read from the same file, so
+        the explicit id is refused by name (its block cannot be checked), and
+        ``--override`` files it into the big file with the setting's reason
+        said. Dies to: the parse error dropped by either reader, or the fourth
+        phrase missing from ``file_row``'s note."""
+        t = _build_tree(tmp_path)
+        (tmp_path / "espalier.toml").write_text("ledger_fragments = True\n", encoding="utf-8")
+        assert _file(lr, t, "DEF-3") == 2
+        assert "could not be parsed" in capsys.readouterr().err
+        assert _file(lr, t, "DEF-3", "--override") == 0
+        err = capsys.readouterr().err
+        assert "could not be parsed" in err and "this row goes into FORWARD_LEDGER.md" in err, err
 
     def test_an_unreadable_setting_file_is_said(self, lr, tmp_path, capsys):
         t = _build_tree(tmp_path)

@@ -647,7 +647,7 @@ class TestTheHandler:
 
 
 class TestBothSpellingsOfTheStdlibSeam:
-    """3.12 grew ``onexc``; the floor is 3.10, where only ``onerror`` exists.
+    """3.12 grew ``onexc``; the floor is 3.11, where only ``onerror`` exists.
     Whichever this interpreter has, the handler must be reached with the
     ``(func, path, exception)`` shape."""
 

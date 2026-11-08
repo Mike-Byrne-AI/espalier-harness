@@ -314,13 +314,8 @@ def declared_test_roots(repo: Path) -> tuple[str, ...]:
     pyproject = repo / "pyproject.toml"
     if not pyproject.is_file():
         return ("tests",)
-    try:
-        import tomllib
-    except ModuleNotFoundError:  # pragma: no cover - 3.10 fallback
-        try:
-            import tomli as tomllib  # type: ignore[no-redef]
-        except ModuleNotFoundError:
-            return ("tests",)
+    import tomllib
+
     try:
         data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001 - a malformed pyproject must not decide a verdict

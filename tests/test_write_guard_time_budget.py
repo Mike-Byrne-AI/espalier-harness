@@ -220,10 +220,13 @@ class TestTheBudgetSitsBelowTheWiring:
 
     def test_the_hook_process_counts_from_its_first_line_and_exits_on_a_refusal(self):
         tree = ast.parse((HOOKS_DIR / "write_guard.py").read_text(encoding="utf-8"))
+        # The `__name__` block that calls main(): the first one says the floor.
         main_block = next(
             n for n in tree.body
             if isinstance(n, ast.If) and isinstance(n.test, ast.Compare)
             and isinstance(n.test.left, ast.Name) and n.test.left.id == "__name__"
+            and any(isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == "main"
+                    for c in ast.walk(n))
         )
         calls = [c for c in ast.walk(main_block) if isinstance(c, ast.Call)
                  and isinstance(c.func, ast.Name) and c.func.id == "main"]

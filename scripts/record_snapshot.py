@@ -70,6 +70,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 
 #: Same resolver every sibling in ``scripts/`` uses. Deliberately NOT
@@ -165,29 +166,32 @@ DEFAULT_EXCLUDE_PATTERNS_REL = ".espalier/record_exclude_patterns.txt"
 #: own config. Names no patterns -- it asserts only that this repo HAS material
 #: to withhold, which is the half of the fact that must survive a clone.
 #:
-#: Read by line-scan rather than a TOML parser: `tomllib` is 3.11+ and this
-#: script targets the same floor as the rest of the harness. The cost is that a
-#: MISTYPED key reads as absent, which re-permits the bypass -- so treat this as
+#: Read with `tomllib` as a top-level key: a MISTYPED key, or one under a
+#: `[table]`, reads as absent, which re-permits the bypass -- so treat this as
 #: defence-in-depth over the primary gate (a missing or empty vocabulary refuses
-#: regardless), never as the thing standing between you and a leak.
+#: regardless), never as the thing standing between you and a leak. A file that
+#: does not decode or parse refuses (`RecordError`) rather than reading as
+#: absent: the policy it holds cannot be read, and both keys read here guard the
+#: publishing direction.
 REQUIRES_EXCLUSIONS_KEY = "record_requires_exclusions"
 CONFIG_REL = "espalier.toml"
 
 
 def _config_flag_is_true(repo_root: Path, key: str) -> bool:
-    """``<key> = true`` on its own line in espalier.toml (line-scan, see above)."""
+    """``<key> = true`` at the top level of espalier.toml; raises ``RecordError``
+    when the file is there and cannot be read, decoded or parsed (see above)."""
     cfg = repo_root / CONFIG_REL
     if not cfg.is_file():
         return False
     try:
-        text = cfg.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return False
-    for line in text.splitlines():
-        bare = line.split("#", 1)[0].replace(" ", "").replace("\t", "")
-        if bare == f"{key}=true":
-            return True
-    return False
+        data = tomllib.loads(cfg.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError) as exc:  # UnicodeDecodeError and TOMLDecodeError are ValueErrors
+        raise RecordError(
+            f"{CONFIG_REL} at {repo_root} could not be read as TOML ({exc}), so whether it sets "
+            f"{key} = true is unknown -- fix the file and re-run; the record never assumes the "
+            "key is off"
+        ) from exc
+    return data.get(key) is True
 
 
 def repo_requires_exclusions(repo_root: Path) -> bool:

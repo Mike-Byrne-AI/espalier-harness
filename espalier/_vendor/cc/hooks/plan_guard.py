@@ -67,6 +67,9 @@ except Exception as _floor:  # noqa: BLE001 -- the start refusal itself cannot i
             " is refused until then.")}}) + "\n")
     sys.stdout.flush()
     raise SystemExit(0) from None
+# Below the supported Python floor, say the floor first (write_guard.py says why).
+if __name__ == "__main__":
+    _start_refusal.refuse_below_floor("plan_guard", "PreToolUse")
 try:
     import _hook_utils  # noqa: E402
     import _denial_reasons  # noqa: E402
@@ -88,17 +91,6 @@ except Exception as _skew:  # noqa: BLE001 -- a kept helper that predates its si
     if __name__ != "__main__":
         raise
     _start_refusal.refuse_on_helper_skew("plan_guard", "PreToolUse", _skew)
-
-# stdlib TOML for adopter-configured exempt prefixes. The
-# zero-espalier-imports contract forbids reaching into espalier/_compat.py,
-# so this mirrors that file's fallback pattern inline.
-try:
-    import tomllib as _tomllib  # type: ignore[import-not-found]
-except ModuleNotFoundError:  # fail-open: ok deliberate -- no TOML parser: the regex arm of the shared reader serves the key
-    try:
-        import tomli as _tomllib  # type: ignore[no-redef]
-    except ModuleNotFoundError:
-        _tomllib = None  # type: ignore[assignment]
 
 # Bash/PowerShell dispatch in main() dead under current matcher; see header banner.
 # Shared SoT via _hook_utils.MUTATION_TOOLS.
@@ -393,15 +385,12 @@ def _read_adopter_exempt_config(root: Path) -> tuple[tuple[str, ...], str]:
     on an allow, and stderr alone reaches the debug log only (the protocol
     pin). The same text is the note, which the deny carries
     (``_adopter_exempt_note``), so a setting that exempts nothing is never
-    refused unexplained. The reading itself -- tomllib, tomli, or the stdlib
-    regex fallback when no parser is importable (Py<3.11 without tomli), so
-    the config is honored rather than silently dropped -- is
+    refused unexplained. The reading itself (``tomllib``) is
     ``_hook_utils.read_toml_string_list``, the one hook-side reader of the
-    file (write_guard's adopter zones route through it too). This function
-    passes its OWN ``_tomllib`` binding as the parser, so a test that sets it
-    to ``None`` still forces the regex arm; the diagnoses that need the whole
-    table (a key under another table, a near-miss spelling, the required-list
-    setting) run only with a parser. Validation and the advisories stay here.
+    file (write_guard's adopter zones route through it too); the diagnoses
+    that need the whole table (a key under another table, a near-miss
+    spelling, the required-list setting) read it through
+    ``_hook_utils.read_toml_table``. Validation and the advisories stay here.
     Never raises.
 
     tools/cc/ has a zero-espalier-imports contract so this duplicates the
@@ -441,17 +430,15 @@ def _read_adopter_exempt_config_uncached(root: Path) -> tuple[tuple[str, ...], s
     def _malformed(text: str) -> None:
         _ignored("malformed", f"malformed espalier.toml ({text}); falling back to strict mode")
 
-    raw = _hook_utils.read_toml_string_list(
-        root, _ADOPTER_CONFIG_KEY, parser=_tomllib, on_error=_malformed,
-    )
+    raw = _hook_utils.read_toml_string_list(root, _ADOPTER_CONFIG_KEY, on_error=_malformed)
     if raw is None:
         if said:
             # The file could not be parsed (said above).
             return (), said[-1]
-        # The key is absent. With a parser, read the table once more for the
-        # shapes the hook does NOT honor, so the schema mismatch is observable
-        # instead of silently denying every write.
-        data = _hook_utils.read_toml_table(root, parser=_tomllib) if _tomllib is not None else None
+        # The key is absent. Read the table once more for the shapes the hook
+        # does NOT honor, so the schema mismatch is observable instead of
+        # silently denying every write.
+        data = _hook_utils.read_toml_table(root)
         if isinstance(data, dict):
             plan_guard_table = data.get("plan_guard")
             bare_exempt = data.get("exempt_prefixes")

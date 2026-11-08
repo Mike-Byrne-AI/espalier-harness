@@ -175,20 +175,20 @@ class TestInterpreterResolution:
 
     def test_a_directory_named_like_a_version_is_not_an_interpreter(self, gate, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "3.10").mkdir()
-        assert gate.resolve_interpreter("3.10", find=lambda v: sys.executable) == Path(sys.executable).resolve()
+        (tmp_path / "3.11").mkdir()
+        assert gate.resolve_interpreter("3.11", find=lambda v: sys.executable) == Path(sys.executable).resolve()
 
     def test_a_bare_version_goes_through_the_finder(self, gate):
-        assert gate.resolve_interpreter("3.10", find=lambda v: sys.executable) == Path(sys.executable).resolve()
+        assert gate.resolve_interpreter("3.11", find=lambda v: sys.executable) == Path(sys.executable).resolve()
 
     def test_a_bare_version_the_finder_cannot_place_is_refused(self, gate):
-        with pytest.raises(gate.GateRefusal, match=r"uv python install 3\.10"):
-            gate.resolve_interpreter("3.10", find=lambda v: None)
+        with pytest.raises(gate.GateRefusal, match=r"uv python install 3\.11"):
+            gate.resolve_interpreter("3.11", find=lambda v: None)
 
     def test_a_bare_version_without_uv_is_refused_naming_the_install(self, gate, monkeypatch):
         monkeypatch.setattr(gate.shutil, "which", lambda name, path=None: None)
         with pytest.raises(gate.GateRefusal, match="needs `uv` on PATH"):
-            gate.resolve_interpreter("3.10")
+            gate.resolve_interpreter("3.11")
 
     def test_an_unknown_name_is_refused(self, gate, monkeypatch):
         monkeypatch.setattr(gate.shutil, "which", lambda name, path=None: None)

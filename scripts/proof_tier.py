@@ -1110,16 +1110,10 @@ _VERSION_FLAG = "--version"
 
 def dev_extra_pins(root: Path) -> dict[str, str]:
     """``{name: version}`` for each exact ``name==version`` spec in the dev
-    extra. Empty when ``pyproject.toml`` cannot be read or no TOML reader is
-    importable (3.10 without ``tomli``): the receipt then prints the versions
-    and skips the comparison, never the run."""
-    try:
-        import tomllib
-    except ImportError:  # Python 3.10: the base dependencies install tomli there
-        try:
-            import tomli as tomllib  # type: ignore[no-redef]
-        except ImportError:
-            return {}
+    extra. Empty when ``pyproject.toml`` cannot be read or parsed: the receipt
+    then prints the versions and skips the comparison, never the run."""
+    import tomllib
+
     try:
         data = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
     except (OSError, ValueError):  # TOMLDecodeError is a ValueError

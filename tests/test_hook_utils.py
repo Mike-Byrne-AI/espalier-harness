@@ -835,17 +835,6 @@ class TestReadTomlScalar:
         assert _hook_utils.read_toml_scalar(tmp_path, "name") == "x"
         assert _hook_utils.read_toml_scalar(tmp_path, "missing") is None
 
-    def test_regex_arm_types_a_bool_an_int_and_a_quoted_string_only(self, tmp_path):
-        import _hook_utils
-        (tmp_path / "espalier.toml").write_text(
-            '# n = 1\nn = 1_000  # a comment\nb = false\ns = "quoted"\nf = 1.5\nw = word\n'
-            '[t]\nunder = 7\n', encoding="utf-8")
-        read = lambda k: _hook_utils.read_toml_scalar(tmp_path, k, parser=None)  # noqa: E731
-        assert read("n") == 1000 and read("b") is False and read("s") == "quoted"
-        assert read("f") is None and read("w") is None   # not guessed at
-        assert read("under") is None                      # a table key is not top-level
-        assert read("zz") is None
-
     def test_a_malformed_file_reports_through_on_error_and_returns_none(self, tmp_path):
         import _hook_utils
         (tmp_path / "espalier.toml").write_text("handoff_context_tokens = abc\n", encoding="utf-8")
@@ -853,26 +842,18 @@ class TestReadTomlScalar:
         assert _hook_utils.read_toml_scalar(tmp_path, "handoff_context_tokens", on_error=said.append) is None
         assert len(said) == 1 and said[0], said
 
-    def test_both_readers_go_through_the_one_body_with_their_own_fallback(self, tmp_path, monkeypatch):
+    def test_both_readers_go_through_the_one_body(self, tmp_path, monkeypatch):
         import _hook_utils
-        calls: list[tuple[str, object]] = []
+        calls: list[str] = []
 
-        def _recorder(root, key, *, fallback, parser, on_error):
-            calls.append((key, fallback))
+        def _recorder(root, key, *, on_error):
+            calls.append(key)
             return "recorded"
 
         monkeypatch.setattr(_hook_utils, "_read_toml_flat", _recorder)
         assert _hook_utils.read_toml_string_list(tmp_path, "a") == "recorded"
         assert _hook_utils.read_toml_scalar(tmp_path, "b") == "recorded"
-        assert calls == [("a", _hook_utils._regex_extract_string_list), ("b", _hook_utils._regex_extract_scalar)]
-
-    def test_the_regex_arm_s_declared_gaps_read_none(self, tmp_path):
-        # Pinned as gaps, not guessed at: a `#` inside a quoted value cuts it,
-        # and a quoted key is not matched (tomllib reads both).
-        import _hook_utils
-        (tmp_path / "espalier.toml").write_text('s = "a # b"\n"q" = 1\n', encoding="utf-8")
-        assert _hook_utils.read_toml_scalar(tmp_path, "s", parser=None) is None
-        assert _hook_utils.read_toml_scalar(tmp_path, "q", parser=None) is None
+        assert calls == ["a", "b"]
 
     def test_the_push_bit_reads_as_the_ship_driver_reads_it(self, tmp_path):
         # One reader: the ask's clause says what the push verb will do, so the
@@ -1067,51 +1048,6 @@ class TestReadTomlStringList:
         assert _hook_utils.read_toml_string_list(tmp_path, "k", on_error=said.append) is None
         assert len(said) == 1 and said[0], said
         assert _hook_utils.read_toml_table(tmp_path) is None
-
-    def test_no_parser_takes_the_regex_arm(self, tmp_path):
-        import _hook_utils
-        (tmp_path / "espalier.toml").write_text('# k = ["no"]\nk = ["a", "b"]\n', encoding="utf-8")
-        assert _hook_utils.read_toml_string_list(tmp_path, "k", parser=None) == ["a", "b"]
-        assert _hook_utils.read_toml_string_list(tmp_path, "zz", parser=None) is None
-        assert _hook_utils.read_toml_table(tmp_path, parser=None) is None
-
-    def test_a_text_only_parser_is_retried_with_a_text_handle(self, tmp_path):
-        # DEF-871: tomli below 1.1 types load() for a text handle and raises
-        # TypeError on the binary one the reader opens (measured 2026-10-08 on
-        # CPython 3.10 with tomli 1.0.4: every source write denied as the
-        # guard's internal error once any espalier.toml existed). The stub
-        # reproduces that documented behaviour, not the library; the real one
-        # was driven once at landing. RED without the retry: the TypeError
-        # escaped the reader.
-        import _hook_utils
-        (tmp_path / "espalier.toml").write_text('k = ["a"]\n', encoding="utf-8")
-        real = _hook_utils._toml_parser()
-        assert real is not None, "this interpreter has no TOML parser to delegate to"
-
-        class _Tomli10:
-            @staticmethod
-            def load(fh):
-                if "b" in getattr(fh, "mode", ""):
-                    raise TypeError("a bytes-like object is required, not 'str'")
-                return real.loads(fh.read())
-
-        assert _hook_utils.read_toml_table(tmp_path, parser=_Tomli10()) == {"k": ["a"]}
-
-    def test_a_parser_that_takes_neither_handle_is_reported_not_raised(self, tmp_path):
-        # The retry's own TypeError goes to the caller's channel like a
-        # malformed file does: the docstring's "never raises" holds for a
-        # parser that is wrong both ways, instead of wedging the guard.
-        import _hook_utils
-        (tmp_path / "espalier.toml").write_text('k = ["a"]\n', encoding="utf-8")
-
-        class _Broken:
-            @staticmethod
-            def load(fh):
-                raise TypeError("no handle suits me")
-
-        said: list[str] = []
-        assert _hook_utils.read_toml_table(tmp_path, parser=_Broken(), on_error=said.append) is None
-        assert len(said) == 1 and "no handle suits me" in said[0], said
 
     def test_adopter_prefixes_are_boundary_matched_pairs(self, tmp_path, monkeypatch):
         import _hook_utils
@@ -1433,20 +1369,14 @@ class TestAdopterZoneReadingEdges:
         '[tool.other]\nprotected_paths = ["src/"]',                    # table-scoped, not top-level
         'unprotected_paths = ["src/"]',                                 # a substring key
     ])
-    def test_the_regex_arm_agrees_with_a_real_parse_on_the_three_divergences(self, tmp_path, text):
-        """The no-parser fallback now creates DENIES, so an over-match is a false
-        deny on user-owned code; the 2-A review drove these three rows."""
+    def test_a_lookalike_of_the_key_is_not_the_key(self, tmp_path, text):
+        """The reader creates DENIES (the adopter zones), so an over-match is a
+        false deny on user-owned code: a key inside a trailing comment, under a
+        table, or as a substring of another key is not the top-level key (the
+        2-A review drove these three rows against the retired regex arm)."""
         import _hook_utils
         (tmp_path / "espalier.toml").write_text(text + "\n", encoding="utf-8")
-        assert _hook_utils.read_toml_string_list(tmp_path, "protected_paths", parser=None) is None
         assert _hook_utils.read_toml_string_list(tmp_path, "protected_paths") is None
-
-    def test_a_zone_read_by_the_degraded_reader_is_said(self, tmp_path, monkeypatch, capsys):
-        hu = self._fresh(monkeypatch)
-        monkeypatch.setattr(hu, "_toml_parser", lambda: None)
-        (tmp_path / "espalier.toml").write_text('protected_paths = ["data/"]\n', encoding="utf-8")
-        assert hu.adopter_protected_prefixes(tmp_path) == (("data/", "protected"),)
-        assert "read by the no-parser regex fallback" in capsys.readouterr().err
 
     def test_the_memo_follows_the_file(self, tmp_path, monkeypatch):
         hu = self._fresh(monkeypatch)

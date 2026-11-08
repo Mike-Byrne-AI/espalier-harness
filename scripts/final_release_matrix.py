@@ -32,10 +32,7 @@ import shutil
 import subprocess
 import sys
 import time
-try:
-    import tomllib  # Python 3.11+
-except ImportError:  # Python 3.10
-    import tomli as tomllib  # type: ignore[no-redef]
+import tomllib
 import tarfile
 import zipfile
 from dataclasses import dataclass
