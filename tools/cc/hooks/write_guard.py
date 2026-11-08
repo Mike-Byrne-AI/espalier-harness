@@ -346,9 +346,13 @@ if TYPE_CHECKING:  # the type checker's view of the names the steps bind
 #: The steps, in source order: a decorator runs where its function is defined.
 _PATTERN_STEPS: list[Callable[[], None]] = []
 #: Held while the path loads, so a second thread waits for all of it.
-_PATTERN_PATH_LOCK = threading.Lock()
+#: Reentrant, so a step that calls a reader (which calls the loader first)
+#: returns at once instead of deadlocking the guard until the parent's kill.
+_PATTERN_PATH_LOCK = threading.RLock()
 #: Set once every step has run, never before.
 _pattern_path_loaded = False
+#: Set while the steps run, so a reentrant call from one of them returns.
+_pattern_path_loading = False
 
 
 def _on_the_pattern_path(step: Callable[[], None]) -> Callable[[], None]:
@@ -363,23 +367,27 @@ def _load_the_pattern_path() -> None:
     The done flag is set after the last step, so an import or a step that
     raises leaves the path unloaded and the next call raises again (into
     `main`'s crash guard, or the importer's own traceback)."""
-    global _bash_patterns, _speedbump, _pattern_path_loaded
+    global _bash_patterns, _speedbump, _pattern_path_loaded, _pattern_path_loading
     if _pattern_path_loaded:
         return
     with _PATTERN_PATH_LOCK:
-        if _pattern_path_loaded:
+        if _pattern_path_loaded or _pattern_path_loading:
             return
-        # This file's directory first, as at its top: a caller may have put
-        # sys.path back since, and `_speedbump` imports its siblings bare,
-        # trusting the hook to have done this (DEF-768).
-        here = str(Path(__file__).parent)
-        if sys.path[:1] != [here]:
-            sys.path.insert(0, here)
-        import _bash_patterns
-        import _speedbump
-        for step in _PATTERN_STEPS:
-            step()
-        _pattern_path_loaded = True
+        _pattern_path_loading = True
+        try:
+            # This file's directory first, as at its top: a caller may have put
+            # sys.path back since, and `_speedbump` imports its siblings bare,
+            # trusting the hook to have done this (DEF-768).
+            here = str(Path(__file__).parent)
+            if sys.path[:1] != [here]:
+                sys.path.insert(0, here)
+            import _bash_patterns
+            import _speedbump
+            for step in _PATTERN_STEPS:
+                step()
+            _pattern_path_loaded = True
+        finally:
+            _pattern_path_loading = False
 
 
 def __getattr__(name: str) -> Any:

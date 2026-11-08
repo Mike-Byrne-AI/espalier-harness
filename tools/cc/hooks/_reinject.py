@@ -994,10 +994,13 @@ _PIPE_SPLIT_RE = re.compile(r"""split\(\s*['"]\|['"]""")
 #: pattern it can reconstruct statically).
 _GUARD_PATTERN_MODULES: tuple[str, ...] = ("_bash_patterns", "_speedbump", "write_guard")
 _GUARD_PATTERN_MODULE_RE = re.compile(r"(^|/)tools/cc/hooks/(?:_bash_patterns|_speedbump|write_guard)\.py$")
-#: A name bound at column 0 to `re.compile(`, annotated or not. Every span is
-#: bounded and each pair of neighbours is disjoint (ReDoS class 5).
+#: A name bound to `re.compile(`, annotated or not, at column 0 or one level in:
+#: write_guard binds the patterns it builds from `_bash_patterns` inside steps
+#: its loader runs once (each under a `global`), so they are module-level names
+#: written one level in. Every span is bounded and each pair of neighbours is
+#: disjoint (ReDoS class 5).
 _MODULE_LEVEL_COMPILE_RE = re.compile(
-    r"(?m)^(?P<name>[A-Za-z_]\w{0,80})[ \t]*(?::[^=\n]{0,120})?=[ \t]*re\.compile\("
+    r"(?m)^(?:[ ]{4})?(?P<name>[A-Za-z_]\w{0,80})[ \t]*(?::[^=\n]{0,120})?=[ \t]*re\.compile\("
 )
 #: Where a top-level statement ends: a newline before a column-0 character that
 #: cannot continue a bracketed expression (a column-0 comment ends it too).
@@ -1171,7 +1174,7 @@ def _render_ledger_parser(tool_name: str, tool_input: dict, root: Path) -> "str 
 
 
 def _unanchored_new_bindings(new: str, old: str) -> list[str]:
-    """Names bound at column 0 to `re.compile(` in ``new`` that this call
+    """Names bound at module level to `re.compile(` in ``new`` that this call
     actually introduces or changes, and that compose no command-position
     anchor. A statement carried unchanged from ``old`` (an Edit's context) is
     not this edit's, and one that composes `_CMD_POS` / `_PS_CMD_POS` already
