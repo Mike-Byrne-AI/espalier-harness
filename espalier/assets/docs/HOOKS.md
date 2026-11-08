@@ -1249,8 +1249,8 @@ first; the dangerous-command catch is a secondary slip-catcher):
    `"${TMPDIR:?}"`, `"${TMPDIR:-/tmp}"`, `$env:TEMP`, cmd's `%TEMP%`, forced
    or not; until 2026-11-07 the unforced spellings drew the nudge), the
    variable read as the value the hook inherits from the session; unset or
-   relative, it is read as any other variable, and so is one the command
-   sets itself (`export TMPDIR=$(mktemp -d)` before its own cleanup), whose
+   relative, it is read as any other variable, and so is a variable the
+   command sets itself (`export TMPDIR=$(mktemp -d)` before its own cleanup), whose
    value is not the inherited one. The sweeps do not take that last
    reading: a walk rooted at a temp variable the command sets walls as the
    inherited root (spell the path, or bind another name), a declared limit
