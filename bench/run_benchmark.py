@@ -627,7 +627,10 @@ def _budget_fallback(hooks_dir: str) -> re.Pattern[str] | None:
     literal piece as written and each field any text. It never holds the
     template's words, so a reader of the template alone scores it as a judged
     deny (DEF-2058). None for a tree with no such function or binding: one
-    older than the fallback, or a stand-in hook."""
+    older than the fallback, or a stand-in hook. Like the template, a source
+    that cannot be read, or a binding that is no string literal or f-string,
+    is no verdict either way (``BudgetMiss``): a read that failed must not
+    score the fallback as a block again."""
     source = Path(hooks_dir) / "write_guard.py"
     try:
         tree = ast.parse(source.read_text(encoding="utf-8"))
@@ -639,16 +642,21 @@ def _budget_fallback(hooks_dir: str) -> re.Pattern[str] | None:
     if owner is None:
         return None
     for handler in (h for t in ast.walk(owner) if isinstance(t, ast.Try) for h in t.handlers):
-        for node in (n for s in handler.body for n in ast.walk(s) if isinstance(n, ast.Assign)):
-            if not any(isinstance(t, ast.Name) and t.id == "reason" for t in node.targets):
+        for node in (n for s in handler.body for n in ast.walk(s)):
+            targets = node.targets if isinstance(node, ast.Assign) else (
+                [node.target] if isinstance(node, (ast.AnnAssign, ast.AugAssign)) else [])
+            if not any(isinstance(t, ast.Name) and t.id == "reason" for t in targets):
                 continue
-            value = node.value
-            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            value = getattr(node, "value", None)
+            if isinstance(node, ast.Assign | ast.AnnAssign) and isinstance(value, ast.Constant) \
+                    and isinstance(value.value, str):
                 return re.compile(re.escape(value.value), re.DOTALL)
-            if isinstance(value, ast.JoinedStr):
+            if isinstance(node, ast.Assign | ast.AnnAssign) and isinstance(value, ast.JoinedStr):
                 return re.compile("".join(
                     re.escape(part.value) if isinstance(part, ast.Constant) else ".*?"
                     for part in value.values), re.DOTALL)
+            raise BudgetMiss(f"{source}::{_BUDGET_FALLBACK_OWNER} binds its fallback refusal at line "
+                             f"{node.lineno} in a form this reader cannot read (a string literal or f-string)")
     return None
 
 
@@ -656,7 +664,9 @@ def budget_refused(stdout: str, hooks_dir: Path) -> bool:
     """True when ``stdout`` is write_guard's time-budget refusal: stdout
     JSON whose ``permissionDecisionReason`` is, in full, the hook tree's
     template or the parent's plain-words fallback at its deadline, from a
-    judgment that never finished. Never for a judged deny."""
+    judgment that never finished. Never for a judged deny. Raises
+    ``BudgetMiss`` where the tree's ``_denial_reasons.py`` or
+    ``write_guard.py`` cannot be read: no verdict, never a scored block."""
     patterns = [p for p in (_budget_refusal(str(hooks_dir)), _budget_fallback(str(hooks_dir))) if p is not None]
     if not patterns:
         return False

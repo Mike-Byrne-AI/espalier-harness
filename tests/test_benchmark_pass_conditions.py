@@ -331,6 +331,39 @@ class TestTheBudgetsRefusalIsNoVerdict:
         (tmp_path / "write_guard.py").write_text("def deny(reason):\n    pass\n", encoding="utf-8")
         assert rb.budget_refused(decision(reason), tmp_path) is False
 
+    @pytest.mark.parametrize("binding", [
+        'reason: str = f"Stand-in ran out of its {BUDGET} s budget, refused."',
+        'reason = "Stand-in ran out of its 9 s budget, refused."',
+    ], ids=["annotated-fstring", "literal"])
+    def test_the_fallback_is_read_from_the_trees_own_source(self, tmp_path, binding):
+        """The reader reads a tree's own wording, in either binding form, and
+        no other tree's."""
+        import json
+
+        import bench.run_benchmark as rb
+
+        (tmp_path / "write_guard.py").write_text(
+            "def _answer_from_a_judging_child():\n    try:\n        import _denial_reasons\n"
+            f"    except Exception:\n        {binding}\n", encoding="utf-8")
+
+        def decision(text: str) -> str:
+            return json.dumps({"hookSpecificOutput": {"permissionDecision": "deny",
+                                                      "permissionDecisionReason": text}})
+
+        assert rb.budget_refused(decision("Stand-in ran out of its 9 s budget, refused."), tmp_path) is True
+        assert rb.budget_refused(decision("Stand-in ran out of its 9 s budget."), tmp_path) is False
+
+    def test_a_fallback_bound_in_an_unreadable_form_is_no_verdict(self, tmp_path):
+        """A binding the reader cannot render refuses, never scores the
+        fallback as a block again."""
+        import bench.run_benchmark as rb
+
+        (tmp_path / "write_guard.py").write_text(
+            "def _answer_from_a_judging_child():\n    try:\n        import _denial_reasons\n"
+            "    except Exception:\n        reason = _plain_words()\n", encoding="utf-8")
+        with pytest.raises(rb.BudgetMiss, match="cannot read"):
+            rb.budget_refused('{"hookSpecificOutput": {}}', tmp_path)
+
     def test_a_refusal_that_left_no_state_is_retried_once(self, monkeypatch, tmp_path, capsys):
         import bench.run_benchmark as rb
 

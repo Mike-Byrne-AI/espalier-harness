@@ -20,7 +20,7 @@ import pytest
 
 from tests._guard_fixture import carry_protected_tree
 from tests._hook_assertions import assert_hook_allowed, assert_hook_denied
-from tests._hook_spawn import BUDGET_FALLBACK, BUDGET_REFUSAL, run_hook_through
+from tests._hook_spawn import BUDGET_FALLBACK, BUDGET_REFUSAL, holds_a_budget_refusal, run_hook_through
 from tests._spaced_paths import CMD, PS, SH, fill, quoted, skip_unless_plain
 from tests._symlink_support import requires_symlink
 
@@ -2103,7 +2103,7 @@ def _delete_verdict(result: subprocess.CompletedProcess) -> str:
     # from any other spawn. Both refusals: the child's template, and the
     # parent's plain-words fallback at its deadline, which never holds the
     # template's phrase (DEF-2058).
-    if BUDGET_REFUSAL in out or BUDGET_FALLBACK in out:
+    if holds_a_budget_refusal(out):
         pytest.fail(f"write_guard ran out of its time budget, so no tier judged this row: {out[:200]}")
     if result.returncode == 2 or '"permissionDecision": "deny"' in out:
         return "wall"     # either shell's hard tier, each with its own reason text
