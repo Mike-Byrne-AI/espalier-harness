@@ -1094,3 +1094,50 @@ class TestUpgradeNamesTheKeptHelperSkew:
         assert run.returncode == 0, run.stderr
         assert "could not be parsed (SyntaxError)" in run.stdout, run.stdout
         assert "cannot be compared" in run.stdout and "espalier upgrade --execute" in run.stdout, run.stdout
+
+    def test_a_kept_sibling_is_named_with_the_names_and_keywords_it_lacks(self, tmp_path):
+        # DEF-5087: the keep rule is the same for every managed tools/cc file,
+        # so a kept older _post_merge.py is read as the helper is -- the names
+        # the regenerated scripts take, and the keywords they pass that its
+        # functions take no parameter for (a copy from before 68bcc8b has every
+        # name the banner reads and read_required without head=: names alone
+        # read it clean, and the Open PRs: line went).
+        target = _make_target(tmp_path)
+        _run_init(target)
+        kept = target / "tools" / "cc" / "_post_merge.py"
+        lines = [ln for ln in kept.read_text(encoding="utf-8").splitlines(keepends=True)
+                 if ln.strip() != "# espalier:managed"]
+        kept.write_text("".join(lines) + "\ndel JOB_LINK_RE\n\n\ndef read_required(number, gh, fields=''):\n"
+                        "    return None\n", encoding="utf-8")
+        for extra in ((), ("--execute",)):
+            run = self._upgrade(target, *extra)
+            assert run.returncode == 0, (extra, run.stderr)
+            named = [ln for ln in run.stdout.splitlines() if "kept tools/cc/_post_merge.py lacks" in ln]
+            assert len(named) == 1, (extra, run.stdout)
+            assert "`JOB_LINK_RE` (tools/cc/ship.py)" in named[0], named
+            assert "`read_required` without `head=`, `runs=`" in named[0], named
+            assert "tools/cc/hooks/session_start.py" in named[0], named
+            assert "`# espalier:managed` marker line" in named[0] and "espalier upgrade --execute" in named[0], named
+        assert "del JOB_LINK_RE" in kept.read_text(encoding="utf-8")   # named, never prevented
+
+    def test_a_take_under_an_import_guard_or_a_getattr_default_is_none(self, tmp_path):
+        # A name the script runs on without is a degrade: naming it would warn
+        # falsely (52 such sites at e1c7a55, 32 of them _json_safe). A by-path
+        # load is read through its loader, as the banner's six are.
+        from espalier.cli import _sibling_takes
+        cc = tmp_path / "tools" / "cc"
+        (cc / "hooks").mkdir(parents=True)
+        (cc / "_b.py").write_text("hard = soft = via_path = 1\n", encoding="utf-8")
+        (cc / "a.py").write_text(
+            "try:\n    from _b import guarded\nexcept ImportError:\n    guarded = None\nfrom _b import hard\n",
+            encoding="utf-8")
+        (cc / "hooks" / "h.py").write_text(
+            "import importlib.util\nfrom pathlib import Path\n\n"
+            "def _load_b():\n"
+            "    spec = importlib.util.spec_from_file_location('x', Path(__file__).parent.parent / '_b.py')\n"
+            "    return spec\n\n"
+            "def use():\n    b = _load_b()\n    getattr(b, 'soft', None)\n    return b.via_path(k=1)\n",
+            encoding="utf-8")
+        names, keywords = _sibling_takes(cc)
+        assert names["_b"] == {"hard": {"tools/cc/a.py"}, "via_path": {"tools/cc/hooks/h.py"}}
+        assert keywords["_b"] == {"via_path": {"k": {"tools/cc/hooks/h.py"}}}

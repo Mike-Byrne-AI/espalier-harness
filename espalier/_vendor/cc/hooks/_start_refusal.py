@@ -18,6 +18,14 @@ catch-alls. If this module itself cannot import, each hook's own last resort
 refuses in its place, naming this file, and ``write_guard``'s lets through the
 one restore of it to HEAD.
 
+Its kept-old-file test reads any ``tools/cc/`` module, not ``_hook_utils``
+alone (DEF-5087): an upgrade keeps whichever managed file lost its marker and
+regenerates the siblings around it, so the refusal names the file that lacks
+the name. ``tools/cc/ship.py`` loads this module by path and calls
+:func:`refuse_kept_siblings` under its ``__main__``, so a kept sibling of the
+ship driver is the same named refusal on stderr, never a traceback that names
+an attribute; ``session_start`` reads the same test for its loaded modules.
+
 It is also where a deny hook below the supported Python floor says so
 (:func:`refuse_below_floor`): the one module every deny hook reaches
 before any sibling, so the floor is spelled here as a literal and checked by a
@@ -47,21 +55,23 @@ from typing import NoReturn
 #: module top. Under the hook protocol an uncaught exit 1 is a NON-BLOCKING
 #: error, so a guard that dies at import judges nothing (measured 2026-10-07
 #: and 2026-10-10: every call proceeded unguarded); these are the fail-closed
-#: shape instead. Two causes read differently (DEF-2010). A KEPT OLD HELPER: an
-#: upgrade kept the tree's ``tools/cc/hooks/_hook_utils.py`` as the adopter's
-#: (no managed marker) and regenerated the rest, which import a name the kept
-#: copy lacks -- or, on a tree being edited, an edit removed the name or added
-#: its import first. ANY OTHER RAISE: the file that raised is named, with its
-#: line, and the upgrade is not offered, since it would regenerate the file
-#: under edit (the 2026-10-14 and 10-16 lock-outs, each a sibling that raised
-#: at import and a refusal that blamed the helper). Composed by
-#: :func:`refuse_on_helper_skew` from this module and the standard library
-#: alone, since any other sibling may be the one that failed. ``{hook}`` is
-#: the hook's stem, ``{error}`` the exception's class and text, ``{restore}``
-#: the repair (:func:`_restore_clause`).
+#: shape instead. Two causes read differently (DEF-2010). A KEPT OLD FILE: an
+#: upgrade kept one of the tree's ``tools/cc/`` modules as the adopter's (no
+#: managed marker) and regenerated the rest, which take a name the kept copy
+#: lacks -- ``_hook_utils.py`` most often, any sibling since DEF-5087 -- or, on
+#: a tree being edited, an edit removed the name or added its import first.
+#: ANY OTHER RAISE: the file that raised is named, with its line, and the
+#: upgrade is not offered, since it would regenerate the file under edit (the
+#: 2026-10-14 and 10-16 lock-outs, each a sibling that raised at import and a
+#: refusal that blamed the helper). Composed by :func:`refuse_on_helper_skew`
+#: from this module and the standard library alone, since any other sibling
+#: may be the one that failed. ``{hook}`` is the hook's stem, ``{error}`` the
+#: exception's class and text, ``{kept}`` the file that lacks the name and
+#: ``{kept_name}`` its basename, ``{restore}`` the repair
+#: (:func:`_restore_clause`).
 HELPER_SKEW = (
-    "{hook} cannot start: {taker} takes `{name}` from tools/cc/hooks/_hook_utils.py,"
-    " which lacks it ({error}). If an upgrade kept _hook_utils.py as yours (no managed"
+    "{hook} cannot start: {taker} takes `{name}` from {kept},"
+    " which lacks it ({error}). If an upgrade kept {kept_name} as yours (no managed"
     " marker) and regenerated the rest: from a terminal, restore its `# espalier:managed`"
     " marker line and run `espalier upgrade --execute .`. If an edit in progress removed"
     " the name or added its import, restore the edited file to HEAD: {restore}. Every"
@@ -69,9 +79,9 @@ HELPER_SKEW = (
 )
 SIBLING_RAISED = (
     "{hook} cannot start: {file} raised {error} at line {line} while the hook imported"
-    " its siblings. No name is missing from tools/cc/hooks/_hook_utils.py, so this is"
-    " not a kept old helper and `espalier upgrade` would not repair it. Restore the file"
-    " to HEAD: {restore}. Every call this hook judges is refused until then."
+    " its siblings. It names no name a tools/cc/ module lacks, so this is not a kept"
+    " old file and `espalier upgrade` would not repair it. Restore the file to HEAD:"
+    " {restore}. Every call this hook judges is refused until then."
 )
 #: The import failed in a file outside ``tools/cc/`` (never seen: the hook's
 #: own frame is under it), so nothing is named to restore.
@@ -81,9 +91,10 @@ SIBLING_RAISED_UNPLACED = (
     " file it names. Every call this hook judges is refused until then."
 )
 #: The two above for an exception that escaped the hook's own module body after
-#: its siblings imported (:func:`refuse_on_body_raise`). No upgrade is offered
-#: and none is ruled out: the file may be a sibling an upgrade kept, which the
-#: kept-helper test does not read.
+#: its siblings imported (:func:`refuse_on_body_raise`). A name a kept sibling
+#: lacks reads as ``HELPER_SKEW`` there too; for any other raise no upgrade is
+#: offered and none is ruled out, since a kept copy can fail another way (a
+#: changed signature), which the kept-file test does not read.
 BODY_RAISED = (
     "{hook} cannot start: {file} raised {error} at line {line} while the hook's own"
     " module body ran, after its siblings imported. Restore the file to HEAD: {restore}."
@@ -160,17 +171,20 @@ _LETS_A_RESTORE_THROUGH = frozenset({"write_guard"})
 
 class _SkewReading:
     """What a failed start can say about itself: the file that raised (an
-    absolute path under ``tools/cc/``) and its line, the helper name a sibling
-    takes and ``_hook_utils`` lacks (the kept-old-helper test), and the files
-    whose restore to HEAD the refusal names and lets through: the raising file
-    first, then (on the kept-helper test) ``_hook_utils.py``, then every other
-    ``tools/cc/`` file on the traceback, inner to outer."""
+    absolute path under ``tools/cc/``) and its line, the name a sibling takes
+    and the file of the ``tools/cc/`` module that lacks it (the kept-old-file
+    test, :func:`_missing_sibling_name`), and the files whose restore to HEAD
+    the refusal names and lets through: the raising file first, then (on the
+    kept-file test) the file that lacks the name, then every other
+    ``tools/cc/`` file on the traceback, inner to outer. ``missing`` and
+    ``kept`` are both set or both None."""
 
     def __init__(self, file: Path | None, line: int | None, missing: str | None,
-                 restorable: list[Path], cc_dir: Path) -> None:
+                 restorable: list[Path], cc_dir: Path, kept: Path | None = None) -> None:
         self.file = file
         self.line = line
         self.missing = missing
+        self.kept = kept
         self.restorable = restorable
         self.cc_dir = cc_dir
 
@@ -188,28 +202,39 @@ def _under(path: Path, cc_dir: Path) -> bool:
     return True
 
 
-def _missing_helper_name(exc: BaseException) -> str | None:
-    """The kept-old-helper test: the name a sibling takes from ``_hook_utils``
-    that the loaded ``_hook_utils`` lacks, or None. Read from the exception's
-    own fields (an ``ImportError`` from ``from _hook_utils import <name>``, an
-    ``AttributeError`` on the ``_hook_utils`` module object), then checked
-    against the module, so an error raised for any other reason never reads as
-    a kept helper."""
-    helper = sys.modules.get("_hook_utils")
-    if helper is None:
-        return None
+def _missing_sibling_name(exc: BaseException, cc_dir: Path) -> tuple[str, Path] | None:
+    """The kept-old-file test: the name a module under ``tools/cc/`` was asked
+    for and lacks, with that module's file, or None. Read from the exception's
+    own fields (an ``ImportError`` from ``from <module> import <name>``, an
+    ``AttributeError`` on the module object, a module loaded by path under an
+    alias included), then checked against the module, so an error raised for
+    any other reason never reads as a kept file, and neither does a module
+    still running its own body (a circular import names a name not yet bound).
+    Until DEF-5087 it read ``_hook_utils`` alone, and a kept older sibling of
+    any other name was told the upgrade would not repair it."""
+    module: object = None
     name: object = None
-    if isinstance(exc, ImportError) and exc.name == "_hook_utils":
+    if isinstance(exc, ImportError) and isinstance(exc.name, str):
+        module = sys.modules.get(exc.name)
         name = getattr(exc, "name_from", None)
         if not isinstance(name, str):
             text = str(exc)
             if text.startswith("cannot import name '"):
                 name = text[len("cannot import name '"):].split("'", 1)[0]
-    elif isinstance(exc, AttributeError) and getattr(exc, "obj", None) is helper:
-        name = exc.name
-    if isinstance(name, str) and name and not hasattr(helper, name):
-        return name
-    return None
+    elif isinstance(exc, AttributeError):
+        module = getattr(exc, "obj", None)
+        name = getattr(exc, "name", None)
+    if not isinstance(module, types.ModuleType) or not isinstance(name, str) or not name:
+        return None
+    if getattr(getattr(module, "__spec__", None), "_initializing", False):
+        return None
+    source = getattr(module, "__file__", None)
+    if not isinstance(source, str):
+        return None
+    path = Path(source).resolve()
+    if not _under(path, cc_dir) or hasattr(module, name):
+        return None
+    return name, path
 
 
 def _module_the_error_names(exc: BaseException, cc_dir: Path) -> Path | None:
@@ -240,12 +265,12 @@ def wedge_reading(exc: BaseException) -> _SkewReading | None:
     """Read a failed start (or, for the crash guard, a fault after it): the
     innermost traceback frame in a file under ``tools/cc/`` -- or, for a
     ``SyntaxError``, which has no frame in the file it names, that file -- and
-    the kept-old-helper test. The file that raised is often not the file that
+    the kept-old-file test. The file that raised is often not the file that
     was edited (a circular import raises in the module it re-enters, a bad
     argument in the helper it was handed to, a new module's import in the new
     module), so every ``tools/cc/`` file on the traceback may be restored, and
-    ``_hook_utils.py`` too when the test holds; a restore to HEAD of any of
-    them re-enables the committed guard and can disable nothing. It reads
+    the file that lacks the name too when the test holds; a restore to HEAD of
+    any of them re-enables the committed guard and can disable nothing. It reads
     the exception's class, traceback, ``filename`` and the name a sibling
     takes, never renders its text, so the crash guard may hand it a caught
     OSError (the portability roster's argued entry). Never raises: None when
@@ -269,17 +294,18 @@ def wedge_reading(exc: BaseException) -> _SkewReading | None:
             tb = tb.tb_next
         if file is None and chain:
             file, line = chain[-1]
-        missing = _missing_helper_name(exc)
+        lacked = _missing_sibling_name(exc, cc_dir)
+        missing, kept = lacked if lacked is not None else (None, None)
         restorable: list[Path] = [file] if file is not None else []
-        if missing is not None:
-            restorable.append(cc_dir / "hooks" / "_hook_utils.py")
+        if kept is not None and kept not in restorable:
+            restorable.append(kept)
         read_on = _module_the_error_names(exc, cc_dir)
         if read_on is not None and read_on not in restorable:
             restorable.append(read_on)
         for outer, _line in reversed(chain):
             if outer not in restorable:
                 restorable.append(outer)
-        return _SkewReading(file, line, missing, restorable, cc_dir)
+        return _SkewReading(file, line, missing, restorable, cc_dir, kept)
     # fail-open: ok text-fallback the refusal goes out unplaced
     except Exception:  # noqa: BLE001
         return None
@@ -411,8 +437,8 @@ def wedge_restore(hook: str, reading: _SkewReading | None, error: str,
             return None
         rel = reading.rel(target)
         raiser = reading.rel(reading.file) if reading.file is not None else "a sibling"
-        if reading.missing is not None:
-            cause = f"{raiser} takes `{reading.missing}`, which tools/cc/hooks/_hook_utils.py lacks"
+        if reading.missing is not None and reading.kept is not None:
+            cause = f"{raiser} takes `{reading.missing}`, which {reading.rel(reading.kept)} lacks"
         else:
             cause = f"{raiser} raised {error}"
         copy = _save_before_restore(target, reading.cc_dir)
@@ -531,6 +557,59 @@ def body_done() -> None:
         sys.excepthook = _HOOK_BEFORE_THE_BODY.pop()
 
 
+# ── a script that meets a kept, older sibling (DEF-5087) ─────────────────────
+#: A script's refusal when a name it, or a sibling it imported, takes from a
+#: ``tools/cc/`` module is one that module lacks: the shape ``espalier upgrade``
+#: leaves when it keeps a managed file with no marker and regenerates the rest
+#: (``espalier/cli.py::_deploy_managed_py``, its ``skipped_user_file``). Until
+#: DEF-5087 every ship driver verb, ``--help`` included, ended in a traceback
+#: naming an attribute (driven 2026-11-08 at main 2062663). The fields are
+#: ``HELPER_SKEW``'s; no call is let through, since a script judges nothing.
+SCRIPT_KEPT_SIBLING = (
+    "{script} cannot run: {taker} takes `{name}` from {kept}, which lacks it ({error})."
+    " If an upgrade kept {kept_name} as yours (no managed marker) and regenerated the"
+    " rest: restore its `# espalier:managed` marker line and run `espalier upgrade"
+    " --execute .` (the upgrade then replaces it with the packaged version, and its"
+    " current text is not kept). If an edit in progress removed the name or added its"
+    " import, restore the edited file to HEAD: {restore}."
+)
+
+
+def refuse_kept_siblings(script: str, code: int = 1) -> None:
+    """Under a script's ``__main__``, before its sibling imports: an uncaught
+    exception that reads as a kept, older sibling (:func:`_missing_sibling_name`
+    through :func:`wedge_reading`) -- at an import, at a module-level read, or
+    in a call that reads the name later -- is ``SCRIPT_KEPT_SIBLING`` on stderr
+    and exit ``code``, never a traceback that names an attribute. Anything else,
+    and a refusal whose text cannot be composed, goes to the exception hook that
+    was in place, so the traceback stays where it is the only account. Installed
+    as ``sys.excepthook``, which runs for an exception nothing caught; the
+    ``SystemExit`` raised there sets the exit code (driven on 3.11 to 3.14 for
+    the deny hooks' body refusal, :func:`refuse_on_body_raise`). The script
+    loads this module by path, so it reaches it with no sibling on the way."""
+    before = sys.excepthook
+
+    def _refuse(kind: type[BaseException], exc: BaseException, tb: types.TracebackType | None) -> None:
+        reading = wedge_reading(exc) if isinstance(exc, Exception) else None
+        if reading is None or reading.missing is None or reading.kept is None:
+            before(kind, exc, tb)
+            return
+        try:
+            text = SCRIPT_KEPT_SIBLING.format(
+                script=script, taker=reading.rel(reading.file) if reading.file is not None else script,
+                name=reading.missing, kept=reading.rel(reading.kept), kept_name=reading.kept.name,
+                error=f"{type(exc).__name__}: {exc}", restore=_restore_clause(reading, False))
+        # fail-open: ok text-fallback the traceback is the account a refusal that cannot be composed leaves
+        except Exception:  # noqa: BLE001
+            before(kind, exc, tb)
+            return
+        sys.stderr.write(text + "\n")
+        sys.stderr.flush()
+        raise SystemExit(code)
+
+    sys.excepthook = _refuse
+
+
 def refuse_on_helper_skew(hook: str, event: str, exc: BaseException, *, at: str = "sibling import") -> NoReturn:
     """Emit the fail-closed refusal for a deny hook whose sibling import failed
     at module top, then exit 0: the structured channel, where an exit 1 would be
@@ -598,10 +677,12 @@ def refuse_on_helper_skew(hook: str, event: str, exc: BaseException, *, at: str 
         error = f"{type(exc).__name__}: {os_error_text(exc)}"
         if reading is not None and reading.file is not None:
             details.update(file=reading.rel(reading.file), line=reading.line)
-        if reading is not None and reading.missing is not None and reading.file is not None:
+        if (reading is not None and reading.missing is not None and reading.kept is not None
+                and reading.file is not None):
             reason = HELPER_SKEW.format(hook=hook, taker=reading.rel(reading.file), name=reading.missing,
+                                        kept=reading.rel(reading.kept), kept_name=reading.kept.name,
                                         error=error, restore=_restore_clause(reading, lets_through))
-            details["cause"] = "kept helper"
+            details.update(cause="kept helper", kept=reading.rel(reading.kept))
         elif reading is not None and reading.file is not None:
             details["cause"] = "raised"
             reason = (BODY_RAISED if body else SIBLING_RAISED).format(

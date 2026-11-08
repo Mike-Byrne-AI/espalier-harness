@@ -7139,17 +7139,23 @@ def _kept_helper_skew_lines(
     same on both; an unparsable kept copy cannot be compared and says so, never
     falling silent. The names read with a degrade are listed apart: the hooks
     run on without those. ``repair`` replaces the default command where
-    ``upgrade --execute`` refuses (a tree with no saved plan, DEF-1063)."""
-    if not any(p.replace("\\", "/") == _KEPT_HELPER for p in kept):
-        return []
+    ``upgrade --execute`` refuses (a tree with no saved plan, DEF-1063).
+
+    Every other kept ``tools/cc/`` module gets the same reading from
+    :func:`_kept_sibling_skew_lines` (DEF-5087): the keep rule is the same for
+    all of them, and a kept older ``_post_merge.py`` stopped every ship driver
+    verb at import and cost the banner its pull-request line."""
     hint, _ = _remedy_interpreter()
     command = repair or f"`{hint} -m espalier upgrade --execute .`"
+    siblings = _kept_sibling_skew_lines(repo_root, kept, command)
+    if not any(p.replace("\\", "/") == _KEPT_HELPER for p in kept):
+        return siblings
     try:
         kept_tree = ast.parse((repo_root / _KEPT_HELPER).read_text(encoding="utf-8"))
     except (SyntaxError, OSError, UnicodeDecodeError) as exc:
         return [f"kept helper {_KEPT_HELPER} could not be parsed ({type(exc).__name__}): the names the "
                 "regenerated hooks take from it cannot be compared, and every hook that imports it fails "
-                f"to start -- restore its `# espalier:managed` marker line and run {command}"]
+                f"to start -- restore its `# espalier:managed` marker line and run {command}"] + siblings
     floor, degraded = _helper_names_the_hooks_take(_deploy_source_path("tools/cc/hooks"))
     bound = _module_level_bindings(kept_tree)
     missing_floor = sorted(floor - bound)
@@ -7166,6 +7172,142 @@ def _kept_helper_skew_lines(
             f"kept helper {_KEPT_HELPER} also lacks {plural(len(missing_degraded), 'name')} the hooks "
             f"run on without: {', '.join(missing_degraded)} (the time-budget scaler and the audit "
             "lock are off)")
+    return lines + siblings
+
+
+#: The most names and keywords one kept file's line spells before it counts the rest.
+_KEPT_SIBLING_SHOWN = 6
+
+
+def _catches_import_error(handler: ast.ExceptHandler) -> bool:
+    """Does ``handler`` catch an ``ImportError`` (by name, a parent, or bare)?"""
+    if handler.type is None:
+        return True
+    names = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+    return any(isinstance(n, ast.Name) and n.id in {"ImportError", "ModuleNotFoundError", "Exception",
+                                                    "BaseException"} for n in names)
+
+
+def _sibling_takes(cc_src: Path) -> tuple[dict[str, dict[str, set[str]]], dict[str, dict[str, dict[str, set[str]]]]]:
+    """``(names, keywords)`` the packaged ``tools/cc/`` sources take from each
+    sibling module, by stem: ``names[module][name]`` and
+    ``keywords[module][function][keyword]`` are the sources (``tools/cc/...``)
+    that take each. A take is a ``from <module> import <name>`` outside a
+    ``try`` that catches ``ImportError`` (inside one it is a degrade: the
+    script runs on without it), a read of ``<alias>.<name>`` where the alias
+    is an ``import <module>`` or a variable a function binds from a loader
+    that loads ``<module>.py`` by path (``spec_from_file_location``, the
+    banner's six sites), and the keywords a call ``<alias>.<function>(...)``
+    passes. ``getattr(<alias>, "<name>", <default>)`` is a degrade and no
+    take. Read from the packaged sources, so it moves with the release."""
+    modules = {p.stem for p in [*cc_src.glob("*.py"), *(cc_src / "hooks").glob("*.py")]} - {"__init__"}
+    names: dict[str, dict[str, set[str]]] = {}
+    keywords: dict[str, dict[str, dict[str, set[str]]]] = {}
+    for path in sorted([*cc_src.glob("*.py"), *(cc_src / "hooks").glob("*.py")]):
+        rel = "tools/cc/" + path.relative_to(cc_src).as_posix()
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, OSError, UnicodeDecodeError):
+            continue
+        degrades = {id(n) for t in ast.walk(tree) if isinstance(t, ast.Try)
+                    and any(_catches_import_error(h) for h in t.handlers)
+                    for s in t.body for n in ast.walk(s) if isinstance(n, ast.ImportFrom)}
+        loaders = {
+            fn.name: str(c.value)[:-3] for fn in ast.walk(tree) if isinstance(fn, ast.FunctionDef)
+            and any(isinstance(n, ast.Attribute) and n.attr == "spec_from_file_location" for n in ast.walk(fn))
+            for c in ast.walk(fn) if isinstance(c, ast.Constant) and isinstance(c.value, str)
+            and c.value.endswith(".py") and c.value[:-3] in modules
+        }
+        aliases = {(a.asname or a.name): a.name for n in ast.walk(tree) if isinstance(n, ast.Import)
+                   for a in n.names if a.name in modules and a.name != path.stem}
+        scopes: list[tuple[ast.AST, dict[str, str]]] = [(tree, aliases)]
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            bound: dict[str, str] = {}
+            for n in ast.walk(fn):
+                if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
+                    value = n.value.orelse if isinstance(n.value, ast.IfExp) else n.value
+                    if (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
+                            and value.func.id in loaders):
+                        bound[n.targets[0].id] = loaders[value.func.id]
+            if bound:
+                scopes.append((fn, bound))
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.ImportFrom) and node.level == 0 and node.module in modules
+                    and node.module != path.stem and id(node) not in degrades):
+                for a in node.names:
+                    names.setdefault(node.module, {}).setdefault(a.name, set()).add(rel)
+        for scope, alias_of in scopes:
+            for node in ast.walk(scope):
+                if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id in alias_of:
+                    names.setdefault(alias_of[node.value.id], {}).setdefault(node.attr, set()).add(rel)
+                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                        and isinstance(node.func.value, ast.Name) and node.func.value.id in alias_of):
+                    for k in node.keywords:
+                        if k.arg:
+                            (keywords.setdefault(alias_of[node.func.value.id], {})
+                             .setdefault(node.func.attr, {}).setdefault(k.arg, set()).add(rel))
+    return names, keywords
+
+
+def _kept_sibling_skew_lines(repo_root: Path, kept: list[str], command: str) -> list[str]:
+    """For each kept ``tools/cc/`` module other than ``_hook_utils.py`` (whose
+    lines :func:`_kept_helper_skew_lines` writes, with the deny hooks'
+    consequence), the names the regenerated sources take that the kept copy
+    does not bind, and the keywords they pass that its function takes no
+    parameter for (a ``**kwargs`` takes every one), each with the sources
+    that take it, then the repair (DEF-5087). Names read with a degrade are
+    no take (:func:`_sibling_takes`). An unparsable kept copy says so."""
+    cc_src = _deploy_source_path("tools/cc")
+    candidates = []
+    for p in kept:
+        rel = p.replace("\\", "/")
+        if rel == _KEPT_HELPER or not rel.startswith("tools/cc/") or not rel.endswith(".py"):
+            continue
+        if (cc_src / rel[len("tools/cc/"):]).is_file():
+            candidates.append(rel)
+    if not candidates:
+        return []
+    names, keywords = _sibling_takes(cc_src)
+    lines: list[str] = []
+    for rel in sorted(candidates):
+        stem = Path(rel).stem
+        try:
+            tree = ast.parse((repo_root / rel).read_text(encoding="utf-8"))
+        except (SyntaxError, OSError, UnicodeDecodeError) as exc:
+            if names.get(stem) or keywords.get(stem):
+                lines.append(f"kept {rel} could not be parsed ({type(exc).__name__}): what the regenerated "
+                             "scripts take from it cannot be compared -- restore its `# espalier:managed` "
+                             f"marker line and run {command}")
+            continue
+        bound = _module_level_bindings(tree)
+        defs = {n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        def takers(paths: set[str]) -> str:
+            first = sorted(paths)[:3]
+            return ", ".join(first) + (f" and {len(paths) - 3} more" if len(paths) > 3 else "")
+
+        lacks: list[str] = []
+        for name in sorted(set(names.get(stem, {})) - bound):
+            lacks.append(f"`{name}` ({takers(names[stem][name])})")
+        for func, passed in sorted(keywords.get(stem, {}).items()):
+            fn = defs.get(func)
+            if fn is None or fn.args.kwarg is not None:
+                continue
+            params = {a.arg for a in [*fn.args.args, *fn.args.kwonlyargs]}
+            missing = sorted(set(passed) - params)
+            if missing:
+                lacks.append(f"`{func}` without {', '.join(f'`{k}=`' for k in missing)} "
+                             f"({takers({t for k in missing for t in passed[k]})})")
+        if not lacks:
+            continue
+        shown = lacks[:_KEPT_SIBLING_SHOWN]
+        if len(lacks) > _KEPT_SIBLING_SHOWN:
+            shown.append(f"and {len(lacks) - _KEPT_SIBLING_SHOWN} more")
+        lines.append(
+            f"kept {rel} lacks what the regenerated scripts take from it: {'; '.join(shown)} -- each stops "
+            "at that read until it is repaired: restore its `# espalier:managed` marker line and run "
+            f"{command}")
     return lines
 
 

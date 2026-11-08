@@ -212,6 +212,11 @@ def degraded_names(hook: str) -> set[str]:
 def helper_bindings() -> set[str]:
     """The names ``_hook_utils.py`` binds at module level (an assignment, a
     def, a class, an import), so a cell deletes only what the helper has."""
+    return module_bindings(HELPER)
+
+
+def module_bindings(module: str) -> set[str]:
+    """The names a sibling binds at module level, read as ``helper_bindings``."""
     out: set[str] = set()
 
     def visit(stmts: list[ast.stmt]) -> None:
@@ -236,7 +241,60 @@ def helper_bindings() -> set[str]:
                 visit(s.body)
                 visit(getattr(s, "orelse", []))
 
-    visit(_parse(HELPER).body)
+    visit(_parse(module).body)
+    return out
+
+
+def _top_level_nodes(stmts: list[ast.stmt]):
+    """Every node a module runs at import: inside its top-level blocks, never
+    inside a def, a class or a lambda, and never under ``if TYPE_CHECKING``."""
+    for s in stmts:
+        if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        if isinstance(s, ast.If) and isinstance(s.test, ast.Name) and s.test.id == "TYPE_CHECKING":
+            continue
+        todo: list[ast.AST] = [s]
+        while todo:
+            node = todo.pop()
+            yield node
+            todo.extend(c for c in ast.iter_child_nodes(node)
+                        if not isinstance(c, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)))
+
+
+def kept_sibling_reads(hook: str) -> dict[str, str]:
+    """``{sibling: name}``: for each sibling other than the helper and the start
+    refusal (which each deny hook imports first and alone) that the hook reads
+    a name from at import -- ``from <sibling> import <name>``, or
+    ``<sibling>.<name>`` -- the first such name, sorted, of those the sibling
+    binds and never reads itself. Deleting it there is the kept-old-file skew
+    for a file that is not the helper (DEF-5087); a name the sibling's own code
+    reads cannot stand for a kept copy, since an older copy that lacks the name
+    lacks the code that reads it too (``_denial_reasons`` calls
+    ``_maintenance_mode.relaunch_hint()`` at import, which reads ``ENV_VAR``:
+    deleting that raised a NameError in the sibling, no kept copy's shape).
+    Discovered from the hook's source, so a sibling the hook starts reading at
+    import joins the cells the day it does."""
+    skip = {HELPER, REFUSAL}
+    found: dict[str, set[str]] = {}
+    aliases: dict[str, str] = {}
+    nodes = list(_top_level_nodes(_parse(hook[:-3]).body))
+    for node in nodes:
+        if isinstance(node, ast.Import):
+            aliases.update({a.asname or a.name: a.name for a in node.names if _is_sibling(a.name)})
+        elif isinstance(node, ast.ImportFrom) and node.module and _is_sibling(node.module):
+            found.setdefault(node.module, set()).update(a.name for a in node.names)
+    for node in nodes:
+        if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                and node.value.id in aliases):
+            found.setdefault(aliases[node.value.id], set()).add(node.attr)
+    out: dict[str, str] = {}
+    for sibling, names in sorted(found.items()):
+        if sibling in skip:
+            continue
+        own = {n.id for n in ast.walk(_parse(sibling)) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+        bound = sorted((names & module_bindings(sibling)) - own)
+        if bound:
+            out[sibling] = bound[0]
     return out
 
 
@@ -285,7 +343,7 @@ class Cell:
     hook: str
     event: str
     name: str | None
-    kind: str        # "deny-hook" (a floor name gone) | "degraded" (a budget name gone) | "reporter" | "intact" | "planted" | "raised" | "syntax" | "floor" (a floor module raising) | "body" (the hook's own module body raising)
+    kind: str        # "deny-hook" (a floor name gone) | "degraded" (a budget name gone) | "reporter" | "intact" | "planted" | "raised" | "syntax" | "floor" (a floor module raising) | "body" (the hook's own module body raising) | "kept" (a name gone from a sibling that is not the helper; name is "<sibling>:<name>")
     rc: int
     stdout: str
     stderr: str
@@ -336,9 +394,13 @@ def _plant_in_the_body(path: Path, text: str, before: str | None = None) -> None
 
 def _cell(base: Path, job: tuple[str, str, str | None, str], allowance: RetryAllowance) -> Cell:
     hook, event, name, kind = job
-    root = base / f"{kind}-{hook[:-3]}-{name or 'none'}"
+    root = base / f"{kind}-{hook[:-3]}-{(name or 'none').replace(':', '-')}"
     _copy_cc(root)
-    if kind == "planted":
+    if kind == "kept" and name is not None:
+        sibling, gone = name.split(":")
+        kept = root / _floor_rel(sibling)
+        kept.write_bytes(kept.read_bytes() + f"\ndel {gone}\n".encode("utf-8"))
+    elif kind == "planted":
         (root / "tools" / "cc" / "hooks" / f"{name}.py").write_text(
             'raise ImportError("planted: this sibling cannot import")\n', encoding="utf-8")
     elif kind == "floor" and name is not None:
@@ -384,6 +446,8 @@ def cells(tmp_path_factory) -> list[Cell]:
             jobs.append((hook, event, "split", "body"))
         for name in FLOOR_PLANTS:
             jobs.append((hook, event, name, "floor"))
+        for sibling, name in kept_sibling_reads(hook).items():
+            jobs.append((hook, event, f"{sibling}:{name}", "kept"))
     for hook, event in reporter_hooks().items():
         for name in sorted(BUDGET_NAMES):
             jobs.append((hook, event, name, "reporter"))
@@ -565,6 +629,31 @@ class TestADenyHookOnAKeptHelper:
             assert f"takes `{c.name}` from tools/cc/hooks/_hook_utils.py, which lacks it" in reason, reason
             assert "`git restore --source=HEAD -- tools/cc/hooks/" in reason, reason
             assert "Error" in reason, reason          # the exception's class, never through os_error_text
+
+    def test_a_name_a_kept_sibling_lacks_is_refused_naming_that_file(self, cells):
+        # DEF-5087 (air's ruling e8d934): the kept-old-file test reads any
+        # tools/cc module, so a kept sibling that is not the helper is named
+        # with the upgrade repair, never told the upgrade would not repair it.
+        kept = [c for c in cells if c.kind == "kept"]
+        assert {(c.hook, str(c.name)) for c in kept} == {
+            (h, f"{s}:{n}") for h in deny_hooks() for s, n in kept_sibling_reads(h).items()}
+        # The floor at authoring (2026-11-08): stop_gate reads three such
+        # siblings and write_guard two; config_guard and plan_guard read only
+        # names their sibling's own code reads, so the reader's unit rows in
+        # tests/test_kept_sibling.py stand for them.
+        assert len(kept) >= 5 and len({c.hook for c in kept}) >= 2, sorted((c.hook, c.name) for c in kept)
+        for c in kept:
+            sibling, name = str(c.name).split(":")
+            rel = _floor_rel(sibling)
+            reason = _reason(c)
+            assert c.rc == 0 and _is_refusal(c), _summary(c)
+            assert f"takes `{name}` from {rel}, which lacks it" in reason, reason
+            assert f"If an upgrade kept {rel.rsplit('/', 1)[1]} as yours" in reason, reason
+            assert "espalier upgrade --execute" in reason and "would not repair" not in reason, reason
+            # The record is best-effort: its writer, _integrity, imports from
+            # _json_safe, so a kept _json_safe leaves the decision and no record.
+            if sibling != "_json_safe":
+                assert f'"kept": "{rel}"' in c.audit, (c.hook, c.audit[-400:])
 
     def test_a_missing_degraded_name_is_judged_not_refused(self, cells):
         budget = [c for c in cells if c.kind == "degraded"]
@@ -1097,12 +1186,14 @@ class TestTheOneRestoreAWedgedGuardLetsThrough:
         # hand, or by any code path but a missing name) is a plain raise.
         script = (
             "import sys; sys.path.insert(0, sys.argv[1]); import _hook_utils as h, _start_refusal as d\n"
-            "print(d._missing_helper_name(AttributeError('x', name='STATE_DIR', obj=h)))\n"
-            "print(d._missing_helper_name(AttributeError('x', name='no_such_helper_name', obj=h)))\n"
+            "from pathlib import Path; cc = Path(d.__file__).resolve().parent.parent\n"
+            "print(d._missing_sibling_name(AttributeError('x', name='STATE_DIR', obj=h), cc))\n"
+            "r = d._missing_sibling_name(AttributeError('x', name='no_such_helper_name', obj=h), cc)\n"
+            "print(r[0], r[1].name)\n"
         )
         out = subprocess.run([sys.executable, "-c", script, str(HOOKS_DIR)], capture_output=True, text=True,
                              encoding="utf-8", env=_ENV, cwd=str(REPO_ROOT), timeout=45)
-        assert out.stdout.split() == ["None", "no_such_helper_name"], (out.stdout, out.stderr)
+        assert out.stdout.split() == ["None", "no_such_helper_name", "_hook_utils.py"], (out.stdout, out.stderr)
 
     def test_the_crash_guard_names_the_frame_and_never_the_message(self, restores):
         refused = next(r for r in restores if r.plant == "crash" and not r.passes)
