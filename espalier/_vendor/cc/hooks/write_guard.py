@@ -67,6 +67,7 @@ permissionDecision="deny") -- see "The time budget" below `_deny_mcp`.
 """
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import os
@@ -75,7 +76,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, NamedTuple
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple
 
 # The hook's own start, read before the pattern modules import (about a
 # quarter of a second of a call here). In the hook process Claude Code starts,
@@ -276,16 +277,18 @@ try:
     from _hook_utils import os_error_text  # noqa: E402
     import _integrity  # noqa: E402
     import _maintenance_mode  # noqa: E402
-    import _bash_patterns  # noqa: E402
     import _protected_zones  # noqa: E402
-    import _speedbump  # noqa: E402
     import _reinject  # noqa: E402
     # Every helper name this hook's import graph takes -- by name import at any
     # depth, or as a module-level attribute (the alias lines further down) --
     # read once here, so a copy that predates any of them refuses here with the
     # repair instead of dying at an alias (exit 1) or crashing later in a
     # function-level import (the crash guard, with the wrong remedy). Pinned to
-    # the AST derivation by tests/test_hooks_start_on_a_kept_helper.py.
+    # the AST derivation by tests/test_hooks_start_on_a_kept_helper.py. The graph
+    # takes in the two pattern modules the loader below imports on first use
+    # (DEF-946), and the read stays here, before any call: a kept helper that
+    # predates a name they take refuses at the start with the upgrade, on a
+    # read-only call as on any other.
     _WRITE_GUARD_HELPER_NAMES = (
         "ADOPTER_ZONE_KEYS", "DENIED", "MCPPayloadUnverifiable", "MCP_CONTENT_KEYS", "MCP_PATH_FIELDS",
         "MUTATION_TOOLS", "RECALL_LOG_NAME", "STATE_DIR", "_append_jsonl", "_locked_increment",
@@ -302,11 +305,14 @@ try:
     # The budget's deadline setter, read with a degrade (DEF-1176): a helper
     # that predates the budget arms no deadline for the judgment's spawns and
     # the budget still ends the call; the `finally` that reset it used to
-    # raise there, into the crash guard. The lock is read through _speedbump's
-    # degraded alias for the same reason.
+    # raise there, into the crash guard. The state-write lock the refused
+    # call's exit holds is read with the same degrade, here rather than
+    # through _speedbump's alias of it (the same object, read the same way),
+    # so a refusal's exit loads no pattern module (DEF-946).
     _set_judgment_deadline: Callable[[float | None], None] = (
         getattr(_hook_utils, "set_judgment_deadline", None) or (lambda deadline: None)
     )
+    _STATE_WRITE_LOCK: Any = getattr(_hook_utils, "STATE_WRITE_LOCK", None) or contextlib.nullcontext()
 except Exception as _skew:  # noqa: BLE001 -- a kept helper that predates its siblings (DEF-1176)
     if __name__ != "__main__":
         raise
@@ -314,37 +320,105 @@ except Exception as _skew:  # noqa: BLE001 -- a kept helper that predates its si
 
 MUTATION_TOOLS = _hook_utils.MUTATION_TOOLS
 
+# ── The pattern path (DEF-946) ───────────────────────────────────────────────
+#
+# `_bash_patterns` (about 170 compiles at import) and `_speedbump` serve the
+# Bash, PowerShell and checkpoint judgments alone. A read-only tool returns from
+# `_run_main` after the kill-switch scan and the secret-path check, which read
+# neither, so neither module imports at the top of this file: together they
+# were about two thirds of a Read call's cost. Each module-level statement built
+# from them is a step, defined where it always stood (`@_on_the_pattern_path`)
+# and run once, in source order, by `_load_the_pattern_path`. Every function
+# that reads a name the steps bind calls the loader before its first such read,
+# and `_run_main` calls it right after its read-only return (both pinned by
+# tests/test_write_guard.py::TestThePatternPath); the module `__getattr__` below serves
+# the same names to an importer (the re-exports, `wg._bash_patterns`,
+# `wg.DANGEROUS_BASH_PATTERNS`). A census that walks `vars()` of this module
+# calls the loader first. A pattern module that cannot import, or a step that
+# raises, leaves the path unloaded, so the next call raises again, into
+# `main`'s crash guard, which names that file and line and lets through the one
+# restore of it; a read-only call passes meanwhile, so the file can be read.
+if TYPE_CHECKING:  # the type checker's view of the names the steps bind
+    import _bash_patterns
+    import _speedbump
+    from _bash_patterns import _CP_SYMLINK_RE, _LN_S_RE, iter_hardlink_operands
+
+#: The steps, in source order: a decorator runs where its function is defined.
+_PATTERN_STEPS: list[Callable[[], None]] = []
+#: Held while the path loads, so a second thread waits for all of it.
+_PATTERN_PATH_LOCK = threading.Lock()
+#: Set once every step has run, never before.
+_pattern_path_loaded = False
+
+
+def _on_the_pattern_path(step: Callable[[], None]) -> Callable[[], None]:
+    """Enrol ``step`` to run, in source order, when the pattern path loads."""
+    _PATTERN_STEPS.append(step)
+    return step
+
+
+def _load_the_pattern_path() -> None:
+    """Import the two pattern modules and run every step, once.
+
+    The done flag is set after the last step, so an import or a step that
+    raises leaves the path unloaded and the next call raises again (into
+    `main`'s crash guard, or the importer's own traceback)."""
+    global _bash_patterns, _speedbump, _pattern_path_loaded
+    if _pattern_path_loaded:
+        return
+    with _PATTERN_PATH_LOCK:
+        if _pattern_path_loaded:
+            return
+        # This file's directory first, as at its top: a caller may have put
+        # sys.path back since, and `_speedbump` imports its siblings bare,
+        # trusting the hook to have done this (DEF-768).
+        here = str(Path(__file__).parent)
+        if sys.path[:1] != [here]:
+            sys.path.insert(0, here)
+        import _bash_patterns
+        import _speedbump
+        for step in _PATTERN_STEPS:
+            step()
+        _pattern_path_loaded = True
+
+
+def __getattr__(name: str) -> Any:
+    """A name a step binds, read from outside before the path loaded: load it
+    and read again. A dunder probe (the import system's ``__path__``) is
+    answered without loading."""
+    if name.startswith("__") or _pattern_path_loaded:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    _load_the_pattern_path()
+    try:
+        return globals()[name]
+    except KeyError:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from None
+
+
 # Public re-exports for tests that pin the friction-layer surface
 # (tests/test_redos.py, tests/test_contract_consumers.py,
 # tests/test_write_guard.py). Don't reach into _bash_patterns or
 # _protected_zones from tests directly -- keep the import path stable
 # at the dispatcher boundary so future internal reshuffles stay
-# test-transparent.
-_REDIRECT_RE = _bash_patterns._REDIRECT_RE
-_HEREDOC_RE = _bash_patterns._HEREDOC_RE
-_TEE_RE = _bash_patterns._TEE_RE
-_SED_INPLACE_RE = _bash_patterns._SED_INPLACE_RE
-_CP_MV_RE = _bash_patterns._CP_MV_RE
-_GIT_CHECKOUT_DASHDASH_RE = _bash_patterns._GIT_CHECKOUT_DASHDASH_RE
-_GIT_CHECKOUT_BARE_RE = _bash_patterns._GIT_CHECKOUT_BARE_RE
-_GIT_RESTORE_RE = _bash_patterns._GIT_RESTORE_RE
-_LN_S_RE = _bash_patterns._LN_S_RE
-_CP_SYMLINK_RE = _bash_patterns._CP_SYMLINK_RE
-iter_hardlink_operands = _bash_patterns.iter_hardlink_operands
-_PYTHON_DASH_C_RE = _bash_patterns._PYTHON_DASH_C_RE
-_NODE_DASH_E_RE = _bash_patterns._NODE_DASH_E_RE
-_RUBY_DASH_E_RE = _bash_patterns._RUBY_DASH_E_RE
-_PERL_DASH_E_RE = _bash_patterns._PERL_DASH_E_RE
-_INTERP_STDIN_RE = _bash_patterns._INTERP_STDIN_RE
-# Inner write-target regexes (run over interpreter -e/-c bodies). Re-exported
-# so tests/test_redos.py can pin them linear.
-_PY_FILE_OPEN_RE = _bash_patterns._PY_FILE_OPEN_RE
-_NODE_FS_WRITE_RE = _bash_patterns._NODE_FS_WRITE_RE
-_RUBY_FILE_WRITE_RE = _bash_patterns._RUBY_FILE_WRITE_RE
-_PERL_OPEN_RE = _bash_patterns._PERL_OPEN_RE
-_PERL_OPEN3_RE = _bash_patterns._PERL_OPEN3_RE
-_PY_PATH_WRITE_RE = _bash_patterns._PY_PATH_WRITE_RE
-_PY_DEST_ARG_WRITE_RE = _bash_patterns._PY_DEST_ARG_WRITE_RE
+# test-transparent. Three are read here too (`_LN_S_RE`, `_CP_SYMLINK_RE`,
+# `iter_hardlink_operands`); the inner write-target regexes (run over
+# interpreter -e/-c bodies) are re-exported so tests/test_redos.py can pin
+# them linear.
+_PATTERN_REEXPORTS = (
+    "_REDIRECT_RE", "_HEREDOC_RE", "_TEE_RE", "_SED_INPLACE_RE", "_CP_MV_RE",
+    "_GIT_CHECKOUT_DASHDASH_RE", "_GIT_CHECKOUT_BARE_RE", "_GIT_RESTORE_RE", "_LN_S_RE",
+    "_CP_SYMLINK_RE", "iter_hardlink_operands", "_PYTHON_DASH_C_RE", "_NODE_DASH_E_RE",
+    "_RUBY_DASH_E_RE", "_PERL_DASH_E_RE", "_INTERP_STDIN_RE",
+    "_PY_FILE_OPEN_RE", "_NODE_FS_WRITE_RE", "_RUBY_FILE_WRITE_RE", "_PERL_OPEN_RE",
+    "_PERL_OPEN3_RE", "_PY_PATH_WRITE_RE", "_PY_DEST_ARG_WRITE_RE",
+)
+
+
+@_on_the_pattern_path
+def _bind_the_reexports() -> None:
+    namespace = globals()
+    for name in _PATTERN_REEXPORTS:
+        namespace[name] = getattr(_bash_patterns, name)
 
 PROTECTED_PREFIXES = _protected_zones.PROTECTED_PREFIXES
 PROTECTED_FILES = _protected_zones.PROTECTED_FILES
@@ -437,11 +511,17 @@ _aliases_protected_inode = _protected_zones.aliases_protected_inode
 # that and tests/test_redos.py reddened on it (two derived instances). The
 # `export|declare` clause below is safe because those verbs are NOT in
 # `_CMD_POS_WRAP_RUN`'s roster, so it cannot re-consume what `_CMD_POS` consumed.
-_HARNESS_ENV_PREFIX_RE = re.compile(
-    _bash_patterns._CMD_POS_NO_VERB
-    + r"(?:(?:export|declare)(?:[ \t]+-[^\s;|&]+)*[ \t]+)?"
-    + rf"(?:{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE)[ \t]*="
-)
+_HARNESS_ENV_PREFIX_RE: re.Pattern[str]
+
+
+@_on_the_pattern_path
+def _build_the_harness_env_prefix() -> None:
+    global _HARNESS_ENV_PREFIX_RE
+    _HARNESS_ENV_PREFIX_RE = re.compile(
+        _bash_patterns._CMD_POS_NO_VERB
+        + r"(?:(?:export|declare)(?:[ \t]+-[^\s;|&]+)*[ \t]+)?"
+        + rf"(?:{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE)[ \t]*="
+    )
 
 # ⚠ POLARITY. The deny above teaches a mental model -- "an inline assignment
 # cannot reach the hooks of the ALREADY-RUNNING session" -- and that is true only
@@ -475,10 +555,16 @@ _HARNESS_ENV_PREFIX_RE = re.compile(
 # own value and any further NAME=val segments -- never one of those segments'
 # NAMES: without the lookahead a separator right after a second assignment
 # (`...=1 X=1; pytest`) backtracked onto `X` and read it as the command.
-_BASH_ENV_PREFIX_TARGET_RE = re.compile(
-    "^" + _bash_patterns._ASSIGN_VALUE + r"[ \t]+(?:[A-Za-z_]\w*="
-    + _bash_patterns._ASSIGN_VALUE + r"[ \t]+)*(?![A-Za-z_]\w*=)([^\s;|&=]+)"
-)
+_BASH_ENV_PREFIX_TARGET_RE: re.Pattern[str]
+
+
+@_on_the_pattern_path
+def _build_the_env_prefix_target() -> None:
+    global _BASH_ENV_PREFIX_TARGET_RE
+    _BASH_ENV_PREFIX_TARGET_RE = re.compile(
+        "^" + _bash_patterns._ASSIGN_VALUE + r"[ \t]+(?:[A-Za-z_]\w*="
+        + _bash_patterns._ASSIGN_VALUE + r"[ \t]+)*(?![A-Za-z_]\w*=)([^\s;|&=]+)"
+    )
 
 # ⚠ `claude` is the ONE target that must keep denying, and it is a real reach,
 # not pedagogy: `ESPALIER_MAINTENANCE_MODE=1 claude -p "..."` launches a NESTED
@@ -616,6 +702,7 @@ def _blank_quoted_spans(text: str) -> "str | None":
     shell runs -- the fallbacks `_quote_aware_words` takes. The leftmost
     span wins at each quote, as there, so a quote left over after the spans
     are blanked is one that never closed."""
+    _load_the_pattern_path()
     runs_something = False
 
     def blank(span: "re.Match[str]") -> str:
@@ -717,6 +804,7 @@ def _occurrence_is_benign(tail: str, reads: "dict[str, bool] | None" = None) -> 
     the verdicts, so each of a chain of prefixes heading one test run costs
     a dictionary lookup, not another read of the run.
     """
+    _load_the_pattern_path()
     # ⚠ A BACKSLASH-NEWLINE IS A CONTINUATION, NOT A STATEMENT BOUNDARY. Splicing
     # it out BEFORE the split is what keeps `VAR=1 \<nl>claude` one statement. Left
     # unspliced, the split yielded `1 \`, whose trailing `\` satisfies the target
@@ -762,6 +850,7 @@ def _harness_env_prefix_is_benign(command: str) -> bool:
     Fails toward the DENY on an unparseable tail: this layer is friction, and a
     missed step-aside costs a re-issue while a wrong one drops the lesson.
     """
+    _load_the_pattern_path()
     matches = list(_HARNESS_ENV_PREFIX_RE.finditer(command))
     if not matches:
         return False
@@ -782,41 +871,47 @@ class BashPatternRecord(NamedTuple):
 # entries that need them; the rest fall back to the
 # "Dangerous command blocked: matches pattern '<source>'" default
 # generated in check_bash_dangerous_patterns.
-DANGEROUS_BASH_PATTERNS: tuple[BashPatternRecord, ...] = (
-    # ⚠ ANCHORED 2026-08-24 (DEF-498), the other two sites of DEF-414f's class.
-    # These are the LITERAL belt to `_bash_patterns.has_catastrophic_recursive_rm`'s
-    # braces — that function is the flag-order- and spelling-independent superset,
-    # so these two add nothing it misses, but as bare substrings they fired on any
-    # command whose TEXT contained the spelling. That is the whole of
-    # `echo 'the guard refuses rm -rf /'` being refused. Kept rather than deleted
-    # (a named record carries its own message and the coupling gate pins it), but
-    # anchored so a MENTION is not read as an INVOCATION.
-    # ⚠ AND RIGHT-ANCHORED. `rm[ \t]+-rf[ \t]+/` matched the PREFIX of every absolute
-    # path -- `rm -rf /tmp/x` contains `rm -rf /` -- so these records, not the
-    # operand classifier, were what hard-denied an ordinary cleanup. Re-tiering
-    # the classifier alone changed nothing until these were bounded, which is why
-    # the ledger's own unit of work says "right-anchor the rm-rf-root record AND
-    # stop _operand_can_be_catastrophic denying every absolute-path operand" --
-    # two edits, one defect. `(?=\s|$)` keeps bare `/` and bare `*` (including
-    # `rm -rf / 2> /dev/null`) and drops `/tmp/x` and `*.egg-info`.
-    BashPatternRecord("rm-rf-root",
-                      re.compile(_bash_patterns._CMD_POS + r"rm[ \t]+-rf[ \t]+/(?=\s|$)")),
-    BashPatternRecord("rm-rf-star",
-                      re.compile(_bash_patterns._CMD_POS + r"rm[ \t]+-rf[ \t]+\*(?=\s|$)")),
-    # `git reset --hard` lives in the CP-DISCARD soft speed-bump (_speedbump.py),
-    # not the hard-deny tier -- it discards uncommitted work (no reflog) but is a
-    # routine operation, so a deny-once-then-allow reminder fits the governing
-    # frame better than a wall that fires even in maintenance mode. The
-    # catastrophic-rm forms above remain hard-denied.
-    BashPatternRecord(
-        "harness-env-prefix",
-        _HARNESS_ENV_PREFIX_RE,
-        # Message lives in the tested operator-facing template registry in
-        # _denial_reasons so it carries the Don't/Do pairing under
-        # test_template_contains_both_markers.
-        _denial_reasons.HARNESS_ENV_PREFIX_INLINE,
-    ),
-)
+DANGEROUS_BASH_PATTERNS: tuple[BashPatternRecord, ...]
+
+
+@_on_the_pattern_path
+def _build_the_bash_records() -> None:
+    global DANGEROUS_BASH_PATTERNS
+    DANGEROUS_BASH_PATTERNS = (
+        # ⚠ ANCHORED 2026-08-24 (DEF-498), the other two sites of DEF-414f's class.
+        # These are the LITERAL belt to `_bash_patterns.has_catastrophic_recursive_rm`'s
+        # braces — that function is the flag-order- and spelling-independent superset,
+        # so these two add nothing it misses, but as bare substrings they fired on any
+        # command whose TEXT contained the spelling. That is the whole of
+        # `echo 'the guard refuses rm -rf /'` being refused. Kept rather than deleted
+        # (a named record carries its own message and the coupling gate pins it), but
+        # anchored so a MENTION is not read as an INVOCATION.
+        # ⚠ AND RIGHT-ANCHORED. `rm[ \t]+-rf[ \t]+/` matched the PREFIX of every absolute
+        # path -- `rm -rf /tmp/x` contains `rm -rf /` -- so these records, not the
+        # operand classifier, were what hard-denied an ordinary cleanup. Re-tiering
+        # the classifier alone changed nothing until these were bounded, which is why
+        # the ledger's own unit of work says "right-anchor the rm-rf-root record AND
+        # stop _operand_can_be_catastrophic denying every absolute-path operand" --
+        # two edits, one defect. `(?=\s|$)` keeps bare `/` and bare `*` (including
+        # `rm -rf / 2> /dev/null`) and drops `/tmp/x` and `*.egg-info`.
+        BashPatternRecord("rm-rf-root",
+                          re.compile(_bash_patterns._CMD_POS + r"rm[ \t]+-rf[ \t]+/(?=\s|$)")),
+        BashPatternRecord("rm-rf-star",
+                          re.compile(_bash_patterns._CMD_POS + r"rm[ \t]+-rf[ \t]+\*(?=\s|$)")),
+        # `git reset --hard` lives in the CP-DISCARD soft speed-bump (_speedbump.py),
+        # not the hard-deny tier -- it discards uncommitted work (no reflog) but is a
+        # routine operation, so a deny-once-then-allow reminder fits the governing
+        # frame better than a wall that fires even in maintenance mode. The
+        # catastrophic-rm forms above remain hard-denied.
+        BashPatternRecord(
+            "harness-env-prefix",
+            _HARNESS_ENV_PREFIX_RE,
+            # Message lives in the tested operator-facing template registry in
+            # _denial_reasons so it carries the Don't/Do pairing under
+            # test_template_contains_both_markers.
+            _denial_reasons.HARNESS_ENV_PREFIX_INLINE,
+        ),
+    )
 
 # Dangerous PowerShell patterns -- mirrors DANGEROUS_BASH_PATTERNS shape.
 # Tuple-of-records (not a plain list[re.Pattern]) so a PS pattern needing a
@@ -878,18 +973,24 @@ DANGEROUS_BASH_PATTERNS: tuple[BashPatternRecord, ...] = (
 # The `Set-Item` / `SetEnvironmentVariable` arms are left unanchored: both are
 # multi-token forms that read far less naturally inside prose, and widening the
 # anchor to expression position is a bigger change than this defect earns.
-_PS_HARNESS_ENV_PREFIX_RE = re.compile(
-    r"(?:"
-    r"(?P<envcolon>"
-    + _bash_patterns._PS_CMD_POS
-    + rf"\$env:(?:{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE)\s*=)"
-    r"|Set-Item\s+(?:-Path\s+)?[\"']?Env:[\\/]?"
-    rf"(?:{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE)\b"
-    r"|SetEnvironmentVariable\(\s*[\"']"
-    rf"(?:{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE)[\"']"
-    r")",
-    re.IGNORECASE,
-)
+_PS_HARNESS_ENV_PREFIX_RE: re.Pattern[str]
+
+
+@_on_the_pattern_path
+def _build_the_ps_harness_env_prefix() -> None:
+    global _PS_HARNESS_ENV_PREFIX_RE
+    _PS_HARNESS_ENV_PREFIX_RE = re.compile(
+        r"(?:"
+        r"(?P<envcolon>"
+        + _bash_patterns._PS_CMD_POS
+        + rf"\$env:(?:{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE)\s*=)"
+        r"|Set-Item\s+(?:-Path\s+)?[\"']?Env:[\\/]?"
+        rf"(?:{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE)\b"
+        r"|SetEnvironmentVariable\(\s*[\"']"
+        rf"(?:{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE)[\"']"
+        r")",
+        re.IGNORECASE,
+    )
 
 # PowerShell twin of _BASH_ENV_PREFIX_INVOKES_RE. PowerShell separates statements
 # with `;` or a newline rather than by juxtaposition, so "a command follows" means
@@ -964,6 +1065,7 @@ def _ps_harness_env_prefix_is_benign(command: str) -> bool:
     """PowerShell twin of ``_harness_env_prefix_is_benign``; same
     fail-toward-deny contract, same `claude` exception, same every-occurrence
     rule."""
+    _load_the_pattern_path()
     matches = list(_PS_HARNESS_ENV_PREFIX_RE.finditer(command))
     if not matches:
         return False
@@ -1018,6 +1120,7 @@ def _cmd_program(text: str, at: int) -> str | None:
     an interactive cmd runs nothing it was handed. The switch walk is
     `_bash_patterns._cmd_program_at`'s, which the delete reader shares
     (DEF-1151)."""
+    _load_the_pattern_path()
     start = _bash_patterns._cmd_program_at(text, at)
     return None if start is None else text[start:]
 
@@ -1027,6 +1130,7 @@ def _cmd_set_launches_claude(scan: str, opener_re: "re.Pattern[str]", program_te
     that sets a harness variable at a statement start and launches ``claude``
     anywhere after it. ``program_text`` is an offset-aligned unmasked twin to
     read the program from (PowerShell's scan pair); default ``scan``."""
+    _load_the_pattern_path()
     source = scan if program_text is None else program_text
     for opener in opener_re.finditer(scan):
         program = _cmd_program(source, opener.end())
@@ -1053,7 +1157,7 @@ def _cmd_set_launches_claude(scan: str, opener_re: "re.Pattern[str]", program_te
 # `_speedbump._pred_rmrf`. It was defined here first and the soft tier kept
 # matching bare -- so a `#` comment quoting the pattern cleared the hard deny
 # and then tripped the speed bump instead. One definition, both tiers.
-_PS_CMD_POS = _bash_patterns._PS_CMD_POS
+_PS_CMD_POS: str
 #: Same reason, same module: the hard records below and `_speedbump._pred_rmrf`
 #: must enrol an added alias at the same moment. Two FAIL-OPENS predating this
 #: change were found by a must-deny corpus on 2026-08-24 and are closed by
@@ -1062,48 +1166,61 @@ _PS_CMD_POS = _bash_patterns._PS_CMD_POS
 #: -Recurse` slipped because both hard-coded Recurse-before-Force. Neither is a
 #: friction bug; both are genuine catastrophic deletes the guard let through, at
 #: HEAD and for as long as the records have existed.
-_PS_REMOVE_VERB = _bash_patterns._PS_REMOVE_VERB
+_PS_REMOVE_VERB: str
 
 
-DANGEROUS_PS_PATTERNS: tuple[BashPatternRecord, ...] = (
-    # The switches by every spelling that runs (DEF-822): the unambiguous
-    # cmdlet prefixes (`-r -fo`), the long forms, and the /bin/rm clusters
-    # pwsh hands the native binary on a POSIX host (`-rf`). The fragments
-    # are `_bash_patterns`' so the soft tier and these records read one
-    # spelling set; they spelled `-Recurse` and `-Force` in full until
-    # 2026-09-16 and `ri -r -fo C:\` drew nothing.
-    BashPatternRecord(
-        "ps-remove-item-recurse-force-prefix",
-        re.compile(
-            _bash_patterns._PS_REMOVE_AT + _bash_patterns._QUOTED_VERB_TAIL
-            + r"\s+" + _bash_patterns._PS_RECURSE_SWITCH
-            + r"\s+" + _bash_patterns._PS_FORCE_SWITCH, re.IGNORECASE,
+@_on_the_pattern_path
+def _bind_the_ps_fragments() -> None:
+    global _PS_CMD_POS, _PS_REMOVE_VERB
+    _PS_CMD_POS = _bash_patterns._PS_CMD_POS
+    _PS_REMOVE_VERB = _bash_patterns._PS_REMOVE_VERB
+
+
+DANGEROUS_PS_PATTERNS: tuple[BashPatternRecord, ...]
+
+
+@_on_the_pattern_path
+def _build_the_ps_records() -> None:
+    global DANGEROUS_PS_PATTERNS
+    DANGEROUS_PS_PATTERNS = (
+        # The switches by every spelling that runs (DEF-822): the unambiguous
+        # cmdlet prefixes (`-r -fo`), the long forms, and the /bin/rm clusters
+        # pwsh hands the native binary on a POSIX host (`-rf`). The fragments
+        # are `_bash_patterns`' so the soft tier and these records read one
+        # spelling set; they spelled `-Recurse` and `-Force` in full until
+        # 2026-09-16 and `ri -r -fo C:\` drew nothing.
+        BashPatternRecord(
+            "ps-remove-item-recurse-force-prefix",
+            re.compile(
+                _bash_patterns._PS_REMOVE_AT + _bash_patterns._QUOTED_VERB_TAIL
+                + r"\s+" + _bash_patterns._PS_RECURSE_SWITCH
+                + r"\s+" + _bash_patterns._PS_FORCE_SWITCH, re.IGNORECASE,
+            ),
         ),
-    ),
-    BashPatternRecord(
-        "ps-remove-item-recurse-force-mixed",
-        # Spans bounded `{0,200}` (not unbounded `.*`): an unbounded form is
-        # quadratic on a repeated-token payload scanning toward an absent
-        # `-Force` (a hook-runtime ReDoS — `tests/test_redos.py` dot-star gate).
-        # Detection-preserving: real `Remove-Item … -Recurse … -Force` flag
-        # clusters sit far inside 200 chars. The tail is the soft tier's:
-        # either order, or one cluster carrying both letters.
-        re.compile(
-            _bash_patterns._PS_REMOVE_AT + _bash_patterns._QUOTED_VERB_TAIL
-            + r"\s+[^\n;|&]{0,200}?" + _bash_patterns._PS_RECURSIVE_FORCE_TAIL,
-            re.IGNORECASE,
+        BashPatternRecord(
+            "ps-remove-item-recurse-force-mixed",
+            # Spans bounded `{0,200}` (not unbounded `.*`): an unbounded form is
+            # quadratic on a repeated-token payload scanning toward an absent
+            # `-Force` (a hook-runtime ReDoS — `tests/test_redos.py` dot-star gate).
+            # Detection-preserving: real `Remove-Item … -Recurse … -Force` flag
+            # clusters sit far inside 200 chars. The tail is the soft tier's:
+            # either order, or one cluster carrying both letters.
+            re.compile(
+                _bash_patterns._PS_REMOVE_AT + _bash_patterns._QUOTED_VERB_TAIL
+                + r"\s+[^\n;|&]{0,200}?" + _bash_patterns._PS_RECURSIVE_FORCE_TAIL,
+                re.IGNORECASE,
+            ),
         ),
-    ),
-    BashPatternRecord(
-        "ps-harness-env-prefix",
-        _PS_HARNESS_ENV_PREFIX_RE,
-        # Same message as the Bash twin: the operator-facing advice is identical
-        # (set it in the parent shell before launching), and reusing the tested
-        # template keeps this record inside test_template_contains_both_markers'
-        # Don't/Do pairing check rather than growing a second, untested string.
-        _denial_reasons.HARNESS_ENV_PREFIX_INLINE,
-    ),
-)
+        BashPatternRecord(
+            "ps-harness-env-prefix",
+            _PS_HARNESS_ENV_PREFIX_RE,
+            # Same message as the Bash twin: the operator-facing advice is identical
+            # (set it in the parent shell before launching), and reusing the tested
+            # template keeps this record inside test_template_contains_both_markers'
+            # Don't/Do pairing check rather than growing a second, untested string.
+            _denial_reasons.HARNESS_ENV_PREFIX_INLINE,
+        ),
+    )
 
 
 _resolve_project_root = _hook_utils.resolve_project_root
@@ -1343,6 +1460,7 @@ _PS_GLUED_PAREN_RE = re.compile(r"(?<=[\w@$])\(")
 def _ps_blank_argument_parens(scan: str) -> str:
     """``scan`` with each glued `(` (`_PS_GLUED_PAREN_RE`) and its closing
     `)` blanked, the same length."""
+    _load_the_pattern_path()
     out = list(scan)
     closers = _bash_patterns.ps_paren_closers(scan)
     for m in _PS_GLUED_PAREN_RE.finditer(scan):
@@ -1358,7 +1476,13 @@ _PS_SECRET_TOKEN_SPLIT_RE = re.compile(r"[\s,]+")
 #: One quoted span: the quote arms `_bash_patterns._QUOTED_OR_BARE_OPERAND`
 #: composes. Disjoint on the opening character and closed by the first
 #: matching quote, so a cut over a flood of them stays linear.
-_QUOTED_SPAN_RE = re.compile(_bash_patterns._QUOTED_SPAN)
+_QUOTED_SPAN_RE: re.Pattern[str]
+
+
+@_on_the_pattern_path
+def _build_the_quoted_span() -> None:
+    global _QUOTED_SPAN_RE
+    _QUOTED_SPAN_RE = re.compile(_bash_patterns._QUOTED_SPAN)
 
 #: What the quote-aware cut cannot read, per leg: one of these anywhere in a
 #: statement sends it to the leg's old split. The quote arms know no escape,
@@ -1386,6 +1510,7 @@ def _a_boundary_sits_in_a_quote(text: str, boundaries: "re.Pattern[str]") -> boo
     wrongly: `ssh host 'cd app; cat .env' 'echo a; echo b'` (the
     failure-mode review, 2026-10-05). Every statement then takes the old
     split."""
+    _load_the_pattern_path()
     i, n = 0, len(text)
     while i < n:
         if text[i] in "\"'":
@@ -1425,6 +1550,7 @@ def _quote_aware_words(
     substitution, whose words the shell runs: `cat "$(echo .env)"` reads
     `.env`, and the quote-blind split reached it by cutting the quote apart.
     """
+    _load_the_pattern_path()
     if any(o in text for o in opaque):
         return _split_words(text, separators)
     out: list[tuple[str, str]] = []
@@ -1468,6 +1594,7 @@ def _secret_read_targets(command: str, _depth: int = 0) -> list[str]:
     failed on the quoted value and the raw text put the read at a command
     position; the lane made the masker read the value, which took the
     accident away (the failure-mode review, measured)."""
+    _load_the_pattern_path()
     out: list[str] = []
     for text in _bash_patterns._wall_readings(command):
         for path in _secret_read_targets_one(text, _depth):
@@ -1486,6 +1613,7 @@ def _secret_read_targets_one(command: str, _depth: int = 0) -> list[str]:
     are cut from the MASKED command, so a bar inside that pattern
     (`"heredoc\\|cat \\.env"`) is not a boundary either.
     """
+    _load_the_pattern_path()
     # A HEREDOC BODY IS DATA, NOT COMMANDS. Measured: without this truncation
     # the guard denied its own test file being written, because
     # `cat >> tests/x.py <<'EOF'` followed by a body line containing
@@ -1655,6 +1783,7 @@ def _ps_quoted_mentions(command: str) -> frozenset[int]:
     a quote that never closes, a double-quoted span holding a substitution,
     which runs, or a mark where PowerShell pairs quotes otherwise than the
     Bash grammar the blanking borrows (`_ps_blank_quoted_spans`)."""
+    _load_the_pattern_path()
     if any(o in command for o in _PS_OPAQUE):
         return frozenset()
     blank = _ps_blank_quoted_spans(command)
@@ -1735,6 +1864,7 @@ def _ps_secret_read_targets(command: str, _depth: int = 0) -> list[str]:
     not a separator, and a word boundary cannot be masked inside a string,
     so it stays out of the cut set.
     """
+    _load_the_pattern_path()
     scan = _ps_blank_argument_parens(_bash_patterns.powershell_scan_text(command))
     out: list[str] = []
     aware = not _a_boundary_sits_in_a_quote(scan, _PS_STATEMENT_BOUNDARY_RE)
@@ -2201,11 +2331,21 @@ _join_directory = _hook_utils.join_directory
 # builders, moved out of this hook): the rm hard tier and the speed bump's
 # defer read the same directories the protected-write checks below do, and
 # `_speedbump` cannot import this hook (this hook imports it).
-_Bases = _bash_patterns.Bases
-_command_bases = _bash_patterns.command_bases
 _directory_exists = _hook_utils.directory_exists   # the chain's oracle, one home
-_bash_bases = _bash_patterns.bash_bases
-_powershell_bases = _bash_patterns.powershell_bases
+if TYPE_CHECKING:  # the type checker's view of the names the step binds
+    from _bash_patterns import Bases as _Bases  # noqa: F401 -- bound by the step; no reader in this file
+    from _bash_patterns import bash_bases as _bash_bases
+    from _bash_patterns import command_bases as _command_bases  # noqa: F401 -- bound by the step; no reader in this file
+    from _bash_patterns import powershell_bases as _powershell_bases
+
+
+@_on_the_pattern_path
+def _bind_the_bases() -> None:
+    global _Bases, _command_bases, _bash_bases, _powershell_bases
+    _Bases = _bash_patterns.Bases
+    _command_bases = _bash_patterns.command_bases
+    _bash_bases = _bash_patterns.bash_bases
+    _powershell_bases = _bash_patterns.powershell_bases
 
 
 def check_bash_for_protected_mutations(command: str, root: Path, cwd: Path | None = None) -> int:
@@ -2216,6 +2356,7 @@ def check_bash_for_protected_mutations(command: str, root: Path, cwd: Path | Non
     ``cwd`` is the directory the command runs in (the hook payload's, which
     follows a ``cd`` from an earlier call); a ``cd`` inside the command moves
     the base for the statements after it (DEF-509)."""
+    _load_the_pattern_path()
     bases = _bash_bases(command, root, cwd)
     for raw in _bash_patterns._candidate_paths_from_bash(command):
         for at in bases(raw):
@@ -2328,6 +2469,7 @@ def check_bash_for_protected_hardlinks(command: str, root: Path, cwd: Path | Non
     the inode write-through backstop in ``aliases_protected_inode``; this is the
     early, clearer-message friction at creation time.
     """
+    _load_the_pattern_path()
     bases = _bash_bases(command, root, cwd)
     for raw in iter_hardlink_operands(command):
         for at in bases(raw):
@@ -2381,6 +2523,7 @@ def check_bash_for_protected_symlinks(command: str, root: Path, cwd: Path | None
     read, and a separator inside a quoted value opened a command position
     there, so a message variable naming the forge was refused.
     """
+    _load_the_pattern_path()
     # Continuations spliced first, as the write extractor does (DEF-701): the
     # span regexes below now stop at a newline, so `ln -s t \` + newline +
     # `<link>` must be joined here or the link name is lost. The cap bounds the
@@ -2448,6 +2591,7 @@ def _bash_dangerous_reason(
     places where the walk cannot follow. Derived here, never at the call
     site, so a new nested reader is flagged by construction (the lane's
     review: three hand-placed wraps, and no test for a fourth)."""
+    _load_the_pattern_path()
     if _depth > 0:
         with _bash_patterns.another_shells_program():
             return _bash_dangerous_reason_here(command, root, _depth, cwd)
@@ -2464,6 +2608,7 @@ def _bash_dangerous_reason_here(
     -Command`` program back, each one level down; ``_depth`` bounds the
     exchange.
     """
+    _load_the_pattern_path()
     # Role-mapped so a MENTION is not read as an INVOCATION: the two literal
     # records below are command-position-anchored, and a markdown backtick, a `(`
     # inside double quotes or a `<<'EOF'` body all synthesised a command position
@@ -2598,19 +2743,26 @@ def _bash_dangerous_reason_here(
 #: to. DERIVED, never hand-listed: any record whose pid names the recursive
 #: force-delete concept. A new recursive-delete record is enrolled on arrival
 #: instead of quietly keeping the un-carved behaviour.
-_PS_RECURSIVE_DELETE_PIDS = frozenset(
-    e.pid for e in DANGEROUS_PS_PATTERNS if "remove-item-recurse-force" in e.pid
-)
+_PS_RECURSIVE_DELETE_PIDS: frozenset[str]
 
 #: The records the "does the assignment actually invoke something?" carve-out
 #: applies to, across BOTH shells. DERIVED from the pid, never hand-listed, so a
 #: future shell's env-prefix record is enrolled on arrival rather than quietly
 #: keeping the un-carved behaviour -- same discipline as the roster above.
-_ENV_PREFIX_PIDS = frozenset(
-    e.pid
-    for e in (*DANGEROUS_BASH_PATTERNS, *DANGEROUS_PS_PATTERNS)
-    if e.pid.endswith("harness-env-prefix")
-)
+_ENV_PREFIX_PIDS: frozenset[str]
+
+
+@_on_the_pattern_path
+def _derive_the_carve_out_pids() -> None:
+    global _PS_RECURSIVE_DELETE_PIDS, _ENV_PREFIX_PIDS
+    _PS_RECURSIVE_DELETE_PIDS = frozenset(
+        e.pid for e in DANGEROUS_PS_PATTERNS if "remove-item-recurse-force" in e.pid
+    )
+    _ENV_PREFIX_PIDS = frozenset(
+        e.pid
+        for e in (*DANGEROUS_BASH_PATTERNS, *DANGEROUS_PS_PATTERNS)
+        if e.pid.endswith("harness-env-prefix")
+    )
 
 
 def check_powershell(
@@ -2651,6 +2803,7 @@ def _ps_dangerous_reason(
 ) -> str | None:
     """`_ps_dangerous_reason_here`, flagged one level down exactly as
     `_bash_dangerous_reason` is (a `pwsh -Command` body from Bash)."""
+    _load_the_pattern_path()
     if _depth > 0:
         with _bash_patterns.another_shells_program():
             return _ps_dangerous_reason_here(raw, root, _depth, cwd)
@@ -2662,6 +2815,7 @@ def _ps_dangerous_reason_here(
 ) -> str | None:
     """The deny reason the PowerShell dangerous tier owes ``raw``, or None --
     the twin of ``_bash_dangerous_reason``, split out for the same exchange."""
+    _load_the_pattern_path()
     # The pair, not the joined text alone: `_ps_shell_program_bodies` slices a
     # `bash -c` program out of the raw twin by offset (DEF-637).
     raw, command = _bash_patterns.powershell_scan_pair(raw)
@@ -2789,6 +2943,7 @@ def check_powershell_for_protected_mutations(
     Set-Acl / Set-ItemProperty (a permission change silences a hook as
     surely as a write) / etc. ``cwd`` and a ``Set-Location`` inside the
     command move the base a relative spelling resolves against (DEF-509)."""
+    _load_the_pattern_path()
     bases = _powershell_bases(command, root, cwd)
     for raw in _bash_patterns._candidate_paths_from_powershell(command):
         for at in bases(raw):
@@ -2839,6 +2994,7 @@ def check_powershell_for_protected_symlinks(
     PowerShell twin of ``check_bash_for_protected_symlinks``.
     The general write check is allowlist-AWARE, so a symlink into an
     allowlisted-in-protected path slipped through before."""
+    _load_the_pattern_path()
     bases = _powershell_bases(command, root, cwd)
     for raw in _bash_patterns.powershell_symlink_linknames(command):
         for at in bases(raw):
@@ -3231,7 +3387,7 @@ def _end_the_refused_call(streams: _HeldStreams, *, exit_now: bool) -> None:
     is flushed and, in the hook process, ``os._exit(0)`` -- the exit never
     waits for the judgment. In process (a test, a probe) the lock is let go
     and the caller returns the deny's sentinel."""
-    with _speedbump.STATE_WRITE_LOCK:  # the degraded read (DEF-1176): the helper's lock when it has one
+    with _STATE_WRITE_LOCK:  # the degraded read (DEF-1176): the helper's lock when it has one
         try:
             if streams.real_out is not None:
                 streams.real_out.flush()
@@ -3499,6 +3655,12 @@ def _run_main(data: dict | None = None) -> int:
     # Pass read-only tools immediately
     if tool_name not in MUTATION_TOOLS and not tool_name.startswith("mcp__"):
         return 0
+
+    # The pattern path (DEF-946), loaded here and not above: everything below
+    # reads it, nothing above does on a read-only call. Unguarded on purpose:
+    # a pattern module that cannot import reaches `main`'s crash guard, which
+    # refuses this call and names the file, never an allow.
+    _load_the_pattern_path()
 
     # Dangerous-command patterns -- fire ALWAYS, even under MAINTENANCE_MODE.
     # These guard against operations that are dangerous regardless of whether

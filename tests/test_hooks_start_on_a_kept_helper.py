@@ -853,7 +853,9 @@ class TestAFloorThatRaisesIsRefused:
         # The class, read from the source: a module-level import of a sibling
         # outside every `try` is one whose failure is exit 1, and so is one
         # under a `try` that catches less than Exception (the `_json_safe`
-        # shape under the helper: a KeyError passes `except ImportError`).
+        # shape under the helper: a KeyError passes `except ImportError`). An
+        # `if TYPE_CHECKING:` body never runs, so only its `else` is read
+        # (write_guard's type-only imports of the pattern path, DEF-946).
         bare: list[str] = []
 
         def visit(stmts: list[ast.stmt]) -> None:
@@ -862,6 +864,8 @@ class TestAFloorThatRaisesIsRefused:
                     bare.extend(a.name for a in s.names if _is_sibling(a.name))
                 elif isinstance(s, ast.ImportFrom) and s.module and _is_sibling(s.module):
                     bare.append(s.module)
+                elif isinstance(s, ast.If) and isinstance(s.test, ast.Name) and s.test.id == "TYPE_CHECKING":
+                    visit(s.orelse)
                 elif isinstance(s, (ast.If, ast.With)):
                     visit(s.body)
                     visit(getattr(s, "orelse", []))
@@ -953,7 +957,11 @@ class TestTheOneRestoreAWedgedGuardLetsThrough:
         reason = _output(refused)["permissionDecisionReason"]
         assert "takes `say_once` from tools/cc/hooks/_hook_utils.py" in reason, reason
         assert "espalier upgrade --execute" in reason, reason
-        assert "(or the same command for the file you edited, if it is tools/cc/hooks/_hook_utils.py or " in reason, reason
+        # Both files: the taker's restore first, then the helper as the file you
+        # edited. Which file takes the name first is an import-order fact (the
+        # eager name read, since the pattern modules load on first use, DEF-946).
+        assert "(or the same command for the file you edited, if it is tools/cc/hooks/_hook_utils.py" in reason, reason
+        assert "`git restore --source=HEAD -- tools/cc/hooks/_hook_utils.py`" not in reason, reason
 
     def test_a_quoted_shell_operator_refuses_even_where_the_path_would_match(self, tmp_path):
         # The operator check is its own refusal, not the operand count's: a
@@ -1103,15 +1111,27 @@ class TestTheNamedRestoreRepairsTheGuard:
     guard starts again. The table above judges the hook's JSON; this is the
     oracle that the command it names is the repair."""
 
+    #: The scenarios that break `_bash_patterns` or `_speedbump`, which the
+    #: guard loads on a mutation's first use (DEF-946): a read-only call passes
+    #: while they are broken, so the file can be read, and a mutation meets the
+    #: crash guard, which names the file and lets the same restore through.
+    _ON_THE_PATTERN_PATH = frozenset({"staged", "circular", "new-module"})
+    _MUTATION = {"tool_name": "Edit", "tool_input": {"file_path": "notes.txt", "old_string": "a", "new_string": "b"}}
+
     @pytest.mark.parametrize("scenario", sorted(_SCENARIOS))
     def test_the_command_the_refusal_names_repairs_the_wedge(self, tmp_path, scenario):
         root = tmp_path / scenario
         _committed_copy(root)
         edited = _SCENARIOS[scenario](root)
         audit = root / "audit"
-        refused = _run_payload(root, "write_guard.py", _NOOP_INPUT["PreToolUse"], audit)
+        on_the_path = scenario in self._ON_THE_PATTERN_PATH
+        payload = self._MUTATION if on_the_path else _NOOP_INPUT["PreToolUse"]
+        refused = _run_payload(root, "write_guard.py", payload, audit)
         reason = json.loads(refused.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
-        assert "cannot start" in reason and edited in reason, reason
+        assert ("internal error" if on_the_path else "cannot start") in reason and edited in reason, reason
+        if on_the_path:
+            read = _run_payload(root, "write_guard.py", _NOOP_INPUT["PreToolUse"], audit)
+            assert read.returncode == 0 and not read.stdout.strip(), (read.stdout, read.stderr[-300:])
         command = f"git restore --source=HEAD -- {edited}"
         assert "`git restore --source=HEAD -- " in reason, reason
         passed = _run_payload(root, "write_guard.py", _bash(command), audit)
@@ -1119,7 +1139,7 @@ class TestTheNamedRestoreRepairsTheGuard:
         assert "permissionDecision" not in out and "was let through" in out["additionalContext"], out
         ran = _git(root, *command.split()[1:])
         assert ran.returncode == 0, ran.stderr
-        judged = _run_payload(root, "write_guard.py", _NOOP_INPUT["PreToolUse"], audit)
+        judged = _run_payload(root, "write_guard.py", payload, audit)
         assert judged.returncode == 0 and "deny" not in judged.stdout, (judged.stdout, judged.stderr[-300:])
 
     def test_the_last_resorts_command_repairs_it_from_any_directory(self, tmp_path):
