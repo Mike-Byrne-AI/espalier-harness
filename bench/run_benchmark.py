@@ -613,12 +613,52 @@ def _budget_refusal(hooks_dir: str) -> re.Pattern[str] | None:
     return None
 
 
+#: The write_guard function whose handler words the parent's own refusal at
+#: its deadline when ``_denial_reasons`` cannot be imported.
+_BUDGET_FALLBACK_OWNER = "_answer_from_a_judging_child"
+
+
+@functools.lru_cache(maxsize=None)
+def _budget_fallback(hooks_dir: str) -> re.Pattern[str] | None:
+    """The parent's plain-words refusal at its deadline, as the hook tree at
+    ``hooks_dir`` words it: the ``reason`` an exception handler of
+    ``write_guard.py::_answer_from_a_judging_child`` binds when the import of
+    ``_denial_reasons`` fails, read out of the source like the template, each
+    literal piece as written and each field any text. It never holds the
+    template's words, so a reader of the template alone scores it as a judged
+    deny (DEF-2058). None for a tree with no such function or binding: one
+    older than the fallback, or a stand-in hook."""
+    source = Path(hooks_dir) / "write_guard.py"
+    try:
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, SyntaxError, ValueError) as exc:
+        raise BudgetMiss(f"cannot read write_guard's fallback refusal in {source}: {exc}") from exc
+    owner = next((n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == _BUDGET_FALLBACK_OWNER), None)
+    if owner is None:
+        return None
+    for handler in (h for t in ast.walk(owner) if isinstance(t, ast.Try) for h in t.handlers):
+        for node in (n for s in handler.body for n in ast.walk(s) if isinstance(n, ast.Assign)):
+            if not any(isinstance(t, ast.Name) and t.id == "reason" for t in node.targets):
+                continue
+            value = node.value
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                return re.compile(re.escape(value.value), re.DOTALL)
+            if isinstance(value, ast.JoinedStr):
+                return re.compile("".join(
+                    re.escape(part.value) if isinstance(part, ast.Constant) else ".*?"
+                    for part in value.values), re.DOTALL)
+    return None
+
+
 def budget_refused(stdout: str, hooks_dir: Path) -> bool:
     """True when ``stdout`` is write_guard's time-budget refusal: stdout
-    JSON whose ``permissionDecisionReason`` is the hook tree's template in
-    full, from a judgment that never finished. Never for a judged deny."""
-    pattern = _budget_refusal(str(hooks_dir))
-    if pattern is None:
+    JSON whose ``permissionDecisionReason`` is, in full, the hook tree's
+    template or the parent's plain-words fallback at its deadline, from a
+    judgment that never finished. Never for a judged deny."""
+    patterns = [p for p in (_budget_refusal(str(hooks_dir)), _budget_fallback(str(hooks_dir))) if p is not None]
+    if not patterns:
         return False
     try:
         data = json.loads(stdout or "")
@@ -626,7 +666,7 @@ def budget_refused(stdout: str, hooks_dir: Path) -> bool:
         return False
     hso = data.get("hookSpecificOutput") if isinstance(data, dict) else None
     reason = hso.get("permissionDecisionReason") if isinstance(hso, dict) else None
-    return isinstance(reason, str) and pattern.fullmatch(reason) is not None
+    return isinstance(reason, str) and any(p.fullmatch(reason) is not None for p in patterns)
 
 
 def _espalier_state(project: Path) -> list[tuple[str, int, int]]:

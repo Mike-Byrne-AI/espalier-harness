@@ -1,0 +1,14 @@
+{
+ "id": "DEF-2058",
+ "subject": "bench/run_benchmark.py",
+ "cmd": "python3 -c \"import json,pathlib,subprocess,sys;sys.path[:0]=['.','tools/cc/hooks','tools/cc'];import pytest,bench.run_benchmark as rb,tests.test_write_guard as tw;R=[];pytest.fail=lambda *a,**k:R.append('failed');r='Command blocked: write_guard ran out of its 4.0 s time budget before it had judged this command, so the call is refused rather than let through unjudged.';o=json.dumps({'hookSpecificOutput':{'hookEventName':'PreToolUse','permissionDecision':'deny','permissionDecisionReason':r}});v=tw._delete_verdict(subprocess.CompletedProcess(['x'],0,stdout=o,stderr=''));print(R[0] if R else v,rb.budget_refused(o,pathlib.Path('tools/cc/hooks')))\"",
+ "open_value": "wall False",
+ "why_not": null,
+ "inputs": [
+  "tests/test_write_guard.py",
+  "tools/cc/hooks/_denial_reasons.py"
+ ],
+ "row_sha": "25d01403ce8d",
+ "text_sha": "b51e9204ae33",
+ "verified_2026_11_08": "OPEN (filed 2026-11-08; probe driven at filing here and in the export of HEAD 6ca282e5fb72)"
+}

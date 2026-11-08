@@ -291,6 +291,46 @@ class TestTheBudgetsRefusalIsNoVerdict:
         # stand-in hook) has no refusal to read.
         assert rb.budget_refused(refusal, tmp_path) is False
 
+    def test_the_reader_knows_the_parents_fallback_refusal(self, monkeypatch, tmp_path):
+        """DEF-2058: where the parent cannot import ``_denial_reasons`` at its
+        deadline it refuses in plain words that never hold the template's, so
+        a reader of the template alone scored that refusal as a block. The
+        reason is rendered from the live hook's own fallback binding at the
+        live deadline, and tied to the phrase the test-side readers know it
+        by (``tests/_hook_spawn.py::BUDGET_FALLBACK``)."""
+        import ast
+        import json
+
+        import bench.run_benchmark as rb
+        from tests import _hook_spawn as hs
+
+        monkeypatch.syspath_prepend(str(HOOKS))
+        import write_guard
+
+        owner = next(n for n in ast.parse((HOOKS / "write_guard.py").read_text(encoding="utf-8")).body
+                     if isinstance(n, ast.FunctionDef) and n.name == "_answer_from_a_judging_child")
+        bound = [n.value for t in ast.walk(owner) if isinstance(t, ast.Try) for h in t.handlers
+                 for s in h.body for n in ast.walk(s) if isinstance(n, ast.Assign)
+                 and any(isinstance(x, ast.Name) and x.id == "reason" for x in n.targets)]
+        assert len(bound) == 1, bound
+        reason = eval(compile(ast.Expression(bound[0]), "write_guard.py", "eval"),
+                      {"HARD_DEADLINE_S": write_guard.HARD_DEADLINE_S})
+        assert hs.BUDGET_FALLBACK in reason and hs.BUDGET_REFUSAL not in reason, reason
+
+        def decision(text: str) -> str:
+            return json.dumps({"hookSpecificOutput": {
+                "hookEventName": "PreToolUse", "permissionDecision": "deny",
+                "permissionDecisionReason": text}}) + "\n"
+
+        assert rb.budget_refused(decision(reason), HOOKS) is True
+        # The fallback in full, never a judged deny that only quotes its phrase.
+        assert rb.budget_refused(decision(f"Command blocked: a judged deny ({hs.BUDGET_FALLBACK})."), HOOKS) is False
+        assert rb.budget_refused(decision(f"Dangerous command blocked, quoting: {reason}"), HOOKS) is False
+        # A tree whose write_guard holds no fallback (one older than it, or a
+        # stand-in hook) has none to read.
+        (tmp_path / "write_guard.py").write_text("def deny(reason):\n    pass\n", encoding="utf-8")
+        assert rb.budget_refused(decision(reason), tmp_path) is False
+
     def test_a_refusal_that_left_no_state_is_retried_once(self, monkeypatch, tmp_path, capsys):
         import bench.run_benchmark as rb
 
