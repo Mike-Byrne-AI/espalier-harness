@@ -1633,7 +1633,14 @@ out = {}
 for script in scripts:
     stem = script[:-3] if script.endswith(".py") else script
     try:
-        importlib.import_module(stem)
+        module = importlib.import_module(stem)
+        # A hook that loads part of its graph on first use defines the loader
+        # (write_guard's pattern path): run it, so a sibling that cannot import
+        # there is named here too. Read from the module's own namespace, never
+        # through a module __getattr__.
+        load = vars(module).get("_load_the_pattern_path")
+        if callable(load):
+            load()
         out[script] = {"ok": True, "error": ""}
     except SystemExit as exc:
         ok = exc.code in (0, None)

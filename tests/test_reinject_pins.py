@@ -182,6 +182,57 @@ class TestGuardPatternClassify:
                               "content": 'import re\n_X: "re.Pattern[str]" = re.compile("x")\n'}, root)
         assert "_UNANCHORED_BY_DESIGN" in out
 
+    def test_a_step_bound_compile_under_a_global_fires_too(self, tmp_path):
+        # write_guard binds the patterns it builds from `_bash_patterns` inside
+        # the steps its loader runs once: a module-level name written one level
+        # in, under a `global` (a function's own local, beside it, stays silent).
+        root = self._root(tmp_path, "write_guard.py")
+        step = ("@_on_the_pattern_path\ndef _build_the_x() -> None:\n"
+                '    global _X_RE\n    _X_RE = re.compile(_bash_patterns._QUOTED_SPAN)\n')
+        out = _fire("Edit", {"file_path": "tools/cc/hooks/write_guard.py", "new_string": step}, root)
+        assert "`_X_RE`" in out and "_UNANCHORED_BY_DESIGN" in out, out
+
+    def test_an_edit_of_one_step_line_reads_the_global_from_the_file(self, tmp_path):
+        # An Edit of the binding line alone carries no `global`: the file on
+        # disk, read after the write, declares it.
+        root = self._root(tmp_path)
+        (root / "tools" / "cc" / "hooks" / "write_guard.py").write_text(
+            "@_on_the_pattern_path\ndef _build_the_x() -> None:\n    global _X_RE\n"
+            '    _X_RE = re.compile(r"b")\n', encoding="utf-8")
+        out = _fire("Edit", {"file_path": "tools/cc/hooks/write_guard.py",
+                             "old_string": '    _X_RE = re.compile(r"a")\n',
+                             "new_string": '    _X_RE = re.compile(r"b")\n'}, root)
+        assert "`_X_RE`" in out, out
+
+    @pytest.mark.parametrize("order", ["anchored first", "anchored second"])
+    def test_each_binding_in_a_step_is_read_on_its_own(self, tmp_path, order):
+        # A step's statement ends at its next statement, not at the step's end,
+        # so an anchored binding beside it neither hides nor stands for it.
+        root = self._root(tmp_path, "write_guard.py")
+        anchored = "    _A_RE = re.compile(_bash_patterns._CMD_POS + r\"x\")\n"
+        plain = "    _B_RE = re.compile(r\"y\")\n"
+        body = anchored + plain if order == "anchored first" else plain + anchored
+        step = "@_on_the_pattern_path\ndef _build_the_two() -> None:\n    global _A_RE, _B_RE\n" + body
+        out = _fire("Edit", {"file_path": "tools/cc/hooks/write_guard.py", "new_string": step}, root)
+        assert "`_B_RE`" in out and "`_A_RE`" not in out, out
+
+    def test_a_binding_in_a_block_inside_a_step_fires(self, tmp_path):
+        root = self._root(tmp_path, "write_guard.py")
+        step = ("@_on_the_pattern_path\ndef _build_the_x() -> None:\n    global _X_RE\n"
+                '    if True:\n        _X_RE = re.compile(r"x")\n')
+        out = _fire("Edit", {"file_path": "tools/cc/hooks/write_guard.py", "new_string": step}, root)
+        assert "`_X_RE`" in out, out
+
+    def test_write_guard_alone_is_told_where_a_built_pattern_goes(self, tmp_path):
+        root = self._root(tmp_path, "write_guard.py", "_speedbump.py")
+        guard = _fire("Edit", {"file_path": "tools/cc/hooks/write_guard.py",
+                               "new_string": '_NEW_RE = re.compile(r"x")\n'}, root)
+        assert "@_on_the_pattern_path" in guard and "NameError" in guard, guard
+        (root / STATE_DIR / "reinject_once_REINJECT-GUARD-PATTERN-CLASSIFY").unlink()
+        other = _fire("Edit", {"file_path": "tools/cc/hooks/_speedbump.py",
+                               "new_string": '_NEW_RE = re.compile(r"x")\n'}, root)
+        assert "_UNANCHORED_BY_DESIGN" in other and "@_on_the_pattern_path" not in other, other
+
     def test_silent_on_an_indented_compile_and_off_the_walked_modules(self, tmp_path):
         root = self._root(tmp_path, "write_guard.py", "_reinject.py")
         assert "_UNANCHORED_BY_DESIGN" not in _fire(
@@ -228,7 +279,7 @@ class TestGuardPatternClassify:
         found = TestCommandPositionClassClose._all_module_patterns()
         assert len(found) >= 55, "the contract's population collapsed; this pin would pass vacuously"
         seen = {
-            mod: {m.group("name") for m in _reinject._MODULE_LEVEL_COMPILE_RE.finditer(
+            mod: {m.group("name") for m in _reinject._module_level_compile_matches(
                 (HOOKS_DIR / f"{mod}.py").read_text(encoding="utf-8"))}
             for mod in _reinject._GUARD_PATTERN_MODULES
         }

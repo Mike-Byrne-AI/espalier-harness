@@ -994,14 +994,51 @@ _PIPE_SPLIT_RE = re.compile(r"""split\(\s*['"]\|['"]""")
 #: pattern it can reconstruct statically).
 _GUARD_PATTERN_MODULES: tuple[str, ...] = ("_bash_patterns", "_speedbump", "write_guard")
 _GUARD_PATTERN_MODULE_RE = re.compile(r"(^|/)tools/cc/hooks/(?:_bash_patterns|_speedbump|write_guard)\.py$")
-#: A name bound at column 0 to `re.compile(`, annotated or not. Every span is
-#: bounded and each pair of neighbours is disjoint (ReDoS class 5).
+#: A name bound to `re.compile(`, annotated or not, at column 0 or up to three
+#: levels in. Every span is bounded and each pair of neighbours is disjoint
+#: (ReDoS class 5). An indented binding is a module-level name only where a
+#: `global` declares it (`_STEP_GLOBAL_RE`): write_guard binds the patterns it
+#: builds from `_bash_patterns` inside steps its loader runs once, each under a
+#: `global` (a nested block in a step puts the binding deeper); any other is a
+#: function's local, which no census walks.
 _MODULE_LEVEL_COMPILE_RE = re.compile(
-    r"(?m)^(?P<name>[A-Za-z_]\w{0,80})[ \t]*(?::[^=\n]{0,120})?=[ \t]*re\.compile\("
+    r"(?m)^(?P<indent>(?:[ ]{4}){0,3})(?P<name>[A-Za-z_]\w{0,80})[ \t]*(?::[^=\n]{0,120})?=[ \t]*re\.compile\("
 )
-#: Where a top-level statement ends: a newline before a column-0 character that
-#: cannot continue a bracketed expression (a column-0 comment ends it too).
-_NEXT_TOP_LEVEL_RE = re.compile(r"\n(?=[^\s)\]}])")
+#: A `global` statement inside a function, and the names it declares.
+_STEP_GLOBAL_RE = re.compile(r"(?m)^[ ]{4,12}global[ \t]+(?P<names>[A-Za-z_][\w, \t]{0,400})$")
+
+
+def _step_globals(text: str) -> "set[str]":
+    """The names the `global` statements in ``text`` declare."""
+    return {n.strip() for g in _STEP_GLOBAL_RE.finditer(text) for n in g.group("names").split(",")}
+
+
+def _module_level_compile_matches(text: str, declared: "frozenset[str]" = frozenset()) -> "list[re.Match[str]]":
+    """The bindings ``text`` makes at module level to `re.compile(`: at column
+    0, or indented under a `global` that declares the name, in ``text`` or in
+    ``declared`` (the file's own, read from disk: an Edit of one line of a step
+    carries no `global` line)."""
+    names = _step_globals(text) | declared
+    return [m for m in _MODULE_LEVEL_COMPILE_RE.finditer(text)
+            if not m.group("indent") or m.group("name") in names]
+
+
+def _binding_statement(text: str, m: "re.Match[str]") -> str:
+    """The statement a binding opens: up to the next line, at its indent or
+    less, that opens another (a line starting with a closing bracket continues
+    it; a blank line never ends it). An indented binding ends at its step's next
+    statement, never at the step's end, so a second binding in the same step is
+    read on its own."""
+    width = len(m.group("indent"))
+    pos = text.find("\n", m.end())
+    while pos != -1:
+        nxt = text.find("\n", pos + 1)
+        line = text[pos + 1:nxt if nxt != -1 else len(text)]
+        stripped = line.lstrip(" ")
+        if stripped and stripped[0] not in ")]}" and len(line) - len(stripped) <= width:
+            return text[m.start():pos]
+        pos = nxt
+    return text[m.start():]
 
 
 def _once_flag(root: Path, rid: str) -> Path:
@@ -1170,18 +1207,18 @@ def _render_ledger_parser(tool_name: str, tool_input: dict, root: Path) -> "str 
     )
 
 
-def _unanchored_new_bindings(new: str, old: str) -> list[str]:
-    """Names bound at column 0 to `re.compile(` in ``new`` that this call
+def _unanchored_new_bindings(new: str, old: str, declared: "frozenset[str]" = frozenset()) -> list[str]:
+    """Names bound at module level to `re.compile(` in ``new`` that this call
     actually introduces or changes, and that compose no command-position
     anchor. A statement carried unchanged from ``old`` (an Edit's context) is
     not this edit's, and one that composes `_CMD_POS` / `_PS_CMD_POS` already
     satisfies the contract: neither may spend the row's once-per-session flag,
     or a genuinely new pattern later in the session draws nothing (driven by
-    the failure-mode review, 2026-10-03)."""
+    the failure-mode review, 2026-10-03). ``declared``: the `global` names the
+    file on disk declares."""
     names: list[str] = []
-    for m in _MODULE_LEVEL_COMPILE_RE.finditer(new):
-        end = _NEXT_TOP_LEVEL_RE.search(new, m.end())
-        statement = new[m.start():end.start() if end else len(new)]
+    for m in _module_level_compile_matches(new, declared):
+        statement = _binding_statement(new, m)
         if "_CMD_POS" in statement or (old and statement.strip() in old):
             continue
         names.append(m.group("name"))
@@ -1196,11 +1233,18 @@ def _render_guard_pattern_classify(tool_name: str, tool_input: dict, root: Path)
     hit = _pointer_target(tool_input, root, _GUARD_PATTERN_MODULE_RE)
     if hit is None or _once_flag(root, "REINJECT-GUARD-PATTERN-CLASSIFY").exists():
         return None
-    names = _unanchored_new_bindings(_new_content(tool_input), tool_input.get("old_string", "") or "")
+    base, rel = hit
+    # The file's own `global` declarations, read after the write: an Edit of
+    # one binding inside a step carries no `global` line of its own.
+    try:
+        on_disk = frozenset(_step_globals((base / rel).read_text(encoding="utf-8", errors="replace")))
+    except (OSError, ValueError):  # fail-open: ok telemetry -- an advisory classify; an unreadable file reads the call's own text alone
+        on_disk = frozenset()
+    names = _unanchored_new_bindings(_new_content(tool_input), tool_input.get("old_string", "") or "", on_disk)
     if not names:
         return None
-    _, rel = hit
     shown = ", ".join(f"`{n}`" for n in names[:3]) + (" ..." if len(names) > 3 else "")
+    in_write_guard = rel.endswith("write_guard.py")
     return (
         f"`{rel}` binds {shown} to a compiled pattern that composes no command-position "
         "anchor. tests/test_speedbump_irreversible.py::TestCommandPositionClassClose::"
@@ -1216,6 +1260,12 @@ def _render_guard_pattern_classify(tool_name: str, tool_input: dict, root: Path)
         "`_UNANCHORED_BY_DESIGN` with its category and reason. That file runs only in the "
         "full tier's serial leg, so a step's targeted proof misses it unless it names it: "
         "`pytest tests/test_speedbump_irreversible.py -k TestCommandPositionClassClose -q`."
+        + (" In write_guard.py, a pattern built from `_bash_patterns` (or from a name a step "
+           "binds) goes in an `@_on_the_pattern_path` step under a `global`, never at module "
+           "level: the pattern modules load on first use, so a module-level read of one is a "
+           "NameError when the judging child imports the file, which wedges the guard: every "
+           "call refused until the file is restored (tests/test_write_guard.py::TestThePatternPath)."
+           if in_write_guard else "")
     )
 
 
