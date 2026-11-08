@@ -198,8 +198,9 @@ _CMD_POS_SUBST = r"(?:\$\([^(){}`;|&\n]*\)|`[^(){}`;|&\n]*`)"
 #: end again (`"env -i $(a)env " * n`: 113 -> 402 ms at 4 -> 8 KB).
 _CMD_POS_SUBST_GLUED = _CMD_POS_SUBST + r"(?=[^\s\w!<>(){}`;|&])"
 _CMD_POS_REDIRECT = (
-    r"(?:[0-9]?[<>]{1,2}[&|]?[ \t]*(?:\"[^\"\n]*\"|'[^'\n]*'|" + _CMD_POS_SUBST_GLUED + r"|[^\s;|&\"'(){}`])"
-    r"(?:\"[^\"\n]*\"|'[^'\n]*'|" + _CMD_POS_SUBST_GLUED + r"|[^\s;|&\"'()`])*[ \t]+)"
+    r"(?:[0-9]?[<>]{1,3}[&|]?(?:[ \t]+(?:\"[^\"\n]*\"|'[^'\n]*'|" + _CMD_POS_SUBST_GLUED + r"|\$(?!\{[ \t\n|])|[^\s;|&\"'(){}`$<>0-9-])"
+    r"|\"[^\"\n]*\"|'[^'\n]*'|" + _CMD_POS_SUBST_GLUED + r"|\$(?!\{[ \t\n|])|[^\s;|&\"'()`$<>])"
+    r"(?:\"[^\"\n]*\"|'[^'\n]*'|" + _CMD_POS_SUBST_GLUED + r"|\$(?!\{[ \t\n|])|[^\s;|&\"'()`$])*[ \t]+)"
 )
 # ⚠ Every token run below is `[^\s;|&]`, never `\S`. `\S` matches `;`, so a
 # greedy `\S*` run scans PAST the command separator to end-of-input and then
@@ -252,7 +253,7 @@ _CMD_POS_REDIRECT = (
 # (`$(pwd)/x`) or, as the whole argument, before a flag (`sudo -u $(id -un) -E
 # mv`). Anywhere else the separator after it opens the position itself
 # (`sudo -u $(id -un) mv`). What neither reads is a declared limit in
-# docs/HOOKS.md: a nested substitution, a separator inside one, a letter glued
+# docs/SHARP_EDGES.md: a nested substitution, a separator inside one, a letter glued
 # after one.
 #
 # This fragment fronts every command-position consumer, and a wedged regex is a
@@ -273,15 +274,15 @@ _WRAP_ARG_QUOTES = (
 #: Each piece opens on a character no other piece or the bare class opens on:
 #: a lone `$` never before a paren or a closable ANSI-C quote, an escape never
 #: of a paren or a backtick (the bare class takes neither `$` nor a backslash).
-_WRAP_ARG_PIECES = _WRAP_ARG_QUOTES + r"|\$(?!\()(?!'(?:[^'\\\n]|\\.)*')|\\[^\n()`]"
+_WRAP_ARG_PIECES = _WRAP_ARG_QUOTES + r"|\$(?!\()(?!\{[ \t\n|])(?!'(?:[^'\\\n]|\\.)*')|\\[^\n()`]"
 #: The argument word with a substitution only before a glued character...
 _CMD_POS_WRAP_ARG_WORD = (
-    r"(?:" + _WRAP_ARG_PIECES + r"|" + _CMD_POS_SUBST_GLUED + r"|[^-\s;|&(){}`\"'$\\])"
+    r"(?:" + _WRAP_ARG_PIECES + r"|" + _CMD_POS_SUBST_GLUED + r"|\{[^\s{}()`;|&\"'$\\]*\}|[^-\s;|&(){}`\"'$\\])"
     r"(?:" + _WRAP_ARG_PIECES + r"|" + _CMD_POS_SUBST_GLUED + r"|[^\s;|&()`\"'$\\])*"
 )
 #: ...and with one at the word's end too, read only where a flag follows.
 _CMD_POS_WRAP_ARG_WORD_ANY = (
-    r"(?:" + _WRAP_ARG_PIECES + r"|" + _CMD_POS_SUBST + r"(?=[^\w!<>(){}`;|&])|[^-\s;|&(){}`\"'$\\])"
+    r"(?:" + _WRAP_ARG_PIECES + r"|" + _CMD_POS_SUBST + r"(?=[^\w!<>(){}`;|&])|\{[^\s{}()`;|&\"'$\\]*\}|[^-\s;|&(){}`\"'$\\])"
     r"(?:" + _WRAP_ARG_PIECES + r"|" + _CMD_POS_SUBST + r"(?=[^\w!<>(){}`;|&])|[^\s;|&()`\"'$\\])*"
 )
 #: Words whose own arm goes on past a flag: never an argument. Every
@@ -293,18 +294,31 @@ _CMD_POS_WRAP_ARG_OWNED = r"(?:" + _CMD_POS_WRAPPER_SPELLED + r"[ \t]|\d|(?:ba|z
 #: keyword roster is `_CMD_POS_KEYWORD`'s, defined below; pinned equal in
 #: tests/test_write_guard.py::TestTheWrapperRunReadsEachTokenOnce.
 _CMD_POS_WRAP_ARG_BEFORE_FLAG = (
-    r"(?:[A-Za-z_]\w*=|[<>]|(?:then|do|else|elif|if|while|until)[ \t]|![ \t]|eval[ \t])"
+    r"(?:[A-Za-z_]\w*=|[<>]|(?:then|do|else|elif|if|while|until)[ \t]|![ \t]|eval(?![\w=!<>]))"
 )
 _CMD_POS_WRAP_NEXT = r"[ \t]+(?:-[^\s;|&()`]|(?!\d[<>])\d)"
 _CMD_POS_WRAP_ARG = (
     r"(?!" + _CMD_POS_WRAP_ARG_OWNED + r")(?:" + _CMD_POS_WRAP_ARG_WORD_ANY + r"(?=" + _CMD_POS_WRAP_NEXT + r")"
     + r"|(?!" + _CMD_POS_WRAP_ARG_BEFORE_FLAG + r")" + _CMD_POS_WRAP_ARG_WORD + r"(?!" + _CMD_POS_WRAP_NEXT + r")"
-    + r"|\{\}(?=" + _CMD_POS_WRAP_NEXT + r"))"
+    + r")"
 )
 _CMD_POS_WRAP_RUN = (
     "(?:" + _CMD_POS_WRAPPER_SPELLED
     + r"(?:[ \t]+(?:-[^\s;|&()`]+(?:[ \t]+" + _CMD_POS_WRAP_ARG
     + r")?|(?!\d[<>])\d[^\s;|&()`]*|(?=\d[<>])\d[^\s;|&()`]*(?=" + _CMD_POS_WRAP_NEXT + r")))*[ \t]+)"
+)
+#: One wrapper with base's argument rule -- only a wrapper word and a digit
+#: declined, a digit-led redirect read by the numeric arm -- and the
+#: separator-free word: for a composition with no assignment or redirect arm
+#: after the run (the PowerShell carriers' `{0,3}`, the speed bump's fetch
+#: positions), where declining such a word would leave it unread (`sudo
+#: 2>$null rm -rf cc` on the PowerShell tool, `bash <(sudo 2>/dev/null curl
+#: ...)`; the failure-mode review). Bounded by its consumers, so the in-run
+#: reading has no outer arm to share a token with.
+_CMD_POS_WRAP_ONE_LOOSE = (
+    "(?:" + _CMD_POS_WRAPPER_SPELLED
+    + r"(?:[ \t]+(?:-[^\s;|&()`]+(?:[ \t]+(?!" + _CMD_POS_WRAPPER_SPELLED + r"[ \t])(?!\d)" + _CMD_POS_WRAP_ARG_WORD
+    + r")?|\d[^\s;|&()`]*))*[ \t]+)"
 )
 #: The argument of a run whose star holds an assignment run and nothing else
 #: (the slashed arm): only a wrapper word, a digit and an assignment compete.
@@ -312,7 +326,7 @@ _WRAP_STEP_NEXT = r"[ \t]+[-\d]"
 _WRAP_STEP_ARG = (
     r"(?!" + _CMD_POS_WRAPPER_SPELLED + r"[ \t])(?!\d)(?:" + _CMD_POS_WRAP_ARG_WORD_ANY + r"(?=" + _WRAP_STEP_NEXT + r")"
     + r"|(?![A-Za-z_]\w*=)" + _CMD_POS_WRAP_ARG_WORD + r"(?!" + _WRAP_STEP_NEXT + r")"
-    + r"|\{\}(?=" + _WRAP_STEP_NEXT + r"))"
+    + r")"
 )
 #: A carrier step's argument: base's classes (a step is bounded and opens on
 #: no separator, so neither rule above is needed there) with the quoted pieces.
@@ -428,7 +442,11 @@ _CMD_POS_NEGATE = r"(?:![ \t]+)"
 # which drives every prefix token this fragment admits against a FAILING tail
 # (a matching tail short-circuits and hides the blowup, which is why the older
 # quoted-body population never caught it).
-_CMD_POS_EXEC_QUOTE = r"(?:\b(?:eval|(?:ba|z|k|da)?sh[ \t]+-c)[ \t]*(?:[\"'][ \t]*)?)"
+# `eval` stops before a word character, `=`, `!`, `<` or `>`: `evalenv` and
+# `evalA=1` are no eval, and reading them as one gave a glued word two
+# parses (`"env -i evalenv " * 18`: 1.34 s at 270 bytes, the failure-mode
+# review of DEF-3043's lane; `"evalA=1 " * n` exponential on base too).
+_CMD_POS_EXEC_QUOTE = r"(?:\b(?:eval(?![\w=!<>])|(?:ba|z|k|da)?sh[ \t]+-c)[ \t]*(?:[\"'][ \t]*)?)"
 # Assembled with ``+`` concatenation of module-level names, NOT f-strings.
 # That is a hard requirement, not a style choice: the ReDoS dot-star gate
 # (tests/test_redos.py::test_no_unreviewed_dotstar_in_hook_regexes) statically
@@ -461,7 +479,12 @@ _CMD_POS_EXEC_QUOTE = r"(?:\b(?:eval|(?:ba|z|k|da)?sh[ \t]+-c)[ \t]*(?:[\"'][ \t
 # only there, and inside a word they are text (`${HOME}/w`, `a{1,2}`). Read
 # anywhere, a word's brace was a start the token runs had to stop at, and
 # `env -C ${HOME}/w mv` lost its verb with the separator-free runs.
-_CMD_POS_SEP = r"(?:[;&|\n\r()`]|(?<![^\s;&|(){}`])[{}])"
+# A brace after a brace is no word start either (`a{}`, `x{{`: the
+# failure-mode review read "env -x a{}" at 2.9 s for 16 KB when it was), and
+# `${` before a blank or a bar is bash 5.3's `${ cmd; }` / `${| cmd; }`, a
+# command run in the current shell (from its release notes; this host's 5.2
+# rejects it).
+_CMD_POS_SEP = r"(?:[;&|\n\r()`]|(?<![^\s;&|()`])[{}]|\$\{(?=[ \t\n|]))"
 _CMD_POS_WS = r"[ \t\r\v\f]*"
 #: The quoted-directory arm, named so the native remove verb behind a
 #: carrier reads it from here (`_NATIVE_VERB_PATH`, DEF-3028's sibling);
@@ -7636,7 +7659,8 @@ def _nested_shell_programs(command: str, _depth: int) -> list[str]:
 #: measured on bash 3.2 by the dispatcher, ruling 6344f9: after `env -u X --
 #: cd /tmp` the `&&` side's `$PWD` was the start directory, after `command --
 #: cd /tmp`, `builtin cd /tmp` and `time cd /tmp` it was /tmp).
-_CMD_POS_SHELL_WORDS = r"(?:(?:command|time)(?:[ \t]+-[^\s;|&()`]+)*[ \t]+)"
+#: `command -v`/`-V` print and run nothing, so only `-p` and `--` keep the cd.
+_CMD_POS_SHELL_WORDS = r"(?:(?:command(?:[ \t]+(?:-p|--))*|time(?:[ \t]+(?:-p|--))*)[ \t]+)"
 _CMD_POS_IN_SHELL = (
     r"(?:(?:^|" + _CMD_POS_SEP + ")" + _CMD_POS_WS + "(?:"
     + _CMD_POS_SHELL_WORDS + "|" + _CMD_POS_ENV_ASSIGN
@@ -7645,7 +7669,9 @@ _CMD_POS_IN_SHELL = (
     + "|" + _CMD_POS_REDIRECT
     + "|" + _CMD_POS_EXEC_QUOTE + ")*"
     + "|" + _CMD_POS_EXEC_QUOTE + ")"
-    + _CMD_POS_VERB_PREFIX
+    # an escape, an ANSI-C or a plain quote, never a directory: a
+    # path-qualified `cd` is the external binary, run in a child
+    + r"\\?\$?[\"']?"
 )
 _DIR_VERB_RE = re.compile(
     _CMD_POS_IN_SHELL + r"(?:builtin[ \t]+)?\b(cd|pushd|popd)" + _QUOTED_VERB_TAIL
@@ -9859,7 +9885,7 @@ _PS_REMOVE_VERB = (
 #: (`sudo find . -delete` runs find as `sudo rm` runs rm): the Bash run
 #: whole, bounded -- a roster spelled for the other shell UNIONs, it never
 #: replaces (memory/hook-authoring.md).
-_PS_NATIVE_WRAP_RUN = r"(?:" + _CMD_POS_WRAP_RUN + r"){0,3}"
+_PS_NATIVE_WRAP_RUN = r"(?:" + _CMD_POS_WRAP_ONE_LOOSE + r"){0,3}"
 #: The same run before the REMOVE verb, all but `xargs`, this tool's pipe
 #: carrier there (DEF-826, `_PS_PIPE_CARRIER`): the operands it hands the
 #: remove verb come down the pipe, which the enumerator reader reads and
@@ -9871,7 +9897,7 @@ _PS_NATIVE_WRAP_RUN = r"(?:" + _CMD_POS_WRAP_RUN + r"){0,3}"
 #: declared. Its own constant: the find, destroy and truncate readers keep
 #: the whole run, whose `xargs shred` and `xargs find -delete` they read (a
 #: first draft narrowed the shared run and dropped all four, the code review).
-_PS_REMOVE_WRAP_RUN = r"(?:(?!(?i:xargs)\b)" + _CMD_POS_WRAP_RUN + r"){0,3}"
+_PS_REMOVE_WRAP_RUN = r"(?:(?!(?i:xargs)\b)" + _CMD_POS_WRAP_ONE_LOOSE + r"){0,3}"
 #: A remove verb at a PowerShell command position, behind the wrapper run
 #: (DEF-1162): on macOS and Linux pwsh resolves the bare remove word to the
 #: native binary and the wrapper words are native programs that run what they

@@ -159,7 +159,8 @@ _GIT_PREOPT = _bash_patterns._GIT_PREOPT
 # -- same class, same fix, sibling module (STANDING_PRINCIPLES §8). Composed
 # VERBATIM: operator decision D-3 asked whether to widen the separator class to
 # recover `$(...)`/backtick substitution, and that fork is MOOT -- the landed
-# _CMD_POS_SEP already contains `(`, `)`, `{`, `}` and a backtick, so all three
+# _CMD_POS_SEP already contains `(`, `)` and a backtick, and a brace at a word's
+# start (DEF-3044; `${ ` too, bash 5.3's form), so all three
 # substitution shapes still fire under the plain fragment. A divergent copy of a
 # security-adjacent regex is worse than anything it would buy.
 _GIT_CMD = (
@@ -1506,7 +1507,7 @@ _FETCH_EXEC_PIPE_RE = re.compile(
     # the carriers' one home for it, which reads `~/bin/env` and a drive
     # letter, and the roster in every spelling (C76, the code review's N4).
     + _bash_patterns._CARRIER_WRAP_HEAD +
-    r"(?:" + _bash_patterns._CMD_POS_WRAP_RUN + r"){0,4}"
+    r"(?:" + _bash_patterns._CMD_POS_WRAP_ONE_LOOSE + r"){0,4}"
     + _bash_patterns._CMD_POS_VERB_PREFIX + _FETCH_PIPE_TARGET,
     re.IGNORECASE,
 )
@@ -1543,11 +1544,13 @@ _FETCH_EXEC_PIPE_RE = re.compile(
 #: `_CMD_POS_WRAP_RUN`, and `_FETCH_INNER_ASSIGN`'s value is the unquoted
 #: pieces of `_ASSIGN_VALUE` (a plain character, an escaped one, a lone `$`);
 #: both are pinned in tests/test_write_guard.py::TestQuotedVerbTailIsUniform.
-#: Since DEF-3043 and DEF-3044 the anchor's run itself stops at every opener,
-#: so the wrapper piece is that run; the position as a whole stays narrowed
-#: while `_bash_patterns._ASSIGN_VALUE` (the anchor's assignment) still
-#: carries a run across an opener.
-_FETCH_INNER_WRAP_ONE = _bash_patterns._CMD_POS_WRAP_RUN
+#: Since DEF-3043 and DEF-3044 the anchor's word stops at every opener, so
+#: the wrapper piece is the loose run over it (`_CMD_POS_WRAP_ONE_LOOSE`:
+#: base's argument rule, since this position has no redirect arm after the
+#: run to take a word the anchor's run declines); the position as a whole
+#: stays narrowed while `_bash_patterns._ASSIGN_VALUE` (the anchor's
+#: assignment) still carries a run across an opener.
+_FETCH_INNER_WRAP_ONE = _bash_patterns._CMD_POS_WRAP_ONE_LOOSE
 _FETCH_INNER_ASSIGN = r"""(?:[A-Za-z_]\w*=(?:[^\s;|&'"$\\(`]|\\.|\$(?![('`]))*[ \t]+)"""
 _FETCH_INNER_POS = (
     r"[(`]" + _bash_patterns._CMD_POS_WS + _bash_patterns._CARRIER_WRAP_HEAD

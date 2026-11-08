@@ -256,7 +256,11 @@ class TestTheSentenceSplitter:
 #: HOOKS 29 -> 31 on 2026-11-03: a temp root itself walls, and its two
 #: limits are declared, each with its row in `TestAScratchRootItselfIsTheWall`
 #: (a sweep's walk root, and a root spelled by its variable).
-_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 31, "docs/SHARP_EDGES.md": 4}
+#: SHARP_EDGES 4 -> 5 on 2026-11-08: the command-position anchor's one-level
+#: substitution piece, its limits (a separator inside, nesting, a letter
+#: glued after) declared and pinned in
+#: `TestTheWrapperRunReadsEachTokenOnce::test_the_declared_limit_of_the_substitution_piece_stays_a_limit`.
+_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 31, "docs/SHARP_EDGES.md": 5}
 
 
 def test_the_census_is_the_pinned_population():

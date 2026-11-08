@@ -4362,6 +4362,16 @@ def _prefix_run_tokens() -> list[str]:
     tokens += [f"env -i {p} " for p in ("'a b'", '"a b"', "$'a b'", "a\\ b", '"a;b"', "$(a)/x",
                                         "`a`.x", "${a}x", "x{a}y", "$(a b)/x")]
     tokens += ["env -i $(a) -x ", "env -i `a b` -x ", "env -i {} -x ", ">$(a)/x ", ">`a`.x "]
+    # a glued `eval`: the exec opener read `eval` before any character, so
+    # `evalenv` was the flag's argument OR `eval` then a wrapper (the
+    # failure-mode review: 1.34 s at 270 bytes); `evalA=1` the same with an
+    # assignment, exponential on base too
+    tokens += ["env -i evalenv ", "evalA=1 ", "env -i eval>a ", "env -i eval! ", "evalthen "]
+    # a spaced operator before a flag or a numeric (the redirect took the
+    # flag as its target: `"env 2> -C " * 20`, 2.5 s, the code review), and a
+    # doubled operator (`>>` then `x`, or `>` then `>x`: `">>a " * 22`, 3.4 s)
+    tokens += ["env 2> -C ", "env -i > -x ", "env 2>> -x ", "env 2> 5 ", "sudo -u a 2> -E ", "env -i > 5 "]
+    tokens += [">>a ", "2>>/dev/null ", "<<a ", "<<<a ", ">>|a "]
     return tokens
 
 
@@ -4423,7 +4433,15 @@ def _separator_flood_units() -> list[str]:
     # word's start only), so `"/env -x{" * n` is a glued flag holding a
     # slashed wrapper, read again from every `/`: DEF-3051's open flood, not
     # this row's, which a paren or a backtick here does reach.
-    return [u for u in units if not ("/env -x" in u and ("{" in u or "}" in u))]
+    units = [u for u in units if not ("/env -x" in u and ("{" in u or "}" in u))]
+    # a brace after a brace: the lookbehind once counted the first as a word
+    # start, so the second opened a position inside the word (the
+    # failure-mode review: "env -x a{}" read 2.9 s at 16 KB); and bash 5.3's
+    # `${ cmd; }`, a command position the brace rule opens itself
+    # and the operators a redirect swallows, `|` and `&`, both starts (`">|>a "`,
+    # 614 ms at 8 KB, the code review)
+    return units + ["env -x a{}", "a{}>b", "x{{>", "}}>a ", "${ ", "{{ ", "env -i ${ ", "env -x{}", "sudo -u{} ",
+                    ">a{}", ">|>a ", ">&>a ", "sudo -u {a,b} ", "{a} "]
 
 
 @pytest.mark.parametrize("unit", _separator_flood_units())
@@ -4707,7 +4725,7 @@ def test_the_nested_run_the_gate_once_carried_is_caught_by_these_rows():
     import _bash_patterns as bp
 
     nested = bp._CMD_POS_REDIRECT.replace(
-        r"[^\s;|&\"'()`])*[ \t]+", r"[^\s;|&\"'()`]+)*[ \t]+")
+        r"[^\s;|&\"'()`$])*[ \t]+", r"[^\s;|&\"'()`$]+)*[ \t]+")
     assert nested != bp._CMD_POS_REDIRECT, "the live fragment is not the single-character form"
     anchor = bp._CMD_POS.replace(bp._CMD_POS_REDIRECT, nested)
     rx = re.compile(anchor + r"zzz\b")
