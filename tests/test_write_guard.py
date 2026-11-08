@@ -1295,14 +1295,16 @@ class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
         # ReDoS gate). Since DEF-3043 the argument is `_WRAP_STEP_ARG` (this
         # arm's star holds an assignment run alone, so only an assignment
         # competes beside a wrapper word and a digit) and the numeric arm
-        # keeps a digit-led redirect, which no redirect arm here could own
+        # keeps a digit-led redirect, which no redirect arm here could own.
+        # A digit-led redirect's rest is `_CMD_POS_WRAP_DIGIT_RUN` in both
+        # runs, so a one-level substitution in its target reads as one piece
         bp = _bash_patterns_module()
         decline = "(?!" + bp._CMD_POS_SLASHED_WRAPPER_WORD + ")"
-        split_numeric = (r"(?!\d[<>])\d[^\s;|&()`]*|(?=\d[<>])\d[^\s;|&()`]*(?="
-                         + bp._CMD_POS_WRAP_NEXT + ")")
+        split_numeric = (r"(?!\d[<>])\d[^\s;|&()`]*|(?=\d[<>])\d" + bp._CMD_POS_WRAP_DIGIT_RUN
+                         + "(?=" + bp._CMD_POS_WRAP_NEXT + ")")
         assert split_numeric in bp._CMD_POS_WRAP_RUN
         derived = (bp._CMD_POS_WRAP_RUN.replace(bp._CMD_POS_WRAP_ARG, decline + bp._WRAP_STEP_ARG, 1)
-                   .replace(split_numeric, r"\d[^\s;|&()`]*", 1))
+                   .replace(split_numeric, r"\d" + bp._CMD_POS_WRAP_DIGIT_RUN, 1))
         assert derived.count(decline) == 1
         assert bp._CMD_POS_SLASHED_WRAP_RUN == derived
         assert "(?<=/)" + bp._CMD_POS_SLASHED_WRAP_RUN in bp._CMD_POS_NO_VERB
