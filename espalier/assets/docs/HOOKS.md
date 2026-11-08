@@ -1203,7 +1203,10 @@ first; the dangerous-command catch is a secondary slip-catcher):
    module that could, so `-Force $env:TEMP\x` steps off the wall as the
    literal path below the same root does, and draws the one nudge a
    variable draws (2026-11-07; until then it walled as unreadable); a
-   comma array of such paths stays the wall.
+   comma array of such paths stays the wall, and so does a path below a
+   name bound to one (`$d = $env:TEMP`, then `-Force $d\x`): this rung
+   reads the text as typed, never through a binding, so `$d` is a variable
+   (spell `$env:TEMP\x` in place).
    A forced remove of several targets is judged element by element, each
    by the rule it meets (on the roster, plainly relative, or a literal path
    below a scratch root), so a build directory and its own scratch in one
@@ -1254,7 +1257,11 @@ first; the dangerous-command catch is a secondary slip-catcher):
    value is not the inherited one. The sweeps do not take that last
    reading: a walk rooted at a temp variable the command sets walls as the
    inherited root (spell the path, or bind another name), a declared limit
-   (`tests/test_write_guard.py::TestAScratchRootItselfIsTheWall::test_a_sweep_reads_a_variable_the_command_sets_by_its_inherited_value`). A
+   (`tests/test_write_guard.py::TestAScratchRootItselfIsTheWall::test_a_sweep_reads_a_variable_the_command_sets_by_its_inherited_value`).
+   A name bound to that variable, or to the home, is the root too
+   (`D="$TMPDIR"; rm -rf "$D"`, `D=${HOME}`, `$d = $env:TEMP`): the walls
+   follow a binding whose value is wholly such a variable, and a value that
+   runs past it (`D=$TMPDIR/sub`) or is single-quoted is not followed. A
    sibling of the nested one there is scratch to the rule, a declared limit
    (`tests/test_speedbump_irreversible.py::TestCpRmrfTempRoots::test_a_temp_directory_nested_below_a_temp_root_is_never_scratch`).
    A checkout deeper inside the target is not looked for, a declared limit

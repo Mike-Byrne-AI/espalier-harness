@@ -1,0 +1,13 @@
+{
+ "id": "DEF-2054",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c 'import os, sys; from pathlib import Path; os.environ.update(TEMP=\"C:/tmp/job-1\", TMP=\"C:/tmp/job-1\", TMPDIR=\"/tmp/job-1\"); sys.path.insert(0, \"tools/cc/hooks\"); import write_guard as wg; repo = Path.home() / \"scratch-root-no-such-repo\"; rm, ri = \"rm \" + \"-r\" + \"f \", \"Remove-Item \" + \"-Rec\" + \"urse \"; q = chr(34); w = lambda t, c: (wg._bash_dangerous_reason if t == \"Bash\" else wg._ps_dangerous_reason)(c, repo, cwd=repo) is not None; ok = w(\"Bash\", rm + q + \"$TMPDIR\" + q) and w(\"Bash\", rm + q + \"$HOME\" + q) and w(\"PowerShell\", ri + \"$env:TEMP\"); n = sum(not w(t, c) for t, c in ((\"Bash\", \"D=\" + q + \"$TMPDIR\" + q + \"; \" + rm + q + \"$D\" + q), (\"Bash\", \"D=\" + q + \"$HOME\" + q + \"; \" + rm + q + \"$D\" + q), (\"PowerShell\", \"$d = $env:TEMP; \" + ri + \"$d\"))); print((\"open\" if n else \"fixed\") if ok else \"the in-place spelling does not wall\")'",
+ "open_value": "open",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/write_guard.py"
+ ],
+ "row_sha": "4ed6bb0c79b4",
+ "text_sha": "cd5854a3a601",
+ "verified_2026_11_07": "OPEN (filed 2026-11-07; probe driven at filing here and in the export of HEAD ef6cb0ad34cc)"
+}
