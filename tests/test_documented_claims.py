@@ -41,10 +41,12 @@ from _json_key_paths import key_paths
 
 from espalier._safe_walk import visible
 from espalier.changelog import category_label
+from espalier.claim_extractor import RECORD_SURFACES
 
 from tests._export_guard import pruned_from_this_tree
-from tests._git_oracle import owns_its_worktree, require_tracked_paths
+from tests._git_oracle import _git_env, owns_its_worktree, require_tracked_paths
 from tests._live_tree import checkout_glob, checkout_iterdir, checkout_rglob
+from tests._record_paths import is_dated_fragment
 from tests.test_doc_source_citations import _RECORD_SURFACE_DOCS
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -2706,9 +2708,28 @@ def _public_scan_files(roots: tuple[Path, ...], repo_root: Path) -> list[Path]:
         if not root.exists():
             continue
         files += [root] if root.is_file() else [
-            f for pattern in ("*.md", "*.py", "*.yaml", "*.yml")
+            f for pattern in ("*.md", "*.py", "*.yaml", "*.yml", "*.js")
             for f in checkout_rglob(root, pattern, root=repo_root)]
     return files
+
+
+def _is_stale_scan_record(rel_posix: str) -> bool:
+    """A record the stale-forms scan leaves alone (DEF-1040): the citation sweep's
+    record docs, the record axis (`espalier.claim_extractor.RECORD_SURFACES`, which
+    holds them), and the one-file-per-row fragments (a Session Log row). A record
+    keeps the words of its day; editing one to pass a new pattern falsifies it."""
+    return (rel_posix in _RECORD_SURFACE_DOCS or rel_posix in RECORD_SURFACES
+            or is_dated_fragment(rel_posix))
+
+
+def _stale_scan_text(rel_posix: str, raw: str) -> str:
+    """The text the stale-forms patterns read: a pin's blockquote lines dropped (in
+    `docs/external/` every `>` line is a verbatim upstream quote, which a refresh
+    copies as written), then wrapped lines joined with their quote or comment
+    prefixes, then whitespace collapsed."""
+    if rel_posix.startswith("docs/external/"):
+        raw = "\n".join(line for line in raw.splitlines() if not line.lstrip().startswith(">"))
+    return re.sub(r"\s+", " ", re.sub(r"\s*\n[\s>#]*", " ", raw))
 
 
 class TestHookProtocolStaleForms:
@@ -2729,6 +2750,7 @@ class TestHookProtocolStaleForms:
         # the refuted reading where no scan looked.
         REPO_ROOT / "memory",
         REPO_ROOT / "bench" / "end_to_end",
+        REPO_ROOT / "CLAUDE.md",
     )
 
     STALE_PATTERNS = (
@@ -2740,13 +2762,13 @@ class TestHookProtocolStaleForms:
          "exit 0 covers structured decisions; exit 2 covers simple stderr blocks"),
         # DEF-1040: the reading the 2026-09-28 pin refuted. Claude Code reads
         # stdout JSON on every exit code (docs/external/cc-hook-protocol.md).
-        (r"\bignores\s+the\s+JSON\b",
+        (r"\bignor\w*\s+(?:the\s+|any\s+|its\s+)?(?:stdout\s+)?JSON\b(?!\s+schema)",
          "Claude Code reads stdout JSON on every exit code"),
-        (r"\bJSON\s+is\s+ignored\b",
+        (r"\bJSON\s+(?:is|was|gets|are)\s+(?:silently\s+)?ignored\b",
          "Claude Code reads stdout JSON on every exit code"),
-        (r"\bexit\s+2\s+discards\b",
+        (r"\bexit[\s-]+(?:code\s+)?2\s+discards\b",
          "an exit-2 hook's JSON is still read; it cannot override the block"),
-        (r"\bonly[*_]*\s+processed\s+on\s+exit\s+0\b",
+        (r"(?<![a-z])only[*_]*\s+processed[*_]*\s+on\s+exit\s+0|\bprocessed\s+only\s+on\s+exit\s+0",
          "Claude Code reads stdout JSON on every exit code"),
         (r"\bsilently\s+dropped\s+reasons\b",
          "mixing exit 2 with stdout JSON drops no reason; say what the test proves"),
@@ -2755,9 +2777,9 @@ class TestHookProtocolStaleForms:
     )
 
     # The pin's own record of the retired sentences, quoted to say they were
-    # retired: whitespace-normalized, removed from that one file before the scan,
-    # so a new stale sentence elsewhere in it still reds. Kept present by
-    # TestStaleFormsAllowancesStillQuote.
+    # retired: whitespace-normalized, removed once from that one file before the
+    # scan, so a new stale sentence elsewhere in it (a repeat of a quote included)
+    # still reds. Kept present, once each, by TestStaleFormsAllowancesStillQuote.
     RETIREMENT_QUOTES = {
         "docs/external/cc-hook-protocol.md": (
             "JSON output is **only** processed on exit 0",
@@ -2769,11 +2791,11 @@ class TestHookProtocolStaleForms:
         offenders = []
         for path in _public_scan_files(self.PUBLIC_SCAN_PATHS, REPO_ROOT):
             rel_posix = path.relative_to(REPO_ROOT).as_posix()
-            if rel_posix in _RECORD_SURFACE_DOCS:
+            if _is_stale_scan_record(rel_posix):
                 continue  # a record keeps the words of its day (Core Rule 13)
-            text = re.sub(r"\s+", " ", path.read_text(encoding="utf-8", errors="ignore"))
+            text = _stale_scan_text(rel_posix, path.read_text(encoding="utf-8", errors="ignore"))
             for quote in self.RETIREMENT_QUOTES.get(rel_posix, ()):
-                text = text.replace(quote, "")
+                text = text.replace(quote, "", 1)
             for pattern, hint in self.STALE_PATTERNS:
                 if re.search(pattern, text, re.IGNORECASE | re.DOTALL):
                     rel = path.relative_to(REPO_ROOT)
@@ -2808,40 +2830,92 @@ class TestPublicScanFilesSkipLinkedWorktrees:
 
 
 class TestStaleFormsAllowancesStillQuote:
-    """Each retirement quote `TestHookProtocolStaleForms` lets through is still in
-    its file (DEF-1040). Its own class for the reason above: the ledger probe calls
-    the stale-forms class's tests bare in a scratch root that holds no pin."""
+    """Each retirement quote `TestHookProtocolStaleForms` lets through is in its
+    file once (DEF-1040). Its own class for the reason above: a ledger probe may
+    call the stale-forms class's tests bare (DEF-1196), in a root with no pin, so
+    keep fixture-taking and pin-reading tests out of it."""
 
-    def test_each_retirement_quote_is_still_in_its_file(self):
-        stale = []
+    def test_each_retirement_quote_is_in_its_file_once(self):
+        wrong = []
         for rel, quotes in TestHookProtocolStaleForms.RETIREMENT_QUOTES.items():
-            text = re.sub(r"\s+", " ", (REPO_ROOT / rel).read_text(encoding="utf-8"))
-            stale += [f"  {rel}: {q!r}" for q in quotes if q not in text]
-        assert not stale, (
-            "A retirement quote the stale-forms scan allows is gone from its file; "
-            "drop it from RETIREMENT_QUOTES:\n" + "\n".join(stale)
+            text = _stale_scan_text(rel, (REPO_ROOT / rel).read_text(encoding="utf-8"))
+            wrong += [f"  {rel}: {q!r} found {text.count(q)} times"
+                      for q in quotes if text.count(q) != 1]
+        assert not wrong, (
+            "A retirement quote the stale-forms scan allows is not in its file "
+            "exactly once; update it to the file's wording, or drop it:\n" + "\n".join(wrong)
         )
 
-    def test_the_scan_skips_each_record_surface_and_reads_a_note(self, tmp_path, monkeypatch):
-        """The refuted sentence reds in a memory note and a bench scenario, and
-        passes in a declared record surface."""
-        sentence = "Claude Code ignores the JSON in that case."
-        for rel in ("memory/CONVERGENCE_LEDGER.md", "memory/note.md",
-                    "bench/end_to_end/scenarios/x.yaml"):
-            (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
-            (tmp_path / rel).write_text(sentence + "\n", encoding="utf-8")
-        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-        subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
-        module = sys.modules[TestHookProtocolStaleForms.__module__]
-        monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
-        monkeypatch.setattr(TestHookProtocolStaleForms, "PUBLIC_SCAN_PATHS",
-                            (tmp_path / "memory", tmp_path / "bench" / "end_to_end"))
-        with pytest.raises(AssertionError) as caught:
-            TestHookProtocolStaleForms().test_no_stale_paraphrases_in_public_surface()
-        reported = str(caught.value)
-        assert "memory/note.md" in reported.replace("\\", "/")
-        assert "bench/end_to_end/scenarios/x.yaml" in reported.replace("\\", "/")
-        assert "CONVERGENCE_LEDGER" not in reported
+
+def _stale_scan_report(tmp_path: Path, monkeypatch, files: dict[str, str]) -> str:
+    """Run the real stale-forms scan over a scratch git root holding ``files``
+    (repo-relative path -> text), every top folder a root; '' when it passes."""
+    for rel, text in files.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(text + "\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, env=_git_env())
+    module = sys.modules[TestHookProtocolStaleForms.__module__]
+    monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
+    roots = tuple(sorted({tmp_path / rel.split("/", 1)[0] for rel in files}))
+    monkeypatch.setattr(TestHookProtocolStaleForms, "PUBLIC_SCAN_PATHS", roots)
+    try:
+        TestHookProtocolStaleForms().test_no_stale_paraphrases_in_public_surface()
+    except AssertionError as caught:
+        return str(caught).replace("\\", "/")
+    return ""
+
+
+class TestStaleFormsReadTheClass:
+    """The DEF-1040 patterns red the refuted reading in its spellings, and pass a
+    record, a pin's upstream quote and unrelated prose. Fixture-taking, so not in
+    `TestHookProtocolStaleForms` (above)."""
+
+    @pytest.mark.parametrize("sentence", [
+        "Claude Code ignores the JSON in that case.",
+        "exit 2 ignores JSON on stdout.",
+        "The CLI ignores stdout JSON on a non-zero exit.",
+        "It ignores any JSON the hook prints.",
+        "On exit 2 the JSON is ignored.",
+        "the JSON gets ignored when the hook exits 2.",
+        "exit-2 discards stdout JSON.",
+        "exit code 2 discards the JSON.",
+        "JSON output is **only**\nprocessed on exit 0.",
+        "JSON output is _only_ processed on exit 0.",
+        "JSON output is **only processed** on exit 0.",
+        "JSON output is processed only on exit 0.",
+        "the bug where exit-2-plus-stdout-JSON silently dropped reasons.",
+        "if it fails, the channel-XOR contract has silently broken again.",
+        "> Claude Code ignores\n> the JSON in that case.",
+    ], ids=["ignores-the", "exit-2-ignores", "ignores-stdout", "ignores-any",
+            "is-ignored", "gets-ignored", "exit-2-hyphen-discards", "exit-code-2-discards",
+            "bold-wrapped", "underscore-emphasis", "bold-span", "processed-only",
+            "bench-dropped-reasons", "bench-channel-xor", "blockquote-wrapped"])
+    def test_a_spelling_of_the_refuted_reading_reds(self, sentence, tmp_path, monkeypatch):
+        report = _stale_scan_report(tmp_path, monkeypatch, {"memory/note.md": sentence})
+        assert "memory/note.md" in report
+
+    @pytest.mark.parametrize("rel", sorted(_RECORD_SURFACE_DOCS | set(RECORD_SURFACES))
+                             + ["memory/session-log.d/2026-11-08-120000-win.md"])
+    def test_a_record_keeps_its_words(self, rel, tmp_path, monkeypatch):
+        sentence = "step 4 said Claude Code ignores the JSON in that case."
+        report = _stale_scan_report(tmp_path, monkeypatch,
+                                    {rel: sentence, "memory/note.md": sentence})
+        assert "memory/note.md" in report
+        assert rel not in report
+
+    @pytest.mark.parametrize("files", [
+        {"docs/external/pin.md": "> Claude Code ignores the JSON output for that event."},
+        {"memory/note.md": "The validator ignores the JSON Schema draft keyword."},
+        {"memory/note.md": "Claude Code reads stdout JSON on every exit code."},
+    ], ids=["pin-blockquote", "json-schema-prose", "the-pinned-reading"])
+    def test_a_correct_sentence_passes(self, files, tmp_path, monkeypatch):
+        assert _stale_scan_report(tmp_path, monkeypatch, files) == ""
+
+    def test_a_repeated_retirement_quote_still_reds(self, tmp_path, monkeypatch):
+        quote = "If you exit 2, any JSON is ignored."
+        report = _stale_scan_report(tmp_path, monkeypatch, {
+            "docs/external/cc-hook-protocol.md": f'the pin said *"{quote}"*\n\nLater: {quote}'})
+        assert "docs/external/cc-hook-protocol.md" in report
 
 
 class TestFingerprintMatchesSchema:
