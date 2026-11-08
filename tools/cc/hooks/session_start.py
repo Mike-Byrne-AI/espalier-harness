@@ -742,6 +742,24 @@ _PR_FIELDS = (
 # path (`_load_post_merge`) and keeps no copy, so the three readers cannot
 # drift. Without the module the pull-request block is one voiced line.
 _POST_MERGE_UNREAD = "pull requests unread (tools/cc/_post_merge.py is not beside the hooks)"
+# What the block reads from that module: each name, and the keywords it passes
+# (DEF-5087). An older copy -- `espalier upgrade` keeps a managed file that lost
+# its marker and regenerates the hooks around it -- that lacks one would raise
+# at the call and lose the line under a warning naming an argument (a copy
+# from before 68bcc8b has `read_required` without `head=`: the Open PRs: line
+# went, driven 2026-11-08), so the block is one line naming the file and the
+# repair instead. Pinned to this file's own calls by tests/test_kept_sibling.py.
+_POST_MERGE_READS: dict[str, tuple[str, ...]] = {
+    "check_outcome": (),
+    "latest_run_per_check": (),
+    "read_required": ("head", "runs"),
+    "verdicts": (),
+}
+_POST_MERGE_KEPT = (
+    "pull requests unread (tools/cc/_post_merge.py {lack}, which the banner reads): if an upgrade"
+    " kept it as yours (no managed marker), restore its `# espalier:managed` marker line and run"
+    " `espalier upgrade --execute .`; if an edit in progress removed it, restore the file to HEAD"
+)
 _PR_INDENT = " " * len("Open PRs:  ")   # `Merged:    ` is the same width
 
 
@@ -938,6 +956,43 @@ def _load_post_merge() -> Any:
             _hook_utils.advise_exc("session_start: tools/cc/_post_merge.py would not load", e)
             return None
     return mod
+
+
+#: ``co_flags`` bit for a ``**kwargs`` parameter (``inspect.CO_VARKEYWORDS``),
+#: spelled here so the check imports nothing.
+_CO_VARKEYWORDS = 0x08
+
+
+def _post_merge_lacks(module: Any) -> str:
+    """What ``module`` lacks of ``_POST_MERGE_READS``, as a clause (``lacks
+    `verdicts```, ``has `read_required` without `head=```), or '' when it has
+    every read. The parameters are read from the code object, never from a
+    call a TypeError answers, as the `Orders:` line reads a kept seat driver's;
+    a ``**kwargs`` takes every keyword."""
+    for name, keywords in _POST_MERGE_READS.items():
+        func = getattr(module, name, None)
+        if func is None:
+            return f"lacks `{name}`"
+        code = getattr(func, "__code__", None)
+        if code is None or code.co_flags & _CO_VARKEYWORDS:
+            continue
+        params = code.co_varnames[:code.co_argcount + code.co_kwonlyargcount]
+        for keyword in keywords:
+            if keyword not in params:
+                return f"has `{name}` without `{keyword}=`"
+    return ""
+
+
+def _post_merge_unread() -> str:
+    """The pull-request block's one line when the verdict module cannot answer
+    it, else '': ``_POST_MERGE_UNREAD`` where ``tools/cc/_post_merge.py`` is not
+    beside the hooks or will not load, ``_POST_MERGE_KEPT`` naming what an older
+    copy lacks (DEF-5087)."""
+    module = _load_post_merge()
+    if module is None:
+        return _POST_MERGE_UNREAD
+    lack = _post_merge_lacks(module)
+    return _POST_MERGE_KEPT.format(lack=lack) if lack else ""
 
 
 def _read_merge_rules(root: Path, deadline: float | None = None) -> tuple[str, int, str]:
@@ -5513,16 +5568,17 @@ def _run_main(wall_start: float | None = None) -> int:
     # row) cannot take the already-computed open line down with it.
     _phase("pull-request reads", Orders=orders_line)
     try:
-        post_merge_present = _load_post_merge() is not None
+        post_merge_unread = _post_merge_unread()
     except Exception as e:  # noqa: BLE001 -- bounded warn, never block session
         _late_load_failed("session_start: post-merge verdict module probe failed", e)
-        post_merge_present = False
-    if not post_merge_present:
-        # The verdict rule is the module's; without it neither line can read a
-        # check, so the block is one line that says so (the Merging: line's
-        # shape without _merge_rules.py), never two silent lines.
-        _hook_utils.advise_warn(_POST_MERGE_UNREAD)
-        open_prs_line = _POST_MERGE_UNREAD
+        post_merge_unread = _POST_MERGE_UNREAD
+    if post_merge_unread:
+        # The verdict rule is the module's; without it, or with an older copy
+        # that lacks what the lines read, neither line can read a check, so the
+        # block is one line that says so (the Merging: line's shape without
+        # _merge_rules.py), never two silent lines.
+        _hook_utils.advise_warn(post_merge_unread)
+        open_prs_line = post_merge_unread
         merged_prs_line = ""
     else:
         # Each line makes its own list read, so a read that did not answer
