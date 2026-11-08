@@ -269,7 +269,7 @@ is read on its own, and one that cannot be read says so on its own line:
   are red by name, else `waiting on N running` (N of the required checks;
   the banner's `Open PRs:` line counts every check) and `the newer run of
   <check>` for a cancelled required cell a newer run of its workflow on the
-  pull request's head has not finished (a re-bind's title edit re-runs Harness
+  pull request's head is still going (a re-bind's title edit re-runs Harness
   Guard and cancels the run going: a wait, never a red to fix), else that
   nothing required is red or running (a review, or a required check that has
   not reported). A cancelled cell is read that way from one more read, the

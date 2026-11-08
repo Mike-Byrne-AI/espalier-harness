@@ -179,7 +179,8 @@ waiting on 1 running` while checks run, and with a red `... 1 red (verify);
 auto-merge armed but held: required check red (verify); tools/cc/ship.py status
 tells a test red (fix, push, re-bind) from a lost runner (rerun)` (a cancelled
 required cell counts red, as a failed one does, unless a newer run of its
-workflow on the row's head has not finished: then the tail is the wait,
+workflow on the row's head is still going: then the tally marks it, `1 red
+(freshness [superseded])`, and the tail is the wait,
 `auto-merge armed; waiting on the newer run of freshness`, read from one more
 bounded read of the runs on the head, made only while the `Merged:` read after
 it keeps its share of the deadline; a re-bind's title edit re-runs Harness

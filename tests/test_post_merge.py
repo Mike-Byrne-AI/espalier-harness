@@ -452,15 +452,54 @@ class TestASupersededCellIsAWait:
          "the cancelled run is not in the listing"),
         (None, "the runs read was not made or did not answer"),
         ([{"id": 1}], "an answer that is not the REST shape"),
+        ({"message": "Not Found", "documentation_url": "https://docs.github.com/rest", "status": "404"},
+         "gh api's JSON error body on stdout is no listing"),
+        ({"workflow_runs": {"42452020852": {}}}, "workflow_runs that is not a list"),
         (_runs_519(status=""), "a newer run with no status is not known to be going"),
-    ], ids=["newer-completed", "other-workflow", "older", "not-listed", "unread", "not-rest", "no-status"])
+        (_runs_519("waiting"), "waiting is an environment approval that can sit for weeks"),
+        (_runs_519("action_required"), "action_required is not going"),
+        (_runs_519("a_status_github_adds_later"), "a status not on the going list"),
+        ({"workflow_runs": [_api_run(42452020852, 366642379, "2026-11-08T05:45:40Z", "queued") | {"workflow_id": None},
+                            _api_run(42452013919, 366642379, "2026-11-08T05:45:34Z")]},
+         "the newer run names no workflow"),
+        ({"workflow_runs": [{"id": 42452020852, "created_at": "2026-11-08T05:45:40Z", "status": "queued"},
+                            {"id": 42452013919, "created_at": "2026-11-08T05:45:34Z", "status": "completed"}]},
+         "neither run names a workflow: no match on two absences"),
+    ], ids=["newer-completed", "other-workflow", "older", "not-listed", "unread", "not-rest", "json-error-body",
+            "runs-not-a-list", "no-status", "waiting", "action-required", "unknown-status", "newer-no-workflow",
+            "both-no-workflow"])
     def test_a_cancel_with_no_newer_going_run_of_its_workflow_stays_red(self, pm, answer, why):
-        """A lost runner's cancel, a timeout's and a hand cancel have no newer
-        run: they stay red, and the driver still offers the re-run. Dies to:
-        any of these read as a wait (``why``)."""
+        """A lost runner's cancel and a timeout's have no newer run: they stay
+        red, and the driver still offers the re-run where the listing holds
+        their run. Dies to: any of these read as a wait (``why``)."""
         reading, _ = self._read(pm, [_FRESHNESS], answer)
         assert [r["name"] for r in reading["red"]] == ["freshness"], why
         assert reading["superseded"] == [], why
+
+    def test_the_read_says_which_runs_the_listing_held(self, pm):
+        """The driver confirms a cancelled cell free of a newer run only where
+        the listing held the cell's own run. Dies to: a JSON error body, or a
+        listing without the cell's run, read as an answer for it."""
+        reading, _ = self._read(pm, [_FRESHNESS], _runs_519("completed"))
+        assert reading["listed"] == {"42452020852", "42452013919", "42452013917"}
+        for answer in (None, {"message": "API rate limit exceeded"}, {"workflow_runs": "x"}):
+            assert self._read(pm, [_FRESHNESS], answer)[0]["listed"] == set(), answer
+        assert pm.runs_listing({"workflow_runs": [{"id": 1}, "junk", None]}) == [{"id": 1}]
+        assert pm.runs_listing({"message": "Not Found"}) is None
+        assert pm.read_required(1, lambda args: [_FRESHNESS])["listed"] == set()
+
+    def test_two_cancels_in_two_runs_only_the_superseded_one_waits(self, pm):
+        """One cancelled cell's run has a newer run going, the other's has
+        none: the second stays red. Dies to: every cancelled cell read as a
+        wait once any run is superseded."""
+        other = {"name": "test (3.12)", "bucket": "cancel",
+                 "link": "https://github.com/o/r/actions/runs/42452013917/job/6"}
+        listing = _runs_519()
+        listing["workflow_runs"][2] = _api_run(42452013917, 366642111, "2026-11-08T05:45:34Z")
+        reading, asked = self._read(pm, [_FRESHNESS, other], listing)
+        assert [r["name"] for r in reading["superseded"]] == ["freshness"]
+        assert [r["name"] for r in reading["red"]] == ["test (3.12)"]
+        assert len(asked) == 1
 
     def test_a_tie_on_the_stamp_is_broken_by_the_run_id(self, pm):
         """Two runs created in one second: the later id is the newer. Dies to:

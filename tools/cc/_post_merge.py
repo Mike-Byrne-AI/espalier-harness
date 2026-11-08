@@ -74,6 +74,12 @@ RED_BUCKETS = frozenset({"fail", "cancel"})
 REQUIRED_FIELDS = "name,bucket,link"
 #: A check's link when it names an Actions job: the run id, then the job id.
 JOB_LINK_RE = re.compile(r"/actions/runs/(\d+)/job/(\d+)(?![0-9])")
+#: The REST statuses of a workflow run still going, the only ones that make a
+#: newer run supersede a cancelled cell (``superseded_runs``): a run a
+#: concurrency group holds reads ``pending``. ``waiting`` (an environment
+#: approval, which can sit for thirty days), ``action_required``, ``completed``
+#: and a status GitHub adds later are not on it.
+RUN_GOING = frozenset({"queued", "in_progress", "requested", "pending"})
 #: The fields one merged listing carries for these readers.
 MERGED_FIELDS = "number,mergedAt,statusCheckRollup"
 #: The fields the Session Log debt readers ask for (the board's ``records:``
@@ -213,11 +219,13 @@ def _default_gh(cwd: object) -> Gh:
 def read_required(number: object, gh: Gh, fields: str = REQUIRED_FIELDS, *, head: str = "",
                   runs: Gh | None = None) -> dict | None:
     """The one ``gh pr checks <number> --required`` read: ``{"red", "running",
-    "superseded", "rows"}``, the answer's rows whose bucket holds a merge
-    (``RED_BUCKETS``) less those a newer run supersedes, those still running
-    (``pending``), the cancelled ones a newer run of their workflow on the
-    pull request's head supersedes (``superseded_runs``: a wait on that run,
-    never a red), and every row; None when the answer is not a list, which is
+    "superseded", "listed", "rows"}``, the answer's rows whose bucket holds a
+    merge (``RED_BUCKETS``) less those a newer run supersedes, those still
+    running (``pending``), the cancelled ones a newer run of their workflow on
+    the pull request's head supersedes (``superseded_runs``: a wait on that
+    run, never a red), the ids of the runs the runs read listed (empty where
+    it was not made or not answered: a cancelled cell whose run is not among
+    them is not known to be free of a newer run), and every row; None when the answer is not a list, which is
     "could not read", never green (a repository with no required checks
     answers rc=1 with no JSON). ``gh`` takes the arguments after ``gh`` and
     returns the parsed JSON or None; ``gh pr checks`` exits 1 when a check
@@ -244,11 +252,27 @@ def read_required(number: object, gh: Gh, fields: str = REQUIRED_FIELDS, *, head
     red = [r for r in rows if bucket(r) in RED_BUCKETS]
     cancelled = {run_of(r) for r in red if bucket(r) == "cancel"} - {""}
     newer: set[str] = set()
+    listed: set[str] = set()
     if cancelled and head and runs is not None:
-        newer = superseded_runs(cancelled, runs(runs_on_head(head)))
+        listing = runs_listing(runs(runs_on_head(head)))
+        if listing is not None:
+            listed = {str(run.get("id")) for run in listing}
+            newer = superseded_runs(cancelled, {"workflow_runs": listing})
     superseded = [r for r in red if bucket(r) == "cancel" and run_of(r) in newer]
     return {"red": [r for r in red if r not in superseded],
-            "running": [r for r in rows if bucket(r) == "pending"], "superseded": superseded, "rows": rows}
+            "running": [r for r in rows if bucket(r) == "pending"], "superseded": superseded,
+            "listed": listed, "rows": rows}
+
+
+def runs_listing(answer: object) -> list[dict] | None:
+    """The runs ``runs_on_head``'s read listed, or None where it did not
+    answer with a listing: ``gh api`` writes an error body (a 403, a 404, a
+    rate limit) to stdout as JSON, and a reader that ignores the exit code
+    would take that body for an answer, so only a dict whose
+    ``workflow_runs`` is a list is one."""
+    if not isinstance(answer, dict) or not isinstance(answer.get("workflow_runs"), list):
+        return None
+    return [run for run in answer["workflow_runs"] if isinstance(run, dict)]
 
 
 def runs_on_head(head: str) -> list[str]:
@@ -262,38 +286,35 @@ def runs_on_head(head: str) -> list[str]:
 def superseded_runs(cancelled: set[str], answer: object) -> set[str]:
     """Of ``cancelled`` (the runs cancelled required cells ran in), those a
     newer run of the same workflow on the same head supersedes: the listing
-    (``runs_on_head``'s answer) holds the run, and another run with its
-    ``workflow_id``, created after it (``created_at``, then the id on a tie),
-    that has not completed. The cell holds the merge until that run's job
-    reports, so its readers word it as a wait on that run, never as a red to
-    fix, push and re-bind (DEF-3035: a seat that followed the board to
-    ``status`` after a re-bind was told to push, which would cancel the newer
-    run in turn).
+    (``runs_on_head``'s answer, through ``runs_listing``) holds the run, and
+    another run with its ``workflow_id``, created after it (``created_at``,
+    then the id on a tie), that is still going (``RUN_GOING``). The cell
+    holds the merge until that run ends, so its readers word it as a wait on
+    that run, never as a red to fix, push and re-bind (DEF-3035: a seat that
+    followed the board to ``status`` after a re-bind was told to push, which
+    would cancel the newer run in turn).
 
-    The newer run is the rule, not GitHub's concurrency note: a cell
-    cancelled before it starts carries none. #519's ``freshness`` (job
-    128643084948, head 3f9be29, 2026-11-08) has no annotation; the Harness
-    Guard run that superseded it (42452020852, created 05:45:40Z) shares
-    workflow 366642379 with the cancelled run (42452013919, created
-    05:45:34Z), and freshness carried no note in 37 of its 38 supersedes
-    read that week, while verify carried it in 37 of 37. Nor is a newer
-    check run of the same name: it appeared after the cancel in every window
-    read, while the newer workflow run existed before it. A newer run that
-    has completed supersedes nothing (it skipped the job, so a wait would
-    never end); a run the listing does not hold, an answer that is not the
-    REST shape, a lost runner's cancel, a timeout's and a hand cancel (none
-    has a newer run) stay red, so the ship driver still offers the re-run."""
-    if not isinstance(answer, dict):
+    The newer run is the rule, not GitHub's concurrency note (a cell
+    cancelled before it starts carries none) and not a newer check run of
+    the same name (it appears only after the cancel); DEF-3035's record
+    holds the census behind both. A newer run that has completed supersedes
+    nothing (it skipped the job, so a wait would never end), nor does one
+    whose status is not on the going list (an environment approval can sit
+    for weeks); a run the listing does not hold and an answer that is not a
+    listing stay red. The rule cannot see why a cell was cancelled: a newer
+    run of the same workflow in another concurrency group (a dispatch,
+    another event's group) can make a hand-cancelled or timed-out cell read
+    as a wait, for that run's life at most."""
+    listed = runs_listing(answer)
+    if listed is None:
         return set()
-    listed = [run for run in answer.get("workflow_runs") or [] if isinstance(run, dict)]
 
     def order(run: dict) -> tuple[str, int]:
         ident = run.get("id")
         return str(run.get("created_at") or ""), ident if isinstance(ident, int) else -1
 
     def going(run: dict) -> bool:
-        status = str(run.get("status") or "").lower()
-        return bool(status) and status != "completed"
+        return str(run.get("status") or "").lower() in RUN_GOING
 
     found: set[str] = set()
     for run in listed:

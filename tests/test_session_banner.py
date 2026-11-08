@@ -2619,7 +2619,9 @@ class TestOpenPRsLine:
             return mod._RequiredHold([], ["freshness"])
 
         line = mod._open_prs_line(row, required_reader=reader)
-        assert line.endswith("1 red (freshness); auto-merge armed; waiting on the newer run of freshness"), line
+        # The tally marks the cell the tail waits on, so the two never disagree.
+        assert line.endswith("1 red (freshness [superseded]); auto-merge armed; waiting on the newer run of "
+                             "freshness"), line
         assert asked == [519]
         assert "no red is required" not in line and "required check red" not in line
 

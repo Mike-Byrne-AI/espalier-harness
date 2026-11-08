@@ -1456,7 +1456,8 @@ def _pr_summary(pr: dict, required_red: list[str] | None = None,
     blocked names what holds it instead of guessing; ``superseded`` names the
     required cells that read cancelled because a newer run of their workflow
     on the head supersedes them, which hold it as a wait (DEF-3035). The
-    tally counts such a cell red, as the listing gives it: its own rule."""
+    tally counts such a cell red, as the listing gives it, and marks its
+    name ``[superseded]`` so the tally and the tail agree."""
     rollup = pr.get("statusCheckRollup")
     rows = _latest_run_per_check(rollup if isinstance(rollup, list) else [])
     outcomes = [(_check_outcome(r), r) for r in rows]
@@ -1479,6 +1480,9 @@ def _pr_summary(pr: dict, required_red: list[str] | None = None,
                 _ascii(str(r.get("name") or r.get("context") or "?"))
                 for o, r in outcomes if o == "red" and isinstance(r, dict)
             ]
+            # A cell the tail below waits on is marked, so the tally never
+            # reads as a red the tail contradicts (DEF-3035).
+            names = [f"{n} [superseded]" if n in superseded else n for n in names]
             checks += f", {red} red ({_check_names(names)})"
     merge_state = str(pr.get("mergeStateStatus") or "").upper()
     held = ""
