@@ -495,14 +495,18 @@ class TestShippedBenchmarkReproducesFromSdist:
     silently regresses to 147/153 again, which no other contract notices.
     """
 
-    # ~15s idle, but it drives the whole 154-attempt corpus through a real
-    # guard subprocess per row, so its cost tracks corpus growth (39 -> 154
-    # in-scope since the 60s global ceiling was set) and it degrades sharply
-    # under machine load. Where the timeout method is thread (Windows) a breach
-    # kills the WHOLE run, so it costs the entire suite rather than one test.
-    # Covered by _SLOW_FILES membership, so the timeout contract needs no
-    # module-wide exempt marker (which would blanket future sites here).
-    @pytest.mark.timeout(300)
+    # It drives the whole corpus through a real guard subprocess per row, so
+    # its cost tracks corpus growth and runner speed: 75 to 232 s alone on
+    # ubuntu-latest (the Bypass Benchmark step, 16 runs), and 138 to 300+ s on
+    # the full tier's parallel leg, where it crossed a 300 s ceiling in 7 of 19
+    # Linux cells (DEF-2056, 2026-11-08). So the file runs on the serial leg
+    # (scripts/proof_tier.py::TIMEOUT_NEAR_SERIAL_FILES) and the ceiling is
+    # 2.6 times the slowest solo run. Where the timeout method is thread
+    # (Windows) a breach kills the WHOLE run, so it costs the entire suite
+    # rather than one test. Covered by _SLOW_FILES membership, so the timeout
+    # contract needs no module-wide exempt marker (which would blanket future
+    # sites here).
+    @pytest.mark.timeout(600)
     @pytest.mark.skipif(
         sys.platform == "win32",
         reason=(

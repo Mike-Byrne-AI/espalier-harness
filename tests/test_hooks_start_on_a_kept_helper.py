@@ -41,7 +41,7 @@ the in-process import of a skewed copy raises (the ``__name__`` gate); and the
 pre-fix shape, the guard disarmed by text surgery on a copy, exits 1 -- the red
 this contract was written to catch, earned against the detector it uses.
 """
-# slow-exempt: about a hundred short hook subprocesses from per-cell copies of tools/cc on a thread pool, once per module, measured 2026-10-10: 10.6 s for the module on the Air, 6.4 s of it the cells
+# slow-exempt: about a hundred short hook subprocesses from per-cell copies of tools/cc on a thread pool, once per module, measured 2026-10-10: 10.6 s for the module on the Air, 6.4 s of it the cells; on loaded Linux CI cells the cells fixture alone took 21 to 48 s (2026-11-07/08, DEF-2056)
 from __future__ import annotations
 
 import ast
@@ -59,6 +59,9 @@ import pytest
 from espalier.harness_config import CANONICAL_HOOK_WIRING, GOVERNANCE_BLOCKING_HOOKS
 from tests._hook_spawn import not_a_budget_miss
 from tests._live_tree import checkout_glob, copy_checkout
+
+# timeout-exempt: headroom, not cost -- the module-scoped `cells` fixture lands in the first `cells` test each xdist worker runs, 21 to 48 s of the ini's 60 s across 19 Linux full-tier cells (2026-11-07/08, DEF-2056), so each class whose tests request it carries this ceiling; the module stays in the fast slice and its other tests keep the ini's
+_CELLS_CEILING_S = 180
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CC_DIR = REPO_ROOT / "tools" / "cc"
@@ -456,6 +459,7 @@ class TestTheDerivation:
 
 # ── a deny hook on a kept helper ──────────────────────────────────────────────
 
+@pytest.mark.timeout(_CELLS_CEILING_S)
 class TestADenyHookOnAKeptHelper:
     def test_no_cell_exits_one(self, cells):
         ones = [_summary(c) for c in cells if c.rc == 1]
@@ -508,6 +512,7 @@ class TestADenyHookOnAKeptHelper:
             assert "upgrade --execute" not in _reason(c), _reason(c)
 
 
+@pytest.mark.timeout(_CELLS_CEILING_S)
 class TestAReporterOnTheBudgetSkew:
     def test_every_reporter_starts_and_exits_zero(self, cells):
         # The realistic skew only (the two budget names): a reporter's death is
@@ -727,6 +732,7 @@ def _output(run: Restore) -> dict:
     return json.loads(text)["hookSpecificOutput"]
 
 
+@pytest.mark.timeout(_CELLS_CEILING_S)
 class TestAWedgedGuardNamesWhatRaised:
     def test_a_sibling_that_raises_at_import_is_named_and_the_upgrade_is_not(self, cells):
         # The row's probe shape, on every deny hook: a sibling's module body
@@ -764,6 +770,7 @@ class TestAWedgedGuardNamesWhatRaised:
                 assert "run from a terminal" in _reason(c), (c.hook, _reason(c))
 
 
+@pytest.mark.timeout(_CELLS_CEILING_S)
 class TestAFloorThatRaisesIsRefused:
     """DEF-3008: the floor of the guard -- the helper, with
     ``tools/cc/_json_safe.py`` under it, and the reasons module, with
