@@ -229,8 +229,13 @@ is read on its own, and one that cannot be read says so on its own line:
   the merge, the red run's finish, the read time), so red-to-first-mention
   is derived from a record; a red that has held since before the window is
   never a first mention; a failed append is a note under the line, and the
-  section still renders. For each workflow file in the checkout's
-  `.github/workflows/` whose triggers run it on a push to the base (`on:
+  section still renders. For each workflow file in `.github/workflows/` at
+  `origin/<base>` (fetched first, so a workflow merged there since this
+  checkout's commit is read and one deleted there is not; under `--no-fetch`
+  or a failed fetch a line under the section says the base is as last
+  fetched; the checkout's files, with a line saying so and why, where the
+  clone has no such ref or git could not list it in time) whose
+  triggers run it on a push to the base (`on:
   push`, or a `push` whose branch filters take the base; a push of tags alone
   does not count), the post-merge proof apart since the base line above reads
   it, the line also carries that workflow's newest push-run verdict, which the

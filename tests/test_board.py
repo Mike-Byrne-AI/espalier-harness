@@ -50,6 +50,12 @@ def _gh(answers: dict[str, object]):
 
     def run(argv, **kw):
         calls.append(list(argv))
+        if argv[:4] == ["git", "rev-parse", "--verify", "--quiet"] and argv[4].startswith("refs/remotes/origin/"):
+            # The base-run roster's first question, by its exact shape (any
+            # other git call stays an unexpected one): these trees are no git
+            # repository, so no origin/<base>, and the roster is the checkout's
+            # (tests/test_board_ledger_base.py reads the base over real git).
+            return 1, "", ""
         key = " ".join(argv[1:3]) if argv[1] != "api" else ("api compare" if "/compare/" in argv[2] else argv[2])
         if key == "run list" and "--workflow" in argv and argv[argv.index("--workflow") + 1] != "post-merge.yml":
             # The advisory Windows leg's read, keyed by its workflow; a fixture
@@ -974,7 +980,9 @@ class TestChecksLine:
         dropped instead of named."""
         self._leg_in_checkout(tmp_path, name="a.yml")
         self._leg_in_checkout(tmp_path, name="b.yml")
-        ticks = iter([0.0, board.BASE_RUN_BUDGET_SECONDS - 10.0, board.BASE_RUN_BUDGET_SECONDS - 1.0])
+        # The start, the roster's one git question (no origin/<base> here),
+        # then one reading before each gh read.
+        ticks = iter([0.0, 0.0, board.BASE_RUN_BUDGET_SECONDS - 10.0, board.BASE_RUN_BUDGET_SECONDS - 1.0])
         inner = _gh({"pr list merged": [], "run list a.yml": [dict(_run("completed", "failure", "d" * 40), databaseId=9)]})
         timeouts: dict[str, float] = {}
 
@@ -991,12 +999,20 @@ class TestChecksLine:
         assert "b (main, advisory): unread (the 30 s budget for these reads was spent)" in got["lines"]
         assert not [c for c in run.calls if "b.yml" in c]
 
-    def test_the_roster_is_derived_from_the_checkouts_workflow_files(self, board, monkeypatch, tmp_path):
-        """Dies to: the post-merge proof on the roster (its own line holds the
-        revert rule), a .yaml file missed, a folder or another extension read,
-        a file that cannot be decoded dropping off, or a tree with no
-        workflows folder raising."""
-        assert board.base_run_workflows(tmp_path, "main") == {}
+    def test_the_fallback_roster_is_derived_from_the_checkouts_workflow_files(self, board, monkeypatch, tmp_path):
+        """Where the clone has no origin/<base> the roster is the checkout's,
+        and the reason rides beside it. Dies to: the post-merge proof on the
+        roster (its own line holds the revert rule), a .yaml file missed, a
+        folder or another extension read, a file that cannot be decoded
+        dropping off, or a tree with no workflows folder raising."""
+        no_ref = _gh({})
+
+        def roster(base: str) -> dict:
+            got, why = board.base_run_workflows(tmp_path, base, run_=no_ref)
+            assert why == f"origin/{base} is not in this clone", why
+            return got
+
+        assert roster("main") == {}
         self._leg_in_checkout(tmp_path, name="post-merge.yml")
         self._leg_in_checkout(tmp_path, name="cut.yaml", body=self._SUPERSEDING)
         self._leg_in_checkout(tmp_path, name="other.yml", base="develop")
@@ -1004,8 +1020,8 @@ class TestChecksLine:
         (workflows / "notes.md").write_text("on: push\n", encoding="utf-8")
         (workflows / "folder.yml").mkdir()
         (workflows / "binary.yml").write_bytes(b"on: push\n\xff\xfe")
-        assert board.base_run_workflows(tmp_path, "main") == {"binary.yml": False, "cut.yaml": True}
-        assert board.base_run_workflows(tmp_path, "develop") == {"binary.yml": False, "other.yml": False}
+        assert roster("main") == {"binary.yml": False, "cut.yaml": True}
+        assert roster("develop") == {"binary.yml": False, "other.yml": False}
         # A BOM ahead of the first line's `on:` is read through, and a file
         # that cannot be read at all stays on the roster (the read decides).
         (workflows / "bom.yml").write_bytes(b"\xef\xbb\xbfon:\n  push:\n    branches: [main]\n")
@@ -1018,8 +1034,7 @@ class TestChecksLine:
             return real(path, *args, **kwargs)
 
         monkeypatch.setattr(Path, "read_text", read_text)
-        assert board.base_run_workflows(tmp_path, "main") == {"binary.yml": False, "bom.yml": False, "cut.yaml": True,
-                                                              "locked.yml": False}
+        assert roster("main") == {"binary.yml": False, "bom.yml": False, "cut.yaml": True, "locked.yml": False}
 
     def test_a_section_reader_out_of_step_costs_the_section_never_the_board(self, board, monkeypatch, tmp_path):
         """Dies to: a sibling module kept at another version (a name one reads
