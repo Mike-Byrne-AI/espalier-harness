@@ -105,10 +105,12 @@ class TestOneTranslation:
         def record(path: str) -> str:
             seen.append(path)
             return path
-        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        # A drive-spelled value on every host (on POSIX `str(tmp_path)` starts
+        # with `/` and is handed over, rightly: the code review's first warning).
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", "C:/proj")
         translating(record)
-        assert _paths._repo_root() == tmp_path.resolve()
-        assert [p for p in seen if p == str(tmp_path) and not p.startswith("/")] == []
+        assert _paths._repo_root() == Path("C:/proj").resolve()
+        assert seen == []
 
 
 class TestTheWalkUp:
@@ -171,6 +173,95 @@ class TestAKeptOlderPaths:
         monkeypatch.delenv("CLAUDE_PROJECT_DIR")
         monkeypatch.chdir(tmp_path)
         assert hu._project_root_spelling() == "."
+
+
+class TestNoFourthReader:
+    """The variable has two readers: the resolver, and the hooks' degrade for
+    a kept older ``_paths.py``. A third, read raw, is how three spellings came
+    to disagree (the failure-mode review, 2026-11-08)."""
+
+    _READERS = {("_paths.py", "project_root_spelling"), ("_hook_utils.py", "_project_root_spelling")}
+
+    @staticmethod
+    def _reads(tree) -> set[str]:
+        """The innermost function (or ``<module>``) holding each read of the
+        variable from the environment: ``os.environ.get``, ``os.getenv`` or a
+        loaded ``os.environ[...]``. A write into a child's env is no read."""
+        import ast
+
+        def is_key(node) -> bool:
+            return isinstance(node, ast.Constant) and node.value == "CLAUDE_PROJECT_DIR"
+
+        def is_read(node) -> bool:
+            if isinstance(node, ast.Call) and node.args and is_key(node.args[0]):
+                callee = node.func
+                name = getattr(callee, "attr", None) or getattr(callee, "id", None)
+                owner = getattr(callee, "value", None)
+                owner_name = getattr(owner, "attr", None) or getattr(owner, "id", None)
+                return (name == "get" and owner_name == "environ") or name == "getenv"
+            return (isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load)
+                    and is_key(node.slice) and getattr(node.value, "attr", None) == "environ")
+
+        found: set[str] = set()
+
+        def visit(node, scope: str) -> None:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                scope = node.name
+            if is_read(node):
+                found.add(scope)
+            for child in ast.iter_child_nodes(node):
+                visit(child, scope)
+
+        visit(tree, "<module>")
+        return found
+
+    def test_only_the_resolver_and_the_degrade_read_the_variable(self):
+        import ast
+        from tests._live_tree import checkout_rglob
+        readers = {
+            (path.name, fn)
+            for path in sorted(checkout_rglob(TOOLS_CC, "*.py"))
+            for fn in self._reads(ast.parse(path.read_text(encoding="utf-8")))
+        }
+        assert readers == self._READERS, (
+            f"CLAUDE_PROJECT_DIR is read by {sorted(readers - self._READERS)} "
+            f"(and no longer by {sorted(self._READERS - readers)}): call _paths._repo_root() "
+            "(or _hook_utils.resolve_project_root() in a hook) instead"
+        )
+
+    def test_the_hooks_pass_the_translator_by_the_name_the_resolver_takes(self):
+        """`_project_root_spelling` calls the shared resolver with
+        ``translate=``, unguarded: a rename on one side only would raise in
+        every deny hook (the failure-mode review's third note)."""
+        import inspect
+        assert "translate" in inspect.signature(_paths.project_root_spelling).parameters
+        assert "translate=_msys_drive_to_windows" in inspect.getsource(_hook_utils()._project_root_spelling)
+
+
+class TestARealKeptOlderPaths:
+    @pytest.mark.parametrize("kept", ["without_the_resolver", "raising_at_import"])
+    def test_the_guarded_import_itself_keeps_the_hooks_starting(self, tmp_path, monkeypatch, kept):
+        """The module-level guard, not a patched attribute: ``_hook_utils``
+        loaded (under an alias) beside a ``_paths`` that predates the resolver,
+        or one whose import fails, starts and resolves by today's rule."""
+        import types
+        if kept == "without_the_resolver":
+            older = types.ModuleType("_paths")
+            older._repo_root = lambda: tmp_path  # type: ignore[attr-defined]
+            monkeypatch.setitem(sys.modules, "_paths", older)
+        else:
+            monkeypatch.setitem(sys.modules, "_paths", None)   # the import raises ImportError
+        spec = importlib.util.spec_from_file_location("_hook_utils_kept_older", HOOKS_DIR / "_hook_utils.py")
+        assert spec is not None and spec.loader is not None
+        hu = importlib.util.module_from_spec(spec)
+        sys.path.insert(0, str(HOOKS_DIR))
+        try:
+            spec.loader.exec_module(hu)
+        finally:
+            sys.path.remove(str(HOOKS_DIR))
+        assert hu._shared_root_spelling is None
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        assert hu._project_root_spelling() == str(tmp_path)
 
 
 class TestTheWiringCanary:

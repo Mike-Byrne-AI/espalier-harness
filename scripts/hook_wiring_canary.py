@@ -130,8 +130,13 @@ def _translated(raw: str) -> str:
     ``_msys_drive_to_windows`` on Windows for a ``/c/...`` value), from the
     checkout this script sits in, so a session directory exported from Git
     Bash walks up from the drive path the hooks would read (DEF-664). The
-    value comes back unchanged when that ``_paths.py`` cannot be loaded (this
-    script copied somewhere alone): the canary then reads it raw, as before."""
+    value comes back unchanged when that ``_paths.py`` cannot be loaded: so
+    the translation holds only when the canary runs from a checkout, and a
+    copy installed alone under ``~/.claude/hooks/`` reads the value raw, as
+    before. A value that is not ``/``-spelled cannot need it and never loads
+    the module (the Windows gate is ``_translate_drive``'s own)."""
+    if not raw.startswith("/"):
+        return raw
     module = sys.modules.get("_paths")
     if module is None:
         path = Path(__file__).resolve().parent.parent / "tools" / "cc" / "_paths.py"

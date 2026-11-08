@@ -70,9 +70,13 @@ def _translate_drive(raw: str) -> str:
 
 def project_root_spelling(translate: Callable[[str], str] | None = None) -> str:
     """``CLAUDE_PROJECT_DIR`` as a string ``Path`` can resolve: the one
-    repo-root resolver the hooks, the top-level tools and the statusline read
+    repo-root resolver the hooks (``_hook_utils._project_root_spelling``),
+    ``_repo_root``'s callers, the statusline and the wiring canary read
     (DEF-664; before it, three spellings disagreed on a Git Bash value and on
-    an unset one).
+    an unset one). A few drivers find their checkout another way on purpose
+    (``seat``, ``checkout_sync``, ``memory_sort_audit``,
+    ``generate_ledger_regions``) and never read the variable; a new reader of
+    it is red in ``tests/test_repo_root_resolver.py``.
 
       1. The variable, when non-empty, through ``translate``: the hooks pass
          their ``_msys_drive_to_windows``; the default is ``_translate_drive``.

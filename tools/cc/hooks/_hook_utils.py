@@ -77,13 +77,15 @@ except ImportError:  # pragma: no cover - a tools/cc/_json_safe.py that predates
 # guarded the same way and wider: a kept `_paths.py` that predates it, or one
 # that raises at import, leaves `_project_root_spelling` on its own rule below
 # -- the drive translation included, since an untranslated root fails open on
-# a deny compare -- never an import crash that takes every hook down.
+# a deny compare -- never an import crash here. (`_protected_zones.py`,
+# `post_write_check.py` and `session_start.py` import `_paths` unguarded, as
+# before this lane: a `_paths.py` that raises still stops those.)
 _shared_root_spelling: Any = None
 try:
     import _paths as _root_paths  # noqa: E402
     _shared_root_spelling = getattr(_root_paths, "project_root_spelling", None)
 # fail-open: ok deliberate -- a kept or broken _paths.py degrades to the local rule below
-except Exception:  # noqa: BLE001  # pragma: no cover
+except Exception:  # noqa: BLE001 -- a kept or broken _paths.py must never take the hooks down  # pragma: no cover
     _shared_root_spelling = None
 
 # shutil / subprocess / tempfile are imported lazily inside the three functions
@@ -359,15 +361,12 @@ HOOK_AUDIT_NOQA_TEMPLATE = (
 
 
 def resolve_project_root() -> Path:
-    """Resolve ``CLAUDE_PROJECT_DIR`` to an absolute path.
-
-    ``os.environ.get("CLAUDE_PROJECT_DIR", ".")`` returns ``""``
-    if the variable EXISTS but is empty (rather than the ``"."`` default).
-    Empty resolves to cwd, identical to the documented default, but the
-    operator gets no notice that their env was ignored. If cwd is
-    unrelated to the repo, protected-zone checks are computed against
-    the wrong root silently. This helper warns on empty values, then
-    falls back to the same cwd behavior.
+    """Resolve ``CLAUDE_PROJECT_DIR`` to an absolute path, through
+    ``_project_root_spelling`` (the one resolver, ``tools/cc/_paths.py::
+    project_root_spelling``, DEF-664): the variable translated, else the
+    walk-up to ``tools/cc/hooks``, else cwd. An empty value, and an unset one
+    that finds no marker, warn on stderr, since protected-zone checks
+    computed against an unrelated cwd would be wrong without a word.
     """
     return Path(_project_root_spelling()).resolve()
 

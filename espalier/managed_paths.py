@@ -155,8 +155,10 @@ STANDARD_MANAGED_TOOLS = [
     # ModuleNotFoundError on a fresh init if it is not deployed.
     "tools/cc/_freshness_cache.py",
     # SoT for cc/ path strings (LIVE_SURFACE_REL, COMMANDS_INDEX_REL,
-    # PACK_MANIFEST_REL, BLUEPRINTS_DIR_REL, ...). Imported by session_resume.py
-    # + hooks (_protected_zones.py, post_write_check.py) via sys.path shim.
+    # PACK_MANIFEST_REL, BLUEPRINTS_DIR_REL, ...) and the one repo-root
+    # resolver (project_root_spelling, DEF-664). Imported by session_resume.py,
+    # statusline.py + hooks (_hook_utils.py behind a guarded import,
+    # _protected_zones.py, post_write_check.py) via sys.path shim.
     "tools/cc/_paths.py",
     # Malformed/non-dict JSON chokepoint (load_json_dict_safe). Imported by
     # cognitive_blueprint.py + execution_plan.py (siblings) and by hooks
