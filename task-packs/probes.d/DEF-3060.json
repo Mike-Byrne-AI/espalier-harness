@@ -1,0 +1,10 @@
+{
+ "id": "DEF-3060",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c \"import sys,time;sys.path.insert(0,'tools/cc/hooks');import _bash_patterns as b;s=('env -x a{}'*820)[:8000];t=time.perf_counter();b._PS_REMOVE_ITEM_RE.search(s);print(int(time.perf_counter()-t>0.25))\"",
+ "open_value": "1",
+ "why_not": null,
+ "row_sha": "3bb26c47f957",
+ "text_sha": "80e41032fac6",
+ "verified_2026_11_07": "OPEN (filed 2026-11-07; probe driven at filing here and in the export of HEAD c82196b8b1b5)"
+}
