@@ -32,6 +32,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests._live_tree import checkout_rglob
+
 
 def _ns(**kwargs) -> argparse.Namespace:
     """Build a Namespace with sensible defaults for any cmd_* function."""
@@ -1785,7 +1787,7 @@ class TestPasteReadyRemediesQuoteASpacedPath:
 
         bare: list[str] = []
         slots = 0
-        for path in sorted(root.rglob("*.py")):
+        for path in sorted(checkout_rglob(root, "*.py")):
             if "_vendor" in path.relative_to(root).parts:
                 continue
             tree = ast.parse(path.read_text(encoding="utf-8"))

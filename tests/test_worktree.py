@@ -193,7 +193,7 @@ class TestBuildWorktreePlan:
             prefix = cmd.split(" worktree add ", 1)[0]
             # The shell IS the oracle: the printed text must survive its word split.
             proc = subprocess.run(f"{prefix} rev-parse --show-toplevel", shell=True,  # noqa: S602
-                                  capture_output=True, text=True, timeout=60, env=env)
+                                  capture_output=True, encoding="utf-8", timeout=30, env=env)
             assert proc.returncode == 0, (cmd, proc.stderr)
             assert Path(proc.stdout.strip()).resolve() == spaced.resolve(), (cmd, proc.stdout)
 
