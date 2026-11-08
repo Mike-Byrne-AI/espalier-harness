@@ -94,6 +94,18 @@ needed some forty module-level re-exports. The module-top `try`/`except` keeps
 every import at module scope, and its handler refuses only under `__main__`,
 so an in-process importer still sees the real error.
 
+One exception, by measure: `write_guard`'s two pattern modules,
+`_bash_patterns` and `_speedbump` (about two thirds of a read-only call's
+cost), import on first use, from `_load_the_pattern_path`, never at the top.
+Every module-level line built from them is an `@_on_the_pattern_path` step,
+binding its name under a `global`; every function that reads such a name calls
+the loader first; and nothing that runs at import (a module-level statement, a
+class body, a default, a decorator) or a module-level lambda reads one, since a
+read there is a NameError when the judging child imports the file: an exit 1
+that lets every call through unjudged. `tests/test_write_guard.py::TestThePatternPath`
+reads all three from the source, and the floor's helper names stay in the eager
+module-top read, so a kept helper still refuses at the start.
+
 ## Maintenance mode — parent-shell launch only
 
 `ESPALIER_MAINTENANCE_MODE=1` bypasses friction-only checks (write_guard

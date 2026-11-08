@@ -927,17 +927,19 @@ helper missing only those judges on. `plan_guard.py`, `config_guard.py` and
 `stop_gate.py` carry the same guard (the Stop gate's refusal is the Stop-style
 block, which the protocol's loop signal lets through on the next Stop),
 `upgrade` names the missing names when it keeps the helper, and `espalier
-doctor` names a wired hook that cannot start. Maintenance mode (the friction
+doctor` names a wired hook that cannot start (for `write_guard`, a broken one of
+the two siblings below that it loads on first use too). Maintenance mode (the friction
 bypass below) does not lift this refusal -- the guard runs before that gate is
 read, and the PreToolUse guard matches every tool.
 
 **Two siblings load on first use.** `write_guard`'s two largest siblings,
 `_bash_patterns.py` and `_speedbump.py`, serve only the Bash, PowerShell and
 checkpoint judgments. A read-only call (a tool outside `MUTATION_TOOLS` that is
-not an MCP write: `Read`, `Grep`, `Glob`, `TodoWrite`) returns after the
+not an MCP tool: `Read`, `Grep`, `Glob`, `TodoWrite`) returns after the
 kill-switch scan and the secret-path check, which read neither, so both import
-on a mutation's first use rather than at the hook's start, and a read-only call
-never pays their import. The helper names they take from
+on the first mutation or MCP call (every `mcp__` tool, a read among them, loads
+them) rather than at the hook's start, and a read-only call never pays their
+import. The helper names they take from
 `_hook_utils.py` are still read at the start, so a kept helper is refused the
 same way on every call. A broken `_bash_patterns.py` or `_speedbump.py` is
 therefore a crash, not a failure to start: a read-only call passes, so the file
