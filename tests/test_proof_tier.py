@@ -1559,6 +1559,7 @@ _WALL_CLOCK_HIGH_WATER: dict[tuple[str, str], float] = {
     ("tests/test_speedbump_irreversible.py", "_SPEEDBUMP_CI_SAFE_MS"): 500,
     ("tests/test_speedbump_irreversible.py", "_SPEEDBUMP_GIT_CEILING_MS"): 80,
     ("tests/test_hooks.py", "_ENV_PREFIX_CEILING_MS"): 1000,
+    ("tests/test_write_guard_time_budget.py", "_OVERRUN_CEILING_MS"): 1000,
 }
 #: The exemption census, EXACT: (file, enclosing function). A marker is the
 #: cheapest way to silence the rule, so every one is enrolled here with the

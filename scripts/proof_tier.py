@@ -176,10 +176,14 @@ _SHELL_OPERATORS = ";|&()<>`"
 #: them out of the parallel run and runs them serially after it (16 s). The
 #: audit that named them: ``tests/README.md``, "Parallel-safety". This tuple is
 #: the list's one home; the bodies say "the two lines this script prints".
+#: ``tests/test_write_guard_time_budget.py`` joined for DEF-3048's strike row,
+#: whose ceiling is the hook protocol's 5 s timeout over a 4.0 s designed
+#: deadline (47 rows, 9.79 s at one worker on the Air, 2026-11-07).
 WALL_CLOCK_SERIAL_FILES: tuple[str, ...] = (
     "tests/test_redos.py",
     "tests/test_speedbump_irreversible.py",
     "tests/test_hooks.py",
+    "tests/test_write_guard_time_budget.py",
 )
 
 #: The end-to-end gates whose serial duration sits inside the parallel load

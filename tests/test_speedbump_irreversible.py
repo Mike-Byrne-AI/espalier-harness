@@ -3330,6 +3330,15 @@ class TestCommandPositionClassClose:
             "TOKENIZER -- a `$NAME` / `${NAME}` reference the Bash pre-pass "
             "replaces with its bound literal, the name read greedily; it selects "
             "no command.",
+        "_bash_patterns._BOUND_VARIABLE_VALUE_RE":
+            "TOKENIZER -- a binding's value that is wholly one variable the removal "
+            "readers read (the home, a temp variable), matched at the offset after "
+            "the `=` of a site the anchored `_VAR_ANY_ASSIGN_RE` found, for the walls' "
+            "reading only; it selects no command (603f72's class).",
+        "_bash_patterns._PS_BOUND_READ_RE":
+            "TOKENIZER -- the temp or home variable read a PowerShell binding's value "
+            "is wholly (quotes off), so the pre-pass binds the name to that read; it "
+            "selects no command (603f72's class).",
         "_bash_patterns._BINDING_SCOPE_CHAR_RE":
             "SYNTAX -- a paren that opens or closes a child scope (a subshell, a "
             "command substitution), read on the masked text, where a binding "
@@ -3340,7 +3349,8 @@ class TestCommandPositionClassClose:
             "shell); the program itself is judged by the anchored arms.",
         "_bash_patterns._PS_VAR_ASSIGN_RE":
             "SELF-ANCHORED -- inline `(?:^|[;\\r\\n{]|&&|\\|\\|)`: the PowerShell twin "
-            "of `_VAR_ASSIGN_RE`, and the literal must END the statement.",
+            "of `_VAR_ASSIGN_RE`, and the literal (or a temp or home variable's "
+            "read, `_ps_bound_env_read`) must END the statement.",
         "_bash_patterns._PS_VAR_REF_RE":
             "SYNTAX TOKEN: a `$name` / `${name}` reference the pre-pass replaces "
             "at the offset its walk reached; it selects no command.",

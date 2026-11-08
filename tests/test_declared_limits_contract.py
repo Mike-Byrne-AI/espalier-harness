@@ -256,7 +256,10 @@ class TestTheSentenceSplitter:
 #: HOOKS 29 -> 31 on 2026-11-03: a temp root itself walls, and its two
 #: limits are declared, each with its row in `TestAScratchRootItselfIsTheWall`
 #: (a sweep's walk root, and a root spelled by its variable).
-_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 31, "docs/SHARP_EDGES.md": 4}
+#: HOOKS 31 -> 30 on 2026-11-07: the time budget's limit closed (DEF-3048). A
+#: state write that hangs no longer holds the refusal until the timeout lets
+#: the call through; the parent's kill at its hard deadline refuses it.
+_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 30, "docs/SHARP_EDGES.md": 4}
 
 
 def test_the_census_is_the_pinned_population():
