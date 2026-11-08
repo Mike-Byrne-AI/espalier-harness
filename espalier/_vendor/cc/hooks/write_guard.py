@@ -218,8 +218,8 @@ def _answer_from_a_judging_child() -> None:
         import _denial_reasons  # type: ignore[import-not-found]
         reason = _denial_reasons.WRITE_GUARD_TIME_BUDGET.format(budget=HARD_DEADLINE_S)
     except Exception:  # noqa: BLE001 -- fail-open: ok text-fallback the refusal still goes out, in plain words
-        reason = (f"Command blocked: write_guard could not finish judging this command within its"
-                  f" {HARD_DEADLINE_S} s time budget, so the call is refused rather than let through unjudged.")
+        reason = (f"Command blocked: write_guard ran out of its {HARD_DEADLINE_S} s time budget before it had"
+                  " judged this command, so the call is refused rather than let through unjudged.")
     sys.stdout.write(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}) + "\n")
     sys.stdout.flush()

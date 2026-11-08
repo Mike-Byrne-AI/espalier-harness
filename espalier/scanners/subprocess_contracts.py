@@ -150,7 +150,13 @@ PRAGMA_RE = re.compile(r"^#\s*subprocess-contract:\s*ok\s+(.{12,})$")
 # sys.executable form, which _normalize_interpreter does not read, so no call-site
 # list resolves. It is not an espalier CLI call either way; the real spawn is
 # driven end to end by tests/test_checkout_sync.py's hand-off rows.
-MAX_PRAGMA_COUNT: int = 14
+# Raised 14 -> 15 (2026-11-07) for tools/cc/_json_safe.py::run_tree_to_deadline,
+# the tree-bounded spawn write_guard's parent starts its judging child through
+# (DEF-3048): the argv is the caller's, its own first parameter, as run_bounded's
+# is, but it is not a SPAWN_WRAPPERS name (its one caller would then need the
+# pragma for a dynamic interpreter list instead); tests/test_bounded_spawn.py
+# pins the tree bound and the real-hook rows the child.
+MAX_PRAGMA_COUNT: int = 15
 
 # Sister-site protection: fixture files contain intentional positives.
 EXEMPT_PREFIXES: tuple[str, ...] = (

@@ -520,6 +520,7 @@ def run_tree_to_deadline(
     if os.name != "nt":
         kwargs["start_new_session"] = True
     try:
+        # subprocess-contract: ok the argv is the caller's by design (write_guard's judging child); the tree bound is pinned by tests/test_bounded_spawn.py::TestTheTreeBoundEndsEveryProcessAtTheDeadline and the child by tests/test_write_guard_time_budget.py's real-hook rows
         proc = subprocess.Popen(args, **kwargs)  # spawn: ok the tree-bounded spawn itself
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         raise TreeStartError(type(exc).__name__) from exc  # the cause carries the detail
