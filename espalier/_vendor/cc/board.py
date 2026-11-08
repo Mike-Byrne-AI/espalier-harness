@@ -212,38 +212,55 @@ def read_open_prs(root: Path, *, run_: Runner = run) -> list[dict]:
 def read_required_section(root: Path, prs: list[dict], *, run_: Runner = run,
                           clock: Callable[[], float] = time.monotonic) -> None:
     """Each pull request GitHub reports as BLOCKED (a draft is not read) gets
-    ``required``: the names of its required checks that are red and those
-    still running, from the one ``gh pr checks --required`` read
-    (``_post_merge.read_required``, the driver's and the banner's too), or
+    ``required``: the names of its required checks that are red, those still
+    running and those a newer run of their workflow on its head supersedes
+    (a wait, never a red: DEF-3035), from the one ``gh pr checks --required``
+    read (``_post_merge.read_required``, the driver's and the banner's too)
+    and, on a row holding a cancelled cell, the one runs read of its head; or
     ``{"unread": why}``. The list read carries no check status, so without
     this the row could only say a check or a review holds it (DEF-4063).
-    Bounded as REQUIRED_READ_ROWS and REQUIRED_BUDGET_SECONDS say; one read
-    that fails costs only its row."""
+    Bounded as REQUIRED_READ_ROWS and REQUIRED_BUDGET_SECONDS say, each read's
+    timeout cut to the budget left when it starts; a runs read the budget
+    cannot afford is not made, and its cancelled cells stay red. One read
+    that fails costs only its row (the runs read only the wait)."""
     start, made = clock(), 0
+
+    def left() -> float:
+        return REQUIRED_BUDGET_SECONDS - (clock() - start)
+
+    def gh(args: list[str]) -> object:
+        return _gh_json(root, *args, run_=run_, timeout=max(0.1, min(GH_TIMEOUT, left())))
+
+    def runs(args: list[str]) -> object:
+        if left() <= 3.0:   # the floor below: a read that would time out, not answer
+            return None
+        try:
+            return gh(args)
+        except Exception:  # noqa: BLE001 -- the runs read costs only the wait: its cancelled cells stay red
+            return None
+
     for pr in prs:
         if str(pr.get("mergeStateStatus") or "").upper() != "BLOCKED" or pr.get("isDraft"):
             continue
-        left = REQUIRED_BUDGET_SECONDS - (clock() - start)
         if made >= REQUIRED_READ_ROWS:
             pr["required"] = {"unread": f"the board reads the first {REQUIRED_READ_ROWS} blocked rows' checks"}
             continue
-        if left <= 3.0:   # below a gh read's own latency: it would time out, not answer
+        if left() <= 3.0:   # below a gh read's own latency: it would time out, not answer
             pr["required"] = {"unread": f"the {REQUIRED_BUDGET_SECONDS:.0f} s budget for these reads was spent"}
             continue
         made += 1
-        timeout = min(GH_TIMEOUT, left)
         try:
-            reading = _post_merge.read_required(
-                pr["number"], lambda args, t=timeout: _gh_json(root, *args, run_=run_, timeout=t))
+            reading = _post_merge.read_required(pr["number"], gh, head=str(pr.get("headRefOid") or ""), runs=runs)
             pr["required"] = ({"unread": "gh pr checks answered something other than a list"} if reading is None
                               else {key: [_ascii(str(r.get("name") or "?")) for r in reading[key]]
-                                    for key in ("red", "running")})
+                                    for key in ("red", "running", "superseded")})
         except Unresolvable as exc:
             # gh's answer when no required check has reported (a repository
             # that requires a review alone, or a head whose checks have not
             # registered yet) is an answer: nothing required is red or running.
             none = any(words in str(exc) for words in _NO_CHECKS_REPORTED)
-            pr["required"] = {"red": [], "running": []} if none else {"unread": " ".join(str(exc).split())}
+            pr["required"] = ({"red": [], "running": [], "superseded": []} if none
+                              else {"unread": " ".join(str(exc).split())})
         except Exception as exc:  # noqa: BLE001 -- one row's read costs its row, never the board
             pr["required"] = {"unread": " ".join(f"{type(exc).__name__}: {os_error_text(exc)}".split())}
 
@@ -1603,7 +1620,9 @@ def _pr_meaning(pr: dict) -> str:
             meaning = (f"blocked: its required checks were not read ({required['unread']}): "
                        f"gh pr checks {pr.get('number')} --required")
         else:
-            meaning = f"blocked: {_post_merge.held_by(required.get('red') or [], required.get('running') or [])}"
+            # A cancelled cell a newer run supersedes is a wait on it (DEF-3035).
+            meaning = "blocked: " + _post_merge.held_by(required.get("red") or [], required.get("running") or [],
+                                                        required.get("superseded") or [])
             if required.get("red"):
                 # A red cell is a test's verdict or a lost runner's; only the
                 # driver's read on the lane tells them apart (the banner says so too).

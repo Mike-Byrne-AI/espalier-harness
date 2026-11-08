@@ -2627,6 +2627,72 @@ def test_no_wait_budget_meets_the_ceiling_of_a_test_that_runs_it():
     assert not offenders, "\n".join(offenders)
 
 
+#: What a retried spawn must leave under its ceiling: room for the kill and
+#: the teardown, the rule ``tests/test_hook_spawn_routing.py`` holds the short
+#: helper to (its worst case at or under the ceiling less 10 s).
+_RETRY_TEARDOWN_S = 10
+
+
+def _retry_offenders(modules: list[tuple[str, str]], ini: float) -> list[str]:
+    """Each wait budget in a unit that calls ``tests/_hook_spawn.py::
+    retry_a_budget_miss`` whose bound twice over does not fit the governing
+    ceiling less ``_RETRY_TEARDOWN_S``: the refused attempt can take up to its
+    bound under load (the refusal lands 4.0 s after the parent's own start),
+    and the retry up to the bound again (DEF-2057)."""
+    retrying: set[tuple[str, str]] = set()
+    for stem, text in modules:
+        if "retry_a_budget_miss" not in text:
+            continue
+        for u in _collect_units(ast.parse(text), {}):
+            if any(isinstance(n, ast.Call) and _terminal_name(n.func) == "retry_a_budget_miss"
+                   for n in u.walked()):
+                retrying.add((stem, u.qual))
+    out = []
+    for s in _budget_sites(modules, ini):
+        if (s.module, s.unit) not in retrying:
+            continue
+        if s.ceiling is None or 2 * s.seconds > s.ceiling - _RETRY_TEARDOWN_S:
+            out.append(f"tests/{s.module}.py:{s.line} ({s.unit}): a retried spawn's timeout={s.seconds:g} "
+                       f"twice over passes the {s.ceiling} s ceiling of {s.governed_by} less "
+                       f"{_RETRY_TEARDOWN_S} s -- raise that ceiling, or hand the result to "
+                       "not_a_budget_miss instead")
+    return out
+
+
+def test_a_retried_spawn_fits_its_bound_twice_under_its_ceiling():
+    """DEF-2057: ``retry_a_budget_miss`` spends a second spawn on a budget
+    refusal, and the refused attempt is capped only by its bound under load,
+    so every site it wraps holds twice its bound under the ceiling of each
+    test that runs it, less the teardown room. A site that cannot keeps
+    ``not_a_budget_miss``; the moved sites are counted so the pin is never
+    vacuous."""
+    modules = _all_test_dir_modules()
+    retrying = [stem for stem, text in modules if "retry_a_budget_miss(lambda" in text]
+    assert retrying, "no site writes its spawn inside retry_a_budget_miss: the pin polices nothing"
+    offenders = _retry_offenders(modules, _global_pytest_timeout())
+    assert not offenders, "\n".join(offenders)
+
+
+class TestTheRetryPinReportsBothVerdicts:
+    def test_a_45_s_retried_spawn_under_the_ini_ceiling_is_reported(self):
+        src = (_SYNTH_RUN + "from tests._hook_spawn import retry_a_budget_miss\n"
+               "def _run():\n    return retry_a_budget_miss(lambda: subprocess.run(['x'], timeout=45))\n"
+               "def test_x():\n    _run()\n")
+        assert len(_retry_offenders([("test_synth", src)], 60)) == 1
+
+    def test_the_same_site_under_a_raised_ceiling_is_clear(self):
+        src = (_SYNTH_RUN + "from tests._hook_spawn import retry_a_budget_miss\n"
+               "def _run():\n    return retry_a_budget_miss(lambda: subprocess.run(['x'], timeout=45))\n"
+               "@pytest.mark.timeout(100)\ndef test_x():\n    _run()\n")
+        assert _retry_offenders([("test_synth", src)], 60) == []
+
+    def test_a_parameter_default_bound_is_charged_too(self):
+        src = (_SYNTH_RUN + "from tests._hook_spawn import retry_a_budget_miss\n"
+               "def _run(timeout=45):\n    return retry_a_budget_miss(lambda: subprocess.run(['x'], timeout=timeout))\n"
+               "def test_x():\n    _run()\n")
+        assert len(_retry_offenders([("test_synth", src)], 60)) == 1
+
+
 #: The units holding a ``timeout=`` value the walker cannot read, one entry per
 #: value, pinned by identity so a swap is seen as well as a change in count.
 #: 2026-10-07: tests/test_write_guard_time_budget.py's ``stuck_s / 2`` (20 s).
