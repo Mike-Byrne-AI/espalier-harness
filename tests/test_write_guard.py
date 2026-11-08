@@ -1303,15 +1303,22 @@ class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
         # competes beside a wrapper word and a digit) and the numeric arm
         # keeps a digit-led redirect, which no redirect arm here could own.
         # A digit-led redirect's rest is `_CMD_POS_WRAP_DIGIT_RUN` in both
-        # runs, so a one-level substitution in its target reads as one piece
+        # runs, so a one-level substitution in its target reads as one piece,
+        # except, in the slashed copy, a digit-led word holding a slashed
+        # start, which keeps base's paren-stopped reading (DEF-3051's
+        # generic reading; read through a substitution it carried every
+        # later start to the end of a separator flood)
         bp = _bash_patterns_module()
         decline = "(?!" + bp._CMD_POS_SLASHED_WRAPPER_WORD + ")"
         split_numeric = (r"(?!\d[<>])\d[^\s;|&()`]*|(?=\d[<>])\d" + bp._CMD_POS_WRAP_DIGIT_RUN
                          + "(?=" + bp._CMD_POS_WRAP_NEXT + ")")
+        slashed_numeric = (decline + r"\d" + bp._CMD_POS_WRAP_DIGIT_RUN
+                           + "|(?=" + bp._CMD_POS_SLASHED_WRAPPER_WORD + r")\d[^\s;|&()`]*")
         assert split_numeric in bp._CMD_POS_WRAP_RUN
+        assert bp._CMD_POS_SLASHED_WRAP_DIGIT == slashed_numeric
         derived = (bp._CMD_POS_WRAP_RUN.replace(bp._CMD_POS_WRAP_ARG, decline + bp._WRAP_STEP_ARG, 1)
-                   .replace(split_numeric, r"\d" + bp._CMD_POS_WRAP_DIGIT_RUN, 1))
-        assert derived.count(decline) == 1
+                   .replace(split_numeric, slashed_numeric, 1))
+        assert derived.count(decline) == 2
         assert bp._CMD_POS_SLASHED_WRAP_RUN == derived
         assert "(?<=/)" + bp._CMD_POS_SLASHED_WRAP_RUN in bp._CMD_POS_NO_VERB
 

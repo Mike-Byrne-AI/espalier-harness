@@ -4744,10 +4744,15 @@ def test_the_nested_run_the_gate_once_carried_is_caught_by_these_rows():
         pytest.skip("signal.alarm not available on this platform")
     import _bash_patterns as bp
 
-    nested = bp._CMD_POS_REDIRECT.replace(
+    # The redirect at a statement's start (`;>a...`) is
+    # `_CMD_POS_REDIRECT_LEAD`'s since each redirect got one owner; splicing
+    # the nested run into `_CMD_POS_REDIRECT`, which the anchor no longer
+    # holds, left the row unreached (POSIX CI, #516)
+    nested = bp._CMD_POS_REDIRECT_LEAD.replace(
         r"[^\s;|&\"'()`$])*[ \t]+", r"[^\s;|&\"'()`$]+)*[ \t]+")
-    assert nested != bp._CMD_POS_REDIRECT, "the live fragment is not the single-character form"
-    anchor = bp._CMD_POS.replace(bp._CMD_POS_REDIRECT, nested)
+    assert nested != bp._CMD_POS_REDIRECT_LEAD, "the live fragment is not the single-character form"
+    assert bp._CMD_POS_REDIRECT_LEAD in bp._CMD_POS, "the anchor no longer holds the leading redirect's owner"
+    anchor = bp._CMD_POS.replace(bp._CMD_POS_REDIRECT_LEAD, nested)
     rx = re.compile(anchor + r"zzz\b")
     signal.signal(signal.SIGALRM, _alarm)
     signal.setitimer(signal.ITIMER_REAL, 0.5)  # wall-clock-exempt: must-trip witness, the alarm firing is the pass

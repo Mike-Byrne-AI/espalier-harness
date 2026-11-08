@@ -427,10 +427,20 @@ _CMD_POS_SLASHED_WRAPPER_WORD = (
 # is `_WRAP_STEP_ARG`: this arm's star holds an assignment run alone, so an
 # assignment is the one word it declines beside a wrapper word and a digit
 # (DEF-3043), and a redirect or a keyword stays readable as an argument.
+# Its digit-led word splits in two owners by that same word test: one holding
+# a slashed start keeps base's reading, which stops at a paren (DEF-3051's
+# generic reading, 90c7c3), and only the rest read a one-level substitution
+# (`_CMD_POS_WRAP_DIGIT_RUN`). Read through a substitution, the word
+# `2>$(a)/}/env` carried every later start in `"/env 2>$(a)/}" * n` to the
+# end (1.7 s at 30 KB, the separator-flood rows on POSIX CI).
+_CMD_POS_SLASHED_WRAP_DIGIT = (
+    r"(?!" + _CMD_POS_SLASHED_WRAPPER_WORD + r")\d" + _CMD_POS_WRAP_DIGIT_RUN
+    + r"|(?=" + _CMD_POS_SLASHED_WRAPPER_WORD + r")\d[^\s;|&()`]*"
+)
 _CMD_POS_SLASHED_WRAP_RUN = (
     "(?:" + _CMD_POS_WRAPPER_SPELLED
     + r"(?:[ \t]+(?:-[^\s;|&()`]+(?:[ \t]+(?!" + _CMD_POS_SLASHED_WRAPPER_WORD + r")" + _WRAP_STEP_ARG
-    + r")?|\d" + _CMD_POS_WRAP_DIGIT_RUN + r"))*[ \t]+)"
+    + r")?|" + _CMD_POS_SLASHED_WRAP_DIGIT + r"))*[ \t]+)"
 )
 # An assignment prefix, ended where bash ends the word: at the first UNQUOTED
 # blank (DEF-848's lane). The value is a run of pieces -- a plain character,
