@@ -2717,6 +2717,67 @@ _MKTEMP_BINDING_RE = re.compile(
 #: The literal a temp-located ``mktemp`` binding is read as
 #: (`bind_mktemp_scratch`): a name below the POSIX temp root.
 _MKTEMP_SCRATCH = "/tmp/.mktemp-scratch"
+#: A binding value that is wholly one variable the removal readers read, at
+#: the offset after the `=`: the home (`$HOME`, `${HOME}`) or a temp variable
+#: in `_TEMP_VAR_BASH_RE`'s spellings (`$TMPDIR`, `${TEMP}`, `${TMPDIR:-/tmp}`,
+#: `${TMPDIR%/}`), bare or double-quoted, the quotes balanced. Read for the
+#: walls only (`_followed_variable_value`). ReDoS: `"?` then `$`, a name run
+#: then a non-name lookahead or `{`, an operator word of a negated class then
+#: the `}` it excludes -- each adjacent pair exclusive.
+_BOUND_VARIABLE_VALUE_RE = re.compile(
+    r"(?P<q>\"?)\$(?:(?P<n>HOME|TEMP|TMP|TMPDIR)(?![A-Za-z0-9_])"
+    r"|\{(?P<b>HOME|TEMP|TMP|TMPDIR)(?P<op>:?[-=?][^}\"$`\\]*|%%?/)?\})(?P=q)"
+)
+
+
+def _followed_variable_value(
+    command: str, at: int, bindings: dict[str, str], seen: "set[str] | frozenset[str]" = frozenset(),
+) -> str | None:
+    """The value the walls bind for an assignment whose value starts at
+    ``at`` and is wholly one variable the removal readers read
+    (`_BOUND_VARIABLE_VALUE_RE`), or ``None``, which unbinds the name as
+    any computed value does.
+
+    ⚠ WHY. The walls' binding pre-pass bound a literal value alone, so
+    `D="$TMPDIR"; rm -rf "$D"` drew the nudge, one re-issue from taking the
+    per-user temp directory, where `rm -rf "$TMPDIR"` walled, and
+    `D="$HOME"` the same for the home. The name is bound to the variable's
+    braced reference, so the inlined reading is the one the readers already
+    judge (`_temp_var_target`, `_HOME_PREFIX_RE`): `${D}x` stays a sibling,
+    never another variable's name. A variable this command bound to a
+    literal earlier is followed to that literal, as the shell stores it; one
+    with an operator after such a binding unbinds. The value must END where
+    the match ends (`_bound_value`'s rule for the walls: `D=$TMPDIR/sub` or
+    `D="$TMPDIR"x` runs past it and stays unbound, DEF-1173's record), and a
+    single-quoted value is the literal text, which this never matches.
+
+    Three more refusals, each a binding that does not hold where the name
+    is read (the failure-mode review, measured): the assignment must end
+    its statement (a `;`, `&&`, `||`, a newline, a closing paren or the
+    end), so a prefix assignment (`D=$HOME rm -rf "$D"`, where bash expands
+    `$D` first) and a pipeline or background stage (`D=$TMPDIR | cat`, a
+    subshell) are not followed; and a variable this command assigned a
+    computed value earlier (``seen``, not in ``bindings``:
+    `export TMPDIR=$(mktemp -d); D="$TMPDIR"`) is that value, never the
+    inherited one, so the sweep readers, which do not take the per-text
+    reading `_TEMP_VARS_SET` gives the remove readers, never meet it."""
+    m = _BOUND_VARIABLE_VALUE_RE.match(command, at)
+    if m is None:
+        return None
+    end = m.end()
+    rest = command[end:].lstrip(" \t")
+    if rest and rest[0] not in ";\r\n)" and not rest.startswith(("&&", "||")):
+        return None
+    name, op = m.group("n") or m.group("b"), m.group("op")
+    if name == "HOME" and op is not None:
+        return None  # the home reader reads no operator spelling
+    if name in bindings:
+        return None if op is not None else bindings[name]
+    if name in seen:
+        return None  # assigned a computed value earlier in this command
+    if op is None:
+        return "${" + name + "}"
+    return command[m.start() + len(m.group("q")):end - len(m.group("q"))]
 
 
 def _mktemp_stays_in_temp(words: str) -> bool:
@@ -2819,7 +2880,9 @@ def _bound_value(lit: "re.Match[str]", command: str, wall: bool) -> str | None:
 
 #: Every `NAME=` at a statement start, literal value or not: the sites the
 #: sequential pre-pass walks. One that `_VAR_ASSIGN_RE` also matches binds;
-#: any other unbinds the name (its value is computed, so a later reference
+#: in the walls' reading so does one whose value is wholly a variable the
+#: removal readers read (`_followed_variable_value`); any other unbinds the
+#: name (its value is computed, so a later reference
 #: is unknown rather than stale -- a stale binding is the only way this
 #: pre-pass could REFUSE a write that lands elsewhere).
 _VAR_ANY_ASSIGN_RE = re.compile(_BINDING_START + _DECL_BUILTIN_PREFIX + _BINDING_NAME + "=")
@@ -5714,7 +5777,10 @@ def _expand_simple_var_assignments(command: str, *, wall: bool = False) -> str:
     the line won for every reference and that spelling allowed; the
     PowerShell twin `_expand_simple_ps_var_assignments` was written
     sequential and this one was brought level, DEF-801's lane). A later
-    assignment with a computed value unbinds the name. Anything fancier --
+    assignment with a computed value unbinds the name -- bar, in the walls'
+    mode, a value that is wholly a temp variable or the home, bound to that
+    variable's braced reference (`_followed_variable_value`, which also
+    names the bindings it declines). Anything fancier --
     `$(...)`, `${VAR:-default}`, arithmetic expansion, a second assignment in
     one statement -- is intentionally not handled. The expander is
     best-effort: ambiguous cases
@@ -5759,6 +5825,10 @@ def _expand_simple_var_assignments(command: str, *, wall: bool = False) -> str:
     events.sort(key=lambda event: (event[0], event[1]))
     out: list[str] = []
     bindings: dict[str, str] = {}
+    # every name a site assigned so far, literal or computed: a variable the
+    # command assigned is never followed to its inherited value
+    # (`_followed_variable_value`); not journaled, so a scope only adds names
+    seen: set[str] = set()
     journal: list[tuple[str, str | None]] = []
     marks: list[int] = []
     at = 0
@@ -5805,7 +5875,10 @@ def _expand_simple_var_assignments(command: str, *, wall: bool = False) -> str:
         else:
             out.append(command[site.start(1):site.end()])
             at = site.end()
-            bind(site.group(1), None)
+            # the walls follow a value that is wholly one read variable
+            bind(site.group(1),
+                 _followed_variable_value(command, site.end(), bindings, seen) if wall else None)
+        seen.add(site.group(1))
     try:
         piece, grown = _substitute_bash_refs(command[at:], bindings, grown)
     except _ExpansionTooLarge:
@@ -11780,6 +11853,10 @@ def powershell_removal_is_below_a_scratch_root(
     if not invocations:
         return False
     asked = 0
+    # A temp variable is read as the value this process inherits (DEF-2049)
+    # only where the command sets none: a value it sets is not that one, and
+    # this rung lifts a wall
+    inherited = not _ps_command_sets_a_temp_var(raw)
     for m in invocations:
         args = raw[m.start("args"):m.end("args")]
         tokens = _ps_removal_target_tokens(
@@ -11790,10 +11867,13 @@ def powershell_removal_is_below_a_scratch_root(
             if "," in tok:
                 return False
             path = _ps_unquote(tok).replace("\\", "/")
-            if not _is_scratch_literal(path):
+            read = (_temp_var_target(path, powershell=True) if inherited else None) or path
+            if not _is_scratch_literal(read):
                 return False
-            if _target_is_catastrophic(path, root):
+            if _target_is_catastrophic(read, root):
                 return False
+            # the quiet carve-out below asks the spelling as typed, so a
+            # variable keeps the one nudge it draws on the other readers
             if quiet:
                 asked += 1
                 if asked > TEMP_CARVE_MAX or not below_a_temp_root(path, root, bash=False):
@@ -12842,6 +12922,12 @@ def _cmd_target(token: str) -> str:
         lambda m: _CMD_FIXED_VARS.get((m.group(1) or "").lower())
         or "$" + (m.group(1) or m.group(2) or m.group(3)), t)
     t = t.replace("\\", "/")
+    # a temp variable alone is the directory it names (DEF-2049), read here
+    # so the Bash and PowerShell tools judge one text (cmd's names are not
+    # case-sensitive); a path below it stays a variable, as on both tools
+    temp = re.fullmatch(r"\$(TEMP|TMP|TMPDIR)/?", t, re.IGNORECASE)
+    if temp is not None:
+        t = _temp_var_target("$" + temp.group(1).upper(), powershell=False) or t
     head = "//" if t.startswith("//") else ""
     return head + re.sub(r"/{2,}", "/", t[len(head):])
 
@@ -13099,6 +13185,11 @@ def _ps_unforced_target_is_catastrophic(part: str, root: str | None, base: str |
         part = "." + part[pwd.end():]
     elif pwd and not part[pwd.end():].strip("/*"):
         return True                        # from nowhere: as a bare wildcard is
+    # a temp variable is the directory it names (DEF-2049), so its root
+    # walls as the literal root does; unset or relative, it stays a variable
+    temp = _temp_var_target(part, powershell=True)
+    if temp is not None:
+        part = temp
     if "$" in part:
         return False
     return _ps_sweep_root_is_catastrophic(part, root, base)
@@ -13180,7 +13271,16 @@ def powershell_recursive_removal_is_catastrophic(
         return False
     inlined = _expand_simple_ps_var_assignments(command)
     readings = (command,) if inlined == command else (command, inlined)
-    return any(_ps_unforced_lands_catastrophic(text, root, cwd) for text in readings)
+    # a temp variable this command sets is read as unread (DEF-2049): the
+    # speed bump defers on this same call with this same text; cmd's names
+    # (`set TEMP=...` in a `cmd /c` program) are bash's bare-name test
+    _TEMP_VARS_SET.append(
+        _TEMP_VARS_SET[-1] or _ps_command_sets_a_temp_var(command)
+        or _BASH_TEMP_VAR_NAME_RE.search(_PS_TEMP_VAR_READ_RE.sub("", command)) is not None)
+    try:
+        return any(_ps_unforced_lands_catastrophic(text, root, cwd) for text in readings)
+    finally:
+        _TEMP_VARS_SET.pop()
 
 
 def _ps_unforced_lands_catastrophic(
@@ -13556,6 +13656,102 @@ _HOME_PREFIX_RE = re.compile(r"^(?:~|\$\{HOME\}|\$HOME)(?=/|$)")
 #: in, which the caller's ``base`` already is -- the one variable besides the
 #: home whose value the guard knows without the shell.
 _PWD_PREFIX_RE = re.compile(r"^(?:\$\{PWD\}|\$PWD)(?=/|$)")
+#: A temp variable at the head of a removal target (DEF-2049): `$TEMP`,
+#: `$TMP` or `$TMPDIR`, braced or not, by bash's spelling (case-sensitive),
+#: and the environment drive's on the PowerShell tool (`$env:TEMP`,
+#: `${env:TEMP}`, any case; the lookup keeps the typed case, so on a POSIX
+#: host, whose environment is case-sensitive, `$env:temp` names nothing).
+#: Only to a separator or the end, so `$TMPDIRS` is another name. Bash's
+#: braced form also takes the expansions that still name the variable's
+#: value where it is set (`${TMPDIR:?}`, `${TMPDIR:-/tmp}`, `${TMPDIR=x}`, the
+#: ShellCheck-safe spellings) and the trailing-separator strip `${TMPDIR%/}`.
+_TEMP_VAR_BASH_RE = re.compile(
+    r"^\$(?:\{(?P<b>TEMP|TMP|TMPDIR)(?:(?P<op>:?[-=?])(?P<word>[^}]*)|%%?/)?\}"
+    r"|(?P<n>TEMP|TMP|TMPDIR)(?![A-Za-z0-9_]))")
+_TEMP_VAR_PS_RE = re.compile(
+    r"^\$(?:\{env:(?P<b>TEMP|TMP|TMPDIR)\}|env:(?P<n>TEMP|TMP|TMPDIR)(?![A-Za-z0-9_]))",
+    re.IGNORECASE)
+_ABSOLUTE_VALUE_RE = re.compile(r"^(?:[A-Za-z]:)?/")
+#: A PowerShell command that names a temp variable by anything but a read of
+#: its environment-drive spelling (`_PS_TEMP_VAR_READ_RE`, removed first):
+#: an assignment (`$env:TEMP = ...`, the compound operators too), the drive
+#: by path (`Set-Item env:TEMP`, `Env:\TEMP`), or the name as a string (a
+#: .NET call's `'TEMP'`). A path component named `tmp` or `Temp` is none.
+_PS_TEMP_VAR_READ_RE = re.compile(
+    r"\$(?:\{env:(?:TEMP|TMP|TMPDIR)\}|env:(?:TEMP|TMP|TMPDIR)(?![A-Za-z0-9_]))"
+    r"(?!\s*(?:[-+*/%]|\?\?)?=)", re.IGNORECASE)
+_PS_TEMP_VAR_NAME_RE = re.compile(
+    r"env:[\\/]?(?:TEMP|TMP|TMPDIR)(?![A-Za-z0-9_])|(['\"])(?:TEMP|TMP|TMPDIR)\1", re.IGNORECASE)
+#: A PowerShell command that runs code which can set the session's
+#: environment where the guard does not read it: a dot-sourced or invoked
+#: script (`. ./setup.ps1`, `& ./x.ps1`), or a module import.
+_PS_RUNS_UNREAD_CODE_RE = re.compile(
+    r"(?:^|[;{(|&\n]\s*)\.\s+\S|\.ps1\b|\b(?:Import-Module|ipmo)\b", re.IGNORECASE)
+#: A Bash text that names a temp variable by anything but an expansion: an
+#: assignment (`TMPDIR=...`, `export TMPDIR=...`), `read`, `unset`, a `for`
+#: variable -- every way bash sets one spells the bare name (cmd's `set TEMP=`
+#: too; its `%TEMP%` read is no setting).
+_BASH_TEMP_VAR_NAME_RE = re.compile(r"(?<![A-Za-z0-9_${%])(?:TEMP|TMP|TMPDIR)(?![A-Za-z0-9_])")
+#: Whether the text the classifier is judging sets a temp variable itself
+#: (DEF-2049), the top of a stack pushed by the two classifier entries the
+#: hard tier and the speed bump both call with the same text
+#: (`has_catastrophic_recursive_rm`, `powershell_recursive_removal_is_catastrophic`),
+#: so the two tiers read one answer for one text. Set, a temp variable stays
+#: unread: the value the command expands is not the one this process
+#: inherits (`export TMPDIR=$(mktemp -d)` then its cleanup).
+_TEMP_VARS_SET: list[bool] = [False]
+
+
+def _temp_var_target(part: str, *, powershell: bool) -> str | None:
+    """``part`` (separator-normalised, quotes removed) with a leading temp
+    variable (`_TEMP_VAR_BASH_RE`, `_TEMP_VAR_PS_RE`) read as the value this
+    process inherits, or None where none leads it or its value names no
+    absolute path (unset, empty, relative): then the variable stays unread,
+    as any other is.
+
+    ⚠ WHY (DEF-2049). The readers resolved no temp variable, so the root
+    spelled by one was not the root to the wall: `rm -rf "$TMPDIR"` drew the
+    nudge, one re-issue from taking a Mac's per-user temp directory, where
+    `rm -rf /var/folders/<x>/T` walled, and a forced PowerShell remove below
+    `$env:TEMP` walled as an unreadable target where the literal path below
+    the same root passed. The value read is the hook's, inherited from the
+    session that launched the shell; a text that sets the variable itself
+    expands its own value, so the two classifier entries leave it unread
+    there (`_TEMP_VARS_SET`), and the one reader that lifts a wall by it
+    (`powershell_removal_is_below_a_scratch_root`) asks
+    `_ps_command_sets_a_temp_var` first."""
+    m = (_TEMP_VAR_PS_RE if powershell else _TEMP_VAR_BASH_RE).match(part)
+    if m is None or _TEMP_VARS_SET[-1]:
+        return None
+    tail = part[m.end():]
+    if tail and not tail.startswith("/"):
+        return None
+    found = m.groupdict()
+    inherited = os.environ.get(found["b"] or found["n"])
+    op = found.get("op")
+    if op and (inherited is None or (op.startswith(":") and not inherited)):
+        # unset (or empty, with the colon): `?` stops the shell before the
+        # remove runs; `-` and `=` expand the word in its place
+        if op.endswith("?"):
+            return None
+        inherited = found["word"]
+    value = (inherited or "").replace("\\", "/")
+    if not _ABSOLUTE_VALUE_RE.match(value):
+        return None
+    out = value.rstrip("/") + tail
+    # the root of a drive or of the filesystem keeps its separator
+    if not out or (len(out) == 2 and out[1] == ":"):
+        out += "/"
+    return out
+
+
+def _ps_command_sets_a_temp_var(raw: str) -> bool:
+    """The PowerShell command names ``TEMP``, ``TMP`` or ``TMPDIR`` by
+    anything but a read of `$env:` (`_PS_TEMP_VAR_READ_RE`), or runs code
+    the guard does not read (`_PS_RUNS_UNREAD_CODE_RE`), so the value a
+    remove expands may not be the one this process inherits (DEF-2049)."""
+    return (_PS_TEMP_VAR_NAME_RE.search(_PS_TEMP_VAR_READ_RE.sub("", raw)) is not None
+            or _PS_RUNS_UNREAD_CODE_RE.search(raw) is not None)
 
 
 def _posix(path: str) -> str:
@@ -13693,6 +13889,12 @@ def _target_is_catastrophic(
     match = _HOME_PREFIX_RE.match(norm)
     expanded = (os.path.expanduser("~") + norm[match.end():]) if match else norm
     expanded = expanded.replace("\\", "/")
+    # A temp variable is the directory it names (DEF-2049), as `$HOME` is:
+    # the root spelled by it walls as the literal root does (rule a2 below).
+    # Unset or relative, it stays a variable, the soft tier's.
+    temp = None if match else _temp_var_target(expanded, powershell=False)
+    if temp is not None:
+        expanded = temp
     # `$PWD` is the directory the command runs in (DEF-843): until 2026-09-18
     # it was read as a relative name inside that directory, so the checkout
     # removed through `$PWD` from its root drew the nudge where its plain
@@ -13934,6 +14136,8 @@ def _brace_prefix_completes_a_site(prefix: str, root: str | None, base: str | No
     p = ((os.path.expanduser("~") + prefix[m.end():]) if m else prefix).replace("\\", "/")
     if _PWD_PREFIX_RE.match(p):
         return True
+    # a temp variable is read as `_target_is_catastrophic` reads it (DEF-2049)
+    p = (None if m else _temp_var_target(p, powershell=False)) or p
     if not (p.startswith("/") or _DRIVE_OR_UNC_ABSOLUTE_RE.match(p)):
         if base is None:
             return False
@@ -14527,10 +14731,16 @@ def has_catastrophic_recursive_rm(
     judged by the same rules (`has_catastrophic_cmd_remove`), so every
     consumer of this classifier -- the hard tier, the speed bump's deferral
     -- reads them with the rm forms."""
-    return (
-        _bash_sweep_walk(command, root, cwd, _rm_lands_catastrophic)
-        or has_catastrophic_cmd_remove(command, root, cwd)
-    )
+    # a temp variable this text sets is read as unread (DEF-2049): the speed
+    # bump defers on this same call with this same text, so both read it so
+    _TEMP_VARS_SET.append(_TEMP_VARS_SET[-1] or _BASH_TEMP_VAR_NAME_RE.search(command) is not None)
+    try:
+        return (
+            _bash_sweep_walk(command, root, cwd, _rm_lands_catastrophic)
+            or has_catastrophic_cmd_remove(command, root, cwd)
+        )
+    finally:
+        _TEMP_VARS_SET.pop()
 
 
 def _rm_lands_catastrophic(
@@ -15611,7 +15821,10 @@ def _ps_dotnet_paths(scan: str, raw: str | None = None) -> list[str]:
 # the double-quoted form) at a statement start, and the literal must END the
 # statement: `$p = 'a' + 'b'`, `$p = 'a'.Trim()`, a `-join`, a subexpression,
 # a bare word (a COMMAND in PowerShell) and a scope-qualified name
-# (`$script:p`, `$env:X`) are not bindings. Names are case-insensitive, as
+# (`$script:p`, `$env:X`) are not bindings -- bar a temp variable's
+# environment read (`$d = $env:TEMP`, bare or double-quoted), bound to that
+# read so every reader reads it as the variable in place
+# (`_ps_bound_env_read`). Names are case-insensitive, as
 # PowerShell's are. Every reference takes the most recent binding before it;
 # a later assignment with a computed value unbinds the name. A reference
 # before its binding, an unbound name, a here-string body and a `$(...)`
@@ -15635,9 +15848,42 @@ def _ps_dotnet_paths(scan: str, raw: str | None = None) -> list[str]:
 _PS_VAR_ASSIGN_RE = re.compile(
     r"(?:^|[;\r\n{]|&&|\|\|)[ \t]*"
     r"\$([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*"
-    r"('(?:[^']|'')*'|\"[^\"$`]*\")"
+    r"('(?:[^']|'')*'|\"[^\"$`]*\""
+    # a value that is wholly a temp or home variable's read, bare or
+    # double-quoted (`_ps_bound_env_read`), ending its statement with no
+    # pipe or `&` after it (`$d = $env:TEMP | Join-Path ...` binds the
+    # pipeline's output); the third arm's `$` after the quote is the class
+    # the second excludes
+    r"|(?i:\"" + r"\$(?:\{(?:HOME|env:(?:TEMP|TMP|TMPDIR|HOME|USERPROFILE|HOMEPATH))\}"
+    r"|(?:HOME|env:(?:TEMP|TMP|TMPDIR|HOME|USERPROFILE|HOMEPATH))(?![A-Za-z0-9_]))" + r"\""
+    r"|\$(?:\{(?:HOME|env:(?:TEMP|TMP|TMPDIR|HOME|USERPROFILE|HOMEPATH))\}"
+    r"|(?:HOME|env:(?:TEMP|TMP|TMPDIR|HOME|USERPROFILE|HOMEPATH))(?![A-Za-z0-9_])))"
+    r"(?=[ \t]*(?:$|[;\r\n#}])))"
     r"(?=[ \t]*(?:$|[;\r\n|&#}]))"
 )
+#: A bound value `_ps_bound_env_read` reads as a variable, quotes off.
+_PS_BOUND_READ_RE = re.compile(
+    r"\$(?:\{(?P<b>HOME|env:(?:TEMP|TMP|TMPDIR|HOME|USERPROFILE|HOMEPATH))\}"
+    r"|(?P<n>HOME|env:(?:TEMP|TMP|TMPDIR|HOME|USERPROFILE|HOMEPATH))(?![A-Za-z0-9_]))\Z",
+    re.IGNORECASE,
+)
+
+
+def _ps_bound_env_read(literal: str) -> str | None:
+    """The braced read (`${env:TEMP}`, `${HOME}`) a binding's value names
+    where it is wholly a temp or home variable's read (`_PS_VAR_ASSIGN_RE`'s
+    third and fourth arms, `_PS_BOUND_READ_RE`), else ``None``: a quoted
+    literal, bound as its text.
+    Braced, so `${d}x` stays a sibling and never another variable's name;
+    the typed case is kept, as `_temp_var_target`'s lookup keeps it. The
+    reference is the variable, so every reader reads it as it reads the
+    variable spelled in place: `$d = $env:TEMP; Remove-Item -Recurse $d`
+    walls as `Remove-Item -Recurse $env:TEMP` does, and a forced remove of
+    a literal tail below it is below the root (603f72's class)."""
+    m = _PS_BOUND_READ_RE.match(literal[1:-1] if literal.startswith('"') else literal)
+    if m is None:
+        return None
+    return "${" + (m.group("b") or m.group("n")) + "}"
 #: A `$name` / `${name}` reference; the lookahead refuses a scope qualifier.
 _PS_VAR_REF_RE = re.compile(
     r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))(?![A-Za-z0-9_:])"
@@ -15719,7 +15965,10 @@ def _ps_interpolate_refs(body: str, bindings: dict[str, tuple[str, str]]) -> str
             if r is not None:
                 bound = bindings.get((r.group(1) or r.group(2)).lower())
                 if bound is not None:
-                    out.append(_ps_escape_expandable(bound[1]))
+                    # an environment read (`_ps_bound_env_read`) is
+                    # interpolated as the read, never escaped into text
+                    out.append(bound[0] if bound[0].startswith("$")
+                               else _ps_escape_expandable(bound[1]))
                     i = r.end()
                     continue
         out.append(c)
@@ -15792,7 +16041,9 @@ def _ps_walk_and_expand(s: str, sites: "dict[int, re.Match[str]]") -> str:
             if m is not None:
                 out.append(s[i:m.end()])
                 literal = m.group(2)
-                bindings[m.group(1).lower()] = (literal, _ps_literal_value(literal))
+                read = _ps_bound_env_read(literal)
+                bindings[m.group(1).lower()] = (
+                    (literal, _ps_literal_value(literal)) if read is None else (read, read))
                 i = m.end()
                 continue
             r = _PS_VAR_REF_RE.match(s, i)

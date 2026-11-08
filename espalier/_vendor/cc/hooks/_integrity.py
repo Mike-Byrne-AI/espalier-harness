@@ -43,6 +43,9 @@ from _json_safe import decode_bom, load_json_dict_safe, os_error_text  # noqa: E
 # hand-patched copy an upgrade kept) leaves the append unlocked, as it was,
 # rather than raising from a writer that promises never to.
 _STATE_WRITE_LOCK = getattr(_hook_utils, "STATE_WRITE_LOCK", None) or contextlib.nullcontext()
+# The torn-line heal (DEF-3048), guarded the same way: without it a record a
+# killed writer cut off swallows the next one, as it did before.
+_own_line = getattr(_hook_utils, "own_line", None) or (lambda path, line: line)
 
 # Files covered by the committed integrity manifest. Kept in parity with
 # espalier.surface_contract.get_protected_integrity_paths() but hard-coded
@@ -1742,12 +1745,12 @@ def append_audit(repo_root: Path, event: dict, *, quiet: bool = False) -> bool:
                 _hook_utils.lock_file(fh)
             except OSError:  # fail-open: ok deliberate -- a filesystem that cannot lock: the unlocked append still lands, as the sibling appends do
                 with _STATE_WRITE_LOCK:
-                    fh.write(line)
+                    fh.write(_own_line(log_path, line))
                     fh.flush()
             else:
                 try:
                     with _STATE_WRITE_LOCK:
-                        fh.write(line)
+                        fh.write(_own_line(log_path, line))
                         fh.flush()
                 finally:
                     try:
@@ -1805,7 +1808,10 @@ DENIAL_EVENT_TYPES = frozenset({
     "pretooluse_blocked_secret_path",
     "pretooluse_blocked_internal_error",
     # write_guard's judgment outran its time budget and the call was refused
-    # (DEF-1160); ``details.tool`` names the tool, never the command.
+    # (DEF-1160); ``details.tool`` names the tool, never the command. The
+    # parent's refusal at the hard deadline (DEF-3048) never parsed the call,
+    # so its record carries ``details.bound`` ("child") and ``details.bytes``
+    # (the payload's length) in place of the tool.
     "pretooluse_blocked_time_budget",
     "configchange_blocked_kill_switch",
     # A project settings change that unwires a governance gate the

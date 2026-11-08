@@ -968,7 +968,7 @@ class TestCpRmrfTempRoots:
                 "rm -rf {s}/x/../y",                             # a parent step
                 "cd {s}/sp && rm -rf ../x",
                 'rm -rf "$ESPALIER_UNSET_DIR/x"',                # an unbound variable
-                'rm -rf "$TMPDIR/x"',                             # the shell's value, not the hook's
+                'rm -rf "$TMPDIR/x"',                             # the quiet carve-out reads the spelling as typed
                 'T=$(mktemp -d -p {r}) && rm -rf "$T"',           # made elsewhere
                 'T=$(mktemp -d espalier.XXXXXX) && rm -rf "$T"',  # made in the cwd
                 'T=$(mktemp -d) && rm -rf "$T/.."',
@@ -3070,6 +3070,31 @@ class TestCommandPositionClassClose:
         "_bash_patterns._PS_PWD_PREFIX_RE":
             "TARGET -- the PowerShell twin of `_PWD_PREFIX_RE` on an "
             "already-extracted unforced-remove operand (DEF-843, parity).",
+        "_bash_patterns._TEMP_VAR_BASH_RE":
+            "TARGET -- reads a leading `$TEMP`/`$TMP`/`$TMPDIR` as its value on "
+            "an already-extracted operand (DEF-2049).",
+        "_bash_patterns._TEMP_VAR_PS_RE":
+            "TARGET -- the PowerShell twin of `_TEMP_VAR_BASH_RE` (`$env:TEMP`) "
+            "on an already-extracted remove operand (DEF-2049).",
+        "_bash_patterns._ABSOLUTE_VALUE_RE":
+            "VALUE -- `match`ed on one environment variable's value to decide "
+            "whether it names an absolute path; never a command (DEF-2049).",
+        "_bash_patterns._PS_TEMP_VAR_READ_RE":
+            "VARIABLE READ -- removes the `$env:` reads of a temp variable from "
+            "the forced rung's raw text so `_PS_TEMP_VAR_NAME_RE` sees what is "
+            "left; decides no command position (DEF-2049).",
+        "_bash_patterns._PS_RUNS_UNREAD_CODE_RE":
+            "SCRIPT RUN -- finds a dot-sourced or invoked script or a module "
+            "import in the forced rung's raw text, so a temp variable it may set "
+            "stays unread; decides no command position (DEF-2049).",
+        "_bash_patterns._BASH_TEMP_VAR_NAME_RE":
+            "VARIABLE NAME -- the bare name of a temp variable (how bash and cmd "
+            "set one) in a text the classifier entries judge, so the variable "
+            "stays unread there; decides no command position (DEF-2049).",
+        "_bash_patterns._PS_TEMP_VAR_NAME_RE":
+            "VARIABLE NAME -- finds a temp variable named by anything but a read "
+            "(an assignment, the env drive by path, a quoted name) in text the "
+            "anchored `_PS_REMOVE_ITEM_RE` reader already selected (DEF-2049).",
         "_bash_patterns._DRIVE_ABSOLUTE_RE":
             "TARGET -- the drive half of `_DRIVE_OR_UNC_ABSOLUTE_RE` below, "
             "`match`ed in `_posix` on ONE already-extracted path to decide "
@@ -3305,6 +3330,15 @@ class TestCommandPositionClassClose:
             "TOKENIZER -- a `$NAME` / `${NAME}` reference the Bash pre-pass "
             "replaces with its bound literal, the name read greedily; it selects "
             "no command.",
+        "_bash_patterns._BOUND_VARIABLE_VALUE_RE":
+            "TOKENIZER -- a binding's value that is wholly one variable the removal "
+            "readers read (the home, a temp variable), matched at the offset after "
+            "the `=` of a site the anchored `_VAR_ANY_ASSIGN_RE` found, for the walls' "
+            "reading only; it selects no command (603f72's class).",
+        "_bash_patterns._PS_BOUND_READ_RE":
+            "TOKENIZER -- the temp or home variable read a PowerShell binding's value "
+            "is wholly (quotes off), so the pre-pass binds the name to that read; it "
+            "selects no command (603f72's class).",
         "_bash_patterns._BINDING_SCOPE_CHAR_RE":
             "SYNTAX -- a paren that opens or closes a child scope (a subshell, a "
             "command substitution), read on the masked text, where a binding "
@@ -3315,7 +3349,8 @@ class TestCommandPositionClassClose:
             "shell); the program itself is judged by the anchored arms.",
         "_bash_patterns._PS_VAR_ASSIGN_RE":
             "SELF-ANCHORED -- inline `(?:^|[;\\r\\n{]|&&|\\|\\|)`: the PowerShell twin "
-            "of `_VAR_ASSIGN_RE`, and the literal must END the statement.",
+            "of `_VAR_ASSIGN_RE`, and the literal (or a temp or home variable's "
+            "read, `_ps_bound_env_read`) must END the statement.",
         "_bash_patterns._PS_VAR_REF_RE":
             "SYNTAX TOKEN: a `$name` / `${name}` reference the pre-pass replaces "
             "at the offset its walk reached; it selects no command.",

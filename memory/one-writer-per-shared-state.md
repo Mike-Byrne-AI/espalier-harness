@@ -75,7 +75,7 @@ The same class, four ways in one month, every one green until it was not:
    guard under test. The differential's `_child_env` is the pattern: the
    isolation is in the environment every spawn receives, not in a docstring.
 3. **Serialise only what cannot be isolated**, and write down why: the
-   three wall-clock-budget test files run serially after the parallel leg
+   four wall-clock-budget test files run serially after the parallel leg
    because timing under contention is the thing they measure.
 
    A second case, measured 2026-09-26: `tests/test_wheel_payload.py`'s
