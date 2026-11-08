@@ -271,13 +271,16 @@ refresh (raised with the dispatcher 2026-10-10).
 A timed-out espalier `command` guard therefore **fails open** on `PreToolUse`:
 the call goes ahead, and the most the operator sees is a non-blocking
 `hook error` notice (the 2026-10-10 page counts a timeout among a hook's
-failures; the 2026-09-28 page promised no notice at all). `write_guard` keeps its own time budget,
-3.5 s from the hook's start and below its wired 5 s `timeout`, and denies
-(its usual deny decision, the reason asking for the command to be split) a
-call whose judgment is still running when the budget runs out, so its
-judgment never reaches the timeout. `plan_guard` and `config_guard` keep no budget:
-their judgments read one path or one settings file. No in-repo test pins a hook's wall-clock
-cost against the configured `timeout`.
+failures; the 2026-09-28 page promised no notice at all). `write_guard` judges in a child
+process under a time budget of 3.5 s and denies (its usual deny decision, the
+reason asking for the command to be split) a call whose judgment is still
+running when the budget runs out; since a judgment can sit in one long call
+that budget cannot interrupt, the hook process itself kills the child's tree
+at 4.0 s from its start, writes the same deny and is gone by 4.6 s, under its
+wired 5 s `timeout` (`docs/HOOKS.md`, "The time budget").
+`plan_guard` and `config_guard` keep no budget: their judgments read one path
+or one settings file. `write_guard`'s answer is the one the harness's own
+tests pin against the configured `timeout`.
 
 ## The XOR rule (now ADVICE, not a protocol constraint)
 

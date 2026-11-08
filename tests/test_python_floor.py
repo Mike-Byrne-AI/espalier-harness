@@ -2988,10 +2988,23 @@ def _top_level_import_strays(source: str) -> list[str]:
 
 
 def _statement_imports(node: ast.AST) -> set[str]:
-    """Every module a statement imports, anywhere inside it."""
-    return {alias.name for sub in ast.walk(node) if isinstance(sub, ast.Import)
-            for alias in sub.names} | {
-        sub.module or "" for sub in ast.walk(node) if isinstance(sub, ast.ImportFrom)}
+    """Every module a statement imports when it runs: anywhere inside it but a
+    function's body, whose imports run when it is called, not when it is
+    defined (write_guard defines its judging-child parent above the floor
+    call and calls it after the floor speaks, DEF-3048). A module-level call
+    of such a function is not followed."""
+    names: set[str] = set()
+    pending = [node]
+    while pending:
+        sub = pending.pop()
+        if isinstance(sub, ast.Import):
+            names.update(alias.name for alias in sub.names)
+        elif isinstance(sub, ast.ImportFrom):
+            names.add(sub.module or "")
+        elif isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            continue
+        pending.extend(ast.iter_child_nodes(sub))
+    return names
 
 
 #: Every module a hook can import from its own folder or the tools folder
@@ -3185,6 +3198,13 @@ class TestTheFloorVoiceStaysReachable:
         assert _floor_call_order(source.replace(call, "import ship\n" + call, 1), hook, event) is not None
         nested = call.replace("    _start_refusal", "    if not os.environ.get('X'):\n        _start_refusal")
         assert _floor_call_order(source.replace(call, nested, 1), hook, event) is not None
+        # A sibling imported inside a function defined above the call runs at
+        # the call, not at the definition, so it reads clean; the same import
+        # at module level reds (above, `import ship`).
+        deferred = "def _probe():\n    import _hook_utils\n    import ship\n\n\n" + call
+        assert _floor_call_order(source.replace(call, deferred, 1), hook, event) is None
+        hoisted = "class _Probe:\n    import _hook_utils\n\n\n" + call
+        assert _floor_call_order(source.replace(call, hoisted, 1), hook, event) is not None
 
     def test_the_banner_says_the_floor_before_any_sibling(self):
         """The reporter's half (the ruling on request 881ed0): below the floor

@@ -50,8 +50,13 @@ SPAWN_FLOOR = 27
 TIMED_FLOOR = 50
 SPAWN_ATTRS = frozenset({"run", "Popen", "call", "check_output", "check_call"})
 PRAGMA = "# spawn: ok"
-#: Where a raw timed spawn may stand: the bounded spawn and its tree kill...
-BOUNDED_HOME = ("_json_safe.py", frozenset({"run_bounded", "_end_tree"}))
+#: Where a raw timed spawn may stand: the bounded spawn and its tree kill, and
+#: the tree-bounded spawn a parent answers by a fixed time through (DEF-3048:
+#: write_guard's judgment child, killed with its whole tree at the deadline)...
+BOUNDED_HOME = ("_json_safe.py", frozenset({"run_bounded", "_end_tree", "run_tree_to_deadline"}))
+#: The bounded spawns a call site names; a hook's call to either is a spawn the
+#: census counts, declared like any other.
+BOUNDED_NAMES = ("run_bounded", "run_tree_to_deadline")
 #: ...a ``run_bounded`` a module defines in its ``except ImportError`` handler,
 #: the fallback for a load where ``_json_safe`` is not importable (a def of
 #: that name anywhere else is no exemption)...
@@ -145,7 +150,7 @@ def spawn_sites(root: Path = HOOKS_DIR, pattern: str = "*.py") -> list[dict]:
             ) or (isinstance(fn, ast.Name) and fn.id in bare_spawns) or communicates
             routed = _named(fn, "spawn_checked")
             no_stdin = _named(fn, "run_no_stdin")
-            bounded = _named(fn, "run_bounded") or no_stdin
+            bounded = any(_named(fn, name) for name in BOUNDED_NAMES) or no_stdin
             if not (raw or routed or bounded):
                 continue
             declared = any(PRAGMA in lines[i] for i in (node.lineno - 1, node.lineno - 2) if 0 <= i < len(lines))

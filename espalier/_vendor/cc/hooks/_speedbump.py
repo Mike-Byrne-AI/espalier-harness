@@ -78,6 +78,9 @@ STATE_WRITE_LOCK = getattr(_hook_utils, "STATE_WRITE_LOCK", None) or contextlib.
 spawn_timeout: Callable[[float], float] = (
     getattr(_hook_utils, "spawn_timeout", None) or (lambda default: default)
 )
+# The torn-line heal (DEF-3048), with the same degrade: without it the snapshot
+# line lands after a torn one, as it did before.
+own_line: Callable[[Path, str], str] = getattr(_hook_utils, "own_line", None) or (lambda path, line: line)
 # The bounded spawn, read the same way: a kept helper that predates it leaves
 # the checkpoints' git reads on subprocess.run, unbounded on Windows as before.
 run_bounded: Callable[..., Any] = getattr(_hook_utils, "run_bounded", None) or subprocess.run
@@ -2915,8 +2918,10 @@ def snapshot_discard(
         # The line goes out whole under the state-write lock: write_guard's
         # budget refusal takes it before it ends the process, and a line cut
         # off here is the one the reminder tells the operator to recover from.
+        # A kill from outside can still cut one off, so the line starts its own
+        # (own_line): the log's last line stays the newest snapshot, whole.
         with STATE_WRITE_LOCK, log.open("a", encoding="utf-8") as fh:
-            fh.write(f"{stamp}\t{sha}\t{' '.join(cmd.split())}\n")
+            fh.write(own_line(log, f"{stamp}\t{sha}\t{' '.join(cmd.split())}\n"))
         _record_snapshot(tool_name, tool_input, root, sha)
         return sha
     except (OSError, subprocess.SubprocessError, ValueError) as exc:  # strict decode: a structured answer (DEF-821)

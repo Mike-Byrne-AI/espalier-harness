@@ -197,7 +197,16 @@ documented* below. The classification is the durable part.
         --ignore=tests/test_redos.py \
         --ignore=tests/test_speedbump_irreversible.py \
         --ignore=tests/test_hooks.py \
+        --ignore=tests/test_write_guard_time_budget.py \
+        --ignore=tests/test_guard_metamorphic.py \
+        --ignore=tests/test_powershell_reachability_differential.py \
+        --ignore=tests/test_declared_limits_contract.py \
+        --ignore=tests/test_axis_registry.py \
+        --ignore=tests/test_verify_pins.py \
         --ignore=tests/test_documented_claims.py
+
+(the serial files are `scripts/proof_tier.py::SERIAL_FILES`, its one home;
+`python scripts/proof_tier.py` prints the lines the tier runs.)
 
 `-n auto` uses one worker per CPU (`os.cpu_count()` when psutil is absent, so 8
 on the self-host Air). `PYTEST_XDIST_AUTO_NUM_WORKERS=<n>` in the environment
@@ -251,7 +260,7 @@ parallel command `pytest -n auto -m "not slow"`. Verdicts are grounded against
 | live `bench/RESULTS.md` | only `test_update_canonical_refuses_write_on_regression` invokes `--update-canonical`, and it asserts the file is *untouched* on a regression | **Safe for the fast slice** — that test is now `slow` (TP-223 A), so `-m "not slow"` never collects it; no fast-slice test mutates the live file (`test_fuse` writes only to a `tmp_path/out` tree) |
 | cwd | `test_execution_plan_cli.py` uses `monkeypatch.chdir(tmp_path)` (auto-restore); `test_init_upgrade_paths.py` uses `os.chdir` with explicit restore to `orig_cwd`, both into tmp dirs | **Safe** — xdist workers are separate processes (cwd is per-worker), and every chdir restores |
 | `legacy_pathlib_probes()` (`tests/_legacy_pathlib.py`) | swaps four probe bodies onto `pathlib.Path` for the duration of a `with` block, restoring in `finally` | **Safe** — xdist workers are separate processes, so the patch cannot reach a sibling test. **NOT thread-safe**: these are process-globals, so a thread-parallel runner (`pytest-run-parallel`, not xdist) would race. Also note the patch is live for anything executing inside the block, so keep the block tight around the call under test |
-| wall-clock perf budgets (`test_redos.py`, `test_speedbump_irreversible.py`, `test_hooks.py`; `test_documented_claims.py` is `--ignore`d too but **verified 2026-08-24 to hold no elapsed assertion any more** — its carve-out is now unexamined rather than justified, and is kept only because nobody has measured what removing it costs) | `signal.setitimer` + `elapsed_ms < <ceiling>` measure **wall** time, not CPU time; every ceiling is a named constant at ten times a dated floor (`DEF-922`, the rule above) | **False-fails under `-n auto`** — CPU oversubscription inflates wall-time past the budget (observed: a 5 ms-CPU regex hit 100.6 ms wall). Pass serially. Must be `--ignore`d from the parallel command or run serially; correctness is unaffected (no shared state) |
+| wall-clock perf budgets (`test_redos.py`, `test_speedbump_irreversible.py`, `test_hooks.py`, `test_write_guard_time_budget.py`; `test_documented_claims.py` is `--ignore`d too but **verified 2026-08-24 to hold no elapsed assertion any more** — its carve-out is now unexamined rather than justified, and is kept only because nobody has measured what removing it costs) | `signal.setitimer` + `elapsed_ms < <ceiling>` measure **wall** time, not CPU time; every ceiling is a named constant at ten times a dated floor (`DEF-922`, the rule above) | **False-fails under `-n auto`** — CPU oversubscription inflates wall-time past the budget (observed: a 5 ms-CPU regex hit 100.6 ms wall). Pass serially. Must be `--ignore`d from the parallel command or run serially; correctness is unaffected (no shared state) |
 
 **Go/no-go for the CI flip (decided: the flip happened on 2026-09-25, PR #4; this block is the record of how it was cleared and of every race since):**
 - **`-n auto -m "not slow"` (fast slice): GO with one carve-out** — no live-file mutation and per-test/per-worker isolation throughout (3120 passed under `-n auto`). The three wall-clock-budget perf files must be `--ignore`d or run serially; they false-fail on scheduler wait, not on a real regression. (`test_documented_claims.py` is `--ignore`d alongside them but no longer holds an elapsed assertion — see the table row.)

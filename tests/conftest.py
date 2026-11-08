@@ -167,6 +167,7 @@ _COLLECTOR_PAUSED_FILES: tuple[str, ...] = (
     "tests/test_redos.py",
     "tests/test_speedbump_irreversible.py",
     "tests/test_hooks.py",
+    "tests/test_write_guard_time_budget.py",
 )
 _COLLECTOR_PAUSED_PATHS = frozenset(
     (Path(__file__).resolve().parent.parent / rel).resolve() for rel in _COLLECTOR_PAUSED_FILES
