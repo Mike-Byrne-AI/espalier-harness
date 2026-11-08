@@ -204,7 +204,7 @@ def _walk_surface_findings(repo_root: Path, findings: list[dict[str, str]]) -> N
             findings.append({"level": "error", "check": "generated_docs", "detail": f"missing generated doc promised by build plan: {rel_path}"})
 
     dot_claude = repo_root / ".claude"
-    if dot_claude.exists() and tomllib is not None:
+    if dot_claude.exists():
         for path in visible(safe_rglob(dot_claude, "*.toml"), dot_claude):
             if not _is_managed(path):
                 continue

@@ -675,7 +675,6 @@ def _repo_slug() -> str:
     repository moves the absolute-link arm with it instead of stranding it."""
     from espalier._compat import tomllib
 
-    assert tomllib is not None, "neither tomllib nor tomli; cannot read pyproject"
     data = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     url = data["project"]["urls"]["Repository"]
     prefix = "https://github.com/"

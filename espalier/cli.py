@@ -3024,27 +3024,24 @@ _PROBE_PY = "python"
 #: No ``"``, ``$``, backtick, ``!`` or newline in a code: the checker
 #: ``shlex``-splits the stored command, and a person re-verifying a row pastes
 #: it into a shell (``TestOnboardingProbesDoNotWalk`` pins both). The fragments
-#: below own the names ``r``, ``f``, ``P``, ``k``, ``w`` and ``h``.
+#: below own the names ``r``, ``f`` and ``k``, and import ``tomllib``.
 _PROBE_TEXT_READ = (
     "r=lambda p:(lambda a:a if a==p.read_text(encoding='utf-8',errors='ignore') else None)"
     "(p.read_text(encoding='utf-8',errors='replace')) if p.is_file() else None;"
 )
-#: ``espalier.toml`` as the harness reads it. ``P``: the parser the hooks bind
-#: (``_hook_utils._toml_parser``: ``tomllib``, else ``tomli``), and ``k`` the
-#: file parsed with it from its bytes, ``{}`` for a file that does not decode or
-#: parse -- a byte-order mark, a cp1252 byte, a syntax error -- since
-#: ``config.load_config`` and ``_hook_utils.read_toml_table`` then read no key
-#: at all. Where the probe's interpreter has neither parser, ``h`` is what the
-#: hooks' own no-parser arm (``_hook_utils._regex_extract_string_list``) reads:
-#: the file decoded with replacement, full-line comments dropped, cut at the
-#: first ``[table]`` (TOML files every key below a header INTO that table).
+#: ``espalier.toml`` as the harness reads it: ``k`` is the file parsed with the
+#: stdlib ``tomllib`` (the parser ``_hook_utils._toml_parser`` binds) from its
+#: bytes, ``{}`` for a file that does not decode or parse -- a byte-order mark,
+#: a cp1252 byte, a syntax error -- since ``config.load_config`` and
+#: ``_hook_utils.read_toml_table`` then read no key at all. A probe runs under
+#: the interpreter of the checker that drives it
+#: (``check_ledger_probes._under_this_interpreter``), at the floor 3.11 or newer,
+#: where ``tomllib`` is always present; below it the import raises, and a probe
+#: that prints nothing and exits non-zero reads UNRESOLVED, never a verdict.
 _PROBE_CONFIG = (
-    "import importlib.util;f=pathlib.Path('espalier.toml');"
-    "P=next((m for m in ('tomllib','tomli') if importlib.util.find_spec(m)),None);k={};"
-    "exec(chr(10).join(['try:',' k=__import__(P).loads(f.read_bytes().decode())',"
-    "'except (OSError,ValueError,TypeError):',' k={}'])) if P and f.is_file() else None;"
-    "w=f.read_text(encoding='utf-8',errors='replace') if f.is_file() else '';"
-    "h=re.split(r'(?m)^[ \\t]*\\[',re.sub(r'(?m)^\\s*#.*','',w),maxsplit=1)[0];"
+    "import tomllib;f=pathlib.Path('espalier.toml');k={};"
+    "exec(chr(10).join(['try:',' k=tomllib.loads(f.read_bytes().decode())',"
+    "'except (OSError,ValueError,TypeError):',' k={}'])) if f.is_file() else None;"
 )
 _ONBOARDING_ROWS: tuple[dict[str, str], ...] = (
     {
@@ -3068,8 +3065,7 @@ _ONBOARDING_ROWS: tuple[dict[str, str], ...] = (
         # placeholder, `(not set -- `, under `## Where we are / next gate`,
         # which only `/handoff` fills (DEF-1032, DEF-1033).
         "code": ("import codecs,pathlib,re;" + _PROBE_CONFIG +
-                 "off=(k.get('goal_snapshot') is False) if P else "
-                 "re.search(r'(?m)^[ \\t]*goal_snapshot[ \\t]*=[ \\t]*false',h) is not None;"
+                 "off=k.get('goal_snapshot') is False;"
                  "g=pathlib.Path('cc/GOAL.md');b=g.read_bytes() if g.is_file() else None;"
                  "e='utf-32' if (b or b'')[:4] in (codecs.BOM_UTF32_LE,codecs.BOM_UTF32_BE) else "
                  "'utf-16' if (b or b'')[:2] in (codecs.BOM_UTF16_LE,codecs.BOM_UTF16_BE) else 'utf-8-sig';"
@@ -3136,9 +3132,8 @@ _ONBOARDING_ROWS: tuple[dict[str, str], ...] = (
                  "keep the gate everywhere."),
         # Open until the key holds a list, as the plan gate reads it
         # (`_hook_utils.read_toml_string_list`, then `isinstance(raw, list)`).
-        "code": ("import pathlib,re;" + _PROBE_CONFIG +
-                 "print((not isinstance(k.get('plan_exempt_prefixes'),list)) if P else "
-                 "re.search(r'(?m)^[ \\t]*plan_exempt_prefixes[ \\t]*=[ \\t]*\\[(.*?)\\]',h,re.S) is None)"),
+        "code": ("import pathlib;" + _PROBE_CONFIG +
+                 "print(not isinstance(k.get('plan_exempt_prefixes'),list))"),
         "open": "True",
     },
     {

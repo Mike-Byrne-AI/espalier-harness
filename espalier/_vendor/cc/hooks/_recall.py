@@ -544,8 +544,8 @@ def _is_pull_excluded(source: str, exclude: "Iterable[str]") -> bool:
 
 
 #: The two flat espalier.toml keys an adopter declares recall sources with, and
-#: the family each yields under. Flat string lists on purpose: both reader arms
-#: of _hook_utils.read_toml_string_list read them (the regex arm reads no table).
+#: the family each yields under. Flat string lists, the shape
+#: _hook_utils.read_toml_string_list reads.
 RECALL_SOURCE_KEYS: tuple[tuple[str, str], ...] = (
     ("recall_sources", "declared documents"),
     ("recall_records", "declared records"),

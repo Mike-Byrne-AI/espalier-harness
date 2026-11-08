@@ -68,13 +68,11 @@ SH = "sh"
 # bypasses the redirector the same way on Windows in a venv (bpo-35797:
 # ``popen_spawn_win32.py`` launches ``sys._base_executable``). Equal to
 # ``sys.executable`` everywhere else: a POSIX venv runs the interpreter through a
-# symlink with no process between, and on 3.10 its ``_base_executable`` is the
-# venv path itself (alternate-name resolution landed in 3.11, bpo-46028); a
-# ``--copies`` POSIX venv records an empty string (gh-96861) and an embedded or
-# frozen interpreter none, hence the fallback. What the base interpreter cannot
-# see is the venv's site-packages: the hooks are stdlib-only except the ``tomli``
-# fallback ``_hook_utils._toml_parser`` takes below 3.11, so a 3.10 venv's hook
-# run under it reads ``espalier.toml`` through the regex arm. The pin in
+# symlink with no process between (alternate-name resolution of
+# ``_base_executable`` landed in 3.11, bpo-46028); a ``--copies`` POSIX venv
+# records an empty string (gh-96861) and an embedded or frozen interpreter none,
+# hence the fallback. What the base interpreter cannot see is the venv's
+# site-packages, which the hooks never read: they are stdlib-only. The pin in
 # ``tests/test_test_suite_contract.py`` keeps every module that asserts on a
 # parent pid on this constant.
 HOOK_PYTHON = getattr(sys, "_base_executable", None) or sys.executable

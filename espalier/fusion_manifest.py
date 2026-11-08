@@ -60,9 +60,8 @@ HARNESS_INCLUDE: tuple[str, ...] = (
     "scripts/exception_policy_allowlist.json",
     "scripts/check_memory_md_tag_parity.py",
     # NOTE: pyproject.toml / .gitattributes are deliberately NOT overlaid — the
-    # host owns those (a Python host has its own pyproject). The engine needs
-    # `tomli` only on Python <3.11 (_compat.py falls back to stdlib tomllib on
-    # 3.11+); the handoff notes the one `pip install tomli` line for <3.11 hosts.
+    # host owns those (a Python host has its own pyproject). The engine reads
+    # TOML with the stdlib `tomllib` (3.11+, the floor), so it adds no dependency.
     # Reusable engineering-knowledge docs (cross-project, low espalier coupling):
     "docs/FAILURE_MODES.md",        # the crown jewel — named bug-class catalog + disciplines
     "docs/MEMORY_SYSTEMS.md",       # memory-systems model + sorting rule; producer for memory/README.md's cross-ref

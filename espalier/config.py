@@ -110,11 +110,9 @@ def _expected_types(default: Any, annotation: Any) -> tuple[type, ...] | None:
 
 def config_sets_key(repo_root: Path, key: str) -> bool:
     """Does ``<repo_root>/espalier.toml`` set the top-level ``key``, whatever its
-    value? False when the file is absent, unreadable, malformed or no TOML parser
-    imports: a caller that announces a default errs toward announcing it."""
+    value? False when the file is absent, unreadable or malformed: a caller that
+    announces a default errs toward announcing it."""
     candidate = repo_root / CONFIG_NAME
-    if tomllib is None:
-        return False
     try:
         data = tomllib.loads(candidate.read_text(encoding="utf-8-sig"))
     except (ValueError, OSError):
@@ -169,14 +167,6 @@ def load_config(repo_root: Path, config_path: Path | None = None) -> HarnessConf
                 f"--config path {candidate} not found; using default configuration.",
                 stacklevel=2,
             )
-        return HarnessConfig()
-    if tomllib is None:
-        warnings.warn(
-            f"Found {candidate.name} but no TOML parser available. "
-            "Install tomli (`pip install tomli`) for Python < 3.11. "
-            "Using default configuration.",
-            stacklevel=2,
-        )
         return HarnessConfig()
     try:
         text = candidate.read_text(encoding="utf-8")

@@ -17,13 +17,9 @@ silent at CI time.
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # pragma: no cover -- 3.10 fallback (espalier supports >=3.10)
-    import tomli as tomllib  # type: ignore[no-redef]
+import tomllib
 
 from espalier.ruff_config_contract import ALLOWED_PER_FILE_IGNORES
 

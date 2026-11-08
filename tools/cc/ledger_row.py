@@ -351,9 +351,9 @@ def _claims_in_the_way(root: Path, ids: list[str], section: str | None, *,
 # pull request (DEF-1197 was minted twice on 2026-10-09: "highest id plus one"
 # read on two branches gives one answer). Each seat owns a block per kind in
 # the tracked ``espalier.toml [id_blocks]`` table, and minting takes the
-# lowest number of the block that nothing has taken. Read by a line scan, as
-# mail.py reads ``dispatcher``: the 3.10 floor has no tomllib. One seat line
-# is an inline table, so the scan needs no multi-line grammar:
+# lowest number of the block that nothing has taken. Read with tomllib, as
+# mail.py reads ``dispatcher``. Each seat is one line, an inline table, so a
+# seat's whole block reads (and diffs) on the line that names it:
 #
 #     [id_blocks]
 #     win = { DEF = "2000-2999", INV = "100-199", TP = "500-599" }
@@ -374,11 +374,13 @@ BLOCKS_TABLE = "id_blocks"
 #: names it. Never tracked. A scratch tree outside git uses the fallback.
 MINTED_RECORD = "espalier/minted_ids.json"
 MINTED_FALLBACK = ".espalier-state/minted_ids.json"
+#: A table header line; read only to refuse a ``[id_blocks.<seat>]`` table,
+#: which tomllib reads as the same block but which is not one line per seat.
 _HEADER_RE = re.compile(r"""^[ \t]*\[\[?[ \t]*([^\]]*?)[ \t]*\]\]?[ \t]*(#.*)?$""")
-#: Matched against the line with its comment cut off: a range value is
-#: ``"low-high"`` and a seat key a machine name, so neither holds a ``#``.
-_SEAT_LINE_RE = re.compile(r"""^[ \t]*(["']?)([A-Za-z0-9_-]+)\1[ \t]*=[ \t]*\{([^{}]*)\}[ \t]*$""")
-_RANGE_RE = re.compile(r"""^[ \t]*([A-Z]+)[ \t]*=[ \t]*"(\d+)-(\d+)"[ \t]*$""")
+#: A seat key: a machine name, or ``_unnamed``.
+_SEAT_KEY_RE = re.compile(r"[A-Za-z0-9_-]+")
+#: A block's value: ``"low-high"``.
+_SPAN_RE = re.compile(r"(\d+)-(\d+)")
 _ID_TOKEN_RE = re.compile(r"\b(DEF|INV|TP)-(\d+)")
 #: A row id as typed: a sub-row's letter suffix (``DEF-343a``) shares its
 #: base number's block.
@@ -404,56 +406,52 @@ class SeatNameUnread(SeatUnreadable):
 
 def read_id_blocks(root: Path) -> dict[str, dict[str, tuple[int, int]]] | None:
     """``{seat: {kind: (low, high)}}`` from ``<root>/espalier.toml``'s
-    ``[id_blocks]`` table, or ``None`` when the file or the table is absent
-    (minting is off and explicit ids work as before). A table that is there
-    but unreadable raises :class:`MintRefused` naming the line: a broken team
-    setting fails closed, as a bad ``dispatcher`` does, and two seats whose
+    ``[id_blocks]`` table, read with tomllib, or ``None`` when the file or the
+    table is absent (minting is off and explicit ids work as before). A file
+    that cannot be read or parsed, or a table that is there but not one
+    ``seat = { KIND = "low-high", ... }`` line per seat, raises
+    :class:`MintRefused` naming why: a broken team setting fails closed, as a
+    bad ``dispatcher`` does, and never reads as no blocks. Two seats whose
     ranges of one kind overlap are refused for the same reason -- they would
     mint one id twice by construction."""
     path = root / "espalier.toml"
     if not path.is_file():
         return None
     try:
-        text = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8-sig")
     except (OSError, ValueError) as exc:  # strict decode: a team setting, refused by name rather than guessed
         detail = _load("_json_safe").os_error_text(exc)
         raise MintRefused(f"espalier.toml could not be read ({detail}), so no id block is known") from None
-    blocks: dict[str, dict[str, tuple[int, int]]] = {}
-    seen_table = False
-    inside = False
+    import tomllib  # here, not at the top: the tool still imports below the floor, where the hooks say the floor
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise MintRefused(f"espalier.toml could not be parsed ({exc}), so no id block is known") from None
+    if BLOCKS_TABLE not in data:
+        return None
     for n, line in enumerate(text.splitlines(), 1):
         header = _HEADER_RE.match(line)
-        if header:
-            table = header.group(1).strip().strip("\"'")
-            if table.startswith(BLOCKS_TABLE + "."):
-                raise MintRefused(f"espalier.toml line {n}: [{table}] is not read; give each seat one line "
-                                  f'under [{BLOCKS_TABLE}], e.g. win = {{ DEF = "2000-2999" }}')
-            inside = table == BLOCKS_TABLE
-            seen_table = seen_table or inside
-            continue
-        body = line.split("#", 1)[0]
-        if not inside or not body.strip():
-            continue
-        m = _SEAT_LINE_RE.match(body)
-        if not m:
-            raise MintRefused(f"espalier.toml line {n} under [{BLOCKS_TABLE}] is not "
-                              f'`seat = {{ DEF = "lo-hi", ... }}` on one line: {line.strip()!r}')
-        seat, ranges = m.group(2), {}
-        for part in m.group(3).split(","):
-            if not part.strip():
-                continue
-            r = _RANGE_RE.match(part)
-            if not r or r.group(1) not in ID_KINDS or int(r.group(2)) > int(r.group(3)):
-                raise MintRefused(f"espalier.toml line {n}: {part.strip()!r} is not one of "
-                                  f'{"/".join(ID_KINDS)} = "low-high" with low <= high')
-            if r.group(1) in ranges:
-                raise MintRefused(f"espalier.toml line {n}: seat {seat!r} gives {r.group(1)} twice")
-            ranges[r.group(1)] = (int(r.group(2)), int(r.group(3)))
-        if seat in blocks:
-            raise MintRefused(f"espalier.toml line {n}: seat {seat!r} has a second line under [{BLOCKS_TABLE}]")
+        name = header.group(1).strip("\"'") if header else ""
+        if name.startswith(BLOCKS_TABLE + "."):
+            raise MintRefused(f"espalier.toml line {n}: [{name}] is a table per seat; give each seat one line "
+                              f'under [{BLOCKS_TABLE}], e.g. win = {{ DEF = "2000-2999" }}')
+    table = data[BLOCKS_TABLE]
+    if not isinstance(table, dict):
+        raise MintRefused(f"espalier.toml sets {BLOCKS_TABLE} = {table!r}, not a table; give each seat one line "
+                          f'under [{BLOCKS_TABLE}], e.g. win = {{ DEF = "2000-2999" }}')
+    blocks: dict[str, dict[str, tuple[int, int]]] = {}
+    for seat, spans in table.items():
+        if not _SEAT_KEY_RE.fullmatch(seat) or not isinstance(spans, dict):
+            raise MintRefused(f"espalier.toml [{BLOCKS_TABLE}]: {seat!r} = {spans!r} is not "
+                              f'`seat = {{ DEF = "lo-hi", ... }}` on one line')
+        ranges: dict[str, tuple[int, int]] = {}
+        for kind, span in spans.items():
+            m = _SPAN_RE.fullmatch(span) if isinstance(span, str) else None
+            if kind not in ID_KINDS or m is None or int(m.group(1)) > int(m.group(2)):
+                raise MintRefused(f"espalier.toml [{BLOCKS_TABLE}]: seat {seat!r}'s {kind} = {span!r} is not one "
+                                  f'of {"/".join(ID_KINDS)} = "low-high" with low <= high')
+            ranges[kind] = (int(m.group(1)), int(m.group(2)))
         blocks[seat] = ranges
-    if not seen_table:
-        return None
     for kind in ID_KINDS:
         spans = sorted((lo, hi, seat) for seat, r in blocks.items() if kind in r for lo, hi in [r[kind]])
         for (lo1, hi1, s1), (lo2, hi2, s2) in zip(spans, spans[1:]):
@@ -730,8 +728,9 @@ def explicit_id_refusal(root: Path, rid: str) -> tuple[str | None, str | None]:
     answering its clone's name is refused here as it is for a mint -- that is
     evidence, not a failed read. A seat name git could not answer is refused
     by name too, ``--override`` the way past: an id checked against no block
-    is the collision the channel refuses. A table that cannot be read, or a
-    copied subset without ``mail.py``, is a note and no refusal: the explicit
+    is the collision the channel refuses; so is an ``espalier.toml`` that
+    cannot be read or parsed, or a table :func:`read_id_blocks` refuses. A
+    copied subset without ``mail.py`` is a note and no refusal: the explicit
     path worked before the blocks."""
     m = _ROW_ID_RE.fullmatch(rid)
     if not m:
@@ -2068,9 +2067,11 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str |
     # ledger_fragments); every lookup below reads the view either way, so a
     # row or class that lives in a file is seen like one in the ledger.
     as_files, how = _FRAG.ledger_fragments_setting(root)
-    if not as_files and any(s in how for s in ("neither true nor false", "not the top-level", "could not be read")):
-        # A setting written but not read as on (`= True`, `= "true"`, under a
-        # table) would send every filing into the file without a word.
+    if not as_files and any(s in how for s in ("neither true nor false", "not the top-level", "could not be read",
+                                               "could not be parsed")):
+        # A setting written but not read as on (`= "true"`, under a table, a
+        # file tomllib refuses such as `= True`) would send every filing into
+        # the file without a word.
         print(f"ledger_row: note -- {how}; this row goes into {ledger.name}", file=sys.stderr)
     text = pending.view(file_text).text
     row_file = _FRAG.ledger_fragment_dir(ledger) / f"{rid}.md"

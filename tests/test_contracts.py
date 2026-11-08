@@ -849,7 +849,7 @@ def _shipped_python(repo: Path) -> tuple[set[str], list[str]]:
     wheel: set[str] = set()
     unread: list[str] = []
     pyproject = repo / "pyproject.toml"
-    if tomllib is not None and pyproject.is_file():
+    if pyproject.is_file():
         config = tomllib.loads(pyproject.read_text(encoding="utf-8")).get("tool", {}).get("setuptools", {})
         unread = [f"[tool.setuptools] {key}" for key in _UNREAD_SETUPTOOLS_KEYS if key in config]
         packages = config.get("packages")
@@ -1007,16 +1007,8 @@ class TestShippedRootsAreWhatShips:
                            "extra/run.py")
         assert "extra/run.py" in _shipped_python(repo)[0]
 
-    @staticmethod
-    def _toml_or_skip() -> None:
-        from espalier._compat import tomllib
-
-        if tomllib is None:
-            pytest.skip("no TOML reader on this interpreter: the pyproject half reads nothing here")
-
     def test_the_wheel_half_reads_the_packages_and_their_data(self, tmp_path):
         """A package the sdist leaves out still ships in the wheel."""
-        self._toml_or_skip()
         repo = self._plant(tmp_path, "recursive-include tools *.py\ninclude scripts/run.py\n", "pkg/data/gen.py")
         (repo / "pyproject.toml").write_text(
             '[tool.setuptools.packages.find]\ninclude = ["pkg*"]\n\n'
@@ -1027,7 +1019,6 @@ class TestShippedRootsAreWhatShips:
     def test_a_namespace_package_ships_unless_the_find_turns_namespaces_off(self, tmp_path):
         """``packages.find`` finds a folder with no ``__init__.py`` by default,
         as setuptools reads pyproject; ``namespaces = false`` leaves it out."""
-        self._toml_or_skip()
         repo = self._plant(tmp_path, "include scripts/run.py\n", "ns/mod.py")
         find = '[tool.setuptools.packages.find]\ninclude = ["pkg*", "ns*"]\n'
         (repo / "pyproject.toml").write_text(find, encoding="utf-8")
@@ -1038,7 +1029,6 @@ class TestShippedRootsAreWhatShips:
     def test_a_pyproject_form_the_pin_does_not_read_is_named(self, tmp_path):
         """A key that could ship Python is named, never read as shipping
         nothing; so is a pyproject that leaves packages to discovery."""
-        self._toml_or_skip()
         repo = self._plant(tmp_path, self._MANIFEST)
         (repo / "pyproject.toml").write_text('[tool.setuptools]\nscript-files = ["bin/run.py"]\n', encoding="utf-8")
         assert _shipped_roots_problems(repo, self._ROOTS) == [
