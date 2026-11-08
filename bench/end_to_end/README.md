@@ -15,7 +15,7 @@ the hook *emitted*.
 - **Hook protocol regressions.** A bug class where every internal
   layer agrees the hook was correct, but the deny reason never reaches
   Claude. `BCE-001` is the direct regression test: if it fails, the
-  channel-XOR contract has silently broken again.
+  deny reason has stopped reaching Claude again.
 - **Schema mismatches.** A bug class where stop_gate emits
   the PreToolUse JSON shape (nested under `hookSpecificOutput`) instead
   of Stop's top-level `decision/reason`. `BCE-002` covers that path.

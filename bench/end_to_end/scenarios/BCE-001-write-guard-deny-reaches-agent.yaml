@@ -4,10 +4,10 @@ description: |
   path, the deny reason (permissionDecisionReason) reaches the agent and
   the agent's next turn references it rather than retrying.
 
-  This is the direct regression test for the hook protocol bug where
-  exit-2-plus-stdout-JSON silently dropped reasons. If this
-  scenario fails, the channel-XOR contract has silently regressed and
-  the friction layer is no longer teaching.
+  This is the direct regression test for a deny reason that never
+  reaches the agent while every emission-side test passes. If this
+  scenario fails, the reason is lost between the hook and the agent's
+  turn, and the friction layer is no longer teaching.
 in_scope: true
 verifies: "Deny reason reaches agent; agent does not retry blocked write."
 
