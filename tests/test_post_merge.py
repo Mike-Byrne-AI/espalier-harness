@@ -317,7 +317,9 @@ class TestTheRequiredRead:
     def test_the_read_asks_once_and_splits_red_running_and_the_rest(self, pm):
         """Dies to: `cancel` read as anything but red (a job no runner picked
         up holds a merge as a failure does), `pending` as anything but
-        running, or the caller's field list dropped (the driver adds `link`)."""
+        running, the link dropped from the one read (DEF-3035: the run a
+        cancelled cell ran in comes from it, never a second read), or the
+        caller's field list dropped."""
         calls: list[list[str]] = []
         answer = [{"name": "a", "bucket": "fail"}, {"name": "b", "bucket": "CANCEL"},
                   {"name": "c", "bucket": "pending"}, {"name": "d", "bucket": "pass"},
@@ -329,12 +331,13 @@ class TestTheRequiredRead:
 
         reading = pm.read_required(27, gh)
         assert calls == [["pr", "checks", "27", "--required", "--json", pm.REQUIRED_FIELDS]]
-        assert pm.REQUIRED_FIELDS == "name,bucket"
+        assert pm.REQUIRED_FIELDS == "name,bucket,link"
         assert [r["name"] for r in reading["red"]] == ["a", "b"]
         assert [r["name"] for r in reading["running"]] == ["c"]
+        assert reading["superseded"] == []
         assert [r["name"] for r in reading["rows"]] == ["a", "b", "c", "d", "e"]
-        pm.read_required("27", gh, fields="name,bucket,link")
-        assert calls[-1][-1] == "name,bucket,link"
+        pm.read_required("27", gh, fields="name,bucket,link,workflow")
+        assert calls[-1][-1] == "name,bucket,link,workflow"
 
     def test_an_answer_that_is_not_a_list_is_unread_and_a_refusal_is_the_callers(self, pm):
         """A repository with no required checks answers rc=1 with no JSON:
@@ -388,6 +391,166 @@ class TestTheRequiredRead:
             if isinstance(node, ast.Constant) and node.value == "--required"
         })
         assert spelled == ["tools/cc/_post_merge.py"], spelled
+
+
+#: #519's head on 2026-11-08 (3f9be29) and its two Harness Guard runs: the
+#: catch-up's push started 42452013919, the re-bind's title edit 42452020852,
+#: which cancelled freshness (job 128643084948) in the first before it started.
+_HEAD_519 = "3f9be2932" + "0" * 31
+_FRESHNESS = {"name": "freshness", "bucket": "cancel",
+              "link": "https://github.com/o/r/actions/runs/42452013919/job/128643084948"}
+
+
+def _api_run(ident: int, workflow: int, created: str, status: str = "completed") -> dict:
+    """One workflow run as ``runs_on_head``'s REST answer gives it."""
+    return {"id": ident, "workflow_id": workflow, "created_at": created, "status": status}
+
+
+def _runs_519(newer_status: str = "in_progress", **newer) -> dict:
+    return {"total_count": 3, "workflow_runs": [
+        _api_run(42452020852, 366642379, "2026-11-08T05:45:40Z", newer_status) | newer,
+        _api_run(42452013919, 366642379, "2026-11-08T05:45:34Z"),
+        _api_run(42452013917, 366642111, "2026-11-08T05:45:34Z", "in_progress"),
+    ]}
+
+
+class TestASupersededCellIsAWait:
+    """DEF-3035: a required cell a newer run of its workflow on the same head
+    cancelled holds the merge only until that run's job reports. Read as a
+    red, ``status`` said to fix and push, and the board pointed there, minutes
+    before the newer run's job went green; a push would cancel it in turn."""
+
+    @staticmethod
+    def _read(pm, checks: list[dict], runs_answer: object, head: str = _HEAD_519):
+        asked: list[list[str]] = []
+
+        def runs(args):
+            asked.append(list(args))
+            return runs_answer
+
+        return pm.read_required(519, lambda args: checks, head=head, runs=runs), asked
+
+    def test_a_cancel_a_newer_unfinished_run_supersedes_is_a_wait_not_a_red(self, pm):
+        """#519's freshness, whose cancel carries no note. Dies to: the cell
+        left red, the newer run looked for by name rather than workflow, more
+        than one runs read, or a red beside it swept into the wait."""
+        checks = [_FRESHNESS, {"name": "verify", "bucket": "fail",
+                               "link": "https://github.com/o/r/actions/runs/42452013917/job/5"},
+                  {"name": "test (3.12)", "bucket": "pending", "link": ""}]
+        reading, asked = self._read(pm, checks, _runs_519())
+        assert [r["name"] for r in reading["superseded"]] == ["freshness"]
+        assert [r["name"] for r in reading["red"]] == ["verify"]
+        assert [r["name"] for r in reading["running"]] == ["test (3.12)"]
+        assert asked == [pm.runs_on_head(_HEAD_519)]
+        assert asked[0] == ["api", f"repos/{{owner}}/{{repo}}/actions/runs?head_sha={_HEAD_519}&per_page=100"]
+
+    @pytest.mark.parametrize("answer, why", [
+        (_runs_519("completed"), "the newer run completed: it skipped the job, so a wait would never end"),
+        (_runs_519(workflow_id=999), "the newer run is another workflow's"),
+        (_runs_519(created_at="2026-11-08T05:45:30Z"), "the other run is older"),
+        ({"total_count": 1, "workflow_runs": [_api_run(42452020852, 366642379, "2026-11-08T05:45:40Z", "queued")]},
+         "the cancelled run is not in the listing"),
+        (None, "the runs read was not made or did not answer"),
+        ([{"id": 1}], "an answer that is not the REST shape"),
+        ({"message": "Not Found", "documentation_url": "https://docs.github.com/rest", "status": "404"},
+         "gh api's JSON error body on stdout is no listing"),
+        ({"workflow_runs": {"42452020852": {}}}, "workflow_runs that is not a list"),
+        (_runs_519(status=""), "a newer run with no status is not known to be going"),
+        (_runs_519("waiting"), "waiting is an environment approval that can sit for weeks"),
+        (_runs_519("action_required"), "action_required is not going"),
+        (_runs_519("a_status_github_adds_later"), "a status not on the going list"),
+        ({"workflow_runs": [_api_run(42452020852, 366642379, "2026-11-08T05:45:40Z", "queued") | {"workflow_id": None},
+                            _api_run(42452013919, 366642379, "2026-11-08T05:45:34Z")]},
+         "the newer run names no workflow"),
+        ({"workflow_runs": [{"id": 42452020852, "created_at": "2026-11-08T05:45:40Z", "status": "queued"},
+                            {"id": 42452013919, "created_at": "2026-11-08T05:45:34Z", "status": "completed"}]},
+         "neither run names a workflow: no match on two absences"),
+    ], ids=["newer-completed", "other-workflow", "older", "not-listed", "unread", "not-rest", "json-error-body",
+            "runs-not-a-list", "no-status", "waiting", "action-required", "unknown-status", "newer-no-workflow",
+            "both-no-workflow"])
+    def test_a_cancel_with_no_newer_going_run_of_its_workflow_stays_red(self, pm, answer, why):
+        """A lost runner's cancel and a timeout's have no newer run: they stay
+        red, and the driver still offers the re-run where the listing holds
+        their run. Dies to: any of these read as a wait (``why``)."""
+        reading, _ = self._read(pm, [_FRESHNESS], answer)
+        assert [r["name"] for r in reading["red"]] == ["freshness"], why
+        assert reading["superseded"] == [], why
+
+    def test_the_read_says_which_runs_the_listing_held(self, pm):
+        """The driver confirms a cancelled cell free of a newer run only where
+        the listing held the cell's own run. Dies to: a JSON error body, or a
+        listing without the cell's run, read as an answer for it."""
+        reading, _ = self._read(pm, [_FRESHNESS], _runs_519("completed"))
+        assert reading["listed"] == {"42452020852", "42452013919", "42452013917"}
+        for answer in (None, {"message": "API rate limit exceeded"}, {"workflow_runs": "x"}):
+            assert self._read(pm, [_FRESHNESS], answer)[0]["listed"] == set(), answer
+        assert pm.runs_listing({"workflow_runs": [{"id": 1}, "junk", None]}) == [{"id": 1}]
+        assert pm.runs_listing({"message": "Not Found"}) is None
+        assert pm.read_required(1, lambda args: [_FRESHNESS])["listed"] == set()
+
+    def test_two_cancels_in_two_runs_only_the_superseded_one_waits(self, pm):
+        """One cancelled cell's run has a newer run going, the other's has
+        none: the second stays red. Dies to: every cancelled cell read as a
+        wait once any run is superseded."""
+        other = {"name": "test (3.12)", "bucket": "cancel",
+                 "link": "https://github.com/o/r/actions/runs/42452013917/job/6"}
+        listing = _runs_519()
+        listing["workflow_runs"][2] = _api_run(42452013917, 366642111, "2026-11-08T05:45:34Z")
+        reading, asked = self._read(pm, [_FRESHNESS, other], listing)
+        assert [r["name"] for r in reading["superseded"]] == ["freshness"]
+        assert [r["name"] for r in reading["red"]] == ["test (3.12)"]
+        assert len(asked) == 1
+
+    def test_a_tie_on_the_stamp_is_broken_by_the_run_id(self, pm):
+        """Two runs created in one second: the later id is the newer. Dies to:
+        a tie read as newer both ways, or never."""
+        tie = "2026-11-08T05:45:34Z"
+        later = {"workflow_runs": [_api_run(42452013919, 1, tie), _api_run(42452013920, 1, tie, "queued")]}
+        earlier = {"workflow_runs": [_api_run(42452013919, 1, tie), _api_run(42452013918, 1, tie, "queued")]}
+        assert [r["name"] for r in self._read(pm, [_FRESHNESS], later)[0]["superseded"]] == ["freshness"]
+        assert self._read(pm, [_FRESHNESS], earlier)[0]["superseded"] == []
+
+    def test_the_runs_read_is_made_only_for_a_cancelled_cell_that_names_a_run(self, pm):
+        """One read a pull request, and none where no cell needs it: a fail, a
+        cancel that is no Actions job, no head, or no reader. Dies to: a runs
+        read on every blocked row (the board's and the banner's budgets), or
+        a cancel with no head read as a wait."""
+        not_a_job = {"name": "external", "bucket": "cancel", "link": "https://ci.example/build/9"}
+        failed = dict(_FRESHNESS, bucket="fail")
+        for checks, head in (([failed], _HEAD_519), ([not_a_job], _HEAD_519), ([_FRESHNESS], "")):
+            reading, asked = self._read(pm, checks, _runs_519(), head=head)
+            assert asked == [] and reading["superseded"] == [], (checks, head)
+            assert len(reading["red"]) == 1
+        reading = pm.read_required(519, lambda args: [_FRESHNESS], head=_HEAD_519)
+        assert [r["name"] for r in reading["red"]] == ["freshness"] and reading["superseded"] == []
+        two = [_FRESHNESS, dict(_FRESHNESS, name="verify",
+                                link="https://github.com/o/r/actions/runs/42452013919/job/128643084949")]
+        reading, asked = self._read(pm, two, _runs_519())
+        assert len(asked) == 1 and [r["name"] for r in reading["superseded"]] == ["freshness", "verify"]
+
+    def test_held_by_words_the_superseded_cells_as_a_wait(self, pm):
+        """Dies to: a superseded cell named as a red, its wait dropped beside
+        the running count, a red outranked by it, or a non-ASCII name."""
+        assert pm.held_by([], [], ["freshness"]) == "waiting on the newer run of freshness"
+        assert pm.held_by([], ["a", "b", "c"], ["freshness"]) == "waiting on 3 running and the newer run of freshness"
+        assert pm.held_by([], [], ["a", "b", "c", "d"]) == "waiting on the newer runs of a, b, c, and 1 more"
+        assert pm.held_by(["guard"], ["x"], ["freshness"]) == "required check red (guard)"
+        assert pm.held_by([], [], ["fraîcheur"]).isascii()
+
+    def test_the_banner_words_the_wait_as_the_module_does(self, pm):
+        """The banner keeps its superseded tail literal, as its running tail.
+        Dies to: the two drifting apart, or the banner's blocked row saying
+        no red is required, or a red, over a superseded cell."""
+        hook = _load(REPO_ROOT / "tools" / "cc" / "hooks" / "session_start.py", "session_start_wait_under_test")
+        rollup = [{"__typename": "CheckRun", "name": "freshness", "status": "COMPLETED", "conclusion": "CANCELLED"}]
+        row = {"number": 519, "headRefName": "lane/519", "baseRefName": "main", "mergeStateStatus": "BLOCKED",
+               "autoMergeRequest": {"x": 1}, "statusCheckRollup": rollup}
+        assert hook._pr_summary(row, [], ["freshness"]).endswith(
+            f"; auto-merge armed; {pm.held_by([], [], ['freshness'])}")
+        running = dict(row, statusCheckRollup=rollup + [
+            {"__typename": "CheckRun", "name": f"t{n}", "status": "IN_PROGRESS", "conclusion": None} for n in range(3)])
+        assert hook._pr_summary(running, [], ["freshness", "verify"]).endswith(
+            f"; auto-merge armed; {pm.held_by([], ['a', 'b', 'c'], ['freshness', 'verify'])}")
 
 
 def _run_row(status: str, conclusion: str | None, sha: str, run_id: int, created: str = "", updated: str = "") -> dict:
