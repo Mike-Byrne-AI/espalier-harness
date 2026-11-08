@@ -448,7 +448,7 @@ class TestALongerBoundRetriesTheRefusalOnce:
         sleeper = argv("first-sleep")
         with pytest.raises(subprocess.TimeoutExpired):
             hs.retry_a_budget_miss(lambda: subprocess.run(sleeper, input="{}", capture_output=True, text=True,
-                                                          timeout=2), env=None)
+                                                          encoding="utf-8", timeout=2), env=None)
         assert runs() == 1
 
     def test_the_retry_starts_from_the_state_the_first_attempt_began_with(self, child, tmp_path):
