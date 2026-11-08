@@ -222,18 +222,48 @@ def _git_read(repo: Path, *args: str) -> tuple[list[str] | None, str]:
     return [ln for ln in out.splitlines() if ln], ""
 
 
-def classify_landing(pack_text: str, repo: Path) -> list[LandingEntry]:
+@dataclass(frozen=True)
+class LandingRead:
+    """A classification and the roots it was read against: ``prefix`` is
+    ``--repo``'s place under the work tree's top (``""`` at the top or in a
+    bare repository), ``top`` the top itself, set only when ``prefix`` is."""
+
+    entries: list[LandingEntry]
+    prefix: str = ""
+    top: str = ""
+
+
+def _read_listing(repo: Path, *, full_tree: bool, bare: bool) -> tuple[set[str], set[str]]:
+    """``(tracked, modified)`` at ``repo``: relative to it, or to the top with
+    ``full_tree``. Raises :class:`LandingUnreadable` on a failed read."""
+    tree_args = ["ls-tree", "-r", *(["--full-tree"] if full_tree else []), "--name-only", "HEAD"]
+    tracked, why = _git_read(repo, *tree_args)
+    if tracked is None:
+        raise LandingUnreadable(f"git {' '.join(tree_args)} failed ({why})")
+    if bare:
+        return set(tracked), set()
+    # diff names paths from the top unless --relative, which keeps the ones
+    # under repo and names them from it, as the plain ls-tree does.
+    diff_args = ["diff", "--name-only", *([] if full_tree else ["--relative"]), "HEAD"]
+    modified, why = _git_read(repo, *diff_args)
+    if modified is None:
+        raise LandingUnreadable(f"git {' '.join(diff_args)} failed ({why})")
+    return set(tracked), set(modified)
+
+
+def read_landing(pack_text: str, repo: Path) -> LandingRead:
     """Classify a pack's claimed paths against the git state of ``repo``.
 
-    ``repo`` may be any folder inside a work tree: the listing is the whole
-    tree's (``ls-tree --full-tree``), since claims are repo-relative and a
-    plain ``ls-tree`` lists a subdirectory's tree relative to it, and
-    ``diff --name-only`` names paths from the top already. A bare repository
-    is read against HEAD alone (nothing can be DRIFTED). A folder git cannot
-    read -- not in a repository, a HEAD naming no commit, a read that fails --
-    raises :class:`LandingUnreadable` with the reason, git's own message
-    included, never an empty set: an empty set classifies every claim OWED,
-    a landing failure that is not there.
+    Claims are read relative to ``repo``, as an adopter whose project root is a
+    subdirectory of its repository writes them. Where ``repo`` is such a
+    subdirectory, a claim it does not resolve is tried against the work tree's
+    top too (the ``_resolve_matches`` rule: erring toward LANDED beats a fake
+    OWED blocker), and the read names both roots. A bare repository is read
+    against HEAD alone (nothing can be DRIFTED). A folder git cannot read --
+    not in a repository, a branch with no commit, a read that fails -- raises
+    :class:`LandingUnreadable` with the reason, git's own message included,
+    never an empty set: an empty set classifies every claim OWED, a landing
+    failure that is not there.
     """
     shape, why = _git_read(repo, "rev-parse", "--is-bare-repository", "--is-inside-work-tree")
     if shape is None:
@@ -247,16 +277,29 @@ def classify_landing(pack_text: str, repo: Path) -> list[LandingEntry]:
         # timeout failure has a reason worth adding.
         detail = "" if not why or why.startswith("git exited") else f" ({why})"
         raise LandingUnreadable(f"the checked-out branch has no commit{detail}")
-    tracked, why = _git_read(repo, "ls-tree", "-r", "--full-tree", "--name-only", "HEAD")
-    if tracked is None:
-        raise LandingUnreadable(f"git ls-tree -r --full-tree --name-only HEAD failed ({why})")
-    modified: list[str] = []
+    tracked, modified = _read_listing(repo, full_tree=False, bare=bare)
+    entries = classify_against(pack_text, tracked, modified)
+    prefix_lines: list[str] | None = []
     if not bare:
-        diff, why = _git_read(repo, "diff", "--name-only", "HEAD")
-        if diff is None:
-            raise LandingUnreadable(f"git diff --name-only HEAD failed ({why})")
-        modified = diff
-    return classify_against(pack_text, set(tracked), set(modified))
+        prefix_lines, why = _git_read(repo, "rev-parse", "--show-prefix")
+        if prefix_lines is None:
+            raise LandingUnreadable(f"git rev-parse --show-prefix failed ({why})")
+    if not prefix_lines:
+        return LandingRead(entries)
+    top_lines, why = _git_read(repo, "rev-parse", "--show-toplevel")
+    if not top_lines:
+        raise LandingUnreadable(f"git rev-parse --show-toplevel failed ({why})")
+    top_tracked, top_modified = _read_listing(repo, full_tree=True, bare=False)
+    entries = [
+        _classify_token(e.path, top_tracked, top_modified) if e.status == OWED else e
+        for e in entries
+    ]
+    return LandingRead(entries, prefix=prefix_lines[0], top=top_lines[0])
+
+
+def classify_landing(pack_text: str, repo: Path) -> list[LandingEntry]:
+    """``read_landing``'s entries alone."""
+    return read_landing(pack_text, repo).entries
 
 
 def render_table(entries: list[LandingEntry]) -> str:

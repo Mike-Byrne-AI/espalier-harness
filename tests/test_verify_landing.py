@@ -26,6 +26,7 @@ from espalier.verify_landing import (
     _extract_path_tokens,
     classify_against,
     classify_landing,
+    read_landing,
     render_table,
 )
 
@@ -311,15 +312,54 @@ class TestATreeGitCannotReadIsRefusedNotOwed:
         with pytest.raises(LandingUnreadable, match="no commit"):
             classify_landing(FIXTURE_PACK, repo)
 
-    def test_a_subdirectory_reads_the_work_tree_top(self, tmp_path, monkeypatch):
+    def test_a_subdirectory_tries_a_repo_relative_claim_from_the_top(self, tmp_path, monkeypatch):
         monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
         repo = _seed_repo(tmp_path)
         at_top = {e.path: e.status for e in classify_landing(FIXTURE_PACK, repo)}
-        at_sub = {e.path: e.status for e in classify_landing(FIXTURE_PACK, repo / "src")}
+        read = read_landing(FIXTURE_PACK, repo / "src")
+        at_sub = {e.path: e.status for e in read.entries}
         assert at_sub == at_top
         assert at_sub["src/landed.py"] == LANDED
         assert at_sub["src/drifted.py"] == DRIFTED
         assert at_sub["src/owed.py"] == OWED
+        assert read.prefix == "src/" and read.top
+
+    def test_a_project_root_subdirectory_reads_its_own_relative_claims(self, tmp_path, monkeypatch):
+        # An adopter whose project root is a subdirectory of its repository
+        # writes claims relative to that root.
+        monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+        repo = _init_repo(tmp_path)
+        proj = repo / "proj"
+        (proj / "src").mkdir(parents=True)
+        (proj / "src" / "landed.py").write_text("x = 1\n", encoding="utf-8")
+        (proj / "src" / "drifted.py").write_text("y = 1\n", encoding="utf-8")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "seed")
+        (proj / "src" / "drifted.py").write_text("y = 2\n", encoding="utf-8")
+        read = read_landing(FIXTURE_PACK, proj)
+        status = {e.path: e.status for e in read.entries}
+        assert status["src/landed.py"] == LANDED
+        assert status["src/drifted.py"] == DRIFTED
+        assert status["src/owed.py"] == OWED
+        assert read.prefix == "proj/"
+
+    def test_the_cli_names_both_roots_above_the_table(self, tmp_path):
+        repo = _seed_repo(tmp_path)
+        pack = tmp_path / "pack.md"
+        pack.write_text(FIXTURE_PACK, encoding="utf-8")
+        env = dict(os.environ)
+        env["PYTHONPATH"] = str(REPO_ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+        env["GIT_CEILING_DIRECTORIES"] = str(tmp_path)
+        result = subprocess.run(
+            [sys.executable, "-m", "espalier", "verify-landing",
+             str(pack), "--repo", str(repo / "src")],
+            cwd=str(REPO_ROOT), env=env, capture_output=True, text=True, timeout=30,
+            encoding="utf-8",
+        )
+        assert result.returncode == 0, result.stderr
+        assert "Read relative to src/ first, then from the work tree's top" in result.stdout
+        # As read from the top: src/ and src/*.py hold the drifted file.
+        assert "1 landed | 3 drifted | 1 owed" in result.stdout
 
     def test_the_cli_exits_2_with_no_table_on_a_non_git_repo(self, tmp_path):
         plain = tmp_path / "plain"

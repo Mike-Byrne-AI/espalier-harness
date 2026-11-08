@@ -14662,10 +14662,11 @@ def cmd_verify_landing(args: argparse.Namespace) -> int:
     existing directory (the shared repo-arg precondition guard), and when git
     cannot read its state (not a work tree, no commit, a failed read), with
     the reason and no table: an all-OWED table there would report a landing
-    failure that is not there. A subdirectory of a work tree reads the whole
-    tree; a bare repository reads HEAD alone.
+    failure that is not there. A subdirectory of a work tree reads its claims
+    relative to it, then a claim not found there from the top, and the table
+    says so; a bare repository reads HEAD alone.
     """
-    from espalier.verify_landing import LandingUnreadable, classify_landing, render_table
+    from espalier.verify_landing import LandingUnreadable, read_landing, render_table
 
     repo = _resolve_repo_arg(args.repo)
     if repo is None:
@@ -14681,10 +14682,11 @@ def cmd_verify_landing(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        entries = classify_landing(pack_text, repo)
+        read = read_landing(pack_text, repo)
     except LandingUnreadable as exc:
         print(f"FAIL: cannot read the git state of {repo}: {exc}")
         return 2
+    entries = read.entries
     if args.json:
         print(
             json.dumps(
@@ -14698,6 +14700,11 @@ def cmd_verify_landing(args: argparse.Namespace) -> int:
     else:
         print(f"\n{pack_path.name} landing check")
         print("=" * 40)
+        if read.prefix:
+            print(
+                f"Read relative to {read.prefix} first, then from the work tree's top "
+                f"({read.top}) for a claim not found there."
+            )
         print(render_table(entries))
     return 0
 
