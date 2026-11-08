@@ -1940,6 +1940,21 @@ class TestTheWrapperRunReadsEachTokenOnce:
         _assert_zone_walled(self._ZONE, tmp_path)
         _assert_zone_walled(prefix + self._ZONE, tmp_path)
 
+    @pytest.mark.parametrize("head", [
+        "sudo -u 'a b' -- ", "env -u X -- ", "sudo ", "/usr/bin/env ", "nohup ", "sudo -u $(id -un) -- ",
+    ])
+    def test_a_cd_behind_a_wrapper_moves_no_later_statement(self, tmp_path, head):
+        # ruling 6344f9: a cd a wrapper runs is that program's child's, so
+        # the `&&` side stays where it started (bash 3.2, the dispatcher's
+        # drive); read through the anchor's wrapper run, the quoted span
+        # re-based the move onto /tmp and let it through
+        _assert_zone_walled(f"{head}cd /tmp && {self._ZONE}", tmp_path)
+
+    @pytest.mark.parametrize("head", ["", "command -- ", "command ", "builtin ", "time ", "A=1 "])
+    def test_a_cd_the_shell_runs_itself_moves_the_later_statement(self, tmp_path, head):
+        # the twin: the current shell's own cd re-bases what follows
+        assert_hook_allowed(run_bash_guard(f"{head}cd /tmp && {self._ZONE}", tmp_path))
+
     @pytest.mark.parametrize("prefix", [
         "sudo -u 'a b' ", "env -C $(pwd)/x ", "sudo -u A=1 -E ", ">$(mktemp)/x ", "env -C ${HOME}/w ",
     ])

@@ -7627,8 +7627,28 @@ def _nested_shell_programs(command: str, _depth: int) -> list[str]:
 #: share an input (the ReDoS rule). `builtin cd` is spelled here because
 #: `builtin` is not on `_CMD_POS`'s wrapper run (`command cd` is; the
 #: asymmetry was driven by the failure-mode review).
+#: The anchor is the current shell's command position, not `_CMD_POS`: a
+#: `cd` behind a wrapper or a path-qualified one runs in that program's child
+#: (where it runs at all), so the statements after it stay in the directory
+#: they started in. `command`, `time` and `builtin` keep the shell's own `cd`.
+#: Read through `_CMD_POS`, `sudo -u 'a b' -- cd /tmp && rm -rf cc` re-based
+#: the delete onto a directory it never ran in (a false allow on the zone;
+#: measured on bash 3.2 by the dispatcher, ruling 6344f9: after `env -u X --
+#: cd /tmp` the `&&` side's `$PWD` was the start directory, after `command --
+#: cd /tmp`, `builtin cd /tmp` and `time cd /tmp` it was /tmp).
+_CMD_POS_SHELL_WORDS = r"(?:(?:command|time)(?:[ \t]+-[^\s;|&()`]+)*[ \t]+)"
+_CMD_POS_IN_SHELL = (
+    r"(?:(?:^|" + _CMD_POS_SEP + ")" + _CMD_POS_WS + "(?:"
+    + _CMD_POS_SHELL_WORDS + "|" + _CMD_POS_ENV_ASSIGN
+    + "|" + _CMD_POS_KEYWORD + r"[ \t]+"
+    + "|" + _CMD_POS_NEGATE
+    + "|" + _CMD_POS_REDIRECT
+    + "|" + _CMD_POS_EXEC_QUOTE + ")*"
+    + "|" + _CMD_POS_EXEC_QUOTE + ")"
+    + _CMD_POS_VERB_PREFIX
+)
 _DIR_VERB_RE = re.compile(
-    _CMD_POS + r"(?:builtin[ \t]+)?\b(cd|pushd|popd)" + _QUOTED_VERB_TAIL
+    _CMD_POS_IN_SHELL + r"(?:builtin[ \t]+)?\b(cd|pushd|popd)" + _QUOTED_VERB_TAIL
     + r"(?:[ \t]+-[A-Za-z@]{1,8}|[ \t]+--){0,4}"
     + r"(?:[ \t]+(?:(['\"])([^'\"\n]{0,512})\2|(-|[^\s'\"<>-][^\s'\"<>]{0,511})))?$"
 )
