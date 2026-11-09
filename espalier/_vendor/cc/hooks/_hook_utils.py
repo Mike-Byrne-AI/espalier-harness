@@ -75,9 +75,11 @@ except ImportError:  # pragma: no cover - a tools/cc/_json_safe.py that predates
             args, timeout=timeout, input=input, capture_output=capture_output, check=check, **kwargs)
 # The program-word spelling of a spaced interpreter (DEF-2062), guarded the
 # same way: a `_json_safe.py` that predates it leaves `executable_word` on the
-# bare `sys.executable` it printed before, never an import crash.
+# bare `sys.executable` it printed before (a spaced root is still quoted by the
+# fallback below), never an import crash.
 try:
     from _json_safe import program_word, quoted_if_spaced, windows_short_path  # noqa: E402
+# fail-open: ok text-fallback a kept older _json_safe.py keeps the bare interpreter word it printed before (DEF-2062)
 except ImportError:  # pragma: no cover - a tools/cc/_json_safe.py that predates the spelling
     def program_word(path: str, short_path: Any) -> str:
         """Fallback when ``_json_safe`` lacks the spelling: ``path`` unchanged, as before DEF-2062."""
@@ -98,6 +100,17 @@ def executable_word() -> str:
     form, which PowerShell 5.1, cmd and Git Bash all run, else the path quoted
     when spaced. Bare, a spaced path is cut at its first space in every shell."""
     return program_word(sys.executable, windows_short_path)
+
+
+def powershell_call_note(word: str) -> str:
+    """The clause a SEEN message (the banner, an additionalContext advisory)
+    appends after a command whose program word is quoted (DEF-2062, ack
+    2e78b5): Windows PowerShell 5.1 reads a quoted first word as text, so it
+    needs ``&`` before it. Empty for a bare word or off Windows. A stderr line
+    of an exit-0 hook takes no note: nothing reads it."""
+    if word.startswith('"') and sys.platform == "win32":
+        return " (in PowerShell, type & before it: PowerShell reads a quoted first word as text)"
+    return ""
 
 
 # The one repo-root resolver `_project_root_spelling` delegates to (DEF-664),

@@ -75,7 +75,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _json_safe import decode_text_or_problem, os_error_text, run_bounded  # noqa: E402
 
 # The program-word spelling (DEF-2062), guarded: a kept `_json_safe.py` that
-# predates it leaves the prune note on the bare spelling it printed before.
+# predates it leaves the prune note's interpreter bare, as it printed before
+# (its root is still quoted by the fallback below).
 try:
     from _json_safe import program_word, quoted_if_spaced, windows_short_path  # noqa: E402
 except ImportError:  # pragma: no cover - a tools/cc/_json_safe.py that predates the spelling

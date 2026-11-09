@@ -192,9 +192,10 @@ def program_word(path: str, short_path: "Callable[[str], str | None] | None") ->
     its short form with forward slashes when that is a drive-rooted word of
     plain characters: one bare word that Windows PowerShell 5.1, cmd and Git
     Bash all run (DEF-2060). Else the double-quoted path, which cmd and the
-    POSIX shells run and PowerShell needs ``&`` before. A hook says nothing of
-    that ``&``: an exit-0 hook's stderr is dropped, so a note there would reach
-    no one (ruling bd0473). Pure text: the lookup is a parameter."""
+    POSIX shells run and PowerShell needs ``&`` before: a seen hook message says
+    so through ``_hook_utils.powershell_call_note`` (ack 2e78b5), and a stderr
+    line of an exit-0 hook takes no note, since nothing reads it. Pure text:
+    the lookup is a parameter."""
     if not any(ch.isspace() for ch in path):
         return path
     short = short_path(path) if short_path is not None else None

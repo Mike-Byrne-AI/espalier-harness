@@ -18,6 +18,7 @@ import ast
 import importlib.util
 import os
 import shutil
+import string
 import subprocess
 import sys
 from pathlib import Path
@@ -69,6 +70,15 @@ _CASES = [
     (SPACED, ""),
     ("/home/a b/.venv/bin/python", None),
 ]
+# Built from the alphabet, not by hand (both reviews of 165e78b3: the hand list
+# let 33 of 39 one-sided edits through): one short form per printable
+# character, the drive letter's edges, the length edge, and other whitespace
+# in the long path.
+_CASES += [(SPACED, f"C:\\A{c}B~1\\python.exe") for c in string.printable if c != "\\"]
+_CASES += [(SPACED, f"{d}:\\PY~1\\python.exe") for d in ("c", "Z", "1", "\u00e9", "\u212a")]
+_CASES += [(SPACED, s) for s in ("C:\\", "C:/", "C:\\\u00e9~1\\python.exe", "C:\\a+b\\p.exe", "C:\\a-b\\p.exe")]
+_CASES += [(SPACED.replace(" ", ws), SHORT) for ws in ("\t", "\u00a0", "\u3000")]
+_CASES += [(SPACED.replace(" ", ws), None) for ws in ("\t", "\u00a0", "\u3000")]
 
 
 class TestTheHooksTwinSpellsAsTheEngineDoes:
@@ -117,27 +127,59 @@ class TestTheHintSpellsASpacedInterpreterAsOneWord:
         assert hu.python_command_hint() == "python3"
 
 
+class TestThePowerShellNote:
+    """ack 2e78b5: a seen message after a quoted program word says PowerShell
+    needs ``&``; a bare word, or a host off Windows, takes no note."""
+
+    @pytest.mark.parametrize("word,platform,said", [
+        (f'"{SPACED}"', "win32", True),
+        ("C:/PROGRA~1/Py/python.exe", "win32", False),
+        (f'"{SPACED}"', "linux", False),
+        ("python3", "win32", False),
+    ], ids=["quoted-win", "bare-win", "quoted-linux", "name-win"])
+    def test_the_note_follows_a_quoted_word_on_windows(self, hu, monkeypatch, word, platform, said):
+        monkeypatch.setattr(hu.sys, "platform", platform)
+        assert ("type & before it" in hu.powershell_call_note(word)) is said
+
+
 class TestAKeptOlderJsonSafeStillStarts:
     """ruling bd0473 (b): an adopter who kept a ``_json_safe.py`` that predates
     the spelling gets hooks that start and print the bare path, as before."""
 
     def test_the_hooks_import_and_spell_bare(self, tmp_path):
+        """A real older ``_json_safe.py`` had ``quoted_if_spaced`` and not the
+        two new names. A spaced ``sys.executable`` in the child tells the bare
+        fallback apart from the new spelling on any host. Dies to: either
+        guard (``_hook_utils``, ``record_merge``) removed."""
         tree = tmp_path / "cc"
         shutil.copytree(TOOLS_CC, tree, ignore=shutil.ignore_patterns("__pycache__"))
         kept = tree / "_json_safe.py"
         text = kept.read_text(encoding="utf-8")
-        for name in ("program_word", "windows_short_path", "quoted_if_spaced"):
+        for name in ("program_word", "windows_short_path"):
             text = text.replace(f"def {name}(", f"def _gone_{name}(")
-        # `_plain_path` calls quoted_if_spaced at run time only; keep the module importable.
-        text = text.replace("return quoted_if_spaced(str(value))", "return str(value)")
         kept.write_bytes(text.encode("utf-8"))
-        code = ("import sys; sys.path.insert(0, sys.argv[1]); import _hook_utils as h; "
-                "import post_write_check; print(h.executable_word())")
+        code = ("import sys; sys.path[:0] = [sys.argv[1], sys.argv[2]]; "
+                "import _hook_utils as h, post_write_check, record_merge as rm; "
+                f"sys.executable = {SPACED!r}; "
+                "print(h.executable_word()); print(rm.program_word(sys.executable, rm.windows_short_path))")
         proc = subprocess.run(  # spawn: ok a test driving a kept-sibling import in its own interpreter
-            [sys.executable, "-c", code, str(tree / "hooks")],
+            [sys.executable, "-c", code, str(tree / "hooks"), str(tree)],
             capture_output=True, text=True, timeout=scaled(30), cwd=str(tmp_path))
         assert proc.returncode == 0, proc.stderr
-        assert proc.stdout.strip() == sys.executable, proc.stdout
+        assert proc.stdout.split("\n")[:2] == [SPACED, SPACED], proc.stdout
+
+    def test_post_write_check_reads_the_new_names_by_getattr(self):
+        """The reverse kept sibling: a new ``post_write_check.py`` beside an
+        older ``_hook_utils.py`` that lacks ``executable_word`` and
+        ``quoted_if_spaced`` (failure-mode review of 165e78b3: an
+        AttributeError in place of the prune note). Each is read through
+        ``getattr`` with a fallback, never as an attribute."""
+        for hook, names in (("post_write_check.py", ("executable_word", "quoted_if_spaced", "powershell_call_note")),
+                            ("session_start.py", ("powershell_call_note",))):
+            src = (TOOLS_CC / "hooks" / hook).read_text(encoding="utf-8")
+            for name in names:
+                assert f"_hook_utils.{name}" not in src, (hook, name)
+                assert (f"getattr(_hook_utils, '{name}'" in src or f'getattr(_hook_utils, "{name}"' in src), (hook, name)
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="GetShortPathNameW is Windows only")
@@ -159,19 +201,31 @@ class TestTheRealWindowsLookup:
         assert os.path.samefile(word, spaced)
 
 
+def _is_sys_interpreter(expr: ast.expr) -> bool:
+    """``sys.executable`` or ``sys._base_executable``, alone or in an ``or``."""
+    if isinstance(expr, ast.BoolOp):
+        return any(_is_sys_interpreter(v) for v in expr.values)
+    return (isinstance(expr, ast.Attribute) and expr.attr in ("executable", "_base_executable")
+            and isinstance(expr.value, ast.Name) and expr.value.id == "sys")
+
+
 def _bare_interpreter_commands(source: str, rel: str) -> list[str]:
-    """Each f-string in ``source`` that opens a backticked command with
-    ``{sys.executable}``: the program word of a paste, printed bare."""
+    """Each f-string in ``source`` where ``{sys.executable}`` (or
+    ``_base_executable``) is followed by `` -m `` or a ``.py`` script: the
+    program word of a command, printed bare. A path named as information (no
+    command after it) is not counted. Declared limits, read by both reviews of
+    165e78b3 and absent from tools/cc today: a local bound from
+    ``sys.executable``, ``str.format``, ``%`` and ``+`` building."""
     found = []
     for node in ast.walk(ast.parse(source)):
         if not isinstance(node, ast.JoinedStr):
             continue
-        for before, value in zip(node.values, node.values[1:]):
-            if (isinstance(value, ast.FormattedValue)
-                    and isinstance(value.value, ast.Attribute) and value.value.attr == "executable"
-                    and isinstance(value.value.value, ast.Name) and value.value.value.id == "sys"
-                    and isinstance(before, ast.Constant) and isinstance(before.value, str)
-                    and before.value.endswith("`")):
+        for value, after in zip(node.values, node.values[1:]):
+            if not (isinstance(value, ast.FormattedValue) and _is_sys_interpreter(value.value)):
+                continue
+            tail = after.value if isinstance(after, ast.Constant) and isinstance(after.value, str) else ""
+            head = tail.split("`")[0].split(")")[0]
+            if head.startswith(" -m ") or (head.startswith(" ") and ".py" in head.split(" ")[1]):
                 found.append(f"{rel}:{node.lineno}")
     return found
 
@@ -191,7 +245,20 @@ class TestNoCommandOpensWithABareInterpreter:
             found += _bare_interpreter_commands(path.read_text(encoding="utf-8"), rel)
         assert not found, found
 
-    def test_the_pin_sees_the_shape_it_bans(self):
-        src = 'x = f"run `{sys.executable} -m espalier memory prune` by hand"\n'
-        assert _bare_interpreter_commands(src, "probe.py") == ["probe.py:1"]
-        assert _bare_interpreter_commands('x = f"the interpreter ({sys.executable})"\n', "probe.py") == []
+    @pytest.mark.parametrize("src", [
+        'x = f"run `{sys.executable} -m espalier memory prune` by hand"',
+        'x = f"run: {sys.executable} -m espalier memory prune"',
+        'x = f"`{sys._base_executable or sys.executable} tools/cc/seat.py brief`"',
+        'x = f"run {sys.executable} tools/cc/execution_plan.py status"',
+    ], ids=["backticked", "no-backtick", "base-or", "script"])
+    def test_the_pin_sees_the_shape_it_bans(self, src):
+        assert _bare_interpreter_commands(src + "\n", "probe.py") == ["probe.py:1"]
+
+    @pytest.mark.parametrize("src", [
+        'x = f"the hook interpreter ({sys.executable}) has no pytest"',
+        'x = f" (at {sys.executable})"',
+        'x = f"`{sys.executable}` has no pytest"',
+        'x = f"run `{_hook_utils.executable_word()} -m espalier memory prune`"',
+    ], ids=["paren", "at", "backticked-info", "spelled"])
+    def test_the_pin_passes_a_path_named_as_information(self, src):
+        assert _bare_interpreter_commands(src + "\n", "probe.py") == []

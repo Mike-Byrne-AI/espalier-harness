@@ -674,6 +674,37 @@ class TestTheLadderRunsTheWiredInterpretersEngineFirst:
         monkeypatch.setattr(mod._hook_utils, "_ADVISORIES", [])
         return mod
 
+    @pytest.mark.parametrize("word,note", [
+        ("C:/PROGRA~1/Py/python.exe", False),
+        ('"C:/Program Files/Py/python.exe"', True),
+    ], ids=["short-form", "quoted"])
+    def test_a_spaced_interpreter_and_root_survive_the_paste(self, tmp_path, monkeypatch, word, note):
+        """DEF-2062: the refused prune's remedy spells a spaced interpreter as
+        one word and quotes a spaced root; a quoted word carries the PowerShell
+        note, since this advisory reaches Claude and the operator (ack 2e78b5).
+        The expectation is literal, never recomputed through the helpers under
+        test (both reviews of 165e78b3: an unspaced root let a revert of the
+        quoting pass). Dies to: the bare ``sys.executable`` or ``repo_root``
+        restored, the note dropped or unguarded."""
+        repo = tmp_path / "a b"
+        (repo / ".espalier").mkdir(parents=True)
+        (repo / "docs").mkdir()
+        mod = self._hook(monkeypatch)
+        monkeypatch.setattr(shutil, "which", lambda name, *a, **k: None)
+        monkeypatch.setattr(mod._hook_utils, "executable_word", lambda: word)
+        monkeypatch.setattr(mod._hook_utils.sys, "platform", "win32")
+        _make_over_cap_memory(repo)
+
+        def run_bounded(cmd, **kw):
+            return subprocess.CompletedProcess(cmd, 2, "", "memory prune: refused\n")
+
+        monkeypatch.setattr(mod._hook_utils, "run_bounded", run_bounded)
+        mod._maybe_autoprune_memory(repo, "ESPALIER_MEMORY.md")
+        said = " ".join(mod._hook_utils._ADVISORIES)
+        assert f'run `{word} -m espalier memory prune --rows ' in said, said
+        assert f'--root "{repo}" --allow-empty --keep-newest 1` by hand' in said, said
+        assert ("type & before it" in said) is note, said
+
     def test_a_wired_engine_that_refused_is_final_and_the_path_binary_is_not_tried(self, fresh_repo, monkeypatch):
         """The wired engine ran the prune and refused: the warn carries its
         words, and the PATH binary, whatever install answers the name, never

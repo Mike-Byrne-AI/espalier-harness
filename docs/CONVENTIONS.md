@@ -1410,11 +1410,14 @@ by surface, not by habit:
   Both spell `sys.executable` through `tools/cc/_json_safe.py::program_word`,
   the engine helper's twin (`tests/test_json_safe_program_word.py` pins the
   two together), with a spaced path's argument slots through
-  `quoted_if_spaced`. One limit is the engine's minus its note: where a spaced
-  path has no plain short form, the hook prints the quoted path and says
-  nothing of PowerShell's `&`, because an exit-0 hook's stderr is dropped
-  (`DEF-2062`). A message that opens a backticked command with a bare
-  `{sys.executable}` is refused by
+  `quoted_if_spaced`. Where a spaced path has no plain short form, the word is
+  the quoted path, and a message the reader SEES (a banner line, an
+  `additionalContext` advisory) appends `_hook_utils.powershell_call_note(word)`,
+  the engine's `&` note on the same line; a stderr line of an exit-0 hook
+  takes none, since nothing reads it (`DEF-2062`, ack 2e78b5). A reporter reads
+  each new helper name by `getattr` with a default, so a kept older
+  `_hook_utils.py` still starts. A message that runs `{sys.executable}` bare
+  (`-m` or a `.py` script after it) is refused by
   `tests/test_json_safe_program_word.py::TestNoCommandOpensWithABareInterpreter`.
 - **`.claude/settings.json` hook wiring** — `cli._build_settings_json` threads
   the same detected interpreter. This is mechanical enforcement, and it has
