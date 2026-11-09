@@ -2954,3 +2954,57 @@ def test_the_helper_imports_standalone_under_both_spellings() -> None:
         result = subprocess.run([sys.executable, "-c", code], cwd=str(cwd),
                                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30)
         assert result.returncode == 0, result.stderr
+
+
+class TestALinkMadeInAZone:
+    """What a link placed in a watched zone adds to the after-check's walk: the
+    zone-write limit docs/HOOKS.md declares (ruled 2026-11-09, ack c825b4). A
+    link into a zone is a zone write, which is none of the contract's three
+    jobs, so no reader is grown to judge it; the after-check sees what the link
+    adds when it lands, or nothing.
+
+    Driven on the Windows box (Python 3.11.9 and 3.13.15, links made by
+    mklink): a file link with a live target and a hard link read as added
+    files, and a junction is walked into, so its target's files read as added
+    (``os.walk`` does not treat a junction as a link). A directory link is not
+    walked and a link to a missing target fails its stat, so neither adds a
+    file the walk compares. Mutation: walk with ``followlinks=True`` and the
+    directory link's file appears, which reds the limit half."""
+
+    @staticmethod
+    def _link(make, *args) -> None:
+        try:
+            make(*args)
+        except (OSError, NotImplementedError) as exc:  # pragma: no cover - host without link rights
+            pytest.skip(f"this host cannot make the link: {exc}")
+
+    def test_a_directory_link_or_a_dangling_link_adds_nothing_and_a_file_link_adds_its_file(
+            self, tree: Path, tmp_path_factory: pytest.TempPathFactory) -> None:
+        outside = tmp_path_factory.mktemp("outside")
+        (outside / "dir").mkdir()
+        (outside / "dir" / "inner.py").write_bytes(b"print('inner')\n")
+        (outside / "payload.py").write_bytes(b"print('payload')\n")
+        zone = tree / "tools" / "cc" / "hooks"
+        before = zw.snapshot(tree)
+        self._link(os.symlink, str(outside / "dir"), str(zone / "d_link"), True)
+        self._link(os.symlink, str(outside / "missing.py"), str(zone / "missing_link.py"))
+        self._link(os.symlink, str(outside / "payload.py"), str(zone / "f_link.py"))
+        self._link(os.link, str(outside / "payload.py"), str(zone / "h_link.py"))
+        added = zw.diff(before, zw.snapshot(tree))["added"]
+        # the declared limit: a directory link and a dangling link add nothing
+        assert not any(rel.startswith("tools/cc/hooks/d_link") for rel in added), added
+        assert "tools/cc/hooks/missing_link.py" not in added, added
+        # the controls: the walk is live, and a link it can read is a file it compares
+        assert "tools/cc/hooks/f_link.py" in added and "tools/cc/hooks/h_link.py" in added, added
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="a junction is a Windows link")
+    def test_a_junction_is_walked_so_its_targets_files_read_as_added(
+            self, tree: Path, tmp_path_factory: pytest.TempPathFactory) -> None:
+        import _winapi  # noqa: PLC0415 - Windows only
+
+        outside = tmp_path_factory.mktemp("outside")
+        (outside / "dir").mkdir()
+        (outside / "dir" / "inner.py").write_bytes(b"print('inner')\n")
+        before = zw.snapshot(tree)
+        self._link(_winapi.CreateJunction, str(outside / "dir"), str(tree / "tools" / "cc" / "hooks" / "j_link"))
+        assert zw.diff(before, zw.snapshot(tree))["added"] == ["tools/cc/hooks/j_link/inner.py"]

@@ -1924,13 +1924,12 @@ spellings of them are work:
   force push to an unresolvable remote draws its nudge
   (`tests/test_write_guard.py::TestTheCoverageContract::test_an_unresolvable_operand_on_a_kept_job_draws_the_conservative_verdict`).
   A conservative refusal that goes quiet is a defect, not a limit.
-- **Outside it, and seen by no reader.** An encoded program and a script file
-  whose contents are the program are declared limits, each pinned at allow by
+- **Outside it, and seen by no reader.** An encoded program, a script file
+  whose contents are the program, and a program assembled from pieces nothing
+  in the command binds to a literal (bound pieces are inlined and read) are
+  declared limits, each pinned at allow by
   `tests/test_write_guard.py::TestTheCoverageContract::test_the_forms_no_reader_sees_are_pinned_as_allows`.
-  A program assembled from pieces nothing in the command binds to a literal is
-  a declared limit, pinned at allow by
-  `tests/test_write_guard.py::TestTheCoverageContract::test_the_forms_no_reader_sees_are_pinned_as_allows`
-  (bound pieces are inlined and read). A program held in a variable is a
+  A program held in a variable is a
   declared limit pinned by
   `tests/test_write_guard.py::TestCrossShellRouting::test_bash_tool_declared_limits_are_pinned`.
 - **Outside it by ruling (2026-11-08), so the family is not filed again.** A
@@ -1951,6 +1950,12 @@ spellings of them are work:
   unresolvable operand through, and the after-check reports the write when it
   lands, for the zones it watches
   (`tests/test_write_guard.py::TestTheCoverageContract::test_the_zone_path_check_lets_an_unresolvable_operand_through_to_the_after_check`).
+  A link made inside a watched zone is judged by what it adds there: a file
+  link with a live target and a hard link read as added files, and a Windows
+  junction is walked, so its target's files do; a directory link and a link
+  to a missing target add no file the after-check compares, a declared limit
+  pinned by
+  `tests/test_zone_watch.py::TestALinkMadeInAZone::test_a_directory_link_or_a_dangling_link_adds_nothing_and_a_file_link_adds_its_file`.
 - A new report on these jobs is a defect when its form is in the contract, or
   when it records a slip seen in a real session (a transcript or an audit row
   names it). Otherwise it is recorded under the limits above with the contract
