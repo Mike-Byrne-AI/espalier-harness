@@ -1476,6 +1476,7 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run, now: datetime
     closed: list[tuple[dict, dict, str]] = []
     board["assignments"] = mail.live_assignments(by_machine, dispatcher, closed=closed)
     board["asks"] = mail.live_requests(by_machine, now=now)
+    board["parked"] = mail.parked_jobs(by_machine, dispatcher)
     try:
         local = read_sessions(root, run_=run_)
     except Unresolvable as exc:
@@ -1999,20 +2000,52 @@ def under_two(assignments: list[dict], rows: list[dict], dispatcher: str = "") -
 #: the ack closes the stop, which frees the seat on either tree's tick (a
 #: release names no stop, and an adopter's worker waits until its stop is
 #: answered), so the line clears in the same move and never asks twice.
-PARKED_RELEASE = "release the parked job, ack the stop, and re-send the job at the ruling"
+PARKED_RELEASE = (f"release the parked job (a release opening {mail.PARKED_PREFIX} that acks its assign and "
+                  "names the call), ack the stop, and re-send the job at the ruling")
+
+#: The id matching's one home is the mail driver (``parked_jobs`` reads a
+#: release's call the way a stop's is read here).
+_names = mail.names_token
+_id_tokens = mail.id_tokens
 
 
-def _names(text: str, token: str) -> bool:
-    """Whether ``text`` carries ``token`` as a whole word (an id or its
-    six-character suffix, a ledger id), never inside a longer one."""
-    return bool(token) and re.search(r"(?<![\w-])" + re.escape(token) + r"(?![\w-])", text) is not None
+def _parked_job(park: dict) -> str:
+    """A parked job as its line names it: the seat, the job and its assign,
+    and the release, each id in full (the ids a re-send or a drop names)."""
+    assign, release = park.get("assign"), park.get("release") or {}
+    if assign is None:
+        return f"assign {release.get('ack')} (not on the record; released {release.get('id')})"
+    re_ = assign.get("re") or {}
+    return (f"{re_.get(mail.ASSIGN_SEAT_KEY) or '?'}: {_job(re_)} (assign {assign.get('id')}; "
+            f"released {release.get('id')})")
 
 
-def _id_tokens(message_id: str) -> tuple[str, ...]:
-    """A message's full id and its six-character suffix, the two ways a seat
-    names one in a text."""
-    suffix = message_id.rsplit("-", 1)[-1] if "-" in message_id else ""
-    return (message_id, suffix) if len(suffix) == 6 else (message_id,)
+def parked_lines(parks: list[dict]) -> list[str]:
+    """The jobs section's ``parked:`` and ``re-send:`` lines, under the
+    ``stopped:`` lines: one per job the dispatcher released onto an operator
+    call (``mail.parked_jobs``) and has not given out again. While the call
+    is open, ``parked:`` names the job and the call; once the call's sender
+    acks it (the ruling), ``re-send:`` names the job and the ruling, until an
+    assign of the job dated after the release, or a release acking the parked
+    one (the ruling dropped the job), clears it. A park whose text names no
+    operator call says so and stays, since nothing else would bring the job
+    back. Before it, once the release and the stop's ack were sent, nothing
+    on the board linked the job to the call, so at a ruling hours later
+    nothing named the job to re-send (``DEF-2067``). Computed where it
+    renders, from the parks the board holds (TestSectionCounts' rule)."""
+    lines: list[str] = []
+    for park in parks:
+        call, ruling = park.get("call"), park.get("ruling")
+        drop = f"a release acking {(park.get('release') or {}).get('id')} where the ruling drops it"
+        if call is None:
+            lines.append(f"          parked: {_parked_job(park)} on no operator call its text names: "
+                         f"re-send the job, or {drop}")
+        elif ruling is None:
+            lines.append(f"          parked: {_parked_job(park)} on operator call {call.get('id')}, open")
+        else:
+            lines.append(f"          re-send: {_parked_job(park)}: operator call {call.get('id')} ruled by "
+                         f"{ruling.get('id')}: re-send the job, or {drop}")
+    return lines
 
 
 def stopped_lines(asks: list[dict], assignments: list[dict], dispatcher: str = "") -> list[str]:
@@ -2190,6 +2223,9 @@ def render(board: dict) -> str:
         # so the release of a job parked on an operator call is read where the
         # short seats are, and not from the asks rows, which cap at ASKS_SHOWN.
         lines.extend(stopped_lines(board.get("asks") or [], jobs, str(disp.get("name") or "")))
+        # A job released onto an operator call, from the release until it is
+        # given out again (DEF-2067), so the re-send at the ruling is read here.
+        lines.extend(parked_lines(board.get("parked") or []))
     asks = board.get("asks") or []
     if board.get("mail_unread"):
         lines.append(f"asks:     unread (the mail could not be read: {board['mail_unread']})")

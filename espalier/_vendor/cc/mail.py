@@ -172,6 +172,18 @@ OPERATOR_CALL_PREFIX = "OPERATOR CALL:"
 #: of the operator call, read the same way (``is_stop``); before it a stopped
 #: worker sent nothing and the board showed no stopped seat (``DEF-5030``).
 STOPPED_PREFIX = "stopped:"
+#: What the dispatcher's release of a job an open operator call parks opens
+#: with (the shape approved on ruling ``20261107T060117Z-air-5e86f5`` (C):
+#: release the parked job at the stop, re-send it at the ruling): a
+#: ``release`` whose ``ack`` names the job's assign and whose text names the
+#: call by its id or the id's six-character suffix. The release closes the job
+#: and the stop is acked, so nothing else on the board names the job any
+#: more; the marker is the link from the job to the call (``parked_jobs``),
+#: read by the board's ``parked:`` and ``re-send:`` lines until the job is
+#: assigned again (``DEF-2067``: ``DEF-1071``, parked on ``17217c`` on 11-08,
+#: was carried in Session Log prose alone). A prefix, never any release that
+#: mentions a call, so a call named in passing parks nothing.
+PARKED_PREFIX = "parked:"
 #: What the dispatcher's ruling on a gridlock opens with (root CLAUDE.md Core
 #: Rule 15): an ``ack`` whose text opens with the marker, or a ``note`` where no
 #: request waits on the ruling (``DEF-4060``), the one the seat-day census
@@ -880,6 +892,95 @@ def is_stop(message: object) -> bool:
     does, on any ack naming it (``live_requests``)."""
     return (isinstance(message, dict) and message.get("type") == "request"
             and str(message.get("text") or "").startswith(STOPPED_PREFIX))
+
+
+def is_parked(message: object) -> bool:
+    """Whether ``message`` is a release whose text opens with
+    :data:`PARKED_PREFIX` and whose ``ack`` names a message: the dispatcher's
+    release of a job an operator call parks. Read as :func:`is_stop` reads
+    its prefix: a note, a request or an ack carrying the word is no park, a
+    release quoting it mid-text is not one, and a release acking nothing (a
+    lane release) is not one."""
+    return (isinstance(message, dict) and message.get("type") == "release" and bool(message.get("ack"))
+            and str(message.get("text") or "").startswith(PARKED_PREFIX))
+
+
+def id_tokens(message_id: str) -> tuple[str, ...]:
+    """A message's full id and its six-character suffix, the two ways a seat
+    names one in a text."""
+    suffix = message_id.rsplit("-", 1)[-1] if "-" in message_id else ""
+    return (message_id, suffix) if len(suffix) == 6 else (message_id,)
+
+
+def names_token(text: str, token: str) -> bool:
+    """Whether ``text`` carries ``token`` as a whole word (an id or its
+    six-character suffix, a ledger id), never inside a longer one."""
+    return bool(token) and re.search(r"(?<![\w-])" + re.escape(token) + r"(?![\w-])", text) is not None
+
+
+def names_message(text: str, message_id: str) -> bool:
+    """Whether ``text`` names the message ``message_id``, by its full id or
+    its suffix, as a whole word."""
+    return any(names_token(text, t) for t in id_tokens(message_id))
+
+
+def parked_jobs(by_machine: dict[str, list[dict]], dispatcher: str | None = None) -> list[dict]:
+    """The jobs the dispatcher parked on an operator call and has not given
+    out again, oldest park first: one ``{"release", "assign", "call",
+    "ruling"}`` per parked release (:func:`is_parked`) whose job is still
+    owed. ``assign`` is the assign the release's ``ack`` names (``None`` where
+    no assign on the record has that id); ``call`` is the earliest operator
+    call (:func:`is_operator_call`) the release's text names by full id or
+    suffix (``None`` where it names none); ``ruling`` is the earliest ack
+    from the call's own sender naming the call's full id, the ack that closes
+    it in :func:`live_requests` (``None`` while it is open). A park ends at an
+    assign dated after it of the same job (:func:`_job_key`), or naming one
+    of its ledger ids or its lane, and at a release whose ``ack`` names the
+    parked release (the dispatcher's word that the ruling dropped the job),
+    so a re-send or a drop clears it and nothing asks twice. Only the
+    dispatcher's releases and assigns count where one is named, as in
+    :func:`live_assignments` (:data:`DISPATCHER_UNUSABLE` counts none);
+    unnamed, every machine's do. Ordered as the claims fold is: the stamp,
+    the machine, the position in its file."""
+    events: list[tuple[str, str, int, dict]] = []
+    for machine, messages in by_machine.items():
+        for i, m in enumerate(messages):
+            events.append((str(m.get("at") or ""), str(m.get("from") or machine), i, m))
+    events.sort(key=lambda t: t[:3])
+    counts = (lambda who: not dispatcher or who == dispatcher)
+    assigns = {str(m.get("id")): m for _a, who, _i, m in events if m.get("type") == "assign" and counts(who)}
+    calls = [m for _a, _w, _i, m in events if is_operator_call(m)]
+    rulings: dict[str, dict] = {}
+    for _a, who, _i, m in events:
+        if m.get("type") == "ack":
+            call = next((c for c in calls if str(c.get("id")) == str(m.get("ack") or "")), None)
+            if call is not None and who == str(call.get("from") or "") and str(call.get("id")) not in rulings:
+                rulings[str(call.get("id"))] = m
+    parks: list[dict] = []
+    for n, (_at, who, _i, m) in enumerate(events):
+        if not (is_parked(m) and counts(who)):
+            continue
+        assign = assigns.get(str(m.get("ack")))
+        a_re = (assign or {}).get("re") or {}
+        key, ids, lane = _job_key(a_re), set(_str_list(a_re.get("ids"))), str(a_re.get("lane") or "")
+        ended = False
+        for _a2, who2, _i2, later in events[n + 1:]:
+            l_re = later.get("re") or {}
+            if later.get("type") == "assign" and counts(who2) and assign is not None and (
+                    _job_key(l_re) == key or ids & set(_str_list(l_re.get("ids")))
+                    or (lane and str(l_re.get("lane") or "") == lane)):
+                ended = True
+            elif later.get("type") == "release" and counts(who2) and str(later.get("ack") or "") == str(m.get("id")):
+                ended = True
+            if ended:
+                break
+        if ended:
+            continue
+        text = str(m.get("text") or "")
+        call = next((c for c in calls if names_message(text, str(c.get("id") or ""))), None)
+        parks.append({"release": m, "assign": assign, "call": call,
+                      "ruling": rulings.get(str(call.get("id"))) if call is not None else None})
+    return parks
 
 
 def ruling_text(message: dict) -> str:

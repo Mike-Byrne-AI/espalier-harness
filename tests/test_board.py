@@ -1556,7 +1556,8 @@ class TestUnderTwo:
                                 now=_T0.replace(minute=2))
         lines = self._text(board, monkeypatch, tmp_path, {"air": [*jobs, call], "win": [stop],
                                                           "air-work": [idle]}).splitlines()
-        release = "release the parked job, ack the stop, and re-send the job at the ruling"
+        release = ("release the parked job (a release opening parked: that acks its assign and names the call), "
+                   "ack the stop, and re-send the job at the ruling")
         assert self._stopped(lines) == [
             f"          stopped: win (stop {stop['id']}) holds lane/a (assign {jobs[0]['id']}); lane/b (assign "
             f"{jobs[1]['id']}, parked on {call['id']}): {release}",
@@ -1643,6 +1644,68 @@ class TestUnderTwo:
         text = board.render(TestSectionCounts._board(asks=[call, stop], stopped="stale"))
         assert (f"          stopped: win (stop 20261020T000000Z-win-5709ed) holds lane/a (assign a1, parked on "
                 f"20261019T000000Z-air-c0ffee): {board.PARKED_RELEASE}") in text.splitlines(), text
+
+    def test_a_parked_job_is_read_from_its_release_until_it_is_re_sent(self, board, monkeypatch, tmp_path):
+        """DEF-2067: once the dispatcher released a job an open operator call
+        parks and acked the stop, the board kept no link from the job to the
+        call, so at the ruling, hours later, nothing named the job to re-send
+        (DEF-1071, parked on 17217c on 11-08, lived in Session Log prose). A
+        ``parked:`` release keeps the link: a ``parked:`` line under the
+        ``stopped:`` lines while the call is open, a ``re-send:`` line once
+        its sender acks it, nothing once the job is assigned again or the
+        park is released. Dies to: no line, a line on the wrong side of the
+        stopped lines, the ruling not read, a suffixed id printed, or the line
+        kept after the re-send."""
+        mail = board.mail
+        job = mail.new_message("air", "assign", "Job", seat="win", ids=["DEF-1071"], now=_T0)
+        other = self._assign(board, "win", "lane/a")
+        call = mail.new_message("air", "request", f"{mail.OPERATOR_CALL_PREFIX} park or drive?",
+                                now=_T0.replace(minute=1))
+        stop = mail.new_message("win", "request", f"{mail.STOPPED_PREFIX} call {call['id']} parks {job['id']}",
+                                now=_T0.replace(minute=2))
+        park = mail.new_message("air", "release", f"{mail.PARKED_PREFIX} on call {call['id'].rsplit('-', 1)[1]}",
+                                ack=job["id"], now=_T0.replace(minute=3))
+        freed = mail.new_message("air", "ack", "released", ack=stop["id"], now=_T0.replace(minute=3))
+        base = {"air": [job, other, call, park, freed], "win": [stop]}
+        lines = self._text(board, monkeypatch, tmp_path, base).splitlines()
+        held = f"win: DEF-1071 (assign {job['id']}; released {park['id']})"
+        i = lines.index(f"          parked: {held} on operator call {call['id']}, open")
+        assert lines[i - 1].startswith("          under two: ") and lines[i + 1].startswith("asks:"), lines[i - 1:i + 2]
+        ruling = mail.new_message("air", "ack", "drive it", ack=call["id"], now=_T0.replace(minute=9))
+        lines = self._text(board, monkeypatch, tmp_path, {**base, "air": [*base["air"], ruling]}).splitlines()
+        assert (f"          re-send: {held}: operator call {call['id']} ruled by {ruling['id']}: re-send the job, "
+                f"or a release acking {park['id']} where the ruling drops it") in lines, lines
+        assert not any(ln.startswith("          parked: ") for ln in lines), lines
+        resent = mail.new_message("air", "assign", "Job", seat="win", ids=["DEF-1071"], now=_T0.replace(minute=10))
+        lines = self._text(board, monkeypatch, tmp_path, {**base, "air": [*base["air"], ruling, resent]}).splitlines()
+        assert not any(ln.startswith(("          parked: ", "          re-send: ")) for ln in lines), lines
+
+    def test_a_parked_line_sits_under_the_stopped_lines_and_says_a_call_it_cannot_find(self, board, monkeypatch,
+                                                                                         tmp_path):
+        """A seat still stopped keeps its stopped line above the parks; a park
+        naming no operator call stays (nothing else would bring the job back)
+        and says so. Dies to: the order turned, or a park with no call
+        dropped."""
+        mail = board.mail
+        job = mail.new_message("air", "assign", "Job", seat="win", ids=["DEF-7"], now=_T0)
+        stop = mail.new_message("win-2", "request", f"{mail.STOPPED_PREFIX} the guard refuses", now=_T0)
+        park = mail.new_message("air", "release", f"{mail.PARKED_PREFIX} on the base question", ack=job["id"],
+                                now=_T0.replace(minute=3))
+        lines = self._text(board, monkeypatch, tmp_path, {"air": [job, park], "win-2": [stop]}).splitlines()
+        i = lines.index(f"          stopped: win-2 (stop {stop['id']}) holds no job")
+        assert lines[i + 1] == (f"          parked: win: DEF-7 (assign {job['id']}; released {park['id']}) on no "
+                                f"operator call its text names: re-send the job, or a release acking {park['id']} "
+                                "where the ruling drops it"), lines[i:i + 2]
+
+    def test_the_parked_lines_are_derived_at_the_render(self, board):
+        """TestSectionCounts' rule: the lines come from the parks the board
+        holds, at the render. Dies to: a stored line list read, or an unknown
+        assign dropped."""
+        park = {"release": {"id": "20261109T180000Z-air-aaaaaa", "ack": "20261108T000000Z-air-000000"},
+                "assign": None, "call": {"id": "20261108T044022Z-air-17217c"}, "ruling": None}
+        text = board.render(TestSectionCounts._board(parked=[park], parked_lines="stale"))
+        assert ("          parked: assign 20261108T000000Z-air-000000 (not on the record; released "
+                "20261109T180000Z-air-aaaaaa) on operator call 20261108T044022Z-air-17217c, open") in text.splitlines(), text
 
     def test_an_unread_mail_prints_no_under_two_line(self, board, monkeypatch, tmp_path):
         """Dies to: every seat read as idle from an empty fold."""

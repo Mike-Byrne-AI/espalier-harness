@@ -1304,6 +1304,78 @@ class TestOperatorCalls:
         freed = mail.new_message("win-2", "ack", "released docs/HOOKS.md", ack=stop["id"], now=t.replace(minute=5))
         assert mail.live_requests({"win": [stop], "win-2": [freed]}, now=t.replace(minute=9)) == []
 
+    def test_a_park_is_a_release_that_acks_and_opens_with_its_own_prefix(self, mail):
+        """DEF-2067: the dispatcher's release of a job an operator call parks
+        opens with ``parked:`` and acks the job's assign, so the board can
+        keep the link from the job to the call once the release and the
+        stop's ack are sent. Read as the stop is: a release alone, the prefix
+        at the text's opening, as spelled, and acking a message. Dies to: a
+        note, a lane release, another case or a mid-text mention read as a
+        park."""
+        t = datetime(2026, 11, 9, 17, 0, 0, tzinfo=timezone.utc)
+        assert mail.PARKED_PREFIX == "parked:"
+        a = "20261108T023412Z-air-82d224"
+        park = mail.new_message("air", "release", f"{mail.PARKED_PREFIX} on call 17217c", ack=a, now=t)
+        plain = mail.new_message("air", "release", "DEF-1071 released: parked on call 17217c", ack=a, now=t)
+        lane = mail.new_message("air", "release", f"{mail.PARKED_PREFIX} the lane", lane="lane/a", now=t)
+        note = mail.new_message("air", "note", f"{mail.PARKED_PREFIX} not a release", now=t)
+        upper = mail.new_message("air", "release", "PARKED: not the prefix", ack=a, now=t)
+        quoted = mail.new_message("air", "release", f"released; not {mail.PARKED_PREFIX} on 17217c", ack=a, now=t)
+        assert [mail.is_parked(m) for m in (park, plain, lane, note, upper, quoted)] == [
+            True, False, False, False, False, False]
+        assert mail.is_parked({"type": "release"}) is False and mail.is_parked("junk") is False
+
+    def test_a_parked_job_is_owed_from_its_release_until_it_is_given_out_again(self, mail):
+        """DEF-2067, the fold: a parked release names its assign (by ack) and
+        its call (by full id or suffix); the call's ruling is its sender's
+        own ack; the park ends at a later assign of the same job (its key,
+        one of its ledger ids, or its lane) or at a release acking the park.
+        Dies to: the assign or the call not resolved, the suffix not read, a
+        worker's ack read as the ruling, an earlier assign ending it, the end
+        rules dropped, or a worker's park counted under a named dispatcher."""
+        t = datetime(2026, 11, 9, 17, 0, 0, tzinfo=timezone.utc)
+        job = mail.new_message("air", "assign", "Job", seat="win", ids=["DEF-1071"], now=t)
+        call = mail.new_message("air", "request", f"{mail.OPERATOR_CALL_PREFIX} park, split or drive?",
+                                now=t.replace(minute=1))
+        suffix = call["id"].rsplit("-", 1)[1]
+        park = mail.new_message("air", "release", f"{mail.PARKED_PREFIX} on call {suffix}", ack=job["id"],
+                                now=t.replace(minute=2))
+        base = [job, call, park]
+        [only] = mail.parked_jobs({"air": base}, "air")
+        assert (only["release"]["id"], only["assign"]["id"], only["call"]["id"], only["ruling"]) == (
+            park["id"], job["id"], call["id"], None)
+        moot = mail.new_message("win", "ack", "moot", ack=call["id"], now=t.replace(minute=3))
+        assert mail.parked_jobs({"air": base, "win": [moot]}, "air")[0]["ruling"] is None
+        ruling = mail.new_message("air", "ack", "drive it", ack=call["id"], now=t.replace(minute=4))
+        assert mail.parked_jobs({"air": [*base, ruling]}, "air")[0]["ruling"]["id"] == ruling["id"]
+        for later in (mail.new_message("air", "assign", "re-sent", seat="win", ids=["DEF-1071"], now=t.replace(minute=5)),
+                      mail.new_message("air", "assign", "with more", seat="win-2", ids=["DEF-1071", "DEF-9"],
+                                       now=t.replace(minute=5)),
+                      mail.new_message("air", "release", "dropped", ack=park["id"], now=t.replace(minute=5))):
+            assert mail.parked_jobs({"air": [*base, ruling, later]}, "air") == [], later["text"]
+        early = mail.new_message("air", "assign", "before", seat="win", ids=["DEF-1071"], now=t.replace(second=30))
+        assert len(mail.parked_jobs({"air": [early, *base]}, "air")) == 1
+        stray = mail.new_message("win", "release", f"{mail.PARKED_PREFIX} on call {suffix}", ack=job["id"],
+                                 now=t.replace(minute=2))
+        assert mail.parked_jobs({"air": [job, call], "win": [stray]}, "air") == []
+        assert len(mail.parked_jobs({"air": [job, call], "win": [stray]})) == 1, "no dispatcher: every machine's"
+        on_lane = mail.new_message("air", "assign", "Job", seat="win", lane="lane/a", now=t)
+        lane_park = mail.new_message("air", "release", f"{mail.PARKED_PREFIX} on {suffix}", ack=on_lane["id"],
+                                     now=t.replace(minute=2))
+        relane = mail.new_message("air", "assign", "Job, ids now", seat="win", lane="lane/a", ids=["DEF-2"],
+                                  now=t.replace(minute=6))
+        assert mail.parked_jobs({"air": [on_lane, call, lane_park, relane]}, "air") == []
+        by_class = mail.new_message("air", "assign", "Job", seat="win", classes=["C76"], now=t)
+        class_park = mail.new_message("air", "release", f"{mail.PARKED_PREFIX} on {suffix}", ack=by_class["id"],
+                                      now=t.replace(minute=2))
+        reclass = mail.new_message("air", "assign", "Job again", seat="win", classes=["C76"], now=t.replace(minute=6))
+        assert len(mail.parked_jobs({"air": [by_class, call, class_park]}, "air")) == 1
+        assert mail.parked_jobs({"air": [by_class, call, class_park, reclass]}, "air") == [], "the job's key ends it"
+        nocall = mail.new_message("air", "release", f"{mail.PARKED_PREFIX} on a call", ack="20261108T000000Z-air-000000",
+                                  now=t.replace(minute=2))
+        [lost] = mail.parked_jobs({"air": [nocall]}, "air")
+        assert lost["assign"] is None and lost["call"] is None and lost["ruling"] is None
+
     def test_only_the_askers_own_ack_closes_an_operator_call(self, mail):
         """Any seat's ack closed any request, and inbox.md tells a worker to
         close a moot ask, so a worker could clear the operator's question from
