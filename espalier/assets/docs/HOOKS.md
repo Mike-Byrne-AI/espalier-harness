@@ -211,7 +211,12 @@ too (those two add the start gate this five-row line does not carry: a
 newer merge's green run clears an older red only when it started after that
 merge landed, else it is printed beside the red), and a tree without the module beside the
 hooks gets one line in the block's place, `pull requests unread
-(tools/cc/_post_merge.py is not beside the hooks)`, never a silent green.
+(tools/cc/_post_merge.py is not beside the hooks)`, never a silent green. An
+older copy an upgrade kept as yours, one that lacks a name the block reads or
+a keyword it passes, gets one line too, naming what it lacks and the repair
+(`pull requests unread (tools/cc/_post_merge.py has `read_required` without
+`head=`, ...)`), where the line used to go under a warning naming an argument
+(until 2026-11-08).
 Each check name is owned by the newest merge whose run of it reached
 a verdict, so a later green run clears an older red, while a run still
 pending, cancelled or stale supersedes nothing (the last two read
@@ -925,16 +930,28 @@ takes are read under one module-top guard, and a failure there is a structured
 deny with a `pretooluse_blocked_internal_error` record; every call is refused
 until the cause is repaired. The deny names the file under `tools/cc/` that
 raised, its line and the exception. When a name a sibling takes is missing from
-`_hook_utils.py` -- the kept-helper case -- it also names the upgrade repair
-(restore the helper's `# espalier:managed` marker line, then `espalier upgrade
---execute .`). Any other raise names no upgrade, which would regenerate the
+the `tools/cc/` module it reads -- `_hook_utils.py` most often, any sibling
+since 2026-11-08 (a kept older `_bash_patterns.py` was told the upgrade would
+not repair it) -- it names that file and the upgrade repair (restore its
+`# espalier:managed` marker line, then `espalier upgrade --execute .`). The
+ship driver reads the same test: `tools/cc/ship.py` loads `_start_refusal.py`
+by path before its siblings, so a kept sibling it reads is one refusal on
+stderr naming the file, the line that read it and the repair, exit 1, never a
+traceback. The other scripts under `tools/cc/` do not install it yet, so a
+kept sibling still ends one of them in a traceback. Any other
+raise names no upgrade, which would regenerate the
 file under edit (a sibling raising at import was blamed on the helper twice,
 2026-10-14 and 10-16). The two budget names (`spawn_timeout`,
 `STATE_WRITE_LOCK`) degrade instead, because no verdict depends on them, so a
 helper missing only those judges on. `plan_guard.py`, `config_guard.py` and
 `stop_gate.py` carry the same guard (the Stop gate's refusal is the Stop-style
 block, which the protocol's loop signal lets through on the next Stop),
-`upgrade` names the missing names when it keeps the helper, and `espalier
+`upgrade` and a re-run of `init` name the missing names when they keep the
+helper (and, for any other kept `tools/cc/` file, the names and call keywords
+the regenerated scripts take that it lacks; a name read under an import guard
+that runs on, an `AttributeError` guard, a `hasattr` check or a `getattr`
+default is left out, and one under a start guard that refuses is not; a name
+read through a loader that is handed the module's name is not read yet), and `espalier
 doctor` names a wired hook that cannot start (for `write_guard`, a broken one of
 the two siblings below that it loads on first use too). Maintenance mode (the friction
 bypass below) does not lift this refusal -- the guard runs before that gate is
@@ -953,7 +970,10 @@ same way on every call. A broken `_bash_patterns.py` or `_speedbump.py` is
 therefore a crash, not a failure to start: a read-only call passes, so the file
 can be read, and a mutation meets the crash guard (`write_guard internal error
 (<error> at <file>:<line>)`), which names the same files and lets the same one
-restore through.
+restore through. Where the name read there is one a kept, older
+`_bash_patterns.py` lacks, the crash guard names that file and the upgrade
+repair as the start refusal does (until 2026-11-08 it said to restore
+`write_guard.py`).
 
 **The floor starts or refuses too.** Until 2026-10-16 the floor of that guard
 -- `_hook_utils.py`, with `tools/cc/_json_safe.py` under it, and
@@ -988,7 +1008,8 @@ guarded imports, installs `_start_refusal.refuse_on_body_raise` as the
 interpreter's exception hook, so an exception escaping its module body is the
 same refusal: it names the file and line that raised, says the module body
 raised (not an import), neither offers nor rules out an upgrade (the
-kept-helper test alone offers one), records `details.skew: "module body"`
+kept-file test alone offers one, and a name a kept sibling lacks reads as that
+refusal here too), records `details.skew: "module body"`
 (`"sibling import"` for the guarded imports), lets `write_guard`'s one restore
 through and the Stop hook's loop signal pass. `write_guard`'s judging child
 carries it, and so does a hook process that judges itself. It covers the
@@ -1010,7 +1031,8 @@ text is `git restore [--source=HEAD] [--] <file>`, `git checkout -- <file>` or
   `tools/cc/` file on the traceback, because the file you edited is often an
   outer one: a circular import raises in the module it re-enters, a bad
   argument in the helper it was handed to, a new module's import in the new
-  module. In the kept-helper case it also names `_hook_utils.py`.
+  module. In the kept-file case it also names the file that lacks the name
+  (`_hook_utils.py`, or the kept sibling).
 - **Which command.** The command it names is `git restore --source=HEAD --
   <file>`. A bare `git restore` reads the index, which keeps a staged break and
   refuses a path a merge left unmerged.

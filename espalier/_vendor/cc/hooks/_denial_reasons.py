@@ -1084,6 +1084,20 @@ WRITE_GUARD_CRASHED_AT = (
     " edited, restore it to HEAD: {restore}. Otherwise `/status --log` counts it and"
     " the repair is made from a terminal outside this session."
 )
+#: The same crash where the name read is one a kept, older sibling lacks
+#: (``_start_refusal.crash_refusal``'s kept-old-file fields): the pattern path's
+#: first use reads ``_bash_patterns``, which an upgrade keeps as the adopter's
+#: when it lost its marker. The file that lacks the name and the upgrade repair
+#: are named, never only a restore of the file that read it (DEF-5087's review).
+WRITE_GUARD_CRASHED_ON_A_KEPT_FILE = (
+    "write_guard internal error ({error} at {file}:{line}): {file} takes `{name}` from"
+    " {kept}, which lacks it; failing closed. If an upgrade kept {kept_name} as yours"
+    " (no managed marker) and regenerated the rest: from a terminal, restore its"
+    " `# espalier:managed` marker line and run `espalier upgrade --execute .`. If an"
+    " edit in progress removed the name or added its read, restore the edited file to"
+    " HEAD: {restore}. A read-only call may still pass, so the file can be read; every"
+    " mutation is refused until then."
+)
 
 #: Reasons whose deny/block is FAIL-CLOSED because the hook could not read or
 #: verify its payload, so no governance rule matched and there is no denial to
