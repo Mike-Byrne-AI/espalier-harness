@@ -52,12 +52,15 @@ SUBPROCESS_CONTRACTS: dict[str, str] = {
         "tests/test_subprocess_cli_contract.py::test_read_summary_list_flag_exists",
 }
 
-#: The harness's spawn wrappers (``spawn_checked`` in tools/cc/hooks/_hook_utils.py,
-#: ``run_bounded`` in tools/cc/_json_safe.py, the route every timed spawn there
-#: takes since 2026-10-13, and its tree-ending sibling ``run_tree_bounded``),
-#: read by bare name or attribute. Held equal to the encoding scanner's and
+#: The harness's spawn wrappers (``spawn_checked`` in tools/cc/hooks/_hook_utils.py
+#: and its tree-ending form ``spawn_tree_checked``, ``run_bounded`` in
+#: tools/cc/_json_safe.py, the route every timed spawn there takes since
+#: 2026-10-13, and its tree-ending sibling ``run_tree_bounded``), read by bare
+#: name or attribute. Held equal to the encoding scanner's and
 #: tests/test_contracts.py's copies.
-SPAWN_WRAPPERS: frozenset[str] = frozenset({"spawn_checked", "run_bounded", "run_tree_bounded", "run_no_stdin"})
+SPAWN_WRAPPERS: frozenset[str] = frozenset({
+    "spawn_checked", "spawn_tree_checked", "run_bounded", "run_tree_bounded", "run_no_stdin",
+})
 
 OS_BINARIES: frozenset[str] = frozenset({
     "git", "pytest", "tar", "gzip", "find", "grep", "sed", "awk",
@@ -157,7 +160,12 @@ PRAGMA_RE = re.compile(r"^#\s*subprocess-contract:\s*ok\s+(.{12,})$")
 # is, but it is not a SPAWN_WRAPPERS name (its one caller would then need the
 # pragma for a dynamic interpreter list instead); tests/test_bounded_spawn.py
 # pins the tree bound and the real-hook rows the child.
-MAX_PRAGMA_COUNT: int = 15
+# Raised 15 -> 16 (2026-11-08) for tools/cc/hooks/_hook_utils.py::spawn_tree_checked,
+# the chokepoint's tree-ending form the stop gate's test run takes: its one
+# call carries the same pragma as spawn_checked's, for the same reason (the argv
+# is the caller's, argv[0] resolved first); tests/test_stop_gate.py drives both
+# of its callers end to end.
+MAX_PRAGMA_COUNT: int = 16
 
 # Sister-site protection: fixture files contain intentional positives.
 EXEMPT_PREFIXES: tuple[str, ...] = (

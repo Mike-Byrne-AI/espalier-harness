@@ -279,7 +279,7 @@ class TestStopGateSkipsLeaveARecord:
         def _slow(*_a, **_k):
             raise subprocess.TimeoutExpired(cmd="pytest", timeout=60)
 
-        monkeypatch.setattr(sg._hook_utils, "spawn_checked", _slow)
+        monkeypatch.setattr(sg._hook_utils, "spawn_tree_checked", _slow)
         assert sg._gate_pytest(tmp_path) == 0
         records = _records("stop_failed_open_pytest_did_not_run")
         assert len(records) == 1 and records[0]["details"]["fault"] == "TimeoutExpired", records
