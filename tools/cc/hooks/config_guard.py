@@ -147,7 +147,6 @@ def _unwiring_findings(root: Path) -> list[str]:
     # is judged on its own content, so the repair is let through -- which is
     # why the kill-switch scan's leave-it-editable fail-open is not borrowed.
     state, data = _integrity.read_project_settings(root)
-    data = _integrity.without_protocol_typed_hooks(data)
     live = set(_integrity.live_governance_gates(data, root))
     deployed = set(_integrity.deployed_governance_gates(root))
     before = _integrity.read_wired_gates(root)

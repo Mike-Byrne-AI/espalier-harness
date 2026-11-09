@@ -941,9 +941,10 @@ class TestHookTypeIsRequiredAndVoidsTheWholeFile:
       | typed SessionStart + untyped PostToolUse        | NEITHER          |
       | typed + type="prompt", same event               | NEITHER          |
 
-    So the rule is not per-entry and not per-event: ANY hook object whose
-    ``type`` is not exactly ``"command"`` makes Claude Code load NO hooks from
-    the file at all, silently. One stray entry -- an adopter's OWN unrelated
+    So the rule is not per-entry and not per-event: ANY hook object Claude
+    Code refuses (the matrix's untyped entry and malformed prompt entry; the
+    full whitelist is ``surface_contract.HOOK_TYPE_REQUIRED_STRINGS``) makes it
+    load NO hooks from the file at all, silently. One stray entry -- an adopter's OWN unrelated
     hook, not espalier's -- disarms every governance gate while every espalier
     surface reports armed.
 
@@ -982,6 +983,22 @@ class TestHookTypeIsRequiredAndVoidsTheWholeFile:
                             "args": ["a.py"], "timeout": 5}]}]}, False),
         ({"E": [{"matcher": "*", "hooks": [{"type": "command",
                                             "command": "python3"}]}]}, False),
+        # The three types Claude Code added after 2.1.247, each driven on
+        # 2.1.319 (2026-11-09, marker rig, 2 runs an arm): with its required
+        # string field the file loads (the http hook POSTed, the mcp_tool hook
+        # called its tool); without it, or with a number there, the file voids
+        # and CC's stderr names the field. An unconfigured mcp server is a
+        # non-blocking error at fire time, not a schema fault.
+        ({"E": [{"hooks": [{"type": "http", "url": "http://127.0.0.1:9/h"}]}]}, False),
+        ({"E": [{"hooks": [{"type": "mcp_tool", "server": "s", "tool": "t"}]}]}, False),
+        ({"E": [{"hooks": [{"type": "mcp_tool", "server": "nosuch",
+                            "tool": "t", "input": {"x": "${tool_input.file_path}"}}]}]}, False),
+        ({"E": [{"hooks": [{"type": "agent", "prompt": "check it"}]}]}, False),
+        ({"E": [{"hooks": [{"type": "http"}]}]}, True),
+        ({"E": [{"hooks": [{"type": "http", "url": 5}]}]}, True),
+        ({"E": [{"hooks": [{"type": "mcp_tool", "server": "s"}]}]}, True),
+        ({"E": [{"hooks": [{"type": "mcp_tool", "tool": "t"}]}]}, True),
+        ({"E": [{"hooks": [{"type": "agent"}]}]}, True),
 
         # ── VOIDS THE WHOLE FILE (each driven against real CC 2.1.247 with a
         # control hook that fired in the same file).
@@ -1043,6 +1060,27 @@ class TestHookTypeIsRequiredAndVoidsTheWholeFile:
             "voids whole -- the fail-open this class exists to close"
         )
 
+    @pytest.mark.parametrize("beside", [
+        {"type": "http", "url": "http://127.0.0.1:9/h"},
+        {"type": "mcp_tool", "server": "s", "tool": "t"},
+        {"type": "agent", "prompt": "check it"},
+    ], ids=["http", "mcp_tool", "agent"])
+    def test_a_driven_hook_type_beside_the_gate_leaves_it_wired(self, tmp_path, beside):
+        """The adopter's own http, mcp_tool or agent hook does not void the
+        file (driven on CC 2.1.319), so the gate beside it still reads live;
+        before DEF-1195 doctor told this adopter no hooks load at all."""
+        import json
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_text(json.dumps({"hooks": {
+            "PreToolUse": [
+                {"matcher": "*", "hooks": [{"type": "command", "command": "python3",
+                                            "args": ["tools/cc/hooks/write_guard.py"]}]},
+            ],
+            "PostToolUse": [{"hooks": [beside]}],
+        }}), encoding="utf-8")
+        wired = sc.discover_executable_hook_wirings(tmp_path)
+        assert [w["script"] for w in wired] == ["tools/cc/hooks/write_guard.py"], wired
+
     def test_ci_guard_mirror_agrees_on_the_type_rule(self):
         """The mirror is count-parity-locked; a one-sided fix is a silent split."""
         import importlib.util
@@ -1082,6 +1120,14 @@ class TestHookTypeIsRequiredAndVoidsTheWholeFile:
             {"SessionStart": [{"hooks": [None]}]},
             {"SessionStart": [{}]},
             "not-a-dict",
+            # the types driven on 2.1.319, each well-formed and each missing its field
+            {"PostToolUse": [{"hooks": [{"type": "http", "url": "http://h/x"}]}]},
+            {"PostToolUse": [{"hooks": [{"type": "http", "url": 5}]}]},
+            {"PostToolUse": [{"hooks": [{"type": "mcp_tool", "server": "s", "tool": "t"}]}]},
+            {"PostToolUse": [{"hooks": [{"type": "mcp_tool", "server": "s"}]}]},
+            {"PostToolUse": [{"hooks": [{"type": "mcp_tool", "tool": "t"}]}]},
+            {"PostToolUse": [{"hooks": [{"type": "agent", "prompt": "p"}]}]},
+            {"PostToolUse": [{"hooks": [{"type": "agent"}]}]},
         ):
             assert (sc.hooks_config_voided_by(cfg)
                     == cig._ci_hooks_config_voided_by(cfg)), (

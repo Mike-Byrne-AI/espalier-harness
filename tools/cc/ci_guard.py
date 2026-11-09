@@ -1035,25 +1035,37 @@ def _ci_matcher_covers_canonical(deployed: str, canonical: str) -> bool:
     return _ci_matcher_covers_mutations(deployed)
 
 
+#: Stdlib-only mirror of surface_contract.HOOK_TYPE_REQUIRED_STRINGS: each hook
+#: type Claude Code accepts and the fields it requires to be a string (http,
+#: mcp_tool and agent driven on 2.1.319, DEF-1195).
+_CI_HOOK_TYPE_REQUIRED_STRINGS = {
+    "command": ("command",),
+    "prompt": ("prompt",),
+    "agent": ("prompt",),
+    "http": ("url",),
+    "mcp_tool": ("server", "tool"),
+}
+
+
 def _ci_hook_object_schema_error(hook) -> str | None:  # type: ignore[no-untyped-def]
     """Stdlib-only mirror of surface_contract._hook_object_schema_error."""
     if not isinstance(hook, dict):
         return "a hook entry is %s, not an object" % type(hook).__name__
     htype = hook.get("type")
+    required = _CI_HOOK_TYPE_REQUIRED_STRINGS.get(htype) if isinstance(htype, str) else None
+    if required is None:
+        shown = "<absent>" if htype is None else repr(htype)
+        return ("a hook entry has type %s (expected one of %s)"
+                % (shown, ", ".join('"%s"' % t for t in _CI_HOOK_TYPE_REQUIRED_STRINGS)))
+    for field in required:
+        if not isinstance(hook.get(field), str):
+            return 'a "%s" hook has no string "%s"' % (htype, field)
     if htype == "command":
-        if not isinstance(hook.get("command"), str):
-            return 'a "command" hook has no string "command"'
         args = hook.get("args")
         if args is not None and not isinstance(args, list):
             return ('a "command" hook\'s "args" is %s, not a list'
                     % type(args).__name__)
-        return None
-    if htype == "prompt":
-        if not isinstance(hook.get("prompt"), str):
-            return 'a "prompt" hook has no string "prompt"'
-        return None
-    shown = "<absent>" if htype is None else repr(htype)
-    return 'a hook entry has type %s (expected "command" or "prompt")' % shown
+    return None
 
 
 def _ci_hooks_config_voided_by(hooks_cfg) -> str | None:  # type: ignore[no-untyped-def]
@@ -1158,9 +1170,10 @@ def _scan_settings_for_missing_governance_events(rel: str, root: Path) -> list[s
         # `type` sends the operator to rewrite wiring that is already right.
         findings.append(
             f"{rel}: {voided_by} -- Claude Code loads NO hooks at all from a "
-            "settings file containing a hook entry whose 'type' is not exactly "
-            '"command" (absent counts), so EVERY governance gate below is dead, '
-            "including the ones whose own wiring is correct"
+            "settings file holding one malformed hook entry (a 'type' it does "
+            "not know, absent included, or a type missing its required field), "
+            "so EVERY governance gate below is dead, including the ones whose "
+            "own wiring is correct"
         )
     hooks_dir = root / _HOOKS_DIR_REL
     for script, event in sorted(_GOVERNANCE_BLOCKING_HOOKS.items()):

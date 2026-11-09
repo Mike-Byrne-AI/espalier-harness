@@ -1472,8 +1472,9 @@ def matcher_token_probe(token: str) -> str:
 
 
 def hooks_config_voided_by(hooks_cfg: object) -> str | None:
-    """The first hook object whose ``type`` is not exactly ``"command"``,
-    described for an operator, or ``None`` when every hook object is valid.
+    """The first group or hook object Claude Code refuses (an unknown or
+    absent ``type``, or a type missing its required string field), described
+    for an operator, or ``None`` when every hook object is valid.
 
     ⚠ THIS IS NOT A PER-ENTRY RULE, AND IT IS NOT A RULE ABOUT ``type``.
     Claude Code SCHEMA-VALIDATES the whole hooks block and refuses ALL of it if
@@ -1507,6 +1508,15 @@ def hooks_config_voided_by(hooks_cfg: object) -> str | None:
       offending entry sits under ``PostToolUse`` or ``PreToolUse``. Whole file,
       not per-event and not per-entry.
 
+    Driven again on Claude Code 2.1.319 (2026-11-09, DEF-1195), same rig, a
+    blocking control on ``UserPromptSubmit`` and two runs an arm: an ``http``
+    hook with a string ``url``, an ``mcp_tool`` hook with ``server`` and
+    ``tool`` (an unconfigured server included) and an ``agent`` hook with a
+    ``prompt`` each LOAD; each without its field, and ``http`` with a number
+    ``url``, VOIDS, with CC's stderr naming the field. ``"wibble"`` still voids,
+    and the stderr now lists the accepted types. The voided runs' stderr was
+    not empty on this version.
+
     ⚠ Returns a DESCRIPTION, not a bool, because the caller has to be able to
     name the offender. A gate that reports every hook dead without saying which
     entry killed them is a verdict paired with nothing to do — the defect one
@@ -1539,39 +1549,63 @@ def hooks_config_voided_by(hooks_cfg: object) -> str | None:
     return None
 
 
+#: Each hook ``type`` Claude Code accepts, with the fields it requires to be a
+#: string. Driven: ``command`` and ``prompt`` on 2.1.247; ``http`` (``url``),
+#: ``mcp_tool`` (``server``, ``tool``) and ``agent`` (``prompt``) on 2.1.319
+#: (2026-11-09, marker rig, two runs an arm): with each field the file loads
+#: (the http hook POSTed, the mcp_tool hook called its tool), and without it,
+#: or with a number there, the file voids and CC's stderr names the field.
+#: 2.1.319's own refusal of an unknown type lists exactly these five. Twinned
+#: in ``tools/cc/ci_guard.py`` and ``tools/cc/hooks/_integrity.py``.
+HOOK_TYPE_REQUIRED_STRINGS: dict[str, tuple[str, ...]] = {
+    "command": ("command",),
+    "prompt": ("prompt",),
+    "agent": ("prompt",),
+    "http": ("url",),
+    "mcp_tool": ("server", "tool"),
+}
+
+
 def _hook_object_schema_error(hook: object) -> str | None:
     """What makes this hook object invalid to Claude Code, or ``None``.
 
-    A POSITIVE whitelist of the two accepted shapes, which is safe precisely
-    because CC itself rejects anything else: an unknown ``type`` value
-    (``"wibble"``) was driven and VOIDS the file, so whitelisting cannot invent
-    a red that CC would not also produce. Extra keys are tolerated by CC
-    (``timeout`` driven), so they are tolerated here.
+    A POSITIVE whitelist of the accepted shapes
+    (:data:`HOOK_TYPE_REQUIRED_STRINGS`), which is safe precisely because CC
+    itself rejects anything else: an unknown ``type`` value (``"wibble"``) was
+    driven and VOIDS the file, so whitelisting cannot invent a red that CC
+    would not also produce. Extra keys are tolerated by CC (``timeout``
+    driven), so they are tolerated here.
 
-    ⚠ ``args`` present-but-``None`` is deliberately NOT flagged. A string
-    ``args`` was driven and voids; ``null`` was not driven, and the cost
-    asymmetry is steep -- a false red here declares every gate on a healthy
-    tree dead and fails the adopter's CI, which is exactly the harm the
+    ⚠ The whitelist went stale once: it held ``command`` and ``prompt`` alone
+    while CC grew ``http``, ``mcp_tool`` and ``agent``, so an adopter's own
+    http hook read as killing every gate (DEF-1195). A type CC adds next is the
+    same false red until it is driven and added here.
+
+    ⚠ Optional fields are deliberately NOT type-checked, except ``args``.
+    A string ``args`` was driven and voids; ``null`` was not driven, nor were
+    a non-object ``headers``/``input`` or a non-list ``allowedEnvVars``, and the
+    cost asymmetry is steep -- a false red here declares every gate on a
+    healthy tree dead and fails the adopter's CI, which is exactly the harm the
     ``type: "prompt"`` over-generalisation caused. Undriven shapes get the
     permissive reading until someone drives them.
     """
     if not isinstance(hook, dict):
         return f"a hook entry is {type(hook).__name__}, not an object"
     htype = hook.get("type")
+    required = HOOK_TYPE_REQUIRED_STRINGS.get(htype) if isinstance(htype, str) else None
+    if required is None:
+        shown = "<absent>" if htype is None else repr(htype)
+        return (f"a hook entry has type {shown} (expected one of "
+                + ", ".join(f'"{t}"' for t in HOOK_TYPE_REQUIRED_STRINGS) + ")")
+    for field in required:
+        if not isinstance(hook.get(field), str):
+            return f'a "{htype}" hook has no string "{field}"'
     if htype == "command":
-        if not isinstance(hook.get("command"), str):
-            return 'a "command" hook has no string "command"'
         args = hook.get("args")
         if args is not None and not isinstance(args, list):
             return (f'a "command" hook\'s "args" is {type(args).__name__}, '
                     "not a list")
-        return None
-    if htype == "prompt":
-        if not isinstance(hook.get("prompt"), str):
-            return 'a "prompt" hook has no string "prompt"'
-        return None
-    shown = "<absent>" if htype is None else repr(htype)
-    return f'a hook entry has type {shown} (expected "command" or "prompt")'
+    return None
 
 
 def discover_executable_hook_wirings(repo_root: Path) -> list[dict]:

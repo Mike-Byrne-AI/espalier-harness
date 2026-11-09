@@ -366,7 +366,7 @@ def _record_wired_gates(root: Path, source: str) -> None:
         _integrity.clear_wired_gates(root)
         return
     _integrity.write_wired_gates(
-        root, _integrity.live_governance_gates(_integrity.without_protocol_typed_hooks(data), root))
+        root, _integrity.live_governance_gates(data, root))
 
 
 def _blueprint_present(root: Path) -> bool:
@@ -2938,13 +2938,11 @@ def _report_integrity_state(root: Path) -> str:
     # and `--repair` is the merge that rewires every shape but a void file
     # (the plain merge fixes an absent event only; doctor names each shape).
     # A void verdict is not reported: this hook running refutes "loads NO
-    # hooks", and the hook types the pinned protocol names beside command and
-    # prompt are set aside first (their voiding rule is its own ledger row).
+    # hooks" for the file it was loaded from.
     unwired: list[str] = []
     try:
         state, data = _integrity.read_project_settings(root)
         if state == "read" and isinstance(data, dict):  # unreadable: the kill-switch scan above says so
-            data = _integrity.without_protocol_typed_hooks(data)
             if _integrity._hooks_config_voided_by(data.get("hooks")) is None:
                 unwired = _integrity.unwired_governance_gates(_integrity.PROJECT_SETTINGS_REL, data, root)
     except Exception as e:  # noqa: BLE001 — bounded warn, do not crash session

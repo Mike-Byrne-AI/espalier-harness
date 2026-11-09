@@ -2246,9 +2246,9 @@ def _check_governance_event_wiring(repo_root: Path) -> list[str]:
     if voided_by:
         failures.append(
             f"governance hooks are not loaded at all: {voided_by} -- Claude "
-            'Code discards the WHOLE hooks block unless every entry sets '
-            '"type": "command", so the gates below cannot fire whatever their '
-            "own wiring says"
+            "Code discards the WHOLE hooks block when one entry is malformed "
+            "(a type it does not know, or a type missing its required field), "
+            "so the gates below cannot fire whatever their own wiring says"
         )
     for script in harness_config.unwired_governance_gates(repo_root):
         event = harness_config.GOVERNANCE_BLOCKING_HOOKS[script]
