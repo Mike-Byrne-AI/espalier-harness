@@ -13522,7 +13522,9 @@ class TestPowerShellLiteralSpanLookback:
     re-parser takes it or not. A 3200-word comma list of quoted words cost
     3.0 s here on that lookback alone, near the 3.5 s judgment budget. The
     double-quoted twin, ``_ps_expandable_is_reparsed``, already asks only when
-    the answer can change the mask; the literal branches now do the same."""
+    the answer can change the mask; the single-quoted branch now does the same
+    (``_ps_literal_is_kept_live``), and the lookback answers once per text and
+    offset (``_ps_reparse_answers``)."""
 
     @staticmethod
     def _counting(monkeypatch):
@@ -13576,9 +13578,9 @@ class TestPowerShellLiteralSpanLookback:
         real = bp._PS_REPARSED_SPAN_BEFORE
 
         class _Counted:
-            def search(self, *a):
-                searches.append(a[2])
-                return real.search(*a)
+            def search(self, *a, **kw):
+                searches.append(a[2] if len(a) > 2 else kw.get("endpos"))
+                return real.search(*a, **kw)
 
         monkeypatch.setattr(bp, "_PS_REPARSED_SPAN_BEFORE", _Counted())
         bp._ps_reparse_answers.cache_clear()
@@ -13611,7 +13613,50 @@ class TestPowerShellLiteralSpanLookback:
         import sys
         sys.path.insert(0, str(HOOKS_DIR))
         import _bash_patterns as bp
-        assert bp._ps_reparse_answers.cache_info().maxsize == 8
+        bp._ps_reparse_answers.cache_clear()
+        for k in range(20):
+            bp.powershell_scan_text(f"iex 'Get-Date; Get-Item x{k}'")
+        assert bp._ps_reparse_answers.cache_info().currsize <= 8
+
+    def test_a_swapped_pattern_is_never_served_an_old_answer(self, monkeypatch):
+        """The memo is keyed on the pattern and the window too: an answer
+        cached under one pattern is not served under another (the review read
+        the stale answer both ways, the second masking a live program)."""
+        import re
+        import sys
+        sys.path.insert(0, str(HOOKS_DIR))
+        import _bash_patterns as bp
+        live = "iex 'Get-Date; Get-Item stale'"
+        assert bp.powershell_scan_text(live) == live
+        monkeypatch.setattr(bp, "_PS_REPARSED_SPAN_BEFORE", re.compile("zzz$"))
+        assert bp.powershell_scan_text(live) == "iex 'Get-Date  Get-Item stale'"
+        monkeypatch.undo()
+        assert bp.powershell_scan_text(live) == live
+
+    def test_the_gate_reads_exactly_what_the_literal_blanker_blanks(self):
+        """One source for two decisions: the gate skips a span holding none of
+        ``_PS_INERTABLE_SYNTAX``, which is sound only while the blanker changes
+        those characters and no other. A blanker widened to a new character
+        reds here before the gate can go stale on it (the failure-mode review)."""
+        import sys
+        sys.path.insert(0, str(HOOKS_DIR))
+        import _bash_patterns as bp
+        for ch in [chr(c) for c in range(128)] + [" ", " ", "“", "‘"]:
+            s = "a" + ch + "b"
+            out = list(s)
+            bp._ps_blank_literal(s, out, 0, len(s))
+            assert ("".join(out) != s) == (ch in bp._PS_INERTABLE_SYNTAX), repr(ch)
+
+    def test_a_reparsed_program_still_reads_as_one(self):
+        """The gate's False means "blanking changes nothing", never "not
+        re-parsed": the statement-start reader asks the lookback itself."""
+        import sys
+        sys.path.insert(0, str(HOOKS_DIR))
+        import _bash_patterns as bp
+        cmd = "powershell -Command 'Start-Process cmd'"
+        k = cmd.index("'")
+        assert bp._ps_span_is_reparsed(cmd, k) is True
+        assert bp._ps_literal_is_kept_live(cmd, k, k + 1, cmd.index("'", k + 1)) is False
 
 
 class TestPowerShellReparsedExpandableSpan:

@@ -4529,7 +4529,10 @@ def _ps_close_double_quote(s: str, i: int) -> int:
 
 
 def _ps_blank_literal(s: str, out: list, a: int, b: int) -> None:
-    """Blank every command-position character in ``s[a:b]``. Same length."""
+    """Blank every command-position character in ``s[a:b]``. Same length.
+    `_ps_literal_is_kept_live` skips the reparse lookback for a span holding
+    none of ``_PS_INERTABLE_SYNTAX``: change what this blanks and that gate
+    goes stale (pinned by ``TestPowerShellLiteralSpanLookback``)."""
     for k in range(a, b):
         if s[k] in _PS_INERTABLE_SYNTAX:
             out[k] = " "
@@ -4818,7 +4821,7 @@ def _walk_powershell_spans(s: str, spans: "list[tuple[int, int, str]] | None" = 
             # real invocation. Driven: `iex '$env:VAR=1; <cmd>'` sets the
             # variable and runs the command against real pwsh. Asked only when
             # the span holds something to blank (DEF-3039).
-            if not _ps_literal_is_reparsed(s, i, i + 1, j):
+            if not _ps_literal_is_kept_live(s, i, i + 1, j):
                 _ps_blank_literal(s, out, i + 1, j)
             if spans is not None:
                 spans.append((i, j, "'"))
@@ -9818,12 +9821,14 @@ _PS_REPARSE_LOOKBACK = 2048
 
 
 @functools.lru_cache(maxsize=8)
-def _ps_reparse_answers(s: str) -> "dict[int, bool]":
+def _ps_reparse_answers(s: str, rx: object, lookback: int) -> "dict[int, bool]":
     """The lookback's answers for one text, by opener offset. The answer is a
-    function of the text and the offset alone, and one judgment walks the same
-    text seven times (DEF-3039, measured through the two PowerShell checks),
-    so a span that must ask pays the lookback once. Held per text, so the
-    memory is bounded by the texts kept, never by a span count."""
+    function of the text, the offset, the pattern and the window, and one
+    judgment walks the same text seven times (DEF-3039, measured through the
+    two PowerShell checks), so a span that must ask pays the lookback once.
+    Keyed on the pattern and the window too, so a test that swaps either is
+    never served an answer computed under the old one. At most eight texts are
+    kept, each with one entry per span that asked."""
     return {}
 
 
@@ -9832,7 +9837,7 @@ def _ps_span_is_reparsed(s: str, opener: int) -> bool:
     Searched with ``pos``/``endpos`` (the ``$`` anchor holds at ``endpos``),
     never on a slice, and over a bounded lookback; answered once per text and
     offset (`_ps_reparse_answers`)."""
-    answers = _ps_reparse_answers(s)
+    answers = _ps_reparse_answers(s, _PS_REPARSED_SPAN_BEFORE, _PS_REPARSE_LOOKBACK)
     hit = answers.get(opener)
     if hit is None:
         hit = answers[opener] = bool(
@@ -9856,14 +9861,20 @@ def _ps_expandable_is_reparsed(s: str, opener: int, a: int, b: int) -> bool:
     return False
 
 
-def _ps_literal_is_reparsed(s: str, opener: int, a: int, b: int) -> bool:
-    """`_ps_span_is_reparsed` for a single-quoted span ``s[a:b]``, asked only
-    when the answer can change the mask, as `_ps_expandable_is_reparsed` is for
-    its twin. ``_ps_blank_literal`` blanks command-position characters alone,
-    so a span holding none (an ordinary quoted word or path) is masked the same
-    either way: DEF-3039 measured seven lookbacks a span through the two
-    PowerShell checks, 3.0 s of a 3200-word quoted list. A here-string body
-    always holds its line breaks, which are on the list, so it always asks."""
+def _ps_literal_is_kept_live(s: str, opener: int, a: int, b: int) -> bool:
+    """Whether the masker keeps the single-quoted span ``s[a:b]`` live rather
+    than blanking it: `_ps_span_is_reparsed`, asked only when the answer can
+    change the mask, as `_ps_expandable_is_reparsed` is for its twin.
+    ``_ps_blank_literal`` blanks the characters of ``_PS_INERTABLE_SYNTAX``
+    alone, so a span holding none (an ordinary quoted word or path) is masked
+    the same either way: DEF-3039 measured seven lookbacks a span through the
+    two PowerShell checks, 3.0 s of a 3200-word quoted list.
+
+    False is NOT a reparse verdict: ``powershell -Command 'Start-Process cmd'``
+    is re-parsed and answers False here, since blanking it changes nothing. A
+    reader asking whether a span is a program (the statement-start reader
+    below) asks `_ps_span_is_reparsed` itself. The here-string branch asks it
+    directly too: its body always holds line breaks, which are on the list."""
     if _PS_INERTABLE_SYNTAX.isdisjoint(s[a:b]):
         return False
     return _ps_span_is_reparsed(s, opener)
