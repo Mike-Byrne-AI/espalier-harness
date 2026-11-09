@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2065",
+ "subject": "tools/cc/hooks/session_start.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "a probe needs a Claude Code hook type newer than 2.1.319's five; driven in memory only",
+ "row_sha": "cfbf58af7609",
+ "text_sha": "006f42394f83",
+ "verified_2026_11_09": "OPEN (filed 2026-11-09; probe driven at filing)"
+}

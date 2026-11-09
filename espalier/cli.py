@@ -10772,7 +10772,7 @@ def _unwired_gate_diagnosis(
             + (voided_detail or "the malformed hook entry")
             + " in .claude/settings.json. Claude Code validates the WHOLE hooks "
             "block and discards ALL of it if any group or entry is malformed, "
-            "and it reports nothing -- so the offending entry may be one of "
+            "and may report nothing -- so the offending entry may be one of "
             "your own hooks, under an event unrelated to espalier."
         )
     if absent and merge_refused:

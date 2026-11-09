@@ -1128,6 +1128,11 @@ class TestHookTypeIsRequiredAndVoidsTheWholeFile:
             {"PostToolUse": [{"hooks": [{"type": "mcp_tool", "tool": "t"}]}]},
             {"PostToolUse": [{"hooks": [{"type": "agent", "prompt": "p"}]}]},
             {"PostToolUse": [{"hooks": [{"type": "agent"}]}]},
+            # a type value that is not a string: unhashable ones must not raise
+            {"PostToolUse": [{"hooks": [{"type": {}}]}]},
+            {"PostToolUse": [{"hooks": [{"type": ["http"]}]}]},
+            {"PostToolUse": [{"hooks": [{"type": 5}]}]},
+            {"PostToolUse": [{"hooks": [{"type": True}]}]},
         ):
             assert (sc.hooks_config_voided_by(cfg)
                     == cig._ci_hooks_config_voided_by(cfg)), (

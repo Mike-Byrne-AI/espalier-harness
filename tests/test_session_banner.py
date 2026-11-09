@@ -4982,13 +4982,13 @@ class TestTheGovernanceWiringLine:
         Code 2.1.319, DEF-1195), so the rest reads wired; and a void verdict
         is refuted by this hook running at all."""
         mod = _load()
-        self._tree(tmp_path)
+        self._tree(tmp_path, drop="plan_guard.py")
         path = tmp_path / ".claude" / "settings.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         data["hooks"]["PostToolUse"] = [{"hooks": [{"type": "http", "url": "http://localhost:9/x"}]}]
         path.write_text(json.dumps(data), encoding="utf-8")
         mod._hook_utils.take_advisories()
-        assert "UNWIRED" not in mod._report_integrity_state(tmp_path)
+        assert mod._report_integrity_state(tmp_path).startswith("UNWIRED (1 finding)")
         data["hooks"]["Stop"][0]["hooks"][0]["type"] = "wibble"  # a type Claude Code refuses
         path.write_text(json.dumps(data), encoding="utf-8")
         assert "UNWIRED" not in mod._report_integrity_state(tmp_path)

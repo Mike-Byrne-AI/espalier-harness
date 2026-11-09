@@ -3118,7 +3118,8 @@ def run_doctor_check(
                 + (_voided_detail or "the malformed hook entry")
                 + " in .claude/settings.json -- Claude Code validates the whole "
                 "hooks block and discards ALL of it if any group or entry is "
-                "malformed, warning about nothing, so "
+                "malformed (silently on 2.1.247; 2.1.319 names the field on "
+                "stderr), so "
                 + ", ".join(voided)
                 + " cannot fire whatever their own wiring says. Other wiring "
                 "problems on this tree are masked until it is fixed; re-run "

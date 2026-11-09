@@ -1054,9 +1054,11 @@ def _ci_hook_object_schema_error(hook) -> str | None:  # type: ignore[no-untyped
     htype = hook.get("type")
     required = _CI_HOOK_TYPE_REQUIRED_STRINGS.get(htype) if isinstance(htype, str) else None
     if required is None:
-        shown = "<absent>" if htype is None else repr(htype)
-        return ("a hook entry has type %s (expected one of %s)"
-                % (shown, ", ".join('"%s"' % t for t in _CI_HOOK_TYPE_REQUIRED_STRINGS)))
+        shown = "<absent>" if htype is None else ascii(htype)
+        newer = ("; if `/hooks` lists it, this espalier predates that Claude "
+                 "Code hook type" if isinstance(htype, str) else "")
+        return ("a hook entry has type %s (expected one of %s%s)"
+                % (shown, ", ".join('"%s"' % t for t in _CI_HOOK_TYPE_REQUIRED_STRINGS), newer))
     for field in required:
         if not isinstance(hook.get(field), str):
             return 'a "%s" hook has no string "%s"' % (htype, field)

@@ -1478,7 +1478,8 @@ def hooks_config_voided_by(hooks_cfg: object) -> str | None:
 
     ⚠ THIS IS NOT A PER-ENTRY RULE, AND IT IS NOT A RULE ABOUT ``type``.
     Claude Code SCHEMA-VALIDATES the whole hooks block and refuses ALL of it if
-    any group or hook object fails — silently, stderr empty on every voided run.
+    any group or hook object fails — silently on 2.1.247 (stderr empty on every
+    voided run); 2.1.319 names the field on stderr, see below.
     So one stray entry, which may be an adopter's OWN unrelated hook rather than
     anything espalier wrote, disarms every governance gate at once.
 
@@ -1572,8 +1573,8 @@ def _hook_object_schema_error(hook: object) -> str | None:
     A POSITIVE whitelist of the accepted shapes
     (:data:`HOOK_TYPE_REQUIRED_STRINGS`), which is safe precisely because CC
     itself rejects anything else: an unknown ``type`` value (``"wibble"``) was
-    driven and VOIDS the file, so whitelisting cannot invent a red that CC
-    would not also produce. Extra keys are tolerated by CC (``timeout``
+    driven and VOIDS the file, so on a driven Claude Code version whitelisting
+    cannot invent a red that CC would not also produce. Extra keys are tolerated by CC (``timeout``
     driven), so they are tolerated here.
 
     ⚠ The whitelist went stale once: it held ``command`` and ``prompt`` alone
@@ -1594,9 +1595,11 @@ def _hook_object_schema_error(hook: object) -> str | None:
     htype = hook.get("type")
     required = HOOK_TYPE_REQUIRED_STRINGS.get(htype) if isinstance(htype, str) else None
     if required is None:
-        shown = "<absent>" if htype is None else repr(htype)
+        shown = "<absent>" if htype is None else ascii(htype)
+        newer = ("; if `/hooks` lists it, this espalier predates that Claude "
+                 "Code hook type" if isinstance(htype, str) else "")
         return (f"a hook entry has type {shown} (expected one of "
-                + ", ".join(f'"{t}"' for t in HOOK_TYPE_REQUIRED_STRINGS) + ")")
+                + ", ".join(f'"{t}"' for t in HOOK_TYPE_REQUIRED_STRINGS) + newer + ")")
     for field in required:
         if not isinstance(hook.get(field), str):
             return f'a "{htype}" hook has no string "{field}"'

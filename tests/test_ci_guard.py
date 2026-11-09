@@ -1309,6 +1309,8 @@ class TestHookSideWiringTwin:
         assert ig._CANONICAL_PRETOOLUSE_MATCHERS == cg._CI_CANONICAL_PRETOOLUSE_MATCHERS
         assert ig._MUTATION_MATCHER_TOOLS == cg._CI_MUTATION_MATCHER_TOOLS
         assert ig._GOVERNANCE_HOOKS_DIR == cg._HOOKS_DIR_REL
+        from espalier.surface_contract import HOOK_TYPE_REQUIRED_STRINGS
+        assert ig._HOOK_TYPE_REQUIRED_STRINGS == cg._CI_HOOK_TYPE_REQUIRED_STRINGS == HOOK_TYPE_REQUIRED_STRINGS
 
     _HOOK_ENTRIES = (
         _wired("write_guard.py"),
@@ -1342,6 +1344,11 @@ class TestHookSideWiringTwin:
         {"type": "mcp_tool", "server": "s", "tool": "t"},
         {"type": "mcp_tool", "server": "s"},
         {"type": "mcp_tool", "tool": "t"},
+        {"type": {}},            # an unhashable type value: no copy may raise on it
+        {"type": []},
+        {"type": 5},
+        {"type": True},
+        {"type": "uné"},         # echoed into operator output: ascii() keeps it 7-bit
         "python tools/cc/hooks/write_guard.py",
         None,
     )
@@ -1351,6 +1358,7 @@ class TestHookSideWiringTwin:
         for hook in self._HOOK_ENTRIES:
             assert ig._hook_executes_script_path(hook) == cg._ci_hook_executes_script_path(hook), hook
             assert ig._hook_object_schema_error(hook) == cg._ci_hook_object_schema_error(hook), hook
+            assert (cg._ci_hook_object_schema_error(hook) or "").isascii(), hook
         for matcher in ("", "*", ".*", "Write|Edit|NotebookEdit", "Write", "Bash", "(", "Write|Edit"):
             assert ig._matcher_covers_mutations(matcher) == cg._ci_matcher_covers_mutations(matcher), matcher
 
