@@ -1393,7 +1393,11 @@ by surface, not by habit:
 - **Runtime hints the engine PRINTS or RETURNS** — the `{py} -m espalier <verb>`
   strings in `cli`, `doctor` and `fuse` — spell the **remedy** interpreter from
   `cli._remedy_py()`: the resolver's answer when it clears the floor, else the
-  interpreter running the command (`DEF-758`; `_detect_python_command()` is
+  interpreter running the command, which on Windows is spelled with its
+  forward-slash 8.3 short form when its path holds a space, since PowerShell
+  refuses a quoted first word; text written INTO the adopter's tree (the
+  onboarding ledger rows) passes `persisted=True` and keeps the long quoted
+  path, a short name being one volume's (`DEF-758`; `_detect_python_command()` is
   the WRITE answer, what settings.json carries, and on a host where nothing
   validated it is the literal `python` -- a command that cannot run). A hint
   is something an operator copy-pastes, and on stock macOS (`python3` only) a

@@ -2401,7 +2401,10 @@ class TestRewireNextStepSpellsAnInterpreterThatCanRun:
         assert "python-espalier-absent -m espalier" not in step, (
             f"the next step is spelled with an interpreter doctor cannot vouch for: {step}"
         )
-        assert sys.executable in step, (
+        # Spelled as the remedy spells it: on a spaced Windows checkout that is
+        # the 8.3 short form of sys.executable (DEF-2060), not the long path.
+        from espalier import cli
+        assert f"{cli._remedy_py()} -m espalier" in step, (
             f"the interpreter running doctor is the one that can run the rewire: {step}"
         )
         assert "on path" in step.lower() and "no target" in step.lower(), (

@@ -49,7 +49,9 @@ from espalier._python_floor import (
 from espalier._safe_walk import safe_rglob, visible, is_own_git_repo as _is_own_git_repo
 from espalier._rmtree import remove_file
 from espalier._spawn import run_no_stdin
-from espalier._text import os_error_text, pin_utf8_streams, plural, quoted_if_spaced
+from espalier._text import (
+    os_error_text, pin_utf8_streams, plural, program_word, quoted_if_spaced, windows_short_path,
+)
 from espalier._venv import (
     entry_argv,
     exec_name_has_space,
@@ -1280,7 +1282,29 @@ def _detect_python_command() -> str:
     return "python"
 
 
-def _remedy_interpreter() -> tuple[str, bool]:
+_POWERSHELL_CALL_NOTE_SAID = False
+
+
+def _remedy_program_word(path: str, *, persisted: bool = False) -> str:
+    """``path`` as the program word of a remedy (``DEF-2060``): on Windows the
+    forward-slash 8.3 short form of a spaced path, one bare word PowerShell
+    5.1, cmd and Git Bash all run; elsewhere, or with no spaceless short form,
+    the double-quoted path, and then one stderr note a run telling a
+    PowerShell reader to put ``&`` before it. A ``persisted`` copy (text
+    written into the adopter's tree) keeps the long quoted spelling: a short
+    name is this volume's, and a later reader may be on another."""
+    if persisted:
+        return quoted_if_spaced(path)
+    word = program_word(path, windows_short_path if sys.platform == "win32" else None)
+    global _POWERSHELL_CALL_NOTE_SAID
+    if word.startswith('"') and sys.platform == "win32" and not _POWERSHELL_CALL_NOTE_SAID:
+        _POWERSHELL_CALL_NOTE_SAID = True
+        print(f"espalier: in PowerShell, type & before a command this prints that opens "
+              f"with {word} (PowerShell reads a quoted first word as text).", file=sys.stderr)
+    return word
+
+
+def _remedy_interpreter(*, persisted: bool = False) -> tuple[str, bool]:
     """The interpreter to SPELL in a remediation the operator will type, and
     whether the resolver's own answer clears the floor.
 
@@ -1303,19 +1327,24 @@ def _remedy_interpreter() -> tuple[str, bool]:
     this, which started, since a name that hangs at start-up would hang the
     operator's next command too. A caller that names the TARGET reads
     :func:`_detect_python_command`, never this.
+
+    The absolute path is spelled by :func:`_remedy_program_word` (DEF-2060):
+    a quoted first word is a parse error in PowerShell, so on Windows a spaced
+    path becomes its 8.3 short form; ``persisted`` keeps the quoted long form
+    for text written into the adopter's tree.
     """
     py = _detect_python_command()
     if interpreter_meets_floor(py):
         if sys.executable and start_unconfirmed_of(py) is not None:
-            return quoted_if_spaced(sys.executable), True
+            return _remedy_program_word(sys.executable, persisted=persisted), True
         return py, True
     if sys.executable and interpreter_meets_floor(sys.executable):
-        # An absolute path the operator will paste, so quoted when it carries
-        # whitespace (`C:\Program Files\...`). Under `pipx run` / `uvx` it is
-        # an ephemeral cache root a later shell may not have -- still the
-        # truest name available, and every sentence built on it says to put a
-        # durable interpreter on PATH first.
-        return quoted_if_spaced(sys.executable), False
+        # An absolute path the operator will paste, so one word in every shell
+        # when it carries whitespace (`C:\Program Files\...`). Under `pipx run`
+        # / `uvx` it is an ephemeral cache root a later shell may not have --
+        # still the truest name available, and every sentence built on it says
+        # to put a durable interpreter on PATH first.
+        return _remedy_program_word(sys.executable, persisted=persisted), False
     return py, False
 
 
@@ -1344,7 +1373,7 @@ def _unheard_on_path(patient_seconds: int = 0) -> str | None:
     return None
 
 
-def _remedy_py() -> str:
+def _remedy_py(*, persisted: bool = False) -> str:
     """The interpreter to SPELL in a remedy the operator will type: the first
     element of :func:`_remedy_interpreter`.
 
@@ -1359,9 +1388,10 @@ def _remedy_py() -> str:
     (``DEF-758``). The split is pinned by the resolver's CALL SITES --
     ``tests/test_portability_contract.py`` reds a call outside the argued
     write-answer sites -- not by the resolver's output, which on this host
-    happens to agree.
+    happens to agree. ``persisted`` is for text written into the adopter's
+    tree (:func:`_remedy_interpreter`).
     """
-    return _remedy_interpreter()[0]
+    return _remedy_interpreter(persisted=persisted)[0]
 
 
 def hand_wiring_phrase(written: str, quote: str = "`") -> str:
@@ -3020,7 +3050,9 @@ _PROBE_PY = "python"
 #: no ``try`` in a one-line program (a real U+FFFD survives both).
 #: ``code`` is the probe's Python; the command is assembled at filing behind
 #: ``_PROBE_PY``, and ``{espalier}`` in a row's text becomes the command this
-#: host would type (``_remedy_py()``), since the text is instructions to a person.
+#: host would type, in its persisted spelling (``_remedy_py(persisted=True)``:
+#: a long path, never this volume's 8.3 name), since the text is instructions
+#: to a person.
 #: No ``"``, ``$``, backtick, ``!`` or newline in a code: the checker
 #: ``shlex``-splits the stored command, and a person re-verifying a row pastes
 #: it into a shell (``TestOnboardingProbesDoNotWalk`` pins both). The fragments
@@ -3200,7 +3232,7 @@ def _file_onboarding_rows(repo_root: Path) -> dict[str, list[str]]:
     with tempfile.TemporaryDirectory(prefix="espalier-onboarding-") as scratch:
         for row in _ONBOARDING_ROWS:
             body = Path(scratch) / f"{row['id']}.md"
-            atomic_write_text(body, row["text"].replace("{espalier}", f"{_remedy_py()} -m espalier"))
+            atomic_write_text(body, row["text"].replace("{espalier}", f"{_remedy_py(persisted=True)} -m espalier"))
             argv = [sys.executable, str(verb), "--root", str(repo_root), "file", row["id"],
                     "--section", row["section"], "--anchor", row["anchor"],
                     "--text-file", str(body), "--severity", "minor", "--subject", _LEDGER_REL]
@@ -9029,8 +9061,9 @@ def _swap_interpreter_token(command: str, new_name: str) -> str:
     was rewirable): ``new_name`` is read as a word and the launcher's flag
     (:func:`_target_words`), the old name's quotes go with it, and the word is
     written double-quoted only when it holds whitespace -- a program word sh
-    and Git Bash take, and PowerShell refuses (driven on Windows 11; DEF-2060
-    holds the PowerShell reach of that spaced head). ``"python3" x.py`` is
+    and Git Bash take, and PowerShell refuses (driven on Windows 11; DEF-2063
+    holds the PowerShell reach of that spaced head, which DEF-2060's 8.3
+    short form cannot serve in a persisted command). ``"python3" x.py`` is
     a PowerShell parse error (it runs a shell-form hook where Git Bash is
     absent), ``"py -3"`` is a file no host has, and a bare spaced path is cut
     by the shell (the DEF-636 absolute-path write arrives bare). Production
