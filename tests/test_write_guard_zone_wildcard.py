@@ -401,24 +401,43 @@ class TestANonRecursiveRemoveReachesFilesOnly:
         assert _zone_reason(check, verb + " build/out.txt", tree) == ""
 
 
-#: DEF-4031: the deletes that cannot take a directory, by tool. A Bash `rm`
-#: without `-r` or `-d`, `unlink` and `shred` refuse one ("is a directory"); a
-#: PowerShell remove cmdlet without its recurse switch fails on the
-#: has-children prompt the non-interactive tool host cannot show (driven on
-#: Windows PowerShell 5.1, 2026-10-17), and removes an EMPTY directory (driven
-#: on 5.1 and pwsh 7.6.5, 2026-11-09).
+#: DEF-4031: the lone deletes that cannot take a directory, by tool, each on
+#: ``write_guard._LONE_DELETE``'s allowlist (air's ruling 843d54). A Bash `rm`
+#: without `-r` or `-d` refuses a directory ("is a directory"); a PowerShell
+#: remove cmdlet without its recurse switch fails on the has-children prompt
+#: the non-interactive tool host cannot show (driven on Windows PowerShell 5.1,
+#: 2026-10-17), and removes an EMPTY directory (driven on 5.1 and pwsh 7.6.5,
+#: 2026-11-09), so the relief needs a directory holding an entry on both.
 _FILE_ONLY_VERBS = {
-    _BASH: ["rm -f", "rm", "rm -fv", "unlink", "shred"],
-    _PS: ["Remove-Item", "Remove-Item -Force", "Remove-Item -LiteralPath", "ri",
-          "Remove-Item -Force -Confirm:$false"],
+    _BASH: ["rm -f", "rm", "rm -fv", "rm -i", "rm --force", "rm --verbose", "rm --"],
+    _PS: ["Remove-Item", "Remove-Item -Force", "Remove-Item -LiteralPath", "Remove-Item -Path", "ri",
+          "Remove-Item -Force -Confirm:$false", "Remove-Item -WhatIf", "REMOVE-ITEM -force"],
 }
-#: The deletes that can take a directory, and those whose flags the reader
-#: cannot see (a variable bound to a switch, a splat), by tool: each keeps
-#: the deny.
+#: The deletes that can take a directory, those whose flags the reader cannot
+#: see, and every verb or flag off the allowlist, by tool: each keeps the deny.
 _DIRECTORY_VERBS = {
-    _BASH: ["rm -r", "rm -d", "rm --dir", "rmdir"],
-    _PS: ["Remove-Item -Recurse", "Remove-Item -Force:$v", "Remove-Item @p"],
+    _BASH: ["rm -r", "rm -R", "rm -rf", "rm -d", "rm --dir", "rm --di", "rm --recursive", "rmdir", "unlink",
+            'rm "-d"', "rm '-r'", "rm \\-d", "rm -fd", "/bin/rm -f", "sudo rm -f", "command rm -f", "X=1 rm -f"],
+    _PS: ["Remove-Item -Recurse", "Remove-Item -r", "Remove-Item -Force:$v", "Remove-Item @p", "del", "rd",
+          "rmdir", "erase", "Remove-Item –Recurse", "Remove-Item —Recurse", "Remove-Item ―Recurse",
+          "Remove-Item -Path:", "Remove-Item `-Recurse"],
 }
+#: Commands where the delete is not the command's only statement, or its
+#: recurse switch trails the operand (air's must-deny rows, note ab1566, and
+#: the code review's loop form): each keeps the deny on a full directory.
+_NOT_ALONE = {
+    _BASH: ["rm -f tools -r", "rm tools -R", "alias rm='rm -r'; rm tools", 'rm() { command rm -r "$@"; }; rm tools',
+            'for d in tools; do rm -f "$d"; done', "cd . && rm -f tools",
+            "rm -f tools; rm -r tools", "rm -f tools build"],
+    _PS: ["Remove-Item tools -Recurse", "$PSDefaultParameterValues['Remove-Item:Recurse']=$true; Remove-Item tools",
+          "function Remove-Item { Microsoft.PowerShell.Management\\Remove-Item -Recurse @args }; Remove-Item tools",
+          "Set-Alias ri rd; ri tools", "Remove-Item tools; Remove-Item -Recurse tools", "Remove-Item tools, build",
+          "Remove-Item (Join-Path . tools)", "Remove-Item tools\\cc"],
+}
+#: Left out, since main allows them too, so they are not this row's polarity:
+#: an operand fed by a pipe (`echo tools | xargs rm -f`, `'tools' |
+#: Remove-Item`) or a substitution, and `rm -f tools*` (DEF-3010's files-only
+#: read). Carried to the dispatcher with the lane.
 #: The fixture's governed directories that hold an entry, and the empty ones.
 _FULL_DIRS = ["tools", "tools/cc"]
 _EMPTY_DIRS = ["cc", "tools/cc/hooks"]
@@ -434,59 +453,84 @@ def _compose(verbs: "dict[str, list[str]]", dirs: list[str], checks: "tuple[str,
 
 
 class TestADeleteThatCannotTakeADirectoryLeavesTheZone:
-    """DEF-4031: a delete that cannot take a directory, naming a governed one,
-    removes nothing, so neither zone check refuses it; the read is of the
-    operand on disk as typed (``write_guard._leaves_the_directory``), and
-    every delete that can remove something keeps the deny (the row's
-    polarity). Composed from the verb rosters above crossed with the
-    fixture's directories."""
+    """DEF-4031: a delete that is the command's only statement, carries only
+    allowlisted flags and cannot take a directory, naming a governed directory
+    that holds an entry, removes nothing, so neither zone check refuses it.
+    The read is ``write_guard._a_lone_file_delete``: the operand as typed,
+    joined to the directory the command runs in, by lstat and one scandir.
+    Everything else keeps main's deny (the row's polarity, air's ruling
+    843d54): an empty directory, a link, a junction, a file, a missing
+    operand, a climb, any verb or flag off the allowlist, and any command
+    with a second statement, a definition, a prefix word or an expansion.
+    Composed from the rosters above crossed with the fixture's directories."""
 
-    @pytest.mark.parametrize(("check", "command"),
-                             _compose(_FILE_ONLY_VERBS, _FULL_DIRS) + _compose(_FILE_ONLY_VERBS, _EMPTY_DIRS, (_BASH,)))
+    @pytest.mark.parametrize(("check", "command"), _compose(_FILE_ONLY_VERBS, _FULL_DIRS))
     def test_it_is_allowed(self, tree: Path, check: str, command: str) -> None:
         assert _zone_reason(check, command, tree) == "", command
 
-    @pytest.mark.parametrize(("check", "command"), _compose(_FILE_ONLY_VERBS, _EMPTY_DIRS, (_PS,)))
-    def test_an_empty_directory_keeps_the_deny_on_powershell(self, tree: Path, check: str, command: str) -> None:
+    @pytest.mark.parametrize(("check", "command"), _compose(_FILE_ONLY_VERBS, _EMPTY_DIRS))
+    def test_an_empty_directory_keeps_the_deny(self, tree: Path, check: str, command: str) -> None:
+        """A cmdlet removes an empty directory, and `rm -d` or `rmdir` would;
+        the relief needs an entry on both tools so no misread of a flag can
+        remove one (ruling 843d54, point 3)."""
         assert _zone_reason(check, command, tree), command
 
     @pytest.mark.parametrize(("check", "command"), _compose(_DIRECTORY_VERBS, _FULL_DIRS + _EMPTY_DIRS))
-    def test_a_delete_that_can_take_it_keeps_the_deny(self, tree: Path, check: str, command: str) -> None:
+    def test_a_delete_off_the_allowlist_keeps_the_deny(self, tree: Path, check: str, command: str) -> None:
+        assert _zone_reason(check, command, tree), command
+
+    @pytest.mark.parametrize(("check", "command"), [(c, x) for c, xs in _NOT_ALONE.items() for x in xs])
+    def test_a_delete_that_is_not_alone_keeps_the_deny(self, tree: Path, check: str, command: str) -> None:
         assert _zone_reason(check, command, tree), command
 
     @pytest.mark.parametrize("check", [_BASH, _PS])
-    @pytest.mark.parametrize("operand", [".claude/settings.json", "tools/cc/gone", "tools/cc/../cc"])
+    @pytest.mark.parametrize("operand", [".claude/settings.json", "tools/cc/gone", "tools/cc/../cc", "tools/../tools"])
     def test_a_file_a_missing_operand_or_a_climb_keeps_the_deny(self, tree: Path, check: str, operand: str) -> None:
         for verb in _FILE_ONLY_VERBS[check]:
             assert _zone_reason(check, verb + " " + operand, tree), verb + " " + operand
 
     @pytest.mark.parametrize("check", [_BASH, _PS])
-    def test_the_same_operand_removed_by_another_arm_keeps_the_deny(self, tree: Path, check: str) -> None:
-        verbs = _FILE_ONLY_VERBS[check][0], _DIRECTORY_VERBS[check][0]
-        assert _zone_reason(check, "; ".join(v + " tools" for v in verbs), tree)
+    def test_the_operand_is_read_from_the_directory_the_command_runs_in(self, tree: Path, check: str) -> None:
+        """`cc` below `tools` holds an entry; `cc` at the root is empty."""
+        command = _FILE_ONLY_VERBS[check][0] + " cc"
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            getattr(write_guard, check)(command, tree, tree / "tools")
+        assert out.getvalue().strip() == "", command
+        assert _zone_reason(check, command, tree), command
 
     @pytest.mark.parametrize("check", [_BASH, _PS])
-    def test_a_link_to_the_directory_keeps_the_deny(self, tree: Path, tmp_path: Path, check: str) -> None:
-        """A link to a directory is itself removed (air's drive of BSD `rm`,
-        2026-11-09), so the read is the operand's own, never its target's."""
+    def test_a_directory_whose_only_entry_is_hidden_is_allowed(self, tree: Path, check: str) -> None:
+        """Both hosts kept a directory whose only child is hidden (driven on
+        5.1 and Git Bash, 2026-11-09), so any entry counts."""
+        (tree / "cc" / ".keep").write_text("", encoding="utf-8")
+        assert _zone_reason(check, _FILE_ONLY_VERBS[check][0] + " cc", tree) == ""
+
+    @pytest.mark.parametrize("check", [_BASH, _PS])
+    def test_a_link_to_the_directory_keeps_the_deny(self, tree: Path, check: str) -> None:
+        """A link to a directory is itself removed (air's drive of BSD `rm`;
+        Git Bash and 5.1, 2026-11-09), so the read is the operand's own, by
+        lstat, never its target's, with or without a trailing separator."""
         try:
-            (tree / "lnk").symlink_to(tree / "tools" / "cc", target_is_directory=True)
+            (tree / "tools" / "lnk").symlink_to(tree / "tools" / "cc", target_is_directory=True)
         except OSError as exc:
             pytest.skip(f"no symlink on this host: {exc}")
-        assert _zone_reason(check, _FILE_ONLY_VERBS[check][0] + " lnk", tree)
+        for operand in ("tools/lnk", "tools/lnk/"):
+            assert _zone_reason(check, _FILE_ONLY_VERBS[check][0] + " " + operand, tree), operand
 
     @pytest.mark.skipif(os.name != "nt", reason="a junction is a Windows reparse point")
     @pytest.mark.parametrize("check", [_BASH, _PS])
     def test_a_junction_to_the_directory_keeps_the_deny(self, tree: Path, check: str) -> None:
         import _winapi
 
-        _winapi.CreateJunction(str(tree / "tools" / "cc"), str(tree / "jct"))
-        assert _zone_reason(check, _FILE_ONLY_VERBS[check][0] + " jct", tree)
+        _winapi.CreateJunction(str(tree / "tools" / "cc"), str(tree / "tools" / "jct"))
+        for operand in ("tools/jct", "tools/jct/"):
+            assert _zone_reason(check, _FILE_ONLY_VERBS[check][0] + " " + operand, tree), operand
 
     @pytest.mark.parametrize("check", [_BASH, _PS])
     def test_a_directory_beside_the_zone_needs_no_read(self, tree: Path, check: str, monkeypatch) -> None:
         def boom(*_a, **_k):
             raise AssertionError("the directory was read for an allowed operand")
 
-        monkeypatch.setattr(write_guard, "_leaves_the_directory", boom)
+        monkeypatch.setattr(write_guard, "_a_lone_file_delete", boom, raising=False)
         assert _zone_reason(check, _FILE_ONLY_VERBS[check][0] + " build", tree) == ""
