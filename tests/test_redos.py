@@ -4267,7 +4267,10 @@ def test_every_derived_regex_is_linear_on_adversarial_runs(name, pattern):
                 f"{name} exceeded {_CI_SAFE_BUDGET_MS}ms on the {shape_name} "
                 f"payload ({len(payload)} chars). A greedy run that can cross a "
                 f"command separator is quadratic by construction — bound the "
-                f"token class to [^\\s;|&] rather than \\S."
+                f"token class to [^\\s;|&] rather than \\S; where it is bounded "
+                f"already, refuse a start inside the run with a leading "
+                f"lookbehind (write_guard._CASE_ARM_RE) when every caller "
+                f".match()es at the start."
             )
         finally:
             signal.setitimer(signal.ITIMER_REAL, 0)
