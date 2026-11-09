@@ -75,7 +75,16 @@ import unicodedata
 from pathlib import Path
 from typing import NamedTuple
 
-from _json_safe import os_error_text
+# This script is loaded under two spellings: run or loaded with this directory
+# already on sys.path, and imported as `tools.cc.sister_site_probe` from the
+# repo root, where nothing has. So it puts its own directory on sys.path the
+# way hooks/_bash_patterns.py does instead of trusting every importer to have
+# done so.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
+from _json_safe import os_error_text  # noqa: E402
 
 
 # Files that DEFINE canonicals — excluded from clique detection. Other files

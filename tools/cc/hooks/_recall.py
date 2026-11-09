@@ -69,6 +69,7 @@ file corpus if the sibling is absent.
 from __future__ import annotations
 
 import math
+import os
 import re
 import sys
 from collections import Counter
@@ -77,12 +78,21 @@ from dataclasses import dataclass
 from itertools import zip_longest
 from pathlib import Path
 
+# This module is imported under two spellings: bare, with the hooks directory
+# already on sys.path (the importing hook or script put it there), and as
+# `tools.cc.hooks._recall` from the repo root, where nothing has. So it puts its
+# own directory on sys.path the way _bash_patterns does instead of trusting every
+# importer to have done so.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
 # _hook_utils is the foundational sibling helper (every hook bare-imports it; it is in
 # MANIFEST_FILES + every settings.json deploy). A bare import is the established shape
 # and keeps the helper single-sourced (tests/test_hook_helper_consolidation.py forbids a
 # local re-def). is_self_host_repo returns False for any adopter repo, which is what
 # gates the harness-dev exemplar corpus.
-from _hook_utils import (
+from _hook_utils import (  # noqa: E402
     is_seeded_placeholder,
     is_self_host_repo,
     iter_doc_sections,

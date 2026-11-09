@@ -54,6 +54,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, Callable, Iterator, NamedTuple
@@ -62,7 +63,15 @@ from typing import Any, Callable, Iterator, NamedTuple
 # so it would re-pay that on every tool call. typing is already loaded; NamedTuple
 # gives the same frozen-by-construction value type without the inspect import.
 
-import _hook_utils
+# This module is imported under two spellings: bare, with the hooks directory
+# already on sys.path (write_guard puts it there before loading this module),
+# and as `tools.cc.hooks._speedbump` from the repo root, where nothing has. So
+# it puts its own directory on sys.path the way _bash_patterns does instead of
+# trusting every importer to have done so.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+import _hook_utils  # noqa: E402
 from _hook_utils import (
     STATE_DIR, _read_counter, _write_counter, directory_exists, join_directory,
     joined_directories, lock_file, resolve_in_checkout, say_once, unlock_file,
@@ -93,8 +102,7 @@ sibling_checkouts: Callable[[Path], Any] = getattr(_hook_utils, "sibling_checkou
 import _bash_patterns
 # The CP-GATEWEAKEN body names the maintenance-mode relaunch; pin the env-var to
 # the SoT (_maintenance_mode.ENV_VAR) via an f-string rather than a literal, per
-# the no-literal contract. Sibling import — the importing hook (write_guard) has
-# already inserted hooks_dir on sys.path.
+# the no-literal contract. Sibling import, found through the insert above.
 import _maintenance_mode  # type: ignore[import-not-found]
 
 SPEEDBUMP_SESSION_CAP = 4
