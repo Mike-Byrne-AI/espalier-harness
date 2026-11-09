@@ -425,9 +425,15 @@ So does a seat named for the worktree alone (its own `espalier.machine`,
 which SessionStart sets) that still holds a live claim on the mail channel:
 only that name can release it, so removing the worktree would leave the
 claim warning every other seat's plan with no seat to close it. The kept
-line names the lanes and the release to run in the worktree. A seat whose
-claims cannot be read (the mail driver is deployed but does not import) is
-kept too; only a deploy without the mail driver reads as no claims.
+line names the lanes and the release to run in the worktree. So does a seat
+that holds a live job from the dispatcher and no claim (a seat between
+lanes: its lane's push released its claims): removed, the job would stay
+on the board with nobody to work it. The kept line names the jobs and
+`seat.py retire <seat> --return-jobs`, run from the main checkout, which
+hands them back and removes it. A seat whose claims or jobs cannot be read
+(the mail driver is deployed but does not import, or the `dispatcher`
+setting in `espalier.toml` does not read) is kept too; only a deploy
+without the mail driver reads as none.
 On Windows a folder a process holds open (a terminal or an editor in it)
 cannot be renamed, and the reaper keeps any folder that refuses a rename.
 Elsewhere a rename proves nothing, so the reaper reads which folder each

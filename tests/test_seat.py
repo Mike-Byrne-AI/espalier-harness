@@ -1341,6 +1341,26 @@ class TestRetire:
         by_machine, _ = seat.mail.read_mail(clone)
         assert seat.mail.live_assignments(by_machine) == [] and not feat.exists()
 
+    def test_a_dispatcher_setting_that_does_not_read_retires_nothing_and_says_so(self, seat, clone, registry):
+        """The fold counts no assign under a broken dispatcher setting, so
+        retire's own read would see no job to hand back. Dies to: the list
+        printing "jobs: none" unqualified, and a retire that releases the
+        claim and removes the worktree with the job unseen (DEF-2043's review)."""
+        feat = _worktree(clone, "feat", name="box-feat")
+        # The clone's copy alone: the setting is read at the clone root, and a
+        # copy in the worktree would keep it as an uncommitted change instead.
+        (clone / "espalier.toml").write_bytes(b"dispatcher = 7\n")
+        _send(seat, clone, "box", "assign", "build it", lane="lane/next", seat="box-feat")
+        _send(seat, feat, "box-feat", "claim", "the feature", lane="lane/feat")
+        found, note = seat.seats(clone, fetch=True)
+        assert note.startswith("no seat's jobs are counted (espalier.toml sets dispatcher = 7"), note
+        removal = {s.name: s for s in found}["box-feat"].removal
+        assert removal.startswith("its seat box-feat's jobs could not be read (espalier.toml sets dispatcher = 7"), removal
+        assert "; its seat box-feat holds 1 live claim (lane/feat)" in removal, removal
+        with pytest.raises(seat.Refused, match=r"would be kept \(its seat box-feat's jobs could not be read"):
+            seat.cmd_retire(clone, "box-feat", dry_run=False, fetch=True, return_jobs=True)
+        assert len(_live_claims_from(seat, clone, "box-feat")) == 1 and feat.is_dir()
+
     def test_a_worktree_that_must_stay_keeps_its_claims(self, seat, clone, registry):
         """Live claims usually mean unpushed work. Dies to: releasing first and
         judging the removal after, which leaves the work kept and unclaimed."""

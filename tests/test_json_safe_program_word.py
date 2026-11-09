@@ -70,7 +70,25 @@ _CASES = [
     (SPACED, "PROGRA~1\\python.exe"),
     (SPACED, ""),
     ("/home/a b/.venv/bin/python", None),
+    # DEF-2064: a drive-rooted path's backslashes, spaced or not, and the
+    # forms that are not drive-rooted and keep theirs.
+    ("C:\\Users\\a\\Python312\\python.exe", None),
+    ("c:\\Py\\python.exe", "unused"),
+    ("C:/Py\\mixed\\python.exe", None),
+    ("C:\\Program Files\\Py\\python.exe", None),
+    ("C:\\Program Files\\Py\\python.exe", "C:\\JO&COT~1\\python.exe"),
+    ("\\\\server\\share\\python.exe", None),
+    ("\\\\?\\C:\\Py\\python.exe", None),
+    ("C:python.exe", None),
+    ("1:\\Py\\python.exe", None),
+    ("\u00e9:\\Py\\python.exe", None),
+    ("C:", None),
+    ("", None),
+    ("1:/Py/python.exe", None),
 ]
+# An unspaced drive-rooted path holding one character of each kind (the
+# failure-mode review: a bare `'` or `(` is grammar to every shell).
+_CASES += [(f"C:\\A{c}B\\python.exe", None) for c in string.printable if c not in "\\" and not c.isspace()]
 # Built from the alphabet, not by hand (both reviews of 165e78b3: the hand list
 # let 33 of 39 one-sided edits through): one short form per printable
 # character, the drive letter's edges, the length edge, and other whitespace
@@ -263,3 +281,149 @@ class TestNoCommandOpensWithABareInterpreter:
     ], ids=["paren", "at", "backticked-info", "spelled"])
     def test_the_pin_passes_a_path_named_as_information(self, src):
         assert _bare_interpreter_commands(src + "\n", "probe.py") == []
+
+
+#: The helpers that spell an interpreter as the program word of a command.
+_SPELLERS = frozenset({"program_word", "_remedy_program_word", "_remedy_interpreter", "_remedy_py",
+                       "executable_word", "python_command_hint"})
+#: The calls that write a file (``espalier/``'s writers go through
+#: ``atomic_write_*``, pinned by ``tests/test_atomic_io.py``'s census).
+_FILE_WRITERS = frozenset({"atomic_write_text", "atomic_write_bytes", "write_text", "write_bytes"})
+#: The one spelling of a command written INTO the adopter's tree, where a later
+#: reader may be on another host or volume, so the path is kept as spelled.
+_PERSISTED_SITES = {("espalier/cli.py", "_file_onboarding_rows"): 1}
+#: The functions that write a file AND spell a typed word, with how many typed
+#: spellings each holds. Each was read for DEF-2064 (2026-11-09) and prints its
+#: spelling to the operator, never into a file: the worktree-include re-run hint
+#: rides a WARN line, and the rest are `print` remedies. A new spelling in one
+#: of them changes its count and is read again here.
+_TYPED_IN_A_WRITER = {
+    ("espalier/cli.py", "deploy_harness"): 1,
+    ("espalier/cli.py", "cmd_upgrade"): 7,
+    ("espalier/cli.py", "cmd_refresh_self_host_pin"): 1,
+    ("espalier/cli.py", "cmd_memory_prune"): 1,
+}
+
+
+def _callee(func: ast.expr) -> str | None:
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return None
+
+
+def _spelling_sites(source: str, rel: str) -> list[tuple[str, str, bool, bool]]:
+    """``(rel, enclosing function, persisted, the function writes a file)`` for
+    each call of a speller in ``source``. ``persisted`` is a literal
+    ``persisted=True`` keyword; the enclosing function is the innermost one."""
+    found: list[tuple[str, str, bool, bool]] = []
+
+    def visit(node: ast.AST, fn: ast.AST | None) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                visit(child, child)
+                continue
+            if isinstance(child, ast.Call) and _callee(child.func) in _SPELLERS:
+                persisted = any(k.arg == "persisted" and isinstance(k.value, ast.Constant) and k.value.value is True
+                                for k in child.keywords)
+                writes = fn is not None and any(
+                    isinstance(n, ast.Call) and _callee(n.func) in _FILE_WRITERS for n in ast.walk(fn))
+                found.append((rel, getattr(fn, "name", "<module>"), persisted, writes))
+            visit(child, fn)
+
+    visit(ast.parse(source), None)
+    return found
+
+
+def _census() -> list[tuple[str, str, bool, bool]]:
+    sites: list[tuple[str, str, bool, bool]] = []
+    for base in (REPO_ROOT / "espalier", TOOLS_CC):
+        for path in sorted(checkout_rglob(base, "*.py")):
+            rel = path.relative_to(REPO_ROOT).as_posix()
+            if "__pycache__" in path.parts or rel.startswith(("espalier/_vendor/", "espalier/assets/")):
+                continue
+            sites += _spelling_sites(path.read_text(encoding="utf-8"), rel)
+    return sites
+
+
+def _counted(sites: list[tuple[str, str, bool, bool]]) -> dict[tuple[str, str], int]:
+    counts: dict[tuple[str, str], int] = {}
+    for rel, fn, _persisted, _writes in sites:
+        counts[(rel, fn)] = counts.get((rel, fn), 0) + 1
+    return counts
+
+
+class TestTheTypedAndPersistedSpellingsAreCounted:
+    """DEF-2064's census, which the DEF-2060 review asked for: a typed remedy
+    spells a Windows path with forward slashes (or its 8.3 short form), and a
+    copy written into the adopter's tree keeps the path as spelled. Nothing
+    pinned which sites were which, so a remedy moved into a written file, or
+    a new writer spelling the typed word, passed. Every speller call is read
+    here: the persisted ones are exactly the roster, and a typed one inside a
+    function that writes a file is rostered with its count after a read. The
+    hook head the rewire writes into ``settings.json`` is spelled apart, by
+    ``cli._hook_head_word`` (DEF-2063), which calls no speller and is pinned by
+    ``tests/test_init_rewire_interpreter.py``."""
+
+    def test_the_persisted_spellings_are_the_roster(self):
+        sites = _census()
+        assert len(sites) >= 100, f"the census read {len(sites)} speller calls: the reader went blind"
+        persisted = _counted([s for s in sites if s[2]])
+        assert persisted == _PERSISTED_SITES, persisted
+
+    def test_a_typed_spelling_in_a_writer_is_rostered(self):
+        typed_in_writer = _counted([s for s in _census() if s[3] and not s[2]])
+        assert typed_in_writer == _TYPED_IN_A_WRITER, (
+            "a function that writes a file spells a TYPED interpreter word: read whether that word "
+            f"reaches the file (then persisted=True) or the operator (then roster it): {typed_in_writer}")
+
+    @pytest.mark.parametrize("src,expected", [
+        ("def f(p):\n    p.write_text(f'{_remedy_py()} -m espalier')\n", [("probe.py", "f", False, True)]),
+        ("def f(p):\n    atomic_write_text(p, _remedy_py(persisted=True))\n", [("probe.py", "f", True, True)]),
+        ("def f():\n    print(_hook_utils.python_command_hint())\n", [("probe.py", "f", False, False)]),
+        ("def f():\n    def g(p):\n        p.write_bytes(b'')\n    return program_word(x, None)\n",
+         [("probe.py", "f", False, True)]),
+        ("x = executable_word()\n", [("probe.py", "<module>", False, False)]),
+    ], ids=["typed-in-writer", "persisted", "printed", "nested-writer", "module"])
+    def test_the_census_sees_each_shape(self, src, expected):
+        assert _spelling_sites(src, "probe.py") == expected
+
+
+def git_bash() -> str | None:
+    """Git for Windows' own ``bash.exe`` (``<git root>/bin/bash.exe``, found
+    by walking up from the PATH ``git``, which is ``<git root>/cmd/git.exe``
+    or ``<git root>/mingw64/bin/git.exe``), never a PATH ``bash``: on Windows
+    that can be WSL's, which cannot run a ``C:/`` program."""
+    git = shutil.which("git")
+    if not git:
+        return None
+    for root in list(Path(git).resolve().parents)[:3]:
+        candidate = root / "bin" / "bash.exe"
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Git Bash is a Windows host's shell")
+class TestGitBashRunsTheSpelledInterpreter:
+    """DEF-2064's oracle: Git Bash itself, given the word each of this host's
+    interpreters (this one and the base it was made from, the two differing
+    under a venv) is spelled as. A backslash path reached it with its
+    separators dropped (``C:UsersMichael...python.exe: command not found``)."""
+
+    def test_git_bash_runs_the_spelled_interpreter(self, tmp_path):
+        from espalier._text import program_word, windows_short_path
+
+        bash = git_bash()
+        if bash is None:
+            pytest.skip("no Git for Windows bash.exe beside git on PATH")
+        exes = dict.fromkeys(p for p in (sys.executable, getattr(sys, "_base_executable", None)) if p)
+        for exe in exes:
+            word = program_word(exe, windows_short_path)
+            script = tmp_path / "run.sh"
+            script.write_bytes(f"{word} -c 'print(4242)'\n".encode("utf-8"))
+            proc = subprocess.run(  # spawn: ok the row's oracle is the real Git Bash
+                [bash, "--noprofile", "--norc", str(script)],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=scaled(20))
+            assert "4242" in proc.stdout, (exe, word, proc.returncode, proc.stderr[-400:])
