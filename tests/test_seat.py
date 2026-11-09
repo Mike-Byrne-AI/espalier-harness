@@ -580,7 +580,9 @@ class TestLaunch:
 #: interpreter); and since 2026-10-30 the STOP sends one request opening with
 #: stopped: (DEF-5030, the fix shape the seat named under the ruling d6ef5a
 #: that minted the row: a stopped worker sent nothing, so the board showed no
-#: stopped seat). The self-host render must reproduce it byte for byte; its 15
+#: stopped seat); and since 2026-11-09 the STOP says the dispatcher's release
+#: of a job an operator call parks (DEF-3038, the shape the dispatcher
+#: approved on 20261107T060117Z-air-5e86f5 (C)). The self-host render must reproduce it byte for byte; its 15
 #: minutes is DISPATCHER_TICK's interval, rendered, never copied.
 _OPERATOR_TICK = (
     "/loop 10m Worker tick. Run /inbox (mark read) and /inbox board and read live state. Act only on what is "
@@ -597,7 +599,8 @@ _OPERATOR_TICK = (
     "then proceed on it after 15 minutes (the dispatcher's tick; the board's asks line shows your request's "
     "age) with no answer; a request with no recommendation keeps the stop, and an ack from air beginning "
     "redirect: re-aims you at once. STOP, send air one request opening with stopped: that names what stops you "
-    "(an operator call by its id), and only re-read mail until an ack frees or re-aims you or what stops you is "
+    "(an operator call by its id; air releases the job a call parks at the stop and re-sends it at the ruling, and "
+    "that release ends your stop), and only re-read mail until an ack frees or re-aims you or what stops you is "
     "gone, then ack your own stop saying so (an ack that does not free you: send the stop again), for what the "
     "assign authority reserves for the operator (a new pack, a scope change, a release or tag, a revert that is "
     "not the red-main revert, an open operator call on your fork), a platform stop, a refusal you cannot resolve, "
@@ -825,7 +828,9 @@ class TestBrief:
         # call names no stop, so the seat acks its own stop when the cause is gone, and an
         # interim ack that frees nothing is answered by sending the stop again.
         assert (f"STOP, send {{dispatcher}} one request opening with {marker} that names what stops you (an operator "
-                "call by its id), and only re-read mail until an ack frees or re-aims you or what stops you is gone, "
+                "call by its id; {dispatcher} releases the job a call parks at the stop and re-sends it at the ruling, "
+                "and that release ends your stop), and only re-read mail until an ack frees or re-aims you or what "
+                "stops you is gone, "
                 "then ack your own stop saying so (an ack that does not free you: send the stop again), for what the "
                 "assign authority reserves for the operator") in seat.SELF_HOST_PROCEED
         assert (f"STOP and send {{dispatcher}} one request opening with {marker}, then only re-read mail until it is "

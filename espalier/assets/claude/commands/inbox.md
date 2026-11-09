@@ -376,7 +376,15 @@ is read on its own, and one that cannot be read says so on its own line:
   until released; one open pull request per seat, the next job built while
   the first is in CI), and a seat holding none has no jobs row, so which
   seats were short was once remembered between ticks; the line is where they
-  are read, every tick.
+  are read, every tick. Where a seat has a `stopped:` request open, the line
+  goes on with `; stopped: <seat> (stop <id>) holds <job> (assign <id>), ...`
+  (`holds no job` where it holds none), each id the full one a release names,
+  and, where a stopped seat holds a job, `release the job a stop parks on an
+  operator call, and re-send it at the ruling`: a stop on one job's open
+  operator call idled the seat's other job too while the line read the seat
+  full, so the dispatcher releases the parked job at the stop, which ends the
+  stop, and re-sends it at the ruling. The count is left as it is, since a
+  stopped seat counted short would be sent a job while it only reads mail.
 - **claims** and the ledger's live row count, counted at the base
   branch's remote-tracking ref with the base's own ledger tools and naming the
   commit it read, so a checkout that stops moving still reads what the base

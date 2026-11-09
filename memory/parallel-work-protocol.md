@@ -457,7 +457,15 @@ or tag, a revert that is not the red-`main` revert, an open operator call, an
 `OPERATOR CALL:` request on the board's `asks:` line), for a platform safety stop, for a refusal it cannot resolve, and for a
 conflict outside its own files; the stop is said as one `request` whose text
 opens with `stopped:` (its first word; it names what stops the seat, an open
-operator call by its id; no proceeding on it), so the board's `asks:` line
+operator call by its id; no proceeding on it; since 2026-11-09, `DEF-3038`, the
+shape the dispatcher approved on `20261107T060117Z-air-5e86f5` (C): the
+dispatcher releases a job an open operator call parks at the stop and re-sends
+it at the ruling, so the seat's other job is not idled with it, and that
+release ends the stop; the board's `under two:` tail names each stopped seat
+with its stop's id and its live jobs with their assigns' ids, so the release is
+read every tick, not remembered, while the count is left as it is, since a
+stopped seat counted short would be sent a third job while it only reads mail),
+so the board's `asks:` line
 carries it with its age, the dispatcher's past-the-hour read under the gridlock
 rule, counted apart on the header and tagged `(stopped)`; any `ack` naming it
 closes it, and since a release or the ruling on an operator call names no

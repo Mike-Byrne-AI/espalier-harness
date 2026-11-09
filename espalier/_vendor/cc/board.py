@@ -1994,6 +1994,41 @@ def under_two(assignments: list[dict], rows: list[dict], dispatcher: str = "") -
     return short, {"size": len(counts), "seats_line": len(named), "jobs": len(jobbed), "dispatcher": dispatcher}
 
 
+def stopped_clause(asks: list[dict], assignments: list[dict], dispatcher: str = "") -> str:
+    """The under-two tail's ``stopped:`` clause: each seat with an open stop (a
+    request opening with mail.STOPPED_PREFIX that no ack names), in the order
+    its first stop was sent, with the stop's full id and the seat's live jobs,
+    each with its assign's full id, the id a release names; ``""`` when no
+    seat has one open. A seat stopped on one job's open operator call idled
+    its other job too, and the tail still read it full, so neither job moved
+    and no third was given (DEF-3038, found by the dispatcher's 11-04 run
+    review). The approved shape (the ruling 20261107T060117Z-air-5e86f5 (C)):
+    the dispatcher releases the parked job at the stop and re-sends it at the
+    ruling; this clause is where that is read, every tick, beside the short
+    seats (DEF-5034), never remembered. The count is left as it is: counted
+    short, a stopped seat would be sent a third job while it only reads mail.
+    The dispatcher's own request is not a worker's stop. Computed where it
+    renders, never stored on the board (TestSectionCounts' rule)."""
+    stops: dict[str, list[str]] = {}
+    for m in asks:
+        seat = str(m.get("from") or "")
+        if seat and seat != dispatcher and mail.is_stop(m):
+            stops.setdefault(seat, []).append(str(m.get("id") or ""))
+    if not stops:
+        return ""
+    held: dict[str, list[str]] = {}
+    for a in assignments:
+        re_ = a.get("re") or {}
+        seat = str(re_.get(mail.ASSIGN_SEAT_KEY) or "")
+        if seat in stops:
+            held.setdefault(seat, []).append(f"{_job(re_)} (assign {a.get('id')})")
+    parts = [f"{seat} (stop{'s' if len(ids) > 1 else ''} {', '.join(ids)}) "
+             + (f"holds {', '.join(held[seat])}" if held.get(seat) else "holds no job")
+             for seat, ids in stops.items()]
+    release = ": release the job a stop parks on an operator call, and re-send it at the ruling" if held else ""
+    return "; stopped: " + "; ".join(parts) + release
+
+
 def render(board: dict) -> str:
     lines = [f"board -- read live {board.get('read_at')}" + (f" by {board['seat']}" if board.get("seat") else "")]
     lines.append(f"merging:  {board.get('merging') or 'unread (no branch-protection answer)'}")
@@ -2106,9 +2141,13 @@ def render(board: dict) -> str:
         of = (f"(the seats line names {who['seats_line']}, the jobs {who['jobs']}"
               + (f", the dispatcher {who['dispatcher']} apart)" if who["dispatcher"] else ")"))
         size = f"of {who['size']} seat{'s' if who['size'] != 1 else ''} {of}"
+        # A stopped seat's live jobs ride the same line (DEF-3038), so the
+        # release of a job parked on an operator call is read where the short
+        # seats are, and not from the asks rows, which cap at ASKS_SHOWN.
         lines.append("          under two: " + (f"no worker seat named {of}" if not who["size"]
                                                else ", ".join(f"{s} ({n}, {when})" for s, n, when in short) + ", " + size
-                                               if short else f"none {size}"))
+                                               if short else f"none {size}")
+                     + stopped_clause(board.get("asks") or [], jobs, str(disp.get("name") or "")))
     asks = board.get("asks") or []
     if board.get("mail_unread"):
         lines.append(f"asks:     unread (the mail could not be read: {board['mail_unread']})")
