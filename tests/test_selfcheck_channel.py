@@ -97,3 +97,36 @@ class TestSelfcheckChannel:
         env = captured.get("env")
         assert env is not None, "run_selfcheck must pass env= to propagate the import root"
         assert pkg_parent in env.get("PYTHONPATH", "").split(os.pathsep)
+
+    def test_the_callers_pytest_options_and_plugins_never_reach_the_bundled_run(self, tmp_path, monkeypatch):
+        # DEF-1150: the child pytest took the caller's PYTEST_ADDOPTS and
+        # PYTEST_PLUGINS, so a --basetemp named there was emptied (pytest
+        # empties a basetemp it is given) and a plugin meant for the caller's
+        # own suite loaded into the bundled run. Driven for real: an inherited
+        # basetemp holding a file another run is using, and a plugin on the
+        # path that leaves a mark when it loads.
+        import os
+
+        from espalier.selfcheck import run_selfcheck
+
+        held = tmp_path / "bt" / "popen-gw0" / "test_x0" / "in-use.txt"
+        held.parent.mkdir(parents=True)
+        held.write_text("x", encoding="utf-8")
+        mark = tmp_path / "callers-plugin-loaded"
+        plugins = tmp_path / "plugins"
+        plugins.mkdir()
+        (plugins / "callers_own_plugin.py").write_text(
+            "from pathlib import Path\n"
+            "def pytest_configure(config):\n"
+            f"    Path({str(mark)!r}).write_text('x', encoding='utf-8')\n",
+            encoding="utf-8")
+        monkeypatch.setenv("PYTEST_ADDOPTS", f"--basetemp={(tmp_path / 'bt').as_posix()}")
+        monkeypatch.setenv("PYTEST_PLUGINS", "callers_own_plugin")
+        existing = os.environ.get("PYTHONPATH", "")
+        monkeypatch.setenv("PYTHONPATH", os.pathsep.join(p for p in (str(plugins), existing) if p))
+
+        rc = run_selfcheck(tmp_path)
+
+        assert held.exists(), "the bundled run emptied a --basetemp the caller's PYTEST_ADDOPTS named"
+        assert not mark.exists(), "the bundled run loaded a plugin the caller's PYTEST_PLUGINS named"
+        assert rc == 0

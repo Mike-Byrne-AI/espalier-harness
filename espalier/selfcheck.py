@@ -57,6 +57,16 @@ from espalier._safe_walk import safe_rglob
 from espalier._spawn import run_no_stdin
 from espalier.managed_markers import has_managed_marker
 
+#: The two variables pytest reads from the environment as a run's own
+#: configuration: options (``PYTEST_ADDOPTS``) and plugins to load
+#: (``PYTEST_PLUGINS``). The bundled check is configured by its own
+#: ``pytest.ini`` and loads no plugin, so a value here belongs to the caller's
+#: suite, and :func:`run_selfcheck`'s child never takes it. pytest empties a
+#: ``--basetemp`` it is given, so a caller's basetemp named in
+#: ``PYTEST_ADDOPTS`` was emptied by the child (DEF-1150). The host's own
+#: settings (the temp root, plugin autoload, colour) still reach the child.
+_CALLER_RUN_CONFIG: tuple[str, ...] = ("PYTEST_ADDOPTS", "PYTEST_PLUGINS")
+
 
 def run_selfcheck(repo_root: Path) -> int:
     """Run the bundled engine-integrity tests against the installed engine.
@@ -65,7 +75,8 @@ def run_selfcheck(repo_root: Path) -> int:
     runs pytest against it in a throwaway working directory so the adopter repo
     is never the pytest rootdir, and returns pytest's exit code. The bundled
     tests construct their own synthetic repos; ``repo_root`` is accepted for a
-    consistent command signature but is intentionally not read here.
+    consistent command signature but is intentionally not read here. The
+    child takes the caller's environment less :data:`_CALLER_RUN_CONFIG`.
     """
     # Hand the running espalier's import root to the subprocess. The bundled
     # tests `import espalier`, but the subprocess runs with cwd=work (a throwaway
@@ -79,6 +90,8 @@ def run_selfcheck(repo_root: Path) -> int:
     # still never the pytest rootdir.
     pkg_parent = str(Path(__file__).resolve().parents[1])
     env = os.environ.copy()
+    for key in _CALLER_RUN_CONFIG:
+        env.pop(key, None)
     existing = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = pkg_parent + os.pathsep + existing if existing else pkg_parent
     if importlib.util.find_spec("pytest") is None:

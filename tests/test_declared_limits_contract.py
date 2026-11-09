@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import os
 import re
 import subprocess
 import sys
@@ -362,9 +363,14 @@ def test_every_cited_pin_runs_and_passes_on_this_host():
     if not cited:
         pytest.skip("no citations yet -- the sentence contract reports that")
     from tests._tree_spawn import run_tree_bounded
+    # The outer session's PYTEST_ADDOPTS is not inherited: pytest empties a
+    # --basetemp it is given, so a basetemp named there was emptied by this
+    # child under every other test of the session (DEF-1150), and its other
+    # options would reshape the -rA lines read below.
     proc = run_tree_bounded(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-rA", "--tb=line", *cited],
         cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8", timeout=300, stdin=subprocess.DEVNULL,
+        env={**os.environ, "PYTEST_ADDOPTS": ""},
     )
     outcomes: dict[str, set[str]] = {}
     for line in proc.stdout.splitlines():
