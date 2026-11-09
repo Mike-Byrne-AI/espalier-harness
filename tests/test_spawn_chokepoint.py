@@ -50,13 +50,18 @@ SPAWN_FLOOR = 27
 TIMED_FLOOR = 50
 SPAWN_ATTRS = frozenset({"run", "Popen", "call", "check_output", "check_call"})
 PRAGMA = "# spawn: ok"
-#: Where a raw timed spawn may stand: the bounded spawn and its tree kill, and
-#: the tree-bounded spawn a parent answers by a fixed time through (DEF-3048:
-#: write_guard's judgment child, killed with its whole tree at the deadline)...
-BOUNDED_HOME = ("_json_safe.py", frozenset({"run_bounded", "_end_tree", "run_tree_to_deadline"}))
-#: The bounded spawns a call site names; a hook's call to either is a spawn the
-#: census counts, declared like any other.
-BOUNDED_NAMES = ("run_bounded", "run_tree_to_deadline")
+#: Where a raw timed spawn may stand: the bounded spawn and its tree kill, the
+#: tree-bounded spawn a parent answers by a fixed time through (DEF-3048:
+#: write_guard's judgment child, killed with its whole tree at the deadline),
+#: and the tree-ending run with its wait and its process-table walk (a child
+#: that is itself a tree, ended whole at its timeout from no group of its own)...
+BOUNDED_HOME = ("_json_safe.py", frozenset({"run_bounded", "_end_tree", "run_tree_to_deadline",
+                                            "run_tree_bounded", "_communicate_or_end_the_tree",
+                                            "_process_table"}))
+#: The bounded spawns a call site names (the tree-ending wait on a ``Popen``
+#: the caller holds among them); a hook's call to any is a spawn the census
+#: counts, declared like any other.
+BOUNDED_NAMES = ("run_bounded", "run_tree_to_deadline", "run_tree_bounded", "communicate_tree_bounded")
 #: ...a ``run_bounded`` a module defines in its ``except ImportError`` handler,
 #: the fallback for a load where ``_json_safe`` is not importable (a def of
 #: that name anywhere else is no exemption)...
@@ -224,7 +229,8 @@ class TestEveryTimedSpawnIsBounded:
         assert not stray, (
             "a raw subprocess call with a timeout (or the ** splat that can carry one) "
             "waits on any grandchild holding its pipe on Windows, past its cap; call "
-            "run_bounded (from _json_safe, or _hook_utils in a hook) instead:\n  "
+            "run_bounded (from _json_safe, or _hook_utils in a hook) instead, or "
+            "run_tree_bounded for a child that is a tree (a pytest, a script that runs one):\n  "
             + "\n  ".join(f"tools/cc/{s['file']}:{s['lineno']} in {s['function']}" for s in stray)
         )
 

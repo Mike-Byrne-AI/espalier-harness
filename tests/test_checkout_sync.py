@@ -2302,9 +2302,13 @@ class TestAProcessTableThatDidNotAnswerSaysItCannotTell:
                        subprocess.CompletedProcess(["ps"], 0, "", "")):
             monkeypatch.setattr(cs, "run", lambda argv, *, cwd, timeout, given=answer: given)
             assert cs._parent_map() is None, answer
-        monkeypatch.setattr(cs, "run", lambda argv, *, cwd, timeout: subprocess.CompletedProcess(
-            argv, 0, "    1     0\n   42     1\nnoise\n", ""))
+        # The ps spelling and its parser are the bounded spawn's tree walk's
+        # (`_json_safe.PS_TABLE_ARGV`): three columns, the group last.
+        seen = []
+        monkeypatch.setattr(cs, "run", lambda argv, *, cwd, timeout: seen.append(argv) or subprocess.CompletedProcess(
+            argv, 0, "    1     0     1\n   42     1    42\nnoise\n", ""))
         assert cs._parent_map() == {1: 0, 42: 1}
+        assert seen == [list(cs.PS_TABLE_ARGV)], seen
 
     def test_an_empty_snapshot_is_unread_on_windows_too(self, cs, monkeypatch):
         monkeypatch.setattr(cs, "_process_table_windows", lambda: {})

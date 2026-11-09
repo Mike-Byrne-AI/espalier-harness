@@ -43,6 +43,7 @@ from _stack_trees import ADOPTER_STACKS
 from tests import _axis_registry as reg
 from tests._live_tree import checkout_glob
 from tests import _interpreter_hosts as hosts
+from tests._tree_spawn import run_tree_bounded
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -147,7 +148,7 @@ def outcomes(node_ids: list[str], rootdir: Path, timeout: float = 45) -> dict[st
     ``timeout`` defaults below the 60 s per-test ceiling, which is all a planted
     row needs; a caller running real proving nodes passes its own and carries a
     ``pytest.mark.timeout`` above it."""
-    proc = subprocess.run(
+    proc = run_tree_bounded(
         [sys.executable, "-m", "pytest", "-v", "-p", "no:cacheprovider", "--color=no", "--tb=line",
          *node_ids],
         cwd=rootdir, env=_child_env(), capture_output=True, text=True, encoding="utf-8",

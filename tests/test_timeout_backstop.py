@@ -27,6 +27,7 @@ import pytest
 
 from tests import _timeout_backstop as backstop
 from tests import _wait_budget as wb
+from tests._tree_spawn import run_tree_bounded
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -266,7 +267,7 @@ def _drive(tmp_path: Path, body: str, *, ceiling: tuple[str, ...] = ("--timeout=
     temp.mkdir()
     env.update(TMPDIR=str(temp), TEMP=str(temp), TMP=str(temp))
     t0 = time.monotonic()
-    proc = subprocess.run(
+    proc = run_tree_bounded(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *ceiling,
          "test_probe.py"],
         cwd=tmp_path, env=env, capture_output=True, text=True, encoding="utf-8",

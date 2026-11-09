@@ -19,7 +19,6 @@ from __future__ import annotations
 import inspect
 import os
 import re
-import subprocess
 import sys
 import tempfile
 import warnings
@@ -29,6 +28,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests import _never_ran
+from tests._tree_spawn import run_tree_bounded
 from tests._nested_race import RACE_RAISE, NestedControllerRaceLost, lost_to_the_race
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -64,7 +64,7 @@ def _drive(tmp_path: Path, body: str, *args: str, workers: tuple[str, ...] = ("-
     # xdist controller would mint a numbered dir on pytest's shared root and
     # delete the finished ones there at its end (DEF-5056).
     basetemp = tempfile.mkdtemp(prefix="basetemp-", dir=tmp_path)
-    proc = subprocess.run(
+    proc = run_tree_bounded(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", f"--basetemp={basetemp}",
          *workers, *args, "test_probe.py"],
         cwd=tmp_path, env=env, capture_output=True, text=True, encoding="utf-8",

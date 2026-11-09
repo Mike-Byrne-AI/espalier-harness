@@ -84,7 +84,7 @@ from typing import IO, Callable
 # Sibling import via this script's own directory (session_summary.py's
 # pattern): it resolves the same way when the hooks load this file by path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _json_safe import os_error_text  # noqa: E402
+from _json_safe import PS_TABLE_ARGV, os_error_text, parse_process_table  # noqa: E402
 
 REMOTE = "origin"
 WORKTREES_REL = (".claude", "worktrees")
@@ -441,18 +441,16 @@ def _parent_map(timeout: float = GIT_CAP_S) -> dict[int, int] | None:
     failed, or a table with no rows, which no host has (the reader is in
     it). Never {}, which read as a host with no processes, so an ancestor
     walk stopped at the first hop and CP-KILL found no children (DEF-2046).
-    Windows: a Toolhelp32 snapshot (no spawn); elsewhere: one ``ps``."""
+    Windows: a Toolhelp32 snapshot (no spawn); elsewhere: one ``ps``, in the
+    spelling and through the parser the bounded spawn's tree walk reads
+    (``_json_safe.PS_TABLE_ARGV``, ``parse_process_table``)."""
     if os.name == "nt":
         return _parent_map_windows()
-    r = run(["ps", "-A", "-o", "pid=,ppid="], cwd=Path(os.path.abspath("/")), timeout=timeout)
+    r = run(list(PS_TABLE_ARGV), cwd=Path(os.path.abspath("/")), timeout=timeout)
     if r is None or r.returncode != 0:
         return None
-    table: dict[int, int] = {}
-    for line in r.stdout.splitlines():
-        parts = line.split()
-        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-            table[int(parts[0])] = int(parts[1])
-    return table or None
+    table = parse_process_table(r.stdout)
+    return {pid: ppid for pid, (ppid, _group) in table.items()} if table else None
 
 
 def _parent_map_windows() -> dict[int, int] | None:
