@@ -795,8 +795,9 @@ SELF_HOST_PROCEED = (
     "its citation, then proceed on it after {wait} minutes (the dispatcher's tick; the board's asks line shows "
     "your request's age) with no answer; a request with no recommendation keeps the stop, and an ack from "
     "{dispatcher} beginning redirect: re-aims you at once. STOP, send {dispatcher} one request opening with "
-    "stopped: that names what stops you (an operator call by its id; {dispatcher} releases the job a call parks at "
-    "the stop and re-sends it at the ruling, and that release ends your stop), and only re-read mail until an ack frees "
+    "stopped: that names what stops you (an operator call by its id, and the assign id of the job it parks: "
+    "{dispatcher} releases that job, acks your stop and re-sends the job at the ruling), and only re-read mail until an "
+    "ack frees "
     "or re-aims you or what stops you is gone, then ack your own stop saying so (an ack that does not free you: "
     "send the stop again), for what the assign "
     "authority reserves for the operator (a new pack, a scope change, a release or tag, a revert that is not "
@@ -818,10 +819,11 @@ SELF_HOST_PROCEED = (
 #: the dispatcher's past-the-hour gridlock read (DEF-5030). Since 2026-11-09
 #: this repository's clause says the release (DEF-3038, the shape the
 #: dispatcher approved on 20261107T060117Z-air-5e86f5 (C)): a stop on one
-#: job's open operator call idled the seat's other job too, so the dispatcher
-#: releases the parked job at the stop and re-sends it at the ruling, read from
-#: the board's under-two tail (``board.py::stopped_clause``); the release is
-#: what ends the stop, and the seat acks its own stop and goes on.
+#: job's open operator call idled the seat's other job too, so the stop names
+#: the parked job's assign id, and the dispatcher releases that job, acks the
+#: stop (the ack is what frees the seat: a release names no stop) and re-sends
+#: the job at the ruling, read from the board's stopped lines under the
+#: under-two tail (``board.py::stopped_lines``, ``board.py::PARKED_RELEASE``).
 ADOPTER_PROCEED = (
     "STOP and send {dispatcher} one request opening with stopped:, then only re-read mail until it is answered, "
     "on anything not green: a red you cannot fix in two attempts, a choice the assign does not settle, a "

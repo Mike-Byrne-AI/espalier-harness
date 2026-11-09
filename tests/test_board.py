@@ -1525,62 +1525,124 @@ class TestUnderTwo:
         assert (f"          under two: air (0, {when}), win-2 (1, {when}), of 2 seats (the seats line names 2, "
                 "the jobs 1)") in text, text
 
-    def test_a_stopped_seat_is_named_with_its_live_jobs_and_the_release(self, board, monkeypatch, tmp_path):
+    def _stopped(self, lines: list[str]) -> list[str]:
+        """The stopped lines, which sit right under the tail."""
+        i = next(i for i, ln in enumerate(lines) if ln.startswith("          under two: "))
+        rest = lines[i + 1:]
+        return rest[:next((k for k, ln in enumerate(rest) if not ln.startswith("          stopped: ")), len(rest))]
+
+    def test_a_stopped_seat_is_named_with_its_jobs_and_the_parked_one_marked(self, board, monkeypatch, tmp_path):
         """DEF-3038: a seat stopped on one job's open operator call idled its
         other job too, and the tail read the seat full (``none of 1 seat``), so
         neither job moved and no third was given. The approved shape (ruling
         20261107T060117Z-air-5e86f5 (C)): the dispatcher releases the parked
-        job at the stop and re-sends it at the ruling, read here, where short
-        seats are read every tick (DEF-5034), not remembered: each seat with an
-        open stop, its stop's full id and its live jobs with the assigns' full
-        ids, the ids a release names. The count is left as it is (a count of
-        one would send a third job to a seat that only reads mail). Dies to:
-        the stopped seat left off the tail, a job or an assign id dropped, a
-        suffix printed for a full id, a stopped seat holding none left out, or
-        the release said where no stopped seat holds a job."""
+        job at the stop and re-sends it at the ruling, read here, under the
+        tail where short seats are read every tick (DEF-5034), not remembered:
+        one line a stopped seat, its stop's full id and its live jobs with the
+        assigns' full ids, the job its stop names beside an open call marked
+        with the call, and the release on that seat's line alone. The count is
+        left as it is (a count of one would send a third job to a seat that
+        only reads mail). Dies to: the stopped seat left off, a job or an
+        assign id dropped, a suffix printed for a full id, the unparked job
+        marked, a stopped seat holding none left out, or the release said
+        beside a seat with nothing parked."""
         mail = board.mail
         jobs = [self._assign(board, "win", "lane/a"), self._assign(board, "win", "lane/b")]
         call = mail.new_message("air", "request", f"{mail.OPERATOR_CALL_PREFIX} which base?", now=_T0)
-        stop = mail.new_message("win", "request", f"{mail.STOPPED_PREFIX} the open operator call {call['id']}",
+        suffix = call["id"].rsplit("-", 1)[1]
+        stop = mail.new_message("win", "request", f"{mail.STOPPED_PREFIX} the open operator call {suffix}",
                                 lane="lane/b", now=_T0.replace(minute=1))
         idle = mail.new_message("air-work", "request", f"{mail.STOPPED_PREFIX} the guard refuses the edit",
                                 now=_T0.replace(minute=2))
         lines = self._text(board, monkeypatch, tmp_path, {"air": [*jobs, call], "win": [stop],
                                                           "air-work": [idle]}).splitlines()
+        release = "release the parked job, ack the stop, and re-send the job at the ruling"
+        assert self._stopped(lines) == [
+            f"          stopped: win (stop {stop['id']}) holds lane/a (assign {jobs[0]['id']}); lane/b (assign "
+            f"{jobs[1]['id']}, parked on {call['id']}): {release}",
+            f"          stopped: air-work (stop {idle['id']}) holds no job"], lines
+        assert board.PARKED_RELEASE == release
         tail = next(ln for ln in lines if ln.startswith("          under two: "))
-        assert tail.endswith(
-            f"; stopped: win (stop {stop['id']}) holds lane/a (assign {jobs[0]['id']}), lane/b (assign "
-            f"{jobs[1]['id']}); air-work (stop {idle['id']}) holds no job: release the job a stop parks on an "
-            "operator call, and re-send it at the ruling"), tail
-        assert tail.startswith(f"          under two: air-work (0, {self._since(board, _T0.replace(minute=2))}), of 2 "
-                               "seats"), "the count is left as it is"
-        # A stopped seat holding no job is named, and no release is said.
-        lines = self._text(board, monkeypatch, tmp_path, {"air": [call], "air-work": [idle]}).splitlines()
-        tail = next(ln for ln in lines if ln.startswith("          under two: "))
-        assert tail.endswith(f"; stopped: air-work (stop {idle['id']}) holds no job"), tail
+        assert tail == (f"          under two: air-work (0, {self._since(board, _T0.replace(minute=2))}), of 2 seats "
+                        "(the seats line names 3, the jobs 1, the dispatcher air apart)"), "the count is left as it is"
 
-    def test_no_open_stop_adds_no_stopped_clause(self, board, monkeypatch, tmp_path):
+    def test_nothing_asks_again_once_the_job_is_released_or_the_call_ruled(self, board, monkeypatch, tmp_path):
+        """The failure-mode review, driven: the first shape said the release
+        beside every stopped seat holding a job, so after the parked job was
+        released it asked for the other one. Dies to: the release said for a
+        job no open call parks."""
+        mail = board.mail
+        jobs = [self._assign(board, "win", "lane/a"), self._assign(board, "win", "lane/b")]
+        call = mail.new_message("air", "request", f"{mail.OPERATOR_CALL_PREFIX} which base?", now=_T0)
+        stop = mail.new_message("win", "request", f"{mail.STOPPED_PREFIX} the call {call['id']} parks {jobs[1]['id']}",
+                                now=_T0.replace(minute=1))
+        released = mail.new_message("air", "release", "", ack=jobs[1]["id"], now=_T0.replace(minute=3))
+        lines = self._text(board, monkeypatch, tmp_path, {"air": [*jobs, call, released], "win": [stop]}).splitlines()
+        assert self._stopped(lines) == [
+            f"          stopped: win (stop {stop['id']}) holds lane/a (assign {jobs[0]['id']})"], lines
+        ruling = mail.new_message("air", "ack", "ruled: main", ack=call["id"], now=_T0.replace(minute=4))
+        lines = self._text(board, monkeypatch, tmp_path, {"air": [*jobs, call, ruling], "win": [stop]}).splitlines()
+        assert self._stopped(lines) and all("parked" not in ln for ln in self._stopped(lines)), lines
+
+    def test_a_stop_of_another_kind_marks_nothing(self, board, monkeypatch, tmp_path):
+        """A refusal names a job and no call, and a stop names a call and no
+        job of the seat's: neither parks one (the failure-mode review: the
+        first shape said the release for any stop). Dies to: the call or the
+        job alone marking it."""
+        mail = board.mail
+        jobs = [self._assign(board, "win", "lane/a")]
+        call = mail.new_message("air", "request", f"{mail.OPERATOR_CALL_PREFIX} which base?", now=_T0)
+        refusal = mail.new_message("win", "request", f"{mail.STOPPED_PREFIX} the guard refuses {jobs[0]['id']}",
+                                   lane="lane/a", now=_T0.replace(minute=1))
+        lines = self._text(board, monkeypatch, tmp_path, {"air": [*jobs, call], "win": [refusal]}).splitlines()
+        assert self._stopped(lines) == [
+            f"          stopped: win (stop {refusal['id']}) holds lane/a (assign {jobs[0]['id']})"], lines
+        other = mail.new_message("win", "request", f"{mail.STOPPED_PREFIX} the call {call['id']}", lane="lane/z",
+                                 now=_T0.replace(minute=1))
+        lines = self._text(board, monkeypatch, tmp_path, {"air": [*jobs, call], "win": [other]}).splitlines()
+        assert self._stopped(lines) and "parked" not in "\n".join(self._stopped(lines)), lines
+
+    def test_a_ledger_id_names_the_job_as_a_whole_word_and_several_stops_are_listed(self, board, monkeypatch,
+                                                                                     tmp_path):
+        """An assign by id is named by its ledger id, never by a longer one
+        holding it; a seat with two open stops lists both. Dies to: a
+        substring match, or one stop kept."""
+        mail = board.mail
+        by_id = [mail.new_message("air", "assign", "", seat="win", ids=["DEF-1"], now=_T0),
+                 mail.new_message("air", "assign", "", seat="win", ids=["DEF-10"], now=_T0)]
+        call = mail.new_message("air", "request", f"{mail.OPERATOR_CALL_PREFIX} which base?", now=_T0)
+        first = mail.new_message("win", "request", f"{mail.STOPPED_PREFIX} the guard refuses", now=_T0.replace(minute=1))
+        second = mail.new_message("win", "request", f"{mail.STOPPED_PREFIX} call {call['id']} parks DEF-1",
+                                  now=_T0.replace(minute=2))
+        lines = self._text(board, monkeypatch, tmp_path, {"air": [*by_id, call], "win": [first, second]}).splitlines()
+        assert self._stopped(lines) == [
+            f"          stopped: win (stops {first['id']}, {second['id']}) holds DEF-1 (assign {by_id[0]['id']}, "
+            f"parked on {call['id']}); DEF-10 (assign {by_id[1]['id']}): {board.PARKED_RELEASE}"], lines
+
+    def test_no_open_stop_adds_no_stopped_line(self, board, monkeypatch, tmp_path):
         """A stop an ack names is closed, a note opening with the word is no
         stop, and the dispatcher's own request is not a worker's stop. Dies to:
-        the clause read from every request, or from a closed one."""
+        the lines read from every request, or from a closed one."""
         mail = board.mail
         jobs = [self._assign(board, "win", "lane/a")]
         stop = mail.new_message("win", "request", f"{mail.STOPPED_PREFIX} a conflict outside my files", now=_T0)
         ack = mail.new_message("air", "ack", "freed", ack=stop["id"], now=_T0.replace(minute=5))
         note = mail.new_message("win-2", "note", f"{mail.STOPPED_PREFIX} not a request", now=_T0)
         own = mail.new_message("air", "request", f"{mail.STOPPED_PREFIX} the dispatcher's own", now=_T0)
-        text = self._text(board, monkeypatch, tmp_path, {"air": [*jobs, ack, own], "win": [stop], "win-2": [note]})
-        tail = next(ln for ln in text.splitlines() if ln.startswith("          under two: "))
-        assert "stopped:" not in tail, tail
+        lines = self._text(board, monkeypatch, tmp_path, {"air": [*jobs, ack, own], "win": [stop],
+                                                          "win-2": [note]}).splitlines()
+        assert self._stopped(lines) == [], lines
 
-    def test_the_stopped_clause_is_derived_at_the_render(self, board):
+    def test_the_stopped_lines_are_derived_at_the_render(self, board):
         """TestSectionCounts' rule: read from the asks and the assignments the
         board holds, never a stored field. Dies to: a stored list read."""
+        call = {"id": "20261019T000000Z-air-c0ffee", "type": "request", "from": "air", "at": "t0", "re": {},
+                "text": "OPERATOR CALL: x"}
         stop = {"id": "20261020T000000Z-win-5709ed", "type": "request", "from": "win", "at": "t0",
-                "re": {"lane": "lane/a"}, "text": "stopped: the open operator call 20261019T000000Z-air-c0ffee"}
-        text = board.render(TestSectionCounts._board(asks=[stop], stopped="stale"))
-        assert ("; stopped: win (stop 20261020T000000Z-win-5709ed) holds lane/a (assign a1): release the job a stop "
-                "parks on an operator call, and re-send it at the ruling") in text, text
+                "re": {"lane": "lane/a"}, "text": "stopped: the open operator call c0ffee"}
+        text = board.render(TestSectionCounts._board(asks=[call, stop], stopped="stale"))
+        assert (f"          stopped: win (stop 20261020T000000Z-win-5709ed) holds lane/a (assign a1, parked on "
+                f"20261019T000000Z-air-c0ffee): {board.PARKED_RELEASE}") in text.splitlines(), text
 
     def test_an_unread_mail_prints_no_under_two_line(self, board, monkeypatch, tmp_path):
         """Dies to: every seat read as idle from an empty fold."""
@@ -1686,8 +1748,8 @@ class TestAsks:
         note = mail.new_message("win-2", "note", f"{mail.STOPPED_PREFIX} not a request", now=_T0)
         text = board.render(self._board(board, monkeypatch, tmp_path, {"win": [stop], "air": [call], "win-2": [plain, note]}))
         assert "asks:     3 open, 1 stopped, 1 operator call (requests no ack names, oldest first): " in text, text
-        # The asks rows alone: the jobs tail names the stop too (DEF-3038).
-        rows = [ln for ln in text.splitlines() if not ln.startswith("          under two: ")
+        # The asks rows alone: the jobs section's stopped lines name the stop too (DEF-3038).
+        rows = [ln for ln in text.splitlines() if not ln.startswith("          stopped: ")
                 and (stop["id"] in ln or call["id"] in ln or plain["id"] in ln)]
         assert [ln.endswith(" (stopped)") for ln in rows] == [True, False, False], rows
         assert rows[0].endswith(f"{stop['id']} win lane/a: 6 h 25 min (stopped)"), rows
