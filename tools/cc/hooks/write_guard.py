@@ -454,6 +454,9 @@ _resolve_bash_in_checkout = _hook_utils.resolve_bash_in_checkout
 _is_protected = _protected_zones._is_protected
 _is_allowed = _protected_zones._is_allowed
 _encloses_protected = _protected_zones._encloses_protected
+_has_wildcard = _protected_zones.has_wildcard
+_glob_reach = _protected_zones.glob_reach
+_glob_reaches_protected = _protected_zones.glob_reaches_protected
 _aliases_protected_inode = _protected_zones.aliases_protected_inode
 
 # BC-028: Bash tool inline-assignment of harness env vars.
@@ -2167,23 +2170,37 @@ def _zone_reading(rel_path: str, root: Path) -> "tuple[tuple[str, str] | None, s
             rel = rel[2:]
         if rel in ("", "."):
             return None, ""
-        harness = [(entry, fold(entry, all_components=True).rstrip("/"))
+        # A wildcard operand reads each entry by what it can name (DEF-3010),
+        # the verdict's own reading, so its text names what its literal twin's
+        # would: `too*` holds `tools/cc/` as `tools` does.
+        wild = _has_wildcard(rel)
+
+        def sits_in(zone: str, is_file: bool) -> bool:
+            if rel == zone or rel.startswith(zone + "/"):
+                return True
+            return wild and _glob_reach(rel, zone, is_file=is_file)[0] == "names"
+
+        def holds(zone: str, is_file: bool) -> bool:
+            if zone.startswith(rel + "/"):
+                return True
+            return wild and _glob_reach(rel, zone, is_file=is_file)[0] == "encloses"
+
+        harness = [(entry, fold(entry, all_components=True).rstrip("/"), entry in PROTECTED_FILES)
                    for entry in (*_hook_utils.harness_protected_prefixes(root), *PROTECTED_FILES)]
-        if any(rel == ground or rel.startswith(ground + "/") for _entry, ground in harness):
+        if any(sits_in(ground, is_file) for _entry, ground, is_file in harness):
             return None, ""
-        held = next((entry for entry, ground in harness if ground.startswith(rel + "/")), "")
+        held = next((entry for entry, ground, is_file in harness if holds(ground, is_file)), "")
         zones = []
         for prefix, kind in _hook_utils.adopter_protected_prefixes(root):
             zone = fold(prefix, all_components=True).rstrip("/")
-            if not any(zone == ground or zone.startswith(ground + "/") for _entry, ground in harness):
+            if not any(zone == ground or zone.startswith(ground + "/") for _entry, ground, _f in harness):
                 zones.append((prefix, kind, zone))
-        inside = [(prefix, kind) for prefix, kind, zone in zones
-                  if rel == zone or rel.startswith(zone + "/")]
+        inside = [(prefix, kind) for prefix, kind, zone in zones if sits_in(zone, False)]
         for prefix, kind in inside:
             if kind == "protected":
                 return (prefix, kind), held
         for prefix, kind, zone in zones:
-            if kind == "protected" and zone.startswith(rel + "/"):
+            if kind == "protected" and holds(zone, False):
                 return (prefix, kind), held
         return (inside[0] if inside else None), held
     except Exception as exc:  # noqa: BLE001 -- a lookup never decides; the fallback is said, once a session
@@ -2464,13 +2481,20 @@ def _mutated_zone(effect: str, rel: str, root: Path) -> bool:
     '*.pyc' -delete` from the repo root is an everyday command); and the
     whole tree (`.`) only for a `git clean` with the ignored-files flag,
     which takes the gitignored protected files. The allowlist holds as for
-    a write."""
+    a write. An operand holding a wildcard is judged by what it can name
+    (DEF-3010): `tools/*` names `tools/cc/` and a root `too*` encloses it, so
+    each is refused as the directory it reaches is, while `build/*` and
+    `tools/*.log` reach nothing. The read runs only on a wildcard operand."""
     if _is_allowed(rel):
         return False
     if _is_protected(rel, root):
         return True
-    if effect in ("delete", "move", "clean") and _encloses_protected(rel, root):
+    if effect in _TAKES_ITS_TREE and _encloses_protected(rel, root):
         return True
+    if _has_wildcard(rel):
+        reach = _glob_reaches_protected(rel, root)
+        if reach == "names" or (reach == "encloses" and effect in _TAKES_ITS_TREE):
+            return True
     return effect == "clean" and rel.strip("/") in ("", ".")
 
 

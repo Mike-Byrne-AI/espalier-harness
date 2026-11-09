@@ -730,6 +730,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # PowerShell group's closer, a drive path bound or judged by
             # depth): drives the wall, the zone deny and the nudge in-process.
             "test_write_guard_root_reading",
+            # A wildcard operand judged by what it can name (DEF-3010): drives
+            # both tools' zone checks in-process over the live roster.
+            "test_write_guard_zone_wildcard",
             # In-place sed/perl option-grammar tokenizer: drives the
             # protected-zone extractor over a DERIVED spelling population.
             "test_write_guard_sed_grammar",

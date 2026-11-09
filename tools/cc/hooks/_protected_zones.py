@@ -14,6 +14,7 @@ this module's inventory must remain a superset of surface_contract's.
 """
 from __future__ import annotations
 
+import fnmatch
 import os
 import stat
 import sys
@@ -249,6 +250,95 @@ def _encloses_protected(rel_path: str, root: Path) -> bool:
     prefix = rel_norm + "/"
     zones = list(_hook_utils.protected_prefixes(root)) + sorted(PROTECTED_FILES)
     return any(_fs_equiv(zone, all_components=True).startswith(prefix) for zone in zones)
+
+
+#: The wildcards both shells expand in an operand they remove or relocate:
+#: Bash's and PowerShell's `*`, `?` and `[...]` (DEF-3010). An operand holding
+#: one is judged by what it can name, never as the literal path it spells.
+_WILDCARD_CHARS = frozenset("*?[")
+
+#: Glob syntax `fnmatch` does not read the way a shell does -- an extended
+#: glob's group, a brace list, a POSIX or equivalence class: a segment holding
+#: any of it is read as able to name every component, the fail-closed side.
+_UNREAD_GLOB = ("(", ")", "{", "}", "|", "[:", "[=", "[.")
+
+
+def has_wildcard(rel_path: str) -> bool:
+    """True when a removed or relocated operand holds a shell wildcard, the one
+    case ``glob_reach`` is asked about: a literal operand costs one scan."""
+    return any(ch in _WILDCARD_CHARS for ch in rel_path)
+
+
+def _segment_may_name(pattern: str, name: str) -> bool:
+    """One folded operand segment against one folded zone component: a literal
+    segment by equality, a wildcard segment by ``fnmatchcase`` (Bash's `[^...]`
+    spelled as fnmatch's `[!...]`; a leading dot is matched, as PowerShell and
+    Bash's dotglob match it), and one holding syntax fnmatch does not read as
+    matching."""
+    if not any(ch in _WILDCARD_CHARS for ch in pattern):
+        return pattern == name
+    if any(token in pattern for token in _UNREAD_GLOB):
+        return True
+    return fnmatch.fnmatchcase(name, pattern.replace("[^", "[!"))
+
+
+def glob_reach(rel_path: str, zone: str, *, is_file: bool) -> "tuple[str, str]":
+    """What a wildcard operand can name of one protected entry, as ``(reach,
+    tail)`` (DEF-3010). ``reach`` is ``"names"`` when the operand can name the
+    entry itself or a path inside a protected directory, ``"encloses"`` when
+    it can name a directory above it (a delete, a move or a clean takes the
+    entry with it), and ``""`` when no expansion reaches it: `tools/*` names
+    `tools/cc/`, a root `too*` encloses it, `tools/*.log` reaches nothing.
+    A `**` segment names whatever lies below it, the fail-closed reading of
+    globstar.
+
+    ``tail`` is set for the one reading the shell's own expansion decides: an
+    operand reaching INSIDE a protected directory with its wildcards only at
+    the directory's own depths and a literal remainder (a root `*/build`
+    names `cc/build` only when `cc/build` exists, since a glob names nothing
+    absent), as the root-relative path that would have to exist, spelled as
+    the zone and the operand spell it, never folded (a folded `cc/build`
+    misses a real `cc/Build` on a case-sensitive tree). Both sides are
+    compared in ``_fs_equiv``'s folded form, the form ``_is_protected``
+    reads; the fold keeps one segment per segment."""
+    spelled = rel_path.replace("\\", "/").split("/")
+    folded = _fs_equiv(rel_path, all_components=True).split("/")
+    kept = [i for i, seg in enumerate(folded) if seg not in ("", ".")]
+    pattern = [folded[i] for i in kept]
+    zone_spelled = [seg for seg in zone.replace("\\", "/").split("/") if seg]
+    target = [seg for seg in _fs_equiv(zone, all_components=True).split("/") if seg]
+    for depth, seg in enumerate(pattern):
+        if depth == len(target):
+            if is_file:
+                return "", ""
+            rest = [spelled[i] for i in kept[depth:]]
+            if has_wildcard("/".join(rest)):
+                return "names", ""
+            return "names", "/".join(zone_spelled + rest)
+        if seg == "**":
+            return "names", ""
+        if not _segment_may_name(seg, target[depth]):
+            return "", ""
+    return ("names" if len(pattern) == len(target) else "encloses"), ""
+
+
+def glob_reaches_protected(rel_path: str, root: Path) -> str:
+    """The strongest reach a wildcard operand has over every protected prefix
+    and file (``"names"``, then ``"encloses"``, then ``""``), ``glob_reach``
+    per entry. A reading whose ``tail`` does not exist under ``root`` reaches
+    nothing: the shell expands a glob against the tree, and content the
+    command itself would create first is not the harness's."""
+    best = ""
+    entries = [(prefix, False) for prefix in _hook_utils.protected_prefixes(root)]
+    entries += [(name, True) for name in sorted(PROTECTED_FILES)]
+    for zone, is_file in entries:
+        reach, tail = glob_reach(rel_path, zone, is_file=is_file)
+        if tail and not os.path.lexists(root / tail):
+            continue
+        if reach == "names":
+            return reach
+        best = best or reach
+    return best
 
 
 def _is_allowed(rel_path: str) -> bool:
