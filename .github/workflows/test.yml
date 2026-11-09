@@ -103,9 +103,9 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     # A hang the per-test ceiling cannot reach ends here, not at GitHub's
-    # 360-minute default (DEF-1178): above the measured worst case, 46.6 min
-    # (the last 16 runs to 2026-10-16).
-    timeout-minutes: 75
+    # 360-minute default (DEF-1178): 1.5x the worst of the last 20 green runs,
+    # 57.2 min (median 37.8, 2026-11-09, scripts/ci_job_bounds_census.py).
+    timeout-minutes: 90
     strategy:
       # A LITERAL four-cell list, never a `${{ }}` expression: branch protection
       # matches check-run names, the release checklist requires `test (3.11)`
@@ -316,8 +316,9 @@ jobs:
     needs: tier
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
-    # The `test` cells' bound: the same leg on one interpreter.
-    timeout-minutes: 75
+    # The `test` cells' leg on one interpreter, measured on its own: 1.5x the
+    # worst of its last 20 green runs, 58.0 min (2026-11-09, the bounds census).
+    timeout-minutes: 90
 
     steps:
       - name: Keep the temp dir on the runner's disk

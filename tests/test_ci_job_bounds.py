@@ -494,3 +494,75 @@ class TestThePortabilityDispatchKeepsTheLegsApart:
         setup = next(s for s in job["steps"] if s.get("uses", "").startswith("actions/setup-python@"))
         assert setup["with"]["python-version"] == "${{ env.PYTHON_VERSION }}"
         assert setup["name"] == "Set up Python ${{ env.PYTHON_VERSION }}"
+
+
+def _census():
+    """scripts/ci_job_bounds_census.py under an alias, never the bare name."""
+    import importlib.util
+    path = Path(__file__).resolve().parent.parent / "scripts" / "ci_job_bounds_census.py"
+    spec = importlib.util.spec_from_file_location("_ci_job_bounds_census_under_test", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+class TestTheBoundsCensusReadsWhatTheWorkflowsDeclare:
+    """scripts/ci_job_bounds_census.py re-measures every job's bound against its
+    last green runs (post-merge's 75 sat under a 70.7-minute worst and cut runs
+    with no verdict, 2026-11-08). Its text reader, its job matcher, its rule and
+    its cut count are pinned here; each test names the mutation it dies to."""
+
+    def test_its_reader_finds_every_job_level_bound_pyyaml_reads(self):
+        """Dies to a reader that misses a job, or reads a step's timeout as the job's."""
+        census = _census()
+        for name, data in _workflows().items():
+            want = {job_id: job["timeout-minutes"] for job_id, job in ((data or {}).get("jobs") or {}).items()
+                    if isinstance(job.get("timeout-minutes"), int)}
+            text = (WORKFLOWS / name).read_text(encoding="utf-8")
+            got = {job_id: meta["bound"] for job_id, meta in census.read_bounds(text).items()}
+            assert got == want, name
+
+    def test_a_matrix_cell_and_a_literal_name_find_their_job(self):
+        """Dies to a matcher that strips a literal name's own parentheses, or keeps a cell's."""
+        census = _census()
+        jobs = {"test": {"bound": 75, "name": None},
+                "release-check": {"bound": 90, "name": "release-readiness gate (publish proof tier)"}}
+        assert census.job_for("test (3.11)", jobs) == "test"
+        assert census.job_for("test", jobs) == "test"
+        assert census.job_for("release-readiness gate (publish proof tier)", jobs) == "release-check"
+        assert census.job_for("test-serial (3.11)", jobs) is None
+
+    def test_the_rule_is_the_factor_times_the_worst_rounded_up_to_five(self):
+        """Dies to rounding down, or to a factor read as a margin added."""
+        census = _census()
+        assert census.needed_bound(70.7, 1.5) == 110
+        assert census.needed_bound(48.2, 1.5) == 75
+        assert census.needed_bound(50.0, 1.5) == 75
+        assert census.needed_bound(50.1, 1.5) == 80
+
+    def test_a_green_is_measured_and_only_a_cancel_at_the_bound_is_a_cut(self, monkeypatch):
+        """Dies to counting a red or an early cancel as a cut, or a red as a green."""
+        census = _census()
+
+        def job(name, conclusion, start, end):
+            return {"name": name, "conclusion": conclusion,
+                    "startedAt": f"2026-11-08T{start}:00Z", "completedAt": f"2026-11-08T{end}:00Z"}
+
+        views = {
+            1: [job("full-tier", "success", "01:00", "02:00")],
+            2: [job("full-tier", "cancelled", "03:00", "04:15")],
+            3: [job("full-tier", "cancelled", "05:00", "05:10")],
+            4: [job("full-tier", "failure", "06:00", "07:30")],
+        }
+
+        def fake_gh(args, repo):
+            if args[:2] == ["run", "list"]:
+                return [{"databaseId": i, "status": "completed"} for i in views]
+            return {"jobs": views[int(args[2])]}
+
+        monkeypatch.setattr(census, "gh_json", fake_gh)
+        out = census.measure("post-merge.yml", {"full-tier": {"bound": 75, "name": None}}, 20, 60, None)
+        assert out["full-tier"]["greens"] == [60.0]
+        assert out["full-tier"]["cuts"] == 1
