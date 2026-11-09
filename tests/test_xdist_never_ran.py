@@ -221,7 +221,11 @@ _SUITE_HOOKS = ("pytest_collection_finish", "pytest_runtest_logreport", "pytest_
 #: it, so the real tree is never built here. The stub returns at once, or ends
 #: the xdist worker inside the build where ``PROBE_BUILD_DIES`` is set: once the
 #: controller's first command has reached it on xdist's worker channel, never
-#: before (DEF-4032). The controller answers a worker's collection-finished
+#: before (DEF-4032); at one worker, the rows' setting, that is the only send the
+#: controller makes it, so the send always lands first. A wait that cannot be
+#: made (no one channel, a receive refused or timed out) raises in the build, so
+#: the rows red naming it rather than fall back to the race. The controller
+#: answers a worker's collection-finished
 #: message with a send, and a worker that died at once had closed its end by
 #: then wherever the controller was slow to it, so execnet's write raised and
 #: the child ended in pytest's internal error: GitHub's runners by load, and on
@@ -244,6 +248,8 @@ _BUILD_CONFTEST = (
     "class _ControllerSlow:\n"
     "    def pytest_xdist_node_collection_finished(self, node, ids):\n"
     "        time.sleep(float(os.environ['PROBE_CONTROLLER_SLOW']))\n"
+    "        with open('probe-controller-slow', 'a', encoding='utf-8') as said:\n"
+    "            said.write(node.gateway.id + '\\n')\n"
     "\n"
     "\n"
     "_CHANNELS = []\n"
@@ -252,8 +258,9 @@ _BUILD_CONFTEST = (
     "def pytest_sessionstart(session):\n"
     "    config = session.config\n"
     "    if hasattr(config, 'workerinput'):\n"
-    "        _CHANNELS[:] = [plugin.channel for plugin in config.pluginmanager.get_plugins()\n"
-    "                        if type(plugin).__name__ == 'WorkerInteractor']\n"
+    "        found = [getattr(plugin, 'channel', None) for plugin in config.pluginmanager.get_plugins()\n"
+    "                 if type(plugin).__name__ == 'WorkerInteractor']\n"
+    "        _CHANNELS[:] = [channel for channel in found if channel is not None]\n"
     "    elif os.environ.get('PROBE_CONTROLLER_SLOW'):\n"
     "        config.pluginmanager.register(_ControllerSlow(), 'probe-controller-slow')\n"
     "\n"
@@ -264,7 +271,7 @@ _BUILD_CONFTEST = (
     "            raise RuntimeError(f'probe: no one xdist worker channel to wait on ({len(_CHANNELS)})')\n"
     "        try:\n"
     "            _CHANNELS[0].receive(timeout=20)\n"
-    "        except (EOFError, OSError):\n"
+    "        except EOFError:  # the controller closed it: nothing more will be sent\n"
     "            pass\n"
     "        os._exit(3)\n"
     "    return factory.mktemp('tree')\n"
@@ -387,11 +394,15 @@ class TestACrashedWorkerIsNamedOnlyWhereItsBuildCanBe:
         controller's first command has reached it, so the send always lands
         first. One child, never driven again: a retry would hide the race this
         row exists to catch. Dies to: the stub's wait dropped (the child ends
-        in pytest's internal error, ``OSError: cannot send``)."""
+        in pytest's internal error, ``OSError: cannot send``), or a slow switch
+        that no longer reaches the controller (each worker's marker is read)."""
         rc, lines = _drive(tmp_path, _SIX_IN_THE_BUILD, conftest_text=_BUILD_CONFTEST,
                            extra_env={"PROBE_BUILD_DIES": "1", "PROBE_CONTROLLER_SLOW": "0.5"})
         assert rc != pytest.ExitCode.INTERNAL_ERROR, (_what_raised(lines), lines)
         assert _build_lines(lines) == _NAMED_EACH_TIME, lines
+        slowed = tmp_path / "probe-controller-slow"
+        assert slowed.is_file() and slowed.read_text(encoding="utf-8").split() == [f"gw{i}" for i in range(5)], \
+            "the controller was never slowed, so this run tested nothing"
 
     @pytest.mark.timeout(_CHILDREN_CEILING_S)
     def test_a_first_test_whose_setup_crosses_the_ceiling_is_named_as_either(self, tmp_path):
@@ -410,6 +421,8 @@ class TestACrashedWorkerIsNamedOnlyWhereItsBuildCanBe:
         """The child leaves out a hook the conftest lacks, so that a run on the
         unfixed conftest reds on what it prints; here the list is held whole."""
         assert [name for name in _SUITE_HOOKS if not hasattr(conftest, name)] == []
+        assert "pytest_sessionstart" not in _SUITE_HOOKS, \
+            "the probe conftest defines its own pytest_sessionstart after the copy, which would shadow the suite's"
 
 
 #: Six tests that each take the tree, so every worker builds it.
