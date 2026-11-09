@@ -12036,6 +12036,13 @@ class TestSecretPathAccess:
         "0< .env cat",
         "while read l; do echo \"$l\"; done < .env",
         "{ cat; } < .env",
+        # the code review's fix batch: a glued redirect, a function head, a quoted case pattern
+        "cat<.env",
+        "sudo cat<.env",
+        "done<.env",
+        "f() { cat .env; }; f",
+        "function f { cat .env; }",
+        "case x in\n  *.md|\"a b\") cat .env;;\nesac",
     ])
     def test_a_read_behind_a_head_word_or_from_a_redirect_is_refused(self, command, tmp_path):
         assert_hook_denied(run_guard_tool("Bash", {"command": command}, tmp_path),
@@ -12047,6 +12054,7 @@ class TestSecretPathAccess:
         "if true; then\n  cat .env; fi",
         "(cat .env)",
         "env cat .env",
+        "env $(cat .env | xargs) node app.js",  # env stays a read verb, not a wrapper
     ])
     def test_the_controls_stay_refused(self, command, tmp_path):
         assert_hook_denied(run_guard_tool("Bash", {"command": command}, tmp_path),
@@ -12054,14 +12062,14 @@ class TestSecretPathAccess:
 
     @pytest.mark.parametrize("command", [
         "cp .env.example .env",
-        "sudo cp .env.example .env",
+        "sudo cp notes.txt .env",
         "echo cat .env",
         "nice echo cat .env",
         "grep -rn .env docs/",
         "cat < notes.txt",
         "xargs cat < list.txt",
         "cp a b < .env",                       # a copier never reads its stdin
-        '"then" cat .env.example',
+        '"then" cat .env',                     # a quoted keyword is a command named `then`
         'git commit -m "then cat .env"',
         'echo "case x in x) cat .env"',
         "cat README.md # < .env",
@@ -12070,6 +12078,17 @@ class TestSecretPathAccess:
     ])
     def test_a_head_word_or_redirect_that_reads_no_secret_is_allowed(self, command, tmp_path):
         assert_hook_allowed(run_guard_tool("Bash", {"command": command}, tmp_path))
+
+    def test_the_secret_leg_reads_the_zone_legs_wrapper_roster(self):
+        # The secret leg derives its wrappers by slicing the zone leg's two
+        # literals; a reshaped literal would corrupt the edge words (the
+        # failure-mode review drove `\b` and `(?i:` into them: `exec` and
+        # `proxychains` went unread). Pinned against the same findall the
+        # roster's own pin reads, `env` alone left out (a read verb here).
+        bp = _bash_patterns_module()
+        builtins, binaries = _load_write_guard()._secret_head_wrappers()
+        assert builtins == set(_roster_words(bp._CMD_POS_WRAPPER_BUILTINS))
+        assert binaries == set(_roster_words(bp._CMD_POS_WRAPPER_BINARIES)) - {"env"}
 
     # DEF-1045: a statement that opens with a quoted string is a mention when
     # nothing in the command can run it. A positive gate with two arms, each

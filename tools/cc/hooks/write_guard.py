@@ -1629,9 +1629,14 @@ _INPUT_REDIRECT_RE = re.compile(r"[0-9]*<(?![<>&(])")
 _OUTPUT_REDIRECT_RE = re.compile(r"[0-9]*>>?\|?")
 #: A shell assignment word (`FOO=1`, `FOO="a b"` read as one word).
 _ASSIGNMENT_WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
-#: A case arm's pattern opening a statement (`x) cat .env`, `(x) ...`); the
-#: word split drops the `)`, so it is read off the statement's text.
-_CASE_ARM_RE = re.compile(r"\(?[^\s;|&()<>]+\)[ \t]*")
+#: A case arm's pattern opening a statement (`x) cat .env`, `"a b") ...`)
+#: or a function's head (`f() { cat .env`, `function f() {`); the word
+#: split drops the parentheses, so it is read off the statement's text.
+#: One arm per character, so an anchored match is linear.
+_CASE_ARM_RE = re.compile(
+    r"(?:(?:function[ \t]+)?[A-Za-z_][\w.:-]*[ \t]*\(\)"
+    r"|\(?(?:\"[^\"\n]*\"|'[^'\n]*'|[^\s;|&()<>\"'])+\))[ \t]*"
+)
 #: The words that close a compound command: an input redirect after one
 #: feeds every read in its body (`while read l; do echo "$l"; done < .env`).
 _COMPOUND_CLOSERS = frozenset({"done", "fi", "esac", "}"})
@@ -1642,12 +1647,16 @@ def _secret_head_wrappers() -> "tuple[frozenset[str], frozenset[str]]":
     """The wrapper roster the zone leg skips at command position
     (`_bash_patterns._CMD_POS_WRAPPER_BUILTINS` / `_BINARIES`), as words:
     derived from those literals, so the two legs read one roster (DEF-2061).
-    Read on the Bash leg only, which has loaded the module (DEF-946)."""
+    Read on the Bash leg only, which has loaded the module (DEF-946). `env`
+    is left out: it stays a read verb whose operands are all read, so
+    `env $(cat .env | xargs) node app.js` is refused as it was before the
+    head was read (the code review of 630019's lane)."""
+    _load_the_pattern_path()
     global _SECRET_HEAD_WRAPPERS
     if _SECRET_HEAD_WRAPPERS is None:
         _SECRET_HEAD_WRAPPERS = (
             frozenset(_bash_patterns._CMD_POS_WRAPPER_BUILTINS[3:-1].split("|")),
-            frozenset(_bash_patterns._CMD_POS_WRAPPER_BINARIES[3:-1].split("|")),
+            frozenset(_bash_patterns._CMD_POS_WRAPPER_BINARIES[3:-1].split("|")) - {"env"},
         )
     return _SECRET_HEAD_WRAPPERS
 
@@ -1687,6 +1696,7 @@ def _secret_read_head(words: "list[tuple[str, str]]", sources: list[str]) -> int
     DEF-2061). A wrapper flag never takes a read verb as its value, so
     `sudo -E cat .env` reads as `cat`. A keyword is read as typed (a quoted
     `"then"` is a command); a wrapper by the word the shell runs."""
+    _load_the_pattern_path()
     prefix = _bash_patterns._BASH_HEAD_PREFIX_WORDS
     i, n = 0, len(words)
     while i < n:
@@ -1704,6 +1714,9 @@ def _secret_read_head(words: "list[tuple[str, str]]", sources: list[str]) -> int
                 continue
             if raw == "case" and i + 2 < n and words[i + 2][0] == "in":
                 i += 4                  # `case WORD in PATTERN`, the `)` split off
+                continue
+            if raw == "function" and i + 1 < n:
+                i += 2                  # `function f {`
                 continue
             return i
         i += 1
@@ -1726,7 +1739,24 @@ def _secret_read_head(words: "list[tuple[str, str]]", sources: list[str]) -> int
     return i
 
 
-def _input_redirect_sources(args: "list[tuple[str, str]]", sources: list[str]) -> "list[tuple[str, str]]":
+def _split_glued_input_redirects(words: "list[tuple[str, str]]") -> "list[tuple[str, str]]":
+    """``words`` with an input redirect glued behind an unquoted word cut
+    off as a word of its own: `cat<.env` is `cat` and `<.env`, `done<.env`
+    is `done` and `<.env` (the code review of 630019's lane). A word with
+    a quote, an fd prefix (`0<`) or a `<<`, `<&`, `<(`, `<>` is kept whole."""
+    out: list[tuple[str, str]] = []
+    for raw, word in words:
+        k = raw.find("<")
+        if (k > 0 and raw == word and not raw[:k].isdigit()
+                and not raw.startswith(("<<", "<&", "<(", "<>"), k)):
+            out.append((raw[:k], word[:k]))
+            out.append((raw[k:], word[k:]))
+        else:
+            out.append((raw, word))
+    return out
+
+
+def _input_redirect_sources(args:"list[tuple[str, str]]", sources: list[str]) -> "list[tuple[str, str]]":
     """``args`` without their input redirects, each source added to
     ``sources``: `cat < .env` reads `.env` as `cat .env` does (DEF-1132).
     The scan stops at a comment; an output redirect's target stays an
@@ -1808,8 +1838,9 @@ def _secret_read_targets_one(command: str, _depth: int = 0) -> list[str]:
         arm = _CASE_ARM_RE.match(text)  # `x) cat .env` after `;;` or a newline
         if arm is not None:
             text = text[arm.end():]
-        words = (_quote_aware_words(text, _TOKEN_SPLIT_RE, _BASH_OPAQUE)
-                 if aware else _split_words(text, _TOKEN_SPLIT_RE))
+        words = _split_glued_input_redirects(
+            _quote_aware_words(text, _TOKEN_SPLIT_RE, _BASH_OPAQUE)
+            if aware else _split_words(text, _TOKEN_SPLIT_RE))
         sources: list[str] = []
         head = _secret_read_head(words, sources)
         if head >= len(words):
