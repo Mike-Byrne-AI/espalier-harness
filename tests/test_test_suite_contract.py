@@ -3858,7 +3858,9 @@ _PRIVATE_HOOK_RUNNERS: dict[str, int] = {
     # and reads its `sys.modules` there, which no stdin-fed runner can.
     "test_write_guard.py": 15,
     "test_write_guard_time_budget.py": 1,
-    "test_xdist_never_ran.py": 1,
+    # test_xdist_never_ran.py's one left at zero on 2026-11-08 (DEF-1179): its
+    # `_drive` runs a pytest, not a hook ("hooks" was the pytest hooks in its
+    # docstring), and now runs it through tests/_tree_spawn.py's run_tree_bounded.
     "test_zone_watch.py": 1,
 }
 

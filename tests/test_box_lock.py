@@ -36,6 +36,8 @@ from typing import IO
 
 import pytest
 
+from tests._tree_spawn import communicate_tree_bounded
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 #: Every wait here stays well under pytest-timeout's 60 s: under the thread
@@ -153,7 +155,8 @@ def _wait_for(path: Path, timeout: float = 25.0) -> bool:
 
 
 def _finish(child: subprocess.Popen, rc: int = 0) -> tuple[str, str]:
-    out, err = child.communicate(timeout=_CHILD_DEADLINE_S)
+    # A run past the deadline is ended with its xdist workers, never left at parent 1.
+    out, err = communicate_tree_bounded(child, timeout=_CHILD_DEADLINE_S)
     assert child.returncode == rc, f"rc={child.returncode}\n{out}\n{err}"
     return out, err
 
@@ -222,7 +225,7 @@ class _Waiter:
         return any(line.startswith(_WAITING) for line in self.lines)
 
     def finish(self, rc: int = 0) -> tuple[str, str]:
-        out, _ = self.child.communicate(timeout=_CHILD_DEADLINE_S)
+        out, _ = communicate_tree_bounded(self.child, timeout=_CHILD_DEADLINE_S)
         self._reader.join(timeout=_CHILD_DEADLINE_S)
         err = self.stderr
         assert self.child.returncode == rc, f"rc={self.child.returncode}\n{out}\n{err}"

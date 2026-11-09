@@ -259,7 +259,7 @@ class TestTheSentenceSplitter:
 #: HOOKS 31 -> 30 on 2026-11-07: the time budget's limit closed (DEF-3048). A
 #: state write that hangs no longer holds the refusal until the timeout lets
 #: the call through; the parent's kill at its hard deadline refuses it.
-_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 30, "docs/SHARP_EDGES.md": 4}
+_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 30, "docs/SHARP_EDGES.md": 5}
 
 
 def test_the_census_is_the_pinned_population():
@@ -354,9 +354,10 @@ def test_every_cited_pin_runs_and_passes_on_this_host():
     cited = _cited_ids()
     if not cited:
         pytest.skip("no citations yet -- the sentence contract reports that")
-    proc = subprocess.run(
+    from tests._tree_spawn import run_tree_bounded
+    proc = run_tree_bounded(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-rA", "--tb=line", *cited],
-        cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8", timeout=300,
+        cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8", timeout=300, stdin=subprocess.DEVNULL,
     )
     outcomes: dict[str, set[str]] = {}
     for line in proc.stdout.splitlines():

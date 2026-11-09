@@ -58,20 +58,24 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _bounded_spawn():
-    """``run_bounded`` from this checkout's ``tools/cc/_json_safe.py``, loaded
-    by path, never an installed engine's: ``subprocess.run`` whose timeout
+    """This checkout's ``tools/cc/_json_safe.py``, loaded by path, never an
+    installed engine's: its ``run_bounded`` is ``subprocess.run`` whose timeout
     holds on Windows, where ``run`` waits on a grandchild holding its pipe
-    (DEF-3004)."""
+    (DEF-3004), and its ``run_tree_bounded`` ends a child that is itself a
+    tree (a pytest) whole at the timeout, where ``run`` on POSIX kills the
+    child alone and leaves the rest at parent 1 (DEF-1179)."""
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
         "_json_safe_for_host_check", REPO_ROOT / "tools" / "cc" / "_json_safe.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.run_bounded
+    return module
 
 
-run_bounded = _bounded_spawn()
+_JSON_SAFE = _bounded_spawn()
+run_bounded = _JSON_SAFE.run_bounded
+run_tree_bounded = _JSON_SAFE.run_tree_bounded
 REPORT_ROOT = REPO_ROOT / "reports" / "host-check"
 REF_PREFIX = "refs/heads/host-check/"
 _STAMP_RE = re.compile(r"(\d{8}-\d{4})")
@@ -207,9 +211,9 @@ def run_step(step: dict, out_dir: Path, repo_root: Path = REPO_ROOT) -> dict:
         fh.flush()
         try:
             # subprocess-contract: ok planned-step-argv-is-pytest-or-one-of-the-three-benches-see-plan_steps
-            proc = run_bounded(step["argv"], cwd=repo_root, stdout=fh,
-                               stderr=subprocess.STDOUT, env=step["env"],
-                               timeout=step["timeout"])
+            proc = run_tree_bounded(step["argv"], cwd=repo_root, stdout=fh,
+                                    stderr=subprocess.STDOUT, env=step["env"],
+                                    timeout=step["timeout"])
             rc: int | None = proc.returncode
         except subprocess.TimeoutExpired:
             rc = None

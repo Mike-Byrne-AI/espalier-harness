@@ -54,9 +54,10 @@ SUBPROCESS_CONTRACTS: dict[str, str] = {
 
 #: The harness's spawn wrappers (``spawn_checked`` in tools/cc/hooks/_hook_utils.py,
 #: ``run_bounded`` in tools/cc/_json_safe.py, the route every timed spawn there
-#: takes since 2026-10-13), read by bare name or attribute. Held equal to the
-#: encoding scanner's and tests/test_contracts.py's copies.
-SPAWN_WRAPPERS: frozenset[str] = frozenset({"spawn_checked", "run_bounded", "run_no_stdin"})
+#: takes since 2026-10-13, and its tree-ending sibling ``run_tree_bounded``),
+#: read by bare name or attribute. Held equal to the encoding scanner's and
+#: tests/test_contracts.py's copies.
+SPAWN_WRAPPERS: frozenset[str] = frozenset({"spawn_checked", "run_bounded", "run_tree_bounded", "run_no_stdin"})
 
 OS_BINARIES: frozenset[str] = frozenset({
     "git", "pytest", "tar", "gzip", "find", "grep", "sed", "awk",

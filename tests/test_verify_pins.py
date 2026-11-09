@@ -53,6 +53,7 @@ import os
 import stat
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -60,6 +61,8 @@ import pytest
 
 from tests import test_protected_path_contract_parity as _parity
 from tests._live_tree import live_tree_skip_names
+from tests._wait_budget import scaled
+from tests.test_bounded_spawn import _alive, _end_holder
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _SCRIPT = REPO_ROOT / "scripts" / "verify_pins.py"
@@ -293,11 +296,12 @@ def _run(*args: str) -> tuple[int, dict]:
     # its test by name instead of the ceiling ending it first. Each inner pytest
     # the script runs is bounded at 700 s (its own `--timeout`, default 1800):
     # an ordinary control runs two, and 2 x 700 sits under this 1500, so a hung
-    # inner run is ended and reported by the script rather than orphaned when
-    # this bound kills only the script. The `--per-file` controls run 2 + 2N
-    # (one baseline and one revert per non-test file), so there this bound can
-    # still fire first and leave the running inner pytest behind.
-    proc = subprocess.run(
+    # inner run is ended and reported by the script first. The `--per-file`
+    # controls run 2 + 2N (one baseline and one revert per non-test file), so
+    # there this bound can fire first; it ends the script's whole tree, the
+    # running inner pytest and what that started included, where
+    # `subprocess.run` would kill the script alone.
+    proc = verify_pins.run_tree_bounded(
         [sys.executable, str(_SCRIPT), "--json", "--timeout", "700", *args],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
         cwd=str(REPO_ROOT), timeout=1500,
@@ -1176,14 +1180,15 @@ class TestExitCodes:
         """FAILURE_MODES §C19: a gate that reds on correct work gets switched
         off. This one exits 0 whatever it finds unless asked otherwise."""
         # Two inner pytests per run, each under `--timeout 270`: 2 x 270 sits under
-        # this test's 600, so the script, not this bound, ends a hung inner run.
-        default = subprocess.run(
+        # this test's 600, so the script, not this bound, ends a hung inner run;
+        # where this one fires, it ends the script's whole tree.
+        default = verify_pins.run_tree_bounded(
             [sys.executable, str(_SCRIPT), "--timeout", "270", "--commit", TEST_ONLY],
             capture_output=True, text=True, cwd=str(REPO_ROOT), timeout=600, encoding="utf-8",
         )
         assert default.returncode == 0, default.stdout[-2000:]
 
-        strict = subprocess.run(
+        strict = verify_pins.run_tree_bounded(
             [sys.executable, str(_SCRIPT), "--timeout", "270", "--commit", DOCS_ONLY, "--strict"],
             capture_output=True, text=True, cwd=str(REPO_ROOT), timeout=600, encoding="utf-8",
         )
@@ -1230,7 +1235,7 @@ class TestTheReportIsHonestAboutItself:
         ), rep["evidence"]
 
     def test_explain_names_what_the_tool_cannot_detect(self):
-        proc = subprocess.run(
+        proc = verify_pins.run_tree_bounded(
             [sys.executable, str(_SCRIPT), "--explain"],
             capture_output=True, text=True, cwd=str(REPO_ROOT), timeout=120, encoding="utf-8",
         )
@@ -1303,6 +1308,49 @@ class TestTheRecursionFuse:
         assert DEPTH_ENV == "ESPALIER_VERIFY_PINS_DEPTH"
         source = Path(__file__).read_text(encoding="utf-8")
         assert f'os.environ.get("{DEPTH_ENV}"' in source
+
+
+#: How long the guard's holder sleeps: far past the bound (``scaled(5)`` at
+#: the call, room for the inner pytest to start and its test to start the
+#: holder, measured at 0.2 s on the Air; 15 s on a leg at a 180 s ceiling),
+#: so a holder alive after the call is one the bound left behind.
+_TREE_HOLD_SECONDS = 120
+
+
+class TestTheInnerBoundEndsTheWholeTree:
+    """``run_pytest``'s bound ends the inner pytest and everything it started.
+    ``subprocess.run`` kills the child alone at its timeout on POSIX, so a
+    process the inner suite started (a hook, a git, a nested pytest) ran on at
+    parent 1 beside the clone in the temp directory. The guard drives the real
+    ``run_pytest`` on a one-test tree whose test starts a holder and sleeps
+    past the bound: the holder is gone after the call."""
+
+    def test_the_inner_pytests_bound_ends_what_its_test_started(self, tmp_path):
+        target = tmp_path / "target"
+        target.mkdir()
+        pidfile = tmp_path / "holder.pid"
+        (target / "test_hold.py").write_text(
+            "import subprocess, sys, time\n\n\n"
+            "def test_hold():\n"
+            f"    holder = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep({_TREE_HOLD_SECONDS})'])\n"
+            f"    open({str(pidfile)!r}, 'w').write(str(holder.pid))\n"
+            f"    time.sleep({_TREE_HOLD_SECONDS})\n",
+            encoding="utf-8")
+        try:
+            with pytest.raises(subprocess.TimeoutExpired):
+                run_pytest(target, ["test_hold.py"], scaled(5))
+            if not pidfile.exists():
+                pytest.fail("the holder never started inside the bound (scaled(5)), so the case did not run")
+            pid = int(pidfile.read_text(encoding="utf-8").strip())
+            gone_by = time.monotonic() + 5.0
+            while _alive(pid) and time.monotonic() < gone_by:
+                time.sleep(0.05)
+            alive = _alive(pid)
+        finally:
+            _end_holder(pidfile)
+        assert not alive, (
+            "run_pytest's bound ended the inner pytest and left the holder its test started "
+            "running: the kill reached the direct child only")
 
 
 # ---------------------------------------------------------------------------

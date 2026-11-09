@@ -27,6 +27,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._tree_spawn import run_tree_bounded
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 REL = Path(__file__).resolve().relative_to(REPO_ROOT).as_posix()
 #: Spelled here, not imported: see the module docstring.
@@ -66,7 +68,7 @@ def _run_child(root: Path | None, parent: Path | None, *extra: str) -> tuple[sub
         env.update(TMPDIR=str(root), TEMP=str(root), TMP=str(root))
         if parent is not None:
             env[KEY] = str(parent)
-    proc = subprocess.run(
+    proc = run_tree_bounded(
         [sys.executable, "-m", "pytest", "-q", "-s", "-p", "no:cacheprovider", *extra, f"{REL}::{_REPORTING_ROW}"],
         cwd=REPO_ROOT, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True,
         encoding="utf-8", errors="replace", timeout=45,
