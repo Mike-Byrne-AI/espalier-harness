@@ -2017,6 +2017,12 @@ spellings of them are work:
   to a missing target add no file the after-check compares, a declared limit
   pinned by
   `tests/test_zone_watch.py::TestALinkMadeInAZone::test_a_directory_link_or_a_dangling_link_adds_nothing_and_a_file_link_adds_its_file`.
+  A bare `rm` naming a governed directory keeps the zone deny on the Bash tool
+  even where it cannot take a directory, a declared limit: that tool replays
+  your shell's aliases, so the guard cannot know a bare `rm` is not recursive,
+  while the PowerShell tool loads no profile and lets a lone remove cmdlet
+  without its recurse switch through when the directory it names holds an
+  entry. The guard's own tests pin both halves.
 - A new report on these jobs is a defect when its form is in the contract, or
   when it records a slip seen in a real session (a transcript or an audit row
   names it). Otherwise it is recorded under the limits above with the contract
