@@ -9,8 +9,8 @@ in-process 2026-10-16, four spellings of four). The comparator,
 ``_protected_zones.glob_reach``, reads the operand segment by segment against
 each protected entry; the verdict and the deny text both ask it.
 
-Three layers, so a wall-tier behaviour is pinned at the reader where it can
-be: the comparator by its readings (paths only, no command text), the verdict
+Three layers, because each pins a wall-tier behaviour at the reader where it
+can be: the comparator by its readings (paths only, no command text), the verdict
 by effect and by checkout (paths only), then one composition through both
 zone checks, built from the live protected roster crossed with the remove and
 move verbs the zone loops consume, with a must-allow twin of every shape below

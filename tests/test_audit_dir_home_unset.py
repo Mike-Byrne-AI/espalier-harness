@@ -536,8 +536,15 @@ def _audit_store_drops(text: str) -> list[int]:
     ('def f(**kw):\n    env = {k: v for k, v in os.environ.items() if not k.startswith("ESPALIER_")}\n'
      '    env.update(ESPALIER_AUDIT_DIR=os.environ["ESPALIER_AUDIT_DIR"], **kw)\n    return env\n', False),
     ('def f():\n    return {k: v for k, v in os.environ.items() if not k.startswith("ESPALIER_BOX_LOCK")}\n', False),
+    ('def f(tmp_path, monkeypatch):\n    monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))\n'
+     '    for k in [k for k in os.environ if k.startswith("ESPALIER_") and k != "ESPALIER_AUDIT_DIR"]:\n'
+     '        monkeypatch.delenv(k)\n', False),
+    ('def f(tmp_path, monkeypatch):\n    monkeypatch.setenv("ESPALIER_OTHER", str(tmp_path))\n'
+     '    for k in [k for k in os.environ if k.startswith("ESPALIER_")]:\n'
+     '        monkeypatch.delenv(k)\n', True),
 ], ids=["literal", "tuple-single-quoted", "inverted-mention", "dict-then-del", "pop", "module-level-keep",
-        "loop-of-pops", "keep-clause", "own-store", "own-home", "keyword-store", "other-prefix"])
+        "loop-of-pops", "keep-clause", "own-store", "own-home", "keyword-store", "other-prefix",
+        "monkeypatch-store", "monkeypatch-other-name"])
 def test_the_census_reads_each_shape_that_drops_the_store(shape, drops):
     """The census below, on the shapes the failure-mode review drove past
     its literal first form. Dies to: a shape read the wrong way round."""

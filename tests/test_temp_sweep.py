@@ -313,6 +313,8 @@ _UNLOCKED_MAKERS: dict[str, str] = {
     # class fixture's context manager.
     "tests/test_write_guard.py":
         "class-fixture context managers, removed at teardown; a kill leaves empty fixture dirs and audit logs",
+    "tests/test_write_guard_zone_wildcard.py::_reached_entries": _CM_SMALL + (
+        "an empty dir: the protected roster is read for it at collection, nothing written"),
     "tests/test_xdist_never_ran.py::_drive": _IN_BASETEMP,
     "tools/cc/board.py::read_ledger_at_base": _CM_SMALL + "a ~7 MB base tar and its extracted tools/cc modules",
     "tools/cc/check_ledger_probes.py::_probe_audit_dir": "removed at exit by atexit; a kill leaves a few small audit logs",
