@@ -1645,12 +1645,15 @@ class TestARowsOnlyHandoffOntoAnOpenPullRequestParks:
 
     @staticmethod
     def _onto_open(ship, tmp_path, *, diff: str = f"A\t{_PARKED_ROW}\n", mail: _FakeMail,
-                   extra: dict | None = None):
+                   extra: dict | None = None, title: str = "feat: a thing", base_runs: str = "[]"):
         _toml(tmp_path, "handoff_push = true\n")
-        answers = TestHandoffVerb._existing_pr_answers(tmp_path)
+        answers = TestHandoffVerb._existing_pr_answers(tmp_path, base_runs=base_runs)
+        answers[_list_key()] = _rows(_pr(title=title))
         answers[_LANE_DIFF] = (0, diff, "")
         answers[_ORIGIN_HEAD_READ] = (0, f"{ORIGIN_HEAD}\n", "")
-        answers[("git", "merge-base", "--is-ancestor")] = (0, "", "")   # origin's head is behind HEAD
+        # The up-to-date rule on: GitHub holds a stale lane itself, so the
+        # stale-base read stops there (the stale rows below turn it off).
+        answers[_PROTECTION_KEY] = (0, json.dumps({"strict": True, "contexts": ["lint"]}), "")
         answers[("git", "reset", "--keep")] = (0, "", "")
         answers.update(extra or {})
         ship._MAIL = mail
@@ -1698,27 +1701,79 @@ class TestARowsOnlyHandoffOntoAnOpenPullRequestParks:
         [(lane, text)] = mail.released
         assert lane == "lane/x" and "parked" in text and text.isascii(), text
 
-    def test_a_head_origin_moved_past_parks_resets_to_it_and_names_the_rebind(
-            self, ship, tmp_path, monkeypatch, capsys):
+    def test_a_head_origin_moved_past_parks_resets_to_it_and_rebinds_its_marker(
+            self, ship, tmp_path, monkeypatch):
         """A server-side update-branch moved origin/<branch> past this
         checkout: the commits since the merge base are still rows alone, so
         they park and the branch moves forward to origin's head, where today's
-        path refused with "merge them in"; a marker bound before the move names
-        an older head, so the rebind is named. Dies to: the park moved after
-        the origin-ahead refusal (this row's commit count would refuse it), and
-        the move left unsaid."""
+        path refused with "merge them in"; the title's marker, bound to the
+        head before the move, is re-bound, as the push's end would have.
+        Dies to: the park moved after the origin-ahead refusal (this row's
+        commit count would refuse it), and the stale marker left standing."""
         mail = _FakeMail()
-        spawns = self._onto_open(ship, tmp_path, mail=mail, extra={
-            ("git", "rev-list", "--count"): (0, "2\n", ""),
-            ("git", "merge-base", "--is-ancestor"): (1, "", ""),
-        })
-        monkeypatch.setattr(ship, "rebind", lambda **_kw: pytest.fail("a park pushes nothing to re-bind"))
+        spawns = self._onto_open(ship, tmp_path, mail=mail, title=f"feat: a thing {ship.MARKER}@{HEAD[:7]}",
+                                 extra={("git", "rev-list", "--count"): (0, "2\n", "")})
+        rebinds: list[int] = []
+        monkeypatch.setattr(ship, "rebind", lambda **_kw: rebinds.append(
+            spawns.count(("git", "reset", "--keep"))) or 0)
         assert ship.handoff() == 0
         assert mail.parked == [(_PARKED_ROW, None, "origin/main", "HEAD")]
         [reset] = spawns.matching(("git", "reset", "--keep"))
         assert reset[-1] == ORIGIN_HEAD and spawns.count(("git", "push")) == 0
+        assert rebinds == [1]   # once, after the reset
+
+    def test_a_marker_already_bound_to_origins_head_is_left_alone(self, ship, tmp_path, monkeypatch):
+        mail = _FakeMail()
+        self._onto_open(ship, tmp_path, mail=mail, title=f"feat: a thing {ship.MARKER}@{ORIGIN_HEAD[:7]}")
+        monkeypatch.setattr(ship, "rebind", lambda **_kw: pytest.fail("a marker bound to the head was re-bound"))
+        assert ship.handoff() == 0
+        assert mail.parked == [(_PARKED_ROW, None, "origin/main", "HEAD")]
+
+    def _stale(self, ship, tmp_path, monkeypatch, *, near: list[str], diff_rc: int = 0):
+        """The up-to-date rule off (this repository's setting since 10-09), so
+        the stale-base read runs; its result stood in."""
+        mail = _FakeMail()
+        spawns = self._onto_open(ship, tmp_path, mail=mail, extra={
+            _PROTECTION_KEY: (0, json.dumps({"strict": False, "contexts": ["lint"]}), ""),
+            ("gh", "run", "list", "--branch"): (0, "[]", ""),
+            ("git", "diff", "--name-only"): (diff_rc, "", "fatal: bad revision" if diff_rc else ""),
+        })
+        monkeypatch.setattr(ship._merge_rules, "stale_base", lambda root, **_kw: {
+            "tested": "abc1234", "now": "def5678", "moved": 2, "near": near, "unread": ""})
+        monkeypatch.setattr(ship, "rebind", lambda **_kw: 0)
+        return mail, spawns
+
+    def test_a_lane_its_base_moved_near_pushes_as_before(self, ship, tmp_path, monkeypatch, capsys):
+        """The dispatcher's amendment: a base that moved near the lane's files
+        since its CI ran makes the push one the board's stale: line would ask
+        for, which re-runs that CI on the combination. Dies to: a park keyed on
+        anything but the read's meetings."""
+        mail, spawns = self._stale(ship, tmp_path, monkeypatch, near=["tools/cc/ship.py (both changed)"])
+        assert ship.handoff() == 0
+        assert mail.parked == [] and spawns.count(("git", "push")) == 1
         out = capsys.readouterr().out
-        assert "had moved past this checkout" in out and f"ship.py rebind` binds it to {ORIGIN_HEAD[:7]}" in out
+        assert "main moved near #7's files since its CI ran (tools/cc/ship.py (both changed))" in out
+
+    def test_a_base_moved_away_from_the_lanes_files_parks(self, ship, tmp_path, monkeypatch):
+        mail, spawns = self._stale(ship, tmp_path, monkeypatch, near=[])
+        assert ship.handoff() == 0
+        assert mail.parked == [(_PARKED_ROW, None, "origin/main", "HEAD")] and spawns.count(("git", "push")) == 0
+
+    def test_a_stale_read_that_fails_parks_and_says_so(self, ship, tmp_path, monkeypatch, capsys):
+        mail, spawns = self._stale(ship, tmp_path, monkeypatch, near=["never read"], diff_rc=128)
+        assert ship.handoff() == 0
+        assert mail.parked == [(_PARKED_ROW, None, "origin/main", "HEAD")] and spawns.count(("git", "push")) == 0
+        out = capsys.readouterr().out
+        assert "stale-base check not read" in out and "stale: line stays the backstop" in out
+
+    def test_a_red_base_is_said_on_the_park_with_the_disarm(self, ship, tmp_path, monkeypatch, capsys):
+        """The push this park replaces said it; an armed merge still lands on
+        the red base once its checks are green."""
+        mail = _FakeMail()
+        self._onto_open(ship, tmp_path, mail=mail, base_runs=_RED_BASE)
+        assert ship.handoff() == 0
+        assert mail.parked == [(_PARKED_ROW, None, "origin/main", "HEAD")]
+        assert "gh pr merge --disable-auto 7" in capsys.readouterr().out
 
     @pytest.mark.parametrize("diff", [
         pytest.param(f"A\t{_PARKED_ROW}\nM\ttools/cc/ship.py\n", id="code-beside-the-row"),

@@ -706,13 +706,15 @@ python tools/cc/ship.py handoff
   pushes nothing onto it, so its running checks are not cancelled and
   restarted for a record, and moves back to `origin/<branch>`; the merge-first
   and the fold above do not run, since each is a push, and the lane's claims
-  are released as the push would have released them. A lane that conflicts
-  with its base is the exception: it needs the merge-first push to merge at
-  all, so a run that push cancels could not have landed it, and the rows ride
-  that push as before (where git cannot probe the merge, the rows park and the
-  verb says so, naming `catch-up`). Where origin's head had moved past this
-  checkout, the verb names the `rebind` a marker bound before that move owes.
-  Either way the next lane's push, any seat's, folds the rows into the base.
+  are released as the push would have released them. Two lanes take the push
+  as before, the rows riding it: one that conflicts with its base, which needs
+  the merge-first push to merge at all (a run that push cancels could not have
+  landed it), and one whose base moved near its files since its CI ran (the
+  board's `stale:` read), whose push re-runs that CI on the combination. A
+  merge probe or a stale read that cannot answer parks, and the verb says so.
+  After the reset, a title whose approval marker names another head (an
+  update-branch made outside `catch-up`) is re-bound, as the push's end would
+  have. Either way the next lane's push, any seat's, folds the rows into the base.
   Until that fold, the banner's recent rows, which read the tree, show them to
   no seat, this one's next session included; say so in the `Next:` line. A
   lane that edits or renames a row, a seat with no name, a pull request's head
