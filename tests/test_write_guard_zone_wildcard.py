@@ -303,6 +303,8 @@ class TestANonRecursiveRemoveReachesFilesOnly:
     @pytest.mark.parametrize(("check", "command"), [
         (_BASH, "rm -f *"), (_BASH, "rm *"), (_BASH, 'for f in *; do rm -f "$f"; done'),
         (_BASH, "rm -f tools/*"), (_BASH, "unlink too*"), (_BASH, "/bin/rm -f *"),
+        (_BASH, "(rm -f *)"), (_BASH, "true;rm -f *"),   # a separator glued to the verb
+        (_BASH, "{ rm -f *; }"), (_BASH, 'for d in tools/*; do sudo rm -f "$d"; done'),
         (_PS, "Remove-Item *"), (_PS, "Remove-Item -Path tools/* -Force"), (_PS, "del *"),
     ])
     def test_the_settled_silent_pair_stays_silent(self, tree: Path, check: str, command: str) -> None:
@@ -316,7 +318,12 @@ class TestANonRecursiveRemoveReachesFilesOnly:
         (_BASH, 'sh -c "rm -f *"'),                     # a nested program: not counted, fails closed
         (_BASH, 'for f in *; do rm -r "$f"; done'),
         (_BASH, "mv * /tmp/t"),                         # a move takes directories (the ruling's edge 1)
+        (_BASH, "rm -d *"), (_BASH, "rm --dir *"),      # `-d` takes an empty directory
+        (_BASH, 'for d in tools/*; do rm -f "$d"; rm -rf "$d"; done'),     # a decoy before the recursion
+        (_BASH, 'for d in tools/*; do rm -f "$d" && mv "$d" /tmp/x; done'),
+        (_BASH, "rm $FLAGS *"), (_PS, "Remove-Item @p *"),   # flags the reader cannot see
         (_PS, "Remove-Item .claude/*"), (_PS, "Remove-Item -Recurse *"), (_PS, "Move-Item * t"),
+        (_PS, "Remove-Item -Path * -Force; Remove-Item -Path * -Recurse"),   # the Bash mixed row's twin
     ])
     def test_a_remove_that_can_take_a_directory_or_a_file_still_draws_the_deny(
         self, tree: Path, check: str, command: str,
@@ -332,6 +339,44 @@ class TestANonRecursiveRemoveReachesFilesOnly:
         (tree / "secret.cfg").write_text("x", encoding="utf-8")
         reason = _zone_reason(check, command, tree)
         assert "secret.cfg" in reason and "protected_paths" in reason, reason
+
+    @pytest.mark.parametrize("entry", [e for e in _reached_entries() if e.endswith("/")])
+    @pytest.mark.parametrize("check", [_BASH, _PS])
+    def test_a_glob_into_a_protected_directory_draws_the_deny(self, tree: Path, check: str, entry: str) -> None:
+        """What the first cut of the files-only read dropped (the failure-mode
+        review of 2270fd4a): such a remove leaves a directory but takes the
+        files in it, so a glob reaching INSIDE a protected directory is
+        refused. Each directory on the live roster, a file put inside it, one
+        letter of its last component a `?`, then `/*`."""
+        (tree / entry / "f.txt").parent.mkdir(parents=True, exist_ok=True)
+        (tree / entry / "f.txt").write_text("x", encoding="utf-8")
+        spelled = entry.rstrip("/")
+        glob = spelled[:-1] + "?/*"
+        verb = "rm -f " if check == _BASH else "Remove-Item "
+        assert _zone_reason(check, verb + glob, tree), (check, glob)
+
+    @pytest.mark.parametrize(("check", "command"), [
+        (_BASH, "rm -f tools/*/hooks/*.py"), (_PS, "Remove-Item tools/*/hooks/*.py")])
+    def test_a_glob_at_the_hook_scripts_draws_the_deny(self, tree: Path, check: str, command: str) -> None:
+        """The code review's BLOCK on 2270fd4a: the hook scripts themselves,
+        the anti-self-disable floor, reached two levels in."""
+        (tree / "tools" / "cc" / "hooks" / "write_guard.py").write_text("x", encoding="utf-8")
+        assert _zone_reason(check, command, tree), command
+
+    @pytest.mark.parametrize(("check", "command"), [
+        (_BASH, "rm -f dat?/*"), (_BASH, "rm -f */raw.csv"), (_PS, "Remove-Item dat?/*")])
+    def test_a_glob_into_an_adopter_directory_draws_its_own_deny(self, tree: Path, check: str, command: str) -> None:
+        (tree / "espalier.toml").write_text('protected_paths = ["data/"]\n', encoding="utf-8")
+        (tree / "data").mkdir()
+        (tree / "data" / "raw.csv").write_text("x", encoding="utf-8")
+        reason = _zone_reason(check, command, tree)
+        assert "protected_paths" in reason, (command, reason)
+
+    def test_an_absent_adopter_entry_is_not_read_as_a_file(self, tree: Path) -> None:
+        """A declared entry the tree does not hold names nothing: the root
+        glob runs (the failure-mode review's absent-entry row)."""
+        (tree / "espalier.toml").write_text('protected_paths = ["data/"]\n', encoding="utf-8")
+        assert _zone_reason(_BASH, "rm -f *", tree) == ""
 
     def test_a_protected_paths_directory_is_a_directory(self, tree: Path) -> None:
         """Its twin: where the tree holds a directory at the entry, the

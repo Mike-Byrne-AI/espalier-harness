@@ -2163,9 +2163,10 @@ def _zone_reading(
     then a generated one it sits in: a clean of a build directory is refused
     for the protected zone it holds, never for the generated one around it.
     The whole tree (`.`) is the harness's. ``files_only`` is the verdict's
-    own reading for a wildcard a non-recursive remove takes (DEF-3010): the
-    harness's files alone, nothing enclosed, and an adopter entry as the file
-    it may name unless the root holds a directory there. Never raises: a
+    own reading for a wildcard a non-recursive remove takes (DEF-3010): what
+    it names, of a directory only a path strictly inside it, nothing
+    enclosed, and an adopter entry as a file where the root holds one. Never
+    raises: a
     lookup never decides the verdict; a failed one is said once a session and
     the harness text stands in."""
     try:
@@ -2183,7 +2184,8 @@ def _zone_reading(
         def sits_in(zone: str, is_file: bool) -> bool:
             if rel == zone or rel.startswith(zone + "/"):
                 return True
-            return wild and _glob_reach(rel_path, zone, is_file=is_file, tree=root) == "names"
+            return wild and _glob_reach(
+                rel_path, zone, is_file=is_file, tree=root, files_only=files_only) == "names"
 
         def holds(zone: str, is_file: bool) -> bool:
             if files_only:
@@ -2192,17 +2194,16 @@ def _zone_reading(
                 return True
             return wild and _glob_reach(rel_path, zone, is_file=is_file, tree=root) == "encloses"
 
-        everything = [(entry, fold(entry, all_components=True).rstrip("/"), entry in PROTECTED_FILES)
-                      for entry in (*_hook_utils.harness_protected_prefixes(root), *PROTECTED_FILES)]
-        harness = [row for row in everything if row[2]] if files_only else everything
+        harness = [(entry, fold(entry, all_components=True).rstrip("/"), entry in PROTECTED_FILES)
+                   for entry in (*_hook_utils.harness_protected_prefixes(root), *PROTECTED_FILES)]
         if any(sits_in(ground, is_file) for _entry, ground, is_file in harness):
             return None, ""
         held = next((entry for entry, ground, is_file in harness if holds(ground, is_file)), "")
         zones = []
         for prefix, kind in _hook_utils.adopter_protected_prefixes(root):
             zone = fold(prefix, all_components=True).rstrip("/")
-            if not any(zone == ground or zone.startswith(ground + "/") for _entry, ground, _f in everything):
-                zones.append((prefix, kind, zone, files_only and not (root / prefix.rstrip("/")).is_dir()))
+            if not any(zone == ground or zone.startswith(ground + "/") for _entry, ground, _f in harness):
+                zones.append((prefix, kind, zone, files_only and (root / prefix.rstrip("/")).is_file()))
         inside = [(prefix, kind) for prefix, kind, zone, is_file in zones if sits_in(zone, is_file)]
         for prefix, kind in inside:
             if kind == "protected":

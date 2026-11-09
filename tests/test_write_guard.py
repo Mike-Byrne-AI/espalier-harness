@@ -17544,7 +17544,8 @@ class TestEveryOneLineZoneDenyHasAnAdopterArm:
     def test_the_zone_text_is_rendered_by_its_producer_alone(self):
         source = (HOOKS_DIR / "write_guard.py").read_text(encoding="utf-8")
         assert _zone_text_read_outside_its_producer(source) == []
-        assert "_zone_template(rel_path, root, mutation=mutation)" in source, "the producer's own read moved"
+        assert "_zone_template(rel_path, root, mutation=mutation, files_only=files_only)" in source, (
+            "the producer's own read moved")
 
     def test_a_planted_read_of_the_zone_text_is_named(self):
         planted = (

@@ -9364,22 +9364,46 @@ _FILE_ONLY_REMOVE_VERBS = frozenset({"rm", "unlink", "shred"})
 
 def _matched_remove_verb(scan: str, m: "re.Match[str]") -> str:
     """The verb word `_DESTROY_RE` matched before its operand span, as the
-    shell runs it: path, quote and `.exe` dropped, lower-cased."""
-    words = scan[m.start():m.start(1)].split()
-    word = words[-1].strip("\"'").replace("\\", "/").rsplit("/", 1)[-1].lower() if words else ""
+    shell runs it: path, quote and `.exe` dropped, lower-cased; a separator
+    or a subshell's parenthesis glued to it (`true;rm`, `(rm`) is not part of
+    the word."""
+    return _bare_verb(scan[m.start():m.start(1)])
+
+
+def _bare_verb(text: str) -> str:
+    """The last word of ``text`` as the shell runs it: a separator, a
+    subshell's or group's bracket or a backtick glued to it is not part of
+    it, nor a quote, a leading backslash, a path or `.exe`; lower-cased."""
+    words = [w for w in re.split(r"[\s;&|(){}`]+", text) if w]
+    word = words[-1].strip("\"'").lstrip("\\").replace("\\", "/").rsplit("/", 1)[-1].lower() if words else ""
     return word[:-4] if word.endswith(".exe") else word
+
+
+def _flags_unseen(args: str) -> bool:
+    """A remove whose flags this reader cannot see: a variable, a command
+    substitution or a splat in its arguments can carry a recursive switch,
+    so it is never read as files-only (the code review of 2270fd4a)."""
+    return any(ch in args for ch in "$`@")
+
+
+#: The remove and move verbs a loop body is counted by: a files-only loop
+#: holds exactly one, so a decoy before a recursive remove or a move of the
+#: same variable is not read as files-only (the code review of 2270fd4a).
+_LOOP_BODY_VERBS = frozenset({"rm", "rmdir", "unlink", "shred", "mv", "rename", "find", "xargs", "git"})
 
 
 def files_only_removed_operands(command: str, *, powershell: bool = False) -> frozenset[str]:
     """The `delete` operands of ``command`` that every remove of them takes
-    as a file only (DEF-3010): a Bash `rm` without a recursive flag,
+    as a file only (DEF-3010): a Bash `rm` without a recursive flag or `-d`,
     `unlink` or `shred`, a word-list loop whose body is such a remove, and
     on PowerShell a remove cmdlet without the recurse switch or a native
-    single-file delete. None of these takes a directory -- `rm` without `-r`
-    refuses one, and a cmdlet without `-Recurse` on a directory with
-    children prompts and aborts in a host with no terminal -- so the zone
-    reader reads a wildcard there against the protected FILES alone, and a
-    non-recursive root `rm -f *` stays the silent pair the operator settled.
+    single-file delete. None of these takes a directory with anything in it
+    -- `rm` without `-r` refuses one, and a cmdlet without `-Recurse` on a
+    directory with children prompts and aborts in a host with no terminal
+    (an EMPTY directory a cmdlet does take: an empty protected directory
+    holds nothing to protect) -- so the zone reader reads a wildcard there
+    by what it names, of a directory only inside it, and a non-recursive
+    root `rm -f *` stays the silent pair the operator settled.
     Counted against the full reader: an operand qualifies only when each of
     its `delete` readings is one of these, so the same word removed by any
     other arm (a recursive remove, `rmdir`, a nested program, an enumerator
@@ -9398,7 +9422,7 @@ def files_only_removed_operands(command: str, *, powershell: bool = False) -> fr
     if powershell:
         for m in _PS_REMOVE_ITEM_RE.finditer(scan):
             args = _named_span(raw, m, "args", through_quotes=True, powershell=True)
-            if _PS_RECURSE_SWITCH_RE.search(_outside_quotes(args)):
+            if _PS_RECURSE_SWITCH_RE.search(_outside_quotes(args)) or _flags_unseen(args):
                 continue
             tokens = _ps_removal_target_tokens(args, tokens=_ps_operand_tokens(args), unknown_takes_value=False)
             mine.update(p for t in tokens for p in _ps_list_targets(t))
@@ -9412,17 +9436,26 @@ def files_only_removed_operands(command: str, *, powershell: bool = False) -> fr
             if verb not in _FILE_ONLY_REMOVE_VERBS:
                 continue
             span = raw_span(raw, m, through_quotes=True)
-            if verb == "rm" and rm_recursive_force_operands("rm " + span)[0]:
+            if _flags_unseen(span):
                 continue
+            if verb == "rm" and (rm_recursive_force_operands("rm " + span)[0] or any(
+                    t == "--dir" or (t.startswith("-") and not t.startswith("--") and "d" in t)
+                    for t in span.split())):
+                continue    # recursing, or `-d`: it takes an empty directory
             mine.update(_positional_operands(span))
         if _loop_carrier_witnessed(raw):
             for m in _FOR_WORDS_REMOVE_RE.finditer(scan):
-                verb = _named_span(raw, m, "verb").strip().lower()
+                verb = _bare_verb(_named_span(raw, m, "verb"))
                 read = _loop_removal_paths(raw, m)
                 if read is None or read.root_effect != "delete" or verb not in _FILE_ONLY_REMOVE_VERBS:
                     continue
                 if _bash_loop_reading(raw, m)[2]:   # the wipe: a recursing body
                     continue
+                body = scan[m.start():]
+                done = re.search(r"(?<![\w-])done(?![\w-])", body)
+                words = [_bare_verb(w) for w in re.split(r"[\s;&|(){}`]+", body[:done.start() if done else None])]
+                if sum(w in _LOOP_BODY_VERBS for w in words) != 1:
+                    continue    # another remove or move in the body: not files-only
                 mine.update(read.roots)
     every = Counter(p for effect, p in reader(command) if effect == "delete")
     return frozenset(p for p, n in mine.items() if every.get(p) == n)
