@@ -74,7 +74,7 @@ def _plan_path() -> Path:
     """Resolve cc/execution_plan.json under the repo root.
 
     Uses the single owner _paths._repo_root (env ``CLAUDE_PROJECT_DIR`` →
-    nearest pyproject/tools/cc ancestor → cwd) so launching Claude Code from a
+    nearest ``tools/cc/hooks`` ancestor → cwd) so launching Claude Code from a
     subdirectory still writes the plan where plan_guard can find it.
     """
     return _paths._repo_root() / "cc" / "execution_plan.json"
