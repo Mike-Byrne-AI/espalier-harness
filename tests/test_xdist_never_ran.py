@@ -57,7 +57,7 @@ def _drive(tmp_path: Path, body: str, *args: str, workers: tuple[str, ...] = ("-
     (tmp_path / "test_probe.py").write_text(body, encoding="utf-8")
     env = {k: v for k, v in os.environ.items()
            if k not in ("PYTEST_ADDOPTS", "PYTEST_TIMEOUT", "GITHUB_ACTIONS", "PROBE_BUILD_DIES",
-                        "PROBE_CONTROLLER_RAISES")
+                        "PROBE_CONTROLLER_RAISES", "PROBE_CONTROLLER_SLOW")
            and not k.startswith("PYTEST_XDIST_")}
     env.update(extra_env or {})
     # A basetemp of its own: the planted tree loads no suite conftest, and its
@@ -84,11 +84,14 @@ class NestedControllerCrashed(UserWarning):
 #: At most this many child runs per row. A child whose controller's channel to
 #: a dying worker raised inside execnet ends in pytest's internal error, which
 #: prints no summary: CI cells from 2026-10-18 on (DEF-2025's struck row counts
-#: them; on GitHub's macOS runners all three attempts lose on most runs,
-#: DEF-4032), never this box (12 of 12 runs complete). Whether a run was a
-#: reading is the exit code's question, never the shape execnet prints; which
-#: failure a row that lost every attempt raises is the shape's
-#: (:func:`_drive_to_a_reading`).
+#: them; on GitHub's macOS runners all three attempts lost on most runs,
+#: DEF-4032), never this box (12 of 12 runs complete). Since 2026-11-09 the
+#: build stub's worker dies only once the controller's first command reached
+#: it, which closes the send race behind those crashes by construction; the
+#: retry and its count stay as the watch that says whether anything else
+#: still ends a child there. Whether a run was a reading is the exit code's
+#: question, never the shape execnet prints; which failure a row that lost
+#: every attempt raises is the shape's (:func:`_drive_to_a_reading`).
 _ATTEMPTS = 3
 #: The per-test ceiling of a row that may drive that many children, each under
 #: :func:`_drive`'s 45 s bound, with room left for the kill and the teardown:
@@ -216,10 +219,21 @@ _SUITE_HOOKS = ("pytest_collection_finish", "pytest_runtest_logreport", "pytest_
                 "pytest_terminal_summary", "pytest_xdist_node_collection_finished", "pytest_sessionfinish")
 #: Their conftest: the suite's hooks, with the build stubbed where the hook reads
 #: it, so the real tree is never built here. The stub returns at once, or ends
-#: the xdist worker inside the build where ``PROBE_BUILD_DIES`` is set.
+#: the xdist worker inside the build where ``PROBE_BUILD_DIES`` is set: once the
+#: controller's first command has reached it on xdist's worker channel, never
+#: before (DEF-4032); at one worker, the rows' setting, that is the only send the
+#: controller makes it, so the send always lands first. A wait that cannot be
+#: made (no one channel, a receive refused or timed out) raises in the build, so
+#: the rows red naming it rather than fall back to the race. The controller
+#: answers a worker's collection-finished
+#: message with a send, and a worker that died at once had closed its end by
+#: then wherever the controller was slow to it, so execnet's write raised and
+#: the child ended in pytest's internal error: GitHub's runners by load, and on
+#: demand ``PROBE_CONTROLLER_SLOW`` (seconds the controller sleeps there).
 _BUILD_CONFTEST = (
     "import os\n"
     "import sys\n"
+    "import time\n"
     "\n"
     "import pytest\n"
     "\n"
@@ -231,8 +245,34 @@ _BUILD_CONFTEST = (
     "        globals()[_name] = getattr(suite, _name)\n"
     "\n"
     "\n"
+    "class _ControllerSlow:\n"
+    "    def pytest_xdist_node_collection_finished(self, node, ids):\n"
+    "        time.sleep(float(os.environ['PROBE_CONTROLLER_SLOW']))\n"
+    "        with open('probe-controller-slow', 'a', encoding='utf-8') as said:\n"
+    "            said.write(node.gateway.id + '\\n')\n"
+    "\n"
+    "\n"
+    "_CHANNELS = []\n"
+    "\n"
+    "\n"
+    "def pytest_sessionstart(session):\n"
+    "    config = session.config\n"
+    "    if hasattr(config, 'workerinput'):\n"
+    "        found = [getattr(plugin, 'channel', None) for plugin in config.pluginmanager.get_plugins()\n"
+    "                 if type(plugin).__name__ == 'WorkerInteractor']\n"
+    "        _CHANNELS[:] = [channel for channel in found if channel is not None]\n"
+    "    elif os.environ.get('PROBE_CONTROLLER_SLOW'):\n"
+    "        config.pluginmanager.register(_ControllerSlow(), 'probe-controller-slow')\n"
+    "\n"
+    "\n"
     "def _build(factory, timeout=None):\n"
     "    if os.environ.get('PROBE_BUILD_DIES') and os.environ.get('PYTEST_XDIST_WORKER'):\n"
+    "        if len(_CHANNELS) != 1:\n"
+    "            raise RuntimeError(f'probe: no one xdist worker channel to wait on ({len(_CHANNELS)})')\n"
+    "        try:\n"
+    "            _CHANNELS[0].receive(timeout=20)\n"
+    "        except EOFError:  # the controller closed it: nothing more will be sent\n"
+    "            pass\n"
     "        os._exit(3)\n"
     "    return factory.mktemp('tree')\n"
     "\n"
@@ -345,6 +385,25 @@ class TestACrashedWorkerIsNamedOnlyWhereItsBuildCanBe:
         assert rc != 0, lines
         assert _build_lines(lines) == _NAMED_EACH_TIME, lines
 
+    def test_a_controller_slow_to_schedule_still_hears_each_worker_go_down(self, tmp_path):
+        """DEF-4032's race on demand: the controller sleeps where it hears a
+        worker finish collecting, before xdist schedules, so a worker that died
+        at once has closed its end of the channel by the send, and execnet's
+        write raises (a stub that dies at once lost 5 of 5 runs here at 0.2 s,
+        the end GitHub's runners reach by load). The stub dies only once the
+        controller's first command has reached it, so the send always lands
+        first. One child, never driven again: a retry would hide the race this
+        row exists to catch. Dies to: the stub's wait dropped (the child ends
+        in pytest's internal error, ``OSError: cannot send``), or a slow switch
+        that no longer reaches the controller (each worker's marker is read)."""
+        rc, lines = _drive(tmp_path, _SIX_IN_THE_BUILD, conftest_text=_BUILD_CONFTEST,
+                           extra_env={"PROBE_BUILD_DIES": "1", "PROBE_CONTROLLER_SLOW": "0.5"})
+        assert rc != pytest.ExitCode.INTERNAL_ERROR, (_what_raised(lines), lines)
+        assert _build_lines(lines) == _NAMED_EACH_TIME, lines
+        slowed = tmp_path / "probe-controller-slow"
+        assert slowed.is_file() and slowed.read_text(encoding="utf-8").split() == [f"gw{i}" for i in range(5)], \
+            "the controller was never slowed, so this run tested nothing"
+
     @pytest.mark.timeout(_CHILDREN_CEILING_S)
     def test_a_first_test_whose_setup_crosses_the_ceiling_is_named_as_either(self, tmp_path):
         """No test asks for the tree; the first test's fixture crosses the
@@ -362,6 +421,8 @@ class TestACrashedWorkerIsNamedOnlyWhereItsBuildCanBe:
         """The child leaves out a hook the conftest lacks, so that a run on the
         unfixed conftest reds on what it prints; here the list is held whole."""
         assert [name for name in _SUITE_HOOKS if not hasattr(conftest, name)] == []
+        assert "pytest_sessionstart" not in _SUITE_HOOKS, \
+            "the probe conftest defines its own pytest_sessionstart after the copy, which would shadow the suite's"
 
 
 #: Six tests that each take the tree, so every worker builds it.
