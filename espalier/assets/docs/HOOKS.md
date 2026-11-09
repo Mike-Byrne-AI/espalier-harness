@@ -338,8 +338,8 @@ against the git in hand.
   worktree is told which file to copy, the main checkout read off its gitdir
   line), cannot read it, holds no JSON object, or leaves a deployed blocking
   gate unwired or its whole hooks block void (the reader is
-  `hooks/_integrity.py::checkout_wiring_notice`, which sets protocol-typed
-  hook entries aside as SessionStart and `config_guard` do, and names the
+  `hooks/_integrity.py::checkout_wiring_notice`, which reads the voiding rule
+  SessionStart and `config_guard` read, and names the
   remedies SessionStart's own warning names; a note, never a refusal).
 
 A `Merging:` line after `Merged:` prints the base branch's merge rules as
@@ -2082,8 +2082,10 @@ A deleted, emptied or syntax-broken project file wires nothing -- Claude Code
 loads no hooks from any of them (driven) -- and is judged so; refusing it
 blocks no repair, since the next change is judged on its own content.
 The local file keeps the kill-switch check only; it normally wires nothing. A
-hook entry of type `http` or `mcp_tool` runs no gate and is set aside rather
-than read as voiding the file. `espalier clean-generated`'s in-session
+well-formed hook entry of type `http`, `mcp_tool` or `agent` runs no gate and
+does not void the file (Claude Code loads each beside the gates, driven); one
+missing its required field (`url`; `server` and `tool`; `prompt`) voids the
+whole hooks block, and the change is judged so. `espalier clean-generated`'s in-session
 uninstall records its own unwire first
 (`.espalier-state/settings_write_intent.json`), and that one write is let
 through, so its two-run flow still works.

@@ -787,7 +787,8 @@ GATE_LEGACY_FORM = "legacy_form"
 #: printed "Hooks now intercept" over a gate that never fires on Edit.
 GATE_MISWIRED = "miswired"
 #: Not a property of THIS gate at all: some hook entry somewhere in
-#: settings.json has a ``type`` other than ``"command"``, so Claude Code loads
+#: settings.json is one Claude Code refuses (an unknown or absent ``type``, or
+#: a type missing its required field), so Claude Code loads
 #: no hooks from the file and every deployed gate is dead at once. Highest
 #: precedence, because it is a whole-FILE fact that overrides whatever this
 #: gate's own entry happens to look like -- and the offending entry is often
@@ -928,9 +929,10 @@ def classify_unwired_gate(repo_root: Path, script: str) -> str:
     whole-file one on 2026-08-27 against real Claude Code 2.1.247:
 
     * ``GATE_VOIDED_SETTINGS`` -- checked FIRST and not a fact about this
-      gate's entry at all: some hook object anywhere in the file has a
-      ``type`` other than ``"command"``, so CC loads NO hooks and this gate
-      is dead however well it is wired. See
+      gate's entry at all: some hook object anywhere in the file is one CC
+      refuses (an unknown or absent ``type``, or a type missing its required
+      field), so CC loads NO hooks and this gate is dead however well it is
+      wired. See
       :func:`surface_contract.hooks_config_voided_by`.
 
     * ``GATE_ABSENT`` -- the gate's canonical EVENT KEY is missing from
@@ -967,8 +969,8 @@ def classify_unwired_gate(repo_root: Path, script: str) -> str:
     free to be more forgiving.
     """
     # FIRST, because it is not a fact about this gate's entry at all. When any
-    # hook object in the file carries a `type` other than "command", Claude Code
-    # loads NOTHING, so this gate's own wiring can be flawless and still dead.
+    # hook object in the file is one Claude Code refuses (an unknown or absent
+    # `type`, or a type missing its required field), it loads NOTHING, so this gate's own wiring can be flawless and still dead.
     # Asking the entry-shape questions below would produce a true sentence about
     # the entry and a false remedy for the operator -- who must fix somebody
     # else's hook, possibly under a different event.

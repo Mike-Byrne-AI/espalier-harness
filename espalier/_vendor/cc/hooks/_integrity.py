@@ -961,24 +961,38 @@ def _matcher_covers_canonical(deployed: str, canonical: str) -> bool:
     return _matcher_covers_mutations(deployed)
 
 
+#: Twin of surface_contract.HOOK_TYPE_REQUIRED_STRINGS: each hook type Claude
+#: Code accepts and the fields it requires to be a string (http, mcp_tool and
+#: agent driven on 2.1.319, DEF-1195).
+_HOOK_TYPE_REQUIRED_STRINGS: dict[str, tuple[str, ...]] = {
+    "command": ("command",),
+    "prompt": ("prompt",),
+    "agent": ("prompt",),
+    "http": ("url",),
+    "mcp_tool": ("server", "tool"),
+}
+
+
 def _hook_object_schema_error(hook: object) -> str | None:
     if not isinstance(hook, dict):
         return "a hook entry is %s, not an object" % type(hook).__name__
     htype = hook.get("type")
+    required = _HOOK_TYPE_REQUIRED_STRINGS.get(htype) if isinstance(htype, str) else None
+    if required is None:
+        shown = "<absent>" if htype is None else ascii(htype)
+        newer = ("; if `/hooks` lists it, this espalier predates that Claude "
+                 "Code hook type" if isinstance(htype, str) else "")
+        return ("a hook entry has type %s (expected one of %s%s)"
+                % (shown, ", ".join('"%s"' % t for t in _HOOK_TYPE_REQUIRED_STRINGS), newer))
+    for field in required:
+        if not isinstance(hook.get(field), str):
+            return 'a "%s" hook has no string "%s"' % (htype, field)
     if htype == "command":
-        if not isinstance(hook.get("command"), str):
-            return 'a "command" hook has no string "command"'
         args = hook.get("args")
         if args is not None and not isinstance(args, list):
             return ('a "command" hook\'s "args" is %s, not a list'
                     % type(args).__name__)
-        return None
-    if htype == "prompt":
-        if not isinstance(hook.get("prompt"), str):
-            return 'a "prompt" hook has no string "prompt"'
-        return None
-    shown = "<absent>" if htype is None else repr(htype)
-    return 'a hook entry has type %s (expected "command" or "prompt")' % shown
+    return None
 
 
 def _hooks_config_voided_by(hooks_cfg: object) -> str | None:
@@ -1027,9 +1041,10 @@ def unwired_governance_gates(rel: str, data: object, repo_root: Path) -> list[st
     if voided_by:
         findings.append(
             f"{rel}: {voided_by} -- Claude Code loads NO hooks at all from a "
-            "settings file containing a hook entry whose 'type' is not exactly "
-            '"command" (absent counts), so EVERY governance gate below is dead, '
-            "including the ones whose own wiring is correct"
+            "settings file holding one malformed hook entry (a 'type' it does "
+            "not know, absent included, or a type missing its required field), "
+            "so EVERY governance gate below is dead, including the ones whose "
+            "own wiring is correct"
         )
     for script in unwired:
         event = _GOVERNANCE_BLOCKING_HOOKS[script]
@@ -1160,41 +1175,9 @@ def recorded_settings_writer(repo_root: Path, data: object, *, now: float | None
 # rewrites it when it lets a change through, since Claude Code then runs the
 # changed file.
 
-#: Hook types the pinned protocol names beside "command" and "prompt"
-#: (docs/external/cc-hook-protocol.md, "Timeouts"). The voiding rule above,
-#: shared with ci_guard and the engine, predates them and reads either one as
-#: voiding the whole hooks block; that class is its own ledger row, since it
-#: needs a live drive. Such an entry can never execute a governance gate, so the
-#: live readers set it aside instead of reading the file as void.
-_PROTOCOL_NON_COMMAND_TYPES = frozenset({"http", "mcp_tool"})
-
 WIRED_GATES_SNAPSHOT = (_hook_utils.STATE_DIR, "wired_gates.json")
 UNWIRED_PENDING = (_hook_utils.STATE_DIR, "settings_unwired_pending.json")
 PROJECT_SETTINGS_REL = ".claude/settings.json"
-
-
-def without_protocol_typed_hooks(data: object) -> object:
-    """``data`` with every hook entry of a type in
-    ``_PROTOCOL_NON_COMMAND_TYPES`` removed (groups kept, so the shape is still
-    one Claude Code loads); anything that is not a settings object, unchanged."""
-    if not isinstance(data, dict) or not isinstance(data.get("hooks"), dict):
-        return data
-    hooks: dict[str, object] = {}
-    for event, groups in data["hooks"].items():
-        if not isinstance(groups, list):
-            hooks[event] = groups
-            continue
-        kept: list[object] = []
-        for group in groups:
-            if isinstance(group, dict) and isinstance(group.get("hooks"), list):
-                kept.append({**group, "hooks": [
-                    h for h in group["hooks"]
-                    if not (isinstance(h, dict) and h.get("type") in _PROTOCOL_NON_COMMAND_TYPES)
-                ]})
-            else:
-                kept.append(group)
-        hooks[event] = kept
-    return {**data, "hooks": hooks}
 
 
 def read_project_settings(repo_root: Path) -> tuple[str, object]:
@@ -1214,7 +1197,7 @@ def read_project_settings(repo_root: Path) -> tuple[str, object]:
     if not raw.strip():
         return "read", None
     try:
-        return "read", json.loads(decode_bom(raw))  # json-dict-safe: ok every consumer takes object and shape-checks before a deref (_gate_wiring, without_protocol_typed_hooks, settings_content_digest; session_start isinstance-checks)
+        return "read", json.loads(decode_bom(raw))  # json-dict-safe: ok every consumer takes object and shape-checks before a deref (_gate_wiring, settings_content_digest; session_start isinstance-checks)
     except (ValueError, UnicodeDecodeError):  # fail-open: ok deliberate -- unreadable is an answer: config_guard judges it as wiring nothing (fail-closed)
         return "unreadable", None
 
@@ -1256,9 +1239,8 @@ def checkout_wiring_notice(repo_root: Path) -> str | None:
     checks out tracked files only) runs with every guard off and nothing else
     says so: the thing that would is a hook (DEF-1192; the install half,
     ``.worktreeinclude``, landed 2026-10-09). Judged on wiring and never on a
-    file's presence on disk (a hook on disk is not a wired hook), with
-    protocol-typed hook entries set aside first, as SessionStart and
-    config_guard do: the settings file is absent (a dangling symlink is named
+    file's presence on disk (a hook on disk is not a wired hook), by the same
+    voiding rule SessionStart and config_guard read: the settings file is absent (a dangling symlink is named
     as one; a linked worktree is told which file to copy, the main checkout
     read off its gitdir line); it cannot be read as JSON; it holds no JSON
     object (an emptied file); its hooks block is void, so Claude Code loads no
@@ -1300,7 +1282,7 @@ def checkout_wiring_notice(repo_root: Path) -> str | None:
         return f"{where} cannot be read as JSON (unreadable, or malformed), {loses}; {repair}"
     if not isinstance(data, dict):
         return f"{where} holds no JSON object (an empty file, or a list), {loses}; {repair}"
-    voided_by, unwired = _gate_wiring(without_protocol_typed_hooks(data), repo_root)
+    voided_by, unwired = _gate_wiring(data, repo_root)
     if not unwired:
         return None
     gates = ", ".join(unwired)

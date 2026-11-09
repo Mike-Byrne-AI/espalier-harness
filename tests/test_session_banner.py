@@ -4978,20 +4978,34 @@ class TestTheGovernanceWiringLine:
         assert all(line.isascii() for line in lines), lines
 
     def test_a_void_verdict_is_not_reported_by_a_hook_that_ran(self, tmp_path):
-        """An http hook reads as voiding the whole block under the shared rule
-        (its own ledger row): set aside, the rest is wired; and a void verdict
-        that survives is refuted by this hook running at all."""
+        """A well-formed http hook loads beside the gates (driven on Claude
+        Code 2.1.319, DEF-1195), so the rest reads wired; and a void verdict
+        is refuted by this hook running at all."""
         mod = _load()
-        self._tree(tmp_path)
+        self._tree(tmp_path, drop="plan_guard.py")
         path = tmp_path / ".claude" / "settings.json"
         data = json.loads(path.read_text(encoding="utf-8"))
         data["hooks"]["PostToolUse"] = [{"hooks": [{"type": "http", "url": "http://localhost:9/x"}]}]
         path.write_text(json.dumps(data), encoding="utf-8")
         mod._hook_utils.take_advisories()
-        assert "UNWIRED" not in mod._report_integrity_state(tmp_path)
-        data["hooks"]["Stop"][0]["hooks"][0]["type"] = "agent"  # a type no copy accepts
+        assert mod._report_integrity_state(tmp_path).startswith("UNWIRED (1 finding)")
+        data["hooks"]["Stop"][0]["hooks"][0]["type"] = "wibble"  # a type Claude Code refuses
         path.write_text(json.dumps(data), encoding="utf-8")
         assert "UNWIRED" not in mod._report_integrity_state(tmp_path)
+
+    def test_a_dropped_gate_beside_an_agent_hook_is_still_named(self, tmp_path):
+        """An agent hook with its prompt loads (driven on 2.1.319), so it does
+        not void the file and hide a dropped gate: the shared rule read it as
+        a void before DEF-1195, and the line stayed silent."""
+        mod = _load()
+        self._tree(tmp_path, drop="plan_guard.py")
+        path = tmp_path / ".claude" / "settings.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["hooks"]["PostToolUse"] = [{"hooks": [{"type": "agent", "prompt": "check it"}]}]
+        path.write_text(json.dumps(data), encoding="utf-8")
+        mod._hook_utils.take_advisories()
+        summary = mod._report_integrity_state(tmp_path)
+        assert summary.startswith("UNWIRED (1 finding)"), summary
 
     def test_a_fully_wired_tree_says_nothing_of_it(self, tmp_path):
         mod = _load()
