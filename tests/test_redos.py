@@ -4298,32 +4298,41 @@ def test_every_derived_regex_is_linear_on_adversarial_runs(name, pattern):
 # runaway, and only a shape detector sees it.
 #
 # Two things close it. The arm below needs no alarm: it times `.search` at two
-# sizes four times apart and judges the GROWTH, which the host's speed divides
-# out of -- a linear pattern reads about 4, a quadratic one about 16, and the
-# limit is their geometric mean. And the shapes are derived: a run of one
+# sizes eight times apart and judges the GROWTH, which the host's speed divides
+# out of -- a linear pattern reads about 8, a quadratic one about 64, and the
+# limit is near their geometric mean. And the shapes are derived: a run of one
 # character that each repeated single-character class in the pattern accepts
 # (:func:`_derived_run_units`), beside the hand list, so a `[0-9]*` brings its
-# own run of `0`; the ceiling arm above reads them too. Measured on the Windows
-# box (2026-11-09, 3.11, the 221 derived patterns, every hand and derived
-# shape, three samples a size): the population read 3.5 to 6.6, the slowest
-# big sample 10.8 ms; the four patterns #543 fixed, their leading lookbehind
-# stripped, read 14.7 to 16.5, at 88 ms to 1.6 s on the big size.
+# own run of `0`; the ceiling arm above reads them too.
+#
+# Why eight, not four: the arm first shipped at 2000 and 8000 with a limit of
+# 8, and #547's own 3.11 cell missed the pre-fix redirect patterns (job
+# 129105379980): a quadratic that costs 430 ms at 30000 chars in python:3.11
+# on Linux reads 31 ms at 8000, and the CI runner, faster, put it under the
+# judged floor. At 16000 the same pattern reads 120 ms. Measured 2026-11-09,
+# the 221 derived patterns, every hand and derived shape, three samples a
+# size, at 2000 and 16000: in python:3.11 (3.11.16, Linux, Docker on the
+# Windows box), two passes of 19.5 s, the slowest linear big sample 7.7 ms,
+# no pair judged, and the three pre-fix patterns timed below 120 to 148 ms at
+# ratios 61.5 to 63.6; on the Windows box (3.11.9), three passes of 24 to
+# 26 s, the slowest linear 11.6 ms, no pair judged, the pre-fix patterns 166
+# to 209 ms at 62.9 to 68.7.
 #
 # The window is the speedbump file's (`tests/test_speedbump_irreversible.py::
 # _search_window_ms`, DEF-2000): the samples interleave, small then big, each
 # size's floor is its reading, and a pair over the limit is asked again as a
 # second window judged on its own, the lower ratio the estimate. A pair whose
 # big sample is under `_GROWTH_JUDGED_FLOOR_S` is not judged: at single-digit
-# milliseconds the ratio is clock noise (a linear row read 8.5 at 7.6 ms on
-# this box). The limit and that floor are bounds on a RED, never ceilings on a
+# milliseconds the ratio is clock noise (a linear row read 10.4 at 7.4 ms in
+# the Linux pass). The limit and that floor are bounds on a RED, never ceilings on a
 # pass: a host slow throughout lifts both sizes together and leaves the ratio
 # where it was, so the wall-clock rule (tests/test_proof_tier.py) pairs
 # neither with a floor. A small sample past the regex tier's ceiling ends the
 # pair before the big size, so a runaway costs one small search; one that
 # never returns at all is the module's per-test timeout's (thread method).
 _GROWTH_SMALL_LEN = 2000
-_GROWTH_BIG_LEN = 4 * _GROWTH_SMALL_LEN
-_GROWTH_RATIO_LIMIT = 8.0
+_GROWTH_BIG_LEN = 8 * _GROWTH_SMALL_LEN
+_GROWTH_RATIO_LIMIT = 22.0
 _GROWTH_JUDGED_FLOOR_S = 0.025
 _GROWTH_SAMPLES = 3
 
@@ -4450,7 +4459,7 @@ def _growth_verdict(pattern: "re.Pattern[str]", unit: str) -> str | None:
 @pytest.mark.parametrize("name,pattern", _DERIVED_REGEXES)
 def test_every_derived_regex_grows_linearly_without_an_alarm(name, pattern):
     """The shape detector every platform runs: it times `.search` of each
-    derived regex on every hand and derived run at 2000 and 8000 chars and
+    derived regex on every hand and derived run at 2000 and 16000 chars and
     reds on growth past linear. Self-enrolling like the ceiling arm; no skip
     anywhere."""
     units = [*_ADVERSARIAL_UNITS, *((f"derived-run {u!r}", u) for u in _derived_run_units(pattern))]
@@ -4502,9 +4511,16 @@ def test_the_derived_runs_reach_past_the_hand_list():
 def test_the_growth_arm_reds_the_pre_543_patterns(name, source, unit):
     """The arm's must-trip rows: each fixed pattern as it was reads past the
     limit on its run, on any platform. `_CASE_ARM_RE` is left out of the
-    timing only for its cost (1.6 s a big sample here, two windows of six);
-    its derivation row above stands, and it read 16.5 on this arm by hand."""
-    assert _growth_verdict(re.compile(source), unit) is not None, name
+    timing only for its cost (about 6 s a big sample at 16000 chars on the
+    Windows box, two windows of six); its derivation row above stands. The
+    reading rides the assertion, so a miss says whether the floor or the
+    limit let the pattern through (#547's first 3.11 cell could not)."""
+    small, big = _run_of(unit, _GROWTH_SMALL_LEN), _run_of(unit, _GROWTH_BIG_LEN)
+    small_s, big_s = _growth_window_time(re.compile(source), small, big)
+    assert _growth_verdict(re.compile(source), unit) is not None, (
+        f"{name}: {small_s * 1000:.1f} -> {big_s * 1000:.1f}ms (ratio {big_s / small_s:.1f}, "
+        f"limit {_GROWTH_RATIO_LIMIT}, judged above {_GROWTH_JUDGED_FLOOR_S * 1000:.0f}ms)"
+    )
 
 
 def test_the_growth_arm_passes_the_same_patterns_fixed():
