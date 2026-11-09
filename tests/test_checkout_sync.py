@@ -487,8 +487,84 @@ class TestReapWorktrees:
         reason = dict(report.kept)["feat"]
         assert reason.startswith("its seat work-feat holds 1 live claim (lane/feat) that only it can release and "
                                  "2 jobs from the dispatcher (lane/next, DEF-1 DEF-2)"), reason
-        assert "`python tools/cc/seat.py retire work-feat --return-jobs` releases them and returns the jobs" in reason
+        assert ("from the main checkout, `python tools/cc/seat.py retire work-feat --return-jobs` releases them, "
+                "returns the jobs and removes it") in reason, reason
         assert "mail.py send --type release --ack <claim id>` for each (c-feat)" in reason, reason
+        # The by-hand release leaves the jobs: it never says the worktree can go then.
+        assert reason.endswith("then the jobs still keep it until they go back"), reason
+
+    def test_a_malformed_job_field_names_the_job_and_never_raises(self, cs, repos, monkeypatch):
+        """The mail fold tolerates a field that is not a list of strings, so
+        the job reaches the reaper. Dies to: joining the raw field (a
+        TypeError out of reap_worktrees, which loses every worktree's reap
+        at each start; the code review's drive)."""
+        work = repos["work"]
+        wt = _worktree(repos, "feat", "lane/feat")
+        _git(work, "config", "extensions.worktreeConfig", "true")
+        _git(wt, "config", "--worktree", "espalier.machine", "work-feat")
+        monkeypatch.setattr(cs, "seat_live_mail", lambda root, seat, timeout: ([], [
+            {"id": "20261109T000000Z-boss-abc123", "re": {"seat": seat, "lane": 3, "ids": 5, "classes": True}},
+            {"id": "j-2", "re": {"seat": seat, "ids": ["DEF-7", 8], "classes": 7}},
+            {"id": "j-3", "re": "not a dict"}]))
+        report = cs.reap_worktrees(work, sessions=[])
+        reason = dict(report.kept)["feat"]
+        assert reason.startswith("its seat work-feat holds 3 jobs from the dispatcher (abc123, DEF-7, j-3)"), reason
+
+    def test_a_seat_with_claims_and_an_unread_dispatcher_names_both(self, cs, repos, tmp_path):
+        """Claims are read before the setting, so a broken setting does not
+        hide them; the unread jobs lead, so retire (which goes on only past
+        "its seat <seat> holds") refuses. Dies to: the setting read first
+        (the claim ids vanish), or the claims leading (retire would release
+        and remove with the jobs unseen)."""
+        mail = _load(REPO_ROOT / "tools" / "cc" / "mail.py", "mail_for_reaper_unread_test")
+        work = repos["work"]
+        (work / "espalier.toml").write_bytes(b'dispatcher = "Air"\n')
+        wt = _worktree(repos, "feat", "lane/feat")
+        _git(work, "config", "extensions.worktreeConfig", "true")
+        _git(wt, "config", "--worktree", "espalier.machine", "work-feat")
+        claim = mail.new_message("work-feat", "claim", "a", lane="lane/feat")
+        _mail_ref(work, tmp_path, "work-feat", [claim])
+        reason = dict(cs.reap_worktrees(work, sessions=[]).kept)["feat"]
+        assert reason.startswith("its seat work-feat's jobs could not be read (espalier.toml sets dispatcher = "), reason
+        assert "; its seat work-feat holds 1 live claim (lane/feat)" in reason and claim["id"] in reason, reason
+
+    def test_a_python_that_cannot_read_the_setting_keeps_the_worktree_and_says_why(self, cs, repos, monkeypatch):
+        """Below 3.11 there is no tomllib, so the setting read raises
+        ImportError: said as unread jobs with the floor named, never the bare
+        module error (the failure-mode review's drive on 3.10)."""
+        work = repos["work"]
+        (work / "espalier.toml").write_bytes(b'dispatcher = "boss"\n')
+        wt = _worktree(repos, "feat", "lane/feat")
+        _git(work, "config", "extensions.worktreeConfig", "true")
+        _git(wt, "config", "--worktree", "espalier.machine", "work-feat")
+        import mail as live_mail  # the module the reaper's own `import mail` binds
+
+        def no_tomllib(root):
+            raise ModuleNotFoundError("No module named 'tomllib'")
+        monkeypatch.setattr(live_mail, "dispatcher_setting", no_tomllib)
+        reason = dict(cs.reap_worktrees(work, sessions=[]).kept)["feat"]
+        assert reason.startswith("its seat work-feat's jobs could not be read (this Python cannot read "
+                                 "espalier.toml (No module named 'tomllib'; it needs 3.11 or later))"), reason
+
+    def test_an_ignored_file_beside_a_held_job_never_advises_force(self, cs, repos, monkeypatch):
+        """The ignored-file line is reached before the seat's; its --force
+        advice, followed, strands the job as the reaper would. Dies to: the
+        advice kept when the seat holds claims or jobs (the failure-mode
+        review's drive)."""
+        work = repos["work"]
+        wt = _worktree(repos, "feat", "lane/feat")
+        _git(work, "config", "extensions.worktreeConfig", "true")
+        _git(wt, "config", "--worktree", "espalier.machine", "work-feat")
+        (wt / ".gitignore").write_bytes(b"run.log\n.gitignore\n")
+        (wt / "run.log").write_bytes(b"x\n")
+        held = [{"id": "j-1", "re": {"seat": "work-feat", "ids": ["DEF-2043"]}}]
+        monkeypatch.setattr(cs, "seat_live_mail", lambda root, seat, timeout: ([], held))
+        reason = dict(cs.reap_worktrees(work, sessions=[]).kept)["feat"]
+        assert "ignored file" in reason and "--force" not in reason, reason
+        assert ", and its seat work-feat holds 1 job from the dispatcher (DEF-2043)" in reason, reason
+        monkeypatch.setattr(cs, "seat_live_mail", lambda root, seat, timeout: ([], []))
+        reason = dict(cs.reap_worktrees(work, sessions=[]).kept)["feat"]
+        assert reason.endswith("then `git worktree remove --force` it"), reason
 
     def test_a_dispatcher_setting_that_does_not_read_keeps_the_worktree(self, cs, repos, tmp_path):
         """A broken dispatcher setting counts no assign (mail's fail-closed

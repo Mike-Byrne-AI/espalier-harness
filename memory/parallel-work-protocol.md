@@ -234,7 +234,7 @@ launcher did not start the handoff arms nothing and says the window needs a
      releases, refuses too, since the refs as last fetched miss a job given
      since; `--no-fetch` retires on them (2026-11-02). The
      SessionStart clean-up releases nothing: it keeps a worktree whose seat
-     still holds a live claim.
+     still holds a live claim or a live job from the dispatcher.
 6. **Change a record's format by expand, then contract.** Readers learn the new
    form while still reading the old; then writers switch; then the old form
    goes. Never a flag day while other lanes are open. win-2's derived-totals

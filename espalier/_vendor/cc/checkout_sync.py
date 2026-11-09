@@ -34,7 +34,8 @@ Two jobs, each touching nothing unless every safety condition holds:
   lock names a dead pid, every ignored file in it is a cache, a
   byte-identical copy of the root's, or session state saved first, no seat
   named for the worktree alone still holds a live claim on the mail channel
-  (only that name can release it), no process works in it, and **no live
+  (only that name can release it) or a live job from the dispatcher (only
+  that seat works it), no process works in it, and **no live
   session is in it**. A plan still open in it keeps a worktree with work in
   it, never a clean, merged one: that lane finished, and the removal names
   the plan that was never closed (DEF-4047). Liveness reads Claude Code's own
@@ -1891,22 +1892,32 @@ def _why_kept(git: _Git, block: dict[str, str], path: Path, upstream: str | None
                 f"keep what you need, then delete {them}"
                 + (f" ({_plural(others, 'other ignored file')} too)" if others else ""))
     if lost:
-        return (f"{_plural(len(lost), 'ignored file')} git status cannot see ({_names(lost)}); move what you "
-                "need, then `git worktree remove --force` it")
+        files = f"{_plural(len(lost), 'ignored file')} git status cannot see ({_names(lost)}); move what you need"
+        # A forced removal of a worktree whose seat holds claims or jobs
+        # strands them as the reaper would (DEF-2043): the seat's reason
+        # replaces the --force advice, so the banner never types the harm.
+        held = _seat_claims_kept(here, root)
+        return f"{files}, and {held}" if held else f"{files}, then `git worktree remove --force` it"
     return _seat_claims_kept(here, root)
 
 
 class JobsUnread(Exception):
-    """The dispatcher setting did not read, so the seat's jobs are not known."""
+    """The dispatcher setting did not read, so the seat's jobs are not known;
+    ``claims`` are the seat's live claims, read before it."""
+
+    def __init__(self, how: str, claims: list[dict]):
+        super().__init__(how)
+        self.claims = claims
 
 
 def seat_live_mail(root: Path, seat: str, timeout: float) -> tuple[list[dict], list[dict]]:
     """``(the live claims seat sent, the live jobs the dispatcher gave it)``,
     from one read of the mail channel's local refs (``mail.py``, a deployed
     sibling; nothing of either where it is not deployed). A dispatcher
-    setting that does not read raises :class:`JobsUnread`: the channel counts
-    no assign then (it fails closed for a worker), which would read here as no
-    job and let the worktree go."""
+    setting that does not read raises :class:`JobsUnread` carrying the claims:
+    the channel counts no assign then (it fails closed for a worker), which
+    would read here as no job and let the worktree go. So does a Python that
+    cannot read ``espalier.toml`` at all (no ``tomllib`` below 3.11)."""
     try:
         import mail
     except ImportError:
@@ -1916,22 +1927,33 @@ def seat_live_mail(root: Path, seat: str, timeout: float) -> tuple[list[dict], l
         if (Path(__file__).resolve().parent / "mail.py").is_file():
             raise
         return [], []  # fail-open: ok deliberate -- a deploy set without the channel has nothing to strand
-    dispatcher, how = mail.dispatcher_setting(root)
-    if dispatcher == mail.DISPATCHER_UNUSABLE:
-        raise JobsUnread(how)
     by_machine, _ = mail.read_mail(root, timeout=timeout)
     claims = [c for c in mail.live_claims(by_machine) if str(c.get("from") or "") == seat]
+    try:
+        dispatcher, how = mail.dispatcher_setting(root)
+    except ImportError as exc:
+        raise JobsUnread(f"this Python cannot read espalier.toml ({exc}; it needs 3.11 or later)", claims) from exc
+    if dispatcher == mail.DISPATCHER_UNUSABLE:
+        raise JobsUnread(how, claims)
     jobs = [j for j in mail.live_assignments(by_machine, dispatcher)
             if str((j.get("re") or {}).get(mail.ASSIGN_SEAT_KEY) or "") == seat]
     return claims, jobs
 
 
+def _words(value: object) -> str:
+    """A message field's strings, space-joined; a malformed field (not a
+    list of strings) reads as none, as the mail fold reads it."""
+    return " ".join(v for v in value if isinstance(v, str)) if isinstance(value, (list, tuple)) else ""
+
+
 def _job_name(job: dict) -> str:
     """A job as the board names it: its lane, else its ids, else its classes,
     else its message id's tail."""
-    re_ = job.get("re") or {}
-    return (str(re_.get("lane") or "") or " ".join(str(i) for i in re_.get("ids") or [])
-            or " ".join(str(c) for c in re_.get("classes") or []) or str(job.get("id") or "")[-6:])
+    re_ = job.get("re")
+    re_ = re_ if isinstance(re_, dict) else {}
+    lane = re_.get("lane")
+    return ((lane if isinstance(lane, str) else "") or _words(re_.get("ids")) or _words(re_.get("classes"))
+            or str(job.get("id") or "")[-6:])
 
 
 def _seat_claims_kept(here: _Git, root: Path) -> str:
@@ -1975,7 +1997,10 @@ def _seat_claims_kept(here: _Git, root: Path) -> str:
     try:
         claims, jobs = seat_live_mail(root, seat, timeout)
     except JobsUnread as e:
-        return f"its seat {seat}'s jobs could not be read ({_ascii(str(e))[:160]})"
+        unread = f"its seat {seat}'s jobs could not be read ({_ascii(str(e))[:160]})"
+        # The unread jobs lead, so retire (which goes on only past a reason
+        # opening "its seat <seat> holds") refuses: its own read counts no job then.
+        return unread + (f"; {_claims_words(seat, e.claims, '')}" if e.claims else "")
     except Exception as e:  # noqa: BLE001 -- fail-open: ok deliberate -- an unread claim list keeps the worktree, as an unread status does
         return f"its seat {seat}'s claims and jobs could not be read ({_ascii(os_error_text(e))[:120]})"
     if not claims and not jobs:
@@ -1983,17 +2008,25 @@ def _seat_claims_kept(here: _Git, root: Path) -> str:
     held = f"{_plural(len(jobs), 'job')} from the dispatcher ({_names([_job_name(j) for j in jobs])})"
     if not claims:
         return (f"its seat {seat} holds {held} and no claim: removed, nobody would work them. "
-                f"`python tools/cc/seat.py retire {seat} --return-jobs` hands them back and removes it, "
-                "or the dispatcher reassigns them, then it can go")
+                f"From the main checkout, `python tools/cc/seat.py retire {seat} --return-jobs` hands them back "
+                "and removes it, or once the dispatcher reassigns them it can go")
+    return _claims_words(seat, claims, held)
+
+
+def _claims_words(seat: str, claims: list[dict], held: str) -> str:
+    """The kept reason for a seat holding live claims, and ``held`` (the
+    jobs it also holds, worded) when it is not ''."""
     lanes = sorted({str((c.get("re") or {}).get("lane") or "no lane") for c in claims})
     ids = [str(c.get("id") or "") for c in claims if c.get("id")]
-    retire = (f"`python tools/cc/seat.py retire {seat} --return-jobs` releases them and returns the jobs"
-              if jobs else f"`python tools/cc/seat.py retire {seat}` releases them")
+    retire = (f"`python tools/cc/seat.py retire {seat} --return-jobs` releases them, returns the jobs"
+              if held else f"`python tools/cc/seat.py retire {seat}` releases them")
     return (f"its seat {seat} holds {_plural(len(claims), 'live claim')} ({_names(lanes)}) that only it can "
-            f"release" + (f" and {held}" if jobs else "") + f": {retire} from inside it and removes it, "
+            f"release" + (f" and {held}" if held else "")
+            + f": from the main checkout, {retire} and removes it, "
             "or in it, `python tools/cc/mail.py send --type release --ack <claim id>` for each"
             + (f" ({_names(ids)})" if ids else "")
-            + " (by id: a lane release reads as its lane shipped), then it can go")
+            + " (by id: a lane release reads as its lane shipped), then "
+            + ("the jobs still keep it until they go back" if held else "it can go"))
 
 
 # -- the banner's words ------------------------------------------------------------

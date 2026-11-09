@@ -248,6 +248,7 @@ def _seat_name(clone: str | None, path: Path, clone_unread: str = "") -> tuple[s
 CHANNEL_UNREAD = "the mail channel could not be read"
 FETCH_FAILED = "the mail fetch failed"
 FETCH_STALE = "; claims and jobs as last fetched"
+JOBS_UNCOUNTED = "no seat's jobs are counted"
 
 
 def _read_channel(root: Path, *, fetch: bool) -> tuple[list[dict], list[dict], str]:
@@ -263,7 +264,12 @@ def _read_channel(root: Path, *, fetch: bool) -> tuple[list[dict], list[dict], s
         else:
             note = "claims and jobs as last fetched (--no-fetch)"
         by_machine, _skipped = mail.read_mail(root, timeout=GIT_CAP_S)
-        dispatcher, _how = mail.dispatcher_setting(root)
+        dispatcher, how = mail.dispatcher_setting(root)
+        if dispatcher == mail.DISPATCHER_UNUSABLE:
+            # The fold counts no assign then: said, so a seat's "jobs: none"
+            # is not read as a seat holding none (retire refuses on the
+            # reaper's own verdict, which keeps a seat whose jobs did not read).
+            note = (f"{note}; " if note else "") + f"{JOBS_UNCOUNTED} ({how})"
         return mail.live_claims(by_machine), mail.live_assignments(by_machine, dispatcher), note
     except mail.Unresolvable as exc:
         return [], [], f"{CHANNEL_UNREAD} ({exc})"

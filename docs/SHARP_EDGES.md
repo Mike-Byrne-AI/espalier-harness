@@ -6337,7 +6337,7 @@ holds a live job from the dispatcher and no claim, a seat between lanes, naming 
 and `seat.py retire <seat> --return-jobs`; a dispatcher setting that does not read keeps
 it too. It does not release them itself: a release is a
 push to origin, and a claim nobody released usually marks work someone abandoned. A
-worktree removed by hand (`git worktree remove`) still strands its seat's claims.
+worktree removed by hand (`git worktree remove`) still strands its seat's claims and jobs.
 
 ## A runner's timeout is not a refusal of the action: read the remote back before saying nothing was sent
 
