@@ -24,7 +24,10 @@ regenerates the siblings around it, so the refusal names the file that lacks
 the name. ``tools/cc/ship.py`` loads this module by path and calls
 :func:`refuse_kept_siblings` under its ``__main__``, so a kept sibling of the
 ship driver is the same named refusal on stderr, never a traceback that names
-an attribute; ``session_start`` reads the same test for its loaded modules.
+an attribute. ``session_start`` does not read this test: it checks only what
+its pull-request block reads from ``tools/cc/_post_merge.py``, each name and
+the keywords it passes, against its own table
+(``session_start.py::_POST_MERGE_READS``, read by ``_post_merge_lacks``).
 
 It is also where a deny hook below the supported Python floor says so
 (:func:`refuse_below_floor`): the one module every deny hook reaches
