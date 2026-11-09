@@ -408,7 +408,7 @@ is read on its own, and one that cannot be read says so on its own line:
   one of its ledger ids clears the line, and so does that drop; a park naming
   no operator call says so, prints its drop and stays. Once the release and
   the stop's ack were sent, the board kept no link from the job to the call,
-  so at a ruling hours later nothing named the job to re-send (`DEF-2067`).
+  so at a ruling hours later nothing named the job to re-send.
 - **claims** and the ledger's live row count, counted at the base
   branch's remote-tracking ref with the base's own ledger tools and naming the
   commit it read, so a checkout that stops moving still reads what the base
