@@ -50,11 +50,13 @@ from espalier._safe_walk import safe_rglob, visible, is_own_git_repo as _is_own_
 from espalier._rmtree import remove_file
 from espalier._spawn import run_no_stdin
 from espalier._text import (
-    os_error_text, pin_utf8_streams, plural, program_word, quoted_if_spaced, windows_short_path,
+    forward_if_drive_rooted, is_drive_rooted, os_error_text, pin_utf8_streams, plural, program_word,
+    quoted_if_spaced, windows_short_path,
 )
 from espalier._venv import (
     entry_argv,
     exec_name_has_space,
+    glued_head,
     head_is_quoted,
     interpreter_site_quoted,
     interpreter_site_token,
@@ -9418,15 +9420,18 @@ def _swap_interpreter_token(command: str, new_name: str) -> str:
     The target brings its own quoting (DEF-4094, once that quoted spaced head
     was rewirable): ``new_name`` is read as a word and the launcher's flag
     (:func:`_target_words`), the old name's quotes go with it, and the word is
-    written double-quoted only when it holds whitespace -- a program word sh
-    and Git Bash take, and PowerShell refuses (driven on Windows 11; DEF-2063
-    holds the PowerShell reach of that spaced head, which DEF-2060's 8.3
-    short form cannot serve in a persisted command). ``"python3" x.py`` is
-    a PowerShell parse error (it runs a shell-form hook where Git Bash is
-    absent), ``"py -3"`` is a file no host has, and a bare spaced path is cut
-    by the shell (the DEF-636 absolute-path write arrives bare). Production
-    hands this ``python``, ``python3``, ``py -3`` or that absolute path, all
-    bare; a quoted target reaches it from the API and the tests alone.
+    spelled by :func:`_hook_head_word`: a drive-rooted Windows path with
+    forward slashes and only its spaced folders quoted, one word Git Bash and
+    PowerShell 5.1 both run (DEF-2063), any other path double-quoted when it
+    holds whitespace. A whole-path quote was the Windows spelling until then,
+    and PowerShell refuses it: ``"python3" x.py`` is a PowerShell parse error
+    (it runs a shell-form hook where Git Bash is absent). ``"py -3"`` is a
+    file no host has, and a bare spaced path is cut by the shell (the DEF-636
+    absolute-path write arrives bare). Production hands this ``python``,
+    ``python3``, ``py -3`` or that absolute path, all bare; a quoted target
+    reaches it from the API and the tests alone. A head this wrote is read
+    back by its span (:func:`~espalier._venv.glued_head`), since its quotes
+    sit inside the word.
     """
     head = interpreter_token(command)
     if not head:
@@ -9445,14 +9450,22 @@ def _swap_interpreter_token(command: str, new_name: str) -> str:
         start = shim_end
         if not old:
             return command
-    idx = command.find(old, start)
-    if idx < 0:  # unreachable via the token readers, but never corrupt on a surprise
-        return command
-    end = idx + len(old)
+    glued = glued_head(command[start:])
+    if glued is not None:
+        # This swap's own spaced Windows spelling (DEF-2063): the quotes sit
+        # inside the word, so the word is not a substring of the line and its
+        # span is read, not searched for.
+        idx, end = start + glued[1], start + glued[2]
+        quoted = False
+    else:
+        idx = command.find(old, start)
+        if idx < 0:  # unreachable via the token readers, but never corrupt on a surprise
+            return command
+        end = idx + len(old)
+        # The quotes around the old name, where a terminated quote put them (an
+        # unterminated one has no closing quote at `end`, and is declined upstream).
+        quoted = idx > 0 and command[idx - 1] in "\"'" and command[end:end + 1] == command[idx - 1]
     word, flags = _target_words(new_name)
-    # The quotes around the old name, where a terminated quote put them (an
-    # unterminated one has no closing quote at `end`, and is declined upstream).
-    quoted = idx > 0 and command[idx - 1] in "\"'" and command[end:end + 1] == command[idx - 1]
     if is_python_launcher(old):
         # A quoted launcher path (`"C:/Windows/py.exe" -3 x.py`) puts its
         # closing quote between the token and the flag; the flag is still the
@@ -9467,7 +9480,45 @@ def _swap_interpreter_token(command: str, new_name: str) -> str:
     if quoted:
         idx -= 1
         end += 1
-    return command[:idx] + " ".join([quoted_if_spaced(word), *flags]) + command[end:]
+    return command[:idx] + " ".join([_hook_head_word(word), *flags]) + command[end:]
+
+
+def _hook_head_word(word: str) -> str:
+    """``word``, an interpreter bare of quotes, spelled as the head of a
+    shell-form hook command written into ``settings.json`` (DEF-2063). That
+    line runs in Git Bash, or in Windows PowerShell where Git Bash is absent,
+    and must parse in both. A drive-rooted Windows path takes forward slashes,
+    since Git Bash drops an unquoted backslash; spaced, only each folder that
+    holds the space is quoted, so the word opens unquoted, which PowerShell
+    runs as a command, and stays one word, which bash reads with the quotes
+    removed (``C:/x/'Program Files (x86)'/py/python.exe``). Driven on Windows
+    11 through Git Bash and PowerShell 5.1, ``-File`` and ``-Command``, for
+    folders holding a space, ``(x86)``, ``&``, ``$`` and ``'``: a word that
+    opens with a quote is a string to PowerShell, ``& "<path>"`` a syntax error
+    to bash, a double-quoted ``$`` is expanded by bash, and a single quote
+    cannot hold a ``'``. So single quotes, double where a folder holds ``'``
+    and nothing double quotes expand, and otherwise the whole path
+    double-quoted as before, which bash runs. cmd.exe, which runs no hook,
+    reads the folder-quoted word wrong (driven). Any other path, POSIX among
+    them, is the double-quoted word when spaced, which the POSIX shells run.
+    The 8.3 short form serves a typed remedy, never this: a short name is one
+    volume's, and this line outlives the host it was written on."""
+    if not is_drive_rooted(word):
+        return quoted_if_spaced(word)
+    path = forward_if_drive_rooted(word)
+    if not any(ch.isspace() for ch in path):
+        return path
+    folders = []
+    for folder in path.split("/"):
+        if not any(ch.isspace() for ch in folder):
+            folders.append(folder)
+        elif "'" not in folder:
+            folders.append(f"'{folder}'")
+        elif not any(ch in folder for ch in '"$`'):
+            folders.append(f'"{folder}"')
+        else:
+            return quoted_if_spaced(path)
+    return "/".join(folders)
 
 
 def _target_words(target: str) -> tuple[str, list[str]]:

@@ -1921,3 +1921,99 @@ class TestARemedysProgramWordRunsInEveryShell:
             pytest.skip(f"8.3 names are off on this volume: {short}")
         assert not word.startswith('"') and "\\" not in word and " " not in word, word
         assert os.path.samefile(word, spaced)
+
+
+def _git_bash() -> "str | None":
+    """Git for Windows' own ``bash.exe`` (``<git root>/bin/bash.exe``, found
+    by walking up from the PATH ``git``, which is ``<git root>/cmd/git.exe``
+    or ``<git root>/mingw64/bin/git.exe``), never a PATH ``bash``: on Windows
+    that can be WSL's, which cannot run a ``C:/`` program."""
+    import shutil
+
+    git = shutil.which("git")
+    if not git:
+        return None
+    for root in list(Path(git).resolve().parents)[:3]:
+        candidate = root / "bin" / "bash.exe"
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+class TestAWindowsProgramWordHasForwardSlashes:
+    """DEF-2064: an unspaced Windows interpreter path kept its backslashes in a
+    typed remedy, and Git Bash read each as an escape, so ``C:\\Py\\python.exe``
+    ran as ``C:Pypython.exe``, a command that is not found (driven on Windows
+    11: PowerShell 5.1 and cmd run either slash, Git Bash only the forward
+    one). A drive-rooted program word is spelled with forward slashes; a copy
+    written into the adopter's tree keeps the path as spelled."""
+
+    UNSPACED = "C:\\Users\\a\\AppData\\Local\\Programs\\Python\\Python312\\python.exe"
+    SPACED = "C:\\Program Files\\Py\\python.exe"
+
+    def _only_this_interpreter_clears_the_floor(self, monkeypatch, exe):
+        import sys
+
+        from espalier import cli
+
+        monkeypatch.setattr(sys, "executable", exe)
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(cli, "_detect_python_command", lambda: "python")
+        monkeypatch.setattr(cli, "interpreter_meets_floor", lambda p: p == exe)
+        monkeypatch.setattr(cli, "windows_short_path", lambda p: None)
+        monkeypatch.setattr(cli, "_POWERSHELL_CALL_NOTE_SAID", False)
+        return cli
+
+    def test_the_probe_an_unspaced_remedy_holds_no_backslash(self, monkeypatch):
+        """The row's probe: ``_remedy_interpreter`` with an unspaced backslash
+        ``sys.executable`` on a faked ``win32``."""
+        cli = self._only_this_interpreter_clears_the_floor(monkeypatch, self.UNSPACED)
+        word, clears = cli._remedy_interpreter()
+        assert word == self.UNSPACED.replace("\\", "/")
+        assert clears is False
+
+    def test_a_spaced_path_with_no_short_form_is_quoted_with_forward_slashes(self, monkeypatch):
+        cli = self._only_this_interpreter_clears_the_floor(monkeypatch, self.SPACED)
+        assert cli._remedy_py() == '"C:/Program Files/Py/python.exe"'
+
+    @pytest.mark.parametrize("exe", [UNSPACED, SPACED], ids=["unspaced", "spaced"])
+    def test_a_persisted_copy_keeps_the_path_as_spelled(self, monkeypatch, exe):
+        cli = self._only_this_interpreter_clears_the_floor(monkeypatch, exe)
+        assert cli._remedy_py(persisted=True) == (f'"{exe}"' if " " in exe else exe)
+
+    @pytest.mark.parametrize("path", [
+        "/usr/bin/python3",
+        "python",
+        "\\\\server\\share\\python.exe",
+        "\\\\?\\C:\\Py\\python.exe",
+        "C:python.exe",
+        "1:\\Py\\python.exe",
+    ], ids=["posix", "name", "unc", "verbatim", "drive-relative", "digit-drive"])
+    def test_a_path_that_is_not_drive_rooted_is_unchanged(self, path):
+        from espalier._text import program_word
+
+        assert program_word(path, None) == path
+
+    @pytest.mark.skipif(__import__("sys").platform != "win32", reason="Git Bash is a Windows host's shell")
+    def test_git_bash_runs_the_spelled_interpreter(self, tmp_path):
+        """The oracle the row names: Git Bash itself, given the word each of
+        this host's interpreters (this one and the base it was made from, the
+        two differing under a venv) is spelled as. A backslash path reached it
+        with its separators dropped."""
+        import subprocess
+        import sys
+
+        from espalier._text import program_word, windows_short_path
+
+        bash = _git_bash()
+        if bash is None:
+            pytest.skip("no Git for Windows bash.exe beside git on PATH")
+        exes = dict.fromkeys(p for p in (sys.executable, getattr(sys, "_base_executable", None)) if p)
+        for exe in exes:
+            word = program_word(exe, windows_short_path)
+            script = tmp_path / "run.sh"
+            script.write_bytes(f"{word} -c 'print(4242)'\n".encode("utf-8"))
+            proc = subprocess.run(  # spawn: ok the row's oracle is the real Git Bash
+                [bash, "--noprofile", "--norc", str(script)],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+            assert "4242" in proc.stdout, (exe, word, proc.returncode, proc.stderr[-400:])

@@ -105,7 +105,55 @@ def interpreter_token(command: str) -> str:
     if cmd[:1] in ("'", '"'):
         end = cmd.find(cmd[0], 1)
         return cmd[1:end] if end > 0 else cmd[1:]
+    glued = glued_head(cmd)
+    if glued is not None:
+        return glued[0]
     return cmd.split(None, 1)[0]
+
+
+def glued_head(command: str) -> tuple[str, int, int] | None:
+    """The first word of a shell-form ``command`` that opens unquoted and holds
+    a quoted run, as the shell reads it: ``(the word, quotes removed, its start,
+    its end)``, indices into ``command`` as given; None for a head that opens
+    with a quote, holds none, or holds one that never closes.
+
+    This is the head the rewire writes for a spaced Windows interpreter
+    (DEF-2063): ``C:/x/'Program Files'/py/python.exe hook.py``, only the
+    spaced folder quoted, one word that Git Bash and Windows PowerShell 5.1
+    both run (driven on Windows 11, where a word that opens with a quote is a
+    string to PowerShell and ``&`` before it a syntax error to bash). Either
+    quote opens a run that the same quote closes, and whitespace inside a run
+    is the path's own; a backslash is a character, never an escape (a Windows
+    path's separator). An unterminated run reads None, so every reader keeps
+    its first-word reading and the rewire declines that head as before. Twin of
+    ``tools/cc/hooks/session_start.py::_glued_head``, pinned equal by
+    ``tests/test_hook_entry_argv.py``.
+    """
+    text = command or ""
+    start = len(text) - len(text.lstrip())
+    if start >= len(text) or text[start] in ("'", '"'):
+        return None
+    word: list[str] = []
+    quote = ""
+    seen = False
+    i = start
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == quote:
+                quote = ""
+            else:
+                word.append(ch)
+        elif ch in ("'", '"'):
+            quote, seen = ch, True
+        elif ch.isspace():
+            break
+        else:
+            word.append(ch)
+        i += 1
+    if not seen or quote:
+        return None
+    return "".join(word), start, i
 
 
 def head_is_quoted(command: str) -> bool:
@@ -121,11 +169,13 @@ def head_is_quoted(command: str) -> bool:
     The closing quote must end the word: glued to the next one
     (``"/x y/python3"x.py``) the shell reads one word with the quotes removed,
     a file no host has, so it reads False and stays declined as before
-    (failure-mode review).
+    (failure-mode review). A head that opens unquoted and holds a quoted run
+    that closes (:func:`glued_head`, the rewire's spaced Windows spelling,
+    DEF-2063) is one word to the shell too, and reads True.
     """
     cmd = (command or "").strip()
     if cmd[:1] not in ("'", '"'):
-        return False
+        return glued_head(cmd) is not None
     end = cmd.find(cmd[0], 1)
     return end > 0 and (end + 1 == len(cmd) or cmd[end + 1].isspace())
 
@@ -158,7 +208,9 @@ def entry_argv(command: object, args: object = None) -> tuple[str, list]:
     if cmd[:1] in ("'", '"'):
         end = cmd.find(cmd[0], 1)
         return head, (cmd[end + 1:].split() if end > 0 else [])
-    return (os.path.expanduser(head) if head.startswith("~") else head), cmd.split()[1:]
+    glued = glued_head(cmd)
+    rest = cmd[glued[2]:].split() if glued is not None else cmd.split()[1:]
+    return (os.path.expanduser(head) if head.startswith("~") else head), rest
 
 
 def names_a_python(token: str) -> bool:
@@ -208,11 +260,12 @@ def shell_cut_path(command: str) -> str | None:
     a Python (not a ``.py``/``.sh`` script), where argv[0] is a path that is
     not a file. The rewire must DECLINE such an entry: swapping the cut word
     wrote ``python Envs/py312/bin/python3 ...``, which exits 2 -- a block on
-    every tool call (failure-mode review, driven). Twin of
+    every tool call (failure-mode review, driven). A head holding a quoted run
+    that closes (:func:`glued_head`, DEF-2063) is one word, never cut. Twin of
     ``tools/cc/hooks/session_start.py::_shell_cut_path``.
     """
     cmd = command.strip() if isinstance(command, str) else ""
-    if not cmd or cmd[:1] in ("'", '"'):
+    if not cmd or cmd[:1] in ("'", '"') or glued_head(cmd) is not None:
         return None
     words = cmd.split()
     head = os.path.expanduser(words[0]) if words[0].startswith("~") else words[0]

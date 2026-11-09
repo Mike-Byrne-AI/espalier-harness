@@ -109,6 +109,16 @@ ENTRIES = [
     ("shell-tilde", "~/venv/bin/python x.py", None, os.path.expanduser("~/venv/bin/python"), ["x.py"]),
     ("shell-tilde-quoted", '"~/venv/bin/python" x.py', None, "~/venv/bin/python", ["x.py"]),
     ("exec-launcher-in-command", "py -3", ["x.py"], "py -3", ["x.py"]),
+    # DEF-2063: the rewire's spaced Windows head, only its spaced folder
+    # quoted; one word to the shell, read with its quotes removed.
+    ("shell-folder-single-quoted", "C:/'Program Files'/Py/python.exe x.py -u", None,
+     "C:/Program Files/Py/python.exe", ["x.py", "-u"]),
+    ("shell-folder-double-quoted", 'C:/"it\'s here"/Py/python.exe x.py', None,
+     "C:/it's here/Py/python.exe", ["x.py"]),
+    ("shell-folder-quote-unterminated", "C:/'Program Files/Py/python.exe x.py", None,
+     "C:/'Program", ["Files/Py/python.exe", "x.py"]),
+    ("exec-folder-quoted-is-the-file-name", "C:/'Program Files'/python.exe", ["x.py"],
+     "C:/'Program Files'/python.exe", ["x.py"]),
 ]
 
 
@@ -167,6 +177,8 @@ SHELL_COMMANDS = [
     ("/usr/bin/python3 /opt/my dir/python_hook.py", None),
     ("/opt/hooks dir/python_hook.py", None),
     ("node x.js", None),
+    ("C:/'Program Files'/Python312/python.exe x.py", None),
+    ("C:/'Program Files/Python312/python.exe x.py", "C:/'Program Files/Python312/python.exe"),
 ]
 
 

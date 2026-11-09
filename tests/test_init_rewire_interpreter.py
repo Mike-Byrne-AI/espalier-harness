@@ -480,7 +480,7 @@ class TestAQuotedHeadIsOneWordToItsShell:
         pytest.param("python3 x.py", "/a b/python3", '"/a b/python3" x.py', id="bare-old-bare-spaced-target"),
         pytest.param("python3 x.py", '"/a b/python3"', '"/a b/python3" x.py', id="bare-old-quoted-spaced-target"),
         pytest.param("python3 x.py", "py -3", "py -3 x.py", id="bare-old-launcher-target"),
-        pytest.param("python3 x.py", '"C:/Program Files/py.exe" -3', '"C:/Program Files/py.exe" -3 x.py',
+        pytest.param("python3 x.py", '"C:/Program Files/py.exe" -3', "C:/'Program Files'/py.exe -3 x.py",
                      id="bare-old-quoted-launcher-path-target"),
         pytest.param('. "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" "/x y/python3"', "python3",
                      '. "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" python3', id="dotted-shim-quoted-old-bare-target"),
@@ -493,9 +493,11 @@ class TestAQuotedHeadIsOneWordToItsShell:
     ])
     def test_the_swap_quotes_the_target_as_the_site_does(self, command, target, expected):
         """The target brings its own quoting: the old name's quotes go with
-        it, a word is double-quoted only when it holds whitespace (the one
-        quoting sh, Git Bash and PowerShell all take; `"python3" x.py` is a
-        PowerShell parse error), and the launcher's flag follows the word bare.
+        it, a word is quoted only when it holds whitespace (a POSIX path
+        double-quoted, which sh and Git Bash take; a drive-rooted Windows path
+        quoted folder by folder, DEF-2063, since PowerShell refuses a word that
+        opens with a quote and `"python3" x.py` is its parse error), and the
+        launcher's flag follows the word bare.
         Production targets arrive bare (`python`, `python3`, `py -3`, the
         DEF-636 absolute path); the quoted ones are the API's and this table's.
         Before this a bare old name took a spaced target bare, the shape the
@@ -624,6 +626,121 @@ class TestAQuotedHeadIsOneWordToItsShell:
         assert shape.quoted is False, shape
         assert not cli._is_rewirable_interpreter(
             shape.argv[0], exec_form=shape.exec_form, cut=shape.cut, quoted=shape.quoted)
+
+
+#: (target, the swapped shell-form command, id): one row per spelling the
+#: head writer chooses (DEF-2063).
+_WINDOWS_HEADS = [
+    ("C:/Program Files/Py/python.exe", "C:/'Program Files'/Py/python.exe x.py", "single-quoted-folder"),
+    ("C:\\Program Files (x86)\\Py\\python.exe", "C:/'Program Files (x86)'/Py/python.exe x.py",
+     "backslashes-turned-x86-folder"),
+    ("C:\\Users\\a\\Python311\\python.exe", "C:/Users/a/Python311/python.exe x.py", "unspaced-forward-slashes"),
+    ("C:/it's here/Py/python.exe", "C:/\"it's here\"/Py/python.exe x.py", "double-quoted-folder-holding-a-quote"),
+    ("C:/it's $x/Py/python.exe", "\"C:/it's $x/Py/python.exe\" x.py", "whole-path-fallback"),
+    ("/home/a b/bin/python3", "\"/home/a b/bin/python3\" x.py", "posix-path-whole-quoted"),
+]
+
+
+class TestASpacedWindowsHeadRunsInBothHookShells:
+    """DEF-2063: a shell-form hook rewired to a spaced interpreter opened with
+    a double-quoted word, which Windows PowerShell 5.1 reads as a string and
+    refuses, so the hook never parsed where Git Bash is absent; ``& "<path>"``,
+    PowerShell's own answer, is a syntax error to bash. A drive-rooted head is
+    now written with forward slashes and only its spaced folders quoted, one
+    word both shells run (driven on Windows 11 for folders holding a space,
+    ``(x86)``, ``&``, ``$`` and ``'``), and every reader of the head reads that
+    word back, so doctor and a second rewire see the path the first wrote."""
+
+    @pytest.mark.parametrize("target,expected", [r[:2] for r in _WINDOWS_HEADS], ids=[r[2] for r in _WINDOWS_HEADS])
+    def test_the_swap_spells_the_head_for_both_hook_shells(self, target, expected):
+        assert cli._swap_interpreter_token("python x.py", target) == expected
+
+    def test_the_probe_a_spaced_target_no_longer_opens_with_a_quote(self):
+        """The row's probe."""
+        assert cli._swap_interpreter_token("python tools/cc/hooks/a.py", "C:/Program Files/Py/python.exe")[:1] != '"'
+
+    @pytest.mark.parametrize("target", [r[0] for r in _WINDOWS_HEADS], ids=[r[2] for r in _WINDOWS_HEADS])
+    def test_the_written_head_reads_back_and_rewires_again(self, tmp_path, monkeypatch, target):
+        """air's edge (ack c76dfb): the round trip per quote form. The rewire
+        writes the head, the readers (the rewire walk, doctor's ``_wired_entry``
+        and the hook-side twin) read the same path back as one word, and a
+        second rewire replaces it whole with every argument kept."""
+        from tests.test_hook_entry_argv import _session_start
+
+        written = target.replace("\\", "/") if target[1:2] == ":" else target
+        later = "C:/Other Dir/python.exe"
+        passing = {target}
+        monkeypatch.setattr(cli, "interpreter_meets_floor", lambda p: p in passing)
+        monkeypatch.setattr(cli, "start_unconfirmed_of", lambda p: None)
+        monkeypatch.setattr(cli, "banner_unanswered_of", lambda p: None)
+        path = tmp_path / ".claude" / "settings.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"hooks": {"SessionStart": [{"hooks": [
+            {"type": "command", "command": "python tools/cc/hooks/session_start.py --tag a"}]}]}}),
+            encoding="utf-8")
+
+        first = cli.rewire_interpreter_in_settings(path, new_interpreter=target)
+        assert first.status == cli.REWIRE_DONE, first
+        command = json.loads(path.read_text(encoding="utf-8"))["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+        rest = ["tools/cc/hooks/session_start.py", "--tag", "a"]
+        assert _venv.entry_argv(command) == (written, rest), command
+        assert _session_start()._entry_argv(command) == (written, rest), command
+        assert _venv.shell_cut_path(command) is None, command
+        entry = cli._wired_entry({"type": "command", "command": command}, ["x.py"])
+        assert entry.argv[0] == written, entry
+        assert cli._is_rewirable_interpreter(entry.argv[0], exec_form=entry.exec_form, cut=entry.cut,
+                                             quoted=entry.quoted), entry
+
+        passing = {later}
+        second = cli.rewire_interpreter_in_settings(path, new_interpreter=later)
+        assert second.status == cli.REWIRE_DONE, second
+        again = json.loads(path.read_text(encoding="utf-8"))["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+        assert again == "C:/'Other Dir'/python.exe tools/cc/hooks/session_start.py --tag a", again
+
+    @pytest.mark.parametrize("command,glued", [
+        pytest.param("C:/x/'a b'/python.exe y", ("C:/x/a b/python.exe", 0, 21), id="single"),
+        pytest.param('  C:/x/"a b"/python.exe y', ("C:/x/a b/python.exe", 2, 23), id="double-padded"),
+        pytest.param("C:/x/'a b/python.exe y", None, id="unterminated"),
+        pytest.param("'C:/x/a b/python.exe' y", None, id="opens-with-a-quote"),
+        pytest.param("C:/x/python.exe y", None, id="no-quote"),
+        pytest.param("C:\\x\\'a b'\\python.exe", ("C:\\x\\a b\\python.exe", 0, 21), id="backslash-is-a-character"),
+        pytest.param("", None, id="empty"),
+    ])
+    def test_the_glued_head_reads_alike_in_both_copies(self, command, glued):
+        from tests.test_hook_entry_argv import _session_start
+
+        assert _venv.glued_head(command) == glued
+        assert _session_start()._glued_head(command) == glued
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="the two hook shells of a Windows host")
+    @pytest.mark.parametrize("folder", ["Pro gram (x86)", "it's here"], ids=["single-quoted", "double-quoted"])
+    def test_git_bash_and_powershell_run_the_written_line(self, tmp_path, folder):
+        """The oracle the row names, on the host that runs the hook: a venv
+        under a spaced folder, the head this swap writes for it, and the line
+        run by Git Bash and by Windows PowerShell 5.1 (``-Command``). cmd.exe
+        runs no hook and is not asked."""
+        import subprocess
+        import venv
+
+        from tests.test_cli import _git_bash
+
+        root = tmp_path / folder / "v"
+        venv.EnvBuilder(with_pip=False).create(str(root))
+        script = tmp_path / "mark.py"
+        script.write_bytes(b"print('MARK-OK')\n")
+        line = cli._swap_interpreter_token("python x.py", str(root / "Scripts" / "python.exe")).replace(
+            "x.py", script.as_posix())
+        assert line[:1] != '"', line
+        shells = [["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", line]]
+        bash = _git_bash()
+        if bash is not None:
+            run_sh = tmp_path / "run.sh"
+            run_sh.write_bytes((line + "\n").encode("utf-8"))
+            shells.append([bash, "--noprofile", "--norc", str(run_sh)])
+        for argv in shells:
+            proc = subprocess.run(  # spawn: ok the row's oracle is the real hook shell
+                argv, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+            assert "MARK-OK" in proc.stdout, (argv[0], line, proc.returncode, proc.stderr[-400:])
 
 
 class TestTheLauncherRewiresWithItsFlag:

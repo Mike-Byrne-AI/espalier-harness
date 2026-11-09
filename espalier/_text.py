@@ -77,17 +77,22 @@ def quoted_if_spaced(path: str) -> str:
 def program_word(path: str, short_path: Callable[[str], str | None] | None) -> str:
     """``path`` spelled as the PROGRAM word of a command the reader will type,
     given ``short_path``, a lookup of the path's 8.3 short form (None where
-    the host has none). Unspaced, it is unchanged. Spaced, its short form with
-    forward slashes when that holds no whitespace: one bare word that Windows
-    PowerShell 5.1, cmd and Git Bash all run (driven on Windows 11; a backslash
-    is an escape to bash, a quoted first word a string to PowerShell, so
-    neither of those spellings serves all three, DEF-2060). Else, with no short
-    form or one that still holds a space (8.3 names off on that volume), the
-    double-quoted path, which cmd and the POSIX shells run and PowerShell needs
-    ``&`` before: the caller says so once a run. Pure text: the lookup is a
-    parameter, so the Windows call stays out of it."""
+    the host has none). A drive-rooted Windows path is spelled with forward
+    slashes however it is spaced (DEF-2064): Git Bash reads an unquoted
+    backslash as an escape and drops it, so ``C:\\Py\\python.exe`` reached it
+    as ``C:Pypython.exe``, while PowerShell 5.1 and cmd run either slash
+    (driven on Windows 11). Unspaced, that is the whole change; any other path
+    is unchanged. Spaced, its short form with forward slashes when that holds
+    no whitespace: one bare word that Windows PowerShell 5.1, cmd and Git Bash
+    all run (a quoted first word is a string to PowerShell, DEF-2060). Else,
+    with no short form or one that still holds a space (8.3 names off on that
+    volume), the double-quoted path, which cmd and the POSIX shells run and
+    PowerShell needs ``&`` before: the caller says so once a run. Pure text:
+    the lookup is a parameter, so the Windows call stays out of it. A command
+    written into the adopter's tree never comes here: it keeps the path as
+    spelled (``cli._remedy_program_word``'s ``persisted``)."""
     if not any(ch.isspace() for ch in path):
-        return path
+        return forward_if_drive_rooted(path)
     short = short_path(path) if short_path is not None else None
     if short:
         word = short.replace("\\", "/")
@@ -97,10 +102,24 @@ def program_word(path: str, short_path: Callable[[str], str | None] | None) -> s
         # UNC or `\\?\` form does not run with forward slashes.
         if _PLAIN_PROGRAM_WORD.fullmatch(word):
             return word
-    return quoted_if_spaced(path)
+    return quoted_if_spaced(forward_if_drive_rooted(path))
 
 
 _PLAIN_PROGRAM_WORD = re.compile(r"[A-Za-z]:/[A-Za-z0-9_.~+/-]+")
+
+
+def forward_if_drive_rooted(path: str) -> str:
+    """``path`` with forward slashes when it is drive-rooted (``C:\\`` or
+    ``C:/``, an ASCII drive letter), else unchanged (DEF-2064). A UNC or
+    ``\\\\?\\`` form does not run with forward slashes, and a POSIX path has
+    no backslash separator to turn."""
+    return path.replace("\\", "/") if is_drive_rooted(path) else path
+
+
+def is_drive_rooted(path: str) -> bool:
+    """Does ``path`` open with an ASCII drive letter, a colon and either
+    slash (``C:\\`` or ``C:/``)?"""
+    return len(path) >= 3 and path[0].isascii() and path[0].isalpha() and path[1] == ":" and path[2] in "\\/"
 
 
 def windows_short_path(path: str) -> str | None:

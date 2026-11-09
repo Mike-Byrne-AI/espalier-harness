@@ -188,16 +188,19 @@ def program_word(path: str, short_path: "Callable[[str], str | None] | None") ->
     given ``short_path``, a lookup of the path's 8.3 short form (None where the
     host has none). The hooks' twin of ``espalier/_text.py::program_word``
     (DEF-2062; tools/cc cannot import the engine), pinned to it by
-    ``tests/test_json_safe_program_word.py``. Unspaced, it is unchanged. Spaced,
-    its short form with forward slashes when that is a drive-rooted word of
-    plain characters: one bare word that Windows PowerShell 5.1, cmd and Git
-    Bash all run (DEF-2060). Else the double-quoted path, which cmd and the
-    POSIX shells run and PowerShell needs ``&`` before: a seen hook message says
-    so through ``_hook_utils.powershell_call_note`` (ack 2e78b5), and a stderr
-    line of an exit-0 hook takes no note, since nothing reads it. Pure text:
-    the lookup is a parameter."""
+    ``tests/test_json_safe_program_word.py``. A drive-rooted Windows path is
+    spelled with forward slashes however it is spaced (DEF-2064): Git Bash
+    drops an unquoted backslash as an escape, while PowerShell 5.1 and cmd run
+    either slash. Unspaced, that is the whole change. Spaced, its short form
+    with forward slashes when that is a drive-rooted word of plain characters:
+    one bare word that Windows PowerShell 5.1, cmd and Git Bash all run
+    (DEF-2060). Else the double-quoted path, which cmd and the POSIX shells run
+    and PowerShell needs ``&`` before: a seen hook message says so through
+    ``_hook_utils.powershell_call_note`` (ack 2e78b5), and a stderr line of an
+    exit-0 hook takes no note, since nothing reads it. Pure text: the lookup is
+    a parameter."""
     if not any(ch.isspace() for ch in path):
-        return path
+        return forward_if_drive_rooted(path)
     short = short_path(path) if short_path is not None else None
     if short:
         word = short.replace("\\", "/")
@@ -206,7 +209,18 @@ def program_word(path: str, short_path: "Callable[[str], str | None] | None") ->
         # does not run with forward slashes (driven for DEF-2060).
         if _is_plain_program_word(word):
             return word
-    return quoted_if_spaced(path)
+    return quoted_if_spaced(forward_if_drive_rooted(path))
+
+
+def forward_if_drive_rooted(path: str) -> str:
+    """``path`` with forward slashes when it is drive-rooted (``C:\\`` or
+    ``C:/``, an ASCII drive letter), else unchanged: the twin of
+    ``espalier/_text.py::forward_if_drive_rooted`` (DEF-2064). A UNC or
+    ``\\\\?\\`` form does not run with forward slashes, and a POSIX path has no
+    backslash separator to turn."""
+    if len(path) >= 3 and path[0].isascii() and path[0].isalpha() and path[1] == ":" and path[2] in "\\/":
+        return path.replace("\\", "/")
+    return path
 
 
 _PLAIN_WORD_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.~+/-")
