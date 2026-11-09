@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2062",
+ "subject": "tools/cc/hooks/_hook_utils.py",
+ "cmd": "python3 -c \"import sys;sys.path.insert(0,'tools/cc/hooks');import _hook_utils as h;sys.executable='C:/Program Files/Py/python.exe';h.interpreter_meets_floor=lambda p:p==sys.executable;w=h.python_command_hint();print(' ' in w and w[:1]!=chr(34))\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "2061cfe52ae0",
+ "text_sha": "dc4aa2fc1a3c",
+ "verified_2026_11_08": "OPEN (filed 2026-11-08; probe driven at filing here and in the export of HEAD 28451b2909bd)"
+}
