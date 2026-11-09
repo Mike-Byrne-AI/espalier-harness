@@ -395,6 +395,8 @@ _BACKTICK_TOKEN_RE = re.compile(r"`([^`\s]+)`")
 def _path_shaped(tok: str) -> bool:
     if "…" in tok or "..." in tok:            # illustrative truncation, not a real path
         return False
+    if any(ch in tok for ch in "*?["):        # a wildcard operand (`tools/*`), never a literal zone prefix
+        return False
     return "/" in tok and not tok.startswith("/")   # leading-slash-only => slash-command
 
 

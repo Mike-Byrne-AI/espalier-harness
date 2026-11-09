@@ -14810,6 +14810,7 @@ class TestEverySpanReadDecidesTheQuotedOperandCut:
         ("_bash_pipeline_reading", "_named_span", "verb"): "the remove verb",
         ("_bash_loop_reading", "_named_span", "verb"): "the remove verb",
         ("_bash_loop_reading", "_named_span", "vars"): "the loop variable names",
+        ("files_only_removed_operands", "_named_span", "verb"): "the word-list loop's remove verb",
         ("_loop_head_reading", "_named_span", "head"): "the enumerator head",
         ("_directory_chain", "raw_span", "1"): "the quoted cd target, read by offset (the wrapper-closer lane)",
         ("_ps_dotnet_sweeps", "raw_span", "2"): ".NET call arguments, not a shell span",
