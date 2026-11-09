@@ -15,8 +15,9 @@ Every machine's messages on the remote-tracking mail refs, fetched first
 (``--no-fetch`` reads what is here), as ``tools/cc/mail.py::read_mail`` folds
 them for the board; the merged pull requests ``gh pr list`` gives; the Session
 Log fragment names in the folder ``tools/cc/_record_fragments.py`` names, read
-by name from ``origin/<base>``, HEAD, the records refs' parked rows and the
-fold's prunes (``read_session_log``), never the working tree. A
+by name from ``origin/<base>``, HEAD, the records refs' parked rows, the
+fold's prunes and the open pull requests' heads (``read_session_log``), never
+the working tree. A
 fixture (``--fixture``) is a frozen copy of the same, the fields this reads and
 no message prose. A read that failed is said in every form of the output, the
 row and the JSON included, never printed as a zero.
@@ -63,11 +64,12 @@ Per seat per UTC day in ``[since, until)``, one row:
   checkout as of its last SessionStart). The names are the base's tree,
   HEAD's (the reading seat's own rows riding its lane), the parked rows the
   base does not hold (``tools/cc/mail.py::pending``) and the rows the fold's
-  prunes took off the base (``tools/cc/_record_fragments.py::pruned_rows_argv``),
-  the reads the board's records line makes; one name in two places is one
-  row. A name's date is its writer's local day, and another seat's row riding
-  its own open pull request is in none of the four; the report says both, and
-  the oldest day read. The base read failing is unread, never a zero; another
+  prunes took off the base (``tools/cc/_record_fragments.py::pruned_rows_argv``)
+  and the rows riding the open pull requests, each head's own seat's
+  (``riding_rows``), the reads the board's records line makes; one name in
+  two places is one row. A name's date is its writer's local day, and a row
+  deleted by hand before the fold's trailer is read only where a stale HEAD
+  still holds it; the report says both, and the oldest day read. The base read failing is unread, never a zero; another
   read failing makes the count a floor, said beside it.
 * **under two**: the tick slots -- the dispatcher's loop interval, read from
   ``tools/cc/seat.py::DISPATCHER_TICK``'s own ``/loop <n>m`` line
@@ -180,7 +182,9 @@ START_RE = re.compile(r"\bSTART\b")
 RULES = ("claim", "lane", "ack")
 #: The merged pull requests' read limit; the read's argv spells it.
 GH_LIMIT = 200
-#: Each git read's bound, in seconds: the fetches, the tree and history reads.
+#: The bound, in seconds, of each read this module spawns itself (the base fetch, the tree and history
+#: reads, the open pull requests' list and heads); ``mail.fetch_records`` and ``mail.pending`` keep the
+#: mail driver's own.
 GIT_TIMEOUT = 60.0
 DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -294,19 +298,26 @@ def read_live(repo: Path, fetch: bool) -> dict:
             out["merged_note"] = f"gh pr list failed: {(gh.stderr or '').strip()[:200]}"
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         out["merged"], out["merged_note"] = None, f"gh pr list could not run: {exc}"
-    out["session_log"], out["session_log_note"] = read_session_log(repo, fetch)
+    out["session_log"], out["session_log_note"] = read_session_log(repo, fetch, by_machine=by_machine)
     return out
 
 
+def _one_line(text: object, limit: int = 200) -> str:
+    """``text`` as one line, cut at ``limit``: a git or gh message runs to
+    several lines, and a note rides the one-line day row (``--as-row``)."""
+    return " ".join(str(text).split())[:limit]
+
+
 def _git_names(repo: Path, rev: str, run_) -> list[str]:
-    """The Session Log names in ``rev``'s tree (``git ls-tree``): a commit's
-    tree, never a working tree. A failed read raises the channel's
+    """The Session Log names in ``rev``'s tree (``git ls-tree --full-tree``, so
+    a ``--repo`` aimed below the top reads the same paths): a commit's tree,
+    never a working tree. A failed read raises the channel's
     ``Unresolvable``, never no names."""
     directory = _fragments().SESSION_LOG_DIR
-    rc, out, err = run_(["git", "ls-tree", "--name-only", rev, "--", directory + "/"], cwd=str(repo),
-                        timeout=GIT_TIMEOUT, env=_mail().git_env())
+    rc, out, err = run_(["git", "ls-tree", "--full-tree", "--name-only", rev, "--", directory + "/"],
+                        cwd=str(repo), timeout=GIT_TIMEOUT, env=_mail().git_env())
     if rc != 0:
-        raise _mail().Unresolvable(f"git ls-tree {rev} failed (rc={rc}): {(err or out).strip()[:120] or 'nothing'}")
+        raise _mail().Unresolvable(f"git ls-tree {rev} failed (rc={rc}): {_one_line(err or out, 120) or 'nothing'}")
     return out.splitlines()
 
 
@@ -322,24 +333,65 @@ def _pruned_names(repo: Path, base: str, run_) -> list[str]:
     rc, out, err = run_(["git", *frag.pruned_rows_argv(f"origin/{base}")], cwd=str(repo), timeout=GIT_TIMEOUT,
                         env=env)
     if rc != 0:
-        raise _mail().Unresolvable(f"git log origin/{base} failed (rc={rc}): {(err or out).strip()[:120] or 'nothing'}")
+        raise _mail().Unresolvable(f"git log origin/{base} failed (rc={rc}): {_one_line(err or out, 120) or 'nothing'}")
     return frag.pruned_rows_from(out)
 
 
-def read_session_log(repo: Path, fetch: bool, *, run_=None) -> tuple[list[str] | None, str]:
+def _riding_names(repo: Path, by_machine: dict, fetch: bool, run_) -> tuple[list[str], list[str]]:
+    """``(names, notes)``: the Session Log names riding the open pull requests,
+    each head's own seat's alone, by the loader's rule the board and the ship
+    driver read (``_record_fragments.py::riding_rows`` over ``lane_seat`` and
+    ``mail.lane_seats``: a head carries the base's rows as of its branch point
+    too, which are not riding). A head that is not here is fetched by object
+    id where ``fetch`` allows (it lands objects and moves no ref), else a note,
+    and the count is a floor. The list read failing raises ``Unresolvable``."""
+    mail, frag = _mail(), _fragments()
+    rc, out, err = run_(["gh", "pr", "list", "--state", "open", "--limit", str(GH_LIMIT), "--json",
+                         "number,headRefName,headRefOid,labels"], cwd=str(repo), timeout=GIT_TIMEOUT)
+    if rc != 0:
+        raise mail.Unresolvable(f"gh pr list --state open failed: {_one_line(err or out, 120) or f'rc={rc}'}")
+    try:
+        prs = json.loads(out)
+    except ValueError:
+        raise mail.Unresolvable("gh pr list --state open answered no JSON") from None
+    if not isinstance(prs, list):
+        raise mail.Unresolvable("gh pr list --state open answered no list")
+    seat_of = mail.lane_seats(by_machine)
+    heads: list[tuple[str, list[str]]] = []
+    notes: list[str] = []
+    for pr in prs:
+        oid = str(pr.get("headRefOid") or "") if isinstance(pr, dict) else ""
+        seat = frag.lane_seat(pr, seat_of)
+        if not oid or not seat:
+            continue
+        rc, _o, _e = run_(["git", "cat-file", "-e", f"{oid}^{{commit}}"], cwd=str(repo), timeout=GIT_TIMEOUT,
+                          env=mail.git_env())
+        if rc != 0 and fetch:
+            rc, _o, _e = run_(["git", "fetch", "--quiet", "origin", oid], cwd=str(repo), timeout=GIT_TIMEOUT,
+                              env=mail.git_env())
+        if rc != 0:
+            notes.append(f"#{pr.get('number')}'s head is not here, so its riding rows are unread and the count is "
+                         "a floor")
+            continue
+        heads.append((seat, _git_names(repo, oid, run_)))
+    return frag.riding_rows(heads), notes
+
+
+def read_session_log(repo: Path, fetch: bool, *, by_machine: dict | None = None,
+                     run_=None) -> tuple[list[str] | None, str]:
     """``(names, note)``: the Session Log fragment names a seat wrote, read by
-    name from four places, never from the working tree (``DEF-4046``: a glob of
+    name from five places, never from the working tree (``DEF-4046``: a glob of
     the checkout missed a row parked on a records ref, and the dispatcher's main
     checkout catches up only at SessionStart, so it read a stale tree) --
     ``origin/<base>``'s tree; HEAD's, which holds the reading seat's own rows
     riding its lane (the dispatcher writes its day row on that lane); the rows
     parked on the records refs and not yet folded (``mail.pending``, the
-    board's read); and the rows the fold's prunes took off the base. The same
-    name in two places is one row. The base read failing is ``None``, said as
-    unread; any other failing is a note beside the count, which is then a
-    floor; a fetch that failed is a note too (the refs as last fetched).
-    Another seat's row riding its own open pull request is in none of the
-    four, and the report's note says so."""
+    board's read); the rows the fold's prunes took off the base; and the rows
+    riding the open pull requests, each its own seat's (``_riding_names``,
+    which reads ``by_machine``'s claims). The same name in two places is one
+    row. The base read failing is ``None``, said as unread; any other failing
+    is a note beside the count, which is then a floor; a fetch that failed is
+    a note too (the refs as last fetched). Every note is one line."""
     mail, frag = _mail(), _fragments()
     run_ = run_ or mail.run
     base = _merge_rules().base_branch(repo, cap=GIT_TIMEOUT)
@@ -350,25 +402,34 @@ def read_session_log(repo: Path, fetch: bool, *, run_=None) -> tuple[list[str] |
         try:
             rc, out, err = run_(["git", "fetch", "--quiet", "origin", base], cwd=str(repo), timeout=GIT_TIMEOUT,
                                 env=mail.git_env())
-            fetched = (rc == 0, (err or out).strip()[-160:] or f"rc={rc}")
+            fetched = (rc == 0, _one_line(err or out, 160) or f"rc={rc}")
         except mail.Unresolvable as exc:
-            fetched = (False, str(exc)[:160])
+            fetched = (False, _one_line(exc, 160))
         for what, (ok, problem) in ((f"origin/{base}", fetched), ("the records refs", mail.fetch_records(repo, run=run_))):
             if not ok:
-                notes.append(f"{what} as last fetched (the fetch failed: {problem})")
+                notes.append(f"{what} as last fetched (the fetch failed: {_one_line(problem, 160)})")
     try:
         names = _git_names(repo, f"origin/{base}", run_)
     except mail.Unresolvable as exc:
-        return None, "; ".join([*notes, f"origin/{base}'s rows unread ({exc})"])
+        return None, "; ".join([*notes, f"origin/{base}'s rows unread ({_one_line(exc)})"])
+    riding_notes: list[str] = []
+
+    def riding() -> list[str]:
+        found, more = _riding_names(repo, by_machine or {}, fetch, run_)
+        riding_notes.extend(more)
+        return found
+
     reads = (("HEAD's rows", lambda: _git_names(repo, "HEAD", run_)),
              ("the parked rows", lambda: [path for _machine, path, _ref in mail.pending(
                  repo, frag.SESSION_LOG_DIR, [f"origin/{base}"], run=run_, trailer=frag.FOLD_TRAILER)]),
-             ("the fold's pruned rows", lambda: _pruned_names(repo, base, run_)))
+             ("the fold's pruned rows", lambda: _pruned_names(repo, base, run_)),
+             ("the rows riding the open pull requests", riding))
     for label, read in reads:
         try:
             names += read()
         except mail.Unresolvable as exc:
-            notes.append(f"{label} unread, so the count is a floor ({exc})")
+            notes.append(f"{label} unread, so the count is a floor ({_one_line(exc)})")
+    notes += riding_notes
     return sorted({name.rsplit("/", 1)[-1] for name in names if name.strip()}), "; ".join(notes)
 
 
@@ -858,10 +919,10 @@ def render(data: dict, extra: dict) -> str:
     lines.append("note: assigns and releases count on the day they were sent, closures on the day of the release "
                  "that closed them, so a day's closures can be of jobs given before it")
     lines.append("note: a Session Log name's date is its writer's local day; the rows are read by name from the "
-                 "base's tree, HEAD's, the records refs' parked rows and the fold's prunes, so another seat's row "
-                 "riding its own open pull request is not counted, nor is a row pruned by hand before the fold's "
-                 "trailer"
-                 + (f" (the tree's oldest: {data['session_log_oldest']})" if data["session_log_oldest"] else ""))
+                 "base's tree, HEAD's, the records refs' parked rows, the fold's prunes and the open pull requests' "
+                 "heads (each one's own seat's rows), so a row deleted by hand before the fold's trailer is not "
+                 "counted unless a stale HEAD still holds it"
+                 + (f" (the oldest read: {data['session_log_oldest']})" if data["session_log_oldest"] else ""))
     return "\n".join(lines)
 
 
