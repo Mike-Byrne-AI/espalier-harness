@@ -10,7 +10,9 @@ uses), and classifies each against the repository's git state:
     OWED     — not tracked in ``HEAD`` (the pack claims the file; it isn't there)
 
 This is an **advisory** tool — it prints a table and exits 0; it does not gate;
-it reads landing truth back from git. It is HEAD-only; a
+it reads landing truth back from git. A folder git cannot read is refused
+(``LandingUnreadable``; the CLI exits 2 with the reason and no table), since an
+all-OWED table there would report a landing failure that is not there. It is HEAD-only; a
 ``--check-working-tree`` mode (untracked-but-present) is a deliberate follow-up.
 
 Zero ``tools/cc`` import (espalier-only), per the isolation rule.
@@ -18,6 +20,7 @@ Zero ``tools/cc`` import (espalier-only), per the isolation rule.
 from __future__ import annotations
 
 import fnmatch
+import os
 import re
 import subprocess
 from collections import Counter
@@ -25,7 +28,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from espalier._spawn import run_no_stdin
+from espalier._text import os_error_text
 from espalier.pack_manifest import _live_text, _looks_like_path, _section_body
+from espalier.zone_writes import _GIT_LOCATION_VARS
 
 LANDED = "LANDED"
 DRIFTED = "DRIFTED"
@@ -181,28 +186,118 @@ def classify_against(
     return [_classify_token(t, tracked, modified) for t in _extract_path_tokens(pack_text)]
 
 
-def _git_lines(repo: Path, *args: str) -> list[str]:
-    """Run ``git <args>`` in ``repo`` and return non-empty stdout lines, or
-    ``[]`` on any git failure (advisory tool — never raise)."""
+class LandingUnreadable(Exception):
+    """git could not read the ``--repo``'s state, so no claim can be classified."""
+
+
+def _git_read(repo: Path, *args: str) -> tuple[list[str] | None, str]:
+    """Run ``git <args>`` in ``repo``: ``(non-empty stdout lines, "")``, or
+    ``(None, why)`` on any failure, ``why`` being git's last stderr line or the
+    spawn error. A failure never reads as an empty answer (an empty HEAD
+    listing is ``[]``). ``core.quotePath=false`` prints a non-ASCII path as
+    written, where git would quote it and no claim would match it. The
+    variables that would point git at another repository than ``repo``
+    (``_GIT_LOCATION_VARS``) are dropped: a run from inside a git hook
+    inherits them, and the read would classify that repository."""
+    env = {k: v for k, v in os.environ.items() if k not in _GIT_LOCATION_VARS}
     try:
         out = run_no_stdin(
-            ["git", *args],
+            ["git", "-c", "core.quotePath=false", *args],
             cwd=str(repo),
+            env=env,
             capture_output=True,
             text=True, encoding="utf-8", errors="replace",
             check=True,
             timeout=30,
         ).stdout
-    except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired, ValueError):
-        return []
-    return [ln for ln in out.splitlines() if ln]
+    except subprocess.CalledProcessError as exc:
+        lines = [ln.strip() for ln in (exc.stderr or "").splitlines() if ln.strip()]
+        return None, lines[-1] if lines else f"git exited {exc.returncode}"
+    except subprocess.TimeoutExpired:
+        return None, "git did not answer within 30 s"
+    except (OSError, ValueError) as exc:
+        return None, f"git could not be run: {os_error_text(exc)}"
+    return [ln for ln in out.splitlines() if ln], ""
+
+
+@dataclass(frozen=True)
+class LandingRead:
+    """A classification and the roots it was read against: ``prefix`` is
+    ``--repo``'s place under the work tree's top (``""`` at the top or in a
+    bare repository), ``top`` the top itself, set only when ``prefix`` is."""
+
+    entries: list[LandingEntry]
+    prefix: str = ""
+    top: str = ""
+
+
+def _read_listing(repo: Path, *, full_tree: bool, bare: bool) -> tuple[set[str], set[str]]:
+    """``(tracked, modified)`` at ``repo``: relative to it, or to the top with
+    ``full_tree``. Raises :class:`LandingUnreadable` on a failed read."""
+    tree_args = ["ls-tree", "-r", *(["--full-tree"] if full_tree else []), "--name-only", "HEAD"]
+    tracked, why = _git_read(repo, *tree_args)
+    if tracked is None:
+        raise LandingUnreadable(f"git {' '.join(tree_args)} failed ({why})")
+    if bare:
+        return set(tracked), set()
+    # diff names paths from the top unless --relative, which keeps the ones
+    # under repo and names them from it, as the plain ls-tree does.
+    diff_args = ["diff", "--name-only", *([] if full_tree else ["--relative"]), "HEAD"]
+    modified, why = _git_read(repo, *diff_args)
+    if modified is None:
+        raise LandingUnreadable(f"git {' '.join(diff_args)} failed ({why})")
+    return set(tracked), set(modified)
+
+
+def read_landing(pack_text: str, repo: Path) -> LandingRead:
+    """Classify a pack's claimed paths against the git state of ``repo``.
+
+    Claims are read relative to ``repo``, as an adopter whose project root is a
+    subdirectory of its repository writes them. Where ``repo`` is such a
+    subdirectory, a claim it does not resolve is tried against the work tree's
+    top too (the ``_resolve_matches`` rule: erring toward LANDED beats a fake
+    OWED blocker), and the read names both roots. A bare repository is read
+    against HEAD alone (nothing can be DRIFTED). A folder git cannot read --
+    not in a repository, a branch with no commit, a read that fails -- raises
+    :class:`LandingUnreadable` with the reason, git's own message included,
+    never an empty set: an empty set classifies every claim OWED, a landing
+    failure that is not there.
+    """
+    shape, why = _git_read(repo, "rev-parse", "--is-bare-repository", "--is-inside-work-tree")
+    if shape is None:
+        raise LandingUnreadable(f"not a git work tree ({why})")
+    bare = shape[:1] == ["true"]
+    if not bare and shape[1:2] != ["true"]:
+        raise LandingUnreadable("not a git work tree (inside a repository's .git folder?)")
+    head, why = _git_read(repo, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+    if not head:
+        # --quiet: an unborn branch exits 1 with no message, so only a spawn or
+        # timeout failure has a reason worth adding.
+        detail = "" if not why or why.startswith("git exited") else f" ({why})"
+        raise LandingUnreadable(f"the checked-out branch has no commit{detail}")
+    tracked, modified = _read_listing(repo, full_tree=False, bare=bare)
+    entries = classify_against(pack_text, tracked, modified)
+    prefix_lines: list[str] | None = []
+    if not bare:
+        prefix_lines, why = _git_read(repo, "rev-parse", "--show-prefix")
+        if prefix_lines is None:
+            raise LandingUnreadable(f"git rev-parse --show-prefix failed ({why})")
+    if not prefix_lines:
+        return LandingRead(entries)
+    top_lines, why = _git_read(repo, "rev-parse", "--show-toplevel")
+    if not top_lines:
+        raise LandingUnreadable(f"git rev-parse --show-toplevel failed ({why})")
+    top_tracked, top_modified = _read_listing(repo, full_tree=True, bare=False)
+    entries = [
+        _classify_token(e.path, top_tracked, top_modified) if e.status == OWED else e
+        for e in entries
+    ]
+    return LandingRead(entries, prefix=prefix_lines[0], top=top_lines[0])
 
 
 def classify_landing(pack_text: str, repo: Path) -> list[LandingEntry]:
-    """Classify a pack's claimed paths against the git state of ``repo``."""
-    tracked = set(_git_lines(repo, "ls-tree", "-r", "--name-only", "HEAD"))
-    modified = set(_git_lines(repo, "diff", "--name-only", "HEAD"))
-    return classify_against(pack_text, tracked, modified)
+    """``read_landing``'s entries alone."""
+    return read_landing(pack_text, repo).entries
 
 
 def render_table(entries: list[LandingEntry]) -> str:

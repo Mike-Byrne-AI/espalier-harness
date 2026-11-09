@@ -1339,12 +1339,16 @@ def _asks_count(root: Path, mail: Any, machine: str, by_machine: dict) -> str:
     """On the dispatcher seat (``dispatcher`` in espalier.toml names the
     machine this checkout answers; the dispatcher clone's other worktree seats
     get nothing), how many requests no ack names, from any seat, its own
-    outgoing ones included, and how old the oldest is; ''
-    on any other seat, with none open, or where the deployed mail.py predates
-    the reader. Every machine's ref is counted, this one's own included,
-    since the dispatcher's acks live there. No spawn: the refs were read
-    above, the setting is one file. The caller guards it, so a reader that
-    raises costs the count only."""
+    outgoing ones included, with the workers' stops and the dispatcher's
+    questions to the operator counted apart as the board's asks header counts
+    them (``mail.is_stop``, ``mail.is_operator_call``), and how old the oldest
+    is; '' on any other seat, with none open, or where the deployed mail.py
+    predates the reader. Each of the two classifiers is read on its own, so a
+    deployed mail.py without one counts the other, and one without both gives
+    the count as it read before them. Every machine's ref is counted, this
+    one's own included, since the dispatcher's acks live there. No spawn: the
+    refs were read above, the setting is one file. The caller guards it, so a
+    reader that raises costs the count only."""
     setting = getattr(mail, "dispatcher_setting", None)
     reader = getattr(mail, "live_requests", None)
     if setting is None or reader is None or setting(root)[0] != machine:
@@ -1353,7 +1357,13 @@ def _asks_count(root: Path, mail: Any, machine: str, by_machine: dict) -> str:
     if not asks:
         return ""
     n = len(asks)
-    return (f"{n} unanswered ask{'s' if n != 1 else ''} (requests no ack names), "
+    is_stop = getattr(mail, "is_stop", None)
+    is_call = getattr(mail, "is_operator_call", None)
+    stops = sum(1 for m in asks if is_stop(m)) if is_stop is not None else 0
+    calls = sum(1 for m in asks if is_call(m)) if is_call is not None else 0
+    apart = ((f", {stops} stopped" if stops else "")
+             + (f", {calls} operator call{'s' if calls != 1 else ''}" if calls else ""))
+    return (f"{n} unanswered ask{'s' if n != 1 else ''}{apart} (requests no ack names), "
             f"oldest {_age_text(asks[0].get('age_s'))}: /inbox board lists them")
 
 
