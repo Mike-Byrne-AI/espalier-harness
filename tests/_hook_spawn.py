@@ -233,11 +233,18 @@ def _restore(tree: Path, saved: _Tree) -> None:
 
 
 def _project(env: dict | None, cwd: str | None) -> Path:
-    """The project the hook resolves: ``CLAUDE_PROJECT_DIR`` from the env it
-    is given, else its working directory
-    (``tools/cc/hooks/_hook_utils.py::resolve_project_root``)."""
+    """The project the hook resolves (``tools/cc/_paths.py::project_root_spelling``):
+    ``CLAUDE_PROJECT_DIR`` from the env it is given, else the nearest directory
+    at or above its working directory holding ``tools/cc/hooks``, else the
+    working directory itself."""
     named = (env if env is not None else os.environ).get("CLAUDE_PROJECT_DIR")
-    return Path(named or cwd or os.getcwd())
+    if named:
+        return Path(named)
+    start = Path(cwd or os.getcwd())
+    for candidate in (start.absolute(), *start.absolute().parents):
+        if (candidate / "tools" / "cc" / "hooks").is_dir():
+            return candidate
+    return start
 
 
 class _Before:
