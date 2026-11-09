@@ -83,6 +83,9 @@ class TestSourceCheckoutNudge:
         assert ".claude/settings.json" in err
         assert f"init {quoted_if_spaced(str(repo))}" in err
         if leaf != "bare":
+            # The spaced root reds a nudge that went back to the bare root
+            # on every cell, a bare basetemp included, where the helper
+            # alone would read the bare spelling as correct.
             assert f'init "{repo}"' in err
 
     def test_initialized_repo_does_not_nudge(self, monkeypatch, tmp_path):

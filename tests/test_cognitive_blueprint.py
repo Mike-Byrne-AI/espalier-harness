@@ -897,16 +897,19 @@ class TestHookSideBlueprintPathResolution:
       3. cwd is the last-resort fallback.
 
     These tests verify (1) and (2). The fallback is implicit (any tree
-    without the marker pair lands at cwd).
+    without the ``tools/cc/hooks`` marker lands at cwd).
     """
 
     SCRIPT = Path(__file__).resolve().parent.parent / "tools" / "cc" / "cognitive_blueprint.py"
 
     @staticmethod
     def _make_marker_repo(tmp_path: Path) -> Path:
-        """Build a minimal tree with the markers ``_repo_root`` looks for."""
+        """Build a minimal tree with the marker ``_repo_root`` looks for:
+        ``tools/cc/hooks`` (``_paths._ROOT_MARKER``, DEF-664). The
+        ``pyproject.toml`` is kept, though no longer read, so the walk-up is
+        shown to need the hooks directory and not the manifest."""
         repo = tmp_path / "repo"
-        (repo / "tools" / "cc").mkdir(parents=True)
+        (repo / "tools" / "cc" / "hooks").mkdir(parents=True)
         (repo / "pyproject.toml").write_text(
             "[project]\nname = 'fake'\nversion = '0.0.0'\n",
             encoding="utf-8",

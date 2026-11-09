@@ -74,7 +74,7 @@ import tomllib
 from pathlib import Path
 
 #: Same resolver every sibling in ``scripts/`` uses. Deliberately NOT
-#: ``tools/cc/_paths._repo_root`` -- that walks up for a marker pair because a
+#: ``tools/cc/_paths._repo_root`` -- that walks up for ``tools/cc/hooks`` because a
 #: hook can be launched from any subdir, whereas a ``scripts/`` file is only
 #: ever run from its own checkout. ``--repo-root`` overrides it for tests.
 REPO_ROOT = Path(__file__).resolve().parent.parent
