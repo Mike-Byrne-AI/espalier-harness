@@ -247,7 +247,8 @@ def _has_inbound_link(repo: Path, entry: Path, tracked: list[str]) -> bool:
 # home. A bare "CLAUDE.md" is deliberately NOT treated as a path: the rule
 # under-flags (safe) rather than guessing at prose. A link target may hold
 # balanced parentheses (a Next.js or SvelteKit route-group folder, DEF-5086),
-# read whole as reflect_protocol.LOCAL_LINK_RE reads it.
+# read whole as reflect_protocol.LOCAL_LINK_RE reads it: the old read to the
+# first `)` where the balanced one fails, and never past a line break.
 _PATH_HOME_RE = re.compile(r"\]\(((?:[^()\n]|\([^()\n]*\))+|[^)\n]+)\)|`([^`]+/[^`]+)`")
 
 

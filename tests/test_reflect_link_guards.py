@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -180,6 +181,44 @@ class TestARouteGroupTargetReadsWhole:
         about_the_group = [d for d in read(route_group_repo) if "marketing" in d]
         assert len(about_the_group) == 1, about_the_group
         assert "app/(marketing)/missing.tsx" in about_the_group[0], about_the_group
+
+    @pytest.mark.parametrize("read", [_engine_links, _standalone_links, _reference_links],
+                             ids=["engine", "standalone", "reference"])
+    def test_a_target_the_balanced_read_cannot_take_is_still_read(self, surface_repo, read):
+        """Parentheses nested two deep, an escaped one, or a lone one in a title
+        are past the balanced read; the old read to the first ``)`` takes them,
+        so each dead link is still named rather than silently dropped."""
+        conventions = surface_repo / "docs" / "CONVENTIONS.md"
+        conventions.write_text(
+            conventions.read_text(encoding="utf-8")
+            + "Nested [a](gone-nested-((deep))-x.md), escaped [b](gone-escaped-\\(x.md)"
+            " and titled [c](gone-titled.md \"a (b\").\n",
+            encoding="utf-8",
+        )
+        found = " ".join(read(surface_repo))
+        for target in ("gone-nested-", "gone-escaped-", "gone-titled.md"):
+            assert target in found, (target, found)
+
+    @pytest.mark.parametrize("read", [_engine_links, _standalone_links, _reference_links],
+                             ids=["engine", "standalone", "reference"])
+    def test_an_unclosed_link_does_not_hide_the_links_after_it(self, surface_repo, read):
+        """A destination stops at a line break: read across lines, an unclosed
+        link's target ran on to the next line's ``)`` and the dead link there
+        was named only inside it, under a target no file could have."""
+        conventions = surface_repo / "docs" / "CONVENTIONS.md"
+        conventions.write_text(
+            conventions.read_text(encoding="utf-8")
+            + "An unclosed [open](app/(marketing link.\nThen [later](later-missing.md).\n",
+            encoding="utf-8",
+        )
+        # The engine words a finding `...: [...](<target>) target does not
+        # exist`, the standalone `Broken link in <file>: <target>`, the
+        # reference gives the target alone.
+        targets = []
+        for d in read(surface_repo):
+            engine = re.search(r"\[\.\.\.\]\((.*)\) target does not exist$", d)
+            targets.append(engine.group(1) if engine else d.rsplit(": ", 1)[-1].strip())
+        assert "later-missing.md" in targets, targets
 
 
 # ─── archive exclusion ───────────────────────────────────────────────────────

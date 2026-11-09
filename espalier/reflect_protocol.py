@@ -45,8 +45,14 @@ _MEMORY_FILENAME = "ESPALIER_MEMORY.md"
 # A bare destination may hold balanced parentheses (CommonMark; a Next.js or
 # SvelteKit route-group folder, `app/(marketing)/page.tsx`), one level deep:
 # read to its first `)`, a working link to such a file read as a broken link
-# to `app/(marketing` (DEF-5086). Each alternative opens on a different
-# character, so a run with no closer backtracks linearly.
+# to `app/(marketing` (DEF-5086). Where the balanced read fails (parentheses
+# nested deeper, an escaped one, a title holding a lone one) the old read to
+# the first `)` stands, so such a link is still read, never dropped. A
+# destination stops at a line break, so an unclosed link cannot swallow the
+# next line's links, and a run of them across lines reads linearly; one line
+# of unclosed links stays quadratic, as the old read was, at about 1.7 times
+# its cost (measured 2026-11-09). Twin of tools/cc/reflect_protocol.py's,
+# pinned by tests/test_reflect_protocol.py::TestReflectTwinParity.
 LOCAL_LINK_RE = re.compile(r"\[[^\]]+\]\((?!https?://|mailto:|#)((?:[^()\n]|\([^()\n]*\))+|[^)\n]+)\)")
 # Non-navigable local-only trees excluded from the reflect surface walk.
 # Forced twin of tools/cc/reflect_protocol.py's LOCAL_ONLY_PREFIXES across the
