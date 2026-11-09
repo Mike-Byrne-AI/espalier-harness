@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2063",
+ "subject": "espalier/cli.py",
+ "cmd": "python3 -c \"import espalier.cli as c;print(c._swap_interpreter_token('python tools/cc/hooks/a.py','C:/Program Files/Py/python.exe')[:1]==chr(34))\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "907e1c427784",
+ "text_sha": "ea913432c74f",
+ "verified_2026_11_08": "OPEN (filed 2026-11-08; probe driven at filing here and in the export of HEAD 37fa2425e338)"
+}

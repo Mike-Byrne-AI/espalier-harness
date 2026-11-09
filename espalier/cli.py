@@ -3050,7 +3050,9 @@ _PROBE_PY = "python"
 #: no ``try`` in a one-line program (a real U+FFFD survives both).
 #: ``code`` is the probe's Python; the command is assembled at filing behind
 #: ``_PROBE_PY``, and ``{espalier}`` in a row's text becomes the command this
-#: host would type (``_remedy_py()``), since the text is instructions to a person.
+#: host would type, in its persisted spelling (``_remedy_py(persisted=True)``:
+#: a long path, never this volume's 8.3 name), since the text is instructions
+#: to a person.
 #: No ``"``, ``$``, backtick, ``!`` or newline in a code: the checker
 #: ``shlex``-splits the stored command, and a person re-verifying a row pastes
 #: it into a shell (``TestOnboardingProbesDoNotWalk`` pins both). The fragments
@@ -9059,8 +9061,9 @@ def _swap_interpreter_token(command: str, new_name: str) -> str:
     was rewirable): ``new_name`` is read as a word and the launcher's flag
     (:func:`_target_words`), the old name's quotes go with it, and the word is
     written double-quoted only when it holds whitespace -- a program word sh
-    and Git Bash take, and PowerShell refuses (driven on Windows 11; DEF-2060
-    holds the PowerShell reach of that spaced head). ``"python3" x.py`` is
+    and Git Bash take, and PowerShell refuses (driven on Windows 11; DEF-2063
+    holds the PowerShell reach of that spaced head, which DEF-2060's 8.3
+    short form cannot serve in a persisted command). ``"python3" x.py`` is
     a PowerShell parse error (it runs a shell-form hook where Git Bash is
     absent), ``"py -3"`` is a file no host has, and a bare spaced path is cut
     by the shell (the DEF-636 absolute-path write arrives bare). Production

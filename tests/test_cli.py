@@ -1840,6 +1840,22 @@ class TestARemedysProgramWordRunsInEveryShell:
         assert program_word(self.SPACED, lambda p: self.SPACED) == f'"{self.SPACED}"'
         assert program_word(self.SPACED, lambda p: None) == f'"{self.SPACED}"'
         assert program_word(self.SPACED, None) == f'"{self.SPACED}"'
+        # An 8.3 name keeps shell grammar, which no shell reads as a plain word
+        # (the code review drove MY(PYT~1, JO&COT~1 and IT'SMI~1); a UNC short
+        # form does not run with forward slashes. Each keeps the quoted path.
+        for short in ("C:\\MY(PYT~1\\python.exe", "C:\\JO&COT~1\\python.exe",
+                      "C:\\IT'SMI~1\\python.exe", "C:\\$DEVTO~1\\python.exe",
+                      "\\\\server\\share\\PROGRA~1\\python.exe"):
+            assert program_word(self.SPACED, lambda p, s=short: s) == f'"{self.SPACED}"', short
+
+    def test_an_unconfirmed_start_is_spelled_with_the_short_path_too(self, monkeypatch):
+        """The first quoted return: the resolver's answer clears the floor but
+        its start was never seen (DEF-5014), so the remedy spells the
+        interpreter running this, through the same short form."""
+        cli = self._below_floor_on_path(monkeypatch, self.SHORT)
+        monkeypatch.setattr(cli, "interpreter_meets_floor", lambda p: True)
+        monkeypatch.setattr(cli, "start_unconfirmed_of", lambda p: "its start was never seen")
+        assert cli._remedy_interpreter() == ("C:/PROGRA~1/Py/python.exe", True)
 
     def test_a_spaced_interpreter_on_windows_is_its_short_path(self, monkeypatch, capsys):
         cli = self._below_floor_on_path(monkeypatch, self.SHORT)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from collections.abc import Callable
 
@@ -88,30 +89,43 @@ def program_word(path: str, short_path: Callable[[str], str | None] | None) -> s
     if not any(ch.isspace() for ch in path):
         return path
     short = short_path(path) if short_path is not None else None
-    if short and not any(ch.isspace() for ch in short):
-        return short.replace("\\", "/")
+    if short:
+        word = short.replace("\\", "/")
+        # Only a drive-rooted word of plain characters: an 8.3 name keeps
+        # `&`, `(`, `'` and `$`, which every one of the three shells reads
+        # as grammar in a bare word (driven: `MY(PYT~1`, `JO&COT~1`), and a
+        # UNC or `\\?\` form does not run with forward slashes.
+        if _PLAIN_PROGRAM_WORD.fullmatch(word):
+            return word
     return quoted_if_spaced(path)
+
+
+_PLAIN_PROGRAM_WORD = re.compile(r"[A-Za-z]:/[A-Za-z0-9_.~+/-]+")
 
 
 def windows_short_path(path: str) -> str | None:
     """The 8.3 short form of an existing ``path`` from ``GetShortPathNameW``
     (Windows only), else None: a path that does not exist, or any other
     failure, answers 0 there and None here. Two calls, the first asking the
-    buffer size, so a long path is never cut at ``MAX_PATH``."""
+    buffer size, so a long path is never cut at ``MAX_PATH``. It runs inside
+    remedy printers, so a lookup that cannot load answers None, never a
+    traceback in place of the repair text."""
     if sys.platform != "win32":
         return None
-    import ctypes
-    from ctypes import wintypes
+    try:
+        import ctypes
+        from ctypes import wintypes
 
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    get_short = kernel32.GetShortPathNameW
-    get_short.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
-    get_short.restype = wintypes.DWORD
-    size = get_short(path, None, 0)
-    if not size:
+        get_short = ctypes.WinDLL("kernel32").GetShortPathNameW
+        get_short.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+        get_short.restype = wintypes.DWORD
+        size = get_short(path, None, 0)
+        if not size:
+            return None
+        buf = ctypes.create_unicode_buffer(size)
+        written = get_short(path, buf, size)
+    except (ImportError, AttributeError, OSError, ValueError):
         return None
-    buf = ctypes.create_unicode_buffer(size)
-    written = get_short(path, buf, size)
     if not written or written >= size:
         return None
     return buf.value
