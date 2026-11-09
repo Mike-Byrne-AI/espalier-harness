@@ -1398,8 +1398,8 @@ first; the dangerous-command catch is a secondary slip-catcher):
    catastrophic target, nothing on a roster build directory, one nudge on
    any other. On both tools the zone
    check reads every delete cmd runs, so a protected directory removed
-   through cmd meets the nudge and then the zone wall on the re-issue, the
-   plain form's order. Declared limits: a `cd` inside cmd's own program is
+   through cmd meets the zone wall on the first issue, the plain form's
+   order (the zone checks answer ahead of the nudge). Declared limits: a `cd` inside cmd's own program is
    not followed (the target is judged from where cmd starts and from an
    unknown directory;
    `tests/test_write_guard.py::TestEveryLaunchFormMeetsTheRecursiveDeleteWall::test_a_cd_inside_cmds_program_is_a_declared_limit`),
@@ -1981,7 +1981,8 @@ spellings of them are work:
   substitution or a glob whose literal part names no root draws the
   confirm-by-re-issue nudge rather than the wall (the wall needs a literal
   root; `$PWD` and a bare `*` are read as the directory the command runs in and
-  draw it), a secret read is judged on the literal part of its operand, and a
+  draw it; a glob that reaches a protected zone meets that zone's wall first,
+  since the zone checks answer ahead of the nudge), a secret read is judged on the literal part of its operand, and a
   force push to an unresolvable remote draws its nudge
   (`tests/test_write_guard.py::TestTheCoverageContract::test_an_unresolvable_operand_on_a_kept_job_draws_the_conservative_verdict`).
   A conservative refusal that goes quiet is a defect, not a limit.
@@ -2026,7 +2027,7 @@ spellings of them are work:
 
 | Control | Effect |
 |---------|--------|
-| `ESPALIER_MAINTENANCE_MODE=1` | Bypasses the protected-zone check. Kill-switch gate, dangerous-command blocking and the speed-bump checkpoints (`CP-*`, which dispatch before the maintenance gate is read) still run. One advisory audit record per session says so (`pretooluse_bypassed_maintenance_mode`; `/status --log` counts it). |
+| `ESPALIER_MAINTENANCE_MODE=1` | Bypasses the protected-zone check. Kill-switch gate, dangerous-command blocking and the speed-bump checkpoints (`CP-*`) still run; outside maintenance the zone checks answer before them, so a bump fires only on a call that can proceed. One advisory audit record per session says so (`pretooluse_bypassed_maintenance_mode`; `/status --log` counts it). |
 
 **Denial-hint surface.** Protected-zone denials append a
 discoverability hint pointing at the maintenance-mode escape:
@@ -2742,7 +2743,7 @@ Espalier-Harness has three levels of configuration, from surgical to nuclear:
 What maintenance mode does NOT bypass:
 - stop_gate's gate 1 (pytest, where opted in), gate 5 (the handoff gate) and gate 4 (the blueprint finalize)
 - write_guard's kill-switch gate and dangerous-command blocking
-- write_guard's speed-bump checkpoints (`CP-*`), which dispatch before the maintenance gate is read
+- write_guard's speed-bump checkpoints (`CP-*`), which run under maintenance with no zone check ahead of them
 - config_guard (settings safety)
 - post_write_check (advisory — already non-blocking)
 - reflect_trigger (advisory — detecting drift during maintenance is a feature)

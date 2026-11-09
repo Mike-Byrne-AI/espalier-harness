@@ -62,12 +62,12 @@
     {
       "attempt_id": "BC-062-a5",
       "verifier": "adopter_zone_write_guard",
-      "reissue_past_nudge": true,
+      "reissue_past_nudge": false,
       "tool_name": "Bash",
       "tool_input": {
         "command": "rm -rf data"
       },
-      "intended_target": "a delete of the adopter's protected_paths zone directory itself (a zone that encloses the prefix is never-touch too); the CP-RMRF speed bump answers the first ask, so the row re-issues past it and judges the zone deny, never the bump",
+      "intended_target": "a delete of the adopter's protected_paths zone directory itself (a zone that encloses the prefix is never-touch too); the zone check answers the first ask, ahead of the CP-RMRF speed bump, so the row judges that first answer and a bump in its place reds",
       "expected_outcome": "blocked",
       "expected_block_reason": "protected_paths"
     }

@@ -665,7 +665,10 @@ python tools/cc/ship.py handoff
 - **`handoff_push = true`:** the lane's ONE push, carrying the session's work
   and this handoff's commit together: a lane branch when HEAD is the default
   branch, the push, the pull request with the approval marker bound at
-  creation, auto-merge armed and read back (`/ship` documents each verb). If
+  creation, auto-merge armed and read back (`/ship` documents each verb). The
+  pull request's body, where the handoff opens it, is `handoff --body-file
+  <path>` where given, else this handoff's row and the lane's commit subjects;
+  a pull request opened earlier keeps the body it was opened with. If
   the lane already has an open pull request (it was shipped mid-session with
   `open --early`, or an earlier window opened it), the verb pushes what this
   handoff adds onto it and re-binds the marker to the new head -- the memory

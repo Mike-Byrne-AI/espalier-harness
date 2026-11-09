@@ -437,10 +437,11 @@ read. The friction-layer scope:
   `$p = '<hook>'; Remove-Item $p` denies),
   and a directory operand
   that merely CONTAINS a secret (`tar -cf backup.tar .`). The recursive
-  spelling on a zone directory, forced or not, is bumped first by `_speedbump` (CP-RMRF:
-  deny-once, ahead of the maintenance gate, keyed on the SPELLING and not on
-  the operand -- the same bump fires on an unprotected directory, so it is
-  not zone coverage) and its re-issue reaches the zone check; a plain delete
+  spelling on a zone directory, forced or not, meets the zone check first:
+  outside maintenance mode the zone checks run ahead of `_speedbump`, so the
+  CP-RMRF bump (deny-once, keyed on the SPELLING and not on the operand) fires
+  only on a delete the zone passes and under maintenance -- it is not zone
+  coverage, and it never promises a re-issue the zone refuses; a plain delete
   and every move never bump and are the zone check's alone. Until
   2026-09-14 this bullet said a delete was governed by `_speedbump`; driven,
   no bump fired on any plain delete or move-away shape, and the zone check

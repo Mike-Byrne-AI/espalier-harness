@@ -1032,7 +1032,11 @@ in this tree (2026-09-26); the archive's workflows still carry them.
    `git rm` each folded `changelog.d/*.md` in the fold commit, or the
    emptiness tripwire below still counts them. Those removals are deletions
    the ship driver did not make, so the release lane's push names them:
-   `python tools/cc/ship.py open --allow-deletions "the release fold"`. `[Unreleased]` is large at
+   `python tools/cc/ship.py open --early "release fold" --allow-deletions "the release fold" --body-file <file>`
+   (step 3 says why `--early`), the file (outside the checkout) holding the new release section and
+   the checklist steps run, since a lane changing more than records carries no row of the seat
+   before its handoff and the driver refuses a subjects-only body where `espalier.toml` names a
+   dispatcher. `[Unreleased]` is large at
    cut time — it accumulates every dev bullet between releases — so fold it
    in two pieces.
    (The in-file `## [0.6.6-folded-from-unreleased]` block that once modelled
@@ -1113,8 +1117,10 @@ in this tree (2026-09-26); the archive's workflows still carry them.
    once the merge lands.
    A release lane carries no memory row, and this repository sets
    `handoff_push = true`, so `open` asks for a reason:
-   `--early "release fold"`. The reason is written into the pull request
-   body, so a release reads as one there rather than as a skipped handoff.
+   `--early "release fold"`, beside `--allow-deletions` and `--body-file` on
+   the line step 2 gives. The reason is written into
+   the pull request body, so a release reads as one there rather than as a
+   skipped handoff.
 4. **Tag the merge commit** — from the lane branch (the driver names the
    pull request from it), the ship driver's `release vX.Y.Z` verb does
    steps 4 to 6: it fetches the merge commit, tags it, pushes that one tag
