@@ -892,6 +892,17 @@ class TestReflectTwinParity:
         assert [p.flags for p in hook.PLACEHOLDER_RES] == \
             [p.flags for p in _erp.PLACEHOLDER_PATTERNS]
 
+    def test_the_link_readers_match_pattern_for_pattern(self):
+        """The link-destination reader and the link-text unwrapper are forced
+        twins as well (DEF-5086 changed all three copies in one lane); the
+        heading-anchor copy in ``tests/_md_anchors.py`` is the unwrapper's
+        third copy."""
+        from _md_anchors import _MD_LINK
+
+        hook = _hook_side()
+        assert hook.LOCAL_LINK_RE.pattern == _erp.LOCAL_LINK_RE.pattern
+        assert hook._MD_LINK_TEXT.pattern == _erp._MD_LINK_TEXT.pattern == _MD_LINK.pattern
+
     def test_residue_exempt_surfaces_are_the_canon_minus_the_shipped_catalog(self):
         """The canon answers "is a stale number here expected aging?"; residue
         exemption answers "is quoted residue here content?". Same set but for

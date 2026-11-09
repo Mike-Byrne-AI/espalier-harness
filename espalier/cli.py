@@ -15517,11 +15517,14 @@ def cmd_freshness_unpin(args: argparse.Namespace) -> int:
 # An inline link or image destination: `](dest)`, `](dest "title")`, or the
 # angle-bracket form `](<dest>)`. The lookahead requires the link to close, so a
 # stray `](` in prose is left alone; a bare destination holding `<` is a
-# placeholder example (`memory/<slug>.md`) and does not match. A reference
+# placeholder example (`memory/<slug>.md`) and does not match. A bare
+# destination may hold balanced parentheses, one level deep (CommonMark; a
+# Next.js or SvelteKit route-group folder, `app/(marketing)/page.tsx`): refused,
+# such a link moved unrebased and broke in the archive (DEF-5086). A reference
 # definition (`[id]: dest`) must begin its own line and every line the prune
 # moves begins with `|`, so a moved row cannot carry one.
 _ROW_LINK_DEST_RE = re.compile(
-    r"(\]\(\s*)(<[^<>\n]*>|[^\s()<>]+)"
+    r"(\]\(\s*)(<[^<>\n]*>|(?:[^\s()<>]|\([^\s()<>]*\))+)"
     r"(?=(?:\s+(?:\"[^\"\n]*\"|'[^'\n]*'|\([^()\n]*\)))?\s*\))"
 )
 # `scheme:` at the start of a target: http(s), mailto, ftp, any absolute URL.

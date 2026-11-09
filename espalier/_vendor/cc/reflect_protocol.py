@@ -47,7 +47,18 @@ except ImportError:  # fail-open: ok deliberate -- tools/cc is not on sys.path (
         return subprocess.run(  # spawn: ok the bounded spawn's fallback where _json_safe.py is not importable
             args, timeout=timeout, input=input, capture_output=capture_output, check=check, **kwargs)
 
-LOCAL_LINK_RE = re.compile(r"\[[^\]]+\]\((?!https?://|mailto:|#)([^)]+)\)")
+# A bare destination may hold balanced parentheses (CommonMark; a Next.js or
+# SvelteKit route-group folder, `app/(marketing)/page.tsx`), one level deep:
+# read to its first `)`, a working link to such a file read as a broken link
+# to `app/(marketing` (DEF-5086). Where the balanced read fails (parentheses
+# nested deeper, an escaped one, a title holding a lone one) the old read to
+# the first `)` stands, so such a link is still read, never dropped. A
+# destination stops at a line break, so an unclosed link cannot swallow the
+# next line's links, and a run of them across lines reads linearly; one line
+# of unclosed links stays quadratic, as the old read was, at about 1.7 times
+# its cost (measured 2026-11-09). Twin of espalier/reflect_protocol.py's,
+# pinned by tests/test_reflect_protocol.py::TestReflectTwinParity.
+LOCAL_LINK_RE = re.compile(r"\[[^\]]+\]\((?!https?://|mailto:|#)((?:[^()\n]|\([^()\n]*\))+|[^)\n]+)\)")
 # Forced twin of espalier/reflect_protocol.PLACEHOLDER_PATTERNS across the
 # no-import boundary, pinned pattern-for-pattern by
 # tests/test_reflect_protocol.py::TestReflectTwinParity. This side carried three
@@ -227,7 +238,7 @@ def _visible(paths, base):
     return sorted(p for p in paths if not any(part.startswith(".") for part in Path(p).relative_to(base).parts))
 
 
-_MD_LINK_TEXT = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
+_MD_LINK_TEXT = re.compile(r"!?\[([^\]]*)\]\((?:(?:[^()\n]|\([^()\n]*\))*|[^)\n]*)\)")  # a route-group target unwraps whole (DEF-5086)
 _SLUG_DROP = re.compile(r"[^\w\- ]", re.UNICODE)
 _ATX_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*$")
 

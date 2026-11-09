@@ -14,7 +14,10 @@ What it reads
 Every machine's messages on the remote-tracking mail refs, fetched first
 (``--no-fetch`` reads what is here), as ``tools/cc/mail.py::read_mail`` folds
 them for the board; the merged pull requests ``gh pr list`` gives; the Session
-Log fragment names in the folder ``tools/cc/_record_fragments.py`` names. A
+Log fragment names in the folder ``tools/cc/_record_fragments.py`` names, read
+by name from ``origin/<base>``, HEAD, the records refs' parked rows, the
+fold's prunes and the open pull requests' heads (``read_session_log``), never
+the working tree. A
 fixture (``--fixture``) is a frozen copy of the same, the fields this reads and
 no message prose. A read that failed is said in every form of the output, the
 row and the JSON included, never printed as a zero.
@@ -55,10 +58,19 @@ Per seat per UTC day in ``[since, until)``, one row:
 * **requests** the seat sent that day and how many were answered, with the
   median minutes to the answer (``scripts/mail_latency_census.py::pair``, which
   leaves the dispatcher's own requests out).
-* **Session Log rows**: the fragment names for the seat and the day. A name's
-  date is its writer's local day, a row parked on a records ref is not in the
-  tree, and fragments older than the newest few are archived; the report says
-  all three, and the oldest day the tree holds.
+* **Session Log rows**: the fragment names for the seat and the day, counted
+  by ``rows_by_seat``, the one reader (``DEF-4046``: a glob of the working
+  tree missed a row parked on a records ref and read the dispatcher's
+  checkout as of its last SessionStart). The names are the base's tree,
+  HEAD's (the reading seat's own rows riding its lane), the parked rows the
+  base does not hold (``tools/cc/mail.py::pending``) and the rows the fold's
+  prunes took off the base (``tools/cc/_record_fragments.py::pruned_rows_argv``)
+  and the rows riding the open pull requests, each head's own seat's
+  (``riding_rows``), the reads the board's records line makes; one name in
+  two places is one row. A name's date is its writer's local day, and a row
+  deleted by hand before the fold's trailer is read only where a stale HEAD
+  still holds it; the report says both, and the oldest day read. The base read failing is unread, never a zero; another
+  read failing makes the count a floor, said beside it.
 * **under two**: the tick slots -- the dispatcher's loop interval, read from
   ``tools/cc/seat.py::DISPATCHER_TICK``'s own ``/loop <n>m`` line
   (``census(..., tick_minutes=)`` takes another), laid from 00:00Z -- at
@@ -170,6 +182,10 @@ START_RE = re.compile(r"\bSTART\b")
 RULES = ("claim", "lane", "ack")
 #: The merged pull requests' read limit; the read's argv spells it.
 GH_LIMIT = 200
+#: The bound, in seconds, of each read this module spawns itself (the base fetch, the tree and history
+#: reads, the open pull requests' list and heads); ``mail.fetch_records`` and ``mail.pending`` keep the
+#: mail driver's own.
+GIT_TIMEOUT = 60.0
 DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
@@ -206,6 +222,13 @@ def _fragments():
     """``tools/cc/_record_fragments.py`` by path: the Session Log folder and
     the pattern of its names."""
     return _load("_sdc_fragments", "tools/cc/_record_fragments.py")
+
+
+@functools.lru_cache(maxsize=None)
+def _merge_rules():
+    """``tools/cc/_merge_rules.py`` by path: the base branch's name, from the
+    local ``origin/HEAD`` (no network), as the board and the banner read it."""
+    return _load("_sdc_merge_rules", "tools/cc/_merge_rules.py")
 
 
 def _source_int(rel: str, pattern: str) -> int:
@@ -275,9 +298,139 @@ def read_live(repo: Path, fetch: bool) -> dict:
             out["merged_note"] = f"gh pr list failed: {(gh.stderr or '').strip()[:200]}"
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         out["merged"], out["merged_note"] = None, f"gh pr list could not run: {exc}"
-    log = repo / _fragments().SESSION_LOG_DIR
-    out["session_log"] = sorted(p.name for p in log.glob("*.md")) if log.is_dir() else []
+    out["session_log"], out["session_log_note"] = read_session_log(repo, fetch, by_machine=by_machine)
     return out
+
+
+def _one_line(text: object, limit: int = 200) -> str:
+    """``text`` as one line, cut at ``limit``: a git or gh message runs to
+    several lines, and a note rides the one-line day row (``--as-row``)."""
+    return " ".join(str(text).split())[:limit]
+
+
+def _git_names(repo: Path, rev: str, run_) -> list[str]:
+    """The Session Log names in ``rev``'s tree (``git ls-tree --full-tree``, so
+    a ``--repo`` aimed below the top reads the same paths): a commit's tree,
+    never a working tree. A failed read raises the channel's
+    ``Unresolvable``, never no names."""
+    directory = _fragments().SESSION_LOG_DIR
+    rc, out, err = run_(["git", "ls-tree", "--full-tree", "--name-only", rev, "--", directory + "/"],
+                        cwd=str(repo), timeout=GIT_TIMEOUT, env=_mail().git_env())
+    if rc != 0:
+        raise _mail().Unresolvable(f"git ls-tree {rev} failed (rc={rc}): {_one_line(err or out, 120) or 'nothing'}")
+    return out.splitlines()
+
+
+def _pruned_names(repo: Path, base: str, run_) -> list[str]:
+    """The Session Log names the fold's prunes deleted from ``origin/<base>``,
+    through the loader's one argv and parser (``pruned_rows_argv``,
+    ``pruned_rows_from``), the read the board's records line makes. A shallow
+    clone's history is cut and the read would list nothing, so it is unread."""
+    frag, env = _fragments(), _mail().git_env()
+    rc, out, err = run_(["git", *frag.SHALLOW_ARGV], cwd=str(repo), timeout=GIT_TIMEOUT, env=env)
+    if rc != 0 or out.strip() == "true":
+        raise _mail().Unresolvable(f"origin/{base}'s history is cut here (a shallow clone)")
+    rc, out, err = run_(["git", *frag.pruned_rows_argv(f"origin/{base}")], cwd=str(repo), timeout=GIT_TIMEOUT,
+                        env=env)
+    if rc != 0:
+        raise _mail().Unresolvable(f"git log origin/{base} failed (rc={rc}): {_one_line(err or out, 120) or 'nothing'}")
+    return frag.pruned_rows_from(out)
+
+
+def _riding_names(repo: Path, by_machine: dict, fetch: bool, run_) -> tuple[list[str], list[str]]:
+    """``(names, notes)``: the Session Log names riding the open pull requests,
+    each head's own seat's alone, by the loader's rule the board and the ship
+    driver read (``_record_fragments.py::riding_rows`` over ``lane_seat`` and
+    ``mail.lane_seats``: a head carries the base's rows as of its branch point
+    too, which are not riding). A head that is not here is fetched by object
+    id where ``fetch`` allows (it lands objects and moves no ref), else a note,
+    and the count is a floor. The list read failing raises ``Unresolvable``."""
+    mail, frag = _mail(), _fragments()
+    rc, out, err = run_(["gh", "pr", "list", "--state", "open", "--limit", str(GH_LIMIT), "--json",
+                         "number,headRefName,headRefOid,labels"], cwd=str(repo), timeout=GIT_TIMEOUT)
+    if rc != 0:
+        raise mail.Unresolvable(f"gh pr list --state open failed: {_one_line(err or out, 120) or f'rc={rc}'}")
+    try:
+        prs = json.loads(out)
+    except ValueError:
+        raise mail.Unresolvable("gh pr list --state open answered no JSON") from None
+    if not isinstance(prs, list):
+        raise mail.Unresolvable("gh pr list --state open answered no list")
+    seat_of = mail.lane_seats(by_machine)
+    heads: list[tuple[str, list[str]]] = []
+    notes: list[str] = []
+    for pr in prs:
+        oid = str(pr.get("headRefOid") or "") if isinstance(pr, dict) else ""
+        seat = frag.lane_seat(pr, seat_of)
+        if not oid or not seat:
+            continue
+        rc, _o, _e = run_(["git", "cat-file", "-e", f"{oid}^{{commit}}"], cwd=str(repo), timeout=GIT_TIMEOUT,
+                          env=mail.git_env())
+        if rc != 0 and fetch:
+            rc, _o, _e = run_(["git", "fetch", "--quiet", "origin", oid], cwd=str(repo), timeout=GIT_TIMEOUT,
+                              env=mail.git_env())
+        if rc != 0:
+            notes.append(f"#{pr.get('number')}'s head is not here, so its riding rows are unread and the count is "
+                         "a floor")
+            continue
+        heads.append((seat, _git_names(repo, oid, run_)))
+    return frag.riding_rows(heads), notes
+
+
+def read_session_log(repo: Path, fetch: bool, *, by_machine: dict | None = None,
+                     run_=None) -> tuple[list[str] | None, str]:
+    """``(names, note)``: the Session Log fragment names a seat wrote, read by
+    name from five places, never from the working tree (``DEF-4046``: a glob of
+    the checkout missed a row parked on a records ref, and the dispatcher's main
+    checkout catches up only at SessionStart, so it read a stale tree) --
+    ``origin/<base>``'s tree; HEAD's, which holds the reading seat's own rows
+    riding its lane (the dispatcher writes its day row on that lane); the rows
+    parked on the records refs and not yet folded (``mail.pending``, the
+    board's read); the rows the fold's prunes took off the base; and the rows
+    riding the open pull requests, each its own seat's (``_riding_names``,
+    which reads ``by_machine``'s claims). The same name in two places is one
+    row. The base read failing is ``None``, said as unread; any other failing
+    is a note beside the count, which is then a floor; a fetch that failed is
+    a note too (the refs as last fetched). Every note is one line."""
+    mail, frag = _mail(), _fragments()
+    run_ = run_ or mail.run
+    base = _merge_rules().base_branch(repo, cap=GIT_TIMEOUT)
+    if base is None:
+        return None, "git did not name the base branch in time"
+    notes = []
+    if fetch:
+        try:
+            rc, out, err = run_(["git", "fetch", "--quiet", "origin", base], cwd=str(repo), timeout=GIT_TIMEOUT,
+                                env=mail.git_env())
+            fetched = (rc == 0, _one_line(err or out, 160) or f"rc={rc}")
+        except mail.Unresolvable as exc:
+            fetched = (False, _one_line(exc, 160))
+        for what, (ok, problem) in ((f"origin/{base}", fetched), ("the records refs", mail.fetch_records(repo, run=run_))):
+            if not ok:
+                notes.append(f"{what} as last fetched (the fetch failed: {_one_line(problem, 160)})")
+    try:
+        names = _git_names(repo, f"origin/{base}", run_)
+    except mail.Unresolvable as exc:
+        return None, "; ".join([*notes, f"origin/{base}'s rows unread ({_one_line(exc)})"])
+    riding_notes: list[str] = []
+
+    def riding() -> list[str]:
+        found, more = _riding_names(repo, by_machine or {}, fetch, run_)
+        riding_notes.extend(more)
+        return found
+
+    reads = (("HEAD's rows", lambda: _git_names(repo, "HEAD", run_)),
+             ("the parked rows", lambda: [path for _machine, path, _ref in mail.pending(
+                 repo, frag.SESSION_LOG_DIR, [f"origin/{base}"], run=run_, trailer=frag.FOLD_TRAILER)]),
+             ("the fold's pruned rows", lambda: _pruned_names(repo, base, run_)),
+             ("the rows riding the open pull requests", riding))
+    for label, read in reads:
+        try:
+            names += read()
+        except mail.Unresolvable as exc:
+            notes.append(f"{label} unread, so the count is a floor ({_one_line(exc)})")
+    notes += riding_notes
+    return sorted({name.rsplit("/", 1)[-1] for name in names if name.strip()}), "; ".join(notes)
 
 
 def _words(m: dict, dispatcher: str | None = None) -> dict[str, bool]:
@@ -307,6 +460,16 @@ def session_log_names(names: list[str]) -> list[tuple[str, str]]:
         m = _fragments().SESSION_LOG_NAME_RE.match(name)
         if m:
             out.append((m.group(1), m.group(3)))
+    return out
+
+
+def rows_by_seat(names: list[str]) -> dict[str, dict[str, int]]:
+    """``{seat: {date: rows}}``: the census's one reader of Session Log rows,
+    over the names ``read_session_log`` (or a fixture) gives, a path read by
+    its last part and the same name counted once (``DEF-4046``)."""
+    out: dict[str, dict[str, int]] = {}
+    for date, seat in session_log_names(sorted({str(n).rsplit("/", 1)[-1] for n in names})):
+        out.setdefault(seat, {})[date] = out.get(seat, {}).get(date, 0) + 1
     return out
 
 
@@ -484,13 +647,18 @@ def census(src: dict, since: datetime, until: datetime, now: datetime | None = N
             row(seat, d)["lanes_merged"].append(int(pr["number"]))
         else:
             unattributed.append(int(pr["number"]))
-    names = session_log_names(src.get("session_log") or [])
-    for d, seat in names:
-        if d in days:
-            row(seat, d)["session_log_rows"] += 1
+    log_read = src.get("session_log") is not None
+    by_seat = rows_by_seat(src.get("session_log") or [])
+    for seat, by_day in by_seat.items():
+        for d, n in by_day.items():
+            if d in days:
+                row(seat, d)["session_log_rows"] += n
     if merged is None:
         for r in rows.values():
             r["lanes_merged"] = None
+    if not log_read:
+        for r in rows.values():
+            r["session_log_rows"] = None
 
     live_by_seat: dict[str, list[str]] = {}
     for a in live:
@@ -591,9 +759,9 @@ def census(src: dict, since: datetime, until: datetime, now: datetime | None = N
               "unattributed_merges": None if merged is None else len(unattributed),
               "requests": sum(r["requests"] for r in ordered),
               "answered": sum(r["answered"] for r in ordered),
-              "session_log_rows": sum(r["session_log_rows"] for r in ordered),
+              "session_log_rows": sum(r["session_log_rows"] for r in ordered) if log_read else None,
               **{k: sum(r[k] for r in ordered) for k in WORDS}}
-    oldest = min((d for d, _seat in names), default=None)
+    oldest = min((d for by_day in by_seat.values() for d in by_day), default=None)
     return {"since": since.strftime("%Y-%m-%dT%H:%M:%SZ"), "until": until_text, "days": days,
             "so_far": until > now, "live_at": min(until, now).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "dispatcher": dispatcher, "seats": seats, "rows": ordered, "new_jobs": new_jobs,
@@ -602,7 +770,7 @@ def census(src: dict, since: datetime, until: datetime, now: datetime | None = N
             "unattributed_merges": None if merged is None else sorted(unattributed), "totals": totals,
             "merged_read": merged is not None,
             "merged_at_limit": merged is not None and len(merged) >= GH_LIMIT,
-            "session_log_oldest": oldest}
+            "session_log_read": log_read, "session_log_oldest": oldest}
 
 
 def _again(r: dict) -> str:
@@ -629,6 +797,15 @@ def _hand(r: dict) -> str:
     """A row's releases naming an assign, both halves named."""
     return (f"releases naming an assign {r['hand_releases']} ({r['hand_releases_closing']} closed a live job, "
             f"{r['hand_releases'] - r['hand_releases_closing']} named a job already closed)")
+
+
+def _logs(data: dict, n: int | None, note: str = "") -> str:
+    """The Session Log figure: its count with ``note`` beside it (a floor, a
+    fetch that failed), or unread where the base's names were not read --
+    never a zero (``DEF-4046``)."""
+    if n is None or not data.get("session_log_read", True):
+        return "Session Log rows unread" + (f" ({note})" if note else "")
+    return f"Session Log rows {n}" + (f" ({note})" if note else "")
 
 
 def _words_line(r: dict) -> str:
@@ -662,7 +839,7 @@ def as_row(data: dict, seat: str, day: str, extra: dict | None = None) -> str:
         listed = ", ".join(f"#{n}" for n in r["lanes_merged"])
         merged = f"lanes merged {len(r['lanes_merged'])}{f' ({listed})' if listed else ''}"
     words = _words_line(r)
-    logs = f"Session Log rows {r['session_log_rows']}"
+    logs = _logs(data, r["session_log_rows"], str(extra.get("session_log_note") or ""))
     hand = _hand(r)
     if seat == data["dispatcher"]:
         s = data["dispatcher_sends"].get(day) or dict.fromkeys(SENDS, 0)
@@ -708,6 +885,9 @@ def render(data: dict, extra: dict) -> str:
         lines.append(f"merged pull requests: unread ({extra.get('merged_note', 'no list')})")
     elif data["merged_at_limit"]:
         lines.append(f"merged pull requests: the list is at its limit ({GH_LIMIT}); older merges may be missing")
+    if extra.get("session_log_note"):
+        lines.append(f"Session Log rows: {'unread' if not data.get('session_log_read', True) else 'read'} "
+                     f"({extra['session_log_note']})")
     for r in data["rows"]:
         c = r["closed"]
         median = f", median {r['median_minutes']} min" if r["median_minutes"] is not None else ""
@@ -715,7 +895,7 @@ def render(data: dict, extra: dict) -> str:
         lines.append(f"{r['day']} {r['seat']}: merged {merged}, assigns {r['assigns_received']}, "
                      f"closed {sum(c.values())} (claim {c['claim']}, lane {c['lane']}, ack {c['ack']}){_reread(r)}, "
                      f"re-assigned after a close {r['reassigned_after_close']}{_again(r)}, {_hand(r)}, requests "
-                     f"{r['requests']} ({r['answered']} answered{median}), Session Log rows {r['session_log_rows']}, "
+                     f"{r['requests']} ({r['answered']} answered{median}), {_logs(data, r['session_log_rows'])}, "
                      f"{_words_line(r)}")
     for d, s in data["dispatcher_sends"].items():
         lines.append(f"{d} {data['dispatcher']} sent: assigns {s['assigns_sent']} ({s['jobs_given']} new jobs), "
@@ -735,12 +915,14 @@ def render(data: dict, extra: dict) -> str:
                  f"{t['claimed_again']}, on a lane begun before the job {t['lane_begun_before']}), re-assigned after a close "
                  f"{t['reassigned_after_close']} (rows {t['reassigned_rows']}, packs {t['reassigned_packs']}), "
                  f"live {t['live']}, merged {merged_total}, requests {t['requests']} ({t['answered']} answered), "
-                 f"Session Log rows {t['session_log_rows']}")
+                 f"{_logs(data, t['session_log_rows'])}")
     lines.append("note: assigns and releases count on the day they were sent, closures on the day of the release "
                  "that closed them, so a day's closures can be of jobs given before it")
-    lines.append("note: a Session Log name's date is its writer's local day, a row parked on a records ref is not "
-                 "in the tree, and older rows are archived"
-                 + (f" (the tree's oldest: {data['session_log_oldest']})" if data["session_log_oldest"] else ""))
+    lines.append("note: a Session Log name's date is its writer's local day; the rows are read by name from the "
+                 "base's tree, HEAD's, the records refs' parked rows, the fold's prunes and the open pull requests' "
+                 "heads (each one's own seat's rows), so a row deleted by hand before the fold's trailer is not "
+                 "counted unless a stale HEAD still holds it"
+                 + (f" (the oldest read: {data['session_log_oldest']})" if data["session_log_oldest"] else ""))
     return "\n".join(lines)
 
 
@@ -814,7 +996,7 @@ def main(argv: list[str] | None = None) -> int:
     if until <= since:
         print("seat_day_census: --until must follow --since", file=sys.stderr)
         return 2
-    for key in ("fetch", "dispatcher_how", "merged_note", "skipped"):
+    for key in ("fetch", "dispatcher_how", "merged_note", "skipped", "session_log_note"):
         if src.get(key):
             extra[key] = src[key]
     data = census(src, since, until, now)

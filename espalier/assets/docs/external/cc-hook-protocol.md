@@ -21,7 +21,7 @@ redirect_note: |
   origin; the docs.claude.com URL is retained below only as the redirect entry.
 mirrors:
   - https://docs.claude.com/en/docs/claude-code/hooks
-fetched: 2026-10-31
+fetched: 2026-11-09
 section: "Hook input and output — Exit code output (Exit code 0, Exit code 2, Other exit codes, Timeouts, Block the action when a hook fails, Failed hooks on Windows without Git Bash), JSON output, Decision control; Command hook fields — Exec form and shell form; the WorktreeCreate and WorktreeRemove events"
 section_anchor: "hook-input-and-output"
 content_hash: ""
@@ -108,10 +108,18 @@ exit 2, so the missing-file downgrade does not reach it.
 > structured control.
 >
 > For most events, Claude Code writes stdout to the debug log and doesn't show
-> it in the transcript. The exceptions are `UserPromptSubmit`,
-> `UserPromptExpansion`, `SessionStart`, and `PostModelSwitch`, where Claude
-> Code adds plain-text stdout as context that Claude can see and act on. On
-> those events, Claude Code doesn't add stdout it failed to parse.
+> it in the transcript. On these events, your stdout reaches Claude or the
+> compaction summary:
+>
+> * **`UserPromptSubmit`, `UserPromptExpansion`, `SessionStart`, and
+>   `PostModelSwitch`**: Claude Code adds plain-text stdout as context that
+>   Claude can see and act on. It doesn't add stdout it failed to parse.
+> * **`PreCompact`**: your stdout becomes instructions for the compaction
+>   summary
+
+The four events whose plain stdout reaches Claude are the 2026-10-31 page's
+four; the 2026-11-09 page adds `PreCompact`, whose stdout goes to the
+compaction summary instead (the 10,000-character cap below says how it is cut).
 
 Whether stdout is read as JSON or as plain text is a **syntactic** test, not a
 channel declaration. The 2026-10-31 page states it under "Exit code 0"
@@ -617,12 +625,23 @@ the model, which are easy to conflate:
    > * **Scope**: Claude Code measures each string on its own, even when several
    >   hooks run for the same event. For JSON output, each field is measured
    >   separately; plain stdout is measured whole.
-   > * **Over the limit**: Claude Code saves the output to a file in the session
-   >   directory and replaces it with the file path and a preview of up to the
-   >   first 2,000 characters. […] Unlike that Bash ceiling, this cap has no
-   >   setting or environment variable to raise it.
+   > * **Over the limit**: except for PreCompact stdout, Claude Code saves the
+   >   output to a file in the session directory. It replaces the output with
+   >   the file path and a preview of up to the first 2,000 characters. […]
+   >   Unlike that Bash ceiling, this cap has no setting or environment
+   >   variable to raise it.
    > * **Reading the file**: Claude Code doesn't ask Claude to read the file, so
    >   keep anything Claude must always see within the cap.
+
+   The carve-out, from the 2026-11-09 page's "PreCompact output" (verbatim):
+
+   > When a PreCompact hook exits 0 and doesn't block, Claude Code uses its
+   > stdout as instructions for the compaction summary. Keep that stdout under
+   > 10,000 characters per hook. Claude Code cuts longer output at the cap and
+   > appends a marker.
+
+   Espalier wires no `PreCompact` hook, so the carve-out reaches none of its
+   output; the spill rule above still governs the SessionStart banner.
 
    ⚠ This is the sharpest operational change in the refresh for espalier: the
    SessionStart banner is **plain stdout**, now explicitly capped at 10,000
@@ -959,3 +978,18 @@ read this pin, never a candidate; the forward ledger carries that row. -->
      now prints `<Note>` and `<Warning>` as `> [!NOTE]` and `> [!WARNING]`
      callouts; this pin's prose keeps the component names. Every quoted
      passage stands on that page. -->
+
+<!-- re-excerpt 2026-11-09, against the page fetched that day (the refresh
+     that day found 2 of 60 quotes off). Under "Exit code 0" the sentence
+     naming the events whose stdout leaves the debug log became a list and
+     gained `PreCompact`, whose stdout becomes instructions for the
+     compaction summary; the four events whose plain stdout reaches Claude
+     are unchanged. The 10,000-character cap's "Over the limit" bullet now
+     opens with "except for PreCompact stdout", and the page's "PreCompact
+     output" section (on neither the 2026-10-19 nor the 2026-10-26 refresh's
+     page) cuts that stdout at the cap with a marker rather than saving it to
+     a file; that section is quoted beside the cap.
+     No hook here is wired to `PreCompact`, so neither change reaches
+     espalier's output. The "Exit code 0" sentence on JSON that fails to
+     parse or validate is unchanged and stays as quoted. Every quoted passage
+     stands on that page. -->

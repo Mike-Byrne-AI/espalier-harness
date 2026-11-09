@@ -42,7 +42,18 @@ from espalier._text import plural
 # through one constant so a future rename is a value flip, not scattered edits.
 _MEMORY_FILENAME = "ESPALIER_MEMORY.md"
 
-LOCAL_LINK_RE = re.compile(r"\[[^\]]+\]\((?!https?://|mailto:|#)([^)]+)\)")
+# A bare destination may hold balanced parentheses (CommonMark; a Next.js or
+# SvelteKit route-group folder, `app/(marketing)/page.tsx`), one level deep:
+# read to its first `)`, a working link to such a file read as a broken link
+# to `app/(marketing` (DEF-5086). Where the balanced read fails (parentheses
+# nested deeper, an escaped one, a title holding a lone one) the old read to
+# the first `)` stands, so such a link is still read, never dropped. A
+# destination stops at a line break, so an unclosed link cannot swallow the
+# next line's links, and a run of them across lines reads linearly; one line
+# of unclosed links stays quadratic, as the old read was, at about 1.7 times
+# its cost (measured 2026-11-09). Twin of tools/cc/reflect_protocol.py's,
+# pinned by tests/test_reflect_protocol.py::TestReflectTwinParity.
+LOCAL_LINK_RE = re.compile(r"\[[^\]]+\]\((?!https?://|mailto:|#)((?:[^()\n]|\([^()\n]*\))+|[^)\n]+)\)")
 # Non-navigable local-only trees excluded from the reflect surface walk.
 # Forced twin of tools/cc/reflect_protocol.py's LOCAL_ONLY_PREFIXES across the
 # no-import boundary — keep the two in sync (locked by
@@ -127,7 +138,7 @@ def _safe_text(path: Path) -> str:
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 
 
-_MD_LINK_TEXT = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
+_MD_LINK_TEXT = re.compile(r"!?\[([^\]]*)\]\((?:(?:[^()\n]|\([^()\n]*\))*|[^)\n]*)\)")  # a route-group target unwraps whole (DEF-5086)
 _SLUG_DROP = re.compile(r"[^\w\- ]", re.UNICODE)
 _ATX_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*$")
 

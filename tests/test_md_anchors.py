@@ -8,6 +8,8 @@ with the reason it is here.
 # pytest-marker: default-unit  (pure-function string tests; no subprocess, no tmp tree)
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from _md_anchors import heading_anchors, slug_variants, slugify
@@ -69,6 +71,27 @@ class TestSlugify:
         into the slug as ``foobarmd``. The one construct that genuinely needs it."""
         assert slugify("[Foo](bar.md) heading") == "foo-heading"
         assert slugify("![Alt](img.png) shot") == "alt-shot"
+
+    def test_a_route_group_target_unwraps_whole(self):
+        """A destination holding balanced parentheses (a Next.js or SvelteKit
+        route-group folder, DEF-5086) unwraps to the text alone; cut at its
+        first ``)``, the rest of the target leaked into the slug."""
+        assert slugify("[Pricing](app/(marketing)/page.tsx) route") == "pricing-route"
+
+    def test_the_reflect_twins_unwrap_a_route_group_target_the_same(self):
+        """The two reflect twins carry their own copy of this rule (`tools/cc/`
+        cannot import tests/); each exposes the same anchor for the heading."""
+        import importlib.util
+
+        from espalier.reflect_protocol import _heading_anchors as engine_anchors
+
+        standalone = Path(__file__).resolve().parent.parent / "tools" / "cc" / "reflect_protocol.py"
+        spec = importlib.util.spec_from_file_location("_reflect_protocol_standalone_def5086", standalone)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        heading = "## [Pricing](app/(marketing)/page.tsx) route\n"
+        assert "pricing-route" in engine_anchors(heading)
+        assert "pricing-route" in module._heading_anchors(heading)
 
 
 class TestSlugVariants:
