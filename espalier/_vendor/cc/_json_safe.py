@@ -33,6 +33,7 @@ from typing import IO, TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # the annotation only; subprocess stays a lazy import, as in _hook_utils
     import subprocess
+    from collections.abc import Callable
 
 _MISSING = object()
 
@@ -180,6 +181,69 @@ def quoted_if_spaced(path: str) -> str:
     (the platform this quoting is for) and rare enough on POSIX that a
     shell-specific escape would cost more than it saves."""
     return f'"{path}"' if any(ch.isspace() for ch in path) else path
+
+
+def program_word(path: str, short_path: "Callable[[str], str | None] | None") -> str:
+    """``path`` spelled as the PROGRAM word of a command the reader will type,
+    given ``short_path``, a lookup of the path's 8.3 short form (None where the
+    host has none). The hooks' twin of ``espalier/_text.py::program_word``
+    (DEF-2062; tools/cc cannot import the engine), pinned to it by
+    ``tests/test_json_safe_program_word.py``. Unspaced, it is unchanged. Spaced,
+    its short form with forward slashes when that is a drive-rooted word of
+    plain characters: one bare word that Windows PowerShell 5.1, cmd and Git
+    Bash all run (DEF-2060). Else the double-quoted path, which cmd and the
+    POSIX shells run and PowerShell needs ``&`` before. A hook says nothing of
+    that ``&``: an exit-0 hook's stderr is dropped, so a note there would reach
+    no one (ruling bd0473). Pure text: the lookup is a parameter."""
+    if not any(ch.isspace() for ch in path):
+        return path
+    short = short_path(path) if short_path is not None else None
+    if short:
+        word = short.replace("\\", "/")
+        # An 8.3 name keeps `&`, `(`, `'` and `$`, which each of the three
+        # shells reads as grammar in a bare word, and a UNC or `\\?\` form
+        # does not run with forward slashes (driven for DEF-2060).
+        if _is_plain_program_word(word):
+            return word
+    return quoted_if_spaced(path)
+
+
+_PLAIN_WORD_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.~+/-")
+
+
+def _is_plain_program_word(word: str) -> bool:
+    """``[A-Za-z]:/[A-Za-z0-9_.~+/-]+`` without importing ``re`` here (every
+    hook loads this module on every tool call)."""
+    return (len(word) > 3 and word[0].isascii() and word[0].isalpha() and word[1:3] == ":/"
+            and all(ch in _PLAIN_WORD_CHARS for ch in word[3:]))
+
+
+def windows_short_path(path: str) -> "str | None":
+    """The 8.3 short form of an existing ``path`` from ``GetShortPathNameW``
+    (Windows only), else None: a path that does not exist, or any other
+    failure, answers 0 there and None here. Two calls, the first asking the
+    buffer size, so a long path is never cut at ``MAX_PATH``. ctypes loads in
+    here, never at module level. It runs inside remedy printers, so a lookup
+    that cannot load answers None, never a traceback in place of the text."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        get_short = ctypes.WinDLL("kernel32").GetShortPathNameW  # type: ignore[attr-defined]
+        get_short.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+        get_short.restype = wintypes.DWORD
+        size = get_short(path, None, 0)
+        if not size:
+            return None
+        buf = ctypes.create_unicode_buffer(size)
+        written = get_short(path, buf, size)
+    except (ImportError, AttributeError, OSError, ValueError):
+        return None
+    if not written or written >= size:
+        return None
+    return str(buf.value)
 
 
 def _plain_path(value: object) -> str:

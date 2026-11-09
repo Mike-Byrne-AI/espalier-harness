@@ -701,8 +701,10 @@ class TestTheLadderRunsTheWiredInterpretersEngineFirst:
         # The remedy spells this interpreter's module, never the bare PATH name,
         # with every flag the hook itself passed (a paste must not archive the
         # row just written).
-        assert f"run `{sys.executable} -m espalier memory prune --rows " in said, said
-        assert f"--root {fresh_repo} --allow-empty --keep-newest 1` by hand" in said, said
+        # Spelled so a spaced interpreter or root survives the paste (DEF-2062).
+        assert f"run `{mod._hook_utils.executable_word()} -m espalier memory prune --rows " in said, said
+        assert (f"--root {mod._hook_utils.quoted_if_spaced(str(fresh_repo))} --allow-empty "
+                "--keep-newest 1` by hand") in said, said
 
     @pytest.mark.parametrize("said,no_engine", [
         ("/usr/bin/python3: No module named espalier", True),            # runpy, package absent

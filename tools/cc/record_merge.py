@@ -74,6 +74,23 @@ from typing import Callable, Iterable, TypeVar
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _json_safe import decode_text_or_problem, os_error_text, run_bounded  # noqa: E402
 
+# The program-word spelling (DEF-2062), guarded: a kept `_json_safe.py` that
+# predates it leaves the prune note on the bare spelling it printed before.
+try:
+    from _json_safe import program_word, quoted_if_spaced, windows_short_path  # noqa: E402
+except ImportError:  # pragma: no cover - a tools/cc/_json_safe.py that predates the spelling
+    def program_word(path: str, short_path: object) -> str:
+        """Fallback: ``path`` unchanged, as before DEF-2062."""
+        return path
+
+    def quoted_if_spaced(path: str) -> str:
+        """Fallback: double-quoted when spaced."""
+        return f'"{path}"' if any(ch.isspace() for ch in path) else path
+
+    def windows_short_path(path: str) -> "str | None":
+        """Fallback: no short form."""
+        return None
+
 #: The record files this tool knows the shape of, repo-relative with forward
 #: slashes. A conflict anywhere else is the operator's.
 MEMORY = "ESPALIER_MEMORY.md"
@@ -492,9 +509,14 @@ def restore_memory_cap(root: Path, *, new_rows: list[str], run: Runner = run,
         if not _NO_ENGINE_RE.search(err):
             break   # the engine ran and refused: the PATH binary is not a second opinion
     if not pruned:
-        say(f"note: {MEMORY} is {excess} line(s) over its cap of {cap} and `{sys.executable} -m espalier memory prune "
-            f"--rows {excess} --root {root} --allow-empty --keep-newest {max(len(new_rows), 1)}` could not run "
-            f"({last[:160]}): run it by hand, then amend the merge commit")
+        word = program_word(sys.executable, windows_short_path)
+        # The PowerShell `&` note rides the one line this run says (DEF-2062):
+        # a quoted first word is text to PowerShell 5.1.
+        ps = (" (in PowerShell, type & before it: PowerShell reads a quoted first word as text)"
+              if word.startswith('"') and sys.platform == "win32" else "")
+        say(f"note: {MEMORY} is {excess} line(s) over its cap of {cap} and `{word} -m espalier memory prune "
+            f"--rows {excess} --root {quoted_if_spaced(str(root))} --allow-empty --keep-newest "
+            f"{max(len(new_rows), 1)}` could not run ({last[:160]}): run it by hand{ps}, then amend the merge commit")
         return False
     after = _read_memory(root, say)
     if after is not None:

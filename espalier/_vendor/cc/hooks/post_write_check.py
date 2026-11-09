@@ -312,7 +312,8 @@ def _maybe_autoprune_memory(repo_root: Path, rel_path: str) -> None:
     _hook_utils.advise_warn(
         f"ESPALIER_MEMORY.md autoprune failed: {last_error} "
         f"(file remains at {line_count} lines, cap={_MEMORY_MD_CAP}; "
-        f"run `{sys.executable} -m espalier memory prune --rows {excess} --root {repo_root} "
+        f"run `{_hook_utils.executable_word()} -m espalier memory prune --rows {excess} "
+        f"--root {_hook_utils.quoted_if_spaced(str(repo_root))} "
         f"--allow-empty --keep-newest 1` by hand)"
     )
 

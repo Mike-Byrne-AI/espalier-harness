@@ -1403,6 +1403,19 @@ by surface, not by habit:
   `_remedy_py()`, a local bound from it, or a parameter every call site
   passes one to; `tests/test_portability_contract.py::TestRemediesSpellTheRemedyInterpreter`
   follows the parameter (`DEF-805`).
+- **Runtime hints the HOOKS print** — `tools/cc/` cannot import the engine, so
+  a hook spells the interpreter from `_hook_utils.python_command_hint()` (a
+  bare name that clears the floor and starts, else this interpreter) or, for a
+  command that must name this interpreter, `_hook_utils.executable_word()`.
+  Both spell `sys.executable` through `tools/cc/_json_safe.py::program_word`,
+  the engine helper's twin (`tests/test_json_safe_program_word.py` pins the
+  two together), with a spaced path's argument slots through
+  `quoted_if_spaced`. One limit is the engine's minus its note: where a spaced
+  path has no plain short form, the hook prints the quoted path and says
+  nothing of PowerShell's `&`, because an exit-0 hook's stderr is dropped
+  (`DEF-2062`). A message that opens a backticked command with a bare
+  `{sys.executable}` is refused by
+  `tests/test_json_safe_program_word.py::TestNoCommandOpensWithABareInterpreter`.
 - **`.claude/settings.json` hook wiring** — `cli._build_settings_json` threads
   the same detected interpreter. This is mechanical enforcement, and it has
   always resolved the host value.
