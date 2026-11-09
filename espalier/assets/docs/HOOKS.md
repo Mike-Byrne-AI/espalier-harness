@@ -1765,7 +1765,12 @@ and JSON credential files -- are denied on the `Read` tool and, when a
 read verb names the path in the same statement, on Bash (`cat`, `head`,
 `cp`, `source`, ...) and on the PowerShell tool (`Get-Content`, `gc`,
 `type`, `Format-Hex`, `Copy-Item`, the dot-source, ...), each shell read
-with its own statement grammar and roster; the two rosters are pinned to
+with its own statement grammar and roster. On Bash the verb is read past
+the words that put a command behind them -- `then`, `do`, `!`, `{`, a
+leading assignment, a case arm, a leading redirect and a wrapper run with
+its flags (`sudo -u root`, `timeout 5`, `nohup`) -- and an input redirect's
+source is a read (`cat < .env`, `done < .env`), except a copier's, which
+never reads its stdin. The two rosters are pinned to
 each other class for class, and a program handed to the other shell
 (`powershell -Command "Get-Content .env"` on Bash, `sh -c 'cat .env'` on
 PowerShell) is read with that shell's roster. A program a carrier runs out

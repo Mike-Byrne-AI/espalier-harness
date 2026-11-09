@@ -11965,8 +11965,9 @@ class TestSecretPathAccess:
     # DECLARED LIMITS of the class's first landing, pinned so a change to them
     # is a decision. Still refused: a spaced path whose comment holds an
     # apostrophe (the quote never closes). Still allowed: the quoted-path head
-    # the gate keeps on the old split, and an input redirect, which no leg
-    # reads as a source (filed as DEF-1132).
+    # the gate keeps on the old split. (An input redirect was the second
+    # allow here until DEF-1132's lane read its source; it is a must-deny
+    # row below.)
     @pytest.mark.parametrize("tool, command", [
         ("PowerShell", "Get-Content \"work/client secrets/notes.md\" # it's"),
     ])
@@ -11976,10 +11977,99 @@ class TestSecretPathAccess:
 
     @pytest.mark.parametrize("tool, command", [
         ("PowerShell", "& 'C:\\Program Files\\Git\\usr\\bin\\cat.exe' .env"),
-        ("Bash", "cat < .env"),
     ])
     def test_the_first_landing_still_allows(self, tool, command, tmp_path):
         assert_hook_allowed(run_guard_tool(tool, {"command": command}, tmp_path))
+
+    # The Bash leg reads its verb past the words that put a command behind
+    # them, and an input redirect's source as a read (DEF-1025, DEF-2061,
+    # DEF-1132; one lane, assign 630019). Every row below allowed at main
+    # e19a96ac but the four controls. The head is read as words, with the
+    # wrapper roster derived from the zone leg's own literals; a wrapper
+    # flag never takes a read verb as its value, so `sudo -E cat .env` and
+    # `time -p cat .env` deny where the zone leg's regex would read `cat` as
+    # the flag's value. The named user: an adopter whose AI collaborator
+    # writes the show-it-if-it-exists idiom, a `sudo cat`, or `cat < .env`,
+    # and puts the secrets in the transcript.
+    @pytest.mark.parametrize("command", [
+        # DEF-1025: a read behind a keyword, a prefix word, an assignment or a case arm
+        "if [ -f .env ]; then cat .env; fi",
+        "if false; then :; else cat .env; fi",
+        "time cat .env",
+        "! cat .env",
+        "for i in 1; do cat .env; done",
+        "{ cat .env; }",
+        "if true; then head -5 .env; fi",
+        "while true; do cat .env; break; done",
+        "command cat .env",
+        "builtin source .env",
+        "until false; do cat .env; break; done",
+        "FOO=1 cat .env",
+        'FOO="a b" cat .env',
+        "case x in x) cat .env;; esac",
+        "case x in\n x) cat .env;;\nesac",
+        "case x in a) :;; b) cat .env;; esac",
+        "case x in (x) cat .env;; esac",
+        # DEF-2061: a read behind a wrapper run or a leading redirect
+        "sudo cat .env",
+        "sudo -u root cat .env",
+        "sudo -D /opt/script cat .env",
+        "sudo -E cat .env",
+        "sudo -- cat .env",
+        "/usr/bin/sudo cat .env",
+        "SUDO.EXE cat .env",
+        "timeout 5 cat .env",
+        "timeout -s KILL 5 cat .env",
+        "nice cat .env",
+        "nice -n 10 cat .env",
+        "nohup cat .env",
+        "time -p cat .env",
+        "2>&1 cat .env",
+        ">/dev/null cat .env",
+        # DEF-1132: an input redirect's source, after the verb, before it, or on a compound
+        "cat < .env",
+        "cat <.env",
+        "head -3 < config/.env.local",
+        "sed -n p < .env",
+        "cat < .env > /tmp/out",
+        "< .env cat",
+        "0< .env cat",
+        "while read l; do echo \"$l\"; done < .env",
+        "{ cat; } < .env",
+    ])
+    def test_a_read_behind_a_head_word_or_from_a_redirect_is_refused(self, command, tmp_path):
+        assert_hook_denied(run_guard_tool("Bash", {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("command", [
+        "[ -f .env ] && cat .env",
+        "cat .env",
+        "if true; then\n  cat .env; fi",
+        "(cat .env)",
+        "env cat .env",
+    ])
+    def test_the_controls_stay_refused(self, command, tmp_path):
+        assert_hook_denied(run_guard_tool("Bash", {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("command", [
+        "cp .env.example .env",
+        "sudo cp .env.example .env",
+        "echo cat .env",
+        "nice echo cat .env",
+        "grep -rn .env docs/",
+        "cat < notes.txt",
+        "xargs cat < list.txt",
+        "cp a b < .env",                       # a copier never reads its stdin
+        '"then" cat .env.example',
+        'git commit -m "then cat .env"',
+        'echo "case x in x) cat .env"',
+        "cat README.md # < .env",
+        "done < notes.txt",
+        "for f in a; do :; done > .env.log",
+    ])
+    def test_a_head_word_or_redirect_that_reads_no_secret_is_allowed(self, command, tmp_path):
+        assert_hook_allowed(run_guard_tool("Bash", {"command": command}, tmp_path))
 
     # DEF-1045: a statement that opens with a quoted string is a mention when
     # nothing in the command can run it. A positive gate with two arms, each
