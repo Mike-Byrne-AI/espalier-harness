@@ -2178,12 +2178,12 @@ def _zone_reading(rel_path: str, root: Path) -> "tuple[tuple[str, str] | None, s
         def sits_in(zone: str, is_file: bool) -> bool:
             if rel == zone or rel.startswith(zone + "/"):
                 return True
-            return wild and _glob_reach(rel, zone, is_file=is_file)[0] == "names"
+            return wild and _glob_reach(rel_path, zone, is_file=is_file, tree=root) == "names"
 
         def holds(zone: str, is_file: bool) -> bool:
             if zone.startswith(rel + "/"):
                 return True
-            return wild and _glob_reach(rel, zone, is_file=is_file)[0] == "encloses"
+            return wild and _glob_reach(rel_path, zone, is_file=is_file, tree=root) == "encloses"
 
         harness = [(entry, fold(entry, all_components=True).rstrip("/"), entry in PROTECTED_FILES)
                    for entry in (*_hook_utils.harness_protected_prefixes(root), *PROTECTED_FILES)]
@@ -2435,7 +2435,8 @@ def check_bash_for_protected_mutations(command: str, root: Path, cwd: Path | Non
         for at in bases(raw):
             base, rel = _resolve_bash_in_checkout(raw, root, base=at)
             where, note = _checkout_note(base, root)
-            if _mutated_zone(effect, rel, root):
+            if _mutated_zone(effect, rel, root, base):
+                where += _glob_note(rel, root, base)
                 takes = effect in _TAKES_ITS_TREE
                 if _adopter_zone(rel, root) is not None or (takes and _takes_harness_ground(rel, root)):
                     reason = _zone_reason(
@@ -2473,7 +2474,7 @@ _SYMLINK_NOTE = "a symlink"
 _HARDLINK_NOTE = "a hardlink would alias its bytes under a second name"
 
 
-def _mutated_zone(effect: str, rel: str, root: Path) -> bool:
+def _mutated_zone(effect: str, rel: str, root: Path, base: Path | None = None) -> bool:
     """The zone verdict for one removed or relocated operand, by effect: a
     protected operand is refused for every effect; an ENCLOSING directory
     for a delete, a move or a `git clean` (the tree goes with it), never for
@@ -2484,7 +2485,9 @@ def _mutated_zone(effect: str, rel: str, root: Path) -> bool:
     a write. An operand holding a wildcard is judged by what it can name
     (DEF-3010): `tools/*` names `tools/cc/` and a root `too*` encloses it, so
     each is refused as the directory it reaches is, while `build/*` and
-    `tools/*.log` reach nothing. The read runs only on a wildcard operand."""
+    `tools/*.log` reach nothing. The read runs only on a wildcard operand, and
+    a remainder's existence is read in ``base``, the checkout the operand is
+    relative to (a sibling worktree for a path into one)."""
     if _is_allowed(rel):
         return False
     if _is_protected(rel, root):
@@ -2492,10 +2495,20 @@ def _mutated_zone(effect: str, rel: str, root: Path) -> bool:
     if effect in _TAKES_ITS_TREE and _encloses_protected(rel, root):
         return True
     if _has_wildcard(rel):
-        reach = _glob_reaches_protected(rel, root)
+        reach = _glob_reaches_protected(rel, root, tree=base)[0]
         if reach == "names" or (reach == "encloses" and effect in _TAKES_ITS_TREE):
             return True
     return effect == "clean" and rel.strip("/") in ("", ".")
+
+
+def _glob_note(rel: str, root: Path, base: Path | None) -> str:
+    """What a refused wildcard operand reached, for the deny's path slot
+    (DEF-3010): a root `*/build` refused for `cc/build` says `cc/`, so the
+    refusal of a build clean says why. Asked on the deny path alone."""
+    if not _has_wildcard(rel):
+        return ""
+    entry = _glob_reaches_protected(rel, root, tree=base)[1]
+    return f" (a wildcard that reaches `{entry}`)" if entry else ""
 
 
 def check_bash_for_protected_hardlinks(command: str, root: Path, cwd: Path | None = None) -> int:
@@ -3015,7 +3028,8 @@ def check_powershell_for_protected_mutations(
         for at in bases(raw):
             base, rel = _resolve_bash_in_checkout(raw, root, base=at)
             where, note = _checkout_note(base, root)
-            if _mutated_zone(effect, rel, root):
+            if _mutated_zone(effect, rel, root, base):
+                where += _glob_note(rel, root, base)
                 reason = _zone_reason(
                     rel, root, where=where, mutation=True,
                     effect=_EFFECT_WORD.get(effect, effect).capitalize(),

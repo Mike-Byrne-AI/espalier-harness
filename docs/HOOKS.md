@@ -1126,6 +1126,22 @@ first; the dangerous-command catch is a secondary slip-catcher):
    read off the disk, never a subprocess. A nested clone or a submodule is
    not a checkout of this repository and is not governed.
 
+   An operand that a delete, move or clean removes, and that holds a
+   wildcard (`*`, `?`, `[...]`), is judged by what it can name, not as the
+   literal path it spells: `tools/*` is refused as `tools/cc/` is, and a
+   root `too*` as `tools` is, while `build/*` and `tools/*.log` reach no zone
+   and run. A brace list is expanded and an extended glob's group read as
+   `*`; `**` is `*`, as Bash reads it with globstar off. A remainder below a
+   zone (a root `*/build` against `cc/`) counts only when the checkout holds
+   something it names. The read fails closed where it cannot follow the
+   shell: a negated, POSIX or equivalence class, a nested extended-glob
+   group or a brace sequence reads as naming anything, so such an operand at
+   the root is refused. The friction this costs: a remove without the
+   recursive flag of `tools/*` is refused although it would only remove the
+   files directly in `tools`. The deny says what the wildcard reached. A
+   wildcard on a write, a link or a permission change is still read as the
+   path it spells: those forms are outside the coverage contract below.
+
    A relative Bash or PowerShell spelling is read from the directory the
    command runs in, not from the root: the hook payload's `cwd` (the
    directory Claude is in, which Claude Code moves when an earlier call ran

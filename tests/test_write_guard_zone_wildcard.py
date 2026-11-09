@@ -9,12 +9,12 @@ in-process 2026-10-16, four spellings of four). The comparator,
 ``_protected_zones.glob_reach``, reads the operand segment by segment against
 each protected entry; the verdict and the deny text both ask it.
 
-Two layers, so a wall-tier behaviour is pinned at the reader where it can be:
-the comparator by its readings (paths only, no command text), then one
-composition through both zone checks, built from the live protected roster
-crossed with the remove and move verbs the zone loops consume, with a
-must-allow twin of every shape below an unprotected directory and beside the
-zone.
+Three layers, so a wall-tier behaviour is pinned at the reader where it can
+be: the comparator by its readings (paths only, no command text), the verdict
+by effect and by checkout (paths only), then one composition through both
+zone checks, built from the live protected roster crossed with the remove and
+move verbs the zone loops consume, with a must-allow twin of every shape below
+an unprotected directory and beside the zone.
 """
 from __future__ import annotations
 
@@ -37,42 +37,44 @@ import _protected_zones  # noqa: E402
 import write_guard  # noqa: E402
 
 
-#: (operand, entry, entry is a file, reach, tail) -- each a reading the
-#: docstring of ``glob_reach`` names, plus the folds it must share with
-#: ``_is_protected``.
+#: (operand, entry, entry is a file, reach) -- each a reading the docstrings
+#: of ``glob_reach`` and ``_prepare_segment`` name, read with no tree (the
+#: existence filter is the next class's).
 _READINGS = {
-    "a star below the parent names the zone": ("tools/*", "tools/cc/", False, "names", ""),
-    "a root stub encloses the zone": ("too*", "tools/cc/", False, "encloses", ""),
-    "a question mark is a wildcard": ("tool?", "tools/cc/", False, "encloses", ""),
-    "a class is a wildcard": ("tools/[c]c", "tools/cc/", False, "names", ""),
-    "the shell's caret class negates as fnmatch's bang": ("tools/[^x]c", "tools/cc/", False, "names", ""),
-    "a pattern no zone name fits reaches nothing": ("tools/*.log", "tools/cc/", False, "", ""),
-    "another directory reaches nothing": ("build/*", "tools/cc/", False, "", ""),
-    "a star names an exact protected file": (".claude/*", ".claude/settings.json", True, "names", ""),
-    "a pattern the file's name does not fit": (".claude/*.bak", ".claude/settings.json", True, "", ""),
-    "nothing sits inside a file": (".claude/*/x", ".claude/settings.json", True, "", ""),
-    "a literal remainder inside a zone is the shell's to expand": ("*/build", "cc/", False, "names", "cc/build"),
-    "the remainder keeps its own spelling": ("*/Build", "cc/", False, "names", "cc/Build"),
-    "a wildcard remainder inside a zone fails closed": ("*/*", "cc/", False, "names", ""),
-    "globstar names whatever lies below it": ("**/hooks", "tools/cc/", False, "names", ""),
-    "syntax fnmatch does not read fails closed": ("tools/*(x)", "tools/cc/", False, "names", ""),
-    "the case fold is the protected check's": ("TOOLS/*", "tools/cc/", False, "names", ""),
-    "a separator fold is the protected check's": ("tools\\*", "tools/cc/", False, "names", ""),
-    "a leading dot-segment is no component": ("./tools/*", "tools/cc/", False, "names", ""),
+    "a star below the parent names the zone": ("tools/*", "tools/cc/", False, "names"),
+    "a root stub encloses the zone": ("too*", "tools/cc/", False, "encloses"),
+    "a question mark is a wildcard": ("tool?", "tools/cc/", False, "encloses"),
+    "a class is a wildcard": ("tools/[c]c", "tools/cc/", False, "names"),
+    "a pattern no zone name fits reaches nothing": ("tools/*.log", "tools/cc/", False, ""),
+    "another directory reaches nothing": ("build/*", "tools/cc/", False, ""),
+    "a star names an exact protected file": (".claude/*", ".claude/settings.json", True, "names"),
+    "a pattern the file's name does not fit": (".claude/*.bak", ".claude/settings.json", True, ""),
+    "nothing sits inside a file": (".claude/*/x", ".claude/settings.json", True, ""),
+    "a remainder inside a zone names, absent a tree": ("*/build", "cc/", False, "names"),
+    "the case fold is the protected check's": ("TOOLS/*", "tools/cc/", False, "names"),
+    "a separator fold is the protected check's": ("tools\\*", "tools/cc/", False, "names"),
+    "a leading dot-segment is no component": ("./tools/*", "tools/cc/", False, "names"),
+    "an empty segment is no component": ("tools//*", "tools/cc/", False, "names"),
+    "globstar is a star": ("**/hooks", "tools/cc/", False, ""),
+    "a POSIX class is read before the fold cuts it": ("tools/[[:alpha:]]*", "tools/cc/", False, "names"),
+    "an equivalence class fails closed": ("tools/[[=c=]]*", "tools/cc/", False, "names"),
+    "a negated class is read before the case fold": ("tools/[^A-Z]*", "tools/cc/", False, "names"),
+    "a bang-negated class fails closed": ("tools/[!A-Z]*", "tools/cc/", False, "names"),
+    "an extended-glob group reads as a star": ("tools/*(c)", "tools/cc/", False, "names"),
+    "an at-group with a wildcard reads as a star": ("tools/@(x)?", "tools/cc/", False, "names"),
+    "a nested group fails closed": ("tools/*(a|*(b))", "tools/cc/", False, "names"),
+    "a plain parenthesis is a literal": ("notes (1)*", "tools/cc/", False, ""),
+    "an extended glob reaching nothing is allowed": ("*.@(png|jpg)", "tools/cc/", False, ""),
+    "a brace list reaching nothing is allowed": ("*.{png,jpg}", "tools/cc/", False, ""),
+    "a brace alternative reaching a zone wins": ("{too,x}*", "tools/cc/", False, "encloses"),
+    "a brace list spanning a separator": ("{tools,x}/*", "tools/cc/", False, "names"),
+    "a nested brace list expands as the shell's": ("{x,{too,y}}*", "tools/cc/", False, "encloses"),
+    "a sequence fails closed": ("x{1..3}*", "tools/cc/", False, "names"),
 }
 
-#: The remove and move verbs both zone loops consume, one template each, the
-#: operand bare (a quoted glob is literal in Bash).
-_VERBS = {
-    "bash-recursive-remove": ("check_bash_for_protected_mutations", "rm -r {}"),
-    "bash-move": ("check_bash_for_protected_mutations", "mv {} /tmp/t"),
-    "bash-git-remove": ("check_bash_for_protected_mutations", "git rm -r {}"),
-    "ps-recursive-remove": ("check_powershell_for_protected_mutations", "Remove-Item -Recurse {}"),
-    "ps-move": ("check_powershell_for_protected_mutations", "Move-Item {} t"),
-}
 
-
-def _tree(tmp_path: Path, monkeypatch) -> Path:
+@pytest.fixture
+def tree(tmp_path: Path, monkeypatch) -> Path:
     """A throwaway adopter tree holding every zone the composition reaches,
     with the harness switches cleared and the audit records kept out of the
     live tree."""
@@ -90,6 +92,72 @@ def _tree(tmp_path: Path, monkeypatch) -> Path:
     return root
 
 
+class TestGlobReachReadsAnOperandByWhatItCanName:
+    """The comparator, by its readings: paths only, no command text."""
+
+    @pytest.mark.parametrize("key", sorted(_READINGS))
+    def test_each_reading(self, key: str) -> None:
+        operand, entry, is_file, reach = _READINGS[key]
+        assert _protected_zones.has_wildcard(operand)
+        assert _protected_zones.glob_reach(operand, entry, is_file=is_file) == reach, key
+
+    def test_a_literal_operand_is_never_asked(self, tree: Path, monkeypatch) -> None:
+        """The read costs one scan on a literal operand: the verdict asks the
+        comparator only past ``has_wildcard`` (the assign's no-weight rule)."""
+        def boom(*_a, **_k):
+            raise AssertionError("the comparator was asked about a literal operand")
+
+        monkeypatch.setattr(write_guard, "_glob_reaches_protected", boom)
+        for effect in ("delete", "move", "sweep", "clean"):
+            assert write_guard._mutated_zone(effect, "build/out/app.js", tree) is False
+
+    @pytest.mark.parametrize("remainder", ["build", "Build", "*.pyc", "*/x.txt"])
+    def test_a_remainder_names_only_what_the_tree_holds(self, tree: Path, remainder: str) -> None:
+        """A glob names nothing absent: a root `*/<remainder>` reaches inside
+        `cc/` only once something there fits it, spelled as the operand spells
+        it, and content the command would create first is not the harness's."""
+        operand = "./*/" + remainder
+        assert _protected_zones.glob_reaches_protected(operand, tree) == ("", "")
+        made = {"build": "build", "Build": "Build", "*.pyc": "x.pyc", "*/x.txt": "sub/x.txt"}[remainder]
+        target = tree / "cc" / made
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("x", encoding="utf-8")
+        assert _protected_zones.glob_reaches_protected(operand, tree) == ("names", "cc/")
+
+    def test_globstar_in_a_remainder_is_a_star(self, tree: Path) -> None:
+        """The shells read `**` as `*` (Bash's globstar is off by default), so
+        a remainder's glob does not reach two levels down where pathlib's
+        would."""
+        (tree / "cc" / "a" / "b").mkdir(parents=True)
+        (tree / "cc" / "a" / "b" / "x.txt").write_text("x", encoding="utf-8")
+        assert _protected_zones.glob_reaches_protected("*/**/x.txt", tree)[0] == ""
+        assert _protected_zones.glob_reaches_protected("*/**/*/x.txt", tree)[0] == "names"
+
+    def test_the_remainder_is_read_in_the_checkout_the_operand_is_in(self, tree: Path, tmp_path: Path) -> None:
+        """A path into a sibling worktree is relative to that checkout: its
+        remainder is read there, never in the session's own root (both
+        reviews of 8fb44800)."""
+        other = tmp_path / "other"
+        (other / "cc" / "build").mkdir(parents=True)
+        assert _protected_zones.glob_reaches_protected("*/build", tree)[0] == ""
+        assert _protected_zones.glob_reaches_protected("*/build", tree, tree=other)[0] == "names"
+        assert write_guard._mutated_zone("delete", "*/build", tree, other) is True
+        assert write_guard._mutated_zone("delete", "*/build", tree) is False
+
+
+class TestTheVerdictByEffect:
+    """Names refuses every effect; encloses only the effects that take a tree."""
+
+    @pytest.mark.parametrize(("effect", "refused"), [
+        ("delete", True), ("move", True), ("clean", True), ("sweep", False)])
+    def test_an_enclosing_glob(self, tree: Path, effect: str, refused: bool) -> None:
+        assert write_guard._mutated_zone(effect, "too*", tree) is refused
+
+    @pytest.mark.parametrize("effect", ["delete", "move", "clean", "sweep"])
+    def test_a_naming_glob(self, tree: Path, effect: str) -> None:
+        assert write_guard._mutated_zone(effect, "tools/*", tree) is True
+
+
 def _reached_entries() -> list[str]:
     """The roster an adopter tree protects, read as the guard reads it (the
     module's ``PROTECTED_PREFIXES`` also lists `espalier/`, operative on the
@@ -97,6 +165,35 @@ def _reached_entries() -> list[str]:
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as empty:
         prefixes = _hook_utils.harness_protected_prefixes(Path(empty))
     return sorted({*prefixes, *_protected_zones.PROTECTED_FILES})
+
+
+class TestTheFoldAndTheComparatorAgree:
+    """Every protected entry, with any one letter of any component read as
+    `?`, is refused as the entry itself is: the comparator folds a segment as
+    ``_is_protected`` folds the path, or this reds."""
+
+    @pytest.mark.parametrize("entry", _reached_entries())
+    def test_one_letter_as_a_question_mark(self, tree: Path, entry: str) -> None:
+        spelled = entry.rstrip("/")
+        missed = []
+        for i, ch in enumerate(spelled):
+            if ch in "/.":
+                continue
+            variant = spelled[:i] + "?" + spelled[i + 1:]
+            if not write_guard._mutated_zone("delete", variant, tree):
+                missed.append(i)
+        assert missed == [], entry
+
+
+#: The remove and move verbs both zone loops consume, one template each, the
+#: operand bare (a quoted glob is literal in Bash).
+_VERBS = {
+    "bash-recursive-remove": ("check_bash_for_protected_mutations", "rm -r {}"),
+    "bash-move": ("check_bash_for_protected_mutations", "mv {} /tmp/t"),
+    "bash-git-remove": ("check_bash_for_protected_mutations", "git rm -r {}"),
+    "ps-recursive-remove": ("check_powershell_for_protected_mutations", "Remove-Item -Recurse {}"),
+    "ps-move": ("check_powershell_for_protected_mutations", "Move-Item {} t"),
+}
 
 
 def _wildcard_shapes(entry: str) -> list[str]:
@@ -138,67 +235,53 @@ def _zone_reason(check: str, command: str, root: Path) -> str:
     return json.loads(text)["hookSpecificOutput"]["permissionDecisionReason"] if text else ""
 
 
-class TestGlobReachReadsAnOperandByWhatItCanName:
-    """The comparator, by its readings: paths only, no command text."""
-
-    @pytest.mark.parametrize("key", sorted(_READINGS))
-    def test_each_reading(self, key: str) -> None:
-        operand, entry, is_file, reach, tail = _READINGS[key]
-        assert _protected_zones.has_wildcard(operand)
-        assert _protected_zones.glob_reach(operand, entry, is_file=is_file) == (reach, tail), key
-
-    def test_a_literal_operand_is_never_asked(self) -> None:
-        """The read costs one scan on a literal operand: the verdict asks the
-        comparator only past ``has_wildcard``."""
-        assert not _protected_zones.has_wildcard("tools/cc/hooks/x.py")
-        assert not _protected_zones.has_wildcard("build")
-
-    def test_a_remainder_the_tree_lacks_reaches_nothing(self, tmp_path: Path, monkeypatch) -> None:
-        """A glob names nothing absent: a root `*/build` reaches `cc/build`
-        only once it exists, and content the command would create first is not
-        the harness's."""
-        root = _tree(tmp_path, monkeypatch)
-        assert _protected_zones.glob_reaches_protected("*/build", root) == ""
-        (root / "cc" / "build").mkdir()
-        assert _protected_zones.glob_reaches_protected("*/build", root) == "names"
-
-
 class TestBothZoneChecksReadAWildcardOperand:
     """The live roster crossed with the verbs both zone loops consume."""
 
     @pytest.mark.parametrize(("verb", "entry", "shape"), _cases())
-    def test_a_wildcard_reaching_a_zone_draws_the_zone_deny(
-            self, tmp_path: Path, monkeypatch, verb, entry, shape) -> None:
-        root = _tree(tmp_path, monkeypatch)
+    def test_a_wildcard_reaching_a_zone_draws_the_zone_deny(self, tree: Path, verb, entry, shape) -> None:
         check, template = _VERBS[verb]
-        assert _zone_reason(check, template.format(shape), root), (verb, entry, shape)
+        assert _zone_reason(check, template.format(shape), tree), (verb, entry, shape)
 
     @pytest.mark.parametrize(("verb", "entry", "shape"), _cases())
-    def test_the_same_shape_below_an_unprotected_directory_is_allowed(
-            self, tmp_path: Path, monkeypatch, verb, entry, shape) -> None:
-        root = _tree(tmp_path, monkeypatch)
+    def test_the_same_shape_below_an_unprotected_directory_is_allowed(self, tree: Path, verb, entry, shape) -> None:
         check, template = _VERBS[verb]
-        assert _zone_reason(check, template.format("build/" + shape), root) == "", (verb, entry, shape)
+        assert _zone_reason(check, template.format("build/" + shape), tree) == "", (verb, entry, shape)
 
     @pytest.mark.parametrize("verb", sorted(_VERBS))
-    def test_a_pattern_no_zone_name_fits_is_allowed_beside_the_zone(
-            self, tmp_path: Path, monkeypatch, verb) -> None:
+    def test_a_pattern_no_zone_name_fits_is_allowed_beside_the_zone(self, tree: Path, verb) -> None:
         """The friction the row declared, gone: `tools/*.log` names no
         protected entry, so it is judged as what it names."""
-        root = _tree(tmp_path, monkeypatch)
         check, template = _VERBS[verb]
-        shapes = _beside_shapes(root)
+        shapes = _beside_shapes(tree)
         assert "tools/*.log" in shapes and "*.log" in shapes, shapes
-        assert [s for s in shapes if _zone_reason(check, template.format(s), root)] == [], verb
+        assert [s for s in shapes if _zone_reason(check, template.format(s), tree)] == [], verb
 
 
 class TestTheDenyTextReadsTheGlobAsItsLiteralTwin:
-    def test_an_enclosing_glob_names_the_ground(self, tmp_path: Path, monkeypatch) -> None:
+    def test_an_enclosing_glob_names_the_ground(self, tree: Path) -> None:
         """DEF-5012's text for a glob above harness ground, as for its literal
-        twin: the deny names the ground, never the relaunch."""
-        root = _tree(tmp_path, monkeypatch)
+        twin, with what the glob reached in its path slot: the deny names the
+        ground, never the relaunch."""
         check, template = _VERBS["bash-recursive-remove"]
-        glob = _zone_reason(check, template.format("too*"), root)
-        literal = _zone_reason(check, template.format("tools"), root)
-        assert glob.replace("too*", "tools") == literal
+        glob = _zone_reason(check, template.format("too*"), tree)
+        literal = _zone_reason(check, template.format("tools"), tree)
+        assert "(a wildcard that reaches `tools/cc/`)" in glob
+        assert glob.replace(" (a wildcard that reaches `tools/cc/`)", "").replace("too*", "tools") == literal
         assert "`tools/cc/` is inside it" in glob
+
+    def test_a_glob_reaching_inside_a_zone_names_what_it_reached(self, tree: Path) -> None:
+        (tree / "cc" / "build").mkdir()
+        check, template = _VERBS["ps-recursive-remove"]
+        assert "a wildcard that reaches `cc/`" in _zone_reason(check, template.format("*/build"), tree)
+
+    def test_an_adopter_zone_keeps_its_own_text(self, tree: Path) -> None:
+        """A glob reaching only the adopter's `protected_paths` zone reads that
+        zone's text, never the harness relaunch, though a harness entry fits
+        the same pattern where the tree holds nothing (code review of
+        8fb44800)."""
+        (tree / "espalier.toml").write_text('protected_paths = ["data/"]\n', encoding="utf-8")
+        (tree / "data" / "raw").mkdir(parents=True)
+        assert write_guard._zone_reading("*/raw", tree)[0] == ("data/", "protected")
+        check, template = _VERBS["bash-recursive-remove"]
+        assert "protected_paths" in _zone_reason(check, template.format("*/raw"), tree)
