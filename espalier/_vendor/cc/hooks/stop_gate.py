@@ -585,7 +585,10 @@ def _command_timeout_block(root: Path, cmd: str, *, source: str, place: tuple[in
     phrase = _source_phrase(source)
     do = _SOURCE_TIMEOUT_DO.get(source, _denial_reasons.GATE_COMMAND_TIMEOUT_DO_FINGERPRINT)
     number, count = place
-    if count == 1:
+    # A kept `_denial_reasons.py` that predates the list's reason gives the
+    # lone command's text: the Stop blocks as a timeout either way, never as
+    # the crash handler's internal error, which names no kept file.
+    if count == 1 or not hasattr(_denial_reasons, "GATE_COMMAND_LIST_TIMEOUT"):
         return _audit_block(
             root, "stop_blocked_pytest",
             _denial_reasons.GATE_COMMAND_TIMEOUT.format(cmd=cmd, source=phrase, budget=STOP_INNER_BUDGET, do=do),

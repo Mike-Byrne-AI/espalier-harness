@@ -771,8 +771,9 @@ GATE_COMMAND_LIST_TIMEOUT = (
     "Do: {do}"
 )
 
-# The Do line of GATE_COMMAND_TIMEOUT per source: the command that ran out
-# of time is changed where it lives, not declared again.
+# The Do line of GATE_COMMAND_TIMEOUT and GATE_COMMAND_LIST_TIMEOUT per
+# source: the command that ran out of time is changed where it lives, not
+# declared again.
 GATE_COMMAND_TIMEOUT_DO_ENV = (
     "give Gate 1 a faster command where the variable is set (the shell that "
     "launches Claude Code): one directory, a marker, `-x`; the change takes "
@@ -781,7 +782,8 @@ GATE_COMMAND_TIMEOUT_DO_ENV = (
 )
 GATE_COMMAND_TIMEOUT_DO_TOML = (
     "narrow the `test` entry under [extra_actions] in espalier.toml to what "
-    "proves a change (one directory, a marker, `-x`); the hook reads the file on "
+    "proves a change (one directory, a marker, `-x`; every command of the list "
+    "spends the one budget, a build step included); the hook reads the file on "
     "every Stop, so the change is live at once (from this session the edit needs "
     "an execution plan: /implement-task). ESPALIER_STOP_GATE set to light at the next "
     "launch turns the gate off."

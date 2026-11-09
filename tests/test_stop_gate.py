@@ -943,15 +943,28 @@ class TestGate1EndsTheWholeTreeAtItsBudget:
                 k.arg == "timeout" and isinstance(k.value, ast.Name) and k.value.id == "STOP_INNER_BUDGET"
                 for k in node.keywords)
         }
+        # Every timed call in every function Gate 1 reaches from its entry, so
+        # a spawn moved into a new helper is read too (the review's mutant: a
+        # setup step through `spawn_checked`, timed off the list's deadline).
         functions = {node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
-        for name in ("_gate_pytest", "_run_one_command"):
-            assert name in functions, f"Gate 1's spawning function {name} is gone: re-point this walk"
-            timed = {
-                _named(node) for node in ast.walk(functions[name])
-                if isinstance(node, ast.Call) and any(k.arg == "timeout" for k in node.keywords)
-            }
-            assert timed, f"the walk found no timed call in {name}, where Gate 1 spawns: it broke"
-            budgeted |= timed
+        reached: set[str] = set()
+        todo = ["_gate_pytest"]
+        while todo:
+            name = todo.pop()
+            if name in reached or name not in functions:
+                continue
+            reached.add(name)
+            todo.extend(
+                node.func.id for node in ast.walk(functions[name])
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name))
+        assert {"_gate_pytest", "_run_command_gate", "_run_one_command"} <= reached, (
+            f"Gate 1's walk from _gate_pytest reached {sorted(reached)}: re-point it")
+        timed = {
+            _named(node) for name in reached for node in ast.walk(functions[name])
+            if isinstance(node, ast.Call) and any(k.arg == "timeout" for k in node.keywords)
+        }
+        assert timed, "the walk found no timed call in what Gate 1 reaches: it broke"
+        budgeted |= timed
         assert len(budgeted) >= 2, f"the walk found {sorted(budgeted)}, fewer than Gate 1's two spawns: it broke"
         assert all(name == "spawn_tree_checked" for _line, name in budgeted), (
             f"a spawn under Gate 1's budget kills its child alone on POSIX: {sorted(budgeted)}")
@@ -1029,6 +1042,22 @@ class TestGate1BudgetIsOneForTheWholeList:
         assert [r["details"].get("rule") for r in records] == ["GATE_COMMAND_LIST_TIMEOUT"], records
         reason = json.loads(capsys.readouterr().out)["reason"]
         assert "before `test-step` could start (command 2 of 2)" in reason, reason
+
+    def test_a_kept_reasons_module_without_the_list_reason_still_blocks_as_a_timeout(
+        self, monkeypatch, tmp_path, capsys,
+    ):
+        """A kept ``_denial_reasons.py`` from before the list's reason: the
+        list's timeout blocks with the lone command's text and rule, never
+        as the crash handler's internal error, which names no kept file."""
+        mod = self._load()
+        self._still_clock(monkeypatch, mod, 60.0, {"build-step": 40.0, "test-step": 55.0})
+        monkeypatch.delattr(mod._denial_reasons, "GATE_COMMAND_LIST_TIMEOUT")
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        capsys.readouterr()
+        assert mod._run_command_gate(tmp_path, ("build-step", "test-step"), source="espalier.toml") == 1
+        records = _audit_rows(tmp_path / "audit", "stop_blocked_pytest")
+        assert [r["details"].get("rule") for r in records] == ["GATE_COMMAND_TIMEOUT"], records
+        assert "timeout running `test-step`" in json.loads(capsys.readouterr().out)["reason"]
 
     def test_a_single_command_keeps_the_whole_budget_and_its_own_reason(self, monkeypatch, tmp_path, capsys):
         mod = self._load()

@@ -99,7 +99,8 @@ _NOT_STANDALONE_REASONS: dict[str, str] = {
     "KILL_SWITCH_CI_GATE_ABSENT": "the kill-switch deny's CI clause where no CI gate is installed",
     # The stop gate's per-source Don't and Do lines, interpolated into
     # GATE_COMMAND_SPAWN_FAILED (head "Stop blocked once") and the timeout's
-    # Do line into GATE_COMMAND_TIMEOUT (head "Gate 1 ("); the shell-syntax
+    # Do line into GATE_COMMAND_TIMEOUT and GATE_COMMAND_LIST_TIMEOUT (head
+    # "Gate 1 ("); the shell-syntax
     # remedy rides the spawn-failed reason as its platform siblings do.
     "GATE_COMMAND_DO_ENV": "the Do line of the spawn-failed reason for the override",
     "GATE_COMMAND_DO_TOML": "the Do line of the spawn-failed reason for the declared command",
