@@ -18,7 +18,8 @@ Verbs (each stands alone and derives what it needs from git and gh):
                          base, a missing handoff row where handoff_push is
                          on, this seat's other open pull request, ...)
     lane                 on the default branch: move the unmerged commits to a
-                         lane named from the head subject (a no-op elsewhere)
+                         lane named from the lane's own newest subject, never
+                         a merge's or a row's (a no-op elsewhere)
     open                 push once; open the pull request WITH the approval
                          marker already in the title when the diff needs one
                          (one event, one run, no edit); arm auto-merge; read
@@ -2727,7 +2728,7 @@ def _forecast_pre_push(root: Path, base: str, branch: str) -> None:
     text>". A read that raises is one `open` makes the same way and stops on,
     said once. The gate's hold record is `open`'s alone to write, so no
     check's ``record`` runs here. On the default branch the checks read the
-    lane ``lane`` would name from the head subject, as `open` will after
+    lane ``lane`` would name (from :func:`lane_subject`), as `open` will after
     it: /ship runs this before ``lane``, and the branch `open` pushes is
     that lane, never pushed (DEF-4082's second-lane seat). ``lane`` is said
     as the next step there, never as `open`'s refusal: /ship's usual path
@@ -2736,8 +2737,7 @@ def _forecast_pre_push(root: Path, base: str, branch: str) -> None:
     ``lane`` cannot move the commits, and HEAD's refusal is forecast."""
     lane_branch = branch
     if branch == base:
-        rc, subject, _ = _git("log", "-1", "--format=%s", cwd=str(root))
-        lane_branch = _lane_name_for(subject) or branch
+        lane_branch = _lane_name_for(lane_subject(root, base)) or branch
         if lane_branch != branch:
             _say(f"HEAD is {base}: `lane` moves the commits to {lane_branch} first, and `open`'s checks below "
                  "read that lane")
@@ -2760,8 +2760,39 @@ def _forecast_pre_push(root: Path, base: str, branch: str) -> None:
             _say(f"{_red_base_words(base, red_run)} -- this is a revert/ lane, which `open` lets through")
 
 
+def lane_subject(root: Path, base: str) -> str:
+    """The subject that names a lane: its pull request's default title, and
+    the branch ``lane`` makes. The newest commit on HEAD's first-parent line
+    that ``origin/<base>`` lacks and that is the lane's own change -- neither
+    a merge (the base merged in by hand, or a catch-up) nor a commit touching
+    nothing outside the record folders (the loader's ``FRAGMENT_DIRS``: the
+    handoff's row, a fold or prune, a ledger filing or strike), each of which
+    sits at HEAD in the usual flows and named the lane in its place. A lane of
+    records alone is named by its newest commit outside the Session Log (a
+    filing lane by its filing, not the handoff's row), else by its newest
+    non-merge commit; HEAD's own subject where it holds none, or where git
+    cannot read the range (no ``origin/<base>``). First parents alone: the
+    title is read before `open` fetches the base, and a stale
+    ``origin/<base>`` would otherwise let a commit the base's merge brought in
+    title the lane. The pathspecs are anchored at the top, whatever folder
+    ``root`` names."""
+    fragments = _fragments_module()
+    records = tuple(getattr(fragments, "FRAGMENT_DIRS", ())) or (SESSION_LOG_DIR,)
+    tiers = [records] + ([(SESSION_LOG_DIR,)] if records != (SESSION_LOG_DIR,) else []) + [()]
+    for excluded in tiers:
+        spec = ["--", ":/", *(f":(top,exclude){d.rstrip('/')}" for d in excluded)] if excluded else []
+        rc, out, _ = _git("log", "-1", "--first-parent", "--no-merges", "--format=%s",
+                          f"origin/{base}..HEAD", *spec, cwd=str(root))
+        if rc != 0:
+            break   # the range cannot be read: HEAD's subject, as before
+        if out.strip():
+            return out.strip()
+    rc, out, _ = _git("log", "-1", "--format=%s", cwd=str(root))
+    return out.strip() if rc == 0 else ""
+
+
 def _lane_name_for(subject: str) -> str:
-    """The lane ``lane`` names from the head commit's subject
+    """The lane ``lane`` names from a subject (:func:`lane_subject`'s)
     (``lane/<slug>``), or '' where the subject yields no slug."""
     slug = re.sub(r"[^A-Za-z0-9]+", "-", subject.strip()).strip("-").lower()[:48].rstrip("-")
     return f"lane/{slug}" if slug else ""
@@ -2775,10 +2806,9 @@ def lane() -> int:
         _say(f"HEAD is {branch}, not {base}: nothing to move (a lane already) -- next: open")
         return 0
     _refuse_a_shared_checkout(root)   # the switch below moves every session in this checkout onto the lane
-    rc, subject, _ = _git("log", "-1", "--format=%s", cwd=str(root))
-    name = _lane_name_for(subject)
+    name = _lane_name_for(lane_subject(root, base))
     if not name:
-        raise Refused("the head subject yields no lane name: pick one by hand (git switch -c lane/<name>)")
+        raise Refused("the lane's subject yields no lane name: pick one by hand (git switch -c lane/<name>)")
     rc, _, err = _git("branch", name, cwd=str(root))
     if rc != 0:
         raise Refused(f"could not create {name}: {err.strip()} (pick another name by hand)")
@@ -2924,8 +2954,8 @@ class PrePushState:
 
 def _head_is_base_refusal(st: PrePushState) -> str | None:
     """`open` run on the default branch. `preflight` there reads the lane
-    ``lane`` would make, so it forecasts this only where the head subject
-    names no lane (``lane`` refuses that subject too)."""
+    ``lane`` would make, so it forecasts this only where the lane's subject
+    (:func:`lane_subject`) names no lane (``lane`` refuses that subject too)."""
     if st.branch != st.base:
         return None
     return f"HEAD is {st.base}: run `lane` first (a protected default branch takes no push)"
@@ -2999,12 +3029,11 @@ def _record_the_seat_hold(st: PrePushState) -> None:
 
 
 def _title_refusal(st: PrePushState) -> str | None:
-    """The pull request's title: --title, else the head commit's subject,
-    read before the merge-first step (a merge commit's subject is "Merge
-    remote-tracking branch ...", and the lane's story is the head it had
-    before; both reviews, driven)."""
-    rc, subject, _ = _git("log", "-1", "--format=%s", cwd=str(st.root))
-    st.title = (st.title_given or subject.strip())[:TITLE_MAX].rstrip()
+    """The pull request's title: --title, else the lane's own subject
+    (:func:`lane_subject`: a merge of the base at HEAD, or the handoff's row
+    there, is passed over), read before the merge-first step, whose merge
+    would otherwise be HEAD."""
+    st.title = (st.title_given or lane_subject(st.root, st.base))[:TITLE_MAX].rstrip()
     if st.title:
         return None
     return "the head commit has no subject and no --title was given: a pull request needs a title"
@@ -3453,7 +3482,8 @@ def _handoff_push(title: str | None, body_file: str | None, dry_run: bool,
         return 0
     if on_base:
         if dry_run:
-            _say("dry-run: `lane` would move the unmerged commits to a lane branch, then `open` "
+            name = _lane_name_for(lane_subject(root, base)) or "a lane branch"
+            _say(f"dry-run: `lane` would move the unmerged commits to {name}, then `open` "
                  "would push it as a pull request with auto-merge armed")
             return 0
         lane()
@@ -4090,7 +4120,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("preflight", help="clean tree, non-empty range, post-merge reds, the per-lane handoff notice")
     sub.add_parser("lane", help="on the default branch, move the unmerged commits to a lane")
     p_open = sub.add_parser("open", help="push once, open the pull request (marker bound), arm auto-merge")
-    p_open.add_argument("--title", help="the pull request title (default: the head commit's subject)")
+    p_open.add_argument("--title", help="the pull request title (default: the subject of the lane's newest commit "
+                        "that is neither a merge nor a Session Log row alone; HEAD's where it has none)")
     p_open.add_argument("--body-file", help="the pull request body (default: the commit subjects)")
     p_open.add_argument("--dry-run", action="store_true")
     p_open.add_argument("--early", metavar="REASON",
@@ -4116,7 +4147,8 @@ def build_parser() -> argparse.ArgumentParser:
                                          "the step before a push `open` does not make")
     p_fold.add_argument("--dry-run", action="store_true")
     p_hand = sub.add_parser("handoff", help="/handoff's push: only when espalier.toml sets handoff_push = true")
-    p_hand.add_argument("--title", help="the pull request title (default: the head commit's subject)")
+    p_hand.add_argument("--title", help="the pull request title (default: the subject of the lane's newest commit "
+                        "that is neither a merge nor a Session Log row alone; HEAD's where it has none)")
     p_hand.add_argument("--body-file", help="the pull request body (default: the commit subjects)")
     p_hand.add_argument("--dry-run", action="store_true")
     p_hand.add_argument(BASE_RED_RULED_FLAG, metavar="ACK_ID", dest="base_red_ruled",

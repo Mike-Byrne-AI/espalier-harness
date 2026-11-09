@@ -1807,7 +1807,7 @@ def release_lane(root: Path, lane: str, text: str = "", *, run: Runner = run,
     by_machine, _skipped = read_mail(root, run=run)
     if not own_live_claims(by_machine, machine, lane):
         # A claim made under another spelling of the lane (a lane the ship
-        # driver named from the head subject, a claim typed by hand) is not
+        # driver named from the lane's subject, a claim typed by hand) is not
         # closed by this release: say so, with the one command that lists
         # them, instead of a silence that reads as "nothing to close"
         # (failure-mode review, 2026-10-05).
