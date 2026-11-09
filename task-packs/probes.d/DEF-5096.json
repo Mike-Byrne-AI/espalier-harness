@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5096",
+ "subject": "tests/test_hooks_start_on_a_kept_helper.py",
+ "cmd": "python3 -c \"import ast;m=ast.parse(open('tests/test_hooks_start_on_a_kept_helper.py',encoding='utf-8').read());F={f.name:f for f in m.body if isinstance(f,ast.FunctionDef)};print(*[(any(isinstance(n,ast.Constant) and n.value=='_json_safe' for n in ast.walk(F[k])) if k in F else None) for k in ('_is_sibling','_parse')])\"",
+ "open_value": "True True",
+ "why_not": null,
+ "row_sha": "647b94330269",
+ "text_sha": "a11ae7d9b3de",
+ "verified_2026_11_08": "OPEN (filed 2026-11-08; probe driven at filing here and in the export of HEAD ea6d4381996d)"
+}

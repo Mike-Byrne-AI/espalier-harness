@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5095",
+ "subject": "tools/cc/board.py",
+ "cmd": "python3 -c \"import pathlib,shutil,sys,tempfile;d=tempfile.TemporaryDirectory();t=pathlib.Path(d.name)/'cc';shutil.copytree('tools/cc',t,ignore=shutil.ignore_patterns('__pycache__'));open(t/'_post_merge.py','a').write(chr(10)+'def read_required(number, gh, fields=REQUIRED_FIELDS):'+chr(10)+'    return None'+chr(10));sys.path.insert(0,str(t));import board;p=[{'number':1,'mergeStateStatus':'BLOCKED','headRefOid':'abc'}];board.read_required_section(pathlib.Path(d.name),p,run_=lambda *a,**k:(0,'[]',''));print('unexpected keyword argument' in str(p[0].get('required')))\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "61baa721d577",
+ "text_sha": "eac101f45b0c",
+ "verified_2026_11_08": "OPEN (filed 2026-11-08; probe driven at filing here and in the export of HEAD ea6d4381996d)"
+}

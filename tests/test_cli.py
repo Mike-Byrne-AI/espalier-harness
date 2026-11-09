@@ -1804,3 +1804,120 @@ class TestPasteReadyRemediesQuoteASpacedPath:
                         bare.append(f"{path.relative_to(root.parent).as_posix()}:{node.lineno}: {ast.unparse(call)}")
         assert slots >= 10, f"the population shrank to {slots}: the reader no longer sees the slots"
         assert not bare, "a paste-ready command slot prints a path bare:\n  " + "\n  ".join(bare)
+
+
+class TestARemedysProgramWordRunsInEveryShell:
+    """DEF-2060: a remedy spelled with a spaced absolute interpreter opened with
+    a quoted word, which cmd and Git Bash run and Windows PowerShell 5.1 refuses
+    as a parse error. On Windows the program word is now the 8.3 short path with
+    forward slashes, one bare word all three run (driven on Windows 11 with this
+    checkout's spaced ``.venv``, ``sys.prefix`` the venv in each). With no
+    spaceless short form the quoted word stays, and one stderr note a run tells
+    a PowerShell reader to put ``&`` before it; a copy written into the
+    adopter's tree keeps the long quoted spelling."""
+
+    SPACED = "C:/Program Files/Py/python.exe"
+    SHORT = "C:\\PROGRA~1\\Py\\python.exe"
+
+    def _below_floor_on_path(self, monkeypatch, short):
+        import sys
+
+        from espalier import cli
+
+        monkeypatch.setattr(sys, "executable", self.SPACED)
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(cli, "_detect_python_command", lambda: "python")
+        monkeypatch.setattr(cli, "interpreter_meets_floor", lambda p: p == self.SPACED)
+        monkeypatch.setattr(cli, "windows_short_path", lambda p: short)
+        monkeypatch.setattr(cli, "_POWERSHELL_CALL_NOTE_SAID", False)
+        return cli
+
+    def test_the_text_helper_spells_each_case(self):
+        from espalier._text import program_word
+
+        assert program_word("/usr/bin/python3", lambda p: "unused") == "/usr/bin/python3"
+        assert program_word(self.SPACED, lambda p: self.SHORT) == "C:/PROGRA~1/Py/python.exe"
+        assert program_word(self.SPACED, lambda p: self.SPACED) == f'"{self.SPACED}"'
+        assert program_word(self.SPACED, lambda p: None) == f'"{self.SPACED}"'
+        assert program_word(self.SPACED, None) == f'"{self.SPACED}"'
+        # An 8.3 name keeps shell grammar, which no shell reads as a plain word
+        # (the code review drove MY(PYT~1, JO&COT~1 and IT'SMI~1); a UNC short
+        # form does not run with forward slashes. Each keeps the quoted path.
+        for short in ("C:\\MY(PYT~1\\python.exe", "C:\\JO&COT~1\\python.exe",
+                      "C:\\IT'SMI~1\\python.exe", "C:\\$DEVTO~1\\python.exe",
+                      "\\\\server\\share\\PROGRA~1\\python.exe"):
+            assert program_word(self.SPACED, lambda p, s=short: s) == f'"{self.SPACED}"', short
+
+    def test_an_unconfirmed_start_is_spelled_with_the_short_path_too(self, monkeypatch):
+        """The first quoted return: the resolver's answer clears the floor but
+        its start was never seen (DEF-5014), so the remedy spells the
+        interpreter running this, through the same short form."""
+        cli = self._below_floor_on_path(monkeypatch, self.SHORT)
+        monkeypatch.setattr(cli, "interpreter_meets_floor", lambda p: True)
+        monkeypatch.setattr(cli, "start_unconfirmed_of", lambda p: "its start was never seen")
+        assert cli._remedy_interpreter() == ("C:/PROGRA~1/Py/python.exe", True)
+
+    def test_a_spaced_interpreter_on_windows_is_its_short_path(self, monkeypatch, capsys):
+        cli = self._below_floor_on_path(monkeypatch, self.SHORT)
+        assert cli._remedy_interpreter() == ("C:/PROGRA~1/Py/python.exe", False)
+        assert cli._remedy_py() == "C:/PROGRA~1/Py/python.exe"
+        assert capsys.readouterr().err == "", "a bare short word needs no PowerShell note"
+
+    def test_with_no_spaceless_short_form_the_note_is_said_once(self, monkeypatch, capsys):
+        cli = self._below_floor_on_path(monkeypatch, None)
+        assert cli._remedy_py() == f'"{self.SPACED}"'
+        assert cli._remedy_py() == f'"{self.SPACED}"'
+        err = capsys.readouterr().err
+        assert err.count("in PowerShell, type & before") == 1, err
+        assert f'opens with "{self.SPACED}"' in err, err
+
+    def test_a_persisted_copy_keeps_the_long_quoted_path(self, monkeypatch, capsys):
+        cli = self._below_floor_on_path(monkeypatch, self.SHORT)
+        assert cli._remedy_py(persisted=True) == f'"{self.SPACED}"'
+        assert capsys.readouterr().err == "", "a persisted copy is not a command typed now"
+
+    def test_the_onboarding_rows_write_the_persisted_spelling(self, monkeypatch, tmp_path):
+        """``_file_onboarding_rows`` writes the remedy into the adopter's
+        ledger rows: a short name is this volume's, so the row keeps the long
+        quoted path (ruling 044dcb, amendment 4)."""
+        cli = self._below_floor_on_path(monkeypatch, self.SHORT)
+        verb = tmp_path / cli._LEDGER_VERB_REL
+        verb.parent.mkdir(parents=True)
+        verb.write_text("", encoding="utf-8")
+        monkeypatch.setattr(cli, "_ledger_is_the_untouched_seed", lambda ledger: True)
+        written = []
+        real_write = cli.atomic_write_text
+
+        def record(path, text, *args, **kwargs):
+            written.append(text)
+            return real_write(path, text, *args, **kwargs)
+
+        monkeypatch.setattr(cli, "atomic_write_text", record)
+        monkeypatch.setattr(cli, "run_no_stdin", lambda *a, **k: MagicMock(returncode=0, stdout="", stderr=""))
+        cli._file_onboarding_rows(tmp_path)
+        spelled = [text for text in written if "-m espalier" in text]
+        assert spelled, f"no onboarding row spelled the remedy: {written!r}"
+        assert all(f'"{self.SPACED}" -m espalier' in text for text in spelled), spelled
+        assert not any("PROGRA~1" in text for text in spelled), spelled
+
+    @pytest.mark.skipif(__import__("sys").platform != "win32", reason="GetShortPathNameW is Windows-only")
+    def test_the_windows_lookup_reads_a_real_spaced_file(self, tmp_path):
+        """The real ``GetShortPathNameW`` on a ``tmp_path / "a b"`` file: a short
+        form that holds no space and names the same file, where the volume
+        keeps 8.3 names; a missing path answers None."""
+        import os
+
+        from espalier._text import program_word, windows_short_path
+
+        spaced = tmp_path / "a b" / "python.exe"
+        spaced.parent.mkdir()
+        spaced.write_bytes(b"")
+        short = windows_short_path(str(spaced))
+        assert short is not None, "GetShortPathNameW failed on an existing file"
+        assert os.path.samefile(short, spaced)
+        assert windows_short_path(str(tmp_path / "no such" / "file.exe")) is None
+        word = program_word(str(spaced), windows_short_path)
+        if any(ch.isspace() for ch in short):
+            pytest.skip(f"8.3 names are off on this volume: {short}")
+        assert not word.startswith('"') and "\\" not in word and " " not in word, word
+        assert os.path.samefile(word, spaced)
