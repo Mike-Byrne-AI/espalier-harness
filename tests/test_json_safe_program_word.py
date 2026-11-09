@@ -25,6 +25,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._live_tree import checkout_rglob, copy_checkout
 from tests._wait_budget import scaled
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -152,7 +153,7 @@ class TestAKeptOlderJsonSafeStillStarts:
         fallback apart from the new spelling on any host. Dies to: either
         guard (``_hook_utils``, ``record_merge``) removed."""
         tree = tmp_path / "cc"
-        shutil.copytree(TOOLS_CC, tree, ignore=shutil.ignore_patterns("__pycache__"))
+        copy_checkout(TOOLS_CC, tree, ignore=shutil.ignore_patterns("__pycache__"))
         kept = tree / "_json_safe.py"
         text = kept.read_text(encoding="utf-8")
         for name in ("program_word", "windows_short_path"):
@@ -164,7 +165,7 @@ class TestAKeptOlderJsonSafeStillStarts:
                 "print(h.executable_word()); print(rm.program_word(sys.executable, rm.windows_short_path))")
         proc = subprocess.run(  # spawn: ok a test driving a kept-sibling import in its own interpreter
             [sys.executable, "-c", code, str(tree / "hooks"), str(tree)],
-            capture_output=True, text=True, timeout=scaled(30), cwd=str(tmp_path))
+            capture_output=True, text=True, encoding="utf-8", timeout=scaled(30), cwd=str(tmp_path))
         assert proc.returncode == 0, proc.stderr
         assert proc.stdout.split("\n")[:2] == [SPACED, SPACED], proc.stdout
 
@@ -238,7 +239,7 @@ class TestNoCommandOpensWithABareInterpreter:
 
     def test_no_tools_cc_command_opens_with_a_bare_sys_executable(self):
         found: list[str] = []
-        for path in sorted(TOOLS_CC.rglob("*.py")):
+        for path in sorted(checkout_rglob(TOOLS_CC, "*.py")):
             if "__pycache__" in path.parts:
                 continue
             rel = path.relative_to(REPO_ROOT).as_posix()
