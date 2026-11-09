@@ -2643,14 +2643,10 @@ def check_bash_for_protected_mutations(command: str, root: Path, cwd: Path | Non
             base, rel = _resolve_bash_in_checkout(raw, root, base=at)
             where, note = _checkout_note(base, root)
             if _mutated_zone(effect, rel, root, base, files_only=lone):
-                # DEF-4031: a delete that cannot take a directory, naming one,
-                # removes nothing; read only on a would-deny, so an allowed
-                # command pays nothing for it.
-                if effect == "delete" and not _has_wildcard(raw):
-                    if files_only is None:
-                        files_only = _bash_patterns.files_only_removed_operands(command)
-                    if raw in files_only and _leaves_the_directory(raw, at, root, powershell=False):
-                        continue
+                # DEF-4031: a lone delete that cannot take a directory, naming
+                # a real one, removes nothing; read on a would-deny alone.
+                if effect == "delete" and _a_lone_file_delete(command, raw, at, root, powershell=False):
+                    continue
                 where += _glob_note(rel, root, base, files_only=lone)
                 takes = effect in _TAKES_ITS_TREE
                 if _adopter_zone(rel, root, files_only=lone) is not None or (
@@ -2683,35 +2679,76 @@ _EFFECT_WORD = {"sweep": "delete", "clean": "delete"}
 _REPARSE_POINT = 0x400
 
 
-def _leaves_the_directory(raw: str, at: "Path | None", root: Path, *, powershell: bool) -> bool:
-    """True when ``raw``, the operand of a delete that cannot take a directory
-    (``files_only_removed_operands``), is on disk a real directory that the
-    delete leaves in place, so no zone is mutated (DEF-4031). A Bash `rm`
-    without `-r` or `-d`, `unlink` and `shred` refuse a directory ("is a
+#: The lone deletes ``_a_lone_file_delete`` reads, by tool (``True`` is
+#: PowerShell, matched lower-cased): the verbs, the flags each may carry, and
+#: the short-flag letters a Bash cluster may hold. Any other word keeps the
+#: deny (air's ruling 843d54 on DEF-4031: an allowlist, never a denylist).
+_LONE_DELETE: "dict[bool, tuple[frozenset[str], frozenset[str], frozenset[str]]]" = {
+    False: (frozenset({"rm"}), frozenset({"--force", "--verbose", "--"}), frozenset("fvi")),
+    True: (frozenset({"remove-item", "ri"}),
+           frozenset({"-force", "-path", "-literalpath", "-confirm", "-confirm:$false", "-whatif"}),
+           frozenset()),
+}
+#: Characters that end the relief wherever they stand: a separator, a
+#: grouping, an expansion, a quote, an escape, a redirect, a wildcard, a
+#: comment. A non-ASCII character ends it too (a dash PowerShell reads as one).
+_LONE_DELETE_STOPS = frozenset(";&|\n\r`{}()[]@'\"<>*?~#!$\\")
+
+
+def _a_lone_file_delete(command: str, raw: str, at: "Path | None", root: Path, *, powershell: bool) -> bool:
+    """True when ``command`` is one delete, alone, that cannot take the
+    directory ``raw`` names, and ``raw`` is on disk a real directory holding
+    an entry, so the delete leaves it in place and no zone is mutated
+    (DEF-4031). A Bash `rm` without `-r` or `-d` refuses a directory ("is a
     directory"); a PowerShell remove cmdlet without its recurse switch fails
     on the has-children prompt the tool's non-interactive host cannot show
-    (driven on Windows PowerShell 5.1, 2026-10-17).
+    (driven on Windows PowerShell 5.1, 2026-10-17; pwsh 7 with children not
+    driven). Built by construction, per air's ruling 843d54:
 
-    The read is of the spelling as typed, never the resolved path: a link to
-    a directory is itself removed (BSD `rm` takes it, the target intact), so
-    a link, a junction or any reparse point stays judged. On PowerShell an
-    EMPTY directory is removed (driven on 5.1 and pwsh 7.6.5, 2026-11-09), so
-    it stays judged there. A missing operand, a `..` component, or a read
-    that fails stays judged: only what was seen is spared."""
-    cleaned = _hook_utils._clean_path_prefixes(raw.strip().strip('"').strip("'"))
-    if not cleaned or ".." in cleaned.replace("\\", "/").split("/"):
+    * the command is the delete alone: no separator, grouping, prefix word,
+      definition or expansion, so no redefined verb or default-parameter
+      table can change what runs; ASCII only;
+    * every flag is on ``_LONE_DELETE``'s allowlist (`-Confirm:$false` read
+      as one word), and the one operand is ``raw`` as spelled;
+    * the operand, joined to the directory the command runs in and read
+      with lstat, is a real directory holding an entry. A link, a junction
+      or any reparse point is itself removed (Git Bash took both, and 5.1
+      took both to an empty directory, driven 2026-11-09); an empty
+      directory a cmdlet removes (5.1 and pwsh 7.6.5). A directory whose
+      only child is hidden, or hidden and system, was kept by both hosts
+      (driven 2026-11-09), so any entry counts.
+
+    Anything else, and a read that fails, keeps main's verdict. Asked only on
+    an operand the zone loop would refuse, so an allowed command pays
+    nothing for it."""
+    text = command.strip()
+    seen = text.lower().replace("-confirm:$false", "") if powershell else text
+    if not text.isascii() or not _LONE_DELETE_STOPS.isdisjoint(seen):
         return False
-    path = Path(at or root) / cleaned
+    verbs, flags, letters = _LONE_DELETE[powershell]
+    words = text.split()
+    fold = str.lower if powershell else str
+    if fold(words[0]) not in verbs:
+        return False
+    operands = []
+    for word in words[1:]:
+        if fold(word) in flags or (letters and len(word) > 1 and word[0] == "-" and set(word[1:]) <= letters):
+            continue
+        if word.startswith("-") or ".." in word.split("/"):
+            return False
+        operands.append(word)
+    if operands != [raw]:
+        return False
+    path = Path(at or root) / raw
     try:
         st = os.lstat(path)
         if not stat.S_ISDIR(st.st_mode) or getattr(st, "st_file_attributes", 0) & _REPARSE_POINT:
             return False
-        if powershell:
-            with os.scandir(path) as entries:
-                return next(entries, None) is not None
+        with os.scandir(path) as entries:
+            return next(entries, None) is not None
     except (OSError, ValueError):  # fail-open: ok deliberate -- False keeps the operand judged: an unread directory is refused as on main, never spared
         return False
-    return True
+
 
 #: The effects that take a directory's whole tree with it, the ones
 #: ``_mutated_zone`` refuses an enclosing directory for: a narrowed ``find``
@@ -3291,11 +3328,8 @@ def check_powershell_for_protected_mutations(
             where, note = _checkout_note(base, root)
             if _mutated_zone(effect, rel, root, base, files_only=lone):
                 # DEF-4031, the Bash twin's read on a would-deny alone.
-                if effect == "delete" and not _has_wildcard(raw):
-                    if files_only is None:
-                        files_only = _bash_patterns.files_only_removed_operands(command, powershell=True)
-                    if raw in files_only and _leaves_the_directory(raw, at, root, powershell=True):
-                        continue
+                if effect == "delete" and _a_lone_file_delete(command, raw, at, root, powershell=True):
+                    continue
                 where += _glob_note(rel, root, base, files_only=lone)
                 reason = _zone_reason(
                     rel, root, where=where, mutation=True,

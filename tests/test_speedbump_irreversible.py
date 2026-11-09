@@ -2966,10 +2966,6 @@ class TestCommandPositionClassClose:
             "FLAG inside the span `_PS_PIPED_REMOVE_RE` or `_PS_REMOVE_ITEM_RE` "
             "(both anchored) selected: the remove verb's recurse switch by every "
             "spelling, never a command (DEF-822; the direct remove's span since DEF-842).",
-        "_bash_patterns._PS_SWITCH_CONSTANT_RE":
-            "VALUE -- PowerShell's `$true`, `$false` and `$null`, read out of the "
-            "args span an anchored `_PS_REMOVE_ITEM_RE` selected before "
-            "`_flags_unseen` asks it for a variable, never a command (DEF-4031).",
         "_bash_patterns._PS_DRIVE_QUALIFIED_RE":
             "TOKEN PREFIX -- `match` on ONE target token an anchored remove or "
             "sweep reader handed the judge (a drive letter and colon), never a "

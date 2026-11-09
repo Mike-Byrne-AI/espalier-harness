@@ -9379,20 +9379,11 @@ def _bare_verb(text: str) -> str:
     return word[:-4] if word.endswith(".exe") else word
 
 
-def _flags_unseen(args: str, *, powershell: bool = False) -> bool:
+def _flags_unseen(args: str) -> bool:
     """A remove whose flags this reader cannot see: a variable, a command
     substitution or a splat in its arguments can carry a recursive switch,
-    so it is never read as files-only (the code review of 2270fd4a). On
-    PowerShell the automatic constants `$true`, `$false` and `$null` are
-    values a switch binds (`-Confirm:$false`), never a carrier, so they are
-    read past (DEF-4031); on Bash they are ordinary variables."""
-    if powershell:
-        args = _PS_SWITCH_CONSTANT_RE.sub("", args)
+    so it is never read as files-only (the code review of 2270fd4a)."""
     return any(ch in args for ch in "$`@")
-
-
-#: PowerShell's automatic constants, which can never expand to a switch.
-_PS_SWITCH_CONSTANT_RE = re.compile(r"\$(?:true|false|null)\b", re.IGNORECASE)
 
 
 #: The remove and move verbs a loop body is counted by: a files-only loop
@@ -9416,9 +9407,8 @@ def files_only_removed_operands(command: str, *, powershell: bool = False) -> fr
     Counted against the full reader: an operand qualifies only when each of
     its `delete` readings is one of these, so the same word removed by any
     other arm (a recursive remove, `rmdir`, a nested program, an enumerator
-    loop) is not files-only. Asked by the zone loops on a wildcard operand,
-    and on a plain operand they would refuse, where it lets them pass a
-    real directory such a remove leaves in place (DEF-4031)."""
+    loop) is not files-only. Asked by the zone loops on a wildcard operand
+    alone."""
     from collections import Counter
 
     if powershell:
@@ -9432,7 +9422,7 @@ def files_only_removed_operands(command: str, *, powershell: bool = False) -> fr
     if powershell:
         for m in _PS_REMOVE_ITEM_RE.finditer(scan):
             args = _named_span(raw, m, "args", through_quotes=True, powershell=True)
-            if _PS_RECURSE_SWITCH_RE.search(_outside_quotes(args)) or _flags_unseen(args, powershell=True):
+            if _PS_RECURSE_SWITCH_RE.search(_outside_quotes(args)) or _flags_unseen(args):
                 continue
             tokens = _ps_removal_target_tokens(args, tokens=_ps_operand_tokens(args), unknown_takes_value=False)
             mine.update(p for t in tokens for p in _ps_list_targets(t))
