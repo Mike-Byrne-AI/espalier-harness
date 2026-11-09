@@ -1136,9 +1136,15 @@ first; the dangerous-command catch is a secondary slip-catcher):
    something it names. The read fails closed where it cannot follow the
    shell: a negated, POSIX or equivalence class, a nested extended-glob
    group or a brace sequence reads as naming anything, so such an operand at
-   the root is refused. The friction this costs: a remove without the
-   recursive flag of `tools/*` is refused although it would only remove the
-   files directly in `tools`. The deny says what the wildcard reached. A
+   the root is refused. A remove that cannot take a directory (`rm`
+   without a recursive flag, `unlink`, `shred`, a word-list loop over such a
+   remove, a remove cmdlet without `-Recurse`) reads its wildcard against
+   the protected files alone, by what it names: a root `rm -f *` and
+   `rm -f tools/*` run, as a non-recursive remove always has, while
+   `rm -f .claude/*` and a root `rm -f *` beside a `protected_paths` file are
+   refused; the same word removed by any other remove in the command, or
+   inside a nested program, reads every entry. A move takes directories and
+   reads every entry. The deny says what the wildcard reached. A
    wildcard on a write, a link or a permission change is still read as the
    path it spells: those forms are outside the coverage contract below.
 

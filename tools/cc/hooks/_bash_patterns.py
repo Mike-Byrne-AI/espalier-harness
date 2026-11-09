@@ -9356,6 +9356,78 @@ def _iter_removed_or_relocated_operands(command: str, _depth: int = 0) -> list[t
     return out
 
 
+#: The Bash remove verbs that cannot take a directory without a recursive
+#: flag (DEF-3010): `rm` without one, `unlink`, `shred`. `rmdir` takes an
+#: empty directory and is not one.
+_FILE_ONLY_REMOVE_VERBS = frozenset({"rm", "unlink", "shred"})
+
+
+def _matched_remove_verb(scan: str, m: "re.Match[str]") -> str:
+    """The verb word `_DESTROY_RE` matched before its operand span, as the
+    shell runs it: path, quote and `.exe` dropped, lower-cased."""
+    words = scan[m.start():m.start(1)].split()
+    word = words[-1].strip("\"'").replace("\\", "/").rsplit("/", 1)[-1].lower() if words else ""
+    return word[:-4] if word.endswith(".exe") else word
+
+
+def files_only_removed_operands(command: str, *, powershell: bool = False) -> frozenset[str]:
+    """The `delete` operands of ``command`` that every remove of them takes
+    as a file only (DEF-3010): a Bash `rm` without a recursive flag,
+    `unlink` or `shred`, a word-list loop whose body is such a remove, and
+    on PowerShell a remove cmdlet without the recurse switch or a native
+    single-file delete. None of these takes a directory -- `rm` without `-r`
+    refuses one, and a cmdlet without `-Recurse` on a directory with
+    children prompts and aborts in a host with no terminal -- so the zone
+    reader reads a wildcard there against the protected FILES alone, and a
+    non-recursive root `rm -f *` stays the silent pair the operator settled.
+    Counted against the full reader: an operand qualifies only when each of
+    its `delete` readings is one of these, so the same word removed by any
+    other arm (a recursive remove, `rmdir`, a nested program, an enumerator
+    loop) is not files-only. Asked by the zone loops on a wildcard operand
+    alone."""
+    from collections import Counter
+
+    if powershell:
+        reader = iter_ps_removed_or_relocated_operands
+        raw, scan = powershell_scan_pair(_expand_simple_ps_var_assignments(command))
+        raw, scan = _cap_for_scan(raw), _cap_for_scan(scan)
+    else:
+        reader = iter_removed_or_relocated_operands
+        raw, scan = _extractor_pair(command)
+    mine: "Counter[str]" = Counter()
+    if powershell:
+        for m in _PS_REMOVE_ITEM_RE.finditer(scan):
+            args = _named_span(raw, m, "args", through_quotes=True, powershell=True)
+            if _PS_RECURSE_SWITCH_RE.search(_outside_quotes(args)):
+                continue
+            tokens = _ps_removal_target_tokens(args, tokens=_ps_operand_tokens(args), unknown_takes_value=False)
+            mine.update(p for t in tokens for p in _ps_list_targets(t))
+        for m in _PS_NATIVE_DESTROY_RE.finditer(scan):
+            args = _named_span(raw, m, "args", through_quotes=True, powershell=True)
+            tokens = _ps_removal_target_tokens(args, tokens=_ps_operand_tokens(args), unknown_takes_value=False)
+            mine.update(p for t in tokens for p in _ps_list_targets(t))
+    else:
+        for m in _DESTROY_RE.finditer(scan):
+            verb = _matched_remove_verb(scan, m)
+            if verb not in _FILE_ONLY_REMOVE_VERBS:
+                continue
+            span = raw_span(raw, m, through_quotes=True)
+            if verb == "rm" and rm_recursive_force_operands("rm " + span)[0]:
+                continue
+            mine.update(_positional_operands(span))
+        if _loop_carrier_witnessed(raw):
+            for m in _FOR_WORDS_REMOVE_RE.finditer(scan):
+                verb = _named_span(raw, m, "verb").strip().lower()
+                read = _loop_removal_paths(raw, m)
+                if read is None or read.root_effect != "delete" or verb not in _FILE_ONLY_REMOVE_VERBS:
+                    continue
+                if _bash_loop_reading(raw, m)[2]:   # the wipe: a recursing body
+                    continue
+                mine.update(read.roots)
+    every = Counter(p for effect, p in reader(command) if effect == "delete")
+    return frozenset(p for p, n in mine.items() if every.get(p) == n)
+
+
 # ── Catastrophic recursive delete detection (flag-order-independent; forced or not, DEF-842) ──
 #
 # write_guard.DANGEROUS_BASH_PATTERNS hard-denies `rm -rf /` and `rm -rf *` with

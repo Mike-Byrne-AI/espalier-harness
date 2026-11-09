@@ -285,3 +285,71 @@ class TestTheDenyTextReadsTheGlobAsItsLiteralTwin:
         assert write_guard._zone_reading("*/raw", tree)[0] == ("data/", "protected")
         check, template = _VERBS["bash-recursive-remove"]
         assert "protected_paths" in _zone_reason(check, template.format("*/raw"), tree)
+
+
+_BASH = "check_bash_for_protected_mutations"
+_PS = "check_powershell_for_protected_mutations"
+
+
+class TestANonRecursiveRemoveReachesFilesOnly:
+    """A remove that cannot take a directory reads its wildcard against the
+    protected FILES alone (air's ruling 1f2d12 on DEF-3010): `rm` without a
+    recursive flag refuses a directory, and a cmdlet without `-Recurse` on one
+    with children prompts and aborts with no terminal. So the non-recursive
+    root `rm -f *` stays the silent pair the operator settled (the three rows
+    in test_write_guard.py the first cut turned red), while a move -- which
+    takes directories -- and every remove that can recurse read every entry."""
+
+    @pytest.mark.parametrize(("check", "command"), [
+        (_BASH, "rm -f *"), (_BASH, "rm *"), (_BASH, 'for f in *; do rm -f "$f"; done'),
+        (_BASH, "rm -f tools/*"), (_BASH, "unlink too*"), (_BASH, "/bin/rm -f *"),
+        (_PS, "Remove-Item *"), (_PS, "Remove-Item -Path tools/* -Force"), (_PS, "del *"),
+    ])
+    def test_the_settled_silent_pair_stays_silent(self, tree: Path, check: str, command: str) -> None:
+        assert _zone_reason(check, command, tree) == "", command
+
+    @pytest.mark.parametrize(("check", "command"), [
+        (_BASH, "rm -f .claude/*"),                     # names a protected file
+        (_BASH, "rm -r *"), (_BASH, "rm -rf tools/*"),  # recursing
+        (_BASH, "rm -f *; rm -r *"),                    # the same word, also recursing
+        (_BASH, "rm -f *; rmdir *"),                    # rmdir takes an empty directory
+        (_BASH, 'sh -c "rm -f *"'),                     # a nested program: not counted, fails closed
+        (_BASH, 'for f in *; do rm -r "$f"; done'),
+        (_BASH, "mv * /tmp/t"),                         # a move takes directories (the ruling's edge 1)
+        (_PS, "Remove-Item .claude/*"), (_PS, "Remove-Item -Recurse *"), (_PS, "Move-Item * t"),
+    ])
+    def test_a_remove_that_can_take_a_directory_or_a_file_still_draws_the_deny(
+        self, tree: Path, check: str, command: str,
+    ) -> None:
+        assert _zone_reason(check, command, tree), command
+
+    @pytest.mark.parametrize(("check", "command"), [(_BASH, "rm -f *"), (_PS, "Remove-Item *")])
+    def test_a_root_protected_paths_file_keeps_the_deny(self, tree: Path, check: str, command: str) -> None:
+        """The ruling's edge 2: an adopter's `protected_paths` entry arrives
+        as a prefix with a slash; where the tree holds a FILE there, a root
+        glob a non-recursive remove takes names it and is refused."""
+        (tree / "espalier.toml").write_text('protected_paths = ["secret.cfg"]\n', encoding="utf-8")
+        (tree / "secret.cfg").write_text("x", encoding="utf-8")
+        reason = _zone_reason(check, command, tree)
+        assert "secret.cfg" in reason and "protected_paths" in reason, reason
+
+    def test_a_protected_paths_directory_is_a_directory(self, tree: Path) -> None:
+        """Its twin: where the tree holds a directory at the entry, the
+        non-recursive remove cannot take it, so the root glob runs."""
+        (tree / "espalier.toml").write_text('protected_paths = ["keep/"]\n', encoding="utf-8")
+        (tree / "keep").mkdir()
+        assert _zone_reason(_BASH, "rm -f *", tree) == ""
+        assert _zone_reason(_BASH, "rm -r *", tree)
+
+    def test_a_literal_operand_is_never_read_for_it(self, tree: Path, monkeypatch) -> None:
+        """The files-only read is asked on a wildcard operand alone (the
+        assign's no-weight rule), and a literal non-recursive remove of a zone
+        keeps main's verdict."""
+        import _bash_patterns
+
+        def boom(*_a, **_k):
+            raise AssertionError("the files-only read was asked about a literal operand")
+
+        monkeypatch.setattr(_bash_patterns, "files_only_removed_operands", boom)
+        assert _zone_reason(_BASH, "rm -f cc", tree)
+        assert _zone_reason(_PS, "Remove-Item build/out.txt", tree) == ""

@@ -394,22 +394,39 @@ def glob_reach(rel_path: str, zone: str, *, is_file: bool, tree: "Path | None" =
     return best
 
 
-def glob_reaches_protected(rel_path: str, root: Path, *, tree: "Path | None" = None) -> "tuple[str, str]":
+def glob_reaches_protected(
+    rel_path: str, root: Path, *, tree: "Path | None" = None, files_only: bool = False,
+) -> "tuple[str, str]":
     """The strongest reach a wildcard operand has over every protected prefix
     and file, as ``(reach, entry)`` (``"names"`` over ``"encloses"`` over
     ``""``; ``entry`` the protected entry reached, for the deny's text).
     ``tree`` is the checkout the operand is relative to (a sibling worktree
     for a path into one), where a remainder's existence is read; it defaults
-    to ``root``, whose zones are the roster either way."""
+    to ``root``, whose zones are the roster either way.
+
+    ``files_only`` is a remove that cannot take a directory (a non-recursive
+    `rm`, a cmdlet without `-Recurse`: ``files_only_removed_operands``): the
+    operand is read against the protected FILES alone, by what it names, so
+    a root `rm -f *` stays the silent pair the operator settled while
+    `rm -f .claude/*` keeps the deny. A harness zone is a directory; an
+    adopter's ``protected_paths`` entry is one only where ``tree`` holds a
+    directory there, and is otherwise read as the file it may name."""
     tree = root if tree is None else tree
     best: "tuple[str, str]" = ("", "")
-    entries = [(prefix, False) for prefix in _hook_utils.protected_prefixes(root)]
+    if files_only:
+        harness = set(_hook_utils.harness_protected_prefixes(root))
+        entries = [
+            (prefix.rstrip("/"), True) for prefix in _hook_utils.protected_prefixes(root)
+            if prefix not in harness and not (tree / prefix.rstrip("/")).is_dir()
+        ]
+    else:
+        entries = [(prefix, False) for prefix in _hook_utils.protected_prefixes(root)]
     entries += [(name, True) for name in sorted(PROTECTED_FILES)]
     for zone, is_file in entries:
         reach = glob_reach(rel_path, zone, is_file=is_file, tree=tree)
         if reach == "names":
             return reach, zone
-        if reach and not best[0]:
+        if reach and not best[0] and not files_only:
             best = (reach, zone)
     return best
 

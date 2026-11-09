@@ -2126,21 +2126,23 @@ _PROTECTED_ZONE_HINT = (
 _ADOPTER_KEY_OF_KIND = {kind: key for key, kind in _hook_utils.ADOPTER_ZONE_KEYS}
 
 
-def _adopter_zone(rel_path: str, root: Path) -> "tuple[str, str] | None":
+def _adopter_zone(rel_path: str, root: Path, *, files_only: bool = False) -> "tuple[str, str] | None":
     """The adopter zone a deny target is the adopter's for, as ``(prefix,
     kind)``: ``_zone_reading``'s first half. Every site that denies with a
     harness template asks this first."""
-    return _zone_reading(rel_path, root)[0]
+    return _zone_reading(rel_path, root, files_only=files_only)[0]
 
 
-def _takes_harness_ground(rel_path: str, root: Path) -> bool:
+def _takes_harness_ground(rel_path: str, root: Path, *, files_only: bool = False) -> bool:
     """A removed or relocated operand that ENCLOSES harness ground and is not
     itself harness ground (DEF-5012): its deny names that ground, never the
     relaunch, in an adopter zone or none."""
-    return bool(_zone_reading(rel_path, root)[1])
+    return bool(_zone_reading(rel_path, root, files_only=files_only)[1])
 
 
-def _zone_reading(rel_path: str, root: Path) -> "tuple[tuple[str, str] | None, str]":
+def _zone_reading(
+    rel_path: str, root: Path, *, files_only: bool = False,
+) -> "tuple[tuple[str, str] | None, str]":
     """``(zone, ground)`` for a deny target. ``zone`` is the adopter zone it
     sits in -- or, for a removed or relocated directory, the first
     ``protected_paths`` zone it encloses (a move of `keep` takes `keep/sub/`
@@ -2160,9 +2162,12 @@ def _zone_reading(rel_path: str, root: Path) -> "tuple[tuple[str, str] | None, s
     `data/`. A protected zone the target sits in wins, then one it encloses,
     then a generated one it sits in: a clean of a build directory is refused
     for the protected zone it holds, never for the generated one around it.
-    The whole tree (`.`) is the harness's. Never raises: a lookup never decides
-    the verdict; a failed one is said once a session and the harness text
-    stands in."""
+    The whole tree (`.`) is the harness's. ``files_only`` is the verdict's
+    own reading for a wildcard a non-recursive remove takes (DEF-3010): the
+    harness's files alone, nothing enclosed, and an adopter entry as the file
+    it may name unless the root holds a directory there. Never raises: a
+    lookup never decides the verdict; a failed one is said once a session and
+    the harness text stands in."""
     try:
         fold = _protected_zones._fs_equiv
         rel = fold(rel_path, all_components=True).strip("/")
@@ -2181,26 +2186,29 @@ def _zone_reading(rel_path: str, root: Path) -> "tuple[tuple[str, str] | None, s
             return wild and _glob_reach(rel_path, zone, is_file=is_file, tree=root) == "names"
 
         def holds(zone: str, is_file: bool) -> bool:
+            if files_only:
+                return False
             if zone.startswith(rel + "/"):
                 return True
             return wild and _glob_reach(rel_path, zone, is_file=is_file, tree=root) == "encloses"
 
-        harness = [(entry, fold(entry, all_components=True).rstrip("/"), entry in PROTECTED_FILES)
-                   for entry in (*_hook_utils.harness_protected_prefixes(root), *PROTECTED_FILES)]
+        everything = [(entry, fold(entry, all_components=True).rstrip("/"), entry in PROTECTED_FILES)
+                      for entry in (*_hook_utils.harness_protected_prefixes(root), *PROTECTED_FILES)]
+        harness = [row for row in everything if row[2]] if files_only else everything
         if any(sits_in(ground, is_file) for _entry, ground, is_file in harness):
             return None, ""
         held = next((entry for entry, ground, is_file in harness if holds(ground, is_file)), "")
         zones = []
         for prefix, kind in _hook_utils.adopter_protected_prefixes(root):
             zone = fold(prefix, all_components=True).rstrip("/")
-            if not any(zone == ground or zone.startswith(ground + "/") for _entry, ground, _f in harness):
-                zones.append((prefix, kind, zone))
-        inside = [(prefix, kind) for prefix, kind, zone in zones if sits_in(zone, False)]
+            if not any(zone == ground or zone.startswith(ground + "/") for _entry, ground, _f in everything):
+                zones.append((prefix, kind, zone, files_only and not (root / prefix.rstrip("/")).is_dir()))
+        inside = [(prefix, kind) for prefix, kind, zone, is_file in zones if sits_in(zone, is_file)]
         for prefix, kind in inside:
             if kind == "protected":
                 return (prefix, kind), held
-        for prefix, kind, zone in zones:
-            if kind == "protected" and holds(zone, False):
+        for prefix, kind, zone, is_file in zones:
+            if kind == "protected" and holds(zone, is_file):
                 return (prefix, kind), held
         return (inside[0] if inside else None), held
     except Exception as exc:  # noqa: BLE001 -- a lookup never decides; the fallback is said, once a session
@@ -2213,10 +2221,10 @@ def _zone_reading(rel_path: str, root: Path) -> "tuple[tuple[str, str] | None, s
         return None, ""
 
 
-def _zone_hint(rel_path: str, root: Path) -> str:
+def _zone_hint(rel_path: str, root: Path, *, files_only: bool = False) -> str:
     """The ``{hint}`` a zone deny carries: the maintenance-mode relaunch for a
     harness zone, or the sentence naming the setting the adopter wrote."""
-    zone = _adopter_zone(rel_path, root)
+    zone = _adopter_zone(rel_path, root, files_only=files_only)
     if zone is None:
         return _PROTECTED_ZONE_HINT
     prefix, kind = zone
@@ -2229,7 +2237,7 @@ def _zone_hint(rel_path: str, root: Path) -> str:
         return _PROTECTED_ZONE_HINT
 
 
-def _zone_template(rel_path: str, root: Path, *, mutation: bool = False) -> str:
+def _zone_template(rel_path: str, root: Path, *, mutation: bool = False, files_only: bool = False) -> str:
     """The full deny template for the zone a target sits in: the harness
     templates (whose Don't / Do is the maintenance-mode relaunch) or the
     adopter's own (whose Do names the setting and whose Don't is that
@@ -2238,7 +2246,7 @@ def _zone_template(rel_path: str, root: Path, *, mutation: bool = False) -> str:
     adopter zone through ``_zone_reason`` instead (DEF-995), the one caller of
     this and of ``_zone_hint`` (pinned: an operand that takes harness ground
     must not reach them)."""
-    zone = _adopter_zone(rel_path, root)
+    zone = _adopter_zone(rel_path, root, files_only=files_only)
     if zone is None:
         return _denial_reasons.PROTECTED_ZONE_MUTATION if mutation else _denial_reasons.PROTECTED_ZONE_WRITE
     _prefix, kind = zone
@@ -2251,7 +2259,7 @@ def _zone_template(rel_path: str, root: Path, *, mutation: bool = False) -> str:
 
 def _zone_reason(
     rel_path: str, root: Path, *, where: str, mutation: bool = False, effect: str = "",
-    takes: bool = False,
+    takes: bool = False, files_only: bool = False,
 ) -> str:
     """The rendered reason for a zone deny on a full-template channel (Write /
     Edit / NotebookEdit, PowerShell) and for an adopter zone on every channel:
@@ -2266,7 +2274,7 @@ def _zone_reason(
     (``tests/test_deny_markers.py::_producer_templates`` reads the return
     flow; nothing is registered by name)."""
     if takes:
-        zone, ground = _zone_reading(rel_path, root)
+        zone, ground = _zone_reading(rel_path, root, files_only=files_only)
         if ground and zone is None:
             return _denial_reasons.HARNESS_GROUND_ENCLOSED.format(
                 effect=effect, path=rel_path + where, operand=rel_path, ground=ground,
@@ -2278,9 +2286,9 @@ def _zone_reason(
                 key=_ADOPTER_KEY_OF_KIND.get(kind, kind),
                 kind_text=_denial_reasons.ADOPTER_ZONE_KIND_TEXT.get(kind, kind),
             )
-    template = _zone_template(rel_path, root, mutation=mutation)
+    template = _zone_template(rel_path, root, mutation=mutation, files_only=files_only)
     return template.format(
-        path=rel_path + where, hint=_zone_hint(rel_path, root), effect=effect,
+        path=rel_path + where, hint=_zone_hint(rel_path, root, files_only=files_only), effect=effect,
     )
 
 
@@ -2429,19 +2437,29 @@ def check_bash_for_protected_mutations(command: str, root: Path, cwd: Path | Non
     # DEF-842, reaches here on its re-issue: the speed bump fires first, ahead of the maintenance
     # gate, keyed on the spelling and not on the operand -- it is not zone
     # coverage, and this loop is.
+    files_only: "frozenset[str] | None" = None
     for effect, raw in _bash_patterns.iter_removed_or_relocated_operands(command):
         if effect not in _ZONE_EFFECTS:
             continue
+        # DEF-3010: a wildcard a non-recursive remove takes reaches files only
+        # (the operator's settled silent pair); read once, on such an operand
+        lone = False
+        if effect == "delete" and _has_wildcard(raw):
+            if files_only is None:
+                files_only = _bash_patterns.files_only_removed_operands(command)
+            lone = raw in files_only
         for at in bases(raw):
             base, rel = _resolve_bash_in_checkout(raw, root, base=at)
             where, note = _checkout_note(base, root)
-            if _mutated_zone(effect, rel, root, base):
-                where += _glob_note(rel, root, base)
+            if _mutated_zone(effect, rel, root, base, files_only=lone):
+                where += _glob_note(rel, root, base, files_only=lone)
                 takes = effect in _TAKES_ITS_TREE
-                if _adopter_zone(rel, root) is not None or (takes and _takes_harness_ground(rel, root)):
+                if _adopter_zone(rel, root, files_only=lone) is not None or (
+                        takes and _takes_harness_ground(rel, root, files_only=lone)):
                     reason = _zone_reason(
                         rel, root, where=where, mutation=True,
                         effect=_EFFECT_WORD.get(effect, effect).capitalize(), takes=takes,
+                        files_only=lone,
                     )
                     return _audit_deny(
                         root, "pretooluse_blocked_protected_zone", reason,
@@ -2474,7 +2492,7 @@ _SYMLINK_NOTE = "a symlink"
 _HARDLINK_NOTE = "a hardlink would alias its bytes under a second name"
 
 
-def _mutated_zone(effect: str, rel: str, root: Path, base: Path | None = None) -> bool:
+def _mutated_zone(effect: str, rel: str, root: Path, base: Path | None = None, *, files_only: bool = False) -> bool:
     """The zone verdict for one removed or relocated operand, by effect: a
     protected operand is refused for every effect; an ENCLOSING directory
     for a delete, a move or a `git clean` (the tree goes with it), never for
@@ -2487,7 +2505,10 @@ def _mutated_zone(effect: str, rel: str, root: Path, base: Path | None = None) -
     each is refused as the directory it reaches is, while `build/*` and
     `tools/*.log` reach nothing. The read runs only on a wildcard operand, and
     a remainder's existence is read in ``base``, the checkout the operand is
-    relative to (a sibling worktree for a path into one)."""
+    relative to (a sibling worktree for a path into one). ``files_only`` is a
+    remove that cannot take a directory (``files_only_removed_operands``):
+    its wildcard is read against the protected files alone, so a root
+    `rm -f *` stays silent while `rm -f .claude/*` is refused."""
     if _is_allowed(rel):
         return False
     if _is_protected(rel, root):
@@ -2495,19 +2516,19 @@ def _mutated_zone(effect: str, rel: str, root: Path, base: Path | None = None) -
     if effect in _TAKES_ITS_TREE and _encloses_protected(rel, root):
         return True
     if _has_wildcard(rel):
-        reach = _glob_reaches_protected(rel, root, tree=base)[0]
+        reach = _glob_reaches_protected(rel, root, tree=base, files_only=files_only)[0]
         if reach == "names" or (reach == "encloses" and effect in _TAKES_ITS_TREE):
             return True
     return effect == "clean" and rel.strip("/") in ("", ".")
 
 
-def _glob_note(rel: str, root: Path, base: Path | None) -> str:
+def _glob_note(rel: str, root: Path, base: Path | None, *, files_only: bool = False) -> str:
     """What a refused wildcard operand reached, for the deny's path slot
     (DEF-3010): a root `*/build` refused for `cc/build` says `cc/`, so the
     refusal of a build clean says why. Asked on the deny path alone."""
     if not _has_wildcard(rel):
         return ""
-    entry = _glob_reaches_protected(rel, root, tree=base)[1]
+    entry = _glob_reaches_protected(rel, root, tree=base, files_only=files_only)[1]
     return f" (a wildcard that reaches `{entry}`)" if entry else ""
 
 
@@ -3022,18 +3043,24 @@ def check_powershell_for_protected_mutations(
                 )
     # The Bash twin's second loop (§C52): the operand a verb removes or
     # relocates, and the directory that encloses a protected path.
+    files_only: "frozenset[str] | None" = None
     for effect, raw in _bash_patterns.iter_ps_removed_or_relocated_operands(command):
         if effect not in _ZONE_EFFECTS:
             continue
+        lone = False   # the Bash twin's files-only read (DEF-3010)
+        if effect == "delete" and _has_wildcard(raw):
+            if files_only is None:
+                files_only = _bash_patterns.files_only_removed_operands(command, powershell=True)
+            lone = raw in files_only
         for at in bases(raw):
             base, rel = _resolve_bash_in_checkout(raw, root, base=at)
             where, note = _checkout_note(base, root)
-            if _mutated_zone(effect, rel, root, base):
-                where += _glob_note(rel, root, base)
+            if _mutated_zone(effect, rel, root, base, files_only=lone):
+                where += _glob_note(rel, root, base, files_only=lone)
                 reason = _zone_reason(
                     rel, root, where=where, mutation=True,
                     effect=_EFFECT_WORD.get(effect, effect).capitalize(),
-                    takes=effect in _TAKES_ITS_TREE,
+                    takes=effect in _TAKES_ITS_TREE, files_only=lone,
                 )
                 return _audit_deny(
                     root, "pretooluse_blocked_protected_zone", reason,
