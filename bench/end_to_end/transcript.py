@@ -107,6 +107,10 @@ _DENY_REASON_MARKERS: tuple[str, ...] = (
     # Below the supported Python floor: each deny hook's refusal and the
     # SessionStart banner say the floor's one sentence.
     "does not run on Python",
+    # A kept, older tools/cc sibling (DEF-5087): the start refusal, the crash
+    # guard's kept-file text and a script's refusal each name the file that
+    # lacks the name the same way.
+    ", which lacks it",
 )
 
 

@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5089",
+ "subject": "espalier/cli.py",
+ "cmd": "python3 -c \"import pathlib,sys;sys.path.insert(0,'.');from espalier.cli import _sibling_takes;n,_=_sibling_takes(pathlib.Path('tools/cc'));print('ancestors_of' in n.get('checkout_sync',{}), 'session_log_fragments' in n.get('_record_fragments',{}))\"",
+ "open_value": "False False",
+ "why_not": null,
+ "row_sha": "cf31f11b684f",
+ "text_sha": "ef03602282c8",
+ "verified_2026_11_08": "OPEN (filed 2026-11-08; probe driven at filing here and in the export of HEAD 5d1bff2d0c1a)"
+}

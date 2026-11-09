@@ -1419,6 +1419,11 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # added, locked and removed): git's own refusals and ancestry answers
             # are the thing under test, so no mock stands in.
             "test_checkout_sync",
+            # Drives tools/cc/ship.py as a child interpreter from copied
+            # tools/cc trees with one name gone from a sibling (DEF-5087): the
+            # interpreter's own exception hook and exit are the thing under
+            # test, so no in-process call stands in (fast; slow-exempt).
+            "test_kept_sibling",
             # Drives tools/cc/_merge_rules.py's stale-base read through real git
             # in a throwaway repo per case, commits at fixed dates: what moved on
             # the base since a CI run, and which file imports which, is git's

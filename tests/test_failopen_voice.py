@@ -126,8 +126,11 @@ VOICE_PRAGMA = "# voice:"
 VOICE_KINDS = frozenset({"sink", "decision", "twin", "debug-log", "cli"})
 #: How many lines each kind declares, recorded 2026-10-06 when the census
 #: landed. A declaration is the cheapest answer to a red gate, so a new one
-#: raises its kind's ceiling here, on purpose and in the same change.
-VOICE_CEILINGS = {"sink": 4, "decision": 1, "twin": 7, "debug-log": 14, "cli": 5}
+#: raises its kind's ceiling here, on purpose and in the same change. ``cli``
+#: went to 6 on 2026-11-08: ``_start_refusal.refuse_kept_siblings`` is the ship
+#: driver's refusal of a kept sibling, a script's stderr with no hook JSON to
+#: pair with (it lives beside the deny hooks so it loads with no sibling).
+VOICE_CEILINGS = {"sink": 4, "decision": 1, "twin": 7, "debug-log": 14, "cli": 6}
 
 
 def _is_falsy_literal(node: ast.expr | None) -> bool:
