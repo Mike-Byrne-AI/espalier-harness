@@ -4361,8 +4361,10 @@ def test_every_derived_regex_is_linear_on_adversarial_runs(name, pattern):
 # slower would red a linear pattern. What no projection bounds is the
 # timeout's, as the alarm's late firing is the walker row's: a run's opening
 # small sample (projected from nothing on its first window), a search past
-# three times its projection (growth past cubic between the two sizes, or a
-# stall that long), and a timeout lowered below the declared one
+# three times its projection (x192 between the two sizes, growth past about
+# n^2.5 at the cap: a cubic, x512, whose small floor passes about 22 ms starts
+# its big sample inside the deadline and ends past the timeout; or a stall
+# that long), and a timeout lowered below the declared one
 # (`PYTEST_TIMEOUT`, `--timeout`), which the deadline does not read. And what
 # no ratio limit reads: growth between linear and quadratic, or a quadratic
 # term under a larger linear one, reads under the limit, and is caught only
@@ -4533,7 +4535,9 @@ def _growth_window_time(
     for its first window); then `_GROWTH_SAMPLES` pairs interleave, small then
     big (DEF-2000's order), each big projected from the floor of the smalls
     taken so far -- two at least, so one stalled sample never sets it -- and
-    capped. A stop carries the samples taken."""
+    capped. A small sample carries no cap, only the deadline: it is the size a
+    pattern is read at first, and a projection from the run's earlier floor
+    says nothing of a stall. A stop carries the samples taken."""
     smalls: list[float] = []
     bigs: list[float] = []
     try:
@@ -4578,7 +4582,7 @@ def _growth_judgement(
     try:
         second = _growth_window_time(pattern, small, big, deadline, first[0])
     except _GrowthBudgetSpent as spent:
-        return True, _growth_reading(*first, f"one window; the second not started ({spent.where})")
+        return True, _growth_reading(*first, f"one window; the second stopped ({spent.where})")
     lower = second if second[1] * first[0] < first[1] * second[0] else first
     return _grows_past_linear(*lower), _growth_reading(*lower, "two windows, the lower ratio")
 
@@ -4592,18 +4596,23 @@ def _growth_stop_red(shape: str, spent: _GrowthBudgetSpent, read: int, not_reach
     """The red for a run the deadline or the cap stopped on its first window:
     the run, what stopped it, the samples taken, the runs not reached, and the
     cause the readings point to (air's 1ea8f4 follow-up, ef1b48) -- a regressed
-    pattern where the window in flight reads past the limit or its small floor
-    is ten times the slowest linear one (the wall-clock rule's multiple), else
-    a slow host, every reading linear."""
+    pattern where the window in flight reads past the limit, or where two
+    small samples at least, and no big one, put its small floor past ten times
+    the slowest linear one (the wall-clock rule's multiple); else a slow host:
+    every reading linear, or one small sample, which a stall reads the same as
+    a slow pattern (air's d98e83 (A))."""
     taken = (f"small {', '.join(f'{s * 1000:.1f}' for s in spent.smalls) or 'none'} ms, "
              f"big {', '.join(f'{b * 1000:.1f}' for b in spent.bigs) or 'none'} ms")
     floor = min(spent.smalls) if spent.smalls else 0.0
     if spent.bigs and _grows_past_linear(floor, min(spent.bigs)):
         cause = "the window in flight reads past the limit: a regressed pattern"
-    elif floor > 10 * _GROWTH_SLOWEST_LINEAR_SMALL_S:
+    elif len(spent.smalls) >= 2 and not spent.bigs and floor > 10 * _GROWTH_SLOWEST_LINEAR_SMALL_S:
         cause = (f"its small floor is {floor / _GROWTH_SLOWEST_LINEAR_SMALL_S:.0f} times the slowest "
                  f"linear one ({_GROWTH_SLOWEST_LINEAR_SMALL_S * 1000:.2f}ms on the Windows box): a "
                  f"regressed pattern, unless this host is that much slower")
+    elif len(spent.smalls) < 2:
+        cause = (f"{len(spent.smalls)} small sample taken, too few to read the pattern by, and a stall "
+                 f"reads the same ({read} runs read before it): a slow host")
     else:
         cause = f"every reading is linear ({read} runs read before it, and the window in flight): a slow host"
     return (f"{shape}: not read, its first window stopped at {spent.where}; samples taken: {taken}; "
@@ -4770,7 +4779,7 @@ def test_the_growth_arm_cannot_outlast_the_per_test_timeout(monkeypatch, overrun
     # stopped on a first window, a stop red; on a second, the first window's growth red
     assert red is not None and "past the row's deadline" in red, red
     assert ("runs not reached" in red and "samples taken" in red) if ": not read," in red else (
-        "the second not started" in red), red
+        "the second stopped" in red), red
     if overrun == 1.0:
         assert len(calls) > 2 * _GROWTH_WINDOW_CALLS, (name, len(calls))  # runs were read before the stop
         openers = set(range(0, len(calls), 2 * _GROWTH_WINDOW_CALLS))  # each run's first window opens unprojected
@@ -4809,7 +4818,7 @@ def test_the_growth_arm_reads_a_quadratic_red_on_one_window_when_the_deadline_cu
     calls, now = _growth_simulation(monkeypatch, cost)
     # window 1 ends at 13.72 s; the second's first big, projected 4.48 s from 13.86 s, would end past 17
     red = _growth_first_red(re.compile("x"), [("word-run", "a"), ("space-run", " ")], 17.0)
-    assert red is not None and red.startswith("word-run:") and "the second not started" in red, red
+    assert red is not None and red.startswith("word-run:") and "the second stopped" in red, red
     assert sum(1 for length, _, _ in calls if length == _GROWTH_BIG_LEN) == _GROWTH_SAMPLES, calls
     assert now[0] <= 17.0, now[0]
 
@@ -4859,6 +4868,36 @@ def test_a_stopped_run_names_the_cause_its_readings_point_to(monkeypatch, readin
     else:
         assert red.startswith("word-run:") and "3 runs not reached" in red, red
         assert "big 256.0 ms" in red and "past the limit: a regressed pattern" in red, red
+
+
+def test_a_stop_on_one_small_sample_names_a_slow_host(monkeypatch):
+    """Air's d98e83 (A): an opening small sample that stalls 11 s puts the
+    next small's projection (that one sample) past the deadline. One sample
+    is too few to read the pattern by, so the red names a slow host, never a
+    regressed pattern; two smalls and no big are the floor-multiple branch's."""
+    def cost(length: int, index: int) -> float:
+        return 11.0 if index == 0 else 0.004
+
+    calls, _now = _growth_simulation(monkeypatch, cost)
+    red = _growth_first_red(re.compile("x"), [("word-run", "a"), ("space-run", " ")], 20.0)
+    assert red is not None and red.startswith("word-run: not read,"), red
+    assert "small 11000.0 ms, big none ms" in red and "1 small sample taken" in red, red
+    assert "a slow host" in red and "regressed" not in red, red
+    assert len(calls) == 1, calls
+
+
+def test_a_stop_after_a_linear_big_sample_names_a_slow_host(monkeypatch):
+    """Air's d98e83 (A), its other half: a window that read a big sample
+    linear (ratio 8 above the judged floor) is a slow host's, however far its
+    small floor is past the slowest linear one -- here 51 times. Two smalls and
+    a big read, then the second big's 3.2 s projection crosses the deadline."""
+    def cost(length: int, _index: int) -> float:
+        return 0.05 if length == _GROWTH_SMALL_LEN else 0.4
+
+    _growth_simulation(monkeypatch, cost)
+    red = _growth_first_red(re.compile("x"), [("word-run", "a")], 3.5)
+    assert red is not None and "small 50.0, 50.0, 50.0 ms, big 400.0 ms" in red, red
+    assert "every reading is linear" in red and "a slow host" in red and "regressed" not in red, red
 
 
 def test_one_stalled_small_sample_does_not_red_a_linear_run(monkeypatch):
