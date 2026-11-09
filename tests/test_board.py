@@ -1612,12 +1612,12 @@ class TestUnderTwo:
                  mail.new_message("air", "assign", "", seat="win", ids=["DEF-10"], now=_T0)]
         call = mail.new_message("air", "request", f"{mail.OPERATOR_CALL_PREFIX} which base?", now=_T0)
         first = mail.new_message("win", "request", f"{mail.STOPPED_PREFIX} the guard refuses", now=_T0.replace(minute=1))
-        second = mail.new_message("win", "request", f"{mail.STOPPED_PREFIX} call {call['id']} parks DEF-1",
+        second = mail.new_message("win", "request", f"{mail.STOPPED_PREFIX} call {call['id']} parks DEF-10",
                                   now=_T0.replace(minute=2))
         lines = self._text(board, monkeypatch, tmp_path, {"air": [*by_id, call], "win": [first, second]}).splitlines()
         assert self._stopped(lines) == [
-            f"          stopped: win (stops {first['id']}, {second['id']}) holds DEF-1 (assign {by_id[0]['id']}, "
-            f"parked on {call['id']}); DEF-10 (assign {by_id[1]['id']}): {board.PARKED_RELEASE}"], lines
+            f"          stopped: win (stops {first['id']}, {second['id']}) holds DEF-1 (assign {by_id[0]['id']}); "
+            f"DEF-10 (assign {by_id[1]['id']}, parked on {call['id']}): {board.PARKED_RELEASE}"], lines
 
     def test_no_open_stop_adds_no_stopped_line(self, board, monkeypatch, tmp_path):
         """A stop an ack names is closed, a note opening with the word is no
