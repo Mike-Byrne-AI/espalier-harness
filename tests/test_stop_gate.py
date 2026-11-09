@@ -922,23 +922,174 @@ class TestGate1EndsTheWholeTreeAtItsBudget:
             "the kill reached the direct child only")
 
     def test_every_budgeted_spawn_in_the_gate_ends_its_tree(self):
-        """Each spawn bounded by ``STOP_INNER_BUDGET`` -- Gate 1's test run --
-        calls ``spawn_tree_checked``. The pytest-keyed ratchet in
-        ``tests/test_contracts.py`` cannot read ``_run_one_command``'s
-        handed-in argv, so this holds both of the gate's spawns, and any new
-        one, by the budget they share."""
+        """Each spawn Gate 1's budget bounds -- its test run -- calls
+        ``spawn_tree_checked``: every call handed ``STOP_INNER_BUDGET`` as its
+        timeout anywhere in the hook, and every timed call in the gate's two
+        spawning functions, since ``_run_one_command`` hands its spawn what is
+        left of the list's one budget, not the constant (DEF-5097). The
+        pytest-keyed ratchet in ``tests/test_contracts.py`` cannot read
+        ``_run_one_command``'s handed-in argv, so this holds both of the
+        gate's spawns, and any new one."""
         import ast
         tree = ast.parse((HOOKS_DIR / "stop_gate.py").read_text(encoding="utf-8"))
-        budgeted = [
-            (node.lineno, node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", None))
-            for node in ast.walk(tree)
+
+        def _named(call: ast.Call) -> tuple[int, str | None]:
+            func = call.func
+            return call.lineno, func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+
+        budgeted = {
+            _named(node) for node in ast.walk(tree)
             if isinstance(node, ast.Call) and any(
                 k.arg == "timeout" and isinstance(k.value, ast.Name) and k.value.id == "STOP_INNER_BUDGET"
                 for k in node.keywords)
-        ]
-        assert len(budgeted) >= 2, f"the walk found {budgeted}, fewer than Gate 1's two spawns: it broke"
+        }
+        # Every timed call in every function Gate 1 reaches from its entry, so
+        # a spawn moved into a new helper is read too (the review's mutant: a
+        # setup step through `spawn_checked`, timed off the list's deadline).
+        functions = {node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+        reached: set[str] = set()
+        todo = ["_gate_pytest"]
+        while todo:
+            name = todo.pop()
+            if name in reached or name not in functions:
+                continue
+            reached.add(name)
+            todo.extend(
+                node.func.id for node in ast.walk(functions[name])
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name))
+        assert {"_gate_pytest", "_run_command_gate", "_run_one_command"} <= reached, (
+            f"Gate 1's walk from _gate_pytest reached {sorted(reached)}: re-point it")
+        timed = {
+            _named(node) for name in reached for node in ast.walk(functions[name])
+            if isinstance(node, ast.Call) and any(k.arg == "timeout" for k in node.keywords)
+        }
+        assert timed, "the walk found no timed call in what Gate 1 reaches: it broke"
+        budgeted |= timed
+        assert len(budgeted) >= 2, f"the walk found {sorted(budgeted)}, fewer than Gate 1's two spawns: it broke"
         assert all(name == "spawn_tree_checked" for _line, name in budgeted), (
-            f"a spawn under Gate 1's budget kills its child alone on POSIX: {budgeted}")
+            f"a spawn under Gate 1's budget kills its child alone on POSIX: {sorted(budgeted)}")
+
+
+class TestGate1BudgetIsOneForTheWholeList:
+    """Gate 1's budget is one for the whole test list, not one for each
+    command (DEF-5097). A declared ``[extra_actions] test`` list of two or
+    more commands gave each its own ``STOP_INNER_BUDGET``, so a list whose
+    commands each fit could together outrun the Stop hook's own timeout
+    (``STOP_OUTER_TIMEOUT``): Claude Code then cancels the hook and discards
+    its output, and the Stop passes with nothing blocked and nothing recorded.
+    The first rows hold the gate's clock still (a fake ``monotonic`` that only
+    the fake spawn moves), so what they assert is the timeout each command is
+    handed; the last drives two real commands past a shrunk budget."""
+
+    _load = staticmethod(TestSpawnChokepointInTheStopGate._load)
+
+    @staticmethod
+    def _still_clock(monkeypatch, mod, budget: float, took: dict[str, float]) -> list[tuple[str, float]]:
+        """Patch the gate's clock, budget and spawn: each command takes
+        ``took[<its first word>]`` seconds on a clock only the spawn moves,
+        and outlives a timeout shorter than that. Returns the list the spawn
+        appends each (first word, timeout handed) to."""
+        import types
+        now = [0.0]
+        handed: list[tuple[str, float]] = []
+
+        def _spawn(parts, **kwargs):
+            timeout = kwargs["timeout"]
+            handed.append((parts[0], timeout))
+            if took[parts[0]] > timeout:
+                now[0] += timeout
+                raise subprocess.TimeoutExpired(cmd=parts, timeout=timeout)
+            now[0] += took[parts[0]]
+            return subprocess.CompletedProcess(parts, 0, stdout="", stderr="")
+
+        clock = types.SimpleNamespace(**{n: getattr(time, n) for n in dir(time) if not n.startswith("__")})
+        clock.monotonic = lambda: now[0]
+        monkeypatch.setattr(mod, "time", clock)
+        monkeypatch.setattr(mod, "STOP_INNER_BUDGET", budget)
+        monkeypatch.setattr(mod._hook_utils, "spawn_tree_checked", _spawn)
+        return handed
+
+    def test_a_list_whose_commands_each_fit_blocks_when_together_they_do_not(
+        self, monkeypatch, tmp_path, capsys,
+    ):
+        """The row's own case: a 40 s build, then a 55 s test, under a 60 s
+        budget. Each fits; together they pass the hook's 90 s timeout."""
+        mod = self._load()
+        handed = self._still_clock(monkeypatch, mod, 60.0, {"build-step": 40.0, "test-step": 55.0})
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        capsys.readouterr()
+        rc = mod._run_command_gate(tmp_path, ("build-step", "test-step"), source="espalier.toml")
+        assert rc == 1, (
+            f"a list whose commands together outrun Gate 1's budget passed the Stop: each was handed {handed}")
+        assert handed == [("build-step", 60.0), ("test-step", pytest.approx(20.0))], handed
+        records = _audit_rows(tmp_path / "audit", "stop_blocked_pytest")
+        assert [r["details"].get("rule") for r in records] == ["GATE_COMMAND_LIST_TIMEOUT"], records
+        reason = json.loads(capsys.readouterr().out)["reason"]
+        assert "the 2 commands of the test list share one 60.0s budget" in reason, reason
+        assert "running `test-step` (command 2 of 2)" in reason, reason
+        assert "espalier.toml" in reason and reason.isascii(), reason
+
+    def test_a_command_reached_with_no_budget_left_never_starts(self, monkeypatch, tmp_path, capsys):
+        mod = self._load()
+        handed = self._still_clock(monkeypatch, mod, 60.0, {"build-step": 60.0, "test-step": 1.0})
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        capsys.readouterr()
+        rc = mod._run_command_gate(tmp_path, ("build-step", "test-step"), source="espalier.toml")
+        assert rc == 1, (
+            f"a command reached after the list spent Gate 1's budget ran on a fresh one: each was handed {handed}")
+        assert handed == [("build-step", 60.0)], f"the second command was started with no budget left: {handed}"
+        records = _audit_rows(tmp_path / "audit", "stop_blocked_pytest")
+        assert [r["details"].get("rule") for r in records] == ["GATE_COMMAND_LIST_TIMEOUT"], records
+        reason = json.loads(capsys.readouterr().out)["reason"]
+        assert "before `test-step` could start (command 2 of 2)" in reason, reason
+
+    def test_a_kept_reasons_module_without_the_list_reason_still_blocks_as_a_timeout(
+        self, monkeypatch, tmp_path, capsys,
+    ):
+        """A kept ``_denial_reasons.py`` from before the list's reason: the
+        list's timeout blocks with the lone command's text and rule, never
+        as the crash handler's internal error, which names no kept file."""
+        mod = self._load()
+        self._still_clock(monkeypatch, mod, 60.0, {"build-step": 40.0, "test-step": 55.0})
+        monkeypatch.delattr(mod._denial_reasons, "GATE_COMMAND_LIST_TIMEOUT")
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        capsys.readouterr()
+        assert mod._run_command_gate(tmp_path, ("build-step", "test-step"), source="espalier.toml") == 1
+        records = _audit_rows(tmp_path / "audit", "stop_blocked_pytest")
+        assert [r["details"].get("rule") for r in records] == ["GATE_COMMAND_TIMEOUT"], records
+        assert "timeout running `test-step`" in json.loads(capsys.readouterr().out)["reason"]
+
+    def test_a_single_command_keeps_the_whole_budget_and_its_own_reason(self, monkeypatch, tmp_path, capsys):
+        mod = self._load()
+        handed = self._still_clock(monkeypatch, mod, 60.0, {"slow-step": 61.0})
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        capsys.readouterr()
+        assert mod._run_command_gate(tmp_path, ("slow-step",), source="env") == 1
+        assert handed == [("slow-step", 60.0)], handed
+        records = _audit_rows(tmp_path / "audit", "stop_blocked_pytest")
+        assert [r["details"].get("rule") for r in records] == ["GATE_COMMAND_TIMEOUT"], records
+        assert "after 60.0s" in json.loads(capsys.readouterr().out)["reason"]
+
+    def test_two_real_commands_share_the_budget(self, monkeypatch, tmp_path):
+        """Two real commands, each sleeping three fifths of a shrunk budget:
+        each fits it, the pair does not, so the list blocks. No wall-clock
+        bound is asserted here (this file runs in the parallel slice, where
+        one false-fails; tests/test_proof_tier.py holds the rule): that the
+        second command is handed only what is left is the still-clock rows'."""
+        mod = self._load()
+        root = tmp_path / "repo"
+        root.mkdir()
+        (root / "nap.py").write_text("import sys, time\ntime.sleep(float(sys.argv[1]))\n", encoding="utf-8")
+        budget = scaled(6.0)
+        monkeypatch.setattr(mod, "STOP_INNER_BUDGET", budget)
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        nap = f'"{sys.executable}" nap.py {0.6 * budget:.2f}'
+        started = time.monotonic()
+        rc = mod._run_command_gate(root, (nap, nap), source="espalier.toml")
+        spent = time.monotonic() - started
+        assert rc == 1, f"two commands that together outran a {budget:.1f} s budget passed the Stop ({spent:.1f} s)"
+        records = _audit_rows(tmp_path / "audit", "stop_blocked_pytest")
+        assert [r["details"].get("rule") for r in records] == ["GATE_COMMAND_LIST_TIMEOUT"], records
 
 
 class TestAnInterpreterWithoutPytestIsAFaultNotAFailure:

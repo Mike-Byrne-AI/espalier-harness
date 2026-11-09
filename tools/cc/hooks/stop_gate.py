@@ -559,15 +559,52 @@ def _run_command_gate(root: Path, commands: tuple[str, ...], *, source: str) -> 
     two broken entries reports the second on the Stop after the first, and a
     shared flag would have waved it through unreported (the review drove it).
     Until 2026-10-08 this was ``_run_env_override_gate`` and ran the override
-    alone; the detected arm was dormant."""
-    for cmd in commands:
-        rc = _run_one_command(root, cmd, source=source)
+    alone; the detected arm was dormant.
+
+    The budget is one for the whole list (DEF-5097): the deadline is set as
+    the first command starts and each command is handed what is left of it,
+    and a command reached with none left is not started and blocks as the
+    list's timeout. A budget for each command let a list whose commands each
+    fit outrun the hook's own timeout (``STOP_OUTER_TIMEOUT``) together, and
+    Claude Code cancels a hook there and drops its output: the Stop passed
+    with nothing blocked and nothing recorded."""
+    deadline = time.monotonic() + STOP_INNER_BUDGET
+    for place, cmd in enumerate(commands, start=1):
+        rc = _run_one_command(root, cmd, source=source, deadline=deadline, place=(place, len(commands)))
         if rc != 0:
             return rc
     return 0
 
 
-def _run_one_command(root: Path, cmd: str, *, source: str) -> int:
+def _command_timeout_block(root: Path, cmd: str, *, source: str, place: tuple[int, int], started: bool) -> int:
+    """The block of a Gate 1 command that met the gate's budget. A lone
+    command keeps its own reason (``GATE_COMMAND_TIMEOUT``); a command of a
+    longer list names the list, which shares the one budget, the command's
+    place in it, and whether it ran or was never started
+    (``GATE_COMMAND_LIST_TIMEOUT``)."""
+    phrase = _source_phrase(source)
+    do = _SOURCE_TIMEOUT_DO.get(source, _denial_reasons.GATE_COMMAND_TIMEOUT_DO_FINGERPRINT)
+    number, count = place
+    # A kept `_denial_reasons.py` that predates the list's reason gives the
+    # lone command's text: the Stop blocks as a timeout either way, never as
+    # the crash handler's internal error, which names no kept file.
+    if count == 1 or not hasattr(_denial_reasons, "GATE_COMMAND_LIST_TIMEOUT"):
+        return _audit_block(
+            root, "stop_blocked_pytest",
+            _denial_reasons.GATE_COMMAND_TIMEOUT.format(cmd=cmd, source=phrase, budget=STOP_INNER_BUDGET, do=do),
+            gate=1, rule="GATE_COMMAND_TIMEOUT", source=source,
+        )
+    where = f"running `{cmd}`" if started else f"before `{cmd}` could start"
+    return _audit_block(
+        root, "stop_blocked_pytest",
+        _denial_reasons.GATE_COMMAND_LIST_TIMEOUT.format(
+            count=count, budget=STOP_INNER_BUDGET, where=where, number=number, source=phrase, do=do,
+        ),
+        gate=1, rule="GATE_COMMAND_LIST_TIMEOUT", source=source,
+    )
+
+
+def _run_one_command(root: Path, cmd: str, *, source: str, deadline: float, place: tuple[int, int]) -> int:
     """One command of ``_run_command_gate``. ``shell=False`` -- arguments
     split via ``_hook_utils.split_command`` so quoted strings survive, and an
     entry carrying shell syntax is refused before the spawn (see
@@ -634,24 +671,23 @@ def _run_one_command(root: Path, cmd: str, *, source: str) -> int:
                 (cmd,), "ShellSyntax", None, f"the token {shell_token!r} is shell syntax",
             )
         else:
+            # What is left of the list's one budget (``deadline``, set by
+            # ``_run_command_gate``); a command reached with none left is
+            # never started.
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return _command_timeout_block(root, cmd, source=source, place=place, started=False)
             try:
                 # subprocess-contract: ok the-test-command-the-operator-or-the-repository-named-via-ESPALIER_STOP_GATE_TEST_CMD-or-extra_actions-test-or-the-fingerprint
                 result = _hook_utils.spawn_tree_checked(
                     parts, root=root,
                     capture_output=True,
                     text=True, encoding="utf-8", errors="replace",
-                    timeout=STOP_INNER_BUDGET,
+                    timeout=left,
                     cwd=str(root),
                 )
             except subprocess.TimeoutExpired:
-                return _audit_block(
-                    root, "stop_blocked_pytest",
-                    _denial_reasons.GATE_COMMAND_TIMEOUT.format(
-                        cmd=cmd, source=phrase, budget=STOP_INNER_BUDGET,
-                        do=_SOURCE_TIMEOUT_DO.get(source, _denial_reasons.GATE_COMMAND_TIMEOUT_DO_FINGERPRINT),
-                    ),
-                    gate=1, rule="GATE_COMMAND_TIMEOUT", source=source,
-                )
+                return _command_timeout_block(root, cmd, source=source, place=place, started=True)
     if isinstance(result, _hook_utils.SpawnFailure):
         digest = _spawn_failure_digest(source, cmd)
         if _spawn_failure_reported(root, digest):
