@@ -55,7 +55,7 @@ import re
 
 # ``[text](url)`` and ``![alt](url)`` -> their text. The only markdown construct
 # whose markup would otherwise leak into the slug; see the module docstring.
-_MD_LINK = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
+_MD_LINK = re.compile(r"!?\[([^\]]*)\]\((?:[^()]|\([^()]*\))*\)")  # a route-group target unwraps whole (DEF-5086)
 
 # Everything GitHub discards: not alphanumeric (unicode), not ``_``, ``-`` or space.
 _DROP = re.compile(r"[^\w\- ]", re.UNICODE)

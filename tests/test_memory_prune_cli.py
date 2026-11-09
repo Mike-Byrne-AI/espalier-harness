@@ -753,6 +753,28 @@ class TestMemoryPruneRebasesRowLinks:
             "[angle](<../memory/x.md>) and a [dir](../memory/) link. | notes-a |"
         )
 
+    def test_a_route_group_link_is_rebased_whole(self, tmp_path: Path) -> None:
+        """A bare destination may hold balanced parentheses (CommonMark; a
+        Next.js or SvelteKit route-group folder, DEF-5086). The destination
+        reader refused any parenthesis, so the row moved verbatim and its link
+        broke in the archive; the reflect pass is the oracle, as above."""
+        self._seed_targets(tmp_path, "app/(marketing)/page.tsx")
+        _write_memory(tmp_path, [
+            "2026-01-01 | the [page](app/(marketing)/page.tsx) and "
+            "[gone](app/(marketing)/missing.tsx) | notes-a",
+            "2026-01-02 | B | notes-b",
+        ])
+
+        rc = cmd_memory_prune(_ns(root=str(tmp_path), rows=1, archive=None))
+
+        assert rc == 0
+        assert self._archived_row(tmp_path) == (
+            "| 2026-01-01 | the [page](../app/(marketing)/page.tsx) and "
+            "[gone](../app/(marketing)/missing.tsx) | notes-a |"
+        )
+        broken = self._broken_archive_links(tmp_path)
+        assert len(broken) == 1 and "(../app/(marketing)/missing.tsx)" in broken[0], broken
+
     def test_links_that_need_no_rebase_are_left_alone(self, tmp_path: Path) -> None:
         """A URL of any scheme, a same-doc fragment, a root-anchored path, a target
         already spelled from below the root (a row restored from the archive, or a

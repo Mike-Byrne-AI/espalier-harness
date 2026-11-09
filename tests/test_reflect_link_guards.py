@@ -145,6 +145,43 @@ class TestBrokenLinkGuards:
         assert "task-packs/" not in targets
 
 
+# ─── a route-group target reads whole (DEF-5086) ─────────────────────────────
+
+_ROUTE_GROUP_LINKS = (
+    "The landing page is [page](../app/(marketing)/page.tsx); the pricing "
+    "page is [gone](../app/(marketing)/missing.tsx).\n"
+)
+
+
+class TestARouteGroupTargetReadsWhole:
+    """CommonMark admits balanced parentheses in a bare link destination, and
+    Next.js and SvelteKit name route-group folders that way, so a link to a
+    file under ``app/(marketing)/`` is a working link. Every entrypoint read
+    the target to its first ``)`` and flagged ``app/(marketing`` as a high
+    broken link (DEF-5086, driven end to end at filing). The dead route-group
+    link beside it is the positive control: it still fires, under its whole
+    target."""
+
+    @pytest.fixture()
+    def route_group_repo(self, surface_repo: Path) -> Path:
+        page = surface_repo / "app" / "(marketing)" / "page.tsx"
+        page.parent.mkdir(parents=True)
+        page.write_text("export default function Page() {}\n", encoding="utf-8")
+        conventions = surface_repo / "docs" / "CONVENTIONS.md"
+        conventions.write_text(conventions.read_text(encoding="utf-8") + _ROUTE_GROUP_LINKS,
+                               encoding="utf-8")
+        return surface_repo
+
+    @pytest.mark.parametrize("read", [_engine_links, _standalone_links, _reference_links],
+                             ids=["engine", "standalone", "reference"])
+    def test_a_working_route_group_link_is_not_broken_and_a_dead_one_is_named_whole(
+        self, route_group_repo, read,
+    ):
+        about_the_group = [d for d in read(route_group_repo) if "marketing" in d]
+        assert len(about_the_group) == 1, about_the_group
+        assert "app/(marketing)/missing.tsx" in about_the_group[0], about_the_group
+
+
 # ─── archive exclusion ───────────────────────────────────────────────────────
 
 class TestBlueprintArchiveExclusion:
