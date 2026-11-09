@@ -561,6 +561,20 @@ class TestTheBoundsCensusReadsWhatTheWorkflowsDeclare:
         assert v(30, None, None, 0, 20) == "no green"
         assert v(30, 20, None, 20, 20, unread=-1) == "unread"
 
+    def test_a_dot_name_sidecar_beside_the_workflows_is_never_read(self, monkeypatch, tmp_path, capsys):
+        """Dies to a glob with no hidden-name filter: macOS's ._name.yml sidecar is
+        binary, so reading it as UTF-8 ends the census before any row prints."""
+        census = _census()
+        (tmp_path / "ci.yml").write_text("jobs:\n  build:\n    timeout-minutes: 30\n", encoding="utf-8")
+        (tmp_path / "._ci.yml").write_bytes(b"\x00\x05\x16\x07\x00\x02\x00\x00Mac OS X        \xff\xfe")
+        monkeypatch.setattr(census, "WORKFLOWS", tmp_path)
+        monkeypatch.setattr(census, "measure", lambda wf, jobs, runs, scan, repo: {
+            j: {"greens": [10.0], "green_runs": 20, "cancels": [], "cuts": 0, "cut_max": None, "unread": 0}
+            for j in jobs})
+        assert census.main([]) == 0
+        out = capsys.readouterr().out
+        assert "ci.yml / build" in out and "._ci" not in out
+
     def _measure(self, census, monkeypatch, views, runs=20):
         def fake_gh(args, repo):
             if args[:2] == ["run", "list"]:

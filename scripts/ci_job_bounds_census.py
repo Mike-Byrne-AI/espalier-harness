@@ -221,7 +221,8 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     rows = []
-    for path in sorted(WORKFLOWS.glob("*.y*ml")):
+    # A dot-name is a sidecar (macOS writes ._name.yml beside a copied file), never a workflow.
+    for path in sorted(p for p in WORKFLOWS.glob("*.y*ml") if not p.name.startswith(".")):
         jobs = read_bounds(path.read_text(encoding="utf-8"))
         if not jobs:
             continue
