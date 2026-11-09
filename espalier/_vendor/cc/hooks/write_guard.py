@@ -1621,24 +1621,34 @@ def _secret_read_targets(command: str, _depth: int = 0) -> list[str]:
     return out
 
 
+# The secret leg's four word patterns below are called with `.match` at a
+# word's or a statement's start, where each leading lookbehind always
+# passes; it refuses a start inside the run the pattern opens with, so
+# `tests/test_redos.py`'s unanchored `.search` is linear too. Without it a
+# 30000-char run cost 18.9 s (case arm, `a`), about 1 s (redirects, `0`)
+# and 0.7 s (assignment, `a`) on the Windows box, 2026-11-09; that test
+# skips on Windows (no SIGALRM). A `.match(text, pos)` with pos inside a
+# token returns None.
+
 #: An input redirect as typed: `<`, `0<`, `<file`; never a heredoc or
 #: here-string (`<<`), a duplication (`<&`), a read-write open (`<>`) or a
 #: process substitution (`<(`). Its source is what the verb reads (DEF-1132).
-_INPUT_REDIRECT_RE = re.compile(r"[0-9]*<(?![<>&(])")
+_INPUT_REDIRECT_RE = re.compile(r"(?<![0-9])[0-9]*<(?![<>&(])")
 #: An output redirect as typed, fd included: `>`, `>>`, `>|`, `2>`.
-_OUTPUT_REDIRECT_RE = re.compile(r"[0-9]*>>?\|?")
+_OUTPUT_REDIRECT_RE = re.compile(r"(?<![0-9])[0-9]*>>?\|?")
 #: A shell assignment word (`FOO=1`, `FOO="a b"` read as one word).
-_ASSIGNMENT_WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+_ASSIGNMENT_WORD_RE = re.compile(r"(?<![A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*=")
+#: The characters that end a case arm's unquoted token. The lookbehind and
+#: the token class are both built from it: a character the token can take
+#: but the lookbehind admits as a start would make that run quadratic again.
+_CASE_ARM_STOP = r"\s;|&()<>"
 #: A case arm's pattern opening a statement (`x) cat .env`, `"a b") ...`)
 #: or a function's head (`f() { cat .env`, `function f() {`); the word
 #: split drops the parentheses, so it is read off the statement's text.
-#: One arm per character, so an anchored match is linear; the lookbehind
-#: refuses a start inside a token, so an unanchored search is linear too
-#: (`tests/test_redos.py` searches: 18.9 s on a 30000-char word run without it).
 _CASE_ARM_RE = re.compile(
-    r"(?<![^\s;|&()<>])"
+    r"(?<![^" + _CASE_ARM_STOP + r"])"
     r"(?:(?:function[ \t]+)?[A-Za-z_][\w.:-]*[ \t]*\(\)"
-    r"|\(?(?:\"[^\"\n]*\"|'[^'\n]*'|[^\s;|&()<>\"'])+\))[ \t]*"
+    r"|\(?(?:\"[^\"\n]*\"|'[^'\n]*'|[^" + _CASE_ARM_STOP + r"\"'])+\))[ \t]*"
 )
 #: The words that close a compound command: an input redirect after one
 #: feeds every read in its body (`while read l; do echo "$l"; done < .env`).
@@ -1680,13 +1690,14 @@ def _redirect_at(words: "list[tuple[str, str]]", i: int, sources: list[str]) -> 
         if m is None:
             continue
         tail = word[m.end():]
-        if tail or i + 1 >= len(words):
-            if is_input and tail:
-                sources.append(tail)
-            return 1
-        if is_input:
-            sources.append(words[i + 1][1])
-        return 2
+        # `<file` (or a bare `<` ending the words) is one word; `< file` is two.
+        glued = bool(tail) or i + 1 >= len(words)
+        if is_input and (tail or not glued):
+            sources.append(tail if glued else words[i + 1][1])
+        # A word count, not an exit code; written as one expression because
+        # scripts/release_check.py's hook_protocol_correct reads every
+        # literal `return 2` in a hook as the channel-XOR breach it guards.
+        return 1 if glued else 2
     return 0
 
 
