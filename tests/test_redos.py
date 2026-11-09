@@ -4299,8 +4299,16 @@ def test_every_derived_regex_is_linear_on_adversarial_runs(name, pattern):
 #
 # Two things close it. The arm below needs no alarm: it times `.search` at two
 # sizes eight times apart and judges the GROWTH, which the host's speed divides
-# out of -- a linear pattern reads about 8, a quadratic one about 64, and the
-# limit is near their geometric mean. And the shapes are derived: a run of one
+# out of -- in theory a linear pattern reads 8 and a quadratic one 64, but a
+# host's caches do not divide out: on the Windows box (3.11.9) linear patterns
+# read up to 20.2 to 21.3 across three passes of the arm (win's four-worker
+# tier running beside them), because between 4000 and 16000 chars a run of a
+# backslash costs about three times more per doubling, then two again past it
+# (`_GIT_CLEAN_RE`: 1.95, 1.97, 2.95, 2.81, 2.17 from 1000 to 32000 chars, the
+# same tier beside it); the Linux pass read at most 10.4 and the Mac 8.6 (air,
+# 3.14.7, two passes). The limit, `_GROWTH_RATIO_LIMIT`, sits near the
+# geometric mean of the worst linear reading and the lowest quadratic one
+# (21.3 and 61.5: about 36), set by the worst host measured. And the shapes are derived: a run of one
 # character that each repeated single-character class in the pattern accepts
 # (:func:`_derived_run_units`), beside the hand list, so a `[0-9]*` brings its
 # own run of `0`; the ceiling arm above reads them too.
@@ -4355,10 +4363,13 @@ def test_every_derived_regex_is_linear_on_adversarial_runs(name, pattern):
 # small sample (projected from nothing on its first window), a search past
 # three times its projection (growth past cubic between the two sizes, or a
 # stall that long), and a timeout lowered below the declared one
-# (`PYTEST_TIMEOUT`, `--timeout`), which the deadline does not read.
+# (`PYTEST_TIMEOUT`, `--timeout`), which the deadline does not read. And what
+# no ratio limit reads: growth between linear and quadratic, or a quadratic
+# term under a larger linear one, reads under the limit, and is caught only
+# where it crosses the ceiling arm above.
 _GROWTH_SMALL_LEN = 2000
 _GROWTH_BIG_LEN = 8 * _GROWTH_SMALL_LEN
-_GROWTH_RATIO_LIMIT = 22.0
+_GROWTH_RATIO_LIMIT = 32.0  # 22 until the Windows box's cache knee read 21.3 (air's de2af4)
 _GROWTH_JUDGED_FLOOR_S = 0.025
 _GROWTH_SAMPLES = 3
 #: A big sample's projected cost over its window's small floor: the growth of
