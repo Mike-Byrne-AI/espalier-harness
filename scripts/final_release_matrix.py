@@ -55,20 +55,24 @@ from espalier.artifact_parity import clear_stale_packaging_state  # noqa: E402
 
 
 def _bounded_spawn():
-    """``run_bounded`` from this checkout's ``tools/cc/_json_safe.py``, loaded
-    by path, never an installed engine's: ``subprocess.run`` whose timeout
+    """This checkout's ``tools/cc/_json_safe.py``, loaded by path, never an
+    installed engine's: its ``run_bounded`` is ``subprocess.run`` whose timeout
     holds on Windows, where ``run`` waits on a grandchild holding its pipe
-    (DEF-3004)."""
+    (DEF-3004), and its ``run_tree_bounded`` ends a child that is itself a
+    tree (a pytest) whole at the timeout, where ``run`` on POSIX kills the
+    child alone and leaves the rest at parent 1 (DEF-1179)."""
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
         "_json_safe_for_final_release_matrix", REPO_ROOT / "tools" / "cc" / "_json_safe.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.run_bounded
+    return module
 
 
-run_bounded = _bounded_spawn()
+_JSON_SAFE = _bounded_spawn()
+run_bounded = _JSON_SAFE.run_bounded
+run_tree_bounded = _JSON_SAFE.run_tree_bounded
 
 OUTPUT_ROOT = REPO_ROOT / "dist" / "final-release-matrix"
 
@@ -244,8 +248,10 @@ def _run(
     for key in strip_env:
         full_env.pop(key, None)
     try:
+        # The tree-ending run for every stage: four run a pytest, whose xdist
+        # workers and hooks run on at parent 1 past a plain run's timeout.
         # subprocess-contract: ok release-matrix-generic-runner-callers-pin-each-CLI
-        result = run_bounded(
+        result = run_tree_bounded(
             cmd,
             cwd=str(cwd),
             env=full_env,

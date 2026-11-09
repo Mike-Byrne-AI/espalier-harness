@@ -481,10 +481,11 @@ class TestFullTreeFragmentsResolve:
         in-process so a collection error in any module cannot take this test
         down with it.
         """
-        import subprocess
         import sys
 
-        proc = subprocess.run(
+        from tests._tree_spawn import run_tree_bounded
+
+        proc = run_tree_bounded(
             [sys.executable, "-m", "pytest", "--collect-only", "-q",
              "-p", "no:cacheprovider", "tests/"],
             cwd=REPO_ROOT, capture_output=True, text=True, timeout=300, encoding="utf-8",

@@ -287,7 +287,12 @@ discipline applies in spirit, not just to that directory.
   (`_json_safe`, re-exported by `_hook_utils`; `spawn_checked` is built on
   it), never a raw `subprocess.*` call: on Windows `subprocess.run` waits past
   its timeout for a grandchild holding the pipe (`docs/SHARP_EDGES.md`), and
-  the same test file refuses the raw form by file and line. A module that may
+  the same test file refuses the raw form by file and line. A child that is
+  itself a tree (a pytest, a script that runs one) takes `run_tree_bounded`
+  beside it, whose timeout ends the whole tree on POSIX too (the suite takes it
+  from `tests/_tree_spawn.py`, and
+  `tests/test_contracts.py::TestEveryTimedPytestEndsItsWholeTree` refuses a
+  timed pytest without it). A module that may
   load without its siblings imports it behind `except ImportError` with a
   late-bound fallback; the CI guard alone keeps `subprocess.run`, because it
   imports no sibling a pull request could rewrite under it. Two spawn pragma vocabularies coexist on purpose and answer

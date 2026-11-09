@@ -30,6 +30,7 @@ import pytest
 
 from tests import _temp_sweep as ts
 from tests._symlink_support import requires_symlink
+from tests._tree_spawn import run_tree_bounded
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -521,7 +522,7 @@ def _child_env(temp: Path, *, keep_current_test: bool = False) -> dict[str, str]
 def _start_a_session(env: dict[str, str]) -> subprocess.CompletedProcess:
     """One nested session from this checkout that selects no test: its
     configure runs, and nothing else of note."""
-    return subprocess.run(
+    return run_tree_bounded(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-k", "selects_nothing_at_all",
          str(Path(__file__).resolve())],
         cwd=REPO_ROOT, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace",
