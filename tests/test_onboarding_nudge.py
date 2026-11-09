@@ -24,6 +24,7 @@ import sys
 import pytest
 
 from espalier import cli
+from espalier._text import quoted_if_spaced
 
 
 class _FakeStderr(io.StringIO):
@@ -74,7 +75,9 @@ class TestSourceCheckoutNudge:
         err = _run_nudge(monkeypatch, func=_dummy_command, repo=str(repo), tty=True)
         assert "governance is NOT active" in err
         assert ".claude/settings.json" in err
-        assert f"init {repo}" in err
+        # The nudge quotes a spaced path (#528); a basetemp holding a space,
+        # as the perturbed leg's does, read the bare spelling red.
+        assert f"init {quoted_if_spaced(str(repo))}" in err
 
     def test_initialized_repo_does_not_nudge(self, monkeypatch, tmp_path):
         repo = _make_initialized(tmp_path)

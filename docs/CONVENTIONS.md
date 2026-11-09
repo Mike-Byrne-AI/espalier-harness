@@ -210,10 +210,11 @@ discipline applies in spirit, not just to that directory.
   - All other governance hooks use the matcher declared in `CANONICAL_HOOK_WIRING`
 - Stop gate dispatches agents via the structured channel (exit 0 + `{"decision": "block", "reason": "..."}` JSON)
   — agent cannot stop until the gate is satisfied
-- Hook-side scripts resolve repo root via `os.environ.get("CLAUDE_PROJECT_DIR", ".")` — `CLAUDE_PROJECT_DIR`
-  is authoritative; `.` (cwd) is the fallback only when the var is absent (e.g., testing outside Claude Code).
-  Standalone scripts under `tools/cc/` invoked by hooks or slash commands (e.g., `cognitive_blueprint.py`)
-  follow the same `CLAUDE_PROJECT_DIR` → walk-up-for-markers → cwd order.
+- The repo root has one resolver, `tools/cc/_paths.py::project_root_spelling` (DEF-664): `CLAUDE_PROJECT_DIR`
+  through the Git Bash drive translation, else a walk-up to the nearest directory holding `tools/cc/hooks`,
+  else cwd with a stderr warning. Hooks call `_hook_utils.resolve_project_root()`; standalone `tools/cc/`
+  scripts call `_paths._repo_root()`. Never read the variable directly: a fourth reader is how the three
+  spellings came to disagree, and `tests/test_repo_root_resolver.py` reds on one.
 - **Env-isolation for harness-boundary subprocesses.**
   When a hook spawns a subprocess that itself reads `CLAUDE_PROJECT_DIR`
   (e.g., `cognitive_blueprint.py`, `reflect_protocol.py`), always
