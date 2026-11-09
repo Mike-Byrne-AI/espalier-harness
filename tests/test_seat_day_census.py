@@ -930,3 +930,117 @@ class TestTheDayAndTheSeatAreRead:
         assert data["session_log_oldest"] == "2026-10-18"
         assert "Session Log rows before 2026-10-18 are archived" in census_mod.as_row(data, "win", "2026-10-17")
         assert "archived" not in census_mod.as_row(data, "win", "2026-10-18")
+
+
+class TestTheRowsAreReadByNameOffTheBase:
+    """``DEF-4046``: the Session Log rows are read by name from the base's
+    tree, HEAD's, the parked records refs and the fold's prunes, never the
+    working tree, through ``rows_by_seat``, the census's one reader; a read
+    that failed is said, never a zero."""
+
+    DIR = "memory/session-log.d"
+
+    def test_rows_by_seat_counts_one_name_once_wherever_it_was_read(self):
+        """Dies to: a row on the base and on HEAD counted twice, or a path read
+        whole so its name never matches."""
+        names = [f"{self.DIR}/2026-10-18-090000-win.md", "2026-10-18-090000-win.md",
+                 f"{self.DIR}/2026-10-18-170000-win.md", "2026-10-17-230000-air.md", "README.md"]
+        assert census_mod.rows_by_seat(names) == {"win": {"2026-10-18": 2}, "air": {"2026-10-17": 1}}
+
+    def _read(self, monkeypatch, tmp_path, *, fail: tuple[str, ...] = (), shallow: bool = False,
+              parked: list | Exception = ()):
+        """``read_session_log`` over a faked git: each read answers by its
+        argv, a name in ``fail`` exits 1. A row file left in the working tree
+        is in no read."""
+        real = census_mod._mail()
+        trees = {"origin/main": [f"{self.DIR}/2026-10-18-090000-win.md"],
+                 "HEAD": [f"{self.DIR}/2026-10-18-090000-win.md", f"{self.DIR}/2026-10-18-120000-air.md"]}
+        key = census_mod._fragments().FOLD_TRAILER.partition(": ")[2]
+        pruned_log = f"\x1e{key}\n\x1f\n{self.DIR}/2026-10-18-010000-win-2.md\n"
+        seen = []
+
+        def run_(argv, **kw):
+            seen.append(argv)
+            verb = argv[1]
+            if verb in fail:
+                return 1, "", f"{verb} refused"
+            if verb == "ls-tree":
+                return 0, "\n".join(trees[argv[3]]) + "\n", ""
+            if verb == "rev-parse":
+                return 0, ("true" if shallow else "false") + "\n", ""
+            if verb == "log":
+                return 0, pruned_log, ""
+            return 0, "", ""   # the fetches
+
+        class Mail:
+            def __getattr__(self, name):
+                return getattr(real, name)
+
+            @staticmethod
+            def pending(root, directory, against, **kw):
+                if isinstance(parked, Exception):
+                    raise parked
+                return list(parked)
+
+        class Rules:
+            @staticmethod
+            def base_branch(root, cap=None):
+                return "main"
+
+        monkeypatch.setattr(census_mod, "_mail", Mail)
+        monkeypatch.setattr(census_mod, "_merge_rules", Rules)
+        stray = tmp_path / self.DIR / "2026-10-18-150000-win.md"
+        stray.parent.mkdir(parents=True)
+        stray.write_bytes(b"| 2026-10-18 | a row only the working tree holds | x |\n")
+        return census_mod.read_session_log(tmp_path, fetch=True, run_=run_), seen
+
+    def test_the_four_reads_are_one_set_and_the_working_tree_is_none_of_them(self, monkeypatch, tmp_path):
+        """Dies to: the working-tree glob kept (its stray row counted), the
+        parked row or the pruned row left out, or the base fetched under
+        another name than the one it reads."""
+        parked = [("air", f"{self.DIR}/2026-10-18-200000-win.md", "refs/remotes/origin/records/air")]
+        (names, note), seen = self._read(monkeypatch, tmp_path, parked=parked)
+        assert names == ["2026-10-18-010000-win-2.md", "2026-10-18-090000-win.md", "2026-10-18-120000-air.md",
+                         "2026-10-18-200000-win.md"]
+        assert note == ""
+        assert ["git", "fetch", "--quiet", "origin", "main"] in seen
+        assert ["git", "ls-tree", "--name-only", "origin/main", "--", self.DIR + "/"] in seen
+        data = census_mod.census(_src(session_log=names), DAY, NEXT)
+        assert {r["seat"]: r["session_log_rows"] for r in data["rows"]} == {"air": 1, "win": 2, "win-2": 1}
+
+    def test_a_base_read_that_fails_is_unread_in_the_row_never_a_zero(self, monkeypatch, tmp_path):
+        """Dies to: an unread base printed as ``Session Log rows 0``."""
+        (names, note), _seen = self._read(monkeypatch, tmp_path, fail=("ls-tree",))
+        assert names is None and "origin/main's rows unread" in note
+        src = _src(_m("air", "assign", "2026-10-18T01:00:00Z", "a1", seat="win", ids=["DEF-1"]))
+        src["session_log"] = names
+        data = census_mod.census(src, DAY, NEXT)
+        assert data["totals"]["session_log_rows"] is None
+        logs = {r["seat"]: r["session_log_rows"] for r in data["rows"]}   # the --json rows too
+        assert "win" in logs and set(logs.values()) == {None}
+        row = census_mod.as_row(data, "win", "2026-10-18", {"session_log_note": note})
+        assert "Session Log rows unread (origin/main's rows unread" in row and "Session Log rows 0" not in row
+        report = census_mod.render(data, {"session_log_note": note})
+        assert "Session Log rows: unread (" in report and "Session Log rows 0" not in report
+
+    def test_a_side_read_that_fails_makes_the_count_a_floor_and_says_which(self, monkeypatch, tmp_path):
+        """Dies to: a parked read that raised taking the whole count down, or
+        a shallow clone's empty prune history read as no pruned rows."""
+        (names, note), _seen = self._read(monkeypatch, tmp_path, shallow=True,
+                                          parked=real_unresolvable("git for-each-ref failed"))
+        assert names == ["2026-10-18-090000-win.md", "2026-10-18-120000-air.md"]
+        assert "the parked rows unread, so the count is a floor (git for-each-ref failed)" in note
+        assert "the fold's pruned rows unread, so the count is a floor (origin/main's history is cut" in note
+        data = census_mod.census(_src(session_log=names), DAY, NEXT)
+        row = census_mod.as_row(data, "win", "2026-10-18", {"session_log_note": note})
+        assert "Session Log rows 1 (the parked rows unread, so the count is a floor" in row
+
+    def test_a_fetch_that_failed_is_said_beside_the_count(self, monkeypatch, tmp_path):
+        """Dies to: a failed base fetch read silently as the base now."""
+        (names, note), _seen = self._read(monkeypatch, tmp_path, fail=("fetch",))
+        assert names and "origin/main as last fetched (the fetch failed: fetch refused)" in note
+        assert "the records refs as last fetched" in note
+
+
+def real_unresolvable(text: str) -> Exception:
+    return census_mod._mail().Unresolvable(text)
