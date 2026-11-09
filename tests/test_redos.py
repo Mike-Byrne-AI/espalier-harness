@@ -4255,7 +4255,11 @@ def test_every_derived_regex_is_linear_on_adversarial_runs(name, pattern):
     """
     if not hasattr(signal, "SIGALRM"):
         pytest.skip("signal.alarm not available on this platform")
-    for shape_name, payload in _ADVERSARIAL_SHAPES:
+    derived = [
+        (f"derived-run {unit!r}", _run_of(unit, _WORST_CASE_BODY_LEN))
+        for unit in _derived_run_units(pattern)
+    ]
+    for shape_name, payload in [*_ADVERSARIAL_SHAPES, *derived]:
         signal.signal(signal.SIGALRM, _alarm)
         signal.setitimer(signal.ITIMER_REAL, _CI_SAFE_BUDGET_MS / 1000.0)
         start = time.time()
@@ -4278,6 +4282,238 @@ def test_every_derived_regex_is_linear_on_adversarial_runs(name, pattern):
             f"{name} took {elapsed_ms:.1f}ms on {shape_name} "
             f"(budget {_CI_SAFE_BUDGET_MS}ms)"
         )
+
+
+# ── The alarm-free growth arm and the derived run shapes (DEF-3064) ──────────
+#
+# The budget above arms SIGALRM, so it skips on every Windows interpreter, and
+# a Windows seat proves a new pattern with the one gate that would catch it
+# switched off: `write_guard._CASE_ARM_RE` took 18.9 s on the word run, built
+# and proven on the Windows box, and went red on all four `test-serial` cells
+# after the push (run 42573541872, 2026-11-09). Its shapes were a hand list as
+# well, with no run of a digit, so the same lane's `_INPUT_REDIRECT_RE` and
+# `_OUTPUT_REDIRECT_RE` read about 1 s on a run of `0` at 30000 chars while
+# every cell stayed green, and `_ASSIGNMENT_WORD_RE` 0.7 s on a run of `a`,
+# which is inside the ceiling: a quadratic that is fast at the cap is not a
+# runaway, and only a shape detector sees it.
+#
+# Two things close it. The arm below needs no alarm: it times `.search` at two
+# sizes four times apart and judges the GROWTH, which the host's speed divides
+# out of -- a linear pattern reads about 4, a quadratic one about 16, and the
+# limit is their geometric mean. And the shapes are derived: a run of one
+# character that each repeated single-character class in the pattern accepts
+# (:func:`_derived_run_units`), beside the hand list, so a `[0-9]*` brings its
+# own run of `0`; the ceiling arm above reads them too. Measured on the Windows
+# box (2026-11-09, 3.11, the 221 derived patterns, every hand and derived
+# shape, three samples a size): the population read 3.5 to 6.6, the slowest
+# big sample 10.8 ms; the four patterns #543 fixed, their leading lookbehind
+# stripped, read 14.7 to 16.5, at 88 ms to 1.6 s on the big size.
+#
+# The window is the speedbump file's (`tests/test_speedbump_irreversible.py::
+# _search_window_ms`, DEF-2000): the samples interleave, small then big, each
+# size's floor is its reading, and a pair over the limit is asked again as a
+# second window judged on its own, the lower ratio the estimate. A pair whose
+# big sample is under `_GROWTH_JUDGED_FLOOR_S` is not judged: at single-digit
+# milliseconds the ratio is clock noise (a linear row read 8.5 at 7.6 ms on
+# this box). The limit and that floor are bounds on a RED, never ceilings on a
+# pass: a host slow throughout lifts both sizes together and leaves the ratio
+# where it was, so the wall-clock rule (tests/test_proof_tier.py) pairs
+# neither with a floor. A small sample past the regex tier's ceiling ends the
+# pair before the big size, so a runaway costs one small search; one that
+# never returns at all is the module's per-test timeout's (thread method).
+_GROWTH_SMALL_LEN = 2000
+_GROWTH_BIG_LEN = 4 * _GROWTH_SMALL_LEN
+_GROWTH_RATIO_LIMIT = 8.0
+_GROWTH_JUDGED_FLOOR_S = 0.025
+_GROWTH_SAMPLES = 3
+
+#: The characters a derived run is made of: the first of these a repeated
+#: class accepts is its run. Shell-shaped on purpose -- the extraction modules
+#: read commands -- with a letter, a digit and `_` first.
+_RUN_ALPHABET = " a0_/-=.'\"\\;|&$(){}[]<>*?:,@#%+!~`\tZ9\n"
+
+
+def _repeated_single_classes(pattern: "re.Pattern[str]") -> list[tuple[int, object]]:
+    """Every repeat in ``pattern`` whose body is one character class (a
+    literal, a set, a category, ``.``), as its parsed ``(op, argument)``, in
+    the order the parse walks them; nested repeats included."""
+    from re import _parser as sre_parse
+
+    repeats = {sre_parse.MAX_REPEAT, sre_parse.MIN_REPEAT}
+    if hasattr(sre_parse, "POSSESSIVE_REPEAT"):
+        repeats.add(sre_parse.POSSESSIVE_REPEAT)
+    one_char = {sre_parse.LITERAL, sre_parse.NOT_LITERAL, sre_parse.IN, sre_parse.ANY, sre_parse.CATEGORY}
+    found: list[tuple[int, object]] = []
+
+    def walk(seq) -> None:
+        for op, av in seq:
+            if op in repeats:
+                body = av[2]
+                if len(body) == 1 and body[0][0] in one_char:
+                    found.append(body[0])
+                walk(body)
+            elif op is sre_parse.SUBPATTERN:
+                walk(av[-1])
+            elif op is sre_parse.BRANCH:
+                for branch in av[1]:
+                    walk(branch)
+            elif op in (sre_parse.ASSERT, sre_parse.ASSERT_NOT):
+                walk(av[1])
+            elif op is getattr(sre_parse, "ATOMIC_GROUP", None):
+                walk(av)
+            elif op is sre_parse.GROUPREF_EXISTS:
+                walk(av[1])
+                if av[2] is not None:
+                    walk(av[2])
+
+    walk(sre_parse.parse(pattern.pattern, pattern.flags))
+    return found
+
+
+def _derived_run_units(pattern: "re.Pattern[str]") -> list[str]:
+    """One character per repeated single-character class in ``pattern``, in
+    parse order: the first of `_RUN_ALPHABET` the class accepts that no
+    earlier class took, so two classes that both take letters and digits
+    bring a run of each. The class is compiled alone, so its flags (case,
+    dot-all) hold."""
+    from re import _compiler as sre_compile
+    from re import _parser as sre_parse
+
+    units: list[str] = []
+    for node in _repeated_single_classes(pattern):
+        state = sre_parse.State()
+        state.flags = pattern.flags
+        alone = sre_compile.compile(sre_parse.SubPattern(state, [node]), pattern.flags)
+        unit = next((ch for ch in _RUN_ALPHABET if ch not in units and alone.fullmatch(ch)), None)
+        if unit is not None:
+            units.append(unit)
+    return units
+
+
+def _run_of(unit: str, length: int) -> str:
+    """``unit`` repeated to exactly ``length`` characters."""
+    return (unit * (length // len(unit) + 1))[:length]
+
+
+#: The hand list as run units, for the growth arm's two sizes.
+_ADVERSARIAL_UNITS: list[tuple[str, str]] = [
+    ("space-run", " "), ("word-run", "a"), ("path-run", "a/"), ("env-assign-run", "A=1 "),
+    ("assign-separator-run", "x=1;"), ("wrapper-run", "sudo -u me "), ("flag-run", "-a "),
+    ("quote-run", "'"),
+]
+
+
+def _growth_window_time(pattern: "re.Pattern[str]", small: str, big: str) -> tuple[float, float]:
+    """One window: ``(small_s, big_s)``, the floor of `_GROWTH_SAMPLES`
+    interleaved timings at each size (DEF-2000's order). A small sample past
+    the regex tier's ceiling ends the window with the big size unread
+    (``inf``), so a runaway is never asked the bigger question."""
+    smalls: list[float] = []
+    bigs: list[float] = []
+    for _ in range(_GROWTH_SAMPLES):
+        t0 = time.perf_counter()
+        pattern.search(small)
+        smalls.append(time.perf_counter() - t0)
+        if smalls[-1] * 1000 >= _CI_SAFE_BUDGET_MS:
+            return smalls[-1], float("inf")
+        t0 = time.perf_counter()
+        pattern.search(big)
+        bigs.append(time.perf_counter() - t0)
+    return min(smalls), min(bigs)
+
+
+def _grows_past_linear(small_s: float, big_s: float) -> bool:
+    """The rule: judged only above the floor, red past the limit."""
+    return big_s > _GROWTH_JUDGED_FLOOR_S and big_s > _GROWTH_RATIO_LIMIT * small_s
+
+
+def _growth_verdict(pattern: "re.Pattern[str]", unit: str) -> str | None:
+    """None when a run of ``unit`` reads linear (or too fast to judge);
+    otherwise the sentence with the window the verdict rests on. A pair over
+    the limit is asked again, and the lower ratio is the estimate."""
+    small, big = _run_of(unit, _GROWTH_SMALL_LEN), _run_of(unit, _GROWTH_BIG_LEN)
+    small_s, big_s = _growth_window_time(pattern, small, big)
+    if not _grows_past_linear(small_s, big_s):
+        return None
+    small_2, big_2 = _growth_window_time(pattern, small, big)
+    if big_2 * small_s < big_s * small_2:
+        small_s, big_s = small_2, big_2
+        if not _grows_past_linear(small_s, big_s):
+            return None
+    return (
+        f"{small_s * 1000:.1f}ms at {len(small)} chars -> {big_s * 1000:.1f}ms at {len(big)} "
+        f"(ratio {big_s / small_s:.1f}, limit {_GROWTH_RATIO_LIMIT}) on a run of {unit!r}, "
+        f"two windows"
+    )
+
+
+@pytest.mark.parametrize("name,pattern", _DERIVED_REGEXES)
+def test_every_derived_regex_grows_linearly_without_an_alarm(name, pattern):
+    """The shape detector every platform runs: it times `.search` of each
+    derived regex on every hand and derived run at 2000 and 8000 chars and
+    reds on growth past linear. Self-enrolling like the ceiling arm; no skip
+    anywhere."""
+    units = [*_ADVERSARIAL_UNITS, *((f"derived-run {u!r}", u) for u in _derived_run_units(pattern))]
+    readings = [(shape, _growth_verdict(pattern, unit)) for shape, unit in units]
+    super_linear = [f"{shape}: {verdict}" for shape, verdict in readings if verdict is not None]
+    assert not super_linear, (
+        f"{name} grows past linear -- a greedy run that can restart at every "
+        f"position of the run is quadratic by construction; refuse a start inside "
+        f"the run with a leading lookbehind (write_guard._CASE_ARM_RE) when every "
+        f"caller .match()es at the start, or bound the token class:\n  "
+        + "\n  ".join(super_linear)
+    )
+
+
+#: The four patterns #543 fixed, as they were before the fix (each one's
+#: leading lookbehind stripped), with the run each reads quadratic on. Three
+#: of the four runs are not in the hand list: only the derivation brings them.
+_PRE_543_PATTERNS: list[tuple[str, str, str]] = [
+    ("_INPUT_REDIRECT_RE", r"[0-9]*<(?![<>&(])", "0"),
+    ("_OUTPUT_REDIRECT_RE", r"[0-9]*>>?\|?", "0"),
+    ("_ASSIGNMENT_WORD_RE", r"[A-Za-z_][A-Za-z0-9_]*=", "a"),
+    ("_CASE_ARM_RE", r"(?:(?:function[ \t]+)?[A-Za-z_][\w.:-]*[ \t]*\(\)"
+                     r"|\(?(?:\"[^\"\n]*\"|'[^'\n]*'|[^\s;|&()<>\"'])+\))[ \t]*", "0"),
+]
+
+
+@pytest.mark.parametrize("name,source,unit", _PRE_543_PATTERNS, ids=[p[0] for p in _PRE_543_PATTERNS])
+def test_the_derivation_brings_the_run_each_pre_543_pattern_was_quadratic_on(name, source, unit):
+    """The derivation's must-find rows, read without a clock: each pattern
+    #543 fixed, as it was, derives the run it was quadratic on. Red here
+    means the parse walk lost a repeat form or the class compile broke on
+    this interpreter, and every derived shape above went with it."""
+    assert unit in _derived_run_units(re.compile(source)), (name, _derived_run_units(re.compile(source)))
+
+
+def test_the_derived_runs_reach_past_the_hand_list():
+    """Non-vacuity, both ways: most of the population derives a run, and the
+    population's runs include characters no hand shape is made of (the digit
+    run is the one #543 was missing)."""
+    hand = set("".join(unit for _, unit in _ADVERSARIAL_UNITS))
+    units_by_name = {name: _derived_run_units(pattern) for name, pattern in _DERIVED_REGEXES}
+    with_a_run = [name for name, units in units_by_name.items() if units]
+    assert len(with_a_run) * 2 > len(_DERIVED_REGEXES), (len(with_a_run), len(_DERIVED_REGEXES))
+    beyond = set().union(*map(set, units_by_name.values())) - hand
+    assert "0" in beyond, sorted(beyond)
+
+
+@pytest.mark.parametrize("name,source,unit", _PRE_543_PATTERNS[:3], ids=[p[0] for p in _PRE_543_PATTERNS[:3]])
+def test_the_growth_arm_reds_the_pre_543_patterns(name, source, unit):
+    """The arm's must-trip rows: each fixed pattern as it was reads past the
+    limit on its run, on any platform. `_CASE_ARM_RE` is left out of the
+    timing only for its cost (1.6 s a big sample here, two windows of six);
+    its derivation row above stands, and it read 16.5 on this arm by hand."""
+    assert _growth_verdict(re.compile(source), unit) is not None, name
+
+
+def test_the_growth_arm_passes_the_same_patterns_fixed():
+    """The polarity row: the live, fixed patterns read linear on the same
+    runs, so the trips above are the shape, not the arm."""
+    import write_guard as _wg
+
+    for name, _source, unit in _PRE_543_PATTERNS:
+        assert _growth_verdict(getattr(_wg, name), unit) is None, name
 
 
 # ── _CMD_POS prefix-run budget ────────────────────────────────────────────────
