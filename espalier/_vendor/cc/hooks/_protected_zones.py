@@ -14,7 +14,9 @@ this module's inventory must remain a superset of surface_contract's.
 """
 from __future__ import annotations
 
+import fnmatch
 import os
+import re
 import stat
 import sys
 import unicodedata
@@ -249,6 +251,192 @@ def _encloses_protected(rel_path: str, root: Path) -> bool:
     prefix = rel_norm + "/"
     zones = list(_hook_utils.protected_prefixes(root)) + sorted(PROTECTED_FILES)
     return any(_fs_equiv(zone, all_components=True).startswith(prefix) for zone in zones)
+
+
+#: The wildcards both shells expand in an operand they remove or relocate:
+#: Bash's and PowerShell's `*`, `?` and `[...]` (DEF-3010). An operand holding
+#: one is judged by what it can name, never as the literal path it spells.
+_WILDCARD_CHARS = frozenset("*?[")
+
+#: A brace list (`*.{png,jpg}`), expanded before the read, innermost first, as
+#: Bash expands a nested one. A sequence (`{1..3}`) or more alternatives than
+#: the cap are read as able to name anything, the fail-closed side.
+_BRACE_RE = re.compile(r"\{([^{}]*,[^{}]*)\}")
+_BRACE_CAP = 32
+
+#: An extended glob's group (`@(...)`, `!(...)`, `+(...)`, `*(...)`,
+#: `?(...)`), read as `*` within its segment: it names at most what `*` does.
+_EXTGLOB_RE = re.compile(r"[@!+*?]\([^()]*\)")
+
+#: Segment syntax read as able to name every component (the fail-closed
+#: side), checked on the SPELLED segment, before the fold: the fold cuts a
+#: segment at its first colon and casefolds a class, so `[[:alpha:]]` and a
+#: negated `[^A-Z]` would otherwise read narrower than the shell's match. A
+#: group left after the extended-glob read is a nested one.
+_UNREAD_GLOB = ("[:", "[=", "[.", "[!", "[^", "@(", "!(", "+(", "*(", "?(")
+
+#: A segment able to name every component (the result of ``_prepare_segment``).
+_ANY = object()
+
+
+def has_wildcard(rel_path: str) -> bool:
+    """True when a removed or relocated operand holds a shell wildcard, the one
+    case ``glob_reach`` is asked about: a literal operand costs one scan."""
+    return any(ch in _WILDCARD_CHARS for ch in rel_path)
+
+
+def _alternatives(rel_path: str) -> "list[str] | None":
+    """The operand's brace lists expanded, innermost first, or None for a
+    sequence or past ``_BRACE_CAP`` alternatives."""
+    done: list[str] = []
+    todo = [rel_path]
+    while todo:
+        word = todo.pop()
+        m = _BRACE_RE.search(word)
+        if m is None:
+            if "{" in word and "}" in word:
+                return None
+            done.append(word)
+        else:
+            todo.extend(word[:m.start()] + alt + word[m.end():] for alt in m.group(1).split(","))
+        if len(done) + len(todo) > _BRACE_CAP:
+            return None
+    return done
+
+
+def _prepare_segment(spelled: str) -> object:
+    """One spelled operand segment as a folded fnmatch pattern, or ``_ANY``. A
+    literal segment folds as ``_is_protected`` folds it. ``fnmatchcase`` reads
+    `**` as `*`, which is Bash's reading with globstar off (its default) and
+    PowerShell's."""
+    if not any(ch in _WILDCARD_CHARS for ch in spelled):
+        return _fs_equiv(spelled, all_components=True)
+    seg = _EXTGLOB_RE.sub("*", spelled)
+    if any(token in seg for token in _UNREAD_GLOB):
+        return _ANY
+    return _fs_equiv(seg, all_components=True)
+
+
+def _segment_may_name(pattern: object, name: str) -> bool:
+    """One prepared segment against one folded zone component: a literal by
+    equality, a pattern by ``fnmatchcase`` (a leading dot is matched, as
+    PowerShell and Bash's dotglob match it), ``_ANY`` always."""
+    if pattern is _ANY or not isinstance(pattern, str):
+        return True
+    if not any(ch in _WILDCARD_CHARS for ch in pattern):
+        return pattern == name
+    return fnmatch.fnmatchcase(name, pattern)
+
+
+def _reach_one(spelled: "list[str]", zone: str, is_file: bool) -> "tuple[str, list[str] | None]":
+    """One brace alternative, as segments, against one protected entry:
+    ``(reach, rest)``, where ``rest`` is the spelled remainder below a
+    protected directory the operand reaches inside (None otherwise)."""
+    target = [seg for seg in _fs_equiv(zone, all_components=True).split("/") if seg]
+    for depth, seg in enumerate(spelled):
+        if depth == len(target):
+            return ("", None) if is_file else ("names", spelled[depth:])
+        if not _segment_may_name(_prepare_segment(seg), target[depth]):
+            return "", None
+    return ("names" if len(spelled) == len(target) else "encloses"), None
+
+
+def _rest_exists(tree: Path, zone: str, rest: "list[str]") -> bool:
+    """Whether a remainder below a protected directory names anything in
+    ``tree``: the shell expands a glob against the tree, and content the
+    command itself would create first is not the harness's. A literal
+    remainder is one ``lexists``; a wildcard one is a glob, cut at its first
+    match; a segment read as able to name anything, or a glob that cannot be
+    run, reads as existing (the fail-closed side)."""
+    base = tree.joinpath(*[seg for seg in zone.replace("\\", "/").split("/") if seg])
+    if not has_wildcard("/".join(rest)):
+        return os.path.lexists(base.joinpath(*rest))
+    parts = []
+    for seg in rest:
+        if has_wildcard(seg):
+            seg = _EXTGLOB_RE.sub("*", seg)
+            if any(token in seg for token in _UNREAD_GLOB):
+                return True
+            # pathlib reads `**` as any depth; the shells read it as `*`.
+            while "**" in seg:
+                seg = seg.replace("**", "*")
+        parts.append(seg)
+    try:
+        return next(iter(base.glob("/".join(parts))), None) is not None
+    except (OSError, ValueError, NotImplementedError):
+        return True
+
+
+def glob_reach(
+    rel_path: str, zone: str, *, is_file: bool, tree: "Path | None" = None, files_only: bool = False,
+) -> str:
+    """What a wildcard operand can name of one protected entry (DEF-3010):
+    ``"names"`` when it can name the entry itself or a path inside a protected
+    directory, ``"encloses"`` when it can name a directory above it (a delete,
+    a move or a clean takes the entry with it), ``""`` when no expansion
+    reaches it: `tools/*` names `tools/cc/`, a root `too*` encloses it,
+    `tools/*.log` reaches nothing. Each brace alternative is read and the
+    strongest wins. With ``tree``, a reading INSIDE a protected directory
+    holds only when its remainder names something there (``_rest_exists``):
+    a root `*/build` names `cc/build` only once `cc/build` exists. Segments
+    are compared one by one, each folded as ``_is_protected`` folds a path,
+    after the syntax checks of ``_prepare_segment`` read the spelled form.
+    ``files_only`` is a remove that cannot take a directory with anything in
+    it: only what it NAMES counts, and of a directory only a path strictly
+    inside it (`c?/*` names files in `cc/`; a root `*` names `cc/` itself,
+    which such a remove leaves)."""
+    alternatives = _alternatives(rel_path)
+    if alternatives is None:
+        return "names"
+    best = ""
+    for word in alternatives:
+        spelled = [seg for seg in word.replace("\\", "/").split("/") if seg not in ("", ".")]
+        reach, rest = _reach_one(spelled, zone, is_file)
+        if files_only and (reach != "names" or (not is_file and rest is None)):
+            continue
+        if rest is not None and tree is not None and not _rest_exists(tree, zone, rest):
+            continue
+        if reach == "names":
+            return reach
+        best = best or reach
+    return best
+
+
+def glob_reaches_protected(
+    rel_path: str, root: Path, *, tree: "Path | None" = None, files_only: bool = False,
+) -> "tuple[str, str]":
+    """The strongest reach a wildcard operand has over every protected prefix
+    and file, as ``(reach, entry)`` (``"names"`` over ``"encloses"`` over
+    ``""``; ``entry`` the protected entry reached, for the deny's text).
+    ``tree`` is the checkout the operand is relative to (a sibling worktree
+    for a path into one), where a remainder's existence is read; it defaults
+    to ``root``, whose zones are the roster either way.
+
+    ``files_only`` is a remove that cannot take a directory with anything in
+    it (a non-recursive `rm`, a cmdlet without `-Recurse`:
+    ``files_only_removed_operands``): it is refused for a protected file it
+    names and for a path it names strictly inside a protected directory
+    (``glob_reach``), so a root `rm -f *` stays the silent pair the operator
+    settled while `rm -f c?/*` and `rm -f .claude/*` keep the deny. A
+    harness zone is a directory; an adopter's ``protected_paths`` entry is
+    read as a file where ``tree`` holds a file there, else as a directory."""
+    tree = root if tree is None else tree
+    best: "tuple[str, str]" = ("", "")
+    harness = set(_hook_utils.harness_protected_prefixes(root)) if files_only else set()
+    entries = [
+        (prefix.rstrip("/"), True)
+        if files_only and prefix not in harness and (tree / prefix.rstrip("/")).is_file()
+        else (prefix, False)
+        for prefix in _hook_utils.protected_prefixes(root)
+    ]
+    entries += [(name, True) for name in sorted(PROTECTED_FILES)]
+    for zone, is_file in entries:
+        reach = glob_reach(rel_path, zone, is_file=is_file, tree=tree, files_only=files_only)
+        if reach == "names":
+            return reach, zone
+        if reach and not best[0]:
+            best = (reach, zone)
+    return best
 
 
 def _is_allowed(rel_path: str) -> bool:
