@@ -719,7 +719,8 @@ def _lane_added_rows(root: Path, base: str) -> list[str] | None:
 def _second_push_message(how: str) -> str:
     return (f"{how}, and this lane's commits carry no Session Log row (no change to ESPALIER_MEMORY.md "
             f"and no new file under {SESSION_LOG_DIR}): /handoff writes the row and ships the lane once. "
-            "To ship before it, pass --early \"<reason>\" to `open` (the handoff's row then parks on this "
+            "To ship before it, pass --early \"<reason>\" to `open`, and --body-file <path> where espalier.toml "
+            "names a dispatcher, which refuses a code lane's body of subjects alone (the handoff's row then parks on this "
             "seat's records ref, read by no banner until the next lane's push folds it, or, where the handoff "
             f"adds more than rows, is a second push on this lane); past {ROW_DEBT_CAP} lanes shipped since this "
             "seat's newest Session Log "
@@ -822,6 +823,10 @@ BASE_RED_RULED_FLAG = "--base-red-ruled"
 #: The flag that pushes a lane deleting files the driver did not delete, on
 #: `open` and `handoff` alike, with the reason the pull request's body records.
 ALLOW_DELETIONS_FLAG = "--allow-deletions"
+#: The flag that ships a lane's commit subjects alone as its body where the
+#: driver refuses that (:func:`_default_body`), on `open` and `handoff` alike,
+#: with the reason the pull request's body records.
+SUBJECTS_BODY_FLAG = "--subjects-body"
 #: The ruling's words are the mail channel's (tools/cc/mail.py: the gridlock
 #: marker the seat-day census counts a ruling by, root CLAUDE.md Core Rule 15;
 #: the fixed head a fix-forward ruling opens with, the run id read from it
@@ -3111,9 +3116,146 @@ def _seat_notes(st: PrePushState) -> None:
               "request per seat keeps a seat's lanes off each other's base")
 
 
+#: A task pack: a record for the body's question, as the record merge's roster
+#: is (a pack lane carries its story in the pack itself).
+_PACK_FILE_RE = re.compile(r"^task-packs/(?:[^/]+/)?TP-[^/]*\.md$")
+#: A Session Log row's cells after its date (the loader reads the row and its
+#: date): ``| <date> | <headline> | <text> |``, the headline running to the
+#: first pipe no backslash escapes.
+_ROW_CELLS_RE = re.compile(r"^\|[^|]*\|\s*(.*?)\s*(?<!\\)\|\s*(.*?)\s*\|\s*$")
+
+
+def _outside_the_records(root: Path, base: str) -> list[str] | None:
+    """The paths the lane changes (the three-dot diff the pull request shows)
+    outside the record files: the record merge's roster (``record_merge.ROSTER``:
+    the memory file, the forward ledger and its probes, the fragment folders)
+    and a task pack. None where git cannot say."""
+    rc, out, _ = _git("diff", "--name-only", "--no-renames", f"origin/{base}...HEAD", cwd=str(root))
+    if rc != 0:
+        return None
+    roster = tuple(record_merge.ROSTER)
+    outside: list[str] = []
+    for line in out.splitlines():
+        path = line.strip().replace("\\", "/")
+        if not path or _PACK_FILE_RE.match(path):
+            continue
+        if any(path == entry or (entry.endswith("/") and path.startswith(entry)) for entry in roster):
+            continue
+        outside.append(path)
+    return outside
+
+
+def _seat_rows(root: Path, base: str) -> list[str] | None:
+    """This seat's own Session Log rows on the lane: the files the lane's own
+    commits added (:func:`_lane_added_rows`, where a fold's rows, other
+    seats' and this seat's parked ones, are left out), and of those, where the
+    box is named, the ones named for it (``-<seat>.md``), so a row another
+    seat's commit carries (a lane built on that seat's head) is not this
+    lane's evidence. None where git cannot say."""
+    added = _lane_added_rows(root, base)
+    if not added:
+        return added
+    seat, problem = seat_name(root)
+    if problem:
+        _note(f"this seat's name could not be read ({problem}), so every Session Log row the lane's own "
+              "commits added is read as this seat's for the pull request's body")
+        return added
+    # An unnamed box writes its rows as `local` (the fragment loader's own name for it).
+    seat = seat or "local"
+    # The name's own shape, <date>-<HHMMSS>-<seat>.md: a seat `work` is not `air-work`.
+    own = re.compile(rf"-\d{{6}}-{re.escape(seat)}\.md$")
+    return [path for path in added if own.search(path)]
+
+
+def _row_text(root: Path, path: str) -> str:
+    """A Session Log row file at HEAD as the body shows it: each row the
+    fragment loader reads in it (``rows_from_texts``) as its date and
+    headline, then its text, a paragraph each; a row not in that shape as its
+    line. '' where git or the loader cannot read it, said."""
+    rc, out, err = _git("show", f"HEAD:{path}", cwd=str(root))
+    fragments = _fragments_module()
+    reader = getattr(fragments, "rows_from_texts", None) if fragments is not None else None
+    if rc != 0 or reader is None:
+        _note(f"the Session Log row {path} could not be read ({err.strip()[:120] or 'no loader beside this script'}), "
+              "so the pull request's body does not carry it")
+        return ""
+    shown: list[str] = []
+    for row in reader([(path.rsplit("/", 1)[-1], fold_newlines(out))], ""):
+        cells = _ROW_CELLS_RE.match(row.line.strip())
+        shown.append(f"{row.date}: {cells.group(1)}\n\n{cells.group(2)}" if cells else row.line.strip())
+    return "\n\n".join(shown)
+
+
+def _audit_setting(root: Path) -> str | None:
+    """How ``espalier.toml`` names the dispatcher who audits a merged lane from
+    its body (``mail.dispatcher_setting``'s words), or None where it names
+    none, where the setting cannot be used (the same answer as a file that
+    does not parse, which may name no dispatcher at all: no refusal on a
+    guess), or the channel is not beside this script. A file read, no spawn."""
+    mail = _mail_module()
+    reader = getattr(mail, "dispatcher_setting", None) if mail is not None else None
+    if reader is None:
+        return None
+    dispatcher, how = reader(root)
+    if dispatcher is None or dispatcher == getattr(mail, "DISPATCHER_UNUSABLE", None):
+        return None
+    return str(how)
+
+
+def _subjects_body_refusal(root: Path, base: str, branch: str, rows: list[str] | None) -> str | None:
+    """Why the commit subjects alone may not be the body, or None: a lane a
+    dispatcher audits from its body (:func:`_audit_setting`), changing a file
+    outside the records (:func:`_outside_the_records`), not a revert/ lane
+    (the red base's revert stays fast), and carrying no Session Log row of
+    this seat (``rows``, read by the caller). A read that cannot be made never
+    refuses: no verdict is a refusal on a guess."""
+    if rows is None or rows or is_revert_lane(branch):
+        return None
+    how = _audit_setting(root)
+    if how is None:
+        return None
+    outside = _outside_the_records(root, base)
+    if not outside:
+        return None
+    shown = ", ".join(outside[:3]) + (", ..." if len(outside) > 3 else "")
+    return (f"the pull request's body would be the commit subjects alone, on a tree whose dispatcher audits a "
+            f"merged lane from its body ({how}): this lane changes {len(outside)} file(s) outside the records "
+            f"({shown}) and carries no Session Log row of this seat. Write the lane's evidence to a file and pass --body-file <path>, "
+            "or commit this seat's row on the lane (/handoff writes it, and the default body then carries it), "
+            f"or pass {SUBJECTS_BODY_FLAG} \"<why>\" to ship the subjects alone with the reason in the body")
+
+
+def _default_body(root: Path, base: str, branch: str, subjects_body: str | None = None) -> str:
+    """The pull request's body where no --body-file gives one: this seat's own
+    Session Log rows on the lane (:func:`_seat_rows`), each as
+    :func:`_row_text` shows it, then the commit subjects; the subjects alone
+    where the lane carries no such row. Refused before anything moves where
+    the subjects alone would ship on a lane a dispatcher audits
+    (:func:`_subjects_body_refusal`), unless --subjects-body says why, and the
+    why then rides the body. `open` reads it in place of the subjects, and
+    the handoff's push from the default branch reads it before ``lane``
+    moves the commits."""
+    rc, log, _ = _git("log", "--format=- %s", f"origin/{base}..HEAD", cwd=str(root))
+    subjects = fold_newlines(log) if rc == 0 else ""
+    rows = _seat_rows(root, base)
+    texts = [text for text in (_row_text(root, path) for path in rows or []) if text]
+    why = (subjects_body or "").strip()
+    if texts:
+        if why:
+            _note(f"{SUBJECTS_BODY_FLAG} is not used: the body carries this seat's Session Log row")
+        heading = "## This seat's Session Log row" + ("s" if len(texts) > 1 else "")
+        return heading + "\n\n" + "\n\n".join(texts) + "\n\n## Commits\n\n" + subjects.strip("\n") + "\n"
+    if why:
+        return subjects.rstrip("\n") + f"\n\nShipped with the commit subjects alone: {why}\n"
+    refusal = _subjects_body_refusal(root, base, branch, rows)
+    if refusal:
+        raise Refused(refusal)
+    return subjects
+
+
 def open_pr(title: str | None = None, body_file: str | None = None, dry_run: bool = False,
             early: str | None = None, base_red_ruled: str | None = None,
-            allow_deletions: str | None = None) -> int:
+            allow_deletions: str | None = None, subjects_body: str | None = None) -> int:
     root = repo_root()
     base = default_branch()
     branch = current_branch()
@@ -3151,9 +3293,10 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
             # An operator-written file: a Windows editor's default encoding is
             # refused by name before anything is pushed, never a traceback.
             raise Refused(f"--body-file {body_file}: {problem}")
+        if (subjects_body or "").strip():
+            _note(f"{SUBJECTS_BODY_FLAG} is not used: --body-file gives the body")
     else:
-        rc, log, _ = _git("log", "--format=- %s", f"origin/{base}..HEAD", cwd=str(root))
-        body = log
+        body = _default_body(root, base, branch, subjects_body)
     # Bare line feeds whatever wrote the body (fold_newlines is the one owner):
     # a CRLF body through a text-mode temp file reached GitHub with every line
     # break doubled. The temp file below is opened with newline="" so nothing
@@ -3364,7 +3507,8 @@ def _wait_for_pr_head(branch: str, sha: str) -> None:
 
 
 def handoff(title: str | None = None, body_file: str | None = None, dry_run: bool = False,
-            base_red_ruled: str | None = None, allow_deletions: str | None = None) -> int:
+            base_red_ruled: str | None = None, allow_deletions: str | None = None,
+            subjects_body: str | None = None) -> int:
     """/handoff's one push step, then the own-clear's arm. The push
     (:func:`_handoff_push`) runs only when espalier.toml sets ``handoff_push =
     true``, else the commit stays local and the verb says how to push it. Once
@@ -3384,7 +3528,7 @@ def handoff(title: str | None = None, body_file: str | None = None, dry_run: boo
     stops it is said, with the by-hand reset. A dry run says what it would
     arm."""
     try:
-        rc = _handoff_push(title, body_file, dry_run, base_red_ruled, allow_deletions)
+        rc = _handoff_push(title, body_file, dry_run, base_red_ruled, allow_deletions, subjects_body)
     except Held as whole:
         if dry_run:
             _say("dry-run: the own-clear marker would be armed for this session with this refusal in its brief")
@@ -3438,7 +3582,8 @@ def _red_base_note(root: Path, base: str, pr: dict, branch: str, base_red_ruled:
 
 
 def _handoff_push(title: str | None, body_file: str | None, dry_run: bool,
-                  base_red_ruled: str | None = None, allow_deletions: str | None = None) -> int:
+                  base_red_ruled: str | None = None, allow_deletions: str | None = None,
+                  subjects_body: str | None = None) -> int:
     """The push half of :func:`handoff`. Off: the handoff's commit stays local
     and this says how to push it and how to opt in -- and, when a pull request
     is already open for the branch, that it will merge WITHOUT this commit. On:
@@ -3481,6 +3626,10 @@ def _handoff_push(title: str | None, body_file: str | None, dry_run: bool,
     if pr is None and _park_the_row(root, base, dry_run=dry_run):
         return 0
     if on_base:
+        if not body_file and _audit_setting(root) is not None:
+            # `open`'s body question, asked before `lane` moves the commits
+            # off the default branch: a refusal here leaves them where they were.
+            _default_body(root, base, base, subjects_body)
         if dry_run:
             name = _lane_name_for(lane_subject(root, base)) or "a lane branch"
             _say(f"dry-run: `lane` would move the unmerged commits to {name}, then `open` "
@@ -3491,7 +3640,7 @@ def _handoff_push(title: str | None, body_file: str | None, dry_run: bool,
     branch = current_branch()
     if pr is None:
         return open_pr(title=title, body_file=body_file, dry_run=dry_run, base_red_ruled=base_red_ruled,
-                       allow_deletions=allow_deletions)
+                       allow_deletions=allow_deletions, subjects_body=subjects_body)
     # A handoff whose commits since the pull request's head are rows alone
     # parks them rather than push a record onto the lane's running checks:
     # ahead of the merge-first and the fold below, each a push that cancels.
@@ -4114,6 +4263,12 @@ def release(tag: str, dry_run: bool = False) -> int:
 
 # -------------------------------------------------------------------- main --
 
+#: `open`'s and `handoff`'s --body-file help: the default it replaces is
+#: :func:`_default_body`'s.
+_BODY_FILE_HELP = ("the pull request body (default: this seat's Session Log rows on the lane, then the commit "
+                   "subjects; the subjects alone where it carries none)")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ship.py", description=__doc__.split("\n\n", 1)[0])
     sub = parser.add_subparsers(dest="verb", required=True)
@@ -4122,16 +4277,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_open = sub.add_parser("open", help="push once, open the pull request (marker bound), arm auto-merge")
     p_open.add_argument("--title", help="the pull request title (default: the subject of the lane's newest commit "
                         "that is neither a merge nor a Session Log row alone; HEAD's where it has none)")
-    p_open.add_argument("--body-file", help="the pull request body (default: the commit subjects)")
+    p_open.add_argument("--body-file", help=_BODY_FILE_HELP)
     p_open.add_argument("--dry-run", action="store_true")
     p_open.add_argument("--early", metavar="REASON",
-                        help="ship before the handoff where handoff_push is on, saying why")
+                        help="ship before the handoff where handoff_push is on, saying why (with "
+                             "--body-file where espalier.toml names a dispatcher: the lane carries no row)")
     p_open.add_argument(BASE_RED_RULED_FLAG, metavar="ACK_ID", dest="base_red_ruled",
                         help="land on a red base by the dispatcher's ruling: the ack with this id, on the "
                              "mail channel, names the red post-merge run")
     p_open.add_argument(ALLOW_DELETIONS_FLAG, metavar="WHY", dest="allow_deletions",
                         help="push a lane that deletes files the driver did not delete, saying why (the "
                              "pull request's body records it)")
+    p_open.add_argument(SUBJECTS_BODY_FLAG, metavar="WHY", dest="subjects_body",
+                        help="ship the commit subjects alone as the body where espalier.toml names a "
+                             "dispatcher and the lane carries code and no row of this seat, saying why "
+                             "(the body records it)")
     p_rebind = sub.add_parser("rebind", help="re-bind the title marker to the pull request's head")
     p_rebind.add_argument("--dry-run", action="store_true")
     sub.add_parser("catch-up", help="merge the base in (on the server when clean; locally, record files "
@@ -4149,12 +4309,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_hand = sub.add_parser("handoff", help="/handoff's push: only when espalier.toml sets handoff_push = true")
     p_hand.add_argument("--title", help="the pull request title (default: the subject of the lane's newest commit "
                         "that is neither a merge nor a Session Log row alone; HEAD's where it has none)")
-    p_hand.add_argument("--body-file", help="the pull request body (default: the commit subjects)")
+    p_hand.add_argument("--body-file", help=_BODY_FILE_HELP)
     p_hand.add_argument("--dry-run", action="store_true")
     p_hand.add_argument(BASE_RED_RULED_FLAG, metavar="ACK_ID", dest="base_red_ruled",
                         help="land on a red base by the dispatcher's ruling, as `open` takes it")
     p_hand.add_argument(ALLOW_DELETIONS_FLAG, metavar="WHY", dest="allow_deletions",
                         help="push deletions the driver did not make, saying why, as `open` takes it")
+    p_hand.add_argument(SUBJECTS_BODY_FLAG, metavar="WHY", dest="subjects_body",
+                        help="ship the commit subjects alone as the body, saying why, as `open` takes it")
     p_arm = sub.add_parser("arm", help="arm the own-clear marker for this session by hand: after a lane opened "
                                        "by hand (gh pr create), a handoff whose arm did not run, or a pull by "
                                        "hand that moved HEAD under the armed marker (re-armed at HEAD)")
@@ -4173,7 +4335,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.verb == "open":
             return open_pr(title=args.title, body_file=args.body_file, dry_run=args.dry_run,
                            early=args.early, base_red_ruled=args.base_red_ruled,
-                           allow_deletions=args.allow_deletions)
+                           allow_deletions=args.allow_deletions, subjects_body=args.subjects_body)
         if args.verb == "rebind":
             return rebind(dry_run=args.dry_run)
         if args.verb == "catch-up":
@@ -4188,7 +4350,8 @@ def main(argv: list[str] | None = None) -> int:
             return fold(dry_run=args.dry_run)
         if args.verb == "handoff":
             return handoff(title=args.title, body_file=args.body_file, dry_run=args.dry_run,
-                           base_red_ruled=args.base_red_ruled, allow_deletions=args.allow_deletions)
+                           base_red_ruled=args.base_red_ruled, allow_deletions=args.allow_deletions,
+                           subjects_body=args.subjects_body)
         if args.verb == "arm":
             return arm(why=args.why, dry_run=args.dry_run)
     except Refused as stop:

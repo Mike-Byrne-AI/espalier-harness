@@ -35,7 +35,9 @@ print a Python 3 version, try the other interpreter name, then the launcher's
   yourself before the handoff only when the next lane needs this merge: `open`
   refuses a lane whose commits carry no Session Log row -- no new file under
   `memory/session-log.d/` and no change to `ESPALIER_MEMORY.md` -- unless given
-  `--early "<reason>"`, because the
+  `--early "<reason>"` (with `--body-file <path>` too where `espalier.toml`
+  names a dispatcher: such a lane carries no row, and the body is refused
+  as the subjects alone, Step 2), because the
   handoff's row then reaches the base late: a handoff that adds rows alone
   parks them on the seat's records ref for the next lane's push to fold in,
   whether the lane's pull request is still open or has merged (no push onto
@@ -271,8 +273,15 @@ the diff touches a protected path -- **bound at creation**, so there is one
 event, one check run and no title edit for a race to lose; auto-merge armed and
 read back (a repository whose setting is off is named: merge by hand once the
 checks are green). The
-body is the commit subjects, or `--body-file <path>` for prose -- a file, never
-a heredoc, so a backtick in the prose is text and not a command. The title is
+body is `--body-file <path>` for prose -- a file, never a heredoc, so a
+backtick in the prose is text and not a command. Without it, the body is this
+seat's Session Log rows that the lane's own commits added (a fold's rows left
+out), then the commit subjects; the subjects alone where the lane carries none.
+Where `espalier.toml` names a dispatcher, a lane that changes a file outside
+the records (the record merge's roster and a task pack), carries no row of this
+seat and is not a `revert/` lane is refused before anything moves rather than
+shipped with the subjects alone: pass `--body-file`, commit the row (`/handoff`
+writes it), or pass `--subjects-body "<why>"`, which the body records. The title is
 the lane's subject: that of the newest commit on HEAD's first-parent line the
 base lacks that is neither a merge nor a commit touching only the record
 folders (a handoff's row, a fold, a ledger filing or strike), so a base merged
@@ -455,7 +464,9 @@ the lane: it never re-runs or catches up anything itself.
 Precondition: the lane carried the release fold -- the version surfaces, the
 changelog fold, the freshness re-pin (on the Espalier-Harness source tree, the
 release checklist's steps 1 to 3); the fold's removal of the changelog
-fragments is pushed with `open --allow-deletions "the release fold"` (Step 2).
+fragments is pushed with `open --early "release fold" --allow-deletions "the
+release fold" --body-file <file>` (Step 2; the body the release section, since
+that lane carries no row yet).
 Wait for the merge; stay on the lane branch,
 since the pull request is named from it:
 
