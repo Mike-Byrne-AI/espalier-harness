@@ -1072,7 +1072,10 @@ class TestGate1BudgetIsOneForTheWholeList:
 
     def test_two_real_commands_share_the_budget(self, monkeypatch, tmp_path):
         """Two real commands, each sleeping three fifths of a shrunk budget:
-        each fits it, the pair does not. The second is cut at what is left."""
+        each fits it, the pair does not, so the list blocks. No wall-clock
+        bound is asserted here (this file runs in the parallel slice, where
+        one false-fails; tests/test_proof_tier.py holds the rule): that the
+        second command is handed only what is left is the still-clock rows'."""
         mod = self._load()
         root = tmp_path / "repo"
         root.mkdir()
@@ -1087,8 +1090,6 @@ class TestGate1BudgetIsOneForTheWholeList:
         assert rc == 1, f"two commands that together outran a {budget:.1f} s budget passed the Stop ({spent:.1f} s)"
         records = _audit_rows(tmp_path / "audit", "stop_blocked_pytest")
         assert [r["details"].get("rule") for r in records] == ["GATE_COMMAND_LIST_TIMEOUT"], records
-        assert spent < budget + scaled(3.0), (
-            f"the list ran {spent:.1f} s against a {budget:.1f} s budget: the second command had a fresh one")
 
 
 class TestAnInterpreterWithoutPytestIsAFaultNotAFailure:
