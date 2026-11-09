@@ -1269,7 +1269,10 @@ def spawn_tree_checked(
     ``SpawnFailure`` naming ``ValueError``), since the child stays in the
     caller's group so an ancestor's group kill still reaches it; and on
     Windows the child runs in a kill-on-close job, so what it leaves running
-    when it exits on its own is ended when this process exits."""
+    when it exits on its own is ended when this process exits. Beside a kept
+    ``_json_safe.py`` that predates ``run_tree_bounded`` this is
+    ``spawn_checked`` (the guarded import above), whose timeout kills the
+    child alone on POSIX."""
     import subprocess
 
     checked = _spawn_argv(argv, root)
