@@ -172,6 +172,19 @@ OPERATOR_CALL_PREFIX = "OPERATOR CALL:"
 #: of the operator call, read the same way (``is_stop``); before it a stopped
 #: worker sent nothing and the board showed no stopped seat (``DEF-5030``).
 STOPPED_PREFIX = "stopped:"
+#: What the dispatcher's release of a job an open operator call parks opens
+#: with (the shape approved on ruling ``20261107T060117Z-air-5e86f5`` (C):
+#: release the parked job at the stop, re-send it at the ruling): a
+#: ``release`` whose ``ack`` names the job's assign and whose text names the
+#: call by its full id. The release closes the job and the stop is acked, so
+#: nothing else on the board names the job any more; the marker is the link
+#: from the job to the call (``parked_jobs``), read by the board's ``parked:``
+#: and ``re-send:`` lines until the job is assigned again (``DEF-2067``:
+#: ``DEF-1071``, parked on ``17217c`` on 11-08, was carried in Session Log
+#: prose alone). The board's ``stopped:`` line prints the release ready to
+#: paste. A prefix, never any release that mentions a call, so a call named
+#: in passing parks nothing.
+PARKED_PREFIX = "parked:"
 #: What the dispatcher's ruling on a gridlock opens with (root CLAUDE.md Core
 #: Rule 15): an ``ack`` whose text opens with the marker, or a ``note`` where no
 #: request waits on the ruling (``DEF-4060``), the one the seat-day census
@@ -826,6 +839,41 @@ def age_seconds(message: dict, now: datetime | None = None) -> int | None:
     return max(0, int(((now or datetime.now(timezone.utc)) - at).total_seconds()))
 
 
+def acks_by_request(by_machine: dict[str, list[dict]]) -> dict[str, list[dict]]:
+    """Every ack, keyed by the FULL id its ``ack`` field names, each list in
+    the claims fold's order (the stamp, the machine, the position in its
+    file), each ack's ``from`` filled from its ref where the record lacks it.
+    The one map :func:`closing_ack` reads; an ack's text is never read for
+    an id (an ack naming one call in its text can answer another)."""
+    found: list[tuple[str, str, int, dict]] = []
+    for machine, messages in by_machine.items():
+        for i, m in enumerate(messages):
+            if m.get("type") == "ack":
+                who = str(m.get("from") or machine)
+                found.append((str(m.get("at") or ""), who, i, {**m, "from": who}))
+    found.sort(key=lambda t: t[:3])
+    answers: dict[str, list[dict]] = {}
+    for _at, _who, _i, m in found:
+        answers.setdefault(str(m.get("ack") or ""), []).append(m)
+    return answers
+
+
+def closing_ack(request: dict, answers: dict[str, list[dict]], machine: str = "") -> dict | None:
+    """The ack that closes ``request``, the earliest of those naming its full
+    id (:func:`acks_by_request`), or ``None`` while it is open. An operator
+    call (the dispatcher's question to the operator) closes on its sender's
+    own ack alone, which is its ruling: any seat's ack closed any request,
+    and a worker clearing a "moot" ask would have taken the operator's
+    question off every board with no trace (found at the records line's
+    review). Any other request closes on anyone's. ``machine`` is the ref the
+    request was read from, its sender where the record names none."""
+    acks = answers.get(str(request.get("id") or ""), [])
+    if is_operator_call(request):
+        who = str(request.get("from") or machine)
+        return next((a for a in acks if a.get("from") == who), None)
+    return acks[0] if acks else None
+
+
 def live_requests(by_machine: dict[str, list[dict]], *, now: datetime | None = None) -> list[dict]:
     """The requests no ``ack`` message answers, oldest first, each a copy of
     the request with ``age_s`` (:func:`age_seconds`): the unanswered asks,
@@ -837,25 +885,14 @@ def live_requests(by_machine: dict[str, list[dict]], *, now: datetime | None = N
     machine's ref is read, the asker's own included: an asker may close its
     own request, and the dispatcher's acks live on its own ref. Ordered as
     the claims fold is: the stamp, the machine, the position in its file."""
-    answered: dict[str, set[str]] = {}   # the request id -> the machines whose acks name it
-    for machine, messages in by_machine.items():
-        for m in messages:
-            if m.get("type") == "ack":
-                answered.setdefault(str(m.get("ack") or ""), set()).add(str(m.get("from") or machine))
+    answers = acks_by_request(by_machine)
     asks: list[tuple[str, str, int, dict]] = []
     for machine, messages in by_machine.items():
         for i, m in enumerate(messages):
             if m.get("type") != "request":
                 continue
-            who = str(m.get("from") or machine)
-            acked_by = answered.get(str(m.get("id") or ""), set())
-            # An operator call (the dispatcher's question to the operator) closes
-            # on its sender's own ack alone: any seat's ack closed any request,
-            # and a worker clearing a "moot" ask would have taken the operator's
-            # question off every board with no trace (found at the records line's review).
-            closed = who in acked_by if is_operator_call(m) else bool(acked_by)
-            if not closed:
-                asks.append((str(m.get("at") or ""), who, i, m))
+            if closing_ack(m, answers, machine) is None:
+                asks.append((str(m.get("at") or ""), str(m.get("from") or machine), i, m))
     asks.sort(key=lambda t: t[:3])
     return [{**m, "age_s": age_seconds(m, now)} for _at, _who, _i, m in asks]
 
@@ -880,6 +917,118 @@ def is_stop(message: object) -> bool:
     does, on any ack naming it (``live_requests``)."""
     return (isinstance(message, dict) and message.get("type") == "request"
             and str(message.get("text") or "").startswith(STOPPED_PREFIX))
+
+
+def is_parked(message: object) -> bool:
+    """Whether ``message`` is a release whose text opens with
+    :data:`PARKED_PREFIX` and whose ``ack`` names a message: the dispatcher's
+    release of a job an operator call parks. Read as :func:`is_stop` reads
+    its prefix: a note, a request or an ack carrying the word is no park, a
+    release quoting it mid-text is not one, and a release acking nothing (a
+    lane release) is not one."""
+    return (isinstance(message, dict) and message.get("type") == "release" and bool(message.get("ack"))
+            and str(message.get("text") or "").startswith(PARKED_PREFIX))
+
+
+def id_tokens(message_id: str) -> tuple[str, ...]:
+    """A message's full id and its six-character suffix, the two ways a seat
+    names one in a text."""
+    suffix = message_id.rsplit("-", 1)[-1] if "-" in message_id else ""
+    return (message_id, suffix) if len(suffix) == 6 else (message_id,)
+
+
+def names_token(text: str, token: str) -> bool:
+    """Whether ``text`` carries ``token`` as a whole word (an id or its
+    six-character suffix, a ledger id), never inside a longer one."""
+    return bool(token) and re.search(r"(?<![\w-])" + re.escape(token) + r"(?![\w-])", text) is not None
+
+
+def names_message(text: str, message_id: str) -> bool:
+    """Whether ``text`` names the message ``message_id``, by its full id or
+    its suffix, as a whole word."""
+    return any(names_token(text, t) for t in id_tokens(message_id))
+
+
+def _call_named(text: str, calls: list[dict], ruled: Callable[[dict], bool]) -> dict | None:
+    """The operator call a park's ``text`` names: an open one before a ruled
+    one, then the one named first (the paste-ready park puts the call's full
+    id right after the job), a full id before a suffix. A park citing a ruled
+    call beside its own open one ("on <call>, under the shape approved on
+    <older>") binds to the open one, never the ruled one, whose ruling would
+    print a re-send at once and the re-send would end the park (both
+    reviews); a wrong bind the other way keeps the line waiting, the safer
+    error."""
+    best: tuple[bool, int, int, dict] | None = None
+    for c in calls:
+        for rank, token in enumerate(id_tokens(str(c.get("id") or ""))):
+            hit = re.search(r"(?<![\w-])" + re.escape(token) + r"(?![\w-])", text) if token else None
+            if hit and (best is None or (ruled(c), rank, hit.start()) < best[:3]):
+                best = (ruled(c), rank, hit.start(), c)
+    return best[3] if best else None
+
+
+def parked_jobs(by_machine: dict[str, list[dict]], dispatcher: str | None = None, *,
+                closed: list[tuple[dict, dict, str]] | None = None) -> list[dict]:
+    """The jobs parked on an operator call and not given out again, oldest
+    park first: one ``{"release", "assign", "call", "ruling"}`` per job the
+    assignments fold closed (:func:`live_assignments`' ``closed``, computed
+    here when not given) by an ack release that opens with
+    :data:`PARKED_PREFIX` (:func:`is_parked`), so who may park a job is the
+    fold's rule (the machine that assigned it or the seat it was given to),
+    never a second one, and a release acking a job already closed parks
+    nothing (no backfill: the seat-day census counts such releases).
+    ``call`` is the operator call (:func:`is_operator_call`) the release's
+    text names, by its full id first and then by the id's suffix, the
+    earliest where several match (``None`` where it names none); ``ruling``
+    is the call's :func:`closing_ack` (``None`` while it is open), read from
+    the acks' ``ack`` fields alone. A park ends at an assign stamped strictly
+    after the release (one that counts, as the fold counts assigns) sharing
+    the job's :func:`_job_key`, its lane or one of its ledger ids, and at a
+    release, from the fold's senders, whose ``ack`` is the parked release's
+    FULL id (the drop where the ruling ends the job; the send verb takes a
+    suffix and it closes nothing), so a re-send or a drop clears it and
+    nothing asks twice."""
+    if closed is None:
+        closed = []
+        live_assignments(by_machine, dispatcher, closed=closed)
+    counts = (lambda who: not dispatcher or who == dispatcher)
+    calls: list[tuple[str, str, int, dict]] = []
+    later: list[tuple[str, str, int, dict]] = []
+    for machine, messages in by_machine.items():
+        for i, m in enumerate(messages):
+            who = str(m.get("from") or machine)
+            if is_operator_call(m):
+                calls.append((str(m.get("at") or ""), who, i, {**m, "from": who}))
+            elif m.get("type") in ("assign", "release"):
+                later.append((str(m.get("at") or ""), who, i, m))
+    calls.sort(key=lambda t: t[:3])
+    answers = acks_by_request(by_machine)
+    parks: list[tuple[str, str, dict]] = []
+    for assign, release, rule in closed:
+        if rule != "ack" or not is_parked(release):
+            continue
+        at, park_id = str(release.get("at") or ""), str(release.get("id") or "")
+        a_re = assign.get("re") or {}
+        key, ids, lane = _job_key(a_re), set(_str_list(a_re.get("ids"))), str(a_re.get("lane") or "")
+        senders = {str(assign.get("from") or ""), str(a_re.get(ASSIGN_SEAT_KEY) or "")}
+
+        def ends(who: str, m: dict) -> bool:
+            l_re = m.get("re") or {}
+            if m.get("type") == "assign":
+                return (counts(who) and str(m.get("at") or "") > at
+                        and (_job_key(l_re) == key or bool(ids & set(_str_list(l_re.get("ids"))))
+                             or bool(lane and str(l_re.get("lane") or "") == lane)))
+            return who in senders and str(m.get("ack") or "") == park_id
+
+        if any(ends(who, m) for _a, who, _i, m in later):
+            continue
+        call = _call_named(str(release.get("text") or ""), [c for *_, c in calls],
+                           lambda c: closing_ack(c, answers) is not None)
+        parks.append((at, str(release.get("from") or ""), {
+            "release": release, "assign": assign, "call": call,
+            "ruling": closing_ack(call, answers) if call is not None else None}))
+    parks.sort(key=lambda t: t[:2])
+    return [p for *_, p in parks]
 
 
 def ruling_text(message: dict) -> str:

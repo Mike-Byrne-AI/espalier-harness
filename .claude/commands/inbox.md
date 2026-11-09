@@ -384,13 +384,31 @@ is read on its own, and one that cannot be read says so on its own line:
   an open stop of its seat names an open operator call (its id or the id's
   six-character suffix) and the job (its assign's id or suffix, one of its
   ledger ids, or the stop's lane is the job's), and that seat's line ends
-  `release the parked job, ack the stop, and re-send the job at the ruling`: a
+  `release the parked job (<send>), ack the stop, and re-send the job at the
+  ruling`, where `<send>` is the release ready to paste, `python
+  tools/cc/mail.py send --type release --ack <assign id> --text "parked: <job>
+  on operator call <call id>"`, every id in full: a
   stop on one job's open operator call idled the seat's other job too while
   the line read the seat full, so the dispatcher releases the parked job, and
   its ack frees the seat (a release names no stop). Nothing asks again once
   the job is released or the call is ruled, and a stop of another kind names
   the seat and its jobs and asks nothing. The count is left as it is, since a
   stopped seat counted short would be sent a job while it only reads mail.
+  Under those, each job closed by that `parked:` release (the assignments
+  fold's close, so only the machine that assigned the job or the seat holding
+  it parks it, and a release of a job already closed parks nothing) gets a
+  line until it is given out again: `parked: <seat>: <job> (assign <id>;
+  released <id>) on operator call <id>, open` while the call is open, then
+  `re-send: ...: operator call <id> ruled by <ack id>: re-send the job, or
+  where the ruling drops it: <send>` once the call's sender acks it (its own
+  ack, read by the ack field, never an id in an ack's text), the drop ready to
+  paste: a release acking the parked release's FULL id (the send verb takes a
+  suffix, and a release acking one closes nothing). An assign stamped strictly
+  after the release that shares the job's lane, classes and ids, its lane, or
+  one of its ledger ids clears the line, and so does that drop; a park naming
+  no operator call says so, prints its drop and stays. Once the release and
+  the stop's ack were sent, the board kept no link from the job to the call,
+  so at a ruling hours later nothing named the job to re-send.
 - **claims** and the ledger's live row count, counted at the base
   branch's remote-tracking ref with the base's own ledger tools and naming the
   commit it read, so a checkout that stops moving still reads what the base
