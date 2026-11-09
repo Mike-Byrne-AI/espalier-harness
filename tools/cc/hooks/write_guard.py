@@ -72,6 +72,7 @@ import io
 import json
 import os
 import re
+import stat
 import sys
 import threading
 import time
@@ -2642,6 +2643,14 @@ def check_bash_for_protected_mutations(command: str, root: Path, cwd: Path | Non
             base, rel = _resolve_bash_in_checkout(raw, root, base=at)
             where, note = _checkout_note(base, root)
             if _mutated_zone(effect, rel, root, base, files_only=lone):
+                # DEF-4031: a delete that cannot take a directory, naming one,
+                # removes nothing; read only on a would-deny, so an allowed
+                # command pays nothing for it.
+                if effect == "delete" and not _has_wildcard(raw):
+                    if files_only is None:
+                        files_only = _bash_patterns.files_only_removed_operands(command)
+                    if raw in files_only and _leaves_the_directory(raw, at, root, powershell=False):
+                        continue
                 where += _glob_note(rel, root, base, files_only=lone)
                 takes = effect in _TAKES_ITS_TREE
                 if _adopter_zone(rel, root, files_only=lone) is not None or (
@@ -2668,6 +2677,41 @@ def check_bash_for_protected_mutations(command: str, root: Path, cwd: Path | Non
 
 #: The operator-facing word for an effect the reader tags more finely.
 _EFFECT_WORD = {"sweep": "delete", "clean": "delete"}
+
+#: ``FILE_ATTRIBUTE_REPARSE_POINT``: a junction or a link on Windows, which
+#: ``os.lstat`` can report as a directory there.
+_REPARSE_POINT = 0x400
+
+
+def _leaves_the_directory(raw: str, at: "Path | None", root: Path, *, powershell: bool) -> bool:
+    """True when ``raw``, the operand of a delete that cannot take a directory
+    (``files_only_removed_operands``), is on disk a real directory that the
+    delete leaves in place, so no zone is mutated (DEF-4031). A Bash `rm`
+    without `-r` or `-d`, `unlink` and `shred` refuse a directory ("is a
+    directory"); a PowerShell remove cmdlet without its recurse switch fails
+    on the has-children prompt the tool's non-interactive host cannot show
+    (driven on Windows PowerShell 5.1, 2026-10-17).
+
+    The read is of the spelling as typed, never the resolved path: a link to
+    a directory is itself removed (BSD `rm` takes it, the target intact), so
+    a link, a junction or any reparse point stays judged. On PowerShell an
+    EMPTY directory is removed (driven on 5.1 and pwsh 7.6.5, 2026-11-09), so
+    it stays judged there. A missing operand, a `..` component, or a read
+    that fails stays judged: only what was seen is spared."""
+    cleaned = _hook_utils._clean_path_prefixes(raw.strip().strip('"').strip("'"))
+    if not cleaned or ".." in cleaned.replace("\\", "/").split("/"):
+        return False
+    path = Path(at or root) / cleaned
+    try:
+        st = os.lstat(path)
+        if not stat.S_ISDIR(st.st_mode) or getattr(st, "st_file_attributes", 0) & _REPARSE_POINT:
+            return False
+        if powershell:
+            with os.scandir(path) as entries:
+                return next(entries, None) is not None
+    except (OSError, ValueError):  # fail-open: ok deliberate -- False keeps the operand judged: an unread directory is refused as on main, never spared
+        return False
+    return True
 
 #: The effects that take a directory's whole tree with it, the ones
 #: ``_mutated_zone`` refuses an enclosing directory for: a narrowed ``find``
@@ -3246,6 +3290,12 @@ def check_powershell_for_protected_mutations(
             base, rel = _resolve_bash_in_checkout(raw, root, base=at)
             where, note = _checkout_note(base, root)
             if _mutated_zone(effect, rel, root, base, files_only=lone):
+                # DEF-4031, the Bash twin's read on a would-deny alone.
+                if effect == "delete" and not _has_wildcard(raw):
+                    if files_only is None:
+                        files_only = _bash_patterns.files_only_removed_operands(command, powershell=True)
+                    if raw in files_only and _leaves_the_directory(raw, at, root, powershell=True):
+                        continue
                 where += _glob_note(rel, root, base, files_only=lone)
                 reason = _zone_reason(
                     rel, root, where=where, mutation=True,
