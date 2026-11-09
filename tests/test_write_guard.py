@@ -14810,6 +14810,7 @@ class TestEverySpanReadDecidesTheQuotedOperandCut:
         ("_bash_pipeline_reading", "_named_span", "verb"): "the remove verb",
         ("_bash_loop_reading", "_named_span", "verb"): "the remove verb",
         ("_bash_loop_reading", "_named_span", "vars"): "the loop variable names",
+        ("files_only_removed_operands", "_named_span", "verb"): "the word-list loop's remove verb",
         ("_loop_head_reading", "_named_span", "head"): "the enumerator head",
         ("_directory_chain", "raw_span", "1"): "the quoted cd target, read by offset (the wrapper-closer lane)",
         ("_ps_dotnet_sweeps", "raw_span", "2"): ".NET call arguments, not a shell span",
@@ -17653,7 +17654,8 @@ class TestEveryOneLineZoneDenyHasAnAdopterArm:
     def test_the_zone_text_is_rendered_by_its_producer_alone(self):
         source = (HOOKS_DIR / "write_guard.py").read_text(encoding="utf-8")
         assert _zone_text_read_outside_its_producer(source) == []
-        assert "_zone_template(rel_path, root, mutation=mutation)" in source, "the producer's own read moved"
+        assert "_zone_template(rel_path, root, mutation=mutation, files_only=files_only)" in source, (
+            "the producer's own read moved")
 
     def test_a_planted_read_of_the_zone_text_is_named(self):
         planted = (
