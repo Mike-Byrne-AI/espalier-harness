@@ -47,6 +47,7 @@ from pathlib import Path
 from _blueprint_limits import BLUEPRINT_MAX_SIZE
 from _freshness_cache import _is_state_cache_stale, _read_state_cache_safe
 from _json_safe import os_error_text
+import _paths
 
 # BC-027b: in-content amplification defense.
 # A blueprint under the byte cap can still be a JSON bomb (deep nesting
@@ -266,16 +267,19 @@ def _context_segments(payload: dict) -> list[str]:
     return out
 
 
+def _project_root() -> Path:
+    """The repo root through the one resolver the hooks read too
+    (``tools/cc/_paths.py::project_root_spelling``, DEF-664): the variable
+    with its Git Bash drive spelling translated, else the walk-up to
+    ``tools/cc/hooks``, always resolved, so the statusline never reads a
+    different tree from the hooks when launched from a subdirectory, from an
+    IDE integration or from Git Bash."""
+    return _paths._repo_root()
+
+
 def main(argv: "list[str] | None" = None) -> int:
     segments = "--segments" in (sys.argv[1:] if argv is None else argv)
-    # Resolve to absolute path so the statusline does not silently
-    # degrade to a cwd-relative read when CLAUDE_PROJECT_DIR is unset
-    # (multi-repo workspaces, IDE integrations, spawned subshells).
-    # This is the shared harness idiom: $CLAUDE_PROJECT_DIR first, cwd only as
-    # a fallback, always .resolve()'d — the hook scripts resolve root the same
-    # way. A raw Path.cwd() here misreports when launched from a subdirectory
-    # even with the env var set.
-    root = Path(os.environ.get("CLAUDE_PROJECT_DIR", ".")).resolve()
+    root = _project_root()
     payload = {} if segments else _read_statusline_payload()
     parts = [] if segments else ["espalier"]
     # Compute each indicator independently so one failing segment

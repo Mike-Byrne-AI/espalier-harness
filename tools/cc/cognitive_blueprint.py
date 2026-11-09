@@ -272,7 +272,7 @@ def _repo_root() -> Path:
     """Resolve the repo root for this script's storage operations.
 
     Delegates to the single owner _paths._repo_root (env ``CLAUDE_PROJECT_DIR``
-    → ``pyproject.toml`` + ``tools/cc/`` ancestor walk-up → cwd). A cwd-relative
+    → ``tools/cc/hooks`` ancestor walk-up → cwd). A cwd-relative
     path would break the blueprint chain when Claude Code is launched from a
     subdirectory or after a manual ``cd``; resolving the repo root explicitly
     keeps the chain stable regardless of cwd. (The prior docstring claimed this

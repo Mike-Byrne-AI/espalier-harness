@@ -58,20 +58,24 @@ from espalier.changelog import (  # noqa: E402
 
 
 def _bounded_spawn():
-    """``run_bounded`` from this checkout's ``tools/cc/_json_safe.py``, loaded
-    by path, never an installed engine's: ``subprocess.run`` whose timeout
+    """This checkout's ``tools/cc/_json_safe.py``, loaded by path, never an
+    installed engine's: its ``run_bounded`` is ``subprocess.run`` whose timeout
     holds on Windows, where ``run`` waits on a grandchild holding its pipe
-    (DEF-3004)."""
+    (DEF-3004), and its ``run_tree_bounded`` ends a child that is itself a
+    tree (a pytest) whole at the timeout, where ``run`` on POSIX kills the
+    child alone and leaves the rest at parent 1 (DEF-1179)."""
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
         "_json_safe_for_release_check", REPO_ROOT / "tools" / "cc" / "_json_safe.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.run_bounded
+    return module
 
 
-run_bounded = _bounded_spawn()
+_JSON_SAFE = _bounded_spawn()
+run_bounded = _JSON_SAFE.run_bounded
+run_tree_bounded = _JSON_SAFE.run_tree_bounded
 
 
 #: Every Tier-1 opt-in flag this module reads -- the single census, and the set
@@ -243,7 +247,7 @@ def check_tests_pass(repo_root: Path = REPO_ROOT) -> CheckResult:
     child_env.pop("PYTEST_TIMEOUT", None)
     leg_t0 = _now()
     try:
-        result = run_bounded(
+        result = run_tree_bounded(
             # --color=no: a FAILED line under a forced colour (FORCE_COLOR from
             # the launching shell) opens with an escape, and pytest_failure_tail
             # reads it by its first word.

@@ -24,6 +24,7 @@ import sys
 import pytest
 
 from espalier import cli
+from espalier._text import quoted_if_spaced
 
 
 class _FakeStderr(io.StringIO):
@@ -69,12 +70,23 @@ def _run_nudge(monkeypatch, *, func, repo, tty):
 
 
 class TestSourceCheckoutNudge:
-    def test_source_checkout_on_tty_prints_init_nudge(self, monkeypatch, tmp_path):
-        repo = _make_source_checkout(tmp_path)
+    @pytest.mark.parametrize("leaf", ["bare", "a spaced root"], ids=["bare", "spaced"])
+    def test_source_checkout_on_tty_prints_init_nudge(self, monkeypatch, tmp_path, leaf):
+        # The nudge prints the root through quoted_if_spaced (DEF-912), so the
+        # expected text is read through it too: a spaced root (or a spaced
+        # basetemp, as on the perturbed cell) is double-quoted, a bare one is not.
+        root = tmp_path / leaf
+        root.mkdir()
+        repo = _make_source_checkout(root)
         err = _run_nudge(monkeypatch, func=_dummy_command, repo=str(repo), tty=True)
         assert "governance is NOT active" in err
         assert ".claude/settings.json" in err
-        assert f"init {repo}" in err
+        assert f"init {quoted_if_spaced(str(repo))}" in err
+        if leaf != "bare":
+            # The spaced root reds a nudge that went back to the bare root
+            # on every cell, a bare basetemp included, where the helper
+            # alone would read the bare spelling as correct.
+            assert f'init "{repo}"' in err
 
     def test_initialized_repo_does_not_nudge(self, monkeypatch, tmp_path):
         repo = _make_initialized(tmp_path)

@@ -843,8 +843,9 @@ refusal (a directory without its write bit) is what this host can produce and
 what `tests/test_rmtree.py` drives on both sides of the rule; the Windows
 attribute itself was witnessed on 2026-09-26 on 3.12 to 3.14 (walk 4: `os.chmod`
 sets the real read-only attribute, the bare call refuses, the helper's `onexc`
-arm fires), and `DEF-934` carries the CI test that pins it, since the
-`windows-latest` cell runs the suite and this file's Windows arm still skips there.
+arm fires), and `tests/test_rmtree.py::TestTheWindowsAttribute` pins all three
+on Windows, in `portability.yml`'s `windows-latest` cell (3.12, the `onexc` arm),
+which runs on a pull request that changes Python and is not a required check.
 
 ## `Path.rglob` / recursive `Path.glob` follows directory symlinks on CPython < 3.13
 
@@ -6459,6 +6460,34 @@ copy); and
 `tests/test_spawn_chokepoint.py`, which also drives the Windows branch on every OS with a
 stand-in `Popen`, so a Linux-only required gate still pins the tree kill, the drain and the
 reap.
+
+**On POSIX the timeout leaves the tree running.** `run` kills the child alone and returns, so
+whatever the child started runs on at parent 1: a pytest's xdist workers, hooks and git, a
+script's own inner pytest beside its clone. For a child that is itself a tree, call
+`run_tree_bounded` (`tools/cc/_json_safe.py`, `run_bounded`'s signature; `communicate_tree_bounded`
+for a `Popen` the caller holds; the suite takes both from `tests/_tree_spawn.py`): its timeout,
+and any exception while it waits (a Ctrl-C, the per-test ceiling's), ends the whole tree on
+every OS. On Windows the child goes into the kill-on-close job object `run_tree_to_deadline`
+uses, and the kill is `taskkill /T`, then the job. The two OSes part after a normal exit too:
+on Windows what the child left running stays in the job and is ended when the caller exits
+(the job's handle, one per call, closes with it), where on POSIX it runs on. On POSIX it is a walk of the process table
+down from the child: it stops each process it finds, reads again until a read finds nothing
+new, then kills each one and the group of each that leads one. It starts no session of its
+own and refuses `start_new_session`, `process_group` and `preexec_fn`, on purpose: a group kill
+does not reach into a nested session, so groups compose at one level only, and a session at
+this level would hide the tree from every ancestor's group kill
+(`scripts/fresh_clone_gate.py`'s, `scripts/archive_probe.py`'s); the walk composes at any
+depth. It has two edges. Where `ps` cannot answer, the kill is of the child, and of its group
+where it leads one. And a process whose parent and group leader both ended before the walk is
+below no process the walk reads and in no group it knows, so it runs on: a declared limit
+(POSIX), pinned as it stands by
+`tests/test_bounded_spawn.py::TestTheTreeBoundedRunEndsTheWholeTree::test_an_orphan_whose_group_leader_ended_first_runs_on_posix_and_the_job_ends_it_on_windows`,
+which on Windows pins the job ending that process. Of the timed pytests, every one the
+ratchet reads (`tests/test_contracts.py::TestEveryTimedPytestEndsItsWholeTree`, over the
+tracked Python its census derives from git; its docstring names the shapes it does not read)
+calls it or is named debt with the ledger row that retires it (2026-11-08,
+`tests/test_bounded_spawn.py::TestTheTreeBoundedRunEndsTheWholeTree` and
+`tests/test_bounded_spawn.py::TestTheWalkSignalsOnlyItsOwnTree`).
 
 ## On Windows, a child handed no stdin never starts when the parent's stdin handle is dead
 

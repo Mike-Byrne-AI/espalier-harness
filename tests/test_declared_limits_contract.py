@@ -266,7 +266,7 @@ class TestTheSentenceSplitter:
 #: nothing a row can red on); and the encoded program and the script file,
 #: two sentences citing the same row, joined into one, which keeps the seeded
 #: docs at the ceiling `scripts/sync_asset_docs.py` holds.
-_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 30, "docs/SHARP_EDGES.md": 4}
+_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 30, "docs/SHARP_EDGES.md": 5}
 
 
 def test_the_census_is_the_pinned_population():
@@ -361,9 +361,10 @@ def test_every_cited_pin_runs_and_passes_on_this_host():
     cited = _cited_ids()
     if not cited:
         pytest.skip("no citations yet -- the sentence contract reports that")
-    proc = subprocess.run(
+    from tests._tree_spawn import run_tree_bounded
+    proc = run_tree_bounded(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-rA", "--tb=line", *cited],
-        cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8", timeout=300,
+        cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8", timeout=300, stdin=subprocess.DEVNULL,
     )
     outcomes: dict[str, set[str]] = {}
     for line in proc.stdout.splitlines():
