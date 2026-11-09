@@ -5,12 +5,18 @@ last 20 runs (2026-10-16); the suite grew and post-merge's 48.2-minute worst
 became 70.7, so its 75-minute bound began cutting runs with no verdict, and
 nothing said so until runs were lost. This census is the re-measure as one
 command: for every job in ``.github/workflows/`` that declares a job-level
-``timeout-minutes``, it reads the job's last ``--runs`` green runs through
-``gh`` (every matrix cell counts toward its job), and prints the bound, the
-worst and median green, the bound the rule asks for (``--factor`` times the
-worst, rounded up to five minutes) and the runs cut at the bound (cancelled at
-or past it, which read no verdict). A job whose bound is under the rule's is
-marked ``RAISE``.
+``timeout-minutes``, it reads every cell of the job's last ``--runs`` runs
+holding a green cell through ``gh`` (a matrix job's cells are one run, never
+one each), and prints the bound, the worst and median green cell, the bound
+the rule asks for (``--factor`` times the worst, rounded up to five minutes)
+and the cuts: cancelled cells in those runs that ran longer than the worst
+green, which read no verdict whatever the bound was when they ran. A job whose
+bound is under the rule's is marked ``RAISE``; one with a cut at its present
+bound ``CUT`` (a cut run's real length is unknown, so the greens alone can
+read ``ok`` over runs the bound keeps killing: read the cut run, a slow run
+asks a raise and a hang a test's own timeout); one with fewer green runs than
+``--runs`` ``thin``. A cut under an older, lower bound reads ``ok`` once the
+bound is above it.
 
     python3 scripts/ci_job_bounds_census.py
     python3 scripts/ci_job_bounds_census.py --runs 20 --factor 1.5 --json
@@ -47,9 +53,9 @@ def _load(name: str, rel: str):
 run_bounded = _load("_json_safe_for_ci_job_bounds_census", "tools/cc/_json_safe.py").run_bounded
 
 GH_TIMEOUT = 60.0
-_JOB_RE = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$")
+_JOB_RE = re.compile(r"^  ([A-Za-z0-9_-]+):\s*(?:#.*)?$")
 _NAME_RE = re.compile(r"^    name:\s*(.+?)\s*$")
-_BOUND_RE = re.compile(r"^    timeout-minutes:\s*(\d+)\s*$")
+_BOUND_RE = re.compile(r"^    timeout-minutes:\s*(\d+)\s*(?:#.*)?$")
 _CELL_SUFFIX_RE = re.compile(r" \([^()]*\)$")
 
 
@@ -103,6 +109,24 @@ def needed_bound(worst_minutes: float, factor: float) -> int:
     return int(math.ceil(worst_minutes * factor / 5.0) * 5)
 
 
+def verdict(bound: int, needed: int | None, cut_max: float | None, green_runs: int, runs: int,
+            unread: int = 0) -> str:
+    """One job's verdict, in order: ``unread``, ``no green``, ``RAISE`` (the bound
+    is under the rule's), ``CUT`` (a cell was cancelled at the present bound),
+    ``thin`` (fewer green runs than asked), ``ok``."""
+    if unread < 0:
+        return "unread"
+    if needed is None:
+        return "no green"
+    if bound < needed:
+        return "RAISE"
+    if cut_max is not None and cut_max >= bound - 0.5:
+        return "CUT"
+    if green_runs < runs:
+        return "thin"
+    return "ok"
+
+
 def minutes(started: str | None, completed: str | None) -> float | None:
     if not started or not completed:
         return None
@@ -131,11 +155,16 @@ def gh_json(args: list[str], repo: str | None) -> object:
 
 
 def measure(workflow: str, jobs: dict[str, dict], runs: int, scan: int, repo: str | None) -> dict:
-    """Green minutes and cut count per job of one workflow, newest runs first,
-    until every job holds ``runs`` greens or ``scan`` runs were read."""
+    """Per job of one workflow, newest runs first: the green minutes of every
+    cell of its last ``runs`` runs holding a green cell (a matrix job's four
+    cells are one run, never four), and the cancelled cells in those same runs
+    that ran longer than the job's worst green, which reads as a cut whatever
+    the bound was when it ran. A job stops counting at ``runs`` green runs; the
+    scan stops when every job has, or at ``scan`` runs."""
     listed = gh_json(["run", "list", "--workflow", workflow, "--limit", str(scan),
                       "--json", "databaseId,status"], repo)
-    out = {j: {"greens": [], "cuts": 0, "unread": 0} for j in jobs}
+    out = {j: {"greens": [], "green_runs": 0, "cancels": [], "cuts": 0, "cut_max": None, "unread": 0}
+           for j in jobs}
     if not isinstance(listed, list):
         for j in out:
             out[j]["unread"] = -1
@@ -143,26 +172,43 @@ def measure(workflow: str, jobs: dict[str, dict], runs: int, scan: int, repo: st
     for run in listed:
         if run.get("status") != "completed":
             continue
-        if all(len(v["greens"]) >= runs for v in out.values()):
+        if all(v["green_runs"] >= runs for v in out.values()):
             break
         view = gh_json(["run", "view", str(run.get("databaseId")), "--json", "jobs"], repo)
         if not isinstance(view, dict):
             for v in out.values():
                 v["unread"] += 1
             continue
+        cells: dict[str, list[tuple[str, float]]] = {}
         for job in view.get("jobs") or []:
             job_id = job_for(str(job.get("name") or ""), jobs)
-            if job_id is None:
-                continue
             took = minutes(job.get("startedAt"), job.get("completedAt"))
-            if took is None:
-                continue
+            if job_id is not None and took is not None:
+                cells.setdefault(job_id, []).append((str(job.get("conclusion") or ""), took))
+        for job_id, seen in cells.items():
             slot = out[job_id]
-            if job.get("conclusion") == "success" and len(slot["greens"]) < runs:
-                slot["greens"].append(took)
-            elif job.get("conclusion") == "cancelled" and took >= jobs[job_id]["bound"] - 0.5:
-                slot["cuts"] += 1
+            if slot["green_runs"] >= runs:
+                continue
+            greens = [took for conclusion, took in seen if conclusion == "success"]
+            slot["cancels"].extend(took for conclusion, took in seen if conclusion == "cancelled")
+            if greens:
+                slot["greens"].extend(greens)
+                slot["green_runs"] += 1
+    for slot in out.values():
+        worst = max(slot["greens"], default=None)
+        cut = [took for took in slot["cancels"] if worst is not None and took > worst]
+        slot["cuts"] = len(cut)
+        slot["cut_max"] = round(max(cut), 1) if cut else None
     return out
+
+
+def _ascii(text: str) -> str:
+    """7-bit ASCII for a printed name: a redirected Windows stdout cannot take more."""
+    return text.encode("ascii", "replace").decode("ascii")
+
+
+def _dash(value: object) -> str:
+    return "-" if value is None else str(value)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -185,27 +231,31 @@ def main(argv: list[str] | None = None) -> int:
             greens = m["greens"]
             worst = max(greens) if greens else None
             row = {
-                "workflow": path.name, "job": job_id, "bound": meta["bound"], "greens": len(greens),
+                "workflow": path.name, "job": job_id, "bound": meta["bound"],
+                "green_runs": m["green_runs"], "greens": len(greens),
                 "worst": round(worst, 1) if worst is not None else None,
                 "median": round(statistics.median(greens), 1) if greens else None,
                 "needed": needed_bound(worst, args.factor) if worst is not None else None,
-                "cuts": m["cuts"], "unread": m["unread"],
+                "cuts": m["cuts"], "cut_max": m["cut_max"], "unread": m["unread"],
             }
-            row["verdict"] = ("unread" if m["unread"] < 0 else "no green" if worst is None
-                              else "RAISE" if meta["bound"] < row["needed"] else "ok")
+            row["verdict"] = verdict(meta["bound"], row["needed"], m["cut_max"], m["green_runs"],
+                                     args.runs, m["unread"])
             rows.append(row)
 
     if args.json:
         print(json.dumps({"runs": args.runs, "factor": args.factor, "rows": rows}, indent=1))
         return 0
-    print(f"CI job bounds against the worst of each job's last {args.runs} green runs (rule: {args.factor}x, up to 5 min)")
-    print(f"{'workflow / job':<44} {'bound':>5} {'greens':>6} {'worst':>6} {'median':>6} {'needed':>6} {'cuts':>4}  verdict")
+    print(f"CI job bounds against the worst cell of each job's last {args.runs} green runs "
+          f"(rule: {args.factor}x, up to 5 min; cuts: cancelled cells longer than that worst)")
+    print(f"{'workflow / job':<44} {'bound':>5} {'runs':>4} {'cells':>5} {'worst':>6} {'median':>6} "
+          f"{'needed':>6} {'cuts':>4} {'cutmax':>6}  verdict")
     for r in rows:
-        fmt = lambda v: "-" if v is None else str(v)  # noqa: E731
-        print(f"{r['workflow'] + ' / ' + r['job']:<44} {r['bound']:>5} {r['greens']:>6} {fmt(r['worst']):>6} "
-              f"{fmt(r['median']):>6} {fmt(r['needed']):>6} {r['cuts']:>4}  {r['verdict']}")
+        print(f"{_ascii(r['workflow'] + ' / ' + r['job']):<44} {r['bound']:>5} {r['green_runs']:>4} {r['greens']:>5} "
+              f"{_dash(r['worst']):>6} {_dash(r['median']):>6} {_dash(r['needed']):>6} {r['cuts']:>4} "
+              f"{_dash(r['cut_max']):>6}  {r['verdict']}")
     raise_n = sum(1 for r in rows if r["verdict"] == "RAISE")
-    print(f"{raise_n} of {len(rows)} bounded jobs under the rule")
+    cut_n = sum(1 for r in rows if r["verdict"] == "CUT")
+    print(f"{raise_n} of {len(rows)} bounded jobs under the rule, {cut_n} cut at their present bound")
     return 0
 
 

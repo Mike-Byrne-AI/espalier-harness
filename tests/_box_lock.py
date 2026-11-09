@@ -90,11 +90,12 @@ SESSIONS_READ_S = 5.0
 POLL_S = 0.25
 REPORT_S = 30.0
 #: A holder past this age is named with the inspect and stop commands: above
-#: the post-merge proof's measured worst case (48.2 minutes over ten runs to
-#: 2026-10-16). Keyed on the holder's own age, never on this waiter's wait: the
+#: the post-merge proof's measured worst case (70.7 minutes over its last 20
+#: green runs, 2026-11-08, scripts/ci_job_bounds_census.py; it was 48.2 over
+#: ten to 2026-10-16, when this read 60). Keyed on the holder's own age, never on this waiter's wait: the
 #: lock is not fair, and a waiter that lost several races must not be told to
 #: end a healthy holder two minutes into its line.
-WAIT_CEILING_MIN = 60
+WAIT_CEILING_MIN = 90
 #: Options under which configure runs but no test does: the never-ran count's
 #: collect-only set, plus ``--help`` and ``--markers``.
 _NO_TEST_OPTIONS = (*NO_TEST_RUNS, "help", "markers")

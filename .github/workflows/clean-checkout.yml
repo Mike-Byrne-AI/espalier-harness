@@ -96,7 +96,7 @@ jobs:
     runs-on: ubuntu-latest
     # A hang the per-test ceiling cannot reach ends here, not at GitHub's
     # 360-minute default (DEF-1178): 1.5x the worst of the last 20 green runs,
-    # 104.4 min over 18 read (median 85.9, 2026-11-09, scripts/ci_job_bounds_census.py).
+    # 104.4 min over 18 read (median 85.9, 2026-11-08, scripts/ci_job_bounds_census.py).
     timeout-minutes: 160
     strategy:
       # One cell, the floor interpreter: the tagless-clone question (does a

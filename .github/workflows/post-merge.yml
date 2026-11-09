@@ -22,7 +22,7 @@ permissions:
 
 # No concurrency group, on purpose: each push's run proves its own tip to the
 # end, beside the next one. A run takes about an hour (median 59 minutes over
-# the last 20 greens, 2026-11-09) and merges can land
+# the last 20 greens, 2026-11-08) and merges can land
 # closer together than that, so cancelling the older run on a newer push left
 # main with no verdict through whole stretches (DEF-2015: 8 of 23 runs cancelled
 # on 2026-10-15), and a red then named every merge since the last green. A group
@@ -33,7 +33,7 @@ jobs:
   full-tier:
     runs-on: ubuntu-latest
     # DEF-1178's rule, re-measured by scripts/ci_job_bounds_census.py: 1.5x the
-    # worst of the last 20 green runs, 70.7 min (median 59.0, 2026-11-09), where
+    # worst of the last 20 green runs, 70.7 min (median 59.0, 2026-11-08), where
     # the 75 this replaced cut 2 runs with no verdict.
     timeout-minutes: 110
     steps:

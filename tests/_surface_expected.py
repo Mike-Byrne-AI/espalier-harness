@@ -245,8 +245,8 @@ EXPECTED_SCRIPT_NAMES = frozenset({  # class: literal
     "record_snapshot.py",
     "check_pack_landing.py",
     "check_handoff_landing.py",
-    # 2026-11-09: each CI job's timeout-minutes against its last 20 green runs,
-    # the re-measure DEF-1178's bounds lacked (post-merge's 75 cut 4 of 21 runs).
+    # 2026-11-08: each CI job's timeout-minutes against its last 20 green runs,
+    # the re-measure DEF-1178's bounds lacked (post-merge's 75 cut 2 of its last 22).
     "ci_job_bounds_census.py",
     "derived_population_census.py",
     "final_release_matrix.py",

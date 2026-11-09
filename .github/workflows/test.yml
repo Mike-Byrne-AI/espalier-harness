@@ -103,9 +103,10 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     # A hang the per-test ceiling cannot reach ends here, not at GitHub's
-    # 360-minute default (DEF-1178): 1.5x the worst of the last 20 green runs,
-    # 57.2 min (median 37.8, 2026-11-09, scripts/ci_job_bounds_census.py).
-    timeout-minutes: 90
+    # 360-minute default (DEF-1178): 1.5x the worst cell of the last 20 green
+    # runs, 74.5 min over 75 cells (median 43.0, 2026-11-09,
+    # scripts/ci_job_bounds_census.py), where the 75 before it cut a cell.
+    timeout-minutes: 115
     strategy:
       # A LITERAL four-cell list, never a `${{ }}` expression: branch protection
       # matches check-run names, the release checklist requires `test (3.11)`
@@ -317,7 +318,7 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     # The `test` cells' leg on one interpreter, measured on its own: 1.5x the
-    # worst of its last 20 green runs, 58.0 min (2026-11-09, the bounds census).
+    # worst of its last 20 green runs, 58.5 min (2026-11-09, the bounds census).
     timeout-minutes: 90
 
     steps:

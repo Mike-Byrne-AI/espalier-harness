@@ -542,27 +542,61 @@ class TestTheBoundsCensusReadsWhatTheWorkflowsDeclare:
         assert census.needed_bound(50.0, 1.5) == 75
         assert census.needed_bound(50.1, 1.5) == 80
 
-    def test_a_green_is_measured_and_only_a_cancel_at_the_bound_is_a_cut(self, monkeypatch):
-        """Dies to counting a red or an early cancel as a cut, or a red as a green."""
-        census = _census()
+    def test_a_cut_at_the_present_bound_is_never_ok(self):
+        """Dies to a verdict read from the greens alone: a bound that kills every slow
+        run keeps the greens short, so the rule's bound sits at or under it while
+        runs are lost. A cut under an older, lower bound reads ok once the bound is
+        above it (post-merge's 75.9-minute cuts under its raised 110)."""
+        v = _census().verdict
+        assert v(75, 75, 75.2, 20, 20) == "CUT"
+        assert v(110, 110, 75.9, 20, 20) == "ok"
+        assert v(90, 115, None, 20, 20) == "RAISE"
+        assert v(90, 115, 90.0, 20, 20) == "RAISE"
 
-        def job(name, conclusion, start, end):
-            return {"name": name, "conclusion": conclusion,
-                    "startedAt": f"2026-11-08T{start}:00Z", "completedAt": f"2026-11-08T{end}:00Z"}
+    def test_the_verdict_names_a_thin_read_an_unread_one_and_no_green(self):
+        """Dies to a short window read as ok, or an unread or green-less job read as ok."""
+        v = _census().verdict
+        assert v(40, 20, None, 12, 20) == "thin"
+        assert v(40, 20, None, 20, 20) == "ok"
+        assert v(30, None, None, 0, 20) == "no green"
+        assert v(30, 20, None, 20, 20, unread=-1) == "unread"
 
-        views = {
-            1: [job("full-tier", "success", "01:00", "02:00")],
-            2: [job("full-tier", "cancelled", "03:00", "04:15")],
-            3: [job("full-tier", "cancelled", "05:00", "05:10")],
-            4: [job("full-tier", "failure", "06:00", "07:30")],
-        }
-
+    def _measure(self, census, monkeypatch, views, runs=20):
         def fake_gh(args, repo):
             if args[:2] == ["run", "list"]:
                 return [{"databaseId": i, "status": "completed"} for i in views]
             return {"jobs": views[int(args[2])]}
 
         monkeypatch.setattr(census, "gh_json", fake_gh)
-        out = census.measure("post-merge.yml", {"full-tier": {"bound": 75, "name": None}}, 20, 60, None)
-        assert out["full-tier"]["greens"] == [60.0]
-        assert out["full-tier"]["cuts"] == 1
+        jobs = {"full-tier": {"bound": 110, "name": None}, "test": {"bound": 90, "name": None}}
+        return census.measure("x.yml", jobs, runs, 60, None)
+
+    @staticmethod
+    def _job(name, conclusion, start, end):
+        return {"name": name, "conclusion": conclusion,
+                "startedAt": f"2026-11-08T{start}:00Z", "completedAt": f"2026-11-08T{end}:00Z"}
+
+    def test_a_cut_is_a_cancel_longer_than_the_worst_green_whatever_the_bound(self, monkeypatch):
+        """Dies to counting a red or an early cancel as a cut, a red as a green, or
+        judging a cut by today's bound (a 75-minute cut must still read after a raise)."""
+        census, job = _census(), self._job
+        views = {
+            1: [job("full-tier", "success", "01:00", "02:00")],
+            2: [job("full-tier", "cancelled", "03:00", "04:15")],
+            3: [job("full-tier", "cancelled", "05:00", "05:10")],
+            4: [job("full-tier", "failure", "06:00", "07:30")],
+        }
+        out = self._measure(census, monkeypatch, views)["full-tier"]
+        assert out["greens"] == [60.0] and out["green_runs"] == 1
+        assert out["cuts"] == 1 and out["cut_max"] == 75.0
+
+    def test_a_matrix_runs_cells_are_one_run_toward_the_count(self, monkeypatch):
+        """Dies to a cap that counts cells: four green cells a run must read two runs
+        as eight cells, never as two runs' worth of a five-run window."""
+        census, job = _census(), self._job
+        views = {i: [job(f"test (3.1{c})", "success", "01:00", f"01:{10 * i + c:02d}") for c in range(4)]
+                 for i in (1, 2, 3)}
+        out = self._measure(census, monkeypatch, views, runs=2)["test"]
+        assert out["green_runs"] == 2
+        assert len(out["greens"]) == 8
+        assert max(out["greens"]) == 23.0
