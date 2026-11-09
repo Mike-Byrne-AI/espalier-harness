@@ -1693,8 +1693,11 @@ _MUTATING_TOOLS = ("Write", "Edit", "NotebookEdit")  # shared by both predicates
 
 # CP-GATEWEAKEN -- the keystone. A weakened blocking-hook deny
 # path goes green-local and rides to merge INVISIBLY. It must fire under
-# MAINTENANCE_MODE (the speed-bump call site precedes write_guard's maintenance
-# gate), the exact session class where guard edits arrive in bursts.
+# MAINTENANCE_MODE (write_guard skips only its protected-zone checks there, and
+# the speed-bump call site precedes its maintenance return), the exact session
+# class where guard edits arrive in bursts. Outside maintenance the zone checks
+# run first (DEF-986), so an edit of a guard file in the zone meets that wall
+# and this bump fires only on a target the zone check passes.
 # The predicate is a SYNTACTIC pre-edit proxy: the deny
 # count-delta is NOT cheaply computable at PreToolUse (the edit has not applied),
 # so we fire when `new_string` REMOVES / replaces a deny token relative to
@@ -1805,8 +1808,8 @@ CP_GATEWEAKEN = SpeedBump(
     cap_exempt=True,            # NEVER budget-suppressed (the keystone)
     flag_key=_gateweaken_key,   # per-file one-shot
     # fires_in_maintenance is left at its default: the "fires under MAINTENANCE"
-    # property comes from the write_guard call-site ordering (pre-maintenance
-    # gate), NOT this field, which check() does not consult.
+    # property comes from the write_guard call-site ordering (ahead of its
+    # maintenance return), NOT this field, which check() does not consult.
 )
 
 
