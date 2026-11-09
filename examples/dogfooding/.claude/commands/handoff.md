@@ -153,9 +153,10 @@ Update only durable repo operating knowledge:
 - next session entry point (name the lane, not a pull request number: where
   `handoff_push` is on, the pull request is opened after this row is written,
   by step 8's push, and the next SessionStart banner's `Open PRs:` line names
-  it, unless the lane already merged and carries only this row, which step 8
-  parks instead; where it is off, nothing is pushed and no pull request will
-  appear, so say the lane is committed locally)
+  it, unless the lane already merged and carries only this row, or its pull
+  request is already open and this row is all the handoff adds to it, either
+  of which step 8 parks instead; where it is off, nothing is pushed and no pull
+  request will appear, so say the lane is committed locally)
 
 Keep the row compact: it is one line, and the digest shows its bold headline.
 
@@ -666,9 +667,11 @@ python tools/cc/ship.py handoff
   branch, the push, the pull request with the approval marker bound at
   creation, auto-merge armed and read back (`/ship` documents each verb). If
   the lane already has an open pull request (it was shipped mid-session with
-  `open --early`), the verb pushes this commit onto it and re-binds the marker
-  to the new head -- the memory row must land, not sit local while the pull
-  request merges without it. On a red base the verb refuses as `open` does, a
+  `open --early`, or an earlier window opened it), the verb pushes what this
+  handoff adds onto it and re-binds the marker to the new head -- the memory
+  row must land, not sit local while the pull request merges without it --
+  unless what it adds is Session Log rows alone, which it parks (below). On a
+  red base the verb refuses as `open` does, a
   `revert/` lane excepted; where the dispatcher ruled the red a fix-forward,
   `handoff --base-red-ruled <ack id>` lands the lane on that ruling (`/ship`
   step 2). While this seat has another pull request open, a lane never pushed
@@ -690,18 +693,28 @@ python tools/cc/ship.py handoff
   probe) refuses the push, the lane unpushed and no own-clear armed, until it
   is read and, where it is the lane's own, `handoff --allow-deletions "<why>"`
   says why.
-  **A lane that already merged** (no open pull request, and nothing in its diff
-  with the base but Session Log rows it added) opens no pull request for the
-  row alone: the verb parks the committed row on this seat's records ref
+  **A handoff that carries rows alone** parks them instead of pushing: the
+  verb parks each committed row on this seat's records ref
   (`refs/heads/records/<seat>`, the mail channel's compare-and-swap commit) and
-  moves the branch back to its merge base with the base (`reset --keep`; the
-  row's commit, printed, is on the ref and in the reflog), so the next
-  SessionStart catches this checkout up. The next lane's push, any seat's,
-  folds the row into the base. Until that fold, the banner's recent rows, which
-  read the tree, show it to no seat, this one's next session included; say so
-  in the `Next:` line. A lane that edits or renames a row, a seat with no name,
-  or a park origin refuses opens the pull request as before, and the verb says
-  why.
+  moves the branch back (`reset --keep`; the row's commit, printed, is on the
+  ref and in the reflog). Two shapes. **A lane that already merged** (no open
+  pull request, and nothing in its diff with the base but Session Log rows it
+  added) opens no pull request for the row alone and moves back to its merge
+  base with the base, so the next SessionStart catches this checkout up. **A
+  lane whose pull request is open**, where the commits since `origin/<branch>`
+  (the pull request's head, fetched now) are rows it added and nothing else,
+  pushes nothing onto it, so its running checks are not cancelled and
+  restarted for a record, and moves back to `origin/<branch>`; the merge-first
+  and the fold above do not run, since each is a push, and the lane's claims
+  are released as the push would have released them. A lane that conflicts
+  with its base is the exception: it needs the merge-first push to merge at
+  all, so a run that push cancels could not have landed it, and the rows ride
+  that push as before. Either way the next lane's push, any seat's, folds the
+  rows into the base. Until that fold, the banner's recent rows, which read
+  the tree, show them to no seat, this one's next session included; say so in
+  the `Next:` line. A lane that edits or renames a row, a seat with no name, a
+  pull request's head that cannot be fetched, or a park origin refuses takes
+  the push as before, and the verb says why.
 - **Off (the default):** nothing is pushed. The commit stays on this branch in
   this checkout, and the verb prints how to push it (`/ship`) and how to opt in.
   Say so in the summary: the next session here reads the row while it stays on

@@ -1565,23 +1565,42 @@ def fold(dry_run: bool = False) -> int:
     return 0
 
 
-def _park_the_row(root: Path, base: str, *, dry_run: bool = False) -> bool:
-    """A handoff-only lane -- no open pull request, and nothing in its diff with
-    ``origin/<base>`` but Session Log rows -- parks the rows it added on this
-    seat's records ref (``mail.park``) instead of opening a pull request for
-    them alone: seven such pull requests in two days before this (DEF-5007).
-    Only rows added: a lane that edits or renames a row keeps today's path, so
-    the change reaches a pull request (a park carries additions alone). The
-    blob parked is the committed one (``HEAD:<path>``). Once every row is parked
-    the branch moves back to its merge base with the base (``reset --keep``):
-    the commits held nothing but those rows, now on origin's records ref, and a
-    commit left ahead held the next SessionStart's catch-up on this lane and
-    passed the --early question as a row of this lane's (both reviews). The
-    dropped head is printed. True when parked. Any other lane, a seat with no
-    name or one git could not read, or a park origin refused, keeps today's path
-    and says why."""
+def _park_the_row(root: Path, base: str, *, dry_run: bool = False, branch: str | None = None,
+                  number: object = None) -> bool:
+    """A handoff that carries Session Log rows alone parks the rows it added on
+    this seat's records ref (``mail.park``) instead of pushing them: the next
+    lane's push, any seat's, folds them in. Two shapes. With no pull request
+    open (``branch`` None), the lane already merged and nothing in its diff
+    with ``origin/<base>`` is anything else: no pull request is opened for the
+    row alone (seven such in two days before this). With one open for
+    ``branch`` (``number``), the commits since ``origin/<branch>``, the pull
+    request's head read fresh, are the rows: nothing is pushed onto it, so its
+    running checks are not cancelled and restarted for a record, and a lane
+    that conflicts with its base is left to today's path, whose merge-first
+    push the pull request needs to merge at all (a run that push cancels could
+    not have landed it). Only rows added: a lane that edits or renames a row
+    keeps today's path, so the change reaches a pull request (a park carries
+    additions alone). The blob parked is the committed one (``HEAD:<path>``).
+    Once every row is parked the branch moves back (``reset --keep``) to its
+    merge base with the base, or to ``origin/<branch>``: the commits held
+    nothing but those rows, now on origin's records ref, and a commit left
+    ahead held the next SessionStart's catch-up on this lane, passed the
+    --early question as a row of this lane's (both reviews), and read as
+    unpushed to the Stop hook's handoff gate. Never the base's merge base with
+    a pull request open: that would drop the lane's own commits. The dropped
+    head is printed. True when parked. Any other lane, a seat with no name or
+    one git could not read, a remote head that cannot be fetched, or a park
+    origin refused, keeps today's path and says why."""
     _git("fetch", "origin", base, "--quiet", cwd=str(root))
-    rc, out, _ = _git("diff", "--name-status", "--no-renames", f"origin/{base}...HEAD", cwd=str(root))
+    since = f"origin/{base}"
+    if branch is not None:
+        # The pull request's head as origin holds it now: a stale tracking ref
+        # would let a pushed commit read as one of the rows, or the reset land
+        # behind origin.
+        if _git("fetch", "origin", branch, "--quiet", cwd=str(root))[0] != 0:
+            return False
+        since = f"origin/{branch}"
+    rc, out, _ = _git("diff", "--name-status", "--no-renames", f"{since}...HEAD", cwd=str(root))
     if rc != 0 or not out.strip():
         return False
     entries = [ln.split("\t", 1) for ln in out.splitlines() if ln.strip()]
@@ -1589,14 +1608,25 @@ def _park_the_row(root: Path, base: str, *, dry_run: bool = False) -> bool:
            for e in entries):
         return False
     added = [e[1].replace("\\", "/") for e in entries]
+    where = "opening a pull request for it" if branch is None else f"pushing it onto #{number}"
+    if branch is not None:
+        reasons = _merge_first_reasons(root, f"origin/{base}")
+        if reasons:
+            _say(f"the commits since {since} carry only Session Log rows, but the lane conflicts with "
+                 f"origin/{base} ({', '.join(reasons)}): the base is merged in first and the rows ride that "
+                 "push, which the pull request needs to merge at all")
+            return False
     mail = _mail_module()
     if mail is None:
-        _note("tools/cc/mail.py is not beside this script, so the row is not parked: opening a pull request "
-              "for it, as before")
+        _note(f"tools/cc/mail.py is not beside this script, so the row is not parked: {where}, as before")
         return False
     if dry_run:
-        _say(f"dry-run: park {', '.join(added)} on this seat's records ref and move this branch back to its "
-             f"merge base with origin/{base}; no pull request")
+        if branch is None:
+            _say(f"dry-run: park {', '.join(added)} on this seat's records ref and move this branch back to its "
+                 f"merge base with origin/{base}; no pull request")
+        else:
+            _say(f"dry-run: park {', '.join(added)} on this seat's records ref and move this branch back to "
+                 f"{since}, #{number}'s head; nothing pushed")
         return True
     fragments = _fragments_module()
     trailer = getattr(fragments, "FOLD_TRAILER", "") if fragments is not None else ""
@@ -1608,9 +1638,25 @@ def _park_the_row(root: Path, base: str, *, dry_run: bool = False) -> bool:
             except TypeError:   # a kept, older channel without the trailer: the first rule
                 mail.park(root, rel, None, f"origin/{base}", from_rev="HEAD", say=_say)
     except (mail.Unresolvable, OSError) as exc:
-        _note(f"the row was not parked ({os_error_text(exc)}): opening a pull request for it, as before")
+        _note(f"the row was not parked ({os_error_text(exc)}): {where}, as before")
         return False
     head = _git("rev-parse", "HEAD", cwd=str(root))[1].strip()
+    if branch is not None:
+        rc, target, _ = _git("rev-parse", "--verify", "--quiet", f"{since}^{{commit}}", cwd=str(root))
+        target = target.strip() if rc == 0 else ""
+        moved = bool(target) and _git("reset", "--keep", "--quiet", target, cwd=str(root))[0] == 0
+        _say(f"Nothing pushed onto #{number}: the commits since {since} carry only Session Log rows, now "
+             f"parked on this seat's records ref, so its running checks are not restarted for a record. The "
+             f"next lane's push, any seat's, folds them into {base}; until then the banner's recent rows, "
+             f"which read the tree, show them to no seat, this one's next session included.")
+        if moved:
+            _say(f"This branch moved back to {since} ({target[:7]}), #{number}'s head; the row's commit, "
+                 f"{head[:7]}, is on the records ref (and in this checkout's reflog).")
+        else:
+            _note(f"this branch could not be moved back to {since}: the row's commit {head[:7]} stays ahead, "
+                  f"so the Stop hook's handoff gate reads it as unpushed until you move it "
+                  f"(`git reset --keep {since}`)")
+        return True
     rc, merge_base, _ = _git("merge-base", f"origin/{base}", "HEAD", cwd=str(root))
     moved = rc == 0 and bool(merge_base.strip()) and \
         _git("reset", "--keep", "--quiet", merge_base.strip(), cwd=str(root))[0] == 0
@@ -2428,6 +2474,18 @@ def _refuse_a_marked_record(root: Path) -> None:
         raise Refused(refusal)
 
 
+def _merge_first_reasons(root: Path, ref: str) -> list[str] | None:
+    """The paths that make a merge of ``ref`` into HEAD one to make here
+    before a push: those it would conflict on, and those carrying a merge
+    attribute changed on both sides (GitHub's merge honours no driver).
+    ``[]`` when it merges clean on GitHub too; None when git cannot say."""
+    names = record_merge.probe_conflicts(root, ref, run=RUN)
+    driven = record_merge.attribute_merged_paths(root, ref, run=RUN)
+    if names is None and not driven:
+        return None
+    return sorted(set(names or []) | set(driven))
+
+
 def _merge_base_first(root: Path, base: str, *, dry_run: bool) -> None:
     """Before a push: when a merge of ``origin/<base>`` into HEAD would
     conflict, make that merge here, with the record files resolved by shape,
@@ -2443,13 +2501,11 @@ def _merge_base_first(root: Path, base: str, *, dry_run: bool) -> None:
     back. ``catch-up`` is the verb that refuses, since it exists to clear the
     hold."""
     ref = f"origin/{base}"
-    names = record_merge.probe_conflicts(root, ref, run=RUN)
-    driven = record_merge.attribute_merged_paths(root, ref, run=RUN)
-    if names is None and not driven:
+    reasons = _merge_first_reasons(root, ref)
+    if reasons is None:
         _note(f"could not probe the merge with {ref} (git 2.38+ has `merge-tree --write-tree`, and the "
               "ref must be fetched); a lane that conflicts reads DIRTY on GitHub -- then run catch-up")
         return
-    reasons = sorted(set(names or []) | set(driven))
     if not reasons:
         return
     if dry_run:
@@ -3277,6 +3333,15 @@ def _handoff_push(title: str | None, body_file: str | None, dry_run: bool,
     if pr is None:
         return open_pr(title=title, body_file=body_file, dry_run=dry_run, base_red_ruled=base_red_ruled,
                        allow_deletions=allow_deletions)
+    # A handoff whose commits since the pull request's head are rows alone
+    # parks them rather than push a record onto the lane's running checks:
+    # ahead of the merge-first and the fold below, each a push that cancels.
+    if _park_the_row(root, str(pr.get("baseRefName") or base), dry_run=dry_run, branch=branch,
+                     number=pr.get("number")):
+        if not dry_run:
+            _release_claims(root, branch, "Handoff parked its rows; the lane is on its open pull request; "
+                                          "claims closed.")
+        return 0
     behind = _origin_ahead_refusal(branch, str(root))
     if behind:
         raise Refused(behind)

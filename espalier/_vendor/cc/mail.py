@@ -97,10 +97,11 @@ REMOTE = "origin"
 REF_PREFIX = "refs/heads/mail/"
 REMOTE_REF_PREFIX = "refs/remotes/origin/mail/"
 MAIL_FILE = "mail.jsonl"
-#: Each machine's parked records: a handoff with no open pull request leaves its
-#: Session Log row here, under the path it has in the tree, and the next lane's
-#: push folds it in (``tools/cc/ship.py``). Written by that machine alone, by the
-#: same compare-and-swap commit as its mail.
+#: Each machine's parked records: a handoff that adds Session Log rows alone
+#: (its lane already merged, or its pull request is open and the rows are all
+#: it adds) leaves them here, under the path each has in the tree, and the
+#: next lane's push folds them in (``tools/cc/ship.py``). Written by that
+#: machine alone, by the same compare-and-swap commit as its mail.
 RECORDS_PREFIX = "refs/heads/records/"
 REMOTE_RECORDS_PREFIX = "refs/remotes/origin/records/"
 #: Where this box remembers the last message it read from each other box
@@ -2235,9 +2236,10 @@ def park(root: Path, path: str, data: bytes | None, base_ref: str, *, from_rev: 
          run: Runner = run, say: Callable[[str], None] = print, timeout: float = DEFAULT_TIMEOUT,
          trailer: str = "") -> str:
     """Leave ``data`` at ``path`` on this machine's records ref and push it: a
-    handoff with no open pull request parks its Session Log row here instead of
-    opening a pull request for the row alone (``tools/cc/ship.py``), and the
-    next lane's push folds it in. ``from_rev`` parks the blob committed at
+    handoff that adds Session Log rows alone parks each here instead of opening
+    a pull request for it, or pushing it onto the lane's open one
+    (``tools/cc/ship.py``), and the next lane's push folds it in. ``from_rev``
+    parks the blob committed at
     ``<from_rev>:<path>`` instead, byte for byte (a working-tree read would
     carry a checkout's CRLF). The ref keeps what is still pending: each park
     drops the rows ``base_ref``'s tree holds or its history pruned under

@@ -327,8 +327,9 @@ is read on its own, and one that cannot be read says so on its own line:
   stamps the label at the open) are counted apart on a last line, never as a
   seat's zero.
   An unnamed clone says so instead. The row goes through
-  `python tools/cc/_record_fragments.py new session-log`; where the handoff's
-  lane already merged, the row parks on the seat's records ref and the
+  `python tools/cc/_record_fragments.py new session-log`; where the handoff
+  adds its row alone (its lane already merged, or its pull request is open and
+  the row is all the handoff adds), the row parks on the seat's records ref and the
   landing check's cap note says how many are parked until a push folds them
   in. A read that fails is `unread`, never `0 merges`.
 - **asks:** the requests no `ack` names, from every seat, oldest first, each
