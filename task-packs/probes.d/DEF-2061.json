@@ -7,7 +7,8 @@
  "inputs": [
   "tools/cc/hooks/_bash_patterns.py"
  ],
- "row_sha": "6a1f3dc4d089",
- "text_sha": "65044da8da49",
- "verified_2026_11_08": "OPEN (filed 2026-11-08; probe driven at filing here and in the export of HEAD 70aba7efa6ec)"
+ "row_sha": "66f013b6570e",
+ "text_sha": "2de31a153093",
+ "verified_2026_11_08": "OPEN (filed 2026-11-08; probe driven at filing here and in the export of HEAD 70aba7efa6ec)",
+ "verified_2026_11_09": "STILL_OPEN (text widened 2026-11-09 with sudo -D, moved from DEF-4069 at its strike, ruling c825b4; probe driven at 8f8d604d, value unchanged)"
 }
