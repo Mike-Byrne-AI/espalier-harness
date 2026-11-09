@@ -262,8 +262,12 @@ way or rename a seat that has a name. On the dispatcher
 seat (the machine `dispatcher` in `espalier.toml` names) the line also carries
 how many requests no ack answers yet, from any seat, and how old the oldest is
 (`2 unanswered asks (requests no ack names), oldest 3 h ago: /inbox board
-lists them`), counted from the refs already read with no spawn; a reader that
-fails costs that count and never the headlines. Reporter only, like the two
+lists them`), counted from the refs already read with no spawn; the workers'
+stops and the questions to the operator are counted apart, as the board's
+`asks:` header counts them (`3 unanswered asks, 1 stopped, 2 operator calls
+(requests no ack names), ...`), where the deployed `mail.py` has the two
+classifiers (an older one gives the count alone); a reader that fails costs
+that count and never the headlines. Reporter only, like the two
 lines above it. The compaction re-orient carries an unread count from the
 local refs with no fetch.
 

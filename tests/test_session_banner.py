@@ -3985,6 +3985,100 @@ class TestMailLine:
         assert line == 'win: note -- "hello"\n' + mod._PR_INDENT + mod._MAIL_TAIL
         assert mod._hook_utils.take_advisories() == []
 
+    _SPLIT = [{"id": "r1", "type": "request", "text": "OPERATOR CALL: which first?", "age_s": 2 * 86400 + 60},
+              {"id": "r2", "type": "request", "text": "stopped: a refusal I cannot resolve", "age_s": 3600},
+              {"id": "r3", "type": "request", "text": "OPERATOR CALL: a second question", "age_s": 600},
+              {"id": "r4", "type": "request", "text": "please look at the fixture", "age_s": 120}]
+
+    def test_the_stops_and_operator_calls_are_counted_apart_as_the_board_counts_them(self, tmp_path):
+        """The dispatcher's banner read "7 unanswered asks" while the board's
+        asks header counted all 7 as operator calls: the banner hid which open
+        asks were the operator's to rule. The classifiers are the real
+        mail.py's, so the prefixes are read as the board reads them. Dies to:
+        the count read without the classifiers, or in another order or word
+        than the board's header."""
+        mod, real = _load(), _real_mail()
+        stub, _ = self._asks_stub("mac", live_requests=lambda by: self._SPLIT,
+                                  is_stop=real.is_stop, is_operator_call=real.is_operator_call)
+        line = mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=stub)
+        assert line == ("4 unanswered asks, 1 stopped, 2 operator calls (requests no ack names), "
+                        "oldest 2 d ago: /inbox board lists them")
+        one, _ = self._asks_stub("mac", live_requests=lambda by: self._SPLIT[:1],
+                                 is_stop=real.is_stop, is_operator_call=real.is_operator_call)
+        assert mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=one) == (
+            "1 unanswered ask, 1 operator call (requests no ack names), oldest 2 d ago: /inbox board lists them")
+        plain, _ = self._asks_stub("mac", is_stop=real.is_stop, is_operator_call=real.is_operator_call)
+        assert mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=plain) == (
+            "2 unanswered asks (requests no ack names), oldest 2 d ago: /inbox board lists them"), \
+            "no stop and no call adds nothing to the count"
+
+    def test_a_mail_module_with_one_classifier_counts_that_one(self, tmp_path):
+        """A deployed mail.py from between the two classifiers (the operator
+        call came first): the calls are counted apart, the stop rides the
+        total, and quietly. Dies to: one getattr guarding both readers, which
+        would drop the calls with the stop, or the stop reader reached
+        unguarded, which the count's own guard would report each session."""
+        mod, real = _load(), _real_mail()
+        stub, _ = self._asks_stub("mac", live_requests=lambda by: self._SPLIT,
+                                  is_operator_call=real.is_operator_call)
+        mod._hook_utils.take_advisories()
+        line = mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=stub)
+        assert line == ("4 unanswered asks, 2 operator calls (requests no ack names), "
+                        "oldest 2 d ago: /inbox board lists them")
+        assert mod._hook_utils.take_advisories() == []
+
+    def test_the_split_reads_the_real_modules_fold(self, tmp_path):
+        """The stubbed tests pin the rendering; this one feeds the real
+        mail.py's fold and classifiers end to end, so a stored text the
+        classifiers read otherwise than the stubs (a stripped prefix, a type
+        field renamed) cannot leave the banner counting nothing apart under
+        green stubs. An answered call is no longer counted."""
+        import re
+        import types
+        from datetime import datetime, timezone
+
+        real = _real_mail()
+        t = datetime(2026, 10, 1, 12, 0, 0, tzinfo=timezone.utc)
+        call = real.new_message("mac", "request", "OPERATOR CALL: which lane first?", now=t)
+        ruled = real.new_message("mac", "request", "OPERATOR CALL: an old question", now=t)
+        stop = real.new_message("win", "request", "stopped: a conflict outside my files", now=t)
+        plain = real.new_message("win", "request", "please look", now=t)
+        ack = real.new_message("mac", "ack", "ruled", ack=ruled["id"], now=t)
+        by_machine = {"win": [stop, plain], "mac": [call, ruled, ack]}
+        stub = types.SimpleNamespace(
+            machine_setting=lambda root, timeout=None: ("mac", "named"),
+            dispatcher_setting=lambda root: ("mac", "named"),
+            fetch_mail=lambda root, timeout: (True, ""),
+            read_mail=lambda root, timeout=None: (by_machine, {}),
+            read_cursor=lambda root: {}, unread=lambda by, cursor, exclude_machine: [],
+            headline=real.headline, live_requests=real.live_requests,
+            is_stop=real.is_stop, is_operator_call=real.is_operator_call)
+        line = _load()._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=stub)
+        assert re.fullmatch(r"3 unanswered asks, 1 stopped, 1 operator call \(requests no ack names\), "
+                            r"oldest \d+ d ago: /inbox board lists them", line), line
+
+    def test_every_kind_the_board_counts_apart_the_banner_reads_too(self):
+        """The two readers of the asks fold count alike by copy: twice a kind
+        joined the board's asks header and the banner lagged it (the operator
+        call for two weeks, then the stop). Read from the code, so a third
+        ``mail.is_*`` classifier the board reads reds here until the banner's
+        count reads it through getattr. Dies to: a kind added to the board
+        alone."""
+        import ast
+
+        board = ast.parse((HOOKS_DIR.parent / "board.py").read_text(encoding="utf-8"))
+        on_board = {n.attr for n in ast.walk(board)
+                    if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)
+                    and n.value.id == "mail" and n.attr.startswith("is_")}
+        hook = ast.parse((HOOKS_DIR / "session_start.py").read_text(encoding="utf-8"))
+        count = next(n for n in ast.walk(hook) if isinstance(n, ast.FunctionDef) and n.name == "_asks_count")
+        in_banner = {c.args[1].value for c in ast.walk(count)
+                     if isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == "getattr"
+                     and len(c.args) >= 2 and isinstance(c.args[1], ast.Constant)
+                     and str(c.args[1].value).startswith("is_")}
+        assert on_board, "the board's classifier reads were not found: the walk no longer reads it"
+        assert on_board <= in_banner, sorted(on_board - in_banner)
+
     def test_the_banner_carries_the_line_after_merged_only_when_given(self, tmp_path):
         mod = _load()
         assert "Mail:" not in mod._build_context(tmp_path, False, False)

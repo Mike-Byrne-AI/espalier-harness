@@ -4,14 +4,15 @@ rule it follows, because a green POSIX delete over a read-only file proves
 nothing about the Windows attribute the class is named for.
 
 The Windows read-only attribute cannot be produced on APFS, so the host-real
-arm here uses the POSIX shape of the same refusal: a directory without its
+arm on POSIX uses the POSIX shape of the same refusal: a directory without its
 write bit refuses the unlink of every child. The rule under test is "clear
 bits only on what you were asked to delete": a locked directory INSIDE a tree
 is cleared and the delete finishes; the tree's own parent, and a file's
 directory, are not ours and the delete reports instead. The Windows attribute
 itself (a refusal the file's own bit answers) was witnessed on 2026-09-26 on 3.12
-to 3.14 and has no test here yet (``DEF-934``); its retry logic is driven on any
-host through a fake ``func``.
+to 3.14, and ``TestTheWindowsAttribute`` drives it for real on Windows, where
+``portability.yml``'s windows-latest cell runs it (``DEF-934``); its retry logic
+is driven on any host through a fake ``func``.
 """
 from __future__ import annotations
 
@@ -115,6 +116,65 @@ class TestRemoveTreeOnTheHost:
         with pytest.raises(FileNotFoundError):
             _rmtree.remove_tree(tmp_path / "absent")
         _rmtree.remove_tree(tmp_path / "absent", best_effort=True)
+
+
+class TestTheWindowsAttribute:
+    """The Windows arm of the class, driven for real: the read-only attribute
+    on the file itself, the refusal the module is named for (DEF-934)."""
+
+    @pytest.mark.skipif(os.name != "nt", reason="the Windows arm: the read-only attribute refuses an unlink only there")
+    def test_a_bare_rmtree_refuses_and_the_helper_takes_the_tree_through_its_handler(
+        self, tmp_path, monkeypatch,
+    ):
+        """``_tree``'s ``os.chmod`` sets the real read-only attribute on
+        Windows, so the premise is asserted first: a bare ``shutil.rmtree``
+        raises ``PermissionError`` and leaves the read-only file. Then, on a
+        second tree, ``remove_tree`` deletes it, through the callback
+        spelling this interpreter takes (``onexc`` from 3.12, ``onerror``
+        before), and its handler fired on that file, so a green run here
+        proves the handler arm rather than a delete that never refused. Runs
+        only on Windows: ``portability.yml``'s windows-latest cell takes the
+        ``onexc`` arm (3.12) on a pull request that changes Python; a run
+        dispatched there with a newer ``python`` input takes it on 3.13 or
+        3.14."""
+        bare = _tree(tmp_path / "bare")
+        pack = _tree(tmp_path / "helper")
+        assert _rmtree._HAS_ONEXC == (sys.version_info >= (3, 12))
+        spelling = "onexc" if _rmtree._HAS_ONEXC else "onerror"
+        real_rmtree = shutil.rmtree
+        spellings: list[str] = []
+
+        def _rmtree_spy(path, **kwargs):
+            spellings.extend(k for k in ("onexc", "onerror") if k in kwargs)
+            return real_rmtree(path, **kwargs)
+
+        real_make_handler = _rmtree._make_handler
+        fired: list[tuple[str, BaseException]] = []
+
+        def _make_handler_spy(best_effort, root):
+            handler = real_make_handler(best_effort, root)
+
+            def _recorded(func, path, exc):
+                fired.append((path, exc))
+                return handler(func, path, exc)
+
+            return _recorded
+
+        try:
+            with pytest.raises(PermissionError):
+                shutil.rmtree(bare)
+            assert os.path.exists(bare / "a.pack"), "the bare call must leave the read-only file"
+            monkeypatch.setattr(shutil, "rmtree", _rmtree_spy)
+            monkeypatch.setattr(_rmtree, "_make_handler", _make_handler_spy)
+            _rmtree.remove_tree(pack)
+            assert not os.path.exists(pack)
+            assert spellings and set(spellings) == {spelling}, f"rmtree was handed {spellings}, not {spelling}"
+            refused = [(Path(p).name, type(e)) for p, e in fired]
+            assert refused == [("a.pack", PermissionError)], f"the handler fired on {refused}"
+        finally:
+            for leftover in (bare / "a.pack", pack / "a.pack"):
+                if os.path.exists(leftover):
+                    os.chmod(leftover, stat.S_IWRITE | stat.S_IREAD)
 
 
 def _shut_tree(root: Path) -> Path:
