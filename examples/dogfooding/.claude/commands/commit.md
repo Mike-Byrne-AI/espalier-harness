@@ -162,8 +162,10 @@ sets it to `true`):
   commits, and runs the ship driver as its last step, so this commit and the
   handoff's ride one push, one pull request, one check cycle. Offer `/ship` now
   only when the next lane needs this merge before the session ends, and name the
-  cost: the handoff's row then becomes a second push on the lane (the checks
-  restart and the marker is re-bound) or its own pull request.
+  cost: the handoff's row then parks on the seat's records ref, read by no
+  banner until the next lane's push folds it in, or, where the handoff adds
+  more than its row, is a second push on the lane (the checks restart and the
+  marker is re-bound).
 - **Off** (absent or `false`): `/handoff` pushes nothing, so `/ship` is how this lane is pushed,
   whenever the operator chooses. Offer it; do not say the handoff will push.
 Never offer to ship a commit the landing check redded. `/ship` moves the

@@ -309,7 +309,7 @@ After `espalier init .`, the typical session flow is:
 4. **`/preflight`** — full pre-PR gate (lint + tests + surface audit + reflect)
 5. **`/commit`** — review changes, run risk check, stage and commit
 6. **`/handoff`** — end of session: finalize blueprint, write the Session Log row, then the lane's one push through the ship driver
-7. **`/ship`** — the same push on its own, for a lane the next one needs merged before the session ends: a pull request with the marker bound at creation, auto-merge armed (`--release vX.Y.Z` tags the merge commit). A lane pushed before the handoff costs a second push for the handoff's row.
+7. **`/ship`** — the same push on its own, for a lane the next one needs merged before the session ends: a pull request with the marker bound at creation, auto-merge armed (`--release vX.Y.Z` tags the merge commit). A lane pushed before the handoff leaves the handoff's row parked until the next lane's push folds it, or costs a second push where the handoff adds more than its row.
 
 Less-frequent helpers (`/scan`, `/test-this`, `/audit-accuracy`,
 `/integrity`, `/scope-check`) come up during maintenance, audits, or

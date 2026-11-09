@@ -36,10 +36,12 @@ print a Python 3 version, try the other interpreter name, then the launcher's
   refuses a lane whose commits carry no Session Log row -- no new file under
   `memory/session-log.d/` and no change to `ESPALIER_MEMORY.md` -- unless given
   `--early "<reason>"`, because the
-  handoff's row then becomes a second push on the lane (a check cycle restarted
-  and a marker re-bound), or, where the lane merges before the session ends,
-  a row the handoff parks on the seat's records ref for the next lane's push
-  to fold in (no pull request for the row alone). A row a fold brought in is
+  handoff's row then reaches the base late: a handoff that adds rows alone
+  parks them on the seat's records ref for the next lane's push to fold in,
+  whether the lane's pull request is still open or has merged (no push onto
+  it and no pull request for the row alone), and no banner reads a parked row
+  until that fold; a handoff that adds more than rows is a second push on the
+  lane (a check cycle restarted and a marker re-bound). A row a fold brought in is
   another session's and does not count as this lane's. Past 3 lanes shipped
   since this seat's newest Session Log row (on the base, parked, riding its
   open pull request, or pruned and read from the base's history), `open
@@ -51,9 +53,11 @@ print a Python 3 version, try the other interpreter name, then the launcher's
 
 `/handoff`'s last step is one verb that reads the setting and either makes that
 push (the `lane` and `open` steps below, or a push and a re-bind onto a pull
-request already open) or says why it did not -- including, when the setting is
-off and a pull request is open, that it will merge without the handoff's commit.
-Whichever way it went -- the push landed, or a refusal this window is done with
+request already open), parks a handoff that adds Session Log rows alone (on the
+seat's records ref, with no push: `/handoff` step 8) or says why it did not --
+including, when the setting is off and a pull request is open, that it will
+merge without the handoff's commit.
+Whichever way it went -- the push landed or the rows parked, or a refusal this window is done with
 (the base red, or this seat's other pull request open: the lane stays here,
 whole; or a step after a landed push refused), with that refusal in the marker
 and the lane to land first in the

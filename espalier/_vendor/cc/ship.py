@@ -718,8 +718,10 @@ def _lane_added_rows(root: Path, base: str) -> list[str] | None:
 def _second_push_message(how: str) -> str:
     return (f"{how}, and this lane's commits carry no Session Log row (no change to ESPALIER_MEMORY.md "
             f"and no new file under {SESSION_LOG_DIR}): /handoff writes the row and ships the lane once. "
-            "To ship before it, pass --early \"<reason>\" to `open` (the handoff's row then becomes a "
-            f"second push on this lane); past {ROW_DEBT_CAP} lanes shipped since this seat's newest Session Log "
+            "To ship before it, pass --early \"<reason>\" to `open` (the handoff's row then parks on this "
+            "seat's records ref, read by no banner until the next lane's push folds it, or, where the handoff "
+            f"adds more than rows, is a second push on this lane); past {ROW_DEBT_CAP} lanes shipped since this "
+            "seat's newest Session Log "
             "row, --early is refused until a row is committed on the lane (the cap)")
 
 
@@ -1281,30 +1283,40 @@ def _ensure_seat_label(root: Path, label: str) -> str:
     return label
 
 
-def stale_base_line(root: Path, base: str, pr: dict) -> str:
-    """The stale-base advisory for an open pull request, or "" when its green
-    stands: the up-to-date rule is on (GitHub holds a stale lane itself), the
-    base has not moved since the CI ran, or it moved away from this pull
-    request's files and their imports (``_merge_rules.stale_base``). A read
-    that fails is said."""
+def stale_base_read(root: Path, base: str, pr: dict) -> dict | str | None:
+    """The read behind :func:`stale_base_line`, apart so a caller can key on
+    the result: None where the up-to-date rule is on (GitHub holds a stale
+    lane itself), the reason where a read failed, else
+    ``_merge_rules.stale_base``'s result, whose ``near`` names each meeting."""
     head = str(pr.get("headRefOid") or "")
     branch = str(pr.get("headRefName") or "") or current_branch()
     try:
         rc, out, _ = _gh("api", _merge_rules.protection_endpoint(base), cwd=str(root), timeout=15.0)
         if _merge_rules.strict(rc, out):
-            return ""
+            return None
         _git("fetch", "origin", base, branch, "--quiet", cwd=str(root))
         runs = _gh_json("run", "list", "--branch", branch, "--event", "pull_request", "--limit", "100",
                         "--json", "workflowName,createdAt,headSha,conclusion", cwd=str(root))
         rc, diff, err = _git("diff", "--name-only", "--no-renames", f"origin/{base}...{head}", cwd=str(root))
         if rc != 0:
             return f"stale-base check not read: git diff origin/{base}...{head[:7]} failed ({err.strip()[:120]})"
-        result = _merge_rules.stale_base(root, base_ref=f"origin/{base}",
-                                         tested_when=_merge_rules.tested_at(runs, head),
-                                         pr_paths=[ln for ln in diff.splitlines() if ln.strip()],
-                                         pr_rev=head, run_=RUN)
+        return _merge_rules.stale_base(root, base_ref=f"origin/{base}",
+                                       tested_when=_merge_rules.tested_at(runs, head),
+                                       pr_paths=[ln for ln in diff.splitlines() if ln.strip()],
+                                       pr_rev=head, run_=RUN)
     except Refused as exc:
         return f"stale-base check not read: {exc}"
+
+
+def stale_base_line(root: Path, base: str, pr: dict) -> str:
+    """The stale-base advisory for an open pull request, or "" when its green
+    stands: the up-to-date rule is on (GitHub holds a stale lane itself), the
+    base has not moved since the CI ran, or it moved away from this pull
+    request's files and their imports (``_merge_rules.stale_base``). A read
+    that fails is said."""
+    result = stale_base_read(root, base, pr)
+    if result is None or isinstance(result, str):
+        return result or ""
     return _merge_rules.stale_line(result, base, pr.get("number"))
 
 
@@ -1565,23 +1577,85 @@ def fold(dry_run: bool = False) -> int:
     return 0
 
 
-def _park_the_row(root: Path, base: str, *, dry_run: bool = False) -> bool:
-    """A handoff-only lane -- no open pull request, and nothing in its diff with
-    ``origin/<base>`` but Session Log rows -- parks the rows it added on this
-    seat's records ref (``mail.park``) instead of opening a pull request for
-    them alone: seven such pull requests in two days before this (DEF-5007).
-    Only rows added: a lane that edits or renames a row keeps today's path, so
-    the change reaches a pull request (a park carries additions alone). The
-    blob parked is the committed one (``HEAD:<path>``). Once every row is parked
-    the branch moves back to its merge base with the base (``reset --keep``):
-    the commits held nothing but those rows, now on origin's records ref, and a
-    commit left ahead held the next SessionStart's catch-up on this lane and
-    passed the --early question as a row of this lane's (both reviews). The
-    dropped head is printed. True when parked. Any other lane, a seat with no
-    name or one git could not read, or a park origin refused, keeps today's path
-    and says why."""
+def _unmoved_after_park(root: Path, since: str, number: object, err: str) -> str:
+    """The note for a park whose move to ``since`` (``origin/<branch>``)
+    failed: git's own reason, and where that head holds commits HEAD does not
+    reach, that the push refuses below (:func:`_origin_ahead_refusal`) with
+    what stands in the way first. The usual cause is an untracked file at a
+    path those commits add, and the merge the refusal names fails on the same
+    file, so the files to move are named from the trees -- ``reset --keep``
+    names only the first, and an ignored file is overwritten, not refused
+    (both read on git 2.39) -- before that merge."""
+    why = " ".join(err.split())[:300] or "no reason printed"
+    head = f"the rows are parked, but this branch could not be moved to {since} ({why})"
+    ahead = _commits_head_lacks(since, str(root))
+    if not ahead:
+        return f"{head}: they ride the push onto #{number} as before"
+    # -z on both reads: without it git quotes a non-ASCII or newline path in
+    # the diff, and the quoted name never meets ls-files' raw one.
+    rc, added, _ = _git("diff", "--name-only", "--no-renames", "--diff-filter=A", "-z", "HEAD", since,
+                        cwd=str(root))
+    incoming = {p for p in added.split("\0") if p} if rc == 0 else set()
+    rc, others, _ = _git("ls-files", "--others", "--exclude-standard", "-z", cwd=str(root)) if incoming else \
+        (1, "", "")
+    # A file where a directory arrives, or one inside a directory where a
+    # file arrives, stands in the way as much as the same path does.
+    in_way = sorted(p for p in others.split("\0") if p and any(
+        p == q or q.startswith(p + "/") or p.startswith(q + "/") for q in incoming)) if rc == 0 else []
+    shown = ", ".join(in_way[:5]) + (f" and {len(in_way) - 5} more" if len(in_way) > 5 else "")
+    first = f"move {shown} out of the way, then " if in_way else \
+        "move what git's error above names out of the way, then "
+    return (f"{head}. {since} holds {ahead} commit(s) this HEAD does not reach, so the push onto #{number} "
+            f"refuses below: {first}run `git merge {since}` and `python tools/cc/ship.py handoff` again")
+
+
+def _park_the_row(root: Path, base: str, *, dry_run: bool = False, branch: str | None = None,
+                  pr: dict | None = None) -> bool:
+    """A handoff that carries Session Log rows alone parks the rows it added on
+    this seat's records ref (``mail.park``) instead of pushing them: the next
+    lane's push, any seat's, folds them in. Two shapes. With no pull request
+    open (``branch`` None), the lane already merged and nothing in its diff
+    with ``origin/<base>`` is anything else: no pull request is opened for the
+    row alone (seven such in two days before this). With one open for
+    ``branch`` (``number``), the commits since ``origin/<branch>``, the pull
+    request's head read fresh, are the rows: nothing is pushed onto it, so its
+    running checks are not cancelled and restarted for a record. Two lanes are
+    left to today's path: one that conflicts with its base, whose merge-first
+    push the pull request needs to merge at all (a run that push cancels could
+    not have landed it), and one whose base moved near its files since its CI
+    ran (:func:`stale_base_read`'s meetings), whose push re-runs that CI on the
+    combination, the catch-up the board's stale: line would ask for. A probe or
+    a read that cannot answer parks, and says so. After the reset a marker
+    bound to another head is re-bound (:func:`rebind`), as the push's end
+    would have. Only rows added: a lane that edits or renames a row
+    keeps today's path, so the change reaches a pull request (a park carries
+    additions alone). The blob parked is the committed one (``HEAD:<path>``).
+    Once every row is parked the branch moves back (``reset --keep``) to its
+    merge base with the base, or to ``origin/<branch>``: the commits held
+    nothing but those rows, now on origin's records ref, and a commit left
+    ahead held the next SessionStart's catch-up on this lane, passed the
+    --early question as a row of this lane's (both reviews), and read as
+    unpushed to the Stop hook's handoff gate. Never the base's merge base with
+    a pull request open: that would drop the lane's own commits. The dropped
+    head is printed. True when parked. Any other lane, a seat with no name or
+    one git could not read, a remote head that cannot be fetched, or a park
+    origin refused, keeps today's path and says why; so does a reset to
+    ``origin/<branch>`` that fails after the park, whose rows then ride the
+    push as well, since a commit left ahead there would ask the Stop hook's
+    handoff gate for a handoff each new row answers the same way. Where that
+    head holds commits HEAD lacks, the push refuses instead, and the note
+    names git's error, the untracked files in the way and the merge to run
+    (:func:`_unmoved_after_park`)."""
     _git("fetch", "origin", base, "--quiet", cwd=str(root))
-    rc, out, _ = _git("diff", "--name-status", "--no-renames", f"origin/{base}...HEAD", cwd=str(root))
+    since = f"origin/{base}"
+    if branch is not None:
+        # The pull request's head as origin holds it now: a stale tracking ref
+        # would let a pushed commit read as one of the rows, or the reset land
+        # behind origin.
+        if _git("fetch", "origin", branch, "--quiet", cwd=str(root))[0] != 0:
+            return False
+        since = f"origin/{branch}"
+    rc, out, _ = _git("diff", "--name-status", "--no-renames", f"{since}...HEAD", cwd=str(root))
     if rc != 0 or not out.strip():
         return False
     entries = [ln.split("\t", 1) for ln in out.splitlines() if ln.strip()]
@@ -1589,14 +1663,50 @@ def _park_the_row(root: Path, base: str, *, dry_run: bool = False) -> bool:
            for e in entries):
         return False
     added = [e[1].replace("\\", "/") for e in entries]
+    pr = pr or {}
+    number = pr.get("number")
+    where = "opening a pull request for it" if branch is None else f"pushing it onto #{number}"
+    if branch is not None:
+        reasons = _merge_first_reasons(root, f"origin/{base}")
+        if reasons:
+            _say(f"the commits since {since} carry only Session Log rows, but the lane conflicts with "
+                 f"origin/{base} ({', '.join(reasons)}): the base is merged in first and the rows ride that "
+                 "push, which the pull request needs to merge at all")
+            return False
+        if reasons is None:
+            _note(f"could not probe the merge with origin/{base} (git 2.38+ has `merge-tree --write-tree`): "
+                  f"parking the rows; if #{number} reads DIRTY on GitHub, run catch-up")
+        # A base that moved near the lane's files since its CI ran: the push
+        # re-runs that CI on the combination, the catch-up the board's stale:
+        # line would ask for, which cancels by design. Keyed on the read's
+        # meetings; a read that failed parks, and the board stays the backstop.
+        stale = stale_base_read(root, base, {**pr, "headRefName": branch})
+        if isinstance(stale, dict) and stale.get("near"):
+            near = "; ".join(stale["near"][:3]) + (f"; and {len(stale['near']) - 3} more"
+                                                    if len(stale["near"]) > 3 else "")
+            _say(f"the commits since {since} carry only Session Log rows, but {base} moved near #{number}'s "
+                 f"files since its CI ran ({near}): the rows ride the push, which re-runs that CI on the "
+                 "combination, as the board's stale: line would ask")
+            return False
+        if isinstance(stale, str):
+            _note(f"{stale}; parking the rows, and the board's stale: line stays the backstop")
+        elif isinstance(stale, dict) and stale.get("unread"):
+            # The read ran and could not judge (no run on the head reached a
+            # verdict, a base commit it could not place): it parks as a failed
+            # read does, and says so.
+            _note(f"stale-base check not read: {stale['unread']}; parking the rows, and the board's stale: "
+                  "line stays the backstop")
     mail = _mail_module()
     if mail is None:
-        _note("tools/cc/mail.py is not beside this script, so the row is not parked: opening a pull request "
-              "for it, as before")
+        _note(f"tools/cc/mail.py is not beside this script, so the row is not parked: {where}, as before")
         return False
     if dry_run:
-        _say(f"dry-run: park {', '.join(added)} on this seat's records ref and move this branch back to its "
-             f"merge base with origin/{base}; no pull request")
+        if branch is None:
+            _say(f"dry-run: park {', '.join(added)} on this seat's records ref and move this branch back to its "
+                 f"merge base with origin/{base}; no pull request")
+        else:
+            _say(f"dry-run: park {', '.join(added)} on this seat's records ref and move this branch to "
+                 f"{since}, #{number}'s head; nothing pushed")
         return True
     fragments = _fragments_module()
     trailer = getattr(fragments, "FOLD_TRAILER", "") if fragments is not None else ""
@@ -1608,9 +1718,40 @@ def _park_the_row(root: Path, base: str, *, dry_run: bool = False) -> bool:
             except TypeError:   # a kept, older channel without the trailer: the first rule
                 mail.park(root, rel, None, f"origin/{base}", from_rev="HEAD", say=_say)
     except (mail.Unresolvable, OSError) as exc:
-        _note(f"the row was not parked ({os_error_text(exc)}): opening a pull request for it, as before")
+        _note(f"the row was not parked ({os_error_text(exc)}): {where}, as before")
         return False
     head = _git("rev-parse", "HEAD", cwd=str(root))[1].strip()
+    if branch is not None:
+        rc, target, _ = _git("rev-parse", "--verify", "--quiet", f"{since}^{{commit}}", cwd=str(root))
+        target = target.strip() if rc == 0 else ""
+        rc, _, err = _git("reset", "--keep", "--quiet", target, cwd=str(root)) if target else \
+            (1, "", f"{since} could not be read")
+        if rc != 0:
+            # Parked, but the row's commit is still ahead: a park that returned
+            # here would leave the Stop hook's handoff gate asking for a handoff
+            # each new row would answer the same way. The rows ride the push
+            # instead; the parked copy leaves the records ref once the base
+            # holds it.
+            _note(_unmoved_after_park(root, since, number, err))
+            return False
+        _say(f"Nothing pushed onto #{number}: the commits since {since} carry only Session Log rows, now "
+             f"parked on this seat's records ref, so its running checks are not restarted for a record. The "
+             f"next lane's push, any seat's, folds them into {base}; until then the banner's recent rows, "
+             f"which read the tree, show them to no seat, this one's next session included.")
+        _say(f"This branch is at {since} ({target[:7]}), #{number}'s head; the row's commit, {head[:7]}, is "
+             f"on the records ref (and in this checkout's reflog).")
+        # A marker bound to another head: an update-branch made outside
+        # catch-up, or an earlier re-bind that refused. The push this park
+        # replaces ended in a re-bind; the park makes it where one is owed.
+        title = str(pr.get("title") or "")
+        if _MARKER_RE.search(title) and bind(title, target) != title.rstrip():
+            try:
+                if rebind() != 0:
+                    _note(f"#{number}'s re-bind did not finish: run `python tools/cc/ship.py rebind`")
+            except Refused as exc:
+                _note(f"#{number}'s marker names another head and the re-bind refused ({exc}): run "
+                      "`python tools/cc/ship.py rebind`")
+        return True
     rc, merge_base, _ = _git("merge-base", f"origin/{base}", "HEAD", cwd=str(root))
     moved = rc == 0 and bool(merge_base.strip()) and \
         _git("reset", "--keep", "--quiet", merge_base.strip(), cwd=str(root))[0] == 0
@@ -2428,6 +2569,18 @@ def _refuse_a_marked_record(root: Path) -> None:
         raise Refused(refusal)
 
 
+def _merge_first_reasons(root: Path, ref: str) -> list[str] | None:
+    """The paths that make a merge of ``ref`` into HEAD one to make here
+    before a push: those it would conflict on, and those carrying a merge
+    attribute changed on both sides (GitHub's merge honours no driver).
+    ``[]`` when it merges clean on GitHub too; None when git cannot say."""
+    names = record_merge.probe_conflicts(root, ref, run=RUN)
+    driven = record_merge.attribute_merged_paths(root, ref, run=RUN)
+    if names is None and not driven:
+        return None
+    return sorted(set(names or []) | set(driven))
+
+
 def _merge_base_first(root: Path, base: str, *, dry_run: bool) -> None:
     """Before a push: when a merge of ``origin/<base>`` into HEAD would
     conflict, make that merge here, with the record files resolved by shape,
@@ -2443,13 +2596,11 @@ def _merge_base_first(root: Path, base: str, *, dry_run: bool) -> None:
     back. ``catch-up`` is the verb that refuses, since it exists to clear the
     hold."""
     ref = f"origin/{base}"
-    names = record_merge.probe_conflicts(root, ref, run=RUN)
-    driven = record_merge.attribute_merged_paths(root, ref, run=RUN)
-    if names is None and not driven:
+    reasons = _merge_first_reasons(root, ref)
+    if reasons is None:
         _note(f"could not probe the merge with {ref} (git 2.38+ has `merge-tree --write-tree`, and the "
               "ref must be fetched); a lane that conflicts reads DIRTY on GitHub -- then run catch-up")
         return
-    reasons = sorted(set(names or []) | set(driven))
     if not reasons:
         return
     if dry_run:
@@ -2682,7 +2833,14 @@ def _remote_has_commits_we_lack(branch: str, cwd: str) -> int:
     rc, _, _ = _git("fetch", "origin", branch, "--quiet", cwd=cwd)
     if rc != 0:
         return 0  # the remote branch does not exist yet: a first push
-    rc, out, _ = _git("rev-list", "--count", f"HEAD..origin/{branch}", cwd=cwd)
+    return _commits_head_lacks(f"origin/{branch}", cwd)
+
+
+def _commits_head_lacks(ref: str, cwd: str) -> int:
+    """How many commits ``ref`` holds that HEAD does not reach, 0 where git
+    cannot say: the one count behind :func:`_remote_has_commits_we_lack`'s
+    refusal and the park's note that the push will meet it."""
+    rc, out, _ = _git("rev-list", "--count", f"HEAD..{ref}", cwd=cwd)
     try:
         return int(out.strip() or "0") if rc == 0 else 0
     except ValueError:
@@ -2796,7 +2954,8 @@ def _row_refusal(st: PrePushState) -> str | None:
     if not reason:
         return _second_push_message(how)
     _refuse_on_row_debt(st.root, st.base, prs)
-    _note(f"shipping before the handoff ({reason}): its row will be a second push on this lane")
+    _note(f"shipping before the handoff ({reason}): its row will park on this seat's records ref until the "
+          "next lane's push folds it, or be a second push on this lane where the handoff adds more than rows")
     st.early_reason = reason
     return None
 
@@ -3223,6 +3382,32 @@ def _arm_or_say(*, held: Held | None = None) -> None:
               "so it needs a /clear by hand")
 
 
+def _red_base_note(root: Path, base: str, pr: dict, branch: str, base_red_ruled: str | None) -> None:
+    """A handoff onto an open pull request whose auto-merge was armed before
+    the base went red: not a refusal (the handoff's row must reach the pull
+    request, or park), but the armed merge lands on the red base -- by the
+    dispatcher's ruling where one is given and holds, else named with the
+    disarm. Said on the push and on the park alike."""
+    red_run = base_red_run(base, cwd=str(root))
+    if red_run is None or not pr.get("autoMergeRequest") or is_revert_lane(branch):
+        return
+    base_red = _red_base_words(base, red_run)
+    number = pr.get("number")
+    disarm = (f"#{number}'s auto-merge is armed and lands on the red base once its checks are green: "
+              f"gh pr merge --disable-auto {number} until the revert merges")
+    if base_red_ruled:
+        sender, problem, text = red_base_ruling(root, base_red_ruled, str(red_run.get("databaseId")),
+                                                branch=branch)
+        if problem is None:
+            _say(f"{base_red} -- #{number} lands on it by the dispatcher's ruling {base_red_ruled} "
+                 f"({sender}'s gridlock ack naming run {red_run.get('databaseId')}: "
+                 f"{text[:RULING_TEXT_CHARS]})")
+        else:
+            _note(f"{base_red}. {BASE_RED_RULED_FLAG} {base_red_ruled}: {problem}. {disarm}")
+    else:
+        _note(f"{base_red}. {disarm}")
+
+
 def _handoff_push(title: str | None, body_file: str | None, dry_run: bool,
                   base_red_ruled: str | None = None, allow_deletions: str | None = None) -> int:
     """The push half of :func:`handoff`. Off: the handoff's commit stays local
@@ -3277,6 +3462,15 @@ def _handoff_push(title: str | None, body_file: str | None, dry_run: bool,
     if pr is None:
         return open_pr(title=title, body_file=body_file, dry_run=dry_run, base_red_ruled=base_red_ruled,
                        allow_deletions=allow_deletions)
+    # A handoff whose commits since the pull request's head are rows alone
+    # parks them rather than push a record onto the lane's running checks:
+    # ahead of the merge-first and the fold below, each a push that cancels.
+    if _park_the_row(root, str(pr.get("baseRefName") or base), dry_run=dry_run, branch=branch, pr=pr):
+        _red_base_note(root, str(pr.get("baseRefName") or base), pr, branch, base_red_ruled)
+        if not dry_run:
+            _release_claims(root, branch, "Handoff parked its rows; the lane is on its open pull request; "
+                                          "claims closed.")
+        return 0
     behind = _origin_ahead_refusal(branch, str(root))
     if behind:
         raise Refused(behind)
@@ -3294,27 +3488,7 @@ def _handoff_push(title: str | None, body_file: str | None, dry_run: bool,
     shape = lane_shape(root, base)
     say_lane_shape(root, base, shape)
     refuse_unmade_deletions(shape, base, allow_deletions, branch)
-    red_run = base_red_run(base, cwd=str(root))
-    if red_run is not None and pr.get("autoMergeRequest") and not is_revert_lane(branch):
-        # Not a refusal: the handoff's row must reach the pull request. Its
-        # auto-merge was armed before the base went red, and lands on it -- by
-        # the dispatcher's ruling where one is given and holds, else named with
-        # the disarm.
-        base_red = _red_base_words(base, red_run)
-        number = pr.get("number")
-        disarm = (f"#{number}'s auto-merge is armed and lands on the red base once this push is green: "
-                  f"gh pr merge --disable-auto {number} until the revert merges")
-        if base_red_ruled:
-            sender, problem, text = red_base_ruling(root, base_red_ruled, str(red_run.get("databaseId")),
-                                                    branch=branch)
-            if problem is None:
-                _say(f"{base_red} -- #{number} lands on it by the dispatcher's ruling {base_red_ruled} "
-                     f"({sender}'s gridlock ack naming run {red_run.get('databaseId')}: "
-                     f"{text[:RULING_TEXT_CHARS]})")
-            else:
-                _note(f"{base_red}. {BASE_RED_RULED_FLAG} {base_red_ruled}: {problem}. {disarm}")
-        else:
-            _note(f"{base_red}. {disarm}")
+    _red_base_note(root, base, pr, branch, base_red_ruled)
     if dry_run:
         _say(f"dry-run: git push origin {branch}; then rebind the marker to the new head")
         return 0
