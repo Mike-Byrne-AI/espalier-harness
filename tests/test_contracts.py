@@ -1770,14 +1770,15 @@ class TestReadmeHookCount:
 
 _SUBPROCESS_TEXT_FUNCS = {"run", "check_output", "Popen", "call", "check_call"}
 #: The spawn wrappers that take ``subprocess.run``'s own keywords
-#: (``_hook_utils.spawn_checked``; ``_json_safe.run_bounded``, which every timed
+#: (``_hook_utils.spawn_checked`` and its tree-ending form
+#: ``_hook_utils.spawn_tree_checked``; ``_json_safe.run_bounded``, which every timed
 #: spawn in tools/cc routes through since 2026-10-13, and its tree-ending
 #: sibling ``_json_safe.run_tree_bounded``; the engine's
 #: ``_spawn.run_no_stdin``, every engine spawn's since DEF-928): a decode one makes is the
 #: decode ``run`` makes, so both contracts below read them as spawns. Matched by
 #: bare name or attribute (``_hook_utils.run_bounded``). Held equal to the
 #: scanners' copies by ``TestSpawnWrappersReadEverywhere``.
-_SPAWN_WRAPPERS = frozenset({"spawn_checked", "run_bounded", "run_tree_bounded", "run_no_stdin"})
+_SPAWN_WRAPPERS = frozenset({"spawn_checked", "spawn_tree_checked", "run_bounded", "run_tree_bounded", "run_no_stdin"})
 
 
 def _spawn_call_name(f: ast.expr) -> str | None:
@@ -2429,8 +2430,9 @@ class TestEveryTimedSpawnOutsideToolsCcIsBounded:
 # ---------------------------------------------------------------------------
 
 #: The calls whose timeout ends the child's whole tree (``tools/cc/_json_safe.py``;
-#: the suite takes the first and the last through ``tests/_tree_spawn.py``).
-_TREE_ENDERS = frozenset({"run_tree_bounded", "run_tree_to_deadline", "communicate_tree_bounded"})
+#: the suite takes the first and the last through ``tests/_tree_spawn.py``; the
+#: hooks take the first through ``tools/cc/hooks/_hook_utils.py::spawn_tree_checked``).
+_TREE_ENDERS = frozenset({"run_tree_bounded", "run_tree_to_deadline", "communicate_tree_bounded", "spawn_tree_checked"})
 #: The calls a timed pytest site may name: subprocess's own, every wrapper, the
 #: tree-ending ones, and any function its own module defines (a ``_run``).
 _TREE_SITE_SPAWNS = frozenset({"run", "Popen", "call", "check_output", "check_call"}) | _SPAWN_WRAPPERS | _TREE_ENDERS
@@ -2446,11 +2448,6 @@ _TREE_SITE_DEBT = {
     "espalier/refresh_externals.py::run_bound_tests": (
         "DEF-5090: the engine cannot import tools/cc; the bound pins' pytest takes espalier/_spawn.py's "
         "tree-ending twin with the same row"),
-    "tools/cc/hooks/stop_gate.py::_gate_pytest": (
-        "DEF-5091: a hook. Gate 1 (opt-in, ESPALIER_STOP_GATE=full) runs the adopter's pytest here, and "
-        "the override or declared test command in _run_one_command (an argv handed in, which this "
-        "ratchet cannot read), both through _hook_utils.spawn_checked, the hooks' one spawn chokepoint, "
-        "which has no tree-ending form yet"),
     "tools/cc/ledger_row.py::_run_guard": (
         "DEF-5092: strike --guard's one-node pytest, at the head and at the base, through "
         "check_ledger_probes' run_bounded rather than the tree-ending run_tree_bounded beside it"),
@@ -2540,8 +2537,9 @@ class TestEveryTimedPytestEndsItsWholeTree:
     of the script), a planned step (``scripts/host_check.py::run_step``,
     pinned by ``tests/test_host_check.py``), a held ``Popen``
     (``tests/test_box_lock.py``), and Gate 1's handed-in test command
-    (``tools/cc/hooks/stop_gate.py::_run_one_command``, in its neighbour's
-    debt entry). A debt site that moves out of the read shapes reads as stale,
+    (``tools/cc/hooks/stop_gate.py::_run_one_command``, routed through
+    ``spawn_tree_checked`` and pinned by ``tests/test_stop_gate.py::
+    TestGate1EndsTheWholeTreeAtItsBudget``). A debt site that moves out of the read shapes reads as stale,
     the same as a fixed one: re-key the entry to where the spawn went."""
 
     def test_no_timed_pytest_kills_its_child_alone(self):

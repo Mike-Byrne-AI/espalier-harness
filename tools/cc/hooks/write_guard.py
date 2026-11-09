@@ -1621,6 +1621,182 @@ def _secret_read_targets(command: str, _depth: int = 0) -> list[str]:
     return out
 
 
+# The secret leg's four word patterns below are called with `.match` at a
+# word's or a statement's start, where each leading lookbehind always
+# passes; it refuses a start inside the run the pattern opens with, so
+# `tests/test_redos.py`'s unanchored `.search` is linear too. Without it a
+# 30000-char run cost 18.9 s (case arm, `a`), about 1 s (redirects, `0`)
+# and 0.7 s (assignment, `a`) on the Windows box, 2026-11-09; that test
+# skips on Windows (no SIGALRM). A `.match(text, pos)` with pos inside a
+# token returns None.
+
+#: An input redirect as typed: `<`, `0<`, `<file`; never a heredoc or
+#: here-string (`<<`), a duplication (`<&`), a read-write open (`<>`) or a
+#: process substitution (`<(`). Its source is what the verb reads (DEF-1132).
+_INPUT_REDIRECT_RE = re.compile(r"(?<![0-9])[0-9]*<(?![<>&(])")
+#: An output redirect as typed, fd included: `>`, `>>`, `>|`, `2>`.
+_OUTPUT_REDIRECT_RE = re.compile(r"(?<![0-9])[0-9]*>>?\|?")
+#: A shell assignment word (`FOO=1`, `FOO="a b"` read as one word).
+_ASSIGNMENT_WORD_RE = re.compile(r"(?<![A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*=")
+#: The characters that end a case arm's unquoted token. The lookbehind and
+#: the token class are both built from it: a character the token can take
+#: but the lookbehind admits as a start would make that run quadratic again.
+_CASE_ARM_STOP = r"\s;|&()<>"
+#: A case arm's pattern opening a statement (`x) cat .env`, `"a b") ...`)
+#: or a function's head (`f() { cat .env`, `function f() {`); the word
+#: split drops the parentheses, so it is read off the statement's text.
+_CASE_ARM_RE = re.compile(
+    r"(?<![^" + _CASE_ARM_STOP + r"])"
+    r"(?:(?:function[ \t]+)?[A-Za-z_][\w.:-]*[ \t]*\(\)"
+    r"|\(?(?:\"[^\"\n]*\"|'[^'\n]*'|[^" + _CASE_ARM_STOP + r"\"'])+\))[ \t]*"
+)
+#: The words that close a compound command: an input redirect after one
+#: feeds every read in its body (`while read l; do echo "$l"; done < .env`).
+_COMPOUND_CLOSERS = frozenset({"done", "fi", "esac", "}"})
+_SECRET_HEAD_WRAPPERS: "tuple[frozenset[str], frozenset[str]] | None" = None
+
+
+def _secret_head_wrappers() -> "tuple[frozenset[str], frozenset[str]]":
+    """The wrapper roster the zone leg skips at command position
+    (`_bash_patterns._CMD_POS_WRAPPER_BUILTINS` / `_BINARIES`), as words:
+    derived from those literals, so the two legs read one roster (DEF-2061).
+    Read on the Bash leg only, which has loaded the module (DEF-946). `env`
+    is left out: it stays a read verb whose operands are all read, so
+    `env $(cat .env | xargs) node app.js` is refused as it was before the
+    head was read (the code review of 630019's lane)."""
+    _load_the_pattern_path()
+    global _SECRET_HEAD_WRAPPERS
+    if _SECRET_HEAD_WRAPPERS is None:
+        _SECRET_HEAD_WRAPPERS = (
+            frozenset(_bash_patterns._CMD_POS_WRAPPER_BUILTINS[3:-1].split("|")),
+            frozenset(_bash_patterns._CMD_POS_WRAPPER_BINARIES[3:-1].split("|")) - {"env"},
+        )
+    return _SECRET_HEAD_WRAPPERS
+
+
+def _is_head_wrapper(word: str) -> bool:
+    builtins, binaries = _secret_head_wrappers()
+    base = word.rsplit("/", 1)[-1]
+    low = base.lower()
+    return base in builtins or (low[:-4] if low.endswith(".exe") else low) in binaries
+
+
+def _redirect_at(words: "list[tuple[str, str]]", i: int, sources: list[str]) -> int:
+    """Past the redirect at ``words[i]`` (0 when it is none), its target
+    word included; an input redirect's source goes to ``sources``."""
+    raw, word = words[i]
+    for rx, is_input in ((_INPUT_REDIRECT_RE, True), (_OUTPUT_REDIRECT_RE, False)):
+        m = rx.match(raw)
+        if m is None:
+            continue
+        tail = word[m.end():]
+        # `<file` (or a bare `<` ending the words) is one word; `< file` is two.
+        glued = bool(tail) or i + 1 >= len(words)
+        if is_input and (tail or not glued):
+            sources.append(tail if glued else words[i + 1][1])
+        # A word count, not an exit code; written as one expression because
+        # scripts/release_check.py's hook_protocol_correct reads every
+        # literal `return 2` in a hook as the channel-XOR breach it guards.
+        return 1 if glued else 2
+    return 0
+
+
+def _secret_read_head(words: "list[tuple[str, str]]", sources: list[str]) -> int:
+    """The index of a statement's verb: past the words that put a command
+    behind them and leave it reading -- the keywords and prefix words
+    (`then`, `do`, `!`, `{`, `builtin`; `_bash_patterns._BASH_HEAD_PREFIX_WORDS`),
+    leading assignments, `case WORD in` and its first pattern, a leading
+    redirect, and a wrapper run with its flags and their values (DEF-1025,
+    DEF-2061). A wrapper flag never takes a read verb as its value, so
+    `sudo -E cat .env` reads as `cat`. A keyword is read as typed (a quoted
+    `"then"` is a command); a wrapper by the word the shell runs."""
+    _load_the_pattern_path()
+    prefix = _bash_patterns._BASH_HEAD_PREFIX_WORDS
+    i, n = 0, len(words)
+    while i < n:
+        raw, word = words[i]
+        if _ASSIGNMENT_WORD_RE.match(raw):
+            i += 1
+            continue
+        step = _redirect_at(words, i, sources)
+        if step:
+            i += step
+            continue
+        if not _is_head_wrapper(word):  # first: `time` and `command` take flags
+            if raw in prefix or raw == "{":
+                i += 1
+                continue
+            if raw == "case" and i + 2 < n and words[i + 2][0] == "in":
+                i += 4                  # `case WORD in PATTERN`, the `)` split off
+                continue
+            if raw == "function" and i + 1 < n:
+                i += 2                  # `function f {`
+                continue
+            return i
+        i += 1
+        while i < n:                    # the wrapper's flags, values and counts
+            raw, word = words[i]
+            if _INPUT_REDIRECT_RE.match(raw) or _OUTPUT_REDIRECT_RE.match(raw):
+                break
+            if word[:1].isdigit():
+                i += 1
+                continue
+            if not word.startswith("-") or word == "-":
+                break
+            i += 1
+            if i < n:
+                value = words[i][1]
+                if (value[:1] not in ("-", "") and not value[:1].isdigit()
+                        and not _is_head_wrapper(value)
+                        and value.rsplit("/", 1)[-1] not in _SECRET_READ_VERBS):
+                    i += 1
+    return i
+
+
+def _split_glued_input_redirects(words: "list[tuple[str, str]]") -> "list[tuple[str, str]]":
+    """``words`` with an input redirect glued behind an unquoted word cut
+    off as a word of its own: `cat<.env` is `cat` and `<.env`, `done<.env`
+    is `done` and `<.env` (the code review of 630019's lane). A word with
+    a quote, an fd prefix (`0<`) or a `<<`, `<&`, `<(`, `<>` is kept whole."""
+    out: list[tuple[str, str]] = []
+    for raw, word in words:
+        k = raw.find("<")
+        if (k > 0 and raw == word and not raw[:k].isdigit()
+                and not raw.startswith(("<<", "<&", "<(", "<>"), k)):
+            out.append((raw[:k], word[:k]))
+            out.append((raw[k:], word[k:]))
+        else:
+            out.append((raw, word))
+    return out
+
+
+def _input_redirect_sources(args:"list[tuple[str, str]]", sources: list[str]) -> "list[tuple[str, str]]":
+    """``args`` without their input redirects, each source added to
+    ``sources``: `cat < .env` reads `.env` as `cat .env` does (DEF-1132).
+    The scan stops at a comment; an output redirect's target stays an
+    operand here, for the operand loop's own stop."""
+    kept: list[tuple[str, str]] = []
+    i, n = 0, len(args)
+    while i < n:
+        raw, word = args[i]
+        if raw.startswith("#"):
+            kept.extend(args[i:])
+            break
+        m = _INPUT_REDIRECT_RE.match(raw)
+        if m is None:
+            kept.append(args[i])
+            i += 1
+            continue
+        tail = word[m.end():]
+        if tail:
+            sources.append(tail)
+        elif i + 1 < n:
+            sources.append(args[i + 1][1])
+            i += 1
+        i += 1
+    return kept
+
+
 def _secret_read_targets_one(command: str, _depth: int = 0) -> list[str]:
     """Path tokens read by a recognized read verb, per statement.
 
@@ -1672,14 +1848,27 @@ def _secret_read_targets_one(command: str, _depth: int = 0) -> list[str]:
     for statement in _STATEMENT_BOUNDARY_RE.split(masked):
         # One word per quoted span (§C66): `cat "my proj/.env"` names the
         # whole path and `"cat" .env` reads by the verb it unquotes to.
-        words = (_quote_aware_words(statement.strip(), _TOKEN_SPLIT_RE, _BASH_OPAQUE)
-                 if aware else _split_words(statement.strip(), _TOKEN_SPLIT_RE))
-        if not words:
+        text = statement.strip()
+        arm = _CASE_ARM_RE.match(text)  # `x) cat .env` after `;;` or a newline
+        if arm is not None:
+            text = text[arm.end():]
+        words = _split_glued_input_redirects(
+            _quote_aware_words(text, _TOKEN_SPLIT_RE, _BASH_OPAQUE)
+            if aware else _split_words(text, _TOKEN_SPLIT_RE))
+        sources: list[str] = []
+        head = _secret_read_head(words, sources)
+        if head >= len(words):
             continue
-        verb = words[0][1].rsplit("/", 1)[-1]
+        if words[head][0] in _COMPOUND_CLOSERS:  # `done < .env` feeds the body's reads
+            _input_redirect_sources(words[head + 1:], sources)
+            out.extend(sources)
+            continue
+        verb = words[head][1].rsplit("/", 1)[-1]
         if verb not in _SECRET_READ_VERBS:
             continue
-        args = words[1:]
+        args = _input_redirect_sources(words[head + 1:], sources)
+        if verb not in _COPIER_VERBS:   # a copier never reads its stdin
+            out.extend(sources)
         if verb in _STREAM_EDITORS:
             if _stream_editor_in_place([w for _, w in args]):
                 continue                  # a write: it surfaces nothing
@@ -3600,6 +3789,13 @@ def _judge(seen: list[dict] | None = None) -> int:
                 named = _start_refusal.crash_refusal(reading, error_type, data is not None)
                 if named is not None:
                     crash_reason = _denial_reasons.WRITE_GUARD_CRASHED_AT.format(**named[0])
+                    # A name a kept, older sibling lacks (DEF-5087): the file and
+                    # the upgrade repair, never only a restore. Checked first:
+                    # a kept _denial_reasons.py, the likeliest kept file on
+                    # this path, predates the template, and a raise here would
+                    # leave the unplaced text below.
+                    if "kept" in named[0] and hasattr(_denial_reasons, "WRITE_GUARD_CRASHED_ON_A_KEPT_FILE"):
+                        crash_reason = _denial_reasons.WRITE_GUARD_CRASHED_ON_A_KEPT_FILE.format(**named[0])
                     crash_details = named[1]
         except BaseException:  # noqa: BLE001 -- best-effort; never mask the deny
             passed = None

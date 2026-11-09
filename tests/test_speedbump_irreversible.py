@@ -3132,6 +3132,21 @@ class TestCommandPositionClassClose:
             "legs cut, and `_a_boundary_sits_in_a_quote` walks the uncut text with it "
             "(§C66). It decides where a word ends, not whether a command runs; the "
             "verb is still checked against the read-verb roster.",
+        "write_guard._INPUT_REDIRECT_RE":
+            "TOKENIZER -- `match`ed on ONE word of a statement the secret-read leg "
+            "cut, to read an input redirect's source as the verb's read (DEF-1132); "
+            "it decides what a word is, not whether a command runs.",
+        "write_guard._OUTPUT_REDIRECT_RE":
+            "TOKENIZER -- `match`ed on ONE word at a statement's head, so a leading "
+            "output redirect and its target are skipped to the verb (DEF-2061).",
+        "write_guard._ASSIGNMENT_WORD_RE":
+            "TOKENIZER -- `match`ed on ONE word at a statement's head: a leading "
+            "assignment is skipped to the verb (DEF-1025); the verb is still checked "
+            "against the read-verb roster.",
+        "write_guard._CASE_ARM_RE":
+            "SYNTAX -- a case arm's pattern opening one already-cut statement "
+            "(`x) cat .env`), cut off before the words are read (DEF-1025); the "
+            "verb is still checked against the read-verb roster.",
         "write_guard._PS_GLUED_PAREN_RE":
             "SYNTAX -- a `(` glued to a word, `@` or `$` opens an argument, not a "
             "statement; blanked before the PowerShell secret-read cut (DEF-718).",

@@ -78,7 +78,7 @@ def _existing_docs() -> list[tuple[str, str]]:
     # The onboarding rows init files into every adopter's ledger: instructions an
     # adopter follows, in neither a seed body nor a doc until they are filed.
     from espalier.cli import _ONBOARDING_ROWS, _remedy_py
-    engine = f"{_remedy_py()} -m espalier"
+    engine = f"{_remedy_py(persisted=True)} -m espalier"
     out.append(("task-packs/FORWARD_LEDGER.md (onboarding rows)", "\n".join(
         r["text"].replace("{espalier}", engine) for r in _ONBOARDING_ROWS)))
     return out

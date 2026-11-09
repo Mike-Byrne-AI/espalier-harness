@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
+from collections.abc import Callable
 
 
 def pin_utf8_streams() -> None:
@@ -62,13 +64,71 @@ def quoted_if_spaced(path: str) -> str:
     three). As a PROGRAM word it serves cmd and the POSIX shells only:
     PowerShell reads a quoted first word as a string and refuses the line, and
     its call operator ``& "<path>"`` is in turn a syntax error to bash, so no
-    one spelling of a spaced program runs in all of them (DEF-2060). It quotes
+    one QUOTED spelling of a spaced program runs in all of them (DEF-2060):
+    a program word goes through :func:`program_word` instead. It quotes
     whitespace alone: a ``$`` stays live inside double quotes in PowerShell
     and bash, and an ``&`` in an unspaced path is left bare. A double
     quote INSIDE the path is not escaped: it is illegal in a Windows filename
     (the platform this quoting is for) and rare enough on POSIX that a
     shell-specific escape would cost more than it saves."""
     return f'"{path}"' if any(ch.isspace() for ch in path) else path
+
+
+def program_word(path: str, short_path: Callable[[str], str | None] | None) -> str:
+    """``path`` spelled as the PROGRAM word of a command the reader will type,
+    given ``short_path``, a lookup of the path's 8.3 short form (None where
+    the host has none). Unspaced, it is unchanged. Spaced, its short form with
+    forward slashes when that holds no whitespace: one bare word that Windows
+    PowerShell 5.1, cmd and Git Bash all run (driven on Windows 11; a backslash
+    is an escape to bash, a quoted first word a string to PowerShell, so
+    neither of those spellings serves all three, DEF-2060). Else, with no short
+    form or one that still holds a space (8.3 names off on that volume), the
+    double-quoted path, which cmd and the POSIX shells run and PowerShell needs
+    ``&`` before: the caller says so once a run. Pure text: the lookup is a
+    parameter, so the Windows call stays out of it."""
+    if not any(ch.isspace() for ch in path):
+        return path
+    short = short_path(path) if short_path is not None else None
+    if short:
+        word = short.replace("\\", "/")
+        # Only a drive-rooted word of plain characters: an 8.3 name keeps
+        # `&`, `(`, `'` and `$`, which every one of the three shells reads
+        # as grammar in a bare word (driven: `MY(PYT~1`, `JO&COT~1`), and a
+        # UNC or `\\?\` form does not run with forward slashes.
+        if _PLAIN_PROGRAM_WORD.fullmatch(word):
+            return word
+    return quoted_if_spaced(path)
+
+
+_PLAIN_PROGRAM_WORD = re.compile(r"[A-Za-z]:/[A-Za-z0-9_.~+/-]+")
+
+
+def windows_short_path(path: str) -> str | None:
+    """The 8.3 short form of an existing ``path`` from ``GetShortPathNameW``
+    (Windows only), else None: a path that does not exist, or any other
+    failure, answers 0 there and None here. Two calls, the first asking the
+    buffer size, so a long path is never cut at ``MAX_PATH``. It runs inside
+    remedy printers, so a lookup that cannot load answers None, never a
+    traceback in place of the repair text."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        get_short = ctypes.WinDLL("kernel32").GetShortPathNameW
+        get_short.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+        get_short.restype = wintypes.DWORD
+        size = get_short(path, None, 0)
+        if not size:
+            return None
+        buf = ctypes.create_unicode_buffer(size)
+        written = get_short(path, buf, size)
+    except (ImportError, AttributeError, OSError, ValueError):
+        return None
+    if not written or written >= size:
+        return None
+    return buf.value
 
 
 def _plain_path(value: object) -> str:

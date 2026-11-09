@@ -21,6 +21,9 @@ from pathlib import Path
 
 import pytest
 
+from tests._wait_budget import scaled
+from tests.test_bounded_spawn import _alive, _end_holder
+
 HOOKS_DIR = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
 
 
@@ -767,8 +770,10 @@ class TestGate2ReliefRequiresEvidence:
 
 
 class TestSpawnChokepointInTheStopGate:
-    """The three gate spawns route through ``_hook_utils.spawn_checked`` (the
-    remaining half of DEF-948): the override starts the RESOLVED program (so
+    """The three gate spawns route through the hooks' chokepoint (the
+    remaining half of DEF-948; Gate 1's two through its tree-ending form
+    ``_hook_utils.spawn_tree_checked``, the finalize through
+    ``_hook_utils.spawn_checked``): the override starts the RESOLVED program (so
     ``npm`` on Windows starts ``npm.cmd``), and the plain pytest branch allows
     a spawn failure with a record instead of a silent green."""
 
@@ -831,6 +836,111 @@ class TestSpawnChokepointInTheStopGate:
         )
 
 
+#: How long each holder below sleeps: far past the shrunk budget, so a holder
+#: alive after the call is one the budget's kill missed.
+_GATE1_HOLD_SECONDS = 120
+
+
+class TestGate1EndsTheWholeTreeAtItsBudget:
+    """A Stop whose test run outlives Gate 1's budget ends that run and
+    everything it started. ``subprocess.run`` kills the child alone at its
+    timeout on POSIX, so what an adopter's suite started (a test's server or
+    sleeper, hooks, git) ran on at parent 1 beside the session, once for each
+    Stop that reached the budget. Each row drives the real gate with the
+    budget shrunk, on a run that starts a holder and sleeps past it, one row
+    for each of Gate 1's two spawns: the holder is gone after the call."""
+
+    _load = staticmethod(TestSpawnChokepointInTheStopGate._load)
+
+    @staticmethod
+    def _holder_lines(pidfile: Path) -> list[str]:
+        return [
+            "import subprocess, sys, time",
+            f"holder = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep({_GATE1_HOLD_SECONDS})'])",
+            f"open({str(pidfile)!r}, 'w').write(str(holder.pid))",
+            f"time.sleep({_GATE1_HOLD_SECONDS})",
+        ]
+
+    @staticmethod
+    def _holder_gone(pidfile: Path, budget: float) -> bool:
+        if not pidfile.exists():
+            pytest.fail(f"the holder never started inside the budget ({budget:.1f} s), so the case did not run")
+        pid = int(pidfile.read_text(encoding="utf-8").strip())
+        gone_by = time.monotonic() + 5.0
+        while _alive(pid) and time.monotonic() < gone_by:
+            time.sleep(0.05)
+        return not _alive(pid)
+
+    def test_the_pytest_branch_ends_what_its_test_started(self, tmp_path, monkeypatch):
+        import types
+        mod = self._load()
+        root = tmp_path / "repo"
+        (root / "tests").mkdir(parents=True)
+        pidfile = tmp_path / "holder.pid"
+        body = "".join(f"    {line}\n" for line in self._holder_lines(pidfile))
+        (root / "tests" / "test_hold.py").write_text(f"def test_hold():\n{body}", encoding="utf-8")
+        monkeypatch.setattr(
+            mod, "_resolve_core_tests",
+            lambda r: types.SimpleNamespace(status="ok", note="", env_cmd=None, paths=["tests/test_hold.py"]),
+        )
+        budget = scaled(15)
+        monkeypatch.setattr(mod, "STOP_INNER_BUDGET", budget)
+        monkeypatch.setattr(mod._hook_utils, "_SAID_THIS_PROCESS", set())
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        try:
+            assert mod._gate_pytest(root) == 0, "a test run past the budget is a fault Gate 1 allows, with a record"
+            # The verdict first: a spawn the gate refused reads here as itself,
+            # never as a holder that started late.
+            records = _audit_rows(tmp_path / "audit", "stop_failed_open_pytest_did_not_run")
+            assert [r["details"].get("fault") for r in records] == ["TimeoutExpired"], records
+            gone = self._holder_gone(pidfile, budget)
+        finally:
+            _end_holder(pidfile)
+        assert gone, (
+            "Gate 1's budget ended the pytest and left the holder its test started running: "
+            "the kill reached the direct child only")
+
+    def test_the_command_branch_ends_what_its_command_started(self, tmp_path, monkeypatch):
+        mod = self._load()
+        root = tmp_path / "repo"
+        root.mkdir()
+        pidfile = tmp_path / "holder.pid"
+        (root / "hold.py").write_text("".join(f"{line}\n" for line in self._holder_lines(pidfile)), encoding="utf-8")
+        budget = scaled(15)
+        monkeypatch.setattr(mod, "STOP_INNER_BUDGET", budget)
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        try:
+            assert mod._run_command_gate(root, (f'"{sys.executable}" hold.py',), source="env") == 1, (
+                "a test command past the budget blocks the Stop")
+            records = _audit_rows(tmp_path / "audit", "stop_blocked_pytest")
+            assert [r["details"].get("rule") for r in records] == ["GATE_COMMAND_TIMEOUT"], records
+            gone = self._holder_gone(pidfile, budget)
+        finally:
+            _end_holder(pidfile)
+        assert gone, (
+            "Gate 1's budget ended the test command and left the holder it started running: "
+            "the kill reached the direct child only")
+
+    def test_every_budgeted_spawn_in_the_gate_ends_its_tree(self):
+        """Each spawn bounded by ``STOP_INNER_BUDGET`` -- Gate 1's test run --
+        calls ``spawn_tree_checked``. The pytest-keyed ratchet in
+        ``tests/test_contracts.py`` cannot read ``_run_one_command``'s
+        handed-in argv, so this holds both of the gate's spawns, and any new
+        one, by the budget they share."""
+        import ast
+        tree = ast.parse((HOOKS_DIR / "stop_gate.py").read_text(encoding="utf-8"))
+        budgeted = [
+            (node.lineno, node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", None))
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and any(
+                k.arg == "timeout" and isinstance(k.value, ast.Name) and k.value.id == "STOP_INNER_BUDGET"
+                for k in node.keywords)
+        ]
+        assert len(budgeted) >= 2, f"the walk found {budgeted}, fewer than Gate 1's two spawns: it broke"
+        assert all(name == "spawn_tree_checked" for _line, name in budgeted), (
+            f"a spawn under Gate 1's budget kills its child alone on POSIX: {budgeted}")
+
+
 class TestAnInterpreterWithoutPytestIsAFaultNotAFailure:
     _load = staticmethod(TestSpawnChokepointInTheStopGate._load)
 
@@ -850,7 +960,7 @@ class TestAnInterpreterWithoutPytestIsAFaultNotAFailure:
             lambda root: types.SimpleNamespace(status="ok", note="", env_cmd=None, paths=["tests/test_t.py"]),
         )
         monkeypatch.setattr(
-            mod._hook_utils, "spawn_checked",
+            mod._hook_utils, "spawn_tree_checked",
             lambda argv, **kw: sp.CompletedProcess(argv, 1, "", "/usr/bin/python3: No module named pytest\n"),
         )
         monkeypatch.setattr(mod._hook_utils, "_SAID_THIS_PROCESS", set())
@@ -877,7 +987,7 @@ class TestAnInterpreterWithoutPytestIsAFaultNotAFailure:
             lambda root: types.SimpleNamespace(status="ok", note="", env_cmd=None, paths=["tests/test_t.py"]),
         )
         monkeypatch.setattr(
-            mod._hook_utils, "spawn_checked",
+            mod._hook_utils, "spawn_tree_checked",
             lambda argv, **kw: sp.CompletedProcess(argv, 1, "1 failed\n", ""),
         )
         monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))

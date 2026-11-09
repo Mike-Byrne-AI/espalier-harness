@@ -49,7 +49,9 @@ from espalier._python_floor import (
 from espalier._safe_walk import safe_rglob, visible, is_own_git_repo as _is_own_git_repo
 from espalier._rmtree import remove_file
 from espalier._spawn import run_no_stdin
-from espalier._text import os_error_text, pin_utf8_streams, plural, quoted_if_spaced
+from espalier._text import (
+    os_error_text, pin_utf8_streams, plural, program_word, quoted_if_spaced, windows_short_path,
+)
 from espalier._venv import (
     entry_argv,
     exec_name_has_space,
@@ -1280,7 +1282,29 @@ def _detect_python_command() -> str:
     return "python"
 
 
-def _remedy_interpreter() -> tuple[str, bool]:
+_POWERSHELL_CALL_NOTE_SAID = False
+
+
+def _remedy_program_word(path: str, *, persisted: bool = False) -> str:
+    """``path`` as the program word of a remedy (``DEF-2060``): on Windows the
+    forward-slash 8.3 short form of a spaced path, one bare word PowerShell
+    5.1, cmd and Git Bash all run; elsewhere, or with no spaceless short form,
+    the double-quoted path, and then one stderr note a run telling a
+    PowerShell reader to put ``&`` before it. A ``persisted`` copy (text
+    written into the adopter's tree) keeps the long quoted spelling: a short
+    name is this volume's, and a later reader may be on another."""
+    if persisted:
+        return quoted_if_spaced(path)
+    word = program_word(path, windows_short_path if sys.platform == "win32" else None)
+    global _POWERSHELL_CALL_NOTE_SAID
+    if word.startswith('"') and sys.platform == "win32" and not _POWERSHELL_CALL_NOTE_SAID:
+        _POWERSHELL_CALL_NOTE_SAID = True
+        print(f"espalier: in PowerShell, type & before a command this prints that opens "
+              f"with {word} (PowerShell reads a quoted first word as text).", file=sys.stderr)
+    return word
+
+
+def _remedy_interpreter(*, persisted: bool = False) -> tuple[str, bool]:
     """The interpreter to SPELL in a remediation the operator will type, and
     whether the resolver's own answer clears the floor.
 
@@ -1303,19 +1327,24 @@ def _remedy_interpreter() -> tuple[str, bool]:
     this, which started, since a name that hangs at start-up would hang the
     operator's next command too. A caller that names the TARGET reads
     :func:`_detect_python_command`, never this.
+
+    The absolute path is spelled by :func:`_remedy_program_word` (DEF-2060):
+    a quoted first word is a parse error in PowerShell, so on Windows a spaced
+    path becomes its 8.3 short form; ``persisted`` keeps the quoted long form
+    for text written into the adopter's tree.
     """
     py = _detect_python_command()
     if interpreter_meets_floor(py):
         if sys.executable and start_unconfirmed_of(py) is not None:
-            return quoted_if_spaced(sys.executable), True
+            return _remedy_program_word(sys.executable, persisted=persisted), True
         return py, True
     if sys.executable and interpreter_meets_floor(sys.executable):
-        # An absolute path the operator will paste, so quoted when it carries
-        # whitespace (`C:\Program Files\...`). Under `pipx run` / `uvx` it is
-        # an ephemeral cache root a later shell may not have -- still the
-        # truest name available, and every sentence built on it says to put a
-        # durable interpreter on PATH first.
-        return quoted_if_spaced(sys.executable), False
+        # An absolute path the operator will paste, so one word in every shell
+        # when it carries whitespace (`C:\Program Files\...`). Under `pipx run`
+        # / `uvx` it is an ephemeral cache root a later shell may not have --
+        # still the truest name available, and every sentence built on it says
+        # to put a durable interpreter on PATH first.
+        return _remedy_program_word(sys.executable, persisted=persisted), False
     return py, False
 
 
@@ -1344,7 +1373,7 @@ def _unheard_on_path(patient_seconds: int = 0) -> str | None:
     return None
 
 
-def _remedy_py() -> str:
+def _remedy_py(*, persisted: bool = False) -> str:
     """The interpreter to SPELL in a remedy the operator will type: the first
     element of :func:`_remedy_interpreter`.
 
@@ -1359,9 +1388,10 @@ def _remedy_py() -> str:
     (``DEF-758``). The split is pinned by the resolver's CALL SITES --
     ``tests/test_portability_contract.py`` reds a call outside the argued
     write-answer sites -- not by the resolver's output, which on this host
-    happens to agree.
+    happens to agree. ``persisted`` is for text written into the adopter's
+    tree (:func:`_remedy_interpreter`).
     """
-    return _remedy_interpreter()[0]
+    return _remedy_interpreter(persisted=persisted)[0]
 
 
 def hand_wiring_phrase(written: str, quote: str = "`") -> str:
@@ -3020,7 +3050,9 @@ _PROBE_PY = "python"
 #: no ``try`` in a one-line program (a real U+FFFD survives both).
 #: ``code`` is the probe's Python; the command is assembled at filing behind
 #: ``_PROBE_PY``, and ``{espalier}`` in a row's text becomes the command this
-#: host would type (``_remedy_py()``), since the text is instructions to a person.
+#: host would type, in its persisted spelling (``_remedy_py(persisted=True)``:
+#: a long path, never this volume's 8.3 name), since the text is instructions
+#: to a person.
 #: No ``"``, ``$``, backtick, ``!`` or newline in a code: the checker
 #: ``shlex``-splits the stored command, and a person re-verifying a row pastes
 #: it into a shell (``TestOnboardingProbesDoNotWalk`` pins both). The fragments
@@ -3200,7 +3232,7 @@ def _file_onboarding_rows(repo_root: Path) -> dict[str, list[str]]:
     with tempfile.TemporaryDirectory(prefix="espalier-onboarding-") as scratch:
         for row in _ONBOARDING_ROWS:
             body = Path(scratch) / f"{row['id']}.md"
-            atomic_write_text(body, row["text"].replace("{espalier}", f"{_remedy_py()} -m espalier"))
+            atomic_write_text(body, row["text"].replace("{espalier}", f"{_remedy_py(persisted=True)} -m espalier"))
             argv = [sys.executable, str(verb), "--root", str(repo_root), "file", row["id"],
                     "--section", row["section"], "--anchor", row["anchor"],
                     "--text-file", str(body), "--severity", "minor", "--subject", _LEDGER_REL]
@@ -7139,17 +7171,23 @@ def _kept_helper_skew_lines(
     same on both; an unparsable kept copy cannot be compared and says so, never
     falling silent. The names read with a degrade are listed apart: the hooks
     run on without those. ``repair`` replaces the default command where
-    ``upgrade --execute`` refuses (a tree with no saved plan, DEF-1063)."""
-    if not any(p.replace("\\", "/") == _KEPT_HELPER for p in kept):
-        return []
+    ``upgrade --execute`` refuses (a tree with no saved plan, DEF-1063).
+
+    Every other kept ``tools/cc/`` module gets the same reading from
+    :func:`_kept_sibling_skew_lines` (DEF-5087): the keep rule is the same for
+    all of them, and a kept older ``_post_merge.py`` stopped every ship driver
+    verb at import and cost the banner its pull-request line."""
     hint, _ = _remedy_interpreter()
     command = repair or f"`{hint} -m espalier upgrade --execute .`"
+    siblings = _kept_sibling_skew_lines(repo_root, kept, command)
+    if not any(p.replace("\\", "/") == _KEPT_HELPER for p in kept):
+        return siblings
     try:
         kept_tree = ast.parse((repo_root / _KEPT_HELPER).read_text(encoding="utf-8"))
     except (SyntaxError, OSError, UnicodeDecodeError) as exc:
         return [f"kept helper {_KEPT_HELPER} could not be parsed ({type(exc).__name__}): the names the "
                 "regenerated hooks take from it cannot be compared, and every hook that imports it fails "
-                f"to start -- restore its `# espalier:managed` marker line and run {command}"]
+                f"to start -- restore its `# espalier:managed` marker line and run {command}"] + siblings
     floor, degraded = _helper_names_the_hooks_take(_deploy_source_path("tools/cc/hooks"))
     bound = _module_level_bindings(kept_tree)
     missing_floor = sorted(floor - bound)
@@ -7166,6 +7204,351 @@ def _kept_helper_skew_lines(
             f"kept helper {_KEPT_HELPER} also lacks {plural(len(missing_degraded), 'name')} the hooks "
             f"run on without: {', '.join(missing_degraded)} (the time-budget scaler and the audit "
             "lock are off)")
+    return lines + siblings
+
+
+#: The most names and keywords one kept file's line spells before it counts the rest.
+_KEPT_SIBLING_SHOWN = 6
+
+
+#: The handlers that make an import a degrade: a name a module lacks raises a
+#: plain ``ImportError``, so these (a bare ``except`` too, keyed ``""``) catch
+#: it, and ``ModuleNotFoundError`` alone does not (``stop_gate``'s ship import).
+_IMPORT_DEGRADES = frozenset({"ImportError", "Exception", "BaseException", ""})
+#: The handlers that make an attribute read a degrade: ``AttributeError`` by
+#: name alone. A broad ``except Exception`` around a read is a crash guard that
+#: loses what the read was for (the banner's pull-request lines went that way,
+#: DEF-5087), so a read under one stays a take.
+_ATTRIBUTE_DEGRADES = frozenset({"AttributeError"})
+
+
+def _handler_runs_on(handler: ast.ExceptHandler, caught: frozenset[str]) -> bool:
+    """Does ``handler`` catch one of ``caught`` (by name, or bare where ``""``
+    is among them) and run on? A handler that raises anywhere in it, or calls
+    ``exit``, ``_exit`` or a ``refuse*`` function, ends the run: the deny hooks'
+    start guard (``except Exception: _start_refusal.refuse_on_helper_skew``)
+    refuses every call, so a name it guards is a take, never a degrade (the
+    failure-mode review on DEF-5087: read as a degrade, a kept ``_hook_contract``
+    lacking a name ``stop_gate`` takes printed nothing at upgrade). Only the
+    handler's own top-level statements count: a raise under an ``if`` ends
+    some runs and degrades the rest, and a fallback the handler defines
+    (``_hook_utils``'s ``lock_file`` stand-in) raises when it is called, never
+    when it is defined."""
+    for node in handler.body:
+        if isinstance(node, ast.Raise):
+            return False
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
+            func = node.value.func
+            called = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
+            if called.startswith("refuse") or called in {"exit", "_exit"}:
+                return False
+    named = [] if handler.type is None else (
+        handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type])
+    spelled = {n.id for n in named if isinstance(n, ast.Name)} if named else {""}
+    return bool(spelled & caught)
+
+
+def _sibling_reads(
+    tree: ast.Module, modules: set[str], own: str, binds: dict[str, set[str]],
+) -> tuple[dict[str, set[str]], dict[str, dict[str, set[str]]]]:
+    """What one ``tools/cc/`` source takes from its siblings: ``(names,
+    keywords)``, ``names[module]`` the names it reads and
+    ``keywords[module][function]`` the keywords it passes. The one walker
+    :func:`_sibling_takes` and the banner's table pin
+    (``tests/test_kept_sibling.py``) both read through, so the two cannot see
+    different reads.
+
+    A module is reached by ``from <module> import``, by ``import <module>``,
+    or by path: a function that calls ``spec_from_file_location`` with
+    ``<module>.py`` among its constants is a loader. A name holds a module
+    when it is bound from one -- an assignment, an annotated one or a walrus,
+    either branch of a conditional or an ``or`` -- or when it is the parameter
+    a call in this file passes a module to (to a fixed point), and a
+    function's own parameter or assigned name shadows a module from outside
+    unless the function binds a module to it; a read is ``<name>.<attr>`` or
+    ``<loader>().<attr>`` (chained), a load and never a store. Not a take,
+    since the script runs on without it: a ``from`` import under a handler
+    that catches an ``ImportError`` and runs on (:func:`_handler_runs_on`), a
+    read under one that catches an ``AttributeError``, a read of a name the
+    same function checks with ``hasattr`` (the name only: the keywords a call
+    passes stay takes, since the check never reads a signature), and
+    ``getattr(<module>, "<name>", <default>)``. A loader
+    naming more than one module gives each read to the ones whose ``binds``
+    hold the name."""
+    funcs = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    by_name = {fn.name: fn for fn in funcs}
+    loaders: dict[str, frozenset[str]] = {}
+    for fn in funcs:
+        if any(isinstance(n, ast.Attribute) and n.attr == "spec_from_file_location" for n in ast.walk(fn)):
+            loaded = frozenset(c.value[:-3] for c in ast.walk(fn) if isinstance(c, ast.Constant)
+                               and isinstance(c.value, str) and c.value.endswith(".py")
+                               and c.value[:-3] in modules and c.value[:-3] != own)
+            if loaded:
+                loaders[fn.name] = loaded
+    aliases: dict[str, frozenset[str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                if a.name in modules and a.name != own:
+                    aliases[a.asname or a.name] = aliases.get(a.asname or a.name, frozenset()) | {a.name}
+    enclosing: dict[int, ast.AST] = {}
+
+    def index(node: ast.AST, owner: ast.AST) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                enclosing[id(child)] = owner
+                index(child, child)
+            else:
+                index(child, owner)
+
+    index(tree, tree)
+
+    def own_nodes(scope: ast.AST) -> list[ast.AST]:
+        """The nodes ``scope`` runs itself: a nested function's body is its own scope."""
+        out: list[ast.AST] = []
+        todo = list(ast.iter_child_nodes(scope))
+        while todo:
+            node = todo.pop()
+            out.append(node)
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                todo.extend(ast.iter_child_nodes(node))
+        return out
+
+    params: dict[int, dict[str, frozenset[str]]] = {}
+    local: dict[int, dict[str, frozenset[str]]] = {}
+    # The names a function binds itself (its parameters, and the targets it
+    # assigns): such a name shadows a module of the same name from outside, so
+    # it holds a module only where the function binds one to it (``def f(mail)``
+    # beside ``import mail`` reads ``mail.x`` as the parameter's).
+    shadows: dict[int, set[str]] = {}
+
+    def bound_names(target: ast.expr) -> set[str]:
+        """The names a target binds: a name, or one inside an unpacking -- never
+        one a subscript or attribute target merely reads (``d[sync.f(p)] = v``)."""
+        if isinstance(target, ast.Name):
+            return {target.id}
+        if isinstance(target, (ast.Tuple, ast.List)):
+            return set().union(*(bound_names(e) for e in target.elts))
+        if isinstance(target, ast.Starred):
+            return bound_names(target.value)
+        return set()
+
+    for fn in funcs:
+        own_names = {a.arg for a in [*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs]}
+        own_names |= {a.arg for a in (fn.args.vararg, fn.args.kwarg) if a is not None}
+        for node in own_nodes(fn):
+            targets = (node.targets if isinstance(node, ast.Assign)
+                       else [node.target] if isinstance(node, (ast.AnnAssign, ast.NamedExpr, ast.For)) else [])
+            for target in targets:
+                own_names |= bound_names(target)
+        shadows[id(fn)] = own_names
+
+    def env_of(scope: ast.AST) -> dict[str, frozenset[str]]:
+        chain = [scope]
+        while id(chain[-1]) in enclosing:
+            chain.append(enclosing[id(chain[-1])])
+        env = dict(aliases)
+        for s in reversed(chain):
+            for name in shadows.get(id(s), ()):
+                env.pop(name, None)
+            for bound in (params.get(id(s), {}), local.get(id(s), {})):
+                for key, mods in bound.items():
+                    env[key] = env.get(key, frozenset()) | mods
+        return env
+
+    def modules_of(expr: ast.expr, env: dict[str, frozenset[str]]) -> frozenset[str]:
+        if isinstance(expr, ast.IfExp):
+            return modules_of(expr.body, env) | modules_of(expr.orelse, env)
+        if isinstance(expr, ast.BoolOp):
+            return frozenset().union(*(modules_of(v, env) for v in expr.values))
+        if isinstance(expr, ast.NamedExpr):
+            return modules_of(expr.value, env)
+        if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name):
+            return loaders.get(expr.func.id, frozenset())
+        if isinstance(expr, ast.Name):
+            return env.get(expr.id, frozenset())
+        return frozenset()
+
+    def grow(into: dict[str, frozenset[str]], key: str, mods: frozenset[str]) -> bool:
+        if not mods or mods <= into.get(key, frozenset()):
+            return False
+        into[key] = into.get(key, frozenset()) | mods
+        return True
+
+    scopes: list[ast.AST] = [tree, *funcs]
+    scope_nodes = {id(scope): own_nodes(scope) for scope in scopes}
+    for _ in range(8):   # each round carries a binding one call further; the banner's chains are two deep
+        changed = False
+        for scope in scopes:
+            env = env_of(scope)
+            bound = local.setdefault(id(scope), {})
+            for node in scope_nodes[id(scope)]:
+                if isinstance(node, ast.Assign):
+                    targets, value = node.targets, node.value
+                elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)) and node.value is not None:
+                    targets, value = [node.target], node.value
+                else:
+                    targets, value = [], None
+                if value is not None:
+                    mods = modules_of(value, env)
+                    for target in targets:
+                        if isinstance(target, ast.Name):
+                            changed |= grow(bound, target.id, mods)
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in by_name:
+                    callee = by_name[node.func.id]
+                    into = params.setdefault(id(callee), {})
+                    positional = [a.arg for a in [*callee.args.posonlyargs, *callee.args.args]]
+                    for param, arg in zip(positional, node.args):
+                        if isinstance(arg, ast.Starred):
+                            break
+                        changed |= grow(into, param, modules_of(arg, env))
+                    for kw in node.keywords:
+                        if kw.arg:
+                            changed |= grow(into, kw.arg, modules_of(kw.value, env))
+        if not changed:
+            break
+
+    import_degrade: set[int] = set()
+    attribute_degrade: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Try):
+            under = {id(n) for s in node.body for n in ast.walk(s)}
+            if any(_handler_runs_on(h, _IMPORT_DEGRADES) for h in node.handlers):
+                import_degrade |= under
+            if any(_handler_runs_on(h, _ATTRIBUTE_DEGRADES) for h in node.handlers):
+                attribute_degrade |= under
+
+    def pick(mods: frozenset[str], name: str) -> frozenset[str]:
+        held = frozenset(m for m in mods if name in binds.get(m, ()))
+        return held or mods
+
+    names: dict[str, set[str]] = {}
+    keywords: dict[str, dict[str, set[str]]] = {}
+    for scope in scopes:
+        env = env_of(scope)
+        nodes = scope_nodes[id(scope)]
+        checked = {
+            (m, c.args[1].value) for c in nodes
+            if isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == "hasattr"
+            and len(c.args) == 2 and isinstance(c.args[1], ast.Constant) and isinstance(c.args[1].value, str)
+            for m in modules_of(c.args[0], env)
+        }
+        for node in nodes:
+            if (isinstance(node, ast.ImportFrom) and node.level == 0 and node.module in modules
+                    and node.module != own and id(node) not in import_degrade):
+                names.setdefault(node.module, set()).update(a.name for a in node.names if a.name != "*")
+            elif (isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load)
+                    and id(node) not in attribute_degrade):
+                for m in pick(modules_of(node.value, env), node.attr):
+                    if (m, node.attr) not in checked:
+                        names.setdefault(m, set()).add(node.attr)
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and id(node) not in attribute_degrade):
+                # A hasattr check guards the name, never its signature: a kept
+                # copy that has the function without a keyword passes the check
+                # and raises at the call, so the keywords stay takes.
+                passed = {k.arg for k in node.keywords if k.arg}
+                for m in pick(modules_of(node.func.value, env), node.func.attr) if passed else ():
+                    keywords.setdefault(m, {}).setdefault(node.func.attr, set()).update(passed)
+    return names, keywords
+
+
+def _sibling_takes(cc_src: Path) -> tuple[dict[str, dict[str, set[str]]], dict[str, dict[str, dict[str, set[str]]]]]:
+    """``(names, keywords)`` the packaged ``tools/cc/`` sources take from each
+    sibling module, by stem: ``names[module][name]`` and
+    ``keywords[module][function][keyword]`` are the sources (``tools/cc/...``)
+    that take each, read by :func:`_sibling_reads`. Read from the packaged
+    sources, so it moves with the release."""
+    paths = sorted([*cc_src.glob("*.py"), *(cc_src / "hooks").glob("*.py")])
+    modules = {p.stem for p in paths} - {"__init__"}
+    trees: dict[Path, ast.Module] = {}
+    for path in paths:
+        try:
+            trees[path] = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, OSError, UnicodeDecodeError):
+            continue
+    binds = {path.stem: _module_level_bindings(tree) for path, tree in trees.items()}
+    names: dict[str, dict[str, set[str]]] = {}
+    keywords: dict[str, dict[str, dict[str, set[str]]]] = {}
+    # A take the packaged module does not bind itself is no take: the release
+    # would be broken without it, so it is a misread (a local shadowing a
+    # module, a parameter handed a module at one call and a dict at another),
+    # and naming it would warn about a kept copy that matches the packaged one.
+    for path, tree in trees.items():
+        rel = "tools/cc/" + path.relative_to(cc_src).as_posix()
+        file_names, file_keywords = _sibling_reads(tree, modules, path.stem, binds)
+        for module, taken in file_names.items():
+            for name in taken:
+                if module in binds and name not in binds[module]:
+                    continue
+                names.setdefault(module, {}).setdefault(name, set()).add(rel)
+        for module, calls in file_keywords.items():
+            for func, passed in calls.items():
+                if module in binds and func not in binds[module]:
+                    continue
+                for keyword in passed:
+                    keywords.setdefault(module, {}).setdefault(func, {}).setdefault(keyword, set()).add(rel)
+    return names, keywords
+
+
+def _kept_sibling_skew_lines(repo_root: Path, kept: list[str], command: str) -> list[str]:
+    """For each kept ``tools/cc/`` module other than ``_hook_utils.py`` (whose
+    lines :func:`_kept_helper_skew_lines` writes, with the deny hooks'
+    consequence), the names the regenerated sources take that the kept copy
+    does not bind, and the keywords they pass that its function takes no
+    parameter for (a ``**kwargs`` takes every one), each with the sources
+    that take it, then the repair (DEF-5087). Names read with a degrade are
+    no take (:func:`_sibling_takes`). An unparsable kept copy says so."""
+    cc_src = _deploy_source_path("tools/cc")
+    candidates = []
+    for p in kept:
+        rel = p.replace("\\", "/")
+        if rel == _KEPT_HELPER or not rel.startswith("tools/cc/") or not rel.endswith(".py"):
+            continue
+        if (cc_src / rel[len("tools/cc/"):]).is_file():
+            candidates.append(rel)
+    if not candidates:
+        return []
+    names, keywords = _sibling_takes(cc_src)
+    lines: list[str] = []
+    for rel in sorted(candidates):
+        stem = Path(rel).stem
+        try:
+            tree = ast.parse((repo_root / rel).read_text(encoding="utf-8"))
+        except (SyntaxError, OSError, UnicodeDecodeError) as exc:
+            if names.get(stem) or keywords.get(stem):
+                lines.append(f"kept {rel} could not be parsed ({type(exc).__name__}): what the regenerated "
+                             "scripts take from it cannot be compared -- restore its `# espalier:managed` "
+                             f"marker line and run {command}")
+            continue
+        bound = _module_level_bindings(tree)
+        defs = {n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        def takers(paths: set[str]) -> str:
+            first = sorted(paths)[:3]
+            return ", ".join(first) + (f" and {len(paths) - 3} more" if len(paths) > 3 else "")
+
+        lacks: list[str] = []
+        for name in sorted(set(names.get(stem, {})) - bound):
+            lacks.append(f"`{name}` ({takers(names[stem][name])})")
+        for func, passed in sorted(keywords.get(stem, {}).items()):
+            fn = defs.get(func)
+            if fn is None or fn.args.kwarg is not None:
+                continue
+            params = {a.arg for a in [*fn.args.args, *fn.args.kwonlyargs]}
+            missing = sorted(set(passed) - params)
+            if missing:
+                lacks.append(f"`{func}` without {', '.join(f'`{k}=`' for k in missing)} "
+                             f"({takers({t for k in missing for t in passed[k]})})")
+        if not lacks:
+            continue
+        shown = lacks[:_KEPT_SIBLING_SHOWN]
+        if len(lacks) > _KEPT_SIBLING_SHOWN:
+            shown.append(f"and {len(lacks) - _KEPT_SIBLING_SHOWN} more")
+        lines.append(
+            f"kept {rel} lacks what the regenerated scripts take from it: {'; '.join(shown)} -- each fails "
+            "at that read (a stop, or a lost line where the read is guarded) until it is repaired: restore "
+            "its `# espalier:managed` marker line and run "
+            f"{command}")
     return lines
 
 
@@ -7368,6 +7751,11 @@ def _print_init_summary(
             )
         for line in _kept_user_files_lines(
                 list(result.get('skipped_user_files', [])), preview=False):
+            print("  " + line)
+        # A re-run of init keeps an unmarked managed file as upgrade does, so
+        # it names what the regenerated scripts take that the kept copy lacks
+        # (the failure-mode review on DEF-5087: only upgrade said it).
+        for line in _kept_helper_skew_lines(repo_root, list(result.get('skipped_user_files', []))):
             print("  " + line)
         for line in _slash_name_shadow_lines(repo_root, preview=False):
             print("  " + line)
@@ -7896,6 +8284,8 @@ def cmd_init(args: argparse.Namespace) -> int:
         # keeps (field trial, 2026-10-01).
         surface = preview_managed_surface(repo_root, goal_snapshot=config.goal_snapshot)
         for line in _kept_user_files_lines(surface["skipped_user_files"], preview=True):
+            print(f"[dry-run] {line}")
+        for line in _kept_helper_skew_lines(repo_root, list(surface["skipped_user_files"])):
             print(f"[dry-run] {line}")
         # And what it replaces, by name: the preview named what init keeps and
         # never what it overwrites, so an edited marked body went unnamed until
@@ -9029,8 +9419,9 @@ def _swap_interpreter_token(command: str, new_name: str) -> str:
     was rewirable): ``new_name`` is read as a word and the launcher's flag
     (:func:`_target_words`), the old name's quotes go with it, and the word is
     written double-quoted only when it holds whitespace -- a program word sh
-    and Git Bash take, and PowerShell refuses (driven on Windows 11; DEF-2060
-    holds the PowerShell reach of that spaced head). ``"python3" x.py`` is
+    and Git Bash take, and PowerShell refuses (driven on Windows 11; DEF-2063
+    holds the PowerShell reach of that spaced head, which DEF-2060's 8.3
+    short form cannot serve in a persisted command). ``"python3" x.py`` is
     a PowerShell parse error (it runs a shell-form hook where Git Bash is
     absent), ``"py -3"`` is a file no host has, and a bare spaced path is cut
     by the shell (the DEF-636 absolute-path write arrives bare). Production

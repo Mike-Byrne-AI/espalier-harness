@@ -111,12 +111,15 @@ SUBPROCESS_TEXT_FUNCS: frozenset[str] = frozenset({
     "run", "check_output", "Popen", "call", "check_call",
 })
 #: The harness's spawn wrappers, which take ``subprocess.run``'s own keywords
-#: and so decode as it does: ``spawn_checked`` (tools/cc/hooks/_hook_utils.py)
-#: and ``run_bounded`` (tools/cc/_json_safe.py, the route every timed spawn
-#: there takes, beside its tree-ending sibling ``run_tree_bounded``). Read by
-#: bare name or attribute, so the reroute onto them cannot hide a locale
-#: decode. Held equal to tests/test_contracts.py's copy.
-SPAWN_WRAPPERS: frozenset[str] = frozenset({"spawn_checked", "run_bounded", "run_tree_bounded", "run_no_stdin"})
+#: and so decode as it does: ``spawn_checked`` (tools/cc/hooks/_hook_utils.py,
+#: beside its tree-ending form ``spawn_tree_checked``) and ``run_bounded``
+#: (tools/cc/_json_safe.py, the route every timed spawn there takes, beside
+#: its tree-ending sibling ``run_tree_bounded``). Read by bare name or
+#: attribute, so the reroute onto them cannot hide a locale decode. Held equal
+#: to tests/test_contracts.py's copy.
+SPAWN_WRAPPERS: frozenset[str] = frozenset({
+    "spawn_checked", "spawn_tree_checked", "run_bounded", "run_tree_bounded", "run_no_stdin",
+})
 TEMPFILE_FUNCS: frozenset[str] = frozenset({
     "NamedTemporaryFile", "TemporaryFile", "SpooledTemporaryFile",
 })
