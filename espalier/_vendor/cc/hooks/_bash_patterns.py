@@ -1515,13 +1515,18 @@ _LOOP_FEED_PREFIX = (
     r"(?:(?-i:echo|printf)" + _LOOP_EMIT_ARGS
     + r"[ \t]+(?P<feed>[^\s;|&]{1,80})[ \t]*" + _XARGS_CARRIER_TAIL + r")?"
 )
-_DO_BODY = (
-    r"[ \t]*(?:;|\n)[ \t\n]{0,64}(?-i:do)(?=\s)[ \t\n]{0,64}"
+#: The body from its separator; `_DO_BODY` puts before it the blank run a
+#: head leaves. The soft tier's body reader (`_LOOP_BODY_RE`) compiles
+#: this alone: run unanchored, a leading blank run restarts at every
+#: blank of a flood (the ReDoS receipt measured it quadratic).
+_DO_BODY_FROM_SEPARATOR = (
+    r"(?:;|\n)[ \t\n]{0,64}(?-i:do)(?=\s)[ \t\n]{0,64}"
     r"(?:" + _LOOP_BODY_STATEMENT + r"){0,4}"
     r"(?:(?-i:then|else)[ \t\n]{1,64})?"
     + _LOOP_FEED_PREFIX
     + r"(?P<verb>" + _LOOP_BODY_VERB + r")(?P<rmargs>[^\n;|&]{0,200})"
 )
+_DO_BODY = r"[ \t]*" + _DO_BODY_FROM_SEPARATOR
 #: (1) the enumerator piped into the read loop, the pipe ON THE LINE as the
 #: carrier's is.
 _LOOP_REMOVE_RE = re.compile(
@@ -15506,6 +15511,44 @@ def iter_unnarrowed_loop_remove_roots(
         return
     for _at, roots in _iter_loop_sweeps(raw, scan, wipes_only=wipes_only):
         yield roots
+
+
+#: A loop's ``do`` body read on its own, whatever head opens the loop
+#: (DEF-3063): the soft tier's reading of the carrier-fed body. `_DO_BODY`
+#: from its separator, so the body's grammar -- the statements before the
+#: remove, the emit and its switches, the carrier tail, the verb -- keeps
+#: ONE definition with the four openers that carry it.
+_LOOP_BODY_RE = re.compile(_DO_BODY_FROM_SEPARATOR, re.IGNORECASE)
+
+
+def loop_body_feeds_a_recursive_remove(command: str) -> bool:
+    """True when a loop's ``do`` body emits a parameter expansion into the
+    carrier and the carrier's remove recurses: ``echo "$f" | xargs rm -rf``
+    is ``rm -rf "$f"`` with the item on stdin, so it takes the nudge the
+    direct twin's variable operand takes (DEF-3063). The rm tier reads a
+    recursive remove's OPERANDS, and the carrier-fed remove has none, so a
+    loop no opener reads (a stage before the loop, a word list beside a
+    substitution, a pipe across a line break, a file fed at the tail) and a
+    narrowed head the opener leaves alone drew nothing where the direct
+    twin asked. Any head: the wall for a catastrophic root is the hard
+    tier's, which runs first. The emitted word must be one expansion of a
+    name (`_loop_variable_named`): a fixed word is not the item, and a
+    remove that does not recurse is silent, as the twin is. Read on the
+    masked scan, spans from the raw text; gated on both witnesses, so only
+    a command that pipes into xargs inside a loop pays the walk."""
+    raw, scan = _bash_scan_pair(_cap_for_scan(command))
+    if not _PIPED_CARRIER_WITNESS_RE.search(raw) or not _loop_carrier_witnessed(raw):
+        return False
+    for m in _LOOP_BODY_RE.finditer(scan):
+        feed = _named_span(raw, m, "feed", through_quotes=True)
+        if not feed or _loop_variable_named(feed) is None:
+            continue
+        if _remove_effect(_named_span(raw, m, "verb")) != "delete":
+            continue
+        rmargs = _named_span(raw, m, "rmargs", through_quotes=True)
+        if rm_recursive_force_operands("rm" + rmargs)[0]:
+            return True
+    return False
 
 
 def has_catastrophic_loop_remove(

@@ -1533,10 +1533,14 @@ first; the dangerous-command catch is a secondary slip-catcher):
    way is read by no loop head. Each draws the variable operand's nudge
    behind a plain
    recursing remove -- so a catastrophic word beside a substitution draws
-   that nudge where its direct twin walls -- and behind a body that pipes
-   each item into `xargs rm -rf`, a stage between and a word list beside a
-   substitution draw nothing at all: declared limits too, each pinned as
-   the verdict it draws by
+   that nudge where its direct twin walls -- and the same nudge behind a
+   body that pipes each item into `xargs rm -rf` (`echo "$f" | xargs rm
+   -rf`), under any loop head, since the soft tier reads the word the body
+   emits into the carrier as the recursive remove's operand (until
+   2026-11-09 a stage between, a word list beside a substitution and
+   every other unread head drew nothing at all there). A body that emits a
+   fixed word, or whose remove does not recurse, keeps its direct twin's
+   silence. Each is pinned as the verdict it draws by
    `tests/test_write_guard.py::TestCatastrophicLoopCarrier::test_through_the_hook_loop`.
 
    The PowerShell statement-form loop over a listing

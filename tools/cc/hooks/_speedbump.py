@@ -1054,6 +1054,13 @@ def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = 
             if left and _off_the_ephemeral_roster(
                     operands, str(root), placed=readings.placed(i)):
                 return True
+    # DEF-3063: a loop body that emits its item into the carrier
+    # (`echo "$f" | xargs rm -rf`) is the recursive remove of a variable
+    # operand with the operand on stdin, which the readings above never see:
+    # it takes the direct twin's nudge under any loop head (a catastrophic
+    # root is the hard tier's, deferred above).
+    if any(_bash_patterns.loop_body_feeds_a_recursive_remove(t) for t in texts):
+        return True
     # DEF-1151: cmd.exe's own recursive deletes (`cmd //c rd /s /q src`,
     # `del /s`) take the rm reading -- the wall for a catastrophic target
     # (deferred above: `has_catastrophic_recursive_rm` reads them), no

@@ -2771,6 +2771,15 @@ class TestCommandPositionClassClose:
             "INNER-LANGUAGE: Ruby `FileUtils.rm`/`mv` share their spelling with the "
             "shell verbs; the body is a program the anchored `ruby -e` / stdin "
             "openers selected (DEF-795).",
+        # ── DEF-3063, 2026-11-09: the loop body read without its head, for the
+        # soft tier's carrier-fed nudge. Its opener is the reserved `do` behind
+        # a separator, not `_CMD_POS`: composing the anchor before it would
+        # demand a command where the grammar has the `;`. ──
+        "_bash_patterns._LOOP_BODY_RE":
+            "SELF-ANCHORED on the reserved `do` behind `;` or a line break "
+            "(`_DO_BODY_FROM_SEPARATOR`; its carrier word keeps the anchor's verb prefix), "
+            "searched on the masked scan behind both carrier witnesses, so a quoted "
+            "mention reads nothing; a false read costs a nudge, never a wall (DEF-3063).",
         # ── DEF-802, 2026-09-15: a GATE, not a matcher. It names the delete
         # verbs of both shells only to decide whether the removal snapshot arm
         # walks the text at all; the operands come from the anchored
@@ -2909,6 +2918,12 @@ class TestCommandPositionClassClose:
             "TOKENIZER -- cuts the word-list span the anchored _FOR_WORDS_REMOVE_RE "
             "selected into bash words, on the scan span with pos/endpos; never runs "
             "over a command (DEF-837).",
+        "_bash_patterns._LOOP_BODY_RE":
+            "SELF-ANCHORED -- `_DO_BODY_FROM_SEPARATOR`: the `do` keyword behind `;` or a "
+            "line break, where bash reserves it, and the body's carrier word under "
+            "the anchor's verb prefix (`_XARGS_WORD`); searched on the masked scan "
+            "behind both carrier witnesses, so a quoted loop reads nothing "
+            "(DEF-3063, the soft tier's carrier-fed body).",
         "_bash_patterns._FIND_TYPE_F_RE":
             "FLAG inside the enumerator span `_PIPED_REMOVE_RE` (anchored) selected: "
             "the files-only walk (DEF-826).",

@@ -3864,15 +3864,33 @@ class TestCatastrophicLoopCarrier:
         # DECLARED, pinned exactly so the day a head reads them shows here: a
         # word list beside a command substitution is read by neither head, so
         # beside a catastrophic word it draws the variable operand's nudge
-        # (its twin `rm -rf * $(ls)` walls) and behind the carrier-fed body it
-        # draws NOTHING -- a silent allow, its own ledger row
+        # (its twin `rm -rf * $(ls)` walls), and so does the carrier-fed body
+        # (DEF-3063: it drew NOTHING until the soft tier read the word the
+        # body emits into the carrier as the recursive remove's operand)
         ('for f in * $(ls); do rm -rf "$f"; done', "bump"),
-        ('for f in * $(ls); do echo "$f" | xargs rm -rf; done', "allow"),
+        ('for f in * $(ls); do echo "$f" | xargs rm -rf; done', "bump"),
         # ... and a stage between the enumerator and the loop, behind the
-        # same carrier-fed body, draws nothing at all (declared 2026-09-19,
-        # driven 2026-09-22); the twin without the stage walls
-        ('find . | sort | while read f; do echo "$f" | xargs rm -rf; done', "allow"),
+        # same carrier-fed body, is the same nudge (DEF-3063); the twin
+        # without the stage walls
+        ('find . | sort | while read f; do echo "$f" | xargs rm -rf; done', "bump"),
         ('find . | while read f; do echo "$f" | xargs rm -rf; done', "wall"),
+        # DEF-3063's class: wherever the direct twin (`rm -rf "$f"` in the
+        # body) draws the variable operand's nudge, the carrier-fed body
+        # draws it too -- every loop shape no opener reads, and a narrowed
+        # head the opener reads and leaves alone; each drew nothing on main
+        ('find . |\n  while read f; do echo "$f" | xargs rm -rf; done', "bump"),
+        ('while read f; do echo "$f" | xargs rm -rf; done < files.txt', "bump"),
+        ('for f in sub/a $(ls sub); do echo "$f" | xargs rm -rf; done', "bump"),
+        ('find sub | sort | while read f; do echo "$f" | xargs rm -rf; done', "bump"),
+        ('find build | sort | while read f; do echo "$f" | xargs rm -rf; done', "bump"),
+        ("find . -name '*.pyc' | while read f; do echo \"$f\" | xargs rm -rf; done", "bump"),
+        ("find . -name '*.pyc' | sort | while read f; do echo \"$f\" | xargs rm -rf; done", "bump"),
+        ('find . | sort | while read f; do printf "%s\\n" "$f" | xargs rm -rf; done', "bump"),
+        ('find . | sort | while read f; do echo "$f" | xargs -r rm -r; done', "bump"),
+        # ... and stays silent where its twin does: a remove that does not
+        # recurse, and a body that emits a fixed word rather than the item
+        ('for f in * $(ls); do echo "$f" | xargs rm -f; done', "allow"),
+        ('find . | sort | while read f; do echo build | xargs rm -rf; done', "allow"),
     ])
     def test_through_the_hook_loop(self, tmp_path, cmd, expect):
         """The wiring, not only the classifier (the DEF-498 lesson)."""
@@ -4110,6 +4128,29 @@ class TestCatastrophicLoopCarrier:
         assert bp.has_catastrophic_bash_sweep(loop, str(tmp_path)) is True, label
         zone = f'for f in {words[:-2]} tools/cc/hooks; do rm -rf "$f"; done'
         assert ("delete", "tools/cc/hooks") in bp.iter_removed_or_relocated_operands(zone), label
+
+    def test_a_carrier_fed_body_takes_its_direct_twins_nudge_loop(self, tmp_path):
+        """DEF-3063: `echo "$f" | xargs rm -rf` in a loop body is `rm -rf
+        "$f"` with the item on stdin, so the soft tier answers it as it
+        answers the twin, under heads no opener reads -- a stage before the
+        loop, a word list beside a substitution -- where it answered
+        nothing; a remove that does not recurse stays silent beside its
+        twin. Read at the predicate, so the row names the arm."""
+        import sys
+        sys.path.insert(0, str(HOOKS_DIR))
+        import _speedbump as sb
+        for head, tail in (
+            ("for f in * $(ls); do ", "; done"),
+            ("find . | sort | while read f; do ", "; done"),
+        ):
+            for body, asks in (
+                ('rm -rf "$f"', True),
+                ('echo "$f" | xargs rm -rf', True),
+                ('rm -f "$f"', False),
+                ('echo "$f" | xargs rm -f', False),
+            ):
+                cmd = head + body + tail
+                assert sb._pred_rmrf("Bash", {"command": cmd}, tmp_path) is asks, cmd
 
     def test_the_loop_openers_are_one_derived_roster_loop(self):
         """FM-4 of DEF-837's review: the loop openers were kept by hand at
