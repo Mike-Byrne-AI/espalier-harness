@@ -2051,8 +2051,11 @@ class TestTheWallClockRule:
 
 _LAUNCHERS = frozenset({"run", "Popen", "call", "check_call", "check_output"})
 #: Launchers read by name wherever they come from (``tools/cc/_json_safe.py``'s
-#: bounded spawn, which takes the argv first).
-_NAMED_LAUNCHERS = frozenset({"run_bounded"})
+#: bounded spawns, each of which takes the argv first). Every one the module
+#: defines is here (``TestTheNestedRunRule::test_every_bounded_spawn_is_read_as_a_launcher``):
+#: with ``run_tree_bounded`` missing, ``scripts/verify_pins.py`` and its suite
+#: runs dropped out of the population the day they moved onto it (DEF-1179).
+_NAMED_LAUNCHERS = frozenset({"run_bounded", "run_tree_bounded", "run_tree_to_deadline"})
 #: The launches the scan finds at the pin, the serial files' included; the
 #: floor the scan must clear before its verdict is read, as the wall-clock
 #: rule's (a scan that finds a handful is broken, not looking at clean files).
@@ -2262,6 +2265,16 @@ class TestTheNestedRunRule:
     """DEF-2035: a pytest child launched off the serial lists is placed when it
     lands, not found by a red leg; with the detector's must-trip and
     must-not-trip rows (`docs/STANDING_PRINCIPLES.md` §7)."""
+
+    def test_every_bounded_spawn_is_read_as_a_launcher(self):
+        """A launch through a bounded spawn is read by the spawn's name, so one
+        the rule does not name hides every launch routed onto it."""
+        from tests._tree_spawn import bounded_spawn_names
+
+        missing = sorted(bounded_spawn_names() - _NAMED_LAUNCHERS)
+        assert not missing, (
+            f"tools/cc/_json_safe.py defines bounded spawns {missing} that _NAMED_LAUNCHERS does "
+            "not read: a pytest launched through one is invisible to the nested-run rule")
 
     # Every launch spells the constant `pytest` or `pytest.main(` in a string,
     # or, through the script hop, names a hop script's file (``_live`` reads both).

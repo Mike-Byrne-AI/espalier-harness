@@ -133,18 +133,20 @@ REPO_DEFAULT = Path(__file__).resolve().parent.parent
 
 
 def _bounded_spawn():
-    """``run_bounded`` from this checkout's ``tools/cc/_json_safe.py``, loaded
-    by path, never an installed engine's: ``subprocess.run`` whose timeout
-    holds on Windows, where ``run`` waits on a grandchild holding its pipe
-    (DEF-3004)."""
+    """``run_tree_bounded`` from this checkout's ``tools/cc/_json_safe.py``,
+    loaded by path, never an installed engine's: ``subprocess.run`` whose
+    timeout ends the inner pytest's whole tree. ``run`` kills the inner pytest
+    alone, so on POSIX a hook, a git or a nested pytest it started ran on at
+    parent 1 beside the clone, and on Windows the call waited on a grandchild
+    holding its pipe (DEF-3004)."""
     spec = importlib.util.spec_from_file_location(
         "_json_safe_for_verify_pins", REPO_DEFAULT / "tools" / "cc" / "_json_safe.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.run_bounded
+    return module.run_tree_bounded
 
 
-run_bounded = _bounded_spawn()
+run_tree_bounded = _bounded_spawn()
 
 PINNED = "PINNED"
 UNPINNED = "UNPINNED"
@@ -721,7 +723,7 @@ def run_pytest(clone: Path, selection: list[str], timeout: int) -> RunResult:
     # run on the first's would pay that delete in a test, and a file that
     # would not go errors every test into a false PINNED.
     basetemp = tempfile.mkdtemp(prefix="basetemp-", dir=clone.parent)
-    proc = run_bounded(
+    proc = run_tree_bounded(
         [sys.executable, "-m", "pytest", *selection, "-q", "--tb=no", "-rfE",
          "-p", "no:cacheprovider", "--continue-on-collection-errors", f"--basetemp={basetemp}"],
         cwd=str(clone), capture_output=True, text=True,

@@ -813,7 +813,6 @@ class TestTheLiveProbeFile:
     #: in a --shared clone: six live probes name a path the clone lacks; three
     #: read it and now declare it, these three only name it.)
     _NAMED_NOT_READ = {
-        "DEF-664": {"tools/cc/hooks/.espalier-state"},              # `test -d` asserts its ABSENCE
         "DEF-741": {"WALK2_FINDINGS.md", "WINDOWS_FUSE_NOTES.md"},  # classifier arguments, never opened
         "DEF-1155": {".claude/settings.json", "reports/harness_config.json",
                      "reports/repo_fingerprint.json"},         # fixtures it writes inside its temp tree (the DEF-999 shape)
@@ -826,7 +825,10 @@ class TestTheLiveProbeFile:
         # row struck (the checkout's wiring note), its probe retired. DEF-4029
         # left it on 2026-11-01 the same way: its row struck (the PowerShell
         # write reader's four shapes, #366), its probe retired, by lane
-        # the-powershell-write-shapes-row-is-struck.
+        # the-powershell-write-shapes-row-is-struck. DEF-664 left it on
+        # 2026-11-08 the same way: its row struck (one repo-root resolver), its
+        # probe re-pinned on behaviour and then retired, by lane
+        # one-repo-root-resolver.
     }
     _PATH_LITERAL = re.compile(
         r"(?<![\w/.-])((?:[A-Za-z_.][\w.-]*/)+[\w.-]*"
