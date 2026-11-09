@@ -126,7 +126,7 @@ try:
         "plan_completion",
         "python_command_hint", "read_stdin_safely", "read_toml_table",
         "relief_agents_line", "relief_flags", "resolve_project_root", "say_bad_stdin", "say_once", "spawn_checked",
-        "split_command", "stop_gate_test_cmd", "unlock_file", "warn", "warn_exc",
+        "spawn_tree_checked", "split_command", "stop_gate_test_cmd", "unlock_file", "warn", "warn_exc",
     )
     for _name in _STOP_GATE_HELPER_NAMES:
         getattr(_hook_utils, _name)
@@ -636,7 +636,7 @@ def _run_one_command(root: Path, cmd: str, *, source: str) -> int:
         else:
             try:
                 # subprocess-contract: ok the-test-command-the-operator-or-the-repository-named-via-ESPALIER_STOP_GATE_TEST_CMD-or-extra_actions-test-or-the-fingerprint
-                result = _hook_utils.spawn_checked(
+                result = _hook_utils.spawn_tree_checked(
                     parts, root=root,
                     capture_output=True,
                     text=True, encoding="utf-8", errors="replace",
@@ -1025,7 +1025,7 @@ def _gate_pytest(root: Path) -> int:
         return 0
 
     try:
-        result = _hook_utils.spawn_checked(
+        result = _hook_utils.spawn_tree_checked(
             [sys.executable, "-m", "pytest"] + test_args + ["-q", "--tb=short"],
             root=root,
             capture_output=True,
