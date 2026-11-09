@@ -760,6 +760,17 @@ GATE_COMMAND_TIMEOUT = (
     "Do: {do}"
 )
 
+# A command of a test list of two or more (the declared [extra_actions] test)
+# that met the budget the list shares (DEF-5097); {where} is "running `<cmd>`"
+# or "before `<cmd>` could start", and the Do line is the source's, as above.
+GATE_COMMAND_LIST_TIMEOUT = (
+    "Gate 1 ({source}): the {count} commands of the test list share one "
+    "{budget}s budget, the gate's STOP_INNER_BUDGET, and it ran out {where} "
+    "(command {number} of {count}). A gate green because it ran out of time "
+    "is no gate, so this blocks.\n"
+    "Do: {do}"
+)
+
 # The Do line of GATE_COMMAND_TIMEOUT per source: the command that ran out
 # of time is changed where it lives, not declared again.
 GATE_COMMAND_TIMEOUT_DO_ENV = (
