@@ -132,12 +132,19 @@ def _guard_reason(result: subprocess.CompletedProcess) -> str:
 def _past_the_bump(command: str, tmp_path: Path, run=run_bash_guard) -> subprocess.CompletedProcess:
     """The judgment a speed bump hands on (``run`` is the tool's fixture,
     the Bash one by default): a bump denies the first issue of a recursive
-    delete or a discard and lets the re-issue through, and the guard runs
-    the bumps before the zone check, so the re-issue is the one the zone
-    tier answers."""
+    delete or a discard and lets the re-issue through. Since DEF-986 the
+    zone check runs before the bumps, so a target it walls is answered on the
+    first call; the re-issue is for a spelling the zone tier passed, where
+    the bump is what answered first."""
     result = run(command, tmp_path)
     if _guard_reason(result).startswith("Speed-bump ["):
         result = run(command, tmp_path)
+        # The bump promised this re-issue proceeds: it may allow, or meet a
+        # second checkpoint the command also trips, never a wall (DEF-986).
+        # Accepting a wall here kept every bump-then-wall row green while the
+        # guard broke that promise.
+        again = _guard_reason(result)
+        assert again == "" or again.startswith("Speed-bump ["), (command, again)
     return result
 
 
@@ -162,6 +169,65 @@ def _assert_zone_walled(command: str, tmp_path: Path, run=run_bash_guard) -> Non
     assert_hook_denied(result)
     reason = _guard_reason(result)
     assert any(text in reason for text in _WALL_TEXTS), (command, reason)
+
+
+class TestTheZoneQuestionGoesBeforeTheBump:
+    """DEF-986: a speed bump promises that a re-issue proceeds, so it fires
+    only on a call that can. Before the fix the guard ran the bumps ahead of
+    the protected-zone checks: a recursive delete of a protected file drew
+    the bump, and its re-issue met the zone wall, a second and different
+    deny the first had said would not come. Outside maintenance mode the
+    zone question now goes first; under it no zone check runs, so the bump
+    is the first responder there, as CP-GATEWEAKEN needs."""
+
+    _PROTECTED_RM = "rm -rf tools/cc/hooks/session_start.py"
+    _PS_PROTECTED_RM = "Remove-Item -Recurse -Force tools/cc/hooks/session_start.py"
+
+    def test_a_delete_of_a_protected_file_meets_the_zone_wall_on_the_first_call(self, tmp_path):
+        first = run_bash_guard(self._PROTECTED_RM, tmp_path)
+        reason = _guard_reason(first)
+        assert "protected harness zone" in reason, reason
+        assert not reason.startswith("Speed-bump ["), reason
+        # The re-issue meets the same wall: nothing was promised.
+        assert _guard_reason(run_bash_guard(self._PROTECTED_RM, tmp_path)) == reason
+
+    def test_the_powershell_twin_meets_the_zone_wall_on_the_first_call(self, tmp_path):
+        reason = _guard_reason(_run_ps_guard(self._PS_PROTECTED_RM, tmp_path))
+        assert "protected harness zone" in reason, reason
+        assert not reason.startswith("Speed-bump ["), reason
+
+    def test_the_bump_still_fires_once_and_clears_on_an_unprotected_target(self, tmp_path):
+        command = "rm -rf src/old"
+        assert _guard_reason(run_bash_guard(command, tmp_path)).startswith("Speed-bump [CP-RMRF]")
+        assert _guard_reason(run_bash_guard(command, tmp_path)) == ""
+
+    def test_no_check_runs_after_the_bump_in_the_dispatch(self):
+        """The order itself, read from the source: every `check_*` call in
+        `_run_main` sits ahead of the speed bump's `check_fired`, so a zone
+        check (or any other deny) added after the bump reds here rather than
+        bringing the false re-issue promise back. Only the advisory reinject
+        (`_reinject.check`, an attribute call that never denies) follows."""
+        import ast
+
+        tree = ast.parse((HOOKS_DIR / "write_guard.py").read_text(encoding="utf-8"))
+        fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_run_main")
+        calls = [c for c in ast.walk(fn) if isinstance(c, ast.Call)]
+        bump = min(c.lineno for c in calls
+                   if isinstance(c.func, ast.Attribute) and c.func.attr == "check_fired")
+        after = sorted({c.func.id for c in calls
+                        if isinstance(c.func, ast.Name) and c.func.id.startswith("check_") and c.lineno > bump})
+        assert after == [], f"checks dispatched after the speed bump: {after}"
+
+    def test_under_maintenance_the_bump_fires_on_a_protected_target_and_clears(self, tmp_path, monkeypatch):
+        # No zone check runs under maintenance mode, so the bump is the one
+        # pause the delete gets, and its promise holds.
+        monkeypatch.setenv("ESPALIER_MAINTENANCE_MODE", "1")
+        first = run_bash_guard(self._PROTECTED_RM, tmp_path)
+        assert _guard_reason(first).startswith("Speed-bump [CP-RMRF]")
+        # A structured deny carries nothing on stderr (channel-XOR): the
+        # maintenance debug line belongs to the allow, not beside the bump.
+        assert "MAINTENANCE_MODE" not in (first.stderr or ""), first.stderr
+        assert _guard_reason(run_bash_guard(self._PROTECTED_RM, tmp_path)) == ""
 
 
 class TestTheShellFixturesCarryTheProtectedTree:
@@ -8602,7 +8668,7 @@ class TestCatastrophicRmFlagOrderIndependent:
         ("PowerShell", "Remove-Item -Recurse out; Set-Location build; Remove-Item -Recurse *", "bump"),
     ])
     def test_a_directory_an_earlier_statement_removed_withholds_the_glob_relief(
-        self, tmp_path, tool, cmd, expect,
+        self, tmp_path, monkeypatch, tool, cmd, expect,
     ):
         """The walk asks the disk whether a `cd` target is there, and the disk
         answers for the moment the hook runs -- before the command's own
@@ -8612,7 +8678,14 @@ class TestCatastrophicRmFlagOrderIndependent:
         reading stays), so a leading glob after it walls from nowhere. The
         named user: an agent that clears a build directory and re-enters it in
         one command, where the failed `cd` leaves the glob at the checkout
-        root."""
+        root.
+
+        Judged under maintenance mode, where no zone check runs, so each row
+        reads the hard tier's walk alone: since DEF-986 the zone checks answer
+        ahead of the speed bump, and the zone tier does not credit the
+        contents-only twin's `cd build`, so its wall would stand in for the
+        bump that row pins."""
+        monkeypatch.setenv("ESPALIER_MAINTENANCE_MODE", "1")
         (tmp_path / "build" / "sub").mkdir(parents=True)
         got = _delete_verdict(run_guard_from(tool, cmd, tmp_path, tmp_path))
         assert got == expect, (cmd, got)
@@ -15903,7 +15976,8 @@ class TestTheCoverageContract:
     @pytest.mark.parametrize("cmd, reason", [
         ("rm -rf $UNBOUND", "Speed-bump [CP-RMRF]"),               # a variable with no literal binding
         ("rm -rf $(pwd)", "Speed-bump [CP-RMRF]"),                 # a command substitution
-        ("rm -rf t*", "Speed-bump [CP-RMRF]"),                     # a glob whose literal part names no root
+        ("rm -rf q*", "Speed-bump [CP-RMRF]"),                     # a glob whose literal part names no root
+        ("rm -rf t*", "a wildcard that reaches"),                  # the same, reaching a zone the project holds: that wall answers first (DEF-986)
         ("rm -rf $PWD", "Dangerous command blocked"),              # read as the directory the command runs in
         ("rm -rf *", "Dangerous command blocked"),                 # a bare glob: that same directory
         ("cat $S/.env", "Secret-path access blocked"),             # judged on the literal part
@@ -16943,15 +17017,16 @@ class TestRemovedOrRelocatedOperandIsAMutation:
                 denied = bool(wg.check_mcp(spelled, tool, projects["plain"]))
             assert denied == (expect == "deny"), f"{tool} {spelled} -> {'deny' if denied else 'allow'}"
 
-    def test_the_recursive_force_spelling_bumps_first_and_its_reissue_reaches_the_zone_check(self, tmp_path):
-        """Through the real hook, twice: the speed bump sits ahead of the
-        maintenance gate and the zone checks, so the recursive-force spelling
-        on a zone directory is bumped on the first issue and refused as a
-        zone mutation on the re-issue the bump text invites (the order is
-        declared, not accidental; the failure-mode review asked for the pin)."""
+    def test_the_recursive_force_spelling_meets_the_zone_wall_on_the_first_issue(self, tmp_path):
+        """Through the real hook, twice: outside maintenance mode the zone
+        checks sit ahead of the speed bump (DEF-986), so the recursive-force
+        spelling on a zone directory is refused as a zone mutation on the
+        first issue, and the re-issue meets the same wall: no bump promised it
+        passage (the order is declared, not accidental; the failure-mode
+        review asked for the pin)."""
         (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True)
         first = run_bash_guard("rm -rf tools/cc/hooks", tmp_path)
-        assert_hook_denied(first, contains_reason="Speed-bump")
+        assert_hook_denied(first, contains_reason="protected harness zone")
         second = run_bash_guard("rm -rf tools/cc/hooks", tmp_path)
         assert_hook_denied(second, contains_reason="protected harness zone")
 
@@ -16964,9 +17039,10 @@ class TestRemovedOrRelocatedOperandIsAMutation:
     @pytest.mark.parametrize("form", _CMD_FORMS, ids=[f[0] for f in _CMD_FORMS])
     def test_cmds_recursive_delete_of_a_zone_meets_the_same_order(self, form, tmp_path):
         """cmd.exe's own recursive deletes (DEF-1151) on a zone directory,
-        on both tools, take the plain form's order above: the speed bump
-        first -- it now reads them, and it sits ahead of the zone checks --
-        and the zone wall on the re-issue. Before, the zone wall answered the
+        on both tools, take the plain form's order above: the zone wall on
+        the first issue and on the re-issue (DEF-986: the zone checks sit
+        ahead of the speed bump, which reads these forms too, so the bump
+        never promises a re-issue the wall refuses). Before, the zone wall answered the
         first issue on the PowerShell tool and nothing answered it on the
         Bash tool; behind cmd's existence test, nothing answered the
         PowerShell re-issue until its zone reader took the cmd reader."""
@@ -16974,7 +17050,7 @@ class TestRemovedOrRelocatedOperandIsAMutation:
         _id, tool, template = form
         command = template.format(t="tools/cc/hooks")
         first = run_guard_from(tool, command, tmp_path, None)
-        assert_hook_denied(first, contains_reason="Speed-bump")
+        assert_hook_denied(first, contains_reason="protected harness zone")
         second = run_guard_from(tool, command, tmp_path, None)
         assert_hook_denied(second, contains_reason="protected harness zone")
 
@@ -17136,10 +17212,10 @@ class TestAdopterZonesFromEspalierToml:
         root = self._tree(tmp_path)
         assert_hook_denied(run_guard_tool("Write", {"file_path": "models/w.bin", "content": "x"}, root),
                            contains_reason="`models/` under `protected_paths`")
-        # A recursive delete meets the CP-RMRF speed bump first (deny-once); the
-        # re-issue is what reaches the zone check, and the zone must still deny.
+        # A recursive delete meets the zone check first (DEF-986: it runs ahead
+        # of the CP-RMRF speed bump), and the re-issue meets it again.
         first = run_bash_guard("rm -rf data", root)
-        assert_hook_denied(first, contains_reason="Speed-bump [CP-RMRF]")
+        assert_hook_denied(first, contains_reason="`protected_paths`")
         assert_hook_denied(run_bash_guard("rm -rf data", root), contains_reason="`protected_paths`")
 
     def test_the_prefix_twin_allows(self, tmp_path):

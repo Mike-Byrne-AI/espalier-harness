@@ -3769,9 +3769,12 @@ the-gates fails open:
   one-shot would fire on edit 1 and let edits 2..N weaken other gates silently
   (blueprint §11 #4). Pinned by `test_two_guard_files_fire_twice`.
 
-And the call site is **before** the maintenance gate in `write_guard`, so
+And the call site is **before** the maintenance return in `write_guard`, so
 it fires in the exact session class — harness self-edit under MAINTENANCE_MODE —
-where the protected-zone check is bypassed and gate edits arrive in bursts. Note
+where the protected-zone check is bypassed and gate edits arrive in bursts.
+Outside maintenance the zone checks run first (a bump promises its re-issue
+proceeds, so it fires only on a call the zone passes), and an edit of a guard
+file in the zone meets that wall instead of this bump. Note
 the `SpeedBump.fires_in_maintenance` field is **inert** (`check()` never reads it);
 the property comes from call-site ordering, pinned by the integration test, not
 the field. Mirror of the recall engine's defensive floor (the cap-exempt keystone: safety-critical fires are never budget-suppressed, keyed per-file).
