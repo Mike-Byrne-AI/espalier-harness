@@ -73,6 +73,54 @@ except ImportError:  # pragma: no cover - a tools/cc/_json_safe.py that predates
         import subprocess
         return subprocess.run(  # spawn: ok the bounded spawn's fallback, for a _json_safe.py that predates it
             args, timeout=timeout, input=input, capture_output=capture_output, check=check, **kwargs)
+# The tree-ending form spawn_tree_checked takes from HERE, guarded the same way
+# and falling back to the bounded spawn: a `_json_safe.py` that predates it
+# leaves that call killing the child alone at the timeout on POSIX, as before
+# it, never an import crash.
+try:
+    from _json_safe import run_tree_bounded  # noqa: E402
+except ImportError:  # pragma: no cover - a tools/cc/_json_safe.py that predates the tree-ending spawn
+    run_tree_bounded = run_bounded
+# The program-word spelling of a spaced interpreter (DEF-2062), guarded the
+# same way: a `_json_safe.py` that predates it leaves `executable_word` on the
+# bare `sys.executable` it printed before (a spaced root is still quoted by the
+# fallback below), never an import crash.
+try:
+    from _json_safe import program_word, quoted_if_spaced, windows_short_path  # noqa: E402
+# fail-open: ok text-fallback a kept older _json_safe.py keeps the bare interpreter word it printed before (DEF-2062)
+except ImportError:  # pragma: no cover - a tools/cc/_json_safe.py that predates the spelling
+    def program_word(path: str, short_path: Any) -> str:
+        """Fallback when ``_json_safe`` lacks the spelling: ``path`` unchanged, as before DEF-2062."""
+        return path
+
+    def quoted_if_spaced(path: str) -> str:
+        """Fallback when ``_json_safe`` lacks the helper: double-quoted when spaced."""
+        return f'"{path}"' if any(ch.isspace() for ch in path) else path
+
+    def windows_short_path(path: str) -> "str | None":
+        """Fallback when ``_json_safe`` lacks the lookup: no short form."""
+        return None
+
+
+def executable_word() -> str:
+    """``sys.executable`` spelled as the program word of a command the operator
+    will paste (DEF-2062): on Windows a spaced path's forward-slash 8.3 short
+    form, which PowerShell 5.1, cmd and Git Bash all run, else the path quoted
+    when spaced. Bare, a spaced path is cut at its first space in every shell."""
+    return program_word(sys.executable, windows_short_path)
+
+
+def powershell_call_note(word: str) -> str:
+    """The clause a SEEN message (the banner, an additionalContext advisory)
+    appends after a command whose program word is quoted (DEF-2062, ack
+    2e78b5): Windows PowerShell 5.1 reads a quoted first word as text, so it
+    needs ``&`` before it. Empty for a bare word or off Windows. A stderr line
+    of an exit-0 hook takes no note: nothing reads it."""
+    if word.startswith('"') and sys.platform == "win32":
+        return " (in PowerShell, type & before it: PowerShell reads a quoted first word as text)"
+    return ""
+
+
 # The one repo-root resolver `_project_root_spelling` delegates to (DEF-664),
 # guarded the same way and wider: a kept `_paths.py` that predates it, or one
 # that raises at import, leaves `_project_root_spelling` on its own rule below
@@ -1224,19 +1272,15 @@ def spawn_checked(
     the resolved argv through ``run_bounded``, so a ``timeout`` is a bound on
     Windows too; a program that cannot start returns a ``SpawnFailure``
     instead of raising, so the caller decides what to say. ``TimeoutExpired``
-    propagates as today. ``kwargs`` are ``subprocess.run``'s."""
+    propagates as today. ``kwargs`` are ``subprocess.run``'s. On POSIX the
+    timeout kills the child alone: for a child that is itself a tree of work,
+    call :func:`spawn_tree_checked`."""
     import subprocess
 
-    argv = [str(a) for a in argv]
-    if not argv:
-        return SpawnFailure((), "EmptyCommand", None)
-    resolved = resolve_program(argv[0], root=root)
-    if resolved is None:
-        return SpawnFailure(tuple(argv), "Unresolved", None)
-    if os.name == "nt" and resolved.lower().endswith((".cmd", ".bat")) and any(
-        ch in arg for arg in argv[1:] for ch in _CMD_SHIM_METACHARS
-    ):
-        return SpawnFailure(tuple(argv), "CmdShimMetachar", resolved)
+    checked = _spawn_argv(argv, root)
+    if isinstance(checked, SpawnFailure):
+        return checked
+    args, resolved = checked
     try:
         # Two pragma vocabularies meet here on purpose: `subprocess-contract: ok`
         # answers the subprocess_contracts scanner (is this espalier-CLI argv
@@ -1244,11 +1288,62 @@ def spawn_checked(
         # raw spawn declared?). This call is the chokepoint, routed onto the
         # bounded spawn, so it needs the first and not the second.
         # subprocess-contract: ok the chokepoint -- argv is the caller's, argv[0] resolved above; an espalier-signature spawn that routes here carries its own pin at its call site
-        return run_bounded([resolved, *argv[1:]], **kwargs)
+        return run_bounded([resolved, *args[1:]], **kwargs)
     except subprocess.TimeoutExpired:
         raise
     except (OSError, ValueError) as exc:  # ValueError: a NUL in an argument
-        return SpawnFailure(tuple(argv), type(exc).__name__, resolved, os_error_text(exc))
+        return SpawnFailure(tuple(args), type(exc).__name__, resolved, os_error_text(exc))
+
+
+def spawn_tree_checked(
+    argv: Sequence[str], *, root: Path, **kwargs: Any,
+) -> "subprocess.CompletedProcess[Any] | SpawnFailure":
+    """:func:`spawn_checked` for a child that is itself a tree of work -- a
+    test run that starts servers, hooks and git -- whose ``timeout`` ends the
+    child and every process below it on every OS (``run_tree_bounded``), where
+    ``spawn_checked``'s kills the child alone on POSIX and the rest ran on at
+    parent 1. The resolution, the shim refusal and the ``SpawnFailure``
+    contract are ``spawn_checked``'s, and ``TimeoutExpired`` propagates once
+    the tree is ended. Two edges are ``run_tree_bounded``'s: on POSIX
+    ``start_new_session``, ``process_group`` and ``preexec_fn`` are refused (a
+    ``SpawnFailure`` naming ``ValueError``), since the child stays in the
+    caller's group so an ancestor's group kill still reaches it; and on
+    Windows the child runs in a kill-on-close job, so what it leaves running
+    when it exits on its own is ended when this process exits. Beside a kept
+    ``_json_safe.py`` that predates ``run_tree_bounded`` this is
+    ``spawn_checked`` (the guarded import above), whose timeout kills the
+    child alone on POSIX."""
+    import subprocess
+
+    checked = _spawn_argv(argv, root)
+    if isinstance(checked, SpawnFailure):
+        return checked
+    args, resolved = checked
+    try:
+        # subprocess-contract: ok the chokepoint's tree-ending form -- argv is the caller's, argv[0] resolved above; an espalier-signature spawn that routes here carries its own pin at its call site
+        return run_tree_bounded([resolved, *args[1:]], **kwargs)
+    except subprocess.TimeoutExpired:
+        raise
+    except (OSError, ValueError) as exc:  # ValueError: a NUL in an argument, or a group keyword refused on POSIX
+        return SpawnFailure(tuple(args), type(exc).__name__, resolved, os_error_text(exc))
+
+
+def _spawn_argv(argv: Sequence[str], root: Path) -> "tuple[list[str], str] | SpawnFailure":
+    """The two chokepoints' check before the start: ``(argv as strings, the
+    program argv[0] resolved to)``, or the ``SpawnFailure`` that refuses the
+    spawn -- an empty argv, an argv[0] that does not resolve, or a Windows
+    script shim with a metacharacter argument."""
+    args = [str(a) for a in argv]
+    if not args:
+        return SpawnFailure((), "EmptyCommand", None)
+    resolved = resolve_program(args[0], root=root)
+    if resolved is None:
+        return SpawnFailure(tuple(args), "Unresolved", None)
+    if os.name == "nt" and resolved.lower().endswith((".cmd", ".bat")) and any(
+        ch in arg for arg in args[1:] for ch in _CMD_SHIM_METACHARS
+    ):
+        return SpawnFailure(tuple(args), "CmdShimMetachar", resolved)
+    return args, resolved
 
 
 # Universal plan-exempt prefixes: paths under these skip plan_guard's plan-required
@@ -4180,9 +4275,11 @@ def python_command_hint() -> str:
     BANS the versioned spelling in operator text. Neither literal is portable,
     so neither belongs in a message. Interpolate this instead.
 
-    Falls back to ``sys.executable`` -- an absolute path, always correct and
-    paste-able -- rather than guessing a bare name that may not resolve. Verbose
-    beats wrong in a remediation the operator is about to run.
+    Falls back to ``sys.executable`` -- an absolute path, always correct --
+    rather than guessing a bare name that may not resolve. Verbose beats wrong
+    in a remediation the operator is about to run. It is spelled through
+    :func:`executable_word` (DEF-2062): bare, a spaced path is cut at its first
+    space in every shell.
 
     ⚠ Returns "" when NOTHING on this host clears the floor, and callers MUST
     check. The first version fell back to ``sys.executable`` unchecked, which
@@ -4203,7 +4300,7 @@ def python_command_hint() -> str:
         if interpreter_meets_floor(candidate) and interpreter_start_failure(candidate) is None:
             return candidate
     if sys.executable and interpreter_meets_floor(sys.executable):
-        return sys.executable
+        return executable_word()
     return ""
 
 

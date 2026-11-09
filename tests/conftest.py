@@ -1422,6 +1422,11 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # added, locked and removed): git's own refusals and ancestry answers
             # are the thing under test, so no mock stands in.
             "test_checkout_sync",
+            # Drives tools/cc/ship.py as a child interpreter from copied
+            # tools/cc trees with one name gone from a sibling (DEF-5087): the
+            # interpreter's own exception hook and exit are the thing under
+            # test, so no in-process call stands in (fast; slow-exempt).
+            "test_kept_sibling",
             # Drives tools/cc/_merge_rules.py's stale-base read through real git
             # in a throwaway repo per case, commits at fixed dates: what moved on
             # the base since a CI run, and which file imports which, is git's
@@ -1546,6 +1551,10 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # Reads a filled spaced path back through real bash and pwsh: the
             # shells are the oracle for what the quoter means (DEF-5082).
             "test_spaced_paths",
+            # Imports the hooks in a child over a copied tools/cc whose kept
+            # _json_safe.py predates the spelling: a module object in this
+            # process cannot stand in for a fresh import (DEF-2062).
+            "test_json_safe_program_word",
         ),
         "integration",
     ),

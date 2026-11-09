@@ -211,7 +211,12 @@ too (those two add the start gate this five-row line does not carry: a
 newer merge's green run clears an older red only when it started after that
 merge landed, else it is printed beside the red), and a tree without the module beside the
 hooks gets one line in the block's place, `pull requests unread
-(tools/cc/_post_merge.py is not beside the hooks)`, never a silent green.
+(tools/cc/_post_merge.py is not beside the hooks)`, never a silent green. An
+older copy an upgrade kept as yours, one that lacks a name the block reads or
+a keyword it passes, gets one line too, naming what it lacks and the repair
+(`pull requests unread (tools/cc/_post_merge.py has `read_required` without
+`head=`, ...)`), where the line used to go under a warning naming an argument
+(until 2026-11-08).
 Each check name is owned by the newest merge whose run of it reached
 a verdict, so a later green run clears an older red, while a run still
 pending, cancelled or stale supersedes nothing (the last two read
@@ -929,16 +934,28 @@ takes are read under one module-top guard, and a failure there is a structured
 deny with a `pretooluse_blocked_internal_error` record; every call is refused
 until the cause is repaired. The deny names the file under `tools/cc/` that
 raised, its line and the exception. When a name a sibling takes is missing from
-`_hook_utils.py` -- the kept-helper case -- it also names the upgrade repair
-(restore the helper's `# espalier:managed` marker line, then `espalier upgrade
---execute .`). Any other raise names no upgrade, which would regenerate the
+the `tools/cc/` module it reads -- `_hook_utils.py` most often, any sibling
+since 2026-11-08 (a kept older `_bash_patterns.py` was told the upgrade would
+not repair it) -- it names that file and the upgrade repair (restore its
+`# espalier:managed` marker line, then `espalier upgrade --execute .`). The
+ship driver reads the same test: `tools/cc/ship.py` loads `_start_refusal.py`
+by path before its siblings, so a kept sibling it reads is one refusal on
+stderr naming the file, the line that read it and the repair, exit 1, never a
+traceback. The other scripts under `tools/cc/` do not install it yet, so a
+kept sibling still ends one of them in a traceback. Any other
+raise names no upgrade, which would regenerate the
 file under edit (a sibling raising at import was blamed on the helper twice,
 2026-10-14 and 10-16). The two budget names (`spawn_timeout`,
 `STATE_WRITE_LOCK`) degrade instead, because no verdict depends on them, so a
 helper missing only those judges on. `plan_guard.py`, `config_guard.py` and
 `stop_gate.py` carry the same guard (the Stop gate's refusal is the Stop-style
 block, which the protocol's loop signal lets through on the next Stop),
-`upgrade` names the missing names when it keeps the helper, and `espalier
+`upgrade` and a re-run of `init` name the missing names when they keep the
+helper (and, for any other kept `tools/cc/` file, the names and call keywords
+the regenerated scripts take that it lacks; a name read under an import guard
+that runs on, an `AttributeError` guard, a `hasattr` check or a `getattr`
+default is left out, and one under a start guard that refuses is not; a name
+read through a loader that is handed the module's name is not read yet), and `espalier
 doctor` names a wired hook that cannot start (for `write_guard`, a broken one of
 the two siblings below that it loads on first use too). Maintenance mode (the friction
 bypass below) does not lift this refusal -- the guard runs before that gate is
@@ -957,7 +974,10 @@ same way on every call. A broken `_bash_patterns.py` or `_speedbump.py` is
 therefore a crash, not a failure to start: a read-only call passes, so the file
 can be read, and a mutation meets the crash guard (`write_guard internal error
 (<error> at <file>:<line>)`), which names the same files and lets the same one
-restore through.
+restore through. Where the name read there is one a kept, older
+`_bash_patterns.py` lacks, the crash guard names that file and the upgrade
+repair as the start refusal does (until 2026-11-08 it said to restore
+`write_guard.py`).
 
 **The floor starts or refuses too.** Until 2026-10-16 the floor of that guard
 -- `_hook_utils.py`, with `tools/cc/_json_safe.py` under it, and
@@ -992,7 +1012,8 @@ guarded imports, installs `_start_refusal.refuse_on_body_raise` as the
 interpreter's exception hook, so an exception escaping its module body is the
 same refusal: it names the file and line that raised, says the module body
 raised (not an import), neither offers nor rules out an upgrade (the
-kept-helper test alone offers one), records `details.skew: "module body"`
+kept-file test alone offers one, and a name a kept sibling lacks reads as that
+refusal here too), records `details.skew: "module body"`
 (`"sibling import"` for the guarded imports), lets `write_guard`'s one restore
 through and the Stop hook's loop signal pass. `write_guard`'s judging child
 carries it, and so does a hook process that judges itself. It covers the
@@ -1014,7 +1035,8 @@ text is `git restore [--source=HEAD] [--] <file>`, `git checkout -- <file>` or
   `tools/cc/` file on the traceback, because the file you edited is often an
   outer one: a circular import raises in the module it re-enters, a bad
   argument in the helper it was handed to, a new module's import in the new
-  module. In the kept-helper case it also names `_hook_utils.py`.
+  module. In the kept-file case it also names the file that lacks the name
+  (`_hook_utils.py`, or the kept sibling).
 - **Which command.** The command it names is `git restore --source=HEAD --
   <file>`. A bare `git restore` reads the index, which keeps a staged break and
   refuses a path a merge left unmerged.
@@ -1789,7 +1811,12 @@ and JSON credential files -- are denied on the `Read` tool and, when a
 read verb names the path in the same statement, on Bash (`cat`, `head`,
 `cp`, `source`, ...) and on the PowerShell tool (`Get-Content`, `gc`,
 `type`, `Format-Hex`, `Copy-Item`, the dot-source, ...), each shell read
-with its own statement grammar and roster; the two rosters are pinned to
+with its own statement grammar and roster. On Bash the verb is read past
+the words that put a command behind them -- `then`, `do`, `!`, `{`, a
+leading assignment, a case arm, a leading redirect and a wrapper run with
+its flags (`sudo -u root`, `timeout 5`, `nohup`) -- and an input redirect's
+source is a read (`cat < .env`, `done < .env`), except a copier's, which
+never reads its stdin. The two rosters are pinned to
 each other class for class, and a program handed to the other shell
 (`powershell -Command "Get-Content .env"` on Bash, `sh -c 'cat .env'` on
 PowerShell) is read with that shell's roster. A program a carrier runs out
@@ -2587,7 +2614,7 @@ same for the checks the flag switches off in them
 |---------|--------|
 | `ESPALIER_STOP_GATE=light` (default) | Skip gate 1 (pytest). Run hygiene gates 2-3 only. |
 | `ESPALIER_STOP_GATE=full` | Run gate 1 (the test gate; the row below says what it runs) before hygiene gates. **Caution:** Stop fires on every turn, not just end-of-session. If set permanently, the test command runs on every turn. A pytest file list runs under the hook interpreter, so pytest must be installed for that form: on a Windows host wired to the launcher (`py -3`, a system Python) while your pytest lives in a virtualenv, the gate skips with a note (`stop_failed_open_pytest_missing`) until you install pytest for that interpreter or set `ESPALIER_STOP_GATE_TEST_CMD`. |
-| `ESPALIER_STOP_GATE_TEST_CMD=<command>` | The command gate 1 runs as *your* suite, as an argv at the repository root without a shell (a non-zero exit, a timeout or a command that cannot start blocks the Stop; an entry carrying shell syntax -- `&&`, `||`, a pipe, `;`, a redirection, `$(` -- is refused before the spawn, once a session per command, with the shape named: one program per entry, each started at the root, so `test = ["npm run build", "npm test"]` where a shell line would chain them). It is the first of three sources: without it, under `full`, gate 1 runs the `test` entry under `[extra_actions]` in `espalier.toml` (read on every Stop), else the test command detected from the repository's own files (`npm test`, `go test ./...`, `cargo test`, a bare `pytest -q`), and a pytest tree holding the harness default test files runs only those. `doctor` and the SessionStart banner say which one runs here (gate 1's own stderr line is a debug-log copy). A Gate 1 that skips -- nothing declared or detected and no default file here, no fingerprint test path exists, pytest timed out or could not run, the override splits to nothing, the fingerprint is unreadable, the mode is misspelt -- records `stop_failed_open_*` once a session, so `/status --log` counts it. |
+| `ESPALIER_STOP_GATE_TEST_CMD=<command>` | The command gate 1 runs as *your* suite, as an argv at the repository root without a shell (a non-zero exit, a timeout or a command that cannot start blocks the Stop; an entry carrying shell syntax -- `&&`, `||`, a pipe, `;`, a redirection, `$(` -- is refused before the spawn, once a session per command, with the shape named: one program per entry, each started at the root, so `test = ["npm run build", "npm test"]` where a shell line would chain them). It is the first of three sources: without it, under `full`, gate 1 runs the `test` entry under `[extra_actions]` in `espalier.toml` (read on every Stop), else the test command detected from the repository's own files (`npm test`, `go test ./...`, `cargo test`, a bare `pytest -q`), and a pytest tree holding the harness default test files runs only those. `doctor` and the SessionStart banner say which one runs here (gate 1's own stderr line is a debug-log copy). A Gate 1 that skips -- nothing declared or detected and no default file here, no fingerprint test path exists, pytest timed out or could not run, the override splits to nothing, the fingerprint is unreadable, the mode is misspelt -- records `stop_failed_open_*` once a session, so `/status --log` counts it. Gate 1's run is ended whole: at its budget (`STOP_INNER_BUDGET`) the command and every process it started are stopped, on every OS. On Windows the run also sits in a job that closes when the Stop hook exits, so a process a green run leaves behind ends then too: a daemon your test command keeps on purpose (Gradle's, an MSBuild or compiler server) starts cold at each Stop. |
 | `ESPALIER_MAINTENANCE_MODE=1` | Skip gates 2 and 3 (hygiene friction). Gate 1 (pytest, if opted in), gate 5 (the handoff gate: continuity, not friction) and gate 4 (blueprint finalize) still run. One advisory audit record per session says so (`stop_bypassed_maintenance_mode`; `/status --log` counts it). |
 
 Set the stop gate mode for a single session:

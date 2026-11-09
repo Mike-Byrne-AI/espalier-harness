@@ -5,7 +5,10 @@ The chokepoint, ``_hook_utils.spawn_checked``, resolves argv[0] first
 (``shutil.which``, which honours PATHEXT on Windows so ``npm`` finds
 ``npm.cmd`` -- DEF-948's remaining half) and returns a ``SpawnFailure``
 instead of raising when the program cannot start, so every gate that routes
-through it must decide what to SAY. Reporters keep their own spawn -- since
+through it must decide what to SAY. Its tree-ending form,
+``_hook_utils.spawn_tree_checked``, is the same check onto
+``_json_safe.run_tree_bounded``, for a child that is itself a tree (Gate 1's
+test run), and a call to it routes as one to the chokepoint does. Reporters keep their own spawn -- since
 2026-10-13 ``run_bounded``, the bounded one -- under a ``# spawn: ok <reason>``
 declaration on the call line or the line above.
 
@@ -62,6 +65,9 @@ BOUNDED_HOME = ("_json_safe.py", frozenset({"run_bounded", "_end_tree", "run_tre
 #: the caller holds among them); a hook's call to any is a spawn the census
 #: counts, declared like any other.
 BOUNDED_NAMES = ("run_bounded", "run_tree_to_deadline", "run_tree_bounded", "communicate_tree_bounded")
+#: The hooks' chokepoint and its tree-ending form, in ``_hook_utils.py``'s
+#: order: a gate's call to either is routed.
+CHOKEPOINTS = ("spawn_checked", "spawn_tree_checked")
 #: ...a ``run_bounded`` a module defines in its ``except ImportError`` handler,
 #: the fallback for a load where ``_json_safe`` is not importable (a def of
 #: that name anywhere else is no exemption)...
@@ -153,7 +159,7 @@ def spawn_sites(root: Path = HOOKS_DIR, pattern: str = "*.py") -> list[dict]:
                 isinstance(fn, ast.Attribute) and fn.attr in {"system", "popen"}
                 and isinstance(fn.value, ast.Name) and fn.value.id == "os"
             ) or (isinstance(fn, ast.Name) and fn.id in bare_spawns) or communicates
-            routed = _named(fn, "spawn_checked")
+            routed = any(_named(fn, name) for name in CHOKEPOINTS)
             no_stdin = _named(fn, "run_no_stdin")
             bounded = any(_named(fn, name) for name in BOUNDED_NAMES) or no_stdin
             if not (raw or routed or bounded):
@@ -192,9 +198,10 @@ class TestSpawnChokepoint:
     def test_every_spawn_is_the_chokepoint_or_declared(self):
         undeclared = [s for s in spawn_sites() if (s["raw"] or s["bounded"]) and not s["declared"]]
         chokepoint = [s for s in undeclared if s["file"] == "_hook_utils.py"]
-        assert [(s["function"], s["bounded"]) for s in chokepoint] == [("spawn_checked", True)], (
-            "exactly one undeclared spawn belongs in _hook_utils.py -- the chokepoint's own, "
-            f"spawn_checked onto run_bounded; found {chokepoint}"
+        assert [(s["function"], s["bounded"]) for s in chokepoint] == [(name, True) for name in CHOKEPOINTS], (
+            "exactly two undeclared spawns belong in _hook_utils.py -- the chokepoint's own, "
+            "spawn_checked onto run_bounded, and its tree-ending form's, spawn_tree_checked onto "
+            f"run_tree_bounded; found {chokepoint}"
         )
         stray = [s for s in undeclared if s["file"] != "_hook_utils.py"]
         assert not stray, (

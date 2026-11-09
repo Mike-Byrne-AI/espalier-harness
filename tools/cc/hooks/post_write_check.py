@@ -309,11 +309,16 @@ def _maybe_autoprune_memory(repo_root: Path, rel_path: str) -> None:
         if not _NO_ENGINE_RE.search(result.stderr or ""):
             break   # the engine ran and refused: the PATH binary is not a second opinion
 
+    _word = getattr(_hook_utils, "executable_word", lambda: sys.executable)()
     _hook_utils.advise_warn(
         f"ESPALIER_MEMORY.md autoprune failed: {last_error} "
         f"(file remains at {line_count} lines, cap={_MEMORY_MD_CAP}; "
-        f"run `{sys.executable} -m espalier memory prune --rows {excess} --root {repo_root} "
-        f"--allow-empty --keep-newest 1` by hand)"
+        # getattr: a kept older _hook_utils.py lacks these names (DEF-2062), and
+        # this note must not become a traceback in its place.
+        f"run `{_word} -m espalier memory prune "
+        f"--rows {excess} --root {getattr(_hook_utils, 'quoted_if_spaced', str)(str(repo_root))} "
+        f"--allow-empty --keep-newest 1` by hand"
+        f"{getattr(_hook_utils, 'powershell_call_note', lambda _w: '')(_word)})"
     )
 
 
