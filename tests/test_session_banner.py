@@ -4225,6 +4225,22 @@ class TestOpenPlanOnStartup:
         assert "`/opt/venv/bin/python3.12 tools/cc/execution_plan.py reset`" in section
         assert "`python tools/cc" not in section and "`python3 tools/cc" not in section
 
+    @pytest.mark.parametrize("hint,note", [
+        ('"C:/Program Files/Py/python.exe"', True),
+        ("C:/PROGRA~1/Py/python.exe", False),
+    ], ids=["quoted", "short-form"])
+    def test_a_quoted_interpreter_carries_the_powershell_note(self, tmp_path, monkeypatch, hint, note):
+        """DEF-2062 (ack 2e78b5): the banner reaches Claude and the operator,
+        so a quoted program word says PowerShell needs ``&`` before it. Dies
+        to: the note dropped from the OPEN PLAN line."""
+        mod = _load()
+        _write_plan(tmp_path)
+        monkeypatch.setattr(mod._hook_utils, "python_command_hint", lambda: hint)
+        monkeypatch.setattr(mod._hook_utils.sys, "platform", "win32")
+        section = mod._open_plan_section(tmp_path)
+        assert f"`{hint} tools/cc/execution_plan.py status`" in section, section
+        assert ("type & before it" in section) is note, section
+
     def test_closed_empty_unreadable_or_absent_plans_are_silent(self, tmp_path):
         """The same four silences as ``has_active_plan`` (the predicate this
         section reads first), so the banner and plan_guard cannot disagree."""

@@ -1408,6 +1408,22 @@ by surface, not by habit:
   `_remedy_py()`, a local bound from it, or a parameter every call site
   passes one to; `tests/test_portability_contract.py::TestRemediesSpellTheRemedyInterpreter`
   follows the parameter (`DEF-805`).
+- **Runtime hints the HOOKS print** — `tools/cc/` cannot import the engine, so
+  a hook spells the interpreter from `_hook_utils.python_command_hint()` (a
+  bare name that clears the floor and starts, else this interpreter) or, for a
+  command that must name this interpreter, `_hook_utils.executable_word()`.
+  Both spell `sys.executable` through `tools/cc/_json_safe.py::program_word`,
+  the engine helper's twin (`tests/test_json_safe_program_word.py` pins the
+  two together), with a spaced path's argument slots through
+  `quoted_if_spaced`. Where a spaced path has no plain short form, the word is
+  the quoted path, and a message the reader SEES (a banner line, an
+  `additionalContext` advisory) appends `_hook_utils.powershell_call_note(word)`,
+  the engine's `&` note on the same line; a stderr line of an exit-0 hook
+  takes none, since nothing reads it (`DEF-2062`, ack 2e78b5). A reporter reads
+  each new helper name by `getattr` with a default, so a kept older
+  `_hook_utils.py` still starts. A message that runs `{sys.executable}` bare
+  (`-m` or a `.py` script after it) is refused by
+  `tests/test_json_safe_program_word.py::TestNoCommandOpensWithABareInterpreter`.
 - **`.claude/settings.json` hook wiring** — `cli._build_settings_json` threads
   the same detected interpreter. This is mechanical enforcement, and it has
   always resolved the host value.

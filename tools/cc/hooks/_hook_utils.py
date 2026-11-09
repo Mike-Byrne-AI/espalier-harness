@@ -81,6 +81,46 @@ try:
     from _json_safe import run_tree_bounded  # noqa: E402
 except ImportError:  # pragma: no cover - a tools/cc/_json_safe.py that predates the tree-ending spawn
     run_tree_bounded = run_bounded
+# The program-word spelling of a spaced interpreter (DEF-2062), guarded the
+# same way: a `_json_safe.py` that predates it leaves `executable_word` on the
+# bare `sys.executable` it printed before (a spaced root is still quoted by the
+# fallback below), never an import crash.
+try:
+    from _json_safe import program_word, quoted_if_spaced, windows_short_path  # noqa: E402
+# fail-open: ok text-fallback a kept older _json_safe.py keeps the bare interpreter word it printed before (DEF-2062)
+except ImportError:  # pragma: no cover - a tools/cc/_json_safe.py that predates the spelling
+    def program_word(path: str, short_path: Any) -> str:
+        """Fallback when ``_json_safe`` lacks the spelling: ``path`` unchanged, as before DEF-2062."""
+        return path
+
+    def quoted_if_spaced(path: str) -> str:
+        """Fallback when ``_json_safe`` lacks the helper: double-quoted when spaced."""
+        return f'"{path}"' if any(ch.isspace() for ch in path) else path
+
+    def windows_short_path(path: str) -> "str | None":
+        """Fallback when ``_json_safe`` lacks the lookup: no short form."""
+        return None
+
+
+def executable_word() -> str:
+    """``sys.executable`` spelled as the program word of a command the operator
+    will paste (DEF-2062): on Windows a spaced path's forward-slash 8.3 short
+    form, which PowerShell 5.1, cmd and Git Bash all run, else the path quoted
+    when spaced. Bare, a spaced path is cut at its first space in every shell."""
+    return program_word(sys.executable, windows_short_path)
+
+
+def powershell_call_note(word: str) -> str:
+    """The clause a SEEN message (the banner, an additionalContext advisory)
+    appends after a command whose program word is quoted (DEF-2062, ack
+    2e78b5): Windows PowerShell 5.1 reads a quoted first word as text, so it
+    needs ``&`` before it. Empty for a bare word or off Windows. A stderr line
+    of an exit-0 hook takes no note: nothing reads it."""
+    if word.startswith('"') and sys.platform == "win32":
+        return " (in PowerShell, type & before it: PowerShell reads a quoted first word as text)"
+    return ""
+
+
 # The one repo-root resolver `_project_root_spelling` delegates to (DEF-664),
 # guarded the same way and wider: a kept `_paths.py` that predates it, or one
 # that raises at import, leaves `_project_root_spelling` on its own rule below
@@ -4235,9 +4275,11 @@ def python_command_hint() -> str:
     BANS the versioned spelling in operator text. Neither literal is portable,
     so neither belongs in a message. Interpolate this instead.
 
-    Falls back to ``sys.executable`` -- an absolute path, always correct and
-    paste-able -- rather than guessing a bare name that may not resolve. Verbose
-    beats wrong in a remediation the operator is about to run.
+    Falls back to ``sys.executable`` -- an absolute path, always correct --
+    rather than guessing a bare name that may not resolve. Verbose beats wrong
+    in a remediation the operator is about to run. It is spelled through
+    :func:`executable_word` (DEF-2062): bare, a spaced path is cut at its first
+    space in every shell.
 
     ⚠ Returns "" when NOTHING on this host clears the floor, and callers MUST
     check. The first version fell back to ``sys.executable`` unchecked, which
@@ -4258,7 +4300,7 @@ def python_command_hint() -> str:
         if interpreter_meets_floor(candidate) and interpreter_start_failure(candidate) is None:
             return candidate
     if sys.executable and interpreter_meets_floor(sys.executable):
-        return sys.executable
+        return executable_word()
     return ""
 
 
