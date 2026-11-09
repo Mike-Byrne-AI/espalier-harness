@@ -709,12 +709,15 @@ python tools/cc/ship.py handoff
   are released as the push would have released them. A lane that conflicts
   with its base is the exception: it needs the merge-first push to merge at
   all, so a run that push cancels could not have landed it, and the rows ride
-  that push as before. Either way the next lane's push, any seat's, folds the
-  rows into the base. Until that fold, the banner's recent rows, which read
-  the tree, show them to no seat, this one's next session included; say so in
-  the `Next:` line. A lane that edits or renames a row, a seat with no name, a
-  pull request's head that cannot be fetched, or a park origin refuses takes
-  the push as before, and the verb says why.
+  that push as before (where git cannot probe the merge, the rows park and the
+  verb says so, naming `catch-up`). Where origin's head had moved past this
+  checkout, the verb names the `rebind` a marker bound before that move owes.
+  Either way the next lane's push, any seat's, folds the rows into the base.
+  Until that fold, the banner's recent rows, which read the tree, show them to
+  no seat, this one's next session included; say so in the `Next:` line. A
+  lane that edits or renames a row, a seat with no name, a pull request's head
+  that cannot be fetched, a park origin refuses, or a reset that fails after
+  the park takes the push as before, and the verb says why.
 - **Off (the default):** nothing is pushed. The commit stays on this branch in
   this checkout, and the verb prints how to push it (`/ship`) and how to opt in.
   Say so in the summary: the next session here reads the row while it stays on
@@ -739,8 +742,10 @@ the clear runs after it); in any other window tell the operator it needs a
 `/clear`. A lane opened by hand (`gh pr create` outside the driver) ran no
 verb and armed nothing: `python tools/cc/ship.py arm --why "<how>"` arms by
 hand on a clean tree. Shipping here, after the row, is the order that costs one
-check cycle per lane: a lane shipped mid-session makes this commit a second push
-(the checks restart and the marker is re-bound), or its own pull request, which
-is why, where `handoff_push` is on, `open` refuses a lane that does not carry its
-row unless given `--early "<reason>"`.
+check cycle per lane and lands the row with the lane: a lane shipped mid-session
+leaves this commit's row parked on the seat's records ref, read by no banner
+until the next lane's push folds it in, or, where this handoff adds more than
+its row, makes it a second push (the checks restart and the marker is
+re-bound), which is why, where `handoff_push` is on, `open` refuses a lane that
+does not carry its row unless given `--early "<reason>"`.
 

@@ -1650,6 +1650,7 @@ class TestARowsOnlyHandoffOntoAnOpenPullRequestParks:
         answers = TestHandoffVerb._existing_pr_answers(tmp_path)
         answers[_LANE_DIFF] = (0, diff, "")
         answers[_ORIGIN_HEAD_READ] = (0, f"{ORIGIN_HEAD}\n", "")
+        answers[("git", "merge-base", "--is-ancestor")] = (0, "", "")   # origin's head is behind HEAD
         answers[("git", "reset", "--keep")] = (0, "", "")
         answers.update(extra or {})
         ship._MAIL = mail
@@ -1676,7 +1677,8 @@ class TestARowsOnlyHandoffOntoAnOpenPullRequestParks:
         assert reset[-1] == ORIGIN_HEAD, reset
         out = capsys.readouterr().out
         assert "Nothing pushed onto #7" in out and "origin/lane/x" in out and out.isascii()
-        assert f"moved back to origin/lane/x ({ORIGIN_HEAD[:7]})" in out and HEAD[:7] in out
+        assert f"is at origin/lane/x ({ORIGIN_HEAD[:7]})" in out and HEAD[:7] in out
+        assert "rebind" not in out   # origin's head was behind this checkout: no marker moved
 
     def test_a_dry_run_says_it_would_park_and_moves_nothing(self, ship, tmp_path, capsys):
         mail = _FakeMail()
@@ -1696,18 +1698,27 @@ class TestARowsOnlyHandoffOntoAnOpenPullRequestParks:
         [(lane, text)] = mail.released
         assert lane == "lane/x" and "parked" in text and text.isascii(), text
 
-    def test_a_head_origin_moved_past_parks_and_resets_to_it(self, ship, tmp_path, monkeypatch):
+    def test_a_head_origin_moved_past_parks_resets_to_it_and_names_the_rebind(
+            self, ship, tmp_path, monkeypatch, capsys):
         """A server-side update-branch moved origin/<branch> past this
         checkout: the commits since the merge base are still rows alone, so
-        they park and the branch moves to origin's head, where today's path
-        refused with "merge them in"."""
+        they park and the branch moves forward to origin's head, where today's
+        path refused with "merge them in"; a marker bound before the move names
+        an older head, so the rebind is named. Dies to: the park moved after
+        the origin-ahead refusal (this row's commit count would refuse it), and
+        the move left unsaid."""
         mail = _FakeMail()
-        spawns = self._onto_open(ship, tmp_path, mail=mail, extra={("git", "rev-list", "--count"): (0, "2\n", "")})
-        monkeypatch.setattr(ship, "rebind", lambda **_kw: 0)
+        spawns = self._onto_open(ship, tmp_path, mail=mail, extra={
+            ("git", "rev-list", "--count"): (0, "2\n", ""),
+            ("git", "merge-base", "--is-ancestor"): (1, "", ""),
+        })
+        monkeypatch.setattr(ship, "rebind", lambda **_kw: pytest.fail("a park pushes nothing to re-bind"))
         assert ship.handoff() == 0
         assert mail.parked == [(_PARKED_ROW, None, "origin/main", "HEAD")]
         [reset] = spawns.matching(("git", "reset", "--keep"))
         assert reset[-1] == ORIGIN_HEAD and spawns.count(("git", "push")) == 0
+        out = capsys.readouterr().out
+        assert "had moved past this checkout" in out and f"ship.py rebind` binds it to {ORIGIN_HEAD[:7]}" in out
 
     @pytest.mark.parametrize("diff", [
         pytest.param(f"A\t{_PARKED_ROW}\nM\ttools/cc/ship.py\n", id="code-beside-the-row"),
@@ -1761,19 +1772,35 @@ class TestARowsOnlyHandoffOntoAnOpenPullRequestParks:
         out = capsys.readouterr().out
         assert "conflicts with origin/main" in out and "CHANGELOG.md" in out and out.isascii()
 
-    def test_a_reset_that_fails_is_said_with_the_command(self, ship, tmp_path, monkeypatch, capsys):
-        """The row is parked; a commit left ahead of origin/<branch> reads as
-        unpushed to the Stop hook's handoff gate, so the way back is named."""
+    def test_a_reset_that_fails_after_the_park_takes_the_push(self, ship, tmp_path, monkeypatch, capsys):
+        """The row is parked, but a commit left ahead of origin/<branch>
+        would read as unpushed to the Stop hook's handoff gate, which asks for
+        a handoff each new row answers the same way (failure-mode review):
+        the rows ride the push as well, and it is said."""
         mail = _FakeMail()
         spawns = self._onto_open(ship, tmp_path, mail=mail,
                                  extra={("git", "reset", "--keep"): (128, "", "error: Entry 'x' not uptodate")})
-        monkeypatch.setattr(ship, "rebind", lambda **_kw: pytest.fail(
-            "the handoff pushed its row onto the open pull request and re-bound it"))
+        monkeypatch.setattr(ship, "rebind", lambda **_kw: 0)
+        assert ship.handoff() == 0
+        assert mail.parked == [(_PARKED_ROW, None, "origin/main", "HEAD")]
+        assert spawns.count(("git", "push")) == 1
+        out = capsys.readouterr().out
+        assert "could not be moved to origin/lane/x" in out and "ride the push onto #7" in out
+        assert "Nothing pushed" not in out
+
+    def test_a_merge_git_cannot_probe_parks_and_says_so(self, ship, tmp_path, monkeypatch, capsys):
+        """A git older than 2.38 cannot say whether the lane conflicts: the
+        rows park, and the note names the catch-up for a pull request GitHub
+        reads DIRTY (both reviews)."""
+        mail = _FakeMail()
+        spawns = self._onto_open(ship, tmp_path, mail=mail,
+                                 extra={("git", "merge-tree"): (129, "", "usage: git merge-tree")})
+        monkeypatch.setattr(ship, "rebind", lambda **_kw: pytest.fail("a park pushes nothing to re-bind"))
         assert ship.handoff() == 0
         assert mail.parked == [(_PARKED_ROW, None, "origin/main", "HEAD")]
         assert spawns.count(("git", "push")) == 0
         out = capsys.readouterr().out
-        assert "could not be moved back to origin/lane/x" in out and "git reset --keep origin/lane/x" in out
+        assert "could not probe the merge with origin/main" in out and "catch-up" in out
 
 
 class TestPushClaimsInShippedBodiesNameTheSetting:

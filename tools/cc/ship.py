@@ -718,8 +718,10 @@ def _lane_added_rows(root: Path, base: str) -> list[str] | None:
 def _second_push_message(how: str) -> str:
     return (f"{how}, and this lane's commits carry no Session Log row (no change to ESPALIER_MEMORY.md "
             f"and no new file under {SESSION_LOG_DIR}): /handoff writes the row and ships the lane once. "
-            "To ship before it, pass --early \"<reason>\" to `open` (the handoff's row then becomes a "
-            f"second push on this lane); past {ROW_DEBT_CAP} lanes shipped since this seat's newest Session Log "
+            "To ship before it, pass --early \"<reason>\" to `open` (the handoff's row then parks on this "
+            "seat's records ref, read by no banner until the next lane's push folds it, or, where the handoff "
+            f"adds more than rows, is a second push on this lane); past {ROW_DEBT_CAP} lanes shipped since this "
+            "seat's newest Session Log "
             "row, --early is refused until a row is committed on the lane (the cap)")
 
 
@@ -1590,7 +1592,10 @@ def _park_the_row(root: Path, base: str, *, dry_run: bool = False, branch: str |
     a pull request open: that would drop the lane's own commits. The dropped
     head is printed. True when parked. Any other lane, a seat with no name or
     one git could not read, a remote head that cannot be fetched, or a park
-    origin refused, keeps today's path and says why."""
+    origin refused, keeps today's path and says why; so does a reset to
+    ``origin/<branch>`` that fails after the park, whose rows then ride the
+    push as well, since a commit left ahead there would ask the Stop hook's
+    handoff gate for a handoff each new row answers the same way."""
     _git("fetch", "origin", base, "--quiet", cwd=str(root))
     since = f"origin/{base}"
     if branch is not None:
@@ -1616,6 +1621,9 @@ def _park_the_row(root: Path, base: str, *, dry_run: bool = False, branch: str |
                  f"origin/{base} ({', '.join(reasons)}): the base is merged in first and the rows ride that "
                  "push, which the pull request needs to merge at all")
             return False
+        if reasons is None:
+            _note(f"could not probe the merge with origin/{base} (git 2.38+ has `merge-tree --write-tree`): "
+                  f"parking the rows; if #{number} reads DIRTY on GitHub, run catch-up")
     mail = _mail_module()
     if mail is None:
         _note(f"tools/cc/mail.py is not beside this script, so the row is not parked: {where}, as before")
@@ -1644,18 +1652,28 @@ def _park_the_row(root: Path, base: str, *, dry_run: bool = False, branch: str |
     if branch is not None:
         rc, target, _ = _git("rev-parse", "--verify", "--quiet", f"{since}^{{commit}}", cwd=str(root))
         target = target.strip() if rc == 0 else ""
-        moved = bool(target) and _git("reset", "--keep", "--quiet", target, cwd=str(root))[0] == 0
+        # Origin's head past this checkout's (an update-branch made on the
+        # server): the reset takes the checkout forward to it, and a marker
+        # bound before that move names an older head.
+        ahead = bool(target) and _git("merge-base", "--is-ancestor", target, "HEAD", cwd=str(root))[0] == 1
+        if not (target and _git("reset", "--keep", "--quiet", target, cwd=str(root))[0] == 0):
+            # Parked, but the row's commit is still ahead: a park that returned
+            # here would leave the Stop hook's handoff gate asking for a handoff
+            # each new row would answer the same way. The rows ride the push
+            # instead; the parked copy leaves the records ref once the base
+            # holds it.
+            _note(f"the rows are parked, but this branch could not be moved to {since}: they ride the push "
+                  f"onto #{number} as before")
+            return False
         _say(f"Nothing pushed onto #{number}: the commits since {since} carry only Session Log rows, now "
              f"parked on this seat's records ref, so its running checks are not restarted for a record. The "
              f"next lane's push, any seat's, folds them into {base}; until then the banner's recent rows, "
              f"which read the tree, show them to no seat, this one's next session included.")
-        if moved:
-            _say(f"This branch moved back to {since} ({target[:7]}), #{number}'s head; the row's commit, "
-                 f"{head[:7]}, is on the records ref (and in this checkout's reflog).")
-        else:
-            _note(f"this branch could not be moved back to {since}: the row's commit {head[:7]} stays ahead, "
-                  f"so the Stop hook's handoff gate reads it as unpushed until you move it "
-                  f"(`git reset --keep {since}`)")
+        _say(f"This branch is at {since} ({target[:7]}), #{number}'s head; the row's commit, {head[:7]}, is "
+             f"on the records ref (and in this checkout's reflog).")
+        if ahead:
+            _note(f"{since} had moved past this checkout (an update-branch made on GitHub): where #{number}'s "
+                  f"title carries the approval marker, `python tools/cc/ship.py rebind` binds it to {target[:7]}")
         return True
     rc, merge_base, _ = _git("merge-base", f"origin/{base}", "HEAD", cwd=str(root))
     moved = rc == 0 and bool(merge_base.strip()) and \
@@ -2852,7 +2870,8 @@ def _row_refusal(st: PrePushState) -> str | None:
     if not reason:
         return _second_push_message(how)
     _refuse_on_row_debt(st.root, st.base, prs)
-    _note(f"shipping before the handoff ({reason}): its row will be a second push on this lane")
+    _note(f"shipping before the handoff ({reason}): its row will park on this seat's records ref until the "
+          "next lane's push folds it, or be a second push on this lane where the handoff adds more than rows")
     st.early_reason = reason
     return None
 
