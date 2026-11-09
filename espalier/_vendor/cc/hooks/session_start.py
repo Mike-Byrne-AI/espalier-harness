@@ -1491,6 +1491,9 @@ def _orders_line(root: Path, read: dict, mail: Any = None, seat: Any = None, pyt
         hint = line("worker", machine, spelled, source=source)
     else:
         hint = line("worker", machine, spelled)
+    if callable(line) and spelled:
+        # DEF-2062: a quoted word's PowerShell note, by getattr (a kept older helper lacks it).
+        hint += getattr(_hook_utils, "powershell_call_note", lambda _w: "")(spelled)
     # A worker's box-lock off-note rides this line (the dispatcher's rides the
     # `Mail:` line's clause): the seat driver already loaded gives the path.
     box = _box_lock_note(root, machine, seat=seat)
@@ -3025,7 +3028,10 @@ def _report_integrity_state(root: Path) -> str:
             # The helper returns "" when nothing here clears the floor; then
             # no command is printed rather than a broken one (DEF-636).
             py = _hook_utils.python_command_hint()
-            how = (f"`{py} -m espalier integrity refresh .`" if py
+            # The PowerShell note for a quoted word (DEF-2062), read by getattr:
+            # a kept older _hook_utils.py lacks it, and the line still prints.
+            note = getattr(_hook_utils, "powershell_call_note", lambda _w: "")(py)
+            how = (f"`{py} -m espalier integrity refresh .`{note}" if py
                    else f"`-m espalier integrity refresh .` under a Python {_hook_utils.floor_text()} or newer")
             return f"no manifest in this worktree (per checkout, gitignored)  ->  from its root, run {how}"
         return "no manifest (run `espalier init .`)"
@@ -4644,6 +4650,8 @@ def _open_plan_section(root: Path) -> str:
     # then the script is named and the interpreter left to the operator.
     py = _hook_utils.python_command_hint()
     verb = f"{py} tools/cc/execution_plan.py" if py else "tools/cc/execution_plan.py"
+    # DEF-2062: a quoted word's PowerShell note, by getattr (a kept older helper lacks it).
+    note = getattr(_hook_utils, "powershell_call_note", lambda _w: "")(py)
     parts = [
         f"\n--- OPEN PLAN (cc/execution_plan.json is in_progress; last touched {age} ago) ---\n",
         f"{_one_line(data.get('task', ''), 200)}\n",
@@ -4656,7 +4664,7 @@ def _open_plan_section(root: Path) -> str:
         )
     parts.append(
         "plan_guard reads this as an open mutation window on source files.\n"
-        f"  Yours? Continue it: `{verb} status`\n"
+        f"  Yours? Continue it: `{verb} status`{note}\n"
         f"  A finished task's? Clear it: `{verb} reset` (the record is demoted "
         "beside the blueprint cold store)\n"
     )

@@ -1548,6 +1548,10 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # Reads a filled spaced path back through real bash and pwsh: the
             # shells are the oracle for what the quoter means (DEF-5082).
             "test_spaced_paths",
+            # Imports the hooks in a child over a copied tools/cc whose kept
+            # _json_safe.py predates the spelling: a module object in this
+            # process cannot stand in for a fresh import (DEF-2062).
+            "test_json_safe_program_word",
         ),
         "integration",
     ),

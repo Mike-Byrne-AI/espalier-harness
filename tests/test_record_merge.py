@@ -315,8 +315,35 @@ class TestMemoryCap:
         assert rm.restore_memory_cap(root, new_rows=["3"], run=run, say=said.append) is False
         assert [c[0] for c in calls] == [sys.executable], calls
         assert len(said) == 1 and "holds no row to archive" in said[0], said
-        # the remedy spells this interpreter's module with the cap step's own flags, never the bare PATH name
-        assert f"`{sys.executable} -m espalier memory prune --rows 1 --root {root} --allow-empty --keep-newest 1`" in said[0], said
+        # the remedy spells this interpreter's module with the cap step's own flags, never the bare PATH name,
+        # its program word and root spelled so a spaced path survives the paste (DEF-2062)
+        word = rm.program_word(sys.executable, rm.windows_short_path)
+        assert (f"`{word} -m espalier memory prune --rows 1 --root {rm.quoted_if_spaced(str(root))} "
+                "--allow-empty --keep-newest 1`") in said[0], said
+
+    @pytest.mark.parametrize("short,word,note", [
+        ("C:\\PROGRA~1\\Py\\python.exe", "C:/PROGRA~1/Py/python.exe", False),
+        (None, '"C:/Program Files/Py/python.exe"', True),
+    ], ids=["short-form", "no-short-form"])
+    def test_a_spaced_interpreter_and_root_survive_the_paste(self, rm, tmp_path, monkeypatch, short, word, note):
+        """DEF-2062: the prune note spelled a spaced interpreter and root bare,
+        so every shell cut the pasted command at the first space. On Windows the
+        program word is the forward-slash 8.3 short form, else the quoted path
+        with the PowerShell ``&`` note on the same line; the root is quoted.
+        Dies to: the bare ``sys.executable`` or ``root`` restored, the note
+        unguarded or dropped."""
+        root = self._tree(tmp_path / "a b", hook_cap=2, policy_cap=None)
+        (root / "ESPALIER_MEMORY.md").write_text("1\n2\n3\n", encoding="utf-8")
+        monkeypatch.setattr(rm.shutil, "which", lambda name, *a, **k: None)
+        monkeypatch.setattr(sys, "executable", "C:/Program Files/Py/python.exe")
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(rm, "windows_short_path", lambda p: short)
+        said: list[str] = []
+        assert rm.restore_memory_cap(
+            root, new_rows=["3"], run=lambda argv, **kw: (2, "", "memory prune: refused"), say=said.append) is False
+        assert len(said) == 1, said
+        assert f"`{word} -m espalier memory prune --rows 1 --root \"{root}\" --allow-empty" in said[0], said
+        assert ("type & before it" in said[0]) is note, said
 
     @pytest.mark.parametrize("said,no_engine", [
         ("/usr/bin/python3: No module named espalier", True),
