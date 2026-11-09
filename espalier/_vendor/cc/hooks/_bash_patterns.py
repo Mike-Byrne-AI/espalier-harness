@@ -15536,9 +15536,13 @@ def loop_body_feeds_a_recursive_remove(command: str) -> bool:
     remove that does not recurse is silent, as the twin is. Read on the
     masked scan, spans from the raw text; gated on both witnesses, so only
     a command that pipes into xargs inside a loop pays the walk."""
-    raw, scan = _bash_scan_pair(_cap_for_scan(command))
-    if not _PIPED_CARRIER_WITNESS_RE.search(raw) or not _loop_carrier_witnessed(raw):
+    capped = _cap_for_scan(command)
+    # both witnesses before the mask: a command with no carrier inside a
+    # loop pays a splice and two searches, never the masker
+    spliced = splice_line_continuations(capped)
+    if not _PIPED_CARRIER_WITNESS_RE.search(spliced) or not _loop_carrier_witnessed(spliced):
         return False
+    raw, scan = _bash_scan_pair(capped)
     for m in _LOOP_BODY_RE.finditer(scan):
         feed = _named_span(raw, m, "feed", through_quotes=True)
         if not feed or _loop_variable_named(feed) is None:

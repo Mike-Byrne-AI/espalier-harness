@@ -1488,6 +1488,11 @@ first; the dangerous-command catch is a secondary slip-catcher):
    `tests/test_write_guard.py::TestCatastrophicEnumeratorCarrier::test_classifier_matrix_carrier`
    and, through the hook,
    `tests/test_write_guard.py::TestCatastrophicEnumeratorCarrier::test_through_the_hook_carrier`.
+   The echoed path stays outside this wall inside a loop body too: there a
+   variable echoed into a recursing `xargs` remove (`echo "$f" | xargs rm
+   -rf`) draws the soft tier's nudge, as the direct remove of the same
+   variable does (the loop carrier, below), and the wall reads the loop
+   from its head, not from the echo.
 
    The loop carrier -- the enumerator's output bound to
    a loop variable and removed in the loop's body, on the Bash tool -- is
