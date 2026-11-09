@@ -134,6 +134,29 @@ class TestTheSummary:
         assert result["skipped"] and result["rc"] is None
         assert (tmp_path / "pwsh-differential.txt").read_text(encoding="utf-8").startswith("skipped:")
 
+    def test_a_planned_step_runs_through_the_spawn_whose_timeout_ends_its_tree(self, hc, tmp_path, monkeypatch):
+        """A planned step is a pytest, or a bench that runs one, so its timeout
+        ends the whole tree (``run_tree_bounded``), where ``run_bounded`` on
+        POSIX kills the child alone and leaves its workers at parent 1
+        (DEF-1179). The step's argv is handed in, so the timed-pytest ratchet
+        in ``tests/test_contracts.py`` cannot read this site: this row is its
+        pin. Both spawns are stand-ins; nothing runs."""
+        seen: list[tuple] = []
+
+        def tree_bounded(argv, **kw):
+            seen.append((argv, kw.get("timeout")))
+            return subprocess.CompletedProcess(argv, 0)
+
+        def child_alone(*_args, **_kw):
+            raise AssertionError("run_step spawned through run_bounded, whose timeout kills the child alone on POSIX")
+
+        monkeypatch.setattr(hc, "run_tree_bounded", tree_bounded)
+        monkeypatch.setattr(hc, "run_bounded", child_alone)
+        step = {"name": "pytest", "argv": ["never-run", "-q"], "env": {}, "skip": None, "timeout": 7}
+        result = hc.run_step(step, tmp_path)
+        assert seen == [(["never-run", "-q"], 7)], seen
+        assert result["rc"] == 0, result
+
 
 def _git(*args, cwd):
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True,

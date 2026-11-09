@@ -5628,7 +5628,8 @@ class TestGitBashDrivePrefix:
             "def pytest_unconfigure(config):\n    _legacy.__exit__(None, None, None)\n",
             encoding="utf-8")
         node_ids = [f"tests/test_write_guard.py::{name}" for name in sorted(emulated)]
-        run = subprocess.run(
+        from tests._tree_spawn import run_tree_bounded
+        run = run_tree_bounded(
             [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "legacy_floor_plugin",
              "--tb=no", *node_ids],
             capture_output=True, text=True, encoding="utf-8", timeout=45, cwd=str(repo),
@@ -5683,7 +5684,8 @@ class TestGitBashDrivePrefix:
         # down and leaves an orphan pytest (the red team, 2026-09-22). The
         # outer session's PYTEST_ADDOPTS is not inherited: a `--tb=native`
         # there changes the inner output this row parses.
-        return subprocess.run(
+        from tests._tree_spawn import run_tree_bounded
+        return run_tree_bounded(
             [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
              f"--rootdir={where}", "-c", os.devnull, str(where / "test_emu_fail.py")],
             capture_output=True, text=True, encoding="utf-8", timeout=45, cwd=str(where),
@@ -5731,7 +5733,12 @@ class TestGitBashDrivePrefix:
     # on `literal` dropped.
     _TRANSLATING_FUNCTIONS = {
         "_hook_utils.py": {
-            "_project_root_spelling": ("raw", "test_a_git_bash_spelled_project_dir_is_the_project"),
+            # The call is the degrade's, for a kept `_paths.py` without the
+            # shared resolver (DEF-664); the live path hands the translator to
+            # `_paths.project_root_spelling`, which
+            # test_a_git_bash_spelled_project_dir_is_the_project reads.
+            "_project_root_spelling": ("raw", "tests/test_repo_root_resolver.py::TestAKeptOlderPaths::"
+                                              "test_without_the_shared_resolver_the_hooks_keep_todays_rule"),
             "_clean_path_prefixes": ("cleaned",
                                      "test_a_git_bash_spelled_write_reaches_the_zone_on_every_tool, "
                                      "test_a_git_bash_spelled_source_write_needs_the_plan"),
@@ -5747,6 +5754,10 @@ class TestGitBashDrivePrefix:
                                         "test_the_git_bash_spelling_goes_through_the_drive_translation"),
             "_drive_path_inside_the_repo_or_home": (
                 "site", "test_the_repo_or_home_read_translates_its_own_root_and_home"),
+        },
+        "_paths.py": {
+            "_translate_drive": ("raw", "tests/test_repo_root_resolver.py::TestOneTranslation::"
+                                        "test_the_three_resolvers_agree_on_a_git_bash_value"),
         },
     }
 
