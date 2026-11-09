@@ -200,7 +200,12 @@ def program_word(path: str, short_path: "Callable[[str], str | None] | None") ->
     exit-0 hook takes no note, since nothing reads it. Pure text: the lookup is
     a parameter."""
     if not any(ch.isspace() for ch in path):
-        return forward_if_drive_rooted(path)
+        # An unspaced drive-rooted word that is not plain characters is
+        # double-quoted: bare, its `'` or `(` is grammar to each shell.
+        if not _is_drive_rooted(path):
+            return path
+        word = forward_if_drive_rooted(path)
+        return word if _is_plain_program_word(word) else f'"{word}"'
     short = short_path(path) if short_path is not None else None
     if short:
         word = short.replace("\\", "/")
@@ -218,9 +223,12 @@ def forward_if_drive_rooted(path: str) -> str:
     ``espalier/_text.py::forward_if_drive_rooted`` (DEF-2064). A UNC or
     ``\\\\?\\`` form does not run with forward slashes, and a POSIX path has no
     backslash separator to turn."""
-    if len(path) >= 3 and path[0].isascii() and path[0].isalpha() and path[1] == ":" and path[2] in "\\/":
-        return path.replace("\\", "/")
-    return path
+    return path.replace("\\", "/") if _is_drive_rooted(path) else path
+
+
+def _is_drive_rooted(path: str) -> bool:
+    """Twin of ``espalier/_text.py::is_drive_rooted``."""
+    return len(path) >= 3 and path[0].isascii() and path[0].isalpha() and path[1] == ":" and path[2] in "\\/"
 
 
 _PLAIN_WORD_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.~+/-")

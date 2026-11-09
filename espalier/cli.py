@@ -9488,17 +9488,20 @@ def _hook_head_word(word: str) -> str:
     shell-form hook command written into ``settings.json`` (DEF-2063). That
     line runs in Git Bash, or in Windows PowerShell where Git Bash is absent,
     and must parse in both. A drive-rooted Windows path takes forward slashes,
-    since Git Bash drops an unquoted backslash; spaced, only each folder that
-    holds the space is quoted, so the word opens unquoted, which PowerShell
-    runs as a command, and stays one word, which bash reads with the quotes
-    removed (``C:/x/'Program Files (x86)'/py/python.exe``). Driven on Windows
-    11 through Git Bash and PowerShell 5.1, ``-File`` and ``-Command``, for
-    folders holding a space, ``(x86)``, ``&``, ``$`` and ``'``: a word that
-    opens with a quote is a string to PowerShell, ``& "<path>"`` a syntax error
-    to bash, a double-quoted ``$`` is expanded by bash, and a single quote
-    cannot hold a ``'``. So single quotes, double where a folder holds ``'``
-    and nothing double quotes expand, and otherwise the whole path
-    double-quoted as before, which bash runs. cmd.exe, which runs no hook,
+    since Git Bash drops an unquoted backslash, and each folder that is not
+    plain characters (a space, ``'``, ``(``, ``&``...) is quoted, so the word
+    opens unquoted, which PowerShell runs as a command, and stays one word,
+    which bash reads with the quotes removed
+    (``C:/x/'Program Files (x86)'/py/python.exe``). Driven on Windows 11
+    through Git Bash and PowerShell 5.1, ``-File`` and ``-Command``, for
+    folders holding a space, ``(x86)``, ``&``, ``$`` and ``'``, and by the
+    failure-mode review for 14 shapes: a word that opens with a quote is a
+    string to PowerShell, ``& "<path>"`` a syntax error to bash, a
+    double-quoted ``$`` is expanded by bash, and a single quote cannot hold a
+    ``'``. So single quotes, double where a folder holds ``'`` and nothing
+    double quotes expand, and otherwise the whole path double-quoted as
+    before, which bash runs. PowerShell refuses a folder holding ``,`` or
+    ``{`` in any of these spellings (the review's drive). cmd.exe, which runs no hook,
     reads the folder-quoted word wrong (driven). Any other path, POSIX among
     them, is the double-quoted word when spaced, which the POSIX shells run.
     The 8.3 short form serves a typed remedy, never this: a short name is one
@@ -9506,19 +9509,33 @@ def _hook_head_word(word: str) -> str:
     if not is_drive_rooted(word):
         return quoted_if_spaced(word)
     path = forward_if_drive_rooted(word)
-    if not any(ch.isspace() for ch in path):
-        return path
-    folders = []
-    for folder in path.split("/"):
-        if not any(ch.isspace() for ch in folder):
-            folders.append(folder)
-        elif "'" not in folder:
-            folders.append(f"'{folder}'")
-        elif not any(ch in folder for ch in '"$`'):
-            folders.append(f'"{folder}"')
+    drive, *folders = path.split("/")
+    spelled = [drive]
+    for folder in folders:
+        # Every folder that is not plain is quoted, spaced or not: a bare `'`,
+        # `(` or `&` is grammar to both shells (the failure-mode review drove
+        # `D'Angelo`, `Py(3.12)` and `R&D` beside a spaced folder: exit 2 in
+        # Git Bash, a block from a PreToolUse hook).
+        if _PLAIN_HEAD_FOLDER.fullmatch(folder) or not folder:
+            spelled.append(folder)
+        elif not any(ch in folder for ch in _SINGLE_QUOTE_LIKE):
+            spelled.append(f"'{folder}'")
+        elif not any(ch in folder for ch in _DOUBLE_QUOTE_LIVE):
+            spelled.append(f'"{folder}"')
         else:
-            return quoted_if_spaced(path)
-    return "/".join(folders)
+            return f'"{path}"'
+    return "/".join(spelled)
+
+
+#: A folder both hook shells read as plain characters in a bare word.
+_PLAIN_HEAD_FOLDER = re.compile(r"[A-Za-z0-9_.~+@#-]+")
+#: What ends a single-quoted run: `'` itself, and to PowerShell the curly
+#: single quotes it reads as one (U+2018 to U+201B).
+_SINGLE_QUOTE_LIKE = "'‘’‚‛"
+#: What a double-quoted run does not keep literal in one of the two shells:
+#: the quote itself and its curly forms (U+201C to U+201E, PowerShell's), `$`
+#: and the backtick.
+_DOUBLE_QUOTE_LIVE = '"$`“”„'
 
 
 def _target_words(target: str) -> tuple[str, list[str]]:
@@ -9552,8 +9569,15 @@ def _launcher_spelling_of(container: dict, key: str, token: str) -> str:
         # Past the statusline shim head, as the swap searches: a shim path
         # may itself contain the letters of the token.
         text = container[key]
-        at = text.find(token, max(statusline_shim_end(text), 0))
-        rest = text[at + len(token):] if at >= 0 else ""
+        start = max(statusline_shim_end(text), 0)
+        glued = glued_head(text[start:])
+        if glued is not None and glued[0] == token:
+            # A folder-quoted head (DEF-2063): the decoded token is not a
+            # substring of the line, so the flag is read after its span.
+            rest = text[start + glued[2]:]
+        else:
+            at = text.find(token, start)
+            rest = text[at + len(token):] if at >= 0 else ""
         if rest[:1] in ("\"", "'"):
             rest = rest[1:]  # the closing quote of a quoted launcher path
         flag = re.match(r"\s+(\S+)", rest)

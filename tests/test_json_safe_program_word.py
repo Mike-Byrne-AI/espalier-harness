@@ -84,7 +84,11 @@ _CASES = [
     ("\u00e9:\\Py\\python.exe", None),
     ("C:", None),
     ("", None),
+    ("1:/Py/python.exe", None),
 ]
+# An unspaced drive-rooted path holding one character of each kind (the
+# failure-mode review: a bare `'` or `(` is grammar to every shell).
+_CASES += [(f"C:\\A{c}B\\python.exe", None) for c in string.printable if c not in "\\" and not c.isspace()]
 # Built from the alphabet, not by hand (both reviews of 165e78b3: the hand list
 # let 33 of 39 one-sided edits through): one short form per printable
 # character, the drive letter's edges, the length edge, and other whitespace
@@ -357,7 +361,10 @@ class TestTheTypedAndPersistedSpellingsAreCounted:
     pinned which sites were which, so a remedy moved into a written file, or
     a new writer spelling the typed word, passed. Every speller call is read
     here: the persisted ones are exactly the roster, and a typed one inside a
-    function that writes a file is rostered with its count after a read."""
+    function that writes a file is rostered with its count after a read. The
+    hook head the rewire writes into ``settings.json`` is spelled apart, by
+    ``cli._hook_head_word`` (DEF-2063), which calls no speller and is pinned by
+    ``tests/test_init_rewire_interpreter.py``."""
 
     def test_the_persisted_spellings_are_the_roster(self):
         sites = _census()
@@ -381,3 +388,42 @@ class TestTheTypedAndPersistedSpellingsAreCounted:
     ], ids=["typed-in-writer", "persisted", "printed", "nested-writer", "module"])
     def test_the_census_sees_each_shape(self, src, expected):
         assert _spelling_sites(src, "probe.py") == expected
+
+
+def git_bash() -> str | None:
+    """Git for Windows' own ``bash.exe`` (``<git root>/bin/bash.exe``, found
+    by walking up from the PATH ``git``, which is ``<git root>/cmd/git.exe``
+    or ``<git root>/mingw64/bin/git.exe``), never a PATH ``bash``: on Windows
+    that can be WSL's, which cannot run a ``C:/`` program."""
+    git = shutil.which("git")
+    if not git:
+        return None
+    for root in list(Path(git).resolve().parents)[:3]:
+        candidate = root / "bin" / "bash.exe"
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Git Bash is a Windows host's shell")
+class TestGitBashRunsTheSpelledInterpreter:
+    """DEF-2064's oracle: Git Bash itself, given the word each of this host's
+    interpreters (this one and the base it was made from, the two differing
+    under a venv) is spelled as. A backslash path reached it with its
+    separators dropped (``C:UsersMichael...python.exe: command not found``)."""
+
+    def test_git_bash_runs_the_spelled_interpreter(self, tmp_path):
+        from espalier._text import program_word, windows_short_path
+
+        bash = git_bash()
+        if bash is None:
+            pytest.skip("no Git for Windows bash.exe beside git on PATH")
+        exes = dict.fromkeys(p for p in (sys.executable, getattr(sys, "_base_executable", None)) if p)
+        for exe in exes:
+            word = program_word(exe, windows_short_path)
+            script = tmp_path / "run.sh"
+            script.write_bytes(f"{word} -c 'print(4242)'\n".encode("utf-8"))
+            proc = subprocess.run(  # spawn: ok the row's oracle is the real Git Bash
+                [bash, "--noprofile", "--norc", str(script)],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=scaled(20))
+            assert "4242" in proc.stdout, (exe, word, proc.returncode, proc.stderr[-400:])

@@ -178,6 +178,9 @@ SHELL_COMMANDS = [
     ("/opt/hooks dir/python_hook.py", None),
     ("node x.js", None),
     ("C:/'Program Files'/Python312/python.exe x.py", None),
+    # A folder-quoted head the shell still cuts at a later unquoted space (a
+    # hand edit; code review): read whole, the cut is found as before.
+    ("C:/'Program Files'/Python 3.12/python.exe x.py", "C:/Program Files/Python 3.12/python.exe"),
     ("C:/'Program Files/Python312/python.exe x.py", "C:/'Program Files/Python312/python.exe"),
 ]
 

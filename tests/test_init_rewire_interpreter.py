@@ -20,6 +20,7 @@ must keep, and that these tests exist to pin:
 from __future__ import annotations
 
 import json
+import string
 import sys
 from pathlib import Path
 
@@ -655,6 +656,14 @@ class TestASpacedWindowsHeadRunsInBothHookShells:
     def test_the_swap_spells_the_head_for_both_hook_shells(self, target, expected):
         assert cli._swap_interpreter_token("python x.py", target) == expected
 
+    def test_a_folder_quoted_launcher_keeps_its_flag(self):
+        """Code review: the launcher's flag was found by searching for the
+        decoded token, which is no substring of a folder-quoted head, so the
+        site was probed as a bare launcher (the DEF-1146 hazard)."""
+        command = "C:/'Program Files'/py.exe -3 x.py"
+        assert cli._launcher_spelling_of({"command": command}, "command", "C:/Program Files/py.exe") == (
+            "C:/Program Files/py.exe -3")
+
     def test_the_probe_a_spaced_target_no_longer_opens_with_a_quote(self):
         """The row's probe."""
         assert cli._swap_interpreter_token("python tools/cc/hooks/a.py", "C:/Program Files/Py/python.exe")[:1] != '"'
@@ -712,8 +721,23 @@ class TestASpacedWindowsHeadRunsInBothHookShells:
         assert _venv.glued_head(command) == glued
         assert _session_start()._glued_head(command) == glued
 
+    @pytest.mark.parametrize("char", [c for c in string.printable if c not in "/\\" and not c.isspace()]
+                             + ["\u2019", "\u201c"], ids=lambda c: f"U+{ord(c):04X}")
+    def test_every_folder_character_reads_back_as_written(self, char):
+        """The failure-mode review's pin: a folder holding any one character,
+        beside a spaced folder and alone, reads back through the head readers as
+        the path the swap was given (a bare `'` in an unspaced folder once read
+        as `C:/Users/DAngelo/My` and ran nowhere)."""
+        for target in (f"C:/My Py/A{char}B/python.exe", f"C:/A{char}B/python.exe"):
+            command = cli._swap_interpreter_token("python x.py", target)
+            assert command[:1] != "&", command
+            assert _venv.entry_argv(command) == (target, ["x.py"]), (target, command)
+
     @pytest.mark.skipif(sys.platform != "win32", reason="the two hook shells of a Windows host")
-    @pytest.mark.parametrize("folder", ["Pro gram (x86)", "it's here"], ids=["single-quoted", "double-quoted"])
+    @pytest.mark.parametrize("folder", ["Pro gram (x86)", "it's here", "R &D x", "a $b c",
+                                        "D'Angelo/My Py", "Py(3.12)/My Py", "R&D/My Py"],
+                             ids=["x86", "quote", "ampersand", "dollar", "unspaced-quote-folder",
+                                  "unspaced-paren-folder", "unspaced-ampersand-folder"])
     def test_git_bash_and_powershell_run_the_written_line(self, tmp_path, folder):
         """The oracle the row names, on the host that runs the hook: a venv
         under a spaced folder, the head this swap writes for it, and the line
@@ -722,7 +746,8 @@ class TestASpacedWindowsHeadRunsInBothHookShells:
         import subprocess
         import venv
 
-        from tests.test_cli import _git_bash
+        from tests.test_json_safe_program_word import git_bash as _git_bash
+        from tests._wait_budget import scaled
 
         root = tmp_path / folder / "v"
         venv.EnvBuilder(with_pip=False).create(str(root))
@@ -739,7 +764,7 @@ class TestASpacedWindowsHeadRunsInBothHookShells:
             shells.append([bash, "--noprofile", "--norc", str(run_sh)])
         for argv in shells:
             proc = subprocess.run(  # spawn: ok the row's oracle is the real hook shell
-                argv, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+                argv, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=scaled(20))
             assert "MARK-OK" in proc.stdout, (argv[0], line, proc.returncode, proc.stderr[-400:])
 
 

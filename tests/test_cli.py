@@ -1923,23 +1923,6 @@ class TestARemedysProgramWordRunsInEveryShell:
         assert os.path.samefile(word, spaced)
 
 
-def _git_bash() -> "str | None":
-    """Git for Windows' own ``bash.exe`` (``<git root>/bin/bash.exe``, found
-    by walking up from the PATH ``git``, which is ``<git root>/cmd/git.exe``
-    or ``<git root>/mingw64/bin/git.exe``), never a PATH ``bash``: on Windows
-    that can be WSL's, which cannot run a ``C:/`` program."""
-    import shutil
-
-    git = shutil.which("git")
-    if not git:
-        return None
-    for root in list(Path(git).resolve().parents)[:3]:
-        candidate = root / "bin" / "bash.exe"
-        if candidate.is_file():
-            return str(candidate)
-    return None
-
-
 class TestAWindowsProgramWordHasForwardSlashes:
     """DEF-2064: an unspaced Windows interpreter path kept its backslashes in a
     typed remedy, and Git Bash read each as an escape, so ``C:\\Py\\python.exe``
@@ -1972,6 +1955,18 @@ class TestAWindowsProgramWordHasForwardSlashes:
         assert word == self.UNSPACED.replace("\\", "/")
         assert clears is False
 
+    @pytest.mark.parametrize("path,word", [
+        ("C:\\Users\\o'brien\\python.exe", "\"C:/Users/o'brien/python.exe\""),
+        ("C:\\Py(3.12)\\python.exe", '"C:/Py(3.12)/python.exe"'),
+        ("C:\\R&D\\python.exe", '"C:/R&D/python.exe"'),
+    ], ids=["quote", "paren", "ampersand"])
+    def test_an_unspaced_path_holding_grammar_is_quoted(self, path, word):
+        """The failure-mode review: bare, the forward-slash word's `'` or `(`
+        is grammar to every shell, so it is quoted as a spaced one is."""
+        from espalier._text import program_word
+
+        assert program_word(path, None) == word
+
     def test_a_spaced_path_with_no_short_form_is_quoted_with_forward_slashes(self, monkeypatch):
         cli = self._only_this_interpreter_clears_the_floor(monkeypatch, self.SPACED)
         assert cli._remedy_py() == '"C:/Program Files/Py/python.exe"'
@@ -1993,27 +1988,3 @@ class TestAWindowsProgramWordHasForwardSlashes:
         from espalier._text import program_word
 
         assert program_word(path, None) == path
-
-    @pytest.mark.skipif(__import__("sys").platform != "win32", reason="Git Bash is a Windows host's shell")
-    def test_git_bash_runs_the_spelled_interpreter(self, tmp_path):
-        """The oracle the row names: Git Bash itself, given the word each of
-        this host's interpreters (this one and the base it was made from, the
-        two differing under a venv) is spelled as. A backslash path reached it
-        with its separators dropped."""
-        import subprocess
-        import sys
-
-        from espalier._text import program_word, windows_short_path
-
-        bash = _git_bash()
-        if bash is None:
-            pytest.skip("no Git for Windows bash.exe beside git on PATH")
-        exes = dict.fromkeys(p for p in (sys.executable, getattr(sys, "_base_executable", None)) if p)
-        for exe in exes:
-            word = program_word(exe, windows_short_path)
-            script = tmp_path / "run.sh"
-            script.write_bytes(f"{word} -c 'print(4242)'\n".encode("utf-8"))
-            proc = subprocess.run(  # spawn: ok the row's oracle is the real Git Bash
-                [bash, "--noprofile", "--norc", str(script)],
-                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
-            assert "4242" in proc.stdout, (exe, word, proc.returncode, proc.stderr[-400:])

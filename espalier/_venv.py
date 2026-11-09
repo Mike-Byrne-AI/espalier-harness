@@ -261,13 +261,17 @@ def shell_cut_path(command: str) -> str | None:
     not a file. The rewire must DECLINE such an entry: swapping the cut word
     wrote ``python Envs/py312/bin/python3 ...``, which exits 2 -- a block on
     every tool call (failure-mode review, driven). A head holding a quoted run
-    that closes (:func:`glued_head`, DEF-2063) is one word, never cut. Twin of
+    that closes (:func:`glued_head`, DEF-2063) is one word, read whole: the
+    shell still cuts it at a LATER unquoted space (``C:/'Program
+    Files'/Python 3.12/python.exe``, a hand edit), so the search runs from
+    that word (code review). Twin of
     ``tools/cc/hooks/session_start.py::_shell_cut_path``.
     """
     cmd = command.strip() if isinstance(command, str) else ""
-    if not cmd or cmd[:1] in ("'", '"') or glued_head(cmd) is not None:
+    if not cmd or cmd[:1] in ("'", '"'):
         return None
-    words = cmd.split()
+    glued = glued_head(cmd)
+    words = [glued[0], *cmd[glued[2]:].split()] if glued is not None else cmd.split()
     head = os.path.expanduser(words[0]) if words[0].startswith("~") else words[0]
     if not any(sep in head for sep in ("/", "\\")) or os.path.isfile(head):
         return None

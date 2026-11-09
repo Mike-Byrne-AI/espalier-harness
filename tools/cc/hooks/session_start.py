@@ -3265,12 +3265,14 @@ def _shell_cut_path(command: str) -> "str | None":
     longer word-prefix that names a Python (not a ``.py``/``.sh`` script),
     where argv[0] is a path that is not a file, is the cut path. A head
     holding a quoted run that closes (:func:`_glued_head`, DEF-2063) is one
-    word, never cut. Twin of ``espalier._venv.shell_cut_path``.
+    word, read whole, which a later unquoted space still cuts. Twin of
+    ``espalier._venv.shell_cut_path``.
     """
     cmd = command.strip() if isinstance(command, str) else ""
-    if not cmd or cmd[:1] in ("'", '"') or _glued_head(cmd) is not None:
+    if not cmd or cmd[:1] in ("'", '"'):
         return None
-    words = cmd.split()
+    glued = _glued_head(cmd)
+    words = [glued[0], *cmd[glued[2]:].split()] if glued is not None else cmd.split()
     head = os.path.expanduser(words[0]) if words[0].startswith("~") else words[0]
     if not any(sep in head for sep in ("/", "\\")) or os.path.isfile(head):
         return None

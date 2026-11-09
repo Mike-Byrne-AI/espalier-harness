@@ -88,11 +88,18 @@ def program_word(path: str, short_path: Callable[[str], str | None] | None) -> s
     with no short form or one that still holds a space (8.3 names off on that
     volume), the double-quoted path, which cmd and the POSIX shells run and
     PowerShell needs ``&`` before: the caller says so once a run. Pure text:
-    the lookup is a parameter, so the Windows call stays out of it. A command
+    the lookup is a parameter, so the Windows call stays out of it. An
+    unspaced drive-rooted word that is not plain characters (``o'brien``,
+    ``Py(3.12)``) is double-quoted, as a spaced one with no short form is: bare,
+    each of the three shells reads its ``'`` or ``(`` as grammar. A remedy
     written into the adopter's tree never comes here: it keeps the path as
-    spelled (``cli._remedy_program_word``'s ``persisted``)."""
+    spelled (``cli._remedy_program_word``'s ``persisted``); a hook head the
+    rewire writes is spelled by ``cli._hook_head_word``."""
     if not any(ch.isspace() for ch in path):
-        return forward_if_drive_rooted(path)
+        if not is_drive_rooted(path):
+            return path
+        word = forward_if_drive_rooted(path)
+        return word if _PLAIN_PROGRAM_WORD.fullmatch(word) else f'"{word}"'
     short = short_path(path) if short_path is not None else None
     if short:
         word = short.replace("\\", "/")
