@@ -125,7 +125,8 @@ request then reads DIRTY until you merge by hand.
 python tools/cc/ship.py lane
 ```
 
-On the default branch: creates `lane/<slug of the head subject>` at HEAD,
+On the default branch: creates `lane/<slug of the lane's subject>` at HEAD (the
+lane's subject is Step 2's, the pull request's default title),
 switches to it, and only then points the local default branch back at origin's
 -- every commit the default branch carried is reachable from the lane before
 the default branch moves, which is why the order is the tool's and not a
@@ -271,8 +272,15 @@ event, one check run and no title edit for a race to lose; auto-merge armed and
 read back (a repository whose setting is off is named: merge by hand once the
 checks are green). The
 body is the commit subjects, or `--body-file <path>` for prose -- a file, never
-a heredoc, so a backtick in the prose is text and not a command. `--title`
-overrides the head subject; at most 72 characters. `--dry-run` asks the guard, prints the calls with the title it would bind, and
+a heredoc, so a backtick in the prose is text and not a command. The title is
+the lane's subject: that of the newest commit on HEAD's first-parent line the
+base lacks that is neither a merge nor a commit touching only the record
+folders (a handoff's row, a fold, a ledger filing or strike), so a base merged
+in by hand, a catch-up or the handoff's records at HEAD do not name the pull
+request. A lane of records alone takes its newest commit outside the Session
+Log (a filing lane its filing), else its newest non-merge commit; HEAD's own
+subject only where it holds none. `--title` overrides it; at most 72
+characters. `--dry-run` asks the guard, prints the calls with the title it would bind, and
 changes nothing.
 
 The URL it prints is the handoff's `Next:` line. Go back to work. The next

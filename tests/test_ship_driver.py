@@ -388,7 +388,8 @@ def _preflight_answers(root, *, dirty="", untracked="", commits="abc1234 feat: a
         _LANE_DIFF: (0, "M\ttools/cc/ship.py\n", ""),   # the shape read: a code lane, nothing deleted
         # `open`'s refusals before its push, read by the forecast (ship.PRE_PUSH_CHECKS):
         # no pull request open for the lane, origin's copy of it (none) not ahead, the
-        # open pull requests (none), the head subject for the title.
+        # open pull requests (none), the lane's subject for the title (every
+        # tier of ship.lane_subject is a `git log -1` read, answered here).
         ("gh", "pr", "list", "--head"): (0, "[]", ""),
         ("git", "fetch"): (0, "", ""),
         ("git", "rev-list", "--count"): (0, "0\n", ""),
@@ -983,10 +984,11 @@ class TestHandoffVerb:
         answers[("git", "status", "--porcelain", "-uno")] = (0, "", "")
         answers[("git", "fetch")] = (0, "", "")
         answers[_LANE_DIFF] = (0, "M\ttools/cc/ship.py\n", "")   # code: not a handoff-only lane
+        answers[("git", "log", "-1")] = (0, "feat: a thing\n", "")   # the lane's subject, which names it
         spawns = _arm(ship, answers)
         assert ship.handoff(dry_run=True) == 0
         assert spawns.mutations == []
-        assert "dry-run: `lane` would move" in capsys.readouterr().out
+        assert "dry-run: `lane` would move the unmerged commits to lane/feat-a-thing" in capsys.readouterr().out
 
     def test_on_from_the_default_branch_moves_to_a_lane_first(self, ship, tmp_path, monkeypatch):
         _toml(tmp_path, "handoff_push = true\n")

@@ -1390,6 +1390,10 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # git itself and is listed below on its own merits, so the prefix
             # warning stands but that half of its evidence does not.)
             "test_check_handoff_landing",
+            # Drives tools/cc/ship.py's lane-subject read against real `git
+            # merge`/`commit` in tmp_path repos: which commit is the lane's own
+            # newest is git's answer, so no stand-in runner is its oracle.
+            "test_ship_lane_subject",
             # the three scripts landed together on 2026-09-06; each drives its
             # script by path against a scratch tree (a git repo, a fixture
             # ledger, a copied checkout), which is integration by this file's
@@ -1674,6 +1678,9 @@ _SLOW_FILES: set[str] = {
     # co-author trailer check against actual commit objects rather than a
     # string fixture; the parser cases next to them are pure and fast.
     "test_check_handoff_landing",
+    # Builds a scratch repository per case with real `git init`/`commit`/
+    # `merge` (a dozen git spawns each) to read the lane's own newest commit.
+    "test_ship_lane_subject",
     # Copies this checkout into tmp_path and drives `git init`/`add`/`commit`
     # plus the script's own git and probe subprocesses for the dry-run case;
     # ~1.3 s here, and a real process tree either way.
