@@ -1148,6 +1148,30 @@ first; the dangerous-command catch is a secondary slip-catcher):
    read off the disk, never a subprocess. A nested clone or a submodule is
    not a checkout of this repository and is not governed.
 
+   An operand that a delete, move or clean removes, and that holds a
+   wildcard (`*`, `?`, `[...]`), is judged by what it can name, not as the
+   literal path it spells: `tools/*` is refused as `tools/cc/` is, and a
+   root `too*` as `tools` is, while `build/*` and `tools/*.log` reach no zone
+   and run. A brace list is expanded and an extended glob's group read as
+   `*`; `**` is `*`, as Bash reads it with globstar off. A remainder below a
+   zone (a root `*/build` against `cc/`) counts only when the checkout holds
+   something it names. The read fails closed where it cannot follow the
+   shell: a negated, POSIX or equivalence class, a nested extended-glob
+   group or a brace sequence reads as naming anything, so such an operand at
+   the root is refused. A remove that cannot take a directory (`rm`
+   without a recursive flag, `unlink`, `shred`, a word-list loop over such a
+   remove, a remove cmdlet without `-Recurse`) is judged by what its
+   wildcard names, and of a protected directory only a path inside it: a
+   root `rm -f *` and `rm -f tools/*` run, as a non-recursive remove always
+   has, while `rm -f c?/*`, `rm -f .claude/*` and a root `rm -f *` beside a
+   `protected_paths` file are refused. The same word removed by any other
+   remove in the command (`rm -d` included, which takes an empty
+   directory), or inside a nested program, reads every entry. A cmdlet
+   without `-Recurse` does take an empty directory, which holds nothing to
+   protect. A move takes directories and reads every entry. The deny says what the wildcard reached. A
+   wildcard on a write, a link or a permission change is still read as the
+   path it spells: those forms are outside the coverage contract below.
+
    A relative Bash or PowerShell spelling is read from the directory the
    command runs in, not from the root: the hook payload's `cwd` (the
    directory Claude is in, which Claude Code moves when an earlier call ran
