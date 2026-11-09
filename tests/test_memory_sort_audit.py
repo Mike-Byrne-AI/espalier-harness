@@ -471,6 +471,14 @@ class TestDeadPathHome:
             f"co-homed soft breadcrumb wrongly flagged: {findings}"
         )
 
+    def test_a_route_group_home_is_read_whole(self):
+        """A link destination with balanced parentheses (a Next.js or
+        SvelteKit route-group folder, DEF-5086) is one home; cut at its first
+        ``)`` it read as ``app/(marketing``, a path no tree tracks, and the
+        entry homed there flagged as unlinked."""
+        claim = "[page](app/(marketing)/page.tsx) and [doc](docs/x.md#y)"
+        assert memory_sort_audit._extract_path_homes(claim) == ["app/(marketing)/page.tsx", "docs/x.md"]
+
 
 class TestIsolationContract:
     def test_zero_espalier_imports(self):
