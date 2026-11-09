@@ -248,7 +248,7 @@ def _has_inbound_link(repo: Path, entry: Path, tracked: list[str]) -> bool:
 # under-flags (safe) rather than guessing at prose. A link target may hold
 # balanced parentheses (a Next.js or SvelteKit route-group folder, DEF-5086),
 # read whole as reflect_protocol.LOCAL_LINK_RE reads it.
-_PATH_HOME_RE = re.compile(r"\]\(((?:[^()]|\([^()]*\))+)\)|`([^`]+/[^`]+)`")
+_PATH_HOME_RE = re.compile(r"\]\(((?:[^()\n]|\([^()\n]*\))+|[^)\n]+)\)|`([^`]+/[^`]+)`")
 
 
 def _extract_path_homes(claim: str) -> list[str]:

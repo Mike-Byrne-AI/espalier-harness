@@ -47,7 +47,7 @@ _MEMORY_FILENAME = "ESPALIER_MEMORY.md"
 # read to its first `)`, a working link to such a file read as a broken link
 # to `app/(marketing` (DEF-5086). Each alternative opens on a different
 # character, so a run with no closer backtracks linearly.
-LOCAL_LINK_RE = re.compile(r"\[[^\]]+\]\((?!https?://|mailto:|#)((?:[^()]|\([^()]*\))+)\)")
+LOCAL_LINK_RE = re.compile(r"\[[^\]]+\]\((?!https?://|mailto:|#)((?:[^()\n]|\([^()\n]*\))+|[^)\n]+)\)")
 # Non-navigable local-only trees excluded from the reflect surface walk.
 # Forced twin of tools/cc/reflect_protocol.py's LOCAL_ONLY_PREFIXES across the
 # no-import boundary — keep the two in sync (locked by
@@ -132,7 +132,7 @@ def _safe_text(path: Path) -> str:
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 
 
-_MD_LINK_TEXT = re.compile(r"!?\[([^\]]*)\]\((?:[^()]|\([^()]*\))*\)")  # a route-group target unwraps whole (DEF-5086)
+_MD_LINK_TEXT = re.compile(r"!?\[([^\]]*)\]\((?:(?:[^()\n]|\([^()\n]*\))*|[^)\n]*)\)")  # a route-group target unwraps whole (DEF-5086)
 _SLUG_DROP = re.compile(r"[^\w\- ]", re.UNICODE)
 _ATX_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*$")
 

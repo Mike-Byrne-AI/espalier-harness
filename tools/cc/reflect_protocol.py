@@ -52,7 +52,7 @@ except ImportError:  # fail-open: ok deliberate -- tools/cc is not on sys.path (
 # read to its first `)`, a working link to such a file read as a broken link
 # to `app/(marketing` (DEF-5086). Each alternative opens on a different
 # character, so a run with no closer backtracks linearly.
-LOCAL_LINK_RE = re.compile(r"\[[^\]]+\]\((?!https?://|mailto:|#)((?:[^()]|\([^()]*\))+)\)")
+LOCAL_LINK_RE = re.compile(r"\[[^\]]+\]\((?!https?://|mailto:|#)((?:[^()\n]|\([^()\n]*\))+|[^)\n]+)\)")
 # Forced twin of espalier/reflect_protocol.PLACEHOLDER_PATTERNS across the
 # no-import boundary, pinned pattern-for-pattern by
 # tests/test_reflect_protocol.py::TestReflectTwinParity. This side carried three
@@ -232,7 +232,7 @@ def _visible(paths, base):
     return sorted(p for p in paths if not any(part.startswith(".") for part in Path(p).relative_to(base).parts))
 
 
-_MD_LINK_TEXT = re.compile(r"!?\[([^\]]*)\]\((?:[^()]|\([^()]*\))*\)")  # a route-group target unwraps whole (DEF-5086)
+_MD_LINK_TEXT = re.compile(r"!?\[([^\]]*)\]\((?:(?:[^()\n]|\([^()\n]*\))*|[^)\n]*)\)")  # a route-group target unwraps whole (DEF-5086)
 _SLUG_DROP = re.compile(r"[^\w\- ]", re.UNICODE)
 _ATX_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*$")
 
