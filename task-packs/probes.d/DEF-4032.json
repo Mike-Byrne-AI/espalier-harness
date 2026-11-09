@@ -3,10 +3,11 @@
  "subject": "tests/test_xdist_never_ran.py",
  "cmd": null,
  "open_value": null,
- "why_not": "the race lives on GitHub's runners and never showed on this repository's Mac or Windows box: read on most macOS portability legs and once on the ubuntu clean-checkout leg (run 41239423797, 2026-10-31), so a local probe would read the roster, not the race; the oracle is the nested controller crash annotation on those legs",
- "row_sha": "50fe68c774ba",
- "text_sha": "a800ce727682",
+ "why_not": "the mechanism reproduces on this repository's Mac only on demand (a controller delayed before it schedules), which the pin row drives and the 2026-11-09 fix closes, so a local probe reads the fix, not the runners; what keeps the row open is whether GitHub's runners still end a child there, and the oracle for that is the nested controller crash annotation and the roster line on the macOS portability legs",
+ "row_sha": "dc6512c7c202",
+ "text_sha": "857e01825676",
  "verified_2026_10_19": "STILL_OPEN (re-pinned value unchanged on 2026-10-19: W3's review round: the mitigation is bounded to the race's own failure type, the runs are named, the write's ValueError variant is named, and the completed-child shape is split out to DEF-4033) [changed: text]",
  "verified_2026_10_31": "STILL_OPEN (re-pinned value unchanged on 2026-10-31: the race was read on an ubuntu runner (the clean-checkout (3.10) job, run 41239423797, 2026-10-31), where the six rows are unmarked and redded the leg; the claim stands and its scope widens from GitHub's macOS runners to GitHub's runners) [changed: anchor, text]",
- "verified_2026_11_02": "STILL_OPEN (re-pinned value unchanged on 2026-11-02: the row widened to every runner on 2026-10-31 and its reason still named the macOS runners alone; moved by the verb now that it takes the reason) [changed: why not]"
+ "verified_2026_11_02": "STILL_OPEN (re-pinned value unchanged on 2026-11-02: the row widened to every runner on 2026-10-31 and its reason still named the macOS runners alone; moved by the verb now that it takes the reason) [changed: why not]",
+ "verified_2026_11_09": "STILL_OPEN (re-pinned value unchanged on 2026-11-09: the mechanism was reproduced on this box and closed by the stub's wait, pinned by a row; the claim stands until the runners' watch reads zero over 30 macOS legs (dispatcher ruling bd0c22)) [changed: text, why not]"
 }
