@@ -719,7 +719,11 @@ python tools/cc/ship.py handoff
   no seat, this one's next session included; say so in the `Next:` line. A
   lane that edits or renames a row, a seat with no name, a pull request's head
   that cannot be fetched, a park origin refuses, or a reset that fails after
-  the park takes the push as before, and the verb says why.
+  the park takes the push as before, and the verb says why. Where that reset
+  fails because the pull request's head holds commits this checkout lacks,
+  the push refuses instead: the verb prints git's error, the untracked files
+  in the way and the merge to run, then `python tools/cc/ship.py handoff`
+  again.
 - **Off (the default):** nothing is pushed. The commit stays on this branch in
   this checkout, and the verb prints how to push it (`/ship`) and how to opt in.
   Say so in the summary: the next session here reads the row while it stays on

@@ -1577,6 +1577,38 @@ def fold(dry_run: bool = False) -> int:
     return 0
 
 
+def _unmoved_after_park(root: Path, since: str, number: object, err: str) -> str:
+    """The note for a park whose move to ``since`` (``origin/<branch>``)
+    failed: git's own reason, and where that head holds commits HEAD does not
+    reach, that the push refuses below (:func:`_origin_ahead_refusal`) with
+    what stands in the way first. The usual cause is an untracked file at a
+    path those commits add, and the merge the refusal names fails on the same
+    file, so the files to move are named from the trees -- ``reset --keep``
+    names only the first, and an ignored file is overwritten, not refused
+    (both read on git 2.39) -- before that merge."""
+    why = " ".join(err.split())[:300] or "no reason printed"
+    head = f"the rows are parked, but this branch could not be moved to {since} ({why})"
+    ahead = _commits_head_lacks(since, str(root))
+    if not ahead:
+        return f"{head}: they ride the push onto #{number} as before"
+    # -z on both reads: without it git quotes a non-ASCII or newline path in
+    # the diff, and the quoted name never meets ls-files' raw one.
+    rc, added, _ = _git("diff", "--name-only", "--no-renames", "--diff-filter=A", "-z", "HEAD", since,
+                        cwd=str(root))
+    incoming = {p for p in added.split("\0") if p} if rc == 0 else set()
+    rc, others, _ = _git("ls-files", "--others", "--exclude-standard", "-z", cwd=str(root)) if incoming else \
+        (1, "", "")
+    # A file where a directory arrives, or one inside a directory where a
+    # file arrives, stands in the way as much as the same path does.
+    in_way = sorted(p for p in others.split("\0") if p and any(
+        p == q or q.startswith(p + "/") or p.startswith(q + "/") for q in incoming)) if rc == 0 else []
+    shown = ", ".join(in_way[:5]) + (f" and {len(in_way) - 5} more" if len(in_way) > 5 else "")
+    first = f"move {shown} out of the way, then " if in_way else \
+        "move what git's error above names out of the way, then "
+    return (f"{head}. {since} holds {ahead} commit(s) this HEAD does not reach, so the push onto #{number} "
+            f"refuses below: {first}run `git merge {since}` and `python tools/cc/ship.py handoff` again")
+
+
 def _park_the_row(root: Path, base: str, *, dry_run: bool = False, branch: str | None = None,
                   pr: dict | None = None) -> bool:
     """A handoff that carries Session Log rows alone parks the rows it added on
@@ -1610,7 +1642,10 @@ def _park_the_row(root: Path, base: str, *, dry_run: bool = False, branch: str |
     origin refused, keeps today's path and says why; so does a reset to
     ``origin/<branch>`` that fails after the park, whose rows then ride the
     push as well, since a commit left ahead there would ask the Stop hook's
-    handoff gate for a handoff each new row answers the same way."""
+    handoff gate for a handoff each new row answers the same way. Where that
+    head holds commits HEAD lacks, the push refuses instead, and the note
+    names git's error, the untracked files in the way and the merge to run
+    (:func:`_unmoved_after_park`)."""
     _git("fetch", "origin", base, "--quiet", cwd=str(root))
     since = f"origin/{base}"
     if branch is not None:
@@ -1655,6 +1690,12 @@ def _park_the_row(root: Path, base: str, *, dry_run: bool = False, branch: str |
             return False
         if isinstance(stale, str):
             _note(f"{stale}; parking the rows, and the board's stale: line stays the backstop")
+        elif isinstance(stale, dict) and stale.get("unread"):
+            # The read ran and could not judge (no run on the head reached a
+            # verdict, a base commit it could not place): it parks as a failed
+            # read does, and says so.
+            _note(f"stale-base check not read: {stale['unread']}; parking the rows, and the board's stale: "
+                  "line stays the backstop")
     mail = _mail_module()
     if mail is None:
         _note(f"tools/cc/mail.py is not beside this script, so the row is not parked: {where}, as before")
@@ -1683,14 +1724,15 @@ def _park_the_row(root: Path, base: str, *, dry_run: bool = False, branch: str |
     if branch is not None:
         rc, target, _ = _git("rev-parse", "--verify", "--quiet", f"{since}^{{commit}}", cwd=str(root))
         target = target.strip() if rc == 0 else ""
-        if not (target and _git("reset", "--keep", "--quiet", target, cwd=str(root))[0] == 0):
+        rc, _, err = _git("reset", "--keep", "--quiet", target, cwd=str(root)) if target else \
+            (1, "", f"{since} could not be read")
+        if rc != 0:
             # Parked, but the row's commit is still ahead: a park that returned
             # here would leave the Stop hook's handoff gate asking for a handoff
             # each new row would answer the same way. The rows ride the push
             # instead; the parked copy leaves the records ref once the base
             # holds it.
-            _note(f"the rows are parked, but this branch could not be moved to {since}: they ride the push "
-                  f"onto #{number} as before")
+            _note(_unmoved_after_park(root, since, number, err))
             return False
         _say(f"Nothing pushed onto #{number}: the commits since {since} carry only Session Log rows, now "
              f"parked on this seat's records ref, so its running checks are not restarted for a record. The "
@@ -2791,7 +2833,14 @@ def _remote_has_commits_we_lack(branch: str, cwd: str) -> int:
     rc, _, _ = _git("fetch", "origin", branch, "--quiet", cwd=cwd)
     if rc != 0:
         return 0  # the remote branch does not exist yet: a first push
-    rc, out, _ = _git("rev-list", "--count", f"HEAD..origin/{branch}", cwd=cwd)
+    return _commits_head_lacks(f"origin/{branch}", cwd)
+
+
+def _commits_head_lacks(ref: str, cwd: str) -> int:
+    """How many commits ``ref`` holds that HEAD does not reach, 0 where git
+    cannot say: the one count behind :func:`_remote_has_commits_we_lack`'s
+    refusal and the park's note that the push will meet it."""
+    rc, out, _ = _git("rev-list", "--count", f"HEAD..{ref}", cwd=cwd)
     try:
         return int(out.strip() or "0") if rc == 0 else 0
     except ValueError:

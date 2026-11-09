@@ -1729,7 +1729,7 @@ class TestARowsOnlyHandoffOntoAnOpenPullRequestParks:
         assert ship.handoff() == 0
         assert mail.parked == [(_PARKED_ROW, None, "origin/main", "HEAD")]
 
-    def _stale(self, ship, tmp_path, monkeypatch, *, near: list[str], diff_rc: int = 0):
+    def _stale(self, ship, tmp_path, monkeypatch, *, near: list[str], diff_rc: int = 0, unread: str = ""):
         """The up-to-date rule off (this repository's setting since 10-09), so
         the stale-base read runs; its result stood in."""
         mail = _FakeMail()
@@ -1739,9 +1739,21 @@ class TestARowsOnlyHandoffOntoAnOpenPullRequestParks:
             ("git", "diff", "--name-only"): (diff_rc, "", "fatal: bad revision" if diff_rc else ""),
         })
         monkeypatch.setattr(ship._merge_rules, "stale_base", lambda root, **_kw: {
-            "tested": "abc1234", "now": "def5678", "moved": 2, "near": near, "unread": ""})
+            "tested": "abc1234", "now": "def5678", "moved": 2, "near": near, "unread": unread})
         monkeypatch.setattr(ship, "rebind", lambda **_kw: 0)
         return mail, spawns
+
+    def test_a_stale_read_that_could_not_answer_parks_and_says_so(self, ship, tmp_path, monkeypatch, capsys):
+        """The read ran but could not judge (no run on the head reached a
+        verdict, the dispatcher's optional item): it parks, as a failed read
+        does, and the docstring's "says so" holds for this shape too."""
+        mail, spawns = self._stale(ship, tmp_path, monkeypatch, near=[],
+                                   unread="no run on the pull request's head tested anything yet")
+        assert ship.handoff() == 0
+        assert mail.parked == [(_PARKED_ROW, None, "origin/main", "HEAD")] and spawns.count(("git", "push")) == 0
+        out = capsys.readouterr().out
+        assert "no run on the pull request's head tested anything yet" in out
+        assert "stale: line stays the backstop" in out
 
     def test_a_lane_its_base_moved_near_pushes_as_before(self, ship, tmp_path, monkeypatch, capsys):
         """The dispatcher's amendment: a base that moved near the lane's files
@@ -1841,7 +1853,67 @@ class TestARowsOnlyHandoffOntoAnOpenPullRequestParks:
         assert spawns.count(("git", "push")) == 1
         out = capsys.readouterr().out
         assert "could not be moved to origin/lane/x" in out and "ride the push onto #7" in out
+        assert "error: Entry 'x' not uptodate" in out   # git's own reason, not the exit code alone
         assert "Nothing pushed" not in out
+
+    def test_an_untracked_file_in_the_way_with_origin_ahead_names_it_and_the_merge(
+            self, ship, tmp_path, monkeypatch, capsys):
+        """The dispatcher's amendment (1): origin/<branch> holds a commit HEAD
+        lacks that adds a path an untracked file holds here, so the reset after
+        the park fails, and the origin-ahead refusal's merge then fails on the
+        same file (rc 2 on a scratch drive, git 2.39.5; `reset --keep` names
+        only the first such file, the merge names them all). The note carries
+        git's error, says the push refuses, and names every untracked file in
+        the way with the merge to run after moving them. Dies to: a note keyed
+        on the exit code alone, "ride the push as before" where the push
+        refuses, and a file named from reset's message alone (two.txt)."""
+        mail = _FakeMail()
+        err = ("error: Untracked working tree file 'new.txt' would be overwritten by merge.\n"
+               "fatal: Could not reset index file to revision 'origin/lane/x'.\n")
+        spawns = self._onto_open(ship, tmp_path, mail=mail, extra={
+            ("git", "rev-list", "--count"): (0, "2\n", ""),
+            ("git", "reset", "--keep"): (128, "", err),
+            # NUL-separated, as -z prints: a non-ASCII name arrives raw, not quoted.
+            ("git", "diff", "--name-only", "--no-renames", "--diff-filter=A"):
+                (0, "new.txt\0two.txt\0kept.txt\0café.txt\0dir/sub.txt\0", ""),
+            ("git", "ls-files", "--others", "--exclude-standard"):
+                (0, "two.txt\0new.txt\0stray.txt\0café.txt\0dir\0", ""),
+        })
+        monkeypatch.setattr(ship, "rebind", lambda **_kw: pytest.fail("nothing was pushed to re-bind"))
+        with pytest.raises(ship.Refused, match=r"git merge origin/lane/x"):
+            ship.handoff()
+        assert mail.parked == [(_PARKED_ROW, None, "origin/main", "HEAD")]
+        assert spawns.count(("git", "push")) == 0 and spawns.count(("git", "merge")) == 0
+        [diff] = spawns.matching(("git", "diff", "--name-only", "--no-renames", "--diff-filter=A"))
+        assert "-z" in diff, diff
+        [note] = [ln for ln in capsys.readouterr().out.splitlines() if "could not be moved" in ln]
+        assert "Untracked working tree file 'new.txt'" in note and "Could not reset index file" in note
+        assert "ride the push" not in note and "refuses" in note
+        # dir: an untracked file where a directory arrives stands in the way too.
+        assert "move café.txt, dir, new.txt, two.txt out of the way" in note
+        assert "kept.txt" not in note and "stray.txt" not in note
+        assert note.index("move caf") < note.index("git merge origin/lane/x")
+        assert note.endswith("`python tools/cc/ship.py handoff` again")
+
+    @pytest.mark.parametrize("others, named", [
+        ("".join(f"f{i}.txt\0" for i in range(7)), "move f0.txt, f1.txt, f2.txt, f3.txt, f4.txt and 2 more out"),
+        ("stray.txt\0", "move what git's error above names out of the way"),
+    ])
+    def test_the_files_in_the_way_are_capped_and_an_unnamed_one_points_at_gits_error(
+            self, ship, tmp_path, monkeypatch, capsys, others, named):
+        mail = _FakeMail()
+        self._onto_open(ship, tmp_path, mail=mail, extra={
+            ("git", "rev-list", "--count"): (0, "1\n", ""),
+            ("git", "reset", "--keep"): (128, "", "error: Entry 'x' not uptodate. Cannot merge.\n"),
+            ("git", "diff", "--name-only", "--no-renames", "--diff-filter=A"):
+                (0, "".join(f"f{i}.txt\0" for i in range(7)), ""),
+            ("git", "ls-files", "--others", "--exclude-standard"): (0, others, ""),
+        })
+        monkeypatch.setattr(ship, "rebind", lambda **_kw: pytest.fail("nothing was pushed to re-bind"))
+        with pytest.raises(ship.Refused):
+            ship.handoff()
+        [note] = [ln for ln in capsys.readouterr().out.splitlines() if "could not be moved" in ln]
+        assert named in note and note.isascii(), note
 
     def test_a_merge_git_cannot_probe_parks_and_says_so(self, ship, tmp_path, monkeypatch, capsys):
         """A git older than 2.38 cannot say whether the lane conflicts: the
