@@ -285,16 +285,31 @@ class TestTheChangeIsJudgedNotTheState:
         _write(tree, {"permissions": {}})
         assert _change(tree) is None
 
-    def test_an_http_hook_added_to_a_wired_tree_passes(self, tree):
-        """The voiding rule shared with ci_guard and doctor predates the hook
-        types the pinned protocol names beside command and prompt (its own
-        ledger row); such an entry runs no gate, so the live check sets it aside."""
+    @pytest.mark.parametrize("beside", [
+        {"type": "http", "url": "http://localhost:9/x"},
+        {"type": "mcp_tool", "server": "s", "tool": "t"},
+        {"type": "agent", "prompt": "check it"},
+    ], ids=["http", "mcp_tool", "agent"])
+    def test_a_driven_hook_type_added_to_a_wired_tree_passes(self, tree, beside):
+        """Claude Code 2.1.319 loads each of these beside the gates (driven,
+        DEF-1195), so the change loses nothing and is let through."""
         _started(tree)
         data = _settings()
-        data["hooks"]["PostToolUse"] = [{"hooks": [{"type": "http", "url": "http://localhost:9/x"}]}]
+        data["hooks"]["PostToolUse"] = [{"hooks": [beside]}]
         _write(tree, data)
         assert _change(tree) is None
         assert sorted(_integrity().read_wired_gates(tree)) == sorted(GATES)
+
+    def test_an_http_hook_with_no_url_voids_the_file_and_is_refused(self, tree):
+        """No `url` voids the whole hooks block (driven on 2.1.319: CC's stderr
+        names the field and the control hook beside it never fires), so the
+        change unwires every gate the session runs. The live readers used to
+        set every http entry aside, which hid this one."""
+        _started(tree)
+        data = _settings()
+        data["hooks"]["PostToolUse"] = [{"hooks": [{"type": "http"}]}]
+        _write(tree, data)
+        _denied_naming(_change(tree), GATES)
 
     def test_an_allowed_change_becomes_the_sessions_and_a_refusal_is_noted_once(self, tree):
         ig = _integrity()

@@ -1562,8 +1562,8 @@ class TestCheckoutWiringNotice:
     checkout they act in would launch a session with the gates off (DEF-1192: a
     worktree checks out tracked files only, and the project settings file is
     gitignored). It judges wiring, never a file's presence on disk -- a hook on
-    disk is not a wired hook -- sets protocol-typed hook entries aside as the
-    two live readers do, and is a reporter: one line or None, never a refusal.
+    disk is not a wired hook -- by the voiding rule the two live readers share,
+    and is a reporter: one line or None, never a refusal.
     The wired shape comes from ``tests/_wired_settings.py``, derived from the
     engine's canonical table, not typed here."""
 
@@ -1637,16 +1637,24 @@ class TestCheckoutWiringNotice:
         write_wired_settings(tmp_path)
         assert _integrity.checkout_wiring_notice(tmp_path) is None
 
-    def test_a_protocol_typed_entry_beside_the_gates_is_set_aside(self, tmp_path):
-        """An ``http`` or ``mcp_tool`` hook (the pinned protocol names both)
-        cannot execute a gate, and the voiding rule predates them: read raw, it
-        voids the whole block and every gate reads unwired. SessionStart and
-        config_guard strip those entries first; so does this reader (the first
-        cut did not: the failure-mode review's probe, 2026-10-11)."""
-        write_wired_settings(tmp_path, extra={
-            "Notification": [{"hooks": [{"type": "http", "url": "https://example.invalid/hook"}]}],
-        })
+    @pytest.mark.parametrize("entry", [
+        {"type": "http", "url": "https://example.invalid/hook"},
+        {"type": "mcp_tool", "server": "s", "tool": "t"},
+        {"type": "agent", "prompt": "check it"},
+    ], ids=["http", "mcp_tool", "agent"])
+    def test_a_driven_hook_type_beside_the_gates_is_silent(self, tmp_path, entry):
+        """Claude Code 2.1.319 loads each beside the gates (driven, DEF-1195),
+        so the checkout launches with every gate on and nothing is said."""
+        write_wired_settings(tmp_path, extra={"Notification": [{"hooks": [entry]}]})
         assert _integrity.checkout_wiring_notice(tmp_path) is None
+
+    def test_an_http_hook_with_no_url_names_the_void(self, tmp_path):
+        """No ``url`` voids the whole hooks block (driven on 2.1.319), so a
+        session launched here runs no gate. This reader set every http entry
+        aside before DEF-1195 and stayed silent on this file."""
+        write_wired_settings(tmp_path, extra={"Notification": [{"hooks": [{"type": "http"}]}]})
+        notice = _integrity.checkout_wiring_notice(tmp_path)
+        assert notice and 'no string "url"' in notice and "loads NO hooks" in notice, notice
 
     def test_a_dropped_event_key_names_the_gate_it_unwires_and_the_repair(self, tmp_path):
         """N7's shape: the hook file stays on disk, its event key is gone. The

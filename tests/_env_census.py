@@ -38,8 +38,9 @@ def drops(text: str, key: str, keeping: Iterable[str]) -> list[int]:
     the variable when its filter, run on the name itself, selects it; one at
     module level never does, since it is built at import, before a test's own
     value exists. Any site passes whose function (the module, for a
-    module-level one) stores one of ``keeping`` as a subscript, a dict key or
-    a keyword. A filter that reads another name is not run, and its site
+    module-level one) stores one of ``keeping`` as a subscript, a dict key, a
+    keyword, or the first argument of a ``setenv`` call (pytest's
+    ``monkeypatch.setenv``). A filter that reads another name is not run, and its site
     counts as dropping. Not read: a loop of ``if`` statements popping by
     prefix, a prefix held in a named constant, and a child script inside a
     string."""
@@ -66,6 +67,9 @@ def drops(text: str, key: str, keeping: Iterable[str]) -> list[int]:
                                                for k in n.keys):
                 return True
             if isinstance(n, ast.keyword) and n.arg in keeping:
+                return True
+            if isinstance(n, ast.Call) and getattr(n.func, "attr", None) == "setenv" and n.args \
+                    and isinstance(n.args[0], ast.Constant) and n.args[0].value in keeping:
                 return True
         return False
 

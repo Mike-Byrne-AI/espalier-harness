@@ -1309,6 +1309,8 @@ class TestHookSideWiringTwin:
         assert ig._CANONICAL_PRETOOLUSE_MATCHERS == cg._CI_CANONICAL_PRETOOLUSE_MATCHERS
         assert ig._MUTATION_MATCHER_TOOLS == cg._CI_MUTATION_MATCHER_TOOLS
         assert ig._GOVERNANCE_HOOKS_DIR == cg._HOOKS_DIR_REL
+        from espalier.surface_contract import HOOK_TYPE_REQUIRED_STRINGS
+        assert ig._HOOK_TYPE_REQUIRED_STRINGS == cg._CI_HOOK_TYPE_REQUIRED_STRINGS == HOOK_TYPE_REQUIRED_STRINGS
 
     _HOOK_ENTRIES = (
         _wired("write_guard.py"),
@@ -1335,6 +1337,18 @@ class TestHookSideWiringTwin:
         {"type": "prompt", "prompt": "x"},
         {"type": "prompt"},
         {"type": "agent"},
+        {"type": "agent", "prompt": "x"},
+        {"type": "http", "url": "http://h/x"},
+        {"type": "http"},
+        {"type": "http", "url": 5},
+        {"type": "mcp_tool", "server": "s", "tool": "t"},
+        {"type": "mcp_tool", "server": "s"},
+        {"type": "mcp_tool", "tool": "t"},
+        {"type": {}},            # an unhashable type value: no copy may raise on it
+        {"type": []},
+        {"type": 5},
+        {"type": True},
+        {"type": "uné"},         # echoed into operator output: ascii() keeps it 7-bit
         "python tools/cc/hooks/write_guard.py",
         None,
     )
@@ -1344,6 +1358,7 @@ class TestHookSideWiringTwin:
         for hook in self._HOOK_ENTRIES:
             assert ig._hook_executes_script_path(hook) == cg._ci_hook_executes_script_path(hook), hook
             assert ig._hook_object_schema_error(hook) == cg._ci_hook_object_schema_error(hook), hook
+            assert (cg._ci_hook_object_schema_error(hook) or "").isascii(), hook
         for matcher in ("", "*", ".*", "Write|Edit|NotebookEdit", "Write", "Bash", "(", "Write|Edit"):
             assert ig._matcher_covers_mutations(matcher) == cg._ci_matcher_covers_mutations(matcher), matcher
 
@@ -1373,6 +1388,28 @@ class TestHookSideWiringTwin:
             seen_counts.add(len(ci))
         # The population is only a parity proof if it reaches both verdicts and the void.
         assert {0, 1, 4, 5} <= seen_counts, seen_counts
+
+    @pytest.mark.parametrize("beside", [
+        {"type": "http", "url": "http://127.0.0.1:9/h"},
+        {"type": "mcp_tool", "server": "s", "tool": "t"},
+        {"type": "agent", "prompt": "check it"},
+    ], ids=["http", "mcp_tool", "agent"])
+    def test_a_driven_hook_type_beside_the_gates_fails_no_merge(self, tmp_path, beside):
+        """An adopter's committed http, mcp_tool or agent hook loads beside the
+        gates (driven on Claude Code 2.1.319), so neither twin reports the file
+        void: before DEF-1195 ci_guard failed such a merge as every gate dead."""
+        cg, ig = _load_ci_guard_twin(), _load_integrity_twin()
+        hd = tmp_path / "tools" / "cc" / "hooks"
+        hd.mkdir(parents=True)
+        for s in ("write_guard.py", "plan_guard.py", "config_guard.py", "stop_gate.py"):
+            (hd / s).write_text("import sys\nsys.exit(0)\n", encoding="utf-8")
+        (tmp_path / ".claude").mkdir()
+        target = tmp_path / ".claude" / "settings.json"
+        shape = _canonical_settings()
+        shape["hooks"]["PostToolUse"] = [{"hooks": [beside]}]
+        target.write_text(json.dumps(shape), encoding="utf-8")
+        assert cg._scan_settings_for_missing_governance_events(".claude/settings.json", tmp_path) == []
+        assert ig.unwired_governance_gates(".claude/settings.json", ig._load_settings_json(target), tmp_path) == []
 
 
 class TestN7BomSettings:

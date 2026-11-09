@@ -4255,7 +4255,11 @@ def test_every_derived_regex_is_linear_on_adversarial_runs(name, pattern):
     """
     if not hasattr(signal, "SIGALRM"):
         pytest.skip("signal.alarm not available on this platform")
-    for shape_name, payload in _ADVERSARIAL_SHAPES:
+    derived = [
+        (f"derived-run {unit!r}", _run_of(unit, _WORST_CASE_BODY_LEN))
+        for unit in _derived_run_units(pattern)
+    ]
+    for shape_name, payload in [*_ADVERSARIAL_SHAPES, *derived]:
         signal.signal(signal.SIGALRM, _alarm)
         signal.setitimer(signal.ITIMER_REAL, _CI_SAFE_BUDGET_MS / 1000.0)
         start = time.time()
@@ -4278,6 +4282,703 @@ def test_every_derived_regex_is_linear_on_adversarial_runs(name, pattern):
             f"{name} took {elapsed_ms:.1f}ms on {shape_name} "
             f"(budget {_CI_SAFE_BUDGET_MS}ms)"
         )
+
+
+# ── The alarm-free growth arm and the derived run shapes (DEF-3064) ──────────
+#
+# The budget above arms SIGALRM, so it skips on every Windows interpreter, and
+# a Windows seat proves a new pattern with the one gate that would catch it
+# switched off: `write_guard._CASE_ARM_RE` took 18.9 s on the word run, built
+# and proven on the Windows box, and went red on all four `test-serial` cells
+# after the push (run 42573541872, 2026-11-09). Its shapes were a hand list as
+# well, with no run of a digit, so the same lane's `_INPUT_REDIRECT_RE` and
+# `_OUTPUT_REDIRECT_RE` read about 1 s on a run of `0` at 30000 chars while
+# every cell stayed green, and `_ASSIGNMENT_WORD_RE` 0.7 s on a run of `a`,
+# which is inside the ceiling: a quadratic that is fast at the cap is not a
+# runaway, and only a shape detector sees it.
+#
+# Two things close it. The arm below needs no alarm: it times `.search` at two
+# sizes eight times apart and judges the GROWTH, which the host's speed divides
+# out of -- in theory a linear pattern reads 8 and a quadratic one 64, but a
+# host's caches do not divide out: on the Windows box (3.11.9) linear patterns
+# read up to 20.2 to 21.3 across three passes of the arm (win's four-worker
+# tier running beside them), because between 4000 and 16000 chars a run of a
+# backslash costs about three times more per doubling, then two again past it
+# (`_GIT_CLEAN_RE`: 1.95, 1.97, 2.95, 2.81, 2.17 from 1000 to 32000 chars, the
+# same tier beside it); the Linux pass read at most 10.4 and the Mac 8.6 (air,
+# 3.14.7, two passes). The limit, `_GROWTH_RATIO_LIMIT`, sits near the
+# geometric mean of the worst linear reading and the lowest quadratic one
+# (21.3 and 61.5: about 36), set by the worst host measured. And the shapes are derived: a run of one
+# character that each repeated single-character class in the pattern accepts
+# (:func:`_derived_run_units`), beside the hand list, so a `[0-9]*` brings its
+# own run of `0`; the ceiling arm above reads them too.
+#
+# Why eight, not four: the arm first shipped at 2000 and 8000 with a limit of
+# 8, and #547's own 3.11 cell missed the pre-fix redirect patterns (job
+# 129105379980): a quadratic that costs 430 ms at 30000 chars in python:3.11
+# on Linux reads 31 ms at 8000, and the CI runner, faster, put it under the
+# judged floor. At 16000 the same pattern reads 120 ms. Measured 2026-11-09,
+# the 221 derived patterns, every hand and derived shape, three samples a
+# size, at 2000 and 16000: in python:3.11 (3.11.16, Linux, Docker on the
+# Windows box), two passes of 19.5 s, the slowest linear big sample 7.7 ms,
+# no pair judged, and the three pre-fix patterns timed below 120 to 148 ms at
+# ratios 61.5 to 63.6; on the Windows box (3.11.9), three passes of 24 to
+# 26 s, the slowest linear 11.6 ms, no pair judged, the pre-fix patterns 166
+# to 209 ms at 62.9 to 68.7.
+#
+# The window is the speedbump file's (`tests/test_speedbump_irreversible.py::
+# _search_window_ms`, DEF-2000): the samples interleave, small then big, each
+# size's floor is its reading, and a pair over the limit is asked again as a
+# second window judged on its own, the lower ratio the estimate. A pair whose
+# big sample is under `_GROWTH_JUDGED_FLOOR_S` is not judged: at single-digit
+# milliseconds the ratio is clock noise (a linear row read 10.4 at 7.4 ms in
+# the Linux pass). The limit and that floor are bounds on a RED, never ceilings on a
+# pass: a host slow throughout lifts both sizes together and leaves the ratio
+# where it was, so the wall-clock rule (tests/test_proof_tier.py) pairs
+# neither with a floor.
+#
+# No alarm caps a search here, so the row's time is bounded the way the walker
+# row's is (DEF-5023, `_walker_row_budget_s`), with a projection where that
+# row's alarm ceiling stands: a deadline at pyproject's per-test timeout less
+# `_GROWTH_BUDGET_MARGIN_S`, and every search started only while its projected
+# cost still fits before it (:func:`_growth_timed`, the arm's one way to
+# search). A big sample is projected from its window's small floor, at least
+# two samples, times `_GROWTH_PROJECTION` -- a quadratic's growth -- and is
+# asked only while that projection is within `_GROWTH_SEARCH_CAP_S` as well, so
+# a pattern too slow at 2000 chars to be asked at 16000 is never asked, and one
+# stalled small sample never sets a big sample's projection (air's amendment
+# on #547, 1ea8f4). A run the deadline or the cap stops is a red that names the
+# run and window in flight, the samples taken, the runs not reached and which
+# cause the readings point to (`_growth_stop_red`), never a timeout kill that
+# says nothing: the pre-#543 `_CASE_ARM_RE`, whose small floor reads 227 ms on
+# the Mac (two windows at 16000 chars about 87 s), is never asked the big size.
+# A pattern ends at its first super-linear run. Why a deadline and not the
+# PowerShell body row's count of capped calls: a pattern here runs up to 46
+# runs (the loop and piped removal patterns, read on the Windows box,
+# 2026-11-09), and 46 runs of two windows of three big samples leave each about
+# 181 ms of the 50 s budget, while the slowest linear small floor
+# (`_GROWTH_SLOWEST_LINEAR_SMALL_S`) projects 63 ms -- a runner three times
+# slower would red a linear pattern. What no projection bounds is the
+# timeout's, as the alarm's late firing is the walker row's: a run's opening
+# small sample (projected from nothing on its first window), a search past
+# three times its projection (x192 between the two sizes, growth past about
+# n^2.5 at the cap: a cubic, x512, whose small floor passes about 22 ms starts
+# its big sample inside the deadline and ends past the timeout; or a stall
+# that long), and a timeout lowered below the declared one
+# (`PYTEST_TIMEOUT`, `--timeout`), which the deadline does not read. And what
+# no ratio limit reads: growth between linear and quadratic, or a quadratic
+# term under a larger linear one, reads under the limit, and is caught only
+# where it crosses the ceiling arm above.
+_GROWTH_SMALL_LEN = 2000
+_GROWTH_BIG_LEN = 8 * _GROWTH_SMALL_LEN
+_GROWTH_RATIO_LIMIT = 32.0  # 22 until the Windows box's cache knee read 21.3 (air's de2af4)
+_GROWTH_JUDGED_FLOOR_S = 0.025
+_GROWTH_SAMPLES = 3
+#: A big sample's projected cost over its window's small floor: the growth of
+#: a quadratic at `_GROWTH_BIG_LEN` over `_GROWTH_SMALL_LEN`.
+_GROWTH_PROJECTION = (_GROWTH_BIG_LEN / _GROWTH_SMALL_LEN) ** 2
+#: Room under pytest's per-test timeout past the row's deadline: for a search
+#: that started inside the deadline and outruns its projection, and for the
+#: row's work outside its searches (building the runs, the reading's text). The
+#: searches themselves take about 0.11 s a pattern on the Windows box (the 221
+#: patterns, both sizes, 24 to 26 s a pass, 2026-11-09).
+_GROWTH_BUDGET_MARGIN_S = 10.0
+#: The most a big sample may be projected to cost: half the margin, so a search
+#: that starts at the deadline's edge and runs three times its projection still
+#: ends inside the timeout. A small floor past this over `_GROWTH_PROJECTION`
+#: (78 ms at 2000 chars, eighty times the slowest linear floor) is never asked
+#: the big size.
+_GROWTH_SEARCH_CAP_S = _GROWTH_BUDGET_MARGIN_S / 2
+#: The slowest linear small floor in the population, the cause rule's yardstick
+#: and the false-red row's: `_PS_TRUNCATE_RE` on the run `x=1;`, 0.98 ms, three
+#: samples, Windows 3.11.9 on the self-host Windows box, 2026-11-09.
+_GROWTH_SLOWEST_LINEAR_SMALL_S = 0.00098
+
+#: The characters a derived run is made of: the first of these a repeated
+#: class accepts is its run. Shell-shaped on purpose -- the extraction modules
+#: read commands -- with a letter, a digit and `_` first.
+_RUN_ALPHABET = " a0_/-=.'\"\\;|&$(){}[]<>*?:,@#%+!~`\tZ9\n"
+
+
+def _repeated_single_classes(pattern: "re.Pattern[str]") -> list[tuple[int, object]]:
+    """Every repeat in ``pattern`` whose body is one character class (a
+    literal, a set, a category, ``.``), as its parsed ``(op, argument)``, in
+    the order the parse walks them; nested repeats included."""
+    from re import _parser as sre_parse
+
+    repeats = {sre_parse.MAX_REPEAT, sre_parse.MIN_REPEAT}
+    if hasattr(sre_parse, "POSSESSIVE_REPEAT"):
+        repeats.add(sre_parse.POSSESSIVE_REPEAT)
+    one_char = {sre_parse.LITERAL, sre_parse.NOT_LITERAL, sre_parse.IN, sre_parse.ANY, sre_parse.CATEGORY}
+    found: list[tuple[int, object]] = []
+
+    def walk(seq) -> None:
+        for op, av in seq:
+            if op in repeats:
+                body = av[2]
+                if len(body) == 1 and body[0][0] in one_char:
+                    found.append(body[0])
+                walk(body)
+            elif op is sre_parse.SUBPATTERN:
+                walk(av[-1])
+            elif op is sre_parse.BRANCH:
+                for branch in av[1]:
+                    walk(branch)
+            elif op in (sre_parse.ASSERT, sre_parse.ASSERT_NOT):
+                walk(av[1])
+            elif op is getattr(sre_parse, "ATOMIC_GROUP", None):
+                walk(av)
+            elif op is sre_parse.GROUPREF_EXISTS:
+                walk(av[1])
+                if av[2] is not None:
+                    walk(av[2])
+
+    walk(sre_parse.parse(pattern.pattern, pattern.flags))
+    return found
+
+
+def _derived_run_units(pattern: "re.Pattern[str]") -> list[str]:
+    """One character per repeated single-character class in ``pattern``, in
+    parse order: the first of `_RUN_ALPHABET` the class accepts that no
+    earlier class took, so two classes that both take letters and digits
+    bring a run of each. The class is compiled alone, so its flags (case,
+    dot-all) hold."""
+    from re import _compiler as sre_compile
+    from re import _parser as sre_parse
+
+    units: list[str] = []
+    for node in _repeated_single_classes(pattern):
+        state = sre_parse.State()
+        state.flags = pattern.flags
+        alone = sre_compile.compile(sre_parse.SubPattern(state, [node]), pattern.flags)
+        unit = next((ch for ch in _RUN_ALPHABET if ch not in units and alone.fullmatch(ch)), None)
+        if unit is not None:
+            units.append(unit)
+    return units
+
+
+def _run_of(unit: str, length: int) -> str:
+    """``unit`` repeated to exactly ``length`` characters."""
+    return (unit * (length // len(unit) + 1))[:length]
+
+
+#: The hand list as run units, for the growth arm's two sizes.
+_ADVERSARIAL_UNITS: list[tuple[str, str]] = [
+    ("space-run", " "), ("word-run", "a"), ("path-run", "a/"), ("env-assign-run", "A=1 "),
+    ("assign-separator-run", "x=1;"), ("wrapper-run", "sudo -u me "), ("flag-run", "-a "),
+    ("quote-run", "'"),
+]
+
+
+def _growth_row_budget_s(timeout_s: float) -> float | None:
+    """The growth row's time for one pattern inside pytest's per-test
+    ``timeout_s``: `_GROWTH_BUDGET_MARGIN_S` under it. None with no timeout.
+    It reads the declared timeout, as :func:`_walker_row_budget_s` does."""
+    if timeout_s <= 0:
+        return None
+    return timeout_s - _GROWTH_BUDGET_MARGIN_S
+
+
+#: The growth row's clock for its deadline; the simulated-clock rows replace it.
+_growth_clock = time.perf_counter
+
+
+def _growth_deadline() -> float | None:
+    """When the growth row stops starting searches: now plus its budget."""
+    budget_s = _growth_row_budget_s(_pyproject_timeout_s())
+    return None if budget_s is None else _growth_clock() + budget_s
+
+
+class _GrowthBudgetSpent(Exception):
+    """A search was not started: its projection would end past the row's
+    deadline, or a big sample's would pass `_GROWTH_SEARCH_CAP_S`. ``where``
+    names it and which; ``smalls`` and ``bigs`` are the samples its window had
+    taken."""
+
+    def __init__(self, where: str):
+        super().__init__(where)
+        self.where = where
+        self.smalls: list[float] = []
+        self.bigs: list[float] = []
+
+
+def _growth_search_s(pattern: "re.Pattern[str]", payload: str) -> float:
+    """One unalarmed search, timed; the simulated-clock rows replace it.
+    Called through :func:`_growth_timed` alone."""
+    t0 = time.perf_counter()
+    pattern.search(payload)
+    return time.perf_counter() - t0
+
+
+def _growth_timed(
+    pattern: "re.Pattern[str]", payload: str, projected_s: float, deadline: float | None,
+    cap_s: float | None = None,
+) -> float:
+    """The arm's one way to search: one projected past ``cap_s``, or that,
+    costing ``projected_s``, would end past ``deadline``, is not started
+    (DEF-5023's stop check, the projection where the walker row's alarm
+    ceiling stands)."""
+    asked = f"a search of {len(payload)} chars projected at {projected_s * 1000:.0f}ms"
+    if cap_s is not None and projected_s > cap_s:
+        raise _GrowthBudgetSpent(f"{asked}, past the {cap_s * 1000:.0f}ms cap on one search")
+    if deadline is not None and _growth_clock() + projected_s > deadline:
+        raise _GrowthBudgetSpent(f"{asked}, past the row's deadline")
+    return _growth_search_s(pattern, payload)
+
+
+def _growth_window_time(
+    pattern: "re.Pattern[str]", small: str, big: str, deadline: float | None,
+    prior_small_s: float = 0.0,
+) -> tuple[float, float]:
+    """One window: ``(small_s, big_s)``, each size's floor. A small sample
+    opens it, projected from ``prior_small_s`` (the run's earlier floor, none
+    for its first window); then `_GROWTH_SAMPLES` pairs interleave, small then
+    big (DEF-2000's order), each big projected from the floor of the smalls
+    taken so far -- two at least, so one stalled sample never sets it -- and
+    capped. A small sample carries no cap, only the deadline: it is the size a
+    pattern is read at first, and a projection from the run's earlier floor
+    says nothing of a stall. A stop carries the samples taken."""
+    smalls: list[float] = []
+    bigs: list[float] = []
+    try:
+        smalls.append(_growth_timed(pattern, small, prior_small_s, deadline))
+        for _ in range(_GROWTH_SAMPLES):
+            smalls.append(_growth_timed(pattern, small, min(smalls), deadline))
+            bigs.append(_growth_timed(pattern, big, min(smalls) * _GROWTH_PROJECTION, deadline,
+                                      cap_s=_GROWTH_SEARCH_CAP_S))
+    except _GrowthBudgetSpent as spent:
+        spent.smalls, spent.bigs = smalls, bigs
+        raise
+    return min(smalls), min(bigs)
+
+
+def _grows_past_linear(small_s: float, big_s: float) -> bool:
+    """The rule: judged only above the floor, red past the limit."""
+    return big_s > _GROWTH_JUDGED_FLOOR_S and big_s > _GROWTH_RATIO_LIMIT * small_s
+
+
+def _growth_reading(small_s: float, big_s: float, windows: str) -> str:
+    """A window's readings as a sentence, red or not."""
+    ratio = f"{big_s / small_s:.1f}" if small_s > 0 else "unbounded"
+    return (
+        f"{small_s * 1000:.1f}ms at {_GROWTH_SMALL_LEN} chars -> {big_s * 1000:.1f}ms at "
+        f"{_GROWTH_BIG_LEN} (ratio {ratio}, limit {_GROWTH_RATIO_LIMIT}, judged above "
+        f"{_GROWTH_JUDGED_FLOOR_S * 1000:.0f}ms), {windows}"
+    )
+
+
+def _growth_judgement(
+    pattern: "re.Pattern[str]", unit: str, deadline: float | None,
+) -> tuple[bool, str]:
+    """``(red, reading)`` for a run of ``unit``: red past the limit above the
+    floor. A pair over the limit is asked again, and the lower ratio is the
+    estimate; where the deadline or the cap leaves no room for the second
+    window, the first stands, and the reading says so. A first window that is
+    stopped raises `_GrowthBudgetSpent` to the row."""
+    small, big = _run_of(unit, _GROWTH_SMALL_LEN), _run_of(unit, _GROWTH_BIG_LEN)
+    first = _growth_window_time(pattern, small, big, deadline)
+    if not _grows_past_linear(*first):
+        return False, _growth_reading(*first, "one window")
+    try:
+        second = _growth_window_time(pattern, small, big, deadline, first[0])
+    except _GrowthBudgetSpent as spent:
+        return True, _growth_reading(*first, f"one window; the second stopped ({spent.where})")
+    lower = second if second[1] * first[0] < first[1] * second[0] else first
+    return _grows_past_linear(*lower), _growth_reading(*lower, "two windows, the lower ratio")
+
+
+def _growth_units(pattern: "re.Pattern[str]") -> list[tuple[str, str]]:
+    """The runs a pattern is read on: the hand list, then its derived runs."""
+    return [*_ADVERSARIAL_UNITS, *((f"derived-run {u!r}", u) for u in _derived_run_units(pattern))]
+
+
+def _growth_stop_red(shape: str, spent: _GrowthBudgetSpent, read: int, not_reached: list[str]) -> str:
+    """The red for a run the deadline or the cap stopped on its first window:
+    the run, what stopped it, the samples taken, the runs not reached, and the
+    cause the readings point to (air's 1ea8f4 follow-up, ef1b48) -- a regressed
+    pattern where the window in flight reads past the limit, or where two
+    small samples at least, and no big one, put its small floor past ten times
+    the slowest linear one (the wall-clock rule's multiple); else a slow host:
+    every reading linear, or one small sample, which a stall reads the same as
+    a slow pattern (air's d98e83 (A))."""
+    taken = (f"small {', '.join(f'{s * 1000:.1f}' for s in spent.smalls) or 'none'} ms, "
+             f"big {', '.join(f'{b * 1000:.1f}' for b in spent.bigs) or 'none'} ms")
+    floor = min(spent.smalls) if spent.smalls else 0.0
+    if spent.bigs and _grows_past_linear(floor, min(spent.bigs)):
+        cause = "the window in flight reads past the limit: a regressed pattern"
+    elif len(spent.smalls) >= 2 and not spent.bigs and floor > 10 * _GROWTH_SLOWEST_LINEAR_SMALL_S:
+        cause = (f"its small floor is {floor / _GROWTH_SLOWEST_LINEAR_SMALL_S:.0f} times the slowest "
+                 f"linear one ({_GROWTH_SLOWEST_LINEAR_SMALL_S * 1000:.2f}ms on the Windows box): a "
+                 f"regressed pattern, unless this host is that much slower")
+    elif len(spent.smalls) < 2:
+        cause = (f"{len(spent.smalls)} small sample taken, too few to read the pattern by, and a stall "
+                 f"reads the same ({read} runs read before it): a slow host")
+    else:
+        cause = f"every reading is linear ({read} runs read before it, and the window in flight): a slow host"
+    return (f"{shape}: not read, its first window stopped at {spent.where}; samples taken: {taken}; "
+            f"{len(not_reached)} runs not reached ({', '.join(not_reached) or 'none'}); {cause}")
+
+
+def _growth_first_red(
+    pattern: "re.Pattern[str]", units: list[tuple[str, str]], deadline: float | None,
+) -> str | None:
+    """The row's walk: each run in order, ending at the first that reads
+    super-linear (the pattern is red, and the runs after it would only spend
+    the budget) or at a stop, which is a red naming what was read
+    (:func:`_growth_stop_red`)."""
+    for read, (shape, unit) in enumerate(units):
+        try:
+            red, reading = _growth_judgement(pattern, unit, deadline)
+        except _GrowthBudgetSpent as spent:
+            return _growth_stop_red(shape, spent, read, [later for later, _ in units[read + 1:]])
+        if red:
+            return f"{shape}: {reading}"
+    return None
+
+
+@pytest.mark.parametrize("name,pattern", _DERIVED_REGEXES)
+def test_every_derived_regex_grows_linearly_without_an_alarm(name, pattern):
+    """The shape detector every platform runs: it times `.search` of each
+    derived regex on every hand and derived run at 2000 and 16000 chars and
+    reds on growth past linear, or on a run its deadline or cap leaves unread.
+    Self-enrolling like the ceiling arm; no skip anywhere."""
+    red = _growth_first_red(pattern, _growth_units(pattern), _growth_deadline())
+    assert red is None, (
+        f"{name} is not read:\n  {red}" if ": not read," in str(red) else
+        f"{name} grows past linear -- a greedy run that can restart at every "
+        f"position of the run is quadratic by construction; refuse a start inside "
+        f"the run with a leading lookbehind (write_guard._CASE_ARM_RE) when every "
+        f"caller .match()es at the start, or bound the token class:\n  {red}"
+    )
+
+
+#: The four patterns #543 fixed, as they were before the fix (each one's
+#: leading lookbehind stripped), with the run each reads quadratic on. Three
+#: of the four runs are not in the hand list: only the derivation brings them.
+_PRE_543_PATTERNS: list[tuple[str, str, str]] = [
+    ("_INPUT_REDIRECT_RE", r"[0-9]*<(?![<>&(])", "0"),
+    ("_OUTPUT_REDIRECT_RE", r"[0-9]*>>?\|?", "0"),
+    ("_ASSIGNMENT_WORD_RE", r"[A-Za-z_][A-Za-z0-9_]*=", "a"),
+    ("_CASE_ARM_RE", r"(?:(?:function[ \t]+)?[A-Za-z_][\w.:-]*[ \t]*\(\)"
+                     r"|\(?(?:\"[^\"\n]*\"|'[^'\n]*'|[^\s;|&()<>\"'])+\))[ \t]*", "0"),
+]
+
+
+@pytest.mark.parametrize("name,source,unit", _PRE_543_PATTERNS, ids=[p[0] for p in _PRE_543_PATTERNS])
+def test_the_derivation_brings_the_run_each_pre_543_pattern_was_quadratic_on(name, source, unit):
+    """The derivation's must-find rows, read without a clock: each pattern
+    #543 fixed, as it was, derives the run it was quadratic on. Red here
+    means the parse walk lost a repeat form or the class compile broke on
+    this interpreter, and every derived shape above went with it."""
+    assert unit in _derived_run_units(re.compile(source)), (name, _derived_run_units(re.compile(source)))
+
+
+def test_the_derived_runs_reach_past_the_hand_list():
+    """Non-vacuity, both ways: most of the population derives a run, and the
+    population's runs include characters no hand shape is made of (the digit
+    run is the one #543 was missing)."""
+    hand = set("".join(unit for _, unit in _ADVERSARIAL_UNITS))
+    units_by_name = {name: _derived_run_units(pattern) for name, pattern in _DERIVED_REGEXES}
+    with_a_run = [name for name, units in units_by_name.items() if units]
+    assert len(with_a_run) * 2 > len(_DERIVED_REGEXES), (len(with_a_run), len(_DERIVED_REGEXES))
+    beyond = set().union(*map(set, units_by_name.values())) - hand
+    assert "0" in beyond, sorted(beyond)
+
+
+@pytest.mark.parametrize("name,source,unit", _PRE_543_PATTERNS[:3], ids=[p[0] for p in _PRE_543_PATTERNS[:3]])
+def test_the_growth_arm_reds_the_pre_543_patterns(name, source, unit):
+    """The arm's must-trip rows: each fixed pattern as it was reads past the
+    limit on its run, on any platform. `_CASE_ARM_RE` is left out of the
+    timing only for its cost (about 6 s a big sample at 16000 chars on the
+    Windows box, two windows of six); its derivation row above stands. The
+    reading rides the assertion, so a miss says whether the floor or the
+    limit let the pattern through (#547's first 3.11 cell could not)."""
+    try:
+        red, reading = _growth_judgement(re.compile(source), unit, _growth_deadline())
+    except _GrowthBudgetSpent as spent:
+        pytest.fail(f"{name}: not read, {spent.where}")
+    assert red, f"{name}: {reading}"
+
+
+def test_the_growth_arm_passes_the_same_patterns_fixed():
+    """The polarity row: the live, fixed patterns read linear on the same
+    runs, so the trips above are the shape, not the arm."""
+    import write_guard as _wg
+
+    deadline = _growth_deadline()
+    for name, _source, unit in _PRE_543_PATTERNS:
+        try:
+            red, reading = _growth_judgement(getattr(_wg, name), unit, deadline)
+        except _GrowthBudgetSpent as spent:
+            pytest.fail(f"{name}: not read, {spent.where}")
+        assert not red, f"{name}: {reading}"
+
+
+# ── the growth arm's deadline, on a simulated clock (air's 1ea8f4 on #547) ──
+
+
+def _growth_simulation(
+    monkeypatch: pytest.MonkeyPatch, cost: Callable[[int, int], float],
+) -> tuple[list[tuple[int, float, float]], list[float]]:
+    """Replace the growth row's clock and timer with a simulated clock:
+    ``cost(length, call_index)`` seconds a search, each search moving the
+    clock by its cost. Records ``(length, start, end)`` a search, and returns
+    the record and the clock's cell."""
+    now = [0.0]
+    calls: list[tuple[int, float, float]] = []
+
+    def search_s(_pattern: object, payload: str) -> float:
+        spent = cost(len(payload), len(calls))
+        calls.append((len(payload), now[0], now[0] + spent))
+        now[0] += spent
+        return spent
+
+    monkeypatch.setattr(sys.modules[__name__], "_growth_clock", lambda: now[0])
+    monkeypatch.setattr(sys.modules[__name__], "_growth_search_s", search_s)
+    return calls, now
+
+
+#: A window's searches: its opening small sample, then a small and a big a pair.
+_GROWTH_WINDOW_CALLS = 1 + 2 * _GROWTH_SAMPLES
+
+
+def _longest_growth_population() -> tuple[str, "re.Pattern[str]"]:
+    """The derived pattern with the most runs, read, never copied."""
+    return max(_DERIVED_REGEXES, key=lambda named: len(_growth_units(named[1])))
+
+
+@pytest.mark.parametrize("overrun", [1.0, 2.9], ids=["on-projection", "2.9x-projection"])
+def test_the_growth_arm_cannot_outlast_the_per_test_timeout(monkeypatch, overrun):
+    """Air's amendment (1) on #547: no alarm caps the growth arm's searches,
+    so the row's longest path -- every run of the population's longest pattern
+    reading over the limit on its first window and under on its second, so
+    every run takes two, each big sample projected at the cap -- is driven on a
+    simulated clock and must stop with a red that names what was read, never
+    outlast the timeout. On its projection every search but a run's unprojected
+    opener ends by the deadline; at 2.9 times it (the failure-mode review's
+    overrun: growth past quadratic, a stall) the margin holds the overrun,
+    since the cap is half of it. The timeout is derived from pyproject.toml
+    (:func:`_pyproject_timeout_s`)."""
+    timeout_s = _pyproject_timeout_s()
+    budget_s = _growth_row_budget_s(timeout_s)
+    assert budget_s is not None and 0 < budget_s < timeout_s, (budget_s, timeout_s)
+    assert _growth_row_budget_s(0.0) is None  # no timeout, nothing kills the row
+    assert 2 * _GROWTH_SEARCH_CAP_S <= _GROWTH_BUDGET_MARGIN_S  # three times the cap ends inside the timeout
+    small_s = _GROWTH_SEARCH_CAP_S / _GROWTH_PROJECTION  # a big sample projected at the cap exactly
+
+    def cost(length: int, index: int) -> float:
+        if length == _GROWTH_SMALL_LEN:
+            return small_s
+        over = (index // _GROWTH_WINDOW_CALLS) % 2 == 0  # a run's first window
+        return overrun * small_s * (_GROWTH_PROJECTION if over else 8.0)
+
+    calls, now = _growth_simulation(monkeypatch, cost)
+    name, pattern = _longest_growth_population()
+    units = _growth_units(pattern)
+    red = _growth_first_red(pattern, units, _growth_deadline())
+    # stopped on a first window, a stop red; on a second, the first window's growth red
+    assert red is not None and "past the row's deadline" in red, red
+    assert ("runs not reached" in red and "samples taken" in red) if ": not read," in red else (
+        "the second stopped" in red), red
+    if overrun == 1.0:
+        assert len(calls) > 2 * _GROWTH_WINDOW_CALLS, (name, len(calls))  # runs were read before the stop
+        openers = set(range(0, len(calls), 2 * _GROWTH_WINDOW_CALLS))  # each run's first window opens unprojected
+        late = [(i, c) for i, c in enumerate(calls) if c[2] > budget_s and i not in openers]
+        assert not late, late
+    assert now[0] < timeout_s, (now[0], timeout_s)
+
+
+def test_the_longest_pattern_reads_linear_inside_the_budget_at_ten_times_the_slowest_floor(monkeypatch):
+    """The false-red side (the failure-mode review): the population's longest
+    pattern, every run linear at ten times the slowest linear small floor (the
+    wall-clock rule's multiple: a runner that much slower), reads linear with
+    no stop. More runs, more samples or a bigger size would red here first,
+    naming the budget, rather than as linear patterns 'not read' on a slow
+    cell."""
+    small_s = 10 * _GROWTH_SLOWEST_LINEAR_SMALL_S
+
+    def cost(length: int, _index: int) -> float:
+        return small_s if length == _GROWTH_SMALL_LEN else 8.0 * small_s
+
+    _calls, now = _growth_simulation(monkeypatch, cost)
+    name, pattern = _longest_growth_population()
+    assert _growth_first_red(pattern, _growth_units(pattern), _growth_deadline()) is None, name
+    budget_s = _growth_row_budget_s(_pyproject_timeout_s())
+    assert budget_s is not None and now[0] < budget_s / 2, (name, now[0], budget_s)
+
+
+def test_the_growth_arm_reads_a_quadratic_red_on_one_window_when_the_deadline_cuts_its_second(monkeypatch):
+    """A quadratic whose first window fits and whose second does not reads red
+    on the first window, says so, and spends no search past the deadline."""
+    small_s = 0.07
+
+    def cost(length: int, _index: int) -> float:
+        return small_s if length == _GROWTH_SMALL_LEN else small_s * _GROWTH_PROJECTION
+
+    calls, now = _growth_simulation(monkeypatch, cost)
+    # window 1 ends at 13.72 s; the second's first big, projected 4.48 s from 13.86 s, would end past 17
+    red = _growth_first_red(re.compile("x"), [("word-run", "a"), ("space-run", " ")], 17.0)
+    assert red is not None and red.startswith("word-run:") and "the second stopped" in red, red
+    assert sum(1 for length, _, _ in calls if length == _GROWTH_BIG_LEN) == _GROWTH_SAMPLES, calls
+    assert now[0] <= 17.0, now[0]
+
+
+@pytest.mark.parametrize("over", [True, False], ids=["past-the-cap", "at-the-cap"])
+def test_the_growth_arm_asks_the_big_size_only_within_the_cap(monkeypatch, over):
+    """A small floor whose projection passes `_GROWTH_SEARCH_CAP_S` is never
+    asked the big size -- the pre-#543 `_CASE_ARM_RE` at the Mac's 227 ms is
+    four times past it -- and the red says so, with the regressed-pattern
+    cause; one at the cap is asked."""
+    small_s = _GROWTH_SEARCH_CAP_S / _GROWTH_PROJECTION * (1.01 if over else 1.0)
+
+    def cost(length: int, _index: int) -> float:
+        return small_s if length == _GROWTH_SMALL_LEN else 8.0 * small_s
+
+    calls, _now = _growth_simulation(monkeypatch, cost)
+    red = _growth_first_red(re.compile("x"), [("word-run", "a")], _growth_deadline())
+    if over:
+        assert red is not None and "cap on one search" in red and "a regressed pattern, unless" in red, red
+        assert [length for length, _, _ in calls] == [_GROWTH_SMALL_LEN] * 2, calls
+    else:
+        assert red is None, red
+        assert sum(1 for length, _, _ in calls if length == _GROWTH_BIG_LEN) == _GROWTH_SAMPLES, calls
+
+
+@pytest.mark.parametrize("readings", ["linear", "past-the-limit"])
+def test_a_stopped_run_names_the_cause_its_readings_point_to(monkeypatch, readings):
+    """Air's ef1b48 (b): a deadline red names the run in flight, the samples
+    taken and the runs not reached, and reads a slow host apart from a
+    regressed pattern -- linear readings at a small floor under ten times the
+    slowest linear one point to the host, a window in flight past the limit to
+    the pattern."""
+    # linear: a run takes 0.252 s, and each big must fit its 576 ms projection, so a 1.05 s deadline
+    # reads two runs and stops the third before its first big; past the limit: one big read, then stopped
+    small_s, big_s, deadline = (0.009, 0.072, 1.05) if readings == "linear" else (0.004, 0.256, 0.3)
+
+    def cost(length: int, _index: int) -> float:
+        return small_s if length == _GROWTH_SMALL_LEN else big_s
+
+    _growth_simulation(monkeypatch, cost)
+    units = [("word-run", "a"), ("space-run", " "), ("path-run", "a/"), ("quote-run", "'")]
+    red = _growth_first_red(re.compile("x"), units, deadline)
+    assert red is not None and ": not read," in red and "past the row's deadline" in red, red
+    if readings == "linear":
+        assert red.startswith("path-run:") and "1 runs not reached (quote-run)" in red, red
+        assert "small 9.0, 9.0 ms, big none ms" in red and "a slow host" in red, red
+    else:
+        assert red.startswith("word-run:") and "3 runs not reached" in red, red
+        assert "big 256.0 ms" in red and "past the limit: a regressed pattern" in red, red
+
+
+def test_a_stop_on_one_small_sample_names_a_slow_host(monkeypatch):
+    """Air's d98e83 (A): an opening small sample that stalls 11 s puts the
+    next small's projection (that one sample) past the deadline. One sample
+    is too few to read the pattern by, so the red names a slow host, never a
+    regressed pattern; two smalls and no big are the floor-multiple branch's."""
+    def cost(length: int, index: int) -> float:
+        return 11.0 if index == 0 else 0.004
+
+    calls, _now = _growth_simulation(monkeypatch, cost)
+    red = _growth_first_red(re.compile("x"), [("word-run", "a"), ("space-run", " ")], 20.0)
+    assert red is not None and red.startswith("word-run: not read,"), red
+    assert "small 11000.0 ms, big none ms" in red and "1 small sample taken" in red, red
+    assert "a slow host" in red and "regressed" not in red, red
+    assert len(calls) == 1, calls
+
+
+def test_a_stop_after_a_linear_big_sample_names_a_slow_host(monkeypatch):
+    """Air's d98e83 (A), its other half: a window that read a big sample
+    linear (ratio 8 above the judged floor) is a slow host's, however far its
+    small floor is past the slowest linear one -- here 51 times. Two smalls and
+    a big read, then the second big's 3.2 s projection crosses the deadline."""
+    def cost(length: int, _index: int) -> float:
+        return 0.05 if length == _GROWTH_SMALL_LEN else 0.4
+
+    _growth_simulation(monkeypatch, cost)
+    red = _growth_first_red(re.compile("x"), [("word-run", "a")], 3.5)
+    assert red is not None and "small 50.0, 50.0, 50.0 ms, big 400.0 ms" in red, red
+    assert "every reading is linear" in red and "a slow host" in red and "regressed" not in red, red
+
+
+def test_one_stalled_small_sample_does_not_red_a_linear_run(monkeypatch):
+    """The projection is the floor of two small samples at least, never one:
+    a run whose opening small sample stalls for 5 s and whose others read
+    linear is asked the big size, read linear, on one window."""
+    def cost(length: int, index: int) -> float:
+        if index == 0:
+            return 5.0
+        return 0.004 if length == _GROWTH_SMALL_LEN else 0.032
+
+    calls, _now = _growth_simulation(monkeypatch, cost)
+    assert _growth_first_red(re.compile("x"), [("word-run", "a")], _growth_deadline()) is None
+    assert sum(1 for length, _, _ in calls if length == _GROWTH_BIG_LEN) == _GROWTH_SAMPLES, calls
+
+
+def test_the_growth_arm_stops_a_pattern_at_its_first_super_linear_run(monkeypatch):
+    """Air's amendment (1): one super-linear run is the pattern's verdict, so
+    the runs after it are never read -- two windows of the first, nothing more."""
+    def cost(length: int, _index: int) -> float:
+        return 0.002 if length == _GROWTH_SMALL_LEN else 0.002 * _GROWTH_PROJECTION
+
+    calls, _now = _growth_simulation(monkeypatch, cost)
+    red = _growth_first_red(re.compile("x"), [("word-run", "a"), ("space-run", " ")], _growth_deadline())
+    assert red is not None and red.startswith("word-run:") and "two windows" in red, red
+    assert len(calls) == 2 * _GROWTH_WINDOW_CALLS, calls
+
+
+#: The rows that run the growth arm on real patterns, the structure read's roots.
+_GROWTH_ROOTS = (
+    "test_every_derived_regex_grows_linearly_without_an_alarm",
+    "test_the_growth_arm_reds_the_pre_543_patterns",
+    "test_the_growth_arm_passes_the_same_patterns_fixed",
+)
+#: Every method of a compiled pattern that scans a string.
+_PATTERN_SCANS = frozenset({"search", "match", "fullmatch", "finditer", "findall", "sub", "subn", "split", "scanner"})
+
+
+def test_the_growth_arm_searches_only_through_its_stop_check():
+    """The structure read, as the PowerShell body row reads its verdict, over
+    every module function the real rows reach (the call graph from
+    `_GROWTH_ROOTS`, not a name filter): a pattern scans a string only in
+    `_growth_search_s`, which only `_growth_timed` calls, after its clock check;
+    every `_growth_timed` call passes the deadline it was given; and each root
+    reads `_growth_deadline()`, so a path the simulated rows do not reach
+    cannot search unchecked. `_derived_run_units` is set apart and not walked:
+    it matches one character against one class, never a run."""
+    module = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    defs = {node.name: node for node in module.body if isinstance(node, ast.FunctionDef)}
+
+    def named_calls(node: ast.AST) -> list[ast.Call]:
+        return [c for c in ast.walk(node) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)]
+
+    derivation = "_derived_run_units"
+    reached: set[str] = set()
+    todo = list(_GROWTH_ROOTS)
+    while todo:
+        name = todo.pop()
+        if name in reached or name not in defs:
+            continue
+        reached.add(name)
+        if name != derivation:
+            todo += [c.func.id for c in named_calls(defs[name])]  # type: ignore[union-attr]
+    assert {"_growth_timed", "_growth_search_s", "_growth_window_time", "_growth_judgement",
+            "_growth_first_red", "_growth_stop_red", derivation} <= reached, sorted(reached)
+    for name in sorted(reached - {derivation}):
+        calls = [c for c in ast.walk(defs[name]) if isinstance(c, ast.Call)]
+        scans = [c.lineno for c in calls if isinstance(c.func, ast.Attribute) and c.func.attr in _PATTERN_SCANS]
+        timers = [c.lineno for c in named_calls(defs[name]) if c.func.id == "_growth_search_s"]  # type: ignore[union-attr]
+        if name == "_growth_search_s":
+            assert len(scans) == 1, scans
+            continue
+        assert not scans, (name, scans)
+        assert not timers or name == "_growth_timed", (name, timers)
+        for call in named_calls(defs[name]):
+            if call.func.id == "_growth_timed":  # type: ignore[union-attr]
+                assert isinstance(call.args[3], ast.Name) and call.args[3].id == "deadline", (name, call.lineno)
+    for root in _GROWTH_ROOTS:
+        assert "_growth_deadline" in {c.func.id for c in named_calls(defs[root])}, root  # type: ignore[union-attr]
+    line = {c.func.id: c.lineno for c in named_calls(defs["_growth_timed"])}  # type: ignore[union-attr]
+    assert line["_growth_clock"] < line["_growth_search_s"], line  # the check, then the search
 
 
 # ── _CMD_POS prefix-run budget ────────────────────────────────────────────────

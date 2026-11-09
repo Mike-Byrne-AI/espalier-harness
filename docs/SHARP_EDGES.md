@@ -6332,9 +6332,12 @@ parallel-work pack's review round: a worktree's seat name outlives the worktree,
 unreleased claims stay live and only that name can release them. **Held since
 2026-10-10:** the worktree clean-up keeps a worktree whose own seat still holds a live
 claim (`tools/cc/checkout_sync.py::_seat_claims_kept`), and its `Worktrees:` line names
-the lanes and the release to run in it. It does not release them itself: a release is a
+the lanes and the release to run in it. Since 2026-11-09 it also keeps one whose seat
+holds a live job from the dispatcher and no claim, a seat between lanes, naming the jobs
+and `seat.py retire <seat> --return-jobs`; a dispatcher setting that does not read keeps
+it too. It does not release them itself: a release is a
 push to origin, and a claim nobody released usually marks work someone abandoned. A
-worktree removed by hand (`git worktree remove`) still strands its seat's claims.
+worktree removed by hand (`git worktree remove`) still strands its seat's claims and jobs.
 
 ## A runner's timeout is not a refusal of the action: read the remote back before saying nothing was sent
 

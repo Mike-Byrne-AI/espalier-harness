@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2066",
+ "subject": "docs/external/cc-hook-protocol.md",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the fix is a quoted passage plus a test comparing it to the table; a probe over the pin's text would be closed by the quote alone",
+ "row_sha": "47ec74ecae94",
+ "text_sha": "4d12a895d42f",
+ "verified_2026_11_09": "OPEN (filed 2026-11-09; probe driven at filing)"
+}

@@ -62,9 +62,9 @@ an event key sails straight through that gate. So the fix is **unconditional**
    Code 2.1.294), and SessionStart names a partial drop. Pinned byte-equal to
    ci_guard, and its roster to the SoT, by
    `test_ci_guard.py::TestHookSideWiringTwin`. The live readers judge a
-   CHANGE against the gates the session started with, not the file's state,
-   and set aside `http` / `mcp_tool` hook entries, which the shared voiding
-   rule still reads as voiding the block (its own ledger row).
+   CHANGE against the gates the session started with, not the file's state.
+   A well-formed `http`, `mcp_tool` or `agent` hook entry loads beside the
+   gates and does not void the block (driven on Claude Code 2.1.319).
 
 **Why the trigger keys on "file on disk":** it models N7 exactly — *the scripts
 stay on disk* — and avoids false-positives on a repo that never installed the

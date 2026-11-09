@@ -494,3 +494,123 @@ class TestThePortabilityDispatchKeepsTheLegsApart:
         setup = next(s for s in job["steps"] if s.get("uses", "").startswith("actions/setup-python@"))
         assert setup["with"]["python-version"] == "${{ env.PYTHON_VERSION }}"
         assert setup["name"] == "Set up Python ${{ env.PYTHON_VERSION }}"
+
+
+def _census():
+    """scripts/ci_job_bounds_census.py under an alias, never the bare name."""
+    import importlib.util
+    path = Path(__file__).resolve().parent.parent / "scripts" / "ci_job_bounds_census.py"
+    spec = importlib.util.spec_from_file_location("_ci_job_bounds_census_under_test", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+class TestTheBoundsCensusReadsWhatTheWorkflowsDeclare:
+    """scripts/ci_job_bounds_census.py re-measures every job's bound against its
+    last green runs (post-merge's 75 sat under a 70.7-minute worst and cut runs
+    with no verdict, 2026-11-08). Its text reader, its job matcher, its rule and
+    its cut count are pinned here; each test names the mutation it dies to."""
+
+    def test_its_reader_finds_every_job_level_bound_pyyaml_reads(self):
+        """Dies to a reader that misses a job, or reads a step's timeout as the job's."""
+        census = _census()
+        for name, data in _workflows().items():
+            want = {job_id: job["timeout-minutes"] for job_id, job in ((data or {}).get("jobs") or {}).items()
+                    if isinstance(job.get("timeout-minutes"), int)}
+            text = (WORKFLOWS / name).read_text(encoding="utf-8")
+            got = {job_id: meta["bound"] for job_id, meta in census.read_bounds(text).items()}
+            assert got == want, name
+
+    def test_a_matrix_cell_and_a_literal_name_find_their_job(self):
+        """Dies to a matcher that strips a literal name's own parentheses, or keeps a cell's."""
+        census = _census()
+        jobs = {"test": {"bound": 75, "name": None},
+                "release-check": {"bound": 90, "name": "release-readiness gate (publish proof tier)"}}
+        assert census.job_for("test (3.11)", jobs) == "test"
+        assert census.job_for("test", jobs) == "test"
+        assert census.job_for("release-readiness gate (publish proof tier)", jobs) == "release-check"
+        assert census.job_for("test-serial (3.11)", jobs) is None
+
+    def test_the_rule_is_the_factor_times_the_worst_rounded_up_to_five(self):
+        """Dies to rounding down, or to a factor read as a margin added."""
+        census = _census()
+        assert census.needed_bound(70.7, 1.5) == 110
+        assert census.needed_bound(48.2, 1.5) == 75
+        assert census.needed_bound(50.0, 1.5) == 75
+        assert census.needed_bound(50.1, 1.5) == 80
+
+    def test_a_cut_at_the_present_bound_is_never_ok(self):
+        """Dies to a verdict read from the greens alone: a bound that kills every slow
+        run keeps the greens short, so the rule's bound sits at or under it while
+        runs are lost. A cut under an older, lower bound reads ok once the bound is
+        above it (post-merge's 75.9-minute cuts under its raised 110)."""
+        v = _census().verdict
+        assert v(75, 75, 75.2, 20, 20) == "CUT"
+        assert v(110, 110, 75.9, 20, 20) == "ok"
+        assert v(90, 115, None, 20, 20) == "RAISE"
+        assert v(90, 115, 90.0, 20, 20) == "RAISE"
+
+    def test_the_verdict_names_a_thin_read_an_unread_one_and_no_green(self):
+        """Dies to a short window read as ok, or an unread or green-less job read as ok."""
+        v = _census().verdict
+        assert v(40, 20, None, 12, 20) == "thin"
+        assert v(40, 20, None, 20, 20) == "ok"
+        assert v(30, None, None, 0, 20) == "no green"
+        assert v(30, 20, None, 20, 20, unread=-1) == "unread"
+
+    def test_a_dot_name_sidecar_beside_the_workflows_is_never_read(self, monkeypatch, tmp_path, capsys):
+        """Dies to a glob with no hidden-name filter: macOS's ._name.yml sidecar is
+        binary, so reading it as UTF-8 ends the census before any row prints."""
+        census = _census()
+        (tmp_path / "ci.yml").write_text("jobs:\n  build:\n    timeout-minutes: 30\n", encoding="utf-8")
+        (tmp_path / "._ci.yml").write_bytes(b"\x00\x05\x16\x07\x00\x02\x00\x00Mac OS X        \xff\xfe")
+        monkeypatch.setattr(census, "WORKFLOWS", tmp_path)
+        monkeypatch.setattr(census, "measure", lambda wf, jobs, runs, scan, repo: {
+            j: {"greens": [10.0], "green_runs": 20, "cancels": [], "cuts": 0, "cut_max": None, "unread": 0}
+            for j in jobs})
+        assert census.main([]) == 0
+        out = capsys.readouterr().out
+        assert "ci.yml / build" in out and "._ci" not in out
+
+    def _measure(self, census, monkeypatch, views, runs=20):
+        def fake_gh(args, repo):
+            if args[:2] == ["run", "list"]:
+                return [{"databaseId": i, "status": "completed"} for i in views]
+            return {"jobs": views[int(args[2])]}
+
+        monkeypatch.setattr(census, "gh_json", fake_gh)
+        jobs = {"full-tier": {"bound": 110, "name": None}, "test": {"bound": 90, "name": None}}
+        return census.measure("x.yml", jobs, runs, 60, None)
+
+    @staticmethod
+    def _job(name, conclusion, start, end):
+        return {"name": name, "conclusion": conclusion,
+                "startedAt": f"2026-11-08T{start}:00Z", "completedAt": f"2026-11-08T{end}:00Z"}
+
+    def test_a_cut_is_a_cancel_longer_than_the_worst_green_whatever_the_bound(self, monkeypatch):
+        """Dies to counting a red or an early cancel as a cut, a red as a green, or
+        judging a cut by today's bound (a 75-minute cut must still read after a raise)."""
+        census, job = _census(), self._job
+        views = {
+            1: [job("full-tier", "success", "01:00", "02:00")],
+            2: [job("full-tier", "cancelled", "03:00", "04:15")],
+            3: [job("full-tier", "cancelled", "05:00", "05:10")],
+            4: [job("full-tier", "failure", "06:00", "07:30")],
+        }
+        out = self._measure(census, monkeypatch, views)["full-tier"]
+        assert out["greens"] == [60.0] and out["green_runs"] == 1
+        assert out["cuts"] == 1 and out["cut_max"] == 75.0
+
+    def test_a_matrix_runs_cells_are_one_run_toward_the_count(self, monkeypatch):
+        """Dies to a cap that counts cells: four green cells a run must read two runs
+        as eight cells, never as two runs' worth of a five-run window."""
+        census, job = _census(), self._job
+        views = {i: [job(f"test (3.1{c})", "success", "01:00", f"01:{10 * i + c:02d}") for c in range(4)]
+                 for i in (1, 2, 3)}
+        out = self._measure(census, monkeypatch, views, runs=2)["test"]
+        assert out["green_runs"] == 2
+        assert len(out["greens"]) == 8
+        assert max(out["greens"]) == 23.0

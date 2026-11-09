@@ -730,6 +730,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # PowerShell group's closer, a drive path bound or judged by
             # depth): drives the wall, the zone deny and the nudge in-process.
             "test_write_guard_root_reading",
+            # A wildcard operand judged by what it can name (DEF-3010): drives
+            # both tools' zone checks in-process over the live roster.
+            "test_write_guard_zone_wildcard",
             # In-place sed/perl option-grammar tokenizer: drives the
             # protected-zone extractor over a DERIVED spelling population.
             "test_write_guard_sed_grammar",
@@ -2368,11 +2371,22 @@ PLATFORM_EXPECTED_FAILURES: tuple[PlatformExpectedFailure, ...] = (
     # DEF-4032, DEF-2025's successor: a nested child whose xdist workers die inside
     # the build, on the runners, ends in its own controller's crash before the row
     # can read what it asserts. The anchor row, and the class whose four tests read
-    # the module-scoped ``crashed`` child and whose fifth drives its own.
+    # the module-scoped ``crashed`` child and whose fifth drives its own. Since
+    # 2026-11-09 the stub's worker dies only once the controller's first command
+    # reached it, which closes the race by construction (reproduced here on
+    # demand); the entries stay until the watch reads zero over 30 macOS legs.
     PlatformExpectedFailure(
         "tests/test_xdist_never_ran.py::TestACrashedWorkerIsNamedOnlyWhereItsBuildCanBe"
         "::test_a_worker_that_dies_in_its_build_is_named_each_time",
         "macos-ci", "DEF-4032", _EXECNET_RACE, "2026-10-19"),
+    # The pin that drives the race on demand: its child kills its workers in the
+    # build, so it is the race's class, but it drives one child and never raises
+    # the race's own failure, so its mark absorbs nothing and a red there reds
+    # the leg.
+    PlatformExpectedFailure(
+        "tests/test_xdist_never_ran.py::TestACrashedWorkerIsNamedOnlyWhereItsBuildCanBe"
+        "::test_a_controller_slow_to_schedule_still_hears_each_worker_go_down",
+        "macos-ci", "DEF-4032", _EXECNET_RACE, "2026-11-09"),
     PlatformExpectedFailure(
         "tests/test_xdist_never_ran.py::TestACrashedControllerStillPrintsWhatItSaw",
         "macos-ci", "DEF-4032", _EXECNET_RACE, "2026-10-19"),

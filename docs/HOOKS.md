@@ -338,8 +338,8 @@ against the git in hand.
   worktree is told which file to copy, the main checkout read off its gitdir
   line), cannot read it, holds no JSON object, or leaves a deployed blocking
   gate unwired or its whole hooks block void (the reader is
-  `hooks/_integrity.py::checkout_wiring_notice`, which sets protocol-typed
-  hook entries aside as SessionStart and `config_guard` do, and names the
+  `hooks/_integrity.py::checkout_wiring_notice`, which reads the voiding rule
+  SessionStart and `config_guard` read, and names the
   remedies SessionStart's own warning names; a note, never a refusal).
 
 A `Merging:` line after `Merged:` prints the base branch's merge rules as
@@ -425,9 +425,15 @@ So does a seat named for the worktree alone (its own `espalier.machine`,
 which SessionStart sets) that still holds a live claim on the mail channel:
 only that name can release it, so removing the worktree would leave the
 claim warning every other seat's plan with no seat to close it. The kept
-line names the lanes and the release to run in the worktree. A seat whose
-claims cannot be read (the mail driver is deployed but does not import) is
-kept too; only a deploy without the mail driver reads as no claims.
+line names the lanes and the release to run in the worktree. So does a seat
+that holds a live job from the dispatcher and no claim (a seat between
+lanes: its lane's push released its claims): removed, the job would stay
+on the board with nobody to work it. The kept line names the jobs and
+`seat.py retire <seat> --return-jobs`, run from the main checkout, which
+hands them back and removes it. A seat whose claims or jobs cannot be read
+(the mail driver is deployed but does not import, or the `dispatcher`
+setting in `espalier.toml` does not read) is kept too; only a deploy
+without the mail driver reads as none.
 On Windows a folder a process holds open (a terminal or an editor in it)
 cannot be renamed, and the reaper keeps any folder that refuses a rename.
 Elsewhere a rename proves nothing, so the reaper reads which folder each
@@ -1147,6 +1153,30 @@ first; the dangerous-command catch is a secondary slip-catcher):
    planted there is stat-ed there. The worktree list is git's own registry
    read off the disk, never a subprocess. A nested clone or a submodule is
    not a checkout of this repository and is not governed.
+
+   An operand that a delete, move or clean removes, and that holds a
+   wildcard (`*`, `?`, `[...]`), is judged by what it can name, not as the
+   literal path it spells: `tools/*` is refused as `tools/cc/` is, and a
+   root `too*` as `tools` is, while `build/*` and `tools/*.log` reach no zone
+   and run. A brace list is expanded and an extended glob's group read as
+   `*`; `**` is `*`, as Bash reads it with globstar off. A remainder below a
+   zone (a root `*/build` against `cc/`) counts only when the checkout holds
+   something it names. The read fails closed where it cannot follow the
+   shell: a negated, POSIX or equivalence class, a nested extended-glob
+   group or a brace sequence reads as naming anything, so such an operand at
+   the root is refused. A remove that cannot take a directory (`rm`
+   without a recursive flag, `unlink`, `shred`, a word-list loop over such a
+   remove, a remove cmdlet without `-Recurse`) is judged by what its
+   wildcard names, and of a protected directory only a path inside it: a
+   root `rm -f *` and `rm -f tools/*` run, as a non-recursive remove always
+   has, while `rm -f c?/*`, `rm -f .claude/*` and a root `rm -f *` beside a
+   `protected_paths` file are refused. The same word removed by any other
+   remove in the command (`rm -d` included, which takes an empty
+   directory), or inside a nested program, reads every entry. A cmdlet
+   without `-Recurse` does take an empty directory, which holds nothing to
+   protect. A move takes directories and reads every entry. The deny says what the wildcard reached. A
+   wildcard on a write, a link or a permission change is still read as the
+   path it spells: those forms are outside the coverage contract below.
 
    A relative Bash or PowerShell spelling is read from the directory the
    command runs in, not from the root: the hook payload's `cwd` (the
@@ -2052,8 +2082,10 @@ A deleted, emptied or syntax-broken project file wires nothing -- Claude Code
 loads no hooks from any of them (driven) -- and is judged so; refusing it
 blocks no repair, since the next change is judged on its own content.
 The local file keeps the kill-switch check only; it normally wires nothing. A
-hook entry of type `http` or `mcp_tool` runs no gate and is set aside rather
-than read as voiding the file. `espalier clean-generated`'s in-session
+well-formed hook entry of type `http`, `mcp_tool` or `agent` runs no gate and
+does not void the file (Claude Code loads each beside the gates, driven); one
+missing its required field (`url`; `server` and `tool`; `prompt`) voids the
+whole hooks block, and the change is judged so. `espalier clean-generated`'s in-session
 uninstall records its own unwire first
 (`.espalier-state/settings_write_intent.json`), and that one write is let
 through, so its two-run flow still works.
@@ -2590,7 +2622,7 @@ same for the checks the flag switches off in them
 |---------|--------|
 | `ESPALIER_STOP_GATE=light` (default) | Skip gate 1 (pytest). Run hygiene gates 2-3 only. |
 | `ESPALIER_STOP_GATE=full` | Run gate 1 (the test gate; the row below says what it runs) before hygiene gates. **Caution:** Stop fires on every turn, not just end-of-session. If set permanently, the test command runs on every turn. A pytest file list runs under the hook interpreter, so pytest must be installed for that form: on a Windows host wired to the launcher (`py -3`, a system Python) while your pytest lives in a virtualenv, the gate skips with a note (`stop_failed_open_pytest_missing`) until you install pytest for that interpreter or set `ESPALIER_STOP_GATE_TEST_CMD`. |
-| `ESPALIER_STOP_GATE_TEST_CMD=<command>` | The command gate 1 runs as *your* suite, as an argv at the repository root without a shell (a non-zero exit, a timeout or a command that cannot start blocks the Stop; an entry carrying shell syntax -- `&&`, `||`, a pipe, `;`, a redirection, `$(` -- is refused before the spawn, once a session per command, with the shape named: one program per entry, each started at the root, so `test = ["npm run build", "npm test"]` where a shell line would chain them). It is the first of three sources: without it, under `full`, gate 1 runs the `test` entry under `[extra_actions]` in `espalier.toml` (read on every Stop), else the test command detected from the repository's own files (`npm test`, `go test ./...`, `cargo test`, a bare `pytest -q`), and a pytest tree holding the harness default test files runs only those. `doctor` and the SessionStart banner say which one runs here (gate 1's own stderr line is a debug-log copy). A Gate 1 that skips -- nothing declared or detected and no default file here, no fingerprint test path exists, pytest timed out or could not run, the override splits to nothing, the fingerprint is unreadable, the mode is misspelt -- records `stop_failed_open_*` once a session, so `/status --log` counts it. Gate 1's run is ended whole: at its budget (`STOP_INNER_BUDGET`) the command and every process it started are stopped, on every OS. On Windows the run also sits in a job that closes when the Stop hook exits, so a process a green run leaves behind ends then too: a daemon your test command keeps on purpose (Gradle's, an MSBuild or compiler server) starts cold at each Stop. |
+| `ESPALIER_STOP_GATE_TEST_CMD=<command>` | The command gate 1 runs as *your* suite, as an argv at the repository root without a shell (a non-zero exit, a timeout or a command that cannot start blocks the Stop; an entry carrying shell syntax -- `&&`, `||`, a pipe, `;`, a redirection, `$(` -- is refused before the spawn, once a session per command, with the shape named: one program per entry, each started at the root, so `test = ["npm run build", "npm test"]` where a shell line would chain them). It is the first of three sources: without it, under `full`, gate 1 runs the `test` entry under `[extra_actions]` in `espalier.toml` (read on every Stop), else the test command detected from the repository's own files (`npm test`, `go test ./...`, `cargo test`, a bare `pytest -q`), and a pytest tree holding the harness default test files runs only those. `doctor` and the SessionStart banner say which one runs here (gate 1's own stderr line is a debug-log copy). A Gate 1 that skips -- nothing declared or detected and no default file here, no fingerprint test path exists, pytest timed out or could not run, the override splits to nothing, the fingerprint is unreadable, the mode is misspelt -- records `stop_failed_open_*` once a session, so `/status --log` counts it. Gate 1's run is ended whole: at its budget (`STOP_INNER_BUDGET`) the command and every process it started are stopped, on every OS. The budget is one for the whole run: a `test` list's commands share it, each started with what is left, and a command the list reaches with none left is not started and blocks naming the list (`details.rule` `GATE_COMMAND_LIST_TIMEOUT`; an entry that could not start at all, such as one carrying shell syntax, keeps its own refusal), so a list whose commands each fit cannot together outrun the Stop hook's own timeout, past which Claude Code cancels the hook and the Stop passes unrecorded. On Windows the run also sits in a job that closes when the Stop hook exits, so a process a green run leaves behind ends then too: a daemon your test command keeps on purpose (Gradle's, an MSBuild or compiler server) starts cold at each Stop. |
 | `ESPALIER_MAINTENANCE_MODE=1` | Skip gates 2 and 3 (hygiene friction). Gate 1 (pytest, if opted in), gate 5 (the handoff gate: continuity, not friction) and gate 4 (blueprint finalize) still run. One advisory audit record per session says so (`stop_bypassed_maintenance_mode`; `/status --log` counts it). |
 
 Set the stop gate mode for a single session:

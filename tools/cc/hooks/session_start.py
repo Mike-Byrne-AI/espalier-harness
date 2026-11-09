@@ -366,7 +366,7 @@ def _record_wired_gates(root: Path, source: str) -> None:
         _integrity.clear_wired_gates(root)
         return
     _integrity.write_wired_gates(
-        root, _integrity.live_governance_gates(_integrity.without_protocol_typed_hooks(data), root))
+        root, _integrity.live_governance_gates(data, root))
 
 
 def _blueprint_present(root: Path) -> bool:
@@ -2938,13 +2938,11 @@ def _report_integrity_state(root: Path) -> str:
     # and `--repair` is the merge that rewires every shape but a void file
     # (the plain merge fixes an absent event only; doctor names each shape).
     # A void verdict is not reported: this hook running refutes "loads NO
-    # hooks", and the hook types the pinned protocol names beside command and
-    # prompt are set aside first (their voiding rule is its own ledger row).
+    # hooks" for the file it was loaded from.
     unwired: list[str] = []
     try:
         state, data = _integrity.read_project_settings(root)
         if state == "read" and isinstance(data, dict):  # unreadable: the kill-switch scan above says so
-            data = _integrity.without_protocol_typed_hooks(data)
             if _integrity._hooks_config_voided_by(data.get("hooks")) is None:
                 unwired = _integrity.unwired_governance_gates(_integrity.PROJECT_SETTINGS_REL, data, root)
     except Exception as e:  # noqa: BLE001 — bounded warn, do not crash session
@@ -3152,6 +3150,42 @@ def _warn_if_load_bearing_tool_missing(self_host: bool, root: "Path | None" = No
             _hook_utils.advise(f"[WARN] {tool} not on PATH -- {reason}")
 
 
+def _glued_head(command: str) -> "tuple | None":
+    """The first word of a shell-form ``command`` that opens unquoted and holds
+    a quoted run, as the shell reads it: ``(the word, quotes removed, its start,
+    its end)``; None for a head that opens with a quote, holds none, or holds
+    one that never closes. The rewire's spelling of a spaced Windows
+    interpreter (DEF-2063: ``C:/x/'Program Files'/py/python.exe hook.py``,
+    one word to Git Bash and Windows PowerShell 5.1 alike). A backslash is a
+    character, never an escape. Twin of ``espalier._venv.glued_head``; pinned
+    equal by ``tests/test_hook_entry_argv.py``."""
+    text = command or ""
+    start = len(text) - len(text.lstrip())
+    if start >= len(text) or text[start] in ("'", '"'):
+        return None
+    word = []
+    quote = ""
+    seen = False
+    i = start
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == quote:
+                quote = ""
+            else:
+                word.append(ch)
+        elif ch in ("'", '"'):
+            quote, seen = ch, True
+        elif ch.isspace():
+            break
+        else:
+            word.append(ch)
+        i += 1
+    if not seen or quote:
+        return None
+    return "".join(word), start, i
+
+
 def _entry_argv(command: object, args: object = None) -> tuple:
     """``(argv[0], the words after it)`` of a settings.json hook entry.
 
@@ -3178,8 +3212,12 @@ def _entry_argv(command: object, args: object = None) -> tuple:
         if end > 0:
             return cmd[1:end], cmd[end + 1:].split()
         return cmd[1:], []
-    head = cmd.split(None, 1)[0]
-    return (os.path.expanduser(head) if head.startswith("~") else head), cmd.split()[1:]
+    glued = _glued_head(cmd)
+    if glued is not None:
+        head, rest = glued[0], cmd[glued[2]:].split()
+    else:
+        head, rest = cmd.split(None, 1)[0], cmd.split()[1:]
+    return (os.path.expanduser(head) if head.startswith("~") else head), rest
 
 
 def _names_a_python(token: str) -> bool:
@@ -3223,13 +3261,16 @@ def _shell_cut_path(command: str) -> "str | None":
     under ``sh -c`` and Git Bash (exit 127, every guard fails open), and the
     cut word names no Python, so asking argv[0] alone skipped the entry. A
     longer word-prefix that names a Python (not a ``.py``/``.sh`` script),
-    where argv[0] is a path that is not a file, is the cut path. Twin of
+    where argv[0] is a path that is not a file, is the cut path. A head
+    holding a quoted run that closes (:func:`_glued_head`, DEF-2063) is one
+    word, read whole, which a later unquoted space still cuts. Twin of
     ``espalier._venv.shell_cut_path``.
     """
     cmd = command.strip() if isinstance(command, str) else ""
     if not cmd or cmd[:1] in ("'", '"'):
         return None
-    words = cmd.split()
+    glued = _glued_head(cmd)
+    words = [glued[0], *cmd[glued[2]:].split()] if glued is not None else cmd.split()
     head = os.path.expanduser(words[0]) if words[0].startswith("~") else words[0]
     if not any(sep in head for sep in ("/", "\\")) or os.path.isfile(head):
         return None
