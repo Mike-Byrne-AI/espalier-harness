@@ -469,10 +469,12 @@ open stop names an open operator call and the job (its assign id or the id's
 suffix, one of its ledger ids, or the stop's lane), so the release is read
 every tick, not remembered, and nothing asks again once the job is released or
 the call ruled; the count is left as it is, since a stopped seat counted short
-would be sent a third job while it only reads mail; the release opens with
-`parked:` and names the call, and the board reads the re-send from it, a
-`parked:` line while the call is open and a `re-send:` line once its sender
-acks it, until the job is assigned again or the park is released, `DEF-2067`), so the board's `asks:` line
+would be sent a third job while it only reads mail; since `DEF-2067` the
+`stopped:` line prints the release ready to paste, opening with `parked:` and
+naming the call in full, and the board reads the re-send from it, a `parked:`
+line while the call is open and a `re-send:` line once its sender acks it,
+with the drop ready to paste, until the job is assigned again or the park is
+dropped), so the board's `asks:` line
 carries it with its age, the dispatcher's past-the-hour read under the gridlock
 rule, counted apart on the header and tagged `(stopped)`; any `ack` naming it
 closes it, and since a release or the ruling on an operator call names no

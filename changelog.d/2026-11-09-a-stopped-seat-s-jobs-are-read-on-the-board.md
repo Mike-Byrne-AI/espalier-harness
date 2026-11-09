@@ -23,5 +23,5 @@
   of the job it parks and says the dispatcher's release, ack and re-send; the
   protocol's stop paragraph and the inbox command body say the same. A seat
   already looping keeps its old tick until it is re-primed, and its stops
-  name no job, so nothing is marked for it. The re-send at the ruling is not
-  yet read from the board. (`DEF-3038`)
+  name no job, so nothing is marked for it. The re-send at the ruling is read
+  from the board too, by the entry below. (`DEF-3038`)

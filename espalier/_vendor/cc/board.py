@@ -1476,7 +1476,7 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run, now: datetime
     closed: list[tuple[dict, dict, str]] = []
     board["assignments"] = mail.live_assignments(by_machine, dispatcher, closed=closed)
     board["asks"] = mail.live_requests(by_machine, now=now)
-    board["parked"] = mail.parked_jobs(by_machine, dispatcher)
+    board["parked"] = mail.parked_jobs(by_machine, dispatcher, closed=closed)
     try:
         local = read_sessions(root, run_=run_)
     except Unresolvable as exc:
@@ -1999,9 +1999,19 @@ def under_two(assignments: list[dict], rows: list[dict], dispatcher: str = "") -
 #: said beside that seat alone: the release takes the job off the seat, and
 #: the ack closes the stop, which frees the seat on either tree's tick (a
 #: release names no stop, and an adopter's worker waits until its stop is
-#: answered), so the line clears in the same move and never asks twice.
-PARKED_RELEASE = (f"release the parked job (a release opening {mail.PARKED_PREFIX} that acks its assign and "
-                  "names the call), ack the stop, and re-send the job at the ruling")
+#: answered), so the line clears in the same move and never asks twice. The
+#: release is printed ready to paste (PARK_COMMAND), from the ids the board
+#: holds, so it opens with mail.PARKED_PREFIX and names the call in full and
+#: the board's parked: and re-send: lines fire (DEF-2067; told in prose, the
+#: dispatcher sent the release it always had).
+PARKED_RELEASE = "ack the stop, and re-send the job at the ruling"
+#: The two paste-ready sends: the park (on the stopped: line) and the drop (on
+#: the parked: and re-send: lines), each acking a FULL id, since the send verb
+#: takes a suffix and a release acking one closes nothing.
+PARK_COMMAND = ('python tools/cc/mail.py send --type release --ack {assign} '
+                '--text "' + mail.PARKED_PREFIX + ' {job} on operator call {call}"')
+DROP_COMMAND = ('python tools/cc/mail.py send --type release --ack {park} '
+                '--text "dropped: {job} is not re-sent ({ruling})"')
 
 #: The id matching's one home is the mail driver (``parked_jobs`` reads a
 #: release's call the way a stop's is read here).
@@ -2012,9 +2022,7 @@ _id_tokens = mail.id_tokens
 def _parked_job(park: dict) -> str:
     """A parked job as its line names it: the seat, the job and its assign,
     and the release, each id in full (the ids a re-send or a drop names)."""
-    assign, release = park.get("assign"), park.get("release") or {}
-    if assign is None:
-        return f"assign {release.get('ack')} (not on the record; released {release.get('id')})"
+    assign, release = park.get("assign") or {}, park.get("release") or {}
     re_ = assign.get("re") or {}
     return (f"{re_.get(mail.ASSIGN_SEAT_KEY) or '?'}: {_job(re_)} (assign {assign.get('id')}; "
             f"released {release.get('id')})")
@@ -2026,8 +2034,9 @@ def parked_lines(parks: list[dict]) -> list[str]:
     call (``mail.parked_jobs``) and has not given out again. While the call
     is open, ``parked:`` names the job and the call; once the call's sender
     acks it (the ruling), ``re-send:`` names the job and the ruling, until an
-    assign of the job dated after the release, or a release acking the parked
-    one (the ruling dropped the job), clears it. A park whose text names no
+    assign of the job stamped after the release, or a release acking the
+    parked one in full (the ruling dropped the job), clears it; that drop is
+    printed ready to paste (DROP_COMMAND). A park whose text names no
     operator call says so and stays, since nothing else would bring the job
     back. Before it, once the release and the stop's ack were sent, nothing
     on the board linked the job to the call, so at a ruling hours later
@@ -2036,15 +2045,18 @@ def parked_lines(parks: list[dict]) -> list[str]:
     lines: list[str] = []
     for park in parks:
         call, ruling = park.get("call"), park.get("ruling")
-        drop = f"a release acking {(park.get('release') or {}).get('id')} where the ruling drops it"
+        job = _job(((park.get("assign") or {}).get("re")) or {})
+        drop = DROP_COMMAND.format(park=(park.get("release") or {}).get("id"), job=job,
+                                   ruling=f"ruled by {ruling.get('id')}" if ruling else "no ruling read")
         if call is None:
             lines.append(f"          parked: {_parked_job(park)} on no operator call its text names: "
-                         f"re-send the job, or {drop}")
+                         f"re-send the job, or drop it: {drop}")
         elif ruling is None:
             lines.append(f"          parked: {_parked_job(park)} on operator call {call.get('id')}, open")
         else:
             lines.append(f"          re-send: {_parked_job(park)}: operator call {call.get('id')} ruled by "
-                         f"{ruling.get('id')}: re-send the job, or {drop}")
+                         f"{ruling.get('id')}: re-send the job (an assign naming {job} clears this), or where "
+                         f"the ruling drops or reshapes it: {drop}")
     return lines
 
 
@@ -2080,7 +2092,7 @@ def stopped_lines(asks: list[dict], assignments: list[dict], dispatcher: str = "
     lines: list[str] = []
     for seat, held_stops in stops.items():
         jobs: list[str] = []
-        parked = False
+        sends: list[str] = []
         for a in assignments:
             re_ = a.get("re") or {}
             if str(re_.get(mail.ASSIGN_SEAT_KEY) or "") != seat:
@@ -2095,12 +2107,13 @@ def stopped_lines(asks: list[dict], assignments: list[dict], dispatcher: str = "
                            or (lane and lane == str((stop.get("re") or {}).get("lane") or ""))):
                     call = on
                     break
-            parked = parked or bool(call)
+            if call:
+                sends.append(PARK_COMMAND.format(assign=a.get("id"), job=_job(re_), call=call))
             jobs.append(f"{_job(re_)} (assign {a.get('id')}" + (f", parked on {call})" if call else ")"))
         ids = [str(m.get("id") or "") for m in held_stops]
         lines.append(f"          stopped: {seat} (stop{'s' if len(ids) > 1 else ''} {', '.join(ids)}) "
                      + (f"holds {'; '.join(jobs)}" if jobs else "holds no job")
-                     + (f": {PARKED_RELEASE}" if parked else ""))
+                     + (f": release the parked job ({'; then '.join(sends)}), {PARKED_RELEASE}" if sends else ""))
     return lines
 
 
