@@ -4816,8 +4816,9 @@ def _walk_powershell_spans(s: str, spans: "list[tuple[int, int, str]] | None" = 
                 raise _UnresolvedShellSyntax("unterminated single quote")
             # A literal span handed to a re-parser is LIVE -- blanking it hid a
             # real invocation. Driven: `iex '$env:VAR=1; <cmd>'` sets the
-            # variable and runs the command against real pwsh.
-            if not _ps_span_is_reparsed(s, i):
+            # variable and runs the command against real pwsh. Asked only when
+            # the span holds something to blank (DEF-3039).
+            if not _ps_literal_is_reparsed(s, i, i + 1, j):
                 _ps_blank_literal(s, out, i + 1, j)
             if spans is not None:
                 spans.append((i, j, "'"))
@@ -9816,11 +9817,27 @@ _PS_REPARSED_SPAN_BEFORE = re.compile(
 _PS_REPARSE_LOOKBACK = 2048
 
 
+@functools.lru_cache(maxsize=8)
+def _ps_reparse_answers(s: str) -> "dict[int, bool]":
+    """The lookback's answers for one text, by opener offset. The answer is a
+    function of the text and the offset alone, and one judgment walks the same
+    text seven times (DEF-3039, measured through the two PowerShell checks),
+    so a span that must ask pays the lookback once. Held per text, so the
+    memory is bounded by the texts kept, never by a span count."""
+    return {}
+
+
 def _ps_span_is_reparsed(s: str, opener: int) -> bool:
     """True when the span opening at ``opener`` is handed to a re-parser.
     Searched with ``pos``/``endpos`` (the ``$`` anchor holds at ``endpos``),
-    never on a slice, and over a bounded lookback."""
-    return bool(_PS_REPARSED_SPAN_BEFORE.search(s, max(0, opener - _PS_REPARSE_LOOKBACK), opener))
+    never on a slice, and over a bounded lookback; answered once per text and
+    offset (`_ps_reparse_answers`)."""
+    answers = _ps_reparse_answers(s)
+    hit = answers.get(opener)
+    if hit is None:
+        hit = answers[opener] = bool(
+            _PS_REPARSED_SPAN_BEFORE.search(s, max(0, opener - _PS_REPARSE_LOOKBACK), opener))
+    return hit
 
 
 def _ps_expandable_is_reparsed(s: str, opener: int, a: int, b: int) -> bool:
@@ -9837,6 +9854,19 @@ def _ps_expandable_is_reparsed(s: str, opener: int, a: int, b: int) -> bool:
         if ch == "`" or ch in _PS_INERTABLE_SYNTAX:
             return _ps_span_is_reparsed(s, opener)
     return False
+
+
+def _ps_literal_is_reparsed(s: str, opener: int, a: int, b: int) -> bool:
+    """`_ps_span_is_reparsed` for a single-quoted span ``s[a:b]``, asked only
+    when the answer can change the mask, as `_ps_expandable_is_reparsed` is for
+    its twin. ``_ps_blank_literal`` blanks command-position characters alone,
+    so a span holding none (an ordinary quoted word or path) is masked the same
+    either way: DEF-3039 measured seven lookbacks a span through the two
+    PowerShell checks, 3.0 s of a 3200-word quoted list. A here-string body
+    always holds its line breaks, which are on the list, so it always asks."""
+    if _PS_INERTABLE_SYNTAX.isdisjoint(s[a:b]):
+        return False
+    return _ps_span_is_reparsed(s, opener)
 
 
 #: The WORDS PowerShell resolves to `Remove-Item` -- the cmdlet and its
