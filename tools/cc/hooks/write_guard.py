@@ -1632,8 +1632,11 @@ _ASSIGNMENT_WORD_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 #: A case arm's pattern opening a statement (`x) cat .env`, `"a b") ...`)
 #: or a function's head (`f() { cat .env`, `function f() {`); the word
 #: split drops the parentheses, so it is read off the statement's text.
-#: One arm per character, so an anchored match is linear.
+#: One arm per character, so an anchored match is linear; the lookbehind
+#: refuses a start inside a token, so an unanchored search is linear too
+#: (`tests/test_redos.py` searches: 18.9 s on a 30000-char word run without it).
 _CASE_ARM_RE = re.compile(
+    r"(?<![^\s;|&()<>])"
     r"(?:(?:function[ \t]+)?[A-Za-z_][\w.:-]*[ \t]*\(\)"
     r"|\(?(?:\"[^\"\n]*\"|'[^'\n]*'|[^\s;|&()<>\"'])+\))[ \t]*"
 )
