@@ -3497,7 +3497,14 @@ def test_prompt_router_classifies_a_flood_within_the_regex_budget(label, payload
 #
 # Scope (honest limitation): the gate catches the dot-star family — the shape
 # that bit in #5 (a ``.*`` span scanning toward an ABSENT required token,
-# super-linear on a repeated token). It does NOT catch nested-quantifier ReDoS
+# super-linear on a repeated token), spelled bare or as an unbounded repeat over
+# a group whose iteration can begin with a bare dot, ``(?:(?!x).)+?`` (DEF-5022:
+# the recall engine's first comment strip took 84 s on an 86 KB paragraph that
+# way). An escape arm, a required character then a dot, is flagged only when a
+# sibling arm can begin with the same character: ``(?:\\.|[^"])*`` splits a run
+# of backslashes two ways at each one and is exponential, while the shipped
+# ``(?:\\.|[^"\\])*`` (74 hook patterns carry the idiom) leaves the backslash to
+# the escape arm and is linear. It does NOT catch nested-quantifier ReDoS
 # (``(a+)+``) or non-dot unbounded quantifiers (``\w*``, ``[^x]*``) — including
 # the ``[^x]*TOKEN[^x]*`` double-negated-class spelling, which is the SAME
 # ReDoS class in a different costume (see ``_MARKER_SUBSTRING_RE`` below, found
@@ -3519,15 +3526,9 @@ _HOOKS_DIR = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
 # matches and the gate re-fails, forcing re-review of the modified regex (the
 # intended friction).
 _DOTSTAR_ALLOWLIST: dict[tuple[str, str], str] = {
-    ("_recall.py", r"^## +(.*)$"): (
-        "Anchored ^...$ single-line heading parse. With no DOTALL the greedy "
-        "`.*` runs to end-of-line and nothing follows it but `$`, so there is "
-        "no trailing-token ambiguity to backtrack on -> linear. Runs over "
-        "bounded memory-file headings, never model-emitted input."
-    ),
     ("_recall.py", r"^###[ \t]+(\S.*)$"): (
-        "TP-187: same shape as the `## ` heading parse above — anchored ^...$ "
-        "single-line `### ` coinage-heading capture, no DOTALL, greedy `.*` runs "
+        "TP-187: anchored ^...$ single-line `### ` coinage-heading capture, "
+        "no DOTALL, greedy `.*` runs "
         "to end-of-line with only `$` after it -> linear. Runs over bounded "
         "FAILURE_MODES.md headings, never model-emitted input."
     ),
@@ -3568,7 +3569,139 @@ def _strip_escapes_and_classes(pattern: str) -> str:
 
 
 def _pattern_has_unbounded_dotstar(pattern: str) -> bool:
-    return bool(_BARE_DOTSTAR_RE.search(_strip_escapes_and_classes(pattern)))
+    """The text scan above, or an unbounded repeat whose iteration can begin
+    with a bare dot (:func:`_repeat_can_begin_with_a_dot`). The text scan sees
+    a dot only when ``*`` or ``+`` follows it, so a dot in a group the
+    quantifier sits on, ``(?:(?!x).)+?``, passed it (DEF-5022); a pattern the
+    parser refuses keeps the text scan alone (it fails at the hook's import
+    anyway)."""
+    if _BARE_DOTSTAR_RE.search(_strip_escapes_and_classes(pattern)):
+        return True
+    from re import _parser as sre_parse
+
+    try:
+        parsed = sre_parse.parse(pattern)
+    except re.error:
+        return False
+    return _repeat_can_begin_with_a_dot(parsed)
+
+
+def _iteration_begins_with_a_dot(seq) -> tuple[bool, bool]:
+    """``(can a match of seq begin with a bare dot, can seq match empty)``.
+
+    The first item that consumes decides: a dot is True; a literal, a class,
+    a category or a group reference is False. A zero-width item (an anchor, a
+    lookaround) and a nullable one (``x?``, ``(?:a|)``) are looked through, so
+    ``(?:(?!x).)`` and ``(?:x?.)`` begin with a dot and ``(?:\\\\.|[^"\\\\])``,
+    whose dot only follows a required backslash, does not; whether such an
+    escape arm overlaps a sibling is :func:`_escape_arm_overlaps_a_sibling`'s
+    question."""
+    from re import _parser as sre_parse
+
+    repeats = {sre_parse.MAX_REPEAT, sre_parse.MIN_REPEAT}
+    if hasattr(sre_parse, "POSSESSIVE_REPEAT"):
+        repeats.add(sre_parse.POSSESSIVE_REPEAT)
+    atomic = getattr(sre_parse, "ATOMIC_GROUP", None)
+    for op, av in seq:
+        if op is sre_parse.ANY:
+            return True, False
+        if op in (sre_parse.ASSERT, sre_parse.ASSERT_NOT, sre_parse.AT):
+            continue
+        if op in repeats:
+            if av[1] == 0:  # x{0} consumes nothing
+                continue
+            begins, nullable = _iteration_begins_with_a_dot(av[2])
+            heads = [(begins, nullable or av[0] == 0)]
+        elif op is sre_parse.SUBPATTERN:
+            heads = [_iteration_begins_with_a_dot(av[-1])]
+        elif op is atomic:
+            heads = [_iteration_begins_with_a_dot(av)]
+        elif op is sre_parse.BRANCH:
+            heads = [_iteration_begins_with_a_dot(branch) for branch in av[1]]
+        elif op is sre_parse.GROUPREF_EXISTS:
+            heads = [_iteration_begins_with_a_dot(av[1]),
+                     _iteration_begins_with_a_dot(av[2]) if av[2] is not None else (False, True)]
+        else:
+            return False, False
+        if any(begins for begins, _ in heads):
+            return True, False
+        if not any(nullable for _, nullable in heads):
+            return False, False
+    return False, True
+
+
+#: Second characters an escape arm's sibling is tried with, after the escape
+#: character itself: a sibling that takes the escape character takes it here.
+_ESCAPE_SIBLING_TAILS = ("", "a", " ", '"', "'", "\\", "`", "\n")
+
+
+def _escape_arm_overlaps_a_sibling(body) -> bool:
+    """Whether a repeated alternation holds an escape arm, a literal ``c``
+    then a bare dot, beside a sibling arm that can also begin with ``c``.
+
+    ``(?:\\\\.|[^"])*`` is exponential: ``[^"]`` takes the backslash too, so
+    a run of backslashes splits two ways at every one (0.14 to 49.8 ms from
+    16 to 28 backslashes, air 0effd7). ``(?:\\\\.|[^"\\\\])*``, the shipped
+    form, is linear, since the class leaves the backslash to the escape arm.
+    A sibling that cannot be compiled alone (a group reference) is not
+    counted."""
+    from re import _compiler as sre_compile
+    from re import _parser as sre_parse
+
+    seq = list(body)
+    while len(seq) == 1 and seq[0][0] is sre_parse.SUBPATTERN:
+        seq = list(seq[0][1][-1])
+    if len(seq) != 1 or seq[0][0] is not sre_parse.BRANCH:
+        return False
+    arms = seq[0][1][1]
+    for i, arm in enumerate(arms):
+        if len(arm) < 2 or arm[0][0] is not sre_parse.LITERAL or arm[1][0] is not sre_parse.ANY:
+            continue
+        escape = chr(arm[0][1])
+        for j, sibling in enumerate(arms):
+            if j == i:
+                continue
+            try:
+                alone = sre_compile.compile(sre_parse.SubPattern(sre_parse.State(), list(sibling)), 0)
+            except (re.error, TypeError, ValueError):
+                continue
+            if any(alone.match(escape + tail) for tail in _ESCAPE_SIBLING_TAILS):
+                return True
+    return False
+
+
+def _repeat_can_begin_with_a_dot(seq) -> bool:
+    """Whether any unbounded repeat in the parsed ``seq``, at any depth, can
+    begin an iteration with a bare dot (``.*`` itself, and the group form
+    ``(?:(?!x).)+?`` the text scan cannot see) or repeats an escape arm a
+    sibling arm overlaps (``(?:\\\\.|[^"])*``) (DEF-5022)."""
+    from re import _constants as sre_constants
+    from re import _parser as sre_parse
+
+    repeats = {sre_parse.MAX_REPEAT, sre_parse.MIN_REPEAT}
+    if hasattr(sre_parse, "POSSESSIVE_REPEAT"):
+        repeats.add(sre_parse.POSSESSIVE_REPEAT)
+    for op, av in seq:
+        if op in repeats:
+            if av[1] is sre_constants.MAXREPEAT and (
+                    _iteration_begins_with_a_dot(av[2])[0] or _escape_arm_overlaps_a_sibling(av[2])):
+                return True
+            inner = [av[2]]
+        elif op is sre_parse.SUBPATTERN:
+            inner = [av[-1]]
+        elif op is getattr(sre_parse, "ATOMIC_GROUP", None):
+            inner = [av]
+        elif op is sre_parse.BRANCH:
+            inner = list(av[1])
+        elif op in (sre_parse.ASSERT, sre_parse.ASSERT_NOT):
+            inner = [av[1]]
+        elif op is sre_parse.GROUPREF_EXISTS:
+            inner = [av[1]] + ([av[2]] if av[2] is not None else [])
+        else:
+            continue
+        if any(_repeat_can_begin_with_a_dot(sub) for sub in inner):
+            return True
+    return False
 
 
 class _UnresolvablePattern(Exception):
@@ -3816,8 +3949,9 @@ def test_no_unreviewed_dotstar_in_hook_regexes():
 
     Earn-the-red: against pre-§7b/§7c HEAD this fails listing
     ``write_guard.py::DANGEROUS_BASH_PATTERNS`` and ``plan_guard.py::_ROOT_SOURCE_HINT`` (un-allowlisted dot-star);
-    after the spans are bounded only the allowlisted ``_recall.py`` survivor
-    remains and the gate passes."""
+    after the spans are bounded only allowlisted survivors remain
+    (``_DOTSTAR_ALLOWLIST``, each pinned live and flagged by
+    ``test_every_dotstar_exemption_is_live_and_flagged``) and the gate passes."""
     offenders: list[str] = []
     unresolved: list[str] = []
     hook_files = sorted(checkout_glob(_HOOKS_DIR, "*.py"))
@@ -3857,6 +3991,10 @@ def test_dotstar_detector_self_check():
         r"^## +(.*)$",
         r"\\.*",  # literal backslash `\\` then a REAL dot-metachar (the
         # one-char-lookbehind blind spot that motivated the escape-aware scan)
+        r'(?:\\.|[^"])*',  # an escape arm whose sibling takes the backslash too:
+        # exponential on a run of backslashes (DEF-5022, air 0effd7)
+        r'(?:`.|[^"])*',  # its PowerShell backtick twin
+        r'"(\\.|[^"])*"',  # the same alternation as a captured group
     ):
         assert _pattern_has_unbounded_dotstar(pat), f"missed dot-star in {pat!r}"
     for pat in (
@@ -3868,6 +4006,58 @@ def test_dotstar_detector_self_check():
         r"\\\.* ",  # escaped backslash THEN escaped dot -> literal, no metachar
     ):
         assert not _pattern_has_unbounded_dotstar(pat), f"false dot-star in {pat!r}"
+
+
+@pytest.mark.parametrize("pat", [
+    r"(?:(?!x).)+?",  # the row's shape: the quantifier sits on the group
+    r"(?:(?!\n[ \t]*\n).)*?",  # the recall code-span regex's first cut (84 s on 86 KB)
+    r"a(?:(?=y).)*b",  # a lookahead, then the dot
+    r"(?:x?.)+",  # a nullable item before the dot
+    r"(?:ab|.)*",  # a branch that begins with the dot
+    r"((?!x).)+",  # a captured group (the parser flattens (?:(?:.)), never this)
+    r"(?:,(?:(?!x).)+){1,3}",  # inside a bounded repeat whose iteration begins with a comma
+    r"(?>(?!x).)*",  # an atomic group
+    r"x|(\w+ (?:(?!x).)+)",  # the repeat inside a captured group, in a branch
+])
+def test_dotstar_detector_reads_a_dot_inside_a_quantified_group(pat):
+    """An unbounded repeat over a group whose iteration can begin with a bare
+    dot is the dot-star family the gate is for (DEF-5022). Red at the base:
+    the text scan sees a dot only when the quantifier follows it."""
+    assert _pattern_has_unbounded_dotstar(pat), f"missed dot-star in {pat!r}"
+
+
+@pytest.mark.parametrize("pat", [
+    r'"(?:\\.|[^"\\])*"',  # the escape idiom: the dot only after a backslash
+    r"'(?:\\.|[^'\\])*'",
+    r'(?:`.|""|[^`"])*',  # PowerShell's backtick escape
+    r"(?:a.)*",  # the dot after a required literal
+    r"(?:(?!x).){0,200}",  # bounded: the fix shape
+    r"(?:.){0,5}x",
+    r"(?:(?!x)\w)+",  # no dot
+    r"(?:.{0})*",  # a dot repeated zero times consumes nothing
+    r"(?:\\.|\w)*",  # the sibling cannot begin with the escape character
+])
+def test_dotstar_detector_leaves_a_dot_behind_a_required_char(pat):
+    """A group whose dot follows a required character, the escape idiom 74
+    shipped hook patterns carry (census at 0c3e1c0), is linear while no
+    sibling arm can begin with that character, and a bounded repeat is the
+    fix shape: neither is flagged."""
+    assert not _pattern_has_unbounded_dotstar(pat), f"false dot-star in {pat!r}"
+
+
+def test_every_dotstar_exemption_is_live_and_flagged():
+    """Each ``_DOTSTAR_ALLOWLIST`` key is a pattern a hook compiles today and
+    one the detector flags, so an exemption outlives neither its pattern nor
+    the detector's reading of it. Red at the base: ``^## +(.*)$`` named a
+    heading parse `_recall.py` no longer compiles."""
+    live = {(path.name, pattern)
+            for path in sorted(checkout_glob(_HOOKS_DIR, "*.py"))
+            for _, pattern in _iter_hook_compiled_patterns(path)
+            if pattern is not None}
+    stale = sorted(set(_DOTSTAR_ALLOWLIST) - live)
+    assert not stale, f"_DOTSTAR_ALLOWLIST names patterns no hook compiles: {stale}"
+    unflagged = sorted(key for key in _DOTSTAR_ALLOWLIST if not _pattern_has_unbounded_dotstar(key[1]))
+    assert not unflagged, f"_DOTSTAR_ALLOWLIST exempts patterns the detector does not flag: {unflagged}"
 
 
 @pytest.mark.parametrize(
