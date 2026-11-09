@@ -1896,28 +1896,54 @@ def _why_kept(git: _Git, block: dict[str, str], path: Path, upstream: str | None
     return _seat_claims_kept(here, root)
 
 
-def seat_live_claims(root: Path, seat: str, timeout: float) -> list[dict]:
-    """The live claims ``seat`` sent, from the mail channel's local refs
-    (``mail.py``, a deployed sibling; [] where it is not deployed)."""
+class JobsUnread(Exception):
+    """The dispatcher setting did not read, so the seat's jobs are not known."""
+
+
+def seat_live_mail(root: Path, seat: str, timeout: float) -> tuple[list[dict], list[dict]]:
+    """``(the live claims seat sent, the live jobs the dispatcher gave it)``,
+    from one read of the mail channel's local refs (``mail.py``, a deployed
+    sibling; nothing of either where it is not deployed). A dispatcher
+    setting that does not read raises :class:`JobsUnread`: the channel counts
+    no assign then (it fails closed for a worker), which would read here as no
+    job and let the worktree go."""
     try:
         import mail
     except ImportError:
-        # Not deployed: no claims to strand. Deployed but not importable (a
-        # SessionStart catch-up that moved a helper this process had already
-        # imported, DEF-2003) is an unread claim list, which keeps the worktree.
+        # Not deployed: no claims or jobs to strand. Deployed but not
+        # importable (a SessionStart catch-up that moved a helper this process
+        # had already imported, DEF-2003) is an unread list, which keeps the worktree.
         if (Path(__file__).resolve().parent / "mail.py").is_file():
             raise
-        return []  # fail-open: ok deliberate -- a deploy set without the channel has no claims to strand
+        return [], []  # fail-open: ok deliberate -- a deploy set without the channel has nothing to strand
+    dispatcher, how = mail.dispatcher_setting(root)
+    if dispatcher == mail.DISPATCHER_UNUSABLE:
+        raise JobsUnread(how)
     by_machine, _ = mail.read_mail(root, timeout=timeout)
-    return [c for c in mail.live_claims(by_machine) if str(c.get("from") or "") == seat]
+    claims = [c for c in mail.live_claims(by_machine) if str(c.get("from") or "") == seat]
+    jobs = [j for j in mail.live_assignments(by_machine, dispatcher)
+            if str((j.get("re") or {}).get(mail.ASSIGN_SEAT_KEY) or "") == seat]
+    return claims, jobs
+
+
+def _job_name(job: dict) -> str:
+    """A job as the board names it: its lane, else its ids, else its classes,
+    else its message id's tail."""
+    re_ = job.get("re") or {}
+    return (str(re_.get("lane") or "") or " ".join(str(i) for i in re_.get("ids") or [])
+            or " ".join(str(c) for c in re_.get("classes") or []) or str(job.get("id") or "")[-6:])
 
 
 def _seat_claims_kept(here: _Git, root: Path) -> str:
     """'' unless the worktree names a seat of its own (git's per-worktree
     ``espalier.machine``, which SessionStart sets) that still holds live
-    claims. Only that name can release them: removed with its worktree, they
-    stay live and warn every other seat's plan, and no seat is left to close
-    them. A worktree that answers its clone's name is the clone's own seat,
+    claims or live jobs from the dispatcher. Only that name can release the
+    claims: removed with its worktree, they stay live and warn every other
+    seat's plan, and no seat is left to close them. A seat between lanes holds
+    jobs and no claim (a push releases its lane's claims), and removed, its
+    jobs stay live on the board with no seat to work them (DEF-2043): kept,
+    as ``seat.py retire`` refuses such a seat unless ``--return-jobs`` hands
+    them back. A worktree that answers its clone's name is the clone's own seat,
     which can still release, so it is not asked. Kept when the seat's name or
     its claims cannot be read, as every other check here keeps what it cannot
     read. Without per-worktree config no worktree has a name of its own (git
@@ -1945,17 +1971,26 @@ def _seat_claims_kept(here: _Git, root: Path) -> str:
         return ""
     timeout = _left(here.deadline, GIT_CAP_S)
     if timeout < MIN_SPAWN_S:
-        return f"its seat {seat}'s claims were not read in time"
+        return f"its seat {seat}'s claims and jobs were not read in time"
     try:
-        claims = seat_live_claims(root, seat, timeout)
+        claims, jobs = seat_live_mail(root, seat, timeout)
+    except JobsUnread as e:
+        return f"its seat {seat}'s jobs could not be read ({_ascii(str(e))[:160]})"
     except Exception as e:  # noqa: BLE001 -- fail-open: ok deliberate -- an unread claim list keeps the worktree, as an unread status does
-        return f"its seat {seat}'s claims could not be read ({_ascii(os_error_text(e))[:120]})"
-    if not claims:
+        return f"its seat {seat}'s claims and jobs could not be read ({_ascii(os_error_text(e))[:120]})"
+    if not claims and not jobs:
         return ""
+    held = f"{_plural(len(jobs), 'job')} from the dispatcher ({_names([_job_name(j) for j in jobs])})"
+    if not claims:
+        return (f"its seat {seat} holds {held} and no claim: removed, nobody would work them. "
+                f"`python tools/cc/seat.py retire {seat} --return-jobs` hands them back and removes it, "
+                "or the dispatcher reassigns them, then it can go")
     lanes = sorted({str((c.get("re") or {}).get("lane") or "no lane") for c in claims})
     ids = [str(c.get("id") or "") for c in claims if c.get("id")]
+    retire = (f"`python tools/cc/seat.py retire {seat} --return-jobs` releases them and returns the jobs"
+              if jobs else f"`python tools/cc/seat.py retire {seat}` releases them")
     return (f"its seat {seat} holds {_plural(len(claims), 'live claim')} ({_names(lanes)}) that only it can "
-            f"release: `python tools/cc/seat.py retire {seat}` releases them from inside it and removes it, "
+            f"release" + (f" and {held}" if jobs else "") + f": {retire} from inside it and removes it, "
             "or in it, `python tools/cc/mail.py send --type release --ack <claim id>` for each"
             + (f" ({_names(ids)})" if ids else "")
             + " (by id: a lane release reads as its lane shipped), then it can go")

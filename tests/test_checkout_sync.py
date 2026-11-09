@@ -350,6 +350,22 @@ def _worktree(repos, name: str, branch: str | None = None, *, base: str = "origi
     return path
 
 
+def _mail_ref(work: Path, tmp_path: Path, machine: str, messages: list[dict]) -> None:
+    """``messages`` as ``machine``'s mail file on its local remote-tracking
+    ref, which is all the channel's reads look at (no fetch)."""
+    mail = _load(REPO_ROOT / "tools" / "cc" / "mail.py", "mail_for_reaper_refs")
+    body = tmp_path / f"mail-{machine}.jsonl"
+    body.write_bytes(("\n".join(mail.encode(m) for m in messages) + "\n").encode("utf-8"))
+    blob = _out(work, "hash-object", "-w", str(body))
+    # Bytes and -z: a text-mode input on Windows writes "\n" as "\r\n", and
+    # mktree would name the file "mail.jsonl\r".
+    tree = subprocess.run(["git", "mktree", "-z"], cwd=work, input=f"100644 blob {blob}\tmail.jsonl\0".encode(),
+                          capture_output=True, env=_git_env(), check=True,
+                          timeout=scaled(45)).stdout.decode().strip()
+    commit = _out(work, "commit-tree", tree, "-m", "mail")
+    _git(work, "update-ref", f"refs/remotes/origin/mail/{machine}", commit)
+
+
 def _registered(repo: Path, path: Path) -> bool:
     listing = _out(repo, "worktree", "list", "--porcelain")
     return any(Path(line[len("worktree "):]).resolve() == path.resolve()
@@ -388,9 +404,9 @@ class TestReapWorktrees:
         def claims(root, seat, timeout):
             asked.append(seat)
             return [{"id": "c-feat", "from": seat, "re": {"lane": "lane/feat"}},
-                    {"id": "c-next", "from": seat, "re": {"lane": "lane/next"}}]
+                    {"id": "c-next", "from": seat, "re": {"lane": "lane/next"}}], []
 
-        monkeypatch.setattr(cs, "seat_live_claims", claims)
+        monkeypatch.setattr(cs, "seat_live_mail", claims)
         report = cs.reap_worktrees(work, sessions=[])
         assert asked == ["work-feat"] and report.removed == [] and wt.is_dir()
         (name, reason), = report.kept
@@ -409,7 +425,7 @@ class TestReapWorktrees:
         _git(work, "config", "extensions.worktreeConfig", "true")
         _git(named, "config", "--worktree", "espalier.machine", "work-done")
         asked: list = []
-        monkeypatch.setattr(cs, "seat_live_claims", lambda root, seat, timeout: asked.append(seat) or [])
+        monkeypatch.setattr(cs, "seat_live_mail", lambda root, seat, timeout: asked.append(seat) or ([], []))
         report = cs.reap_worktrees(work, sessions=[])
         assert sorted(report.removed) == ["done", "plain"] and asked == ["work-done"]
         assert not named.exists() and not inherited.exists()
@@ -419,22 +435,74 @@ class TestReapWorktrees:
         one claim still live, and another seat's claim not counted."""
         mail = _load(REPO_ROOT / "tools" / "cc" / "mail.py", "mail_for_reaper_test")
         work = repos["work"]
-        lines = [mail.encode(mail.new_message("work-feat", "claim", "a", lane="lane/feat")),
-                 mail.encode(mail.new_message("work-feat", "claim", "b", lane="lane/old")),
-                 mail.encode(mail.new_message("work-feat", "release", "", lane="lane/old"))]
-        body = tmp_path / "mail.jsonl"
-        body.write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
-        blob = _out(work, "hash-object", "-w", str(body))
-        # Bytes and -z: a text-mode input on Windows writes "\n" as "\r\n", and
-        # mktree would name the file "mail.jsonl\r".
-        tree = subprocess.run(["git", "mktree", "-z"], cwd=work, input=f"100644 blob {blob}\tmail.jsonl\0".encode(),
-                              capture_output=True, env=_git_env(), check=True,
-                              timeout=scaled(45)).stdout.decode().strip()
-        commit = _out(work, "commit-tree", tree, "-m", "mail")
-        _git(work, "update-ref", "refs/remotes/origin/mail/work-feat", commit)
-        claims = cs.seat_live_claims(work, "work-feat", 10.0)
-        assert [(c["from"], c["re"]["lane"]) for c in claims] == [("work-feat", "lane/feat")]
-        assert cs.seat_live_claims(work, "work-other", 10.0) == []
+        _mail_ref(work, tmp_path, "work-feat", [mail.new_message("work-feat", "claim", "a", lane="lane/feat"),
+                                                mail.new_message("work-feat", "claim", "b", lane="lane/old"),
+                                                mail.new_message("work-feat", "release", "", lane="lane/old")])
+        claims, jobs = cs.seat_live_mail(work, "work-feat", 10.0)
+        assert [(c["from"], c["re"]["lane"]) for c in claims] == [("work-feat", "lane/feat")] and jobs == []
+        assert cs.seat_live_mail(work, "work-other", 10.0) == ([], [])
+
+    def test_a_seat_holding_a_job_and_no_claim_keeps_its_worktree(self, cs, repos, tmp_path):
+        """DEF-2043, driven on real mail refs: the seat's lane shipped (its
+        claims released) and the dispatcher has given it its next job. Its
+        clean, merged worktree is the only place that job is worked from.
+        Dies to: the reaper reading claims alone, which removed it with the
+        job still live and no seat to work it (the base's answer)."""
+        mail = _load(REPO_ROOT / "tools" / "cc" / "mail.py", "mail_for_reaper_job_test")
+        work = repos["work"]
+        (work / "espalier.toml").write_bytes(b'dispatcher = "boss"\n')
+        wt = _worktree(repos, "feat", "lane/feat")
+        idle = _worktree(repos, "idle", "lane/idle")
+        _git(work, "config", "extensions.worktreeConfig", "true")
+        _git(wt, "config", "--worktree", "espalier.machine", "work-feat")
+        _git(idle, "config", "--worktree", "espalier.machine", "work-idle")
+        _mail_ref(work, tmp_path, "work-feat", [mail.new_message("work-feat", "claim", "a", lane="lane/feat"),
+                                                mail.new_message("work-feat", "release", "", lane="lane/feat")])
+        job = mail.new_message("boss", "assign", "the next job", seat="work-feat", ids=["DEF-2043"])
+        # A worker's assign is no job (only the dispatcher's count), and
+        # neither is a job the dispatcher took back.
+        back = mail.new_message("boss", "assign", "taken back", seat="work-idle", ids=["DEF-1195"])
+        _mail_ref(work, tmp_path, "boss", [job, back, mail.new_message("boss", "release", "", ack=back["id"])])
+        _mail_ref(work, tmp_path, "work-other", [mail.new_message("work-other", "assign", "self-made",
+                                                                  seat="work-idle", ids=["DEF-1150"])])
+        report = cs.reap_worktrees(work, sessions=[])
+        assert report.removed == ["idle"] and wt.is_dir() and not idle.exists(), report
+        reason = dict(report.kept)["feat"]
+        assert reason.startswith("its seat work-feat holds 1 job from the dispatcher (DEF-2043)"), reason
+        assert "`python tools/cc/seat.py retire work-feat --return-jobs`" in reason, reason
+
+    def test_a_seat_holding_claims_and_jobs_is_told_retire_returns_the_jobs(self, cs, repos, monkeypatch):
+        """retire refuses a seat holding jobs unless --return-jobs hands them
+        back, so the claims' remedy names the flag once there are jobs too.
+        Dies to: the claims-only words, whose retire would refuse."""
+        work = repos["work"]
+        wt = _worktree(repos, "feat", "lane/feat")
+        _git(work, "config", "extensions.worktreeConfig", "true")
+        _git(wt, "config", "--worktree", "espalier.machine", "work-feat")
+        monkeypatch.setattr(cs, "seat_live_mail", lambda root, seat, timeout: (
+            [{"id": "c-feat", "from": seat, "re": {"lane": "lane/feat"}}],
+            [{"id": "j-1", "re": {"seat": seat, "lane": "lane/next"}},
+             {"id": "j-2", "re": {"seat": seat, "ids": ["DEF-1", "DEF-2"]}}]))
+        report = cs.reap_worktrees(work, sessions=[])
+        reason = dict(report.kept)["feat"]
+        assert reason.startswith("its seat work-feat holds 1 live claim (lane/feat) that only it can release and "
+                                 "2 jobs from the dispatcher (lane/next, DEF-1 DEF-2)"), reason
+        assert "`python tools/cc/seat.py retire work-feat --return-jobs` releases them and returns the jobs" in reason
+        assert "mail.py send --type release --ack <claim id>` for each (c-feat)" in reason, reason
+
+    def test_a_dispatcher_setting_that_does_not_read_keeps_the_worktree(self, cs, repos, tmp_path):
+        """A broken dispatcher setting counts no assign (mail's fail-closed
+        rule for a worker), which here would read as no jobs and let the
+        worktree go: an unread job list keeps it, as an unread claim list does."""
+        work = repos["work"]
+        (work / "espalier.toml").write_bytes(b"dispatcher = 7\n")
+        wt = _worktree(repos, "feat", "lane/feat")
+        _git(work, "config", "extensions.worktreeConfig", "true")
+        _git(wt, "config", "--worktree", "espalier.machine", "work-feat")
+        report = cs.reap_worktrees(work, sessions=[])
+        assert wt.is_dir(), report
+        reason = dict(report.kept)["feat"]
+        assert reason.startswith("its seat work-feat's jobs could not be read (espalier.toml sets dispatcher = 7"), reason
 
     def test_claims_that_cannot_be_read_keep_the_worktree(self, cs, repos, monkeypatch):
         work = repos["work"]
@@ -445,9 +513,9 @@ class TestReapWorktrees:
         def unreadable(root, seat, timeout):
             raise RuntimeError("git show took longer than 2s")
 
-        monkeypatch.setattr(cs, "seat_live_claims", unreadable)
+        monkeypatch.setattr(cs, "seat_live_mail", unreadable)
         report = cs.reap_worktrees(work, sessions=[])
-        assert report.kept == [("feat", "its seat work-feat's claims could not be read (git show took longer than 2s)")]
+        assert report.kept == [("feat", "its seat work-feat's claims and jobs could not be read (git show took longer than 2s)")]
         assert wt.is_dir()
 
     def test_a_seat_name_that_cannot_be_read_keeps_the_worktree(self, cs, repos, monkeypatch):
@@ -467,7 +535,7 @@ class TestReapWorktrees:
                     return _failed
                 return real_ask(self, *args, **kw)
             monkeypatch.setattr(cs._Git, "ask", ask)
-            monkeypatch.setattr(cs, "seat_live_claims", lambda root, seat, timeout: [])
+            monkeypatch.setattr(cs, "seat_live_mail", lambda root, seat, timeout: ([], []))
             report = cs.reap_worktrees(work, sessions=[])
             assert report.removed == [] and wt.is_dir(), report
             reason = dict(report.kept)[f"feat{i}"]
@@ -491,7 +559,7 @@ class TestReapWorktrees:
             def ask(self, *args, _failed=failed, **kw):
                 return _failed if args == switch else real_ask(self, *args, **kw)
             monkeypatch.setattr(cs._Git, "ask", ask)
-            monkeypatch.setattr(cs, "seat_live_claims", lambda root, seat, timeout: [])
+            monkeypatch.setattr(cs, "seat_live_mail", lambda root, seat, timeout: ([], []))
             report = cs.reap_worktrees(work, sessions=[])
             assert wt.is_dir(), report
             reason = dict(report.kept)[f"sw{i}"]
@@ -505,8 +573,8 @@ class TestReapWorktrees:
         wt = _worktree(repos, "yes", "lane/yes")
         _git(work, "config", "extensions.worktreeConfig", "yes")
         _git(wt, "config", "--worktree", "espalier.machine", "work-yes")
-        monkeypatch.setattr(cs, "seat_live_claims",
-                            lambda root, seat, timeout: [{"from": seat, "re": {"lane": "lane/yes"}}])
+        monkeypatch.setattr(cs, "seat_live_mail",
+                            lambda root, seat, timeout: ([{"from": seat, "re": {"lane": "lane/yes"}}], []))
         report = cs.reap_worktrees(work, sessions=[])
         assert wt.is_dir() and dict(report.kept)["yes"].startswith("its seat work-yes holds 1 live claim"), report
 
@@ -2074,7 +2142,7 @@ cc = Path(sys.argv[1])
 sys.path.insert(0, str(cc))
 import checkout_sync
 try:
-    print("CLAIMS", checkout_sync.seat_live_claims(cc, "seat-x", 5))
+    print("CLAIMS", checkout_sync.seat_live_mail(cc, "seat-x", 5))
 except Exception as exc:
     print("RAISED", type(exc).__name__)
 '''
@@ -2082,7 +2150,7 @@ except Exception as exc:
 
 class TestTheReaperKeepsAWorktreeWhoseClaimsDidNotRead:
     """DEF-2003's sister site inside the catch-up: the worktree reaper asks
-    ``seat_live_claims``, which imports ``mail`` after the move. A mail
+    ``seat_live_mail``, which imports ``mail`` after the move. A mail
     driver that is deployed but does not import (it met an old helper) read
     as no claims, and a clean, merged worktree whose seat still held live
     claims was removed (the failure-mode review's drive). Only a mail driver
@@ -2107,7 +2175,7 @@ class TestTheReaperKeepsAWorktreeWhoseClaimsDidNotRead:
         assert self._run(tmp_path, b"from _json_safe import a_name_this_copy_lacks\n") == "RAISED ImportError"
 
     def test_a_mail_driver_not_deployed_is_no_claims(self, tmp_path):
-        assert self._run(tmp_path, None) == "CLAIMS []"
+        assert self._run(tmp_path, None) == "CLAIMS ([], [])"
 
 
 # -- a read that did not answer says it cannot tell (DEF-2046) -------------------------
