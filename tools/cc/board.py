@@ -49,6 +49,40 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Callable
 
+# A kept, older sibling is named with its repair, never a traceback that names
+# an attribute: an uncaught exception loads hooks/_start_refusal.py by path and
+# hands it to that module's refuse_kept_siblings. The one text of this block,
+# and why each line is there, is tests/test_kept_sibling.py's ARM_BLOCK.
+if __name__ == "__main__":
+    from types import TracebackType as _KeptTraceback
+
+    _KEPT_FROM = Path(__file__).resolve().parent
+    _KEPT_SCRIPT = Path(__file__).name
+    _KEPT_BEFORE = sys.excepthook
+
+    def _name_a_kept_sibling(kind: type[BaseException], exc: BaseException, tb: _KeptTraceback | None) -> None:
+        sys.excepthook = _KEPT_BEFORE
+        try:
+            import importlib.util
+            at = (_KEPT_FROM if _KEPT_FROM.name == "hooks" else _KEPT_FROM / "hooks") / "_start_refusal.py"
+            spec = importlib.util.spec_from_file_location("_start_refusal_by_path", at)
+            if spec is not None and spec.loader is not None:
+                reader = importlib.util.module_from_spec(spec)
+                sys.modules[spec.name] = reader
+                spec.loader.exec_module(reader)
+                refuse = getattr(reader, "refuse_kept_siblings", None)
+                if callable(refuse):
+                    reconfigure = getattr(sys.stderr, "reconfigure", None)
+                    if callable(reconfigure):
+                        reconfigure(encoding="utf-8", errors="replace")
+                    refuse(_KEPT_SCRIPT)
+        # fail-open: ok deliberate without the reader a kept sibling keeps its traceback, as before
+        except Exception:  # noqa: BLE001, S110
+            pass
+        sys.excepthook(kind, exc, tb)
+
+    sys.excepthook = _name_a_kept_sibling
+
 # Sibling helpers, reached through the script's own directory (all ship in the
 # deploy set; tests/test_deploy_set_import_closure.py pins the reachability).
 sys.path.insert(0, str(Path(__file__).resolve().parent))

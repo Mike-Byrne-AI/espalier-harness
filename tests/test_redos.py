@@ -853,8 +853,9 @@ _PS_VERB_EXTRACTION_REGEXES = [
     # (`-Command powershell -Command powershell ...`): the shared switch run
     # read every following pair as switch-plus-value, O(n) at each of the n
     # command positions -- 24 s at 28 KB, one second at 6 KB, at HEAD before
-    # DEF-637's witness row found it. The run is bounded at 64 tokens now
-    # (the receipt's remedy); the DEF-717 dash-bearing rows could not see
+    # DEF-637's witness row found it. The run is unbounded and a switch value
+    # may not be an opener word (the receipt's remedy; a 64-token bound was
+    # tried first and measured failing both ways); the DEF-717 dash-bearing rows could not see
     # this shape because their values were never opener words.
     ("ps_exec_switch_value_is_an_opener", _PS_PATH_FLAG_RE, "powershell -Command"),
 ]
@@ -970,10 +971,16 @@ _C52_BASH_ROWS = [
     ("shell_dash_c_long_option_valued", _bash_patterns._SHELL_DASH_C_RE, "bash --rcfile x"),
     ("shell_dash_cx_cluster", _bash_patterns._SHELL_DASH_C_RE, "bash -cx"),
     ("git_clean", _bash_patterns._GIT_CLEAN_RE, "git clean"),
-    # the here-string opener shares the switch run: its unbounded form read a
-    # shell head word as a switch value and was quadratic on a repeated head
-    # (4.0 s at 28 KB through the write extractor, witnessed by the row above
-    # the day the `-c` opener landed beside it)
+    # the here-string opener shares the switch run: its first unbounded form
+    # read a shell head word as a switch value and was quadratic on a repeated
+    # head (4.0 s at 28 KB through the write extractor, witnessed by the row
+    # above the day the `-c` opener landed beside it). A switch's value may
+    # not be any spelling of a shell head, which keeps the run linear with no
+    # bound (DEF-818 took the bound away); these rows red if a value takes the
+    # bare head word again, the spellings with a directory, an `.exe` or
+    # another case are `test_posix_shell_switch_value_is_never_a_head_spelling`,
+    # and the one-head switch-run floods are
+    # `test_posix_shell_switch_run_linear_on_one_head`
     ("shell_herestring_repeated_head", _bash_patterns._SHELL_HERESTRING_RE, "sh -c"),
     ("shell_herestring_switches", _bash_patterns._SHELL_HERESTRING_RE, "bash --norc -x"),
     ("shell_herestring_opener", _bash_patterns._SHELL_HERESTRING_RE, "bash <<<"),
@@ -3125,6 +3132,89 @@ def test_ps_switch_value_run_linear_on_dash_bearing_values(label, seed):
     assert elapsed_ms < _CHAIN_CEILING_MS, f"{label} took {elapsed_ms:.1f}ms"
 
 
+@pytest.mark.parametrize("label,seed,tail", [
+    # bare switches: a value never starts with `-`, so each token is a
+    # switch and never the previous switch's value -- one parse
+    ("short-switches", "-x ", ""),
+    ("long-switches", "--norc ", ""),
+    # the run reaches each opener's tail and fails on an unclosed program
+    ("run-then-open-program", "-x ", "-c 'x"),
+    ("run-then-herestring", "-x ", "<<<"),
+])
+def test_posix_shell_switch_run_linear_on_one_head(label, seed, tail):
+    """DEF-818: the POSIX shell openers' switch run (`bash -x ... -c '...'`,
+    `bash -x ... <<< '...'`) is unbounded, because a bound let a program
+    through behind 65 switches (`tests/test_write_guard.py::
+    test_a_long_switch_run_does_not_hide_a_posix_shell_program`). One head and
+    a 30 KB run, so the whole flood is one opener's run; isolated per opener
+    and through the real extractor. A value that may start with `-` gives a
+    switch run two parses per token and reds these rows. POSIX-only
+    (signal.alarm)."""
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    from _bash_patterns import _candidate_paths_from_bash  # noqa: E402
+
+    payload = "bash " + seed * (_WORST_CASE_BODY_LEN // len(seed)) + tail
+    signal.signal(signal.SIGALRM, _alarm)
+    signal.setitimer(signal.ITIMER_REAL, _CHAIN_CEILING_MS / 1000.0)
+    t = time.time()
+    try:
+        _bash_patterns._SHELL_DASH_C_RE.findall(payload)
+        _bash_patterns._SHELL_HERESTRING_RE.findall(payload)
+        _candidate_paths_from_bash(payload)
+        elapsed_ms = (time.time() - t) * 1000
+    except _Timeout:
+        pytest.fail(
+            f"the POSIX shell switch run exceeded {_CHAIN_CEILING_MS}ms on a 30KB "
+            f"{label} run behind one head (a switch value became ambiguous)"
+        )
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    assert elapsed_ms < _CHAIN_CEILING_MS, f"{label} took {elapsed_ms:.1f}ms"
+
+
+_HEAD_SPELLING_FLOOD_LEN = 2 * _WORST_CASE_BODY_LEN
+
+
+@pytest.mark.parametrize("label,verb", [
+    # a head behind a directory: each opens a start through the `sh -c` exec
+    # arm or the verb prefix, and is a value of the `-c` before it
+    ("slashed-head", "/sh -c"),
+    ("relative-dir-head", "a/sh -c"),
+    # an `.exe` or another case, opened behind a wrapper's path
+    ("wrapper-exe-head", "/a/env -x sh.exe -x"),
+    ("wrapper-upper-head", "/a/ENV -x SH -x"),
+    ("wrapper-upper-exe-head", "/a/env -x SH.EXE -x"),
+])
+def test_posix_shell_switch_value_is_never_a_head_spelling(label, verb):
+    """DEF-818's code review: with the run unbounded, a switch value that is
+    a spelling of a shell head (a directory before it, an `.exe`, another
+    case) opens another start whose run reads the rest of the flood -- the
+    starts x run-length product, 2-6 s at 30 KB on each opener when the
+    refusal took the bare lower-case word alone. 60 KB, isolated per opener,
+    so the quadratic is about four times the 30 KB figure and the wrapper
+    rows (about one second at 30 KB) red with margin. POSIX-only
+    (signal.alarm)."""
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    payload = (verb + " ") * (_HEAD_SPELLING_FLOOD_LEN // (len(verb) + 1))
+    for pattern in (_bash_patterns._SHELL_DASH_C_RE, _bash_patterns._SHELL_HERESTRING_RE):
+        signal.signal(signal.SIGALRM, _alarm)
+        signal.setitimer(signal.ITIMER_REAL, _CI_SAFE_BUDGET_MS / 1000.0)
+        t = time.time()
+        try:
+            pattern.findall(payload)
+            elapsed_ms = (time.time() - t) * 1000
+        except _Timeout:
+            pytest.fail(
+                f"a POSIX shell opener exceeded {_CI_SAFE_BUDGET_MS}ms on a 60KB {label} "
+                f"flood (a head spelling became a switch value)"
+            )
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+        assert elapsed_ms < _CI_SAFE_BUDGET_MS, f"{label} took {elapsed_ms:.1f}ms"
+
+
 @pytest.mark.parametrize("label,seed", [
     # the cmdlet word in a valued parameter: the exec-quote arm opens a
     # command position at each, and each walked to the statement's end
@@ -4402,6 +4492,45 @@ _DERIVED_MUST_INCLUDE = frozenset({
     "_HARNESS_ENV_PREFIX_RE", # lives in write_guard, not _bash_patterns
 })
 
+
+def _first_use_regexes() -> list[tuple[str, "re.Pattern[str]"]]:
+    """The patterns compiled on their first use rather than at import, which
+    the derivation above cannot see (it reads module-level ``_RE`` names):
+    enrolled BY HAND, each through its accessor, and read by both budget
+    arms below beside the derived population (DEF-3063)."""
+    import _bash_patterns  # noqa: E402
+
+    return [
+        ("_bash_patterns._carrier_fed_remove_re()", _bash_patterns._carrier_fed_remove_re()),
+    ]
+
+
+_FIRST_USE_REGEXES = _first_use_regexes()
+
+
+def test_every_first_use_compile_is_enrolled():
+    """The hand list above is checked against the source: every
+    ``re.compile(`` inside a function of `_bash_patterns` names its
+    accessor in `_FIRST_USE_REGEXES`, so a pattern compiled on first use
+    cannot ship outside both budget arms by being left off the list (the
+    failure-mode review of DEF-3063: nothing compared the list with the
+    module). Module-level compiles are the derivation's."""
+    import ast
+
+    import _bash_patterns  # noqa: E402
+
+    tree = ast.parse(Path(_bash_patterns.__file__).read_text(encoding="utf-8"))
+    compiling: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for call in ast.walk(node):
+                if (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                        and call.func.attr == "compile"
+                        and isinstance(call.func.value, ast.Name) and call.func.value.id == "re"):
+                    compiling.add(node.name)
+    enrolled = {name.split(".")[-1].rstrip("()") for name, _ in _FIRST_USE_REGEXES}
+    assert compiling == enrolled, (sorted(compiling), sorted(enrolled))
+
 #: Adversarial payload shapes. Each is a repeated token run chosen to stress a
 #: DIFFERENT quantifier family. The env-assignment and separator runs are the
 #: shapes that caught the anchor's O(n^2) regression; do not drop them.
@@ -4437,7 +4566,7 @@ def test_derived_regex_population_is_non_vacuous():
     )
 
 
-@pytest.mark.parametrize("name,pattern", _DERIVED_REGEXES)
+@pytest.mark.parametrize("name,pattern", _DERIVED_REGEXES + _FIRST_USE_REGEXES)
 def test_every_derived_regex_is_linear_on_adversarial_runs(name, pattern):
     """Every derived extraction regex stays inside the budget on every shape.
 
@@ -4826,7 +4955,7 @@ def _growth_first_red(
     return None
 
 
-@pytest.mark.parametrize("name,pattern", _DERIVED_REGEXES)
+@pytest.mark.parametrize("name,pattern", _DERIVED_REGEXES + _FIRST_USE_REGEXES)
 def test_every_derived_regex_grows_linearly_without_an_alarm(name, pattern):
     """The shape detector every platform runs: it times `.search` of each
     derived regex on every hand and derived run at 2000 and 16000 chars and

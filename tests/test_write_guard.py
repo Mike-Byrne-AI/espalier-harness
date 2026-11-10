@@ -3369,8 +3369,10 @@ class TestCatastrophicEnumeratorCarrier:
         ("git ls-files | xargs git rm --cached", "allow"),
         ("git ls-files 2>/dev/null | xargs rm -rf", "wall"),
         ("git ls-files --cached --others --exclude-standard | xargs rm -f", "wall"),
-        # the declared limits, pinned as what they are: a stage between and
-        # a single stdin path read as nothing; the loop carrier from a
+        # the declared limits, pinned as what they are: a stage between, and
+        # a single stdin path read as nothing by the walls (the soft tier
+        # reads an echoed word as its remove's operand since DEF-3063; this
+        # remove does not recurse, so its twin is silent too); the loop carrier from a
         # relative root inside the repo is the nudge's, as the carrier is
         # (DEF-830 reads it; its wall rows are `TestCatastrophicLoopCarrier`'s)
         ("find . | grep zz | xargs rm -rf", "allow"),
@@ -3394,6 +3396,20 @@ class TestCatastrophicEnumeratorCarrier:
         if expect == "wall":
             assert "piped through xargs into a remove verb" in result.stdout, result.stdout
             assert "maintenance mode does not bypass it" in result.stdout
+
+    @pytest.mark.parametrize("cmd, expect", [
+        # the direct twins wall ...
+        ("Remove-Item -Recurse .", "wall"),
+        ("Remove-Item -Recurse -Force .", "wall"),
+        # DECLARED (air's 5581ae, driven at 351bbb5): a literal item piped
+        # into the cmdlet is the PowerShell twin of a single path echoed into
+        # `xargs`, outside the wall like it; pinned as the exact verdict so
+        # the day a reader binds the piped literal this row reds
+        ("'.' | Remove-Item -Recurse", "allow"),
+    ])
+    def test_through_the_hook_carrier_powershell(self, tmp_path, cmd, expect):
+        result = run_guard_from("PowerShell", cmd, tmp_path, None)
+        assert _delete_verdict(result) == expect, (cmd, result.stdout)
 
     @pytest.mark.parametrize("cmd", ["find . | xargs rm -rf", "git ls-files | xargs rm -rf"])
     def test_the_wall_stands_under_maintenance_mode_carrier(self, tmp_path, cmd):
@@ -3864,15 +3880,40 @@ class TestCatastrophicLoopCarrier:
         # DECLARED, pinned exactly so the day a head reads them shows here: a
         # word list beside a command substitution is read by neither head, so
         # beside a catastrophic word it draws the variable operand's nudge
-        # (its twin `rm -rf * $(ls)` walls) and behind the carrier-fed body it
-        # draws NOTHING -- a silent allow, its own ledger row
+        # (its twin `rm -rf * $(ls)` walls), and so does the carrier-fed body
+        # (DEF-3063: it drew NOTHING until the soft tier read the word the
+        # body emits into the carrier as the recursive remove's operand)
         ('for f in * $(ls); do rm -rf "$f"; done', "bump"),
-        ('for f in * $(ls); do echo "$f" | xargs rm -rf; done', "allow"),
+        ('for f in * $(ls); do echo "$f" | xargs rm -rf; done', "bump"),
         # ... and a stage between the enumerator and the loop, behind the
-        # same carrier-fed body, draws nothing at all (declared 2026-09-19,
-        # driven 2026-09-22); the twin without the stage walls
-        ('find . | sort | while read f; do echo "$f" | xargs rm -rf; done', "allow"),
+        # same carrier-fed body, is the same nudge (DEF-3063); the twin
+        # without the stage walls
+        ('find . | sort | while read f; do echo "$f" | xargs rm -rf; done', "bump"),
         ('find . | while read f; do echo "$f" | xargs rm -rf; done', "wall"),
+        # DEF-3063's class: the soft tier reads the word a carrier is fed as
+        # its recursive remove's operand, so in every loop no opener reads
+        # the carrier-fed body draws the direct twin's (`rm -rf "$f"`)
+        # nudge; each drew nothing on main
+        ('find . |\n  while read f; do echo "$f" | xargs rm -rf; done', "bump"),
+        ('while read f; do echo "$f" | xargs rm -rf; done < files.txt', "bump"),
+        ('for f in sub/a $(ls sub); do echo "$f" | xargs rm -rf; done', "bump"),
+        ('find sub | sort | while read f; do echo "$f" | xargs rm -rf; done', "bump"),
+        ('find build | sort | while read f; do echo "$f" | xargs rm -rf; done', "bump"),
+        ("find . -name '*.pyc' | sort | while read f; do echo \"$f\" | xargs rm -rf; done", "bump"),
+        ('find . | sort | while read f; do printf "%s\\n" "$f" | xargs rm -rf; done', "bump"),
+        ('find . | sort | while read f; do echo "$f" | xargs -r rm -r; done', "bump"),
+        # ... and stays silent where its twin does: a remove that does not
+        # recurse, and a body that emits a fixed roster word
+        ('for f in * $(ls); do echo "$f" | xargs rm -f; done', "allow"),
+        ('find . | sort | while read f; do echo build | xargs rm -rf; done', "allow"),
+        # ... and under a head a loop opener reads, narrowed or roster, the
+        # twin is the remove naming the word in place (`rm -rf "$f"` in the
+        # same loop), which asks, so the carrier asks too; only the unrolled
+        # `rm -rf build dist` is silent (air's ruling 2beae0, driven both ways)
+        ("find . -name '*.pyc' | while read f; do echo \"$f\" | xargs rm -rf; done", "bump"),
+        ("find . -name '*.pyc' | while read f; do rm -rf \"$f\"; done", "bump"),
+        ('for f in build dist; do echo "$f" | xargs rm -rf; done', "bump"),
+        ('for f in build dist; do rm -rf "$f"; done', "bump"),
     ])
     def test_through_the_hook_loop(self, tmp_path, cmd, expect):
         """The wiring, not only the classifier (the DEF-498 lesson)."""
@@ -4110,6 +4151,29 @@ class TestCatastrophicLoopCarrier:
         assert bp.has_catastrophic_bash_sweep(loop, str(tmp_path)) is True, label
         zone = f'for f in {words[:-2]} tools/cc/hooks; do rm -rf "$f"; done'
         assert ("delete", "tools/cc/hooks") in bp.iter_removed_or_relocated_operands(zone), label
+
+    def test_a_carrier_fed_body_takes_its_direct_twins_nudge_loop(self, tmp_path):
+        """DEF-3063: `echo "$f" | xargs rm -rf` in a loop body is `rm -rf
+        "$f"` with the item on stdin, so the soft tier answers it as it
+        answers the twin, under heads no opener reads -- a stage before the
+        loop, a word list beside a substitution -- where it answered
+        nothing; a remove that does not recurse stays silent beside its
+        twin. Read at the predicate, so the row names the arm."""
+        import sys
+        sys.path.insert(0, str(HOOKS_DIR))
+        import _speedbump as sb
+        for head, tail in (
+            ("for f in * $(ls); do ", "; done"),
+            ("find . | sort | while read f; do ", "; done"),
+        ):
+            for body, asks in (
+                ('rm -rf "$f"', True),
+                ('echo "$f" | xargs rm -rf', True),
+                ('rm -f "$f"', False),
+                ('echo "$f" | xargs rm -f', False),
+            ):
+                cmd = head + body + tail
+                assert sb._pred_rmrf("Bash", {"command": cmd}, tmp_path) is asks, cmd
 
     def test_the_loop_openers_are_one_derived_roster_loop(self):
         """FM-4 of DEF-837's review: the loop openers were kept by hand at
@@ -9030,6 +9094,10 @@ class TestCatastrophicRmFlagOrderIndependent:
         bp = self._bp()
         memos = sorted(n for n, o in vars(bp).items() if hasattr(o, "cache_info"))
         assert memos == [
+            # `_carrier_fed_remove_re` (DEF-3063) takes no argument and returns
+            # a compiled pattern, compiled on first use: no key a flag could
+            # be missing from, and no verdict
+            "_carrier_fed_remove_re",
             # `_relief_applies` reads the command's text and nothing else: the
             # flag joins the bases beside it, in `_statement_bases`
             "_nested_shell_programs_cached",
@@ -15395,6 +15463,7 @@ class TestEverySpanReadDecidesTheQuotedOperandCut:
         ("_bash_loop_reading", "_named_span", "verb"): "the remove verb",
         ("_bash_loop_reading", "_named_span", "vars"): "the loop variable names",
         ("files_only_removed_operands", "_named_span", "verb"): "the word-list loop's remove verb",
+        ("carrier_fed_remove_twin", "_named_span", "verb"): "the carrier's remove verb (DEF-3063)",
         ("_loop_head_reading", "_named_span", "head"): "the enumerator head",
         ("_directory_chain", "raw_span", "1"): "the quoted cd target, read by offset (the wrapper-closer lane)",
         ("_ps_dotnet_sweeps", "raw_span", "2"): ".NET call arguments, not a shell span",
@@ -16233,6 +16302,13 @@ class TestCrossShellRouting:
             "powershell -EncodedCommand UwBlAHQALQBDAG8AbgB0AGUAbgB0AA==",
             "powershell -File deploy.ps1",
             "pwsh -Command $prog",
+            # a relative write after a POSIX shell program's own `cd` behind
+            # anything but a bare `-c` (DEF-818's reading; air 34fc8c: a zone
+            # write, the after-check's)
+            "bash -x -c 'cd tools/cc/hooks && echo x > x.py'",
+            "bash -l -c 'cd tools/cc/hooks && echo x > x.py'",
+            "bash -lc 'cd tools/cc/hooks && echo x > x.py'",
+            "bash <<< 'cd tools/cc/hooks && echo x > x.py'",
         ):
             assert_hook_allowed(run_bash_guard(cmd, tmp_path))
 
@@ -16260,7 +16336,8 @@ class TestCrossShellRouting:
         # a long switch run before the program is crossed on every opener:
         # a `{0,64}` bound tried on the runs turned these -- commands that
         # RUN -- into allows (code review, driven), so the runs are unbounded
-        # and this row is what a future bound reds on
+        # and these rows, with the POSIX shell openers' rows in the test
+        # below, are what a future bound reds on
         ("Bash", "python3 " + "-B " * 70 + "-c \"open('tools/cc/hooks/x.py','w')\""),
         ("Bash", "pwsh " + "-NoLogo " * 70 + "-c 'Set-Content -Path tools/cc/hooks/x.py -Value 1'"),
         ("PowerShell", "python " + "-B " * 70 + "-c \"open('tools/cc/hooks/x.py','w')\""),
@@ -16268,6 +16345,32 @@ class TestCrossShellRouting:
     ])
     def test_a_long_switch_run_does_not_hide_the_program(self, tmp_path, tool, cmd):
         assert_hook_denied(run_guard_tool(tool, {"command": cmd}, tmp_path))
+
+    @pytest.mark.parametrize("switches", [65, 70])
+    @pytest.mark.parametrize("opener", ["-c", "<<<"], ids=["dash-c", "herestring"])
+    @pytest.mark.parametrize("body", [
+        'f=tools/cc/hooks/x.py; echo x > "$f"',
+        "d=tools/cc; echo x > $d/hooks/x.py",
+        "chmod 000 tools/cc/hooks/write_guard.py",
+    ], ids=["file-var", "dir-var", "chmod"])
+    def test_a_long_switch_run_does_not_hide_a_posix_shell_program(
+        self, tmp_path, switches, opener, body,
+    ):
+        """DEF-818: the Bash tool's two POSIX shell openers (`bash -c '...'`,
+        `bash <<< '...'`) share one switch run. Bounded at 64 switches, it let
+        these three programs -- each denied at 64 switches or fewer -- through
+        at 65 and 70 on both openers (driven on the live guard, judged only),
+        so the run is unbounded and these rows are what a future bound reds
+        on. Its ReDoS rows are in `tests/test_redos.py`."""
+        cmd = "bash " + "-x " * switches + opener + " '" + body + "'"
+        assert_hook_denied(run_bash_guard(cmd, tmp_path))
+
+    def test_a_catastrophic_delete_behind_a_long_switch_run_is_refused(self, tmp_path):
+        """DEF-818: the catastrophic delete behind 65 switches, pinned refused
+        (air 34fc8c). The here-string opener: behind `-c` the wall misses the
+        delete at ONE switch, older than the bound and its own row (§C76)."""
+        cmd = "bash " + "-x " * 65 + "<<< 'rm -rf /'"
+        assert_hook_denied(run_bash_guard(cmd, tmp_path))
 
     # ── PowerShell tool: a bash program behind bash / sh -c ──
 
@@ -16350,6 +16453,9 @@ class TestCrossShellRouting:
             'wsl bash -c "echo x > tools/cc/hooks/x.py"',
             "bash -c $prog",
             "Get-Content prog.sh | bash",
+            # a relative write after the program's own `cd` (DEF-818's
+            # reading; air 34fc8c: a zone write, the after-check's)
+            "bash -c 'cd tools/cc/hooks && echo x > x.py'",
         ):
             assert_hook_allowed(_run_ps_guard(cmd, tmp_path))
 

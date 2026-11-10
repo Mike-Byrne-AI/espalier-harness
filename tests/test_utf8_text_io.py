@@ -241,14 +241,21 @@ _DELEGATES_ITS_PIN = {
 _MAIN_LINE_RE = re.compile(r"""^if __name__ == ["']__main__["']\s*:""", re.M)
 
 
-def _main_block(tree):
-    for node in tree.body:
-        if (isinstance(node, ast.If) and isinstance(node.test, ast.Compare)
-                and isinstance(node.test.left, ast.Name) and node.test.left.id == "__name__"
-                and any(isinstance(c, ast.Constant) and c.value == "__main__"
-                        for c in node.test.comparators)):
-            return node
-    return None
+def _main_blocks(tree) -> list:
+    """Every top-level ``if __name__ == "__main__":`` block, in source order. A
+    script may carry two: the kept-sibling refusal's, ahead of its sibling
+    imports (``tests/test_kept_sibling.py::ARM_BLOCK``), and the one that runs
+    the program; reading the first alone read the refusal's (DEF-5088)."""
+    return [node for node in tree.body
+            if isinstance(node, ast.If) and isinstance(node.test, ast.Compare)
+            and isinstance(node.test.left, ast.Name) and node.test.left.id == "__name__"
+            and any(isinstance(c, ast.Constant) and c.value == "__main__"
+                    for c in node.test.comparators)]
+
+
+def _main_body(tree) -> list:
+    """The statements of every ``__main__`` block, in the order they run."""
+    return [stmt for block in _main_blocks(tree) for stmt in block.body]
 
 
 def _call_name(node: ast.Call) -> str:
@@ -320,7 +327,7 @@ def _entry_points() -> dict[str, ast.Module]:
     found = {}
     for path in _entry_point_files():
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        if _main_block(tree) is not None:
+        if _main_blocks(tree):
             found[path.relative_to(REPO_ROOT).as_posix()] = tree
     return found
 
@@ -357,7 +364,7 @@ class TestEveryEntryPointPinsItsStreams:
                 continue
             main_fn = next((n for n in tree.body
                             if isinstance(n, ast.FunctionDef) and n.name == "main"), None)
-            if not (_pinned_before_use(_main_block(tree).body)
+            if not (_pinned_before_use(_main_body(tree))
                     or (main_fn is not None and _pinned_before_use(main_fn.body))):
                 unpinned.append(rel)
         assert not unpinned, (
@@ -390,9 +397,14 @@ class TestEveryEntryPointPinsItsStreams:
 
     def test_the_pin_checks_fire_on_planted_modules(self):
         def pinned(src: str) -> bool:
-            return _pinned_before_use(_main_block(ast.parse(src)).body)
+            return _pinned_before_use(_main_body(ast.parse(src)))
 
         head = "import sys\nif __name__ == '__main__':\n"
+        # Two blocks read as one, in order: an early block that neither pins
+        # nor prints (the kept-sibling refusal's) leaves the later pin standing,
+        # and an early print still comes before it.
+        assert pinned(head + "    sys.excepthook = None\n" + head + "    pin_utf8_streams()\n    main()\n")
+        assert not pinned(head + "    print('x')\n" + head + "    pin_utf8_streams()\n    main()\n")
         assert pinned(head + "    pin_utf8_streams()\n    main()\n")
         assert pinned(head + "    for s in (sys.stdout, sys.stderr):\n"
                              "        s.reconfigure(encoding='utf-8', errors='replace')\n"

@@ -230,14 +230,13 @@ def _encloses_protected(rel_path: str, root: Path) -> bool:
     """True when ``rel_path`` is an ANCESTOR of a protected prefix or file:
     removing or relocating that directory takes the zone with it (§C52 --
     `tools` encloses `tools/cc/`, `.claude` the settings files, `.github` the
-    CI guard workflow on every tree). The empty path and `.` enclose
-    everything and answer True (the catastrophic tier walls them first; this
-    is the fail-closed direction). A name that merely PREFIXES a zone
+    CI guard workflow on every tree). A name that merely PREFIXES a zone
     (`tools/ccx`) encloses nothing: the comparison is on a whole component.
     Consulted only for a removed or relocated operand; a write to a
     directory's name is not a write into it, so the write checks do not ask.
-    The empty path and `.` enclose everything and answer FALSE here: they
-    are the catastrophic tier's (`rm -rf .`), and reading them as enclosing
+    The empty path and `.` answer False here, though they enclose
+    everything: they are the catastrophic tier's (`rm -rf .`), which walls
+    them before this check is asked, and reading them as enclosing
     walled `find . -name '*.pyc' -delete` and `git rm -r --cached .` -- an
     everyday spelling refused harder than the dangerous one (review, driven).
     A `git clean` of the whole tree is the one whole-tree remove the zone

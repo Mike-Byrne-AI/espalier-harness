@@ -1440,9 +1440,14 @@ _PIPED_CARRIER_WITNESS_RE = re.compile(_PIPED_CARRIER_WITNESS, re.IGNORECASE)
 #: neither head, so a catastrophic word beside one draws the variable
 #: operand's nudge where its direct twin walls), and the PowerShell
 #: statement-form loop (asked at the hook: the remove cmdlet's wall already).
-#: Behind the carrier-fed body, a stage between and a word list beside a
-#: substitution draw NOTHING -- silent allows, declared with their ledger row
-#: rather than hidden behind "each draws the nudge".
+#: Behind the carrier-fed body (`echo "$f" | xargs rm -rf`), a loop no head
+#: reads draws the nudge its direct twin `rm -rf "$f"` draws: the soft tier
+#: reads the echoed word as the remove's operand wherever the carrier sits
+#: (`carrier_fed_remove_twin`, DEF-3063; until 2026-11-09 a stage between
+#: and a word list beside a substitution drew NOTHING there). Where a head
+#: reads the loop, an echoed word that expands the head's own variable is
+#: the head's item and keeps the head's verdict; any other echoed word is
+#: the twin's.
 #: The read builtin's switch run, one arm per token as the carrier's is: a
 #: token whose LAST letter is a valued switch (`-d`, `-n`, `-N`, `-t`, `-u`,
 #: `-p`, `-a`, `-i` -- alone or glued behind others, `-rd`) takes one value
@@ -2041,10 +2046,13 @@ def iter_hardlink_operands(command: str) -> Iterator[str]:
 # VALUES were the next opener word; the code review then drove `python3`
 # with sixty-five `-B` switches before `-c "open('<hook>','w')"` -- a command
 # that RUNS -- and the bound had turned that deny into an allow, on both
-# legs, while buying nothing: the Bash leg's openers sit on a command
-# position, so a flood without separators has one opener and the run is one
-# pass, and the PowerShell twin's quadratic was the opener-word value, fixed
-# there by refusing it. A bound here is a coverage hole with no receipt.
+# legs. A flood without separators can still open more than one start: a
+# value with a wrapper's path (`/a/env`) opens one through the `(?<=/)`
+# wrapper arm, and `python -x ` + `/a/env -x python -x ` repeated reads
+# quadratic, under the chain ceiling (DEF-818's review measured it), where
+# the PowerShell twin's
+# quadratic was the opener-word value, fixed there by refusing it. A bound
+# here is a coverage hole with no receipt.
 _INTERP_SWITCH_RUN = r"(?:-[\w.-]+(?:[ \t]+[\w./:=,@%+~][\w./:=,@%+~-]*)?[ \t]+)*"
 #: A program operand is ONE bash WORD (DEF-832), not one quoted span: bash
 #: concatenates adjacent segments -- a single-quoted span, an ANSI-C span, a
@@ -2191,30 +2199,47 @@ _POWERSHELL_DASH_COMMAND_RE = re.compile(
     re.DOTALL,
 )
 # A POSIX shell's `-c` program on the Bash tool (§C52): `sh -c '...'`,
-# `bash -lc "..."`. The head and quoted-verb tail, the here-string opener's
-# switch run (`_SHELL_HERESTRING_RE`), a cluster ending in `c`, then the
+# `bash -lc "..."`. The head and quoted-verb tail, the shared switch run
+# (`_POSIX_SHELL_SWITCH_RUN`, below), a cluster ending in `c`, then the
 # program as ONE bash word that starts with a quoted segment (DEF-832:
 # adjacent segments concatenated by the shell; no bare-first arm -- a bare
 # program is one word and names nothing).
 #: A POSIX shell's switch run before its program operand, ONE home for the
-#: `-c` opener below and the here-string opener (`_SHELL_HERESTRING_RE`):
-#: each switch may carry one bare value, never a shell head word (`sh -c sh
-#: -c ...` read every following pair as switch-plus-value, O(n) at each of
-#: n heads -- 4.0 s at 28 KB through the write extractor, a pre-existing
-#: shape the §C52 rows witnessed), and the run is bounded at 64 tokens (the
-#: DEF-637 receipt's remedy for the PowerShell twin).
-_SHELL_SWITCH_RUN_BOUNDED = (
+#: `-c` opener below and the here-string opener (`_SHELL_HERESTRING_RE`).
+#: Each switch may carry one bare value, which never starts with `-` (so a
+#: value is never the next switch) and is never a spelling of a shell head:
+#: a head opens another opener's start, so a value that can be one gives
+#: every following run a second reader -- O(n) at each of n starts.
+#: `sh -c sh -c ...` was 4.0 s at 28 KB through the write extractor (a
+#: pre-existing shape the §C52 rows witnessed), and once the run lost its
+#: bound the code review drove the same product through a head with a
+#: directory (`/sh`, `a/sh`), an `.exe` or another case behind a wrapper
+#: path (`/a/env -x SH`), seconds at 30 KB. A value cannot hold a quote, `\`,
+#: `$`, `~` or `:`, so every head spelling it can hold is a directory, the
+#: head in any case and an optional `.exe`, and the refusal below takes all
+#: of them: the DEF-637 receipt's remedy, the second parse taken away
+#: (docs/SHARP_EDGES.md, ReDoS budget receipt). Declared limit: a switch
+#: whose value is a shell's own path (`bash --rcfile /etc/sh -c '...'`)
+#: ends the run there, so that program is not read. The run is UNBOUNDED on
+#: purpose: a `{0,64}` bound here let programs that run through behind 65
+#: switches on both openers (DEF-818, driven). The witness rows are
+#: `tests/test_write_guard.py::test_a_long_switch_run_does_not_hide_a_posix_shell_program`
+#: and, in `tests/test_redos.py`, `test_posix_shell_switch_run_linear_on_one_head`,
+#: `test_posix_shell_switch_value_is_never_a_head_spelling` and the
+#: repeated-head rows.
+_POSIX_SHELL_SWITCH_RUN = (
     # a short cluster or a long option (`--norc`, `--rcfile FILE`): exclusive
     # on the second character; the review drove `bash --norc -c` past the
     # short-only run
-    r"(?:[ \t]+(?:-[A-Za-z]+|--[A-Za-z][\w-]*)(?:[ \t]+(?!(?:" + _POSIX_SHELL_HEADS
-    + r")(?=[ \t]|$))[\w.=/][\w.=/-]*)?){0,64}"
+    r"(?:[ \t]+(?:-[A-Za-z]+|--[A-Za-z][\w-]*)(?:[ \t]+(?!(?i:(?:[\w.=/-]*/)?(?:"
+    + _POSIX_SHELL_HEADS + r")(?:\.exe)?)(?=[ \t]|$))[\w.=/][\w.=/-]*)?)*"
 )
 _SHELL_DASH_C_RE = re.compile(
     _CMD_POS + r"(?i:" + _POSIX_SHELL_HEADS + r")" + _EXE_SUFFIX + r"\b" + _QUOTED_VERB_TAIL
-    # `c` anywhere in the cluster (`-cx`, `-xc`, `-lc`): both runs bounded, so
-    # the adjacent pair has at most 81 parses (review: `bash -cx` was missed)
-    + _SHELL_SWITCH_RUN_BOUNDED + r"[ \t]+-[A-Za-z]{0,8}c[A-Za-z]{0,8}[ \t]+"
+    # `c` anywhere in the cluster (`-cx`, `-xc`, `-lc`): both letter runs
+    # around the `c` bounded, so the adjacent pair has at most 81 parses
+    # (review: `bash -cx` was missed)
+    + _POSIX_SHELL_SWITCH_RUN + r"[ \t]+-[A-Za-z]{0,8}c[A-Za-z]{0,8}[ \t]+"
     + r"(?P<word>" + _BASH_QUOTED_WORD + r")"
 )
 
@@ -6447,9 +6472,9 @@ _INTERP_PIPE_RE = re.compile(
 #: whole-command scan reads it -- and the pipe spelling is `_INTERP_PIPE_RE`'s.
 _SHELL_HERESTRING_RE = re.compile(
     _CMD_POS + r"(?i:" + _POSIX_SHELL_HEADS + r")" + _EXE_SUFFIX + r"\b" + _QUOTED_VERB_TAIL
-    # the bounded run (§C52): the unbounded one was quadratic on a repeated
-    # head, see `_SHELL_SWITCH_RUN_BOUNDED`
-    + _SHELL_SWITCH_RUN_BOUNDED + r"[ \t]*<<<[ \t]*"
+    # the shared switch run (§C52): unbounded, and linear because a value is
+    # never a spelling of a shell head, see `_POSIX_SHELL_SWITCH_RUN`
+    + _POSIX_SHELL_SWITCH_RUN + r"[ \t]*<<<[ \t]*"
 )
 
 #: The three statement readers' heads, on the masked text at a command
@@ -15711,6 +15736,171 @@ def iter_unnarrowed_loop_remove_roots(
         return
     for _at, roots in _iter_loop_sweeps(raw, scan, wipes_only=wipes_only):
         yield roots
+
+
+#: ── The carrier-fed remove (DEF-3063) ─────────────────────────────────────
+#: A word the shell emits into the carrier, `echo "$D" | xargs rm -rf`, is
+#: the recursive remove's operand with the operand on stdin: `rm -rf "$D"`.
+#: The rm tier reads a remove's OPERANDS and the carrier-fed remove has
+#: none, so it drew nothing wherever it sat -- at the top level, in an `&&`
+#: chain, in a loop body no opener reads -- where its direct twin drew the
+#: nudge or the roster's silence. Composed from the loop body's own pieces,
+#: none of them edited: the anchor before the emit (`_CMD_POS`), the emit's
+#: arguments and its last word (`_LOOP_EMIT_ARGS`, the body's `feed`
+#: shape), the carrier's post-pipe half (`_XARGS_CARRIER_TAIL`) and the
+#: verb as the pipeline carrier admits it (`_FIND_EXEC_VERB`: a program
+#: runs there, not a statement, so no assignment run). A SOURCE string:
+#: `_carrier_fed_remove_re` compiles it on the first command that passes
+#: `_PIPED_CARRIER_WITNESS_RE`, so the import pays nothing.
+_CARRIER_FED_REMOVE = (
+    _CMD_POS + r"(?P<emit>(?-i:echo|printf))"
+    + r"(?P<emitted>" + _LOOP_EMIT_ARGS + r"[ \t]+(?P<feed>[^\s;|&]{1,80}))[ \t]*"
+    + _XARGS_CARRIER_TAIL
+    + r"(?P<verb>" + _FIND_EXEC_VERB + r")(?P<rmargs>[^\n;|&]{0,200})"
+)
+#: echo's own switch letters, which it prints nothing for.
+_ECHO_SWITCH_LETTERS = frozenset("neE")
+
+
+@functools.lru_cache(maxsize=1)
+def _carrier_fed_remove_re() -> "re.Pattern[str]":
+    """`_CARRIER_FED_REMOVE`, compiled once, on first use (DEF-3063)."""
+    return re.compile(_CARRIER_FED_REMOVE, re.IGNORECASE)
+
+
+def _emitted_operands(emit: str, emitted: str) -> list[str]:
+    """The words ``echo`` or ``printf`` hands the carrier, raw: what xargs
+    appends to the remove. echo's leading switches print nothing; printf's
+    leading switches and its format are not items (`printf -v` prints
+    nothing at all: its words are read anyway, toward friction)."""
+    words = _shell_word_spans(emitted) or emitted.split()
+    if emit == "echo":
+        while words and len(words[0]) > 1 and words[0][0] == "-" and set(words[0][1:]) <= _ECHO_SWITCH_LETTERS:
+            words = words[1:]
+        items = words
+    else:
+        while words and words[0].startswith("-"):
+            words = words[1:]
+        items = words[1:]
+        # a format holding text beyond its conversions and escapes is data
+        # printf prints (`printf 'sub/%s' x`, `printf "$D"`): an operand
+        if words and _printf_format_carries_text(words[0]):
+            items = words[:1] + items
+    return [piece for word in items for piece in _xargs_pieces(word)]
+
+
+def _printf_format_carries_text(fmt: str) -> bool:
+    """True when a printf format prints more than its arguments: anything
+    left after its quotes, ``%s``/``%b`` conversions, escapes and blanks."""
+    rest = _shell_unquote(fmt)
+    for token in ("%s", "%b", "\\n", "\\t", "\\0"):
+        rest = rest.replace(token, "")
+    return bool(rest.strip())
+
+
+def _xargs_pieces(word: str) -> list[str]:
+    """One emitted word as xargs splits it: a quoted word holding blanks (or
+    an escaped newline) is several operands on xargs's stdin, each given
+    single-quoted. A double-quoted word with an expansion or an escape in
+    it is kept whole (its blanks are unknown here); an empty one is none."""
+    if len(word) >= 2 and word[0] == word[-1] and word[0] in "'\"":
+        inner = word[1:-1]
+        plain = word[0] == "'" or not any(c in inner for c in "$`\\")
+        if plain and "'" not in inner:
+            parts = inner.replace("\\n", " ").split()
+            if len(parts) != 1:
+                return ["'" + part + "'" for part in parts]
+    return [word]
+
+
+def _operand_cut(rmargs: str) -> int:
+    """Where xargs's appended operands sit in the remove's own span: before
+    its first redirection (with its fd digits), comment or closer outside
+    quotes -- `xargs rm -rf 2>&1` runs `rm -rf <items> 2>&1`, and a twin
+    with the items after `2>` read them as the redirect's target."""
+    i, n, quote = 0, len(rmargs), ""
+    while i < n:
+        c = rmargs[i]
+        if quote:
+            if c == quote:
+                quote = ""
+            elif c == "\\" and quote == '"':
+                i += 1
+        elif c in "'\"":
+            quote = c
+        elif c == "\\":
+            i += 1
+        elif c in "<>)`":
+            j = i
+            while j > 0 and rmargs[j - 1].isdigit():
+                j -= 1
+            return j
+        elif c == "#" and (i == 0 or rmargs[i - 1].isspace()):
+            return i
+        i += 1
+    return n
+
+
+def carrier_fed_remove_twin(command: str) -> "str | None":
+    """``command`` with every word-fed carrier remove in it spelled as its
+    direct twin, or ``None`` where it holds none: ``cd src && echo old |
+    xargs rm -rf`` is ``cd src && rm -rf old`` (DEF-3063). ONE text for
+    every carrier, spliced right to left, so the soft tier reads it once
+    whatever the count (a text per carrier re-read the command per carrier:
+    quadratic, and a flood met the hook's time budget). The soft tier
+    reads the twin as it reads the command, so each carrier takes its
+    twin's verdict -- roster, temp root, placement and all. FOR THE VERDICT
+    ONLY: the twin is a splice nobody typed (inside a quoted program its
+    operands land past the quote), so never place, snapshot, zone-check
+    or report it.
+
+    Inside a loop, parsed head or not, the twin is the remove naming the
+    emitted word in place (`for f in build dist; do rm -rf "$f"; done`,
+    which asks), so an echoed loop variable asks where that twin asks: no
+    loop head is looked up (air's ruling 2beae0). A move is not a remove.
+    Gated before
+    the mask and the first-use compile (about 4.5 ms, paid once a hook
+    process): the emit word as a substring (the pattern spells it in lower
+    case only), then the carrier's witness, so a command that pipes into
+    no xargs, or emits nothing into one, pays a splice and one search."""
+    capped = _cap_for_scan(command)
+    spliced = splice_line_continuations(capped)
+    if "echo" not in spliced and "printf" not in spliced:
+        return None
+    if not _PIPED_CARRIER_WITNESS_RE.search(spliced):
+        return None
+    raw, scan = _bash_scan_pair(capped)
+    cuts: list[tuple[int, int, str]] = []
+    for m in _carrier_fed_remove_re().finditer(scan):
+        verb = _named_span(raw, m, "verb")
+        if _remove_effect(verb) != "delete":
+            continue
+        emitted = _named_span(raw, m, "emitted", through_quotes=True)
+        if m.start("emitted") + len(emitted) > m.end("emitted"):
+            continue              # a quote left open past the emit: no carrier here
+        # a replace switch (`-I{}`) puts the item where its placeholder is,
+        # which the rm readings already read as an operand
+        switches = raw[m.end("emitted"):m.start("verb")].split()
+        if any(t.startswith(("-I", "-J", "-i", "--replace")) for t in switches):
+            continue
+        operands = _emitted_operands(m.group("emit"), emitted)
+        if not operands:
+            continue
+        rmargs = _named_span(raw, m, "rmargs", through_quotes=True)
+        end = m.start("rmargs") + len(rmargs)
+        if cuts and m.start("emit") < cuts[-1][1]:
+            continue              # a span read through a quote reached this match
+        k = _operand_cut(rmargs)
+        spelled = verb + rmargs[:k].rstrip() + " " + " ".join(operands)
+        if k < len(rmargs):
+            spelled += " " + rmargs[k:].lstrip()
+        cuts.append((m.start("emit"), end, spelled))
+    if not cuts:
+        return None
+    twin = raw
+    for start, end, text in reversed(cuts):
+        twin = twin[:start] + text + twin[end:]
+    return twin
 
 
 def has_catastrophic_loop_remove(

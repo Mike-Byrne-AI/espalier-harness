@@ -91,41 +91,46 @@ from pathlib import Path
 from typing import Callable, NamedTuple
 
 # A kept, older sibling is named with its repair, never a traceback that names
-# an attribute (DEF-5087): `espalier upgrade` keeps a managed file that lost its
-# marker and regenerates the rest, so a name read below can be one the kept copy
-# lacks (every verb, --help included, died at the `_post_merge` reads, driven
-# 2026-11-08). The reader is the deny hooks' (hooks/_start_refusal.py, the
-# standard library alone), loaded by path before any sibling, since any of them
-# may be the kept one; a reader that will not load leaves the traceback.
+# an attribute: an uncaught exception loads hooks/_start_refusal.py by path and
+# hands it to that module's refuse_kept_siblings. The one text of this block,
+# and why each line is there, is tests/test_kept_sibling.py's ARM_BLOCK.
 if __name__ == "__main__":
-    # The refusal below writes a path to stderr: both streams take UTF-8 first,
-    # inline, since the layer's pin lives in a sibling that may be the kept one.
+    from types import TracebackType as _KeptTraceback
+
+    _KEPT_FROM = Path(__file__).resolve().parent
+    _KEPT_SCRIPT = Path(__file__).name
+    _KEPT_BEFORE = sys.excepthook
+
+    def _name_a_kept_sibling(kind: type[BaseException], exc: BaseException, tb: _KeptTraceback | None) -> None:
+        sys.excepthook = _KEPT_BEFORE
+        try:
+            import importlib.util
+            at = (_KEPT_FROM if _KEPT_FROM.name == "hooks" else _KEPT_FROM / "hooks") / "_start_refusal.py"
+            spec = importlib.util.spec_from_file_location("_start_refusal_by_path", at)
+            if spec is not None and spec.loader is not None:
+                reader = importlib.util.module_from_spec(spec)
+                sys.modules[spec.name] = reader
+                spec.loader.exec_module(reader)
+                refuse = getattr(reader, "refuse_kept_siblings", None)
+                if callable(refuse):
+                    reconfigure = getattr(sys.stderr, "reconfigure", None)
+                    if callable(reconfigure):
+                        reconfigure(encoding="utf-8", errors="replace")
+                    refuse(_KEPT_SCRIPT)
+        # fail-open: ok deliberate without the reader a kept sibling keeps its traceback, as before
+        except Exception:  # noqa: BLE001, S110
+            pass
+        sys.excepthook(kind, exc, tb)
+
+    sys.excepthook = _name_a_kept_sibling
+
+# The driver prints paths and branch names, and a kept sibling's refusal names a
+# file: both streams take UTF-8 here, inline, before any sibling is read, since
+# the layer's pin lives in a sibling that may be the kept one.
+if __name__ == "__main__":
     for _stream in (sys.stdout, sys.stderr):
         if hasattr(_stream, "reconfigure"):
             _stream.reconfigure(encoding="utf-8", errors="replace")
-
-    def _name_a_kept_sibling() -> None:
-        import importlib.util
-        path = Path(__file__).resolve().parent / "hooks" / "_start_refusal.py"
-        spec = importlib.util.spec_from_file_location("_ship_start_refusal", path)
-        if spec is None or spec.loader is None:
-            return
-        reader = importlib.util.module_from_spec(spec)
-        # Registered before exec, as every by-path load here is: a module the
-        # interpreter cannot find by name breaks dataclass and pickle reads.
-        sys.modules[spec.name] = reader
-        spec.loader.exec_module(reader)
-        # A kept _start_refusal.py from before DEF-5087 has no reader: the
-        # traceback stays, as before, and nothing else is changed.
-        refuse = getattr(reader, "refuse_kept_siblings", None)
-        if callable(refuse):
-            refuse("ship.py")
-
-    try:
-        _name_a_kept_sibling()
-    # fail-open: ok deliberate -- without the reader a kept sibling keeps its traceback, as before DEF-5087
-    except Exception:  # noqa: BLE001, S110
-        pass
 
 # Sibling helpers, reached through the script's own directory (both ship in the
 # deploy set; tests/test_deploy_set_import_closure.py pins the reachability).

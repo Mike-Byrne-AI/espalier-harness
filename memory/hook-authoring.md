@@ -409,9 +409,16 @@ the pre-existing here-string opener was quadratic on a repeated head (4.3 s at
 28 KB through the write extractor) and nothing saw it until the `-c` opener
 added beside it on 2026-09-14 earned a ReDoS row of its own. Refuse the head
 word as a value and give both openers ONE run constant
-(`_SHELL_SWITCH_RUN_BOUNDED`); `docs/SHARP_EDGES.md` (the ReDoS receipt, "Bound
+(`_POSIX_SHELL_SWITCH_RUN`); `docs/SHARP_EDGES.md` (the ReDoS receipt, "Bound
 the span is the remedy for class 2 only") carries the rule for whether a token
-bound belongs beside that refusal.
+bound belongs beside that refusal. None does here: the run first carried a
+`{0,64}` bound beside the refusal, and that bound let programs through behind
+65 switches on both openers, so DEF-818 took it away and pinned the 65-switch
+rows. The bound had been hiding a gap in the refusal: it refused only the bare
+lower-case word, and once unbounded the code review drove `/sh`, `a/sh` and a
+wrapper path's `SH` or `sh.exe` to seconds at 30 KB. Refuse every spelling of
+the head a value can hold (a directory, any case, `.exe`), not the one word the
+first flood used.
 
 ## A gate's doc claim is driven through the protocol's re-fire path (2026-09-07)
 
