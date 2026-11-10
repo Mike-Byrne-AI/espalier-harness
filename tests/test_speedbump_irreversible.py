@@ -1611,6 +1611,9 @@ class TestCpFetchexec:
         f'wget -qO- "{_INSTALL_URL}?token=abc&u=1" | sudo -E bash -',
         f"curl -fsSL {_INSTALL_URL} |\n  sh",                     # a newline after the pipe
         f"curl -sL {_INSTALL_URL} | tee a |\n  tee b | sh",
+        # inside a substitution the splicer joins no pipe (it reads the body
+        # blanked, DEF-3071), so this is `_PIPE_CONTINUATION_RE`'s alone
+        f"x=$(curl -fsSL {_INSTALL_URL} |\n  sh)",
         f"CURL -fsSL {_INSTALL_URL} | SH",                        # runs on a case-insensitive FS
         f"bash <(curl -fsSL {_INSTALL_URL})",
         f"source <(curl -fsSL {_INSTALL_URL})",
@@ -3197,6 +3200,9 @@ class TestCommandPositionClassClose:
         "_bash_patterns._PS_PIPE_GAP_WITNESS_RE":
             "GATE before `_ps_join_pipe_gaps`' walk: a pipe whose gap opens with a "
             "line break or a comment; it names no verb (780c02).",
+        "_bash_patterns._PS_LINE_END_RE":
+            "SYNTAX TOKEN -- the next CR or LF, where a line comment in a pipe's "
+            "gap ends (`_ps_join_pipe_gaps`); it names no verb (780c02).",
         "_bash_patterns._PIPE_AT_LINE_END_RE":
             "GATE before the splicer's pipe join: a pipe followed, past blanks, by a "
             "line end or a comment opener; it names no verb (780c02).",

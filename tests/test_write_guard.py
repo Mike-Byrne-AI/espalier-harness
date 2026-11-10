@@ -16516,10 +16516,12 @@ _PIPE_GAP_TWINS = [
 ]
 #: Each shell's gaps: what its grammar reads past between a pipe and the
 #: next stage (bash: a newline, comment lines and blank lines, a
-#: backslash-newline; pwsh 7.6.5: line breaks, line and block comments).
+#: backslash-newline; pwsh 7.6.5: line breaks, line and block comments; pwsh
+#: 5.1: a comment glued to a block comment's close, too).
 _PIPE_GAPS = {
     "Bash": [" | # note\n", " |\n", " |\n  # one\n\n  # two\n  ", " | \\\n"],
-    "PowerShell": [" | <# note #> ", " | # note\n", " |\n", " | <# a #>\n  <# b #> "],
+    "PowerShell": [" | <# note #> ", " | # note\n", " |\n", " | <# a #>\n  <# b #> ",
+                   " | <# a #><# b #> ", " | <# a #># b\n"],
 }
 
 
@@ -16532,8 +16534,11 @@ class TestAGapAfterAPipeIsRead:
     780c02, bash 3.2 and pwsh 7.6.5). In Bash a bare pipe-newline allowed too:
     the comment's newline is the gap. One join at each shell's scan pre-pass
     (`_splice_line_continuations`, `powershell_scan_pair`), so every reader
-    of either text reads the stage; the census over the corpus's pipe rows
-    found 1224 gap variants losing a verdict their twin had, and none after."""
+    of either text reads the stage. A one-off measurement, not a pin: a
+    census over the corpus's pipe rows, rewriting each live pipe with every
+    gap here, found 1224 variants losing a verdict their twin had, and none
+    after (2026-11-10; it rewrote top-level pipes only, so a program another
+    shell reads is DEF-3071's and DEF-3073's, below)."""
 
     @pytest.mark.parametrize("tool, twin, expect", _PIPE_GAP_TWINS)
     def test_the_one_line_twin_holds_its_verdict(self, tmp_path, tool, twin, expect):
@@ -16582,14 +16587,67 @@ class TestAGapAfterAPipeIsRead:
         ("a | <# c #> b", "a | b"),
         ("a |\n # c\n <# d #>\n b", "a | b"),
         ("a | b", "a | b"),
-        # glued after a block comment, an opener starts no token (the
-        # masker's rule), so the gap ends there
-        ("a | <# c #><# d #> b", "a | <# d #> b"),
+        # a comment glued to a block comment's close is one more comment on
+        # pwsh 5.1 (driven), though the masker opens none there
+        ("a | <# c #><# d #> b", "a | b"),
+        ("a | <# c #># d\n b", "a | b"),
+        # inside a string PowerShell re-parses, a gap that ends in it joins;
+        # one whose comment runs past the closing quote is left whole
+        ("iex 'a | <# c #> b'", "iex 'a | b'"),
+        ("iex 'a | # c'; b", "iex 'a | # c'; b"),
+        ("iex 'a | <# c'; b; 'd #>'", "iex 'a | <# c'; b; 'd #>'"),
     ])
     def test_the_powershell_join(self, cmd, joined):
         bp = _bash_patterns_module()
         raw, scan = bp.powershell_scan_pair(cmd)
         assert raw == joined and len(scan) == len(raw)
+
+    @pytest.mark.parametrize("cmd, expect", [
+        # the code review's BLOCK: a comment in a re-parsed string's gap ran
+        # past its closing quote, and the join swallowed the delete after it
+        ("iex 'Get-Date | # c'; Remove-Item C:\\ -Recurse -Force", "wall"),
+        ("Invoke-Expression 'Get-Date | #'; Remove-Item C:\\ -Recurse -Force", "wall"),
+        ("iex 'Get-Date | <# c'; Remove-Item C:\\ -Recurse -Force; 'x #>'", "wall"),
+        # a gap wholly inside the string is the program's own, and read
+        ("iex 'Get-ChildItem C:\\ -Recurse | <# c #> Remove-Item -Recurse -Force'", "wall"),
+    ])
+    def test_a_reparsed_strings_gap_ends_inside_it(self, tmp_path, cmd, expect):
+        assert _delete_verdict(run_guard_from("PowerShell", cmd, tmp_path, None)) == expect, cmd
+
+    def test_a_scan_the_masker_handed_back_raw_joins_nothing(self, tmp_path):
+        # past the masker's cap the scan is the raw text, where a quoted pipe
+        # and comment survive: joined, `| <# '` swallowed the delete (BLOCK)
+        bp = _bash_patterns_module()
+        cmd = ("Write-Output 'x | <# ' ; Remove-Item C:\\ -Recurse -Force ; Write-Output ' #>'"
+               + " " * (bp._ROLE_MAP_CAP + 1))
+        assert bp.powershell_scan_pair(cmd)[0] == cmd
+        assert _delete_verdict(run_guard_from("PowerShell", cmd, tmp_path, None)) == "wall"
+
+    @pytest.mark.parametrize("comment", [200, 1500])
+    def test_a_gap_across_the_bash_cap_is_read(self, tmp_path, comment):
+        # the code review's BLOCK: past 32 KiB, a pipe on the head's last
+        # line whose comment lines cross the cut was joined to its stage in
+        # the whole command while each half spliced on its own, and the cap's
+        # offsets (`_capped_whole`) put the stage in no one's reading
+        bp = _bash_patterns_module()
+        before = bp._BASH_COMMAND_HALF_CAP - 9 - comment // 2
+        head = "true\n" * (before // 5)
+        head += "#" * (before - len(head) - 1) + "\n"
+        cmd = (head + "echo x |\n#" + "c" * comment + "\nrm -rf *\n" + "true\n" * 9000)
+        assert len(cmd) > bp._BASH_COMMAND_CAP
+        assert _delete_verdict(run_guard_from("Bash", cmd, tmp_path, tmp_path)) == "wall"
+
+    @pytest.mark.parametrize("cmd", [
+        "bash -c 'find / -type f |\nxargs rm -rf'",
+        "bash -c 'find / -type f | # c\nxargs rm -rf'",
+        "eval 'find / -type f | # c\nxargs rm -rf'",
+        "bash <<'E'\nfind / -type f | # c\nxargs rm -rf\nE",
+    ])
+    def test_a_program_another_shell_reads_is_not_joined(self, tmp_path, cmd):
+        # DECLARED, DEF-3073: the splicer reads a quoted program and a heredoc
+        # body blanked, so a gap inside one is not joined (the one-line twin
+        # of each walls); the row's fix moves these to the wall
+        assert _delete_verdict(run_guard_from("Bash", cmd, tmp_path, None)) == "allow", cmd
 
 
 class TestShellOutReader:
