@@ -2448,9 +2448,6 @@ _TREE_SITE_DEBT = {
     "espalier/refresh_externals.py::run_bound_tests": (
         "DEF-5090: the engine cannot import tools/cc; the bound pins' pytest takes espalier/_spawn.py's "
         "tree-ending twin with the same row"),
-    "tools/cc/ledger_row.py::_run_guard": (
-        "DEF-5092: strike --guard's one-node pytest, at the head and at the base, through "
-        "check_ledger_probes' run_bounded rather than the tree-ending run_tree_bounded beside it"),
 }
 
 

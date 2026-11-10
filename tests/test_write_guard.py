@@ -9032,7 +9032,13 @@ class TestCatastrophicRmFlagOrderIndependent:
         assert memos == [
             # `_relief_applies` reads the command's text and nothing else: the
             # flag joins the bases beside it, in `_statement_bases`
-            "_nested_shell_programs_cached", "_relief_applies", "_removed_or_relocated_cached",
+            "_nested_shell_programs_cached",
+            # `_ps_reparse_answers` (DEF-3039) is keyed on the text, the
+            # lookback pattern and its window, and returns, by opener offset,
+            # whether a PowerShell literal span is re-parsed as a program --
+            # read by the masker from the text alone, never from a flag
+            "_ps_reparse_answers",
+            "_relief_applies", "_removed_or_relocated_cached",
             "_resolve_bash_discovered_heads",
             # `_statement_structure` is keyed on the text and the shell alone
             # and returns the text's quote spans and separator offsets -- a
@@ -13585,6 +13591,151 @@ class TestQuotedTargetSurvivesTheRoot:
         assert [_held_regexes(fn, loop, loop.iter.func.value.id) for loop in loops] == [
             ["_A_RE", "_B_RE"], ["_C_RE"], ["_D_RE"],
         ]
+
+
+class TestPowerShellLiteralSpanLookback:
+    """DEF-3039: the masker asked the 2048-byte reparse lookback for every
+    single-quoted span in every walk (seven a span through the two PowerShell
+    checks, measured), though ``_ps_blank_literal`` changes only command-position
+    characters: a literal span holding none is masked the same whether a
+    re-parser takes it or not. A 3200-word comma list of quoted words cost
+    3.0 s here on that lookback alone, near the 3.5 s judgment budget. The
+    double-quoted twin, ``_ps_expandable_is_reparsed``, already asks only when
+    the answer can change the mask; the single-quoted branch now does the same
+    (``_ps_literal_is_kept_live``), and the lookback answers once per text and
+    offset (``_ps_reparse_answers``)."""
+
+    @staticmethod
+    def _counting(monkeypatch):
+        import sys
+        sys.path.insert(0, str(HOOKS_DIR))
+        import _bash_patterns as bp
+        calls: list = []
+        real = bp._ps_span_is_reparsed
+        monkeypatch.setattr(
+            bp, "_ps_span_is_reparsed", lambda s, o: (calls.append(o), real(s, o))[1],
+        )
+        return bp, calls
+
+    def test_a_plain_literal_span_never_asks_the_lookback(self, monkeypatch):
+        bp, calls = self._counting(monkeypatch)
+        for cmd in (
+            "Write-Output " + ",".join(f"'w{k}'" for k in range(400)),
+            "iex 'Get-Date'",                       # an opener in front, nothing to blank
+            "Start-Process notepad -ArgumentList 'C:\\data\\a.txt'",
+            "Write-Output 'it''s'",                 # a doubled quote inside the span
+        ):
+            calls.clear()
+            assert bp.powershell_scan_text(cmd) == cmd, cmd
+            assert calls == [], (cmd, len(calls))
+
+    def test_a_literal_span_holding_syntax_still_asks_and_keeps_its_mask(self, monkeypatch):
+        """The gate skips only what cannot change: a span with a character the
+        literal blanker would blank still asks, and the answer still decides
+        whether it is blanked (inert data) or kept live (a re-parsed program)."""
+        bp, calls = self._counting(monkeypatch)
+        for raw, masked in (
+            ("iex 'Get-Date; Get-Item x'", "iex 'Get-Date; Get-Item x'"),
+            ("Write-Output 'Get-Date; Get-Item x'", "Write-Output 'Get-Date  Get-Item x'"),
+            ("Write-Output 'Copy (1).txt'", "Write-Output 'Copy  1 .txt'"),
+            ("iex @'\nGet-Date; Get-Item x\n'@", "iex @'\nGet-Date; Get-Item x\n'@"),
+            # a here-string body always holds its line breaks, which the
+            # literal blanker blanks, so it always asks
+            ("$doc = @'\na | b\n'@", "$doc = @' a   b '@"),
+            ("Write-Output @'\nplain words\n'@", "Write-Output @' plain words '@"),
+        ):
+            calls.clear()
+            assert bp.powershell_scan_text(raw) == masked, raw
+            assert len(calls) == 1, (raw, calls)
+
+    @staticmethod
+    def _counting_searches(monkeypatch):
+        import sys
+        sys.path.insert(0, str(HOOKS_DIR))
+        import _bash_patterns as bp
+        searches: list = []
+        real = bp._PS_REPARSED_SPAN_BEFORE
+
+        class _Counted:
+            def search(self, *a, **kw):
+                searches.append(a[2] if len(a) > 2 else kw.get("endpos"))
+                return real.search(*a, **kw)
+
+        monkeypatch.setattr(bp, "_PS_REPARSED_SPAN_BEFORE", _Counted())
+        bp._ps_reparse_answers.cache_clear()
+        return bp, searches
+
+    def test_a_span_that_must_ask_pays_the_lookback_once_across_walks(self, monkeypatch):
+        """The paren shape (an Explorer copy's ``'Copy (1).txt'``) holds a
+        character the literal blanker blanks, so the gate cannot skip it; one
+        judgment walks the same text seven times, and the answer is the
+        text's and the offset's alone, so it is searched once a span."""
+        bp, searches = self._counting_searches(monkeypatch)
+        cmd = "Write-Output " + ",".join(f"'Copy ({k}).txt'" for k in range(50))
+        first = bp._walk_powershell_spans(cmd)
+        assert len(searches) == 50
+        assert bp._walk_powershell_spans(cmd) == first
+        assert len(searches) == 50
+
+    def test_a_second_text_never_reads_the_first_texts_answers(self, monkeypatch):
+        """The memo is keyed by the text: the same opener offset in another
+        text is asked again, and the answers differ where the texts do."""
+        bp, searches = self._counting_searches(monkeypatch)
+        live, inert = "iex 'Get-Date; Get-Item x'", "iey 'Get-Date; Get-Item x'"
+        assert live.index("'") == inert.index("'")
+        assert bp.powershell_scan_text(live) == live
+        assert bp.powershell_scan_text(inert) == "iey 'Get-Date  Get-Item x'"
+        assert bp.powershell_scan_text(live) == live
+        assert len(set(searches)) == 1 and len(searches) == 2, searches
+
+    def test_the_memo_is_bounded_by_texts(self):
+        import sys
+        sys.path.insert(0, str(HOOKS_DIR))
+        import _bash_patterns as bp
+        bp._ps_reparse_answers.cache_clear()
+        for k in range(20):
+            bp.powershell_scan_text(f"iex 'Get-Date; Get-Item x{k}'")
+        assert bp._ps_reparse_answers.cache_info().currsize <= 8
+
+    def test_a_swapped_pattern_is_never_served_an_old_answer(self, monkeypatch):
+        """The memo is keyed on the pattern and the window too: an answer
+        cached under one pattern is not served under another (the review read
+        the stale answer both ways, the second masking a live program)."""
+        import re
+        import sys
+        sys.path.insert(0, str(HOOKS_DIR))
+        import _bash_patterns as bp
+        live = "iex 'Get-Date; Get-Item stale'"
+        assert bp.powershell_scan_text(live) == live
+        monkeypatch.setattr(bp, "_PS_REPARSED_SPAN_BEFORE", re.compile("zzz$"))
+        assert bp.powershell_scan_text(live) == "iex 'Get-Date  Get-Item stale'"
+        monkeypatch.undo()
+        assert bp.powershell_scan_text(live) == live
+
+    def test_the_gate_reads_exactly_what_the_literal_blanker_blanks(self):
+        """One source for two decisions: the gate skips a span holding none of
+        ``_PS_INERTABLE_SYNTAX``, which is sound only while the blanker changes
+        those characters and no other. A blanker widened to a new character
+        reds here before the gate can go stale on it (the failure-mode review)."""
+        import sys
+        sys.path.insert(0, str(HOOKS_DIR))
+        import _bash_patterns as bp
+        for ch in [chr(c) for c in range(128)] + [" ", " ", "“", "‘"]:
+            s = "a" + ch + "b"
+            out = list(s)
+            bp._ps_blank_literal(s, out, 0, len(s))
+            assert ("".join(out) != s) == (ch in bp._PS_INERTABLE_SYNTAX), repr(ch)
+
+    def test_a_reparsed_program_still_reads_as_one(self):
+        """The gate's False means "blanking changes nothing", never "not
+        re-parsed": the statement-start reader asks the lookback itself."""
+        import sys
+        sys.path.insert(0, str(HOOKS_DIR))
+        import _bash_patterns as bp
+        cmd = "powershell -Command 'Start-Process cmd'"
+        k = cmd.index("'")
+        assert bp._ps_span_is_reparsed(cmd, k) is True
+        assert bp._ps_literal_is_kept_live(cmd, k, k + 1, cmd.index("'", k + 1)) is False
 
 
 class TestPowerShellReparsedExpandableSpan:
