@@ -13289,15 +13289,45 @@ class TestATypographicQuoteClosesAPowerShellString:
         assert_hook_denied(_run_ps_guard(command, tmp_path),
                            contains_reason="Secret-path access blocked")
 
+    # A doubled escape is one quote of value, its second as typed (driven on
+    # PowerShell 5.1), so a Bash body behind one reads a typographic quote,
+    # text to Bash, and its statement runs. Folding the pair straight read
+    # it as a Bash quote around the read: each of these allowed, and each
+    # denied at the base (the failure-mode review drove them).
+    @pytest.mark.parametrize("command, reason", [
+        ("bash -c 'echo " + _RSQ * 2 + "; cat .env; echo " + _RSQ * 2 + "'", "Secret-path access blocked"),
+        ("bash -c 'echo '" + _RSQ + "; cat .env; echo '" + _RSQ + "'", "Secret-path access blocked"),
+        ('bash -c "echo ' + _RDQ * 2 + '; cat .env; echo ' + _RDQ * 2 + '"', "Secret-path access blocked"),
+        ('bash -c "echo "' + _RDQ + '; cat .env; echo "' + _RDQ + '"', "Secret-path access blocked"),
+        ("sh -c 'echo " + _RSQ * 2 + "; echo 1 > tools/cc/hooks/x.py; echo " + _RSQ * 2 + "'",
+         "protected harness zone blocked"),
+    ], ids=["single-typographic-pair", "single-mixed-pair", "double-typographic-pair",
+            "double-mixed-pair", "zone"])
+    def test_a_doubled_escape_keeps_its_value_for_the_program_it_carries(self, command, reason, tmp_path):
+        assert_hook_denied(_run_ps_guard(command, tmp_path), contains_reason=reason)
+
+    def test_a_subexpression_in_an_expandable_here_string_is_read(self, tmp_path):
+        """PowerShell runs a ``$( )`` inside ``@" "@`` (driven on 5.1), so its
+        quotes are folded as the double-quoted string's are; it allowed at the
+        lane's base, the straight twin denied."""
+        command = '$x = @"\n$(Set-Content ' + _LSQ + 'tools/cc/hooks/x.py' + _RSQ + ' 1)\n"@'
+        assert_hook_denied(_run_ps_guard(command, tmp_path),
+                           contains_reason="Write to protected harness zone blocked")
+
     @pytest.mark.parametrize("text, folded", [
         ("'it" + _RSQ + "'s'", "'it''s'"),
+        ("'it" + _RSQ * 2 + "s'", "'it" + _RSQ * 2 + "s'"),
+        ("'it'" + _RSQ + "s'", "'it" + _RSQ * 2 + "s'"),
+        ('"$(bash -c "echo ' + _RSQ + '; x")"', '"$(bash -c "echo ' + _RSQ + '; x")"'),
+        ('"$(gc ' + _LSQ + 'a' + _RSQ + ')"', '"$(gc ' + "'a'" + ')"'),
         ('"it' + _RSQ + 's"', '"it' + _RSQ + 's"'),
         ("@" + _LSQ + "\nit" + _RSQ + "s\n" + _RSQ + "@", "@'\nit" + _RSQ + "s\n'@"),
         ('bash -c "echo ' + _RSQ + '; x"', 'bash -c "echo ' + _RSQ + '; x"'),
         ("# it" + _RSQ + "s", "# it" + _RSQ + "s"),
         ("Write-Output " + _RSQ + "a", "Write-Output " + _RSQ + "a"),
-    ], ids=["doubled-escape", "value-in-double", "here-string-value", "bash-program",
-            "comment", "unreadable-as-typed"])
+    ], ids=["pair-straight-second", "pair-typographic", "pair-straight-then-typographic",
+            "subexpression-value", "subexpression-code",
+            "value-in-double", "here-string-value", "bash-program", "comment", "unreadable-as-typed"])
     def test_only_the_quotes_powershell_acts_on_are_folded(self, text, folded):
         sys.path.insert(0, str(HOOKS_DIR))
         import _bash_patterns

@@ -752,9 +752,11 @@ def _ps_blank_quoted_spans(text: str) -> "str | None":
     hold a quote. The backtick and the here-string are opaque to both gates
     before this is read. Each way the gate gives no relief and the
     quote-blind deny stands, so a plain `# note` after a test run is a
-    declared false deny. The PowerShell tool's command reaches here folded
-    (`_bash_patterns.fold_powershell_quotes`, at the dispatch); the
-    typographic test stands for a text that was not (DEF-2040)."""
+    declared false deny. The PowerShell tool's command reaches here with
+    the quotes PowerShell acts on folded (`_bash_patterns.fold_powershell_quotes`,
+    at the dispatch), so a typographic quote still here is a string's value,
+    or a text that was never folded; either way the gate gives no relief,
+    which the borrowed Bash grammar cannot be trusted past (DEF-2040)."""
     _load_the_pattern_path()
     if any(q in text for q in _bash_patterns.PS_TYPOGRAPHIC_QUOTES) or "--%" in text:
         return None
