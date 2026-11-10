@@ -4783,6 +4783,18 @@ def fold_powershell_quotes(command: str) -> str:
     """
     if command.isascii() or len(command) > _ROLE_MAP_CAP:
         return command
+    # A braced variable name holds its quotes as name (`${a’b}` binds a
+    # variable on 5.1), and the walk has no `${ }` reading, so a fold there
+    # paired two names' quotes around a live statement: `${a’b}; Get-Content
+    # .env; ${c’d}` allowed, where the base denied it (the code review drove
+    # it, on the hard tier too). Such a command keeps the base's reading.
+    i = command.find("${")
+    while i != -1:
+        stop = command.find("}", i + 2)
+        name = command[i:] if stop == -1 else command[i:stop + 1]
+        if any(q in name for q in PS_TYPOGRAPHIC_QUOTES):
+            return command
+        i = command.find("${", i + 2)
     full = command
     for typographic, straight in _PS_QUOTE_FOLD:
         if typographic in full:

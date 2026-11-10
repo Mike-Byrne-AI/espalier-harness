@@ -13231,9 +13231,7 @@ class TestATypographicQuoteClosesAPowerShellString:
         '"a' + _RDQ + '; b; ' + _LDQ + 'c"',
     ], ids=["straight-opener-typographic-close", "typographic-opener-straight-close", "double"])
     def test_the_scan_text_ends_a_string_where_a_typographic_quote_closes_it(self, text):
-        sys.path.insert(0, str(HOOKS_DIR))
-        import _bash_patterns
-        assert ";" in _bash_patterns.powershell_scan_text(text)
+        assert ";" in _bash_patterns_module().powershell_scan_text(text)
 
     @pytest.mark.parametrize("command", [
         "Write-Output 'a" + _RSQ + "; Get-Content .env; Write-Output " + _LSQ + "c'",
@@ -13306,6 +13304,25 @@ class TestATypographicQuoteClosesAPowerShellString:
     def test_a_doubled_escape_keeps_its_value_for_the_program_it_carries(self, command, reason, tmp_path):
         assert_hook_denied(_run_ps_guard(command, tmp_path), contains_reason=reason)
 
+    # A braced variable name holds its quotes as name (driven on 5.1), and the
+    # walk has no `${ }` reading, so such a command keeps the base's reading:
+    # a fold there paired two names' quotes around the statement (the code
+    # review drove the allow).
+    @pytest.mark.parametrize("command, reason", [
+        ("${a" + _RSQ + "b}; Get-Content .env; ${c" + _RSQ + "d}", "Secret-path access blocked"),
+        ("${a" + _RSQ + "b}; Set-Content tools/cc/hooks/x.py 1; ${c" + _RSQ + "d}",
+         "Write to protected harness zone blocked"),
+    ], ids=["secret", "zone"])
+    def test_a_braced_name_keeps_its_quotes(self, command, reason, tmp_path):
+        assert_hook_denied(_run_ps_guard(command, tmp_path), contains_reason=reason)
+
+    def test_a_test_run_of_a_smart_quoted_path_has_the_relief(self, tmp_path):
+        """The gate reads the folded command, so a test run's typographic-quoted
+        operand is read whole, as its straight twin is (the code review drove
+        it: denied at the lane's base)."""
+        command = '$env:ESPALIER_STOP_GATE="full"; pytest ' + _LDQ + "work/Claude Code/tests" + _RDQ
+        assert_hook_allowed(_run_ps_guard(command, tmp_path))
+
     def test_a_subexpression_in_an_expandable_here_string_is_read(self, tmp_path):
         """PowerShell runs a ``$( )`` inside ``@" "@`` (driven on 5.1), so its
         quotes are folded as the double-quoted string's are; it allowed at the
@@ -13329,9 +13346,7 @@ class TestATypographicQuoteClosesAPowerShellString:
             "subexpression-value", "subexpression-code",
             "value-in-double", "here-string-value", "bash-program", "comment", "unreadable-as-typed"])
     def test_only_the_quotes_powershell_acts_on_are_folded(self, text, folded):
-        sys.path.insert(0, str(HOOKS_DIR))
-        import _bash_patterns
-        assert _bash_patterns.fold_powershell_quotes(text) == folded
+        assert _bash_patterns_module().fold_powershell_quotes(text) == folded
 
     @pytest.mark.parametrize("command", [
         "Write-Output " + _LDQ + "it" + _RSQ + "s fine" + _RDQ,
