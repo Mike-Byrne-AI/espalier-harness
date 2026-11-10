@@ -12060,16 +12060,113 @@ def powershell_removal_is_below_a_scratch_root(
     ``quiet`` asks the speed bump's further question (2026-10-07): does
     every target also hold no work (`below_a_temp_root`), so the remove
     passes without the nudge, as `rm -rf /tmp/x` does on the Bash tool --
-    a checkout below a temp root still draws it."""
+    a checkout below a temp root still draws it.
+
+    A name bound to a temp variable is read through it in one shape alone
+    (`_ps_temp_bound_remove`, DEF-2055), asked only after the text as typed
+    is refused, so a call this rung already answers pays nothing for it."""
+    # A temp variable is read as the value this process inherits (DEF-2049)
+    # only where the command sets none: a value it sets is not that one, and
+    # this rung lifts a wall. Read on the text as typed, before any binding
+    # is followed.
+    inherited = not _ps_command_sets_a_temp_var(powershell_scan_pair(command)[0])
+    if _ps_removal_below_a_scratch_root(command, root, quiet=quiet, inherited=inherited):
+        return True
+    bound = _ps_temp_bound_remove(command)
+    return bound is not None and _ps_removal_below_a_scratch_root(
+        bound, root, quiet=quiet, inherited=inherited)
+
+
+#: DEF-2055: the one binding the scratch-root rung follows -- the command's
+#: first statement binds a plain name to exactly `$env:TEMP` or `$env:TMP`.
+#: Anchored at the start, so a call that opens any other way fails on its
+#: first characters.
+_PS_TEMP_BINDING_RE = re.compile(
+    r"[ \t]*\$([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*\$env:(?:TEMP|TMP)(?![A-Za-z0-9_:{])[ \t]*;[ \t]*",
+    re.IGNORECASE,
+)
+#: What the statement after that binding must not hold, read on it whole: a
+#: brace or `&` (a scope opener, or a call that runs code: a binding there is
+#: undone), a parenthesis (a grouped or `$(...)` argument evaluates before
+#: the cmdlet runs and can `Set-Variable` or `Remove-Variable` the name, air's
+#: verifier, 18c1a6), a second statement, a pipe, a backtick (an escape or a
+#: line continuation) and a comment.
+_PS_TEMP_BINDING_REFUSED = frozenset("{}()&;|`#\r\n")
+#: The remove verbs the statement after the binding may open with, so it is
+#: the remove itself (no dot-source, no other command between the binding
+#: and its use).
+_PS_TEMP_BINDING_VERBS = frozenset({"remove-item", "ri", "rm", "rmdir", "rd", "del", "erase"})
+#: Every name PowerShell predefines (air's 18c1a6): an assignment to a
+#: read-only, constant or type-constrained one fails or is discarded without
+#: stopping the next statement, so the name keeps another value. The first
+#: block is a fresh Windows PowerShell 5.1 host's `Get-Variable` (50 names,
+#: read on win 2026-11-10); the second is pwsh 7's additions and the
+#: automatic variables a session sets on demand, from the about_Automatic_
+#: Variables and about_Preference_Variables lists (not read live: no pwsh on
+#: that host). Lowercase; PowerShell's names are case-insensitive.
+_PS_PREDEFINED_VARIABLES = frozenset({
+    "$", "?", "^", "args", "confirmpreference", "consolefilename", "debugpreference",
+    "error", "erroractionpreference", "errorview", "executioncontext", "false",
+    "formatenumerationlimit", "home", "host", "informationpreference", "input",
+    "maximumaliascount", "maximumdrivecount", "maximumerrorcount", "maximumfunctioncount",
+    "maximumhistorycount", "maximumvariablecount", "myinvocation", "nestedpromptlevel",
+    "null", "outputencoding", "pid", "profile", "progresspreference", "psboundparameters",
+    "pscommandpath", "psculture", "psdefaultparametervalues", "psedition", "psemailserver",
+    "pshome", "psscriptroot", "pssessionapplicationname", "pssessionconfigurationname",
+    "pssessionoption", "psuiculture", "psversiontable", "pwd", "shellid", "stacktrace",
+    "true", "verbosepreference", "warningpreference", "whatifpreference",
+} | {
+    "_", "psitem", "this", "matches", "lastexitcode", "foreach", "switch", "sender",
+    "event", "eventargs", "eventsubscriber", "pscmdlet", "pssenderinfo", "psdebugcontext",
+    "iscoreclr", "islinux", "ismacos", "iswindows", "enabledexperimentalfeatures",
+    "psnativecommandargumentpassing", "psnativecommanduseerroractionpreference", "psstyle",
+    "ofs", "transcript", "psmoduleautoloadingpreference", "logcommandhealthevent",
+    "logcommandlifecycleevent", "logenginehealthevent", "logenginelifecycleevent",
+    "logproviderhealthevent", "logproviderlifecycleevent", "psgetapikey",
+})
+
+
+def _ps_temp_bound_remove(command: str) -> str | None:
+    """The command with its one temp binding followed (the PowerShell
+    pre-pass, `_expand_simple_ps_var_assignments`), where its shape is one
+    no binding can be undone in, else ``None`` (DEF-2055).
+
+    The shape: `$name = $env:TEMP;` (or `$env:TMP`) as the first statement,
+    then one remove statement and nothing else (`_PS_TEMP_BINDING_VERBS`),
+    holding none of `_PS_TEMP_BINDING_REFUSED`, ASCII only; the name is no
+    variable PowerShell predefines (`_PS_PREDEFINED_VARIABLES`). Soundness
+    rests on the refusals: with no scope opener, call operator, dot-source,
+    grouped argument or second statement, nothing runs between the binding
+    and the remove's arguments that can rebind or unbind the name. Anything
+    else keeps the wall: a binding with a tail, work between the binding and
+    the remove, a remove in `try`/`finally` (DEF-2055's row, still open for
+    those). The pre-pass is asked only once the shape holds, so the other
+    seven readers of it pay nothing here."""
+    if not command.isascii():
+        return None
+    m = _PS_TEMP_BINDING_RE.match(command)
+    if m is None or m.group(1).lower() in _PS_PREDEFINED_VARIABLES:
+        return None
+    rest = command[m.end():]
+    if not _PS_TEMP_BINDING_REFUSED.isdisjoint(rest):
+        return None
+    words = rest.split(None, 1)
+    if not words or words[0].lower() not in _PS_TEMP_BINDING_VERBS:
+        return None
+    expanded = _expand_simple_ps_var_assignments(command)
+    return expanded if expanded != command else None
+
+
+def _ps_removal_below_a_scratch_root(
+    command: str, root: str | None, *, quiet: bool, inherited: bool,
+) -> bool:
+    """`powershell_removal_is_below_a_scratch_root`'s read of *command* as
+    given; ``inherited`` is decided there, on the text as typed."""
     raw, scan = powershell_scan_pair(command)
     invocations = list(_PS_REMOVE_ITEM_RE.finditer(scan))
     if not invocations:
         return False
     asked = 0
-    # A temp variable is read as the value this process inherits (DEF-2049)
-    # only where the command sets none: a value it sets is not that one, and
-    # this rung lifts a wall
-    inherited = not _ps_command_sets_a_temp_var(raw)
     for m in invocations:
         args = raw[m.start("args"):m.end("args")]
         tokens = _ps_removal_target_tokens(

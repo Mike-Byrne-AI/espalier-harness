@@ -10654,21 +10654,96 @@ class TestAScratchRootItselfIsTheWall:
         self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
         assert not self._walls(command, tool), command
 
-    def test_a_forced_remove_below_a_bound_variable_keeps_the_wall(self, monkeypatch):
-        """A gap, filed as DEF-2055 (an over-refusal with a fix shape: a
-        scope model for the PowerShell pre-pass), and the forced-remove
-        sentence in docs/HOOKS.md (a variable stays the wall there): this
-        row pins today's wall until that lane. The forced PowerShell remove's
-        rung that lifts the wall
-        below a scratch root reads the command as typed, never through the
-        binding pre-pass, which models no
-        PowerShell scope (a name bound inside `& { }` is unset after it, so
-        `$d\\x` names `\\x` at the drive root). So a forced remove below a
-        name bound to `$env:TEMP` keeps the wall for an unreadable target,
-        an over-refusal: spell `$env:TEMP\\x` in place."""
+    #: A forced remove below a name bound to a temp variable, in the one
+    #: shape the scratch-root rung follows (DEF-2055): bare and quoted tails,
+    #: either separator, `$env:TMP`, no blanks around the `=` and `;`, a
+    #: lowercase variable and a remove alias.
+    BOUND_FORCED_BELOW = [
+        "$d = $env:TEMP; " + RI + "$d\\x",
+        "$d=$env:TMP;" + RI + "$d/x",
+        "$d = $env:TEMP; " + RI + '"$d\\x"',
+        "$work = $env:temp; ri -r -fo $work\\job",
+    ]
+
+    @pytest.mark.parametrize("command", BOUND_FORCED_BELOW, ids=["bare", "tmp-no-blanks", "quoted", "alias"])
+    def test_a_forced_remove_below_a_bound_temp_name_draws_the_in_place_nudge(self, command, monkeypatch):
+        """DEF-2055: the rung that lifts the forced remove's wall below a
+        scratch root read the text as typed, so `$d = $env:TEMP; Remove-Item
+        -Recurse -Force $d\\x` walled as unreadable where `$env:TEMP\\x` spelled
+        in place drew the one nudge. It now follows that binding in the one
+        shape nothing can undo it in (`_ps_temp_bound_remove`), and the
+        speed bump asks the same rung plain and quiet, so the bound spelling
+        draws the in-place spelling's one nudge: the rung says yes, its
+        quiet question says no, for both."""
+        import _bash_patterns as bp
+
         self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
-        assert self._walls("$d = $env:TEMP; " + self.RI + "$d\\x", "PowerShell")
-        assert not self._walls(self.RI + "$env:TEMP\\x", "PowerShell")
+        assert not self._walls(command, "PowerShell"), command
+        root = str(Path.home() / "scratch-root-no-such-repo")
+        in_place = self.RI + "$env:TEMP\\x"
+        for spelling in (in_place, command):
+            assert bp.powershell_removal_is_below_a_scratch_root(spelling, root), spelling
+            assert not bp.powershell_removal_is_below_a_scratch_root(spelling, root, quiet=True), spelling
+
+    #: Spellings where the name may not hold `$env:TEMP` when the remove
+    #: reads it, or that the rung is not asked to read through (air's 18c1a6
+    #: and the row's rewrite). The first three, the predefined pair, the
+    #: child process and the non-ASCII row each red with their refusal alone
+    #: removed (`&`, `;`, `|`, the predefined set, the verb check, the ASCII
+    #: check; driven 2026-11-10). The rest pin behaviour another reader
+    #: also refuses: a grouped argument's inner literal surfaces as a target
+    #: the rung cannot read, and the pre-pass leaves a backtick-escaped name.
+    BOUND_FORCED_KEPT = [
+        ("a-background-job", "$d = $env:TEMP; " + RI + "$d\\x &"),
+        ("a-statement-between-removes", "$d = $env:TEMP; " + RI + "$d\\y; Set-Variable d C:/; " + RI + "$d\\x"),
+        ("an-or-chain", "$d = $env:TEMP; " + RI + "$d\\y || Set-Variable d C:/ || " + RI + "$d\\x"),
+        ("a-grouped-argument", "$d = $env:TEMP; " + RI + "(Remove-Variable d) $d\\x"),
+        ("a-subexpression", "$d = $env:TEMP; " + RI + "$(Set-Variable d C:/) $d\\x"),
+        ("a-predefined-name", "$HOME = $env:TEMP; " + RI + "$HOME\\x"),
+        ("a-preference-name", "$ErrorActionPreference = $env:TEMP; " + RI + "$ErrorActionPreference\\x"),
+        ("a-scriptblock", "& { $d = $env:TEMP }; " + RI + "$d\\x"),
+        ("a-statement-between", "$d = $env:TEMP; Set-Variable d C:/; " + RI + "$d\\x"),
+        ("a-pipe", "$d = $env:TEMP; Set-Variable d C:/ -PassThru | " + RI + "$d\\x"),
+        ("a-try-block", "$d = $env:TEMP; try { " + RI + "$d\\x } finally { }"),
+        ("a-backtick", "$d = $env:TEMP; " + RI + "`$d\\x"),
+        ("a-comment", "$d = $env:TEMP; " + RI + "$d\\x #"),
+        ("a-binding-not-first", "Set-Location C:/; $d = $env:TEMP; " + RI + "$d\\x"),
+        ("a-binding-with-a-tail", '$d = "$env:TEMP\\job"; ' + RI + "$d\\x"),
+        ("a-child-process", "$d = $env:TEMP; powershell -c '" + RI + "$d\\x'"),
+        ("a-child-process-dq", '$d = $env:TEMP; powershell -c "' + RI + '$d\\x"'),
+        ("the-bound-root-itself", "$d = $env:TEMP; " + RI + "$d"),
+        ("non-ascii", "$d = $env:TEMP; " + RI + "$d\\x\u2003"),
+    ]
+
+    @pytest.mark.parametrize("command", [c for _, c in BOUND_FORCED_KEPT], ids=[i for i, _ in BOUND_FORCED_KEPT])
+    def test_a_bound_temp_name_the_remove_may_not_read_keeps_the_wall(self, command, monkeypatch):
+        """DEF-2055's gate admits one shape; every other bound spelling
+        keeps the wall, the row's remaining over-refusal for the shapes the
+        gate cannot prove (spell `$env:TEMP\\x` in place)."""
+        import _bash_patterns as bp
+
+        self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
+        root = str(Path.home() / "scratch-root-no-such-repo")
+        assert not bp.powershell_removal_is_below_a_scratch_root(command, root), command
+
+    def test_every_variable_a_fresh_host_lists_is_refused(self):
+        """The 50 names a fresh Windows PowerShell 5.1 host's `Get-Variable`
+        listed (read 2026-11-10) are all on `_PS_PREDEFINED_VARIABLES`, so
+        trimming the set reds here, not only on the two rows above."""
+        import _bash_patterns as bp
+
+        listed = (
+            "$,?,^,args,ConfirmPreference,ConsoleFileName,DebugPreference,Error,ErrorActionPreference,"
+            "ErrorView,ExecutionContext,false,FormatEnumerationLimit,HOME,Host,InformationPreference,input,"
+            "MaximumAliasCount,MaximumDriveCount,MaximumErrorCount,MaximumFunctionCount,MaximumHistoryCount,"
+            "MaximumVariableCount,MyInvocation,NestedPromptLevel,null,OutputEncoding,PID,PROFILE,"
+            "ProgressPreference,PSBoundParameters,PSCommandPath,PSCulture,PSDefaultParameterValues,PSEdition,"
+            "PSEmailServer,PSHOME,PSScriptRoot,PSSessionApplicationName,PSSessionConfigurationName,"
+            "PSSessionOption,PSUICulture,PSVersionTable,PWD,ShellId,StackTrace,true,VerbosePreference,"
+            "WarningPreference,WhatIfPreference"
+        ).split(",")
+        assert len(listed) == 50
+        assert {n.lower() for n in listed} <= bp._PS_PREDEFINED_VARIABLES
 
     @pytest.mark.parametrize("tool, command", [
         ("Bash", 'D="$TMPDIR"x; ' + RM + '"$D"'),

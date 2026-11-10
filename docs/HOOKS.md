@@ -1304,9 +1304,15 @@ first; the dangerous-command catch is a secondary slip-catcher):
    module that could, so `-Force $env:TEMP\x` steps off the wall as the
    literal path below the same root does, and draws the one nudge a
    variable draws (2026-11-07; until then it walled as unreadable); a
-   comma array of such paths stays the wall, and so does a path below a
-   name bound to one (`$d = $env:TEMP`, then `-Force $d\x`): this rung
-   reads the text as typed, never through a binding, so `$d` is a variable
+   comma array of such paths stays the wall. A path below a name bound to
+   one is read through the binding in one shape alone: `$d = $env:TEMP;`
+   (or `$env:TMP`) as the first statement, then the one remove statement,
+   with no brace, parenthesis, `&`, pipe, backtick, comment or further
+   statement, and a name PowerShell does not predefine, so nothing can
+   rebind or unbind the name before the remove reads it; `-Force $d\x`
+   then draws the in-place spelling's one nudge (2026-11-10).
+   Any other bound spelling stays the wall: a binding with a tail, work
+   between the binding and the remove, a remove inside `try`/`finally`
    (spell `$env:TEMP\x` in place).
    A forced remove of several targets is judged element by element, each
    by the rule it meets (on the roster, plainly relative, or a literal path
