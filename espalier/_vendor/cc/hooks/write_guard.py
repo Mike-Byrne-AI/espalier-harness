@@ -2689,14 +2689,20 @@ _LONE_DELETE_FLAGS = frozenset({"-force", "-path", "-literalpath", "-confirm", "
 #: separator, a drive or provider colon. Read on the words left once
 #: `-Confirm:$false`, the one allowlisted word holding two of them, is taken
 #: out whole. A non-ASCII character ends it too (a dash PowerShell reads as
-#: one).
+#: one). A backslash is not on it: PowerShell's escape is the backtick, and on
+#: Windows a backslash in a bare word is a path separator (driven on 5.1),
+#: which the reader folds to `/` as the zone check does on every host, so
+#: `tools\cc` is read as `tools/cc` and a rooted `\x` or a UNC `\\server` as
+#: the absolute spelling it is (DEF-2068). pwsh on POSIX is not driven: where
+#: it reads the backslash as a name character, the entry it names is
+#: `tools\cc` itself, which no zone is, so the relief spares nothing there.
 #: Its sibling with the same "nothing runs between" job is
 #: `_bash_patterns._PS_TEMP_BINDING_REFUSED` (DEF-2055's binding gate). The two
 #: cannot be one object: `_bash_patterns` imports on first use, after this
-#: module-level set is built, and the gate must admit the `$`, `\` and `:` a
+#: module-level set is built, and the gate must admit the `$` and `:` a
 #: binding spells. Their shared core is pinned in
 #: `tests/test_write_guard.py::TestAScratchRootItselfIsTheWall`.
-_LONE_DELETE_STOPS = frozenset(";&|`{}()[]@'\"<>*?~#!$\\:")
+_LONE_DELETE_STOPS = frozenset(";&|`{}()[]@'\"<>*?~#!$:")
 #: The whitespace Python's ``split`` breaks on and a statement cannot hold
 #: alone: a line break, and the separators the shell does not split on.
 #: Read on the whole command.
@@ -2717,7 +2723,11 @@ def _a_lone_file_delete(command: str, raw: str, at: "Path | None", root: Path, r
       definition or expansion, so no redefined verb or default-parameter
       table can change what runs (the host loads no profile); ASCII only;
     * every flag is on ``_LONE_DELETE_FLAGS`` (`-Confirm:$false` read as one
-      whole word), and the one operand is ``raw`` as spelled, relative;
+      whole word), and the one operand is ``raw`` as spelled, relative, a
+      backslash read as `/` (DEF-2068: a separator on Windows, never
+      PowerShell's escape; `Remove-Item tools\\cc` kept 5.1's has-children
+      refusal as the forward-slash spelling does, driven 2026-11-10; pwsh
+      on POSIX not driven, see ``_LONE_DELETE_STOPS``);
     * the operand, joined to the directory the command runs in and read
       with lstat, is a real directory holding an entry, and the path the
       zone check resolved (``resolved``), so the two reads name one
@@ -2734,7 +2744,9 @@ def _a_lone_file_delete(command: str, raw: str, at: "Path | None", root: Path, r
     non-recursive, and main's alias-proof deny stands there."""
     if not command.isascii() or not _LONE_DELETE_BREAKS.isdisjoint(command.strip(" \t")):
         return False
-    words = [w for w in command.split() if w.lower() != "-confirm:$false"]
+    # The separator fold first, so the rooted, UNC and climbing spellings
+    # below are refused in either form (DEF-2068).
+    words = [w.replace("\\", "/") for w in command.split() if w.lower() != "-confirm:$false"]
     if not _LONE_DELETE_STOPS.isdisjoint("".join(words)):
         return False
     if not words or words[0].lower() not in _LONE_DELETE_VERBS:
@@ -2746,9 +2758,10 @@ def _a_lone_file_delete(command: str, raw: str, at: "Path | None", root: Path, r
         if word.startswith(("-", "/")) or ".." in word.split("/"):
             return False
         operands.append(word)
-    if operands != [raw]:
+    spelled = raw.replace("\\", "/")
+    if operands != [spelled]:
         return False
-    path = Path(at or root) / raw
+    path = Path(at or root) / spelled
     try:
         st = os.lstat(path)
         if not stat.S_ISDIR(st.st_mode) or getattr(st, "st_file_attributes", 0) & _REPARSE_POINT:
@@ -3092,6 +3105,26 @@ def _bash_dangerous_reason_here(
             # a command position of its own, which is what the raw scan behind
             # an off-roster head never gave a one-statement program.
             for program in _bash_patterns._shell_out_program_bodies(spliced, pair):
+                reason = _bash_dangerous_reason(program, root, _depth + 1, cwd=cwd)
+                if reason:
+                    return reason
+            # A POSIX shell's `-c` program (DEF-3068): the same records one
+            # level down. The exec-quote command position opens only after a
+            # bare `-c`, so behind a switch or cluster (`bash -lc '...'`, `sh
+            # -e -c '...'`, `bash -c -- '...'`) the outer scan never read the
+            # program's delete, and every record of this tier was a plain
+            # allow there while the bare spelling walled. The bare spelling
+            # is left out: the outer scan reads it in place, from its own
+            # statement's directory, and read here as well it walled `cd sub
+            # && bash -c 'rm -rf .'`, which nudges (DEF-853's declared row).
+            # Only at the top: inside another shell's program every program
+            # is judged as another shell's already, and an inner bare one
+            # left out there met no tier (the failure-mode review).
+            c_programs = (
+                _bash_patterns._posix_shell_c_programs_unread_in_place(spliced, pair)
+                if _depth == 0 else _bash_patterns._posix_shell_c_bodies(spliced, pair)
+            )
+            for program in c_programs:
                 reason = _bash_dangerous_reason(program, root, _depth + 1, cwd=cwd)
                 if reason:
                     return reason
