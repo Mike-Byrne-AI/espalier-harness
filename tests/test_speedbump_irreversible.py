@@ -610,7 +610,6 @@ class TestCpRmrf:
         "ls sub/*.tmp | xargs rm -f",                          # a bounded wildcard root narrows
         "find sub | grep x | xargs rm -rf",                    # DECLARED: a stage between
         "find sub |\nxargs rm -rf",                            # DECLARED: a Bash-tool joiner never crosses a newline
-        "echo sub/x | xargs rm -rf",                           # DECLARED: a single stdin path
         "find sub | xargs cat",
         "echo 'find sub | xargs rm -rf'",
         # DEF-831: the version-control listing -- a roster root, a bounded
@@ -621,6 +620,65 @@ class TestCpRmrf:
         "echo 'git ls-files sub | xargs rm -rf'",
     ])
     def test_silent_on_a_roster_or_narrowed_enumerator_into_the_carrier_or_a_declared_limit(self, tmp_path, cmd):
+        assert not _fires(_speedbump._pred_rmrf, cmd, tmp_path)
+
+    # ── DEF-3063: a word echoed or printed into a recursing xargs remove is
+    # that remove's operand on stdin, so the carrier takes its direct twin's
+    # verdict wherever it sits (`_bash_patterns.carrier_fed_remove_twins`).
+    # `echo sub/x | xargs rm -rf` sat in the silent list above as DECLARED
+    # (a single stdin path) while `rm -rf sub/x` asked ──
+
+    @pytest.mark.parametrize("carrier,twin,asks", [
+        ("echo sub/x | xargs rm -rf", "rm -rf sub/x", True),
+        ('echo "$D" | xargs rm -rf', 'rm -rf "$D"', True),
+        ('printf "%s\\n" "$D" | xargs rm -rf', 'rm -rf "$D"', True),
+        ('echo -n "$D" | xargs rm -r', 'rm -r "$D"', True),
+        ('echo "$D" | xargs -0 sudo rm -rf --', 'sudo rm -rf -- "$D"', True),
+        ('echo "$D" build | xargs rm -rf', 'rm -rf "$D" build', True),
+        ("echo 'a b' | xargs rm -rf", "rm -rf 'a b'", True),
+        ('/bin/echo "$D" | xargs /bin/rm -rf', '/bin/rm -rf "$D"', True),
+        ('true && echo "$D" | xargs rm -rf', 'true && rm -rf "$D"', True),
+        ('if x; then echo "$D" | xargs rm -rf; fi', 'if x; then rm -rf "$D"; fi', True),
+        # loops no opener reads: a word list beside a substitution, a stage
+        # before the loop, a file fed at the tail (each drew nothing)
+        ('for f in * $(ls); do echo "$f" | xargs rm -rf; done',
+         'for f in * $(ls); do rm -rf "$f"; done', True),
+        ('find . | sort | while read f; do echo "$f" | xargs rm -rf; done',
+         'find . | sort | while read f; do rm -rf "$f"; done', True),
+        ('while read f; do echo "$f" | xargs rm -rf; done < files.txt',
+         'while read f; do rm -rf "$f"; done < files.txt', True),
+        # the twin's silence: the roster, echo's and printf's own switches and
+        # format, a remove that does not recurse, a temp directory's binding
+        ("echo build | xargs rm -rf", "rm -rf build", False),
+        ("echo -n -e build | xargs rm -rf", "rm -rf build", False),
+        ('printf -- "%s" build | xargs rm -rf', "rm -rf build", False),
+        ('echo "$D" | xargs rm -f', 'rm -f "$D"', False),
+        ('d=$(mktemp -d); echo "$d" | xargs rm -rf', 'd=$(mktemp -d); rm -rf "$d"', False),
+    ])
+    def test_a_carrier_fed_remove_takes_its_direct_twins_verdict(self, tmp_path, carrier, twin, asks):
+        assert _fires(_speedbump._pred_rmrf, twin, tmp_path) is asks, twin
+        assert _fires(_speedbump._pred_rmrf, carrier, tmp_path) is asks, carrier
+
+    @pytest.mark.parametrize("cmd", [
+        # a mention, not a command: quoted, a heredoc body, a comment
+        'git commit -m "echo $D | xargs rm -rf"',
+        "echo 'echo $D | xargs rm -rf'",
+        "cat <<'EOF'\necho $D | xargs rm -rf\nEOF",
+        "# echo $D | xargs rm -rf",
+        # not a remove: a move, and a remove the carrier only prints
+        'echo "$D" | xargs mv -t dest', 'echo "$D" | xargs echo rm -rf',
+        # a loop an opener reads is that opener's: a roster word list and a
+        # narrowed head stay silent (DECLARED: their loop-spelled twins
+        # `rm -rf "$f"` ask, the rm tier reading the bare variable)
+        'for f in build dist; do echo "$f" | xargs rm -rf; done',
+        "find . -name '*.pyc' | while read f; do echo \"$f\" | xargs rm -rf; done",
+        # DECLARED, the carrier's own limits: a stage between the emit and
+        # xargs (stdin is no longer the word), and the pipe across a line
+        # break (`_XARGS_CARRIER_TAIL` keeps the pipe on the line)
+        'echo "$D" | tr a b | xargs rm -rf',
+        'echo "$D" |\nxargs rm -rf',
+    ])
+    def test_a_carrier_fed_remove_is_silent_on_a_mention_a_move_a_read_loop_or_a_declared_limit(self, tmp_path, cmd):
         assert not _fires(_speedbump._pred_rmrf, cmd, tmp_path)
 
     @pytest.mark.parametrize("cmd", [
@@ -2771,15 +2829,6 @@ class TestCommandPositionClassClose:
             "INNER-LANGUAGE: Ruby `FileUtils.rm`/`mv` share their spelling with the "
             "shell verbs; the body is a program the anchored `ruby -e` / stdin "
             "openers selected (DEF-795).",
-        # ── DEF-3063, 2026-11-09: the loop body read without its head, for the
-        # soft tier's carrier-fed nudge. Its opener is the reserved `do` behind
-        # a separator, not `_CMD_POS`: composing the anchor before it would
-        # demand a command where the grammar has the `;`. ──
-        "_bash_patterns._LOOP_BODY_RE":
-            "SELF-ANCHORED on the reserved `do` behind `;` or a line break "
-            "(`_DO_BODY_FROM_SEPARATOR`; its carrier word keeps the anchor's verb prefix), "
-            "searched on the masked scan behind both carrier witnesses, so a quoted "
-            "mention reads nothing; a false read costs a nudge, never a wall (DEF-3063).",
         # ── DEF-802, 2026-09-15: a GATE, not a matcher. It names the delete
         # verbs of both shells only to decide whether the removal snapshot arm
         # walks the text at all; the operands come from the anchored
@@ -2918,12 +2967,6 @@ class TestCommandPositionClassClose:
             "TOKENIZER -- cuts the word-list span the anchored _FOR_WORDS_REMOVE_RE "
             "selected into bash words, on the scan span with pos/endpos; never runs "
             "over a command (DEF-837).",
-        "_bash_patterns._LOOP_BODY_RE":
-            "SELF-ANCHORED -- `_DO_BODY_FROM_SEPARATOR`: the `do` keyword behind `;` or a "
-            "line break, where bash reserves it, and the body's carrier word under "
-            "the anchor's verb prefix (`_XARGS_WORD`); searched on the masked scan "
-            "behind both carrier witnesses, so a quoted loop reads nothing "
-            "(DEF-3063, the soft tier's carrier-fed body).",
         "_bash_patterns._FIND_TYPE_F_RE":
             "FLAG inside the enumerator span `_PIPED_REMOVE_RE` (anchored) selected: "
             "the files-only walk (DEF-826).",

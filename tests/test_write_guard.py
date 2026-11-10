@@ -3874,23 +3874,27 @@ class TestCatastrophicLoopCarrier:
         # without the stage walls
         ('find . | sort | while read f; do echo "$f" | xargs rm -rf; done', "bump"),
         ('find . | while read f; do echo "$f" | xargs rm -rf; done', "wall"),
-        # DEF-3063's class: wherever the direct twin (`rm -rf "$f"` in the
-        # body) draws the variable operand's nudge, the carrier-fed body
-        # draws it too -- every loop shape no opener reads, and a narrowed
-        # head the opener reads and leaves alone; each drew nothing on main
+        # DEF-3063's class: the soft tier reads the word a carrier is fed as
+        # its recursive remove's operand, so in every loop no opener reads
+        # the carrier-fed body draws the direct twin's (`rm -rf "$f"`)
+        # nudge; each drew nothing on main
         ('find . |\n  while read f; do echo "$f" | xargs rm -rf; done', "bump"),
         ('while read f; do echo "$f" | xargs rm -rf; done < files.txt', "bump"),
         ('for f in sub/a $(ls sub); do echo "$f" | xargs rm -rf; done', "bump"),
         ('find sub | sort | while read f; do echo "$f" | xargs rm -rf; done', "bump"),
         ('find build | sort | while read f; do echo "$f" | xargs rm -rf; done', "bump"),
-        ("find . -name '*.pyc' | while read f; do echo \"$f\" | xargs rm -rf; done", "bump"),
         ("find . -name '*.pyc' | sort | while read f; do echo \"$f\" | xargs rm -rf; done", "bump"),
         ('find . | sort | while read f; do printf "%s\\n" "$f" | xargs rm -rf; done', "bump"),
         ('find . | sort | while read f; do echo "$f" | xargs -r rm -r; done', "bump"),
         # ... and stays silent where its twin does: a remove that does not
-        # recurse, and a body that emits a fixed word rather than the item
+        # recurse, and a body that emits a fixed roster word
         ('for f in * $(ls); do echo "$f" | xargs rm -f; done', "allow"),
         ('find . | sort | while read f; do echo build | xargs rm -rf; done', "allow"),
+        # a loop an opener reads is the opener's: its narrowed or roster head
+        # stays silent (DECLARED: the loop-spelled twin `rm -rf "$f"` asks,
+        # the rm tier reading the bare variable; air's ruling 62d114)
+        ("find . -name '*.pyc' | while read f; do echo \"$f\" | xargs rm -rf; done", "allow"),
+        ('for f in build dist; do echo "$f" | xargs rm -rf; done', "allow"),
     ])
     def test_through_the_hook_loop(self, tmp_path, cmd, expect):
         """The wiring, not only the classifier (the DEF-498 lesson)."""
@@ -9071,6 +9075,10 @@ class TestCatastrophicRmFlagOrderIndependent:
         bp = self._bp()
         memos = sorted(n for n, o in vars(bp).items() if hasattr(o, "cache_info"))
         assert memos == [
+            # `_carrier_fed_remove_re` (DEF-3063) takes no argument and returns
+            # a compiled pattern, compiled on first use: no key a flag could
+            # be missing from, and no verdict
+            "_carrier_fed_remove_re",
             # `_relief_applies` reads the command's text and nothing else: the
             # flag joins the bases beside it, in `_statement_bases`
             "_nested_shell_programs_cached", "_relief_applies", "_removed_or_relocated_cached",
@@ -14925,6 +14933,7 @@ class TestEverySpanReadDecidesTheQuotedOperandCut:
         ("_bash_loop_reading", "_named_span", "verb"): "the remove verb",
         ("_bash_loop_reading", "_named_span", "vars"): "the loop variable names",
         ("files_only_removed_operands", "_named_span", "verb"): "the word-list loop's remove verb",
+        ("carrier_fed_remove_twins", "_named_span", "verb"): "the carrier's remove verb (DEF-3063)",
         ("_loop_head_reading", "_named_span", "head"): "the enumerator head",
         ("_directory_chain", "raw_span", "1"): "the quoted cd target, read by offset (the wrapper-closer lane)",
         ("_ps_dotnet_sweeps", "raw_span", "2"): ".NET call arguments, not a shell span",

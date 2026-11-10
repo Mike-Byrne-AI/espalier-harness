@@ -1488,11 +1488,16 @@ first; the dangerous-command catch is a secondary slip-catcher):
    `tests/test_write_guard.py::TestCatastrophicEnumeratorCarrier::test_classifier_matrix_carrier`
    and, through the hook,
    `tests/test_write_guard.py::TestCatastrophicEnumeratorCarrier::test_through_the_hook_carrier`.
-   The echoed path stays outside this wall inside a loop body too: there a
-   variable echoed into a recursing `xargs` remove (`echo "$f" | xargs rm
-   -rf`) draws the soft tier's nudge, as the direct remove of the same
-   variable does (the loop carrier, below), and the wall reads the loop
-   from its head, not from the echo.
+   The echoed path is outside this wall, not outside the nudge: the soft
+   tier reads a word echoed or printed into a recursing `xargs` remove as
+   that remove's operand, so `echo "$D" | xargs rm -rf` draws what its
+   direct twin `rm -rf "$D"` draws (the nudge for a variable or a source
+   directory, silence for a roster word or a temp directory), wherever it
+   sits -- the top level, a chain, an `if`, a loop body no loop head reads
+   (until 2026-11-09 it drew nothing anywhere). Inside a loop a loop head
+   reads, the head's verdict stands (below). A stage between the echo and
+   `xargs`, and the pipe across a line break, stay outside both tiers, as
+   they are for the enumerator.
 
    The loop carrier -- the enumerator's output bound to
    a loop variable and removed in the loop's body, on the Bash tool -- is
@@ -1540,12 +1545,15 @@ first; the dangerous-command catch is a secondary slip-catcher):
    recursing remove -- so a catastrophic word beside a substitution draws
    that nudge where its direct twin walls -- and the same nudge behind a
    body that pipes each item into `xargs rm -rf` (`echo "$f" | xargs rm
-   -rf`), under any loop head, since the soft tier reads the word the body
-   emits into the carrier as the recursive remove's operand (until
-   2026-11-09 a stage between, a word list beside a substitution and
-   every other unread head drew nothing at all there). A body that emits a
-   fixed word, or whose remove does not recurse, keeps its direct twin's
-   silence. Each is pinned as the verdict it draws by
+   -rf`), since the soft tier reads the echoed word as the recursive
+   remove's operand (the echoed path, above; until 2026-11-09 a stage
+   between, a word list beside a substitution and every other unread head
+   drew nothing at all there). A body that emits a fixed roster word, or
+   whose remove does not recurse, keeps its direct twin's silence. Where a
+   loop head does read the loop, the carrier-fed body takes the head's
+   verdict, so a roster word list or a narrowed head stays silent where
+   the loop's own `rm -rf "$f"` draws the variable operand's nudge: a
+   declared difference. Each is pinned as the verdict it draws by
    `tests/test_write_guard.py::TestCatastrophicLoopCarrier::test_through_the_hook_loop`.
 
    The PowerShell statement-form loop over a listing

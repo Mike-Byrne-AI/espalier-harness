@@ -1440,9 +1440,12 @@ _PIPED_CARRIER_WITNESS_RE = re.compile(_PIPED_CARRIER_WITNESS, re.IGNORECASE)
 #: neither head, so a catastrophic word beside one draws the variable
 #: operand's nudge where its direct twin walls), and the PowerShell
 #: statement-form loop (asked at the hook: the remove cmdlet's wall already).
-#: Behind the carrier-fed body, a stage between and a word list beside a
-#: substitution draw NOTHING -- silent allows, declared with their ledger row
-#: rather than hidden behind "each draws the nudge".
+#: Behind the carrier-fed body (`echo "$f" | xargs rm -rf`), a loop no head
+#: reads draws the nudge its direct twin `rm -rf "$f"` draws: the soft tier
+#: reads the echoed word as the remove's operand wherever the carrier sits
+#: (`carrier_fed_remove_twins`, DEF-3063; until 2026-11-09 a stage between
+#: and a word list beside a substitution drew NOTHING there). Where a head
+#: reads the loop, the head's verdict stands.
 #: The read builtin's switch run, one arm per token as the carrier's is: a
 #: token whose LAST letter is a valued switch (`-d`, `-n`, `-N`, `-t`, `-u`,
 #: `-p`, `-a`, `-i` -- alone or glued behind others, `-rd`) takes one value
@@ -1515,18 +1518,13 @@ _LOOP_FEED_PREFIX = (
     r"(?:(?-i:echo|printf)" + _LOOP_EMIT_ARGS
     + r"[ \t]+(?P<feed>[^\s;|&]{1,80})[ \t]*" + _XARGS_CARRIER_TAIL + r")?"
 )
-#: The body from its separator; `_DO_BODY` puts before it the blank run a
-#: head leaves. The soft tier's body reader (`_LOOP_BODY_RE`) compiles
-#: this alone: run unanchored, a leading blank run restarts at every
-#: blank of a flood (the ReDoS receipt measured it quadratic).
-_DO_BODY_FROM_SEPARATOR = (
-    r"(?:;|\n)[ \t\n]{0,64}(?-i:do)(?=\s)[ \t\n]{0,64}"
+_DO_BODY = (
+    r"[ \t]*(?:;|\n)[ \t\n]{0,64}(?-i:do)(?=\s)[ \t\n]{0,64}"
     r"(?:" + _LOOP_BODY_STATEMENT + r"){0,4}"
     r"(?:(?-i:then|else)[ \t\n]{1,64})?"
     + _LOOP_FEED_PREFIX
     + r"(?P<verb>" + _LOOP_BODY_VERB + r")(?P<rmargs>[^\n;|&]{0,200})"
 )
-_DO_BODY = r"[ \t]*" + _DO_BODY_FROM_SEPARATOR
 #: (1) the enumerator piped into the read loop, the pipe ON THE LINE as the
 #: carrier's is.
 _LOOP_REMOVE_RE = re.compile(
@@ -15513,46 +15511,93 @@ def iter_unnarrowed_loop_remove_roots(
         yield roots
 
 
-#: A loop's ``do`` body read on its own, whatever head opens the loop
-#: (DEF-3063): the soft tier's reading of the carrier-fed body. `_DO_BODY`
-#: from its separator, so the body's grammar -- the statements before the
-#: remove, the emit and its switches, the carrier tail, the verb -- keeps
-#: ONE definition with the four openers that carry it.
-_LOOP_BODY_RE = re.compile(_DO_BODY_FROM_SEPARATOR, re.IGNORECASE)
+#: ── The carrier-fed remove (DEF-3063) ─────────────────────────────────────
+#: A word the shell emits into the carrier, `echo "$D" | xargs rm -rf`, is
+#: the recursive remove's operand with the operand on stdin: `rm -rf "$D"`.
+#: The rm tier reads a remove's OPERANDS and the carrier-fed remove has
+#: none, so it drew nothing wherever it sat -- at the top level, in an `&&`
+#: chain, in a loop body no opener reads -- where its direct twin drew the
+#: nudge or the roster's silence. Composed from the loop body's own pieces,
+#: none of them edited: the anchor before the emit (`_CMD_POS`), the emit's
+#: arguments and its last word (`_LOOP_EMIT_ARGS`, the body's `feed`
+#: shape), the carrier's post-pipe half (`_XARGS_CARRIER_TAIL`) and the
+#: verb as the pipeline carrier admits it (`_FIND_EXEC_VERB`: a program
+#: runs there, not a statement, so no assignment run). A SOURCE string:
+#: `_carrier_fed_remove_re` compiles it on the first command that passes
+#: `_PIPED_CARRIER_WITNESS_RE`, so the import pays nothing.
+_CARRIER_FED_REMOVE = (
+    _CMD_POS + r"(?P<emit>(?-i:echo|printf))"
+    + r"(?P<emitted>" + _LOOP_EMIT_ARGS + r"[ \t]+(?P<feed>[^\s;|&]{1,80}))[ \t]*"
+    + _XARGS_CARRIER_TAIL
+    + r"(?P<verb>" + _FIND_EXEC_VERB + r")(?P<rmargs>[^\n;|&]{0,200})"
+)
+#: echo's own switch letters, which it prints nothing for.
+_ECHO_SWITCH_LETTERS = frozenset("neE")
 
 
-def loop_body_feeds_a_recursive_remove(command: str) -> bool:
-    """True when a loop's ``do`` body emits a parameter expansion into the
-    carrier and the carrier's remove recurses: ``echo "$f" | xargs rm -rf``
-    is ``rm -rf "$f"`` with the item on stdin, so it takes the nudge the
-    direct twin's variable operand takes (DEF-3063). The rm tier reads a
-    recursive remove's OPERANDS, and the carrier-fed remove has none, so a
-    loop no opener reads (a stage before the loop, a word list beside a
-    substitution, a pipe across a line break, a file fed at the tail) and a
-    narrowed head the opener leaves alone drew nothing where the direct
-    twin asked. Any head: the wall for a catastrophic root is the hard
-    tier's, which runs first. The emitted word must be one expansion of a
-    name (`_loop_variable_named`): a fixed word is not the item, and a
-    remove that does not recurse is silent, as the twin is. Read on the
-    masked scan, spans from the raw text; gated on both witnesses, so only
-    a command that pipes into xargs inside a loop pays the walk."""
+@functools.lru_cache(maxsize=1)
+def _carrier_fed_remove_re() -> "re.Pattern[str]":
+    """`_CARRIER_FED_REMOVE`, compiled once, on first use (DEF-3063)."""
+    return re.compile(_CARRIER_FED_REMOVE, re.IGNORECASE)
+
+
+def _emitted_operands(emit: str, emitted: str) -> list[str]:
+    """The words ``echo`` or ``printf`` hands the carrier, raw: what xargs
+    appends to the remove. echo's leading switches print nothing; printf's
+    leading switches and its format are not items (`printf -v` prints
+    nothing at all: its words are read anyway, toward friction)."""
+    words = _shell_word_spans(emitted) or emitted.split()
+    if emit == "echo":
+        while words and len(words[0]) > 1 and words[0][0] == "-" and set(words[0][1:]) <= _ECHO_SWITCH_LETTERS:
+            words = words[1:]
+        return words
+    while words and words[0].startswith("-"):
+        words = words[1:]
+    return words[1:]
+
+
+def carrier_fed_remove_twins(command: str) -> list[str]:
+    """``command`` once for each word-fed carrier remove in it, with that
+    carrier spelled as its direct twin: ``cd src && echo old | xargs rm
+    -rf`` is ``cd src && rm -rf old`` (DEF-3063). The soft tier reads each
+    twin as it reads the command, so the carrier takes the twin's verdict
+    -- roster, temp root, placement and all -- from the one reading. A
+    carrier inside a loop one of `_LOOP_OPENERS` reads is that opener's to
+    answer (its roots are the items; a roster or narrowed head stays
+    silent), so it yields no twin. A move is not a remove. Gated before
+    the mask and the first-use compile (about 4.5 ms, paid once a hook
+    process): the emit word as a substring (the pattern spells it in lower
+    case only), then the carrier's witness, so a command that pipes into
+    no xargs, or emits nothing into one, pays a splice and one search."""
     capped = _cap_for_scan(command)
-    # both witnesses before the mask: a command with no carrier inside a
-    # loop pays a splice and two searches, never the masker
     spliced = splice_line_continuations(capped)
-    if not _PIPED_CARRIER_WITNESS_RE.search(spliced) or not _loop_carrier_witnessed(spliced):
-        return False
+    if "echo" not in spliced and "printf" not in spliced:
+        return []
+    if not _PIPED_CARRIER_WITNESS_RE.search(spliced):
+        return []
     raw, scan = _bash_scan_pair(capped)
-    for m in _LOOP_BODY_RE.finditer(scan):
-        feed = _named_span(raw, m, "feed", through_quotes=True)
-        if not feed or _loop_variable_named(feed) is None:
+    governed: "set[int] | None" = None
+    twins: list[str] = []
+    for m in _carrier_fed_remove_re().finditer(scan):
+        verb = _named_span(raw, m, "verb")
+        if _remove_effect(verb) != "delete":
             continue
-        if _remove_effect(_named_span(raw, m, "verb")) != "delete":
+        if governed is None:
+            governed = {
+                lm.start("verb") for rx, _shape in _LOOP_OPENERS for lm in rx.finditer(scan)
+            } if _loop_carrier_witnessed(scan) else set()
+        if m.start("verb") in governed:
+            continue
+        operands = _emitted_operands(
+            m.group("emit"), _named_span(raw, m, "emitted", through_quotes=True))
+        if not operands:
             continue
         rmargs = _named_span(raw, m, "rmargs", through_quotes=True)
-        if rm_recursive_force_operands("rm" + rmargs)[0]:
-            return True
-    return False
+        end = m.start("rmargs") + len(rmargs)
+        twins.append(
+            raw[:m.start("emit")] + verb + rmargs.rstrip() + " " + " ".join(operands) + raw[end:]
+        )
+    return twins
 
 
 def has_catastrophic_loop_remove(
