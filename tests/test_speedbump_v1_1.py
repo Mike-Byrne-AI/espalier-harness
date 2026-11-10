@@ -143,8 +143,8 @@ class TestCpMcpDefersToWriteGuard:
     The defer is read from what the payload names, through the leaf walk: a
     place spelled from a root (or drive) that lies inside a checkout. Until
     DEF-5101 it stepped aside only on six top-level keys, so a move keyed
-    ``from``/``to`` or ``source``/``to``, a batch of moves, or a write keyed
-    ``output_path`` was told it left the repo: those cells are RED against it.
+    ``from``/``to`` or ``source``/``to``, a batch of moves, or a move naming its
+    file under ``output_path`` was told it left the repo: those cells are RED against it.
     The six keys stay as cells, so the cells the old roster pinned still hold."""
 
     @pytest.mark.parametrize("shape", [
@@ -240,13 +240,141 @@ class TestCpMcpWriteAndEditVerbs:
         tool_input = {
             "path": {"path": str(r / "a.py"), "content": "x"},
             "output_path": {"output_path": str(r / "src" / "a.py"), "content": "x"},
-            # The edit's text names absolute places and a URL: text is not where
-            # the call lands, so it neither silences nor fires anything.
-            "edits": {"path": str(r / "a.py"), "dryRun": False,
-                      "edits": [{"oldText": "#!/usr/bin/env python", "newText": "see https://example.com"}]},
+            # The edit's text is spelled from a root and lies outside the
+            # checkout, and the walk reads it before the file the edit names:
+            # text is not where the call lands, so it vetoes nothing.
+            "edits": {"edits": [{"oldText": "/usr/bin/env python", "newText": "/etc/hosts"}],
+                      "dryRun": False, "path": str(r / "a.py")},
         }[shape]
         assert _speedbump._pred_mcp_sideeffect(tool_name, tool_input, r) is False
 
+
+
+# ── The anchor is the normaliser's own reading ─────────────────────────────
+
+class TestCpMcpAnchorReadsLikeTheNormaliser:
+    """A leaf is absolute as `normalize_path_str` reads it, on the cleaned
+    spelling, and lies inside when the normalised text is not anchored. An id
+    like `t:1`, and on POSIX a drive spelling, joins the root and comes back
+    still anchored-looking, so it names no place and a remote delete keyed by
+    it is nudged (RED against a placement read by shape, "no leading slash").
+    A `file://` URI of a checkout file is absolute once cleaned and defers (RED
+    against an anchor read on the spelling as typed)."""
+
+    def test_a_drive_shaped_id_names_no_place(self, tmp_path):
+        r = tmp_path.resolve()
+        assert _speedbump._pred_mcp_sideeffect("mcp__x__delete_item", {"id": "t:1"}, r) is True
+
+    @pytest.mark.skipif(os.name == "nt", reason="a drive spelling is absolute on Windows")
+    def test_a_drive_spelling_on_posix_names_no_place(self, tmp_path):
+        r = tmp_path.resolve()
+        assert _speedbump._pred_mcp_sideeffect("mcp__x__delete_item", {"path": "C:/Users/x"}, r) is True
+
+    @pytest.mark.skipif(os.name == "nt", reason="the file URI of a drive path is a separate spelling")
+    def test_a_file_uri_in_the_checkout_defers(self, tmp_path):
+        r = tmp_path.resolve()
+        tool_input = {"from": (r / "a.txt").as_uri(), "to": (r / "b").as_uri()}
+        assert _move(tool_input, r) is False
+
+
+# ── An always-external verb never defers ───────────────────────────────────
+
+class TestCpMcpAlwaysExternalVerbs:
+    """send, post, publish and trigger leave the checkout whatever the call
+    names: a file the call names is what it sends (RED against a defer read
+    for every side-effect verb, which silenced both cells)."""
+
+    @pytest.mark.parametrize("tool_name, shape", [
+        ("mcp__x__send_file", "path"),
+        ("mcp__claude_ai_Gmail__send_email", "attachment"),
+        ("mcp__x__post_message", "file"),
+        ("mcp__x__publish_page", "path"),
+    ])
+    def test_it_fires_though_the_call_names_a_checkout_file(self, tool_name, shape, tmp_path):
+        r = tmp_path.resolve()
+        tool_input = {shape: str(r / "a.pdf"), "to": "x@example.com"}
+        assert _speedbump._pred_mcp_sideeffect(tool_name, tool_input, r) is True
+
+
+# ── A deferrable verb's nudge spends its own budget ─────────────────────────
+
+class TestCpMcpDeferrableBudget:
+    """A deferrable verb's nudge (a write, edit, move, create, update, delete,
+    remove or archive the defer could not place) spends its own session
+    counter, so a run of them never takes the slots CP-COMPACT and the
+    always-external verbs share (RED against one shared counter: after four
+    such nudges the send and the compaction checkpoint were both suppressed)."""
+
+    def test_deferrable_nudges_leave_the_shared_slots(self, tmp_path):
+        root = tmp_path.resolve()
+        mcp = (_speedbump.CP_MCP_SIDEEFFECT,)
+        for verb in ("write", "edit", "move", "create"):
+            fired = _speedbump.check(f"mcp__x__{verb}_thing", {}, root, bumps=mcp)
+            assert fired is not None and "CP-MCP-SIDEEFFECT" in fired, verb
+        # its own budget is spent: a fifth distinct deferrable tool is suppressed
+        assert _speedbump.check("mcp__x__delete_thing", {}, root, bumps=mcp) is None
+        # the shared slots are whole: a send and a compaction still nudge
+        assert _speedbump.check("mcp__x__send_message", {}, root, bumps=mcp) is not None
+        state = root / _speedbump.STATE_DIR
+        (state / "post_compact_pending").write_text("1", encoding="utf-8")
+        compact = _speedbump.check("Write", {"file_path": str(root / "a.py")}, root, bumps=(_speedbump.CP_COMPACT,))
+        assert compact is not None and "CP-COMPACT" in compact
+
+    def test_the_budget_follows_the_verb(self):
+        assert _speedbump._mcp_budget("mcp__x__send_message", {}) == _speedbump.SPEEDBUMP_COUNTER
+        assert _speedbump._mcp_budget("mcp__x__write_page", {}) == _speedbump._MCP_DEFERRABLE_COUNTER
+        assert _speedbump._MCP_DEFERRABLE_COUNTER.startswith("speedbump_")  # SessionStart's sweep clears it
+
+
+# ── What a fire says, and the review's pins ────────────────────────────────
+
+class TestCpMcpWhatTheNudgeSays:
+    """A deferrable verb fires only when its input names no place inside the
+    checkout by an absolute path, so its reminder says that and never that the
+    call "leaves the repo", the false text the row was about (RED against the
+    static body on every fire). An always-external verb keeps the static text."""
+
+    def test_a_relative_local_move_is_not_told_it_leaves_the_repo(self, tmp_path):
+        reason = _speedbump.check("mcp__fs__move_file", {"from": "a.txt", "to": "b"}, tmp_path.resolve(),
+                                  bumps=(_speedbump.CP_MCP_SIDEEFFECT,))
+        assert reason is not None and "names no place inside the checkout" in reason
+        assert "leaves the repo" not in reason
+
+    def test_a_send_is_told_it_leaves_the_repo(self, tmp_path):
+        reason = _speedbump.check("mcp__slack__send_message", {}, tmp_path.resolve(),
+                                  bumps=(_speedbump.CP_MCP_SIDEEFFECT,))
+        assert reason is not None and "leaves the repo" in reason
+
+
+class TestCpMcpReviewPins:
+    """Pins the failure-mode review drove as unpinned or open on the lane."""
+
+    def test_the_checkout_root_itself_is_no_evidence(self, tmp_path):
+        # A cwd or repo_path is the call's context, not where it lands (RED
+        # against counting it: a release cut from the checkout went silent).
+        r = tmp_path.resolve()
+        assert _speedbump._pred_mcp_sideeffect("mcp__gh__create_release", {"repo_path": str(r), "tag": "v1"}, r) is True
+
+    def test_a_capitalised_content_key_is_still_content(self, tmp_path):
+        r = tmp_path.resolve()
+        assert _move({"Content": str(r / "a.txt")}, r) is True
+
+    def test_the_defer_is_read_after_the_verb(self, tmp_path, monkeypatch):
+        # A read, a no-verb name and an always-external verb never ask the
+        # defer: it is not called for them at all.
+        def refuse(*_a, **_k):
+            raise AssertionError("the defer was read before the verb decided")
+        monkeypatch.setattr(_speedbump, "_mcp_names_a_place_in_the_checkout", refuse)
+        r = tmp_path.resolve()
+        assert _speedbump._pred_mcp_sideeffect("mcp__gh__list_issues", {"path": str(r)}, r) is False
+        assert _speedbump._pred_mcp_sideeffect("mcp__x__ping", {"path": str(r)}, r) is False
+        assert _speedbump._pred_mcp_sideeffect("mcp__x__send_file", {"path": str(r / "a")}, r) is True
+
+    @pytest.mark.skipif(os.name == "nt", reason="the home directory is read from USERPROFILE there")
+    def test_a_home_spelling_in_the_checkout_defers(self, tmp_path, monkeypatch):
+        r = tmp_path.resolve()
+        monkeypatch.setenv("HOME", str(r.parent))
+        assert _move({"from": f"~/{r.name}/a.txt", "to": f"~/{r.name}/b"}, r) is False
 
 # ── The earn-fixture: RED against the dead v1 regex ─────────────────────────
 

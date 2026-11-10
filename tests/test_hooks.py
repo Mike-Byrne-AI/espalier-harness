@@ -686,15 +686,19 @@ class TestWriteGuardTypeCoercion:
     def test_mcp_empty_path_field_still_skipped(self, tmp_path):
         """Empty / missing MCP fields stay on the ``continue`` path; only
         truthy non-str triggers deny. Sanity guard so we didn't widen the
-        deny to legitimate "field not present" cases."""
-        result = run_hook(
-            "write_guard.py",
-            {
-                "tool_name": "mcp__filesystem__write_file",
-                "tool_input": {"path": "", "content": "x"},
-            },
-            {"CLAUDE_PROJECT_DIR": str(tmp_path)},
-        )
+        deny to legitimate "field not present" cases. A write naming no place
+        draws the MCP side-effect speed bump's one nudge after this layer
+        allows it; the zone layer's answer is read on the re-issue."""
+        payload = {
+            "tool_name": "mcp__filesystem__write_file",
+            "tool_input": {"path": "", "content": "x"},
+        }
+        first = run_hook("write_guard.py", payload, {"CLAUDE_PROJECT_DIR": str(tmp_path)})
+        assert first.returncode == 0
+        if first.stdout.strip():
+            reason = json.loads(first.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+            assert "[CP-MCP-SIDEEFFECT]" in reason and "Harness self-edits" not in reason, reason
+        result = run_hook("write_guard.py", payload, {"CLAUDE_PROJECT_DIR": str(tmp_path)})
         assert result.returncode == 0
         # No deny — empty path field means no path to check.
         assert not result.stdout.strip()

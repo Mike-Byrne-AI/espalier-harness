@@ -135,6 +135,11 @@ class SpeedBump(NamedTuple):
     # the static text every reader and pin sees. Trailing and defaulted, so a
     # positional construction keeps working.
     body_for: Callable[[str, dict, Path, "Path | None"], str] | None = None
+    # The session counter THIS fire spends, when a cap-governed checkpoint's
+    # fires do not all share one budget: (tool_name, tool_input) -> a counter
+    # name under the state directory. None spends the shared SPEEDBUMP_COUNTER.
+    # Trailing and defaulted, as body_for is.
+    budget_for: Callable[[str, dict], str] | None = None
 
 # NOTE: predicates take `root` (not just tool_name+tool_input) so a flag-dependent
 # checkpoint like CP-COMPACT can read .espalier-state/post_compact_pending. Keep
@@ -1948,11 +1953,22 @@ CP_COMPACT = SpeedBump(
 # the v1.1 under-fire (external-irreversible but not harm-sealed at the PyPI-burn tier, so
 # an under-fire is the cheaper error; tighten from observed data).
 # `write` and `edit` lead a remote page write or document edit as `send` leads a
-# message (DEF-876); a local write or edit names its file and defers below.
+# message (DEF-876); a local write or edit naming its file by an absolute path
+# defers below, and one spelled relative is nudged with the deferrable text.
 _MCP_SIDEEFFECT_VERB_RE = re.compile(
     r"(?:send|delete|remove|trigger|post|create|update|publish|archive|move|write|edit)(?:_|$)",
     re.I,
 )
+#: The side-effect verbs whose effect leaves the checkout whatever the call
+#: names: a message sent, a post, a publish, a trigger. They never defer (a
+#: send_file naming a checkout file still sends it). The rest of the roster may
+#: name a local file and so may defer. A split of the roster above, no new verb.
+_MCP_ALWAYS_EXTERNAL_VERBS = frozenset({"send", "post", "publish", "trigger"})
+#: The session counter a deferrable verb's nudge spends (`SpeedBump.budget_for`):
+#: its own, so a run of local calls the defer cannot place (a write spelled
+#: relative) never spends the slots CP-COMPACT and the always-external verbs
+#: share. Under the `speedbump_` prefix SessionStart clears.
+_MCP_DEFERRABLE_COUNTER = "speedbump_count_mcp_deferrable"
 # Read/neutral verbs that must stay SILENT, incl. the auth-flow verbs in this env's
 # claude_ai_* servers (authenticate / complete_authentication) -- not data mutations worth
 # a deny. Same token-boundary discipline.
@@ -1962,48 +1978,83 @@ _MCP_READ_VERB_RE = re.compile(
 
 
 def _mcp_names_a_place_in_the_checkout(tool_input: object, root: Path) -> bool:
-    """Does the payload name, from a root or a drive, a place inside a checkout?
+    """Does the payload name, by an absolute path, a place inside a checkout?
 
     The local-filesystem defer, read from what the payload names, not from what
     its keys are called (DEF-5101): every non-content string leaf, at any depth
-    and under any key (the leaf walk write_guard's zone check reads), spelled
-    anchored (``rooted``) and placed inside the checkout or a sibling worktree
-    by the FS-free normaliser. A move keyed ``from``/``to``, a batch of moves
-    and a write keyed ``output_path`` defer as ``path`` does; a URL, an id or
-    a place outside every checkout is no evidence.
+    and under any key (the leaf walk write_guard's zone check reads), absolute
+    as the FS-free normaliser itself reads it (``_is_abs_leaf`` on the cleaned
+    spelling, so ``~/`` and ``file://`` count, and ``t:1`` or a drive spelling
+    on POSIX does not), whose normalised text is not anchored: inside the
+    checkout or a sibling worktree. A move keyed ``from``/``to``, a batch of
+    moves and a write keyed ``output_path`` defer as ``path`` does; a URL, an
+    id or a place outside every checkout is no evidence.
 
     A relative leaf is no evidence either way: an MCP server resolves it
-    against its own working directory, which the hook never sees. Declared
-    cost: a local write spelled relative is nudged once per tool. Text is not
-    where a call lands, so nothing vetoes the defer: an edit's ``oldText``
-    holding ``/usr/bin/env`` or a URL leaves a local edit silent. A send whose
-    payload names a checkout file (an attachment) defers too, the residual the
-    six-key defer had for ``send_file{path}``. A payload past the walk's bounds
-    names no place and is nudged."""
+    against its own working directory, which the hook never sees, and so is a
+    ``$CLAUDE_PROJECT_DIR/`` spelling, which cleans to a relative one. Declared
+    cost: a local write spelled either way is nudged once per tool, from its
+    own budget (``_MCP_DEFERRABLE_COUNTER``). Text is not where a call lands,
+    so nothing vetoes the defer: an edit's ``oldText`` holding
+    ``/usr/bin/env`` leaves a local edit silent. Only a deferrable verb asks
+    (``_MCP_ALWAYS_EXTERNAL_VERBS`` never defer), so what is left is a create,
+    update, delete or edit whose input names a checkout file under any key (a
+    source file, a log path, a title that starts with a path); the checkout
+    root itself is context and no evidence. A walk that stops at its
+    bounds before any evidence names no place, so the call is nudged; outside
+    maintenance mode write_guard refuses such a payload before this bump is
+    asked."""
     try:
         for key, _location, leaf in _hook_utils.iter_mcp_path_leaves(tool_input):
-            if key.casefold() in _hook_utils.MCP_CONTENT_KEYS or not _hook_utils.rooted(leaf):
+            if key.casefold() in _hook_utils.MCP_CONTENT_KEYS:
                 continue
-            if not _hook_utils.rooted(_hook_utils.normalize_path_str(leaf, root)):
+            if not _hook_utils._is_abs_leaf(_hook_utils._clean_path_prefixes(leaf)):
+                continue
+            placed = _hook_utils.normalize_path_str(leaf, root)
+            # The checkout itself (a cwd or repo_path the call runs in) is the
+            # call's context, not where it lands: no evidence. A delete or move
+            # of the root is write_guard's refusal before this bump is asked.
+            if placed not in ("", ".") and not _hook_utils.rooted(placed):
                 return True
-    except _hook_utils.MCPPayloadUnverifiable:  # fail-open: ok deliberate an unreadable payload names no place, so the nudge fires
+    except _hook_utils.MCPPayloadUnverifiable:  # fail-open: ok deliberate -- an unreadable payload names no place, so the nudge fires (fail-closed for this bump)
         return False
     return False
+
+
+def _mcp_side_effect_verb(tool_name: str) -> str | None:
+    """The side-effect verb leading an ``mcp__<server>__<action>`` name,
+    casefolded, or None for a read, an auth step or no side-effect verb."""
+    parts = tool_name.split("__")
+    action = parts[-1] if len(parts) >= 3 else ""
+    if _MCP_READ_VERB_RE.match(action):
+        return None
+    match = _MCP_SIDEEFFECT_VERB_RE.match(action)
+    return None if match is None else match.group(0).rstrip("_").casefold()
+
+
+def _mcp_budget(tool_name: str, tool_input: dict) -> str:
+    """The counter an MCP side-effect nudge spends: the shared one for an
+    always-external verb, the deferrable verbs' own for the rest."""
+    if _mcp_side_effect_verb(tool_name) in _MCP_ALWAYS_EXTERNAL_VERBS:
+        return SPEEDBUMP_COUNTER
+    return _MCP_DEFERRABLE_COUNTER
 
 
 def _pred_mcp_sideeffect(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = None) -> bool:
     if not tool_name.startswith("mcp__"):
         return False
-    parts = tool_name.split("__")
-    action = parts[-1] if len(parts) >= 3 else ""   # mcp__<server>__<action>
-    if _MCP_READ_VERB_RE.match(action) or not _MCP_SIDEEFFECT_VERB_RE.match(action):
+    verb = _mcp_side_effect_verb(tool_name)
+    if verb is None:
         return False
+    if verb in _MCP_ALWAYS_EXTERNAL_VERBS:
+        return True
     # DEFER to write_guard for a LOCAL-filesystem op: it is write_guard's
     # protected-zone domain (`write_guard.check_mcp`, which answers before this
     # bump), not an external side effect, and staying silent keeps the nudge body
     # ("leaves the repo") true. Sister to CP-RMRF deferring to the rm hard-deny.
-    # Read after the verb, so a read and a call with no side-effect verb pay
-    # nothing for it, and only on an MCP call: a Bash call never reaches here.
+    # Read after the verb, and for a deferrable verb only, so a read, a send and
+    # a call with no side-effect verb pay nothing for it; a Bash call never
+    # reaches here.
     #
     # The defer never keys on field names. Six top-level keys missed a move keyed
     # from/to and every batch (DEF-5101); the broad _hook_utils.MCP_PATH_FIELDS
@@ -2030,14 +2081,35 @@ def _mcp_tool_key(tool_name: str, tool_input: dict) -> str:
     return safe[:64] + "_" + hashlib.sha256(tool_name.encode("utf-8")).hexdigest()[:16]
 
 
+#: The reminder for a deferrable verb's fire. It fires only when the input
+#: names no place inside the checkout by an absolute path, so all it can say is
+#: that: a relative path or a remote id, the hook cannot tell which. Never that
+#: the call "leaves the repo", which is false for a local write spelled relative.
+_MCP_DEFERRABLE_BODY = (
+    "this MCP tool's side effect (write/edit/move/create/update/delete) names no place "
+    "inside the checkout the hook can see, so it may act outside the repo and be "
+    "irreversible -- confirm the target + payload before it runs"
+)
+
+
+def _mcp_body(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = None) -> str:
+    """The reminder for this fire: the static body for an always-external verb,
+    `_MCP_DEFERRABLE_BODY` for a deferrable one."""
+    if _mcp_side_effect_verb(tool_name) in _MCP_ALWAYS_EXTERNAL_VERBS:
+        return CP_MCP_SIDEEFFECT.body
+    return _MCP_DEFERRABLE_BODY
+
+
 CP_MCP_SIDEEFFECT = SpeedBump(
     id="CP-MCP-SIDEEFFECT",
     predicate=_pred_mcp_sideeffect,
-    body="this MCP tool has an external side effect (send/delete/trigger) that leaves the "
+    body="this MCP tool has an external side effect (send/post/publish/trigger) that leaves the "
          "repo and may be irreversible -- confirm the target + payload before it runs",
+    body_for=_mcp_body,         # a deferrable verb's fire says what the hook could not see
     cap_exempt=False,   # dispositional -> cap-GOVERNED (an MCP write is not the
                         # release/force-push tier; one cap slot, not exempt)
     flag_key=_mcp_tool_key,     # per-tool one-shot (sister to CP-GATEWEAKEN's per-file key)
+    budget_for=_mcp_budget,     # a deferrable verb's nudge spends its own budget
 )
 
 
@@ -2424,18 +2496,18 @@ def _flag_name(bump: "SpeedBump", tool_name: str, tool_input: dict) -> str:
     return f"{base}_{suffix}" if suffix else base
 
 
-def _compare_and_increment(state_dir: Path, cap: int) -> bool:
+def _compare_and_increment(state_dir: Path, cap: int, counter: str = SPEEDBUMP_COUNTER) -> bool:
     """Read the session speed-bump counter; if < cap, increment and return True
     (fire); else return False (suppressed) WITHOUT incrementing. Not serialized on
     its own — callers wrap it in the lock below (or, on a filesystem that cannot
     lock, accept the non-atomic degrade, same posture as _locked_increment)."""
     current = _read_counter(
-        state_dir, SPEEDBUMP_COUNTER, hook="write_guard", event_type="pretooluse_failed_open_counter",
+        state_dir, counter, hook="write_guard", event_type="pretooluse_failed_open_counter",
     )
     if current >= cap:
         return False
     try:
-        _write_counter(state_dir, current + 1, SPEEDBUMP_COUNTER)
+        _write_counter(state_dir, current + 1, counter)
     except OSError:
         # Couldn't persist the slot; fail toward firing (the one-shot flag the
         # caller writes still bounds it to once per checkpoint).
@@ -2443,7 +2515,7 @@ def _compare_and_increment(state_dir: Path, cap: int) -> bool:
     return True
 
 
-def _locked_check_and_increment(state_dir: Path, cap: int) -> bool:
+def _locked_check_and_increment(state_dir: Path, cap: int, counter: str = SPEEDBUMP_COUNTER) -> bool:
     """Atomically: if the session counter < cap, increment and return True (fire);
     else return False (suppressed) WITHOUT incrementing. The lock guarantees two
     concurrent PreToolUse hooks cannot both consume the same slot (no peek-then-
@@ -2461,7 +2533,7 @@ def _locked_check_and_increment(state_dir: Path, cap: int) -> bool:
         return True
     # lock_file is flock on POSIX and LockFileEx on Windows, which ran this
     # compare-then-write unlocked until 2026-10-02 (mirrors _locked_increment).
-    lock_path = state_dir / (SPEEDBUMP_COUNTER + ".lock")
+    lock_path = state_dir / (counter + ".lock")
     # The open, the lock call and the unlock each fail on their own: one
     # `except OSError` around all three re-ran the compare-then-write after an
     # unlock failure, spending a second slot for one call (code review,
@@ -2469,7 +2541,7 @@ def _locked_check_and_increment(state_dir: Path, cap: int) -> bool:
     try:
         lock_fh = open(lock_path, "a+", encoding="utf-8")
     except OSError:
-        return _compare_and_increment(state_dir, cap)
+        return _compare_and_increment(state_dir, cap, counter)
     try:
         try:
             lock_file(lock_fh)
@@ -2477,9 +2549,9 @@ def _locked_check_and_increment(state_dir: Path, cap: int) -> bool:
             # A filesystem that cannot lock (some NFS / network mounts) or a lock
             # Windows refused: degrade to best-effort non-serialized
             # compare-then-write rather than crash the PreToolUse hook.
-            return _compare_and_increment(state_dir, cap)
+            return _compare_and_increment(state_dir, cap, counter)
         try:
-            return _compare_and_increment(state_dir, cap)
+            return _compare_and_increment(state_dir, cap, counter)
         finally:
             try:
                 unlock_file(lock_fh)
@@ -3028,7 +3100,8 @@ def check_fired(
             continue  # already fired this (checkpoint[, key], session) -> allow
 
         if not bump.cap_exempt:
-            if not _locked_check_and_increment(state_dir, SPEEDBUMP_SESSION_CAP):
+            counter = SPEEDBUMP_COUNTER if bump.budget_for is None else bump.budget_for(tool_name, tool_input)
+            if not _locked_check_and_increment(state_dir, SPEEDBUMP_SESSION_CAP, counter):
                 continue  # budget exhausted -> allow (non-exempt only)
 
         try:
