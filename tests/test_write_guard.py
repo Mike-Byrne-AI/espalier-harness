@@ -17061,8 +17061,9 @@ class TestCrossShellRouting:
 class TestTheCoverageContract:
     """The coverage contract for the jobs the parser keeps (docs/HOOKS.md §4,
     decided 2026-10-08, written 2026-10-11): a catastrophic delete, a speed
-    bump and a secret read. Four pins, every row driven through the real hook
-    on a fresh project on 2026-10-11 before it was written:
+    bump and a secret read. Five pins, every row driven through the real hook
+    on a fresh project before it was written (pins 1 to 4 on 2026-10-11,
+    pin 5 on 2026-11-10):
 
     1. On those three jobs an operand the reader cannot resolve is REFUSED
        conservatively, never allowed: the delete draws the confirm-by-re-issue
@@ -17086,6 +17087,11 @@ class TestTheCoverageContract:
        levels deep, on and across both shells. Unpromised but measured: the
        contract promises one level. A red here is re-measured and re-recorded,
        never deleted.
+    5. The PowerShell exception to pin 1, declared: a forced recursive remove
+       of a variable with no literal binding, and a piped sweep of one forced
+       or not, stay the wall on the re-issue too; the unforced remove draws
+       the nudge, as Bash does. A red here is a verdict that moved: the
+       sentence in docs/HOOKS.md moves with it, on purpose.
 
     The named user: the maintainer deciding whether a new spelling report is
     work, who reads the contract's sentence and needs the row that holds it."""
@@ -17103,6 +17109,29 @@ class TestTheCoverageContract:
     ])
     def test_an_unresolvable_operand_on_a_kept_job_draws_the_conservative_verdict(self, tmp_path, cmd, reason):
         assert_hook_denied(run_bash_guard(cmd, tmp_path), contains_reason=reason)
+
+    @pytest.mark.parametrize("cmd, expect", [
+        ("Remove-Item $f -Recurse -Force", ("wall", "wall")),
+        ("Remove-Item -Recurse -Force $f", ("wall", "wall")),
+        ("ri -r -fo $f", ("wall", "wall")),
+        ("$f | Remove-Item -Recurse -Force", ("wall", "wall")),
+        ("gci $f -Recurse | ri -r -fo", ("wall", "wall")),       # a piped sweep of one, forced
+        ("gci $f -Recurse | ri -r", ("wall", "wall")),           # and unforced
+        ("Remove-Item $f -Recurse", ("bump", "allow")),          # the unforced remove: Bash's nudge
+        ("ri -r $f", ("bump", "allow")),
+        ("$f | Remove-Item -Recurse", ("bump", "allow")),
+    ])
+    def test_a_forced_powershell_remove_of_an_unbound_variable_walls_and_the_unforced_nudges(self, tmp_path, cmd, expect):
+        """Pin 5, the PowerShell exception to pin 1 the contract declares
+        (2026-11-10): the forced records wall a variable they cannot read, on
+        the re-issue too, where Bash's `rm -rf $UNBOUND` nudges. Each row is
+        issued twice on one project, so a nudge reads (bump, allow) and a wall
+        (wall, wall) with no speed bump's text; driven on the hook 2026-11-10."""
+        for want in expect:
+            result = run_guard_from("PowerShell", cmd, tmp_path, None)
+            assert _delete_verdict(result) == want, (cmd, want, result.stdout)
+            if want == "wall":
+                assert "Speed-bump" not in result.stdout, (cmd, result.stdout)
 
     @pytest.mark.parametrize("cmd", [
         "echo cm0gLXJmIC4K | base64 -d | sh",      # an encoded program (a recursive delete, encoded)
