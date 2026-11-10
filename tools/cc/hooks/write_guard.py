@@ -2690,6 +2690,12 @@ _LONE_DELETE_FLAGS = frozenset({"-force", "-path", "-literalpath", "-confirm", "
 #: `-Confirm:$false`, the one allowlisted word holding two of them, is taken
 #: out whole. A non-ASCII character ends it too (a dash PowerShell reads as
 #: one).
+#: Its sibling with the same "nothing runs between" job is
+#: `_bash_patterns._PS_TEMP_BINDING_REFUSED` (DEF-2055's binding gate). The two
+#: cannot be one object: `_bash_patterns` imports on first use, after this
+#: module-level set is built, and the gate must admit the `$`, `\` and `:` a
+#: binding spells. Their shared core is pinned in
+#: `tests/test_write_guard.py::TestAScratchRootItselfIsTheWall`.
 _LONE_DELETE_STOPS = frozenset(";&|`{}()[]@'\"<>*?~#!$\\:")
 #: The whitespace Python's ``split`` breaks on and a statement cannot hold
 #: alone: a line break, and the separators the shell does not split on.
@@ -3170,7 +3176,13 @@ def _ps_dangerous_reason_here(
     the twin of ``_bash_dangerous_reason``, split out for the same exchange."""
     _load_the_pattern_path()
     # The pair, not the joined text alone: `_ps_shell_program_bodies` slices a
-    # `bash -c` program out of the raw twin by offset (DEF-637).
+    # `bash -c` program out of the raw twin by offset (DEF-637). The text as
+    # typed is kept for the scratch-root rung, which the speed bump asks with
+    # it too: the twin blanks a command object's call and joins a backtick
+    # continuation, so the rung's binding gate read on it admitted
+    # `& (Get-Command Remove-Item -ErrorVariable d) ... $d\x`, a call the bump
+    # refuses, and no tier fired (DEF-2055's code review, driven).
+    typed = raw
     raw, command = _bash_patterns.powershell_scan_pair(raw)
     for entry in DANGEROUS_PS_PATTERNS:
         if entry.pattern.search(command):
@@ -3215,7 +3227,7 @@ def _ps_dangerous_reason_here(
                 if _bash_patterns.powershell_removal_is_plainly_relative(command, raw=raw):
                     continue  # -> soft speed-bump, not a wall
                 if _bash_patterns.powershell_removal_is_below_a_scratch_root(
-                    raw, str(root) if root else None,
+                    typed=typed, root=str(root) if root else None,
                 ):
                     continue  # -> the same speed-bump, which reads this predicate
                 # each target by the rung it qualifies for (DEF-1174): an

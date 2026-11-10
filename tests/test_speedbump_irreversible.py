@@ -3577,6 +3577,10 @@ class TestCommandPositionClassClose:
             "TOKENIZER -- the temp or home variable read a PowerShell binding's value "
             "is wholly (quotes off), so the pre-pass binds the name to that read; it "
             "selects no command (603f72's class).",
+        "_bash_patterns._PS_TEMP_BINDING_RE":
+            "GATE -- the one temp binding the scratch-root rung follows, matched at "
+            "offset 0 of a command the rung already refused as typed; the remove's "
+            "operands still come from the anchored `_PS_REMOVE_ITEM_RE` (DEF-2055).",
         "_bash_patterns._BINDING_SCOPE_CHAR_RE":
             "SYNTAX -- a paren that opens or closes a child scope (a subshell, a "
             "command substitution), read on the masked text, where a binding "
