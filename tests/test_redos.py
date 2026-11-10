@@ -3148,6 +3148,12 @@ def test_ps_switch_value_run_linear_on_dash_bearing_values(label, seed):
     ("lc-clusters-then-open-program", "-lc ", "'x"),
     ("switch-and-cluster-alternating", "-x -c ", "'x"),
     ("cluster-and-dashdash-alternating", "-c -- ", "'x"),
+    # a `+` option (DEF-3068's batch): a switch opens on `+` and a value
+    # never does, on both tools' runs, so a `+` word is one parse
+    ("plus-switches", "+x ", ""),
+    ("plus-switch-values-then-open-program", "+O extglob ", "-c 'x"),
+    ("plus-and-minus-alternating", "+x -x ", "-c 'x"),
+    ("cluster-and-plus-alternating", "-c +e ", "'x"),
 ])
 def test_posix_shell_switch_run_linear_on_one_head(label, seed, tail):
     """DEF-818: the POSIX shell openers' switch run (`bash -x ... -c '...'`,

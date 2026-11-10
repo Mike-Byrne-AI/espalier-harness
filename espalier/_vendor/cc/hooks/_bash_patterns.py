@@ -2229,9 +2229,14 @@ _POWERSHELL_DASH_COMMAND_RE = re.compile(
 #: repeated-head rows.
 #: One switch of the run and its optional value: a short cluster or a long
 #: option (`--norc`, `--rcfile FILE`), exclusive on the second character; the
-#: review drove `bash --norc -c` past the short-only run.
+#: review drove `bash --norc -c` past the short-only run. A short cluster
+#: opens on `-` or `+`: bash and sh read `+x`, `+e` and `+O name` / `+o name`
+#: as options before the first operand (each ran the program it hid, bash
+#: 5.2, DEF-3068's batch: `bash +x -c '...'` and `bash -c +e '...'` were a
+#: plain allow beside a walled `bash -c '...'`). A value never opens on `+`
+#: either, so a `+` word is a switch alone and the run keeps one parse.
 _POSIX_SHELL_SWITCH = (
-    r"(?:-[A-Za-z]+|--[A-Za-z][\w-]*)(?:[ \t]+(?!(?i:(?:[\w.=/-]*/)?(?:"
+    r"(?:[-+][A-Za-z]+|--[A-Za-z][\w-]*)(?:[ \t]+(?!(?i:(?:[\w.=/-]*/)?(?:"
     + _POSIX_SHELL_HEADS + r")(?:\.exe)?)(?=[ \t]|$))[\w.=/][\w.=/-]*)?"
 )
 _POSIX_SHELL_SWITCH_RUN = r"(?:[ \t]+" + _POSIX_SHELL_SWITCH + r")*"
@@ -2285,6 +2290,20 @@ def _posix_shell_c_bodies(command: str, scan: str) -> Iterator[str]:
 #: quote is the word's own). Derived from that arm, so it says what the arm
 #: reads and nothing of its own.
 _EXEC_QUOTE_AT_WORD_RE = re.compile(_CMD_POS_EXEC_QUOTE + r"\Z")
+#: Whether a `-c` program's word opens on a prefix `_CMD_POS`'s separator
+#: arm reads and its other arms do not: a wrapper run, an assignment, a
+#: keyword, `!` or a redirect, after the word's quote and blanks. Reached by
+#: the slashed arm (`/usr/bin/env bash -c '...'`) or the standalone exec
+#: quote (`builtin eval bash -c '...'`), the command position the exec quote
+#: opens takes a bare verb only, so `sudo <delete>` there was read in place
+#: by nobody (the code review's 15 rows). Derived from those arms' own
+#: pieces, so it names no spelling of its own.
+_PROGRAM_OPENS_ON_PREFIX_RE = re.compile(
+    r"[\"'][ \t]*(?:" + _CMD_POS_WRAP_RUN + "|" + _CMD_POS_ENV_ASSIGN
+    + "|" + _CMD_POS_KEYWORD + r"[ \t]+"
+    + "|" + _CMD_POS_NEGATE
+    + "|" + _CMD_POS_REDIRECT + ")"
+)
 
 
 def _posix_shell_c_programs(command: str, scan: str) -> Iterator[tuple[str, bool]]:
@@ -2293,7 +2312,18 @@ def _posix_shell_c_programs(command: str, scan: str) -> Iterator[tuple[str, bool
     `_CMD_POS_EXEC_QUOTE` opens a command position at the word, so every
     record reads the program in the command's own statement and directory
     chain. Behind a switch or cluster (`bash -lc`, `sh -e -c`, `bash -c --`)
-    no command position opens, and only a reader one level down sees it."""
+    no command position opens, and only a reader one level down sees it.
+
+    In place needs four things at once: the opener outside every outer
+    quote (one walk of bash's quoting), the exec quote ending at the word,
+    the word one quoted span holding no quote, backslash, `$` or backtick,
+    and the word not opening on a prefix (`_PROGRAM_OPENS_ON_PREFIX_RE`).
+    Anything else is read one level down, the side that walls. The walk
+    models quotes and backslashes only: `$'...'`, a `#` comment, a heredoc
+    body and `$(...)` flip its parity where their quote characters stand,
+    so it can read an opener as quoted (one level down: the safe side) or
+    as unquoted inside an outer quote (in place, misread: a nudge where
+    one level down would wall, no worse than before DEF-3068)."""
     if len(scan) != len(command):
         scan = command
     walked, quoted = 0, ""
@@ -2322,17 +2352,20 @@ def _posix_shell_c_programs(command: str, scan: str) -> Iterator[tuple[str, bool
         # quoted, the side that reads the program one level down
         unplaced = walked > at
         # In place only where the outer scan reads the text the shell runs:
-        # the arm opens at the word AND the word is one quoted span holding
-        # no quote, backslash or `$`, so its quote removal is its inside.
-        # Side-by-side segments (DEF-832: a verb split across two quotes)
-        # and a quoted program inside the program read differently raw, and
-        # a bare program left out here met no tier at all (the failure-mode
-        # review's regression, against the lane's first cut).
+        # the arm opens at the word, the word is one quoted span holding no
+        # quote, backslash, `$` or backtick, so its quote removal is its
+        # inside, and it opens on a bare verb, the one thing every arm
+        # reaching the exec quote reads after it. Side-by-side segments
+        # (DEF-832: a verb split across two quotes) and a quoted program
+        # inside the program read differently raw, and a bare program left
+        # out here met no tier at all (the failure-mode review's
+        # regression, against the lane's first cut).
         in_place = (
             not quoted and not unplaced
             and _EXEC_QUOTE_AT_WORD_RE.search(scan, m.start(), at) is not None
             and len(word) >= 2 and word[0] == word[-1] and word[0] in "'\""
             and not any(ch in word[1:-1] for ch in "'\"\\$`")
+            and _PROGRAM_OPENS_ON_PREFIX_RE.match(word) is None
         )
         yield _bash_word_text(word), in_place
 
@@ -2343,8 +2376,10 @@ def _posix_shell_c_programs_unread_in_place(command: str, scan: str) -> Iterator
     spelling is left out: read again one level down it is judged as another
     shell's program, from the payload's directory and the unknown one, and
     `cd sub && bash -c 'rm -rf .'` walled where the in-place read nudges
-    (DEF-853's declared row, red on the lane's first cut). Left out, the
-    bare spelling keeps the verdict it drew before by construction."""
+    (DEF-853's declared row, red on the lane's first cut). Left out, a bare
+    spelling the outer scan reads in place keeps the verdict that reading
+    gives it; every other program, the ones `_posix_shell_c_programs` does
+    not call in place, is read here."""
     for program, in_place in _posix_shell_c_programs(command, scan):
         if not in_place:
             yield program
@@ -11267,13 +11302,22 @@ _PS_STDIN_SHELL_HEADS = _STDIN_SHELL_HEADS
 #: a plain allow here where `bash -c "..."` walled. A cluster holding `c`
 #: never opens a switch of that run, so the opener is the last such cluster
 #: and a flood stays one pass; the run's switches are blank-separated, so a
-#: switch is never two.
+#: switch is never two. Both runs take a POSIX shell's `+` option (`bash +x
+#: -c "..."`, `bash -c +e "..."`: a plain allow here until DEF-3068's batch,
+#: as on the Bash tool), so the run before the cluster is the shared
+#: `_PS_SWITCH_RUN` with `+` added to a switch's start and refused at a
+#: value's, which keeps a `+` word one parse; the shared run is the
+#: interpreter arms' and is left as it is.
+_PS_POSIX_SHELL_SWITCH_RUN = (
+    r"[ \t]*(?:[-/+][\w:.-]+(?:[ \t]+(?!" + _PS_REPARSE_OPENER_WORDS
+    + r"(?=[ \t]|$))[^\s\"'\-/+][^\s]*(?=[ \t]|$))?[ \t]*)*"
+)
 _PS_SHELL_SWITCH_RUN_AFTER_C = (
-    r"(?:(?!" + _POSIX_SHELL_C_CLUSTER + r"[ \t])[-/][\w:.-]+(?:[ \t]+(?!"
-    + _PS_REPARSE_OPENER_WORDS + r"(?=[ \t]|$))[^\s\"'\-/][^\s]*(?=[ \t]|$))?[ \t]+)*"
+    r"(?:(?!" + _POSIX_SHELL_C_CLUSTER + r"[ \t])[-/+][\w:.-]+(?:[ \t]+(?!"
+    + _PS_REPARSE_OPENER_WORDS + r"(?=[ \t]|$))[^\s\"'\-/+][^\s]*(?=[ \t]|$))?[ \t]+)*"
 )
 _PS_SHELL_C_TAIL = (
-    _PS_INTERP_HEAD_TAIL + _PS_SWITCH_RUN + _POSIX_SHELL_C_CLUSTER + r"[ \t]+"
+    _PS_INTERP_HEAD_TAIL + _PS_POSIX_SHELL_SWITCH_RUN + _POSIX_SHELL_C_CLUSTER + r"[ \t]+"
     + _PS_SHELL_SWITCH_RUN_AFTER_C + _PS_PROGRAM_STRING
 )
 _PS_BASH_DASH_C_RE = re.compile(

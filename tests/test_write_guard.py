@@ -16109,14 +16109,39 @@ class TestCrossShellRouting:
         cmd = opener + " '" + program + "'"
         assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "wall"
 
+    #: A POSIX shell's `+` option around the `-c` cluster (DEF-3068's batch):
+    #: bash 5.2 ran the program behind each, and each was a plain allow on
+    #: both tools beside a walled `bash -c`; the here-string shares the run.
+    _PLUS_OPTION_OPENERS = [
+        "bash +x -c", "bash -c +e", "bash -c +O extglob", "bash +e -lc",
+        "sh +o posix -c",
+    ]
+
+    @pytest.mark.parametrize("tool,quote", [("Bash", "'"), ("PowerShell", '"')])
+    @pytest.mark.parametrize("opener", _PLUS_OPTION_OPENERS)
+    def test_a_plus_option_does_not_hide_the_program(self, tmp_path, tool, quote, opener):
+        """The switch run took a `-` option only, so a `+` one (`set +x`'s
+        spelling, the commonest way to turn an option off) ended it, and the
+        delete behind it met no tier on either tool. It is read as a switch,
+        never as a value."""
+        cmd = opener + " " + quote + "rm -rf /" + quote
+        assert _delete_verdict(run_guard_from(tool, cmd, tmp_path, tmp_path)) == "wall"
+
+    def test_a_plus_option_does_not_hide_a_here_string_program(self, tmp_path):
+        """The here-string opener shares the run before its `<<<`."""
+        assert _delete_verdict(run_bash_guard("bash +x <<< 'rm -rf /'", tmp_path)) == "wall"
+
     @pytest.mark.parametrize("cmd", [
         "bash -c -- 'ls -la'",
         "bash -c -x 'ls -la'",
+        "bash +x -c 'ls -la'",
+        "bash -c +e 'ls -la'",
         # the operand after the program is `$0`, never the program
         "bash -c 'echo hi' -- 'rm -rf /'",
         # `--` then a bare word: the program is the word, no quoted program
         "bash -c -- -x",
-    ], ids=["dashdash-read-only", "switch-read-only", "dollar-zero", "bare-after-dashdash"])
+    ], ids=["dashdash-read-only", "switch-read-only", "plus-before-read-only",
+            "plus-after-read-only", "dollar-zero", "bare-after-dashdash"])
     def test_a_switch_after_dash_c_adds_no_refusal(self, tmp_path, cmd):
         """The other side: a read-only program behind the same switches, and
         an operand that is not the program, stay allowed (each allowed on the
@@ -16177,6 +16202,59 @@ class TestCrossShellRouting:
         and met no tier (the lane's first commit walled each). In place now
         needs one quoted span holding no quote, backslash or `$`."""
         assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "wall"
+
+    @pytest.mark.parametrize("head", [
+        "/usr/bin/env bash -c", "/usr/bin/sudo bash -c", "builtin eval bash -c",
+    ], ids=["slashed-env", "slashed-sudo", "builtin-eval"])
+    @pytest.mark.parametrize("program", [
+        "rm -fr /", "sudo rm -fr /", "FOO=1 rm -fr /", "time rm -fr /", "! rm -fr /",
+        "env X=1 rm -fr /",
+    ], ids=["control", "sudo", "assign", "time", "negate", "env"])
+    def test_a_prefixed_bare_dash_c_program_meets_the_wall(self, tmp_path, head, program):
+        """The code review's prefixed-program class (DEF-3068's batch):
+        where the head is reached by `_CMD_POS`'s slashed arm or its
+        standalone exec-quote arm, the command position the exec quote opens
+        takes a bare verb only, so a program opening on a wrapper, an
+        assignment, a keyword or `!` was read in place by nobody and was a
+        plain allow. Such a program is not in place, and meets the wall one
+        level down; the bare verb is the control, walled before and after."""
+        cmd = head + " '" + program + "'"
+        assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "wall"
+
+    @pytest.mark.parametrize("cmd", [
+        # the depth rule's own row: an outer program that is not in place
+        # (it holds quotes) carries a `cd` and a bare `-c`, read one level
+        # down at depth 1, where every program is another shell's
+        "bash -c \"cd sub && bash -c 'rm -rf .'\"",
+        "cd sub && bash -c 'echo $HOME; rm -rf .'",
+        "cd sub && bash -c 'rm -rf \\.'",
+        "cd sub && bash -c \"bash -c 'rm -rf .'\"",
+        "cd sub && bash -c 'sudo rm -rf .'",
+        "cd sub && BASH -c 'rm -rf .'",
+        "cd sub && bash.exe -c 'rm -rf .'",
+        "eval \"bash -c 'rm -rf .'\"",
+    ], ids=["nested-cd", "dollar", "backslash", "nested-opener", "prefixed", "upper-head",
+            "exe-head", "eval-double-quoted"])
+    def test_a_program_not_read_in_place_after_a_cd_walls(self, tmp_path, cmd):
+        """Declared limit (DEF-3068's batch, the code review's rows): a
+        program the outer scan does not read in place is judged one level
+        down from the payload's directory, never from an outer `cd`, so `.`
+        names the checkout and walls where the in-place reading would
+        nudge. Friction, the side the toolbelt fails on, pinned per class so
+        a narrowing is made on purpose; the first row pins the depth rule
+        too (`always unread in place` at depth 1 made it a nudge)."""
+        (tmp_path / "sub" / "build").mkdir(parents=True)
+        assert _delete_verdict(run_guard_from("Bash", cmd, tmp_path, tmp_path)) == "wall"
+
+    def test_a_bare_program_inside_a_program_is_read_one_level_further_down(self):
+        """The depth rule's list-level pin: at the top the bare spelling is
+        left out of the nudge's list, and inside another shell's program it
+        is read (the outer program holds quotes, so it is not in place)."""
+        bp = _bash_patterns_module()
+        cmd = "bash -c \"cd sub && bash -c 'rm -rf build'\""
+        assert bp.nested_shell_programs(cmd) == [
+            "cd sub && bash -c 'rm -rf build'", "rm -rf build",
+        ]
 
     @pytest.mark.parametrize("cmd,expect", [
         ("bash -c -- 'cat .env'", "Secret-path access blocked"),
