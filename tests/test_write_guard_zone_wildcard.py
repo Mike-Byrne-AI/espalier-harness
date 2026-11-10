@@ -557,16 +557,41 @@ class TestADeleteThatCannotTakeADirectoryLeavesTheZone:
         for operand in ("tools/jct", "tools/jct/"):
             assert _zone_reason(_PS, "Remove-Item " + operand, tree), operand
 
-    def test_the_backslash_spelling_keeps_its_false_deny_until_its_row_closes(self, tree: Path) -> None:
-        """DEF-2068, open: `Remove-Item tools\\cc` names the directory
-        `tools/cc` names, but the relief's stop list refuses the backslash,
-        so it keeps a deny the forward-slash spelling does not. This row
-        pins today's behaviour and is the one to MOVE (to an allow) when
-        that row's fix lands (`task-packs/ledger.d/DEF-2068.md`); a red here
-        after such a fix is the fix, not a regression (the failure-mode
-        review of 844d123)."""
-        assert _zone_reason(_PS, "Remove-Item tools\\cc", tree)
-        assert _zone_reason(_PS, "Remove-Item tools/cc", tree) == ""
+    @pytest.mark.parametrize("command", [
+        v + " " + s for v in _FILE_ONLY_VERBS for s in ("tools\\cc", ".\\tools\\cc", "tools\\cc\\", ".\\tools", "tools\\")])
+    def test_the_backslash_spelling_is_allowed(self, tree: Path, command: str) -> None:
+        """DEF-2068: on PowerShell a backslash in a bare word is a path
+        separator (the escape is the backtick), so `Remove-Item tools\\cc`
+        names the directory `tools/cc` names and is spared as that spelling
+        is. 5.1 kept a full directory removed this way, plain, with `-Force`
+        and as `ri -Path .\\x\\ -Confirm:$false`, and removed an empty one
+        (driven 2026-11-10)."""
+        assert _zone_reason(_PS, command, tree) == "", command
+
+    @pytest.mark.parametrize("command", [
+        "Remove-Item cc\\", "Remove-Item tools\\cc\\hooks", "Remove-Item .\\cc",
+        "Remove-Item tools\\cc\\..\\cc", "Remove-Item tools\\..\\tools", "Remove-Item .\\tools\\cc\\..\\..\\tools",
+        "Remove-Item tools\\cc -Recurse", "Remove-Item -Recurse tools\\cc",
+        "Remove-Item tools\\cc; Remove-Item -Recurse tools", "Remove-Item tools\\cc, build",
+    ])
+    def test_a_backslash_spelling_main_refuses_keeps_the_deny(self, tree: Path, command: str) -> None:
+        """The fold keeps every refusal the forward spelling has: an empty
+        directory, a climb (a reader dropping the backslash stop without
+        the fold spares `tools\\..\\tools`), a recurse switch, a second
+        statement and a second operand."""
+        assert _zone_reason(_PS, command, tree), command
+
+    def test_a_rooted_or_unc_backslash_operand_keeps_the_deny(self, tree: Path) -> None:
+        """A rooted `\\x` names the drive root's `x` and a UNC `\\\\host`
+        another machine: both fold to an absolute spelling the relative-only
+        rule refuses. The rooted row reds a reader that drops the backslash
+        stop without the fold (Windows joins a rooted operand onto the
+        run directory's drive, so the two reads agree)."""
+        rooted = "\\" + os.path.splitdrive(str(tree / "tools"))[1].replace("/", "\\").lstrip("\\")
+        assert _zone_reason(_PS, "Remove-Item " + rooted, tree), rooted
+        read = write_guard._a_lone_file_delete
+        assert not read("Remove-Item " + rooted, rooted, tree, tree, tree / "tools")
+        assert not read("Remove-Item \\\\host\\share\\tools", "\\\\host\\share\\tools", tree, tree, tree / "tools")
 
     def test_both_reparse_constants_are_the_stdlib_value(self) -> None:
         """The zone read and the scratch-root reader each name

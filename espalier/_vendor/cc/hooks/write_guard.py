@@ -2687,14 +2687,17 @@ _LONE_DELETE_FLAGS = frozenset({"-force", "-path", "-literalpath", "-confirm", "
 #: separator, a drive or provider colon. Read on the words left once
 #: `-Confirm:$false`, the one allowlisted word holding two of them, is taken
 #: out whole. A non-ASCII character ends it too (a dash PowerShell reads as
-#: one).
+#: one). A backslash is not on it: PowerShell's escape is the backtick, and a
+#: backslash in a bare word is a path separator, which the reader folds to
+#: `/` as the zone check does, so `tools\cc` is read as `tools/cc` and a
+#: rooted `\x` or a UNC `\\server` as the absolute spelling it is (DEF-2068).
 #: Its sibling with the same "nothing runs between" job is
 #: `_bash_patterns._PS_TEMP_BINDING_REFUSED` (DEF-2055's binding gate). The two
 #: cannot be one object: `_bash_patterns` imports on first use, after this
-#: module-level set is built, and the gate must admit the `$`, `\` and `:` a
+#: module-level set is built, and the gate must admit the `$` and `:` a
 #: binding spells. Their shared core is pinned in
 #: `tests/test_write_guard.py::TestAScratchRootItselfIsTheWall`.
-_LONE_DELETE_STOPS = frozenset(";&|`{}()[]@'\"<>*?~#!$\\:")
+_LONE_DELETE_STOPS = frozenset(";&|`{}()[]@'\"<>*?~#!$:")
 #: The whitespace Python's ``split`` breaks on and a statement cannot hold
 #: alone: a line break, and the separators the shell does not split on.
 #: Read on the whole command.
@@ -2715,7 +2718,10 @@ def _a_lone_file_delete(command: str, raw: str, at: "Path | None", root: Path, r
       definition or expansion, so no redefined verb or default-parameter
       table can change what runs (the host loads no profile); ASCII only;
     * every flag is on ``_LONE_DELETE_FLAGS`` (`-Confirm:$false` read as one
-      whole word), and the one operand is ``raw`` as spelled, relative;
+      whole word), and the one operand is ``raw`` as spelled, relative, a
+      backslash read as `/` (DEF-2068: PowerShell's separator, never its
+      escape; `Remove-Item tools\\cc` kept 5.1's has-children refusal as the
+      forward-slash spelling does, driven 2026-11-10);
     * the operand, joined to the directory the command runs in and read
       with lstat, is a real directory holding an entry, and the path the
       zone check resolved (``resolved``), so the two reads name one
@@ -2732,7 +2738,9 @@ def _a_lone_file_delete(command: str, raw: str, at: "Path | None", root: Path, r
     non-recursive, and main's alias-proof deny stands there."""
     if not command.isascii() or not _LONE_DELETE_BREAKS.isdisjoint(command.strip(" \t")):
         return False
-    words = [w for w in command.split() if w.lower() != "-confirm:$false"]
+    # The separator fold first, so the rooted, UNC and climbing spellings
+    # below are refused in either form (DEF-2068).
+    words = [w.replace("\\", "/") for w in command.split() if w.lower() != "-confirm:$false"]
     if not _LONE_DELETE_STOPS.isdisjoint("".join(words)):
         return False
     if not words or words[0].lower() not in _LONE_DELETE_VERBS:
@@ -2744,9 +2752,10 @@ def _a_lone_file_delete(command: str, raw: str, at: "Path | None", root: Path, r
         if word.startswith(("-", "/")) or ".." in word.split("/"):
             return False
         operands.append(word)
-    if operands != [raw]:
+    spelled = raw.replace("\\", "/")
+    if operands != [spelled]:
         return False
-    path = Path(at or root) / raw
+    path = Path(at or root) / spelled
     try:
         st = os.lstat(path)
         if not stat.S_ISDIR(st.st_mode) or getattr(st, "st_file_attributes", 0) & _REPARSE_POINT:

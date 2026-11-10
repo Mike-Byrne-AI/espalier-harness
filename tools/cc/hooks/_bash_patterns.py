@@ -12145,8 +12145,8 @@ _PS_TEMP_BINDING_RE = re.compile(
 #: `-Exclude:(...)`, is one token no other reader refuses), a second statement
 #: on either separator, a pipe, a backtick (an escape or a line continuation)
 #: and a comment. Its sibling with the same job is `write_guard`'s
-#: `_LONE_DELETE_STOPS`: two sets, since that one refuses the `$`, `\` and
-#: `:` a binding spells; their shared core is pinned in
+#: `_LONE_DELETE_STOPS`: two sets, since that one refuses the `$` and `:` a
+#: binding spells; their shared core is pinned in
 #: `tests/test_write_guard.py::TestAScratchRootItselfIsTheWall`.
 _PS_TEMP_BINDING_REFUSED = frozenset("{}()&;|`#\r\n")
 #: Every name PowerShell predefines (air's 18c1a6): an assignment to a
