@@ -16208,8 +16208,8 @@ class TestCrossShellRouting:
     ], ids=["slashed-env", "slashed-sudo", "builtin-eval"])
     @pytest.mark.parametrize("program", [
         "rm -fr /", "sudo rm -fr /", "FOO=1 rm -fr /", "time rm -fr /", "! rm -fr /",
-        "env X=1 rm -fr /",
-    ], ids=["control", "sudo", "assign", "time", "negate", "env"])
+        "env X=1 rm -fr /", "2>/dev/null rm -fr /", "if true; then rm -fr /; fi",
+    ], ids=["control", "sudo", "assign", "time", "negate", "env", "redirect", "keyword"])
     def test_a_prefixed_bare_dash_c_program_meets_the_wall(self, tmp_path, head, program):
         """The code review's prefixed-program class (DEF-3068's batch):
         where the head is reached by `_CMD_POS`'s slashed arm or its
@@ -16221,6 +16221,17 @@ class TestCrossShellRouting:
         cmd = head + " '" + program + "'"
         assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "wall"
 
+    def test_the_prefix_predicate_is_the_separator_arms_pieces(self):
+        """`_PROGRAM_OPENS_ON_PREFIX_RE` lists the separator arm's prefix
+        pieces; a piece that joins the arm and not the predicate would leave
+        its programs in place, read by nobody (the failure-mode review's
+        `coproc` mutant). Pinned on the pattern text: the predicate's
+        alternation, then the exec quote, is the arm's starred group."""
+        bp = _bash_patterns_module()
+        pattern = bp._PROGRAM_OPENS_ON_PREFIX_RE.pattern
+        inner = pattern[pattern.index("(?:") + 3:-1]
+        assert "(?:" + inner + "|" + bp._CMD_POS_EXEC_QUOTE + ")*" in bp._CMD_POS_NO_VERB
+
     @pytest.mark.parametrize("cmd", [
         # the depth rule's own row: an outer program that is not in place
         # (it holds quotes) carries a `cd` and a bare `-c`, read one level
@@ -16228,12 +16239,13 @@ class TestCrossShellRouting:
         "bash -c \"cd sub && bash -c 'rm -rf .'\"",
         "cd sub && bash -c 'echo $HOME; rm -rf .'",
         "cd sub && bash -c 'rm -rf \\.'",
+        "cd sub && bash -c 'echo `pwd`; rm -rf .'",
         "cd sub && bash -c \"bash -c 'rm -rf .'\"",
         "cd sub && bash -c 'sudo rm -rf .'",
         "cd sub && BASH -c 'rm -rf .'",
         "cd sub && bash.exe -c 'rm -rf .'",
         "eval \"bash -c 'rm -rf .'\"",
-    ], ids=["nested-cd", "dollar", "backslash", "nested-opener", "prefixed", "upper-head",
+    ], ids=["nested-cd", "dollar", "backslash", "backtick", "nested-opener", "prefixed", "upper-head",
             "exe-head", "eval-double-quoted"])
     def test_a_program_not_read_in_place_after_a_cd_walls(self, tmp_path, cmd):
         """Declared limit (DEF-3068's batch, the code review's rows): a

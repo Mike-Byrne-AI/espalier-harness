@@ -11305,15 +11305,20 @@ _PS_STDIN_SHELL_HEADS = _STDIN_SHELL_HEADS
 #: switch is never two. Both runs take a POSIX shell's `+` option (`bash +x
 #: -c "..."`, `bash -c +e "..."`: a plain allow here until DEF-3068's batch,
 #: as on the Bash tool), so the run before the cluster is the shared
-#: `_PS_SWITCH_RUN` with `+` added to a switch's start and refused at a
-#: value's, which keeps a `+` word one parse; the shared run is the
-#: interpreter arms' and is left as it is.
+#: `_PS_SWITCH_RUN` with a `+` switch added and `+` refused at a value's
+#: start; the shared run is the interpreter arms' and is left as it is
+#: (pinned to it in `test_the_lookbehind_and_the_arm_share_the_run`). A
+#: `+` switch's body holds no `-`: the shared run's body may, and with
+#: blanks optional between switches a glued `-a-a-a` has 2^n splits
+#: there (pre-existing); a `+` switch taking `-` too gave the glued `+a-a`
+#: word the same blowup, which the time budget refused at 72 characters
+#: where the base allowed it (the failure-mode review, driven).
 _PS_POSIX_SHELL_SWITCH_RUN = (
-    r"[ \t]*(?:[-/+][\w:.-]+(?:[ \t]+(?!" + _PS_REPARSE_OPENER_WORDS
+    r"[ \t]*(?:(?:[-/][\w:.-]+|\+[\w:.]+)(?:[ \t]+(?!" + _PS_REPARSE_OPENER_WORDS
     + r"(?=[ \t]|$))[^\s\"'\-/+][^\s]*(?=[ \t]|$))?[ \t]*)*"
 )
 _PS_SHELL_SWITCH_RUN_AFTER_C = (
-    r"(?:(?!" + _POSIX_SHELL_C_CLUSTER + r"[ \t])[-/+][\w:.-]+(?:[ \t]+(?!"
+    r"(?:(?!" + _POSIX_SHELL_C_CLUSTER + r"[ \t])(?:[-/][\w:.-]+|\+[\w:.]+)(?:[ \t]+(?!"
     + _PS_REPARSE_OPENER_WORDS + r"(?=[ \t]|$))[^\s\"'\-/+][^\s]*(?=[ \t]|$))?[ \t]+)*"
 )
 _PS_SHELL_C_TAIL = (
