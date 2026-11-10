@@ -16502,6 +16502,94 @@ class TestPowerShellBacktickContinuation:
         assert_hook_allowed(_run_ps_guard(cmd, tmp_path))
 
 
+#: The one-line twins of `TestAGapAfterAPipeIsRead`, each with the verdict it
+#: gets: `{gap}` is where the pipe's gap goes, `" | "` in the twin itself.
+_PIPE_GAP_TWINS = [
+    ("Bash", "find / -type f{gap}xargs rm -rf", "wall"),
+    ("Bash", "find ~ -type f{gap}xargs rm -rf", "wall"),
+    ("Bash", "find src -type f{gap}xargs rm -r", "bump"),
+    ("PowerShell", "Get-ChildItem C:\\ -Recurse{gap}Remove-Item -Recurse -Force", "wall"),
+    ("PowerShell", "Get-ChildItem ~ -Recurse{gap}Remove-Item -Recurse -Force", "wall"),
+    ("PowerShell", "Get-ChildItem src{gap}Remove-Item -Recurse", "bump"),
+]
+#: Each shell's gaps: what its grammar reads past between a pipe and the
+#: next stage (bash: a newline, comment lines and blank lines, a
+#: backslash-newline; pwsh 7.6.5: line breaks, line and block comments).
+_PIPE_GAPS = {
+    "Bash": [" | # note\n", " |\n", " |\n  # one\n\n  # two\n  ", " | \\\n"],
+    "PowerShell": [" | <# note #> ", " | # note\n", " |\n", " | <# a #>\n  <# b #> "],
+}
+
+
+class TestAGapAfterAPipeIsRead:
+    """A comment or a line break between two pipe stages hid the second stage
+    from every pipe reader: `find / -type f | # c` + newline + `xargs <delete>`
+    and `Get-ChildItem C:\\ -Recurse | <# c #> Remove-Item -Recurse -Force`
+    were allowed where the one-line twin walls, and so were the home and the
+    unforced (nudged) forms -- both shells run each as one pipeline (air's
+    780c02, bash 3.2 and pwsh 7.6.5). In Bash a bare pipe-newline allowed too:
+    the comment's newline is the gap. One join at each shell's scan pre-pass
+    (`_splice_line_continuations`, `powershell_scan_pair`), so every reader
+    of either text reads the stage; the census over the corpus's pipe rows
+    found 1224 gap variants losing a verdict their twin had, and none after."""
+
+    @pytest.mark.parametrize("tool, twin, expect", _PIPE_GAP_TWINS)
+    def test_the_one_line_twin_holds_its_verdict(self, tmp_path, tool, twin, expect):
+        cmd = twin.format(gap=" | ")
+        assert _delete_verdict(run_guard_from(tool, cmd, tmp_path, None)) == expect, cmd
+
+    @pytest.mark.parametrize("tool, twin, expect, gap", [
+        (tool, twin, expect, gap)
+        for tool, twin, expect in _PIPE_GAP_TWINS for gap in _PIPE_GAPS[tool]
+    ])
+    def test_a_gap_keeps_the_twins_verdict(self, tmp_path, tool, twin, expect, gap):
+        cmd = twin.format(gap=gap)
+        assert _delete_verdict(run_guard_from(tool, cmd, tmp_path, None)) == expect, cmd
+
+    @pytest.mark.parametrize("tool, cmd", [
+        # a comment's text is still a comment: the gap ends at its close
+        ("PowerShell", "Get-ChildItem src | <# | Remove-Item C:\\ -Recurse -Force #> Select-Object Name"),
+        ("Bash", "ls src | # | xargs rm -rf /\ngrep x"),
+    ])
+    def test_what_the_gap_holds_stays_inert(self, tmp_path, tool, cmd):
+        assert _delete_verdict(run_guard_from(tool, cmd, tmp_path, None)) == "allow", cmd
+
+    @pytest.mark.parametrize("cmd", [
+        # text the pipe scan blanks is not a gap unless the RAW text is blank
+        # or a comment: a substitution there is a live stage, and dropping it
+        # with the newline would hide the delete it runs
+        "ls src | $(rm -rf /)\necho done",
+        "ls src |\n$(rm -rf /)\necho done",
+    ])
+    def test_live_text_the_scan_blanks_is_no_gap(self, tmp_path, cmd):
+        assert _delete_verdict(run_guard_from("Bash", cmd, tmp_path, None)) == "wall", cmd
+
+    @pytest.mark.parametrize("cmd, joined", [
+        ("find / | # c\nxargs rm", "find / | xargs rm"),
+        ("a |\n\n  # c\n  b\nc", "a |   b\nc"),
+        ("a |&\nb", "a |& b"),
+        # a line that opens a heredoc keeps its newline: the body follows it
+        ("cat <<'EOF' |\nbody\nEOF\nb", "cat <<'EOF' |\nbody\nEOF\nb"),
+        ('a | "x\ny"', 'a | "x\ny"'),
+        ('a |\n"x\ny"', 'a | "x\ny"'),
+    ])
+    def test_the_bash_join(self, cmd, joined):
+        assert _bash_patterns_module().splice_line_continuations(cmd) == joined
+
+    @pytest.mark.parametrize("cmd, joined", [
+        ("a | <# c #> b", "a | b"),
+        ("a |\n # c\n <# d #>\n b", "a | b"),
+        ("a | b", "a | b"),
+        # glued after a block comment, an opener starts no token (the
+        # masker's rule), so the gap ends there
+        ("a | <# c #><# d #> b", "a | <# d #> b"),
+    ])
+    def test_the_powershell_join(self, cmd, joined):
+        bp = _bash_patterns_module()
+        raw, scan = bp.powershell_scan_pair(cmd)
+        assert raw == joined and len(scan) == len(raw)
+
+
 class TestShellOutReader:
     """447-A step 3 (§C5): a program under an interpreter head is read for
     the text it hands to a SHELL -- the literal given to `os.system` or

@@ -10403,7 +10403,85 @@ def powershell_scan_pair(command: str) -> tuple[str, str]:
         last = m.end()
     raw_parts.append(command[last:])
     scan_parts.append(masked[last:])
-    return _resolve_ps_command_objects("".join(raw_parts), "".join(scan_parts))
+    raw, scan = _ps_join_pipe_gaps("".join(raw_parts), "".join(scan_parts))
+    return _resolve_ps_command_objects(raw, scan)
+
+
+#: A pipe whose gap, past blanks, opens with a line break or a comment: the
+#: only gap `_ps_join_pipe_gaps` rewrites, so a scan without one skips the
+#: walk. A GATE, not a matcher.
+_PS_PIPE_GAP_WITNESS_RE = re.compile(r"\|[ \t]*[\r\n#<]")
+
+
+def _ps_join_pipe_gaps(raw: str, scan: str) -> tuple[str, str]:
+    """The pair with every gap after a live pipe that holds a comment or a
+    line break replaced by one space, at the same offsets in both halves.
+
+    PowerShell reads a pipeline's next stage past blanks, line breaks, line
+    comments and block comments, so `Get-ChildItem C:\\ -Recurse | <# c #>
+    Remove-Item -Recurse -Force` is one pipeline (pwsh 7.6.5, driven), and
+    every pipe reader's stage pattern stopped at the comment's surviving
+    `<#`. Found on the MASKED half, where a pipe that survives is live and
+    a comment opener is read by the masker's own token-start rule; the
+    masker keeps a comment's delimiters on purpose (they end a blank run, so
+    a commented-out command is not read at command position), which is
+    right everywhere except here, between a pipe and its next stage.
+
+    Linear: each gap ends at the first character that is not a blank or a
+    comment, a pipe stops it, and the next ``#>`` and the next line end are
+    each searched for at most once per position they are reached from (a
+    found one is reused while the walk is short of it)."""
+    if not _PS_PIPE_GAP_WITNESS_RE.search(scan):
+        return raw, scan
+    n = len(scan)
+    spans: list[tuple[int, int]] = []
+    close_at, close_from = -1, n + 1
+    eol_at, eol_from = -1, n + 1
+    i = scan.find("|")
+    while 0 <= i < n:
+        j = i + 1
+        while j < n and scan[j] == "|":  # `||`, the pipeline chain operator
+            j += 1
+        start, k, held = j, j, False
+        while k < n:
+            c = scan[k]
+            if c in " \t":
+                k += 1
+            elif c in "\r\n":
+                held, k = True, k + 1
+            elif c == "<" and scan.startswith("<#", k) and scan[k - 1] in _PS_TOKEN_BOUNDARY:
+                if not (close_from <= k + 2 <= close_at):
+                    close_from, close_at = k + 2, scan.find("#>", k + 2)
+                    if close_at < 0:
+                        close_at = n + 1  # unterminated: the masker left it raw
+                if close_at > n:
+                    break
+                held, k = True, close_at + 2
+            elif c == "#" and scan[k - 1] in _PS_TOKEN_BOUNDARY:
+                if not (eol_from <= k <= eol_at):
+                    eol_from = k
+                    eol_at = min((x for x in (scan.find("\n", k), scan.find("\r", k)) if x >= 0),
+                                 default=n)
+                held, k = True, eol_at
+            else:
+                break
+        if held:
+            spans.append((start, k))
+        i = scan.find("|", max(k, j))
+    if not spans:
+        return raw, scan
+    raw_parts: list[str] = []
+    scan_parts: list[str] = []
+    last = 0
+    for a, b in spans:
+        raw_parts.append(raw[last:a])
+        scan_parts.append(scan[last:a])
+        raw_parts.append(" ")
+        scan_parts.append(" ")
+        last = b
+    raw_parts.append(raw[last:])
+    scan_parts.append(scan[last:])
+    return "".join(raw_parts), "".join(scan_parts)
 
 
 def powershell_scan_text(command: str) -> str:
@@ -14793,6 +14871,22 @@ def splice_line_continuations(command: str) -> str:
     return _resolve_bash_discovered_heads(_splice_line_continuations(command))
 
 
+#: A pipe the next thing after which, past blanks, is a line end or a
+#: comment opener: the splicer's pipe join is only possible where this
+#: matches (a superset: it reads the raw text, quotes and all), so a command
+#: without it skips the scan. A GATE, not a matcher.
+_PIPE_AT_LINE_END_RE = re.compile(r"\|&?[ \t\r]*[\n#]")
+
+
+def _blank_or_comment(text: str) -> bool:
+    """``text`` holds nothing bash runs: blanks, or a comment from its first
+    word on. Read on the RAW text, beside `_pipe_scan`'s blank: a quoted
+    span that opens here and closes on a later line is blank in the scan
+    too, and dropping it would cut a live string in half."""
+    word = text.strip()
+    return not word or word.startswith("#")
+
+
 def _splice_line_continuations(command: str) -> str:
     r"""Join physical lines a trailing backslash continues, into logical ones.
 
@@ -14844,10 +14938,14 @@ def _splice_line_continuations(command: str) -> str:
     shape unquoted ran nothing). The operators are read outside quotes and
     comments (``_pipe_scan``), so a quoted mention of ``<<EOF`` opens no body.
     """
-    if "\\" not in command:
+    if "\\" not in command and not _PIPE_AT_LINE_END_RE.search(command):
         return command
     lines = command.split("\n")
     parts: list[str] = []
+    #: The line before ended in a pipe, so bash is still reading that
+    #: pipeline's next stage: a blank or comment-only line here is part of
+    #: the gap it skips (``pipeline '|' newline_list command``).
+    pipe_open = False
     #: (delimiter, quoted, strip_tabs) of every heredoc opened on the logical
     #: line being assembled; their bodies begin once that line ends.
     queue: list[tuple[str, bool, bool]] = []
@@ -14888,6 +14986,9 @@ def _splice_line_continuations(command: str) -> str:
             if idx < last:
                 parts.append("\n")
             continue
+        if pipe_open and idx < last and _blank_or_comment(line):
+            continue
+        pipe_open = False
         for op in _HEREDOC_OPERATOR_RE.finditer(scan_line):
             try:
                 _, spec = _read_heredoc_operator(line, op.start())
@@ -14895,6 +14996,21 @@ def _splice_line_continuations(command: str) -> str:
                 spec = None
             if spec is not None:
                 queue.append((spec[0], not spec[1], spec[2]))
+        if idx < last and not queue:
+            # A line whose last live character is a pipe: bash reads the
+            # next stage from the lines after it, past any blank line and
+            # comment, so `find / | # note` + newline + `xargs <delete>` is
+            # ONE pipeline (driven). Joined here, every pipe reader of both
+            # texts reads the stage it was hidden from (the comment and the
+            # newline went to no reader's stage pattern). A line that opened
+            # a heredoc is left alone: its body follows this newline.
+            stage = scan_line.rstrip(" \t\r")
+            rest = line[len(stage):]
+            if (stage.endswith("|") or stage.endswith("|&")) and (
+                    _blank_or_comment(rest) or rest.strip() == "\\"):
+                parts.append(line[:len(stage)] + " ")
+                pipe_open = True
+                continue
         text, joined = _spliced_line(line, idx == last)
         parts.append(text)
         if joined and idx < last:
@@ -16345,8 +16461,16 @@ def _ps_dotnet_sweeps(raw: str, scan: str) -> list[tuple[int, list[str]]]:
 def _ps_has_sweep_witness(command: str) -> bool:
     """The pre-check every sweep consumer runs before a walk: a find delete
     action, a pipe into a remove verb, or a .NET directory delete, anywhere
-    in the uncapped text."""
-    return bool(_FIND_DELETE_ACTION_RE.search(command) or _PS_SWEEP_WITNESS_RE.search(command))
+    in the uncapped text; or a comment opening after a pipe, which the scan
+    pair's gap join (`_ps_join_pipe_gaps`) reads past to the stage this
+    raw-text witness cannot see (a superset costs a walk)."""
+    return bool(_FIND_DELETE_ACTION_RE.search(command) or _PS_SWEEP_WITNESS_RE.search(command)
+                or _PS_PIPE_THEN_COMMENT_RE.search(command))
+
+
+#: A pipe whose gap opens a comment, line or block: the sweep witness's
+#: superset arm (`_ps_has_sweep_witness`). A GATE, not a matcher.
+_PS_PIPE_THEN_COMMENT_RE = re.compile(r"\|[ \t\r\n]*<?#")
 
 
 def iter_ps_unnarrowed_find_delete_roots(command: str) -> Iterator[list[str]]:

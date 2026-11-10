@@ -1517,8 +1517,10 @@ first; the dangerous-command catch is a secondary slip-catcher):
    direct twin `rm -rf "$D"` draws (the nudge for a variable or a source
    directory, silence for a roster word or a temp directory), wherever it
    sits -- the top level, a chain, an `if`, a loop body whatever its head
-   (until 2026-11-09 it drew nothing anywhere). A stage between
-   the echo and `xargs`, the pipe across a line break, and an emit past
+   (until 2026-11-09 it drew nothing anywhere); a pipe across a line
+   break, or a comment between the stages, is one pipeline on either
+   tool and reads as its one-line twin (since 2026-11-10). A stage between
+   the echo and `xargs`, and an emit past
    the reader's bounds -- more than four words, a word past 80 characters,
    a separator quoted inside an emitted word, a quoted `echo` -- stay
    outside both tiers.
