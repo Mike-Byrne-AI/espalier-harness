@@ -15894,25 +15894,57 @@ def _ps_pipeline_reading(raw: str, m: "re.Match[str] | _CutPipe") -> tuple[list[
     return roots, narrowed, files_only, bool(_PS_RECURSE_SWITCH_RE.search(args))
 
 
-def _ps_block_cut(span: str) -> int:
-    """The offset in an enumerator's span of the closer that leaves the
-    group its head sits in, when a block opens after it; -1 otherwise. The
-    pipe after such a span belongs to the block's statement, not to the
-    enumerator (`foreach ($f in (gci src)) { $f | ri -r }`). Strings are
-    blank in the scan, so a bracket inside one counts nothing. Linear: one
-    pass."""
+def _ps_block_cut(span: str) -> tuple[int, int]:
+    """``(leave, opener)`` for an enumerator's span whose pipe sits inside a
+    block: ``leave`` the offset of the closer that leaves the group the
+    head sits in, ``opener`` that of the innermost block brace opened after
+    it and still open where the span ends (`foreach ($f in (gci src)) { $f
+    | ri -r }`, `if ((gci build).Count) { ... | ri }`). ``(-1, -1)`` when
+    the pipe is the enumerator's own: no leave, or every bracket opened
+    after it closed before the pipe (`(gci src).Where({ ... }) | ri`, a
+    member call taking a script block). Strings are blank in the scan, so a
+    bracket inside one counts nothing. Linear: one pass."""
     depth = 0
     leave = -1
+    opened: list[tuple[str, int]] = []
     for i, ch in enumerate(span):
-        if ch in ")}":
-            depth -= 1
-            if depth < 0 and leave < 0:
-                leave = i
+        if leave < 0:
+            if ch in ")}":
+                depth -= 1
+                if depth < 0:
+                    leave = i
+            elif ch in "({":
+                depth += 1
         elif ch in "({":
-            if leave >= 0 and ch == "{":
-                return leave
-            depth += 1
-    return -1
+            opened.append((ch, i))
+        elif ch in ")}" and opened:
+            opened.pop()
+    for ch, i in reversed(opened):
+        if ch == "{":
+            return leave, i
+    return -1, -1
+
+
+def _ps_foreach_variable(text: str, at: int) -> str | None:
+    """The loop variable's name when the enumerator head at ``at`` is a
+    `foreach` statement's collection (`foreach ($f in (gci src))`, `foreach
+    ($f in gci src)`), else None. A bounded look behind the head: one search
+    over at most 160 characters."""
+    m = re.search(r"(?i)\bforeach[ \t]*\([ \t]*\$(\w+)[ \t]+in[ \t]*\(?[ \t]*\Z",
+                  text[max(0, at - 160):at])
+    return m.group(1) if m else None
+
+
+def _ps_stage_is_variable(stage: str, name: str) -> bool:
+    """True when a pipe's first stage is the variable ``name`` alone, member
+    access allowed (`$f`, `$f.FullName`); PowerShell names fold case."""
+    s = stage.strip()
+    head = "$" + name
+    if s[:len(head)].lower() != head.lower():
+        return False
+    rest = s[len(head):]
+    return rest == "" or (rest[0] == "." and all(
+        part and part.replace("_", "a").isalnum() for part in rest[1:].split(".")))
 
 
 class _CutPipe:
@@ -15940,27 +15972,46 @@ class _CutPipe:
         return self._m.group(name)
 
 
+def _ps_header_feed(text: str, m: "re.Match[str]") -> "re.Match[str] | _CutPipe | None":
+    """What feeds the remove of one `_PS_PIPED_REMOVE_RE` match on ``text``
+    (DEF-3066): the match itself when its pipe is the enumerator's own; when
+    the pipe sits in a block after the enumerator's group, a `_CutPipe`
+    whose span ends at the group's close where the group is a `foreach`
+    header and the block's stage is its loop variable (`foreach ($f in (gci
+    src)) { $f | ri -r }`), else None -- the pipe carries something no
+    enumerator the guard reads binds (`if ((gci build).Count) { '/' | ri -r
+    -fo }`, a body piping another variable)."""
+    args = m.group("args") or ""
+    leave, opener = _ps_block_cut(args)
+    if leave < 0:
+        return m
+    name = _ps_foreach_variable(text, m.start("head"))
+    if name is None or not _ps_stage_is_variable(args[opener + 1:], name):
+        return None
+    return _CutPipe(m, m.start("args") + leave)
+
+
 def _ps_fed_removes(text: str) -> "Iterator[re.Match[str] | _CutPipe]":
-    """Every `_PS_PIPED_REMOVE_RE` match on ``text``, its enumerator span
-    cut where the enumerator's group closes when a block opens after it
-    (DEF-3066). The regex's head span runs to the first pipe, so in a loop
-    body it read past the loop header's closers into the block (`foreach
-    ($f in (Get-ChildItem / -Recurse)) { $f | Remove-Item -Recurse -Force
-    }`): `{` and `$f` read as a positional filter, the pipeline as narrowed,
-    and the remove as recognized safe -- a silent allow for every root,
-    where the statement form beside it walls. Glued (`){$f|ri -r}`), the
-    same tail read as a flag, so the walk read unnarrowed and walled by
-    accident. Cut, the header's enumerator is the body's feed, as it is
-    when the body pipes the loop variable: one reading for both spellings,
-    the statement form's. A body that pipes something else over-reads
-    toward the header's verdict -- the declared limit. A closer followed by
-    blanks or member access is not cut (`(gci src) | ri`, `(gci
-    src).FullName | ri`): the group's output is what the pipe carries. The
-    three verdict readers take this; the zone reader keeps every raw match,
-    its over-yield being the direction a zone wants."""
+    """Every enumerator the guard reads as feeding a remove on ``text``
+    (DEF-3066), by `_ps_header_feed`. The regex's head span runs to the
+    first pipe, so in a loop body it read past the loop header's closers
+    into the block (`foreach ($f in (Get-ChildItem / -Recurse)) { $f |
+    Remove-Item -Recurse -Force }`): spaced, `{` and `$f` read as a
+    positional filter, the pipeline as narrowed, and the remove as
+    recognized safe -- a silent allow for every root, where the statement
+    form beside it walls; glued (`){$f|ri -r}`), the same tail read as a
+    flag and walled by accident. Now the header's listing feeds a body that
+    pipes the loop variable, read as its statement twin, and a pipe in a
+    block that carries anything else is fed by nothing: forced, the record
+    walls it as it walls every operand-less forced remove; unforced, the
+    speed bump nudges it. A group's output piped on stays the enumerator's
+    (`(gci src) | ri`, `(gci src).FullName | ri`, `(gci src).Where({ ...
+    }) | ri`). The three verdict readers take this; the zone reader reads
+    the raw match and the header's feed both."""
     for m in _PS_PIPED_REMOVE_RE.finditer(text):
-        cut = _ps_block_cut(m.group("args"))
-        yield m if cut < 0 else _CutPipe(m, m.start("args") + cut)
+        fed = _ps_header_feed(text, m)
+        if fed is not None:
+            yield fed
 
 
 def _ps_pipeline_sweeps(raw: str, scan: str) -> Iterator[tuple[int, list[str], bool, bool]]:
@@ -16774,6 +16825,14 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
         # itself, as a narrowed find's is
         roots, narrowed, _files_only, _walks = _ps_pipeline_reading(raw, m)
         out.extend(("sweep" if narrowed else "delete", p) for p in roots)
+        # DEF-3066: a loop body piping its variable is fed by the header's
+        # listing, read cut at the header's close; the raw reading above
+        # took the block's brace and variable for a narrowing filter, which
+        # judged a protected directory's parent by itself (the review)
+        fed = _ps_header_feed(scan, m)
+        if isinstance(fed, _CutPipe):
+            roots, narrowed, _files_only, _walks = _ps_pipeline_reading(raw, fed)
+            out.extend(("sweep" if narrowed else "delete", p) for p in roots)
     for m in _PS_FIND_DELETE_RE.finditer(scan):
         # the find family on this tool (DEF-824): the Bash arm's span reader,
         # so `delete`, `sweep` and `move` mean what they mean on Bash, its

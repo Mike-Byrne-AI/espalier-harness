@@ -4294,6 +4294,28 @@ class TestCatastrophicLoopCarrier:
         # a group's output piped on is the enumerator's: its roster pass stays
         ("(gci build) | ri -r", "allow"),
         ("(Get-ChildItem /) | Remove-Item -Recurse", "wall"),
+        # a member call taking a script block is the group's output too: the
+        # narrowed cache clean is read as it was before the cut
+        ("(gci . -Recurse -Directory).Where({ $_.Name -eq '__pycache__' }) | ri -Recurse -Force", "allow"),
+        # a block's pipe that carries anything but the header's loop
+        # variable is fed by nothing: the record walls the forced form, the
+        # speed bump nudges the unforced one, whatever the header lists
+        ("foreach ($f in (gci build)) { $HOME | ri -r -fo }", "wall"),
+        ("foreach ($f in (gci build)) { 'src' | ri -r }", "bump"),
+        ("if ((gci build).Count -gt 0) { '/' | ri -r -fo }", "wall"),
+        ("if ($x) { gci build } else { $t | ri -r }", "bump"),
+        # an outer listing's span swallows an inner enumerator: the block's
+        # pipe is not the outer header's variable, so it is fed by nothing
+        # (the code review: both were silent before the cut)
+        ("foreach ($a in (gci build)) { foreach ($f in (gci / -Recurse)) { $f | ri -r -fo } }", "wall"),
+        ("if ($c) { gci build } else { gci / -Recurse | ri -r -fo }", "wall"),
+        # DECLARED: the ForEach-Object body over a listing is not read as fed
+        # by it (its pipe goes into ForEach-Object, not into a remove), so
+        # the unforced body nudges where its statement twin walls; pinned as
+        # the exact verdict so the day a reader binds `$_` this row reds
+        ("Get-ChildItem / -Recurse | ForEach-Object { $_ | Remove-Item -Recurse }", "bump"),
+        ("gci / -Recurse | % { $_ | ri -r }", "bump"),
+        ("gci / -Recurse | % { $_ | ri -r -fo }", "wall"),
     ])
     def test_the_powershell_carrier_in_the_loop_body_walls_loop(self, tmp_path, cmd, expect):
         """DEF-836's PowerShell arm, restated by DEF-3066. The xfail this
@@ -4302,12 +4324,37 @@ class TestCatastrophicLoopCarrier:
         first pipe, so it read past the loop header's closers into the body:
         `{` and `$f` read as a positional filter, the pipeline as narrowed,
         and the remove as recognized safe -- for every root, `/` included,
-        while the statement form walled. Read through `_ps_fed_removes`, the
-        body's remove is fed by nothing: forced, the record walls it as it
-        walls every operand-less forced remove; unforced, the speed bump
-        nudges it. Each forced piped row allowed at the base."""
+        while the statement form walled. Read through `_ps_fed_removes`, a
+        body that pipes the `foreach` header's variable is fed by the
+        header's listing, cut at the header's close, and reads as its
+        statement twin (`/` walls, `src` nudges, `build` passes), forced or
+        not, spaced or glued; a block's pipe carrying anything else is fed
+        by nothing (forced: the record's wall; unforced: the nudge)."""
         result = run_guard_from("PowerShell", cmd, tmp_path, None)
         assert _delete_verdict(result) == expect, (cmd, result.stdout)
+
+    def test_the_piped_remove_regex_has_exactly_its_two_readers_loop(self):
+        """DEF-3066: the verdict readers take the enumerator pipe through
+        `_ps_fed_removes`, which reads a loop header's listing as its body's
+        feed and a block's other pipes as fed by nothing; the zone reader
+        reads the raw match and the header's feed both. A reader that
+        searched the regex itself would read the block's brace as a
+        narrowing filter again, and the failure-mode review found that
+        reverting two of the three verdict readers moved no row. Grows
+        deliberately."""
+        import ast
+
+        tree = ast.parse((HOOKS_DIR / "_bash_patterns.py").read_text(encoding="utf-8"))
+        sites: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                for sub in ast.walk(node):
+                    if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
+                            and sub.func.attr in ("finditer", "search", "match", "fullmatch")
+                            and isinstance(sub.func.value, ast.Name)
+                            and sub.func.value.id == "_PS_PIPED_REMOVE_RE"):
+                        sites.add(node.name)
+        assert sites == {"_ps_fed_removes", "iter_ps_removed_or_relocated_operands"}, sites
 
     def test_the_placement_helper_has_exactly_its_two_callers_loop(self):
         """The carrier and the loop carrier place their sweeps through ONE
@@ -16852,6 +16899,10 @@ class TestRemovedOrRelocatedOperandIsAMutation:
             "gci -Recurse -Include *.pyc | ri"),
         "ps-delete-piped-newline-after-pipe": (
             "PowerShell", "deny", "_PS_PIPED_REMOVE_RE", 'gci "{D}" -Recurse -File |\nri'),
+        # DEF-3066: a loop body piping its variable is fed by the header's
+        # listing; read raw, the block's brace narrowed the ancestor's sweep
+        "ps-ancestor-piped-in-a-loop-body": (
+            "PowerShell", "deny", "_PS_PIPED_REMOVE_RE", 'foreach ($f in (gci "{A}")) { $f | ri -r -fo }'),
         # ── PowerShell: the native single-file deletes and git clean (the
         # failure-mode review: the Bash reader's verbs this tool lacked --
         # `unlink <hook>` deleted the hook under pwsh while Bash refused it) ──

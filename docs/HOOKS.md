@@ -1576,20 +1576,30 @@ first; the dangerous-command catch is a secondary slip-catcher):
    body reads as its statement twin (`Get-ChildItem / -Recurse |
    Remove-Item -Recurse` walls, the same over `src` nudges, over a roster
    directory passes), forced or not and with the brace spaced or glued to
-   the header. Until 2026-11-10 the span ran on across the block brace:
+   the header, where the body sits on the header's line (a body on a line
+   of its own, or after a `;`, is read as fed by nothing: the record's
+   wall forced, the nudge unforced). Until 2026-11-10 the span ran on
+   across the block brace:
    spaced, the brace and the loop variable read as a narrowing filter and
    the body passed silently for every root, the filesystem root included;
    glued (`){$f|ri -r}`), the same tail read as a flag and walled by
-   accident. A body that pipes something other than the loop variable is
-   still read as fed by the header's listing, the declared limit. A
+   accident. The listing feeds only a body whose pipe carries the
+   `foreach` header's own loop variable; a pipe in a block that carries
+   anything else (another variable, a literal, a pipe under an `if`
+   whose condition lists a directory) is fed by nothing, so the record
+   walls it forced and the speed bump nudges it unforced, as it does any
    recursive remove without the force switch whose target the pipeline
-   binds and no enumerator the guard reads feeds draws the nudge (`'src' |
-   Remove-Item -Recurse`, a variable piped in, a stage such as
-   `Where-Object` between the listing and the remove). What the pipe
-   carries is not read, so a roster item piped in nudges where its operand
-   twin is silent. Pinned by
-   `tests/test_write_guard.py::TestCatastrophicLoopCarrier::test_the_powershell_carrier_in_the_loop_body_walls_loop`
-   and the speed bump's own rows. The same Bash text is inert under pwsh.
+   binds and no enumerator the guard reads feeds (`'src' | Remove-Item
+   -Recurse`, a variable piped in, a stage such as `Where-Object` between
+   the listing and the remove). What the pipe carries is not read, so a
+   roster item piped in nudges where its operand twin is silent. The
+   `ForEach-Object` body (`Get-ChildItem / -Recurse | ForEach-Object { $_
+   | Remove-Item -Recurse }`, and its `%` alias) is not read as fed by the
+   listing before it, so unforced it nudges where its statement twin
+   walls: the declared limit pinned by
+   `tests/test_write_guard.py::TestCatastrophicLoopCarrier::test_the_powershell_carrier_in_the_loop_body_walls_loop`,
+   with the loop rows and the speed bump's own rows. The same Bash text
+   is inert under pwsh.
 
 Additionally, Bash commands that write to protected paths via redirects
 (`> file`), `tee`, `sed -i`, `cp`/`mv`, `git checkout`/`restore` (the `--`
