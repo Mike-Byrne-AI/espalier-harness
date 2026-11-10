@@ -11753,7 +11753,7 @@ def _vetted_scratch_values() -> list[str]:
     `_TEMP_ROOTS` alone. A drive-qualified value with an 8.3 short
     component (`_SHORT_NAME_SHAPE_RE`) is followed by its long spelling
     (`_long_path_name`), vetted the same way, so a ``TEMP`` presented in
-    8.3 form (``C:\\Users\\SOMEUS~1\\...``) is a root under both of its
+    8.3 form (a component such as ``SOMEUS~1``) is a root under both of its
     names and a path typed long below it is scratch (DEF-1125); any other
     value asks nothing more. A value already listed (``TEMP`` and ``TMP``
     are one directory on most hosts) is listed once. Read from the environment,
