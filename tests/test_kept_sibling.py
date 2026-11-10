@@ -61,6 +61,18 @@ _PLANTS = {
 }
 
 
+def _refusal_then_traceback(stderr: str) -> str:
+    """The refusal's one line, asserted to come first, to carry no restore and
+    to be followed by the traceback (DEF-5088, air's ruling 92ed0c: a script's
+    restore would discard an edit in progress with no copy kept, and the
+    traceback is that editor's account)."""
+    first, _sep, rest = stderr.partition("\n")
+    assert rest.startswith("Traceback (most recent call last):"), stderr[-600:]
+    assert first.endswith("the traceback follows."), first
+    assert "git restore" not in stderr and "restore the edited file" not in stderr, stderr[-600:]
+    return first
+
+
 def _drive(tmp_path: Path, plant: str | None) -> subprocess.CompletedProcess:
     root = tmp_path / (plant or "intact")
     copy_checkout(CC_DIR, root / "tools" / "cc", ignore=shutil.ignore_patterns("__pycache__"))
@@ -81,7 +93,7 @@ class TestTheShipDriverOnAKeptSibling:
         run = _drive(tmp_path, plant)
         name, _text, taken = _PLANTS[plant]
         assert run.returncode == 1, (run.returncode, run.stderr[-600:])
-        assert "Traceback" not in run.stderr, run.stderr[-600:]
+        _refusal_then_traceback(run.stderr)
         assert run.stderr.startswith("ship.py cannot run: tools/cc/"), run.stderr[-600:]
         taker = run.stderr[len("ship.py cannot run: "):].split(" takes `", 1)[0]
         assert taker.rsplit(":", 1)[1].isdigit(), taker   # the file and its line (the review's NIT 8)
@@ -90,7 +102,7 @@ class TestTheShipDriverOnAKeptSibling:
         assert f"If an upgrade kept {name} as yours" in run.stderr
         assert "`# espalier:managed` marker line" in run.stderr
         assert "`espalier upgrade --execute .`" in run.stderr
-        assert f"tools/cc/{name}" in run.stderr.split("restore the edited file to HEAD:", 1)[1]
+        assert f"If you are editing tools/cc, the error is your read at {taker};" in run.stderr
         assert run.stdout == ""
 
     @pytest.mark.parametrize("where", ["module", "call"])
@@ -115,7 +127,8 @@ class TestTheShipDriverOnAKeptSibling:
                              text=True, encoding="utf-8", errors="replace", timeout=scaled(30))
         outcome = "cannot run" if where == "module" else "stopped"
         line = 8 if where == "module" else 10
-        assert run.returncode == 1 and "Traceback" not in run.stderr, run.stderr[-600:]
+        assert run.returncode == 1, run.stderr[-600:]
+        _refusal_then_traceback(run.stderr)
         assert run.stderr.startswith(
             f"probe.py {outcome}: tools/cc/probe.py:{line} takes `absent` from tools/cc/_kept.py, which lacks it"
         ), run.stderr[-600:]
@@ -457,6 +470,8 @@ _SCRIPT_CELLS = {
     "loader_read": ("ledger_row.py", [("generate_ledger_regions.py", "\ndel record_fragments\n")],
                     "record_fragments"),
     "raised": ("board.py", [("_post_merge.py", "\nraise KeyError(1)\n")], None),
+    "typo": ("board.py", [("_post_merge.py", "\nimport _json_safe as _typo_js\n_TYPO = _typo_js.fold_newlinez\n")],
+             "fold_newlinez"),
     "no_reader": ("board.py", [("_post_merge.py", "\ndel RUN_RED\n"),
                                ("hooks/_start_refusal.py", "\ndel refuse_kept_siblings\n")], None),
 }
@@ -529,10 +544,23 @@ class TestAnArmedScriptOnAKeptSibling:
         kept = plants[0][0]
         name = Path(script).name
         assert run.returncode == 1, (run.returncode, run.stderr[-600:])
-        assert "Traceback" not in run.stderr, run.stderr[-600:]
+        _refusal_then_traceback(run.stderr)
         assert run.stderr.startswith(f"{name} cannot run: tools/cc/{script}:"), run.stderr[-600:]
         assert f"takes `{taken}` from tools/cc/{kept}, which lacks it" in run.stderr, run.stderr[-600:]
         assert "`espalier upgrade --execute .`" in run.stderr
+
+    def test_a_typo_under_edit_names_its_read_and_offers_no_restore(self, tmp_path):
+        # An edit in progress reads exactly like a kept file: _post_merge.py,
+        # the file under edit, asks _json_safe for a name it never had. The
+        # refusal names the read and keeps the traceback, and offers no restore,
+        # which would discard the edit with no copy kept (air's ruling 92ed0c).
+        script, plants, taken = _SCRIPT_CELLS["typo"]
+        run = _drive_script(tmp_path, script, plants)
+        assert run.returncode == 1, (run.returncode, run.stderr[-600:])
+        first = _refusal_then_traceback(run.stderr)
+        assert "the error is your read at tools/cc/_post_merge.py:" in first, first
+        assert f"`{taken}`" in first, first
+        assert f"AttributeError: module '_json_safe' has no attribute '{taken}'" in run.stderr.split("\n", 1)[1]
 
     def test_a_sibling_that_raises_otherwise_keeps_its_traceback(self, tmp_path):
         script, plants, _taken = _SCRIPT_CELLS["raised"]
@@ -565,7 +593,7 @@ class TestAnArmedScriptOnAKeptSibling:
                 f"_HELP_REACHES_NO_TAKE so its refusal is pinned here\n{run.stderr[-600:]}")
             return
         assert run.returncode == 1, (run.returncode, run.stderr[-600:])
-        assert "Traceback" not in run.stderr, run.stderr[-600:]
+        _refusal_then_traceback(run.stderr)
         assert run.stderr.startswith((f"{name} cannot run: tools/cc/", f"{name} stopped: tools/cc/")), \
             run.stderr[-600:]
         assert ", which lacks it (" in run.stderr, run.stderr[-600:]

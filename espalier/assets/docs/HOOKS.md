@@ -950,9 +950,12 @@ verbs, `/recall` and the status line among them; the event hooks are not
 scripts of this kind, and the deny hooks refuse through the guard above): an
 uncaught exception loads
 `_start_refusal.py` by path, so a kept sibling the script reads is one refusal
-on stderr naming the file, the line that read it and the repair, exit 1, never
-a traceback. A kept function that lacks a keyword the script passes is not read
-that way yet, and still ends in a traceback. Any other
+on stderr naming the file, the line that read it and the upgrade repair, then
+the traceback, exit 1. A script offers no restore: a typo in a file under edit
+reads exactly like a kept file, and a script, unlike a deny hook, keeps no copy
+before one, so the refusal says that an edit's error is its read at that line
+and leaves the traceback to show it. A kept function that lacks a keyword the
+script passes is not read that way yet, and ends in the traceback alone. Any other
 raise names no upgrade, which would regenerate the
 file under edit (a sibling raising at import was blamed on the helper twice,
 2026-10-14 and 10-16). The two budget names (`spawn_timeout`,
