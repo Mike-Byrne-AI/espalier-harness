@@ -4875,12 +4875,21 @@ def mask_powershell_inert_syntax(command: str) -> str:
     than the language does is friction; masking *more* would blank live code.
     Only one of those two errors is a fail-open.
     """
+    return _ps_mask_read(command)[0]
+
+
+def _ps_mask_read(command: str) -> tuple[str, bool]:
+    """`mask_powershell_inert_syntax`'s text, and whether the walk READ
+    ``command`` (``False``: handed back raw, past the length cap or at a
+    span the walk cannot resolve). The fallback's one home, so a reader
+    that must know a surviving pipe is live (`_ps_join_pipe_gaps`) cannot
+    drift from the masker's own conditions."""
     if not command or len(command) > _ROLE_MAP_CAP:
-        return command
+        return command, False
     try:
-        return _walk_powershell_spans(command)
+        return _walk_powershell_spans(command), True
     except (_UnresolvedShellSyntax, IndexError):
-        return command
+        return command, False
 
 
 def _walk_powershell_spans(s: str, spans: "list[tuple[int, int, str]] | None" = None) -> str:
@@ -10528,13 +10537,13 @@ def powershell_scan_pair(command: str) -> tuple[str, str]:
     into the joined text, never into ``command``.
     ``powershell_scan_text`` is the masked half of this pair (pinned).
     """
-    masked = mask_powershell_inert_syntax(command)
+    masked, read = _ps_mask_read(command)
     if len(masked) != len(command):
         # Cannot happen (the masker returns the command or a same-length
         # transform), but a consumer reading offsets across a length
         # mismatch would slice the wrong bytes, and the friction direction
         # is to scan the raw command.
-        masked = command
+        masked, read = command, False
     raw_parts: list[str] = []
     scan_parts: list[str] = []
     last = 0
@@ -10546,7 +10555,7 @@ def powershell_scan_pair(command: str) -> tuple[str, str]:
         last = m.end()
     raw_parts.append(command[last:])
     scan_parts.append(masked[last:])
-    raw, scan = _ps_join_pipe_gaps("".join(raw_parts), "".join(scan_parts), command)
+    raw, scan = _ps_join_pipe_gaps("".join(raw_parts), "".join(scan_parts), read)
     return _resolve_ps_command_objects(raw, scan)
 
 
@@ -10560,20 +10569,7 @@ _PS_PIPE_GAP_WITNESS_RE = re.compile(r"\|[ \t]*[\r\n#<]")
 _PS_LINE_END_RE = re.compile(r"[\r\n]")
 
 
-def _ps_masker_reads(command: str) -> bool:
-    """`mask_powershell_inert_syntax` READ ``command`` rather than handing
-    it back raw (past its length cap, or a span its walk cannot resolve):
-    only then is a pipe that survives the mask known to be live."""
-    if not command or len(command) > _ROLE_MAP_CAP:
-        return False
-    try:
-        _walk_powershell_spans(command)
-    except (_UnresolvedShellSyntax, IndexError):
-        return False
-    return True
-
-
-def _ps_join_pipe_gaps(raw: str, scan: str, command: str) -> tuple[str, str]:
+def _ps_join_pipe_gaps(raw: str, scan: str, masker_read: bool) -> tuple[str, str]:
     """The pair with every gap after a live pipe that holds a comment or a
     line break replaced by one space, at the same offsets in both halves.
 
@@ -10587,25 +10583,33 @@ def _ps_join_pipe_gaps(raw: str, scan: str, command: str) -> tuple[str, str]:
     a commented-out command is not read at command position), which is
     right everywhere except here, between a pipe and its next stage. A
     comment glued to a block comment's close opens there too (`<# a #><# b
-    #>`, `<# a #># b`: one gap on pwsh 5.1, driven), though the masker's
-    token-start rule does not open one there.
+    #>`, `<# a #># b`: one gap on pwsh 5.1, driven), as the masker's walk
+    reads it (`block_end` in `_walk_powershell_spans`).
 
     Two places a surviving pipe is not one the gap is read after: where the
-    masker handed ``command`` back raw (`_ps_masker_reads`), every quoted
-    pipe and comment survives, so nothing is joined; and inside a string
-    the masker keeps live because PowerShell re-parses it (`iex '...'`), a
-    gap is joined only where it ends inside that string (`_ps_quote_cursor`
-    on ``raw``) -- a comment there that runs past the closing quote is the
-    inner program's, and joining it swallowed the quote and the statement
-    after it (`iex 'Get-Date | # c'; Remove-Item C:\\ -Recurse -Force`
-    walled at main and allowed here, the code review).
+    masker handed the command back raw (``masker_read`` false, from
+    `_ps_mask_read`), every quoted pipe and comment survives, so nothing is
+    joined -- a declared limit: past the masker's cap, or with a span it
+    cannot resolve (an unterminated quote), a gap hides its stage from a
+    reader that has only the join; and inside a string the masker keeps
+    live because PowerShell re-parses it (`iex '...'`), a gap is joined
+    only where it ends before that string's closing quote (`_ps_quote_cursor`
+    on ``raw``) -- a comment there that runs past the quote is the inner
+    program's, and joining it swallowed the quote and the statement after
+    it (`iex 'Get-Date | # c'; Remove-Item C:\\ -Recurse -Force` walled at
+    main and allowed here, the code review); the walk then resumes after
+    the string, so a later pipe on the line is still read. Both comment
+    ends are read on the SCAN: a comment lies outside every inert span, so
+    the halves agree there, except in a re-parsed expandable string, where
+    the scan holds the line break a `` `n `` escape denotes and the raw the
+    escape (the reviews of the batch).
 
     Linear: each gap ends at the first character that is not a blank or a
     comment, a pipe stops it, the next line end is one search from where
     the walk is, and the next ``#>`` is searched for at most once per
     position it is reached from (a found one is reused while the walk is
     short of it)."""
-    if not _PS_PIPE_GAP_WITNESS_RE.search(scan) or not _ps_masker_reads(command):
+    if not masker_read or not _PS_PIPE_GAP_WITNESS_RE.search(scan):
         return raw, scan
     n = len(scan)
     quote_at = _ps_quote_cursor(raw)
@@ -10625,26 +10629,25 @@ def _ps_join_pipe_gaps(raw: str, scan: str, command: str) -> tuple[str, str]:
             elif c in "\r\n":
                 held, k = True, k + 1
             elif c == "<" and scan.startswith("<#", k) and opens:
-                # a comment's close is read on RAW: no string opens inside
-                # one, and the masker blanks a glued comment's `>` it does
-                # not read as a comment
                 if not (close_from <= k + 2 <= close_at):
-                    close_from, close_at = k + 2, raw.find("#>", k + 2)
+                    close_from, close_at = k + 2, scan.find("#>", k + 2)
                     if close_at < 0:
-                        close_at = n + 1  # unterminated: no gap ends
+                        close_at = n + 1  # unterminated: the masker left it raw
                 if close_at > n:
                     break
                 held, k = True, close_at + 2
                 glued = k
             elif c == "#" and opens:
-                eol = _PS_LINE_END_RE.search(raw, k)
+                eol = _PS_LINE_END_RE.search(scan, k)
                 held, k = True, (eol.start() if eol else n)
             else:
                 break
         if held:
             quote = quote_at(i)
-            if quote is None or k <= quote[1]:
+            if quote is None or k < quote[1]:
                 spans.append((start, k))
+            else:
+                k = max(j, quote[1] + 1)  # past the string: its line's later pipes
         i = scan.find("|", max(k, j))
     if not spans:
         return raw, scan
@@ -15869,7 +15872,7 @@ def _capped_whole(command: str) -> "tuple[str, int, int] | None":
     the WHOLE command's masked, spliced text -- the net's reading -- and the
     offsets in it where the head the walk read ends and the tail it read
     begins (`_cap_for_scan` keeps the head and the tail, each spliced on its
-    own here). ``lo`` is also where the walk's own text joins them.
+    own here). ``lo`` is at or before where the walk's own text joins them.
 
     Each offset is how far that half's own splice IS the whole's text, not
     its length: a join that straddles a cut reads differently on each side

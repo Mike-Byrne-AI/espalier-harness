@@ -1522,7 +1522,9 @@ first; the dangerous-command catch is a secondary slip-catcher):
    either tool and reads as its one-line twin (since 2026-11-10), except
    inside a Bash command substitution and inside a program handed to
    another shell (`bash -c '...'`, `eval '...'`, a heredoc fed to a
-   shell), where the line break still ends the reading. A stage between
+   shell), where the line break still ends the reading, and in a
+   PowerShell command the guard cannot read whole (one past its length
+   cap, or holding an unterminated quote). A stage between
    the echo and `xargs`, and an emit past
    the reader's bounds -- more than four words, a word past 80 characters,
    a separator quoted inside an emitted word, a quoted `echo` -- stay

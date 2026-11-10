@@ -16611,6 +16611,14 @@ class TestAGapAfterAPipeIsRead:
         ("iex 'Get-Date | <# c'; Remove-Item C:\\ -Recurse -Force; 'x #>'", "wall"),
         # a gap wholly inside the string is the program's own, and read
         ("iex 'Get-ChildItem C:\\ -Recurse | <# c #> Remove-Item -Recurse -Force'", "wall"),
+        # ... its line comment ends where the scan holds the `n escape's line
+        # break (read on raw, the escape ran past the quote: the batch's review)
+        ('iex "Get-ChildItem C:\\ -Recurse | # c`n Remove-Item -Recurse"', "wall"),
+        ('iex "Get-ChildItem src | # c`r`nRemove-Item -Recurse"', "bump"),
+        # a gap left whole inside a string hides no later pipe on its line
+        ("iex 'Get-Date | # c'; Get-ChildItem C:\\ -Recurse | <# x #> Remove-Item -Recurse -Force",
+         "wall"),
+        ("iex 'Get-Date | # c'; Get-ChildItem src | # y\nRemove-Item -Recurse", "bump"),
     ])
     def test_a_reparsed_strings_gap_ends_inside_it(self, tmp_path, cmd, expect):
         assert _delete_verdict(run_guard_from("PowerShell", cmd, tmp_path, None)) == expect, cmd
@@ -16628,6 +16636,15 @@ class TestAGapAfterAPipeIsRead:
         # a separator inside the glued comment is blanked, as in any comment
         assert bp.mask_powershell_inert_syntax("<# a #><# ; #>") == "<# a #><#   #>"
         assert _delete_verdict(run_guard_from("PowerShell", cmd, tmp_path, None)) == "wall", cmd
+
+    @pytest.mark.parametrize("cmd", [
+        # the other direction, pinned: what the glued comment holds is
+        # comment (pwsh 5.1, driven), so a delete inside it runs nothing
+        "<# a #># ; Remove-Item C:\\ -Recurse -Force",
+        "<# a #><# ; Remove-Item C:\\ -Recurse -Force #>",
+    ])
+    def test_what_a_glued_comment_holds_stays_inert(self, tmp_path, cmd):
+        assert _delete_verdict(run_guard_from("PowerShell", cmd, tmp_path, None)) == "allow", cmd
 
     def test_a_scan_the_masker_handed_back_raw_joins_nothing(self, tmp_path):
         # past the masker's cap the scan is the raw text, where a quoted pipe
