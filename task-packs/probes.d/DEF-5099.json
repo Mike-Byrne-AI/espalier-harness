@@ -1,0 +1,13 @@
+{
+ "id": "DEF-5099",
+ "subject": "tools/cc/ship.py",
+ "cmd": "python3 -c \"import pathlib,sys;sys.path.insert(0,'.');from espalier.cli import _sibling_takes;n,_=_sibling_takes(pathlib.Path('tools/cc'));print('_resolve_unmerged' in n.get('record_merge',{}))\"",
+ "open_value": "False",
+ "why_not": null,
+ "inputs": [
+  "espalier/cli.py"
+ ],
+ "row_sha": "50a2bd236e7f",
+ "text_sha": "cf46742db7c8",
+ "verified_2026_11_09": "OPEN (filed 2026-11-09; probe driven at filing here and in the export of HEAD 07685c010095)"
+}

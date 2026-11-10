@@ -71,13 +71,14 @@ import contextlib
 import io
 import json
 import os
+import posixpath
 import re
 import stat
 import sys
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, NamedTuple
+from typing import TYPE_CHECKING, Any, Callable, Iterator, NamedTuple
 
 # The hook's own start, read before the pattern modules import (about a
 # quarter of a second of a call here). In the hook process Claude Code starts,
@@ -301,7 +302,8 @@ try:
     # predates a name they take refuses at the start with the upgrade, on a
     # read-only call as on any other.
     _WRITE_GUARD_HELPER_NAMES = (
-        "ADOPTER_ZONE_KEYS", "DENIED", "MCPPayloadUnverifiable", "MCP_CONTENT_KEYS", "MCP_PATH_FIELDS",
+        "ADOPTER_ZONE_KEYS", "DENIED", "MCPPayloadUnverifiable", "MCP_CONTENT_KEYS", "MCP_LEAFWALK_MAX_NODES",
+        "MCP_PATH_FIELDS",
         "MUTATION_TOOLS", "RECALL_LOG_NAME", "STATE_DIR", "_append_jsonl", "_locked_increment",
         "_msys_drive_to_windows", "_read_counter", "_rel_under_root", "_telemetry_enabled",
         "_write_counter", "adopter_protected_prefixes", "adopter_zone_for", "atomic_write_text", "directory_exists", "git_bash_tmp_mount",
@@ -3457,9 +3459,11 @@ def _mcp_leaf_denied(
 ) -> bool:
     """Protected-zone verdict for one MCP leaf. For a symlink-creation verb the
     allowlist is IGNORED (a symlink may never land in/point at a governed zone);
-    for a normal write the allowlist applies; for a remove/relocate verb a
-    directory that ENCLOSES a protected path is refused as the shells refuse
-    it (§C52; the failure-mode review drove `{"path": "tools"}` allowed)."""
+    for a normal write the allowlist applies; for an operand the tool takes
+    (``removes``: :func:`_mcp_takes`, a delete's or a move's but its
+    destination) a directory that ENCLOSES a protected path is refused as the
+    shells refuse it (§C52; the failure-mode review drove `{"path": "tools"}`
+    allowed)."""
     if symlink_verb and _is_protected(rel_path, root):
         return True
     if _is_allowed(rel_path):
@@ -3499,7 +3503,12 @@ def check_mcp(tool_input: dict, tool_name: str, root: Path) -> int:
     # A symlink-creation verb is allowlist-BLIND (a symlink may never land
     # in/point at a governed zone) -- mirrors the Bash/PS ln twins.
     symlink_verb = _is_mcp_symlink_verb(tool_name)
-    removes = _is_mcp_remove_or_relocate_verb(tool_name)
+    # Whether a field's operand is taken with its tree is read per field: a
+    # move's destination, in an object that names a source, is written into,
+    # as the shells read it (DEF-2026). Read for a move tool alone.
+    effect = _mcp_mutation_effect(tool_name)
+    moves, sourced = _mcp_move_leaves(tool_input) if effect == "Move" else ([], frozenset())
+    resolved: dict[str, tuple[Path, str]] = {}
     # Layer 1 — canonical fields (malformed + protected, resolve-normalised).
     for field_name in _hook_utils.MCP_PATH_FIELDS:
         field_value = tool_input.get(field_name, "")
@@ -3512,8 +3521,10 @@ def check_mcp(tool_input: dict, tool_name: str, root: Path) -> int:
                 type_name=type(field_value).__name__,
             ))
         base, rel_path = _resolve_in_checkout(field_value, root)
-        if _mcp_leaf_denied(rel_path, root, symlink_verb=symlink_verb, removes=removes):
-            return _deny_mcp(rel_path, tool_name, field_name, symlink_verb, root, base=base)
+        resolved[field_name] = (base, rel_path)
+        takes = _mcp_takes(effect, field_name, "" in sourced)
+        if _mcp_leaf_denied(rel_path, root, symlink_verb=symlink_verb, removes=takes):
+            return _deny_mcp(rel_path, tool_name, field_name, symlink_verb, root, base=base, takes=takes)
         # An MCP write whose canonical path field is a hardlink alias of a
         # protected file. Scoped to the bounded canonical fields, NOT the
         # unbounded leaf-walk, to preserve the Class-A2 FS-syscall-free guarantee
@@ -3549,8 +3560,18 @@ def check_mcp(tool_input: dict, tool_name: str, root: Path) -> int:
             if not symlink_verb and key.casefold() in _hook_utils.MCP_CONTENT_KEYS:
                 continue  # data payload, not a write target
             rel_path = _normalize_path_str(leaf, root)
-            if _mcp_leaf_denied(rel_path, root, symlink_verb=symlink_verb, removes=removes):
-                return _deny_mcp(rel_path, tool_name, location, symlink_verb, root, key=key)
+            takes = _mcp_takes(effect, key, effect == "Move" and _mcp_object_of(key, location) in sourced)
+            if _mcp_leaf_denied(rel_path, root, symlink_verb=symlink_verb, removes=takes):
+                return _deny_mcp(rel_path, tool_name, location, symlink_verb, root, key=key, takes=takes)
+        # A move judged as a write into its destination still refuses a name
+        # it lands on harness ground, read as the remove reading reads it: a
+        # landed directory that encloses ground is refused as on main.
+        for key, location, landed, landed_base in _mcp_landings(
+                moves, sourced, symlink_verb=symlink_verb, resolved=resolved):
+            rel_path = _normalize_path_str(landed, root) if landed_base is None else landed
+            if _mcp_leaf_denied(rel_path, root, symlink_verb=symlink_verb, removes=True):
+                return _deny_mcp(rel_path, tool_name, location, symlink_verb, root, base=landed_base, key=key,
+                                 takes=True)
     except _hook_utils.MCPPayloadUnverifiable:
         # The harness hint directly, not the zone pickers: an unverifiable
         # payload names no path, so there is no zone to attribute the deny to.
@@ -3560,15 +3581,161 @@ def check_mcp(tool_input: dict, tool_name: str, root: Path) -> int:
     return 0
 
 
-#: The keys an MCP move names its destination by: the path a move lands at is
-#: not taken by it, so a directory named there reads its zone's own text even
-#: when it encloses harness ground (DEF-5012).
-_MCP_DESTINATION_KEYS = frozenset({"destination", "dest", "dst", "new_path", "target", "target_uri", "to"})
+#: The keys an MCP move names its destination by, in an object that also names
+#: a source (``_MCP_SOURCE_KEYS``): the path a move lands at is written into,
+#: never taken, so a directory named there is judged as a write, as the shells
+#: judge a move's destination (refused only where it is or lies in a zone, or
+#: where a moved name lands on one, DEF-2026). ``target`` and ``target_uri``
+#: are left out: a rename or a move names the thing it moves ``target`` as
+#: often as its destination (the review of DEF-2026's lane drove both), so
+#: under either the operand is read as taken, the refusing side.
+_MCP_DESTINATION_KEYS = frozenset({"destination", "dest", "dst", "new_path", "to"})
+
+#: The keys an MCP move names its source by. A destination key reads as the
+#: destination only in an object that names one of these too: alone, its
+#: operand may be the thing the tool moves (a move keyed ``to`` and nothing
+#: else), so it is read as taken, the refusing side (DEF-2026's review).
+_MCP_SOURCE_KEYS = frozenset({"source", "src", "from", "path", "file_path", "old_path", "uri"})
+
+
+def _mcp_takes(effect: str, key: str, sourced: bool) -> bool:
+    """Does an MCP tool take the operand under ``key`` with its tree (§C52)?
+    ``effect`` is :func:`_mcp_mutation_effect`'s; ``sourced`` says whether the
+    object holding ``key`` names a source (:func:`_mcp_move_leaves`). A
+    delete takes every operand it names, under any key; a move every one but
+    its destination (a ``_MCP_DESTINATION_KEYS`` key, casefolded as the
+    content-key skip is, in a sourced object); a tool that neither deletes nor
+    moves takes none. ``check_mcp`` reads it once per field and hands the
+    answer to ``_deny_mcp``, so the verdict and the text are one reading."""
+    return effect == "Delete" or (
+        effect == "Move" and not (sourced and key.casefold() in _MCP_DESTINATION_KEYS))
+
+
+def _mcp_object_of(key: str, location: str) -> str | None:
+    """The location of the object that holds a leaf, read off the leaf walk's
+    location (``moves[0].to`` holds ``moves[0]``; a list's indices after the
+    key are the key's own, so ``to[1]`` is held by the top object, ``""``).
+    None where the location does not end in the key, which names no object
+    and so no source: the leaf is read as taken."""
+    rest = location
+    while rest.endswith("]"):
+        opening = rest.rfind("[")
+        if opening < 0 or not rest[opening + 1:-1].isdigit():
+            break
+        rest = rest[:opening]
+    if not key or not rest.endswith(key):
+        return None
+    rest = rest[:len(rest) - len(key)]
+    if not rest:
+        return ""
+    return rest[:-1] if rest.endswith(".") else None
+
+
+def _mcp_leaf_is_under(obj: str, location: str) -> bool:
+    """Does the leaf at ``location`` lie in the object at ``obj`` or below it?"""
+    return obj == "" or location.startswith((obj + ".", obj + "["))
+
+
+def _mcp_keys_name_one_object(tool_input: object) -> bool:
+    """Whether no key in the payload holds ``.``, ``[`` or ``]``, so each leaf
+    walk location names one object (``{"m.x": ...}`` and ``{"m": {"x": ...}}``
+    spell one location). False past the walk's node bound."""
+    stack: list[object] = [tool_input]
+    seen = 0
+    while stack:
+        node = stack.pop()
+        seen += 1
+        if seen > _hook_utils.MCP_LEAFWALK_MAX_NODES:
+            return False
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if any(mark in str(key) for mark in ".[]"):
+                    return False
+                stack.append(value)
+        elif isinstance(node, (list, tuple)):
+            stack.extend(node)
+    return True
+
+
+def _mcp_move_leaves(tool_input: dict) -> tuple[list[tuple[str, str, str, str | None]], frozenset[str]]:
+    """A move's leaves with the object each lies in, and the objects that name
+    a source. Read only for a move tool, so a write or a delete pays nothing.
+    A payload whose keys hold the location's own marks names no sourced
+    object, so every destination there is read as taken (main's reading). A
+    payload past the walk's bounds reads as no leaves here: the leaf walk that
+    follows refuses it (``MCPPayloadUnverifiable``)."""
+    try:
+        leaves = [(key, location, leaf, _mcp_object_of(key, location))
+                  for key, location, leaf in _hook_utils.iter_mcp_path_leaves(tool_input)]
+    except _hook_utils.MCPPayloadUnverifiable:
+        return [], frozenset()
+    if not _mcp_keys_name_one_object(tool_input):
+        return leaves, frozenset()
+    sourced = frozenset(obj for key, _location, _leaf, obj in leaves
+                        if obj is not None and key.casefold() in _MCP_SOURCE_KEYS)
+    return leaves, sourced
+
+
+def _mcp_landings(
+    leaves: list[tuple[str, str, str, str | None]], sourced: frozenset[str], *, symlink_verb: bool,
+    resolved: dict[str, tuple[Path, str]],
+) -> Iterator[tuple[str, str, str, Path | None]]:
+    """Each ``(key, location, name, base)`` a move lands a taken operand at:
+    the destination joined with the operand's last component (after
+    ``normpath``, ``\\`` read as ``/`` first, as ``_ps_landed_path`` does), for
+    every destination of a sourced object and every operand the move takes in
+    that object or below it, as ``_bash_patterns._landed_under`` builds a shell
+    move's. A move judged as a write into its destination must still refuse a
+    name that lands on harness ground (`settings.json` moved into `.claude/`,
+    DEF-2026's review). Every destination lands under its spelling, the leaf
+    walk's FS-free reading; a canonical destination field lands under the path
+    Layer 1 resolved for it too (``resolved``: its ``base`` and relative path),
+    so a destination named through a symlink lands where the file does, as the
+    shells resolve theirs. The leaves under one object sit together in walk
+    order, so each destination object's operands are read once, from its own
+    slice. More pairs than the leaf walk's node bound raise
+    ``MCPPayloadUnverifiable``, the caller's fail-closed refusal."""
+    pairs = 0
+    operands_of: dict[str, list[str]] = {}
+    for index, (dkey, dloc, dleaf, dobj) in enumerate(leaves):
+        if dobj is None or dobj not in sourced or dkey.casefold() not in _MCP_DESTINATION_KEYS:
+            continue
+        operands = operands_of.get(dobj)
+        if operands is None:
+            low, high = index, index + 1
+            while low > 0 and _mcp_leaf_is_under(dobj, leaves[low - 1][1]):
+                low -= 1
+            while high < len(leaves) and _mcp_leaf_is_under(dobj, leaves[high][1]):
+                high += 1
+            operands = operands_of[dobj] = [
+                tleaf for tkey, _tloc, tleaf, tobj in leaves[low:high]
+                if (symlink_verb or tkey.casefold() not in _hook_utils.MCP_CONTENT_KEYS)
+                and _mcp_takes("Move", tkey, tobj is not None and tobj in sourced)
+            ]
+        # The spelling always, and the resolved path beside it for a canonical
+        # field, as main reads a destination on both layers: either refusing
+        # refuses (a `.claude` that is itself a link out of the checkout).
+        unders: list[tuple[Path | None, str]] = [(None, dleaf)]
+        if dloc in resolved:
+            unders.append(resolved[dloc])
+        for tleaf in operands:
+            pairs += 1
+            if pairs > _hook_utils.MCP_LEAFWALK_MAX_NODES:
+                raise _hook_utils.MCPPayloadUnverifiable(
+                    f"more than {_hook_utils.MCP_LEAFWALK_MAX_NODES} landed names")
+            name = posixpath.basename(posixpath.normpath(tleaf.replace("\\", "/")))
+            if name in ("", ".", ".."):
+                continue
+            for base, under in unders:
+                prefix = under.replace("\\", "/").rstrip("/")
+                # A resolved destination that is the checkout's root is
+                # relative "": the name lands at the root, never the filesystem's.
+                yield dkey, dloc, (name if base is not None and prefix in ("", ".") else prefix + "/" + name), base
 
 
 def _deny_mcp(
     rel_path: str, tool_name: str, field_name: str, symlink_verb: bool, root: Path,
-    *, base: Path | None = None, key: str = "",
+    *, base: Path | None = None, key: str = "", takes: bool = False,
 ) -> int:
     """Emit the protected-zone MCP deny (symlink vs ordinary write reason; an
     adopter zone's own template on either, DEF-995; for a directory a remove
@@ -3576,11 +3743,13 @@ def _deny_mcp(
     encloses harness ground, the template naming that ground, DEF-5012).
     ``base`` is the checkout a canonical-field path resolved in (Layer 1); the
     FS-free leaf-walk (Layer 2) has none and names the path alone. ``key`` is
-    the leaf's governing key (the field name on Layer 1)."""
+    the leaf's governing key (the field name on Layer 1). ``takes`` is
+    ``check_mcp``'s own reading of the operand (:func:`_mcp_takes`), so the text
+    follows the verdict; a symlink-named tool keeps the symlink text, as on
+    main, so it never reads as a take."""
     where, note = _checkout_note(base, root) if base is not None else ("", {})
     effect = "" if symlink_verb else _mcp_mutation_effect(tool_name)
-    takes = effect == "Delete" or (
-        effect == "Move" and (key or field_name).casefold() not in _MCP_DESTINATION_KEYS)
+    takes = takes and bool(effect)
     if _adopter_zone(rel_path, root) is not None or (takes and _takes_harness_ground(rel_path, root)):
         detail = f"; {_SYMLINK_NOTE}" if symlink_verb else f", field {field_name}"
         reason = _zone_reason(
