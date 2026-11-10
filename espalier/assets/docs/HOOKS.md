@@ -1489,12 +1489,26 @@ first; the dangerous-command catch is a secondary slip-catcher):
    the PowerShell tool the listing piped straight into the cmdlet
    (`git ls-files | Remove-Item`) is the same wipe: the cmdlet binds a
    path from the pipeline by value. A stage between the enumerator and
-   `xargs`, a single path echoed into it, and a shell opened behind the
-   carrier (`xargs sh -c`, the reader roster's standing limit) stay
-   declared limits, pinned by
+   `xargs`, a single path echoed into it (and its PowerShell twin, a
+   literal item piped into the cmdlet: `'.' | Remove-Item -Recurse`), and
+   a shell opened behind the carrier (`xargs sh -c`, the reader roster's
+   standing limit) stay declared limits, pinned by
    `tests/test_write_guard.py::TestCatastrophicEnumeratorCarrier::test_classifier_matrix_carrier`
    and, through the hook,
-   `tests/test_write_guard.py::TestCatastrophicEnumeratorCarrier::test_through_the_hook_carrier`.
+   `tests/test_write_guard.py::TestCatastrophicEnumeratorCarrier::test_through_the_hook_carrier`
+   and
+   `tests/test_write_guard.py::TestCatastrophicEnumeratorCarrier::test_through_the_hook_carrier_powershell`.
+   The echoed path is outside this wall, not outside the nudge: the soft
+   tier reads a word echoed or printed into a recursing `xargs` remove as
+   that remove's operand, so `echo "$D" | xargs rm -rf` draws what its
+   direct twin `rm -rf "$D"` draws (the nudge for a variable or a source
+   directory, silence for a roster word or a temp directory), wherever it
+   sits -- the top level, a chain, an `if`, a loop body whatever its head
+   (until 2026-11-09 it drew nothing anywhere). A stage between
+   the echo and `xargs`, the pipe across a line break, and an emit past
+   the reader's bounds -- more than four words, a word past 80 characters,
+   a separator quoted inside an emitted word, a quoted `echo` -- stay
+   outside both tiers.
 
    The loop carrier -- the enumerator's output bound to
    a loop variable and removed in the loop's body, on the Bash tool -- is
@@ -1540,11 +1554,18 @@ first; the dangerous-command catch is a secondary slip-catcher):
    way is read by no loop head. Each draws the variable operand's nudge
    behind a plain
    recursing remove -- so a catastrophic word beside a substitution draws
-   that nudge where its direct twin walls -- and behind a body that pipes
-   each item into `xargs rm -rf`, a stage between and a word list beside a
-   substitution draw nothing at all: declared limits too, each pinned as
-   the verdict it draws by
-   `tests/test_write_guard.py::TestCatastrophicLoopCarrier::test_through_the_hook_loop`.
+   that nudge where its direct twin walls -- and the same nudge behind a
+   body that pipes each item into `xargs rm -rf` (`echo "$f" | xargs rm
+   -rf`), since the soft tier reads the echoed word as the recursive
+   remove's operand (the echoed path, above; until 2026-11-09 a stage
+   between, a word list beside a substitution and every other unread head
+   drew nothing at all there). A body that emits a fixed roster word, or
+   whose remove does not recurse, keeps its direct twin's silence. Under a
+   head a loop opener reads, a roster word list or a narrowed head, the
+   twin is the loop's own `rm -rf "$f"`, which draws the variable
+   operand's nudge, so the carrier draws it too; only the unrolled `rm -rf
+   build dist` is silent. Each is pinned as the verdict it draws, beside
+   its in-place twin, among the loop carrier's through-the-hook rows.
 
    The PowerShell statement-form loop over a listing
    is the remove cmdlet's variable-operand wall already; the item piped

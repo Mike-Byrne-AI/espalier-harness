@@ -4402,6 +4402,45 @@ _DERIVED_MUST_INCLUDE = frozenset({
     "_HARNESS_ENV_PREFIX_RE", # lives in write_guard, not _bash_patterns
 })
 
+
+def _first_use_regexes() -> list[tuple[str, "re.Pattern[str]"]]:
+    """The patterns compiled on their first use rather than at import, which
+    the derivation above cannot see (it reads module-level ``_RE`` names):
+    enrolled BY HAND, each through its accessor, and read by both budget
+    arms below beside the derived population (DEF-3063)."""
+    import _bash_patterns  # noqa: E402
+
+    return [
+        ("_bash_patterns._carrier_fed_remove_re()", _bash_patterns._carrier_fed_remove_re()),
+    ]
+
+
+_FIRST_USE_REGEXES = _first_use_regexes()
+
+
+def test_every_first_use_compile_is_enrolled():
+    """The hand list above is checked against the source: every
+    ``re.compile(`` inside a function of `_bash_patterns` names its
+    accessor in `_FIRST_USE_REGEXES`, so a pattern compiled on first use
+    cannot ship outside both budget arms by being left off the list (the
+    failure-mode review of DEF-3063: nothing compared the list with the
+    module). Module-level compiles are the derivation's."""
+    import ast
+
+    import _bash_patterns  # noqa: E402
+
+    tree = ast.parse(Path(_bash_patterns.__file__).read_text(encoding="utf-8"))
+    compiling: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for call in ast.walk(node):
+                if (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                        and call.func.attr == "compile"
+                        and isinstance(call.func.value, ast.Name) and call.func.value.id == "re"):
+                    compiling.add(node.name)
+    enrolled = {name.split(".")[-1].rstrip("()") for name, _ in _FIRST_USE_REGEXES}
+    assert compiling == enrolled, (sorted(compiling), sorted(enrolled))
+
 #: Adversarial payload shapes. Each is a repeated token run chosen to stress a
 #: DIFFERENT quantifier family. The env-assignment and separator runs are the
 #: shapes that caught the anchor's O(n^2) regression; do not drop them.
@@ -4437,7 +4476,7 @@ def test_derived_regex_population_is_non_vacuous():
     )
 
 
-@pytest.mark.parametrize("name,pattern", _DERIVED_REGEXES)
+@pytest.mark.parametrize("name,pattern", _DERIVED_REGEXES + _FIRST_USE_REGEXES)
 def test_every_derived_regex_is_linear_on_adversarial_runs(name, pattern):
     """Every derived extraction regex stays inside the budget on every shape.
 
@@ -4826,7 +4865,7 @@ def _growth_first_red(
     return None
 
 
-@pytest.mark.parametrize("name,pattern", _DERIVED_REGEXES)
+@pytest.mark.parametrize("name,pattern", _DERIVED_REGEXES + _FIRST_USE_REGEXES)
 def test_every_derived_regex_grows_linearly_without_an_alarm(name, pattern):
     """The shape detector every platform runs: it times `.search` of each
     derived regex on every hand and derived run at 2000 and 16000 chars and
