@@ -42,12 +42,21 @@ import stat as _stat
 import sys
 from pathlib import Path
 
+# This script is loaded under two spellings: run or loaded with this directory
+# already on sys.path, and imported as `tools.cc.statusline` from the repo
+# root, where nothing has. So it puts its own directory on sys.path the way
+# hooks/_bash_patterns.py does instead of trusting every importer to have done
+# so.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
 # Sibling import: shared blueprint cap constant.
 # tools/cc/ scripts can import siblings; only `espalier` imports are forbidden.
-from _blueprint_limits import BLUEPRINT_MAX_SIZE
-from _freshness_cache import _is_state_cache_stale, _read_state_cache_safe
-from _json_safe import os_error_text
-import _paths
+from _blueprint_limits import BLUEPRINT_MAX_SIZE  # noqa: E402
+from _freshness_cache import _is_state_cache_stale, _read_state_cache_safe  # noqa: E402
+from _json_safe import os_error_text  # noqa: E402
+import _paths  # noqa: E402
 
 # BC-027b: in-content amplification defense.
 # A blueprint under the byte cap can still be a JSON bomb (deep nesting
