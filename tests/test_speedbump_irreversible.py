@@ -3089,6 +3089,18 @@ class TestCommandPositionClassClose:
             "FLAG -- the `-Command` prefix of `pwsh` and `Invoke-Expression`, "
             "fullmatched against one switch word past an anchored `_PS_CARRIER_RE` "
             "head (DEF-1131).",
+        # ── DEF-3068: whether a `-c` program an anchored
+        # `_SHELL_DASH_C_RE` match read is read in place by the outer scan ──
+        "_bash_patterns._EXEC_QUOTE_AT_WORD_RE":
+            "CLASSIFIER -- searched between an anchored `_SHELL_DASH_C_RE` "
+            "match's start and its program word, to ask whether the exec quote "
+            "ends at the word; it opens nothing and decides only which reader "
+            "takes the program (DEF-3068).",
+        "_bash_patterns._PROGRAM_OPENS_ON_PREFIX_RE":
+            "CLASSIFIER -- matched at the start of one program word an anchored "
+            "`_SHELL_DASH_C_RE` match read, to ask whether it opens on a "
+            "wrapper, assignment, keyword, `!` or redirect; it decides only which "
+            "reader takes the program (DEF-3068).",
         # ── DEF-3011: the started shell's own command-line readers -- the
         # cmdlet word that starts it must start a statement first ──
         "_bash_patterns._PS_CLI_FILE_SWITCH_RE":

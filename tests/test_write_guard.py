@@ -16813,6 +16813,17 @@ class TestCrossShellRouting:
             "bash <<< 'cd tools/cc/hooks && echo x > x.py'",
         ):
             assert_hook_allowed(run_bash_guard(cmd, tmp_path))
+        # a delete in such a program after an OUTER `cd` (DEF-3068): the
+        # program is another shell's, judged from the payload's directory
+        # and the unknown one, never from the `cd`, so `.` names the checkout
+        # and walls where the bare `-c` spelling, read in place after the
+        # `cd`, nudges (DEF-853's row). Before DEF-3068 it met no tier.
+        (tmp_path / "sub" / "build").mkdir(parents=True)
+        pair = tuple(
+            _delete_verdict(run_guard_from("Bash", f"cd sub && {opener} 'rm -rf .'", tmp_path, tmp_path))
+            for opener in ("bash -c", "bash -lc")
+        )
+        assert pair == ("bump", "wall")
 
     @pytest.mark.parametrize("cmd", [
         # DEF-745: the program is the stage before the pipe -- its last quoted
@@ -16867,12 +16878,298 @@ class TestCrossShellRouting:
         cmd = "bash " + "-x " * switches + opener + " '" + body + "'"
         assert_hook_denied(run_bash_guard(cmd, tmp_path))
 
-    def test_a_catastrophic_delete_behind_a_long_switch_run_is_refused(self, tmp_path):
+    @pytest.mark.parametrize("opener", ["-c", "<<<"], ids=["dash-c", "herestring"])
+    def test_a_catastrophic_delete_behind_a_long_switch_run_is_refused(self, tmp_path, opener):
         """DEF-818: the catastrophic delete behind 65 switches, pinned refused
-        (air 34fc8c). The here-string opener: behind `-c` the wall misses the
-        delete at ONE switch, older than the bound and its own row (§C76)."""
-        cmd = "bash " + "-x " * 65 + "<<< 'rm -rf /'"
-        assert_hook_denied(run_bash_guard(cmd, tmp_path))
+        (air 34fc8c) on both openers. Behind `-c` the wall missed the delete
+        from ONE switch up until DEF-3068 (rows below)."""
+        cmd = "bash " + "-x " * 65 + opener + " 'rm -rf /'"
+        assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "wall"
+
+    # ── Bash tool: the dangerous tier one level down a switched `-c` ──
+
+    #: The `-c` openers a switch or cluster precedes (DEF-3068): the row's
+    #: spellings, a trailing cluster, a long option, and two other heads.
+    _SWITCHED_DASH_C = [
+        "bash -lc", "bash -l -c", "sh -e -c", "bash -x -c", "bash -cx",
+        "bash --norc -c", "zsh -fc", "dash -e -c",
+    ]
+    #: Every record of the Bash dangerous tier the switched opener hid, each
+    #: denied behind a bare `-c` (Task 0, driven on main 57373db).
+    _TIER_MEMBERS = {
+        "rm-root": "rm -rf /",
+        "rm-home": "rm -rf ~",
+        "rm-unforced-root": "rm -r /",
+        "find-delete-root": "find / -delete",
+        "piped-root": "find / -type f | xargs rm -rf",
+        "loop-root": 'for f in /*; do rm -rf "$f"; done',
+        "env-prefix": "ESPALIER_MAINTENANCE_MODE=1 claude",
+    }
+
+    @pytest.mark.parametrize("opener", _SWITCHED_DASH_C)
+    @pytest.mark.parametrize("program", ["rm -rf /", "rm -rf ~"], ids=["root", "home"])
+    def test_a_switched_dash_c_program_meets_the_wall(self, tmp_path, opener, program):
+        """DEF-3068: `bash -c 'rm -rf /'` walls, and until this row every
+        switched spelling of the same program was a plain allow on the Bash
+        tool: the exec-quote command position (`_CMD_POS_EXEC_QUOTE`) opens
+        only after a bare `-c`, so the outer scan never read the delete, and
+        the tier did not hand the program `_posix_shell_c_bodies` reads one
+        level down as it hands a shell-out's. The wall holds under
+        maintenance mode, so an agent's login-shell one-liner wiping the
+        root or home met no tier at all."""
+        cmd = opener + " '" + program + "'"
+        assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "wall"
+
+    @pytest.mark.parametrize("opener", ["bash -c", "bash -lc", "sh -e -c"],
+                             ids=["bare", "cluster", "switch"])
+    @pytest.mark.parametrize("member", list(_TIER_MEMBERS), ids=list(_TIER_MEMBERS))
+    def test_every_tier_record_reads_a_switched_dash_c_program(self, tmp_path, opener, member):
+        """DEF-3068's class (Core Rule 12): the miss was the tier's, not the
+        rm classifier's. Each record -- the delete, the find, the piped and
+        loop carriers (the loop drew only the bump), the harness env prefix
+        -- reads the switched program as it reads the bare `-c` one, which
+        is the control beside it."""
+        cmd = opener + " '" + self._TIER_MEMBERS[member] + "'"
+        result = run_bash_guard(cmd, tmp_path)
+        if member == "env-prefix":
+            assert_hook_denied(result)
+        else:
+            assert _delete_verdict(result) == "wall"
+
+    @pytest.mark.parametrize("program,verdict", [
+        ("rm -rf build", "allow"),
+        ("ls -la", "allow"),
+        ("rm -rf /tmp/scratch/x", "allow"),
+    ], ids=["relative", "read-only", "deep-tmp"])
+    def test_a_switched_dash_c_program_is_judged_as_the_bare_one(self, tmp_path, program, verdict):
+        """The other side of DEF-3068: the program one level down meets the
+        verdict its bare `-c` twin meets, never a new refusal (Task 0's
+        controls, equal on all nine openers on main)."""
+        # a fresh project per call: a speed bump the first call armed would
+        # read as an allow on the re-issue
+        for k, opener in enumerate(("bash -c", "bash -lc", "sh -e -c")):
+            project = tmp_path / str(k)
+            project.mkdir()
+            assert _delete_verdict(run_bash_guard(opener + " '" + program + "'", project)) == verdict
+
+    #: Switches between the `-c` cluster and its program (DEF-3068's batch,
+    #: the failure-mode review's): a POSIX shell reads every option before
+    #: its first operand, so each runs the quoted word as `bash -c` does.
+    _SWITCHES_AFTER_C = [
+        "bash -c --", "bash -c -x", "bash -c -e --", "bash -lc --",
+        "bash -c -o pipefail", "bash -c --norc",
+    ]
+
+    @pytest.mark.parametrize("opener", _SWITCHES_AFTER_C)
+    @pytest.mark.parametrize("program", ["rm -rf /", "rm -rf ~"], ids=["root", "home"])
+    def test_a_switch_after_dash_c_does_not_hide_the_program(self, tmp_path, opener, program):
+        """DEF-3068's batch: the `-c` reader took the program only as the
+        word right after the cluster, so a switch or a `--` between them hid
+        it, and `bash -c -- 'rm -rf /'` was a plain allow on the Bash tool
+        beside a walled `bash -c 'rm -rf /'`. The run after the cluster is
+        read, and the delete meets the wall from every one of them."""
+        cmd = opener + " '" + program + "'"
+        assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "wall"
+
+    #: A POSIX shell's `+` option around the `-c` cluster (DEF-3068's batch):
+    #: bash 5.2 ran the program behind each, and each was a plain allow on
+    #: both tools beside a walled `bash -c`; the here-string shares the run.
+    _PLUS_OPTION_OPENERS = [
+        "bash +x -c", "bash -c +e", "bash -c +O extglob", "bash +e -lc",
+        "sh +o posix -c",
+    ]
+
+    @pytest.mark.parametrize("tool,quote", [("Bash", "'"), ("PowerShell", '"')])
+    @pytest.mark.parametrize("opener", _PLUS_OPTION_OPENERS)
+    def test_a_plus_option_does_not_hide_the_program(self, tmp_path, tool, quote, opener):
+        """The switch run took a `-` option only, so a `+` one (`set +x`'s
+        spelling, the commonest way to turn an option off) ended it, and the
+        delete behind it met no tier on either tool. It is read as a switch,
+        never as a value."""
+        cmd = opener + " " + quote + "rm -rf /" + quote
+        assert _delete_verdict(run_guard_from(tool, cmd, tmp_path, tmp_path)) == "wall"
+
+    def test_a_plus_option_does_not_hide_a_here_string_program(self, tmp_path):
+        """The here-string opener shares the run before its `<<<`."""
+        assert _delete_verdict(run_bash_guard("bash +x <<< 'rm -rf /'", tmp_path)) == "wall"
+
+    @pytest.mark.parametrize("cmd", [
+        "bash -c -- 'ls -la'",
+        "bash -c -x 'ls -la'",
+        "bash +x -c 'ls -la'",
+        "bash -c +e 'ls -la'",
+        # the operand after the program is `$0`, never the program
+        "bash -c 'echo hi' -- 'rm -rf /'",
+        # `--` then a bare word: the program is the word, no quoted program
+        "bash -c -- -x",
+    ], ids=["dashdash-read-only", "switch-read-only", "plus-before-read-only",
+            "plus-after-read-only", "dollar-zero", "bare-after-dashdash"])
+    def test_a_switch_after_dash_c_adds_no_refusal(self, tmp_path, cmd):
+        """The other side: a read-only program behind the same switches, and
+        an operand that is not the program, stay allowed (each allowed on the
+        lane's base as well)."""
+        assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "allow"
+
+    @pytest.mark.parametrize("opener", ["bash -lc", "sh -e -c", "bash -lc -x"])
+    def test_a_switched_dash_c_delete_meets_the_nudge(self, tmp_path, opener):
+        """DEF-3068's sister site (the failure-mode review): the speed bump
+        reads `nested_shell_programs` beside the command, and that list never
+        held a switched `-c` program, so `bash -lc 'rm -rf <checkout>'` drew
+        no nudge where `bash -c 'rm -rf <checkout>'` drew one. The bare
+        spelling is the control, a nudge before and after."""
+        for k, spelled in enumerate(("bash -c", opener)):
+            project = tmp_path / str(k)
+            project.mkdir()
+            cmd = spelled + " 'rm -rf " + project.name + "'"
+            assert _delete_verdict(run_bash_guard(cmd, project)) == "bump", spelled
+
+    @pytest.mark.parametrize("opener,where,expect", [
+        # the payload's directory: the program is judged from where Claude
+        # is, so `.` in `sub` nudges for both spellings (the switched one was
+        # a plain allow before the batch)
+        ("bash -c", "sub", "bump"),
+        ("bash -lc", "sub", "bump"),
+        ("bash -c", "root", "wall"),
+        ("bash -lc", "root", "wall"),
+    ])
+    def test_a_switched_dash_c_program_is_judged_from_the_payload_directory(
+        self, tmp_path, opener, where, expect,
+    ):
+        """The payload-cwd row the failure-mode review asked for: the
+        switched program one level down is judged from the payload's
+        directory, as the bare one read in place is, so `.` names the
+        checkout from the root and a subdirectory from `sub`."""
+        (tmp_path / "sub" / "build").mkdir(parents=True)
+        at = tmp_path if where == "root" else tmp_path / "sub"
+        got = _delete_verdict(run_guard_from("Bash", opener + " 'rm -rf .'", tmp_path, at))
+        assert got == expect
+
+    @pytest.mark.parametrize("cmd", [
+        # side-by-side quoted segments splitting the verb (DEF-832's shape)
+        "bash -c 'r''m -rf /'",
+        "bash -c 'r''m -rf ~'",
+        "bash -c \"r\"'m -rf /'",
+        "bash -c 'find / -del''ete'",
+        # a bare program inside a bare program: the outer reading keeps the
+        # inner quotes in the operand, so `~` and `..` are never read as such
+        "bash -c \"bash -c 'rm -rf ~'\"",
+        "bash -c \"bash -c 'rm -rf ..'\"",
+    ], ids=["split-root", "split-home", "split-mixed", "split-find", "bare-in-bare-home",
+            "bare-in-bare-parent"])
+    def test_a_bare_dash_c_program_the_outer_scan_misreads_meets_the_wall(self, tmp_path, cmd):
+        """The failure-mode review's regression on the batch's first cut:
+        "read in place" was judged at the opener alone, so a bare program the
+        outer scan reads differently from the shell -- segments it never
+        joins, quotes it keeps in an operand -- was left out one level down
+        and met no tier (the lane's first commit walled each). In place now
+        needs one quoted span holding no quote, backslash or `$`."""
+        assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "wall"
+
+    @pytest.mark.parametrize("head", [
+        "/usr/bin/env bash -c", "/usr/bin/sudo bash -c", "builtin eval bash -c",
+    ], ids=["slashed-env", "slashed-sudo", "builtin-eval"])
+    @pytest.mark.parametrize("program", [
+        "rm -fr /", "sudo rm -fr /", "FOO=1 rm -fr /", "time rm -fr /", "! rm -fr /",
+        "env X=1 rm -fr /", "2>/dev/null rm -fr /", "if true; then rm -fr /; fi",
+    ], ids=["control", "sudo", "assign", "time", "negate", "env", "redirect", "keyword"])
+    def test_a_prefixed_bare_dash_c_program_meets_the_wall(self, tmp_path, head, program):
+        """The code review's prefixed-program class (DEF-3068's batch):
+        where the head is reached by `_CMD_POS`'s slashed arm or its
+        standalone exec-quote arm, the command position the exec quote opens
+        takes a bare verb only, so a program opening on a wrapper, an
+        assignment, a keyword or `!` was read in place by nobody and was a
+        plain allow. Such a program is not in place, and meets the wall one
+        level down; the bare verb is the control, walled before and after."""
+        cmd = head + " '" + program + "'"
+        assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "wall"
+
+    def test_the_prefix_predicate_is_the_separator_arms_pieces(self):
+        """`_PROGRAM_OPENS_ON_PREFIX_RE` lists the separator arm's prefix
+        pieces; a piece that joins the arm and not the predicate would leave
+        its programs in place, read by nobody (the failure-mode review's
+        `coproc` mutant). Pinned on the pattern text: the predicate's
+        alternation, then the exec quote, is the arm's starred group."""
+        bp = _bash_patterns_module()
+        pattern = bp._PROGRAM_OPENS_ON_PREFIX_RE.pattern
+        inner = pattern[pattern.index("(?:") + 3:-1]
+        assert "(?:" + inner + "|" + bp._CMD_POS_EXEC_QUOTE + ")*" in bp._CMD_POS_NO_VERB
+
+    @pytest.mark.parametrize("cmd", [
+        # the depth rule's own row: an outer program that is not in place
+        # (it holds quotes) carries a `cd` and a bare `-c`, read one level
+        # down at depth 1, where every program is another shell's
+        "bash -c \"cd sub && bash -c 'rm -rf .'\"",
+        "cd sub && bash -c 'echo $HOME; rm -rf .'",
+        "cd sub && bash -c 'rm -rf \\.'",
+        "cd sub && bash -c 'echo `pwd`; rm -rf .'",
+        "cd sub && bash -c \"bash -c 'rm -rf .'\"",
+        "cd sub && bash -c 'sudo rm -rf .'",
+        "cd sub && BASH -c 'rm -rf .'",
+        "cd sub && bash.exe -c 'rm -rf .'",
+        "eval \"bash -c 'rm -rf .'\"",
+    ], ids=["nested-cd", "dollar", "backslash", "backtick", "nested-opener", "prefixed", "upper-head",
+            "exe-head", "eval-double-quoted"])
+    def test_a_program_not_read_in_place_after_a_cd_walls(self, tmp_path, cmd):
+        """Declared limit (DEF-3068's batch, the code review's rows): a
+        program the outer scan does not read in place is judged one level
+        down from the payload's directory, never from an outer `cd`, so `.`
+        names the checkout and walls where the in-place reading would
+        nudge. Friction, the side the toolbelt fails on, pinned per class so
+        a narrowing is made on purpose; the first row pins the depth rule
+        too (`always unread in place` at depth 1 made it a nudge)."""
+        (tmp_path / "sub" / "build").mkdir(parents=True)
+        assert _delete_verdict(run_guard_from("Bash", cmd, tmp_path, tmp_path)) == "wall"
+
+    def test_a_bare_program_inside_a_program_is_read_one_level_further_down(self):
+        """The depth rule's list-level pin: at the top the bare spelling is
+        left out of the nudge's list, and inside another shell's program it
+        is read (the outer program holds quotes, so it is not in place)."""
+        bp = _bash_patterns_module()
+        cmd = "bash -c \"cd sub && bash -c 'rm -rf build'\""
+        assert bp.nested_shell_programs(cmd) == [
+            "cd sub && bash -c 'rm -rf build'", "rm -rf build",
+        ]
+
+    @pytest.mark.parametrize("cmd,expect", [
+        ("bash -c -- 'cat .env'", "Secret-path access blocked"),
+        ("bash -c -x 'rm tools/cc/hooks/write_guard.py'", "protected harness zone"),
+    ], ids=["secret-read", "zone-remove"])
+    def test_a_switch_after_dash_c_reaches_the_other_readers(self, tmp_path, cmd, expect):
+        """The secret and zone readers share the widened `-c` reader (the
+        failure-mode review's sister-site pin): each missed its program
+        behind a switch after `-c` before DEF-3068's batch."""
+        assert_hook_denied(run_bash_guard(cmd, tmp_path), contains_reason=expect)
+
+    def test_a_switch_value_before_the_program_is_read_as_the_program(self, tmp_path):
+        """Declared over-read, the switch run's own: a bare word after a
+        switch is read as its value, so in `bash -c -x true '...'` the
+        quoted word -- `$0` to the shell -- is read as the program and
+        walls. Friction, the side the toolbelt fails on; pinned so a fix
+        is made on purpose."""
+        assert _delete_verdict(run_bash_guard("bash -c -x true 'rm -rf /'", tmp_path)) == "wall"
+
+    def test_the_bare_dash_c_program_is_not_read_again_one_level_down(self):
+        """The reader half of the DEF-853 regression the lane's first cut
+        made: the bare `bash -c` program is read in place by the outer scan,
+        and read again one level down it walled `cd sub && bash -c 'rm -rf
+        .'`, which nudges. The nudge's list and the tier's reader leave it
+        out, and keep every switched spelling."""
+        bp = _bash_patterns_module()
+        assert bp.nested_shell_programs("bash -c 'rm -rf build/*'") == []
+        assert bp.nested_shell_programs("bash -lc 'rm -rf build/*'") == ["rm -rf build/*"]
+        assert bp.nested_shell_programs("bash -c -- 'rm -rf build/*'") == ["rm -rf build/*"]
+        assert list(bp._posix_shell_c_programs_unread_in_place(
+            "bash -c 'a' && sh -e -c 'b'", "bash -c 'a' && sh -e -c 'b'")) == ["b"]
+
+    @pytest.mark.parametrize("cmd", [
+        "bash -lc \"bash -c -- 'rm -rf ~'\"",
+        "bash -c \"sh -e -c 'rm -rf /'\"",
+    ], ids=["switched-in-switched", "switched-in-bare"])
+    def test_a_switched_dash_c_program_re_entered_meets_the_wall(self, tmp_path, cmd):
+        """Re-entry members (the failure-mode review): a switched `-c`
+        program inside another shell's `-c` program meets the wall one level
+        further down, inside the depth bound."""
+        assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "wall"
 
     # ── PowerShell tool: a bash program behind bash / sh -c ──
 
@@ -16923,6 +17220,16 @@ class TestCrossShellRouting:
         'sh -c "rm -rf /"',
         "bash -c 'rm -rf /*'",
         'bash -lc "rm -rf /"',
+        # DEF-3068's batch: letters after the `c`, and switches or a `--`
+        # between the cluster and the program, each a plain allow before it
+        "bash -cx 'rm -rf /'",
+        "bash -c -- 'rm -rf /'",
+        "bash -c -x 'rm -rf /'",
+        "bash -lc -- 'rm -rf /'",
+        "bash -c -o pipefail 'rm -rf /'",
+        "& 'C:\\Program Files\\Git\\bin\\bash.exe' -c -- 'rm -rf /'",
+        # re-entry: a switched program inside the bash program
+        "bash -c \"sh -e -c 'rm -rf ~'\"",
     ])
     def test_bash_program_on_the_powershell_tool_dangerous_records_fire(self, tmp_path, cmd):
         assert_hook_denied(_run_ps_guard(cmd, tmp_path), contains_reason="Dangerous")
@@ -16943,6 +17250,7 @@ class TestCrossShellRouting:
         'bash -c "ls -la"',
         "sh -c 'echo x > reports/out.txt'",
         "bash -c 'cat README.md'",
+        "bash -c -- 'ls -la'",
     ])
     def test_bash_program_mentions_and_ordinary_programs_allow_on_powershell(self, tmp_path, cmd):
         assert_hook_allowed(_run_ps_guard(cmd, tmp_path))
