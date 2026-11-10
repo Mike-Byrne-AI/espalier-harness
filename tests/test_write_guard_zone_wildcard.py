@@ -557,6 +557,61 @@ class TestADeleteThatCannotTakeADirectoryLeavesTheZone:
         for operand in ("tools/jct", "tools/jct/"):
             assert _zone_reason(_PS, "Remove-Item " + operand, tree), operand
 
+    @pytest.mark.parametrize("attributes", [0, write_guard._REPARSE_POINT], ids=["control", "reparse"])
+    def test_a_reparse_point_keeps_the_deny_on_every_host(self, tree: Path, attributes: int, monkeypatch) -> None:
+        """Air's note a0654a (a): the reparse arm's witness in the required
+        cells. ``st_file_attributes`` exists on Windows alone and the real
+        junction row above runs there alone, so a stand-in lstat result for
+        ``tools`` carries the attribute: with it the read refuses, and the
+        control, the same directory without it, is spared, so the arm is
+        what refuses. Remove the arm and the reparse row reds (earned
+        2026-11-10)."""
+        import stat as _stat
+        import types
+
+        real = os.lstat
+        target = os.path.normcase(str(tree / "tools"))
+
+        def lstat(path, *args, **kwargs):
+            if os.path.normcase(str(path)) == target:
+                return types.SimpleNamespace(st_mode=_stat.S_IFDIR | 0o755, st_file_attributes=attributes)
+            return real(path, *args, **kwargs)
+
+        monkeypatch.setattr(write_guard.os, "lstat", lstat)
+        spared = write_guard._a_lone_file_delete("Remove-Item tools", "tools", tree, tree, tree / "tools")
+        assert spared is (not attributes)
+
+    @pytest.mark.skipif(os.name == "nt", reason="NTFS refuses a colon in a name; the required cells run POSIX")
+    def test_a_confirm_word_inside_a_real_operand_keeps_the_deny(self, tree: Path) -> None:
+        """Air's note a0654a (b), the first `-Confirm:$false`-inside-a-word
+        row given its red. PowerShell expands ``$false`` in a bare word, so
+        ``cc/d-confirm:$false`` names ``cc/d-confirm:False``; a reader that
+        strips the flag as a substring before its stop check (8004a4e2's)
+        hid the ``$`` and spared a real directory of the typed name. With
+        that directory on disk holding an entry, the row reds at 8004a4e2
+        and denies here (driven 2026-11-10). The second such row,
+        `-Confirm:$false-Recurse`, cannot red at 8004a4e2, whose flag
+        allowlist refuses its word too; it reds against a reader that takes
+        `-Confirm:$false` out of the words by prefix rather than whole,
+        which drops the recurse switch with it (driven the same day)."""
+        named = tree / "cc" / "d-confirm:$false"
+        named.mkdir()
+        (named / "x").write_text("", encoding="utf-8")
+        assert _zone_reason(_PS, "Remove-Item cc/d-confirm:$false", tree)
+
+    @pytest.mark.parametrize(("check", "command"), [
+        (_BASH, "rm tools -r"), (_BASH, "rm tools/cc -rf"), (_BASH, "rm cc -R"),
+        (_BASH, "cmd /c del /q 'tools\\cc'"), (_PS, "cmd /c del /q tools\\cc"),
+    ])
+    def test_the_retired_probes_controls_keep_the_deny(self, tree: Path, check: str, command: str) -> None:
+        """Air's note a0654a (c): two controls of note ab1566 that lived only
+        in the retired probe, now rows: `rm` with its recurse flag after the
+        operand, and `cmd /c del /q tools\\cc` on both tools. On the Bash
+        tool the backslash is quoted: unquoted, Bash's quote removal hands
+        `cmd` the word `toolscc`, which names no zone, so the guard's allow
+        there is right (driven 2026-11-10)."""
+        assert _zone_reason(check, command, tree), command
+
     @pytest.mark.parametrize("check", [_BASH, _PS])
     def test_a_directory_beside_the_zone_needs_no_read(self, tree: Path, check: str, monkeypatch) -> None:
         def boom(*_a, **_k):
