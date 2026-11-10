@@ -1779,7 +1779,21 @@ the shell on stdin) is read by the PowerShell extractor, read-verb roster
 and dangerous records, and `bash -c "..."` / `sh -c '...'` on the
 PowerShell tool (the head bare or given by path, the `-c` bare or clustered
 as `-lc`) by the Bash ones -- one level down, and a program that re-enters
-the first shell one level further, no more. A program piped to `-Command -`
+the first shell one level further, no more. Switches and a `--` between
+the `-c` and its program (`bash -c -- '...'`, `bash -c -x '...'`), and a
+shell's `+` options on either side of the `-c` (`bash +x -c '...'`, `bash -c
++e '...'`, `bash +O extglob -c '...'`), are read on both tools. On the Bash tool a POSIX shell's `-c` program the outer scan
+does not read as the shell receives it -- behind a switch or cluster
+(`bash -lc '...'`, `sh -e -c '...'`, `bash -c -- '...'`), behind a head the
+command position does not open at (`bash.exe -c`, `BASH -c`), opening on a
+prefix the exec quote's command position does not read (a wrapper, an
+assignment, a keyword, `!` or a redirect: `bash -c 'sudo ...'`), holding a
+quote, a backslash, a `$` or a backtick, inside another program's quotes
+(`eval "bash -c '...'"`), or spelled as
+side-by-side quoted segments -- meets the Bash dangerous records and the
+confirm-once nudge one level down, as another shell's program: from the
+payload's directory and the unknown one, since no command position opens
+for it in the outer command. A program piped to `-Command -`
 on the Bash tool (`echo '...' | pwsh -Command -`, `cat <<'EOF' | pwsh
 -Command -`) is read as the stage before the pipe, like an interpreter's;
 `-File <script>` there means the pipe is data. `-EncodedCommand`, `-File
@@ -1788,7 +1802,11 @@ is inlined first), `wsl bash -c` and a relative write after a `cd` inside a
 POSIX shell program anywhere but behind a bare `-c` on the Bash tool (`bash
 -lc 'cd tools/cc/hooks && echo x > x.py'`, a here-string, the PowerShell
 tool's `bash -c`: a zone write, which the coverage contract hands to the
-after-check) are declared limits, pinned by `tests/test_write_guard.py::TestCrossShellRouting::test_bash_tool_declared_limits_are_pinned`
+after-check), and a delete in such a program after a `cd` earlier in the
+outer command, judged from the payload's directory and not the `cd`'s
+(`cd sub && bash -lc 'rm -rf .'` is refused where the bare `-c` spelling
+nudges, and so is each kind of program above the outer scan does not read in
+place, one row per kind), are declared limits, pinned by `tests/test_write_guard.py::TestCrossShellRouting::test_bash_tool_declared_limits_are_pinned`
 and `tests/test_write_guard.py::TestCrossShellRouting::test_powershell_tool_declared_limits_are_pinned`;
 `cmd /c` is a third grammar the hook has no extractor for
 (`tests/test_write_guard.py::TestCrossShellRouting::test_cmd_c_verdicts_are_pinned_not_claimed`).

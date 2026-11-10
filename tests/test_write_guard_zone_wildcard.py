@@ -570,16 +570,53 @@ class TestADeleteThatCannotTakeADirectoryLeavesTheZone:
         for operand in ("tools/jct", "tools/jct/"):
             assert _zone_reason(_PS, "Remove-Item " + operand, tree), operand
 
-    def test_the_backslash_spelling_keeps_its_false_deny_until_its_row_closes(self, tree: Path) -> None:
-        """DEF-2068, open: `Remove-Item tools\\cc` names the directory
-        `tools/cc` names, but the relief's stop list refuses the backslash,
-        so it keeps a deny the forward-slash spelling does not. This row
-        pins today's behaviour and is the one to MOVE (to an allow) when
-        that row's fix lands (`task-packs/ledger.d/DEF-2068.md`); a red here
-        after such a fix is the fix, not a regression (the failure-mode
-        review of 844d123)."""
-        assert _zone_reason(_PS, "Remove-Item tools\\cc", tree)
-        assert _zone_reason(_PS, "Remove-Item tools/cc", tree) == ""
+    @pytest.mark.parametrize("command", [
+        v + " " + s for v in _FILE_ONLY_VERBS for s in ("tools\\cc", ".\\tools\\cc", "tools\\cc\\", ".\\tools", "tools\\")])
+    def test_the_backslash_spelling_is_allowed(self, tree: Path, command: str) -> None:
+        """DEF-2068: on Windows PowerShell a backslash in a bare word is a
+        path separator (the escape is the backtick), so `Remove-Item
+        tools\\cc` names the directory `tools/cc` names and is spared as that
+        spelling is. The guard folds it on every host, so the required Linux
+        cells pin the same verdict; pwsh on POSIX is not driven (where it
+        reads the backslash as a name character, the entry is no zone). 5.1 kept a full directory removed this way, plain, with `-Force`
+        and as `ri -Path .\\x\\ -Confirm:$false`, and removed an empty one
+        (driven 2026-11-10)."""
+        assert _zone_reason(_PS, command, tree) == "", command
+
+    @pytest.mark.parametrize("command", [
+        "Remove-Item cc\\", "Remove-Item tools\\cc\\hooks", "Remove-Item .\\cc",
+        "Remove-Item tools\\cc\\..\\cc", "Remove-Item tools\\..\\tools", "Remove-Item .\\tools\\cc\\..\\..\\tools",
+        "Remove-Item tools\\cc -Recurse", "Remove-Item -Recurse tools\\cc",
+        "Remove-Item tools\\cc; Remove-Item -Recurse tools", "Remove-Item tools\\cc, build",
+    ])
+    def test_a_backslash_spelling_main_refuses_keeps_the_deny(self, tree: Path, command: str) -> None:
+        """The fold keeps every refusal the forward spelling has: an empty
+        directory, a climb (on Windows, a reader dropping the backslash stop
+        without the fold spares `tools\\..\\tools`; on POSIX the unfolded
+        join names one literal entry, the lstat fails and the deny stands,
+        so the required Linux cells cannot witness that mutant), a recurse
+        switch, a second statement and a second operand."""
+        assert _zone_reason(_PS, command, tree), command
+
+    def test_a_rooted_or_unc_backslash_operand_keeps_the_deny(self, tree: Path) -> None:
+        """A rooted `\\x` names the drive root's `x` and a UNC `\\\\host`
+        another machine: both fold to an absolute spelling the relative-only
+        rule refuses. On Windows the rooted row reds a reader that drops the
+        backslash stop without the fold (Windows joins a rooted operand onto
+        the run directory's drive, so the two reads agree); on POSIX the
+        unfolded join fails its lstat, so only a Windows run witnesses it.
+
+        The rooted spelling is bare, as the absolute-operand row's witness
+        is, and skipped the same way under a root holding whitespace, where
+        it splits there and names another path (the perturbed leg; a quote
+        would deny at the quote stop, for the wrong reason)."""
+        read = write_guard._a_lone_file_delete
+        assert not read("Remove-Item \\\\host\\share\\tools", "\\\\host\\share\\tools", tree, tree, tree / "tools")
+        rooted = "\\" + os.path.splitdrive(str(tree / "tools"))[1].replace("/", "\\").lstrip("\\")
+        if any(c.isspace() for c in rooted):
+            pytest.skip("a bare operand splits at the root's whitespace and names another path")
+        assert _zone_reason(_PS, "Remove-Item " + rooted, tree), rooted
+        assert not read("Remove-Item " + rooted, rooted, tree, tree, tree / "tools")
 
     def test_both_reparse_constants_are_the_stdlib_value(self) -> None:
         """The zone read and the scratch-root reader each name
