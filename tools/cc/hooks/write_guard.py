@@ -2687,10 +2687,13 @@ _LONE_DELETE_FLAGS = frozenset({"-force", "-path", "-literalpath", "-confirm", "
 #: separator, a drive or provider colon. Read on the words left once
 #: `-Confirm:$false`, the one allowlisted word holding two of them, is taken
 #: out whole. A non-ASCII character ends it too (a dash PowerShell reads as
-#: one). A backslash is not on it: PowerShell's escape is the backtick, and a
-#: backslash in a bare word is a path separator, which the reader folds to
-#: `/` as the zone check does, so `tools\cc` is read as `tools/cc` and a
-#: rooted `\x` or a UNC `\\server` as the absolute spelling it is (DEF-2068).
+#: one). A backslash is not on it: PowerShell's escape is the backtick, and on
+#: Windows a backslash in a bare word is a path separator (driven on 5.1),
+#: which the reader folds to `/` as the zone check does on every host, so
+#: `tools\cc` is read as `tools/cc` and a rooted `\x` or a UNC `\\server` as
+#: the absolute spelling it is (DEF-2068). pwsh on POSIX is not driven: where
+#: it reads the backslash as a name character, the entry it names is
+#: `tools\cc` itself, which no zone is, so the relief spares nothing there.
 #: Its sibling with the same "nothing runs between" job is
 #: `_bash_patterns._PS_TEMP_BINDING_REFUSED` (DEF-2055's binding gate). The two
 #: cannot be one object: `_bash_patterns` imports on first use, after this
@@ -2719,9 +2722,10 @@ def _a_lone_file_delete(command: str, raw: str, at: "Path | None", root: Path, r
       table can change what runs (the host loads no profile); ASCII only;
     * every flag is on ``_LONE_DELETE_FLAGS`` (`-Confirm:$false` read as one
       whole word), and the one operand is ``raw`` as spelled, relative, a
-      backslash read as `/` (DEF-2068: PowerShell's separator, never its
-      escape; `Remove-Item tools\\cc` kept 5.1's has-children refusal as the
-      forward-slash spelling does, driven 2026-11-10);
+      backslash read as `/` (DEF-2068: a separator on Windows, never
+      PowerShell's escape; `Remove-Item tools\\cc` kept 5.1's has-children
+      refusal as the forward-slash spelling does, driven 2026-11-10; pwsh
+      on POSIX not driven, see ``_LONE_DELETE_STOPS``);
     * the operand, joined to the directory the command runs in and read
       with lstat, is a real directory holding an entry, and the path the
       zone check resolved (``resolved``), so the two reads name one
