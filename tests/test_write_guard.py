@@ -10956,7 +10956,11 @@ class TestAScratchRootItselfIsTheWall:
                 [exe, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
                 # `${input}` enumerates stdin: an inherited open pipe hangs it
                 stdin=subprocess.DEVNULL,
-                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+                # under the test's 60 s ceiling (the suite contract's
+                # test_no_wait_budget_meets_the_ceiling_of_a_test_that_runs_it):
+                # the whole test took 5.9 s on 5.1, about 52 spawns four at a
+                # time, so one host is well under a second (2026-11-10)
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20,
             ).stdout
 
         def answer(name: str) -> str:
