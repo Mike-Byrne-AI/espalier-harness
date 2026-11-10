@@ -2046,10 +2046,13 @@ def iter_hardlink_operands(command: str) -> Iterator[str]:
 # VALUES were the next opener word; the code review then drove `python3`
 # with sixty-five `-B` switches before `-c "open('<hook>','w')"` -- a command
 # that RUNS -- and the bound had turned that deny into an allow, on both
-# legs, while buying nothing: the Bash leg's openers sit on a command
-# position, so a flood without separators has one opener and the run is one
-# pass, and the PowerShell twin's quadratic was the opener-word value, fixed
-# there by refusing it. A bound here is a coverage hole with no receipt.
+# legs. A flood without separators can still open more than one start: a
+# value with a wrapper's path (`/a/env`) opens one through the `(?<=/)`
+# wrapper arm, and `python -x ` + `/a/env -x python -x ` repeated reads
+# quadratic, under the chain ceiling (DEF-818's review measured it), where
+# the PowerShell twin's
+# quadratic was the opener-word value, fixed there by refusing it. A bound
+# here is a coverage hole with no receipt.
 _INTERP_SWITCH_RUN = r"(?:-[\w.-]+(?:[ \t]+[\w./:=,@%+~][\w./:=,@%+~-]*)?[ \t]+)*"
 #: A program operand is ONE bash WORD (DEF-832), not one quoted span: bash
 #: concatenates adjacent segments -- a single-quoted span, an ANSI-C span, a
@@ -2196,30 +2199,47 @@ _POWERSHELL_DASH_COMMAND_RE = re.compile(
     re.DOTALL,
 )
 # A POSIX shell's `-c` program on the Bash tool (§C52): `sh -c '...'`,
-# `bash -lc "..."`. The head and quoted-verb tail, the here-string opener's
-# switch run (`_SHELL_HERESTRING_RE`), a cluster ending in `c`, then the
+# `bash -lc "..."`. The head and quoted-verb tail, the shared switch run
+# (`_POSIX_SHELL_SWITCH_RUN`, below), a cluster ending in `c`, then the
 # program as ONE bash word that starts with a quoted segment (DEF-832:
 # adjacent segments concatenated by the shell; no bare-first arm -- a bare
 # program is one word and names nothing).
 #: A POSIX shell's switch run before its program operand, ONE home for the
-#: `-c` opener below and the here-string opener (`_SHELL_HERESTRING_RE`):
-#: each switch may carry one bare value, never a shell head word (`sh -c sh
-#: -c ...` read every following pair as switch-plus-value, O(n) at each of
-#: n heads -- 4.0 s at 28 KB through the write extractor, a pre-existing
-#: shape the §C52 rows witnessed), and the run is bounded at 64 tokens (the
-#: DEF-637 receipt's remedy for the PowerShell twin).
-_SHELL_SWITCH_RUN_BOUNDED = (
+#: `-c` opener below and the here-string opener (`_SHELL_HERESTRING_RE`).
+#: Each switch may carry one bare value, which never starts with `-` (so a
+#: value is never the next switch) and is never a spelling of a shell head:
+#: a head opens another opener's start, so a value that can be one gives
+#: every following run a second reader -- O(n) at each of n starts.
+#: `sh -c sh -c ...` was 4.0 s at 28 KB through the write extractor (a
+#: pre-existing shape the §C52 rows witnessed), and once the run lost its
+#: bound the code review drove the same product through a head with a
+#: directory (`/sh`, `a/sh`), an `.exe` or another case behind a wrapper
+#: path (`/a/env -x SH`), seconds at 30 KB. A value cannot hold a quote, `\`,
+#: `$`, `~` or `:`, so every head spelling it can hold is a directory, the
+#: head in any case and an optional `.exe`, and the refusal below takes all
+#: of them: the DEF-637 receipt's remedy, the second parse taken away
+#: (docs/SHARP_EDGES.md, ReDoS budget receipt). Declared limit: a switch
+#: whose value is a shell's own path (`bash --rcfile /etc/sh -c '...'`)
+#: ends the run there, so that program is not read. The run is UNBOUNDED on
+#: purpose: a `{0,64}` bound here let programs that run through behind 65
+#: switches on both openers (DEF-818, driven). The witness rows are
+#: `tests/test_write_guard.py::test_a_long_switch_run_does_not_hide_a_posix_shell_program`
+#: and, in `tests/test_redos.py`, `test_posix_shell_switch_run_linear_on_one_head`,
+#: `test_posix_shell_switch_value_is_never_a_head_spelling` and the
+#: repeated-head rows.
+_POSIX_SHELL_SWITCH_RUN = (
     # a short cluster or a long option (`--norc`, `--rcfile FILE`): exclusive
     # on the second character; the review drove `bash --norc -c` past the
     # short-only run
-    r"(?:[ \t]+(?:-[A-Za-z]+|--[A-Za-z][\w-]*)(?:[ \t]+(?!(?:" + _POSIX_SHELL_HEADS
-    + r")(?=[ \t]|$))[\w.=/][\w.=/-]*)?){0,64}"
+    r"(?:[ \t]+(?:-[A-Za-z]+|--[A-Za-z][\w-]*)(?:[ \t]+(?!(?i:(?:[\w.=/-]*/)?(?:"
+    + _POSIX_SHELL_HEADS + r")(?:\.exe)?)(?=[ \t]|$))[\w.=/][\w.=/-]*)?)*"
 )
 _SHELL_DASH_C_RE = re.compile(
     _CMD_POS + r"(?i:" + _POSIX_SHELL_HEADS + r")" + _EXE_SUFFIX + r"\b" + _QUOTED_VERB_TAIL
-    # `c` anywhere in the cluster (`-cx`, `-xc`, `-lc`): both runs bounded, so
-    # the adjacent pair has at most 81 parses (review: `bash -cx` was missed)
-    + _SHELL_SWITCH_RUN_BOUNDED + r"[ \t]+-[A-Za-z]{0,8}c[A-Za-z]{0,8}[ \t]+"
+    # `c` anywhere in the cluster (`-cx`, `-xc`, `-lc`): both letter runs
+    # around the `c` bounded, so the adjacent pair has at most 81 parses
+    # (review: `bash -cx` was missed)
+    + _POSIX_SHELL_SWITCH_RUN + r"[ \t]+-[A-Za-z]{0,8}c[A-Za-z]{0,8}[ \t]+"
     + r"(?P<word>" + _BASH_QUOTED_WORD + r")"
 )
 
@@ -6452,9 +6472,9 @@ _INTERP_PIPE_RE = re.compile(
 #: whole-command scan reads it -- and the pipe spelling is `_INTERP_PIPE_RE`'s.
 _SHELL_HERESTRING_RE = re.compile(
     _CMD_POS + r"(?i:" + _POSIX_SHELL_HEADS + r")" + _EXE_SUFFIX + r"\b" + _QUOTED_VERB_TAIL
-    # the bounded run (§C52): the unbounded one was quadratic on a repeated
-    # head, see `_SHELL_SWITCH_RUN_BOUNDED`
-    + _SHELL_SWITCH_RUN_BOUNDED + r"[ \t]*<<<[ \t]*"
+    # the shared switch run (§C52): unbounded, and linear because a value is
+    # never a spelling of a shell head, see `_POSIX_SHELL_SWITCH_RUN`
+    + _POSIX_SHELL_SWITCH_RUN + r"[ \t]*<<<[ \t]*"
 )
 
 #: The three statement readers' heads, on the masked text at a command
@@ -11694,6 +11714,58 @@ _DRIVE_SCRATCH_ROOT_RE = re.compile(r"^[a-z]:/te?mp$", re.IGNORECASE)
 _SCRATCH_ROOT_VALUE_RE = re.compile(r"^(?:[A-Za-z]:)?/[^/]")
 
 
+#: ``FILE_ATTRIBUTE_REPARSE_POINT``: a junction, a directory link or a mount
+#: point, as ``os.lstat`` reads one on Windows (`_long_path_name`).
+_FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+
+
+def _long_path_name(value: str) -> str | None:
+    """``value`` (drive-qualified, separator-normalised) with each 8.3 short
+    component expanded to its long name, in forward slashes; ``None`` off
+    Windows, where a component is a reparse point (a junction, a directory
+    link, a mount point), where the path is not there, and where nothing
+    changed but case. ``os.path.realpath`` expands short names and follows
+    links too, so it is asked only of a path none of whose components
+    ``os.lstat`` reads as a reparse point, and its answer is kept only where
+    it has the typed value's component count and every typed component
+    without a ``~`` is its twin ignoring case (a subst or mapped drive, a
+    kept ``\\\\?\\`` prefix): a short ``TEMP`` gains its own directory's
+    long spelling and no other place (DEF-1125).
+
+    WHY this way. ``GetLongPathNameW`` follows no link by construction, but
+    its ``ctypes`` import made a first vetting under a short ``TEMP`` cost a
+    median 12.0 ms against this reader's 4.4 ms and main's 2.8 ms (16
+    interleaved fresh processes each, Windows host, 2026-11-10). The lstat
+    walk is load-bearing: a junction whose own component is typed short
+    (``ALONGJ~1``) carries a ``~``, so the twin check alone kept
+    ``realpath``'s answer, the junction's target (driven the same day)."""
+    if sys.platform != "win32" or not _DRIVE_ABSOLUTE_RE.match(value):
+        return None
+    typed = value.split("/")
+    prefix = typed[0]
+    try:
+        for part in typed[1:]:
+            prefix += "/" + part
+            if os.lstat(prefix).st_file_attributes & _FILE_ATTRIBUTE_REPARSE_POINT:
+                return None
+        resolved = os.path.realpath(value, strict=True)
+    except (OSError, AttributeError, ValueError):  # fail-open: ok deliberate -- no long spelling keeps the typed root alone, toward the wall
+        return None
+    long = resolved.replace("\\", "/").rstrip("/")
+    spelled = long.split("/")
+    if len(spelled) != len(typed) or any(
+            "~" not in t and t.casefold() != s.casefold() for t, s in zip(typed, spelled)):
+        return None
+    return long if long.casefold() != value.casefold() else None
+
+
+#: An 8.3 short component, as ``GetShortPathNameW`` mints one: a ``~`` and a
+#: digit (``SOMEUS~1``). Only a drive-qualified value of this shape asks the
+#: expander, so a POSIX ``TMPDIR`` holding a ``~`` elsewhere, and a host whose
+#: temp directory has no short component, never resolve a path (DEF-1125).
+_SHORT_NAME_SHAPE_RE = re.compile(r"~\d")
+
+
 def _vetted_scratch_values() -> list[str]:
     """The values of ``TEMP``, ``TMP`` and ``TMPDIR`` that can serve as a
     scratch root, separator-normalised: an absolute path with at least one
@@ -11703,7 +11775,13 @@ def _vetted_scratch_values() -> list[str]:
     or `TEMP=C:\\Windows` would otherwise turn every wall below it into a
     nudge (code review, driven, 2026-10-04). A value that IS a fixed temp
     root (`TMPDIR=/tmp`) is that root, catastrophic itself, and read through
-    `_TEMP_ROOTS` alone. Read from the environment,
+    `_TEMP_ROOTS` alone. A drive-qualified value with an 8.3 short
+    component (`_SHORT_NAME_SHAPE_RE`) is followed by its long spelling
+    (`_long_path_name`), vetted the same way, so a ``TEMP`` presented in
+    8.3 form (a component such as ``SOMEUS~1``) is a root under both of its
+    names and a path typed long below it is scratch (DEF-1125); any other
+    value asks nothing more. A value already listed (``TEMP`` and ``TMP``
+    are one directory on most hosts) is listed once. Read from the environment,
     never through `tempfile.gettempdir`, which writes a probe file to
     answer. One home for the scratch-root reader, the speed bump's
     temp-root carve-out (`below_a_temp_root`) and the catastrophic reader's
@@ -11726,8 +11804,17 @@ def _vetted_scratch_values() -> list[str]:
     try:
         for var in ("TEMP", "TMP", "TMPDIR"):
             value = os.environ.get(var, "").replace("\\", "/").rstrip("/")
-            if _SCRATCH_ROOT_VALUE_RE.match(value) and not _target_is_catastrophic(value, None, by_drive=False):
-                out.append(value)
+            if not _SCRATCH_ROOT_VALUE_RE.match(value) or _target_is_catastrophic(value, None, by_drive=False):
+                continue
+            if value in out:
+                continue
+            out.append(value)
+            long = (_long_path_name(value)
+                    if _DRIVE_ABSOLUTE_RE.match(value) and _SHORT_NAME_SHAPE_RE.search(value)
+                    else None)
+            if (long and long not in out and _SCRATCH_ROOT_VALUE_RE.match(long)
+                    and not _target_is_catastrophic(long, None, by_drive=False)):
+                out.append(long)
     finally:
         _VETTING_SCRATCH[0] = False
     if len(_VETTED_MEMO) < 32:
