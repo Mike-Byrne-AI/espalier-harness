@@ -431,7 +431,7 @@ _NOT_ALONE = [
     "Remove-Item tools -Recurse", "$PSDefaultParameterValues['Remove-Item:Recurse']=$true; Remove-Item tools",
     "function Remove-Item { Microsoft.PowerShell.Management\\Remove-Item -Recurse @args }; Remove-Item tools",
     "Set-Alias ri rd; ri tools", "Remove-Item tools; Remove-Item -Recurse tools", "Remove-Item tools, build",
-    "Remove-Item (Join-Path . tools)", "Remove-Item tools\\cc", "cd .; Remove-Item tools",
+    "Remove-Item (Join-Path . tools)", "cd .; Remove-Item tools",
 ]
 #: Left out, since main allows them too, so they are not this row's polarity:
 #: an operand fed by a pipe (`'tools' | Remove-Item`) or a substitution, and
@@ -557,7 +557,30 @@ class TestADeleteThatCannotTakeADirectoryLeavesTheZone:
         for operand in ("tools/jct", "tools/jct/"):
             assert _zone_reason(_PS, "Remove-Item " + operand, tree), operand
 
-    @pytest.mark.parametrize("attributes", [0, write_guard._REPARSE_POINT], ids=["control", "reparse"])
+    def test_the_backslash_spelling_keeps_its_false_deny_until_its_row_closes(self, tree: Path) -> None:
+        """DEF-2068, open: `Remove-Item tools\\cc` names the directory
+        `tools/cc` names, but the relief's stop list refuses the backslash,
+        so it keeps a deny the forward-slash spelling does not. This row
+        pins today's behaviour and is the one to MOVE (to an allow) when
+        that row's fix lands (`task-packs/ledger.d/DEF-2068.md`); a red here
+        after such a fix is the fix, not a regression (the failure-mode
+        review of 844d123)."""
+        assert _zone_reason(_PS, "Remove-Item tools\\cc", tree)
+        assert _zone_reason(_PS, "Remove-Item tools/cc", tree) == ""
+
+    def test_both_reparse_constants_are_the_stdlib_value(self) -> None:
+        """The zone read and the scratch-root reader each name
+        ``FILE_ATTRIBUTE_REPARSE_POINT``; both must be the stdlib's, which
+        the stand-in row below compares against rather than against the
+        constant under test (the failure-mode review of 844d123)."""
+        import stat as _stat
+
+        import _bash_patterns
+
+        assert write_guard._REPARSE_POINT == _stat.FILE_ATTRIBUTE_REPARSE_POINT
+        assert _bash_patterns._FILE_ATTRIBUTE_REPARSE_POINT == _stat.FILE_ATTRIBUTE_REPARSE_POINT
+
+    @pytest.mark.parametrize("attributes", [0, 0x400], ids=["control", "reparse"])
     def test_a_reparse_point_keeps_the_deny_on_every_host(self, tree: Path, attributes: int, monkeypatch) -> None:
         """Air's note a0654a (a): the reparse arm's witness in the required
         cells. ``st_file_attributes`` exists on Windows alone and the real

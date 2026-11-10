@@ -10348,29 +10348,65 @@ class TestAShortTempRootReadsItsLongName:
         finally:
             os.rmdir(link)
 
-    @pytest.mark.skipif(sys.platform != "win32", reason="the reader answers on Windows alone")
-    @pytest.mark.parametrize("answer", ["subst-drive", "other-component", "other-count"])
-    def test_a_realpath_answer_of_another_shape_adds_nothing(self, answer, tmp_path, monkeypatch):
-        """The shape bound, with a stand-in ``realpath``: a subst or mapped
-        drive resolves onto another volume or another depth with no reparse
-        point the lstat walk can see, so an answer whose drive, component
-        count or long-typed components differ from the typed value's is
-        dropped. Drop the bound and all three red (driven 2026-11-10)."""
+    @staticmethod
+    def _stub_host(monkeypatch, *, answer: str, reparse: str | None = None) -> None:
+        """The real `_long_path_name` on any host: the reader's platform
+        read as Windows, ``os.path.realpath`` answering ``answer``, and
+        ``os.lstat`` reading ``reparse`` (a typed prefix) as a reparse point
+        and every other prefix as a plain directory. So its walk and shape
+        bound are pinned in the Linux required cells, not only where a
+        Windows volume makes short names (the failure-mode review of
+        4a7c7e9)."""
+        import stat as _stat
+        import types
         bp = _bash_patterns_module()
-        parent = tmp_path / "a long parent name"
-        parent.mkdir()
-        short = self._short_or_skip(parent).replace("\\", "/")
-        above = short.split("/")[:-1]
-        long_typed = next(i for i, c in enumerate(above) if i and "~" not in c)
-        parts = {
-            "subst-drive": ["S:", *above[1:]],
-            "other-component": [*above[:long_typed], "elsewhere", *above[long_typed + 1:]],
-            "other-count": [*above, "extra"],
-        }[answer]
-        shaped = "/".join([*parts, "a long parent name"])
-        assert bp._long_path_name(short), short  # the control: the real answer is kept
-        monkeypatch.setattr(bp.os.path, "realpath", lambda value, strict=False: shaped)
-        assert bp._long_path_name(short) is None, (short, shaped)
+        monkeypatch.setattr(bp, "sys", types.SimpleNamespace(platform="win32"))
+        monkeypatch.setattr(bp.os.path, "realpath", lambda value, strict=False: answer)
+        reparse_bit = _stat.FILE_ATTRIBUTE_REPARSE_POINT
+
+        def lstat(path, *args, **kwargs):
+            return types.SimpleNamespace(st_file_attributes=reparse_bit if path == reparse else 0x10)
+
+        monkeypatch.setattr(bp.os, "lstat", lstat)
+
+    def test_the_real_reader_keeps_a_short_names_own_long_spelling(self, monkeypatch):
+        """The control for the stubbed rows below: no reparse point, an
+        answer of the typed shape, and the long spelling comes back."""
+        self._stub_host(monkeypatch, answer=self.LONG.replace("/", "\\"))
+        assert _bash_patterns_module()._long_path_name(self.SHORT) == self.LONG
+
+    def test_the_real_reader_refuses_a_reparse_point_along_the_path(self, monkeypatch):
+        """A junction's own component typed short (``SOMEUS~1``): the twin
+        check exempts it and ``realpath`` answers the target with the
+        typed shape, so only the lstat walk refuses it. Drop the walk and
+        this row reds on every host."""
+        self._stub_host(monkeypatch, answer="C:/Users/work/AppData/Local/Temp",
+                        reparse="C:/Users/SOMEUS~1")
+        assert _bash_patterns_module()._long_path_name(self.SHORT) is None
+
+    @pytest.mark.parametrize("answer", [
+        "S:/Users/someuser/AppData/Local/Temp",
+        "C:/Users/someuser/AppData/elsewhere/Temp",
+        "C:/Users/someuser/AppData/Local/Temp/extra",
+        "//server/share/Users/someuser/AppData/Local/Temp",
+    ], ids=["subst-drive", "other-component", "other-count", "unc"])
+    def test_the_real_reader_drops_a_realpath_answer_of_another_shape(self, answer, monkeypatch):
+        """The shape bound: a subst or mapped drive resolves onto another
+        volume or another depth with no reparse point the lstat walk can
+        see, so an answer whose drive, component count or long-typed
+        components differ from the typed value's is dropped. Drop the bound
+        and all four red (driven 2026-11-10)."""
+        self._stub_host(monkeypatch, answer=answer)
+        assert _bash_patterns_module()._long_path_name(self.SHORT) is None
+
+    def test_two_short_spellings_of_one_directory_list_its_long_spelling_once(self, monkeypatch):
+        """``TEMP`` and ``TMP`` spelled apart (case) but expanding to one
+        long path: the second value is listed, its long spelling is not
+        listed twice (the code review of 4a7c7e9)."""
+        bp = _bash_patterns_module()
+        other = self.SHORT.lower()
+        self._env(monkeypatch, {self.SHORT: self.LONG, other: self.LONG}, TEMP=self.SHORT, TMP=other)
+        assert bp._vetted_scratch_values() == [self.SHORT, self.LONG, other]
 
     @pytest.mark.skipif(sys.platform != "win32", reason="8.3 names are a Windows volume's")
     def test_a_long_spelling_that_differs_only_in_case_adds_nothing(self, tmp_path):

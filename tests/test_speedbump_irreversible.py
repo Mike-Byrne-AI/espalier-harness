@@ -1172,14 +1172,28 @@ class TestTheHostsShortTempReadsItsLongName:
     rule are `tests/test_write_guard.py::TestAShortTempRootReadsItsLongName`.
     The path is handed to the readers as text; nothing is run."""
 
-    def test_the_hosts_own_temp_reads_in_its_long_form(self):
+    def test_the_hosts_own_temp_reads_in_its_long_form(self, tmp_path):
         typed = os.environ.get("TEMP", "").replace("\\", "/").rstrip("/")
         if not _bash_patterns._SHORT_NAME_SHAPE_RE.search(typed):
+            # A skip nobody reads on an advisory workflow would hide a runner
+            # image that stopped presenting a short TEMP, so on CI it also
+            # writes a warning annotation, which the run's page shows (the
+            # failure-mode review of 4a7c7e9). Never a failure: an image
+            # change is no lane's red on main.
+            if os.environ.get("GITHUB_ACTIONS"):
+                sys.__stdout__.write(f"\n::warning::DEF-1125 measurement: TEMP has no short component: {typed}\n")
             pytest.skip(f"TEMP has no short component here: {typed!r}")
+        parts = typed.split("/")
+        crossed = [p for p in ("/".join(parts[:i]) for i in range(2, len(parts) + 1))
+                   if os.lstat(p).st_file_attributes & _bash_patterns._FILE_ATTRIBUTE_REPARSE_POINT]
+        if crossed:
+            pytest.skip(f"TEMP crosses a reparse point, so it keeps its typed spelling alone: {crossed[0]!r}")
         long = _bash_patterns._long_path_name(typed)
         assert long and not _bash_patterns._SHORT_NAME_SHAPE_RE.search(long), (typed, long)
         assert long in _bash_patterns._vetted_scratch_values(), (typed, long)
         assert _bash_patterns._is_scratch_literal(long + "/espalier-def-1125-x"), long
+        repo = str(tmp_path / "no-such-repo").replace("\\", "/")
+        assert _bash_patterns.below_a_temp_root(long + "/espalier-def-1125-x", repo, bash=False), long
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Git for Windows mounts /tmp; elsewhere /tmp is itself")

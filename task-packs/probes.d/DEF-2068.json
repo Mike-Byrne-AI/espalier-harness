@@ -4,7 +4,7 @@
  "cmd": "python3 -c 'import contextlib,io,os,sys,tempfile;from pathlib import Path;sys.path[:0]=[\"tools/cc/hooks\",\"tools/cc\"];[os.environ.pop(k) for k in list(os.environ) if k.startswith(\"ESPALIER_\")];r=Path(tempfile.mkdtemp()).resolve()/\"t\";(r/\"tools\"/\"cc\"/\"hooks\").mkdir(parents=True);(r/\"cc\").mkdir();os.environ[\"CLAUDE_PROJECT_DIR\"]=str(r);os.environ[\"ESPALIER_AUDIT_DIR\"]=str(r.parent/\"a\");import write_guard as w;o=io.StringIO();c=contextlib.redirect_stdout(o);c.__enter__();w.check_powershell_for_protected_mutations(chr(82)+\"emove-Item tools\"+chr(92)+\"cc\",r,r);c.__exit__(None,None,None);print(\"deny\" if o.getvalue().strip() else \"allow\")'",
  "open_value": "deny",
  "why_not": null,
- "row_sha": "a10ae79a3979",
- "text_sha": "1edaf80d5136",
- "verified_2026_11_09": "OPEN (filed 2026-11-09; probe driven at filing here and in the export of HEAD cc8e6e014614)"
+ "row_sha": "fe9ba878bf12",
+ "text_sha": "270d13138261",
+ "verified_2026_11_09": "STILL_OPEN (re-pinned value unchanged on 2026-11-09: the row's pin moved to its own test) [changed: text]"
 }
