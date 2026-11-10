@@ -1495,9 +1495,12 @@ first; the dangerous-command catch is a secondary slip-catcher):
    directory, silence for a roster word or a temp directory), wherever it
    sits -- the top level, a chain, an `if`, a loop body no loop head reads
    (until 2026-11-09 it drew nothing anywhere). Inside a loop a loop head
-   reads, the head's verdict stands (below). A stage between the echo and
-   `xargs`, and the pipe across a line break, stay outside both tiers, as
-   they are for the enumerator.
+   reads, an echoed word that is the head's own variable keeps the head's
+   verdict (below); any other echoed word is the twin's. A stage between
+   the echo and `xargs`, the pipe across a line break, and an emit past
+   the reader's bounds -- more than four words, a word past 80 characters,
+   a separator quoted inside an emitted word, a quoted `echo` -- stay
+   outside both tiers.
 
    The loop carrier -- the enumerator's output bound to
    a loop variable and removed in the loop's body, on the Bash tool -- is
@@ -1550,7 +1553,7 @@ first; the dangerous-command catch is a secondary slip-catcher):
    between, a word list beside a substitution and every other unread head
    drew nothing at all there). A body that emits a fixed roster word, or
    whose remove does not recurse, keeps its direct twin's silence. Where a
-   loop head does read the loop, the carrier-fed body takes the head's
+   loop head does read the loop, an echoed loop variable takes the head's
    verdict, so a roster word list or a narrowed head stays silent where
    the loop's own `rm -rf "$f"` draws the variable operand's nudge: a
    declared difference. Each is pinned as the verdict it draws by

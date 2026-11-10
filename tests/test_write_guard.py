@@ -3369,8 +3369,10 @@ class TestCatastrophicEnumeratorCarrier:
         ("git ls-files | xargs git rm --cached", "allow"),
         ("git ls-files 2>/dev/null | xargs rm -rf", "wall"),
         ("git ls-files --cached --others --exclude-standard | xargs rm -f", "wall"),
-        # the declared limits, pinned as what they are: a stage between and
-        # a single stdin path read as nothing; the loop carrier from a
+        # the declared limits, pinned as what they are: a stage between, and
+        # a single stdin path read as nothing by the walls (the soft tier
+        # reads an echoed word as its remove's operand since DEF-3063; this
+        # remove does not recurse, so its twin is silent too); the loop carrier from a
         # relative root inside the repo is the nudge's, as the carrier is
         # (DEF-830 reads it; its wall rows are `TestCatastrophicLoopCarrier`'s)
         ("find . | grep zz | xargs rm -rf", "allow"),
@@ -14933,7 +14935,8 @@ class TestEverySpanReadDecidesTheQuotedOperandCut:
         ("_bash_loop_reading", "_named_span", "verb"): "the remove verb",
         ("_bash_loop_reading", "_named_span", "vars"): "the loop variable names",
         ("files_only_removed_operands", "_named_span", "verb"): "the word-list loop's remove verb",
-        ("carrier_fed_remove_twins", "_named_span", "verb"): "the carrier's remove verb (DEF-3063)",
+        ("carrier_fed_remove_twin", "_named_span", "verb"): "the carrier's remove verb (DEF-3063)",
+        ("carrier_fed_remove_twin", "_named_span", "vars"): "a loop opener's variable names (DEF-3063)",
         ("_loop_head_reading", "_named_span", "head"): "the enumerator head",
         ("_directory_chain", "raw_span", "1"): "the quoted cd target, read by offset (the wrapper-closer lane)",
         ("_ps_dotnet_sweeps", "raw_span", "2"): ".NET call arguments, not a shell span",

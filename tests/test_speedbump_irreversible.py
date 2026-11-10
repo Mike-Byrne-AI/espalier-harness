@@ -624,7 +624,7 @@ class TestCpRmrf:
 
     # ── DEF-3063: a word echoed or printed into a recursing xargs remove is
     # that remove's operand on stdin, so the carrier takes its direct twin's
-    # verdict wherever it sits (`_bash_patterns.carrier_fed_remove_twins`).
+    # verdict wherever it sits (`_bash_patterns.carrier_fed_remove_twin`).
     # `echo sub/x | xargs rm -rf` sat in the silent list above as DECLARED
     # (a single stdin path) while `rm -rf sub/x` asked ──
 
@@ -647,6 +647,36 @@ class TestCpRmrf:
          'find . | sort | while read f; do rm -rf "$f"; done', True),
         ('while read f; do echo "$f" | xargs rm -rf; done < files.txt',
          'while read f; do rm -rf "$f"; done < files.txt', True),
+        # a loop an opener reads answers only for its own item: any other
+        # echoed word -- another variable, a fixed word, an expansion that
+        # edits the item, a substitution -- is the twin's (the failure-mode
+        # review: these drew nothing while the twin asked)
+        ('for f in build dist; do echo "$D" | xargs rm -rf; done',
+         'for f in build dist; do rm -rf "$D"; done', True),
+        ('for f in build dist; do echo src | xargs rm -rf; done',
+         'for f in build dist; do rm -rf src; done', True),
+        ('for f in build dist; do echo "${f%/*}" | xargs rm -rf; done',
+         'for f in build dist; do rm -rf "${f%/*}"; done', True),
+        ('for f in build dist; do echo "$f" "$D" | xargs rm -rf; done',
+         'for f in build dist; do rm -rf "$f" "$D"; done', True),
+        ('find . -name "*.pyc" | while read f; do echo "$(dirname "$f")" | xargs rm -rf; done',
+         'find . -name "*.pyc" | while read f; do rm -rf "$(dirname "$f")"; done', True),
+        # a program handed to another shell: the twin splices past the quote,
+        # so these pin the rm reader's quote cut agreeing with it
+        ("bash -c 'echo src | xargs rm -rf'", "bash -c 'rm -rf src'", True),
+        ("bash -c 'echo build | xargs rm -rf'", "bash -c 'rm -rf build'", False),
+        # the items go where xargs appends them, before a redirection (the
+        # code review: after `2>` they read as the redirect's target)
+        ('echo "$D" | xargs rm -rf 2>&1', 'rm -rf "$D" 2>&1', True),
+        ('echo "$D" | xargs rm -rf >/dev/null 2>&1', 'rm -rf "$D" >/dev/null 2>&1', True),
+        ("bash -c 'echo \"$D\" | xargs rm -rf 2>&1'", "bash -c 'rm -rf \"$D\" 2>&1'", True),
+        # xargs splits a quoted multi-word emit on its blanks
+        ("echo 'sub/x sub/y' | xargs rm -rf", "rm -rf sub/x sub/y", True),
+        ("echo 'build dist' | xargs rm -rf", "rm -rf build dist", False),
+        # a printf format holding text is printed data, an operand
+        ('printf "$D\\n" | xargs rm -rf', 'rm -rf "$D"', True),
+        ("printf 'sub/x\\n' | xargs rm -rf", "rm -rf sub/x", True),
+        ("printf 'sub/%s\\n' build | xargs rm -rf", "rm -rf sub/build", True),
         # the twin's silence: the roster, echo's and printf's own switches and
         # format, a remove that does not recurse, a temp directory's binding
         ("echo build | xargs rm -rf", "rm -rf build", False),
@@ -671,15 +701,57 @@ class TestCpRmrf:
         # narrowed head stay silent (DECLARED: their loop-spelled twins
         # `rm -rf "$f"` ask, the rm tier reading the bare variable)
         'for f in build dist; do echo "$f" | xargs rm -rf; done',
+        'for f in build dist; do echo "$f" | xargs sudo rm -rf; done',
         "find . -name '*.pyc' | while read f; do echo \"$f\" | xargs rm -rf; done",
+        'find build | while read; do echo "$REPLY" | xargs rm -rf; done',
         # DECLARED, the carrier's own limits: a stage between the emit and
         # xargs (stdin is no longer the word), and the pipe across a line
         # break (`_XARGS_CARRIER_TAIL` keeps the pipe on the line)
         'echo "$D" | tr a b | xargs rm -rf',
         'echo "$D" |\nxargs rm -rf',
+        # DECLARED, the emit's bounds (the loop body's `_LOOP_EMIT_ARGS` and
+        # `feed`, shared and unedited): more than four emitted words, a word
+        # past 80 characters, a lone printf word (read as the format), and
+        # an emit word in quotes
+        "echo src lib docs tests out | xargs rm -rf",
+        'printf "%s\\n" src lib docs tests | xargs rm -rf',
+        'echo "' + "a/" * 41 + 'x" | xargs rm -rf',
+        '"echo" "$D" | xargs rm -rf',
+        # ... and a quoted separator inside an emitted word (the masked scan
+        # splits the word there)
+        'echo "a&b/c" | xargs rm -rf', "echo 'R&D/sub' | xargs rm -rf",
+        # nothing emitted, and a quote left open past the emit (no pipe runs)
+        'echo "" | xargs rm -rf', "echo it's | xargs rm -rf; echo 'ok'",
     ])
     def test_a_carrier_fed_remove_is_silent_on_a_mention_a_move_a_read_loop_or_a_declared_limit(self, tmp_path, cmd):
         assert not _fires(_speedbump._pred_rmrf, cmd, tmp_path)
+
+    @pytest.mark.parametrize("cmd", ["echo / | xargs rm -rf", "echo . | xargs rm -rf"])
+    def test_a_catastrophic_echoed_word_draws_the_nudge_not_the_defer(self, tmp_path, cmd):
+        """The catastrophic defer reads the command, never the twin: an
+        echoed root is outside the wall (the enumerator carrier's declared
+        limit), so the nudge is all it gets. A twin added to the defer would
+        turn this into an allow; this row reds first."""
+        assert _fires(_speedbump._pred_rmrf, cmd, tmp_path)
+
+    def test_a_carrier_flood_is_read_as_one_twin(self, tmp_path, monkeypatch):
+        """Every carrier in a command is spliced into ONE twin, read once: a
+        twin per carrier re-read the whole command per carrier, quadratic,
+        and 400 carriers met the hook's time budget where main passed them
+        (the failure-mode review). Counted, not timed: the rm readings are
+        built once for the command and once for its twin, whatever the
+        count."""
+        built: list[str] = []
+        real = _speedbump._RmReadings
+
+        def counting(text, at):
+            built.append(text)
+            return real(text, at)
+
+        monkeypatch.setattr(_speedbump, "_RmReadings", counting)
+        cmd = "echo build | xargs rm -rf; " * 200
+        assert not _fires(_speedbump._pred_rmrf, cmd, tmp_path)
+        assert len(built) == 2, len(built)
 
     @pytest.mark.parametrize("cmd", [
         "find sub | xargs rm -rf", "ls -R sub | xargs rm -rf",

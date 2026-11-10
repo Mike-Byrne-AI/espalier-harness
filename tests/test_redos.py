@@ -4417,6 +4417,30 @@ def _first_use_regexes() -> list[tuple[str, "re.Pattern[str]"]]:
 
 _FIRST_USE_REGEXES = _first_use_regexes()
 
+
+def test_every_first_use_compile_is_enrolled():
+    """The hand list above is checked against the source: every
+    ``re.compile(`` inside a function of `_bash_patterns` names its
+    accessor in `_FIRST_USE_REGEXES`, so a pattern compiled on first use
+    cannot ship outside both budget arms by being left off the list (the
+    failure-mode review of DEF-3063: nothing compared the list with the
+    module). Module-level compiles are the derivation's."""
+    import ast
+
+    import _bash_patterns  # noqa: E402
+
+    tree = ast.parse(Path(_bash_patterns.__file__).read_text(encoding="utf-8"))
+    compiling: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for call in ast.walk(node):
+                if (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+                        and call.func.attr == "compile"
+                        and isinstance(call.func.value, ast.Name) and call.func.value.id == "re"):
+                    compiling.add(node.name)
+    enrolled = {name.split(".")[-1].rstrip("()") for name, _ in _FIRST_USE_REGEXES}
+    assert compiling == enrolled, (sorted(compiling), sorted(enrolled))
+
 #: Adversarial payload shapes. Each is a repeated token run chosen to stress a
 #: DIFFERENT quantifier family. The env-assignment and separator runs are the
 #: shapes that caught the anchor's O(n^2) regression; do not drop them.

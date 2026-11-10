@@ -1037,16 +1037,19 @@ def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = 
             return True
     # DEF-3063: a word echoed or printed into a recursing `xargs` remove
     # (`echo "$D" | xargs rm -rf`) is that remove's operand, on stdin, so
-    # the readings above see an operand-less remove and pass it. Each such
-    # carrier is read again as its direct twin (`rm -rf "$D"`, spliced in
-    # place) and takes the twin's answer, wherever it sits; a carrier inside
-    # a loop an opener reads is the sweep pass's, below. A catastrophic
-    # word is the hard tier's, deferred above.
+    # the readings above see an operand-less remove and pass it. The text is
+    # read once more with every carrier spelled as its direct twin (`rm -rf
+    # "$D"`, spliced in place), so each takes the twin's answer wherever it
+    # sits; an operand naming a loop item an opener reads is the sweep
+    # pass's, below. The defer above reads the command, never the twin: a
+    # catastrophic echoed word (`echo / | xargs rm -rf`) is outside the wall
+    # and draws this nudge -- adding the twin to the defer would make it an
+    # allow.
     for index, text in enumerate(texts):
         at = (cwd or root) if index == 0 else None
-        for twin in _bash_patterns.carrier_fed_remove_twins(text):
-            if _rm_readings_ask(twin, at, root):
-                return True
+        twin = _bash_patterns.carrier_fed_remove_twin(text)
+        if twin is not None and _rm_readings_ask(twin, at, root):
+            return True
     # DEF-1151: cmd.exe's own recursive deletes (`cmd //c rd /s /q src`,
     # `del /s`) take the rm reading -- the wall for a catastrophic target
     # (deferred above: `has_catastrophic_recursive_rm` reads them), no
