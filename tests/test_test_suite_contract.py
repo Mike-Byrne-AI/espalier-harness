@@ -5880,3 +5880,256 @@ class TestEveryTerminalSummaryHookHonoursNoSummary:
         assert not _reads_no_summary_before_it_writes(_summary_hooks(unread)[0])
         written_first = guarded.replace("    self.done = True\n", "    tr.write_line('x')\n")
         assert not _reads_no_summary_before_it_writes(_summary_hooks(written_first)[0])
+
+
+# ---------------------------------------------------------------------------
+# DEF-2045: a test that judges a shell payload at the guard lays the protected
+# tree, or is one of the bare spawners rostered here, or argues its own bare
+# project with a marker.
+# ---------------------------------------------------------------------------
+
+#: The helpers that lay the protected directories into a guard fixture's
+#: project (bench/powershell_guard_rehearsal.py, DEF-811's strike). A spawner
+#: whose body names one of them judges in a project that carries the tree.
+_TREE_LAYERS = frozenset({"carry_protected_tree", "throwaway_project", "shaped_root"})
+_BARE_MARKER = "# guard-fixture: bare "
+#: A directory change, as a command literal spells it on either shell.
+_DIRECTORY_CHANGE = re.compile(r"(?:^|[;&|(\s])(?:cd|pushd|sl|Set-Location|Push-Location)\s", re.I)
+_SHELL_TOOL_LITERAL = re.compile(r"[\"'](?:Bash|PowerShell)[\"']")
+
+#: The bare spawners at the 2026-11-10 seeding (cf782b6), each judging the
+#: guard in a project with none of the protected directories. Read, not run:
+#: none hands the guard a command that changes directory, as far as its own
+#: literals and its callers' in the same file show (checked below on every
+#: run), so today the absent tree feeds none of their verdicts. Keyed by name
+#: on purpose: a copy of one under a new name is not on this roster, and that
+#: copy is the shape the row exists for (a new row that changes into a
+#: protected directory and banks the deny the bare project suppressed). The
+#: roster only shrinks: a spawner that lays the tree leaves it.
+_BARE_GUARD_SPAWNERS = frozenset({
+    "bench/powershell_reachability_differential.py::guard_tier.once",
+    "bench/reachability_differential.py::guard_denies",
+    "tests/test_checkout_sync.py::_wedge_restore",
+    "tests/test_edge_cases.py::TestHookRobustness.test_write_guard_allows_safe_bash",
+    "tests/test_edge_cases.py::TestHookRobustness.test_write_guard_blocks_dangerous_bash",
+    "tests/test_hook_voice_reaches_claude.py::TestTheRestLeaveARecord.test_write_guard_discard_snapshot_fault",
+    "tests/test_hooks.py::TestBashCommandCapTrailing.test_powershell_trailing_redirect_after_33kb_pad_blocked",
+    "tests/test_hooks.py::TestBashCommandCapTrailing.test_short_command_still_works",
+    "tests/test_hooks.py::TestBashCommandCapTrailing.test_trailing_redirect_after_33kb_pad_blocked",
+    "tests/test_hooks.py::TestWriteGuard.test_bash_pytest_allowed",
+    "tests/test_hooks.py::TestWriteGuard.test_bash_rm_rf_of_a_dirty_tracked_dir_is_snapshotted_and_the_nudge_says_so",
+    "tests/test_hooks.py::TestWriteGuard.test_bash_rm_rf_slash_blocked",
+    "tests/test_hooks.py::TestWriteGuard.test_bash_rm_rf_star_blocked",
+    "tests/test_hooks.py::TestWriteGuard.test_bash_rm_rf_target_speed_bumped",
+    "tests/test_hooks.py::TestWriteGuardBashPatterns._command",
+    "tests/test_hooks.py::TestWriteGuardBashPatterns.test_env_prefix_form_denied",
+    "tests/test_hooks.py::TestWriteGuardBashPatterns.test_maintenance_env_prefix_denied",
+    "tests/test_hooks.py::TestWriteGuardBashPatterns.test_stop_gate_env_prefix_denied",
+    "tests/test_hooks.py::TestWriteGuardBashPatterns.test_unrelated_env_prefix_allowed",
+    "tests/test_hooks.py::TestWriteGuardTypeCoercion.test_main_umbrella_fails_closed_on_bash_non_str_command",
+    "tests/test_hooks.py::TestWriteGuardV3.test_blocks_macos_sed_inplace",
+    "tests/test_hooks.py::TestWriteGuardV3.test_blocks_powershell_rm",
+    "tests/test_hooks.py::TestWriteGuardV3.test_blocks_traversal_bash_write",
+    "tests/test_security_regression.py::_run_write_guard",
+    "tests/test_speedbump_discard_snapshot.py::TestConditionalPromise.test_the_nudge_at_the_hook_is_not_a_safety_verdict",
+    "tests/test_speedbump_discard_snapshot.py::TestLoopRemovalSnapshot.test_the_hook_snapshots_before_the_loop_nudge_and_names_it",
+    "tests/test_write_guard.py::TestCatastrophicEnumeratorCarrier.test_the_powershell_wall_stands_under_maintenance_mode_carrier",
+    "tests/test_write_guard.py::TestCatastrophicEnumeratorCarrier.test_the_wall_stands_under_maintenance_mode_carrier",
+    "tests/test_write_guard.py::TestCatastrophicFindDelete.test_the_powershell_wall_stands_under_maintenance_mode",
+    "tests/test_write_guard.py::TestCatastrophicFindDelete.test_the_wall_stands_under_maintenance_mode",
+    "tests/test_write_guard.py::TestCatastrophicLoopCarrier.test_the_wall_stands_under_maintenance_mode_loop",
+    "tests/test_write_guard.py::TestCatastrophicRmFlagOrderIndependent.test_a_recursive_delete_without_force_walls_under_maintenance",
+    "tests/test_write_guard.py::TestCatastrophicRmFlagOrderIndependent.test_flag_order_variant_denies_under_maintenance",
+    "tests/test_write_guard_time_budget.py::TestOneLongCallInTheJudgmentIsRefusedInTime.test_the_deny_lands_under_the_wired_timeout_and_the_judgments_tree_ends",
+    "tests/test_write_guard_time_budget.py::_modules_the_guard_reaches",
+})
+
+
+@dataclass(frozen=True)
+class _GuardSpawner:
+    key: str            # "<relpath>::<Qual.name>"
+    lays_tree: bool
+    marker: str | None  # the argued reason on a `# guard-fixture: bare` line
+    commands: tuple[str, ...]  # its literals, then its same-file callers'
+
+
+def _functions_with_qualnames(tree: ast.AST) -> list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef]]:
+    out: list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef]] = []
+
+    def visit(node: ast.AST, prefix: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                out.append((prefix + child.name, child))
+                visit(child, f"{prefix}{child.name}.")
+            elif isinstance(child, ast.ClassDef):
+                visit(child, f"{prefix}{child.name}.")
+            else:
+                visit(child, prefix)
+
+    visit(tree, "")
+    return out
+
+
+def _docstring_nodes(tree: ast.AST) -> set[int]:
+    ids: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            body = getattr(node, "body", [])
+            if (body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant)
+                    and isinstance(body[0].value.value, str)):
+                ids.add(id(body[0].value))
+    return ids
+
+
+def _guard_spawners(rel: str, source: str) -> list[_GuardSpawner]:
+    """Every function in ``source`` that hands write_guard a Bash or
+    PowerShell payload with a ``CLAUDE_PROJECT_DIR`` of its own: it names the
+    hook (a path literal, an import, a name), sets the project variable (a
+    key, a keyword, or a program text that does), and spells a shell tool.
+    A docstring is prose and counts for none of the three."""
+    tree = ast.parse(source)
+    docs = _docstring_nodes(tree)
+    lines = source.splitlines()
+    functions = _functions_with_qualnames(tree)
+    # One hop through a module-level constant, for the hook alone:
+    # `HOOK = HOOKS_DIR / "write_guard.py"` names the hook for every function
+    # that reads HOOK. Not for the project variable or the tool, which a
+    # module-level table of command texts spells without setting either
+    # (bench/guard_row_probe.py's rows do).
+    module_literals: dict[str, list[str]] = {}
+    for stmt in getattr(tree, "body", []):
+        targets = (stmt.targets if isinstance(stmt, ast.Assign)
+                   else [stmt.target] if isinstance(stmt, ast.AnnAssign) and stmt.value else [])
+        for target in targets:
+            if isinstance(target, ast.Name):
+                module_literals[target.id] = [
+                    n.value for n in ast.walk(stmt.value)
+                    if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+    found: list[_GuardSpawner] = []
+    for qual, fn in functions:
+        literals: list[str] = []
+        names: set[str] = set()
+        via_constants: list[str] = []
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Name) and node.id in module_literals:
+                via_constants.extend(module_literals[node.id])
+            if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docs:
+                literals.append(node.value)
+            elif isinstance(node, ast.Name):
+                names.add(node.id)
+            elif isinstance(node, ast.Attribute):
+                names.add(node.attr)
+            elif isinstance(node, ast.keyword) and node.arg:
+                literals.append(node.arg)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                names.update(alias.name for alias in node.names)
+        names_the_hook = (any("write_guard" in lit for lit in literals + via_constants)
+                          or any("write_guard" in name.lower() for name in names))
+        sets_project = any("CLAUDE_PROJECT_DIR" in lit for lit in literals)
+        spells_a_shell = any(lit in ("Bash", "PowerShell") or _SHELL_TOOL_LITERAL.search(lit)
+                             for lit in literals)
+        if not (names_the_hook and sets_project and spells_a_shell):
+            continue
+        first = min([fn.lineno, *(d.lineno for d in fn.decorator_list)])
+        above = lines[first - 2].strip() if first >= 2 else ""
+        marker = above[len(_BARE_MARKER):].strip() if above.startswith(_BARE_MARKER) else None
+        callers = [
+            lit
+            for _q, other in functions
+            if other is not fn and any(
+                isinstance(c, ast.Call) and getattr(c.func, "attr", getattr(c.func, "id", None)) == fn.name
+                for c in ast.walk(other))
+            for lit in (n.value for n in ast.walk(other)
+                        if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docs)
+        ]
+        found.append(_GuardSpawner(f"{rel}::{qual}", bool(_TREE_LAYERS & names), marker or None,
+                                   tuple(literals + callers)))
+    return found
+
+
+def _live_guard_spawners() -> list[_GuardSpawner]:
+    paths = [*checkout_glob(TESTS_DIR, "test_*.py"), *checkout_glob(REPO_ROOT / "bench", "*.py")]
+    # This module is left out: its literals are the detector's own vocabulary
+    # and its fixtures (never scan your own defining material).
+    here = Path(__file__).resolve()
+    return [s for p in sorted(paths) if p.resolve() != here
+            for s in _guard_spawners(p.relative_to(REPO_ROOT).as_posix(), p.read_text(encoding="utf-8"))]
+
+
+def _bare_offenders(spawners: list[_GuardSpawner], roster: frozenset[str]) -> list[str]:
+    """A spawner in a bare project that is neither rostered nor argued, or a
+    rostered one a directory change now reaches."""
+    out: list[str] = []
+    for s in spawners:
+        if s.lays_tree or s.marker:
+            continue
+        if s.key not in roster:
+            out.append(f"{s.key}: judges the guard in a project with no protected directories; "
+                       "lay them with carry_protected_tree (bench/powershell_guard_rehearsal.py), "
+                       f"or argue the bare project on the line above the def: {_BARE_MARKER}<reason>")
+        elif any(_DIRECTORY_CHANGE.search(c) for c in s.commands):
+            out.append(f"{s.key}: rostered as bare because no command reaching it changes directory, "
+                       "and one now does; lay the tree with carry_protected_tree")
+    return out
+
+
+class TestEveryShellGuardSpawnerLaysTheProtectedTree:
+    """DEF-2045. DEF-811's strike laid the protected tree into the fixtures
+    that row named; elsewhere a test that judges a shell payload at the guard
+    in a bare project banks whatever the absent directories decide, and a
+    command that changes into a protected directory reads ALLOW there and a
+    deny with the tree (measured on both shells by the DEF-811 reviewer). The
+    population is DISCOVERED (tests/test_*.py and bench/*.py by AST), floored,
+    and each bare member is rostered, argued with a marker, or red."""
+
+    def test_the_discovery_finds_the_population(self):
+        spawners = _live_guard_spawners()
+        laid = [s.key for s in spawners if s.lays_tree]
+        assert len(spawners) >= 40 and len(laid) >= 5, (
+            f"the spawner discovery found {len(spawners)} ({len(laid)} laying the tree); "
+            "40 and 5 when this floor was set -- fix the discovery, never lower the floor"
+        )
+
+    def test_every_bare_spawner_is_rostered_or_argued(self):
+        offenders = _bare_offenders(_live_guard_spawners(), _BARE_GUARD_SPAWNERS)
+        assert offenders == [], "\n".join(offenders)
+
+    def test_the_roster_has_no_dead_entries(self):
+        bare = {s.key for s in _live_guard_spawners() if not s.lays_tree and not s.marker}
+        dead = sorted(_BARE_GUARD_SPAWNERS - bare)
+        assert dead == [], (
+            f"rostered but no longer a bare spawner (it lays the tree now, was renamed or "
+            f"removed): drop it from _BARE_GUARD_SPAWNERS: {dead}"
+        )
+
+    def test_a_copied_bare_spawner_reds_and_a_laid_or_argued_one_passes(self):
+        """Earn-the-red: the row's own shape. A copy of a rostered bare
+        spawner under a new name reds; the same copy laying the tree, or
+        argued with the marker, passes; and a rostered one a directory change
+        now reaches reds."""
+        spawner = (
+            "import json, os, subprocess, sys\n"
+            "HOOK = 'tools/cc/hooks/write_guard.py'\n"
+            "class TestX:\n"
+            "    def test_copied(self, tmp_path):\n"
+            "        env = dict(os.environ, CLAUDE_PROJECT_DIR=str(tmp_path))\n"
+            "        payload = {'tool_name': 'Bash', 'tool_input': {'command': CMD}}\n"
+            "        subprocess.run([sys.executable, HOOK], input=json.dumps(payload), env=env)\n"
+        )
+        roster = frozenset({"tests/test_x.py::TestX.test_kept"})
+        copied = _guard_spawners("tests/test_x.py", spawner.replace("CMD", "'echo x > notes.txt'"))
+        assert [s.key for s in copied] == ["tests/test_x.py::TestX.test_copied"]
+        assert _bare_offenders(copied, roster), "a new bare spawner read as rostered"
+        laid = spawner.replace("        env = ", "        carry_protected_tree(tmp_path, HOOK)\n        env = ")
+        assert _bare_offenders(_guard_spawners("tests/test_x.py", laid.replace("CMD", "'x'")), roster) == []
+        argued = spawner.replace("    def test_copied", f"    {_BARE_MARKER}judges an empty project on purpose\n    def test_copied")
+        assert _bare_offenders(_guard_spawners("tests/test_x.py", argued.replace("CMD", "'x'")), roster) == []
+        kept = spawner.replace("test_copied", "test_kept")
+        assert _bare_offenders(_guard_spawners("tests/test_x.py", kept.replace("CMD", "'echo x'")), roster) == []
+        moved = kept.replace("CMD", "'cd tools/cc && echo x > notes.txt'")
+        assert _bare_offenders(_guard_spawners("tests/test_x.py", moved), roster), (
+            "a rostered spawner whose command now changes directory read as still bare-safe"
+        )
+        # A docstring that names the hook, the variable and the tool is prose.
+        prose = "def helper():\n    '''write_guard CLAUDE_PROJECT_DIR \"Bash\"'''\n    return 1\n"
+        assert _guard_spawners("tests/test_x.py", prose) == []

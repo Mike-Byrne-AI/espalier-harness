@@ -37,7 +37,7 @@ from pathlib import Path
 
 import pytest
 
-from _json_key_paths import key_paths
+from _json_key_paths import describe_unknown, key_paths
 
 from espalier._safe_walk import visible
 from espalier.changelog import category_label
@@ -2480,7 +2480,7 @@ class TestReadmeDoctorExampleMatchesLiveOutput:
 
     README = REPO_ROOT / "README.md"
 
-    def _extract_top_level_keys_from_demo(self, text: str) -> set[str]:
+    def _extract_top_level_keys_from_demo(self, text: str) -> set[tuple[str, str]]:
         """Extract every JSON key PATH from an abbreviated demo block.
 
         The README uses a ```text block with ``$ espalier doctor .`` as the
@@ -2544,7 +2544,7 @@ class TestReadmeDoctorExampleMatchesLiveOutput:
             "```\n"
         )
         paths = self._extract_top_level_keys_from_demo(demo)
-        assert "checks.presence.status" in paths, (
+        assert ("checks.presence.status", "scalar") in paths, (
             "the README extractor cannot see a nested key in the doc's own "
             "abbreviated idiom — either the compare went depth-1 again or the "
             "ellipsis collapse widened and ate the object's keys first"
@@ -2555,7 +2555,8 @@ class TestReadmeDoctorExampleMatchesLiveOutput:
             "```text\n$ espalier doctor .\n"
             '{ "status": "warn", "checks": {...} }\n```\n'
         )
-        assert self._extract_top_level_keys_from_demo(only) >= {"status", "checks"}
+        assert self._extract_top_level_keys_from_demo(only) >= {
+            ("status", "scalar"), ("checks", "object")}
 
     def test_readme_doctor_keys_subset_of_live(self, initialized_repo_root):
         text = _read(self.README)
@@ -2581,14 +2582,34 @@ class TestReadmeDoctorExampleMatchesLiveOutput:
                 f"espalier doctor output is not valid JSON: {exc}\n"
                 f"stdout: {result.stdout[:500]}"
             )
-        live_keys = key_paths(live_obj)
+        self._assert_demo_within_live(demo_keys, key_paths(live_obj))
+
+    @staticmethod
+    def _assert_demo_within_live(demo_keys, live_keys) -> None:
+        """The gate's comparison: every (path, kind) the demo shows is one the
+        live output holds (DEF-585: the kind, so a demo cannot show a word
+        where doctor emits a dict)."""
         unknown_keys = demo_keys - live_keys
         assert not unknown_keys, (
-            f"README doctor demo references keys not in live output: "
-            f"{unknown_keys}.\n"
-            f"Live keys: {sorted(live_keys)}\n"
-            f"Update README.md to match the actual doctor output shape."
+            "README doctor demo references keys, or a container kind at a "
+            "key, not in live output:\n  "
+            + "\n  ".join(describe_unknown(unknown_keys, live_keys))
+            + f"\nLive keys: {sorted(live_keys)}\n"
+            "Update README.md to match the actual doctor output shape."
         )
+
+    def test_a_demo_that_collapses_a_dict_to_a_word_is_caught(self):
+        """Earn-the-red for DEF-585 on the README twin, in the README's own
+        abridged idiom and through its own extractor and comparison."""
+        live = key_paths({"status": "warn", "warnings": ["x"],
+                          "checks": {"presence": {"surface_present": True}}})
+        demo = self._extract_top_level_keys_from_demo(
+            "```text\n$ espalier doctor .\n"
+            '{ "status": "warn", "checks": "ok", ... }\n```\n'
+        )
+        assert demo == {("status", "scalar"), ("checks", "scalar")}
+        with pytest.raises(AssertionError, match="checks: the sample shows scalar"):
+            self._assert_demo_within_live(demo, live)
 
 
 class TestPublicDocsEmailConsistency:
