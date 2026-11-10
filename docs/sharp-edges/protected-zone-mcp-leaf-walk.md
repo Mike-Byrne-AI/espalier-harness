@@ -77,6 +77,27 @@ fail-closed false-DENY). Because the skip keys on the
 `{"content":{"path":"<protected>"}}` — keeps its own `"path"` governing key and
 is still checked.
 
+**A move's destination is a write, read per object.** A move or rename tool
+takes its source with the source's tree, so a source that encloses a zone
+(`tools` holding `tools/cc/`) is refused; its destination is written into, as
+`mv a.txt tools` writes into `tools`, so a destination that only encloses a zone
+is allowed. Two readings keep that from opening a hole (DEF-2026's review drove
+both as false allows of the first cut). A destination key
+(`write_guard._MCP_DESTINATION_KEYS`) is the destination only in an object that
+also names a source (`_MCP_SOURCE_KEYS`): alone, or as `target`/`target_uri`
+(which `MCP_PATH_FIELDS` names as a rename's operand), the operand may be the
+thing moved, so it is read as taken. And each name the move lands, the
+destination joined with each taken operand's last component (as
+`_bash_patterns._landed_under` builds a shell move's), is judged too, so
+`settings.json` moved into `.claude/` is refused where `.claude/` alone is not.
+A canonical destination field lands under the path Layer 1 resolved for it, so a
+destination named through a symlink lands where the file does. The object a leaf
+lies in is read off the walk's `location` (`write_guard._mcp_object_of`); a key
+holding `.`, `[` or `]` makes two objects spell one location, so such a payload
+names no sourced object and every destination in it is read as taken. A change
+to that string's shape moves these verdicts:
+`tests/test_write_guard.py::TestAnMcpMoveDestinationIsAWrite` pins them.
+
 **How you hit it:** an MCP write whose protected target sits under a
 non-canonical key, inside a list/dict nest, or both, classified ALLOW.
 
@@ -108,3 +129,11 @@ shape):
 3. **Depth/node bound.** A payload nested deeper than 10 or wider than 10000
    nodes is denied **fail-closed** (an over-block on a pathological-but-legit
    batch, recoverable by splitting it or via maintenance mode), never allowed.
+   A move that names more destination-and-operand pairs in one object than
+   that bound (101 `from` beside 101 `to`) is denied the same way.
+4. **A move's destination read by its key.** A server that names the thing it
+   moves under a destination key beside a source key, or that replaces a
+   destination directory it is told to overwrite (`overwrite: true`), moves a
+   zone the guard reads as written into. Both are zone writes the coverage
+   contract (`docs/HOOKS.md`) hands to the after-check; no shipping filesystem
+   server is known to do either.

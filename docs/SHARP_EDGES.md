@@ -3395,6 +3395,15 @@ a value lead): 24 s to 70 ms, run left unbounded. Rule: when a witness flood is
 quadratic, find the token with two parses and take one away — a bound on a run
 a real command can fill is a coverage hole with no receipt, and a must-deny row
 at the padded length is what reds a future bound.
+The exception, with its receipt: the `-c` cluster `-[A-Za-z]{0,8}c[A-Za-z]{0,8}`
+stays bounded in `_SHELL_DASH_C_RE`, `_CARRIER_C_CLUSTER_RE` and
+`_PS_BASH_DASH_C_RE`. Its cost sits inside ONE token, where each `c` in a long
+letter run is a split point, and no second parse can be taken away without
+dropping clusters bash accepts: unbounded it read 113 / 451 / 1800 ms at
+4 / 8 / 16 KB on one token (measured on review, at load 3.5), so a cluster of
+nine letters on either side of the `c` (`-eeeeeeeeec`) reads as no opener.
+The POSIX switch run beside it is unbounded, and linear because its value is
+never a spelling of a shell head.
 
 When adding/editing an extraction regex: add it to `tests/test_redos.py` and
 earn-the-red the repeated-verb, unclosed-tail AND long-bare-inner-token shapes

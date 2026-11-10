@@ -1673,6 +1673,20 @@ guard's test class, at
 (Espalier
 source repo -- not deployed by `init`).
 
+An MCP move or rename tool takes its source with the source's tree and
+writes into its destination, as `mv a.txt tools` does: a destination that
+only holds a zone (`tools` holding `tools/cc/`) runs, and a source that
+holds one is refused. A destination key (`destination`, `dest`, `dst`,
+`new_path`, `to`) reads as the destination only in an object that also
+names a source (`source`, `src`, `from`, `path`, `file_path`, `old_path`,
+`uri`); alone, or as `target`, its operand is read as the thing moved. Each
+name the move lands, the destination (resolved, for a canonical field)
+joined with each moved operand's last component, is judged too, so a file
+named `settings.json` moved into the folder that holds the settings file is
+refused. A destination key that names the moved thing beside a source key,
+and a server that replaces a destination directory it is told to overwrite,
+are zone writes the coverage contract hands to the after-check.
+
 A program under an interpreter head is also read for what it HANDS TO A
 SHELL, and that text meets the Bash dangerous records, the write extractor,
 the secret-read roster and the speed-bump checkpoints as a program of its
@@ -1758,8 +1772,11 @@ on the Bash tool (`echo '...' | pwsh -Command -`, `cat <<'EOF' | pwsh
 -Command -`) is read as the stage before the pipe, like an interpreter's;
 `-File <script>` there means the pipe is data. `-EncodedCommand`, `-File
 <script>`, a program held in an unbound variable (a literal binding earlier in the command
-is inlined first) and `wsl bash -c` are declared
-limits, pinned by `tests/test_write_guard.py::TestCrossShellRouting::test_bash_tool_declared_limits_are_pinned`
+is inlined first), `wsl bash -c` and a relative write after a `cd` inside a
+POSIX shell program anywhere but behind a bare `-c` on the Bash tool (`bash
+-lc 'cd tools/cc/hooks && echo x > x.py'`, a here-string, the PowerShell
+tool's `bash -c`: a zone write, which the coverage contract hands to the
+after-check) are declared limits, pinned by `tests/test_write_guard.py::TestCrossShellRouting::test_bash_tool_declared_limits_are_pinned`
 and `tests/test_write_guard.py::TestCrossShellRouting::test_powershell_tool_declared_limits_are_pinned`;
 `cmd /c` is a third grammar the hook has no extractor for
 (`tests/test_write_guard.py::TestCrossShellRouting::test_cmd_c_verdicts_are_pinned_not_claimed`).
