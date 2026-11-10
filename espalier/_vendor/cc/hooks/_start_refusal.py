@@ -21,10 +21,12 @@ one restore of it to HEAD.
 Its kept-old-file test reads any ``tools/cc/`` module, not ``_hook_utils``
 alone (DEF-5087): an upgrade keeps whichever managed file lost its marker and
 regenerates the siblings around it, so the refusal names the file that lacks
-the name. ``tools/cc/ship.py`` loads this module by path and calls
-:func:`refuse_kept_siblings` under its ``__main__``, so a kept sibling of the
-ship driver is the same named refusal on stderr, never a traceback that names
-an attribute. ``session_start`` does not read this test: it checks only what
+the name. Every command-line script under ``tools/cc/`` that takes a sibling's
+name (the event hooks apart) loads this module by path from an excepthook its
+``__main__`` installs, and calls :func:`refuse_kept_siblings` there, so a kept
+sibling of the ship driver, the board, the mail or ledger verbs is the same
+named refusal on stderr, never a traceback that names an attribute (the block's
+one text is ``tests/test_kept_sibling.py::ARM_BLOCK``, DEF-5088). ``session_start`` does not read this test: it checks only what
 its pull-request block reads from ``tools/cc/_post_merge.py``, each name and
 the keywords it passes, against its own table
 (``session_start.py::_POST_MERGE_READS``, read by ``_post_merge_lacks``).
@@ -583,14 +585,20 @@ def body_done() -> None:
 #: ``HELPER_SKEW``'s, ``{taker}`` with its line where one is placed, and
 #: ``{outcome}`` says whether the script had begun (``stopped``: the read was in
 #: a call the script made) or not (``cannot run``: an import, a module-level
-#: read); no call is let through, since a script judges nothing.
+#: read); no call is let through, since a script judges nothing. The traceback
+#: follows the refusal, and no restore is offered (DEF-5088, air's ruling
+#: 92ed0c): the deny hooks' "never a traceback" is the hook protocol's (an exit 1
+#: reads as non-blocking, and write_guard saves a copy before it lets a restore
+#: through), and a script has neither, so on a tree under edit -- a typo read
+#: from a sibling reads exactly like a kept file -- a restore would discard the
+#: edit with no copy kept, and the traceback is the editor's account.
 SCRIPT_KEPT_SIBLING = (
     "{script} {outcome}: {taker} takes `{name}` from {kept}, which lacks it ({error})."
     " If an upgrade kept {kept_name} as yours (no managed marker) and regenerated the"
     " rest: restore its `# espalier:managed` marker line and run `espalier upgrade"
     " --execute .` (the upgrade then replaces it with the packaged version, and its"
-    " current text is not kept). If an edit in progress removed the name or added its"
-    " import, restore the edited file to HEAD: {restore}."
+    " current text is not kept). If you are editing tools/cc, the error is your read"
+    " at {taker}; the traceback follows."
 )
 
 
@@ -598,14 +606,19 @@ def refuse_kept_siblings(script: str, code: int = 1) -> None:
     """Under a script's ``__main__``, before its sibling imports: an uncaught
     exception that reads as a kept, older sibling (:func:`_missing_sibling_name`
     through :func:`wedge_reading`) -- at an import, at a module-level read, or
-    in a call that reads the name later -- is ``SCRIPT_KEPT_SIBLING`` on stderr
-    and exit ``code``, never a traceback that names an attribute. Anything else,
+    in a call that reads the name later -- is ``SCRIPT_KEPT_SIBLING`` on stderr,
+    then the traceback the hook in place prints, and exit ``code``: the refusal
+    names the kept file and the repair first, so a traceback that names an
+    attribute is never the only account. Anything else,
     and a refusal whose text cannot be composed, goes to the exception hook that
     was in place, so the traceback stays where it is the only account. Installed
     as ``sys.excepthook``, which runs for an exception nothing caught; the
     ``SystemExit`` raised there sets the exit code (driven on 3.11 to 3.14 for
     the deny hooks' body refusal, :func:`refuse_on_body_raise`). The script
-    loads this module by path, so it reaches it with no sibling on the way."""
+    loads this module by path, so it reaches it with no sibling on the way:
+    each script's block (``tests/test_kept_sibling.py::ARM_BLOCK``) does so from
+    its own excepthook, once an exception arrives, and puts the hook it found
+    back first, since the one in place here is the fallback this wraps."""
     before = sys.excepthook
 
     def _begun(tb: types.TracebackType | None) -> bool:
@@ -636,7 +649,7 @@ def refuse_kept_siblings(script: str, code: int = 1) -> None:
             text = SCRIPT_KEPT_SIBLING.format(
                 script=script, outcome="stopped" if _begun(tb) else "cannot run", taker=taker,
                 name=reading.missing, kept=reading.rel(reading.kept), kept_name=reading.kept.name,
-                error=f"{type(exc).__name__}: {exc}", restore=_restore_clause(reading, False))
+                error=f"{type(exc).__name__}: {exc}")
         # fail-open: ok text-fallback the traceback is the account a refusal that cannot be composed leaves
         except Exception:  # noqa: BLE001
             before(kind, exc, tb)
@@ -644,6 +657,9 @@ def refuse_kept_siblings(script: str, code: int = 1) -> None:
         # voice: cli a script's own refusal, on the terminal that ran it (never a hook's exit-0 path)
         sys.stderr.write(text + "\n")
         sys.stderr.flush()
+        # The traceback follows: it keeps the stack and Python's "Did you mean",
+        # which an edit in progress needs and the refusal does not carry.
+        before(kind, exc, tb)
         raise SystemExit(code)
 
     sys.excepthook = _refuse
