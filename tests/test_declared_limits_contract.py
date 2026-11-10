@@ -267,7 +267,13 @@ class TestTheSentenceSplitter:
 #: nothing a row can red on); and the encoded program and the script file,
 #: two sentences citing the same row, joined into one, which keeps the seeded
 #: docs at the ceiling `scripts/sync_asset_docs.py` holds.
-_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 30, "docs/SHARP_EDGES.md": 5}
+#: HOOKS 30 -> 31 on 2026-11-09: a bare `rm` naming a governed directory keeps
+#: the zone deny on the Bash tool, which replays rc aliases (the dispatcher's
+#: ruling 267ffc on DEF-4031), pinned in
+#: `TestADeleteThatCannotTakeADirectoryLeavesTheZone`; its citation's hit is
+#: paid for by an internal row id dropped from the loop-variable sentence, so
+#: the seeded docs stay at the ceiling.
+_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 31, "docs/SHARP_EDGES.md": 5}
 
 
 def test_the_census_is_the_pinned_population():
