@@ -3935,11 +3935,15 @@ reads as coverage.
   hook) does no such per-file resolution — it routes on prompt scope + plan
   state. Because the looser side is the advisory one, the divergence has no
   enforcement consequence. Leave.
-- **Grouped-quantifier ReDoS-scanner gap** — `_BARE_DOTSTAR_RE` (the
-  ReDoS-budget scanner) misses grouped
-  `(.)*`. A gate-*gap* in a detector, not a live ReDoS: no
-  catastrophic-backtracking regex is reachable in the shipped code. Leave
-  until a real instance appears (then earn the gate against it).
+- **Grouped-quantifier ReDoS-scanner gap (closed)** — `_BARE_DOTSTAR_RE`
+  (the ReDoS-budget scanner) missed grouped `(.)*`; a real instance
+  appeared (the recall engine's first comment strip, `(?:(?!x).)+?` in
+  shape, 84 s on an 86 KB paragraph) and the gate was earned against it:
+  the detector now also walks the parsed pattern for an unbounded repeat
+  whose iteration can begin with a bare dot, and for an escape arm
+  (`\\.`) a sibling arm overlaps (`[^"]` taking the backslash too, which is
+  exponential on a run of backslashes). The escape idiom whose class
+  leaves the escape character out stays unflagged, since it is linear.
 - **Speedbump/plan TOCTOU lost-update across sessions** — speedbump-flag and
   execution-plan TOCTOU **lost-update**
   across CONCURRENT sessions. The atomic write already prevents

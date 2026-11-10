@@ -274,7 +274,9 @@ class TestCpGateweakenPerFileKeying:
 
 class TestCpGateweakenUnderMaintenance:
     """The keystone must fire under MAINTENANCE_MODE -- the speed-bump call site
-    in write_guard precedes the maintenance-bypass gate (TP-159). This shells
+    in write_guard precedes the maintenance return (TP-159), and the zone
+    checks that run ahead of it outside maintenance are skipped there
+    (DEF-986). This shells
     write_guard so the real call-site ordering, not the predicate alone, is the
     thing under test."""
 
@@ -302,13 +304,28 @@ class TestCpGateweakenUnderMaintenance:
         assert hso["permissionDecision"] == "deny"
         assert "CP-GATEWEAKEN" in hso["permissionDecisionReason"]
 
-    def test_gateweaken_denies_without_maintenance_too(self, tmp_path):
-        # the speed-bump precedes BOTH the maintenance gate and the
-        # protected-zone check, so it is the first responder either way.
+    def test_the_zone_wall_leaves_the_keystone_armed_for_the_relaunch(self, tmp_path):
+        # The zone deny's remedy is a relaunch with --continue, which keeps
+        # the session's bump flags. Run ahead of the wall, the keystone spent
+        # its per-file flag on a call that could not proceed, and the edit
+        # then landed under maintenance with no pause; now the wall sets no
+        # flag and the relaunched session meets CP-GATEWEAKEN.
+        first = self._run(self._payload(), tmp_path, mode=None)
+        assert "CP-GATEWEAKEN" not in first.stdout, first.stdout
+        second = self._run(self._payload(), tmp_path, mode="1")
+        reason = json.loads(second.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+        assert "CP-GATEWEAKEN" in reason, reason
+
+    def test_without_maintenance_the_zone_wall_answers_first(self, tmp_path):
+        # DEF-986: outside maintenance mode the protected-zone check runs
+        # before the speed bump, so an edit of a guard file meets the wall it
+        # cannot pass, never a bump whose re-issue that wall would refuse.
+        # Under maintenance (above) no zone check runs and the bump answers.
         result = self._run(self._payload(), tmp_path, mode=None)
         assert result.returncode == 0
-        output = json.loads(result.stdout)
-        assert "CP-GATEWEAKEN" in output["hookSpecificOutput"]["permissionDecisionReason"]
+        reason = json.loads(result.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+        assert "protected harness" in reason, reason
+        assert "CP-GATEWEAKEN" not in reason, reason
 
 
 # ── _is_writing_bash heuristic ──────────────────────────────────────────────

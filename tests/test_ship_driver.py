@@ -388,7 +388,8 @@ def _preflight_answers(root, *, dirty="", untracked="", commits="abc1234 feat: a
         _LANE_DIFF: (0, "M\ttools/cc/ship.py\n", ""),   # the shape read: a code lane, nothing deleted
         # `open`'s refusals before its push, read by the forecast (ship.PRE_PUSH_CHECKS):
         # no pull request open for the lane, origin's copy of it (none) not ahead, the
-        # open pull requests (none), the head subject for the title.
+        # open pull requests (none), the lane's subject for the title (every
+        # tier of ship.lane_subject is a `git log -1` read, answered here).
         ("gh", "pr", "list", "--head"): (0, "[]", ""),
         ("git", "fetch"): (0, "", ""),
         ("git", "rev-list", "--count"): (0, "0\n", ""),
@@ -666,6 +667,7 @@ def _open_answers(root, *, branch="lane/x", base="main", existing="[]",
         ("git", "diff", "--name-only"): (0, diff, ""),
         _LANE_DIFF: (0, "".join(f"M\t{p}\n" for p in diff.split()), ""),   # a lane with code: no park
         _ROW_FILES: _row_log(),   # no row added by the lane's own commits
+        ("git", "show"): (0, "", ""),   # a row a test adds, read for the default body: empty unless it says
         ("gh", "label", "create"): (0, "", ""),   # the seat label, stamped where the box is named
         ("gh", "pr", "create"): create,
         ("gh", "pr", "merge"): merge,
@@ -883,6 +885,180 @@ class TestHandoffPushSetting:
         assert FOREIGN_KEYS.get("handoff_push") == "tools/cc/ship.py"
 
 
+#: A Session Log row as a handoff writes it, and as the default body shows it.
+_OWN_ROW = "memory/session-log.d/2026-11-09-120000-air-work.md"
+_ROW_LINE = "| 2026-11-09 | **air-work: the default body \\| a pipe** | Built it; code-reviewer APPROVE. |\n"
+_ROW_SHOWN = "2026-11-09: **air-work: the default body \\| a pipe**\n\nBuilt it; code-reviewer APPROVE."
+
+
+class TestTheDefaultBody:
+    """The ship driver's body where no --body-file gives one. It was the
+    commit subjects alone, and 13 code lanes in the 100 merges to 2026-11-09
+    shipped that way, so the dispatcher auditing a merged lane read a title
+    and nothing else. The default is now this seat's own Session Log rows on
+    the lane, then the subjects; and where a dispatcher audits, a code lane
+    with neither a row nor a --body-file is refused before anything moves
+    unless --subjects-body says why."""
+
+    @staticmethod
+    def _seat(ship, monkeypatch, seat="air-work"):
+        monkeypatch.setattr(ship._mail_module(), "machine_setting", lambda root, **kw: (seat, "stubbed"))
+
+    @staticmethod
+    def _with_rows(answers, *commits):
+        answers[_ROW_FILES] = _row_log(*commits)
+        answers[("git", "show")] = (0, _ROW_LINE, "")
+        return answers
+
+    def test_the_body_is_this_seats_row_then_the_subjects(self, ship, tmp_path, forget_guard, monkeypatch):
+        """Only the row the lane's own commit added under this seat's name:
+        another seat's row on a commit of the lane (a lane built on its head)
+        and a row a fold commit brought in are not this lane's evidence. The
+        row reads as its date and headline, then its text; an escaped pipe
+        stays in the headline. Dies to: the subjects alone (the old default),
+        a folded or another seat's row shown, the row's cells left as a
+        table line."""
+        _write_guard(tmp_path)
+        self._seat(ship, monkeypatch)
+        answers = self._with_rows(_open_answers(tmp_path),
+                                  ("", [_OWN_ROW, "memory/session-log.d/2026-11-09-110000-win.md"]),
+                                  (_FOLD, ["memory/session-log.d/2026-11-08-090000-air-work.md"]))
+        spawns = _arm(ship, answers)
+        assert ship.open_pr() == 0
+        assert spawns.body_texts == ["## This seat's Session Log row\n\n" + _ROW_SHOWN
+                                     + "\n\n## Commits\n\n- feat: a thing\n"]
+        assert [c[2] for c in spawns.matching(("git", "show"))] == [f"HEAD:{_OWN_ROW}"]
+
+    def test_a_tree_naming_no_dispatcher_ships_the_subjects_as_before(self, ship, tmp_path, forget_guard):
+        """An adopter's tree: no row and no dispatcher, the body the
+        subjects alone and nothing refused."""
+        _write_guard(tmp_path)
+        spawns = _arm(ship, _open_answers(tmp_path))
+        assert ship.open_pr() == 0
+        assert spawns.body_texts == ["- feat: a thing\n"]
+
+    def test_a_code_lane_with_no_row_where_a_dispatcher_audits_is_refused_before_anything_moves(
+            self, ship, tmp_path, forget_guard, monkeypatch):
+        """Dies to: the subjects alone shipped where the dispatcher audits
+        the body; a refusal after the merge-first step or the fold."""
+        _write_guard(tmp_path)
+        _toml(tmp_path, 'dispatcher = "air"\n')
+        self._seat(ship, monkeypatch)
+        spawns = _arm(ship, self._with_rows(_open_answers(tmp_path),
+                                            ("", ["memory/session-log.d/2026-11-09-110000-win.md"])))
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr()
+        text = str(stop.value)
+        assert "espalier.toml sets dispatcher = air" in text and "tools/cc/ship.py" in text
+        assert "--body-file" in text and f'{ship.SUBJECTS_BODY_FLAG} "<why>"' in text
+        assert spawns.mutations == [] and ship.FOLDS == []
+
+    def test_subjects_body_ships_the_subjects_and_the_body_records_why(
+            self, ship, tmp_path, forget_guard, monkeypatch):
+        _write_guard(tmp_path)
+        _toml(tmp_path, 'dispatcher = "air"\n')
+        spawns = _arm(ship, _open_answers(tmp_path))
+        assert ship.open_pr(subjects_body="  a one-line typo fix ") == 0
+        assert spawns.body_texts == ["- feat: a thing\n\nShipped with the commit subjects alone: a one-line typo fix\n"]
+
+    @pytest.mark.parametrize("branch, diff", [
+        ("lane/x", "memory/session-log.d/2026-11-09-120000-air-work.md\nESPALIER_MEMORY.md\n"
+                   "task-packs/TP-9-a-pack.md\ntask-packs/Deferred/TP-8-later.md\ntask-packs/ledger.d/DEF-1.md\n"
+                   "task-packs/probes.d/DEF-1.json\ntask-packs/FORWARD_LEDGER.md\nchangelog.d/2026-11-09-x.md\n"),
+        ("revert/lane-x", "tools/cc/ship.py\n"),
+    ], ids=["records-only", "revert-lane"])
+    def test_a_records_lane_and_a_revert_lane_are_not_refused(
+            self, ship, tmp_path, forget_guard, branch, diff):
+        """The rows and packs are their own story, and the red base's revert
+        stays fast. The lane's files are the three-dot diff the pull request
+        shows: a two-dot one lists what the base changed since the fork too.
+        Dies to: a records-only lane refused (the roster or a task pack, a
+        deferred one included, read as code), a revert/ lane refused, the
+        range read two-dot."""
+        _write_guard(tmp_path)
+        _toml(tmp_path, 'dispatcher = "air"\n')
+        spawns = _arm(ship, _open_answers(tmp_path, branch=branch, diff=diff))
+        assert ship.open_pr() == 0
+        assert spawns.body_texts == ["- feat: a thing\n"]
+        if branch == "lane/x":
+            assert ["git", "diff", "--name-only", "--no-renames", "origin/main...HEAD"] in spawns.calls
+
+    def test_an_unusable_dispatcher_setting_refuses_nothing(self, ship, tmp_path, forget_guard):
+        """A file that does not parse reads as an unusable setting whether or
+        not it names a dispatcher: no refusal on a guess. Dies to: the
+        unusable answer counted as a dispatcher named."""
+        _write_guard(tmp_path)
+        _toml(tmp_path, 'dispatcher = "air\n')   # unterminated: the file does not parse
+        spawns = _arm(ship, _open_answers(tmp_path))
+        assert ship.open_pr() == 0
+        assert spawns.body_texts == ["- feat: a thing\n"]
+
+    @pytest.mark.parametrize("seat, own, other", [
+        (None, "memory/session-log.d/2026-11-09-120000-local.md", "memory/session-log.d/2026-11-09-110000-win.md"),
+        ("work", "memory/session-log.d/2026-11-09-120000-work.md", "memory/session-log.d/2026-11-09-110000-air-work.md"),
+    ], ids=["unnamed-box-is-local", "a-seat-is-not-a-longer-names-suffix"])
+    def test_the_seats_own_rows_are_read_by_the_whole_name(
+            self, ship, tmp_path, forget_guard, monkeypatch, seat, own, other):
+        """An unnamed box writes `local` rows; seat `work` is not `air-work`.
+        Dies to: another seat's row shown as this seat's (no filter on an
+        unnamed box, or a bare suffix match)."""
+        _write_guard(tmp_path)
+        monkeypatch.setattr(ship._mail_module(), "machine_setting",
+                            lambda root, **kw: (seat, "stubbed" if seat else "git config espalier.machine is not set"))
+        spawns = _arm(ship, self._with_rows(_open_answers(tmp_path), ("", [own, other])))
+        assert ship.open_pr() == 0
+        assert [c[2] for c in spawns.matching(("git", "show"))] == [f"HEAD:{own}"]
+
+    def test_the_body_file_stays_first(self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        _write_guard(tmp_path)
+        _toml(tmp_path, 'dispatcher = "air"\n')
+        body = tmp_path / "body.md"
+        body.write_text("the lane's story\n", encoding="utf-8")
+        spawns = _arm(ship, _open_answers(tmp_path))
+        assert ship.open_pr(body_file=str(body), subjects_body="unused") == 0
+        assert spawns.body_texts == ["the lane's story\n"]
+        assert f"{ship.SUBJECTS_BODY_FLAG} is not used: --body-file gives the body" in capsys.readouterr().out
+
+    def test_a_row_read_git_cannot_make_never_refuses(self, ship, tmp_path, forget_guard):
+        """No verdict is a refusal on a guess: the rows unread, the subjects ship."""
+        _write_guard(tmp_path)
+        _toml(tmp_path, 'dispatcher = "air"\n')
+        answers = _open_answers(tmp_path)
+        answers[_ROW_FILES] = (128, "", "fatal: bad revision")
+        spawns = _arm(ship, answers)
+        assert ship.open_pr() == 0
+        assert spawns.body_texts == ["- feat: a thing\n"]
+
+    def test_the_handoff_from_the_default_branch_refuses_before_lane_moves_the_commits(
+            self, ship, tmp_path, monkeypatch):
+        """`lane` switches the checkout and resets the default branch before
+        `open` reads the body, so the handoff asks the body's question first
+        (the dispatcher's verifier, 2026-11-09). Dies to: `lane` run, or any
+        mutation, before the refusal."""
+        _toml(tmp_path, 'handoff_push = true\ndispatcher = "air"\n')
+        answers = _reads(tmp_path, branch="main")
+        answers.update({
+            ("git", "status", "--porcelain", "-uno"): (0, "", ""),
+            ("git", "fetch"): (0, "", ""),
+            _LANE_DIFF: (0, "M\ttools/cc/ship.py\n", ""),
+            _ROW_FILES: _row_log(),
+            ("git", "log", "--format=- %s"): (0, "- feat: a thing\n", ""),
+            ("git", "diff", "--name-only"): (0, "tools/cc/ship.py\n", ""),
+        })
+        spawns = _arm(ship, answers)
+        moved: list[str] = []
+        monkeypatch.setattr(ship, "lane", lambda: moved.append("lane") or 0)
+        with pytest.raises(ship.Refused) as stop:
+            ship.handoff()
+        assert "carries no Session Log row of this seat" in str(stop.value)
+        assert moved == [] and spawns.mutations == []
+
+    def test_both_verbs_take_the_flag(self, ship):
+        parser = ship.build_parser()
+        assert parser.parse_args(["open", "--subjects-body", "why"]).subjects_body == "why"
+        assert parser.parse_args(["handoff", "--subjects-body", "why"]).subjects_body == "why"
+
+
 class TestHandoffVerb:
     """`ship.py handoff` is /handoff's one push step, governed by the setting."""
 
@@ -983,10 +1159,11 @@ class TestHandoffVerb:
         answers[("git", "status", "--porcelain", "-uno")] = (0, "", "")
         answers[("git", "fetch")] = (0, "", "")
         answers[_LANE_DIFF] = (0, "M\ttools/cc/ship.py\n", "")   # code: not a handoff-only lane
+        answers[("git", "log", "-1")] = (0, "feat: a thing\n", "")   # the lane's subject, which names it
         spawns = _arm(ship, answers)
         assert ship.handoff(dry_run=True) == 0
         assert spawns.mutations == []
-        assert "dry-run: `lane` would move" in capsys.readouterr().out
+        assert "dry-run: `lane` would move the unmerged commits to lane/feat-a-thing" in capsys.readouterr().out
 
     def test_on_from_the_default_branch_moves_to_a_lane_first(self, ship, tmp_path, monkeypatch):
         _toml(tmp_path, "handoff_push = true\n")
@@ -4033,6 +4210,9 @@ class TestARedBaseRuledByTheDispatcher:
             dispatcher = unusable
         monkeypatch.setattr(ship, "_MAIL", _ruling_channel(by_machine, dispatcher=dispatcher, how=how,
                                                            unusable=unusable, real=real))
+        # The lane carries this seat's row, as a handoff's does: the body's
+        # question on a dispatcher tree is TestTheDefaultBody's, not these rows'.
+        monkeypatch.setattr(ship, "_seat_rows", lambda root, base: [_OWN_ROW])
 
     def test_the_rulings_words_are_the_channels(self, ship):
         """The driver keeps the marker, the head and the text cap as literals
@@ -5435,6 +5615,10 @@ _CALLED_OUTSIDE_THE_LIST = {
     ("marker_needed", "the diff against origin/"):
         "an empty diff after the merge-first step; preflight refuses an empty range first (a range whose "
         "commits net to no change is not forecast)",
+    ("_default_body", "refusal"):
+        "the body's question: an argument the operator passes or not (--body-file, --subjects-body), as the "
+        "other --body-file refusals are, and a forecast of it would say \"will refuse\" on every code lane "
+        "that /ship then opens with its --body-file",
 }
 
 

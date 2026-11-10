@@ -1510,17 +1510,25 @@ def _guard_env(tree: Path, plugin_dir: Path, report: Path) -> dict[str, str]:
 def _run_guard(node: str, *, cwd: Path, plugin_dir: Path, report: Path) -> tuple[int | None, dict]:
     """One pytest run of ``node`` with ``cwd`` as the tree: ``(exit code, the
     plugin's record)``, the code None when the run outran ``_GUARD_TIMEOUT``.
-    ``-p no:cacheprovider`` keeps ``.pytest_cache`` out of both trees."""
+    ``-p no:cacheprovider`` keeps ``.pytest_cache`` out of both trees. At the
+    bound the run's whole tree ends (``_json_safe.run_tree_bounded``), not the
+    pytest alone: a guard that hangs at the base is the expected way to reach
+    it, and a hook, a sleeper or a git its node started would otherwise run on
+    at parent 1 after the strike has answered."""
     if report.exists():
         report.unlink()
     argv = [sys.executable, "-m", "pytest", node, "-q", "-p", "no:cacheprovider", "-p", _GUARD_PLUGIN_NAME]
+    # Loaded ahead of the spawn, so a sibling that will not load is its own
+    # error rather than a pytest that "could not start".
+    spawn = _load("_json_safe")
     try:
-        proc = _CHK.run_bounded(argv, cwd=cwd, env=_guard_env(cwd, plugin_dir, report), capture_output=True,
-                                text=True, encoding="utf-8", errors="replace", timeout=_GUARD_TIMEOUT)
+        proc = spawn.run_tree_bounded(
+            argv, cwd=cwd, env=_guard_env(cwd, plugin_dir, report), capture_output=True,
+            text=True, encoding="utf-8", errors="replace", timeout=_GUARD_TIMEOUT)
     except subprocess.TimeoutExpired:
         return None, {}
     except OSError as exc:
-        return 3, {"tail": f"pytest could not start: {_load('_json_safe').os_error_text(exc)}"}
+        return 3, {"tail": f"pytest could not start: {spawn.os_error_text(exc)}"}
     record: dict = {}
     if report.is_file():
         try:

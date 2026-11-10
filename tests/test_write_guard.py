@@ -132,12 +132,19 @@ def _guard_reason(result: subprocess.CompletedProcess) -> str:
 def _past_the_bump(command: str, tmp_path: Path, run=run_bash_guard) -> subprocess.CompletedProcess:
     """The judgment a speed bump hands on (``run`` is the tool's fixture,
     the Bash one by default): a bump denies the first issue of a recursive
-    delete or a discard and lets the re-issue through, and the guard runs
-    the bumps before the zone check, so the re-issue is the one the zone
-    tier answers."""
+    delete or a discard and lets the re-issue through. Since DEF-986 the
+    zone check runs before the bumps, so a target it walls is answered on the
+    first call; the re-issue is for a spelling the zone tier passed, where
+    the bump is what answered first."""
     result = run(command, tmp_path)
     if _guard_reason(result).startswith("Speed-bump ["):
         result = run(command, tmp_path)
+        # The bump promised this re-issue proceeds: it may allow, or meet a
+        # second checkpoint the command also trips, never a wall (DEF-986).
+        # Accepting a wall here kept every bump-then-wall row green while the
+        # guard broke that promise.
+        again = _guard_reason(result)
+        assert again == "" or again.startswith("Speed-bump ["), (command, again)
     return result
 
 
@@ -162,6 +169,65 @@ def _assert_zone_walled(command: str, tmp_path: Path, run=run_bash_guard) -> Non
     assert_hook_denied(result)
     reason = _guard_reason(result)
     assert any(text in reason for text in _WALL_TEXTS), (command, reason)
+
+
+class TestTheZoneQuestionGoesBeforeTheBump:
+    """DEF-986: a speed bump promises that a re-issue proceeds, so it fires
+    only on a call that can. Before the fix the guard ran the bumps ahead of
+    the protected-zone checks: a recursive delete of a protected file drew
+    the bump, and its re-issue met the zone wall, a second and different
+    deny the first had said would not come. Outside maintenance mode the
+    zone question now goes first; under it no zone check runs, so the bump
+    is the first responder there, as CP-GATEWEAKEN needs."""
+
+    _PROTECTED_RM = "rm -rf tools/cc/hooks/session_start.py"
+    _PS_PROTECTED_RM = "Remove-Item -Recurse -Force tools/cc/hooks/session_start.py"
+
+    def test_a_delete_of_a_protected_file_meets_the_zone_wall_on_the_first_call(self, tmp_path):
+        first = run_bash_guard(self._PROTECTED_RM, tmp_path)
+        reason = _guard_reason(first)
+        assert "protected harness zone" in reason, reason
+        assert not reason.startswith("Speed-bump ["), reason
+        # The re-issue meets the same wall: nothing was promised.
+        assert _guard_reason(run_bash_guard(self._PROTECTED_RM, tmp_path)) == reason
+
+    def test_the_powershell_twin_meets_the_zone_wall_on_the_first_call(self, tmp_path):
+        reason = _guard_reason(_run_ps_guard(self._PS_PROTECTED_RM, tmp_path))
+        assert "protected harness zone" in reason, reason
+        assert not reason.startswith("Speed-bump ["), reason
+
+    def test_the_bump_still_fires_once_and_clears_on_an_unprotected_target(self, tmp_path):
+        command = "rm -rf src/old"
+        assert _guard_reason(run_bash_guard(command, tmp_path)).startswith("Speed-bump [CP-RMRF]")
+        assert _guard_reason(run_bash_guard(command, tmp_path)) == ""
+
+    def test_no_check_runs_after_the_bump_in_the_dispatch(self):
+        """The order itself, read from the source: every `check_*` call in
+        `_run_main` sits ahead of the speed bump's `check_fired`, so a zone
+        check (or any other deny) added after the bump reds here rather than
+        bringing the false re-issue promise back. Only the advisory reinject
+        (`_reinject.check`, an attribute call that never denies) follows."""
+        import ast
+
+        tree = ast.parse((HOOKS_DIR / "write_guard.py").read_text(encoding="utf-8"))
+        fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_run_main")
+        calls = [c for c in ast.walk(fn) if isinstance(c, ast.Call)]
+        bump = min(c.lineno for c in calls
+                   if isinstance(c.func, ast.Attribute) and c.func.attr == "check_fired")
+        after = sorted({c.func.id for c in calls
+                        if isinstance(c.func, ast.Name) and c.func.id.startswith("check_") and c.lineno > bump})
+        assert after == [], f"checks dispatched after the speed bump: {after}"
+
+    def test_under_maintenance_the_bump_fires_on_a_protected_target_and_clears(self, tmp_path, monkeypatch):
+        # No zone check runs under maintenance mode, so the bump is the one
+        # pause the delete gets, and its promise holds.
+        monkeypatch.setenv("ESPALIER_MAINTENANCE_MODE", "1")
+        first = run_bash_guard(self._PROTECTED_RM, tmp_path)
+        assert _guard_reason(first).startswith("Speed-bump [CP-RMRF]")
+        # A structured deny carries nothing on stderr (channel-XOR): the
+        # maintenance debug line belongs to the allow, not beside the bump.
+        assert "MAINTENANCE_MODE" not in (first.stderr or ""), first.stderr
+        assert _guard_reason(run_bash_guard(self._PROTECTED_RM, tmp_path)) == ""
 
 
 class TestTheShellFixturesCarryTheProtectedTree:
@@ -8602,7 +8668,7 @@ class TestCatastrophicRmFlagOrderIndependent:
         ("PowerShell", "Remove-Item -Recurse out; Set-Location build; Remove-Item -Recurse *", "bump"),
     ])
     def test_a_directory_an_earlier_statement_removed_withholds_the_glob_relief(
-        self, tmp_path, tool, cmd, expect,
+        self, tmp_path, monkeypatch, tool, cmd, expect,
     ):
         """The walk asks the disk whether a `cd` target is there, and the disk
         answers for the moment the hook runs -- before the command's own
@@ -8612,7 +8678,14 @@ class TestCatastrophicRmFlagOrderIndependent:
         reading stays), so a leading glob after it walls from nowhere. The
         named user: an agent that clears a build directory and re-enters it in
         one command, where the failed `cd` leaves the glob at the checkout
-        root."""
+        root.
+
+        Judged under maintenance mode, where no zone check runs, so each row
+        reads the hard tier's walk alone: since DEF-986 the zone checks answer
+        ahead of the speed bump, and the zone tier does not credit the
+        contents-only twin's `cd build`, so its wall would stand in for the
+        bump that row pins."""
+        monkeypatch.setenv("ESPALIER_MAINTENANCE_MODE", "1")
         (tmp_path / "build" / "sub").mkdir(parents=True)
         got = _delete_verdict(run_guard_from(tool, cmd, tmp_path, tmp_path))
         assert got == expect, (cmd, got)
@@ -8959,7 +9032,13 @@ class TestCatastrophicRmFlagOrderIndependent:
         assert memos == [
             # `_relief_applies` reads the command's text and nothing else: the
             # flag joins the bases beside it, in `_statement_bases`
-            "_nested_shell_programs_cached", "_relief_applies", "_removed_or_relocated_cached",
+            "_nested_shell_programs_cached",
+            # `_ps_reparse_answers` (DEF-3039) is keyed on the text, the
+            # lookback pattern and its window, and returns, by opener offset,
+            # whether a PowerShell literal span is re-parsed as a program --
+            # read by the masker from the text alone, never from a flag
+            "_ps_reparse_answers",
+            "_relief_applies", "_removed_or_relocated_cached",
             "_resolve_bash_discovered_heads",
             # `_statement_structure` is keyed on the text and the shell alone
             # and returns the text's quote spans and separator offsets -- a
@@ -13514,6 +13593,151 @@ class TestQuotedTargetSurvivesTheRoot:
         ]
 
 
+class TestPowerShellLiteralSpanLookback:
+    """DEF-3039: the masker asked the 2048-byte reparse lookback for every
+    single-quoted span in every walk (seven a span through the two PowerShell
+    checks, measured), though ``_ps_blank_literal`` changes only command-position
+    characters: a literal span holding none is masked the same whether a
+    re-parser takes it or not. A 3200-word comma list of quoted words cost
+    3.0 s here on that lookback alone, near the 3.5 s judgment budget. The
+    double-quoted twin, ``_ps_expandable_is_reparsed``, already asks only when
+    the answer can change the mask; the single-quoted branch now does the same
+    (``_ps_literal_is_kept_live``), and the lookback answers once per text and
+    offset (``_ps_reparse_answers``)."""
+
+    @staticmethod
+    def _counting(monkeypatch):
+        import sys
+        sys.path.insert(0, str(HOOKS_DIR))
+        import _bash_patterns as bp
+        calls: list = []
+        real = bp._ps_span_is_reparsed
+        monkeypatch.setattr(
+            bp, "_ps_span_is_reparsed", lambda s, o: (calls.append(o), real(s, o))[1],
+        )
+        return bp, calls
+
+    def test_a_plain_literal_span_never_asks_the_lookback(self, monkeypatch):
+        bp, calls = self._counting(monkeypatch)
+        for cmd in (
+            "Write-Output " + ",".join(f"'w{k}'" for k in range(400)),
+            "iex 'Get-Date'",                       # an opener in front, nothing to blank
+            "Start-Process notepad -ArgumentList 'C:\\data\\a.txt'",
+            "Write-Output 'it''s'",                 # a doubled quote inside the span
+        ):
+            calls.clear()
+            assert bp.powershell_scan_text(cmd) == cmd, cmd
+            assert calls == [], (cmd, len(calls))
+
+    def test_a_literal_span_holding_syntax_still_asks_and_keeps_its_mask(self, monkeypatch):
+        """The gate skips only what cannot change: a span with a character the
+        literal blanker would blank still asks, and the answer still decides
+        whether it is blanked (inert data) or kept live (a re-parsed program)."""
+        bp, calls = self._counting(monkeypatch)
+        for raw, masked in (
+            ("iex 'Get-Date; Get-Item x'", "iex 'Get-Date; Get-Item x'"),
+            ("Write-Output 'Get-Date; Get-Item x'", "Write-Output 'Get-Date  Get-Item x'"),
+            ("Write-Output 'Copy (1).txt'", "Write-Output 'Copy  1 .txt'"),
+            ("iex @'\nGet-Date; Get-Item x\n'@", "iex @'\nGet-Date; Get-Item x\n'@"),
+            # a here-string body always holds its line breaks, which the
+            # literal blanker blanks, so it always asks
+            ("$doc = @'\na | b\n'@", "$doc = @' a   b '@"),
+            ("Write-Output @'\nplain words\n'@", "Write-Output @' plain words '@"),
+        ):
+            calls.clear()
+            assert bp.powershell_scan_text(raw) == masked, raw
+            assert len(calls) == 1, (raw, calls)
+
+    @staticmethod
+    def _counting_searches(monkeypatch):
+        import sys
+        sys.path.insert(0, str(HOOKS_DIR))
+        import _bash_patterns as bp
+        searches: list = []
+        real = bp._PS_REPARSED_SPAN_BEFORE
+
+        class _Counted:
+            def search(self, *a, **kw):
+                searches.append(a[2] if len(a) > 2 else kw.get("endpos"))
+                return real.search(*a, **kw)
+
+        monkeypatch.setattr(bp, "_PS_REPARSED_SPAN_BEFORE", _Counted())
+        bp._ps_reparse_answers.cache_clear()
+        return bp, searches
+
+    def test_a_span_that_must_ask_pays_the_lookback_once_across_walks(self, monkeypatch):
+        """The paren shape (an Explorer copy's ``'Copy (1).txt'``) holds a
+        character the literal blanker blanks, so the gate cannot skip it; one
+        judgment walks the same text seven times, and the answer is the
+        text's and the offset's alone, so it is searched once a span."""
+        bp, searches = self._counting_searches(monkeypatch)
+        cmd = "Write-Output " + ",".join(f"'Copy ({k}).txt'" for k in range(50))
+        first = bp._walk_powershell_spans(cmd)
+        assert len(searches) == 50
+        assert bp._walk_powershell_spans(cmd) == first
+        assert len(searches) == 50
+
+    def test_a_second_text_never_reads_the_first_texts_answers(self, monkeypatch):
+        """The memo is keyed by the text: the same opener offset in another
+        text is asked again, and the answers differ where the texts do."""
+        bp, searches = self._counting_searches(monkeypatch)
+        live, inert = "iex 'Get-Date; Get-Item x'", "iey 'Get-Date; Get-Item x'"
+        assert live.index("'") == inert.index("'")
+        assert bp.powershell_scan_text(live) == live
+        assert bp.powershell_scan_text(inert) == "iey 'Get-Date  Get-Item x'"
+        assert bp.powershell_scan_text(live) == live
+        assert len(set(searches)) == 1 and len(searches) == 2, searches
+
+    def test_the_memo_is_bounded_by_texts(self):
+        import sys
+        sys.path.insert(0, str(HOOKS_DIR))
+        import _bash_patterns as bp
+        bp._ps_reparse_answers.cache_clear()
+        for k in range(20):
+            bp.powershell_scan_text(f"iex 'Get-Date; Get-Item x{k}'")
+        assert bp._ps_reparse_answers.cache_info().currsize <= 8
+
+    def test_a_swapped_pattern_is_never_served_an_old_answer(self, monkeypatch):
+        """The memo is keyed on the pattern and the window too: an answer
+        cached under one pattern is not served under another (the review read
+        the stale answer both ways, the second masking a live program)."""
+        import re
+        import sys
+        sys.path.insert(0, str(HOOKS_DIR))
+        import _bash_patterns as bp
+        live = "iex 'Get-Date; Get-Item stale'"
+        assert bp.powershell_scan_text(live) == live
+        monkeypatch.setattr(bp, "_PS_REPARSED_SPAN_BEFORE", re.compile("zzz$"))
+        assert bp.powershell_scan_text(live) == "iex 'Get-Date  Get-Item stale'"
+        monkeypatch.undo()
+        assert bp.powershell_scan_text(live) == live
+
+    def test_the_gate_reads_exactly_what_the_literal_blanker_blanks(self):
+        """One source for two decisions: the gate skips a span holding none of
+        ``_PS_INERTABLE_SYNTAX``, which is sound only while the blanker changes
+        those characters and no other. A blanker widened to a new character
+        reds here before the gate can go stale on it (the failure-mode review)."""
+        import sys
+        sys.path.insert(0, str(HOOKS_DIR))
+        import _bash_patterns as bp
+        for ch in [chr(c) for c in range(128)] + [" ", " ", "“", "‘"]:
+            s = "a" + ch + "b"
+            out = list(s)
+            bp._ps_blank_literal(s, out, 0, len(s))
+            assert ("".join(out) != s) == (ch in bp._PS_INERTABLE_SYNTAX), repr(ch)
+
+    def test_a_reparsed_program_still_reads_as_one(self):
+        """The gate's False means "blanking changes nothing", never "not
+        re-parsed": the statement-start reader asks the lookback itself."""
+        import sys
+        sys.path.insert(0, str(HOOKS_DIR))
+        import _bash_patterns as bp
+        cmd = "powershell -Command 'Start-Process cmd'"
+        k = cmd.index("'")
+        assert bp._ps_span_is_reparsed(cmd, k) is True
+        assert bp._ps_literal_is_kept_live(cmd, k, k + 1, cmd.index("'", k + 1)) is False
+
+
 class TestPowerShellReparsedExpandableSpan:
     """DEF-753: an expandable span handed to a re-parser (``iex "..."``,
     ``powershell -Command "..."``, the ``@"..."@`` twin) is code minus its
@@ -15903,7 +16127,8 @@ class TestTheCoverageContract:
     @pytest.mark.parametrize("cmd, reason", [
         ("rm -rf $UNBOUND", "Speed-bump [CP-RMRF]"),               # a variable with no literal binding
         ("rm -rf $(pwd)", "Speed-bump [CP-RMRF]"),                 # a command substitution
-        ("rm -rf t*", "Speed-bump [CP-RMRF]"),                     # a glob whose literal part names no root
+        ("rm -rf q*", "Speed-bump [CP-RMRF]"),                     # a glob whose literal part names no root
+        ("rm -rf t*", "a wildcard that reaches"),                  # the same, reaching a zone the project holds: that wall answers first (DEF-986)
         ("rm -rf $PWD", "Dangerous command blocked"),              # read as the directory the command runs in
         ("rm -rf *", "Dangerous command blocked"),                 # a bare glob: that same directory
         ("cat $S/.env", "Secret-path access blocked"),             # judged on the literal part
@@ -16943,15 +17168,16 @@ class TestRemovedOrRelocatedOperandIsAMutation:
                 denied = bool(wg.check_mcp(spelled, tool, projects["plain"]))
             assert denied == (expect == "deny"), f"{tool} {spelled} -> {'deny' if denied else 'allow'}"
 
-    def test_the_recursive_force_spelling_bumps_first_and_its_reissue_reaches_the_zone_check(self, tmp_path):
-        """Through the real hook, twice: the speed bump sits ahead of the
-        maintenance gate and the zone checks, so the recursive-force spelling
-        on a zone directory is bumped on the first issue and refused as a
-        zone mutation on the re-issue the bump text invites (the order is
-        declared, not accidental; the failure-mode review asked for the pin)."""
+    def test_the_recursive_force_spelling_meets_the_zone_wall_on_the_first_issue(self, tmp_path):
+        """Through the real hook, twice: outside maintenance mode the zone
+        checks sit ahead of the speed bump (DEF-986), so the recursive-force
+        spelling on a zone directory is refused as a zone mutation on the
+        first issue, and the re-issue meets the same wall: no bump promised it
+        passage (the order is declared, not accidental; the failure-mode
+        review asked for the pin)."""
         (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True)
         first = run_bash_guard("rm -rf tools/cc/hooks", tmp_path)
-        assert_hook_denied(first, contains_reason="Speed-bump")
+        assert_hook_denied(first, contains_reason="protected harness zone")
         second = run_bash_guard("rm -rf tools/cc/hooks", tmp_path)
         assert_hook_denied(second, contains_reason="protected harness zone")
 
@@ -16964,9 +17190,10 @@ class TestRemovedOrRelocatedOperandIsAMutation:
     @pytest.mark.parametrize("form", _CMD_FORMS, ids=[f[0] for f in _CMD_FORMS])
     def test_cmds_recursive_delete_of_a_zone_meets_the_same_order(self, form, tmp_path):
         """cmd.exe's own recursive deletes (DEF-1151) on a zone directory,
-        on both tools, take the plain form's order above: the speed bump
-        first -- it now reads them, and it sits ahead of the zone checks --
-        and the zone wall on the re-issue. Before, the zone wall answered the
+        on both tools, take the plain form's order above: the zone wall on
+        the first issue and on the re-issue (DEF-986: the zone checks sit
+        ahead of the speed bump, which reads these forms too, so the bump
+        never promises a re-issue the wall refuses). Before, the zone wall answered the
         first issue on the PowerShell tool and nothing answered it on the
         Bash tool; behind cmd's existence test, nothing answered the
         PowerShell re-issue until its zone reader took the cmd reader."""
@@ -16974,7 +17201,7 @@ class TestRemovedOrRelocatedOperandIsAMutation:
         _id, tool, template = form
         command = template.format(t="tools/cc/hooks")
         first = run_guard_from(tool, command, tmp_path, None)
-        assert_hook_denied(first, contains_reason="Speed-bump")
+        assert_hook_denied(first, contains_reason="protected harness zone")
         second = run_guard_from(tool, command, tmp_path, None)
         assert_hook_denied(second, contains_reason="protected harness zone")
 
@@ -17136,10 +17363,10 @@ class TestAdopterZonesFromEspalierToml:
         root = self._tree(tmp_path)
         assert_hook_denied(run_guard_tool("Write", {"file_path": "models/w.bin", "content": "x"}, root),
                            contains_reason="`models/` under `protected_paths`")
-        # A recursive delete meets the CP-RMRF speed bump first (deny-once); the
-        # re-issue is what reaches the zone check, and the zone must still deny.
+        # A recursive delete meets the zone check first (DEF-986: it runs ahead
+        # of the CP-RMRF speed bump), and the re-issue meets it again.
         first = run_bash_guard("rm -rf data", root)
-        assert_hook_denied(first, contains_reason="Speed-bump [CP-RMRF]")
+        assert_hook_denied(first, contains_reason="`protected_paths`")
         assert_hook_denied(run_bash_guard("rm -rf data", root), contains_reason="`protected_paths`")
 
     def test_the_prefix_twin_allows(self, tmp_path):

@@ -4045,10 +4045,61 @@ def _run_main(data: dict | None = None) -> int:
             _audit(root, "pretooluse_blocked_dangerous_command", tool="PowerShell")
             return rc
 
+    # Maintenance mode, read once and quietly: it decides whether the
+    # protected-zone checks below run at all. Kill-switch + dangerous patterns
+    # above ran regardless. The debug-log line (`is_active`'s) goes out at the
+    # maintenance return below, on a call nothing denied, so a bump's deny
+    # carries nothing on stderr, as when this read sat after the bump.
+    # See _maintenance_mode.py for env-var contract and
+    # tests/test_maintenance_mode.py for the coherence contract.
+    maintenance = _maintenance_mode._maintenance_mode_active(os.environ.get(_maintenance_mode.ENV_VAR))
+
+    # Protected-zone path checks -- BYPASSED under MAINTENANCE_MODE so harness
+    # self-edits work without ceremony. They run BEFORE the speed bump
+    # (DEF-986): a bump promises that its re-issue proceeds, so it may fire
+    # only on a call these checks pass. Run after it, a bumped delete of a
+    # protected file spent its one re-issue and then met this wall, a second
+    # deny the first had said would not come. Each check prints only through
+    # deny() and the dispatch returns at once, so a zone deny is the call's
+    # one JSON object, and the snapshot and the bump below never run beside it.
+    if not maintenance:
+        rc = 0
+        if tool_name in ("Write", "Edit", "NotebookEdit"):
+            rc = check_write_edit(tool_input, root)
+        elif tool_name == "Bash":
+            command = tool_input.get("command", "")
+            # Symlink-creation check FIRST so it isn't masked by the
+            # allowlist-aware general write check (legitimate JSON writes to
+            # ``cc/blueprints/`` are allowed; symlinks to that prefix are not).
+            rc = check_bash_for_protected_symlinks(command, root, cwd=cwd)
+            # Hardlink-creation check (allowlist-aware, source-keyed) before the
+            # general write check, mirroring the symlink ordering.
+            if not rc:
+                rc = check_bash_for_protected_hardlinks(command, root, cwd=cwd)
+            if not rc:
+                rc = check_bash_for_protected_mutations(command, root, cwd=cwd)
+        elif tool_name == "PowerShell":
+            command = tool_input.get("command", "")
+            # Symlink-creation check FIRST (allowlist-blind), like the Bash branch,
+            # so a New-Item SymbolicLink into an allowlisted-in-protected path isn't
+            # masked by the allowlist-aware write check.
+            rc = check_powershell_for_protected_symlinks(command, root, cwd=cwd)
+            if not rc:
+                rc = check_powershell_for_protected_mutations(command, root, cwd=cwd)
+        elif tool_name.startswith("mcp__"):
+            # MCP tools -- protected-zone check across canonical fields AND the
+            # Class-A2 key-agnostic, depth-bounded leaf-walk (move/rename via
+            # destination; non-canonical key; arbitrary nesting). See check_mcp.
+            rc = check_mcp(tool_input, tool_name, root)
+        if rc:
+            return rc
+
     # Speed-bump -- before-effect meta-cognitive checkpoints. Placed AFTER the
-    # dangerous-pattern hard-denies (so write_guard still owns rm -rf / etc.) and
-    # BEFORE the maintenance gate (so CP-GATEWEAKEN fires during harness
-    # self-edit sessions -- the exact session class where gates get weakened).
+    # dangerous-pattern hard-denies (so write_guard still owns rm -rf / etc.),
+    # AFTER the protected-zone checks (DEF-986, above), and BEFORE the
+    # maintenance return (so CP-GATEWEAKEN fires during harness self-edit
+    # sessions -- the exact session class where gates get weakened, and the
+    # one where no zone check ran ahead of it).
     # deny-once-then-allow: the flag set inside check_fired() means the immediate
     # retry falls through to proceed. The registry holds 10 live checkpoints (six
     # irreversible + another seat's run + two meta-cognitive + the MCP tier).
@@ -4066,11 +4117,11 @@ def _run_main(data: dict | None = None) -> int:
     # snapshot's own try covers git, not a name the module no longer has, and
     # on 2026-09-13 a half-landed rename inside it raised before that try and
     # wedged every mutating tool call behind WRITE_GUARD_INTERNAL_ERROR -- the
-    # 2026-09-08 fix's missed sibling, one call above it. The three calls
-    # ABOVE the maintenance gate that stay unwrapped -- the secret-path read
-    # check, the Bash dangerous patterns, the PowerShell hard tier -- own
-    # denies and fail CLOSED on purpose: a fault there must not become an
-    # allow. Only the two friction helpers fail toward allow.
+    # 2026-09-08 fix's missed sibling, one call above it. The calls above
+    # this one that stay unwrapped -- the secret-path read check, the Bash
+    # dangerous patterns, the PowerShell hard tier and the protected-zone
+    # checks -- own denies and fail CLOSED on purpose: a fault there must not
+    # become an allow. Only the two friction helpers fail toward allow.
     try:
         _speedbump.snapshot_discard(tool_name, tool_input, root, cwd=cwd)
     except Exception as exc:  # noqa: BLE001 -- recovery aid only; a snapshot fault must not wedge the session
@@ -4111,50 +4162,18 @@ def _run_main(data: dict | None = None) -> int:
             tool=tool_name, checkpoint=_sb_id,
         )
 
-    # Protected-zone path checks -- BYPASSED under MAINTENANCE_MODE so harness
-    # self-edits work without ceremony. Kill-switch + dangerous patterns above
-    # ran regardless. See _maintenance_mode.py for env-var contract and
-    # tests/test_maintenance_mode.py for the coherence contract.
-    if _maintenance_mode.is_active("write_guard", action="protected-zone check bypassed"):
+    # The maintenance bypass is recorded here, past the bump, on a call nothing
+    # denied: the zone checks were skipped above.
+    if maintenance:
+        _maintenance_mode.is_active("write_guard", action="protected-zone check bypassed")
         _record_maintenance_bypass(root)
         return 0
 
-    if tool_name in ("Write", "Edit", "NotebookEdit"):
-        return check_write_edit(tool_input, root)
-
-    if tool_name == "Bash":
-        command = tool_input.get("command", "")
-        # Symlink-creation check FIRST so it isn't masked by the
-        # allowlist-aware general write check (legitimate JSON writes to
-        # ``cc/blueprints/`` are allowed; symlinks to that prefix are not).
-        rc = check_bash_for_protected_symlinks(command, root, cwd=cwd)
-        if rc:
-            return rc
-        # Hardlink-creation check (allowlist-aware, source-keyed) before the
-        # general write check, mirroring the symlink ordering.
-        rc = check_bash_for_protected_hardlinks(command, root, cwd=cwd)
-        if rc:
-            return rc
-        return check_bash_for_protected_mutations(command, root, cwd=cwd)
-
-    if tool_name == "PowerShell":
-        command = tool_input.get("command", "")
-        # Symlink-creation check FIRST (allowlist-blind), like the Bash branch,
-        # so a New-Item SymbolicLink into an allowlisted-in-protected path isn't
-        # masked by the allowlist-aware write check.
-        rc = check_powershell_for_protected_symlinks(command, root, cwd=cwd)
-        if rc:
-            return rc
-        return check_powershell_for_protected_mutations(command, root, cwd=cwd)
-
-    # MCP tools -- protected-zone check across canonical fields AND the
-    # Class-A2 key-agnostic, depth-bounded leaf-walk (move/rename via
-    # destination; non-canonical key; arbitrary nesting). See check_mcp.
-    # Returns non-zero (deny) on a hit; 0 falls through to reinject.
-    if tool_name.startswith("mcp__"):
-        rc = check_mcp(tool_input, tool_name, root)
-        if rc:
-            return rc
+    # The mutation tools' zone checks passed above and their bump cleared:
+    # each is an allow, and none reaches the reinject below. An MCP call that
+    # passed check_mcp and the bump falls through to it.
+    if tool_name in MUTATION_TOOLS:
+        return 0
 
     # Advisory PreToolUse reinject on the fall-through ALLOW path. Emitted ONLY
     # here (a clean allow, no deny printed) -- NEVER beside a deny() above

@@ -58,7 +58,7 @@
       "verifier": "bash_hook",
       "tool_name": "Bash",
       "tool_input": {"command": "rm -r tools"},
-      "reissue_past_nudge": true,
+      "reissue_past_nudge": false,
       "expected_outcome": "blocked",
       "expected_block_reason": "Bash delete of protected harness zone blocked"
     },
