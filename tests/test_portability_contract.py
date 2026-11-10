@@ -244,6 +244,22 @@ _USER_FACING_CALLS = {"print", "sys.stderr.write", "sys.stdout.write"}
 # measurement showing the FP rate that justifies it.
 _USER_FACING_CONSTRUCTORS = {"CheckResult"}
 
+#: Constructor KEYWORDS whose value is operator text, by the constructor's bare
+#: name, each with its positional index (DEF-678, shape iii). The keyword is the
+#: classification signal the retired prescription in
+#: `_collect_indirect_operator_strings` names: a regex never lives in a
+#: `body=`. `SpeedBump.body` is the reminder text every speed-bump hands
+#: Claude and the operator, and `body_for` the function that picks the variant
+#: for one fire; `_speedbump.py` collected ZERO strings before this, while its
+#: bodies are built from module constants (`body=_RMRF_BODY`, itself
+#: `"..." + _RMRF_TAIL`) that no sink-keyed rule reaches. A module constant a
+#: body names, and the returns of a `body_for` function, are followed within
+#: the module. Add a constructor only when a live operator-facing one appears,
+#: as for `_USER_FACING_CONSTRUCTORS`.
+_USER_FACING_CONSTRUCTOR_KWARGS: dict[str, tuple[tuple[str, int], ...]] = {
+    "SpeedBump": (("body", 2), ("body_for", 6)),
+}
+
 
 def _dotted_call_name(func: ast.expr) -> str | None:
     """FULL dotted name for a Call.func (``print`` / ``sys.stderr.write``), else None.
@@ -379,6 +395,115 @@ def _register_joined_accumulators(expr: ast.expr, acc: set[str]) -> None:
                     for inner in it.args:
                         if isinstance(inner, ast.Name):
                             acc.add(inner.id)
+
+
+def _sink_call_names(tree: ast.AST) -> list[str]:
+    """The dotted names of the calls nested in a user-facing call's arguments
+    (``print(render(...))`` yields ``render``): the printed helpers rule (f)
+    reads, before any resolution."""
+    names: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and _dotted_call_name(node.func) in _USER_FACING_CALLS:
+            for arg in node.args:
+                for sub in ast.walk(arg):
+                    if isinstance(sub, ast.Call):
+                        nm = _dotted_call_name(sub.func)
+                        if nm:
+                            names.append(nm)
+    return names
+
+
+@functools.lru_cache(maxsize=None)
+def _runtime_population() -> tuple[Path, ...]:
+    """Every runtime module the operator-string net reads, resolved."""
+    return tuple(sorted(
+        path.resolve()
+        for src in _RUNTIME_SOURCES if src.exists()
+        for path in checkout_rglob(src, "*.py")
+        if not any(part.endswith("tests") for part in path.parts[:-1])
+    ))
+
+
+def _module_population(path: Path) -> tuple[Path, ...]:
+    """The modules a print in ``path``'s neighbourhood can resolve into: the
+    runtime population when ``path`` is one of it, else the ``.py`` files in
+    its own directory (a test's tmp modules)."""
+    resolved = path.resolve()
+    if any(src.resolve() in resolved.parents for src in _RUNTIME_SOURCES):
+        return _runtime_population()
+    return tuple(sorted(p.resolve() for p in resolved.parent.glob("*.py")))
+
+
+def _imported_module_file(dotted: str, importer: Path, level: int,
+                          members: frozenset[Path]) -> Path | None:
+    """The member file an import of ``dotted`` (``level`` dots deep) names, as
+    this tree spells imports: package-absolute from the repo root
+    (``espalier.doctor``), relative to the importer, or a bare sibling a hook
+    or a ``tools/cc`` script reaches through its own ``sys.path`` entry
+    (``_hook_utils``)."""
+    rel = dotted.replace(".", "/")
+    if level:
+        base = importer.parent
+        for _ in range(level - 1):
+            base = base.parent
+        bases = [base]
+    else:
+        bases = [REPO_ROOT, importer.parent, HOOKS_DIR, HOOKS_DIR.parent]
+    for base in bases:
+        for candidate in (base / f"{rel}.py", base / rel / "__init__.py"):
+            if candidate.resolve() in members:
+                return candidate.resolve()
+    return None
+
+
+@functools.lru_cache(maxsize=None)
+def _printed_from_elsewhere(population: tuple[Path, ...]) -> dict[Path, frozenset[str]]:
+    """Rule (f) across modules (DEF-678, shape ii): for each module of the
+    population, the names of its functions some OTHER module prints, resolved
+    through the printing module's own imports -- ``print(render_report(...))``
+    in ``cli.py`` after ``from espalier.surface_impact import render_report``,
+    or ``print(_hook_utils.python_command_hint())``. Resolved by import, never
+    by bare name: ``render`` alone is defined in eighteen runtime modules.
+
+    Computed once per population, never per file per rule: the collector reads
+    the entry for its own file.
+    """
+    members = frozenset(population)
+    found: dict[Path, set[str]] = {}
+    for path in population:
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, OSError, UnicodeDecodeError):
+            continue
+        modules: dict[str, tuple[str, int]] = {}            # alias -> (module, level)
+        members_of: dict[str, tuple[str, str, int]] = {}    # alias -> (module, name, level)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.asname:
+                        modules[alias.asname] = (alias.name, 0)
+                    else:
+                        modules[alias.name.split(".")[0]] = (alias.name.split(".")[0], 0)
+            elif isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    members_of[alias.asname or alias.name] = (node.module or "", alias.name, node.level)
+        for name in _sink_call_names(tree):
+            parts = name.split(".")
+            target: tuple[Path | None, str] = (None, parts[-1])
+            if len(parts) == 1 and parts[0] in members_of:
+                module, orig, level = members_of[parts[0]]
+                target = (_imported_module_file(module, path, level, members), orig)
+            elif len(parts) > 1 and parts[0] in modules:
+                module, level = modules[parts[0]]
+                dotted = ".".join([module, *parts[1:-1]])
+                target = (_imported_module_file(dotted, path, level, members), parts[-1])
+            elif len(parts) > 1 and parts[0] in members_of:
+                module, orig, level = members_of[parts[0]]
+                dotted = ".".join(p for p in (module, orig, *parts[1:-1]) if p)
+                target = (_imported_module_file(dotted, path, level, members), parts[-1])
+            if target[0] is not None and target[0] != path:
+                found.setdefault(target[0], set()).add(target[1])
+    return {path: frozenset(names) for path, names in found.items()}
 
 
 def _collect_indirect_operator_strings(path: Path) -> list[tuple[int, str]]:
@@ -562,6 +687,36 @@ def _collect_indirect_operator_strings(path: Path) -> list[tuple[int, str]]:
         elif isinstance(val, (ast.Tuple, ast.List)):
             const_seq[tgt.id] = val
 
+    # (iii) the module-level names a constructor keyword can point at: a
+    # constant's value, or a function whose returns are the text (`body_for`).
+    module_values: dict[str, ast.expr] = {}
+    module_defs: dict[str, ast.AST] = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            module_defs[node.name] = node
+        elif (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)):
+            module_values[node.targets[0].id] = node.value
+        elif (isinstance(node, ast.AnnAssign) and node.value is not None
+                and isinstance(node.target, ast.Name)):
+            module_values[node.target.id] = node.value
+
+    def _resolved(expr: ast.expr, seen: set[str]) -> list[tuple[int, str]]:
+        """The literals of ``expr`` and of every module constant or function
+        return it names, followed within the module, each name once."""
+        found = _strings_of(expr)
+        for sub in ast.walk(expr):
+            if not isinstance(sub, ast.Name) or sub.id in seen:
+                continue
+            seen.add(sub.id)
+            if sub.id in module_values:
+                found.extend(_resolved(module_values[sub.id], seen))
+            elif sub.id in module_defs:
+                for ret in ast.walk(module_defs[sub.id]):
+                    if isinstance(ret, ast.Return) and ret.value is not None:
+                        found.extend(_resolved(ret.value, seen))
+        return found
+
     printed_by_name: set[str] = set()
     iterated_and_printed: set[str] = set()
     for node in ast.walk(tree):
@@ -570,6 +725,16 @@ def _collect_indirect_operator_strings(path: Path) -> list[tuple[int, str]]:
             for arg in node.args:
                 if isinstance(arg, ast.Name):
                     printed_by_name.add(arg.id)
+        # (iii) a user-facing constructor keyword (`SpeedBump(body=...)`)
+        if isinstance(node, ast.Call):
+            callee = _dotted_call_name(node.func)
+            fields = _USER_FACING_CONSTRUCTOR_KWARGS.get((callee or "").split(".")[-1], ())
+            for field, index in fields:
+                values = [kw.value for kw in node.keywords if kw.arg == field]
+                if len(node.args) > index:
+                    values.append(node.args[index])
+                for value in values:
+                    out.extend(_resolved(value, set()))
         # (d) a constant iterated by a loop whose body prints
         if isinstance(node, ast.For):
             it = node.iter
@@ -602,15 +767,12 @@ def _collect_indirect_operator_strings(path: Path) -> list[tuple[int, str]]:
     # unwraps, so a helper that returns an f-string is outside the net. That is
     # the shape the dialect-aware maintenance renderer itself uses -- which is
     # how its own exemption came to suppress nothing while reading as coverage.
-    printed_helpers: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and _dotted_call_name(node.func) in _USER_FACING_CALLS:
-            for arg in node.args:
-                for sub in ast.walk(arg):
-                    if isinstance(sub, ast.Call):
-                        nm = _dotted_call_name(sub.func)
-                        if nm:
-                            printed_helpers.add(nm.split(".")[-1])
+    printed_helpers: set[str] = {nm.split(".")[-1] for nm in _sink_call_names(tree)}
+    # ...and (ii) a helper another module prints, resolved through that
+    # module's imports (DEF-678): `surface_impact.render_report` is printed
+    # from `cli.py`, two modules away, which the same-file walk never sees.
+    printed_helpers |= _printed_from_elsewhere(_module_population(path)).get(
+        path.resolve(), frozenset())
     if printed_helpers:
         for fn in ast.walk(tree):
             if (isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -656,7 +818,18 @@ def _collect_indirect_operator_strings(path: Path) -> list[tuple[int, str]]:
             # you wrote it against and misses the house idiom reads as coverage:
             # see ``_register_joined_accumulators`` for the shape matrix.
             if isinstance(node, ast.Return) and node.value is not None:
-                _register_joined_accumulators(node.value, returned_names)
+                joined: set[str] = set()
+                _register_joined_accumulators(node.value, joined)
+                # (i) the return expression's OWN literals, beside the join
+                # (DEF-678). `return f"--- MEMORY ({where}) ---" + "\n".join(out)`
+                # registers `out`, and (a) then reads what is appended to it,
+                # while the banner header written into the return expression
+                # itself was read by no rule: `session_start.py::_memory_toc`,
+                # printed on every session start. Keyed on the join, so a
+                # return that builds no report is not read.
+                if joined:
+                    returned_names |= joined
+                    out.extend(_strings_of(node.value))
             # ...and the same shape handed straight to a user-facing call:
             # ``print("\n".join(parts))`` never returns at all. This is the
             # instance docs/SHARP_EDGES.md named by hand; anchoring only on
@@ -1130,6 +1303,30 @@ class TestOperatorStringsArePortable:
             "the net, rule (e) is not running"
         )
 
+    def test_collector_reaches_the_three_def678_sites(self):
+        """The DEF-678 widenings must ENGAGE their live sites, not merely leave
+        the suite green (``STANDING_PRINCIPLES`` §19): each was blind at its
+        site with every predicate green, so a revert of any one is silent
+        without this. Asserts the SITE, never a count.
+        """
+        def strings_in(rel: str, fn: str) -> list[str]:
+            path = REPO_ROOT / rel
+            return [s for ln, s in _all_operator_strings(path)
+                    if _enclosing_def(path, ln) == fn]
+
+        assert any("--- MEMORY (recent sessions" in s for s in strings_in(
+            "tools/cc/hooks/session_start.py", "_memory_toc")), (
+            "shape (i): the banner header in _memory_toc's return expression is "
+            "out of the net again")
+        bumps = " ".join(s for _, s in _all_operator_strings(HOOKS_DIR / "_speedbump.py"))
+        assert "recursive delete has no recovery" in bumps and "hard-blocks the root" in bumps, (
+            "shape (iii): SpeedBump(body=...) and the constants it names are out of "
+            "the net again; _speedbump.py collects next to nothing without it")
+        assert any("does not run on Python" in s for s in strings_in(
+            "espalier/_python_floor.py", "does_not_run_sentence")), (
+            "shape (ii): does_not_run_sentence is printed from cli.py and doctor.py, "
+            "never from its own module; the cross-module hop no longer reaches it")
+
     def test_no_non_ascii(self):
         """Widened from print-literals to the full net. ``ensure_ascii`` turns a
         non-ASCII character in a JSON payload into a literal escape sequence in
@@ -1436,6 +1633,84 @@ class TestUserFacingContractEarnRed:
             assert want in collected, want
         assert "control \u2014 never printed" not in collected
 
+    def test_a_report_builders_return_literal_is_collected(self, tmp_path):
+        # DEF-678 (i): `session_start.py::_memory_toc`'s banner header lives in
+        # the return expression beside the join, where (a) and (g) read only
+        # what is appended to the accumulator. A return with no join stays
+        # unread: the control.
+        src = tmp_path / "mod.py"
+        src.write_text(
+            "def toc(rows):\n"
+            "    out = [r for r in rows]\n"
+            "    return ('\\n--- MEMORY \\u2014 recent ---\\n' + '\\n'.join(out)\n"
+            "            + f'\\n(python3 pulls {len(out)})\\n')\n\n"
+            "def plain(x):\n"
+            "    return 'control \\u2014 no join'\n",
+            encoding="utf-8",
+        )
+        collected = {s for _, s in _all_operator_strings(src)}
+        assert "\n--- MEMORY \u2014 recent ---\n" in collected
+        assert "\n(python3 pulls " in collected
+        assert "control \u2014 no join" not in collected
+
+    def test_a_helper_printed_from_another_module_is_collected(self, tmp_path):
+        # DEF-678 (ii): rule (f) resolved a printed helper only inside the
+        # printing file. Two forms of import reach two helpers; a third module
+        # defining a helper of the SAME name that nothing imports is the
+        # control, since resolution is by import, never by bare name.
+        (tmp_path / "helpers.py").write_text(
+            "def banner(x):\n"
+            "    return f'\\u2014 {x} banner'\n\n"
+            "def footer():\n"
+            "    return 'footer \\u2014 b'\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "other.py").write_text(
+            "def banner(x):\n"
+            "    return 'control \\u2014 same name, never imported'\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "cli.py").write_text(
+            "import helpers\n"
+            "from helpers import footer as foot\n"
+            "print(helpers.banner(1))\n"
+            "print(foot())\n",
+            encoding="utf-8",
+        )
+        helpers = {s for _, s in _all_operator_strings(tmp_path / "helpers.py")}
+        assert "\u2014 " in helpers and "footer \u2014 b" in helpers, helpers
+        other = {s for _, s in _all_operator_strings(tmp_path / "other.py")}
+        assert "control \u2014 same name, never imported" not in other
+
+    def test_a_speed_bump_body_is_collected(self, tmp_path):
+        # DEF-678 (iii): `SpeedBump(body=...)` is the operator text of every
+        # speed-bump, built from module constants and a `body_for` function,
+        # and `_speedbump.py` collected nothing of it. A module constant no
+        # body names is the control.
+        src = tmp_path / "bumps.py"
+        src.write_text(
+            "from typing import NamedTuple\n"
+            "class SpeedBump(NamedTuple):\n"
+            "    id: str\n"
+            "    predicate: object\n"
+            "    body: str\n"
+            "    body_for: object = None\n\n"
+            "_TAIL = '; confirm \\u2014 tail'\n"
+            "_BODY = 'head \\u2014 a' + _TAIL\n"
+            "_SNAP = 'snapshot \\u2014 b'\n"
+            "_PATTERN = 'control \\u2014 never a body'\n\n"
+            "def _body_for(tool, inp, root, cwd=None):\n"
+            "    return _SNAP if inp else _BODY\n\n"
+            "CP_X = SpeedBump(id='CP-X', predicate=None, body=_BODY, body_for=_body_for)\n"
+            "CP_Y = SpeedBump('CP-Y', None, 'positional \\u2014 c')\n",
+            encoding="utf-8",
+        )
+        collected = {s for _, s in _all_operator_strings(src)}
+        for want in ("head \u2014 a", "; confirm \u2014 tail", "snapshot \u2014 b",
+                     "positional \u2014 c"):
+            assert want in collected, want
+        assert "control \u2014 never a body" not in collected
+
     def test_the_format_exemption_covers_the_format_line_only(self, tmp_path):
         # The struck-row line is exempt; a new message in the same function that
         # reuses the dash is not, although the collector yields the same piece.
@@ -1476,7 +1751,12 @@ class TestUserFacingContractEarnRed:
             return real_walk(node)
 
         def walks_over(n: int) -> int:
-            src = tmp_path / f"mod{n}.py"
+            # A directory of its own per count: a tmp module's cross-module
+            # index (rule (f)'s hop, DEF-678) reads the modules beside it, once
+            # per population and never per function, so both counts pay it for
+            # a population of one and it cancels out of the comparison.
+            src = tmp_path / f"d{n}" / "mod.py"
+            src.parent.mkdir()
             src.write_text("".join(
                 f"def render{i}(xs):\n"
                 f"    out = ['head {i}']\n"
