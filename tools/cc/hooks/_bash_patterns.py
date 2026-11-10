@@ -4714,6 +4714,35 @@ def _ps_blank_expandable(
         k += 1
 
 
+#: The quote characters PowerShell pairs with a straight quote: U+2018 to
+#: U+201B with the apostrophe, U+201C to U+201E with the double quote. Either
+#: form closes a string either form opens, a doubled mixed pair is an escape,
+#: and a here-string's header and terminator take either (DEF-2040, driven on
+#: Windows PowerShell 5.1, 2026-11-10). This is the language's quote class,
+#: not a spelling roster, and its one home.
+PS_TYPOGRAPHIC_QUOTES = "".join(map(chr, (0x2018, 0x2019, 0x201A, 0x201B, 0x201C, 0x201D, 0x201E)))
+_PS_QUOTE_FOLD = tuple(zip(PS_TYPOGRAPHIC_QUOTES, "''''" + '"""'))
+
+
+def fold_powershell_quotes(command: str) -> str:
+    """``command`` with each typographic quote PowerShell reads as a quote
+    written as its straight form, so every reader of the PowerShell grammar
+    -- the masker's walk and the raw-word readers that test for a straight
+    quote by hand -- pairs strings the way PowerShell does (DEF-2040). One
+    code point for one: the length and every offset hold.
+
+    Declared residual: a typographic quote inside a string's value reads as
+    its straight form there, so a path holding one is checked spelled with
+    the straight quote. A per-quote replace, not ``str.translate``, whose
+    non-ASCII path costs about 20 ns a character on every such command."""
+    if command.isascii():
+        return command
+    for typographic, straight in _PS_QUOTE_FOLD:
+        if typographic in command:
+            command = command.replace(typographic, straight)
+    return command
+
+
 def mask_powershell_inert_syntax(command: str) -> str:
     """PowerShell twin of :func:`mask_inert_syntax`.
 
@@ -4767,7 +4796,9 @@ def _walk_powershell_spans(s: str, spans: "list[tuple[int, int, str]] | None" = 
     steps over as ``(open, close, kind)`` -- the opening quote's offset (the
     at-sign of a here-string), the closing quote's, and ``'``, ``"``, ``@'``
     or ``@"`` -- in offset order: PowerShell's quoting read by the ONE walk
-    the mask is, for `_ps_quote_cursor`."""
+    the mask is, for `_ps_quote_cursor`. A typographic quote is read as the
+    straight one PowerShell pairs it with (`fold_powershell_quotes`)."""
+    s = fold_powershell_quotes(s)
     n, i = len(s), 0
     out = list(s)
     while i < n:
@@ -10383,8 +10414,11 @@ def powershell_scan_pair(command: str) -> tuple[str, str]:
     string -- and the same span is replaced in BOTH strings, which keeps them
     aligned.
     ``powershell_scan_text`` is the masked half of this pair, byte-for-byte
-    what it always returned (pinned).
+    what it always returned (pinned). The raw half is folded the way the
+    masker's walk reads it (`fold_powershell_quotes`), so a word read from
+    ``raw`` sees the quotes PowerShell pairs (DEF-2040).
     """
+    command = fold_powershell_quotes(command)
     masked = mask_powershell_inert_syntax(command)
     if len(masked) != len(command):
         # Cannot happen (the masker returns the command or a same-length

@@ -13208,6 +13208,78 @@ class TestSecretPathAccess:
     # guard. This comment is the pointer; do not re-add the duplicate.
 
 
+#: The typographic quotes, spelled by code point so the rows read plainly.
+_LSQ, _RSQ, _LDQ, _RDQ = chr(0x2018), chr(0x2019), chr(0x201C), chr(0x201D)
+
+
+class TestATypographicQuoteClosesAPowerShellString:
+    """DEF-2040: PowerShell pairs each typographic quote with its straight
+    form -- U+2018 to U+201B open and close a single-quoted string with the
+    apostrophe, U+201C to U+201E a double-quoted one with the double quote
+    (driven on Windows PowerShell 5.1, 2026-11-10: 25 of 25 single pairs, 16
+    of 16 double). The guard read them as text, so a string one closed ran
+    on to the next straight quote, and a quoted operand kept its quotes. Each
+    row is a statement PowerShell runs, read as the straight spelling it is
+    to PowerShell: one row per leg (the scan text, the secret read, the
+    zone), and a smart-quoted message that stays allowed."""
+
+    @pytest.mark.parametrize("text", [
+        "'a" + _RSQ + "; b; " + _LSQ + "c'",
+        _LSQ + "a'; b; 'c" + _RSQ,
+        '"a' + _RDQ + '; b; ' + _LDQ + 'c"',
+    ], ids=["straight-opener-typographic-close", "typographic-opener-straight-close", "double"])
+    def test_the_scan_text_ends_a_string_where_a_typographic_quote_closes_it(self, text):
+        sys.path.insert(0, str(HOOKS_DIR))
+        import _bash_patterns
+        assert ";" in _bash_patterns.powershell_scan_text(text)
+
+    @pytest.mark.parametrize("command", [
+        "Write-Output 'a" + _RSQ + "; Get-Content .env; Write-Output " + _LSQ + "c'",
+        'Write-Output "a' + _RDQ + '; Get-Content .env; Write-Output ' + _LDQ + 'c"',
+        "$x = @'\nA\n" + _RSQ + "@\nGet-Content .env; $y = @'\nq\n'@\nWrite-Output $x",
+    ], ids=["single", "double", "here-string-terminator"])
+    def test_a_read_after_a_typographic_close_runs_and_is_denied(self, command, tmp_path):
+        assert_hook_denied(_run_ps_guard(command, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("command", [
+        "Get-Content " + _LSQ + ".env" + _RSQ,
+        "Get-Content " + _LDQ + ".env" + _RDQ,
+    ], ids=["single", "double"])
+    def test_a_typographic_quoted_secret_operand_is_the_secret(self, command, tmp_path):
+        assert_hook_denied(_run_ps_guard(command, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("command", [
+        "Set-Content " + _LSQ + "tools/cc/hooks/x.py" + _RSQ + " 1",
+        "Set-Content " + _LDQ + "tools/cc/hooks/x.py" + _RDQ + " 1",
+    ], ids=["single", "double"])
+    def test_a_typographic_quoted_zone_operand_is_the_zone(self, command, tmp_path):
+        assert_hook_denied(_run_ps_guard(command, tmp_path),
+                           contains_reason="Write to protected harness zone blocked")
+
+    # A PowerShell program the Bash tool launches meets the same records one
+    # level down, through `powershell_scan_pair`; at the lane's base each of
+    # these allowed where its straight twin denied (2026-11-10).
+    @pytest.mark.parametrize("command, reason", [
+        ("powershell -Command \"Get-Content " + _LSQ + ".env" + _RSQ + "\"",
+         "Secret-path access blocked"),
+        ("pwsh -Command \"Write-Output 'a" + _RSQ + "; Get-Content .env; Write-Output " + _LSQ + "c'\"",
+         "Secret-path access blocked"),
+        ("powershell -Command \"Set-Content " + _LSQ + "tools/cc/hooks/x.py" + _RSQ + " 1\"",
+         "write to protected harness zone blocked"),
+    ], ids=["secret-operand", "read-after-close", "zone-operand"])
+    def test_a_program_the_bash_tool_launches_is_read_the_same_way(self, command, reason, tmp_path):
+        assert_hook_denied(run_bash_guard(command, tmp_path), contains_reason=reason)
+
+    @pytest.mark.parametrize("command", [
+        "Write-Output " + _LDQ + "it" + _RSQ + "s fine" + _RDQ,
+        "Write-Output " + _LSQ + "it" + _RSQ + "'s fine" + _RSQ,
+    ], ids=["apostrophe-in-double", "doubled-mixed-escape"])
+    def test_a_smart_quoted_message_stays_allowed(self, command, tmp_path):
+        assert_hook_allowed(_run_ps_guard(command, tmp_path))
+
+
 class TestQuotedProgramsAreReadAsPrograms:
     """DEF-1131: a carrier runs a program out of a quoted string -- Bash
     ``eval``, ``script -c``, ``watch`` and ``su -c``; PowerShell

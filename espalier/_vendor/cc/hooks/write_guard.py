@@ -741,11 +741,6 @@ def _blank_quoted_spans(text: str) -> "str | None":
     return out
 
 
-#: The quote characters PowerShell pairs with a straight quote, U+2018 to
-#: U+201E, which `_QUOTED_SPAN`'s Bash grammar does not read at all.
-_PS_TYPOGRAPHIC_QUOTES = "‘’‚‛“”„"
-
-
 def _ps_blank_quoted_spans(text: str) -> "str | None":
     """`_blank_quoted_spans` for the two PowerShell gates, or None wherever
     PowerShell can end a string somewhere the Bash grammar the blanking
@@ -757,8 +752,11 @@ def _ps_blank_quoted_spans(text: str) -> "str | None":
     hold a quote. The backtick and the here-string are opaque to both gates
     before this is read. Each way the gate gives no relief and the
     quote-blind deny stands, so a plain `# note` after a test run is a
-    declared false deny."""
-    if any(q in text for q in _PS_TYPOGRAPHIC_QUOTES) or "--%" in text:
+    declared false deny. The PowerShell tool's command reaches here folded
+    (`_bash_patterns.fold_powershell_quotes`, at the dispatch); the
+    typographic test stands for a text that was not (DEF-2040)."""
+    _load_the_pattern_path()
+    if any(q in text for q in _bash_patterns.PS_TYPOGRAPHIC_QUOTES) or "--%" in text:
         return None
     blank = _blank_quoted_spans(text)
     if blank is None or "#" in blank or "${" in blank:
@@ -4156,6 +4154,15 @@ def _run_main(data: dict | None = None) -> int:
     tool_input = data.get("tool_input", {})
     if not isinstance(tool_input, dict):
         tool_input = {}
+    # PowerShell pairs each typographic quote with its straight form, so the
+    # PowerShell tool's command is read with them folded, once, here, ahead of
+    # every leg that reads it: the secret read, the hard tier, the zone
+    # checks, the snapshot and the bump (DEF-2040). One code point for one,
+    # so no offset moves. Every PowerShell call loads the pattern path below
+    # anyway; this loads it a few lines sooner.
+    if tool_name == "PowerShell" and isinstance(tool_input.get("command"), str):
+        _load_the_pattern_path()
+        tool_input = {**tool_input, "command": _bash_patterns.fold_powershell_quotes(tool_input["command"])}
     root = _resolve_project_root()
     # A payload the guard could not read allows (there is nothing to check)
     # but never silently: the record and the line say so, once a session.
