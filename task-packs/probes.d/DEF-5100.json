@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5100",
+ "subject": "tools/cc/hooks/_start_refusal.py",
+ "cmd": "python3 -c \"import shutil,subprocess,sys,tempfile,pathlib as P;r=P.Path(tempfile.mkdtemp());c=r/'tools'/'cc';(c/'hooks').mkdir(parents=True);(r/'tools'/'__init__.py').write_text('');(c/'__init__.py').write_text('');shutil.copy2('tools/cc/hooks/_start_refusal.py',c/'hooks');(c/'_kept.py').write_text('present = 1');(c/'probe.py').write_text(chr(10).join(['import sys, pathlib','sys.path.insert(0, str(pathlib.Path(__file__).parent / ~hooks~))','import _start_refusal','_start_refusal.refuse_kept_siblings(~probe.py~)','sys.path.insert(0, str(pathlib.Path(__file__).parent))','import _kept','X = _kept.absent','']).replace('~',chr(39)));o=[subprocess.run([sys.executable,'-E']+a,cwd=r,capture_output=True,text=True,timeout=60).stderr.split(':',1)[0] for a in ([str(c/'probe.py')],['-m','tools.cc.probe'])];print('by_path='+o[0].replace(' ','_')+' dash_m='+o[1].replace(' ','_'))\"",
+ "open_value": "by_path=probe.py_cannot_run dash_m=probe.py_stopped",
+ "why_not": null,
+ "row_sha": "14ab9269f2a9",
+ "text_sha": "15fcedc71958",
+ "verified_2026_11_09": "OPEN (filed 2026-11-09; probe driven at filing here and in the export of HEAD 07685c010095)"
+}
