@@ -1422,7 +1422,6 @@ def _every_parser(parser):
     by the pins that walk it. A parser registered under an alias is one
     object reached twice, so it is kept once.
     """
-    import argparse
     seen: dict[int, tuple[str, argparse.ArgumentParser]] = {}
     queue = [(parser.prog, parser)]
     while queue:
@@ -1436,12 +1435,16 @@ def _every_parser(parser):
     return list(seen.values())
 
 
+@pytest.mark.contract
 class TestHelpWrapsAtSpacesAlone:
     """DEF-993: argparse's default formatter wraps at hyphens and cuts long
     words, so ``espalier --help`` at 60 to 120 columns ended the Quickstart
     URL's line in ``espalier-`` (the link a new user clicks opened a 404) and
     split flags such as ``--add-gitignore`` at their hyphen. The fix is a
     formatter on ``_CuratedChoiceParser`` that every subparser inherits.
+
+    Contract tier: the walk reads every help in the parser, so a help string
+    added anywhere can red it, on a change that earns the slice alone.
     """
 
     WIDTHS = (60, 80, 100, 120)
@@ -1469,7 +1472,11 @@ class TestHelpWrapsAtSpacesAlone:
             for line in p.format_help().splitlines()
             if self._SPLIT_AT_HYPHEN.search(line)
         ]
-        assert not hits, f"at {width} columns, lines end mid-word: {hits[:6]}"
+        assert not hits, (
+            f"at {width} columns, lines end mid-word: {hits[:6]} (a help string "
+            "that spells a word with a trailing hyphen, 'pre- and post-merge', "
+            "trips this too: reword it)"
+        )
 
     @pytest.mark.parametrize("width", WIDTHS, ids=[f"cols{w}" for w in WIDTHS])
     def test_both_epilog_urls_print_whole_on_one_line(self, width, monkeypatch):
@@ -1490,12 +1497,29 @@ class TestHelpWrapsAtSpacesAlone:
         from espalier.cli import _WholeWordHelpFormatter, build_parser
         wrong = [
             name for name, p in _every_parser(build_parser())
-            if p.formatter_class is not _WholeWordHelpFormatter
+            if not issubclass(p.formatter_class, _WholeWordHelpFormatter)
         ]
-        assert not wrong, wrong
+        assert not wrong, (
+            f"{wrong} format help without _WholeWordHelpFormatter: a verb that "
+            "needs another formatter subclasses both, e.g. "
+            "class _Raw(argparse.RawDescriptionHelpFormatter, "
+            "_WholeWordHelpFormatter), never an exemption here"
+        )
+
+    def test_a_word_longer_than_the_line_is_never_cut(self, monkeypatch):
+        # Synthetic, so it reads the long-word switch whatever the live helps
+        # hold: no argument help today carries a word wider than its column,
+        # so dropping break_long_words=False from _split_lines left every
+        # live help unchanged (measured in the lane's review).
+        from espalier.cli import _CuratedChoiceParser
+        monkeypatch.setenv("COLUMNS", "60")
+        url = "https://example.invalid/" + "a" * 60
+        p = _CuratedChoiceParser(prog="probe", description="see " + url, epilog="see " + url)
+        p.add_argument("--x", help="see " + url)
+        lines = p.format_help().splitlines()
+        assert sum(url in line for line in lines) == 3, lines
 
     def test_a_callers_own_formatter_is_kept(self):
-        import argparse
         from espalier.cli import _CuratedChoiceParser
         p = _CuratedChoiceParser(
             prog="probe", formatter_class=argparse.RawDescriptionHelpFormatter,
