@@ -21,10 +21,12 @@ one restore of it to HEAD.
 Its kept-old-file test reads any ``tools/cc/`` module, not ``_hook_utils``
 alone (DEF-5087): an upgrade keeps whichever managed file lost its marker and
 regenerates the siblings around it, so the refusal names the file that lacks
-the name. ``tools/cc/ship.py`` loads this module by path and calls
-:func:`refuse_kept_siblings` under its ``__main__``, so a kept sibling of the
-ship driver is the same named refusal on stderr, never a traceback that names
-an attribute. ``session_start`` does not read this test: it checks only what
+the name. Every command-line script under ``tools/cc/`` that takes a sibling's
+name (the event hooks apart) loads this module by path from an excepthook its
+``__main__`` installs, and calls :func:`refuse_kept_siblings` there, so a kept
+sibling of the ship driver, the board, the mail or ledger verbs is the same
+named refusal on stderr, never a traceback that names an attribute (the block's
+one text is ``tests/test_kept_sibling.py::ARM_BLOCK``, DEF-5088). ``session_start`` does not read this test: it checks only what
 its pull-request block reads from ``tools/cc/_post_merge.py``, each name and
 the keywords it passes, against its own table
 (``session_start.py::_POST_MERGE_READS``, read by ``_post_merge_lacks``).
@@ -605,7 +607,10 @@ def refuse_kept_siblings(script: str, code: int = 1) -> None:
     as ``sys.excepthook``, which runs for an exception nothing caught; the
     ``SystemExit`` raised there sets the exit code (driven on 3.11 to 3.14 for
     the deny hooks' body refusal, :func:`refuse_on_body_raise`). The script
-    loads this module by path, so it reaches it with no sibling on the way."""
+    loads this module by path, so it reaches it with no sibling on the way:
+    each script's block (``tests/test_kept_sibling.py::ARM_BLOCK``) does so from
+    its own excepthook, once an exception arrives, and puts the hook it found
+    back first, since the one in place here is the fallback this wraps."""
     before = sys.excepthook
 
     def _begun(tb: types.TracebackType | None) -> bool:

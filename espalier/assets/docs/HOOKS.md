@@ -944,9 +944,11 @@ the `tools/cc/` module it reads -- `_hook_utils.py` most often, any sibling
 since 2026-11-08 (a kept older `_bash_patterns.py` was told the upgrade would
 not repair it) -- it names that file and the upgrade repair (restore its
 `# espalier:managed` marker line, then `espalier upgrade --execute .`). Every
-script under `tools/cc/` that takes a sibling's name reads the same test (the
-ship driver, the board, the mail, ledger, blueprint and plan verbs, `/recall`
-and the status line among them): an uncaught exception loads
+command-line script under `tools/cc/` that takes a sibling's name reads the
+same test (the ship driver, the board, the mail, ledger, blueprint and plan
+verbs, `/recall` and the status line among them; the event hooks are not
+scripts of this kind, and the deny hooks refuse through the guard above): an
+uncaught exception loads
 `_start_refusal.py` by path, so a kept sibling the script reads is one refusal
 on stderr naming the file, the line that read it and the repair, exit 1, never
 a traceback. A kept function that lacks a keyword the script passes is not read

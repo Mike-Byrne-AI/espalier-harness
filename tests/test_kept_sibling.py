@@ -292,7 +292,12 @@ class TestTheBannerOnAKeptPostMerge:
 #: every render. ``_KEPT_*`` are read when the block runs, since ``__main__``'s
 #: ``__file__`` can read as None by the time an excepthook runs; the traceback
 #: type is aliased because ``_explain_path.py`` evaluates its annotations; the
-#: previous hook is put back before the reader installs its own, which wraps it.
+#: previous hook is put back before the reader installs its own, which wraps it
+#: (without that, a raise that is not a kept file's recurses through the hook).
+#: Twenty-one copies and no shared module, on purpose: any sibling, a shared one
+#: included, may be the kept file, so the block reaches the reader by path with
+#: nothing on the way. To change it: edit ARM_BLOCK here, replace HEAD's text of
+#: it in every script the population names, then run scripts/sync_vendor_cc.py.
 ARM_BLOCK = '''\
 # A kept, older sibling is named with its repair, never a traceback that names
 # an attribute: an uncaught exception loads hooks/_start_refusal.py by path and
@@ -409,6 +414,18 @@ class TestEveryScriptThatTakesASiblingArmsTheReader:
             " standard-library imports:\n"
             + "\n".join(f"  {rel}: {'; '.join(found)}" for rel, found in sorted(problems.items()))
             + "\nthe block, byte for byte:\n" + ARM_BLOCK)
+
+    def test_the_placement_reader_names_what_stands_before_the_block(self):
+        # A control on the reader the row above trusts: a sibling import, a
+        # statement and an unbound Path are each named, so an empty answer
+        # from it never reads as a clean head.
+        head = '"""doc."""\nimport sys\nimport mail\nX = 1\n'
+        assert _head_problems(head, {"mail"}) == [
+            "line 3: a sibling import before the block",
+            "line 4: a Assign statement before the block",
+            "`Path` is not bound before the block",
+        ]
+        assert _head_problems('"""doc."""\nimport sys\nfrom pathlib import Path\n', {"mail"}) == []
 
     def test_no_event_hook_carries_the_block(self):
         from espalier.surface_contract import _CANONICAL_HOOK_SCRIPTS
