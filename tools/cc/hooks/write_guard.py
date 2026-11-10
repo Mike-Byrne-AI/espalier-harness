@@ -741,6 +741,11 @@ def _blank_quoted_spans(text: str) -> "str | None":
     return out
 
 
+#: True while the call in flight is a PowerShell tool command whose
+#: typographic quotes `_run_main` folded (DEF-2040): set at each dispatch.
+_PS_FOLD_MOVED_A_QUOTE = False
+
+
 def _ps_blank_quoted_spans(text: str) -> "str | None":
     """`_blank_quoted_spans` for the two PowerShell gates, or None wherever
     PowerShell can end a string somewhere the Bash grammar the blanking
@@ -752,13 +757,16 @@ def _ps_blank_quoted_spans(text: str) -> "str | None":
     hold a quote. The backtick and the here-string are opaque to both gates
     before this is read. Each way the gate gives no relief and the
     quote-blind deny stands, so a plain `# note` after a test run is a
-    declared false deny. The PowerShell tool's command reaches here with
-    the quotes PowerShell acts on folded (`_bash_patterns.fold_powershell_quotes`,
-    at the dispatch), so a typographic quote still here is a string's value,
-    or a text that was never folded; either way the gate gives no relief,
-    which the borrowed Bash grammar cannot be trusted past (DEF-2040)."""
+    declared false deny. The dispatch folds the PowerShell tool's
+    typographic delimiters to straight ones (DEF-2040), and both gates read
+    texts made from that folded command (one of them its masked half), so a
+    fold that moved a quote is read here as the typographic quote the
+    command was typed with: no relief, the edge the assign kept. A command
+    the fold left alone reads exactly as before, so the fold can only take a
+    relief away, never add one."""
     _load_the_pattern_path()
-    if any(q in text for q in _bash_patterns.PS_TYPOGRAPHIC_QUOTES) or "--%" in text:
+    if (_PS_FOLD_MOVED_A_QUOTE or "--%" in text
+            or any(q in text for q in _bash_patterns.PS_TYPOGRAPHIC_QUOTES)):
         return None
     blank = _blank_quoted_spans(text)
     if blank is None or "#" in blank or "${" in blank:
@@ -4181,6 +4189,28 @@ def _judge(seen: list[dict] | None = None) -> int:
         )
 
 
+def _fold_the_powershell_command(tool_name: str, tool_input: dict) -> dict:
+    """``tool_input`` with the PowerShell tool's command read as PowerShell
+    pairs its quotes: each typographic quote it acts on folded to its
+    straight form, a string's value kept as typed (DEF-2040), on a copy.
+    `_run_main` calls this once, ahead of every leg that reads the command:
+    the secret read, the hard tier, the zone checks, the snapshot and the
+    bump. One code point for one, so no offset moves. Every PowerShell call
+    loads the pattern path anyway; this loads it a few lines sooner. A fold
+    that moved a quote takes the two relief gates' relief away
+    (`_PS_FOLD_MOVED_A_QUOTE`, read in `_ps_blank_quoted_spans`), the
+    assign's edge; any other call clears the flag."""
+    global _PS_FOLD_MOVED_A_QUOTE
+    _PS_FOLD_MOVED_A_QUOTE = False
+    if tool_name != "PowerShell" or not isinstance(tool_input.get("command"), str):
+        return tool_input
+    _load_the_pattern_path()
+    typed = tool_input["command"]
+    folded = _bash_patterns.fold_powershell_quotes(typed)
+    _PS_FOLD_MOVED_A_QUOTE = folded != typed
+    return {**tool_input, "command": folded}
+
+
 def _run_main(data: dict | None = None) -> int:
     if data is None:
         data = _hook_utils.read_stdin_safely()
@@ -4189,16 +4219,8 @@ def _run_main(data: dict | None = None) -> int:
     tool_input = data.get("tool_input", {})
     if not isinstance(tool_input, dict):
         tool_input = {}
-    # PowerShell pairs each typographic quote with its straight form, so the
-    # PowerShell tool's command is read with the quotes PowerShell acts on
-    # folded (a string's value is kept as typed), once, here, ahead of every
-    # leg that reads it: the secret read, the hard tier, the zone checks, the
-    # snapshot and the bump (DEF-2040). One code point for one, so no offset
-    # moves. Every PowerShell call loads the pattern path below anyway; this
-    # loads it a few lines sooner.
-    if tool_name == "PowerShell" and isinstance(tool_input.get("command"), str):
-        _load_the_pattern_path()
-        tool_input = {**tool_input, "command": _bash_patterns.fold_powershell_quotes(tool_input["command"])}
+    # Ahead of every leg that reads the command (DEF-2040).
+    tool_input = _fold_the_powershell_command(tool_name, tool_input)
     root = _resolve_project_root()
     # A payload the guard could not read allows (there is nothing to check)
     # but never silently: the record and the line say so, once a session.

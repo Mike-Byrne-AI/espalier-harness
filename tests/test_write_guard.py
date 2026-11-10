@@ -13318,12 +13318,22 @@ class TestATypographicQuoteClosesAPowerShellString:
     def test_a_braced_name_keeps_its_quotes(self, command, reason, tmp_path):
         assert_hook_denied(_run_ps_guard(command, tmp_path), contains_reason=reason)
 
-    def test_a_test_run_of_a_smart_quoted_path_has_the_relief(self, tmp_path):
-        """The gate reads the folded command, so a test run's typographic-quoted
-        operand is read whole, as its straight twin is (the code review drove
-        it: denied at the lane's base)."""
-        command = '$env:ESPALIER_STOP_GATE="full"; pytest ' + _LDQ + "work/Claude Code/tests" + _RDQ
-        assert_hook_allowed(_run_ps_guard(command, tmp_path))
+    # The assign's edge (air 235b74, kept by ruling 7ce7ac (3)): the two relief
+    # gates borrow the Bash quote grammar, and give no relief where a typographic
+    # quote appears, so a fold that moved one takes the relief away. Through the
+    # real hook, each beside its straight twin, which keeps its relief. The
+    # mention row is a declared false deny: main allowed it only because its walk
+    # never saw the string (driven at 56de1f2: allow; at the lane's 3e4f772,
+    # whose gates read the folded text: allow, and the test run allowed too).
+    @pytest.mark.parametrize("typographic, straight, reason", [
+        ('$env:ESPALIER_STOP_GATE="full"; pytest ' + _LDQ + "work/Claude Code/tests" + _RDQ,
+         '$env:ESPALIER_STOP_GATE="full"; pytest "work/Claude Code/tests"',
+         "ESPALIER_STOP_GATE"),
+        ("$hint = " + _LSQ + "gc .env" + _RSQ, "$hint = 'gc .env'", "Secret-path access blocked"),
+    ], ids=["env-prefix-test-run", "secret-read-mention"])
+    def test_a_folded_quote_takes_the_gates_relief_away(self, typographic, straight, reason, tmp_path):
+        assert_hook_denied(_run_ps_guard(typographic, tmp_path), contains_reason=reason)
+        assert_hook_allowed(_run_ps_guard(straight, tmp_path))
 
     def test_a_subexpression_in_an_expandable_here_string_is_read(self, tmp_path):
         """PowerShell runs a ``$( )`` inside ``@" "@`` (driven on 5.1), so its
@@ -13348,7 +13358,12 @@ class TestATypographicQuoteClosesAPowerShellString:
             "subexpression-value", "subexpression-code",
             "value-in-double", "here-string-value", "bash-program", "comment", "unreadable-as-typed"])
     def test_only_the_quotes_powershell_acts_on_are_folded(self, text, folded):
-        assert _bash_patterns_module().fold_powershell_quotes(text) == folded
+        bp = _bash_patterns_module()
+        assert bp._fold_powershell_quotes(text) == folded
+        # A fold of a fold is itself, which the per-process cache relies on:
+        # it stores each fold as its own (`_PS_FOLDED`).
+        assert bp._fold_powershell_quotes(folded) == folded
+        assert bp.fold_powershell_quotes(text) == folded
 
     @pytest.mark.parametrize("command", [
         "Write-Output " + _LDQ + "it" + _RSQ + "s fine" + _RDQ,

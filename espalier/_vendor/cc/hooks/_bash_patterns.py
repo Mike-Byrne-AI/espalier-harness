@@ -4865,8 +4865,29 @@ _PS_TYPOGRAPHIC_SINGLES = PS_TYPOGRAPHIC_QUOTES[:4]
 _PS_TYPOGRAPHIC_DOUBLES = PS_TYPOGRAPHIC_QUOTES[4:]
 _PS_QUOTE_FOLD = tuple(zip(PS_TYPOGRAPHIC_QUOTES, "''''" + '"""'))
 
+#: Each text folded this process, and each fold as its own fold: the
+#: dispatch folds the command, then every reader's walk folds the text it is
+#: handed again, which is that fold, so a second walk of it is a lookup. A
+#: fold of a fold is itself (pinned). Bounded: cleared past 64 entries.
+_PS_FOLDED: dict[str, str] = {}
+
 
 def fold_powershell_quotes(command: str) -> str:
+    """`_fold_powershell_quotes`, the reading, once a text: an ASCII command
+    is returned at once, and a text folded before, or a fold, is looked up."""
+    if command.isascii():
+        return command
+    done = _PS_FOLDED.get(command)
+    if done is None:
+        done = _fold_powershell_quotes(command)
+        if len(_PS_FOLDED) > 64:
+            _PS_FOLDED.clear()
+        _PS_FOLDED[command] = done
+        _PS_FOLDED[done] = done
+    return done
+
+
+def _fold_powershell_quotes(command: str) -> str:
     """``command`` with each typographic quote PowerShell READS AS A QUOTE
     at this level written as its straight form, so every reader of the
     PowerShell grammar -- the masker's walk and the raw-word readers that
