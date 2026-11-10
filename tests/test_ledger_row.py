@@ -21,6 +21,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -2712,6 +2713,65 @@ class TestAStrikeReadsTheBaseAndTheHead:
         r = _two_commit_repo(tmp_path, head_fixed=False)
         assert lr.main(_repo_args(r, "--dry-run", "strike", "DEF-1", "--text-file", str(r["closing"]))) == 2
         assert "reads its open value '1' at the head too" in capsys.readouterr().err
+
+
+#: How long the guard node's holder sleeps: far past the bound (``scaled(5)``
+#: at the call), so a holder alive after the call is one the bound left behind.
+_GUARD_HOLD_SECONDS = 120
+
+
+class TestTheGuardsBoundEndsWhatItsNodeStarted:
+    """DEF-5092: ``_run_guard``'s bound ends the guard's pytest and everything
+    its node started. ``run_bounded`` is ``subprocess.run`` on POSIX, whose
+    timeout kills the child alone, so what the node started (a hook it drove,
+    a sleeper, a git) ran on at parent 1 after the strike had answered: the
+    expected path for a row whose defect is a hang, where the guard waits at
+    the base until the bound fires. The guard drives the real ``_run_guard``
+    on a one-test tree whose test starts a holder and sleeps past the bound:
+    the run reads as outrun, and the holder is gone. On Windows
+    ``run_bounded``'s own ``taskkill /T`` already ended the tree, so there the
+    case holds as a regression case. Mutation: the spawn routed back through
+    ``_CHK.run_bounded``."""
+
+    @pytest.mark.slow
+    def test_a_guard_that_outruns_its_bound_leaves_nothing_its_node_started(self, lr, tmp_path, monkeypatch):
+        from tests._wait_budget import scaled
+        from tests.test_bounded_spawn import _alive, _end_holder
+
+        target, plugin_dir = tmp_path / "target", tmp_path / "plugin"
+        target.mkdir()
+        plugin_dir.mkdir()
+        (plugin_dir / f"{lr._GUARD_PLUGIN_NAME}.py").write_text(lr._GUARD_PLUGIN, encoding="utf-8")
+        pidfile = tmp_path / "holder.pid"
+        # The pid is written whole and renamed into place, so a bound that fires
+        # between the open and the write leaves no empty file the reap reads past.
+        (target / "test_hold.py").write_text(
+            "import os, subprocess, sys, time\n\n\n"
+            "def test_hold():\n"
+            f"    holder = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep({_GUARD_HOLD_SECONDS})'])\n"
+            f"    with open({str(pidfile) + '.tmp'!r}, 'w') as f:\n"
+            "        f.write(str(holder.pid))\n"
+            f"    os.replace({str(pidfile) + '.tmp'!r}, {str(pidfile)!r})\n"
+            f"    time.sleep({_GUARD_HOLD_SECONDS})\n",
+            encoding="utf-8")
+        monkeypatch.setattr(lr, "_GUARD_TIMEOUT", scaled(5))
+        try:
+            rc, _record = lr._run_guard("test_hold.py", cwd=target, plugin_dir=plugin_dir,
+                                        report=tmp_path / "report.json")
+            if not pidfile.exists():
+                pytest.fail(f"the holder never started inside the bound ({lr._GUARD_TIMEOUT:g} s, exit {rc}), "
+                            "so the case did not run")
+            pid = int(pidfile.read_text(encoding="utf-8").strip())
+            gone_by = time.monotonic() + 5.0
+            while _alive(pid) and time.monotonic() < gone_by:
+                time.sleep(0.05)
+            alive = _alive(pid)
+        finally:
+            _end_holder(pidfile)
+        assert rc is None, f"the guard's run was not read as outrunning its bound (exit {rc})"
+        assert not alive, (
+            "_run_guard's bound ended the guard's pytest and left the holder its node started "
+            "running: the kill reached the direct child only")
 
 
 class TestAGitReadThatDidNotAnswerSaysSo:
