@@ -107,20 +107,38 @@ def _first_word(line: str) -> str | None:
     return word if word else None
 
 
+def _bash_rule_matches(pattern: str, command: str) -> bool:
+    """Does one ``Bash(<pattern>)`` rule's pattern match ``command``?
+
+    The pattern is a glob over the WHOLE command, ``*`` matching any run of
+    characters, so the space before a ``*`` is a word boundary: ``python *``
+    matches ``python x.py`` and not ``python3 x.py``, while ``python*``
+    matches both. The legacy ``:*`` suffix reads as `` *``. A pattern ending
+    in `` *`` also matches its bare command (``python`` alone).
+    """
+    if pattern.endswith(":*"):
+        pattern = pattern[:-2] + " *"
+    if pattern.endswith(" *") and command == pattern[:-2]:
+        return True
+    regex = ".*".join(re.escape(piece) for piece in pattern.split("*"))
+    return re.fullmatch(regex, command, re.DOTALL) is not None
+
+
 def _bash_pattern_covers(declared_tools: list[str], command: str) -> bool:
     """Return True if the command is covered by a declared Bash grant: the
-    plain tool covers every command, a Bash(...) pattern its prefix."""
+    plain tool covers every command, a Bash(...) rule the commands its glob
+    matches as a whole.
+
+    ⚠ DEF-651: this matched by PREFIX (the pattern with its ``*`` stripped),
+    so ``Bash(python *)`` reported coverage of ``python3`` -- the one
+    mismatch the consumer below exists to catch, on a python3-only host where
+    ``python *`` is the natural spelling and Claude Code denies the call.
+    """
     if "Bash" in declared_tools:
         return True
     for tool in declared_tools:
         m = re.match(r"^Bash\((.+)\)$", tool)
-        if not m:
-            continue
-        pattern = m.group(1)
-        # Convert glob-like pattern to check: "git *" means starts with "git "
-        # "python3 *" means starts with "python3 "
-        prefix = pattern.rstrip("*").rstrip()
-        if command == prefix or command.startswith(prefix):
+        if m and _bash_rule_matches(m.group(1), command):
             return True
     return False
 
@@ -130,6 +148,20 @@ def _bash_pattern_covers(declared_tools: list[str], command: str) -> bool:
 # ---------------------------------------------------------------------------
 
 class TestAgentToolDeclarations:
+    @staticmethod
+    def _python3_violations(name: str, content: str) -> list[str]:
+        """One line per ``python3`` command in the body's bash blocks that
+        its declared tools do not cover, each judged as the whole command
+        Claude Code checks against a ``Bash(...)`` rule."""
+        tools = _parse_frontmatter_tools(content)
+        return [
+            f"{name}: runs {line.strip()!r} in a bash block but declares "
+            f"{tools!r} (needs Bash(python3 *))"
+            for line in _extract_bash_blocks(content)
+            if (_first_word(line) or "").startswith("python3")
+            and not _bash_pattern_covers(tools, line.strip())
+        ]
+
     def test_python3_usage_covered_by_python3_declaration(self):
         """If an agent uses 'python3' in bash blocks, it must declare Bash(python3 *).
 
@@ -138,28 +170,40 @@ class TestAgentToolDeclarations:
         """
         violations = []
         for path in _agent_files():
-            content = path.read_text(encoding="utf-8")
-            tools = _parse_frontmatter_tools(content)
-            bash_lines = _extract_bash_blocks(content)
-
-            uses_python3 = any(
-                (_first_word(line) or "").startswith("python3")
-                for line in bash_lines
-            )
-            if not uses_python3:
-                continue
-
-            # python3 usage found — check coverage
-            if not _bash_pattern_covers(tools, "python3"):
-                violations.append(
-                    f"{path.name}: uses 'python3' in bash blocks but declares {tools!r} "
-                    f"(needs Bash(python3 *))"
-                )
+            violations += self._python3_violations(path.name, path.read_text(encoding="utf-8"))
 
         assert not violations, (
             "Agent files use 'python3' in bash blocks without Bash(python3 *) declared.\n"
             + "\n".join(violations)
         )
+
+
+    def test_a_python_rule_does_not_cover_a_python3_command(self):
+        """Earn-the-red for DEF-651, both halves the row names. The
+        predicate: ``Bash(python *)`` read as a prefix covered ``python3``.
+        The consumer: no agent body runs ``python3`` today (every agent
+        declares the plain tool), so the live walk never reaches its assert;
+        a synthetic body drives the same per-body judgment the walk makes.
+        """
+        assert not _bash_pattern_covers(["Bash(python *)"], "python3 tools/cc/x.py")
+        assert not _bash_pattern_covers(["Bash(python *)"], "python3")
+        assert not _bash_pattern_covers(["Bash(git *)"], "python3 x.py")
+        # The matches the glob must keep, so the tightening is not a blanket no.
+        assert _bash_pattern_covers(["Bash(python3 *)"], "python3 tools/cc/x.py")
+        assert _bash_pattern_covers(["Bash(python*)"], "python3 tools/cc/x.py")
+        assert _bash_pattern_covers(["Bash(python3:*)"], "python3 tools/cc/x.py")
+        assert _bash_pattern_covers(["Bash(python *)"], "python tools/cc/x.py")
+        assert _bash_pattern_covers(["Read", "Bash"], "python3 tools/cc/x.py")
+
+        body = (
+            "---\nname: synthetic\ntools: Read, Grep, Bash(python *)\n---\n\n"
+            "```bash\npython3 tools/cc/execution_plan.py status\n```\n"
+        )
+        assert self._python3_violations("synthetic.md", body), (
+            "an agent declaring Bash(python *) that runs python3 read as covered"
+        )
+        covered = body.replace("Bash(python *)", "Bash(python3 *)")
+        assert not self._python3_violations("synthetic.md", covered)
 
 
 # ---------------------------------------------------------------------------

@@ -28,7 +28,7 @@ from pathlib import Path
 
 import pytest
 
-from _json_key_paths import key_paths
+from _json_key_paths import describe_unknown, key_paths
 from tests._cut_start import CUT_OPEN_RE, skip_if_cut
 from tests._live_tree import checkout_rglob
 
@@ -133,18 +133,23 @@ class TestQuickstartDoctorExampleMatchesLiveOutput:
                 f"espalier doctor output is not valid JSON: {exc}\n"
                 f"stdout: {result.stdout[:500]}"
             )
-        live_keys = key_paths(live_obj)
+        self._assert_sample_within_live(demo_keys, key_paths(live_obj))
+
+    @staticmethod
+    def _assert_sample_within_live(demo_keys, live_keys) -> None:
+        """The gate's comparison: every (path, kind) the sample shows is one
+        the live output holds. Its own method so the collapse pin below drives
+        the very comparison the live test makes."""
         unknown_keys = demo_keys - live_keys
         assert not unknown_keys, (
-            f"QUICKSTART doctor sample references key paths not in live "
-            f"output: {sorted(unknown_keys)}.\n"
-            f"Live paths under that parent: "
-            f"{sorted(k for k in live_keys if any(u.startswith(k.rsplit('.', 1)[0] + '.') for u in unknown_keys))}\n"
-            f"Refresh docs/QUICKSTART.md against current "
-            f"`espalier doctor .` output — fix the SAMPLE, not the code.\n"
-            f"(Live output here comes from the `initialized_repo_root` fixture, "
-            f"NOT this checkout, so 'my tree isn't init'ed' is not the cause — "
-            f"see `DEF-575` for why it used to be.)"
+            "QUICKSTART doctor sample references key paths, or a container "
+            "kind at a path, not in live output:\n  "
+            + "\n  ".join(describe_unknown(unknown_keys, live_keys))
+            + "\nRefresh docs/QUICKSTART.md against current "
+            "`espalier doctor .` output — fix the SAMPLE, not the code.\n"
+            "(Live output here comes from the `initialized_repo_root` fixture, "
+            "NOT this checkout, so 'my tree isn't init'ed' is not the cause — "
+            "see `DEF-575` for why it used to be.)"
         )
 
     def test_the_compare_is_recursive(self):
@@ -156,7 +161,7 @@ class TestQuickstartDoctorExampleMatchesLiveOutput:
         reachable, or the gate is depth-1 again.
         """
         nested = key_paths({"checks": {"presence": {"status": "pass"}}})
-        assert "checks.presence.status" in nested, (
+        assert ("checks.presence.status", "scalar") in nested, (
             "key_paths stopped recursing — the gate is depth-1 again and "
             "cannot see the class of defect it exists for (DEF-468)."
         )
@@ -174,9 +179,38 @@ class TestQuickstartDoctorExampleMatchesLiveOutput:
             '{"status": "pass", "checks": {"presence": {"surface_present": true}}}\n'
             '```\n'
         )
-        assert "checks.presence.surface_present" in self._extract_doctor_keys(
+        assert ("checks.presence.surface_present", "scalar") in self._extract_doctor_keys(
             fixture
         ), "the extractor is no longer returning nested paths"
+
+    def test_a_sample_that_collapses_a_dict_to_a_word_is_caught(self):
+        """Earn-the-red for DEF-585: a sample that shows a whole dict as a
+        single word claims only paths the live output holds, so a path-set
+        compare stays green over it. The kind at each path is what reds it.
+
+        Driven through the gate's own extractor and comparison, against a
+        live-shaped object, so neither half can drop the kind unseen.
+        """
+        live = key_paths({
+            "status": "pass",
+            "checks": {"presence": {"surface_present": True}},
+            "failures": [],
+        })
+        collapsed = self._extract_doctor_keys(
+            '```json\n{"status": "pass", "checks": "ok", "failures": []}\n```\n'
+        )
+        assert {p for p, _ in collapsed} <= {p for p, _ in live}, (
+            "the fixture must hold only live paths, or this pin proves the "
+            "path compare, not the kind compare"
+        )
+        with pytest.raises(AssertionError, match="checks: the sample shows scalar"):
+            self._assert_sample_within_live(collapsed, live)
+        # And the other direction a sample can collapse: an array shown as an object.
+        as_object = self._extract_doctor_keys(
+            '```json\n{"status": "pass", "failures": {}}\n```\n'
+        )
+        with pytest.raises(AssertionError, match="failures: the sample shows object"):
+            self._assert_sample_within_live(as_object, live)
 
     def test_a_second_status_sample_is_refused_not_shadowed(self):
         """Two candidate blocks must fail loudly, never silently pick one.

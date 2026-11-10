@@ -1448,7 +1448,7 @@ def _consolidated_unwired_line(scripts: list[str]) -> str:
         f"{plural(len(scripts), 'governance gate')} not effectively wired: "
         + ", ".join(scripts)
         + " present on disk but .claude/settings.json wires no Espalier "
-        "hooks — " + _merge_settings_remedy() + " to wire them, or, if you are "
+        "hooks -- " + _merge_settings_remedy() + " to wire them, or, if you are "
         "partway through an uninstall run from a Claude Code session (whose "
         "first `clean-generated --execute` only unwires), run "
         f"`{_remedy_py()} -m espalier clean-generated --execute .` again to "

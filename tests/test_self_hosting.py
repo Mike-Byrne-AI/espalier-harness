@@ -240,12 +240,29 @@ class TestRunSelfHostCheck:
         """DERIVED, not restated: the statuses `main`/`cmd_self_host` return 0 for
         must be exactly the set the shared owner calls non-failures. Four
         consumers used to carry four hand-written accept-sets; this pins them to
-        one so they cannot drift apart again."""
-        for status in ("pass", "uninitialized", "skipped_release_export"):
-            assert status in sh.GATE_STATUS_NON_FAILURES, (
-                f"{status!r} returns rc=0 to the operator but is not in the "
-                "shared non-failure set"
-            )
+        one so they cannot drift apart again.
+
+        EQUALITY, not membership (DEF-564). Each member below is a status
+        `self_hosting.main` and `cli.cmd_self_host` answer with exit 0 (and
+        `pre_release` and `doctor` read as no failure), so a status added to
+        the shared set widens both exit codes at once. A membership loop over
+        the reviewed three stayed green on a fifth status and on a dropped
+        `skipped`; the set equality reds on either, and the edit that reds it
+        is the review."""
+        reviewed = frozenset({
+            "pass",                    # the gate ran and passed
+            "uninitialized",           # the first-run hint, never a failure
+            "skipped_release_export",  # the gate stood down on an export
+            "skipped",                 # doctor's caller elected not to run it
+        })
+        assert sh.GATE_STATUS_NON_FAILURES == reviewed, (
+            "the statuses that exit 0 from `espalier self-host` and "
+            "self_hosting.main moved: added "
+            f"{sorted(sh.GATE_STATUS_NON_FAILURES - reviewed)}, dropped "
+            f"{sorted(reviewed - sh.GATE_STATUS_NON_FAILURES)}. Review that "
+            "each added status is a non-failure for both exit codes, then "
+            "update `reviewed` here with its reason"
+        )
 
     def test_pre_release_does_not_fail_an_uninitialized_tree(self, tmp_path, monkeypatch):
         """CONSUMER pin. The owner-level tests above pass whether or not

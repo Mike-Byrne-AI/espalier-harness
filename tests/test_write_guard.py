@@ -238,7 +238,13 @@ class TestTheShellFixturesCarryTheProtectedTree:
     without the tree banks a suppressed deny as a correct ALLOW. The roster is
     derived below: a sixth fixture in this file that spawns the guard on a
     shell payload with a project of its own fails the derivation until it
-    lays the tree and joins the list."""
+    lays the tree and joins the list.
+
+    `tests/test_test_suite_contract.py::TestEveryShellGuardSpawnerLaysTheProtectedTree`
+    is the tree-wide pin beside this one (DEF-2045): the shared spawn point
+    lays the tree, and every spawner that runs the guard itself lays it or
+    sits on that roster with its reason. The two fold into one after the
+    lanes that change this file land."""
 
     _FIXTURES = ("run_bash_guard", "run_guard_from", "_run_ps_guard",
                  "_run_ps_guard_with_temp", "run_guard_tool")
@@ -9887,7 +9893,10 @@ def _assignment_guarded_verbs(mod) -> list[tuple[str, list[str]]]:
 
     DERIVED from the module's own source, never hand-listed, so a tenth verb
     regex that adopts the guard self-enrols. One that FORGETS it drops out of
-    the population instead -- which is what the count floor below catches.
+    THIS population, which is why the count floor below was its only backstop
+    (DEF-488); `test_every_command_position_verb_regex_excludes_an_assignment`
+    now judges every command-position verb regex, guarded or not, so a verb
+    regex that forgets the guard reds there by name.
     """
     out: list[tuple[str, list[str]]] = []
     for name, val in sorted(vars(mod).items()):
@@ -9969,6 +9978,161 @@ def test_assignment_guard_removal_is_detected():
             f"{verb}=$(grep foo {probe})"))
     ]
     assert leaked, "removing the assignment guards changed nothing -- the contract is vacuous"
+
+
+# ── every command-position verb regex, guarded or not (DEF-488) ───────
+#
+# The population above is the regexes that already CARRY the guard, so a verb
+# regex that forgets it never enters it, and a hand-set count floor was the
+# only backstop. The family below is every module-level compiled `*_RE` whose
+# pattern holds the module's own `_CMD_POS` text -- the anchor the module says
+# every verb-matching reader composes (assignment readers take
+# `_CMD_POS_NO_VERB` and stay out by construction). Each member must carry the
+# guard, or be shown by a drive not to read `<verb>=` as its verb: a witness
+# command it reads at offset 0, then the same command with `=` after the verb,
+# which it must not read at offset 0. A member with neither is on the roster
+# below with its reason, or it reds. Measured at cf782b628: 46 members, 21
+# guarded, 21 more shown by their witness, 4 on the roster.
+
+#: The tails a witness command puts after a verb: the plain shapes the family's
+#: unguarded members read. A new member no tail reaches reds as unjudged, so
+#: its grammar adds a tail here or the member carries the guard.
+_ASSIGNMENT_WITNESS_TAILS = (
+    " x", " -s x y", " -i x", " checkout -- x", " clean -fd x", " restore x",
+    " rm x", " <<< x", " -c 'x' y", " -e 'x' y",
+)
+
+#: Members with no guard whose regex DOES read the assignment twin at its verb,
+#: each with the reason it stays, driven through the real hook at cf782b628.
+#: `declared limit:` marks a false deny this contract found and the dispatcher
+#: ruled a limit, not a row (ack 20261110T103729Z-air-80c98c): it needs a shell
+#: variable named after the head whose value writes a zone, no session has
+#: recorded one, and the zone-write readers are the after-check's job under the
+#: coverage contract. A session that records one files it then. The roster
+#: check below reds on an entry whose member has since been guarded, so the
+#: roster cannot hide a fix.
+_ASSIGNMENT_GUARD_EXEMPT = {
+    "_TEE_RE": (
+        "reads no operand from an assignment: its operands are its own group, "
+        "which opens on whitespace, so `tee=x <zone path>` allows (driven)"
+    ),
+    "_AWK_HEAD_RE": (
+        "declared limit: the awk reader takes the words after the head, so "
+        "`awk='{print > \"<zone path>\"}' true` is denied while the same "
+        "assignment to `x` allows (driven)"
+    ),
+    "_SED_HEAD_RE": (
+        "declared limit: the sed reader takes the words after the head, so "
+        "`sed=';w <zone path>' true` is denied (driven)"
+    ),
+    "_GIT_HEAD_RE": (
+        "declared limit: the git reader takes the words after the head, so "
+        "`git=x -c core.pager='cat > <zone path>' log` is denied (driven)"
+    ),
+}
+
+
+def _command_position_verb_regexes(mod) -> dict:
+    """Every module-level compiled ``*_RE`` whose pattern holds ``_CMD_POS``."""
+    anchor = mod._CMD_POS
+    return {
+        name: val
+        for name, val in sorted(vars(mod).items())
+        if name.endswith("_RE") and isinstance(getattr(val, "pattern", None), str)
+        and anchor in val.pattern
+    }
+
+
+def _spelled_words(rx, anchor: str) -> list[str]:
+    """The words a pattern spells after its anchor, regex escapes removed
+    first so ``\\bmkdir`` reads ``mkdir`` (its verbs are among them)."""
+    after = re.sub(r"\\[A-Za-z]", " ", rx.pattern.split(anchor, 1)[1])
+    return sorted({w for w in re.findall(r"[a-z][a-z0-9]*", after) if len(w) >= 2})
+
+
+def _assignment_twin_read(rx, verb, tail):
+    """Where ``rx`` stops reading ``<verb>=<tail>`` when it reads that text from
+    offset 0 -- the assignment taken for the verb -- else None."""
+    m = rx.search(verb + "=" + tail)
+    return m.end() if m is not None and m.start() == 0 else None
+
+
+def _assignment_witness(rx, words):
+    """The first ``(verb, tail)`` whose plain command ``rx`` reads at offset 0."""
+    for verb in words:
+        for tail in _ASSIGNMENT_WITNESS_TAILS:
+            m = rx.search(verb + tail)
+            if m is not None and m.start() == 0:
+                return verb, tail
+    return None
+
+
+def _unexcluded_assignment_readers(mod) -> tuple[list[str], list[str]]:
+    """``(unjudged, readers)`` over the family: members with no guard and no
+    witness, and members whose regex reads the assignment twin of their
+    witness at offset 0. A guard stands for a member no tail reaches."""
+    unjudged: list[str] = []
+    readers: list[str] = []
+    for name, rx in _command_position_verb_regexes(mod).items():
+        witness = _assignment_witness(rx, _spelled_words(rx, mod._CMD_POS))
+        if witness is None:
+            if _ASSIGN_GUARD not in rx.pattern:
+                unjudged.append(name)
+        elif _assignment_twin_read(rx, *witness) is not None:
+            readers.append(f"{name}: reads {witness[0] + '=' + witness[1]!r}")
+    return unjudged, readers
+
+
+def test_every_command_position_verb_regex_excludes_an_assignment():
+    """DEF-488: a verb regex that forgets the `(?!=)` guard is caught by name,
+    not dropped from the population. Its own earn-the-red first: a member
+    built on the anchor with no guard reds, and the same member guarded does
+    not, so the judgment below cannot pass for want of reaching anything."""
+    bp = _bash_patterns_module()
+    family = _command_position_verb_regexes(bp)
+    assert len(family) >= 40, (
+        f"only {len(family)} `*_RE` patterns hold `_CMD_POS` (46 at cf782b628) "
+        "-- the anchor changed shape or the family stopped being derivable; "
+        "re-derive before relaxing this floor"
+    )
+    bare = re.compile(bp._CMD_POS + r"\b(?i:truncate)\b([^|;&\n]+)")
+    guarded = re.compile(bp._CMD_POS + r"\b(?i:truncate)\b(?!=)([^|;&\n]+)")
+    words = _spelled_words(bare, bp._CMD_POS)
+    assert _assignment_twin_read(bare, *_assignment_witness(bare, words)) is not None
+    assert _assignment_twin_read(guarded, *_assignment_witness(guarded, words)) is None
+
+    unjudged, readers = _unexcluded_assignment_readers(bp)
+    unjudged = [n for n in unjudged if n not in _ASSIGNMENT_GUARD_EXEMPT]
+    readers = [r for r in readers if r.split(":", 1)[0] not in _ASSIGNMENT_GUARD_EXEMPT]
+    assert not unjudged, (
+        "command-position verb regexes with no `(?!=)` guard that no witness "
+        f"tail reaches: {unjudged}. Add the guard after the verb, or a tail to "
+        "_ASSIGNMENT_WITNESS_TAILS that this regex reads"
+    )
+    assert not readers, (
+        "command-position verb regexes read a `<verb>=` shell ASSIGNMENT as "
+        f"the verb: {readers}. Add `\\b(?!=)` after the verb (the TP-370 "
+        "false-deny class); an exemption goes on _ASSIGNMENT_GUARD_EXEMPT with "
+        "its driven reason"
+    )
+
+
+def test_every_assignment_exemption_is_still_needed():
+    """The roster only shrinks: an entry whose member is gone, has since taken
+    the guard, or no longer reads its assignment twin reds here by name."""
+    bp = _bash_patterns_module()
+    family = _command_position_verb_regexes(bp)
+    _unjudged, readers = _unexcluded_assignment_readers(bp)
+    reading = {r.split(":", 1)[0] for r in readers}
+    stale = {
+        name: ("not in the family" if name not in family
+               else "carries the guard" if _ASSIGN_GUARD in family[name].pattern
+               else "no longer reads its assignment twin")
+        for name in _ASSIGNMENT_GUARD_EXEMPT
+        if name not in family or _ASSIGN_GUARD in family[name].pattern
+        or name not in reading
+    }
+    assert not stale, f"drop these _ASSIGNMENT_GUARD_EXEMPT entries: {stale}"
 
 
 class TestPowerShellEphemeralCarveOut:

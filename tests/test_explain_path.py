@@ -34,6 +34,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
 
@@ -135,6 +137,74 @@ class TestExplainPathResolver:
         assert "tools/cc/hooks/write_guard.py" in text
         # net one-line verdict present
         assert "plan" in text.lower() and "write" in text.lower()
+
+    # DEF-864: the whole text the read-out prints, byte for byte. The test
+    # above holds only that the path and the words "plan" and "write" appear,
+    # so a reword passed it while the docs went on quoting a sentence the tool
+    # no longer prints. Each golden is rendered in an empty project with
+    # maintenance mode set by the test, so the live session's mode, plan and
+    # settings files cannot move it. A deliberate reword updates the golden
+    # here and every doc that quotes the read-out, in one change.
+    _UNMODELLED = (
+        "  unmodelled : other PreToolUse hooks and permissions.deny Edit/Write "
+        "rules: none in .claude/settings.json or .claude/settings.local.json; "
+        "user-level, plugin and managed hooks are not listed\n"
+    )
+    _GOLDEN = {
+        ("tools/cc/hooks/write_guard.py", False): (
+            "Path: tools/cc/hooks/write_guard.py\n"
+            "\n"
+            "  plan_guard : exempt  (exempt -- harness-universal prefix `tools/cc/`)\n"
+            "  write_guard: DENIED -- protected zone `tools/cc/`\n"
+            "  live state : maintenance mode off; plan none active\n"
+            + _UNMODELLED
+            + "\n"
+            "  => Espalier's hooks: writes DENIED (zone `tools/cc/`); no plan required."
+        ),
+        ("src/app.py", False): (
+            "Path: src/app.py\n"
+            "\n"
+            "  plan_guard : REQUIRES an active plan  (plan required -- non-exempt path)\n"
+            "  write_guard: allowed -- unprotected\n"
+            "  live state : maintenance mode off; plan none active\n"
+            + _UNMODELLED
+            + "\n"
+            "  => Espalier's hooks: writes allowed (outside their zones); edits "
+            "require an active plan; none is active."
+        ),
+        ("src/app.py", True): (
+            "Path: src/app.py\n"
+            "\n"
+            "  plan_guard : REQUIRES an active plan  (plan required -- non-exempt path)\n"
+            "  write_guard: allowed -- unprotected\n"
+            "  live state : maintenance mode ON -- protected-zone + plan checks "
+            "bypassed this session; plan none active\n"
+            + _UNMODELLED
+            + "\n"
+            "  => MAINTENANCE MODE active -- protected-zone + plan checks are "
+            "bypassed this session (kill-switch + dangerous-command denials "
+            "still fire). Without maintenance mode: Espalier's hooks: writes "
+            "allowed (outside their zones); edits require an active plan; none "
+            "is active."
+        ),
+    }
+
+    @pytest.mark.parametrize(("path", "maintenance"), sorted(_GOLDEN))
+    def test_render_prints_exactly_the_golden_text(self, path, maintenance, tmp_path, monkeypatch):
+        ep, _, _ = _load_modules()
+        monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+        if maintenance:
+            monkeypatch.setenv("ESPALIER_MAINTENANCE_MODE", "1")
+        else:
+            monkeypatch.delenv("ESPALIER_MAINTENANCE_MODE", raising=False)
+        text = ep.render(ep.explain(path, tmp_path))
+        assert text == self._GOLDEN[(path, maintenance)], (
+            "the /status --explain read-out for "
+            f"{path!r} (maintenance {'on' if maintenance else 'off'}) no longer "
+            "prints the text the docs quote. If the reword is deliberate, update "
+            "this golden and the docs that quote it together.\n"
+            f"printed:\n{text}"
+        )
 
 
 class TestExplainPathAntiDrift:
