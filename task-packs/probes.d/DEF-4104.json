@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4104",
+ "subject": "tools/cc/ship.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the defect is the absence of a step, whose verb or flag the fix names; the oracle is a scratch clone with a bare origin: a lane with a commit never pushed, the fix's park step run, then the own-clear marker read as armed for the session; until the fix names that step, no one-line probe can drive it",
+ "row_sha": "1eb1c7ee3936",
+ "text_sha": "62b3d4c18454",
+ "verified_2026_11_10": "OPEN (filed 2026-11-10; probe driven at filing)"
+}

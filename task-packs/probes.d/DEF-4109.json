@@ -1,0 +1,13 @@
+{
+ "id": "DEF-4109",
+ "subject": "tools/cc/hooks/write_guard.py",
+ "cmd": "python -c 'import sys; sys.path[:0] = [\"tools/cc/hooks\", \"tools/cc\"]; import write_guard as w; s = \".env\"; a = \"sleep 1 & cat \" + s; b = \"cat <<EOF\\nhello\\nEOF\\ncat \" + s; c = \"cat \" + s; print(s in w._secret_read_targets(a), s in w._secret_read_targets(b), s in w._secret_read_targets(c))'",
+ "open_value": "False False True",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/_bash_patterns.py"
+ ],
+ "row_sha": "9781453f2f5c",
+ "text_sha": "5f92d0f09595",
+ "verified_2026_11_10": "OPEN (filed 2026-11-10; probe driven at filing here and in the export of HEAD 1b34b468164e)"
+}
