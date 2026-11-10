@@ -1033,6 +1033,19 @@ class TestPowerShellReparsingWrapperCarriesASwitchValue:
         # driven). `TestCrossShellRouting::test_a_long_switch_run_does_not_
         # hide_the_program` is the row a future bound reds on.
         assert run.endswith(")*"), run
+        # The PowerShell tool's `bash -c` opener carries a copy that adds a
+        # POSIX shell's `+` switch (DEF-3068's batch): the shared run with a
+        # `+` switch arm whose body holds no `-`, and `+` refused at a
+        # value's start, and nothing else, so an edit to the shared run that
+        # forgets the copy reds here (the failure-mode review: the obvious
+        # `run in _PS_BASH_DASH_C_RE.pattern` pin passes on a drifted copy,
+        # since `_PS_CMD_POS` holds the shared run already).
+        derived = run.replace(
+            "(?:[-/][\\w:.-]+(?:", "(?:(?:[-/][\\w:.-]+|\\+[\\w:.]+)(?:", 1,
+        ).replace("[^\\s\\\"'\\-/]", "[^\\s\\\"'\\-/+]", 1)
+        assert derived != run
+        assert bp._PS_POSIX_SHELL_SWITCH_RUN == derived
+        assert bp._PS_POSIX_SHELL_SWITCH_RUN in bp._PS_SHELL_C_TAIL
 
     # The ReDoS pin for the run lives in `tests/test_redos.py`
     # (`test_ps_switch_value_run_linear_on_dash_bearing_values`), under the
