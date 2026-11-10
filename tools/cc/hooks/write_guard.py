@@ -3090,12 +3090,20 @@ def _bash_dangerous_reason_here(
             # A POSIX shell's `-c` program (DEF-3068): the same records one
             # level down. The exec-quote command position opens only after a
             # bare `-c`, so behind a switch or cluster (`bash -lc '...'`, `sh
-            # -e -c '...'`) the outer scan never read the program's delete,
-            # and every record of this tier was a plain allow there while the
-            # bare spelling walled. A bare `-c` program is read twice (raw,
-            # and here); the duplicate costs work inside the depth bound,
-            # never a decision.
-            for program in _bash_patterns._posix_shell_c_bodies(spliced, pair):
+            # -e -c '...'`, `bash -c -- '...'`) the outer scan never read the
+            # program's delete, and every record of this tier was a plain
+            # allow there while the bare spelling walled. The bare spelling
+            # is left out: the outer scan reads it in place, from its own
+            # statement's directory, and read here as well it walled `cd sub
+            # && bash -c 'rm -rf .'`, which nudges (DEF-853's declared row).
+            # Only at the top: inside another shell's program every program
+            # is judged as another shell's already, and an inner bare one
+            # left out there met no tier (the failure-mode review).
+            c_programs = (
+                _bash_patterns._posix_shell_c_programs_unread_in_place(spliced, pair)
+                if _depth == 0 else _bash_patterns._posix_shell_c_bodies(spliced, pair)
+            )
+            for program in c_programs:
                 reason = _bash_dangerous_reason(program, root, _depth + 1, cwd=cwd)
                 if reason:
                     return reason

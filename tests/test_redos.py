@@ -3140,6 +3140,14 @@ def test_ps_switch_value_run_linear_on_dash_bearing_values(label, seed):
     # the run reaches each opener's tail and fails on an unclosed program
     ("run-then-open-program", "-x ", "-c 'x"),
     ("run-then-herestring", "-x ", "<<<"),
+    # DEF-3068's batch: a run AFTER the `-c` cluster too. Every `-c` cluster
+    # can end either run, so a cluster holding `c` never opens a switch of
+    # the run after it; without that refusal these were 4 to 11 s on both
+    # tools' openers at 30 KB (mutant, driven), and they are milliseconds
+    ("c-clusters-then-open-program", "-c ", "'x"),
+    ("lc-clusters-then-open-program", "-lc ", "'x"),
+    ("switch-and-cluster-alternating", "-x -c ", "'x"),
+    ("cluster-and-dashdash-alternating", "-c -- ", "'x"),
 ])
 def test_posix_shell_switch_run_linear_on_one_head(label, seed, tail):
     """DEF-818: the POSIX shell openers' switch run (`bash -x ... -c '...'`,
@@ -3147,12 +3155,14 @@ def test_posix_shell_switch_run_linear_on_one_head(label, seed, tail):
     through behind 65 switches (`tests/test_write_guard.py::
     test_a_long_switch_run_does_not_hide_a_posix_shell_program`). One head and
     a 30 KB run, so the whole flood is one opener's run; isolated per opener
-    and through the real extractor. A value that may start with `-` gives a
-    switch run two parses per token and reds these rows. POSIX-only
+    (the PowerShell tool's `bash -c` opener among them, which shares the
+    cluster) and through both extractors. A value that may start with `-`
+    gives a switch run two parses per token and reds these rows. POSIX-only
     (signal.alarm)."""
     if not hasattr(signal, "SIGALRM"):
         pytest.skip("signal.alarm not available on this platform")
     from _bash_patterns import _candidate_paths_from_bash  # noqa: E402
+    from _bash_patterns import _candidate_paths_from_powershell  # noqa: E402
 
     payload = "bash " + seed * (_WORST_CASE_BODY_LEN // len(seed)) + tail
     signal.signal(signal.SIGALRM, _alarm)
@@ -3161,7 +3171,9 @@ def test_posix_shell_switch_run_linear_on_one_head(label, seed, tail):
     try:
         _bash_patterns._SHELL_DASH_C_RE.findall(payload)
         _bash_patterns._SHELL_HERESTRING_RE.findall(payload)
+        _bash_patterns._PS_BASH_DASH_C_RE.findall(payload)
         _candidate_paths_from_bash(payload)
+        _candidate_paths_from_powershell(payload)
         elapsed_ms = (time.time() - t) * 1000
     except _Timeout:
         pytest.fail(
