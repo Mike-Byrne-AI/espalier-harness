@@ -10723,45 +10723,98 @@ class TestAScratchRootItselfIsTheWall:
         assert not self._walls(command, tool), command
 
     #: A forced remove below a name bound to a temp variable, in the one
-    #: shape the scratch-root rung follows (DEF-2055): bare and quoted tails,
-    #: either separator, `$env:TMP`, no blanks around the `=` and `;`, a
-    #: lowercase variable and a remove alias.
+    #: shape the scratch-root rung follows (DEF-2055), each beside the same
+    #: remove with its value spelled in place: bare and quoted tails, either
+    #: separator, `$env:TMP`, no blanks around the `=` and `;`, a remove
+    #: alias, and every spelling the pre-pass binds (air's 7ad740): braced,
+    #: double-quoted, both, TMPDIR, and a binding a line break ends.
     BOUND_FORCED_BELOW = [
-        "$d = $env:TEMP; " + RI + "$d\\x",
-        "$d=$env:TMP;" + RI + "$d/x",
-        "$d = $env:TEMP; " + RI + '"$d\\x"',
-        "$work = $env:temp; ri -r -fo $work\\job",
+        ("bare", "$d = $env:TEMP; " + RI + "$d\\x", RI + "$env:TEMP\\x"),
+        ("tmp-no-blanks", "$d=$env:TMP;" + RI + "$d/x", RI + "$env:TMP/x"),
+        ("quoted", "$d = $env:TEMP; " + RI + '"$d\\x"', RI + '"$env:TEMP\\x"'),
+        ("alias", "$work = $env:TEMP; ri -r -fo $work\\job", "ri -r -fo $env:TEMP\\job"),
+        ("braced", "$d = ${env:TEMP}; " + RI + "$d\\x", RI + "${env:TEMP}\\x"),
+        ("quoted-value", '$d = "$env:TEMP"; ' + RI + "$d\\x", RI + "$env:TEMP\\x"),
+        ("quoted-braced-value", '$d = "${env:TEMP}"; ' + RI + "$d\\x", RI + "${env:TEMP}\\x"),
+        ("tmpdir", "$d = $env:TMPDIR; " + RI + "$d\\x", RI + "$env:TMPDIR\\x"),
+        ("a-line-break", "$d = $env:TEMP\n" + RI + "$d\\x", RI + "$env:TEMP\\x"),
+        ("a-crlf", "$d = $env:TEMP\r\n" + RI + "$d\\x", RI + "$env:TEMP\\x"),
+        ("a-separator-then-a-line-break", "$d = $env:TEMP;\n" + RI + "$d\\x", RI + "$env:TEMP\\x"),
     ]
 
-    @pytest.mark.parametrize("command", BOUND_FORCED_BELOW, ids=["bare", "tmp-no-blanks", "quoted", "alias"])
-    def test_a_forced_remove_below_a_bound_temp_name_draws_the_in_place_nudge(self, command, monkeypatch):
+    @pytest.mark.parametrize(
+        "command, in_place", [(c, p) for _, c, p in BOUND_FORCED_BELOW], ids=[i for i, _, _ in BOUND_FORCED_BELOW])
+    def test_a_forced_remove_below_a_bound_temp_name_draws_the_in_place_nudge(self, command, in_place, monkeypatch):
         """DEF-2055: the rung that lifts the forced remove's wall below a
         scratch root read the text as typed, so `$d = $env:TEMP; Remove-Item
         -Recurse -Force $d\\x` walled as unreadable where `$env:TEMP\\x` spelled
         in place drew the one nudge. It now follows that binding in the one
         shape nothing can undo it in (`_ps_temp_bound_remove`), and the
         speed bump asks the same rung plain and quiet, so the bound spelling
-        draws the in-place spelling's one nudge: the rung says yes, its
-        quiet question says no, for both."""
+        gets its value's in-place verdict on both tiers: no wall, the one
+        nudge; the rung says yes and its quiet question says no."""
         import _bash_patterns as bp
 
+        sb = _speedbump_module()
         self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
-        assert not self._walls(command, "PowerShell"), command
-        root = str(Path.home() / "scratch-root-no-such-repo")
-        in_place = self.RI + "$env:TEMP\\x"
+        repo = Path.home() / "scratch-root-no-such-repo"
+        assert bp._ps_temp_bound_remove(command) is not None, command
         for spelling in (in_place, command):
-            assert bp.powershell_removal_is_below_a_scratch_root(spelling, root), spelling
-            assert not bp.powershell_removal_is_below_a_scratch_root(spelling, root, quiet=True), spelling
+            assert not self._walls(spelling, "PowerShell"), spelling
+            assert sb._pred_rmrf("PowerShell", {"command": spelling}, repo), spelling
+            assert bp.powershell_removal_is_below_a_scratch_root(spelling, str(repo)), spelling
+            assert not bp.powershell_removal_is_below_a_scratch_root(spelling, str(repo), quiet=True), spelling
+
+    def test_a_bound_temp_name_the_hook_cannot_read_keeps_the_wall(self, monkeypatch):
+        """The binding passes the gate, and the value it names is read as the
+        hook inherits it (`_temp_var_target`), the in-place spelling's reader:
+        with TEMP unset on the hook's side both spellings keep the wall and
+        the speed bump leaves them to it (air's 7ad740)."""
+        sb = _speedbump_module()
+        self._env(monkeypatch, TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
+        repo = Path.home() / "scratch-root-no-such-repo"
+        for spelling in ("$d = $env:TEMP; " + self.RI + "$d\\x", self.RI + "$env:TEMP\\x"):
+            assert self._walls(spelling, "PowerShell"), spelling
+            assert not sb._pred_rmrf("PowerShell", {"command": spelling}, repo), spelling
+
+    @pytest.mark.parametrize("command", [
+        "$d = $env:TEMP; & (Get-Command Remove-Item -ErrorVariable d) -Recurse -Force $d\\x",
+        "$d = $env:TEMP; Remove-Item -Recurse `\n -Force $d\\x",
+    ], ids=["a-command-object-head", "a-backtick-continuation"])
+    def test_the_hard_tier_asks_the_gate_on_the_text_as_typed(self, command, monkeypatch):
+        """DEF-2055's code review, a false allow on the lane as first built:
+        the hard tier handed the rung `powershell_scan_pair`'s twin, which
+        blanks a command object's call and joins a backtick continuation, so
+        the gate admitted these and the hard tier stepped aside, while the
+        speed bump, asking the same rung on the text as typed, was refused it
+        and stayed silent: no tier fired. `-ErrorVariable d` empties `$d`
+        before the arguments evaluate (5.1, the reviewer's read), so the
+        first takes `\\x` at the drive root. Both tiers now read the typed
+        text: the wall answers, and the bump leaves it to the wall."""
+        import _bash_patterns as bp
+
+        sb = _speedbump_module()
+        self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
+        repo = Path.home() / "scratch-root-no-such-repo"
+        assert bp._ps_temp_bound_remove(command) is None, command
+        assert self._walls(command, "PowerShell"), command
+        assert not sb._pred_rmrf("PowerShell", {"command": command}, repo), command
 
     #: Spellings where the name may not hold `$env:TEMP` when the remove
     #: reads it, or that the rung is not asked to read through (air's 18c1a6
-    #: and the row's rewrite). The first three, the predefined pair, the
-    #: child process and the non-ASCII row each red with their refusal alone
-    #: removed (`&`, `;`, `|`, the predefined set, the verb check, the ASCII
-    #: check; driven 2026-11-10). The rest pin behaviour another reader
-    #: also refuses: a grouped argument's inner literal surfaces as a target
-    #: the rung cannot read, and the pre-pass leaves a backtick-escaped name.
+    #: and the row's rewrite). The gate refuses each but the last two, which
+    #: it admits and the target reader then refuses (`_GATE_ADMITS`). The
+    #: first three, the predefined pair, the child process, the non-ASCII row
+    #: and the space-free grouped flag value each lift the wall with their
+    #: refusal alone removed (`&`, `;`, `|`, the predefined set, the verb
+    #: check, the ASCII check, the parenthesis; driven 2026-11-10). The spaced
+    #: grouped and subexpression rows red on that mutant through the gate's
+    #: assertion alone: their inner literal surfaces as a target the rung
+    #: cannot read, so the wall holds there anyway. The pre-pass leaves the
+    #: backtick row's escaped name unbound.
     BOUND_FORCED_KEPT = [
+        ("a-grouped-flag-value",
+         "$d = $env:TEMP; " + RI + "-Exclude:($ExecutionContext.SessionState.PSVariable.Set([char]100,0)) $d\\x"),
         ("a-background-job", "$d = $env:TEMP; " + RI + "$d\\x &"),
         ("a-statement-between-removes", "$d = $env:TEMP; " + RI + "$d\\y; Set-Variable d C:/; " + RI + "$d\\x"),
         ("an-or-chain", "$d = $env:TEMP; " + RI + "$d\\y || Set-Variable d C:/ || " + RI + "$d\\x"),
@@ -10779,20 +10832,82 @@ class TestAScratchRootItselfIsTheWall:
         ("a-binding-with-a-tail", '$d = "$env:TEMP\\job"; ' + RI + "$d\\x"),
         ("a-child-process", "$d = $env:TEMP; powershell -c '" + RI + "$d\\x'"),
         ("a-child-process-dq", '$d = $env:TEMP; powershell -c "' + RI + '$d\\x"'),
-        ("the-bound-root-itself", "$d = $env:TEMP; " + RI + "$d"),
+        ("a-line-break-then-a-statement", "$d = $env:TEMP\n" + RI + "$d\\y\nSet-Variable d C:/"),
         ("non-ascii", "$d = $env:TEMP; " + RI + "$d\\x\u2003"),
+        # PowerShell reads `$d?` as the name `d?`, unbound here: `\x` at the drive root
+        ("a-question-mark-name", "$d = $env:TEMP; " + RI + "$d?\\x"),
+        ("the-bound-root-itself", "$d = $env:TEMP; " + RI + "$d"),
     ]
+    _GATE_ADMITS = frozenset({"a-question-mark-name", "the-bound-root-itself"})
 
-    @pytest.mark.parametrize("command", [c for _, c in BOUND_FORCED_KEPT], ids=[i for i, _ in BOUND_FORCED_KEPT])
-    def test_a_bound_temp_name_the_remove_may_not_read_keeps_the_wall(self, command, monkeypatch):
+    @pytest.mark.parametrize(
+        "row, command", BOUND_FORCED_KEPT, ids=[i for i, _ in BOUND_FORCED_KEPT])
+    def test_a_bound_temp_name_the_remove_may_not_read_keeps_the_wall(self, row, command, monkeypatch):
         """DEF-2055's gate admits one shape; every other bound spelling
         keeps the wall, the row's remaining over-refusal for the shapes the
-        gate cannot prove (spell `$env:TEMP\\x` in place)."""
+        gate cannot prove (spell `$env:TEMP\\x` in place). The gate's own
+        answer is asserted too, so a row the gate should refuse cannot pass
+        on another reader alone."""
         import _bash_patterns as bp
 
         self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
         root = str(Path.home() / "scratch-root-no-such-repo")
+        assert (bp._ps_temp_bound_remove(command) is not None) == (row in self._GATE_ADMITS), command
         assert not bp.powershell_removal_is_below_a_scratch_root(command, root), command
+
+    def test_the_two_nothing_runs_between_sets_agree(self):
+        """`write_guard._LONE_DELETE_STOPS` and the binding gate's
+        `_PS_TEMP_BINDING_REFUSED` do one job, refusing whatever lets code
+        run between a statement's start and its remove, and cannot be one
+        object (`_bash_patterns` imports on first use, after write_guard's
+        module-level set; the gate must admit the `$`, `\\`, `:` a binding
+        spells). Pinned instead: what the gate refuses, the lone-delete
+        reader refuses too, by its stop set or its line-break set (air's
+        7ad740, item 6)."""
+        import _bash_patterns as bp
+
+        wg = _load_write_guard()
+        assert bp._PS_TEMP_BINDING_REFUSED <= wg._LONE_DELETE_STOPS | wg._LONE_DELETE_BREAKS
+
+    @pytest.mark.parametrize("host", ["powershell", "pwsh"])
+    def test_every_name_a_fresh_host_will_not_rebind_is_refused(self, host):
+        """The gate's predefined-name refusal, read from the host itself
+        (air's 7ad740, item 2; modelled on `test_the_parameter_table_is_the_hosts_own`):
+        each name a fresh host's `Get-Variable` lists is assigned at top
+        level in a fresh host of its own, the shape a tool call runs, and
+        read back. A name whose value does not stick would leave `$name\\x`
+        meaning something other than the temp root, so every such name must
+        be on `_PS_PREDEFINED_VARIABLES`. Windows PowerShell 5.1 listed 50
+        and kept 30 (read 2026-11-10); pwsh 7.6.5 lists 54 (air's read).
+        Skipped where the host is absent."""
+        import base64
+        import shutil
+        from concurrent.futures import ThreadPoolExecutor
+
+        import _bash_patterns as bp
+
+        exe = shutil.which(host)
+        if exe is None:
+            pytest.skip(f"no {host} on this host")
+
+        def run(script: str) -> str:
+            encoded = base64.b64encode(script.encode("utf-16-le")).decode()
+            return subprocess.run(
+                [exe, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+            ).stdout
+
+        def sticks(name: str) -> bool:
+            return "STUCK" in run(
+                "try { ${%s} = 'zz-stick' } catch { }; "
+                "if (${%s} -ceq 'zz-stick') { 'STUCK' } else { 'KEPT' }" % (name, name))
+
+        names = [n for n in run("(Get-Variable).Name").splitlines() if n.strip()]
+        assert len(names) > 20, names
+        with ThreadPoolExecutor(4) as pool:
+            kept = {n.lower() for n, stuck in zip(names, pool.map(sticks, names)) if not stuck}
+        assert kept, names
+        assert kept <= bp._PS_PREDEFINED_VARIABLES, sorted(kept - bp._PS_PREDEFINED_VARIABLES)
 
     def test_every_variable_a_fresh_host_lists_is_refused(self):
         """The 50 names a fresh Windows PowerShell 5.1 host's `Get-Variable`

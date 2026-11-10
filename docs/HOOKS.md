@@ -1312,12 +1312,15 @@ first; the dangerous-command catch is a secondary slip-catcher):
    literal path below the same root does, and draws the one nudge a
    variable draws (2026-11-07; until then it walled as unreadable); a
    comma array of such paths stays the wall. A path below a name bound to
-   one is read through the binding in one shape alone: `$d = $env:TEMP;`
-   (or `$env:TMP`) as the first statement, then the one remove statement,
-   with no brace, parenthesis, `&`, pipe, backtick, comment or further
-   statement, and a name PowerShell does not predefine, so nothing can
-   rebind or unbind the name before the remove reads it; `-Force $d\x`
-   then draws the in-place spelling's one nudge (2026-11-10).
+   one is read through the binding in one shape alone: `$d = $env:TEMP`
+   as the first statement (or `${env:TEMP}`, either one double-quoted,
+   and TMP or TMPDIR in place of TEMP), ended by `;` or a line break, then
+   the one remove statement, with no brace, parenthesis, `&`, pipe,
+   backtick, comment or further statement, and a name PowerShell does not
+   predefine, so nothing can rebind or unbind the name before the remove
+   reads it; `-Force $d\x` then gets the verdict the same value spelled in
+   place gets, the one nudge where the hook's own value of the variable is
+   an absolute path below a scratch root, else the wall (2026-11-10).
    Any other bound spelling stays the wall: a binding with a tail, work
    between the binding and the remove, a remove inside `try`/`finally`
    (spell `$env:TEMP\x` in place).
