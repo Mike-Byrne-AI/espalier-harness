@@ -3409,9 +3409,15 @@ class TestCatastrophicEnumeratorCarrier:
         ("Remove-Item -Recurse -Force .", "wall"),
         # DECLARED (air's 5581ae, driven at 351bbb5): a literal item piped
         # into the cmdlet is the PowerShell twin of a single path echoed into
-        # `xargs`, outside the wall like it; pinned as the exact verdict so
-        # the day a reader binds the piped literal this row reds
-        ("'.' | Remove-Item -Recurse", "allow"),
+        # `xargs`, outside the wall like it. Silent until DEF-3066, which
+        # nudges a piped recursive remove no enumerator feeds without reading
+        # what the pipe carries; pinned as the exact verdict so the day a
+        # reader binds the piped literal this row reds
+        ("'.' | Remove-Item -Recurse", "bump"),
+        # DEF-3066: a relative item piped in nudges as its operand twin does
+        ("Remove-Item -Recurse src", "bump"),
+        ("'src' | Remove-Item -Recurse", "bump"),
+        ("Get-ChildItem src | Where-Object { $_.Name -ne 'keep' } | Remove-Item -Recurse", "bump"),
     ])
     def test_through_the_hook_carrier_powershell(self, tmp_path, cmd, expect):
         result = run_guard_from("PowerShell", cmd, tmp_path, None)
@@ -4273,20 +4279,155 @@ class TestCatastrophicLoopCarrier:
         )
         assert _delete_verdict(result) == "allow", result.stdout
 
-    @pytest.mark.xfail(strict=True, reason=(
-        "DEF-836's PowerShell arm, declared not dropped: the bash half landed "
-        "2026-09-18 (the carrier-fed body, _LOOP_FEED_PREFIX) and the PS twin "
-        "has no reader yet. It draws the remove tier's variable-operand bump "
-        "where the statement-form loop beside it walls -- better than the bash "
-        "twin's silent allow, same defect: the body's shape decides where the "
-        "operand should. strict=True so the day it lands this xpasses and reds."))
-    def test_the_powershell_carrier_in_the_loop_body_walls_loop(self, tmp_path):
-        result = run_guard_from(
-            "PowerShell",
-            "foreach ($f in (Get-ChildItem -Recurse -Name)) { $f | Remove-Item -Recurse -Force }",
-            tmp_path, None,
-        )
-        assert _delete_verdict(result) == "wall", result.stdout
+    @pytest.mark.parametrize("cmd, expect", [
+        ("foreach ($f in (Get-ChildItem -Recurse -Name)) { $f | Remove-Item -Recurse -Force }", "wall"),
+        ("foreach ($f in (Get-ChildItem / -Recurse)) { $f | Remove-Item -Recurse -Force }", "wall"),
+        ("foreach ($f in (Get-ChildItem ~ -Recurse)) { $f | Remove-Item -Recurse -Force }", "wall"),
+        # the statement form beside it, which walled throughout
+        ("foreach ($f in (Get-ChildItem / -Recurse)) { Remove-Item -Recurse -Force $f }", "wall"),
+        # unforced, the header's enumerator is the body's feed: the reading
+        # of its statement twin (`gci / -Recurse | ri -r` walls)
+        ("foreach ($f in (Get-ChildItem / -Recurse)) { $f | Remove-Item -Recurse }", "wall"),
+        ("foreach ($f in (gci src)) { $f | ri -r }", "bump"),
+        ("foreach ($f in (gci src)) { ri -r $f }", "bump"),
+        ("foreach ($f in (gci build)) { $f | ri -r }", "allow"),
+        # glued, the tail read as a flag and main walled by accident; cut,
+        # the same reading walls on purpose
+        ("foreach($f in (gci / -Recurse)){$f|ri -r}", "wall"),
+        ("foreach($f in (gci -Recurse)){$f|ri -r}", "wall"),
+        ("foreach($f in (gci / -Recurse)){$f|ri -r -fo}", "wall"),
+        ("foreach($f in (gci src)){$f|ri -r}", "bump"),
+        # a group's output piped on is the enumerator's: its roster pass stays
+        ("(gci build) | ri -r", "allow"),
+        ("(Get-ChildItem /) | Remove-Item -Recurse", "wall"),
+        # a member call taking a script block is the group's output too: the
+        # narrowed cache clean is read as it was before the cut
+        ("(gci . -Recurse -Directory).Where({ $_.Name -eq '__pycache__' }) | ri -Recurse -Force", "allow"),
+        # a block's pipe that carries anything but the header's loop
+        # variable is fed by nothing: the record walls the forced form, the
+        # speed bump nudges the unforced one, whatever the header lists
+        ("foreach ($f in (gci build)) { $HOME | ri -r -fo }", "wall"),
+        ("foreach ($f in (gci build)) { 'src' | ri -r }", "bump"),
+        ("if ((gci build).Count -gt 0) { '/' | ri -r -fo }", "wall"),
+        ("if ($x) { gci build } else { $t | ri -r }", "bump"),
+        # an outer listing's span swallows an inner enumerator: the outer
+        # header does not feed the block, so the inner enumerator opens a
+        # match of its own and is read (the code review: both were silent
+        # before the cut)
+        ("foreach ($a in (gci build)) { foreach ($f in (gci / -Recurse)) { $f | ri -r -fo } }", "wall"),
+        ("if ($c) { gci build } else { gci / -Recurse | ri -r -fo }", "wall"),
+        # an inner loop reusing the outer's variable: the outer header
+        # matches the block's stage, yet the inner header binds it (the
+        # failure-mode review: silent at main and at the lane's first fix)
+        ("foreach ($f in (gci build)) { foreach ($f in (gci / -Recurse)) { $f | ri -r -fo } }", "wall"),
+        ("foreach ($f in (gci build)) { foreach ($f in (gci / -Recurse)) { $f | ri -r } }", "wall"),
+        ("foreach ($f in (gci build)) { foreach ($f in (gci ~ -Recurse)) { $f | ri -r -fo } }", "wall"),
+        ("foreach ($f in (gci / -Recurse)) { foreach ($f in (gci build)) { $f | ri -r -fo } }", "allow"),
+        # a block's listing rooted at a variable reads as its statement twin
+        # (`gci $f -Recurse | ri -r` walls at main), the header's variable
+        # included: DECLARED, the header's roots are not carried into it
+        ("foreach ($f in (gci build -Directory)) { gci $f -Recurse | ri -r }", "wall"),
+        ("gci $f -Recurse | ri -r", "wall"),
+        ("if ((gci $p).Count) { gci $p -Recurse | ri -r }", "wall"),
+        ("gci src -Recurse -Directory | ForEach-Object { if ((gci $_.FullName).Count -eq 0) { gci $_.FullName | ri -r } }", "wall"),
+        # a block the header does not feed has its own pipeline read, as its
+        # statement twin (air's 22f230, the verifier's clean: the
+        # condition's listing opened the only match, the block's pipeline
+        # was never read, and the head walled what main allows). Unforced
+        # too: the inner loop and the else branch walled forced only, by
+        # the record, where their twins wall either way
+        ("if ((Get-ChildItem build).Count -gt 0) { Get-ChildItem build -Recurse | Remove-Item -Recurse -Force }", "allow"),
+        ("if ((Get-ChildItem build).Count -gt 0) { Get-ChildItem build -Recurse | Remove-Item -Recurse }", "allow"),
+        ("if (Get-Item build -ErrorAction Ignore) { Get-ChildItem build -Recurse | Remove-Item -Recurse -Force }", "allow"),
+        ("if (Get-Item build -ErrorAction Ignore) { Get-ChildItem build -Recurse | Remove-Item -Recurse }", "allow"),
+        ("if (Test-Path build) { Get-ChildItem build -Recurse | Remove-Item -Recurse -Force }", "allow"),
+        ("if ((gci build).Count -gt 0) { gci src -Recurse | ri -r -fo }", "bump"),
+        ("if ((gci build).Count -gt 0) { gci src -Recurse | ri -r }", "bump"),
+        ("if ((gci build).Count -gt 0) { gci / -Recurse | ri -r -fo }", "wall"),
+        ("if ((gci build).Count -gt 0) { gci / -Recurse | ri -r }", "wall"),
+        ("if ($c) { gci build } else { gci / -Recurse | ri -r }", "wall"),
+        ("foreach ($a in (gci build)) { foreach ($f in (gci / -Recurse)) { $f | ri -r } }", "wall"),
+        # the four cells the verifier judged by hand: the statement over
+        # `/`, `~` and the checkout root, and the loop over `~`, unforced
+        ("Get-ChildItem / -Recurse | Remove-Item -Recurse", "wall"),
+        ("Get-ChildItem ~ -Recurse | Remove-Item -Recurse", "wall"),
+        ("Get-ChildItem . -Recurse | Remove-Item -Recurse", "wall"),
+        ("foreach ($f in (Get-ChildItem ~ -Recurse)) { $f | Remove-Item -Recurse }", "wall"),
+        # DECLARED: the ForEach-Object body over a listing is not read as fed
+        # by it (its pipe goes into ForEach-Object, not into a remove), so
+        # the unforced body nudges where its statement twin walls; pinned as
+        # the exact verdict so the day a reader binds `$_` this row reds
+        ("Get-ChildItem / -Recurse | ForEach-Object { $_ | Remove-Item -Recurse }", "bump"),
+        ("gci / -Recurse | % { $_ | ri -r }", "bump"),
+        ("gci / -Recurse | % { $_ | ri -r -fo }", "wall"),
+    ])
+    def test_the_powershell_carrier_in_the_loop_body_walls_loop(self, tmp_path, cmd, expect):
+        """DEF-836's PowerShell arm, restated by DEF-3066. The xfail this
+        replaced asserted the wall and said the body drew the variable-operand
+        bump; it was a silent allow. The enumerator reader's span ran to the
+        first pipe, so it read past the loop header's closers into the body:
+        `{` and `$f` read as a positional filter, the pipeline as narrowed,
+        and the remove as recognized safe -- for every root, `/` included,
+        while the statement form walled. Read through `_ps_fed_removes`, a
+        body that pipes the `foreach` header's variable is fed by the
+        header's listing, cut at the header's close, and reads as its
+        statement twin (`/` walls, `src` nudges, `build` passes), forced or
+        not, spaced or glued; a block's pipe carrying anything else is fed
+        by nothing (forced: the record's wall; unforced: the nudge)."""
+        result = run_guard_from("PowerShell", cmd, tmp_path, None)
+        assert _delete_verdict(result) == expect, (cmd, result.stdout)
+
+    @pytest.mark.parametrize("text", [
+        "gci build -Path (gci /) | ri -r",
+        "gci build | ri -r; gci dist | ri -r -fo",
+        "(gci src) | ri -r; Get-ChildItem out -Recurse | Remove-Item -Recurse",
+    ])
+    def test_a_match_whose_pipe_is_its_own_resumes_past_its_end_loop(self, text):
+        """The walk re-searches past a head only where the match's pipe sits
+        in a block; elsewhere it is `finditer` (the code review: a walk that
+        always resumed past the head moved no verdict row, and read an
+        enumerator inside a fed match's span as a feed of its own)."""
+        bp = _bash_patterns_module()
+        scan = bp.powershell_scan_text(text)
+        walked = [m.span() for m, _fed in bp._ps_piped_remove_matches(scan)]
+        assert walked == [m.span() for m in bp._PS_PIPED_REMOVE_RE.finditer(scan)]
+
+    def test_the_piped_remove_regex_has_exactly_its_two_readers_loop(self):
+        """DEF-3066: the verdict readers and the zone reader take the
+        enumerator pipe through `_ps_fed_removes`, which reads a loop
+        header's listing as its body's feed, a block its header does not
+        feed by the block's own pipeline (air's 22f230), and each remove by
+        one feed, the innermost. A reader that searched the regex itself
+        would read the block's brace as a narrowing filter again, and the
+        failure-mode review found that reverting two of the three verdict
+        readers moved no row. `_ps_piped_remove_matches` is the one site
+        that searches the regex and the one caller of `_ps_header_feed`.
+        Grows deliberately."""
+        import ast
+
+        tree = ast.parse((HOOKS_DIR / "_bash_patterns.py").read_text(encoding="utf-8"))
+        sites: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                for sub in ast.walk(node):
+                    if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
+                            and sub.func.attr in ("finditer", "search", "match", "fullmatch")
+                            and isinstance(sub.func.value, ast.Name)
+                            and sub.func.value.id == "_PS_PIPED_REMOVE_RE"):
+                        sites.add(node.name)
+        assert sites == {"_ps_piped_remove_matches"}, sites
+
+        def callers(name: str) -> set[str]:
+            return {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+                    and any(isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name)
+                            and sub.func.id == name for sub in ast.walk(node))}
+
+        # the feed of one match is final only past the search that follows
+        # it (a None may be a block an inner enumerator feeds): the walk
+        # alone asks it, and one reader dedupes the walk for every consumer
+        assert callers("_ps_header_feed") == {"_ps_piped_remove_matches"}
+        assert callers("_ps_piped_remove_matches") == {"_ps_fed_removes"}
+        assert "iter_ps_removed_or_relocated_operands" in callers("_ps_fed_removes")
 
     def test_the_placement_helper_has_exactly_its_two_callers_loop(self):
         """The carrier and the loop carrier place their sweeps through ONE
@@ -17311,6 +17452,22 @@ class TestRemovedOrRelocatedOperandIsAMutation:
             "gci -Recurse -Include *.pyc | ri"),
         "ps-delete-piped-newline-after-pipe": (
             "PowerShell", "deny", "_PS_PIPED_REMOVE_RE", 'gci "{D}" -Recurse -File |\nri'),
+        # DEF-3066: a loop body piping its variable is fed by the header's
+        # listing; read raw, the block's brace narrowed the ancestor's sweep
+        "ps-ancestor-piped-in-a-loop-body": (
+            "PowerShell", "deny", "_PS_PIPED_REMOVE_RE", 'foreach ($f in (gci "{A}")) { $f | ri -r -fo }'),
+        # air's 22f230: a block its header does not feed has its own pipeline
+        # read; the condition's listing opened the only match before
+        "ps-zone-piped-in-an-if-block": (
+            "PowerShell", "deny", "_PS_PIPED_REMOVE_RE",
+            'if ((gci build).Count -gt 0) { gci "{D}" -Recurse | ri -r }'),
+        "ps-zone-listed-in-an-if-condition": (
+            "PowerShell", "allow", "a condition's listing is no delete: the block's own pipeline "
+            "is read, by itself (the failure-mode review: refused at main)",
+            'if ((gci "{D}").Count -gt 0) { gci build -Recurse | ri -r }'),
+        "ps-zone-reused-loop-variable": (
+            "PowerShell", "deny", "_PS_PIPED_REMOVE_RE",
+            'foreach ($f in (gci build)) { foreach ($f in (gci "{D}" -Recurse)) { $f | ri -r } }'),
         # ── PowerShell: the native single-file deletes and git clean (the
         # failure-mode review: the Bash reader's verbs this tool lacked --
         # `unlink <hook>` deleted the hook under pwsh while Bash refused it) ──
@@ -17771,12 +17928,19 @@ class TestRemovedOrRelocatedOperandIsAMutation:
 
         tree = ast.parse((HOOKS_DIR / "_bash_patterns.py").read_text(encoding="utf-8"))
         readers = {"_iter_removed_or_relocated_operands", "iter_ps_removed_or_relocated_operands"}
+        # a helper that is the one site searching its arm stands for that
+        # arm where a reader calls it (TestCatastrophicLoopCarrier's
+        # site test pins the helper as the regex's only search site)
+        helpers = {"_ps_fed_removes": "_PS_PIPED_REMOVE_RE"}
         searched: set[str] = set()
         seen: set[str] = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef) and node.name in readers:
                 seen.add(node.name)
                 for sub in ast.walk(node):
+                    if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name)
+                            and sub.func.id in helpers):
+                        searched.add(helpers[sub.func.id])
                     if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
                             and sub.func.attr in ("finditer", "search", "match")
                             and isinstance(sub.func.value, ast.Name)
@@ -18374,6 +18538,222 @@ class TestADirectoryHoldingHarnessGround:
         assert text in reason, reason
         self._offers_neither_remedy(reason)
         assert "names `tools/cc/` under" not in reason, reason
+
+
+class TestAnMcpMoveDestinationIsAWrite:
+    """DEF-2026: an MCP move tool writes into the directory it names as its
+    destination and takes nothing from it, as `mv a.txt tools` and
+    `Move-Item a.txt tools` do. So a destination that only ENCLOSES harness
+    ground (`tools` holding `tools/cc/`, `.claude` the settings files, `.github`
+    the harness-guard workflow) is judged as the shells judge it: a write, and
+    allowed. Until this lane `check_mcp` read every path field of a
+    remove-or-relocate tool as taken, and refused such a move with the
+    maintenance relaunch (driven 2026-10-17 on DEF-5012's lane). A destination
+    that is or lies in harness ground stays refused, and so does every operand
+    the tool takes: a move's source, each operand of a delete, a `target` key
+    (a rename's operand), and a destination key in an object that names no
+    source. A name the move lands on harness ground (`settings.json` moved into
+    `.claude/`) stays refused too: the lane's review drove both as false allows
+    of the row's first shape."""
+
+    #: The keys a move names its destination and its source by, spelled here
+    #: and held equal to the guard's sets by the first test, so a key added
+    #: there is driven here.
+    _DESTINATION_KEYS = ("destination", "dest", "dst", "new_path", "to")
+    _SOURCE_KEYS = ("source", "src", "from", "path", "file_path", "old_path", "uri")
+
+    #: Directories that hold harness ground and are none of it.
+    _ENCLOSING = ("tools", "tools/", ".claude", ".github")
+
+    _DIRS = ("tools/cc/hooks", "tools/mine", ".claude", ".github/workflows")
+    _FILES = (".claude/settings.json", ".github/workflows/harness-guard.yml")
+
+    #: No zone, and an adopter zone inside `tools/` (a destination of `tools`
+    #: encloses both the zone and the harness ground).
+    _TOMLS = {"no-zone": None, "a-zone-inside-it": 'protected_paths = ["tools/mine/"]\n'}
+
+    @staticmethod
+    def _wg():
+        _bash_patterns_module()
+        import write_guard as wg
+
+        return wg
+
+    def _tree(self, tmp_path: Path, monkeypatch, toml: str) -> Path:
+        return _zone_tree(tmp_path, monkeypatch, self._TOMLS[toml], self._DIRS, self._FILES)
+
+    def test_the_keys_are_the_guards(self):
+        wg = self._wg()
+        assert frozenset(self._DESTINATION_KEYS) == wg._MCP_DESTINATION_KEYS
+        assert frozenset(self._SOURCE_KEYS) == wg._MCP_SOURCE_KEYS
+
+    @pytest.mark.parametrize("toml", list(_TOMLS))
+    @pytest.mark.parametrize("key", _DESTINATION_KEYS)
+    @pytest.mark.parametrize("destination", _ENCLOSING)
+    def test_a_destination_that_encloses_harness_ground_is_allowed(self, tmp_path, monkeypatch, toml, key, destination):
+        root = self._tree(tmp_path, monkeypatch, toml)
+        reason = _zone_deny_reason(
+            self._wg().check_mcp, {"source": "a.txt", key: destination}, "mcp__fs__move_file", root)
+        assert reason == "", reason
+
+    @pytest.mark.parametrize("payload", [
+        {"moves": [{"source": "a.txt", "destination": "tools"}]},
+        {"source": "a.txt", "to": ["tools", ".claude"]},
+        {"items": [{"from": "a.txt", "to": ".github"}]},
+    ], ids=["a-list-of-moves", "a-list-under-the-key", "a-nested-to"])
+    def test_a_nested_destination_is_read_by_its_own_key(self, tmp_path, monkeypatch, payload):
+        # The leaf walk's governing key is the nearest dict key, and a list
+        # takes its parent's (docs/sharp-edges/protected-zone-mcp-leaf-walk.md).
+        # A list under a canonical field (`destination`) is the malformed
+        # payload's deny whatever its key, so the list cell is under `to`.
+        root = self._tree(tmp_path, monkeypatch, "no-zone")
+        assert _zone_deny_reason(self._wg().check_mcp, payload, "mcp__fs__move_file", root) == ""
+
+    @pytest.mark.parametrize("destination", _ENCLOSING)
+    def test_the_shells_and_the_mcp_tool_read_one_move_alike(self, tmp_path, monkeypatch, destination):
+        root = self._tree(tmp_path, monkeypatch, "no-zone")
+        wg = self._wg()
+        verdicts = {
+            "bash": _zone_deny_reason(wg.check_bash_for_protected_mutations, f"mv a.txt {destination}", root, root),
+            "powershell": _zone_deny_reason(
+                wg.check_powershell_for_protected_mutations, f"Move-Item a.txt {destination}", root, root),
+            "mcp": _zone_deny_reason(
+                wg.check_mcp, {"source": "a.txt", "destination": destination}, "mcp__fs__move_file", root),
+        }
+        assert verdicts == {"bash": "", "powershell": "", "mcp": ""}, verdicts
+
+    @pytest.mark.parametrize("toml", list(_TOMLS))
+    @pytest.mark.parametrize("destination", [
+        "tools/cc", "tools/cc/hooks/x.py", "cc", ".claude/settings.json", ".github/workflows/harness-guard.yml",
+    ])
+    def test_a_destination_that_is_or_lies_in_harness_ground_stays_refused(self, tmp_path, monkeypatch, toml,
+                                                                         destination):
+        root = self._tree(tmp_path, monkeypatch, toml)
+        reason = _zone_deny_reason(
+            self._wg().check_mcp, {"source": "a.txt", "destination": destination}, "mcp__fs__move_file", root)
+        assert reason and "is inside it" not in reason, reason
+
+    @pytest.mark.parametrize("toml", list(_TOMLS))
+    @pytest.mark.parametrize(("tool", "payload"), [
+        ("mcp__fs__move_file", {"source": "tools", "destination": "x"}),
+        ("mcp__fs__rename", {"path": ".github", "new_path": "x"}),
+        ("mcp__fs__move_file", {"from": ".claude", "to": "x"}),
+        ("mcp__fs__delete_file", {"target": "tools"}),
+        ("mcp__fs__remove_directory", {"destination": ".github"}),
+        ("mcp__fs__trash", {"to": ".claude"}),
+        # The review's rows: a `target` is the operand renamed or moved, and a
+        # destination key beside no source key may be the thing moved.
+        ("mcp__fs__rename_file", {"target": "tools", "new_name": "tools2"}),
+        ("mcp__fs__move_file", {"target": "tools", "destination": "elsewhere"}),
+        ("mcp__fs__move", {"to": "tools"}),
+        ("mcp__fs__move_to_recycle_bin", {"target": "tools"}),
+        ("mcp__fs__rename", {"target_uri": "tools", "new_name": "x"}),
+        ("mcp__fs__move", {"target": "tools", "to": "archive"}),
+        ("mcp__fs__move_file", {"path": "a.txt", "target": "tools"}),
+        ("mcp__fs__move_file", {"moves": [{"source": "a.txt", "destination": "x"}, {"to": "tools"}]}),
+    ], ids=["move-source", "rename-path", "move-from", "delete-target", "remove-destination", "trash-to",
+            "rename-target-alone", "move-target-beside-a-destination", "move-to-alone", "recycle-target",
+            "rename-target-uri", "move-target-beside-to", "move-target-beside-a-source", "a-batch-object-unsourced"])
+    def test_an_operand_the_tool_takes_stays_refused(self, tmp_path, monkeypatch, toml, tool, payload):
+        # A delete takes every operand it names, under any key: `destination`
+        # and `to` are a move's destination keys and a delete's operands.
+        root = self._tree(tmp_path, monkeypatch, toml)
+        reason = _zone_deny_reason(self._wg().check_mcp, payload, tool, root)
+        assert "is inside it" in reason, reason
+
+    @pytest.mark.parametrize("toml", list(_TOMLS))
+    @pytest.mark.parametrize(("tool", "payload", "landed"), [
+        ("mcp__fs__move_file", {"source": "settings.json", "destination": ".claude"}, ".claude/settings.json"),
+        ("mcp__fs__move_file", {"source": "x/settings.json", "destination": ".claude/"}, ".claude/settings.json"),
+        ("mcp__fs__move_file", {"source": "x\\settings.json", "destination": ".claude"}, ".claude/settings.json"),
+        ("mcp__fs__move_file", {"source": "harness-guard.yml", "destination": ".github/workflows"},
+         ".github/workflows/harness-guard.yml"),
+        ("mcp__fs__rename", {"from": "harness-guard.yml", "to": ".github/workflows/"},
+         ".github/workflows/harness-guard.yml"),
+        ("mcp__fs__move_file", {"moves": [{"from": "settings.json", "to": ".claude"}]}, ".claude/settings.json"),
+        ("mcp__fs__move_file", {"source": "x/cc", "destination": "."}, "cc"),
+    ], ids=["settings-into-claude", "settings-into-claude-slash", "settings-backslash-source", "guard-into-workflows",
+            "guard-from-to", "a-nested-move", "a-directory-onto-the-zone"])
+    def test_a_name_the_move_lands_on_harness_ground_stays_refused(self, tmp_path, monkeypatch, toml, tool,
+                                                                   payload, landed):
+        root = self._tree(tmp_path, monkeypatch, toml)
+        reason = _zone_deny_reason(self._wg().check_mcp, payload, tool, root)
+        assert reason.startswith(f"Write to protected harness zone blocked: {landed} "), reason
+
+    @pytest.mark.parametrize(("payload", "text"), [
+        # The landed name is judged with the remove reading: a directory that
+        # lands where one holding harness ground stands is refused, as on main.
+        ({"source": "x/workflows", "destination": ".github"}, "is inside it"),
+        # The operands are every taken value in the object and below it.
+        ({"source": "q", "destination": ".claude", "extra": {"file": "x/settings.json"}},
+         "Write to protected harness zone blocked: .claude/settings.json "),
+        # The last component is read after normpath, as the leaf walk reads it.
+        ({"source": "x/settings.json/.", "destination": ".claude"},
+         "Write to protected harness zone blocked: .claude/settings.json "),
+        # A key holding the location's marks names no sourced object: the
+        # round-2 review's collision, read as taken (main's reading).
+        ({"m": {"x": {"source": "a.txt"}}, "m.x": {"to": "tools"}}, "is inside it"),
+        ({"m": [{"source": "a.txt"}], "m[0]": {"to": "tools"}}, "is inside it"),
+    ], ids=["a-landed-directory-holding-ground", "an-operand-below-the-object", "a-dot-component", "a-dotted-key",
+            "a-bracketed-key"])
+    def test_the_landing_read_and_the_object_read_hold_their_edges(self, tmp_path, monkeypatch, payload, text):
+        root = self._tree(tmp_path, monkeypatch, "no-zone")
+        reason = _zone_deny_reason(self._wg().check_mcp, payload, "mcp__fs__move_file", root)
+        assert text in reason, reason
+
+    @pytest.mark.parametrize("key", ["destination", "new_path", "dst"])
+    @pytest.mark.parametrize("spelling", ["lnk", "lnk/"])
+    def test_a_destination_named_through_a_symlink_lands_where_the_file_does(self, tmp_path, monkeypatch, key,
+                                                                            spelling):
+        # The canonical fields resolve, so the landed name is built on what the
+        # link names, as `mv settings.json lnk/` reads it (round-2 review).
+        root = self._tree(tmp_path, monkeypatch, "no-zone")
+        try:
+            os.symlink(root / ".claude", root / "lnk", target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            pytest.skip(f"no symlink on this host: {exc}")
+        reason = _zone_deny_reason(
+            self._wg().check_mcp, {"source": "settings.json", key: spelling}, "mcp__fs__move_file", root)
+        assert reason.startswith("Write to protected harness zone blocked: .claude/settings.json"), reason
+
+    def test_a_destination_that_links_out_of_the_checkout_lands_by_its_spelling_too(self, tmp_path, monkeypatch):
+        # The landed name is judged as spelled and as resolved, either refusing,
+        # as main reads a destination on both layers: a `.claude` that is a link
+        # to a folder outside the checkout still holds the settings file.
+        root = _zone_tree(tmp_path, monkeypatch, None, ("tools/cc/hooks",), ())
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        try:
+            os.symlink(outside, root / ".claude", target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            pytest.skip(f"no symlink on this host: {exc}")
+        reason = _zone_deny_reason(
+            self._wg().check_mcp, {"source": "settings.json", "destination": ".claude"}, "mcp__fs__move_file", root)
+        assert reason.startswith("Write to protected harness zone blocked: .claude/settings.json"), reason
+
+    def test_a_batch_of_moves_is_read_one_object_at_a_time(self, tmp_path, monkeypatch):
+        # Each move's operands are read from its own object, so a long batch
+        # stays a pair per move and never reads as too large to verify.
+        root = self._tree(tmp_path, monkeypatch, "no-zone")
+        payload = {"moves": [{"source": f"a{i}.txt", "destination": "tools"} for i in range(2000)]}
+        assert _zone_deny_reason(self._wg().check_mcp, payload, "mcp__fs__move_file", root) == ""
+
+    @pytest.mark.parametrize(("bash", "powershell", "payload"), [
+        ("mv x/settings.json .claude/", "Move-Item -Path x/settings.json -Destination .claude/",
+         {"source": "x/settings.json", "destination": ".claude/"}),
+        ("mv harness-guard.yml .github/workflows/", "Move-Item -Path harness-guard.yml -Destination .github/workflows/",
+         {"source": "harness-guard.yml", "destination": ".github/workflows/"}),
+    ], ids=["settings", "guard"])
+    def test_the_shells_and_the_mcp_tool_refuse_one_landing_alike(self, tmp_path, monkeypatch, bash, powershell,
+                                                                  payload):
+        root = self._tree(tmp_path, monkeypatch, "no-zone")
+        wg = self._wg()
+        verdicts = {
+            "bash": bool(_zone_deny_reason(wg.check_bash_for_protected_mutations, bash, root, root)),
+            "powershell": bool(_zone_deny_reason(wg.check_powershell_for_protected_mutations, powershell, root, root)),
+            "mcp": bool(_zone_deny_reason(wg.check_mcp, payload, "mcp__fs__move_file", root)),
+        }
+        assert verdicts == {"bash": True, "powershell": True, "mcp": True}, verdicts
 
 
 def _unpaired_zone_denies(source: str) -> list[str]:
