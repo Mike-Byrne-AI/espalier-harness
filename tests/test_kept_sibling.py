@@ -14,6 +14,7 @@ must not read as a kept file.
 # slow-exempt: four ship.py --help children over copied tools/cc trees, each under a second
 from __future__ import annotations
 
+import ast
 import importlib.util
 import shutil
 import subprocess
@@ -23,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._live_tree import copy_checkout
+from tests._live_tree import checkout_glob, copy_checkout
 from tests._wait_budget import scaled
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -277,3 +278,207 @@ class TestTheBannerOnAKeptPostMerge:
         banner = _banner()
         monkeypatch.setattr(banner, "_load_post_merge", lambda: None)
         assert banner._post_merge_unread() == banner._POST_MERGE_UNREAD
+
+
+# ── every script that takes a sibling arms the reader (DEF-5088) ─────────────
+
+#: The one text every armed script carries, placed right after its leading run
+#: of standard-library imports, so no sibling is read before it. Until DEF-5088
+#: only ``ship.py`` named a kept sibling; the twenty other scripts that take a
+#: sibling's name ended in a traceback naming an attribute (``board.py --help``
+#: over a copy whose ``_post_merge.py`` lacks ``RUN_RED``, driven 2026-11-08).
+#: Lazy, so a run that raises nothing pays nothing: ``ship.py``'s eager by-path
+#: load cost 1.5 ms a run (median of 25 on the Air), and ``statusline.py`` runs at
+#: every render. ``_KEPT_*`` are read when the block runs, since ``__main__``'s
+#: ``__file__`` can read as None by the time an excepthook runs; the traceback
+#: type is aliased because ``_explain_path.py`` evaluates its annotations; the
+#: previous hook is put back before the reader installs its own, which wraps it.
+ARM_BLOCK = '''\
+# A kept, older sibling is named with its repair, never a traceback that names
+# an attribute: an uncaught exception loads hooks/_start_refusal.py by path and
+# hands it to that module's refuse_kept_siblings. The one text of this block,
+# and why each line is there, is tests/test_kept_sibling.py's ARM_BLOCK.
+if __name__ == "__main__":
+    from types import TracebackType as _KeptTraceback
+
+    _KEPT_FROM = Path(__file__).resolve().parent
+    _KEPT_SCRIPT = Path(__file__).name
+    _KEPT_BEFORE = sys.excepthook
+
+    def _name_a_kept_sibling(kind: type[BaseException], exc: BaseException, tb: _KeptTraceback | None) -> None:
+        sys.excepthook = _KEPT_BEFORE
+        try:
+            import importlib.util
+            at = (_KEPT_FROM if _KEPT_FROM.name == "hooks" else _KEPT_FROM / "hooks") / "_start_refusal.py"
+            spec = importlib.util.spec_from_file_location("_start_refusal_by_path", at)
+            if spec is not None and spec.loader is not None:
+                reader = importlib.util.module_from_spec(spec)
+                sys.modules[spec.name] = reader
+                spec.loader.exec_module(reader)
+                refuse = getattr(reader, "refuse_kept_siblings", None)
+                if callable(refuse):
+                    refuse(_KEPT_SCRIPT)
+        # fail-open: ok deliberate without the reader a kept sibling keeps its traceback, as before
+        except Exception:  # noqa: BLE001, S110
+            pass
+        sys.excepthook(kind, exc, tb)
+
+    sys.excepthook = _name_a_kept_sibling
+'''
+
+
+def _sibling_stems() -> set[str]:
+    return {p.stem for p in [*checkout_glob(CC_DIR, "*.py"), *checkout_glob(CC_DIR / "hooks", "*.py")]} - {"__init__"}
+
+
+def _runs_as_a_script(tree: ast.Module) -> bool:
+    return any(isinstance(node, ast.If) and "__main__" in ast.unparse(node.test) for node in tree.body)
+
+
+def _armed_population() -> list[Path]:
+    """Every ``tools/cc`` source that takes a sibling's name, as the upgrade's
+    kept-file check reads it (``espalier/cli.py::_sibling_takes``), and runs as
+    a script, less the event hooks (``espalier/surface_contract.py::
+    _CANONICAL_HOOK_SCRIPTS``: the deny hooks refuse through their own start
+    guard, and no hook path carries this block's weight)."""
+    from espalier.cli import _sibling_takes
+    from espalier.surface_contract import _CANONICAL_HOOK_SCRIPTS
+
+    names, keywords = _sibling_takes(CC_DIR)
+    takers = {rel for taken in names.values() for sources in taken.values() for rel in sources}
+    takers |= {rel for calls in keywords.values() for passed in calls.values()
+               for sources in passed.values() for rel in sources}
+    population = []
+    for rel in sorted(takers):
+        path = REPO_ROOT / rel
+        if path.parent.name == "hooks" and path.name in _CANONICAL_HOOK_SCRIPTS:
+            continue
+        if _runs_as_a_script(ast.parse(path.read_text(encoding="utf-8"))):
+            population.append(path)
+    return population
+
+
+def _head_problems(head: str, siblings: set[str]) -> list[str]:
+    """What stands before the block that may not: anything but the docstring and
+    imports of modules that are not siblings, and ``sys`` or ``Path`` unbound
+    (the block reads both when it runs)."""
+    problems: list[str] = []
+    bound: set[str] = set()
+    for i, node in enumerate(ast.parse(head).body):
+        if i == 0 and isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+            continue
+        if isinstance(node, ast.Import):
+            tops = {alias.name.split(".")[0] for alias in node.names}
+            bound |= {alias.asname or alias.name.split(".")[0] for alias in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.level == 0:
+            tops = {(node.module or "").split(".")[0]}
+            bound |= {alias.asname or alias.name for alias in node.names}
+        else:
+            problems.append(f"line {node.lineno}: a {type(node).__name__} statement before the block")
+            continue
+        if tops & siblings:
+            problems.append(f"line {node.lineno}: a sibling import before the block")
+    problems += [f"`{name}` is not bound before the block" for name in ("sys", "Path") if name not in bound]
+    return problems
+
+
+class TestEveryScriptThatTakesASiblingArmsTheReader:
+    def test_the_population_is_the_takers_that_run_as_scripts(self):
+        rels = {p.relative_to(REPO_ROOT).as_posix() for p in _armed_population()}
+        # A floor, not the census: a walk that read nothing would pass the
+        # placement row below on no member at all.
+        anchors = {"tools/cc/ship.py", "tools/cc/board.py", "tools/cc/ledger_row.py",
+                   "tools/cc/statusline.py", "tools/cc/hooks/_recall.py", "tools/cc/hooks/_explain_path.py"}
+        assert anchors <= rels, sorted(anchors - rels)
+        assert len(rels) >= 21, sorted(rels)
+        assert not any(rel.endswith(("/write_guard.py", "/stop_gate.py")) for rel in rels)
+
+    def test_every_member_carries_the_one_block_ahead_of_its_siblings(self):
+        siblings = _sibling_stems()
+        problems: dict[str, list[str]] = {}
+        for path in _armed_population():
+            rel = path.relative_to(REPO_ROOT).as_posix()
+            text = path.read_text(encoding="utf-8")
+            count = text.count(ARM_BLOCK)
+            if count != 1:
+                problems[rel] = [f"carries the block {count} times"]
+            elif found := _head_problems(text[:text.index(ARM_BLOCK)], siblings):
+                problems[rel] = found
+        assert not problems, (
+            "each script that takes a sibling's name carries ARM_BLOCK once, right after its leading"
+            " standard-library imports:\n"
+            + "\n".join(f"  {rel}: {'; '.join(found)}" for rel, found in sorted(problems.items()))
+            + "\nthe block, byte for byte:\n" + ARM_BLOCK)
+
+    def test_no_event_hook_carries_the_block(self):
+        from espalier.surface_contract import _CANONICAL_HOOK_SCRIPTS
+
+        carrying = [name for name in _CANONICAL_HOOK_SCRIPTS
+                    if "_name_a_kept_sibling" in (CC_DIR / "hooks" / name).read_text(encoding="utf-8")]
+        assert carrying == []
+
+
+#: Each cell: the script driven, its plants (the file, the text appended) and
+#: the name the refusal must give (None: a control that keeps its traceback).
+#: ``module_read`` is the row's probe (an attribute read at module level);
+#: ``from_import`` a member in ``hooks/`` failing a ``from`` import;
+#: ``loader_read`` a sibling loaded by path under an alias, then read.
+_SCRIPT_CELLS = {
+    "module_read": ("board.py", [("_post_merge.py", "\ndel RUN_RED\n")], "RUN_RED"),
+    "from_import": ("hooks/_recall.py", [("hooks/_hook_utils.py", "\ndel is_seeded_placeholder\n")],
+                    "is_seeded_placeholder"),
+    "loader_read": ("ledger_row.py", [("generate_ledger_regions.py", "\ndel record_fragments\n")],
+                    "record_fragments"),
+    "raised": ("board.py", [("_post_merge.py", "\nraise KeyError(1)\n")], None),
+    "no_reader": ("board.py", [("_post_merge.py", "\ndel RUN_RED\n"),
+                               ("hooks/_start_refusal.py", "\ndel refuse_kept_siblings\n")], None),
+}
+
+
+def _drive_script(tmp_path: Path, script: str, plants: list[tuple[str, str]]) -> subprocess.CompletedProcess:
+    root = tmp_path / "copy"
+    copy_checkout(CC_DIR, root / "tools" / "cc", ignore=shutil.ignore_patterns("__pycache__"))
+    for name, text in plants:
+        target = root / "tools" / "cc" / name
+        target.write_bytes(target.read_bytes() + text.encode("utf-8"))
+    return subprocess.run(
+        [sys.executable, str(root / "tools" / "cc" / script), "--help"],
+        cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=scaled(30),
+    )
+
+
+class TestAnArmedScriptOnAKeptSibling:
+    @pytest.mark.parametrize("cell", ["module_read", "from_import", "loader_read"])
+    def test_a_name_a_sibling_lacks_is_one_named_refusal(self, tmp_path, cell):
+        script, plants, taken = _SCRIPT_CELLS[cell]
+        run = _drive_script(tmp_path, script, plants)
+        kept = plants[0][0]
+        name = Path(script).name
+        assert run.returncode == 1, (run.returncode, run.stderr[-600:])
+        assert "Traceback" not in run.stderr, run.stderr[-600:]
+        assert run.stderr.startswith(f"{name} cannot run: tools/cc/{script}:"), run.stderr[-600:]
+        assert f"takes `{taken}` from tools/cc/{kept}, which lacks it" in run.stderr, run.stderr[-600:]
+        assert "`espalier upgrade --execute .`" in run.stderr
+
+    def test_a_sibling_that_raises_otherwise_keeps_its_traceback(self, tmp_path):
+        script, plants, _taken = _SCRIPT_CELLS["raised"]
+        run = _drive_script(tmp_path, script, plants)
+        assert run.returncode == 1, run.stderr[-600:]
+        assert "Traceback" in run.stderr and "KeyError: 1" in run.stderr, run.stderr[-600:]
+        assert "cannot run" not in run.stderr and "Error in sys.excepthook" not in run.stderr
+
+    def test_a_kept_reader_without_the_refusal_leaves_the_traceback_alone(self, tmp_path):
+        # A _start_refusal.py kept from before the refusal existed: the block
+        # hands the exception on untouched, and never fails inside the hook.
+        script, plants, _taken = _SCRIPT_CELLS["no_reader"]
+        run = _drive_script(tmp_path, script, plants)
+        assert run.returncode == 1, run.stderr[-600:]
+        assert "Traceback" in run.stderr and "RUN_RED" in run.stderr, run.stderr[-600:]
+        assert "Error in sys.excepthook" not in run.stderr and "cannot run" not in run.stderr
+
+    def test_the_intact_copy_prints_its_usage(self, tmp_path):
+        run = _drive_script(tmp_path, "board.py", [])
+        assert run.returncode == 0, run.stderr[-600:]
+        assert run.stdout.startswith("usage: board.py"), run.stdout[:200]
+        assert run.stderr == ""
