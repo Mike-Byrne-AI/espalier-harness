@@ -1,0 +1,10 @@
+{
+ "id": "DEF-3065",
+ "subject": "tools/cc/ledger_row.py",
+ "cmd": "python -c 'import os, re, subprocess, sys; e = dict(os.environ, COLUMNS=\"80\"); out = subprocess.run([sys.executable, \"tools/cc/ledger_row.py\", \"file\", \"--help\"], capture_output=True, text=True, env=e).stdout; print(bool(re.search(r\"[A-Za-z0-9_./`]-$\", out, re.M)))'",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "d3cb5fb96fc3",
+ "text_sha": "074c4396ef6c",
+ "verified_2026_11_09": "OPEN (filed 2026-11-09; probe driven at filing here and in the export of HEAD c96b47ffa279)"
+}

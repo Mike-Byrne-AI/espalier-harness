@@ -15974,6 +15974,37 @@ def _add_allow_rollback_arg(parser: argparse.ArgumentParser) -> None:
 _HELP_INTERPRETER_FIELD = "{py}"
 
 
+class _WholeWordHelpFormatter(argparse.HelpFormatter):
+    """argparse's formatter, wrapping only at spaces (DEF-993).
+
+    The default wraps with textwrap's ``break_on_hyphens=True`` and
+    ``break_long_words=True``, so at common terminal widths the root epilog's
+    Quickstart URL broke after ``espalier-`` (a 404) and flags such as
+    ``--add-gitignore`` broke at their hyphen. Both switches are off here: with
+    only the hyphen one off, a URL longer than the line is still cut mid-word.
+    A word longer than the line overflows it instead. The two methods are the
+    standard library's own bodies with the two switches set, as
+    ``tools/cc/hooks/session_start.py::_orientation_footgun_line`` sets them.
+    """
+
+    def _split_lines(self, text: str, width: int) -> list[str]:
+        import textwrap
+
+        text = self._whitespace_matcher.sub(" ", text).strip()
+        return textwrap.wrap(
+            text, width, break_on_hyphens=False, break_long_words=False,
+        )
+
+    def _fill_text(self, text: str, width: int, indent: str) -> str:
+        import textwrap
+
+        text = self._whitespace_matcher.sub(" ", text).strip()
+        return textwrap.fill(
+            text, width, initial_indent=indent, subsequent_indent=indent,
+            break_on_hyphens=False, break_long_words=False,
+        )
+
+
 class _CuratedChoiceParser(argparse.ArgumentParser):
     """ArgumentParser whose ``invalid choice`` error lists only help-carrying
     subcommands -- mirroring the curated ``--help``, so a typo never advertises
@@ -15987,8 +16018,15 @@ class _CuratedChoiceParser(argparse.ArgumentParser):
     ``TestArgparseErrorCuration.test_curation_does_not_drop_nested_subverbs``.
 
     It also resolves the epilog's interpreter placeholder lazily -- see
-    ``_HELP_INTERPRETER_FIELD``.
+    ``_HELP_INTERPRETER_FIELD`` -- and wraps every help at spaces alone (see
+    ``_WholeWordHelpFormatter``). The formatter is set here rather than at the
+    ``build_parser()`` call because argparse hands subparsers ``parser_class``
+    but never ``formatter_class``; ``setdefault`` keeps a caller's own.
     """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        kwargs.setdefault("formatter_class", _WholeWordHelpFormatter)
+        super().__init__(*args, **kwargs)
 
     def format_help(self) -> str:
         if self.epilog and _HELP_INTERPRETER_FIELD in self.epilog:

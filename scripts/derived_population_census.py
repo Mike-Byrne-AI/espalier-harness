@@ -532,14 +532,21 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         " keeps).",
     ),
     "tests/test_cli_commands.py": (
-        3, "302580d087fba687aadd317785a167a07e69f8859aca5f375f37ac43fbc00a73",
+        6, "8418abbcdb26f463fcf6fccb8dd9ab422b13dc63eee6a3cc953a2d75422dfd91",
         "CORRECT_BY_REMEDY",
         "hook row: tests/test_surface_contract.py:55-69 hand-written 12-name set + "
         "set-equality. The two build_parser()._actions comprehensions (DEF-772, "
         "2026-09-12) derive the listed and hidden verb sets from the parser; each "
         "is held against a population that does not come from the parser -- the "
         "hand-typed HIDDEN tuple by set-equality, and the README-derived verb "
-        "set -- so a subparser that gains or loses help= reds one or the other",
+        "set -- so a subparser that gains or loses help= reds one or the other. "
+        "Grew 3 -> 6 on 2026-11-10 (DEF-993): three comprehensions over "
+        "_every_parser(build_parser()) in TestHelpWrapsAtSpacesAlone, by property: "
+        "the population is the help the CLI prints, so a parser dropped from the "
+        "tree takes its help out of what a user reads too, and a new verb enrols "
+        "itself. The walk going dark is the residual, floored by "
+        "test_the_walk_reaches_nested_subverbs (more than 20 parsers, one nested "
+        "sub-verb; 40 and 4 on the day) -- a coarse floor, not a roster",
     ),
     "tests/test_cmd_scan_self_host_gate.py": (
         6, "1e7a7ae17a5f1380559701df72a092c6f0a629ee7f394fe4d4c08f1e269bf4d5",
