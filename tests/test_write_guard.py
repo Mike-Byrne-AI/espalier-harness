@@ -3397,6 +3397,20 @@ class TestCatastrophicEnumeratorCarrier:
             assert "piped through xargs into a remove verb" in result.stdout, result.stdout
             assert "maintenance mode does not bypass it" in result.stdout
 
+    @pytest.mark.parametrize("cmd, expect", [
+        # the direct twins wall ...
+        ("Remove-Item -Recurse .", "wall"),
+        ("Remove-Item -Recurse -Force .", "wall"),
+        # DECLARED (air's 5581ae, driven at 351bbb5): a literal item piped
+        # into the cmdlet is the PowerShell twin of a single path echoed into
+        # `xargs`, outside the wall like it; pinned as the exact verdict so
+        # the day a reader binds the piped literal this row reds
+        ("'.' | Remove-Item -Recurse", "allow"),
+    ])
+    def test_through_the_hook_carrier_powershell(self, tmp_path, cmd, expect):
+        result = run_guard_from("PowerShell", cmd, tmp_path, None)
+        assert _delete_verdict(result) == expect, (cmd, result.stdout)
+
     @pytest.mark.parametrize("cmd", ["find . | xargs rm -rf", "git ls-files | xargs rm -rf"])
     def test_the_wall_stands_under_maintenance_mode_carrier(self, tmp_path, cmd):
         env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path),
@@ -3892,11 +3906,14 @@ class TestCatastrophicLoopCarrier:
         # recurse, and a body that emits a fixed roster word
         ('for f in * $(ls); do echo "$f" | xargs rm -f; done', "allow"),
         ('find . | sort | while read f; do echo build | xargs rm -rf; done', "allow"),
-        # a loop an opener reads is the opener's: its narrowed or roster head
-        # stays silent (DECLARED: the loop-spelled twin `rm -rf "$f"` asks,
-        # the rm tier reading the bare variable; air's ruling 62d114)
-        ("find . -name '*.pyc' | while read f; do echo \"$f\" | xargs rm -rf; done", "allow"),
-        ('for f in build dist; do echo "$f" | xargs rm -rf; done', "allow"),
+        # ... and under a head a loop opener reads, narrowed or roster, the
+        # twin is the remove naming the word in place (`rm -rf "$f"` in the
+        # same loop), which asks, so the carrier asks too; only the unrolled
+        # `rm -rf build dist` is silent (air's ruling 2beae0, driven both ways)
+        ("find . -name '*.pyc' | while read f; do echo \"$f\" | xargs rm -rf; done", "bump"),
+        ("find . -name '*.pyc' | while read f; do rm -rf \"$f\"; done", "bump"),
+        ('for f in build dist; do echo "$f" | xargs rm -rf; done', "bump"),
+        ('for f in build dist; do rm -rf "$f"; done', "bump"),
     ])
     def test_through_the_hook_loop(self, tmp_path, cmd, expect):
         """The wiring, not only the classifier (the DEF-498 lesson)."""

@@ -1040,8 +1040,8 @@ def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = 
     # the readings above see an operand-less remove and pass it. The text is
     # read once more with every carrier spelled as its direct twin (`rm -rf
     # "$D"`, spliced in place), so each takes the twin's answer wherever it
-    # sits; an operand naming a loop item an opener reads is the sweep
-    # pass's, below. The defer above reads the command, never the twin: a
+    # sits, a loop body included, whatever its head. The defer above reads
+    # the command, never the twin: a
     # catastrophic echoed word (`echo / | xargs rm -rf`) is outside the wall
     # and draws this nudge -- adding the twin to the defer would make it an
     # allow.

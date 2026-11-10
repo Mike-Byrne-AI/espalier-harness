@@ -15670,12 +15670,11 @@ def carrier_fed_remove_twin(command: str) -> "str | None":
     operands land past the quote), so never place, snapshot, zone-check
     or report it.
 
-    Inside a loop one of `_LOOP_OPENERS` reads (the same verb offset, the
-    two patterns sharing `_XARGS_CARRIER_TAIL` and `_FIND_EXEC_VERB`), an
-    emitted operand that expands a name the head binds is the opener's
-    item, and the opener answers for it (a roster or narrowed head stays
-    silent); any other operand -- a fixed word, another variable, a
-    substitution -- is the twin's. A move is not a remove. Gated before
+    Inside a loop, parsed head or not, the twin is the remove naming the
+    emitted word in place (`for f in build dist; do rm -rf "$f"; done`,
+    which asks), so an echoed loop variable asks where that twin asks: no
+    loop head is looked up (air's ruling 2beae0). A move is not a remove.
+    Gated before
     the mask and the first-use compile (about 4.5 ms, paid once a hook
     process): the emit word as a substring (the pattern spells it in lower
     case only), then the carrier's witness, so a command that pipes into
@@ -15687,7 +15686,6 @@ def carrier_fed_remove_twin(command: str) -> "str | None":
     if not _PIPED_CARRIER_WITNESS_RE.search(spliced):
         return None
     raw, scan = _bash_scan_pair(capped)
-    governed: "dict[int, frozenset[str]] | None" = None
     cuts: list[tuple[int, int, str]] = []
     for m in _carrier_fed_remove_re().finditer(scan):
         verb = _named_span(raw, m, "verb")
@@ -15702,16 +15700,6 @@ def carrier_fed_remove_twin(command: str) -> "str | None":
         if any(t.startswith(("-I", "-J", "-i", "--replace")) for t in switches):
             continue
         operands = _emitted_operands(m.group("emit"), emitted)
-        if governed is None:
-            governed = {}
-            if _loop_carrier_witnessed(scan):
-                for rx, _shape in _LOOP_OPENERS:
-                    for lm in rx.finditer(scan):
-                        names = _named_span(raw, lm, "vars").split()
-                        governed[lm.start("verb")] = frozenset(names or ("REPLY",))
-        bound = governed.get(m.start("verb"))
-        if bound is not None:
-            operands = [op for op in operands if _loop_variable_named(op) not in bound]
         if not operands:
             continue
         rmargs = _named_span(raw, m, "rmargs", through_quotes=True)

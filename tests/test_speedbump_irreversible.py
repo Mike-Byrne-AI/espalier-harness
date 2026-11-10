@@ -647,10 +647,22 @@ class TestCpRmrf:
          'find . | sort | while read f; do rm -rf "$f"; done', True),
         ('while read f; do echo "$f" | xargs rm -rf; done < files.txt',
          'while read f; do rm -rf "$f"; done < files.txt', True),
-        # a loop an opener reads answers only for its own item: any other
-        # echoed word -- another variable, a fixed word, an expansion that
-        # edits the item, a substitution -- is the twin's (the failure-mode
-        # review: these drew nothing while the twin asked)
+        # a loop an opener reads, a roster word list or a narrowed head: the
+        # twin is the remove naming the word in place, which asks on the
+        # loop variable, so the carrier asks too (air's ruling 2beae0; these
+        # four sat on the silent list under 62d114's head carve-out) ...
+        ('for f in build dist; do echo "$f" | xargs rm -rf; done',
+         'for f in build dist; do rm -rf "$f"; done', True),
+        ('for f in build dist; do echo "$f" | xargs sudo rm -rf; done',
+         'for f in build dist; do sudo rm -rf "$f"; done', True),
+        ("find . -name '*.pyc' | while read f; do echo \"$f\" | xargs rm -rf; done",
+         "find . -name '*.pyc' | while read f; do rm -rf \"$f\"; done", True),
+        ('find build | while read; do echo "$REPLY" | xargs rm -rf; done',
+         'find build | while read; do rm -rf "$REPLY"; done', True),
+        # ... and any other echoed word -- another variable, a fixed word,
+        # an expansion that edits the item, a substitution -- is the twin's
+        # too (the failure-mode review: these drew nothing while the twin
+        # asked)
         ('for f in build dist; do echo "$D" | xargs rm -rf; done',
          'for f in build dist; do rm -rf "$D"; done', True),
         ('for f in build dist; do echo src | xargs rm -rf; done',
@@ -697,13 +709,6 @@ class TestCpRmrf:
         "# echo $D | xargs rm -rf",
         # not a remove: a move, and a remove the carrier only prints
         'echo "$D" | xargs mv -t dest', 'echo "$D" | xargs echo rm -rf',
-        # a loop an opener reads is that opener's: a roster word list and a
-        # narrowed head stay silent (DECLARED: their loop-spelled twins
-        # `rm -rf "$f"` ask, the rm tier reading the bare variable)
-        'for f in build dist; do echo "$f" | xargs rm -rf; done',
-        'for f in build dist; do echo "$f" | xargs sudo rm -rf; done',
-        "find . -name '*.pyc' | while read f; do echo \"$f\" | xargs rm -rf; done",
-        'find build | while read; do echo "$REPLY" | xargs rm -rf; done',
         # DECLARED, the carrier's own limits: a stage between the emit and
         # xargs (stdin is no longer the word), and the pipe across a line
         # break (`_XARGS_CARRIER_TAIL` keeps the pipe on the line)
@@ -723,7 +728,7 @@ class TestCpRmrf:
         # nothing emitted, and a quote left open past the emit (no pipe runs)
         'echo "" | xargs rm -rf', "echo it's | xargs rm -rf; echo 'ok'",
     ])
-    def test_a_carrier_fed_remove_is_silent_on_a_mention_a_move_a_read_loop_or_a_declared_limit(self, tmp_path, cmd):
+    def test_a_carrier_fed_remove_is_silent_on_a_mention_a_move_or_a_declared_limit(self, tmp_path, cmd):
         assert not _fires(_speedbump._pred_rmrf, cmd, tmp_path)
 
     @pytest.mark.parametrize("cmd", ["echo / | xargs rm -rf", "echo . | xargs rm -rf"])
