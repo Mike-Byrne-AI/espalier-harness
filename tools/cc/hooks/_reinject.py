@@ -24,13 +24,23 @@ from __future__ import annotations
 import os
 import posixpath
 import re
+import sys
 from pathlib import Path
 from typing import Callable, Literal, NamedTuple
 # NamedTuple (not @dataclass): `dataclasses` eagerly imports `inspect` (~4 ms),
 # and write_guard imports this module on the PreToolUse('*') hot path, so a
 # @dataclass here would re-pay that on every tool call. typing is already loaded.
 
-from _hook_utils import (
+# This module is imported under two spellings: bare, with the hooks directory
+# already on sys.path (the importing hook put it there), and as
+# `tools.cc.hooks._reinject` from the repo root, where nothing has. So it puts
+# its own directory on sys.path the way _bash_patterns does instead of trusting
+# every importer to have done so.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
+from _hook_utils import (  # noqa: E402
     RECALL_LOG_NAME,
     STATE_DIR,
     _append_jsonl,
