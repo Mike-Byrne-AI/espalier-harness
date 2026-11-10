@@ -1440,9 +1440,14 @@ _PIPED_CARRIER_WITNESS_RE = re.compile(_PIPED_CARRIER_WITNESS, re.IGNORECASE)
 #: neither head, so a catastrophic word beside one draws the variable
 #: operand's nudge where its direct twin walls), and the PowerShell
 #: statement-form loop (asked at the hook: the remove cmdlet's wall already).
-#: Behind the carrier-fed body, a stage between and a word list beside a
-#: substitution draw NOTHING -- silent allows, declared with their ledger row
-#: rather than hidden behind "each draws the nudge".
+#: Behind the carrier-fed body (`echo "$f" | xargs rm -rf`), a loop no head
+#: reads draws the nudge its direct twin `rm -rf "$f"` draws: the soft tier
+#: reads the echoed word as the remove's operand wherever the carrier sits
+#: (`carrier_fed_remove_twin`, DEF-3063; until 2026-11-09 a stage between
+#: and a word list beside a substitution drew NOTHING there). Where a head
+#: reads the loop, an echoed word that expands the head's own variable is
+#: the head's item and keeps the head's verdict; any other echoed word is
+#: the twin's.
 #: The read builtin's switch run, one arm per token as the carrier's is: a
 #: token whose LAST letter is a valued switch (`-d`, `-n`, `-N`, `-t`, `-u`,
 #: `-p`, `-a`, `-i` -- alone or glued behind others, `-rd`) takes one value
@@ -15547,6 +15552,171 @@ def iter_unnarrowed_loop_remove_roots(
         return
     for _at, roots in _iter_loop_sweeps(raw, scan, wipes_only=wipes_only):
         yield roots
+
+
+#: ── The carrier-fed remove (DEF-3063) ─────────────────────────────────────
+#: A word the shell emits into the carrier, `echo "$D" | xargs rm -rf`, is
+#: the recursive remove's operand with the operand on stdin: `rm -rf "$D"`.
+#: The rm tier reads a remove's OPERANDS and the carrier-fed remove has
+#: none, so it drew nothing wherever it sat -- at the top level, in an `&&`
+#: chain, in a loop body no opener reads -- where its direct twin drew the
+#: nudge or the roster's silence. Composed from the loop body's own pieces,
+#: none of them edited: the anchor before the emit (`_CMD_POS`), the emit's
+#: arguments and its last word (`_LOOP_EMIT_ARGS`, the body's `feed`
+#: shape), the carrier's post-pipe half (`_XARGS_CARRIER_TAIL`) and the
+#: verb as the pipeline carrier admits it (`_FIND_EXEC_VERB`: a program
+#: runs there, not a statement, so no assignment run). A SOURCE string:
+#: `_carrier_fed_remove_re` compiles it on the first command that passes
+#: `_PIPED_CARRIER_WITNESS_RE`, so the import pays nothing.
+_CARRIER_FED_REMOVE = (
+    _CMD_POS + r"(?P<emit>(?-i:echo|printf))"
+    + r"(?P<emitted>" + _LOOP_EMIT_ARGS + r"[ \t]+(?P<feed>[^\s;|&]{1,80}))[ \t]*"
+    + _XARGS_CARRIER_TAIL
+    + r"(?P<verb>" + _FIND_EXEC_VERB + r")(?P<rmargs>[^\n;|&]{0,200})"
+)
+#: echo's own switch letters, which it prints nothing for.
+_ECHO_SWITCH_LETTERS = frozenset("neE")
+
+
+@functools.lru_cache(maxsize=1)
+def _carrier_fed_remove_re() -> "re.Pattern[str]":
+    """`_CARRIER_FED_REMOVE`, compiled once, on first use (DEF-3063)."""
+    return re.compile(_CARRIER_FED_REMOVE, re.IGNORECASE)
+
+
+def _emitted_operands(emit: str, emitted: str) -> list[str]:
+    """The words ``echo`` or ``printf`` hands the carrier, raw: what xargs
+    appends to the remove. echo's leading switches print nothing; printf's
+    leading switches and its format are not items (`printf -v` prints
+    nothing at all: its words are read anyway, toward friction)."""
+    words = _shell_word_spans(emitted) or emitted.split()
+    if emit == "echo":
+        while words and len(words[0]) > 1 and words[0][0] == "-" and set(words[0][1:]) <= _ECHO_SWITCH_LETTERS:
+            words = words[1:]
+        items = words
+    else:
+        while words and words[0].startswith("-"):
+            words = words[1:]
+        items = words[1:]
+        # a format holding text beyond its conversions and escapes is data
+        # printf prints (`printf 'sub/%s' x`, `printf "$D"`): an operand
+        if words and _printf_format_carries_text(words[0]):
+            items = words[:1] + items
+    return [piece for word in items for piece in _xargs_pieces(word)]
+
+
+def _printf_format_carries_text(fmt: str) -> bool:
+    """True when a printf format prints more than its arguments: anything
+    left after its quotes, ``%s``/``%b`` conversions, escapes and blanks."""
+    rest = _shell_unquote(fmt)
+    for token in ("%s", "%b", "\\n", "\\t", "\\0"):
+        rest = rest.replace(token, "")
+    return bool(rest.strip())
+
+
+def _xargs_pieces(word: str) -> list[str]:
+    """One emitted word as xargs splits it: a quoted word holding blanks (or
+    an escaped newline) is several operands on xargs's stdin, each given
+    single-quoted. A double-quoted word with an expansion or an escape in
+    it is kept whole (its blanks are unknown here); an empty one is none."""
+    if len(word) >= 2 and word[0] == word[-1] and word[0] in "'\"":
+        inner = word[1:-1]
+        plain = word[0] == "'" or not any(c in inner for c in "$`\\")
+        if plain and "'" not in inner:
+            parts = inner.replace("\\n", " ").split()
+            if len(parts) != 1:
+                return ["'" + part + "'" for part in parts]
+    return [word]
+
+
+def _operand_cut(rmargs: str) -> int:
+    """Where xargs's appended operands sit in the remove's own span: before
+    its first redirection (with its fd digits), comment or closer outside
+    quotes -- `xargs rm -rf 2>&1` runs `rm -rf <items> 2>&1`, and a twin
+    with the items after `2>` read them as the redirect's target."""
+    i, n, quote = 0, len(rmargs), ""
+    while i < n:
+        c = rmargs[i]
+        if quote:
+            if c == quote:
+                quote = ""
+            elif c == "\\" and quote == '"':
+                i += 1
+        elif c in "'\"":
+            quote = c
+        elif c == "\\":
+            i += 1
+        elif c in "<>)`":
+            j = i
+            while j > 0 and rmargs[j - 1].isdigit():
+                j -= 1
+            return j
+        elif c == "#" and (i == 0 or rmargs[i - 1].isspace()):
+            return i
+        i += 1
+    return n
+
+
+def carrier_fed_remove_twin(command: str) -> "str | None":
+    """``command`` with every word-fed carrier remove in it spelled as its
+    direct twin, or ``None`` where it holds none: ``cd src && echo old |
+    xargs rm -rf`` is ``cd src && rm -rf old`` (DEF-3063). ONE text for
+    every carrier, spliced right to left, so the soft tier reads it once
+    whatever the count (a text per carrier re-read the command per carrier:
+    quadratic, and a flood met the hook's time budget). The soft tier
+    reads the twin as it reads the command, so each carrier takes its
+    twin's verdict -- roster, temp root, placement and all. FOR THE VERDICT
+    ONLY: the twin is a splice nobody typed (inside a quoted program its
+    operands land past the quote), so never place, snapshot, zone-check
+    or report it.
+
+    Inside a loop, parsed head or not, the twin is the remove naming the
+    emitted word in place (`for f in build dist; do rm -rf "$f"; done`,
+    which asks), so an echoed loop variable asks where that twin asks: no
+    loop head is looked up (air's ruling 2beae0). A move is not a remove.
+    Gated before
+    the mask and the first-use compile (about 4.5 ms, paid once a hook
+    process): the emit word as a substring (the pattern spells it in lower
+    case only), then the carrier's witness, so a command that pipes into
+    no xargs, or emits nothing into one, pays a splice and one search."""
+    capped = _cap_for_scan(command)
+    spliced = splice_line_continuations(capped)
+    if "echo" not in spliced and "printf" not in spliced:
+        return None
+    if not _PIPED_CARRIER_WITNESS_RE.search(spliced):
+        return None
+    raw, scan = _bash_scan_pair(capped)
+    cuts: list[tuple[int, int, str]] = []
+    for m in _carrier_fed_remove_re().finditer(scan):
+        verb = _named_span(raw, m, "verb")
+        if _remove_effect(verb) != "delete":
+            continue
+        emitted = _named_span(raw, m, "emitted", through_quotes=True)
+        if m.start("emitted") + len(emitted) > m.end("emitted"):
+            continue              # a quote left open past the emit: no carrier here
+        # a replace switch (`-I{}`) puts the item where its placeholder is,
+        # which the rm readings already read as an operand
+        switches = raw[m.end("emitted"):m.start("verb")].split()
+        if any(t.startswith(("-I", "-J", "-i", "--replace")) for t in switches):
+            continue
+        operands = _emitted_operands(m.group("emit"), emitted)
+        if not operands:
+            continue
+        rmargs = _named_span(raw, m, "rmargs", through_quotes=True)
+        end = m.start("rmargs") + len(rmargs)
+        if cuts and m.start("emit") < cuts[-1][1]:
+            continue              # a span read through a quote reached this match
+        k = _operand_cut(rmargs)
+        spelled = verb + rmargs[:k].rstrip() + " " + " ".join(operands)
+        if k < len(rmargs):
+            spelled += " " + rmargs[k:].lstrip()
+        cuts.append((m.start("emit"), end, spelled))
+    if not cuts:
+        return None
+    twin = raw
+    for start, end, text in reversed(cuts):
+        twin = twin[:start] + text + twin[end:]
+    return twin
 
 
 def has_catastrophic_loop_remove(

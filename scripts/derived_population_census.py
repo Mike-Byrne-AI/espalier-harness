@@ -532,14 +532,21 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         " keeps).",
     ),
     "tests/test_cli_commands.py": (
-        3, "302580d087fba687aadd317785a167a07e69f8859aca5f375f37ac43fbc00a73",
+        6, "8418abbcdb26f463fcf6fccb8dd9ab422b13dc63eee6a3cc953a2d75422dfd91",
         "CORRECT_BY_REMEDY",
         "hook row: tests/test_surface_contract.py:55-69 hand-written 12-name set + "
         "set-equality. The two build_parser()._actions comprehensions (DEF-772, "
         "2026-09-12) derive the listed and hidden verb sets from the parser; each "
         "is held against a population that does not come from the parser -- the "
         "hand-typed HIDDEN tuple by set-equality, and the README-derived verb "
-        "set -- so a subparser that gains or loses help= reds one or the other",
+        "set -- so a subparser that gains or loses help= reds one or the other. "
+        "Grew 3 -> 6 on 2026-11-10 (DEF-993): three comprehensions over "
+        "_every_parser(build_parser()) in TestHelpWrapsAtSpacesAlone, by property: "
+        "the population is the help the CLI prints, so a parser dropped from the "
+        "tree takes its help out of what a user reads too, and a new verb enrols "
+        "itself. The walk going dark is the residual, floored by "
+        "test_the_walk_reaches_nested_subverbs (more than 20 parsers, one nested "
+        "sub-verb; 40 and 4 on the day) -- a coarse floor, not a roster",
     ),
     "tests/test_cmd_scan_self_host_gate.py": (
         6, "1e7a7ae17a5f1380559701df72a092c6f0a629ee7f394fe4d4c08f1e269bf4d5",
@@ -995,6 +1002,16 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         1, "091a2c16ec045da4ccc421cf2fe551aa4b69f99e102f8f4369513bc6c5dea955",
         "CORRECT_BY_PROPERTY",
         "NEW 2026-09-27 (the fourth .claude kind): test_every_deployed_kind_carries_the_marker loops CLAUDE_KIND_GLOBS after a real init asserting file_carries_marker on every deployed body. Deriving is the property (a fifth kind is checked with no new method); the three per-kind methods above it stay literal, so the class keeps an independent side.",
+    ),
+    "tests/test_kept_sibling.py": (
+        1, "63563522abf3f49a1b3aeb2c8bfbbb8f3a038253215e18ef76bc18809f66ad40",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-11-09 (DEF-5088): test_no_event_hook_carries_the_block walks "
+        "espalier/surface_contract.py::_CANONICAL_HOOK_SCRIPTS, the wired-hook roster, for the "
+        "kept-sibling block's name. An emptied roster would pass that row and red the same file's "
+        "test_the_population_is_the_takers_that_run_as_scripts, since write_guard and stop_gate "
+        "would then join the armed population it holds them out of; the armed population itself "
+        "is floored there at 21 with six members named.",
     ),
     "tests/test_init_tier_split.py": (
         4, "2ad479dc7305e0fa0759f62b5425fd50315924ba6dfd41c8ec697235c30a1957",
