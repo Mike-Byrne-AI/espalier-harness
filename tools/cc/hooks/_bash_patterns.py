@@ -2046,10 +2046,13 @@ def iter_hardlink_operands(command: str) -> Iterator[str]:
 # VALUES were the next opener word; the code review then drove `python3`
 # with sixty-five `-B` switches before `-c "open('<hook>','w')"` -- a command
 # that RUNS -- and the bound had turned that deny into an allow, on both
-# legs, while buying nothing: the Bash leg's openers sit on a command
-# position, so a flood without separators has one opener and the run is one
-# pass, and the PowerShell twin's quadratic was the opener-word value, fixed
-# there by refusing it. A bound here is a coverage hole with no receipt.
+# legs. A flood without separators can still open more than one start: a
+# value with a wrapper's path (`/a/env`) opens one through the `(?<=/)`
+# wrapper arm, and `python -x ` + `/a/env -x python -x ` repeated reads
+# quadratic, under the chain ceiling (DEF-818's review measured it), where
+# the PowerShell twin's
+# quadratic was the opener-word value, fixed there by refusing it. A bound
+# here is a coverage hole with no receipt.
 _INTERP_SWITCH_RUN = r"(?:-[\w.-]+(?:[ \t]+[\w./:=,@%+~][\w./:=,@%+~-]*)?[ \t]+)*"
 #: A program operand is ONE bash WORD (DEF-832), not one quoted span: bash
 #: concatenates adjacent segments -- a single-quoted span, an ANSI-C span, a
@@ -2196,30 +2199,47 @@ _POWERSHELL_DASH_COMMAND_RE = re.compile(
     re.DOTALL,
 )
 # A POSIX shell's `-c` program on the Bash tool (§C52): `sh -c '...'`,
-# `bash -lc "..."`. The head and quoted-verb tail, the here-string opener's
-# switch run (`_SHELL_HERESTRING_RE`), a cluster ending in `c`, then the
+# `bash -lc "..."`. The head and quoted-verb tail, the shared switch run
+# (`_POSIX_SHELL_SWITCH_RUN`, below), a cluster ending in `c`, then the
 # program as ONE bash word that starts with a quoted segment (DEF-832:
 # adjacent segments concatenated by the shell; no bare-first arm -- a bare
 # program is one word and names nothing).
 #: A POSIX shell's switch run before its program operand, ONE home for the
-#: `-c` opener below and the here-string opener (`_SHELL_HERESTRING_RE`):
-#: each switch may carry one bare value, never a shell head word (`sh -c sh
-#: -c ...` read every following pair as switch-plus-value, O(n) at each of
-#: n heads -- 4.0 s at 28 KB through the write extractor, a pre-existing
-#: shape the §C52 rows witnessed), and the run is bounded at 64 tokens (the
-#: DEF-637 receipt's remedy for the PowerShell twin).
-_SHELL_SWITCH_RUN_BOUNDED = (
+#: `-c` opener below and the here-string opener (`_SHELL_HERESTRING_RE`).
+#: Each switch may carry one bare value, which never starts with `-` (so a
+#: value is never the next switch) and is never a spelling of a shell head:
+#: a head opens another opener's start, so a value that can be one gives
+#: every following run a second reader -- O(n) at each of n starts.
+#: `sh -c sh -c ...` was 4.0 s at 28 KB through the write extractor (a
+#: pre-existing shape the §C52 rows witnessed), and once the run lost its
+#: bound the code review drove the same product through a head with a
+#: directory (`/sh`, `a/sh`), an `.exe` or another case behind a wrapper
+#: path (`/a/env -x SH`), seconds at 30 KB. A value cannot hold a quote, `\`,
+#: `$`, `~` or `:`, so every head spelling it can hold is a directory, the
+#: head in any case and an optional `.exe`, and the refusal below takes all
+#: of them: the DEF-637 receipt's remedy, the second parse taken away
+#: (docs/SHARP_EDGES.md, ReDoS budget receipt). Declared limit: a switch
+#: whose value is a shell's own path (`bash --rcfile /etc/sh -c '...'`)
+#: ends the run there, so that program is not read. The run is UNBOUNDED on
+#: purpose: a `{0,64}` bound here let programs that run through behind 65
+#: switches on both openers (DEF-818, driven). The witness rows are
+#: `tests/test_write_guard.py::test_a_long_switch_run_does_not_hide_a_posix_shell_program`
+#: and, in `tests/test_redos.py`, `test_posix_shell_switch_run_linear_on_one_head`,
+#: `test_posix_shell_switch_value_is_never_a_head_spelling` and the
+#: repeated-head rows.
+_POSIX_SHELL_SWITCH_RUN = (
     # a short cluster or a long option (`--norc`, `--rcfile FILE`): exclusive
     # on the second character; the review drove `bash --norc -c` past the
     # short-only run
-    r"(?:[ \t]+(?:-[A-Za-z]+|--[A-Za-z][\w-]*)(?:[ \t]+(?!(?:" + _POSIX_SHELL_HEADS
-    + r")(?=[ \t]|$))[\w.=/][\w.=/-]*)?){0,64}"
+    r"(?:[ \t]+(?:-[A-Za-z]+|--[A-Za-z][\w-]*)(?:[ \t]+(?!(?i:(?:[\w.=/-]*/)?(?:"
+    + _POSIX_SHELL_HEADS + r")(?:\.exe)?)(?=[ \t]|$))[\w.=/][\w.=/-]*)?)*"
 )
 _SHELL_DASH_C_RE = re.compile(
     _CMD_POS + r"(?i:" + _POSIX_SHELL_HEADS + r")" + _EXE_SUFFIX + r"\b" + _QUOTED_VERB_TAIL
-    # `c` anywhere in the cluster (`-cx`, `-xc`, `-lc`): both runs bounded, so
-    # the adjacent pair has at most 81 parses (review: `bash -cx` was missed)
-    + _SHELL_SWITCH_RUN_BOUNDED + r"[ \t]+-[A-Za-z]{0,8}c[A-Za-z]{0,8}[ \t]+"
+    # `c` anywhere in the cluster (`-cx`, `-xc`, `-lc`): both letter runs
+    # around the `c` bounded, so the adjacent pair has at most 81 parses
+    # (review: `bash -cx` was missed)
+    + _POSIX_SHELL_SWITCH_RUN + r"[ \t]+-[A-Za-z]{0,8}c[A-Za-z]{0,8}[ \t]+"
     + r"(?P<word>" + _BASH_QUOTED_WORD + r")"
 )
 
@@ -6452,9 +6472,9 @@ _INTERP_PIPE_RE = re.compile(
 #: whole-command scan reads it -- and the pipe spelling is `_INTERP_PIPE_RE`'s.
 _SHELL_HERESTRING_RE = re.compile(
     _CMD_POS + r"(?i:" + _POSIX_SHELL_HEADS + r")" + _EXE_SUFFIX + r"\b" + _QUOTED_VERB_TAIL
-    # the bounded run (§C52): the unbounded one was quadratic on a repeated
-    # head, see `_SHELL_SWITCH_RUN_BOUNDED`
-    + _SHELL_SWITCH_RUN_BOUNDED + r"[ \t]*<<<[ \t]*"
+    # the shared switch run (§C52): unbounded, and linear because a value is
+    # never a spelling of a shell head, see `_POSIX_SHELL_SWITCH_RUN`
+    + _POSIX_SHELL_SWITCH_RUN + r"[ \t]*<<<[ \t]*"
 )
 
 #: The three statement readers' heads, on the masked text at a command

@@ -1722,8 +1722,11 @@ on the Bash tool (`echo '...' | pwsh -Command -`, `cat <<'EOF' | pwsh
 -Command -`) is read as the stage before the pipe, like an interpreter's;
 `-File <script>` there means the pipe is data. `-EncodedCommand`, `-File
 <script>`, a program held in an unbound variable (a literal binding earlier in the command
-is inlined first) and `wsl bash -c` are declared
-limits, pinned by `tests/test_write_guard.py::TestCrossShellRouting::test_bash_tool_declared_limits_are_pinned`
+is inlined first), `wsl bash -c` and a relative write after a `cd` inside a
+POSIX shell program anywhere but behind a bare `-c` on the Bash tool (`bash
+-lc 'cd tools/cc/hooks && echo x > x.py'`, a here-string, the PowerShell
+tool's `bash -c`: a zone write, which the coverage contract hands to the
+after-check) are declared limits, pinned by `tests/test_write_guard.py::TestCrossShellRouting::test_bash_tool_declared_limits_are_pinned`
 and `tests/test_write_guard.py::TestCrossShellRouting::test_powershell_tool_declared_limits_are_pinned`;
 `cmd /c` is a third grammar the hook has no extractor for
 (`tests/test_write_guard.py::TestCrossShellRouting::test_cmd_c_verdicts_are_pinned_not_claimed`).
