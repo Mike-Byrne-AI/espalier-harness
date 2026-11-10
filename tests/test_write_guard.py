@@ -10740,6 +10740,7 @@ class TestAScratchRootItselfIsTheWall:
         ("a-line-break", "$d = $env:TEMP\n" + RI + "$d\\x", RI + "$env:TEMP\\x"),
         ("a-crlf", "$d = $env:TEMP\r\n" + RI + "$d\\x", RI + "$env:TEMP\\x"),
         ("a-separator-then-a-line-break", "$d = $env:TEMP;\n" + RI + "$d\\x", RI + "$env:TEMP\\x"),
+        ("a-trailing-line-break", "$d = $env:TEMP; " + RI + "$d\\x\r\n", RI + "$env:TEMP\\x\r\n"),
     ]
 
     @pytest.mark.parametrize(
@@ -10762,8 +10763,8 @@ class TestAScratchRootItselfIsTheWall:
         for spelling in (in_place, command):
             assert not self._walls(spelling, "PowerShell"), spelling
             assert sb._pred_rmrf("PowerShell", {"command": spelling}, repo), spelling
-            assert bp.powershell_removal_is_below_a_scratch_root(spelling, str(repo)), spelling
-            assert not bp.powershell_removal_is_below_a_scratch_root(spelling, str(repo), quiet=True), spelling
+            assert bp.powershell_removal_is_below_a_scratch_root(typed=spelling, root=str(repo)), spelling
+            assert not bp.powershell_removal_is_below_a_scratch_root(typed=spelling, root=str(repo), quiet=True), spelling
 
     def test_a_bound_temp_name_the_hook_cannot_read_keeps_the_wall(self, monkeypatch):
         """The binding passes the gate, and the value it names is read as the
@@ -10800,6 +10801,30 @@ class TestAScratchRootItselfIsTheWall:
         assert self._walls(command, "PowerShell"), command
         assert not sb._pred_rmrf("PowerShell", {"command": command}, repo), command
 
+    @pytest.mark.parametrize("tool, command", [
+        ("Bash", 'pwsh -c "$d = $env:TEMP; Remove-Item -Recurse -Force $d\\Windows"'),
+        ("Bash", 'powershell -Command "$d = $env:TEMP; Remove-Item -Recurse -Force $d\\Windows"'),
+        ("Bash", 'echo "$d = $env:TEMP; Remove-Item -Recurse -Force $d\\Windows" | pwsh -Command -'),
+        ("Bash", "pwsh -c '$d = $env:TEMP; Remove-Item -Recurse -Force $d\\x'"),
+        ("PowerShell", 'Start-Process powershell -ArgumentList "-NoProfile","-Command",'
+                       '"$d = $env:TEMP; Remove-Item -Recurse -Force $d\\Windows" -Wait'),
+    ], ids=["pwsh-c-dq", "powershell-command-dq", "piped-to-command-stdin", "pwsh-c-sq",
+            "start-process-dq"])
+    def test_a_binding_inside_another_shells_program_is_not_followed(self, tool, command, monkeypatch):
+        """DEF-2055's second code review, a false allow: the launching shell
+        expands `$d` and `$env:TEMP` before PowerShell parses the program, so
+        the child runs `= <temp>; Remove-Item -Recurse -Force \\Windows` at the
+        drive root (live on 5.1 with a harmless stand-in). The gate follows no
+        binding inside another shell's program, so each keeps main's wall; the
+        single-quoted form, whose text is exact, is a safe over-refusal there
+        (the in-place spelling's nested no-tier gap is the inherited one)."""
+        import _bash_patterns as bp
+
+        self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
+        assert self._walls(command, tool), command
+        with bp.another_shells_program():
+            assert bp._ps_temp_bound_remove("$d = $env:TEMP; " + self.RI + "$d\\x") is None
+
     #: Spellings where the name may not hold `$env:TEMP` when the remove
     #: reads it, or that the rung is not asked to read through (air's 18c1a6
     #: and the row's rewrite). The gate refuses each but the last two, which
@@ -10833,6 +10858,8 @@ class TestAScratchRootItselfIsTheWall:
         ("a-child-process", "$d = $env:TEMP; powershell -c '" + RI + "$d\\x'"),
         ("a-child-process-dq", '$d = $env:TEMP; powershell -c "' + RI + '$d\\x"'),
         ("a-line-break-then-a-statement", "$d = $env:TEMP\n" + RI + "$d\\y\nSet-Variable d C:/"),
+        ("a-carriage-return-then-a-statement",
+         "$d = $env:TEMP; " + RI + "$d\\y\rSet-Variable d C:/\r" + RI + "$d\\x"),
         ("non-ascii", "$d = $env:TEMP; " + RI + "$d\\x\u2003"),
         # PowerShell reads `$d?` as the name `d?`, unbound here: `\x` at the drive root
         ("a-question-mark-name", "$d = $env:TEMP; " + RI + "$d?\\x"),
@@ -10853,7 +10880,7 @@ class TestAScratchRootItselfIsTheWall:
         self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
         root = str(Path.home() / "scratch-root-no-such-repo")
         assert (bp._ps_temp_bound_remove(command) is not None) == (row in self._GATE_ADMITS), command
-        assert not bp.powershell_removal_is_below_a_scratch_root(command, root), command
+        assert not bp.powershell_removal_is_below_a_scratch_root(typed=command, root=root), command
 
     def test_the_two_nothing_runs_between_sets_agree(self):
         """`write_guard._LONE_DELETE_STOPS` and the binding gate's
@@ -10868,6 +10895,39 @@ class TestAScratchRootItselfIsTheWall:
 
         wg = _load_write_guard()
         assert bp._PS_TEMP_BINDING_REFUSED <= wg._LONE_DELETE_STOPS | wg._LONE_DELETE_BREAKS
+        # and the exact difference, so a stop the lone-delete reader gains
+        # reds here until someone decides whether the gate needs it too (the
+        # failure-mode review: the subset alone never sees either set shrink)
+        assert wg._LONE_DELETE_STOPS - bp._PS_TEMP_BINDING_REFUSED == frozenset("!\"$'*:<>?@[\\]~")
+
+    #: Refusals no row can witness alone, each with why it is kept anyway.
+    _UNWITNESSED_REFUSALS = {
+        "{": "a block in a remove's arguments runs only through `&`, `.` or a parenthesis, each refused",
+        "}": "its pair",
+        "`": "a continuation needs a line break, refused; an escaped `$` leaves the name unbound",
+    }
+
+    def test_every_gate_refusal_is_witnessed_by_a_row(self, monkeypatch):
+        """Each character of `_PS_TEMP_BINDING_REFUSED`, removed alone (the
+        parentheses as a pair: a lone one is a parse error and nothing runs),
+        lets some row the gate refuses through it, so trimming the set reds
+        here; the three it cannot are named with their reasons, and a reason
+        for a character the set no longer holds reds too (the failure-mode
+        review)."""
+        import _bash_patterns as bp
+
+        self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
+        full = bp._PS_TEMP_BINDING_REFUSED
+        assert set(self._UNWITNESSED_REFUSALS) <= full
+        rows = [c for i, c in self.BOUND_FORCED_KEPT if i not in self._GATE_ADMITS] + [
+            "$d = $env:TEMP; & (Get-Command Remove-Item -ErrorVariable d) -Recurse -Force $d\\x",
+        ]
+        assert all(bp._ps_temp_bound_remove(c) is None for c in rows)
+        units = [c for c in full if c not in self._UNWITNESSED_REFUSALS and c not in "()"] + ["()"]
+        for unit in units:
+            monkeypatch.setattr(bp, "_PS_TEMP_BINDING_REFUSED", full - frozenset(unit))
+            assert any(bp._ps_temp_bound_remove(c) is not None for c in rows), repr(unit)
+        monkeypatch.setattr(bp, "_PS_TEMP_BINDING_REFUSED", full)
 
     @pytest.mark.parametrize("host", ["powershell", "pwsh"])
     def test_every_name_a_fresh_host_will_not_rebind_is_refused(self, host):
@@ -10894,19 +10954,29 @@ class TestAScratchRootItselfIsTheWall:
             encoded = base64.b64encode(script.encode("utf-16-le")).decode()
             return subprocess.run(
                 [exe, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+                # `${input}` enumerates stdin: an inherited open pipe hangs it
+                stdin=subprocess.DEVNULL,
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
             ).stdout
 
-        def sticks(name: str) -> bool:
-            return "STUCK" in run(
+        def answer(name: str) -> str:
+            out = run(
                 "try { ${%s} = 'zz-stick' } catch { }; "
                 "if (${%s} -ceq 'zz-stick') { 'STUCK' } else { 'KEPT' }" % (name, name))
+            return "STUCK" if "STUCK" in out else "KEPT" if "KEPT" in out else out
 
+        # the oracle answers both ways, so a host that prints nothing cannot
+        # pass as one that kept every name (the failure-mode review)
+        assert answer("zz_fresh_probe_name") == "STUCK"
+        assert answer("null") == "KEPT"
         names = [n for n in run("(Get-Variable).Name").splitlines() if n.strip()]
         assert len(names) > 20, names
         with ThreadPoolExecutor(4) as pool:
-            kept = {n.lower() for n, stuck in zip(names, pool.map(sticks, names)) if not stuck}
-        assert kept, names
+            said = dict(zip(names, pool.map(answer, names)))
+        # no answer at all is a statement the host refused to parse (`${?} =`
+        # on 5.1): nothing ran, so nothing was bound -- a name it keeps
+        kept = {n.lower() for n, a in said.items() if a != "STUCK"}
+        assert 0 < len(kept) < len(names), said
         assert kept <= bp._PS_PREDEFINED_VARIABLES, sorted(kept - bp._PS_PREDEFINED_VARIABLES)
 
     def test_every_variable_a_fresh_host_lists_is_refused(self):
@@ -11867,7 +11937,12 @@ class TestPowerShellRecursiveRemoveTiersAgree:
         "build, {scratch}/x", "src, {scratch}/x",
         # DEF-1174: a wildcard after a relative directory, read as it
         "build/*", "src/*", "out/x/**",
+        # DEF-2055: a name bound to the temp variable, met only in the one
+        # shape the rung follows (`_BOUND_SHAPE`), so the rest of the cross
+        # is the population it always was
+        "$d/x", "$d/x/y",
     )
+    _BOUND_SHAPE = "$d = $env:TEMP; {v}"
     _QUOTES = ("{}", "'{}'", '"{}"')
     _SHAPES = ("{v}", "{v}; Write-Output done", "if (Test-Path {t}) {{ {v} }}")
 
@@ -11925,7 +12000,8 @@ class TestPowerShellRecursiveRemoveTiersAgree:
                 word = (fill(fill(spelled, "{scratch}", scratch.as_posix(), PS), "{repo}", repo.as_posix(), PS)
                         if style == "{}" else style.format(target))
                 verb = f"{head} {switches} {word}{tail}"
-                command = self._SHAPES[(i + 2 * j) % 3].format(v=verb, t=word)
+                shape = self._BOUND_SHAPE if spelled.startswith("$d") else self._SHAPES[(i + 2 * j) % 3]
+                command = shape.format(v=verb, t=word)
                 asked += 1
                 if wg._ps_dangerous_reason(command, repo, cwd=repo) is not None:
                     continue

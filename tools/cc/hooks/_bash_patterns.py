@@ -12050,9 +12050,9 @@ def below_a_temp_root(
 
 
 def powershell_removal_is_below_a_scratch_root(
-    command: str, root: str | None, *, quiet: bool = False,
+    *, typed: str, root: str | None, quiet: bool = False,
 ) -> bool:
-    r"""True when every ``Remove-Item`` target in *command* (the raw text) is a
+    r"""True when every ``Remove-Item`` target in *typed* (the raw text) is a
     literal absolute path strictly below a scratch root (`_below_a_scratch_root`)
     and none is catastrophic by meaning (`_target_is_catastrophic`: a checkout
     or a home directory under a temp root, or a link that resolves onto one,
@@ -12090,12 +12090,14 @@ def powershell_removal_is_below_a_scratch_root(
     A name bound to a temp variable is read through it in one shape alone
     (`_ps_temp_bound_remove`, DEF-2055), asked only after the text as typed
     is refused, so a call this rung already answers pays nothing for it.
-    *command* must be the text as typed, never `powershell_scan_pair`'s
+    *typed* must be the text as typed, never `powershell_scan_pair`'s
     twin: the twin blanks a command object's call and joins a backtick
     continuation, which the gate refuses on the typed text (the hard tier
     handed it the twin once, and `& (Get-Command Remove-Item -ErrorVariable
-    d) ... $d\x` passed both tiers: DEF-2055's code review)."""
-    raw, scan = powershell_scan_pair(command)
+    d) ... $d\x` passed both tiers: DEF-2055's code review), so it is
+    keyword-only and named for that: a caller passing a twin says
+    `typed=` beside it (the failure-mode review)."""
+    raw, scan = powershell_scan_pair(typed)
     invocations = list(_PS_REMOVE_ITEM_RE.finditer(scan))
     if not invocations:
         return False
@@ -12111,7 +12113,7 @@ def powershell_removal_is_below_a_scratch_root(
     # never yes, so the gate is not asked for it.
     if quiet:
         return False
-    bound = _ps_temp_bound_remove(command)
+    bound = _ps_temp_bound_remove(typed)
     if bound is None:
         return False
     raw, scan = powershell_scan_pair(bound)
@@ -12196,13 +12198,22 @@ def _ps_temp_bound_remove(command: str) -> str | None:
     else keeps the wall: a binding with a tail, work between the binding and
     the remove, a remove in `try`/`finally` (DEF-2055's row, still open for
     those). The pre-pass is asked only once the shape holds, so the other
-    seven readers of it pay nothing here."""
-    if not command.isascii():
+    seven readers of it pay nothing here.
+
+    Never inside another shell's program (`_ANOTHER_SHELLS_PROGRAM`, which
+    the hard tier sets for every nested program): the launching shell may
+    expand `$d` and `$env:TEMP` before PowerShell parses a word of it, so
+    `pwsh -c "$d = $env:TEMP; Remove-Item -Recurse -Force $d\\Windows"` from
+    Bash runs `= ...; Remove-Item ... \\Windows` at the drive root (driven on
+    5.1 with a harmless stand-in; DEF-2055's second code review). The text
+    read there is not the text PowerShell parses, so the wall stands. A
+    trailing line break is no further statement, so it is trimmed first."""
+    if _ANOTHER_SHELLS_PROGRAM.get() or not command.isascii():
         return None
     m = _PS_TEMP_BINDING_RE.match(command)
     if m is None or m.group(1).lower() in _PS_PREDEFINED_VARIABLES:
         return None
-    rest = command[m.end():]
+    rest = command[m.end():].rstrip(" \t\r\n")
     if not _PS_TEMP_BINDING_REFUSED.isdisjoint(rest):
         return None
     words = rest.split(None, 1)

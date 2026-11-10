@@ -979,9 +979,9 @@ def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = 
                 if _bash_patterns.powershell_removal_is_plainly_relative(cmd, raw=twin):
                     return True
                 if (
-                    _bash_patterns.powershell_removal_is_below_a_scratch_root(raw, str(root))
+                    _bash_patterns.powershell_removal_is_below_a_scratch_root(typed=raw, root=str(root))
                     and not _bash_patterns.powershell_removal_is_below_a_scratch_root(
-                        raw, str(root), quiet=True)
+                        typed=raw, root=str(root), quiet=True)
                 ):
                     return True
                 # each target by the rung it qualifies for (DEF-1174): the

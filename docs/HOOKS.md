@@ -1321,6 +1321,9 @@ first; the dangerous-command catch is a secondary slip-catcher):
    reads it; `-Force $d\x` then gets the verdict the same value spelled in
    place gets, the one nudge where the hook's own value of the variable is
    an absolute path below a scratch root, else the wall (2026-11-10).
+   Never inside another shell's program (`pwsh -c "..."` from Bash, a
+   `Start-Process` argument list): the launching shell may expand `$d`
+   before PowerShell parses it, so the wall stands there.
    Any other bound spelling stays the wall: a binding with a tail, work
    between the binding and the remove, a remove inside `try`/`finally`
    (spell `$env:TEMP\x` in place).

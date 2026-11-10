@@ -3225,7 +3225,7 @@ def _ps_dangerous_reason_here(
                 if _bash_patterns.powershell_removal_is_plainly_relative(command, raw=raw):
                     continue  # -> soft speed-bump, not a wall
                 if _bash_patterns.powershell_removal_is_below_a_scratch_root(
-                    typed, str(root) if root else None,
+                    typed=typed, root=str(root) if root else None,
                 ):
                     continue  # -> the same speed-bump, which reads this predicate
                 # each target by the rung it qualifies for (DEF-1174): an
