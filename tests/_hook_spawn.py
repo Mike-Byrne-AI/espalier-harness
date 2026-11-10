@@ -60,9 +60,13 @@ ceiling.
 """
 from __future__ import annotations
 
+import functools
+import json
 import os
 import signal
 import subprocess
+import sys
+import tempfile
 import threading
 import time
 import warnings
@@ -467,18 +471,99 @@ def retry_a_budget_miss(
     return second
 
 
+#: The shell tools whose payload write_guard judges against the project's tree.
+SHELL_TOOLS = ("Bash", "PowerShell")
+#: Set to a file path to have each row that laid the protected tree name itself
+#: there, one line a spawn (the DEF-2045 measurement; off by default).
+LAY_LOG_ENV = "ESPALIER_TEST_LAY_LOG"
+
+
+@functools.lru_cache(maxsize=1)
+def _protected_dirs() -> tuple[str, ...]:
+    """The directories a guard fixture's project must carry, read ONCE from
+    the suite's own hook tree (``bench/powershell_guard_rehearsal.py::
+    protected_fixture_dirs``, through ``tests/_guard_fixture.py``), never from
+    the copy a row spawns: that read executes the tree's ``_protected_zones``,
+    which binds bare ``tools/cc`` modules, and a temp copy's would outlive its
+    folder. The read's ``sys.path`` entries and the ``tools/cc`` modules it
+    bound are put back, so a row that never names a ``tools/cc`` module gains
+    none (a standard-library module the read imported stays: dropping one
+    would let a later import build a second copy)."""
+    path_before, modules_before = list(sys.path), set(sys.modules)
+    tools_cc = SUITE_CHECKOUT / "tools" / "cc"
+    try:
+        from tests._guard_fixture import rehearsal
+
+        return rehearsal.protected_fixture_dirs(tools_cc / "hooks" / "write_guard.py")
+    finally:
+        sys.path[:] = path_before
+        for name in set(sys.modules) - modules_before:
+            origin = getattr(sys.modules.get(name), "__file__", None) or ""
+            if name == "_bench_protected_zones" or (origin and tools_cc in Path(origin).resolve().parents):
+                sys.modules.pop(name, None)
+
+
+def _shell_payload(input: str | bytes | None) -> bool:
+    if input is None:
+        return False
+    try:
+        data = json.loads(input)
+    except (ValueError, TypeError):
+        return False
+    return isinstance(data, dict) and data.get("tool_name") in SHELL_TOOLS
+
+
+def lays_the_protected_tree(argv: list[str], input: str | bytes | None, env: dict | None,
+                            cwd: str | None) -> Path | None:
+    """The project ``run_hook_through`` lays the protected tree into, or None
+    (DEF-2045). Only for write_guard judging a Bash or PowerShell payload, and
+    only in a project under the temp directory that is not this suite's own
+    checkout: a project with none of the protected directories judges a
+    command that changes into one with the directory absent, and banks the
+    ALLOW the absent directory decided (``cd tools/cc && echo x > notes.txt``
+    reads ALLOW bare and a deny with the tree, on both shells)."""
+    if len(argv) < 2 or Path(argv[1]).name != "write_guard.py" or not _shell_payload(input):
+        return None
+    project = _project(env, cwd)
+    if _is_suite_checkout(project):
+        return None
+    try:
+        resolved, temp = project.resolve(), Path(tempfile.gettempdir()).resolve()
+    except (OSError, RuntimeError):
+        return None
+    return project if temp in resolved.parents else None
+
+
+def _lay_the_protected_tree(project: Path) -> None:
+    for rel in _protected_dirs():
+        (project / rel).mkdir(parents=True, exist_ok=True)
+    log = os.environ.get(LAY_LOG_ENV)
+    if log:
+        with open(log, "a", encoding="utf-8") as fh:
+            fh.write(f"{_row()}\t{project}\n")
+
+
 def _row() -> str:
     return os.environ.get("PYTEST_CURRENT_TEST", "").rsplit(" (", 1)[0]
 
 
 def run_hook_through(
     argv: list[str], *, env: dict | None = None, input: str | bytes | None = None,
-    cwd: str | None = None, statusline: bool = False,
+    cwd: str | None = None, statusline: bool = False, bare_project: bool = False,
 ) -> subprocess.CompletedProcess:
     """Run a hook as Claude Code does, text in and out (or bytes, when the
-    input is bytes), with one retry on a miss under the same bound."""
+    input is bytes), with one retry on a miss under the same bound.
+
+    write_guard judging a shell payload in a temp project gets the protected
+    tree laid first (``lays_the_protected_tree``, DEF-2045); ``bare_project``
+    keeps the project bare, and the caller that passes it is named, with its
+    reason, on ``tests/test_test_suite_contract.py::_BARE_GUARD_SPAWNERS``."""
     name = Path(argv[1]).name if len(argv) > 1 else str(argv[0])
     bound = STATUSLINE_S if statusline else HOOK_S
+    if not bare_project:
+        laid = lays_the_protected_tree(argv, input, env, cwd)
+        if laid is not None:
+            _lay_the_protected_tree(laid)
     before = _Before(env, cwd)
     put_back: list[str] = []
     misses: list[str] = []
