@@ -23,6 +23,10 @@ Load-bearing regressions pinned here:
     tool earns its own nudge under the session cap; an identical re-issue passes.
     Until then the row was id-only and the second different side-effecting
     tool of a session went unchallenged.
+  - The local-filesystem defer is read from the places a payload names, through
+    the leaf walk, never from key names (DEF-5101): a move keyed from/to or a
+    batch defers, a relative leaf or a URL is no evidence. `write` and `edit`
+    lead a side effect as `send` does (DEF-876).
   - No write_guard dispatch change: `mcp__*` already passes the read-only
     early-return and reaches the speed-bump check. Shelled so the real call-site
     ordering, not the predicate alone, is under test.
@@ -104,6 +108,8 @@ class TestCpMcpOverFireGuard:
         "mcp__x__movements",          # `move`  prefix, a read
         "mcp__x__archived_items",     # `archive` prefix, a read
         "mcp__x__sender_profile",     # `send`  prefix, a read
+        "mcp__x__writers_guild",      # `write` prefix, a read
+        "mcp__x__editorial_calendar", # `edit`  prefix, a read
     ])
     def test_prefix_collision_stays_silent(self, tool_name):
         assert _pred(tool_name) is False
@@ -124,91 +130,68 @@ class TestCpMcpDocumentedUnderFire:
         assert _pred(tool_name) is False
 
 
-# ── Defer to write_guard on local-filesystem MCP ops (path-bearing) ─────────
+# ── Defer to write_guard on local-filesystem MCP ops (read from the leaves) ──
+
+def _move(tool_input, root):
+    """The predicate on a move: a side-effect verb, so only the defer silences it."""
+    return _speedbump._pred_mcp_sideeffect("mcp__fs__move_file", tool_input, root)
+
 
 class TestCpMcpDefersToWriteGuard:
-    """A local-fs MCP op carries a path-shaped field and is write_guard's
-    protected-zone domain (write_guard.py:449), NOT an external side effect.
-    CP-MCP stays silent so the hard-deny owns it in ONE round. RED against a
-    predicate that ignores tool_input (the original draft over-fired on
-    mcp__filesystem__move_file, preempting the protected-zone 'destination' deny)."""
+    """A local-filesystem MCP op is write_guard's domain, not an external side
+    effect, so CP-MCP stays silent and its body ("leaves the repo") stays true.
+    The defer is read from what the payload names, through the leaf walk: a
+    place spelled from a root (or drive) that lies inside a checkout. Until
+    DEF-5101 it stepped aside only on six top-level keys, so a move keyed
+    ``from``/``to`` or ``source``/``to``, a batch of moves, or a write keyed
+    ``output_path`` was told it left the repo: those cells are RED against it.
+    The six keys stay as cells, so the cells the old roster pinned still hold."""
 
-    # 441-E / §18.4: hand-authored, NOT derived from _speedbump._LOCAL_FS_FIELDS.
-    # The parametrize below used to read the live tuple, so deleting a member
-    # deleted its own test row (measured: 48 -> 45 passed, rc=0, silent). Only the
-    # "destination" member is pinned anywhere else -- by a real
-    # mcp__filesystem__move_file deny in tests/test_hooks.py -- so five of the six
-    # had no correctness row at all. (Deliberately no `symbol`+file:line anchor
-    # here: "destination" is an asserted STRING over there, not a defined symbol,
-    # and the tree-wide anchor freshness gate correctly reds on that pairing.)
-    _EXPECTED_LOCAL_FS_FIELDS = (
+    @pytest.mark.parametrize("shape", [
         "path", "file_path", "destination", "new_path", "src", "dst",
-    )
+        "from_to", "source_to", "moves_batch", "output_path",
+    ])
+    def test_silent_when_the_payload_names_a_place_in_the_checkout(self, shape, tmp_path):
+        r = tmp_path.resolve()
+        here, there = str(r / "a.txt"), str(r / "sub" / "b")
+        tool_input = {
+            "from_to": {"from": here, "to": there},
+            "source_to": {"source": here, "to": there},
+            "moves_batch": {"moves": [{"source": here, "destination": there},
+                                      {"from": str(r / "c"), "to": str(r / "d")}]},
+            "output_path": {"output_path": there, "content": "x"},
+        }.get(shape, {shape: here})
+        assert _move(tool_input, r) is False
 
-    def test_local_fs_field_roster_is_pinned_against_deletion(self):
-        """The independent axis: hand-written roster vs the live tuple.
+    def test_a_relative_spelling_is_no_evidence(self, tmp_path):
+        """Declared: an MCP server resolves a relative path against its own
+        working directory, which the hook never sees, so a relative leaf says
+        nothing about where the call lands, and the move is nudged."""
+        assert _move({"from": "a.txt", "to": "b"}, tmp_path.resolve()) is True
+        assert _move({"path": "tools/cc/hooks/write_guard.py"}, tmp_path.resolve()) is True
 
-        Failure direction here is an OVER-fire, not a protection hole --
-        write_guard still hard-denies the protected-zone write either way. What
-        a silent deletion costs is a redundant CP-MCP speedbump whose body
-        falsely tells the operator the write "leaves the repo". That is a
-        message-accuracy regression, which is why this is graded nit and pinned
-        rather than left to a count.
-        """
-        live = tuple(_speedbump._LOCAL_FS_FIELDS)
-        assert live == self._EXPECTED_LOCAL_FS_FIELDS, (
-            "_speedbump._LOCAL_FS_FIELDS drifted from the pinned roster.\n"
-            f"  live   : {live}\n"
-            f"  pinned : {self._EXPECTED_LOCAL_FS_FIELDS}\n"
-            "Add or remove the member HERE too, deliberately -- the "
-            "parametrize below derives from this roster, so an un-mirrored "
-            "deletion would otherwise retire its own coverage silently."
-        )
-        assert len(live) == 6, (
-            f"expected 6 local-fs fields, found {len(live)} -- the literal "
-            "count is the tripwire on the obvious wrong fix (regenerating the "
-            "roster from the constant, which is blind in the same direction)"
-        )
+    def test_a_remote_move_fires(self, tmp_path):
+        # Nothing in the checkout is named: a URL, or ids. RED against the six
+        # keys, which deferred the bucket move on its `destination` key.
+        r = tmp_path.resolve()
+        assert _move({"source": "s3://bucket/a", "destination": "s3://bucket/b"}, r) is True
+        assert _move({"card_id": "abc", "list_id": "def"}, r) is True
 
-    def test_the_expected_roster_is_still_a_hand_written_literal(self):
-        """441-E: the count pin above catches a SHRINKING roster; it cannot
-        catch one COLLAPSED back into a derivation.
+    def test_a_place_outside_every_checkout_is_no_evidence(self, tmp_path):
+        outside = tmp_path.resolve() / "elsewhere"
+        checkout = tmp_path.resolve() / "repo"
+        assert _move({"source": str(outside / "a"), "destination": str(outside / "b")}, checkout) is True
 
-        Writing ``_EXPECTED_LOCAL_FS_FIELDS = tuple(_speedbump._LOCAL_FS_FIELDS)``
-        keeps the count at 6, keeps the suite green, and quietly restores the
-        original defect -- the parity assertion becomes ``x == x`` and the
-        parametrize goes back to deriving from the subject under test. AST-level
-        because the runtime value would be byte-identical.
-        """
-        import ast
-        from pathlib import Path
+    def test_text_under_a_content_key_names_no_place(self, tmp_path):
+        r = tmp_path.resolve()
+        assert _move({"content": str(r / "a.txt")}, r) is True
 
-        source = Path(__file__).resolve().read_text(encoding="utf-8")
-        node = None
-        for stmt in ast.walk(ast.parse(source)):
-            if isinstance(stmt, ast.Assign):
-                for target in stmt.targets:
-                    if (isinstance(target, ast.Name)
-                            and target.id == "_EXPECTED_LOCAL_FS_FIELDS"):
-                        node = stmt.value
-        why = (
-            "_EXPECTED_LOCAL_FS_FIELDS must stay a literal tuple of string "
-            "literals. Deriving it from _speedbump._LOCAL_FS_FIELDS is the "
-            "obvious wrong fix §18.4 names explicitly: it enrols an addition "
-            "and stays blind to a deletion, which is where this started."
-        )
-        assert isinstance(node, (ast.Tuple, ast.List)), why
-        assert node.elts, why
-        for element in node.elts:
-            assert (
-                isinstance(element, ast.Constant) and isinstance(element.value, str)
-            ), why
-
-    @pytest.mark.parametrize("field", list(_EXPECTED_LOCAL_FS_FIELDS))
-    def test_silent_when_any_local_fs_field_present(self, field):
-        # `move` is a side-effect verb, but a LOCAL-fs path field means write_guard owns it.
-        ti = {field: "tools/cc/hooks/write_guard.py"}
-        assert _speedbump._pred_mcp_sideeffect("mcp__filesystem__move_file", ti, Path("/tmp")) is False
+    def test_a_payload_past_the_walk_bound_names_no_place(self, tmp_path):
+        r = tmp_path.resolve()
+        deep: dict = {"path": str(r / "a.txt")}
+        for _ in range(_speedbump._hook_utils.MCP_LEAFWALK_MAX_DEPTH + 2):
+            deep = {"next": deep}
+        assert _move(deep, r) is True
 
     @pytest.mark.parametrize("field", ["target", "uri", "target_uri", "source"])
     def test_generic_external_field_still_fires(self, field):
@@ -227,6 +210,42 @@ class TestCpMcpDefersToWriteGuard:
         # an empty/falsey path value is not a real local op -> verb logic applies.
         ti = {"path": ""}
         assert _speedbump._pred_mcp_sideeffect("mcp__slack__send_message", ti, Path("/tmp")) is True
+
+
+# ── A write or an edit is a side-effect verb (DEF-876) ──────────────────────
+
+class TestCpMcpWriteAndEditVerbs:
+    """`write` and `edit` lead an action as `send` and `delete` do: a remote page
+    write or a document edit names nothing in the checkout and is nudged (RED
+    before DEF-876: the roster had neither verb, so both tiers were silent).
+    A local write or edit names its file and still defers to write_guard, under
+    any key, the edit's own oldText/newText beside it."""
+
+    @pytest.mark.parametrize("tool_name, tool_input", [
+        ("mcp__notion__write_page", {}),
+        ("mcp__docs__edit_document", {}),
+        ("mcp__notion__write_page", {"page_id": "abc123", "content": "x"}),
+        ("mcp__docs__edit_document", {"document_id": "1xYz", "requests": [{"insertText": "hi"}]}),
+    ])
+    def test_a_remote_write_or_edit_fires(self, tool_name, tool_input, tmp_path):
+        assert _speedbump._pred_mcp_sideeffect(tool_name, tool_input, tmp_path.resolve()) is True
+
+    @pytest.mark.parametrize("tool_name, shape", [
+        ("mcp__filesystem__write_file", "path"),
+        ("mcp__fs__write_file", "output_path"),
+        ("mcp__filesystem__edit_file", "edits"),
+    ])
+    def test_a_local_write_or_edit_stays_silent(self, tool_name, shape, tmp_path):
+        r = tmp_path.resolve()
+        tool_input = {
+            "path": {"path": str(r / "a.py"), "content": "x"},
+            "output_path": {"output_path": str(r / "src" / "a.py"), "content": "x"},
+            # The edit's text names absolute places and a URL: text is not where
+            # the call lands, so it neither silences nor fires anything.
+            "edits": {"path": str(r / "a.py"), "dryRun": False,
+                      "edits": [{"oldText": "#!/usr/bin/env python", "newText": "see https://example.com"}]},
+        }[shape]
+        assert _speedbump._pred_mcp_sideeffect(tool_name, tool_input, r) is False
 
 
 # ── The earn-fixture: RED against the dead v1 regex ─────────────────────────

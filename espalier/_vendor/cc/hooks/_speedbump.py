@@ -1947,15 +1947,11 @@ CP_COMPACT = SpeedBump(
 # the OTHER direction: verb-not-leading forms (`bulk_delete`, `batch_send`) fall silent --
 # the v1.1 under-fire (external-irreversible but not harm-sealed at the PyPI-burn tier, so
 # an under-fire is the cheaper error; tighten from observed data).
-# Local-filesystem path fields ONLY (mcp__filesystem__*). A narrowed subset of the
-# shared _hook_utils.MCP_PATH_FIELDS: it deliberately DROPS the generic external-payload
-# fields (source/target/uri/target_uri) so send/trigger/post side effects that leave the
-# repo still get nudged. A real mcp__filesystem__move_file carries
-# `destination`, so it continues to defer to write_guard via that field.
-_LOCAL_FS_FIELDS = ("path", "file_path", "destination", "new_path", "src", "dst")
-
+# `write` and `edit` lead a remote page write or document edit as `send` leads a
+# message (DEF-876); a local write or edit names its file and defers below.
 _MCP_SIDEEFFECT_VERB_RE = re.compile(
-    r"(?:send|delete|remove|trigger|post|create|update|publish|archive|move)(?:_|$)", re.I
+    r"(?:send|delete|remove|trigger|post|create|update|publish|archive|move|write|edit)(?:_|$)",
+    re.I,
 )
 # Read/neutral verbs that must stay SILENT, incl. the auth-flow verbs in this env's
 # claude_ai_* servers (authenticate / complete_authentication) -- not data mutations worth
@@ -1965,27 +1961,54 @@ _MCP_READ_VERB_RE = re.compile(
 )
 
 
+def _mcp_names_a_place_in_the_checkout(tool_input: object, root: Path) -> bool:
+    """Does the payload name, from a root or a drive, a place inside a checkout?
+
+    The local-filesystem defer, read from what the payload names, not from what
+    its keys are called (DEF-5101): every non-content string leaf, at any depth
+    and under any key (the leaf walk write_guard's zone check reads), spelled
+    anchored (``rooted``) and placed inside the checkout or a sibling worktree
+    by the FS-free normaliser. A move keyed ``from``/``to``, a batch of moves
+    and a write keyed ``output_path`` defer as ``path`` does; a URL, an id or
+    a place outside every checkout is no evidence.
+
+    A relative leaf is no evidence either way: an MCP server resolves it
+    against its own working directory, which the hook never sees. Declared
+    cost: a local write spelled relative is nudged once per tool. Text is not
+    where a call lands, so nothing vetoes the defer: an edit's ``oldText``
+    holding ``/usr/bin/env`` or a URL leaves a local edit silent. A send whose
+    payload names a checkout file (an attachment) defers too, the residual the
+    six-key defer had for ``send_file{path}``. A payload past the walk's bounds
+    names no place and is nudged."""
+    try:
+        for key, _location, leaf in _hook_utils.iter_mcp_path_leaves(tool_input):
+            if key.casefold() in _hook_utils.MCP_CONTENT_KEYS or not _hook_utils.rooted(leaf):
+                continue
+            if not _hook_utils.rooted(_hook_utils.normalize_path_str(leaf, root)):
+                return True
+    except _hook_utils.MCPPayloadUnverifiable:  # fail-open: ok deliberate an unreadable payload names no place, so the nudge fires
+        return False
+    return False
+
+
 def _pred_mcp_sideeffect(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = None) -> bool:
     if not tool_name.startswith("mcp__"):
         return False
-    # DEFER to write_guard only for LOCAL-filesystem MCP ops (mcp__filesystem__*),
-    # which carry a local path field (write_guard.py:449 protected-zone domain). Those
-    # are NOT external side effects -- staying silent lets the hard-deny own them in ONE
-    # round and keeps the nudge body ("leaves the repo") factually true. Sister to CP-RMRF
-    # deferring to write_guard's rm hard-deny.
-    #
-    # The defer must NOT key on generic external-payload fields. The broad
-    # _hook_utils.MCP_PATH_FIELDS includes target/uri/target_uri -- so send_email{target},
-    # trigger_webhook{uri}, send_sms{target} were silently deferred and got NO nudge from
-    # either tier. Narrow to a local-fs-only subset here (do NOT mutate the shared
-    # MCP_PATH_FIELDS -- other callers rely on its breadth).
-    if isinstance(tool_input, dict) and any(tool_input.get(f) for f in _LOCAL_FS_FIELDS):
-        return False
     parts = tool_name.split("__")
     action = parts[-1] if len(parts) >= 3 else ""   # mcp__<server>__<action>
-    if _MCP_READ_VERB_RE.match(action):
+    if _MCP_READ_VERB_RE.match(action) or not _MCP_SIDEEFFECT_VERB_RE.match(action):
         return False
-    return bool(_MCP_SIDEEFFECT_VERB_RE.match(action))
+    # DEFER to write_guard for a LOCAL-filesystem op: it is write_guard's
+    # protected-zone domain (`write_guard.check_mcp`, which answers before this
+    # bump), not an external side effect, and staying silent keeps the nudge body
+    # ("leaves the repo") true. Sister to CP-RMRF deferring to the rm hard-deny.
+    # Read after the verb, so a read and a call with no side-effect verb pay
+    # nothing for it, and only on an MCP call: a Bash call never reaches here.
+    #
+    # The defer never keys on field names. Six top-level keys missed a move keyed
+    # from/to and every batch (DEF-5101); the broad _hook_utils.MCP_PATH_FIELDS
+    # before them deferred send_email{target} and trigger_webhook{uri}.
+    return not _mcp_names_a_place_in_the_checkout(tool_input, root)
 
 
 def _mcp_tool_key(tool_name: str, tool_input: dict) -> str:
