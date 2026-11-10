@@ -302,7 +302,8 @@ try:
     # predates a name they take refuses at the start with the upgrade, on a
     # read-only call as on any other.
     _WRITE_GUARD_HELPER_NAMES = (
-        "ADOPTER_ZONE_KEYS", "DENIED", "MCPPayloadUnverifiable", "MCP_CONTENT_KEYS", "MCP_PATH_FIELDS",
+        "ADOPTER_ZONE_KEYS", "DENIED", "MCPPayloadUnverifiable", "MCP_CONTENT_KEYS", "MCP_LEAFWALK_MAX_NODES",
+        "MCP_PATH_FIELDS",
         "MUTATION_TOOLS", "RECALL_LOG_NAME", "STATE_DIR", "_append_jsonl", "_locked_increment",
         "_msys_drive_to_windows", "_read_counter", "_rel_under_root", "_telemetry_enabled",
         "_write_counter", "adopter_protected_prefixes", "adopter_zone_for", "atomic_write_text", "directory_exists", "git_bash_tmp_mount",

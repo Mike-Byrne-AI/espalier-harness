@@ -1185,20 +1185,6 @@ first; the dangerous-command catch is a secondary slip-catcher):
    wildcard on a write, a link or a permission change is still read as the
    path it spells: those forms are outside the coverage contract below.
 
-   An MCP move or rename tool takes its source with the source's tree and
-   writes into its destination, as `mv a.txt tools` does: a destination that
-   only holds a zone (`tools` holding `tools/cc/`) runs, and a source that
-   holds one is refused. A destination key (`destination`, `dest`, `dst`,
-   `new_path`, `to`) reads as the destination only in an object that also
-   names a source (`source`, `src`, `from`, `path`, `file_path`, `old_path`,
-   `uri`); alone, or as `target`, its operand is read as the thing moved. Each
-   name the move lands, the destination (resolved, for a canonical field)
-   joined with each moved operand's last component, is judged too, so
-   `settings.json` moved into `.claude/` is refused. A destination key that
-   names the moved thing beside a source key, and a server that replaces a
-   destination directory it is told to overwrite, are zone writes the
-   coverage contract hands to the after-check.
-
    A relative Bash or PowerShell spelling is read from the directory the
    command runs in, not from the root: the hook payload's `cwd` (the
    directory Claude is in, which Claude Code moves when an earlier call ran
@@ -1650,6 +1636,20 @@ guard's test class, at
 `tests/test_write_guard.py::TestRemovedOrRelocatedOperandIsAMutation::test_every_consumed_arm_has_a_deny_row_and_every_row_names_a_consumed_arm`
 (Espalier
 source repo -- not deployed by `init`).
+
+An MCP move or rename tool takes its source with the source's tree and
+writes into its destination, as `mv a.txt tools` does: a destination that
+only holds a zone (`tools` holding `tools/cc/`) runs, and a source that
+holds one is refused. A destination key (`destination`, `dest`, `dst`,
+`new_path`, `to`) reads as the destination only in an object that also
+names a source (`source`, `src`, `from`, `path`, `file_path`, `old_path`,
+`uri`); alone, or as `target`, its operand is read as the thing moved. Each
+name the move lands, the destination (resolved, for a canonical field)
+joined with each moved operand's last component, is judged too, so a file
+named `settings.json` moved into the folder that holds the settings file is
+refused. A destination key that names the moved thing beside a source key,
+and a server that replaces a destination directory it is told to overwrite,
+are zone writes the coverage contract hands to the after-check.
 
 A program under an interpreter head is also read for what it HANDS TO A
 SHELL, and that text meets the Bash dangerous records, the write extractor,
