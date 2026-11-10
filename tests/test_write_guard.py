@@ -13221,7 +13221,9 @@ class TestATypographicQuoteClosesAPowerShellString:
     on to the next straight quote, and a quoted operand kept its quotes. Each
     row is a statement PowerShell runs, read as the straight spelling it is
     to PowerShell: one row per leg (the scan text, the secret read, the
-    zone), and a smart-quoted message that stays allowed."""
+    zone), the carried programs, and a smart-quoted message that stays
+    allowed. Only the quotes PowerShell acts on are folded; a string's value
+    is kept as typed."""
 
     @pytest.mark.parametrize("text", [
         "'a" + _RSQ + "; b; " + _LSQ + "c'",
@@ -13271,6 +13273,35 @@ class TestATypographicQuoteClosesAPowerShellString:
     ], ids=["secret-operand", "read-after-close", "zone-operand"])
     def test_a_program_the_bash_tool_launches_is_read_the_same_way(self, command, reason, tmp_path):
         assert_hook_denied(run_bash_guard(command, tmp_path), contains_reason=reason)
+
+    # A carried program: a PowerShell one (`iex`, a subexpression) is read
+    # with its own quotes folded, and cmd's typographic doubles are quotes to
+    # PowerShell first; each allowed at the lane's base. A Bash program keeps
+    # its characters as typed, since to Bash a typographic quote is text: a
+    # fold of the whole command allowed that row, which the base denied.
+    @pytest.mark.parametrize("command", [
+        'iex "Get-Content ' + _LSQ + '.env' + _RSQ + '"',
+        'Write-Output "$(Get-Content ' + _LSQ + '.env' + _RSQ + ')"',
+        'cmd /c ' + _LDQ + 'type .env' + _RDQ,
+        'bash -c "echo ' + _RSQ + '; cat .env; echo ' + _LSQ + '"',
+    ], ids=["iex", "subexpression", "cmd-typographic-doubles", "bash-program-keeps-its-text"])
+    def test_a_carried_program_is_read_by_its_own_grammar(self, command, tmp_path):
+        assert_hook_denied(_run_ps_guard(command, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("text, folded", [
+        ("'it" + _RSQ + "'s'", "'it''s'"),
+        ('"it' + _RSQ + 's"', '"it' + _RSQ + 's"'),
+        ("@" + _LSQ + "\nit" + _RSQ + "s\n" + _RSQ + "@", "@'\nit" + _RSQ + "s\n'@"),
+        ('bash -c "echo ' + _RSQ + '; x"', 'bash -c "echo ' + _RSQ + '; x"'),
+        ("# it" + _RSQ + "s", "# it" + _RSQ + "s"),
+        ("Write-Output " + _RSQ + "a", "Write-Output " + _RSQ + "a"),
+    ], ids=["doubled-escape", "value-in-double", "here-string-value", "bash-program",
+            "comment", "unreadable-as-typed"])
+    def test_only_the_quotes_powershell_acts_on_are_folded(self, text, folded):
+        sys.path.insert(0, str(HOOKS_DIR))
+        import _bash_patterns
+        assert _bash_patterns.fold_powershell_quotes(text) == folded
 
     @pytest.mark.parametrize("command", [
         "Write-Output " + _LDQ + "it" + _RSQ + "s fine" + _RDQ,

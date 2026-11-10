@@ -4155,11 +4155,12 @@ def _run_main(data: dict | None = None) -> int:
     if not isinstance(tool_input, dict):
         tool_input = {}
     # PowerShell pairs each typographic quote with its straight form, so the
-    # PowerShell tool's command is read with them folded, once, here, ahead of
-    # every leg that reads it: the secret read, the hard tier, the zone
-    # checks, the snapshot and the bump (DEF-2040). One code point for one,
-    # so no offset moves. Every PowerShell call loads the pattern path below
-    # anyway; this loads it a few lines sooner.
+    # PowerShell tool's command is read with the quotes PowerShell acts on
+    # folded (a string's value is kept as typed), once, here, ahead of every
+    # leg that reads it: the secret read, the hard tier, the zone checks, the
+    # snapshot and the bump (DEF-2040). One code point for one, so no offset
+    # moves. Every PowerShell call loads the pattern path below anyway; this
+    # loads it a few lines sooner.
     if tool_name == "PowerShell" and isinstance(tool_input.get("command"), str):
         _load_the_pattern_path()
         tool_input = {**tool_input, "command": _bash_patterns.fold_powershell_quotes(tool_input["command"])}

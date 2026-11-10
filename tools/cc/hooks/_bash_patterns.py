@@ -4721,26 +4721,74 @@ def _ps_blank_expandable(
 #: Windows PowerShell 5.1, 2026-11-10). This is the language's quote class,
 #: not a spelling roster, and its one home.
 PS_TYPOGRAPHIC_QUOTES = "".join(map(chr, (0x2018, 0x2019, 0x201A, 0x201B, 0x201C, 0x201D, 0x201E)))
+_PS_TYPOGRAPHIC_SINGLES = PS_TYPOGRAPHIC_QUOTES[:4]
+_PS_TYPOGRAPHIC_DOUBLES = PS_TYPOGRAPHIC_QUOTES[4:]
 _PS_QUOTE_FOLD = tuple(zip(PS_TYPOGRAPHIC_QUOTES, "''''" + '"""'))
 
 
 def fold_powershell_quotes(command: str) -> str:
-    """``command`` with each typographic quote PowerShell reads as a quote
-    written as its straight form, so every reader of the PowerShell grammar
-    -- the masker's walk and the raw-word readers that test for a straight
-    quote by hand -- pairs strings the way PowerShell does (DEF-2040). One
-    code point for one: the length and every offset hold.
+    """``command`` with each typographic quote PowerShell READS AS A QUOTE
+    at this level written as its straight form, so every reader of the
+    PowerShell grammar -- the masker's walk and the raw-word readers that
+    test for a straight quote by hand -- pairs strings the way PowerShell
+    does (DEF-2040). One code point for one: the length and every offset
+    hold.
 
-    Declared residual: a typographic quote inside a string's value reads as
-    its straight form there, so a path holding one is checked spelled with
-    the straight quote. A per-quote replace, not ``str.translate``, whose
-    non-ASCII path costs about 20 ns a character on every such command."""
-    if command.isascii():
+    Only the quotes PowerShell acts on are folded: each string's opening and
+    closing quote (a here-string's header and terminator), the doubled
+    escape inside a single-quoted string, and inside a double-quoted one a
+    double quote no backtick escapes and a single quote inside a ``$( )``.
+    Every other typographic character is a string's VALUE, which PowerShell
+    hands on as typed, and is left as typed: a value that is another
+    shell's program (`bash -c "echo ’; cat .env"`) is read by that shell's
+    grammar, where it is text -- folding it there invented a Bash quote that
+    masked the read (driven: the whole-text fold allowed it, the base
+    denied it). A PowerShell program one level down (`iex`, `pwsh
+    -Command`) is folded where that level is read. The strings are found by
+    the masker's own walk over a copy with every quote folded, which pairs
+    them exactly as PowerShell does; a command that walk cannot read, or one
+    past the masker's cap, is returned as typed, the reading it had before.
+    """
+    if command.isascii() or len(command) > _ROLE_MAP_CAP:
         return command
+    full = command
     for typographic, straight in _PS_QUOTE_FOLD:
-        if typographic in command:
-            command = command.replace(typographic, straight)
-    return command
+        if typographic in full:
+            full = full.replace(typographic, straight)
+    if full == command:
+        return command
+    spans: list[tuple[int, int, str]] = []
+    try:
+        _walk_powershell_spans(full, spans)
+    except (_UnresolvedShellSyntax, IndexError):
+        return command
+    out = list(command)
+    for open_, close, kind in spans:
+        quote = open_ + 1 if kind[0] == "@" else open_
+        out[quote], out[close] = full[quote], full[close]
+        if kind == "'":
+            for k in range(open_ + 1, close):
+                if command[k] in _PS_TYPOGRAPHIC_SINGLES:
+                    out[k] = "'"          # a doubled escape: a lone one closes
+        elif kind == '"':
+            depth, k = 0, open_ + 1
+            while k < close:
+                ch = command[k]
+                if ch == "`":
+                    k += 2                # an escaped quote is the value's
+                    continue
+                if ch == "$" and command[k + 1:k + 2] == "(":
+                    depth += 1
+                    k += 2
+                    continue
+                if depth and ch == "(":
+                    depth += 1
+                elif depth and ch == ")":
+                    depth -= 1
+                elif ch in _PS_TYPOGRAPHIC_DOUBLES or (depth and ch in _PS_TYPOGRAPHIC_SINGLES):
+                    out[k] = full[k]
+                k += 1
+    return "".join(out)
 
 
 def mask_powershell_inert_syntax(command: str) -> str:
