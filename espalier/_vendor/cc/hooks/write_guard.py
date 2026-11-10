@@ -387,8 +387,8 @@ def _load_the_pattern_path() -> None:
         _pattern_path_loading = True
         try:
             # This file's directory first, as at its top: a caller may have put
-            # sys.path back since, and `_speedbump` imports its siblings bare,
-            # trusting the hook to have done this (DEF-768).
+            # sys.path back since, and the two modules' own inserts add the
+            # directory only where it is absent, never ahead of an earlier entry.
             here = str(Path(__file__).parent)
             if sys.path[:1] != [here]:
                 sys.path.insert(0, here)

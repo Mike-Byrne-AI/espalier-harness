@@ -26,14 +26,22 @@ Conventions:
 """
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
+
+# This module is imported under two spellings: bare, with the hooks directory
+# already on sys.path (the importing hook put it there), and as
+# `tools.cc.hooks._denial_reasons` from the repo root, where nothing has. So it
+# puts its own directory on sys.path the way _bash_patterns does instead of
+# trusting every importer to have done so.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
 
 # Import the canonical env-var name so the reason templates pin to the SoT in
 # _maintenance_mode.ENV_VAR rather than carrying a divergent literal.
-# Sibling-module import; the importing hook has already set
-# ``sys.path.insert(0, hooks_dir)`` by the time this module loads (see
-# write_guard.py:45-50 for the pattern).
-import _maintenance_mode  # type: ignore[import-not-found]
+import _maintenance_mode  # type: ignore[import-not-found]  # noqa: E402
 # The start refusal's old home (DEF-3008): an upgrade keeps a deny hook the
 # adopter edited and regenerates this module, and a kept hook from before
 # the move calls the refusal here. The start refusal imports only the
