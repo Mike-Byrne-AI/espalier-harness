@@ -11689,6 +11689,37 @@ _DRIVE_SCRATCH_ROOT_RE = re.compile(r"^[a-z]:/te?mp$", re.IGNORECASE)
 _SCRATCH_ROOT_VALUE_RE = re.compile(r"^(?:[A-Za-z]:)?/[^/]")
 
 
+def _long_path_name(value: str) -> str | None:
+    """``value`` (drive-qualified, separator-normalised) with each 8.3 short
+    component expanded to its long name by ``GetLongPathNameW``, in forward
+    slashes; ``None`` off Windows, where the call fails (a path that is not
+    there) and where nothing changed. It expands short names alone: a
+    junction or link component keeps its own name where ``realpath`` would
+    follow it (driven 2026-11-10), so a short ``TEMP`` gains its own
+    directory's long spelling and no other place (DEF-1125)."""
+    if sys.platform != "win32" or not _DRIVE_ABSOLUTE_RE.match(value):
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        fn = ctypes.WinDLL("kernel32").GetLongPathNameW  # type: ignore[attr-defined]
+        fn.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+        fn.restype = wintypes.DWORD
+        native = value.replace("/", "\\")
+        size = fn(native, None, 0)
+        if not size:
+            return None
+        buf = ctypes.create_unicode_buffer(size)
+        written = fn(native, buf, size)
+    except (ImportError, AttributeError, OSError, ValueError):  # fail-open: ok deliberate -- no long spelling keeps the typed root alone, toward the wall
+        return None
+    if not written or written >= size:
+        return None
+    long = buf.value.replace("\\", "/").rstrip("/")
+    return long if long != value else None
+
+
 def _vetted_scratch_values() -> list[str]:
     """The values of ``TEMP``, ``TMP`` and ``TMPDIR`` that can serve as a
     scratch root, separator-normalised: an absolute path with at least one
@@ -11698,7 +11729,11 @@ def _vetted_scratch_values() -> list[str]:
     or `TEMP=C:\\Windows` would otherwise turn every wall below it into a
     nudge (code review, driven, 2026-10-04). A value that IS a fixed temp
     root (`TMPDIR=/tmp`) is that root, catastrophic itself, and read through
-    `_TEMP_ROOTS` alone. Read from the environment,
+    `_TEMP_ROOTS` alone. A value holding a ``~`` is followed by its long
+    spelling (`_long_path_name`), vetted the same way, so a ``TEMP``
+    presented in 8.3 form (``C:\\Users\\SOMEUS~1\\...``) is a root under
+    both of its names and a path typed long below it is scratch (DEF-1125);
+    a value with no ``~`` asks nothing more. Read from the environment,
     never through `tempfile.gettempdir`, which writes a probe file to
     answer. One home for the scratch-root reader, the speed bump's
     temp-root carve-out (`below_a_temp_root`) and the catastrophic reader's
@@ -11721,8 +11756,13 @@ def _vetted_scratch_values() -> list[str]:
     try:
         for var in ("TEMP", "TMP", "TMPDIR"):
             value = os.environ.get(var, "").replace("\\", "/").rstrip("/")
-            if _SCRATCH_ROOT_VALUE_RE.match(value) and not _target_is_catastrophic(value, None, by_drive=False):
-                out.append(value)
+            if not _SCRATCH_ROOT_VALUE_RE.match(value) or _target_is_catastrophic(value, None, by_drive=False):
+                continue
+            out.append(value)
+            long = _long_path_name(value) if "~" in value else None
+            if (long and _SCRATCH_ROOT_VALUE_RE.match(long)
+                    and not _target_is_catastrophic(long, None, by_drive=False)):
+                out.append(long)
     finally:
         _VETTING_SCRATCH[0] = False
     if len(_VETTED_MEMO) < 32:

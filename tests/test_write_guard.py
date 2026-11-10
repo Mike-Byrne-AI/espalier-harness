@@ -10141,6 +10141,131 @@ class TestPowerShellScratchRootRung:
             os.rmdir(link) if sys.platform == "win32" else os.unlink(link)
 
 
+def _win32_short_path(path: str) -> str | None:
+    """``path`` as ``GetShortPathNameW`` spells it; ``None`` off Windows or
+    where the call fails."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+    fn = ctypes.WinDLL("kernel32").GetShortPathNameW  # type: ignore[attr-defined]
+    fn.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+    fn.restype = wintypes.DWORD
+    size = fn(path, None, 0)
+    if not size:
+        return None
+    buf = ctypes.create_unicode_buffer(size)
+    return buf.value if fn(path, buf, size) else None
+
+
+class TestAShortTempRootReadsItsLongName:
+    """A ``TEMP``, ``TMP`` or ``TMPDIR`` presented in 8.3 form is a scratch
+    root in its long spelling too (DEF-1125): the long spelling of a path
+    below it steps off the wall as the short one does, and the long spelling
+    of the root itself is the wall.
+
+    WHY. The scratch reader compared the environment's value as typed, so on
+    a Windows host whose temp directory carries a short component
+    (``C:\\Users\\SOMEUS~1\\...``) a forced remove of a scratch tree spelled
+    long met the wall the rung was built to relieve. The long spelling comes
+    from ``GetLongPathNameW``, which expands short names and follows no
+    junction (driven 2026-11-10: a junction component kept its own name
+    where ``realpath`` left it), and it is vetted as the typed value is, so a
+    long form that is the home, or a parent of it, adds nothing. The fake
+    expander rows read the same on every host; the driven row needs a volume
+    that makes short names, and skips naming why where it has none. These
+    are test fixtures for a friction guard: a command is handed to it as
+    text, never run."""
+
+    SHORT = "C:/Users/SOMEUS~1/AppData/Local/Temp"
+    LONG = "C:/Users/someuser/AppData/Local/Temp"
+    RI = "Remove-Item -Recurse -Force "
+
+    @staticmethod
+    def _env(monkeypatch, expanded: dict[str, str], *, home: str = "C:/Users/nobody-here",
+             **values: str) -> None:
+        bp = _bash_patterns_module()
+        monkeypatch.setattr(bp, "_VETTED_MEMO", {})
+        monkeypatch.setattr(bp, "_long_path_name", lambda value: expanded.get(value))
+        for var in ("TEMP", "TMP", "TMPDIR"):
+            monkeypatch.delenv(var, raising=False)
+        for var, value in values.items():
+            monkeypatch.setenv(var, value)
+        monkeypatch.setenv("HOME", home)
+        monkeypatch.setenv("USERPROFILE", home)
+
+    @staticmethod
+    def _walls(command: str, tool: str) -> bool:
+        wg = _load_write_guard()
+        repo = Path.home() / "short-temp-no-such-repo"
+        judge = wg._bash_dangerous_reason if tool == "Bash" else wg._ps_dangerous_reason
+        return judge(command, repo, cwd=repo) is not None
+
+    @pytest.mark.parametrize("spelled", [LONG, LONG.replace("/", "\\"), LONG.upper()],
+                             ids=["slashes", "backslashes", "upper"])
+    def test_a_long_spelling_below_a_short_temp_steps_off_the_wall(self, spelled, monkeypatch):
+        self._env(monkeypatch, {self.SHORT: self.LONG}, TEMP=self.SHORT)
+        sep = "\\" if "\\" in spelled else "/"
+        assert not self._walls(self.RI + spelled + sep + "build-cache", "PowerShell")
+        # the short spelling passed before and still does
+        assert not self._walls(self.RI + self.SHORT + "/build-cache", "PowerShell")
+
+    @pytest.mark.parametrize("tool", ["Bash", "PowerShell"])
+    def test_the_long_spelling_of_the_root_itself_is_the_wall(self, tool, monkeypatch):
+        self._env(monkeypatch, {self.SHORT: self.LONG}, TEMP=self.SHORT)
+        verb = "rm -rf " if tool == "Bash" else self.RI
+        assert self._walls(verb + self.LONG, tool), tool
+        assert self._walls(verb + self.LONG.rsplit("/", 1)[0], tool), (tool, "a parent")
+
+    def test_a_long_form_that_is_the_home_adds_no_root(self, monkeypatch):
+        """The long spelling is vetted as the typed one is: one that names
+        the home directory makes nothing below the home scratch. Drop the
+        vetting and this row steps off the wall."""
+        typed = "C:/Users/someuser/AppData/Local/TEMPOR~1"
+        home = "C:/Users/someuser"
+        self._env(monkeypatch, {typed: home}, home=home, TEMP=typed)
+        assert self._walls(self.RI + home + "/projects/x", "PowerShell")
+
+    def test_a_value_with_no_short_component_is_never_expanded(self, monkeypatch):
+        """Only a value holding ``~`` asks the expander, so a long TEMP pays
+        nothing it did not pay before."""
+        asked: list[str] = []
+        bp = _bash_patterns_module()
+        self._env(monkeypatch, {}, TEMP=self.LONG)
+        monkeypatch.setattr(bp, "_long_path_name", lambda value: asked.append(value))
+        assert bp._vetted_scratch_values() == [self.LONG]
+        assert asked == []
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="8.3 names are a Windows volume's")
+    def test_a_driven_short_temp_passes_its_long_spelling(self, tmp_path):
+        """On the real host, through the hook: ``TEMP`` set to the short
+        spelling of a scratch directory, the forced remove spelled long."""
+        scratch = tmp_path / "a long scratch root name"
+        (scratch / "build-cache").mkdir(parents=True)
+        short = _win32_short_path(str(scratch))
+        if not short or "~" not in short:
+            pytest.skip(f"this volume made no short name: {short!r}")
+        project = tmp_path / "proj"
+        project.mkdir()
+        command = f'{self.RI}"{scratch / "build-cache"}"'
+        assert_hook_allowed(_run_ps_guard_with_temp(command, project, short))
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="8.3 names are a Windows volume's")
+    def test_the_hosts_own_temp_reads_in_its_long_form(self, monkeypatch):
+        """The measurement: where this host's own ``TEMP`` carries a short
+        component (GitHub's windows runners were reported to present
+        ``RUNNER~1``), a path below its long spelling steps off the wall.
+        The skip reason names the value, so ``-rs`` prints what the host
+        presents."""
+        typed = os.environ.get("TEMP", "")
+        if "~" not in typed:
+            pytest.skip(f"TEMP has no short component here: {typed!r}")
+        monkeypatch.setattr(_bash_patterns_module(), "_VETTED_MEMO", {})
+        long = _bash_patterns_module()._long_path_name(typed.replace("\\", "/").rstrip("/"))
+        assert long and "~" not in long, (typed, long)
+        assert not self._walls(self.RI + long + "/espalier-def-1125-x", "PowerShell")
+
+
 #: The fixed temp roots, read from the guard's one home for them at
 #: collection, so a root added there is asked here unasked.
 _FIXED_TEMP_ROOTS = tuple(_bash_patterns_module()._TEMP_ROOTS)
