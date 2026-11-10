@@ -1491,7 +1491,7 @@ first; the dangerous-command catch is a secondary slip-catcher):
 
    The loop carrier -- the enumerator's output bound to
    a loop variable and removed in the loop's body, on the Bash tool -- is
-   read too (DEF-830): the pipe into a read loop, the for loop over a
+   read too: the pipe into a read loop, the for loop over a
    command substitution and the read loop fed at its tail each hand the
    remove verb every path the enumerator lists, so they are judged by the
    enumerator's root through the same tiers as the carrier (until
@@ -2023,7 +2023,8 @@ spellings of them are work:
   your shell's aliases, so the guard cannot know a bare `rm` is not recursive,
   while the PowerShell tool loads no profile and lets a lone remove cmdlet
   without its recurse switch through when the directory it names holds an
-  entry. The guard's own tests pin both halves.
+  entry (pinned by
+  `tests/test_write_guard_zone_wildcard.py::TestADeleteThatCannotTakeADirectoryLeavesTheZone::test_a_bare_rm_keeps_the_deny_on_bash`).
 - A new report on these jobs is a defect when its form is in the contract, or
   when it records a slip seen in a real session (a transcript or an audit row
   names it). Otherwise it is recorded under the limits above with the contract
