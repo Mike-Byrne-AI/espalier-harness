@@ -473,9 +473,6 @@ def retry_a_budget_miss(
 
 #: The shell tools whose payload write_guard judges against the project's tree.
 SHELL_TOOLS = ("Bash", "PowerShell")
-#: Set to a file path to have each row that laid the protected tree name itself
-#: there, one line a spawn (the DEF-2045 measurement; off by default).
-LAY_LOG_ENV = "ESPALIER_TEST_LAY_LOG"
 
 
 @functools.lru_cache(maxsize=1)
@@ -557,10 +554,6 @@ def _lay_the_protected_tree(project: Path) -> None:
         return
     for rel in dirs:
         (project / rel).mkdir(parents=True, exist_ok=True)
-    log = os.environ.get(LAY_LOG_ENV)
-    if log:
-        with open(log, "a", encoding="utf-8") as fh:
-            fh.write(f"{_row()}\t{project}\n")
 
 
 def _row() -> str:
