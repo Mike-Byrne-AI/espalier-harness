@@ -1717,7 +1717,10 @@ the shell on stdin) is read by the PowerShell extractor, read-verb roster
 and dangerous records, and `bash -c "..."` / `sh -c '...'` on the
 PowerShell tool (the head bare or given by path, the `-c` bare or clustered
 as `-lc`) by the Bash ones -- one level down, and a program that re-enters
-the first shell one level further, no more. A program piped to `-Command -`
+the first shell one level further, no more. On the Bash tool a POSIX
+shell's `-c` program meets the Bash dangerous records one level down as
+well, so a switch or cluster before the `-c` (`bash -lc '...'`, `sh -e -c
+'...'`) draws the verdict the bare `bash -c '...'` draws. A program piped to `-Command -`
 on the Bash tool (`echo '...' | pwsh -Command -`, `cat <<'EOF' | pwsh
 -Command -`) is read as the stage before the pipe, like an interpreter's;
 `-File <script>` there means the pipe is data. `-EncodedCommand`, `-File

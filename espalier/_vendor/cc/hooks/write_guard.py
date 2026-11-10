@@ -3087,6 +3087,18 @@ def _bash_dangerous_reason_here(
                 reason = _bash_dangerous_reason(program, root, _depth + 1, cwd=cwd)
                 if reason:
                     return reason
+            # A POSIX shell's `-c` program (DEF-3068): the same records one
+            # level down. The exec-quote command position opens only after a
+            # bare `-c`, so behind a switch or cluster (`bash -lc '...'`, `sh
+            # -e -c '...'`) the outer scan never read the program's delete,
+            # and every record of this tier was a plain allow there while the
+            # bare spelling walled. A bare `-c` program is read twice (raw,
+            # and here); the duplicate costs work inside the depth bound,
+            # never a decision.
+            for program in _bash_patterns._posix_shell_c_bodies(spliced, pair):
+                reason = _bash_dangerous_reason(program, root, _depth + 1, cwd=cwd)
+                if reason:
+                    return reason
     return None
 
 

@@ -16005,12 +16005,79 @@ class TestCrossShellRouting:
         cmd = "bash " + "-x " * switches + opener + " '" + body + "'"
         assert_hook_denied(run_bash_guard(cmd, tmp_path))
 
-    def test_a_catastrophic_delete_behind_a_long_switch_run_is_refused(self, tmp_path):
+    @pytest.mark.parametrize("opener", ["-c", "<<<"], ids=["dash-c", "herestring"])
+    def test_a_catastrophic_delete_behind_a_long_switch_run_is_refused(self, tmp_path, opener):
         """DEF-818: the catastrophic delete behind 65 switches, pinned refused
-        (air 34fc8c). The here-string opener: behind `-c` the wall misses the
-        delete at ONE switch, older than the bound and its own row (§C76)."""
-        cmd = "bash " + "-x " * 65 + "<<< 'rm -rf /'"
-        assert_hook_denied(run_bash_guard(cmd, tmp_path))
+        (air 34fc8c) on both openers. Behind `-c` the wall missed the delete
+        from ONE switch up until DEF-3068 (rows below)."""
+        cmd = "bash " + "-x " * 65 + opener + " 'rm -rf /'"
+        assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "wall"
+
+    # ── Bash tool: the dangerous tier one level down a switched `-c` ──
+
+    #: The `-c` openers a switch or cluster precedes (DEF-3068): the row's
+    #: spellings, a trailing cluster, a long option, and two other heads.
+    _SWITCHED_DASH_C = [
+        "bash -lc", "bash -l -c", "sh -e -c", "bash -x -c", "bash -cx",
+        "bash --norc -c", "zsh -fc", "dash -e -c",
+    ]
+    #: Every record of the Bash dangerous tier the switched opener hid, each
+    #: denied behind a bare `-c` (Task 0, driven on main 57373db).
+    _TIER_MEMBERS = {
+        "rm-root": "rm -rf /",
+        "rm-home": "rm -rf ~",
+        "rm-unforced-root": "rm -r /",
+        "find-delete-root": "find / -delete",
+        "piped-root": "find / -type f | xargs rm -rf",
+        "loop-root": 'for f in /*; do rm -rf "$f"; done',
+        "env-prefix": "ESPALIER_MAINTENANCE_MODE=1 claude",
+    }
+
+    @pytest.mark.parametrize("opener", _SWITCHED_DASH_C)
+    @pytest.mark.parametrize("program", ["rm -rf /", "rm -rf ~"], ids=["root", "home"])
+    def test_a_switched_dash_c_program_meets_the_wall(self, tmp_path, opener, program):
+        """DEF-3068: `bash -c 'rm -rf /'` walls, and until this row every
+        switched spelling of the same program was a plain allow on the Bash
+        tool: the exec-quote command position (`_CMD_POS_EXEC_QUOTE`) opens
+        only after a bare `-c`, so the outer scan never read the delete, and
+        the tier did not hand the program `_posix_shell_c_bodies` reads one
+        level down as it hands a shell-out's. The wall holds under
+        maintenance mode, so an agent's login-shell one-liner wiping the
+        root or home met no tier at all."""
+        cmd = opener + " '" + program + "'"
+        assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "wall"
+
+    @pytest.mark.parametrize("opener", ["bash -c", "bash -lc", "sh -e -c"],
+                             ids=["bare", "cluster", "switch"])
+    @pytest.mark.parametrize("member", list(_TIER_MEMBERS), ids=list(_TIER_MEMBERS))
+    def test_every_tier_record_reads_a_switched_dash_c_program(self, tmp_path, opener, member):
+        """DEF-3068's class (Core Rule 12): the miss was the tier's, not the
+        rm classifier's. Each record -- the delete, the find, the piped and
+        loop carriers (the loop drew only the bump), the harness env prefix
+        -- reads the switched program as it reads the bare `-c` one, which
+        is the control beside it."""
+        cmd = opener + " '" + self._TIER_MEMBERS[member] + "'"
+        result = run_bash_guard(cmd, tmp_path)
+        if member == "env-prefix":
+            assert_hook_denied(result)
+        else:
+            assert _delete_verdict(result) == "wall"
+
+    @pytest.mark.parametrize("program,verdict", [
+        ("rm -rf build", "allow"),
+        ("ls -la", "allow"),
+        ("rm -rf /tmp/scratch/x", "allow"),
+    ], ids=["relative", "read-only", "deep-tmp"])
+    def test_a_switched_dash_c_program_is_judged_as_the_bare_one(self, tmp_path, program, verdict):
+        """The other side of DEF-3068: the program one level down meets the
+        verdict its bare `-c` twin meets, never a new refusal (Task 0's
+        controls, equal on all nine openers on main)."""
+        # a fresh project per call: a speed bump the first call armed would
+        # read as an allow on the re-issue
+        for k, opener in enumerate(("bash -c", "bash -lc", "sh -e -c")):
+            project = tmp_path / str(k)
+            project.mkdir()
+            assert _delete_verdict(run_bash_guard(opener + " '" + program + "'", project)) == verdict
 
     # ── PowerShell tool: a bash program behind bash / sh -c ──
 
