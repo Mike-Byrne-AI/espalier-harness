@@ -15978,9 +15978,12 @@ def _ps_header_feed(text: str, m: "re.Match[str]") -> "re.Match[str] | _CutPipe 
     the pipe sits in a block after the enumerator's group, a `_CutPipe`
     whose span ends at the group's close where the group is a `foreach`
     header and the block's stage is its loop variable (`foreach ($f in (gci
-    src)) { $f | ri -r }`), else None -- the pipe carries something no
-    enumerator the guard reads binds (`if ((gci build).Count) { '/' | ri -r
-    -fo }`, a body piping another variable)."""
+    src)) { $f | ri -r }`), else None -- this match's enumerator does not
+    feed the pipe (`if ((gci build).Count) { '/' | ri -r -fo }`, a body
+    piping another variable). None is not "nothing feeds it": an
+    enumerator inside the block may, and only `_ps_piped_remove_matches`,
+    which searches on past this head, can say; it is this helper's one
+    caller (pinned)."""
     args = m.group("args") or ""
     leave, opener = _ps_block_cut(args)
     if leave < 0:
@@ -15996,14 +15999,18 @@ def _ps_piped_remove_matches(
     """``(match, feed)`` for every `_PS_PIPED_REMOVE_RE` match on ``text``,
     ``feed`` by `_ps_header_feed` -- the one site that searches the regex
     (the verdict readers through `_ps_fed_removes`, the zone reader here).
-    A match whose pipe sits in a block its header does not feed is searched
-    again from just past its head, not past its end: its span ran across
-    the block's brace, so an enumerator inside the span -- the block's own
-    pipeline, an inner loop's header -- opens a match of its own (air's
-    22f230: `if ((gci build).Count -gt 0) { gci build -Recurse | ri -r -fo
-    }` read the condition's listing as the opener, the block's pipeline
-    never, and walled a clean main allows). Matches do not overlap
-    otherwise, as `finditer`'s. Each search starts past the last one's
+    A match whose pipe sits in a block -- fed by its header or not -- is
+    searched again from just past its head, not past its end: its span ran
+    across the block's brace, so an enumerator inside the span -- the
+    block's own pipeline, an inner loop's header -- opens a match of its
+    own (air's 22f230: `if ((gci build).Count -gt 0) { gci build -Recurse |
+    ri -r -fo }` read the condition's listing as the opener, the block's
+    pipeline never, and walled a clean main allows; an outer `foreach`
+    whose variable an inner loop reuses fed the block from the outer
+    listing and hid the inner one, the failure-mode review). Two fed
+    matches may then share one remove: a reader keyed by the remove keeps
+    the later, the innermost header. A match whose pipe is its own resumes
+    past its end, as `finditer`'s. Each search starts past the last one's
     head, so the walk ends; an enumerator head is short and a span holds
     few, so it stays a handful of searches a command."""
     pos = 0
@@ -16013,7 +16020,7 @@ def _ps_piped_remove_matches(
             return
         fed = _ps_header_feed(text, m)
         yield m, fed
-        pos = m.end("head") if fed is None else max(m.end(), m.start() + 1)
+        pos = m.end() if fed is m else m.end("head")
 
 
 def _ps_fed_removes(text: str) -> "Iterator[re.Match[str] | _CutPipe]":
@@ -16026,17 +16033,22 @@ def _ps_fed_removes(text: str) -> "Iterator[re.Match[str] | _CutPipe]":
     recognized safe -- a silent allow for every root, where the statement
     form beside it walls; glued (`){$f|ri -r}`), the same tail read as a
     flag and walled by accident. Now the header's listing feeds a body that
-    pipes the loop variable, read as its statement twin, and a pipe in a
-    block that carries anything else is fed by nothing: forced, the record
+    pipes the loop variable, read as its statement twin. A block the header
+    does not feed has its own pipeline read where one opens inside it
+    (`_ps_piped_remove_matches`); a pipe there that carries anything else
+    (a literal, another variable) is fed by nothing: forced, the record
     walls it as it walls every operand-less forced remove; unforced, the
     speed bump nudges it. A group's output piped on stays the enumerator's
     (`(gci src) | ri`, `(gci src).FullName | ri`, `(gci src).Where({ ...
-    }) | ri`). A block the header does not feed has its own pipeline read
-    (`_ps_piped_remove_matches`). The three verdict readers take this; the
-    zone reader reads the raw match and the header's feed both."""
+    }) | ri`). One feed per remove: where two headers feed one remove (an
+    inner loop reusing the outer's variable), the innermost, the later
+    match, is the one that binds it. The three verdict readers and the
+    zone reader take this, so each pipe is read once, by what feeds it."""
+    feeds: dict[int, "re.Match[str] | _CutPipe"] = {}
     for _m, fed in _ps_piped_remove_matches(text):
         if fed is not None:
-            yield fed
+            feeds[fed.start("rmargs")] = fed
+    yield from feeds.values()
 
 
 def _ps_pipeline_sweeps(raw: str, scan: str) -> Iterator[tuple[int, list[str], bool, bool]]:
@@ -16844,20 +16856,19 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
 
     for m in _PS_REMOVE_ITEM_RE.finditer(scan):
         out.extend(("delete", p) for p in named_targets(m))
-    for m, fed in _ps_piped_remove_matches(scan):
+    for fed in _ps_fed_removes(scan):
         # the enumerator's roots, the current location when it names none
         # (DEF-822); a narrowed pipeline is a `sweep` -- its root judged by
-        # itself, as a narrowed find's is
-        roots, narrowed, _files_only, _walks = _ps_pipeline_reading(raw, m)
+        # itself, as a narrowed find's is. DEF-3066: read by what feeds the
+        # remove, as the verdict readers read it -- a loop body piping its
+        # variable by the header's listing cut at the header's close (read
+        # raw, the block's brace and variable narrowed a protected
+        # directory's parent, the review), a block's own pipeline by itself;
+        # a condition's listing whose span ran into a block it does not feed
+        # is no delete (`if ((gci cc).Count) { gci build -Recurse | ri -r }`
+        # refused a clean, the failure-mode review)
+        roots, narrowed, _files_only, _walks = _ps_pipeline_reading(raw, fed)
         out.extend(("sweep" if narrowed else "delete", p) for p in roots)
-        # DEF-3066: a loop body piping its variable is fed by the header's
-        # listing, read cut at the header's close; the raw reading above
-        # took the block's brace and variable for a narrowing filter, which
-        # judged a protected directory's parent by itself (the review); a
-        # block the header does not feed is read as its own match next
-        if isinstance(fed, _CutPipe):
-            roots, narrowed, _files_only, _walks = _ps_pipeline_reading(raw, fed)
-            out.extend(("sweep" if narrowed else "delete", p) for p in roots)
     for m in _PS_FIND_DELETE_RE.finditer(scan):
         # the find family on this tool (DEF-824): the Bash arm's span reader,
         # so `delete`, `sweep` and `move` mean what they mean on Bash, its

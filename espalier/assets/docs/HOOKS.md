@@ -1589,7 +1589,13 @@ first; the dangerous-command catch is a secondary slip-catcher):
    opens inside it: an `if` whose condition lists a directory and whose
    block lists and removes (`if ((Get-ChildItem build).Count -gt 0) {
    Get-ChildItem build -Recurse | Remove-Item -Recurse -Force }` passes,
-   the same over `/` walls), an `else` branch, an inner loop's header.
+   the same over `/` walls), an `else` branch, an inner loop's header (one
+   that reuses the outer loop's variable binds the remove by its own
+   listing); the condition's listing is no delete, on the zone check as
+   on the wall. A block's listing rooted at a variable reads as its
+   statement twin, the header's own variable included (`foreach ($f in
+   (gci build -Directory)) { gci $f -Recurse | ri -r }` walls, as `gci $f
+   -Recurse | ri -r` does): the header's roots are not carried into it.
    A pipe in a block that carries anything else (another variable, a
    literal) is fed by nothing, so the record
    walls it forced and the speed bump nudges it unforced, as it does any

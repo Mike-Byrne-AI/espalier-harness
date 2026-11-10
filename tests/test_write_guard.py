@@ -4304,11 +4304,26 @@ class TestCatastrophicLoopCarrier:
         ("foreach ($f in (gci build)) { 'src' | ri -r }", "bump"),
         ("if ((gci build).Count -gt 0) { '/' | ri -r -fo }", "wall"),
         ("if ($x) { gci build } else { $t | ri -r }", "bump"),
-        # an outer listing's span swallows an inner enumerator: the block's
-        # pipe is not the outer header's variable, so it is fed by nothing
-        # (the code review: both were silent before the cut)
+        # an outer listing's span swallows an inner enumerator: the outer
+        # header does not feed the block, so the inner enumerator opens a
+        # match of its own and is read (the code review: both were silent
+        # before the cut)
         ("foreach ($a in (gci build)) { foreach ($f in (gci / -Recurse)) { $f | ri -r -fo } }", "wall"),
         ("if ($c) { gci build } else { gci / -Recurse | ri -r -fo }", "wall"),
+        # an inner loop reusing the outer's variable: the outer header
+        # matches the block's stage, yet the inner header binds it (the
+        # failure-mode review: silent at main and at the lane's first fix)
+        ("foreach ($f in (gci build)) { foreach ($f in (gci / -Recurse)) { $f | ri -r -fo } }", "wall"),
+        ("foreach ($f in (gci build)) { foreach ($f in (gci / -Recurse)) { $f | ri -r } }", "wall"),
+        ("foreach ($f in (gci build)) { foreach ($f in (gci ~ -Recurse)) { $f | ri -r -fo } }", "wall"),
+        ("foreach ($f in (gci / -Recurse)) { foreach ($f in (gci build)) { $f | ri -r -fo } }", "allow"),
+        # a block's listing rooted at a variable reads as its statement twin
+        # (`gci $f -Recurse | ri -r` walls at main), the header's variable
+        # included: DECLARED, the header's roots are not carried into it
+        ("foreach ($f in (gci build -Directory)) { gci $f -Recurse | ri -r }", "wall"),
+        ("gci $f -Recurse | ri -r", "wall"),
+        ("if ((gci $p).Count) { gci $p -Recurse | ri -r }", "wall"),
+        ("gci src -Recurse -Directory | ForEach-Object { if ((gci $_.FullName).Count -eq 0) { gci $_.FullName | ri -r } }", "wall"),
         # a block the header does not feed has its own pipeline read, as its
         # statement twin (air's 22f230, the verifier's clean: the
         # condition's listing opened the only match, the block's pipeline
@@ -4356,17 +4371,32 @@ class TestCatastrophicLoopCarrier:
         result = run_guard_from("PowerShell", cmd, tmp_path, None)
         assert _delete_verdict(result) == expect, (cmd, result.stdout)
 
+    @pytest.mark.parametrize("text", [
+        "gci build -Path (gci /) | ri -r",
+        "gci build | ri -r; gci dist | ri -r -fo",
+        "(gci src) | ri -r; Get-ChildItem out -Recurse | Remove-Item -Recurse",
+    ])
+    def test_a_match_whose_pipe_is_its_own_resumes_past_its_end_loop(self, text):
+        """The walk re-searches past a head only where the match's pipe sits
+        in a block; elsewhere it is `finditer` (the code review: a walk that
+        always resumed past the head moved no verdict row, and read an
+        enumerator inside a fed match's span as a feed of its own)."""
+        bp = _bash_patterns_module()
+        scan = bp.powershell_scan_text(text)
+        walked = [m.span() for m, _fed in bp._ps_piped_remove_matches(scan)]
+        assert walked == [m.span() for m in bp._PS_PIPED_REMOVE_RE.finditer(scan)]
+
     def test_the_piped_remove_regex_has_exactly_its_two_readers_loop(self):
-        """DEF-3066: the verdict readers take the enumerator pipe through
-        `_ps_fed_removes`, which reads a loop header's listing as its body's
-        feed and a block's other pipes as fed by nothing; the zone reader
-        reads the raw match and the header's feed both. A reader that
-        searched the regex itself would read the block's brace as a
-        narrowing filter again, and the failure-mode review found that
-        reverting two of the three verdict readers moved no row. Both take
-        the matches from `_ps_piped_remove_matches`, the one site that
-        searches the regex, so a block its header does not feed has its own
-        pipeline read on both (air's 22f230). Grows deliberately."""
+        """DEF-3066: the verdict readers and the zone reader take the
+        enumerator pipe through `_ps_fed_removes`, which reads a loop
+        header's listing as its body's feed, a block its header does not
+        feed by the block's own pipeline (air's 22f230), and each remove by
+        one feed, the innermost. A reader that searched the regex itself
+        would read the block's brace as a narrowing filter again, and the
+        failure-mode review found that reverting two of the three verdict
+        readers moved no row. `_ps_piped_remove_matches` is the one site
+        that searches the regex and the one caller of `_ps_header_feed`.
+        Grows deliberately."""
         import ast
 
         tree = ast.parse((HOOKS_DIR / "_bash_patterns.py").read_text(encoding="utf-8"))
@@ -4380,10 +4410,18 @@ class TestCatastrophicLoopCarrier:
                             and sub.func.value.id == "_PS_PIPED_REMOVE_RE"):
                         sites.add(node.name)
         assert sites == {"_ps_piped_remove_matches"}, sites
-        callers = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
-                   and any(isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name)
-                           and sub.func.id == "_ps_piped_remove_matches" for sub in ast.walk(node))}
-        assert callers == {"_ps_fed_removes", "iter_ps_removed_or_relocated_operands"}, callers
+
+        def callers(name: str) -> set[str]:
+            return {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+                    and any(isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name)
+                            and sub.func.id == name for sub in ast.walk(node))}
+
+        # the feed of one match is final only past the search that follows
+        # it (a None may be a block an inner enumerator feeds): the walk
+        # alone asks it, and one reader dedupes the walk for every consumer
+        assert callers("_ps_header_feed") == {"_ps_piped_remove_matches"}
+        assert callers("_ps_piped_remove_matches") == {"_ps_fed_removes"}
+        assert "iter_ps_removed_or_relocated_operands" in callers("_ps_fed_removes")
 
     def test_the_placement_helper_has_exactly_its_two_callers_loop(self):
         """The carrier and the loop carrier place their sweeps through ONE
@@ -16937,6 +16975,13 @@ class TestRemovedOrRelocatedOperandIsAMutation:
         "ps-zone-piped-in-an-if-block": (
             "PowerShell", "deny", "_PS_PIPED_REMOVE_RE",
             'if ((gci build).Count -gt 0) { gci "{D}" -Recurse | ri -r }'),
+        "ps-zone-listed-in-an-if-condition": (
+            "PowerShell", "allow", "a condition's listing is no delete: the block's own pipeline "
+            "is read, by itself (the failure-mode review: refused at main)",
+            'if ((gci "{D}").Count -gt 0) { gci build -Recurse | ri -r }'),
+        "ps-zone-reused-loop-variable": (
+            "PowerShell", "deny", "_PS_PIPED_REMOVE_RE",
+            'foreach ($f in (gci build)) { foreach ($f in (gci "{D}" -Recurse)) { $f | ri -r } }'),
         # ── PowerShell: the native single-file deletes and git clean (the
         # failure-mode review: the Bash reader's verbs this tool lacked --
         # `unlink <hook>` deleted the hook under pwsh while Bash refused it) ──
@@ -17400,7 +17445,7 @@ class TestRemovedOrRelocatedOperandIsAMutation:
         # a helper that is the one site searching its arm stands for that
         # arm where a reader calls it (TestCatastrophicLoopCarrier's
         # site test pins the helper as the regex's only search site)
-        helpers = {"_ps_piped_remove_matches": "_PS_PIPED_REMOVE_RE"}
+        helpers = {"_ps_fed_removes": "_PS_PIPED_REMOVE_RE"}
         searched: set[str] = set()
         seen: set[str] = set()
         for node in ast.walk(tree):
