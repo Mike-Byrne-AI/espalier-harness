@@ -4891,6 +4891,12 @@ def _walk_powershell_spans(s: str, spans: "list[tuple[int, int, str]] | None" = 
     the mask is, for `_ps_quote_cursor`."""
     n, i = len(s), 0
     out = list(s)
+    #: Where the last block comment's ``#>`` ended: a comment opener there
+    #: starts a token though no boundary character precedes it (`<# a #><# b
+    #: #>`, `<# a #># b`; pwsh 5.1, driven, a glued `& 'Remove-Item'` stage
+    #: after one ran). Read as live text, the second comment's `>` blanked
+    #: the command-position characters after it.
+    block_end = -1
     while i < n:
         c = s[i]
 
@@ -4995,7 +5001,7 @@ def _walk_powershell_spans(s: str, spans: "list[tuple[int, int, str]] | None" = 
             c == "<"
             and i + 1 < n
             and s[i + 1] == "#"
-            and (i == 0 or s[i - 1] in _PS_TOKEN_BOUNDARY)
+            and (i == 0 or i == block_end or s[i - 1] in _PS_TOKEN_BOUNDARY)
         ):
             # Block comments do NOT nest in PowerShell -- verified: the first
             # closing marker ends the comment, and code after it runs.
@@ -5015,10 +5021,10 @@ def _walk_powershell_spans(s: str, spans: "list[tuple[int, int, str]] | None" = 
             if end < 0:
                 raise _UnresolvedShellSyntax("unterminated block comment")
             _ps_blank_literal(s, out, i + 2, end)
-            i = end + 2
+            i = block_end = end + 2
             continue
 
-        if c == "#" and (i == 0 or s[i - 1] in _PS_TOKEN_BOUNDARY):
+        if c == "#" and (i == 0 or i == block_end or s[i - 1] in _PS_TOKEN_BOUNDARY):
             # WARNING: START AT i+1 -- the hash ITSELF MUST SURVIVE, for the same
             # reason the Bash pass keeps it: a blanked hash leaves an unbroken
             # whitespace run from the separator straight to the comment's first

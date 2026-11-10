@@ -3230,10 +3230,9 @@ class TestCatastrophicEnumeratorCarrier:
         # `xargs` hands to `sh` (its own variable operand is the nudge's)
         ("find . | xargs sh -c 'rm -rf \"$0\"'", None, False),
         ("find . -print0 | xargs -0 sh -c 'rm -rf \"$1\"' _", None, False),
-        # DECLARED: the carrier on the next line -- a Bash-tool joiner never
-        # crosses a newline (the statement census's rule; the twin reads it
-        # under the PowerShell census)
-        ("find . |\n  xargs rm -rf", None, False),
+        # the carrier on the next line: one pipeline, read whole by the
+        # splicer's pipe join, as its twin (declared silent until 780c02)
+        ("find . |\n  xargs rm -rf", None, True),
         ("echo one | xargs rm -rf", None, False),                   # DECLARED: a single stdin path
         ("find . | while read f; do rm -rf \"$f\"; done", None, True),   # DEF-830: the loop carrier, the union's third arm
         ("$doc='find . | xargs rm -rf'", None, False),
@@ -3680,7 +3679,7 @@ class TestCatastrophicLoopCarrier:
         ('for f in "$(find .)"; do rm -rf "$f"; done', None, False),           # one quoted word, not a list -- nor a path word to the word-list head
         ("find . | sort | while read f; do rm -rf \"$f\"; done", None, False),  # DECLARED: a stage between
         ("find . | grep zz | while read f; do rm -rf \"$f\"; done", None, False),
-        ('find . |\n  while read f; do rm -rf "$f"; done', None, False),      # DECLARED: the joiner never crosses a newline
+        ('find . |\n  while read f; do rm -rf "$f"; done', None, True),       # one pipeline: the splicer's pipe join (780c02)
         ('while read f; do rm -rf "$f"; done < files.txt', None, False),       # a file, not an enumerator
         ("echo 'find . | while read f; do rm -rf \"$f\"; done'", None, False),
         ('# find . | while read f; do rm -rf "$f"; done\nls', None, False),
@@ -3849,7 +3848,9 @@ class TestCatastrophicLoopCarrier:
         # nudge (`_pred_rmrf`), so none is a silent wipe; a red here routes
         # to that arm
         ('find . | sort | while read f; do rm -rf "$f"; done', "bump"),
-        ('find . |\n  while read f; do rm -rf "$f"; done', "bump"),
+        # ... the pipe across a line break is no longer one of them: one
+        # pipeline, read whole by the splicer's pipe join (780c02)
+        ('find . |\n  while read f; do rm -rf "$f"; done', "wall"),
         ('while read f; do rm -rf "$f"; done < files.txt', "bump"),
         # the review batch: a later removal after the closer still meets the
         # wall; the guarded body is read; a pipeline inside the body, a
@@ -3906,7 +3907,7 @@ class TestCatastrophicLoopCarrier:
         # its recursive remove's operand, so in every loop no opener reads
         # the carrier-fed body draws the direct twin's (`rm -rf "$f"`)
         # nudge; each drew nothing on main
-        ('find . |\n  while read f; do echo "$f" | xargs rm -rf; done', "bump"),
+        ('find . |\n  while read f; do echo "$f" | xargs rm -rf; done', "wall"),  # one pipeline (780c02)
         ('while read f; do echo "$f" | xargs rm -rf; done < files.txt', "bump"),
         ('for f in sub/a $(ls sub); do echo "$f" | xargs rm -rf; done', "bump"),
         ('find sub | sort | while read f; do echo "$f" | xargs rm -rf; done', "bump"),
@@ -16613,6 +16614,20 @@ class TestAGapAfterAPipeIsRead:
     ])
     def test_a_reparsed_strings_gap_ends_inside_it(self, tmp_path, cmd, expect):
         assert _delete_verdict(run_guard_from("PowerShell", cmd, tmp_path, None)) == expect, cmd
+
+    @pytest.mark.parametrize("cmd", [
+        # the masker read a comment glued to a block comment's close as live
+        # text, and its `>` blanked the command position after it: allowed
+        # at main, a pipe or none (pwsh 5.1 ran the glued `&` stage, driven)
+        "<# a #><# b #> & 'Remove-Item' C:\\ -Recurse -Force",
+        "Get-ChildItem C:\\ -Recurse | <# a #><# b #> & 'Remove-Item' -Recurse -Force",
+        "Get-ChildItem C:\\ -Recurse | <# a #><# b #> % { $_ | Remove-Item -Recurse -Force }",
+    ])
+    def test_a_comment_glued_to_a_block_comment_is_masked(self, tmp_path, cmd):
+        bp = _bash_patterns_module()
+        # a separator inside the glued comment is blanked, as in any comment
+        assert bp.mask_powershell_inert_syntax("<# a #><# ; #>") == "<# a #><#   #>"
+        assert _delete_verdict(run_guard_from("PowerShell", cmd, tmp_path, None)) == "wall", cmd
 
     def test_a_scan_the_masker_handed_back_raw_joins_nothing(self, tmp_path):
         # past the masker's cap the scan is the raw text, where a quoted pipe
