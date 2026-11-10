@@ -499,12 +499,25 @@ class TestADeleteThatCannotTakeADirectoryLeavesTheZone:
         so it is not this row's.)"""
         assert _zone_reason(_PS, command, tree), ascii(command)
 
-    def test_an_absolute_operand_keeps_the_deny(self, tree: Path) -> None:
+    @pytest.mark.parametrize("quote", ["", "'", '"'], ids=["bare", "single", "double"])
+    def test_an_absolute_operand_keeps_the_deny(self, tree: Path, quote: str) -> None:
         """An absolute spelling can name another directory than the one the
         zone check resolved (the failure-mode review), so the relief reads a
-        relative operand alone."""
+        relative operand alone.
+
+        The bare spelling is the witness: drop the relief's absolute refusal
+        (``:`` from ``_LONE_DELETE_STOPS`` and the leading-``/`` refusal) and
+        it reds, while a quoted spelling stays denied by the quote stop alone
+        (driven on scratch copies, 2026-11-10). Under a root holding
+        whitespace (CI's perturbed leg, run 42739572925) the bare spelling
+        splits there and names another path, which the guard rightly
+        allows, so it is skipped there and the quoted spellings, which name
+        the directory, still run."""
         operand = str(tree / "tools").replace("\\", "/")
-        assert _zone_reason(_PS, "Remove-Item " + operand, tree), operand
+        if not quote and any(c.isspace() for c in operand):
+            pytest.skip("a bare operand splits at the root's whitespace and names another path")
+        command = "Remove-Item " + quote + operand + quote
+        assert _zone_reason(_PS, command, tree), command
 
     def test_the_read_is_of_the_directory_the_zone_check_resolved(self, tree: Path) -> None:
         read = write_guard._a_lone_file_delete
