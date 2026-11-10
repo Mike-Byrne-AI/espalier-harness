@@ -4871,23 +4871,41 @@ _PS_QUOTE_FOLD = tuple(zip(PS_TYPOGRAPHIC_QUOTES, "''''" + '"""'))
 #: fold of a fold is itself (pinned). Bounded: cleared past 64 entries.
 _PS_FOLDED: dict[str, str] = {}
 
+#: Raised by every fold that moves a quote, a cached one included, so the
+#: two relief gates give no relief wherever one moved, on every route a
+#: PowerShell program reaches them by: the PowerShell tool's dispatch, a
+#: program the Bash tool launches, one `Start-Process` carries (DEF-2040; the
+#: code review drove the last two allowed with the bit kept per dispatch).
+#: `write_guard.py::_a_dispatch_resets_the_fold` lowers it for each call.
+FOLD_MOVED_A_QUOTE: "contextvars.ContextVar[bool]" = contextvars.ContextVar(
+    "FOLD_MOVED_A_QUOTE", default=False)
 
-def fold_powershell_quotes(command: str) -> str:
+#: Past this many nested ``$( )`` levels a body is returned as typed and not
+#: cached: the reading the walk had before the fold, where the recursion
+#: through the cache otherwise met the interpreter's limit near 496 levels
+#: and the hook denied as a crash (the code review drove it at 500).
+_PS_FOLD_DEPTH_CAP = 64
+
+
+def fold_powershell_quotes(command: str, _depth: int = 0) -> str:
     """`_fold_powershell_quotes`, the reading, once a text: an ASCII command
-    is returned at once, and a text folded before, or a fold, is looked up."""
-    if command.isascii():
+    is returned at once, and a text folded before, or a fold, is looked up.
+    A fold that moved a quote raises `FOLD_MOVED_A_QUOTE`."""
+    if command.isascii() or _depth > _PS_FOLD_DEPTH_CAP:
         return command
     done = _PS_FOLDED.get(command)
     if done is None:
-        done = _fold_powershell_quotes(command)
+        done = _fold_powershell_quotes(command, _depth)
         if len(_PS_FOLDED) > 64:
             _PS_FOLDED.clear()
         _PS_FOLDED[command] = done
         _PS_FOLDED[done] = done
+    if done != command:
+        FOLD_MOVED_A_QUOTE.set(True)
     return done
 
 
-def _fold_powershell_quotes(command: str) -> str:
+def _fold_powershell_quotes(command: str, _depth: int = 0) -> str:
     """``command`` with each typographic quote PowerShell READS AS A QUOTE
     at this level written as its straight form, so every reader of the
     PowerShell grammar -- the masker's walk and the raw-word readers that
@@ -4974,7 +4992,7 @@ def _fold_powershell_quotes(command: str) -> str:
             else:
                 bodies = _ps_expandable_extent(full, open_ + 1, close)[1]
             for start, stop in bodies:
-                out[start:stop] = fold_powershell_quotes(command[start:stop])
+                out[start:stop] = fold_powershell_quotes(command[start:stop], _depth + 1)
             if kind == '"':
                 inside = set().union(*(range(a, b) for a, b in bodies)) if bodies else set()
                 k = open_ + 1

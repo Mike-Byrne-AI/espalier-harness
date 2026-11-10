@@ -13270,7 +13270,15 @@ class TestATypographicQuoteClosesAPowerShellString:
          "Secret-path access blocked"),
         ("powershell -Command \"Set-Content " + _LSQ + "tools/cc/hooks/x.py" + _RSQ + " 1\"",
          "write to protected harness zone blocked"),
-    ], ids=["secret-operand", "read-after-close", "zone-operand"])
+        # The `-c` spelling, each leg (air f2b155; driven: allowed at main 56de1f2).
+        ("pwsh -c \"Get-Content " + _LSQ + ".env" + _RSQ + "\"", "Secret-path access blocked"),
+        ("pwsh -c 'Get-Content " + _LDQ + ".env" + _RDQ + "'", "Secret-path access blocked"),
+        ("pwsh -c \"Write-Output 'a" + _RSQ + "; Get-Content .env; Write-Output " + _LSQ + "c'\"",
+         "Secret-path access blocked"),
+        ("pwsh -c \"Set-Content " + _LSQ + "tools/cc/hooks/x.py" + _RSQ + " 1\"",
+         "write to protected harness zone blocked"),
+    ], ids=["secret-operand", "read-after-close", "zone-operand",
+            "c-secret-single", "c-secret-double", "c-read-after-close", "c-zone-operand"])
     def test_a_program_the_bash_tool_launches_is_read_the_same_way(self, command, reason, tmp_path):
         assert_hook_denied(run_bash_guard(command, tmp_path), contains_reason=reason)
 
@@ -13325,15 +13333,89 @@ class TestATypographicQuoteClosesAPowerShellString:
     # mention row is a declared false deny: main allowed it only because its walk
     # never saw the string (driven at 56de1f2: allow; at the lane's 3e4f772,
     # whose gates read the folded text: allow, and the test run allowed too).
-    @pytest.mark.parametrize("typographic, straight, reason", [
-        ('$env:ESPALIER_STOP_GATE="full"; pytest ' + _LDQ + "work/Claude Code/tests" + _RDQ,
+    # A program the Bash tool launches is folded where it is judged, so its own
+    # fold takes the relief away there too (the failure-mode review drove
+    # `pwsh -Command` from Bash: denied at main, allowed with the flag set at
+    # the dispatch alone).
+    @pytest.mark.parametrize("tool, typographic, straight, reason", [
+        ("ps", '$env:ESPALIER_STOP_GATE="full"; pytest ' + _LDQ + "work/Claude Code/tests" + _RDQ,
          '$env:ESPALIER_STOP_GATE="full"; pytest "work/Claude Code/tests"',
          "ESPALIER_STOP_GATE"),
-        ("$hint = " + _LSQ + "gc .env" + _RSQ, "$hint = 'gc .env'", "Secret-path access blocked"),
-    ], ids=["env-prefix-test-run", "secret-read-mention"])
-    def test_a_folded_quote_takes_the_gates_relief_away(self, typographic, straight, reason, tmp_path):
-        assert_hook_denied(_run_ps_guard(typographic, tmp_path), contains_reason=reason)
-        assert_hook_allowed(_run_ps_guard(straight, tmp_path))
+        ("ps", "$hint = " + _LSQ + "gc .env" + _RSQ, "$hint = 'gc .env'", "Secret-path access blocked"),
+        ("bash", "pwsh -Command '$env:ESPALIER_STOP_GATE=1; pytest " + _LSQ + "work/Claude Code/tests" + _RSQ + "'",
+         "pwsh -Command '$env:ESPALIER_STOP_GATE=1; pytest \"work/Claude Code/tests\"'",
+         "ESPALIER_STOP_GATE"),
+        ("bash", "powershell -Command '$env:ESPALIER_STOP_GATE=1; pytest " + _LDQ + "work/Claude Code/tests" + _RDQ + "'",
+         "powershell -Command '$env:ESPALIER_STOP_GATE=1; pytest \"work/Claude Code/tests\"'",
+         "ESPALIER_STOP_GATE"),
+        # The code review's two routes: a program `Start-Process` carries and
+        # one a Bash heredoc feeds (each denied at main, allowed at the lane's
+        # 20999849, whose raise was the dispatch's alone).
+        ("ps", "Start-Process pwsh -ArgumentList '-Command', '$env:ESPALIER_STOP_GATE=\"full\"; pytest "
+               + _LDQ + "work/Claude Code/tests" + _RDQ + "'",
+         "Start-Process pwsh -ArgumentList '-Command', '$env:ESPALIER_STOP_GATE=''full''; pytest "
+         "''work/Claude Code/tests'''",
+         "ESPALIER_STOP_GATE"),
+        ("bash", "pwsh -Command - <<'EOF'\n$env:ESPALIER_STOP_GATE=\"full\"; pytest " + _LDQ
+                 + "work/Claude Code/tests" + _RDQ + "\nEOF",
+         "pwsh -Command - <<'EOF'\n$env:ESPALIER_STOP_GATE=\"full\"; pytest \"work/Claude Code/tests\"\nEOF",
+         "ESPALIER_STOP_GATE"),
+    ], ids=["env-prefix-test-run", "secret-read-mention", "bash-launched-pwsh", "bash-launched-powershell",
+            "start-process-carried", "bash-heredoc"])
+    def test_a_folded_quote_takes_the_gates_relief_away(self, tool, typographic, straight, reason, tmp_path):
+        run = _run_ps_guard if tool == "ps" else run_bash_guard
+        assert_hook_denied(run(typographic, tmp_path), contains_reason=reason)
+        assert_hook_allowed(run(straight, tmp_path))
+
+    def test_a_deep_nest_of_subexpressions_is_read_not_crashed(self, tmp_path):
+        """Past `_PS_FOLD_DEPTH_CAP` levels a body keeps its typed reading;
+        the recursion through the cache met the interpreter's limit near 496
+        levels, and 500 denied as an internal error (the code review drove
+        it; main allows it)."""
+        inner = _LDQ + "hi" + _RDQ
+        for _ in range(500):
+            inner = '"$(Write-Output ' + inner + ')"'
+        assert_hook_allowed(_run_ps_guard("Write-Output " + inner, tmp_path))
+
+    def test_a_dispatch_leaves_no_fold_behind(self, tmp_path, monkeypatch):
+        """An in-process smart-quoted dispatch, then the two gates called
+        directly on a straight command: each gives its relief, since the
+        dispatch's raise is reset on the way out (the failure-mode review
+        drove both gates off after one, at the lane's first fix)."""
+        import contextlib
+        import io
+
+        _bash_patterns_module()  # puts the hooks folder on sys.path
+        import write_guard as wg
+
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path))
+        monkeypatch.delenv("ESPALIER_MAINTENANCE_MODE", raising=False)
+        with contextlib.redirect_stdout(io.StringIO()):
+            wg._run_main({"tool_name": "PowerShell",
+                          "tool_input": {"command": "Write-Output " + _LDQ + "hi" + _RDQ}})
+        assert _bash_patterns_module().FOLD_MOVED_A_QUOTE.get() is False
+        assert wg._ps_quoted_mentions("$hint = 'gc .env'")
+        assert wg._ps_blank_quoted_spans("pytest 'work/Claude Code/tests'") is not None
+
+    def test_a_fold_of_a_fold_is_itself_over_a_seeded_sample(self):
+        """The cache stores each fold as its own fold (`_PS_FOLDED`), sound only
+        while folding is idempotent; ten hand rows cannot hold a property, so
+        this draws texts from the grammar's own tokens (seeded, so a red
+        reproduces) and asserts it, and that the fold moves only quotes."""
+        import random
+
+        bp = _bash_patterns_module()
+        tokens = [*bp.PS_TYPOGRAPHIC_QUOTES, "'", '"', "$(", ")", "@'\n", "\n'@", '@"\n', '\n"@',
+                  "${", "}", "`", "#", "\n", "; ", "gc .env", "x", " "]
+        rng = random.Random(2040)
+        straight = str.maketrans({q: ("'" if q in bp.PS_TYPOGRAPHIC_QUOTES[:4] else '"')
+                                  for q in bp.PS_TYPOGRAPHIC_QUOTES})
+        for _ in range(3000):
+            text = "".join(rng.choice(tokens) for _ in range(rng.randint(1, 14)))
+            once = bp._fold_powershell_quotes(text)
+            assert bp._fold_powershell_quotes(once) == once, ascii(text)
+            assert once.translate(straight) == text.translate(straight), ascii(text)
 
     def test_a_subexpression_in_an_expandable_here_string_is_read(self, tmp_path):
         """PowerShell runs a ``$( )`` inside ``@" "@`` (driven on 5.1), so its

@@ -68,6 +68,8 @@ permissionDecision="deny") -- see "The time budget" below `_deny_mcp`.
 from __future__ import annotations
 
 import contextlib
+import contextvars
+import functools
 import io
 import json
 import os
@@ -741,11 +743,6 @@ def _blank_quoted_spans(text: str) -> "str | None":
     return out
 
 
-#: True while the call in flight is a PowerShell tool command whose
-#: typographic quotes `_run_main` folded (DEF-2040): set at each dispatch.
-_PS_FOLD_MOVED_A_QUOTE = False
-
-
 def _ps_blank_quoted_spans(text: str) -> "str | None":
     """`_blank_quoted_spans` for the two PowerShell gates, or None wherever
     PowerShell can end a string somewhere the Bash grammar the blanking
@@ -757,15 +754,16 @@ def _ps_blank_quoted_spans(text: str) -> "str | None":
     hold a quote. The backtick and the here-string are opaque to both gates
     before this is read. Each way the gate gives no relief and the
     quote-blind deny stands, so a plain `# note` after a test run is a
-    declared false deny. The dispatch folds the PowerShell tool's
-    typographic delimiters to straight ones (DEF-2040), and both gates read
-    texts made from that folded command (one of them its masked half), so a
-    fold that moved a quote is read here as the typographic quote the
-    command was typed with: no relief, the edge the assign kept. A command
-    the fold left alone reads exactly as before, so the fold can only take a
-    relief away, never add one."""
+    declared false deny. Every reader of a PowerShell program folds its
+    typographic delimiters to straight ones first (DEF-2040), and both gates
+    read texts made from a fold (one of them a masked half), so a fold that
+    moved a quote anywhere in this call, on any route (the PowerShell tool,
+    a program the Bash tool launches, one `Start-Process` carries), is read
+    here as the typographic quote it was typed with
+    (`_bash_patterns.FOLD_MOVED_A_QUOTE`): no relief, the edge the assign
+    kept. A call whose folds moved nothing reads exactly as before."""
     _load_the_pattern_path()
-    if (_PS_FOLD_MOVED_A_QUOTE or "--%" in text
+    if (_bash_patterns.FOLD_MOVED_A_QUOTE.get() or "--%" in text
             or any(q in text for q in _bash_patterns.PS_TYPOGRAPHIC_QUOTES)):
         return None
     blank = _blank_quoted_spans(text)
@@ -4198,19 +4196,41 @@ def _fold_the_powershell_command(tool_name: str, tool_input: dict) -> dict:
     bump. One code point for one, so no offset moves. Every PowerShell call
     loads the pattern path anyway; this loads it a few lines sooner. A fold
     that moved a quote takes the two relief gates' relief away
-    (`_PS_FOLD_MOVED_A_QUOTE`, read in `_ps_blank_quoted_spans`), the
-    assign's edge; any other call clears the flag."""
-    global _PS_FOLD_MOVED_A_QUOTE
-    _PS_FOLD_MOVED_A_QUOTE = False
+    (`_bash_patterns.FOLD_MOVED_A_QUOTE`, raised by any fold that moved a
+    quote and read in `_ps_blank_quoted_spans`), the assign's edge, until
+    the dispatch ends (`_a_dispatch_resets_the_fold`)."""
     if tool_name != "PowerShell" or not isinstance(tool_input.get("command"), str):
         return tool_input
     _load_the_pattern_path()
-    typed = tool_input["command"]
-    folded = _bash_patterns.fold_powershell_quotes(typed)
-    _PS_FOLD_MOVED_A_QUOTE = folded != typed
-    return {**tool_input, "command": folded}
+    return {**tool_input, "command": _bash_patterns.fold_powershell_quotes(tool_input["command"])}
 
 
+def _a_dispatch_resets_the_fold(fn: "Callable[..., int]") -> "Callable[..., int]":
+    """``fn`` (`_run_main`) with the fold's raise
+    (`_bash_patterns.FOLD_MOVED_A_QUOTE`) lowered as the call starts and
+    again however it leaves, so no fold reaches another call in the same
+    process (the failure-mode review drove both gates off for an in-process
+    caller after one smart-quoted dispatch). The module is read from
+    ``sys.modules``, where the pattern path's plain import puts it, so a
+    read-only call that never loads it loads nothing here."""
+    @functools.wraps(fn)
+    def dispatch(*args: Any, **kwargs: Any) -> int:
+        _lower_the_fold()
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            _lower_the_fold()
+    return dispatch
+
+
+def _lower_the_fold() -> None:
+    """Lower `FOLD_MOVED_A_QUOTE` where the pattern module is loaded."""
+    raised = getattr(sys.modules.get("_bash_patterns"), "FOLD_MOVED_A_QUOTE", None)
+    if isinstance(raised, contextvars.ContextVar):
+        raised.set(False)
+
+
+@_a_dispatch_resets_the_fold
 def _run_main(data: dict | None = None) -> int:
     if data is None:
         data = _hook_utils.read_stdin_safely()
