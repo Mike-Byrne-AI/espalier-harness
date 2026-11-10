@@ -533,6 +533,11 @@ class TestCpRmrf:
         "(gci build) | ri -r",
         "'src/a.txt' | Remove-Item",                        # not recursive
         "foreach ($f in (gci -Name -Filter *.pyc)) { $f | Remove-Item -Force }",
+        # a block its header does not feed reads its own pipeline: the
+        # roster item `build` passes there as in its statement twin (air's
+        # 22f230: the condition's listing fed nothing and the head nudged)
+        "if ((Get-ChildItem build).Count -gt 0) { Get-ChildItem build -Recurse | Remove-Item -Recurse }",
+        "if (Get-Item build -ErrorAction Ignore) { Get-ChildItem build -Recurse | Remove-Item -Recurse }",
         "$x || ri -r",                                      # the chain operator hands the verb nothing
         "Remove-Item -Recurse",                             # no operand and nothing piped in
         "$doc = 'src | Remove-Item -Recurse'",              # a mention

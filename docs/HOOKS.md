@@ -1584,9 +1584,14 @@ first; the dangerous-command catch is a secondary slip-catcher):
    the body passed silently for every root, the filesystem root included;
    glued (`){$f|ri -r}`), the same tail read as a flag and walled by
    accident. The listing feeds only a body whose pipe carries the
-   `foreach` header's own loop variable; a pipe in a block that carries
-   anything else (another variable, a literal, a pipe under an `if`
-   whose condition lists a directory) is fed by nothing, so the record
+   `foreach` header's own loop variable. A block the header does not
+   feed has its own pipeline read as its statement twin wherever one
+   opens inside it: an `if` whose condition lists a directory and whose
+   block lists and removes (`if ((Get-ChildItem build).Count -gt 0) {
+   Get-ChildItem build -Recurse | Remove-Item -Recurse -Force }` passes,
+   the same over `/` walls), an `else` branch, an inner loop's header.
+   A pipe in a block that carries anything else (another variable, a
+   literal) is fed by nothing, so the record
    walls it forced and the speed bump nudges it unforced, as it does any
    recursive remove without the force switch whose target the pipeline
    binds and no enumerator the guard reads feeds (`'src' | Remove-Item

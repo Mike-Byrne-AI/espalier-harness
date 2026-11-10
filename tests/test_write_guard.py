@@ -4309,6 +4309,29 @@ class TestCatastrophicLoopCarrier:
         # (the code review: both were silent before the cut)
         ("foreach ($a in (gci build)) { foreach ($f in (gci / -Recurse)) { $f | ri -r -fo } }", "wall"),
         ("if ($c) { gci build } else { gci / -Recurse | ri -r -fo }", "wall"),
+        # a block the header does not feed has its own pipeline read, as its
+        # statement twin (air's 22f230, the verifier's clean: the
+        # condition's listing opened the only match, the block's pipeline
+        # was never read, and the head walled what main allows). Unforced
+        # too: the inner loop and the else branch walled forced only, by
+        # the record, where their twins wall either way
+        ("if ((Get-ChildItem build).Count -gt 0) { Get-ChildItem build -Recurse | Remove-Item -Recurse -Force }", "allow"),
+        ("if ((Get-ChildItem build).Count -gt 0) { Get-ChildItem build -Recurse | Remove-Item -Recurse }", "allow"),
+        ("if (Get-Item build -ErrorAction Ignore) { Get-ChildItem build -Recurse | Remove-Item -Recurse -Force }", "allow"),
+        ("if (Get-Item build -ErrorAction Ignore) { Get-ChildItem build -Recurse | Remove-Item -Recurse }", "allow"),
+        ("if (Test-Path build) { Get-ChildItem build -Recurse | Remove-Item -Recurse -Force }", "allow"),
+        ("if ((gci build).Count -gt 0) { gci src -Recurse | ri -r -fo }", "bump"),
+        ("if ((gci build).Count -gt 0) { gci src -Recurse | ri -r }", "bump"),
+        ("if ((gci build).Count -gt 0) { gci / -Recurse | ri -r -fo }", "wall"),
+        ("if ((gci build).Count -gt 0) { gci / -Recurse | ri -r }", "wall"),
+        ("if ($c) { gci build } else { gci / -Recurse | ri -r }", "wall"),
+        ("foreach ($a in (gci build)) { foreach ($f in (gci / -Recurse)) { $f | ri -r } }", "wall"),
+        # the four cells the verifier judged by hand: the statement over
+        # `/`, `~` and the checkout root, and the loop over `~`, unforced
+        ("Get-ChildItem / -Recurse | Remove-Item -Recurse", "wall"),
+        ("Get-ChildItem ~ -Recurse | Remove-Item -Recurse", "wall"),
+        ("Get-ChildItem . -Recurse | Remove-Item -Recurse", "wall"),
+        ("foreach ($f in (Get-ChildItem ~ -Recurse)) { $f | Remove-Item -Recurse }", "wall"),
         # DECLARED: the ForEach-Object body over a listing is not read as fed
         # by it (its pipe goes into ForEach-Object, not into a remove), so
         # the unforced body nudges where its statement twin walls; pinned as
@@ -4340,8 +4363,10 @@ class TestCatastrophicLoopCarrier:
         reads the raw match and the header's feed both. A reader that
         searched the regex itself would read the block's brace as a
         narrowing filter again, and the failure-mode review found that
-        reverting two of the three verdict readers moved no row. Grows
-        deliberately."""
+        reverting two of the three verdict readers moved no row. Both take
+        the matches from `_ps_piped_remove_matches`, the one site that
+        searches the regex, so a block its header does not feed has its own
+        pipeline read on both (air's 22f230). Grows deliberately."""
         import ast
 
         tree = ast.parse((HOOKS_DIR / "_bash_patterns.py").read_text(encoding="utf-8"))
@@ -4354,7 +4379,11 @@ class TestCatastrophicLoopCarrier:
                             and isinstance(sub.func.value, ast.Name)
                             and sub.func.value.id == "_PS_PIPED_REMOVE_RE"):
                         sites.add(node.name)
-        assert sites == {"_ps_fed_removes", "iter_ps_removed_or_relocated_operands"}, sites
+        assert sites == {"_ps_piped_remove_matches"}, sites
+        callers = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+                   and any(isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name)
+                           and sub.func.id == "_ps_piped_remove_matches" for sub in ast.walk(node))}
+        assert callers == {"_ps_fed_removes", "iter_ps_removed_or_relocated_operands"}, callers
 
     def test_the_placement_helper_has_exactly_its_two_callers_loop(self):
         """The carrier and the loop carrier place their sweeps through ONE
@@ -16903,6 +16932,11 @@ class TestRemovedOrRelocatedOperandIsAMutation:
         # listing; read raw, the block's brace narrowed the ancestor's sweep
         "ps-ancestor-piped-in-a-loop-body": (
             "PowerShell", "deny", "_PS_PIPED_REMOVE_RE", 'foreach ($f in (gci "{A}")) { $f | ri -r -fo }'),
+        # air's 22f230: a block its header does not feed has its own pipeline
+        # read; the condition's listing opened the only match before
+        "ps-zone-piped-in-an-if-block": (
+            "PowerShell", "deny", "_PS_PIPED_REMOVE_RE",
+            'if ((gci build).Count -gt 0) { gci "{D}" -Recurse | ri -r }'),
         # ── PowerShell: the native single-file deletes and git clean (the
         # failure-mode review: the Bash reader's verbs this tool lacked --
         # `unlink <hook>` deleted the hook under pwsh while Bash refused it) ──
@@ -17363,12 +17397,19 @@ class TestRemovedOrRelocatedOperandIsAMutation:
 
         tree = ast.parse((HOOKS_DIR / "_bash_patterns.py").read_text(encoding="utf-8"))
         readers = {"_iter_removed_or_relocated_operands", "iter_ps_removed_or_relocated_operands"}
+        # a helper that is the one site searching its arm stands for that
+        # arm where a reader calls it (TestCatastrophicLoopCarrier's
+        # site test pins the helper as the regex's only search site)
+        helpers = {"_ps_piped_remove_matches": "_PS_PIPED_REMOVE_RE"}
         searched: set[str] = set()
         seen: set[str] = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef) and node.name in readers:
                 seen.add(node.name)
                 for sub in ast.walk(node):
+                    if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name)
+                            and sub.func.id in helpers):
+                        searched.add(helpers[sub.func.id])
                     if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
                             and sub.func.attr in ("finditer", "search", "match")
                             and isinstance(sub.func.value, ast.Name)

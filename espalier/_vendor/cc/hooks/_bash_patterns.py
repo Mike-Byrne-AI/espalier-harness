@@ -15991,6 +15991,31 @@ def _ps_header_feed(text: str, m: "re.Match[str]") -> "re.Match[str] | _CutPipe 
     return _CutPipe(m, m.start("args") + leave)
 
 
+def _ps_piped_remove_matches(
+        text: str) -> "Iterator[tuple[re.Match[str], re.Match[str] | _CutPipe | None]]":
+    """``(match, feed)`` for every `_PS_PIPED_REMOVE_RE` match on ``text``,
+    ``feed`` by `_ps_header_feed` -- the one site that searches the regex
+    (the verdict readers through `_ps_fed_removes`, the zone reader here).
+    A match whose pipe sits in a block its header does not feed is searched
+    again from just past its head, not past its end: its span ran across
+    the block's brace, so an enumerator inside the span -- the block's own
+    pipeline, an inner loop's header -- opens a match of its own (air's
+    22f230: `if ((gci build).Count -gt 0) { gci build -Recurse | ri -r -fo
+    }` read the condition's listing as the opener, the block's pipeline
+    never, and walled a clean main allows). Matches do not overlap
+    otherwise, as `finditer`'s. Each search starts past the last one's
+    head, so the walk ends; an enumerator head is short and a span holds
+    few, so it stays a handful of searches a command."""
+    pos = 0
+    while True:
+        m = _PS_PIPED_REMOVE_RE.search(text, pos)
+        if m is None:
+            return
+        fed = _ps_header_feed(text, m)
+        yield m, fed
+        pos = m.end("head") if fed is None else max(m.end(), m.start() + 1)
+
+
 def _ps_fed_removes(text: str) -> "Iterator[re.Match[str] | _CutPipe]":
     """Every enumerator the guard reads as feeding a remove on ``text``
     (DEF-3066), by `_ps_header_feed`. The regex's head span runs to the
@@ -16006,10 +16031,10 @@ def _ps_fed_removes(text: str) -> "Iterator[re.Match[str] | _CutPipe]":
     walls it as it walls every operand-less forced remove; unforced, the
     speed bump nudges it. A group's output piped on stays the enumerator's
     (`(gci src) | ri`, `(gci src).FullName | ri`, `(gci src).Where({ ...
-    }) | ri`). The three verdict readers take this; the zone reader reads
-    the raw match and the header's feed both."""
-    for m in _PS_PIPED_REMOVE_RE.finditer(text):
-        fed = _ps_header_feed(text, m)
+    }) | ri`). A block the header does not feed has its own pipeline read
+    (`_ps_piped_remove_matches`). The three verdict readers take this; the
+    zone reader reads the raw match and the header's feed both."""
+    for _m, fed in _ps_piped_remove_matches(text):
         if fed is not None:
             yield fed
 
@@ -16819,7 +16844,7 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
 
     for m in _PS_REMOVE_ITEM_RE.finditer(scan):
         out.extend(("delete", p) for p in named_targets(m))
-    for m in _PS_PIPED_REMOVE_RE.finditer(scan):
+    for m, fed in _ps_piped_remove_matches(scan):
         # the enumerator's roots, the current location when it names none
         # (DEF-822); a narrowed pipeline is a `sweep` -- its root judged by
         # itself, as a narrowed find's is
@@ -16828,8 +16853,8 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
         # DEF-3066: a loop body piping its variable is fed by the header's
         # listing, read cut at the header's close; the raw reading above
         # took the block's brace and variable for a narrowing filter, which
-        # judged a protected directory's parent by itself (the review)
-        fed = _ps_header_feed(scan, m)
+        # judged a protected directory's parent by itself (the review); a
+        # block the header does not feed is read as its own match next
         if isinstance(fed, _CutPipe):
             roots, narrowed, _files_only, _walks = _ps_pipeline_reading(raw, fed)
             out.extend(("sweep" if narrowed else "delete", p) for p in roots)
