@@ -525,7 +525,11 @@ def lays_the_protected_tree(argv: list[str], input: str | bytes | None, env: dic
     if len(argv) < 2 or Path(argv[1]).name != "write_guard.py" or not _shell_payload(input):
         return None
     project = _project(env, cwd)
-    if _is_suite_checkout(project):
+    # A project the test never made, or one named relative (the child reads it
+    # against its own working directory, this process against its own), is
+    # left as the test spelled it: laying would create the one and could miss
+    # the other.
+    if not project.is_absolute() or not project.is_dir() or _is_suite_checkout(project):
         return None
     try:
         resolved, temp = project.resolve(), Path(tempfile.gettempdir()).resolve()
@@ -534,8 +538,24 @@ def lays_the_protected_tree(argv: list[str], input: str | bytes | None, env: dic
     return project if temp in resolved.parents else None
 
 
+def _blocks_a_protected_dir(project: Path, rel: str) -> bool:
+    """Does a non-directory (a file, a dangling link) sit on the way to
+    ``rel`` under ``project``? A test that built one there did so on purpose."""
+    here = project
+    for part in Path(rel).parts:
+        here = here / part
+        if (here.exists() or here.is_symlink()) and not here.is_dir():
+            return True
+    return False
+
+
 def _lay_the_protected_tree(project: Path) -> None:
-    for rel in _protected_dirs():
+    dirs = _protected_dirs()
+    # A file at a protected name is the test's own fixture: laying around it
+    # would raise before the guard runs, so the project stays as built.
+    if any(_blocks_a_protected_dir(project, rel) for rel in dirs):
+        return
+    for rel in dirs:
         (project / rel).mkdir(parents=True, exist_ok=True)
     log = os.environ.get(LAY_LOG_ENV)
     if log:

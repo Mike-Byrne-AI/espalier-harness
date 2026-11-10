@@ -6216,6 +6216,19 @@ class TestEveryShellGuardSpawnerLaysTheProtectedTree:
         assert hs.lays_the_protected_tree(guard, bash, {"CLAUDE_PROJECT_DIR": str(REPO_ROOT)}, None) is None
         dirs = hs._protected_dirs()
         assert "tools/cc/hooks/" in dirs and ".claude/" in dirs, dirs
+        # A project the test never made, or one named relative, is left alone.
+        missing = {"CLAUDE_PROJECT_DIR": str(tmp_path / "nope" / "p")}
+        assert hs.lays_the_protected_tree(guard, bash, missing, None) is None
+        assert not (tmp_path / "nope").exists()
+        assert hs.lays_the_protected_tree(guard, bash, {"CLAUDE_PROJECT_DIR": "rel/p"}, None) is None
+        # A file at a protected name is the test's own fixture: no laying, no raise.
+        blocked = tmp_path / "blocked"
+        blocked.mkdir()
+        (blocked / ".claude").write_text("a file, on purpose", encoding="utf-8")
+        hs._lay_the_protected_tree(blocked)
+        assert (blocked / ".claude").is_file() and not (blocked / "tools").exists()
+        hs._lay_the_protected_tree(tmp_path)
+        assert all((tmp_path / rel).is_dir() for rel in dirs)
 
     def test_every_bare_spawner_and_opt_out_is_rostered(self):
         offenders = _bare_offenders(_live_guard_spawners(), _live_opt_out_sites(), _BARE_GUARD_SPAWNERS)
