@@ -11,10 +11,12 @@ read the one reader every refusal of this shape goes through
 (``tools/cc/hooks/_start_refusal.py::_missing_sibling_name``) on the shapes it
 must not read as a kept file.
 """
-# slow-exempt: four ship.py --help children over copied tools/cc trees, each under a second
+# slow-exempt: one --help child per armed script and a few controls, each over a copied tools/cc tree, each under a second
 from __future__ import annotations
 
+from collections.abc import Iterable
 import ast
+import functools
 import importlib.util
 import shutil
 import subprocess
@@ -322,6 +324,9 @@ if __name__ == "__main__":
                 spec.loader.exec_module(reader)
                 refuse = getattr(reader, "refuse_kept_siblings", None)
                 if callable(refuse):
+                    reconfigure = getattr(sys.stderr, "reconfigure", None)
+                    if callable(reconfigure):
+                        reconfigure(encoding="utf-8", errors="replace")
                     refuse(_KEPT_SCRIPT)
         # fail-open: ok deliberate without the reader a kept sibling keeps its traceback, as before
         except Exception:  # noqa: BLE001, S110
@@ -396,6 +401,11 @@ class TestEveryScriptThatTakesASiblingArmsTheReader:
                    "tools/cc/statusline.py", "tools/cc/hooks/_recall.py", "tools/cc/hooks/_explain_path.py"}
         assert anchors <= rels, sorted(anchors - rels)
         assert len(rels) >= 21, sorted(rels)
+        assert _HELP_REACHES_NO_TAKE <= rels, sorted(_HELP_REACHES_NO_TAKE - rels)
+        # The per-member drive is parametrized over the files carrying the
+        # block; held equal here, a member that lost it is named, not skipped.
+        assert set(_armed_files()) == rels, (sorted(rels - set(_armed_files())),
+                                             sorted(set(_armed_files()) - rels))
         assert not any(rel.endswith(("/write_guard.py", "/stop_gate.py")) for rel in rels)
 
     def test_every_member_carries_the_one_block_ahead_of_its_siblings(self):
@@ -452,12 +462,58 @@ _SCRIPT_CELLS = {
 }
 
 
-def _drive_script(tmp_path: Path, script: str, plants: list[tuple[str, str]]) -> subprocess.CompletedProcess:
+#: The two members whose ``--help`` reaches no take the walker lists:
+#: ``generate_ledger_regions.py`` reads its siblings in calls, and
+#: ``ledger_row.py`` through ``_load``, a loader handed the module's name
+#: (DEF-5089's shape). A block dropped from either is the placement row's to
+#: catch, and the population row names both.
+_HELP_REACHES_NO_TAKE = frozenset({"tools/cc/generate_ledger_regions.py", "tools/cc/ledger_row.py"})
+
+#: The block's own def line: the collection-time reader of who carries it.
+_ARM_DEF_LINE = "    def _name_a_kept_sibling(kind: type[BaseException]"
+
+
+def _armed_files() -> list[str]:
+    """The files carrying the block, read by its def line alone, since the walk
+    behind the population costs about two seconds and this runs at collection;
+    the population row holds the two sets equal."""
+    return sorted("tools/cc/" + p.relative_to(CC_DIR).as_posix()
+                  for p in [*checkout_glob(CC_DIR, "*.py"), *checkout_glob(CC_DIR / "hooks", "*.py")]
+                  if _ARM_DEF_LINE in p.read_text(encoding="utf-8"))
+
+
+@functools.lru_cache(maxsize=1)
+def _takes_by_taker() -> dict[str, frozenset[str]]:
+    """Each taker's sibling modules, by stem, from ``_sibling_takes``'s names."""
+    from espalier.cli import _sibling_takes
+
+    names, _keywords = _sibling_takes(CC_DIR)
+    by: dict[str, set[str]] = {}
+    for module, taken in names.items():
+        for sources in taken.values():
+            for rel in sources:
+                by.setdefault(rel, set()).add(module)
+    return {rel: frozenset(modules) for rel, modules in by.items()}
+
+
+def _sibling_file(cc: Path, stem: str) -> Path:
+    """The module ``stem`` names under a ``tools/cc`` copy: top level, else its
+    hooks folder (no stem is in both; the walk keys modules by stem)."""
+    top = cc / f"{stem}.py"
+    return top if top.is_file() else cc / "hooks" / f"{stem}.py"
+
+
+def _drive_script(tmp_path: Path, script: str, plants: list[tuple[str, str]],
+                  empty: Iterable[str] = ()) -> subprocess.CompletedProcess:
+    """``script --help`` from a copy of ``tools/cc`` with each plant appended
+    to its file and each module stem in ``empty`` kept as an empty file."""
     root = tmp_path / "copy"
     copy_checkout(CC_DIR, root / "tools" / "cc", ignore=shutil.ignore_patterns("__pycache__"))
     for name, text in plants:
         target = root / "tools" / "cc" / name
         target.write_bytes(target.read_bytes() + text.encode("utf-8"))
+    for stem in empty:
+        _sibling_file(root / "tools" / "cc", stem).write_bytes(b"")
     return subprocess.run(
         [sys.executable, str(root / "tools" / "cc" / script), "--help"],
         cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -493,6 +549,26 @@ class TestAnArmedScriptOnAKeptSibling:
         assert run.returncode == 1, run.stderr[-600:]
         assert "Traceback" in run.stderr and "RUN_RED" in run.stderr, run.stderr[-600:]
         assert "Error in sys.excepthook" not in run.stderr and "cannot run" not in run.stderr
+
+    @pytest.mark.parametrize("member", _armed_files())
+    def test_each_member_names_a_sibling_kept_older_than_every_name_it_reads(self, tmp_path, member):
+        # Every sibling the member takes a name from is kept as an empty file,
+        # a copy older than each name it reads, so whichever read comes first is
+        # a kept file's and never a raise inside the sibling: the member names
+        # the file that lacks it. The two whose --help reaches no take run clean.
+        script = member[len("tools/cc/"):]
+        run = _drive_script(tmp_path, script, [], empty=sorted(_takes_by_taker().get(member, ())))
+        name = Path(script).name
+        if member in _HELP_REACHES_NO_TAKE:
+            assert run.returncode == 0 and "Traceback" not in run.stderr, (
+                f"{member}'s --help now reaches a take (rc {run.returncode}): drop it from "
+                f"_HELP_REACHES_NO_TAKE so its refusal is pinned here\n{run.stderr[-600:]}")
+            return
+        assert run.returncode == 1, (run.returncode, run.stderr[-600:])
+        assert "Traceback" not in run.stderr, run.stderr[-600:]
+        assert run.stderr.startswith((f"{name} cannot run: tools/cc/", f"{name} stopped: tools/cc/")), \
+            run.stderr[-600:]
+        assert ", which lacks it (" in run.stderr, run.stderr[-600:]
 
     def test_the_intact_copy_prints_its_usage(self, tmp_path):
         run = _drive_script(tmp_path, "board.py", [])

@@ -104,6 +104,9 @@ if __name__ == "__main__":
                 spec.loader.exec_module(reader)
                 refuse = getattr(reader, "refuse_kept_siblings", None)
                 if callable(refuse):
+                    reconfigure = getattr(sys.stderr, "reconfigure", None)
+                    if callable(reconfigure):
+                        reconfigure(encoding="utf-8", errors="replace")
                     refuse(_KEPT_SCRIPT)
         # fail-open: ok deliberate without the reader a kept sibling keeps its traceback, as before
         except Exception:  # noqa: BLE001, S110
