@@ -1490,7 +1490,8 @@ first; the dangerous-command catch is a secondary slip-catcher):
    (`git ls-files | Remove-Item`) is the same wipe: the cmdlet binds a
    path from the pipeline by value. A stage between the enumerator and
    `xargs`, a single path echoed into it (and its PowerShell twin, a
-   literal item piped into the cmdlet: `'.' | Remove-Item -Recurse`), and
+   literal item piped into the cmdlet: `'.' | Remove-Item -Recurse`, which
+   draws that tool's nudge, never the wall, since 2026-11-10), and
    a shell opened behind the carrier (`xargs sh -c`, the reader roster's
    standing limit) stay declared limits, pinned by
    `tests/test_write_guard.py::TestCatastrophicEnumeratorCarrier::test_classifier_matrix_carrier`
@@ -1568,13 +1569,27 @@ first; the dangerous-command catch is a secondary slip-catcher):
    its in-place twin, among the loop carrier's through-the-hook rows.
 
    The PowerShell statement-form loop over a listing
-   is the remove cmdlet's variable-operand wall already; the item piped
+   is the remove cmdlet's variable-operand wall already, and the item piped
    INTO the cmdlet inside a loop body (`foreach (...) { $f | Remove-Item
-   -Recurse -Force }`) draws that tool's nudge instead -- the listing in
-   the loop header is read as the pipe's source across the block brace --
-   a declared limit pinned by a strict expected-failure row
-   (`tests/test_write_guard.py::TestCatastrophicLoopCarrier::test_the_powershell_carrier_in_the_loop_body_walls_loop`),
-   so the day a reader closes it the row reds. The same Bash text is inert under pwsh.
+   -Recurse -Force }`) meets the same wall: the listing in the loop header
+   is read as the body's feed, its span cut where its group closes, so the
+   body reads as its statement twin (`Get-ChildItem / -Recurse |
+   Remove-Item -Recurse` walls, the same over `src` nudges, over a roster
+   directory passes), forced or not and with the brace spaced or glued to
+   the header. Until 2026-11-10 the span ran on across the block brace:
+   spaced, the brace and the loop variable read as a narrowing filter and
+   the body passed silently for every root, the filesystem root included;
+   glued (`){$f|ri -r}`), the same tail read as a flag and walled by
+   accident. A body that pipes something other than the loop variable is
+   still read as fed by the header's listing, the declared limit. A
+   recursive remove without the force switch whose target the pipeline
+   binds and no enumerator the guard reads feeds draws the nudge (`'src' |
+   Remove-Item -Recurse`, a variable piped in, a stage such as
+   `Where-Object` between the listing and the remove). What the pipe
+   carries is not read, so a roster item piped in nudges where its operand
+   twin is silent. Pinned by
+   `tests/test_write_guard.py::TestCatastrophicLoopCarrier::test_the_powershell_carrier_in_the_loop_body_walls_loop`
+   and the speed bump's own rows. The same Bash text is inert under pwsh.
 
 Additionally, Bash commands that write to protected paths via redirects
 (`> file`), `tee`, `sed -i`, `cp`/`mv`, `git checkout`/`restore` (the `--`

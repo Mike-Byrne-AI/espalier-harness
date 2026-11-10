@@ -500,6 +500,47 @@ class TestCpRmrf:
         assert not _fires_ps(_speedbump._pred_rmrf, cmd, tmp_path)
 
     @pytest.mark.parametrize("cmd", [
+        "'src' | Remove-Item -Recurse",
+        "'src' | rm -r", "'src' | ri -r", "'src' | del -r", "'src' | rd -r", "'src' | erase -r",
+        "'src','dist' | Remove-Item -Recurse",
+        "@('src') | Remove-Item -Recurse",
+        "[pscustomobject]@{Path='src'} | Remove-Item -Recurse",
+        "Write-Output src | Remove-Item -Recurse",
+        "Resolve-Path src | Remove-Item -Recurse",
+        "$d='src'; $d | Remove-Item -Recurse",
+        "Get-ChildItem src | Where-Object { $_.Name -ne 'keep' } | Remove-Item -Recurse",
+        "'src' |\n  Remove-Item -Recurse",                  # the pipe continues across a line break
+        "'src' | & 'Remove-Item' -Recurse",                 # the call operator
+        # a loop body's piped item: read across the header's closers, the
+        # pipeline was narrowed by `{` and `$f` and nothing answered
+        "foreach ($f in (gci src)) { $f | ri -r }",
+        "gci src | ForEach-Object { $_ | Remove-Item -Recurse }",
+        # unread, a roster item piped in nudges where its twin is silent,
+        # and a catastrophic one where its twin walls: the declared limit
+        "'build' | Remove-Item -Recurse",
+        "'.' | Remove-Item -Recurse",
+    ])
+    def test_powershell_fires_on_a_piped_recursive_remove(self, tmp_path, cmd):
+        """DEF-3066: a recursive remove without the force switch whose target
+        the pipeline binds names no operand of its own, so the operand arm
+        read no target and the sweep arm no root, and the remove took the
+        bound path's items with no prompt where `Remove-Item -Recurse src`
+        nudges. Each row was silent at the base."""
+        assert _fires_ps(_speedbump._pred_rmrf, cmd, tmp_path)
+
+    @pytest.mark.parametrize("cmd", [
+        "Get-ChildItem build | Remove-Item -Recurse",       # a placed enumerator keeps its roster pass
+        "(gci build) | ri -r",
+        "'src/a.txt' | Remove-Item",                        # not recursive
+        "foreach ($f in (gci -Name -Filter *.pyc)) { $f | Remove-Item -Force }",
+        "$x || ri -r",                                      # the chain operator hands the verb nothing
+        "Remove-Item -Recurse",                             # no operand and nothing piped in
+        "$doc = 'src | Remove-Item -Recurse'",              # a mention
+    ])
+    def test_powershell_silent_on_a_placed_or_unpiped_remove(self, tmp_path, cmd):
+        assert not _fires_ps(_speedbump._pred_rmrf, cmd, tmp_path)
+
+    @pytest.mark.parametrize("cmd", [
         "rm -rf /", "rm -rf ~", "ri -r -fo C:\\", "rm -rf $HOME", "rm -rf *",
         "Remove-Item -Recurse C:\\", "rm -r ~", "ri -r $HOME", "Remove-Item -Recurse *",
         # the code review: an end-of-options marker or a GNU long option must

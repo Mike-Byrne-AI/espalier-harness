@@ -3403,9 +3403,15 @@ class TestCatastrophicEnumeratorCarrier:
         ("Remove-Item -Recurse -Force .", "wall"),
         # DECLARED (air's 5581ae, driven at 351bbb5): a literal item piped
         # into the cmdlet is the PowerShell twin of a single path echoed into
-        # `xargs`, outside the wall like it; pinned as the exact verdict so
-        # the day a reader binds the piped literal this row reds
-        ("'.' | Remove-Item -Recurse", "allow"),
+        # `xargs`, outside the wall like it. Silent until DEF-3066, which
+        # nudges a piped recursive remove no enumerator feeds without reading
+        # what the pipe carries; pinned as the exact verdict so the day a
+        # reader binds the piped literal this row reds
+        ("'.' | Remove-Item -Recurse", "bump"),
+        # DEF-3066: a relative item piped in nudges as its operand twin does
+        ("Remove-Item -Recurse src", "bump"),
+        ("'src' | Remove-Item -Recurse", "bump"),
+        ("Get-ChildItem src | Where-Object { $_.Name -ne 'keep' } | Remove-Item -Recurse", "bump"),
     ])
     def test_through_the_hook_carrier_powershell(self, tmp_path, cmd, expect):
         result = run_guard_from("PowerShell", cmd, tmp_path, None)
@@ -4267,20 +4273,41 @@ class TestCatastrophicLoopCarrier:
         )
         assert _delete_verdict(result) == "allow", result.stdout
 
-    @pytest.mark.xfail(strict=True, reason=(
-        "DEF-836's PowerShell arm, declared not dropped: the bash half landed "
-        "2026-09-18 (the carrier-fed body, _LOOP_FEED_PREFIX) and the PS twin "
-        "has no reader yet. It draws the remove tier's variable-operand bump "
-        "where the statement-form loop beside it walls -- better than the bash "
-        "twin's silent allow, same defect: the body's shape decides where the "
-        "operand should. strict=True so the day it lands this xpasses and reds."))
-    def test_the_powershell_carrier_in_the_loop_body_walls_loop(self, tmp_path):
-        result = run_guard_from(
-            "PowerShell",
-            "foreach ($f in (Get-ChildItem -Recurse -Name)) { $f | Remove-Item -Recurse -Force }",
-            tmp_path, None,
-        )
-        assert _delete_verdict(result) == "wall", result.stdout
+    @pytest.mark.parametrize("cmd, expect", [
+        ("foreach ($f in (Get-ChildItem -Recurse -Name)) { $f | Remove-Item -Recurse -Force }", "wall"),
+        ("foreach ($f in (Get-ChildItem / -Recurse)) { $f | Remove-Item -Recurse -Force }", "wall"),
+        ("foreach ($f in (Get-ChildItem ~ -Recurse)) { $f | Remove-Item -Recurse -Force }", "wall"),
+        # the statement form beside it, which walled throughout
+        ("foreach ($f in (Get-ChildItem / -Recurse)) { Remove-Item -Recurse -Force $f }", "wall"),
+        # unforced, the header's enumerator is the body's feed: the reading
+        # of its statement twin (`gci / -Recurse | ri -r` walls)
+        ("foreach ($f in (Get-ChildItem / -Recurse)) { $f | Remove-Item -Recurse }", "wall"),
+        ("foreach ($f in (gci src)) { $f | ri -r }", "bump"),
+        ("foreach ($f in (gci src)) { ri -r $f }", "bump"),
+        ("foreach ($f in (gci build)) { $f | ri -r }", "allow"),
+        # glued, the tail read as a flag and main walled by accident; cut,
+        # the same reading walls on purpose
+        ("foreach($f in (gci / -Recurse)){$f|ri -r}", "wall"),
+        ("foreach($f in (gci -Recurse)){$f|ri -r}", "wall"),
+        ("foreach($f in (gci / -Recurse)){$f|ri -r -fo}", "wall"),
+        ("foreach($f in (gci src)){$f|ri -r}", "bump"),
+        # a group's output piped on is the enumerator's: its roster pass stays
+        ("(gci build) | ri -r", "allow"),
+        ("(Get-ChildItem /) | Remove-Item -Recurse", "wall"),
+    ])
+    def test_the_powershell_carrier_in_the_loop_body_walls_loop(self, tmp_path, cmd, expect):
+        """DEF-836's PowerShell arm, restated by DEF-3066. The xfail this
+        replaced asserted the wall and said the body drew the variable-operand
+        bump; it was a silent allow. The enumerator reader's span ran to the
+        first pipe, so it read past the loop header's closers into the body:
+        `{` and `$f` read as a positional filter, the pipeline as narrowed,
+        and the remove as recognized safe -- for every root, `/` included,
+        while the statement form walled. Read through `_ps_fed_removes`, the
+        body's remove is fed by nothing: forced, the record walls it as it
+        walls every operand-less forced remove; unforced, the speed bump
+        nudges it. Each forced piped row allowed at the base."""
+        result = run_guard_from("PowerShell", cmd, tmp_path, None)
+        assert _delete_verdict(result) == expect, (cmd, result.stdout)
 
     def test_the_placement_helper_has_exactly_its_two_callers_loop(self):
         """The carrier and the loop carrier place their sweeps through ONE
