@@ -3693,7 +3693,10 @@ def iter_mcp_path_leaves(tool_input: object) -> Iterator[tuple[str, str, str]]:
       filter (write_guard skips ``MCP_CONTENT_KEYS``; plan_guard acts only on
       ``MCP_PATH_FIELDS``) — the iterator itself is policy-neutral.
     * ``location`` — a human-readable path for the deny reason
-      (``"batch.files[0].path"``).
+      (``"batch.files[0].path"``). ``write_guard._mcp_object_of`` also reads
+      it to place a leaf in its object (a move's destination is one only
+      beside a source), so a change to its shape moves those verdicts:
+      ``tests/test_write_guard.py::TestAnMcpMoveDestinationIsAWrite`` pins them.
 
     Key-agnostic + depth/node-bounded; raises ``MCPPayloadUnverifiable`` past
     ``MCP_LEAFWALK_MAX_DEPTH`` / ``MCP_LEAFWALK_MAX_NODES`` so the caller fails
