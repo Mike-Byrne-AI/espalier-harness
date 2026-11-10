@@ -11714,6 +11714,58 @@ _DRIVE_SCRATCH_ROOT_RE = re.compile(r"^[a-z]:/te?mp$", re.IGNORECASE)
 _SCRATCH_ROOT_VALUE_RE = re.compile(r"^(?:[A-Za-z]:)?/[^/]")
 
 
+#: ``FILE_ATTRIBUTE_REPARSE_POINT``: a junction, a directory link or a mount
+#: point, as ``os.lstat`` reads one on Windows (`_long_path_name`).
+_FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+
+
+def _long_path_name(value: str) -> str | None:
+    """``value`` (drive-qualified, separator-normalised) with each 8.3 short
+    component expanded to its long name, in forward slashes; ``None`` off
+    Windows, where a component is a reparse point (a junction, a directory
+    link, a mount point), where the path is not there, and where nothing
+    changed but case. ``os.path.realpath`` expands short names and follows
+    links too, so it is asked only of a path none of whose components
+    ``os.lstat`` reads as a reparse point, and its answer is kept only where
+    it has the typed value's component count and every typed component
+    without a ``~`` is its twin ignoring case (a subst or mapped drive, a
+    kept ``\\\\?\\`` prefix): a short ``TEMP`` gains its own directory's
+    long spelling and no other place (DEF-1125).
+
+    WHY this way. ``GetLongPathNameW`` follows no link by construction, but
+    its ``ctypes`` import made a first vetting under a short ``TEMP`` cost a
+    median 12.0 ms against this reader's 4.4 ms and main's 2.8 ms (16
+    interleaved fresh processes each, Windows host, 2026-11-10). The lstat
+    walk is load-bearing: a junction whose own component is typed short
+    (``ALONGJ~1``) carries a ``~``, so the twin check alone kept
+    ``realpath``'s answer, the junction's target (driven the same day)."""
+    if sys.platform != "win32" or not _DRIVE_ABSOLUTE_RE.match(value):
+        return None
+    typed = value.split("/")
+    prefix = typed[0]
+    try:
+        for part in typed[1:]:
+            prefix += "/" + part
+            if os.lstat(prefix).st_file_attributes & _FILE_ATTRIBUTE_REPARSE_POINT:
+                return None
+        resolved = os.path.realpath(value, strict=True)
+    except (OSError, AttributeError, ValueError):  # fail-open: ok deliberate -- no long spelling keeps the typed root alone, toward the wall
+        return None
+    long = resolved.replace("\\", "/").rstrip("/")
+    spelled = long.split("/")
+    if len(spelled) != len(typed) or any(
+            "~" not in t and t.casefold() != s.casefold() for t, s in zip(typed, spelled)):
+        return None
+    return long if long.casefold() != value.casefold() else None
+
+
+#: An 8.3 short component, as ``GetShortPathNameW`` mints one: a ``~`` and a
+#: digit (``SOMEUS~1``). Only a drive-qualified value of this shape asks the
+#: expander, so a POSIX ``TMPDIR`` holding a ``~`` elsewhere, and a host whose
+#: temp directory has no short component, never resolve a path (DEF-1125).
+_SHORT_NAME_SHAPE_RE = re.compile(r"~\d")
+
+
 def _vetted_scratch_values() -> list[str]:
     """The values of ``TEMP``, ``TMP`` and ``TMPDIR`` that can serve as a
     scratch root, separator-normalised: an absolute path with at least one
@@ -11723,7 +11775,13 @@ def _vetted_scratch_values() -> list[str]:
     or `TEMP=C:\\Windows` would otherwise turn every wall below it into a
     nudge (code review, driven, 2026-10-04). A value that IS a fixed temp
     root (`TMPDIR=/tmp`) is that root, catastrophic itself, and read through
-    `_TEMP_ROOTS` alone. Read from the environment,
+    `_TEMP_ROOTS` alone. A drive-qualified value with an 8.3 short
+    component (`_SHORT_NAME_SHAPE_RE`) is followed by its long spelling
+    (`_long_path_name`), vetted the same way, so a ``TEMP`` presented in
+    8.3 form (a component such as ``SOMEUS~1``) is a root under both of its
+    names and a path typed long below it is scratch (DEF-1125); any other
+    value asks nothing more. A value already listed (``TEMP`` and ``TMP``
+    are one directory on most hosts) is listed once. Read from the environment,
     never through `tempfile.gettempdir`, which writes a probe file to
     answer. One home for the scratch-root reader, the speed bump's
     temp-root carve-out (`below_a_temp_root`) and the catastrophic reader's
@@ -11746,8 +11804,17 @@ def _vetted_scratch_values() -> list[str]:
     try:
         for var in ("TEMP", "TMP", "TMPDIR"):
             value = os.environ.get(var, "").replace("\\", "/").rstrip("/")
-            if _SCRATCH_ROOT_VALUE_RE.match(value) and not _target_is_catastrophic(value, None, by_drive=False):
-                out.append(value)
+            if not _SCRATCH_ROOT_VALUE_RE.match(value) or _target_is_catastrophic(value, None, by_drive=False):
+                continue
+            if value in out:
+                continue
+            out.append(value)
+            long = (_long_path_name(value)
+                    if _DRIVE_ABSOLUTE_RE.match(value) and _SHORT_NAME_SHAPE_RE.search(value)
+                    else None)
+            if (long and long not in out and _SCRATCH_ROOT_VALUE_RE.match(long)
+                    and not _target_is_catastrophic(long, None, by_drive=False)):
+                out.append(long)
     finally:
         _VETTING_SCRATCH[0] = False
     if len(_VETTED_MEMO) < 32:
