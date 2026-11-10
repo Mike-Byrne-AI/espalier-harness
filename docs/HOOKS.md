@@ -1556,7 +1556,7 @@ first; the dangerous-command catch is a secondary slip-catcher):
    loop head does read the loop, an echoed loop variable takes the head's
    verdict, so a roster word list or a narrowed head stays silent where
    the loop's own `rm -rf "$f"` draws the variable operand's nudge: a
-   declared difference. Each is pinned as the verdict it draws by
+   declared limit, and each of these is pinned as the verdict it draws by
    `tests/test_write_guard.py::TestCatastrophicLoopCarrier::test_through_the_hook_loop`.
 
    The PowerShell statement-form loop over a listing

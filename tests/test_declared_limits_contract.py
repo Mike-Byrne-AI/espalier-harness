@@ -267,6 +267,11 @@ class TestTheSentenceSplitter:
 #: nothing a row can red on); and the encoded program and the script file,
 #: two sentences citing the same row, joined into one, which keeps the seeded
 #: docs at the ceiling `scripts/sync_asset_docs.py` holds.
+#: HOOKS 30 -> 30 on 2026-11-09 (DEF-3063): the loop carrier's limit for a
+#: body piping into `xargs rm -rf` closed (a stage between and a word list
+#: beside a substitution now draw the twin's nudge, -1), and the loop head's
+#: own verdict over an echoed loop variable is a declared limit in its place
+#: (+1, the same pin).
 _CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 30, "docs/SHARP_EDGES.md": 5}
 
 
