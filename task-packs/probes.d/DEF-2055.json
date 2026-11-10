@@ -1,13 +1,14 @@
 {
  "id": "DEF-2055",
  "subject": "tools/cc/hooks/_bash_patterns.py",
- "cmd": "python -c 'import os, sys; from pathlib import Path; os.environ.update(TEMP=\"C:/tmp/job-1\", TMP=\"C:/tmp/job-1\", TMPDIR=\"/tmp/job-1\"); sys.path.insert(0, \"tools/cc/hooks\"); import write_guard as wg; repo = Path.home() / \"scratch-root-no-such-repo\"; ri = \"Remove-Item \" + \"-Rec\" + \"urse \" + \"-Force \"; w = lambda c: wg._ps_dangerous_reason(c, repo, cwd=repo) is not None; ok = not w(ri + \"$env:TEMP\" + chr(92) + \"x\"); print((\"open\" if w(\"$d = $env:TEMP; \" + ri + \"$d\" + chr(92) + \"x\") else \"fixed\") if ok else \"the in-place spelling walls\")'",
+ "cmd": "python -c 'import os, sys; from pathlib import Path; os.environ.update(TEMP=\"C:/tmp/job-1\", TMP=\"C:/tmp/job-1\", TMPDIR=\"/tmp/job-1\"); sys.path.insert(0, \"tools/cc/hooks\"); import write_guard as wg; repo = Path.home() / \"scratch-root-no-such-repo\"; ri = \"Remove-Item \" + \"-Rec\" + \"urse \" + \"-Force \"; w = lambda c: wg._ps_dangerous_reason(c, repo, cwd=repo) is not None; ok = not w(ri + \"$env:TEMP\" + chr(92) + \"x\"); print((\"open\" if w(\"$d = $env:TEMP; Write-Output ok; \" + ri + \"$d\" + chr(92) + \"x\") else \"fixed\") if ok else \"the in-place spelling walls\")'",
  "open_value": "open",
  "why_not": null,
  "inputs": [
   "tools/cc/hooks/write_guard.py"
  ],
- "row_sha": "43c24f834cb7",
- "text_sha": "ef4408fbb391",
- "verified_2026_11_08": "OPEN (filed 2026-11-08; probe driven at filing here and in the export of HEAD 57832897b3ba)"
+ "row_sha": "dd2b49d0cd57",
+ "text_sha": "c0151df06280",
+ "verified_2026_11_08": "OPEN (filed 2026-11-08; probe driven at filing here and in the export of HEAD 57832897b3ba)",
+ "verified_2026_11_10": "STILL_OPEN (re-pinned value unchanged on 2026-11-10: a bound spelling in the gate's one shape now draws the in-place nudge (_ps_temp_bound_remove), for every spelling the pre-pass binds (bare, braced, double-quoted, TMPDIR, a line-break end; air 7ad740); the row stays live for every other bound shape, and its probe moves to one) [changed: probe, text]"
 }

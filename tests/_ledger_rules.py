@@ -242,19 +242,21 @@ TEXT_OVER_OWN_SUBJECT = {
     # gate-populations-derive-from-the-live-source, the C37 class-fix: the
     # README's skip list is a generated region; the status guard reads the
     # gate_details spelling; their probes keyed on the old text's spelling).
-    "DEF-450", "DEF-476", "DEF-483", "DEF-488",
+    # DEF-488, DEF-564 and DEF-864 left on 2026-11-10 with their rows (struck by
+    # lane each-named-assertion-reds-on-its-mutation, the C36 class: each named
+    # assertion tightened until its mutation reds; their probes read the old
+    # assertion's spelling).
+    "DEF-450", "DEF-476", "DEF-483",
     # DEF-519 and DEF-593 left on 2026-10-08 with their rows (struck by lane
     # ledger-oldest-c: contract rule 2 names the live gate; the index parser
     # names the rows it cannot read).
     "DEF-516",
     "DEF-523", "DEF-543",
-    "DEF-564",
     "DEF-576", "DEF-579", "DEF-588", "DEF-590", "DEF-623", "DEF-629",
     "DEF-644",  # DEF-631 struck 2026-10-09 (the landing-gate lane); its probe retired with it
     "DEF-645", "DEF-649", "DEF-660",
     # DEF-662 left on 2026-10-08 with its row (struck by lane
     # ledger-oldest-b: the doc-to-probe direction landed).
-    "DEF-864",  # TP-332's slot, re-keyed 2026-09-20 (see above)
     #: DEF-874 (filed 2026-09-21 at the corpus fold): the row's deliverable is the
     #: wording of a release-checklist headline itself, so the probe quotes the exact
     #: bulk-push promise the fix must delete (the only occurrence in the file) and no

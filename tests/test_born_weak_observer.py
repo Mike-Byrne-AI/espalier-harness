@@ -180,6 +180,40 @@ def test_silent_on_own_defining_material():
     assert p.observe_born_weak("tests/fixtures/x_negatives.py", old_content="", new_content=bw) is None
 
 
+def test_the_speed_bump_deny_tokens_hold_the_born_weak_ones_and_three_more():
+    """DEF-601: `_speedbump._DENY_TOKENS` is declared a superset of
+    `_born_weak._BW_DENY_TOKENS` (the sister-site comment at its definition),
+    and until this test no file under tests/ named the smaller list, so the
+    relation was prose. A deny token added to the born-weak list alone would
+    leave the speed-bump's removal reader blind to the weakening the token was
+    added to catch.
+
+    Two halves, each its own red. The SUBSET: every born-weak token is a
+    speed-bump token. The DELTA, pinned exactly: the three exit-2 spellings
+    the born-weak list omits on purpose (it runs inside post_write_check, a
+    non-underscore hook the protocol check greps for them, so carrying them
+    there would trip that check; the comment at `_BW_DENY_TOKENS` says so).
+    A new token goes into BOTH lists; this test is never satisfied by
+    widening the smaller one with the exit-2 spellings.
+    """
+    import _born_weak
+    import _speedbump
+
+    born_weak = set(_born_weak._BW_DENY_TOKENS)
+    speed_bump = set(_speedbump._DENY_TOKENS)
+    assert born_weak <= speed_bump, (
+        "a born-weak deny token is missing from the speed-bump's removal "
+        f"reader: {sorted(born_weak - speed_bump)}; add it to "
+        "_speedbump._DENY_TOKENS too"
+    )
+    assert speed_bump - born_weak == {"return 2", "exit(2)", "exit 2"}, (
+        "the speed-bump's tokens beyond the born-weak list moved: "
+        f"{sorted(speed_bump - born_weak)}. The delta is the three exit-2 "
+        "spellings post_write_check cannot carry; a new deny token belongs in "
+        "both lists"
+    )
+
+
 # --- LOG + ORCHESTRATOR -------------------------------------------------------
 def test_log_observation_appends_timestamped_jsonl(tmp_path):
     rec = {"path": _SCANNER, "guard_signals": ["scanner_rule_added"],

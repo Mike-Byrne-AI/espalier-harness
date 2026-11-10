@@ -238,7 +238,13 @@ class TestTheShellFixturesCarryTheProtectedTree:
     without the tree banks a suppressed deny as a correct ALLOW. The roster is
     derived below: a sixth fixture in this file that spawns the guard on a
     shell payload with a project of its own fails the derivation until it
-    lays the tree and joins the list."""
+    lays the tree and joins the list.
+
+    `tests/test_test_suite_contract.py::TestEveryShellGuardSpawnerLaysTheProtectedTree`
+    is the tree-wide pin beside this one (DEF-2045): the shared spawn point
+    lays the tree, and every spawner that runs the guard itself lays it or
+    sits on that roster with its reason. The two fold into one after the
+    lanes that change this file land."""
 
     _FIXTURES = ("run_bash_guard", "run_guard_from", "_run_ps_guard",
                  "_run_ps_guard_with_temp", "run_guard_tool")
@@ -3403,9 +3409,15 @@ class TestCatastrophicEnumeratorCarrier:
         ("Remove-Item -Recurse -Force .", "wall"),
         # DECLARED (air's 5581ae, driven at 351bbb5): a literal item piped
         # into the cmdlet is the PowerShell twin of a single path echoed into
-        # `xargs`, outside the wall like it; pinned as the exact verdict so
-        # the day a reader binds the piped literal this row reds
-        ("'.' | Remove-Item -Recurse", "allow"),
+        # `xargs`, outside the wall like it. Silent until DEF-3066, which
+        # nudges a piped recursive remove no enumerator feeds without reading
+        # what the pipe carries; pinned as the exact verdict so the day a
+        # reader binds the piped literal this row reds
+        ("'.' | Remove-Item -Recurse", "bump"),
+        # DEF-3066: a relative item piped in nudges as its operand twin does
+        ("Remove-Item -Recurse src", "bump"),
+        ("'src' | Remove-Item -Recurse", "bump"),
+        ("Get-ChildItem src | Where-Object { $_.Name -ne 'keep' } | Remove-Item -Recurse", "bump"),
     ])
     def test_through_the_hook_carrier_powershell(self, tmp_path, cmd, expect):
         result = run_guard_from("PowerShell", cmd, tmp_path, None)
@@ -4267,20 +4279,155 @@ class TestCatastrophicLoopCarrier:
         )
         assert _delete_verdict(result) == "allow", result.stdout
 
-    @pytest.mark.xfail(strict=True, reason=(
-        "DEF-836's PowerShell arm, declared not dropped: the bash half landed "
-        "2026-09-18 (the carrier-fed body, _LOOP_FEED_PREFIX) and the PS twin "
-        "has no reader yet. It draws the remove tier's variable-operand bump "
-        "where the statement-form loop beside it walls -- better than the bash "
-        "twin's silent allow, same defect: the body's shape decides where the "
-        "operand should. strict=True so the day it lands this xpasses and reds."))
-    def test_the_powershell_carrier_in_the_loop_body_walls_loop(self, tmp_path):
-        result = run_guard_from(
-            "PowerShell",
-            "foreach ($f in (Get-ChildItem -Recurse -Name)) { $f | Remove-Item -Recurse -Force }",
-            tmp_path, None,
-        )
-        assert _delete_verdict(result) == "wall", result.stdout
+    @pytest.mark.parametrize("cmd, expect", [
+        ("foreach ($f in (Get-ChildItem -Recurse -Name)) { $f | Remove-Item -Recurse -Force }", "wall"),
+        ("foreach ($f in (Get-ChildItem / -Recurse)) { $f | Remove-Item -Recurse -Force }", "wall"),
+        ("foreach ($f in (Get-ChildItem ~ -Recurse)) { $f | Remove-Item -Recurse -Force }", "wall"),
+        # the statement form beside it, which walled throughout
+        ("foreach ($f in (Get-ChildItem / -Recurse)) { Remove-Item -Recurse -Force $f }", "wall"),
+        # unforced, the header's enumerator is the body's feed: the reading
+        # of its statement twin (`gci / -Recurse | ri -r` walls)
+        ("foreach ($f in (Get-ChildItem / -Recurse)) { $f | Remove-Item -Recurse }", "wall"),
+        ("foreach ($f in (gci src)) { $f | ri -r }", "bump"),
+        ("foreach ($f in (gci src)) { ri -r $f }", "bump"),
+        ("foreach ($f in (gci build)) { $f | ri -r }", "allow"),
+        # glued, the tail read as a flag and main walled by accident; cut,
+        # the same reading walls on purpose
+        ("foreach($f in (gci / -Recurse)){$f|ri -r}", "wall"),
+        ("foreach($f in (gci -Recurse)){$f|ri -r}", "wall"),
+        ("foreach($f in (gci / -Recurse)){$f|ri -r -fo}", "wall"),
+        ("foreach($f in (gci src)){$f|ri -r}", "bump"),
+        # a group's output piped on is the enumerator's: its roster pass stays
+        ("(gci build) | ri -r", "allow"),
+        ("(Get-ChildItem /) | Remove-Item -Recurse", "wall"),
+        # a member call taking a script block is the group's output too: the
+        # narrowed cache clean is read as it was before the cut
+        ("(gci . -Recurse -Directory).Where({ $_.Name -eq '__pycache__' }) | ri -Recurse -Force", "allow"),
+        # a block's pipe that carries anything but the header's loop
+        # variable is fed by nothing: the record walls the forced form, the
+        # speed bump nudges the unforced one, whatever the header lists
+        ("foreach ($f in (gci build)) { $HOME | ri -r -fo }", "wall"),
+        ("foreach ($f in (gci build)) { 'src' | ri -r }", "bump"),
+        ("if ((gci build).Count -gt 0) { '/' | ri -r -fo }", "wall"),
+        ("if ($x) { gci build } else { $t | ri -r }", "bump"),
+        # an outer listing's span swallows an inner enumerator: the outer
+        # header does not feed the block, so the inner enumerator opens a
+        # match of its own and is read (the code review: both were silent
+        # before the cut)
+        ("foreach ($a in (gci build)) { foreach ($f in (gci / -Recurse)) { $f | ri -r -fo } }", "wall"),
+        ("if ($c) { gci build } else { gci / -Recurse | ri -r -fo }", "wall"),
+        # an inner loop reusing the outer's variable: the outer header
+        # matches the block's stage, yet the inner header binds it (the
+        # failure-mode review: silent at main and at the lane's first fix)
+        ("foreach ($f in (gci build)) { foreach ($f in (gci / -Recurse)) { $f | ri -r -fo } }", "wall"),
+        ("foreach ($f in (gci build)) { foreach ($f in (gci / -Recurse)) { $f | ri -r } }", "wall"),
+        ("foreach ($f in (gci build)) { foreach ($f in (gci ~ -Recurse)) { $f | ri -r -fo } }", "wall"),
+        ("foreach ($f in (gci / -Recurse)) { foreach ($f in (gci build)) { $f | ri -r -fo } }", "allow"),
+        # a block's listing rooted at a variable reads as its statement twin
+        # (`gci $f -Recurse | ri -r` walls at main), the header's variable
+        # included: DECLARED, the header's roots are not carried into it
+        ("foreach ($f in (gci build -Directory)) { gci $f -Recurse | ri -r }", "wall"),
+        ("gci $f -Recurse | ri -r", "wall"),
+        ("if ((gci $p).Count) { gci $p -Recurse | ri -r }", "wall"),
+        ("gci src -Recurse -Directory | ForEach-Object { if ((gci $_.FullName).Count -eq 0) { gci $_.FullName | ri -r } }", "wall"),
+        # a block the header does not feed has its own pipeline read, as its
+        # statement twin (air's 22f230, the verifier's clean: the
+        # condition's listing opened the only match, the block's pipeline
+        # was never read, and the head walled what main allows). Unforced
+        # too: the inner loop and the else branch walled forced only, by
+        # the record, where their twins wall either way
+        ("if ((Get-ChildItem build).Count -gt 0) { Get-ChildItem build -Recurse | Remove-Item -Recurse -Force }", "allow"),
+        ("if ((Get-ChildItem build).Count -gt 0) { Get-ChildItem build -Recurse | Remove-Item -Recurse }", "allow"),
+        ("if (Get-Item build -ErrorAction Ignore) { Get-ChildItem build -Recurse | Remove-Item -Recurse -Force }", "allow"),
+        ("if (Get-Item build -ErrorAction Ignore) { Get-ChildItem build -Recurse | Remove-Item -Recurse }", "allow"),
+        ("if (Test-Path build) { Get-ChildItem build -Recurse | Remove-Item -Recurse -Force }", "allow"),
+        ("if ((gci build).Count -gt 0) { gci src -Recurse | ri -r -fo }", "bump"),
+        ("if ((gci build).Count -gt 0) { gci src -Recurse | ri -r }", "bump"),
+        ("if ((gci build).Count -gt 0) { gci / -Recurse | ri -r -fo }", "wall"),
+        ("if ((gci build).Count -gt 0) { gci / -Recurse | ri -r }", "wall"),
+        ("if ($c) { gci build } else { gci / -Recurse | ri -r }", "wall"),
+        ("foreach ($a in (gci build)) { foreach ($f in (gci / -Recurse)) { $f | ri -r } }", "wall"),
+        # the four cells the verifier judged by hand: the statement over
+        # `/`, `~` and the checkout root, and the loop over `~`, unforced
+        ("Get-ChildItem / -Recurse | Remove-Item -Recurse", "wall"),
+        ("Get-ChildItem ~ -Recurse | Remove-Item -Recurse", "wall"),
+        ("Get-ChildItem . -Recurse | Remove-Item -Recurse", "wall"),
+        ("foreach ($f in (Get-ChildItem ~ -Recurse)) { $f | Remove-Item -Recurse }", "wall"),
+        # DECLARED: the ForEach-Object body over a listing is not read as fed
+        # by it (its pipe goes into ForEach-Object, not into a remove), so
+        # the unforced body nudges where its statement twin walls; pinned as
+        # the exact verdict so the day a reader binds `$_` this row reds
+        ("Get-ChildItem / -Recurse | ForEach-Object { $_ | Remove-Item -Recurse }", "bump"),
+        ("gci / -Recurse | % { $_ | ri -r }", "bump"),
+        ("gci / -Recurse | % { $_ | ri -r -fo }", "wall"),
+    ])
+    def test_the_powershell_carrier_in_the_loop_body_walls_loop(self, tmp_path, cmd, expect):
+        """DEF-836's PowerShell arm, restated by DEF-3066. The xfail this
+        replaced asserted the wall and said the body drew the variable-operand
+        bump; it was a silent allow. The enumerator reader's span ran to the
+        first pipe, so it read past the loop header's closers into the body:
+        `{` and `$f` read as a positional filter, the pipeline as narrowed,
+        and the remove as recognized safe -- for every root, `/` included,
+        while the statement form walled. Read through `_ps_fed_removes`, a
+        body that pipes the `foreach` header's variable is fed by the
+        header's listing, cut at the header's close, and reads as its
+        statement twin (`/` walls, `src` nudges, `build` passes), forced or
+        not, spaced or glued; a block's pipe carrying anything else is fed
+        by nothing (forced: the record's wall; unforced: the nudge)."""
+        result = run_guard_from("PowerShell", cmd, tmp_path, None)
+        assert _delete_verdict(result) == expect, (cmd, result.stdout)
+
+    @pytest.mark.parametrize("text", [
+        "gci build -Path (gci /) | ri -r",
+        "gci build | ri -r; gci dist | ri -r -fo",
+        "(gci src) | ri -r; Get-ChildItem out -Recurse | Remove-Item -Recurse",
+    ])
+    def test_a_match_whose_pipe_is_its_own_resumes_past_its_end_loop(self, text):
+        """The walk re-searches past a head only where the match's pipe sits
+        in a block; elsewhere it is `finditer` (the code review: a walk that
+        always resumed past the head moved no verdict row, and read an
+        enumerator inside a fed match's span as a feed of its own)."""
+        bp = _bash_patterns_module()
+        scan = bp.powershell_scan_text(text)
+        walked = [m.span() for m, _fed in bp._ps_piped_remove_matches(scan)]
+        assert walked == [m.span() for m in bp._PS_PIPED_REMOVE_RE.finditer(scan)]
+
+    def test_the_piped_remove_regex_has_exactly_its_two_readers_loop(self):
+        """DEF-3066: the verdict readers and the zone reader take the
+        enumerator pipe through `_ps_fed_removes`, which reads a loop
+        header's listing as its body's feed, a block its header does not
+        feed by the block's own pipeline (air's 22f230), and each remove by
+        one feed, the innermost. A reader that searched the regex itself
+        would read the block's brace as a narrowing filter again, and the
+        failure-mode review found that reverting two of the three verdict
+        readers moved no row. `_ps_piped_remove_matches` is the one site
+        that searches the regex and the one caller of `_ps_header_feed`.
+        Grows deliberately."""
+        import ast
+
+        tree = ast.parse((HOOKS_DIR / "_bash_patterns.py").read_text(encoding="utf-8"))
+        sites: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef):
+                for sub in ast.walk(node):
+                    if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
+                            and sub.func.attr in ("finditer", "search", "match", "fullmatch")
+                            and isinstance(sub.func.value, ast.Name)
+                            and sub.func.value.id == "_PS_PIPED_REMOVE_RE"):
+                        sites.add(node.name)
+        assert sites == {"_ps_piped_remove_matches"}, sites
+
+        def callers(name: str) -> set[str]:
+            return {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+                    and any(isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name)
+                            and sub.func.id == name for sub in ast.walk(node))}
+
+        # the feed of one match is final only past the search that follows
+        # it (a None may be a block an inner enumerator feeds): the walk
+        # alone asks it, and one reader dedupes the walk for every consumer
+        assert callers("_ps_header_feed") == {"_ps_piped_remove_matches"}
+        assert callers("_ps_piped_remove_matches") == {"_ps_fed_removes"}
+        assert "iter_ps_removed_or_relocated_operands" in callers("_ps_fed_removes")
 
     def test_the_placement_helper_has_exactly_its_two_callers_loop(self):
         """The carrier and the loop carrier place their sweeps through ONE
@@ -9753,7 +9900,10 @@ def _assignment_guarded_verbs(mod) -> list[tuple[str, list[str]]]:
 
     DERIVED from the module's own source, never hand-listed, so a tenth verb
     regex that adopts the guard self-enrols. One that FORGETS it drops out of
-    the population instead -- which is what the count floor below catches.
+    THIS population, which is why the count floor below was its only backstop
+    (DEF-488); `test_every_command_position_verb_regex_excludes_an_assignment`
+    now judges every command-position verb regex, guarded or not, so a verb
+    regex that forgets the guard reds there by name.
     """
     out: list[tuple[str, list[str]]] = []
     for name, val in sorted(vars(mod).items()):
@@ -9835,6 +9985,161 @@ def test_assignment_guard_removal_is_detected():
             f"{verb}=$(grep foo {probe})"))
     ]
     assert leaked, "removing the assignment guards changed nothing -- the contract is vacuous"
+
+
+# ── every command-position verb regex, guarded or not (DEF-488) ───────
+#
+# The population above is the regexes that already CARRY the guard, so a verb
+# regex that forgets it never enters it, and a hand-set count floor was the
+# only backstop. The family below is every module-level compiled `*_RE` whose
+# pattern holds the module's own `_CMD_POS` text -- the anchor the module says
+# every verb-matching reader composes (assignment readers take
+# `_CMD_POS_NO_VERB` and stay out by construction). Each member must carry the
+# guard, or be shown by a drive not to read `<verb>=` as its verb: a witness
+# command it reads at offset 0, then the same command with `=` after the verb,
+# which it must not read at offset 0. A member with neither is on the roster
+# below with its reason, or it reds. Measured at cf782b628: 46 members, 21
+# guarded, 21 more shown by their witness, 4 on the roster.
+
+#: The tails a witness command puts after a verb: the plain shapes the family's
+#: unguarded members read. A new member no tail reaches reds as unjudged, so
+#: its grammar adds a tail here or the member carries the guard.
+_ASSIGNMENT_WITNESS_TAILS = (
+    " x", " -s x y", " -i x", " checkout -- x", " clean -fd x", " restore x",
+    " rm x", " <<< x", " -c 'x' y", " -e 'x' y",
+)
+
+#: Members with no guard whose regex DOES read the assignment twin at its verb,
+#: each with the reason it stays, driven through the real hook at cf782b628.
+#: `declared limit:` marks a false deny this contract found and the dispatcher
+#: ruled a limit, not a row (ack 20261110T103729Z-air-80c98c): it needs a shell
+#: variable named after the head whose value writes a zone, no session has
+#: recorded one, and the zone-write readers are the after-check's job under the
+#: coverage contract. A session that records one files it then. The roster
+#: check below reds on an entry whose member has since been guarded, so the
+#: roster cannot hide a fix.
+_ASSIGNMENT_GUARD_EXEMPT = {
+    "_TEE_RE": (
+        "reads no operand from an assignment: its operands are its own group, "
+        "which opens on whitespace, so `tee=x <zone path>` allows (driven)"
+    ),
+    "_AWK_HEAD_RE": (
+        "declared limit: the awk reader takes the words after the head, so "
+        "`awk='{print > \"<zone path>\"}' true` is denied while the same "
+        "assignment to `x` allows (driven)"
+    ),
+    "_SED_HEAD_RE": (
+        "declared limit: the sed reader takes the words after the head, so "
+        "`sed=';w <zone path>' true` is denied (driven)"
+    ),
+    "_GIT_HEAD_RE": (
+        "declared limit: the git reader takes the words after the head, so "
+        "`git=x -c core.pager='cat > <zone path>' log` is denied (driven)"
+    ),
+}
+
+
+def _command_position_verb_regexes(mod) -> dict:
+    """Every module-level compiled ``*_RE`` whose pattern holds ``_CMD_POS``."""
+    anchor = mod._CMD_POS
+    return {
+        name: val
+        for name, val in sorted(vars(mod).items())
+        if name.endswith("_RE") and isinstance(getattr(val, "pattern", None), str)
+        and anchor in val.pattern
+    }
+
+
+def _spelled_words(rx, anchor: str) -> list[str]:
+    """The words a pattern spells after its anchor, regex escapes removed
+    first so ``\\bmkdir`` reads ``mkdir`` (its verbs are among them)."""
+    after = re.sub(r"\\[A-Za-z]", " ", rx.pattern.split(anchor, 1)[1])
+    return sorted({w for w in re.findall(r"[a-z][a-z0-9]*", after) if len(w) >= 2})
+
+
+def _assignment_twin_read(rx, verb, tail):
+    """Where ``rx`` stops reading ``<verb>=<tail>`` when it reads that text from
+    offset 0 -- the assignment taken for the verb -- else None."""
+    m = rx.search(verb + "=" + tail)
+    return m.end() if m is not None and m.start() == 0 else None
+
+
+def _assignment_witness(rx, words):
+    """The first ``(verb, tail)`` whose plain command ``rx`` reads at offset 0."""
+    for verb in words:
+        for tail in _ASSIGNMENT_WITNESS_TAILS:
+            m = rx.search(verb + tail)
+            if m is not None and m.start() == 0:
+                return verb, tail
+    return None
+
+
+def _unexcluded_assignment_readers(mod) -> tuple[list[str], list[str]]:
+    """``(unjudged, readers)`` over the family: members with no guard and no
+    witness, and members whose regex reads the assignment twin of their
+    witness at offset 0. A guard stands for a member no tail reaches."""
+    unjudged: list[str] = []
+    readers: list[str] = []
+    for name, rx in _command_position_verb_regexes(mod).items():
+        witness = _assignment_witness(rx, _spelled_words(rx, mod._CMD_POS))
+        if witness is None:
+            if _ASSIGN_GUARD not in rx.pattern:
+                unjudged.append(name)
+        elif _assignment_twin_read(rx, *witness) is not None:
+            readers.append(f"{name}: reads {witness[0] + '=' + witness[1]!r}")
+    return unjudged, readers
+
+
+def test_every_command_position_verb_regex_excludes_an_assignment():
+    """DEF-488: a verb regex that forgets the `(?!=)` guard is caught by name,
+    not dropped from the population. Its own earn-the-red first: a member
+    built on the anchor with no guard reds, and the same member guarded does
+    not, so the judgment below cannot pass for want of reaching anything."""
+    bp = _bash_patterns_module()
+    family = _command_position_verb_regexes(bp)
+    assert len(family) >= 40, (
+        f"only {len(family)} `*_RE` patterns hold `_CMD_POS` (46 at cf782b628) "
+        "-- the anchor changed shape or the family stopped being derivable; "
+        "re-derive before relaxing this floor"
+    )
+    bare = re.compile(bp._CMD_POS + r"\b(?i:truncate)\b([^|;&\n]+)")
+    guarded = re.compile(bp._CMD_POS + r"\b(?i:truncate)\b(?!=)([^|;&\n]+)")
+    words = _spelled_words(bare, bp._CMD_POS)
+    assert _assignment_twin_read(bare, *_assignment_witness(bare, words)) is not None
+    assert _assignment_twin_read(guarded, *_assignment_witness(guarded, words)) is None
+
+    unjudged, readers = _unexcluded_assignment_readers(bp)
+    unjudged = [n for n in unjudged if n not in _ASSIGNMENT_GUARD_EXEMPT]
+    readers = [r for r in readers if r.split(":", 1)[0] not in _ASSIGNMENT_GUARD_EXEMPT]
+    assert not unjudged, (
+        "command-position verb regexes with no `(?!=)` guard that no witness "
+        f"tail reaches: {unjudged}. Add the guard after the verb, or a tail to "
+        "_ASSIGNMENT_WITNESS_TAILS that this regex reads"
+    )
+    assert not readers, (
+        "command-position verb regexes read a `<verb>=` shell ASSIGNMENT as "
+        f"the verb: {readers}. Add `\\b(?!=)` after the verb (the TP-370 "
+        "false-deny class); an exemption goes on _ASSIGNMENT_GUARD_EXEMPT with "
+        "its driven reason"
+    )
+
+
+def test_every_assignment_exemption_is_still_needed():
+    """The roster only shrinks: an entry whose member is gone, has since taken
+    the guard, or no longer reads its assignment twin reds here by name."""
+    bp = _bash_patterns_module()
+    family = _command_position_verb_regexes(bp)
+    _unjudged, readers = _unexcluded_assignment_readers(bp)
+    reading = {r.split(":", 1)[0] for r in readers}
+    stale = {
+        name: ("not in the family" if name not in family
+               else "carries the guard" if _ASSIGN_GUARD in family[name].pattern
+               else "no longer reads its assignment twin")
+        for name in _ASSIGNMENT_GUARD_EXEMPT
+        if name not in family or _ASSIGN_GUARD in family[name].pattern
+        or name not in reading
+    }
+    assert not stale, f"drop these _ASSIGNMENT_GUARD_EXEMPT entries: {stale}"
 
 
 class TestPowerShellEphemeralCarveOut:
@@ -10729,21 +11034,285 @@ class TestAScratchRootItselfIsTheWall:
         self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
         assert not self._walls(command, tool), command
 
-    def test_a_forced_remove_below_a_bound_variable_keeps_the_wall(self, monkeypatch):
-        """A gap, filed as DEF-2055 (an over-refusal with a fix shape: a
-        scope model for the PowerShell pre-pass), and the forced-remove
-        sentence in docs/HOOKS.md (a variable stays the wall there): this
-        row pins today's wall until that lane. The forced PowerShell remove's
-        rung that lifts the wall
-        below a scratch root reads the command as typed, never through the
-        binding pre-pass, which models no
-        PowerShell scope (a name bound inside `& { }` is unset after it, so
-        `$d\\x` names `\\x` at the drive root). So a forced remove below a
-        name bound to `$env:TEMP` keeps the wall for an unreadable target,
-        an over-refusal: spell `$env:TEMP\\x` in place."""
+    #: A forced remove below a name bound to a temp variable, in the one
+    #: shape the scratch-root rung follows (DEF-2055), each beside the same
+    #: remove with its value spelled in place: bare and quoted tails, either
+    #: separator, `$env:TMP`, no blanks around the `=` and `;`, a remove
+    #: alias, and every spelling the pre-pass binds (air's 7ad740): braced,
+    #: double-quoted, both, TMPDIR, and a binding a line break ends.
+    BOUND_FORCED_BELOW = [
+        ("bare", "$d = $env:TEMP; " + RI + "$d\\x", RI + "$env:TEMP\\x"),
+        ("tmp-no-blanks", "$d=$env:TMP;" + RI + "$d/x", RI + "$env:TMP/x"),
+        ("quoted", "$d = $env:TEMP; " + RI + '"$d\\x"', RI + '"$env:TEMP\\x"'),
+        ("alias", "$work = $env:TEMP; ri -r -fo $work\\job", "ri -r -fo $env:TEMP\\job"),
+        ("braced", "$d = ${env:TEMP}; " + RI + "$d\\x", RI + "${env:TEMP}\\x"),
+        ("quoted-value", '$d = "$env:TEMP"; ' + RI + "$d\\x", RI + "$env:TEMP\\x"),
+        ("quoted-braced-value", '$d = "${env:TEMP}"; ' + RI + "$d\\x", RI + "${env:TEMP}\\x"),
+        ("tmpdir", "$d = $env:TMPDIR; " + RI + "$d\\x", RI + "$env:TMPDIR\\x"),
+        ("a-line-break", "$d = $env:TEMP\n" + RI + "$d\\x", RI + "$env:TEMP\\x"),
+        ("a-crlf", "$d = $env:TEMP\r\n" + RI + "$d\\x", RI + "$env:TEMP\\x"),
+        ("a-separator-then-a-line-break", "$d = $env:TEMP;\n" + RI + "$d\\x", RI + "$env:TEMP\\x"),
+        ("a-trailing-line-break", "$d = $env:TEMP; " + RI + "$d\\x\r\n", RI + "$env:TEMP\\x\r\n"),
+    ]
+
+    @pytest.mark.parametrize(
+        "command, in_place", [(c, p) for _, c, p in BOUND_FORCED_BELOW], ids=[i for i, _, _ in BOUND_FORCED_BELOW])
+    def test_a_forced_remove_below_a_bound_temp_name_draws_the_in_place_nudge(self, command, in_place, monkeypatch):
+        """DEF-2055: the rung that lifts the forced remove's wall below a
+        scratch root read the text as typed, so `$d = $env:TEMP; Remove-Item
+        -Recurse -Force $d\\x` walled as unreadable where `$env:TEMP\\x` spelled
+        in place drew the one nudge. It now follows that binding in the one
+        shape nothing can undo it in (`_ps_temp_bound_remove`), and the
+        speed bump asks the same rung plain and quiet, so the bound spelling
+        gets its value's in-place verdict on both tiers: no wall, the one
+        nudge; the rung says yes and its quiet question says no."""
+        import _bash_patterns as bp
+
+        sb = _speedbump_module()
         self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
-        assert self._walls("$d = $env:TEMP; " + self.RI + "$d\\x", "PowerShell")
-        assert not self._walls(self.RI + "$env:TEMP\\x", "PowerShell")
+        repo = Path.home() / "scratch-root-no-such-repo"
+        assert bp._ps_temp_bound_remove(command) is not None, command
+        for spelling in (in_place, command):
+            assert not self._walls(spelling, "PowerShell"), spelling
+            assert sb._pred_rmrf("PowerShell", {"command": spelling}, repo), spelling
+            assert bp.powershell_removal_is_below_a_scratch_root(typed=spelling, root=str(repo)), spelling
+            assert not bp.powershell_removal_is_below_a_scratch_root(typed=spelling, root=str(repo), quiet=True), spelling
+
+    def test_a_bound_temp_name_the_hook_cannot_read_keeps_the_wall(self, monkeypatch):
+        """The binding passes the gate, and the value it names is read as the
+        hook inherits it (`_temp_var_target`), the in-place spelling's reader:
+        with TEMP unset on the hook's side both spellings keep the wall and
+        the speed bump leaves them to it (air's 7ad740)."""
+        sb = _speedbump_module()
+        self._env(monkeypatch, TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
+        repo = Path.home() / "scratch-root-no-such-repo"
+        for spelling in ("$d = $env:TEMP; " + self.RI + "$d\\x", self.RI + "$env:TEMP\\x"):
+            assert self._walls(spelling, "PowerShell"), spelling
+            assert not sb._pred_rmrf("PowerShell", {"command": spelling}, repo), spelling
+
+    @pytest.mark.parametrize("command", [
+        "$d = $env:TEMP; & (Get-Command Remove-Item -ErrorVariable d) -Recurse -Force $d\\x",
+        "$d = $env:TEMP; Remove-Item -Recurse `\n -Force $d\\x",
+    ], ids=["a-command-object-head", "a-backtick-continuation"])
+    def test_the_hard_tier_asks_the_gate_on_the_text_as_typed(self, command, monkeypatch):
+        """DEF-2055's code review, a false allow on the lane as first built:
+        the hard tier handed the rung `powershell_scan_pair`'s twin, which
+        blanks a command object's call and joins a backtick continuation, so
+        the gate admitted these and the hard tier stepped aside, while the
+        speed bump, asking the same rung on the text as typed, was refused it
+        and stayed silent: no tier fired. `-ErrorVariable d` empties `$d`
+        before the arguments evaluate (5.1, the reviewer's read), so the
+        first takes `\\x` at the drive root. Both tiers now read the typed
+        text: the wall answers, and the bump leaves it to the wall."""
+        import _bash_patterns as bp
+
+        sb = _speedbump_module()
+        self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
+        repo = Path.home() / "scratch-root-no-such-repo"
+        assert bp._ps_temp_bound_remove(command) is None, command
+        assert self._walls(command, "PowerShell"), command
+        assert not sb._pred_rmrf("PowerShell", {"command": command}, repo), command
+
+    @pytest.mark.parametrize("tool, command", [
+        ("Bash", 'pwsh -c "$d = $env:TEMP; Remove-Item -Recurse -Force $d\\Windows"'),
+        ("Bash", 'powershell -Command "$d = $env:TEMP; Remove-Item -Recurse -Force $d\\Windows"'),
+        ("Bash", 'echo "$d = $env:TEMP; Remove-Item -Recurse -Force $d\\Windows" | pwsh -Command -'),
+        ("Bash", "pwsh -c '$d = $env:TEMP; Remove-Item -Recurse -Force $d\\x'"),
+        ("PowerShell", 'Start-Process powershell -ArgumentList "-NoProfile","-Command",'
+                       '"$d = $env:TEMP; Remove-Item -Recurse -Force $d\\Windows" -Wait'),
+    ], ids=["pwsh-c-dq", "powershell-command-dq", "piped-to-command-stdin", "pwsh-c-sq",
+            "start-process-dq"])
+    def test_a_binding_inside_another_shells_program_is_not_followed(self, tool, command, monkeypatch):
+        """DEF-2055's second code review, a false allow: the launching shell
+        expands `$d` and `$env:TEMP` before PowerShell parses the program, so
+        the child runs `= <temp>; Remove-Item -Recurse -Force \\Windows` at the
+        drive root (live on 5.1 with a harmless stand-in). The gate follows no
+        binding inside another shell's program, so each keeps main's wall; the
+        single-quoted form, whose text is exact, is a safe over-refusal there
+        (the in-place spelling's nested no-tier gap is the inherited one)."""
+        import _bash_patterns as bp
+
+        self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
+        assert self._walls(command, tool), command
+        with bp.another_shells_program():
+            assert bp._ps_temp_bound_remove("$d = $env:TEMP; " + self.RI + "$d\\x") is None
+
+    #: Spellings where the name may not hold `$env:TEMP` when the remove
+    #: reads it, or that the rung is not asked to read through (air's 18c1a6
+    #: and the row's rewrite). The gate refuses each but the last two, which
+    #: it admits and the target reader then refuses (`_GATE_ADMITS`). The
+    #: first three, the predefined pair, the child process, the non-ASCII row
+    #: and the space-free grouped flag value each lift the wall with their
+    #: refusal alone removed (`&`, `;`, `|`, the predefined set, the verb
+    #: check, the ASCII check, the parenthesis; driven 2026-11-10). The spaced
+    #: grouped and subexpression rows red on that mutant through the gate's
+    #: assertion alone: their inner literal surfaces as a target the rung
+    #: cannot read, so the wall holds there anyway. The pre-pass leaves the
+    #: backtick row's escaped name unbound.
+    BOUND_FORCED_KEPT = [
+        ("a-grouped-flag-value",
+         "$d = $env:TEMP; " + RI + "-Exclude:($ExecutionContext.SessionState.PSVariable.Set([char]100,0)) $d\\x"),
+        ("a-background-job", "$d = $env:TEMP; " + RI + "$d\\x &"),
+        ("a-statement-between-removes", "$d = $env:TEMP; " + RI + "$d\\y; Set-Variable d C:/; " + RI + "$d\\x"),
+        ("an-or-chain", "$d = $env:TEMP; " + RI + "$d\\y || Set-Variable d C:/ || " + RI + "$d\\x"),
+        ("a-grouped-argument", "$d = $env:TEMP; " + RI + "(Remove-Variable d) $d\\x"),
+        ("a-subexpression", "$d = $env:TEMP; " + RI + "$(Set-Variable d C:/) $d\\x"),
+        ("a-predefined-name", "$HOME = $env:TEMP; " + RI + "$HOME\\x"),
+        ("a-preference-name", "$ErrorActionPreference = $env:TEMP; " + RI + "$ErrorActionPreference\\x"),
+        ("a-scriptblock", "& { $d = $env:TEMP }; " + RI + "$d\\x"),
+        ("a-statement-between", "$d = $env:TEMP; Set-Variable d C:/; " + RI + "$d\\x"),
+        ("a-pipe", "$d = $env:TEMP; Set-Variable d C:/ -PassThru | " + RI + "$d\\x"),
+        ("a-try-block", "$d = $env:TEMP; try { " + RI + "$d\\x } finally { }"),
+        ("a-backtick", "$d = $env:TEMP; " + RI + "`$d\\x"),
+        ("a-comment", "$d = $env:TEMP; " + RI + "$d\\x #"),
+        ("a-binding-not-first", "Set-Location C:/; $d = $env:TEMP; " + RI + "$d\\x"),
+        ("a-binding-with-a-tail", '$d = "$env:TEMP\\job"; ' + RI + "$d\\x"),
+        ("a-child-process", "$d = $env:TEMP; powershell -c '" + RI + "$d\\x'"),
+        ("a-child-process-dq", '$d = $env:TEMP; powershell -c "' + RI + '$d\\x"'),
+        ("a-line-break-then-a-statement", "$d = $env:TEMP\n" + RI + "$d\\y\nSet-Variable d C:/"),
+        ("a-carriage-return-then-a-statement",
+         "$d = $env:TEMP; " + RI + "$d\\y\rSet-Variable d C:/\r" + RI + "$d\\x"),
+        ("non-ascii", "$d = $env:TEMP; " + RI + "$d\\x\u2003"),
+        # PowerShell reads `$d?` as the name `d?`, unbound here: `\x` at the drive root
+        ("a-question-mark-name", "$d = $env:TEMP; " + RI + "$d?\\x"),
+        ("the-bound-root-itself", "$d = $env:TEMP; " + RI + "$d"),
+    ]
+    _GATE_ADMITS = frozenset({"a-question-mark-name", "the-bound-root-itself"})
+
+    @pytest.mark.parametrize(
+        "row, command", BOUND_FORCED_KEPT, ids=[i for i, _ in BOUND_FORCED_KEPT])
+    def test_a_bound_temp_name_the_remove_may_not_read_keeps_the_wall(self, row, command, monkeypatch):
+        """DEF-2055's gate admits one shape; every other bound spelling
+        keeps the wall, the row's remaining over-refusal for the shapes the
+        gate cannot prove (spell `$env:TEMP\\x` in place). The gate's own
+        answer is asserted too, so a row the gate should refuse cannot pass
+        on another reader alone."""
+        import _bash_patterns as bp
+
+        self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
+        root = str(Path.home() / "scratch-root-no-such-repo")
+        assert (bp._ps_temp_bound_remove(command) is not None) == (row in self._GATE_ADMITS), command
+        assert not bp.powershell_removal_is_below_a_scratch_root(typed=command, root=root), command
+
+    def test_the_two_nothing_runs_between_sets_agree(self):
+        """`write_guard._LONE_DELETE_STOPS` and the binding gate's
+        `_PS_TEMP_BINDING_REFUSED` do one job, refusing whatever lets code
+        run between a statement's start and its remove, and cannot be one
+        object (`_bash_patterns` imports on first use, after write_guard's
+        module-level set; the gate must admit the `$`, `\\`, `:` a binding
+        spells). Pinned instead: what the gate refuses, the lone-delete
+        reader refuses too, by its stop set or its line-break set (air's
+        7ad740, item 6)."""
+        import _bash_patterns as bp
+
+        wg = _load_write_guard()
+        assert bp._PS_TEMP_BINDING_REFUSED <= wg._LONE_DELETE_STOPS | wg._LONE_DELETE_BREAKS
+        # and the exact difference, so a stop the lone-delete reader gains
+        # reds here until someone decides whether the gate needs it too (the
+        # failure-mode review: the subset alone never sees either set shrink)
+        assert wg._LONE_DELETE_STOPS - bp._PS_TEMP_BINDING_REFUSED == frozenset("!\"$'*:<>?@[\\]~")
+
+    #: Refusals no row can witness alone, each with why it is kept anyway.
+    _UNWITNESSED_REFUSALS = {
+        "{": "a block in a remove's arguments runs only through `&`, `.` or a parenthesis, each refused",
+        "}": "its pair",
+        "`": "a continuation needs a line break, refused; an escaped `$` leaves the name unbound",
+    }
+
+    def test_every_gate_refusal_is_witnessed_by_a_row(self, monkeypatch):
+        """Each character of `_PS_TEMP_BINDING_REFUSED`, removed alone (the
+        parentheses as a pair: a lone one is a parse error and nothing runs),
+        lets some row the gate refuses through it, so trimming the set reds
+        here; the three it cannot are named with their reasons, and a reason
+        for a character the set no longer holds reds too (the failure-mode
+        review)."""
+        import _bash_patterns as bp
+
+        self._env(monkeypatch, TEMP="C:/tmp/job-1", TMP="C:/tmp/job-1", TMPDIR="/tmp/job-1")
+        full = bp._PS_TEMP_BINDING_REFUSED
+        assert set(self._UNWITNESSED_REFUSALS) <= full
+        rows = [c for i, c in self.BOUND_FORCED_KEPT if i not in self._GATE_ADMITS] + [
+            "$d = $env:TEMP; & (Get-Command Remove-Item -ErrorVariable d) -Recurse -Force $d\\x",
+        ]
+        assert all(bp._ps_temp_bound_remove(c) is None for c in rows)
+        units = [c for c in full if c not in self._UNWITNESSED_REFUSALS and c not in "()"] + ["()"]
+        for unit in units:
+            monkeypatch.setattr(bp, "_PS_TEMP_BINDING_REFUSED", full - frozenset(unit))
+            assert any(bp._ps_temp_bound_remove(c) is not None for c in rows), repr(unit)
+        monkeypatch.setattr(bp, "_PS_TEMP_BINDING_REFUSED", full)
+
+    @pytest.mark.parametrize("host", ["powershell", "pwsh"])
+    def test_every_name_a_fresh_host_will_not_rebind_is_refused(self, host):
+        """The gate's predefined-name refusal, read from the host itself
+        (air's 7ad740, item 2; modelled on `test_the_parameter_table_is_the_hosts_own`):
+        each name a fresh host's `Get-Variable` lists is assigned at top
+        level in a fresh host of its own, the shape a tool call runs, and
+        read back. A name whose value does not stick would leave `$name\\x`
+        meaning something other than the temp root, so every such name must
+        be on `_PS_PREDEFINED_VARIABLES`. Windows PowerShell 5.1 listed 50
+        and kept 30 (read 2026-11-10); pwsh 7.6.5 lists 54 (air's read).
+        Skipped where the host is absent."""
+        import base64
+        import shutil
+        from concurrent.futures import ThreadPoolExecutor
+
+        import _bash_patterns as bp
+
+        exe = shutil.which(host)
+        if exe is None:
+            pytest.skip(f"no {host} on this host")
+
+        def run(script: str) -> str:
+            encoded = base64.b64encode(script.encode("utf-16-le")).decode()
+            return subprocess.run(
+                [exe, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+                # `${input}` enumerates stdin: an inherited open pipe hangs it
+                stdin=subprocess.DEVNULL,
+                # under the test's 60 s ceiling (the suite contract's
+                # test_no_wait_budget_meets_the_ceiling_of_a_test_that_runs_it):
+                # the whole test took 5.9 s on 5.1, about 52 spawns four at a
+                # time, so one host is well under a second (2026-11-10)
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20,
+            ).stdout
+
+        def answer(name: str) -> str:
+            out = run(
+                "try { ${%s} = 'zz-stick' } catch { }; "
+                "if (${%s} -ceq 'zz-stick') { 'STUCK' } else { 'KEPT' }" % (name, name))
+            return "STUCK" if "STUCK" in out else "KEPT" if "KEPT" in out else out
+
+        # the oracle answers both ways, so a host that prints nothing cannot
+        # pass as one that kept every name (the failure-mode review)
+        assert answer("zz_fresh_probe_name") == "STUCK"
+        assert answer("null") == "KEPT"
+        names = [n for n in run("(Get-Variable).Name").splitlines() if n.strip()]
+        assert len(names) > 20, names
+        with ThreadPoolExecutor(4) as pool:
+            said = dict(zip(names, pool.map(answer, names)))
+        # no answer at all is a statement the host refused to parse (`${?} =`
+        # on 5.1): nothing ran, so nothing was bound -- a name it keeps
+        kept = {n.lower() for n, a in said.items() if a != "STUCK"}
+        assert 0 < len(kept) < len(names), said
+        assert kept <= bp._PS_PREDEFINED_VARIABLES, sorted(kept - bp._PS_PREDEFINED_VARIABLES)
+
+    def test_every_variable_a_fresh_host_lists_is_refused(self):
+        """The 50 names a fresh Windows PowerShell 5.1 host's `Get-Variable`
+        listed (read 2026-11-10) are all on `_PS_PREDEFINED_VARIABLES`, so
+        trimming the set reds here, not only on the two rows above."""
+        import _bash_patterns as bp
+
+        listed = (
+            "$,?,^,args,ConfirmPreference,ConsoleFileName,DebugPreference,Error,ErrorActionPreference,"
+            "ErrorView,ExecutionContext,false,FormatEnumerationLimit,HOME,Host,InformationPreference,input,"
+            "MaximumAliasCount,MaximumDriveCount,MaximumErrorCount,MaximumFunctionCount,MaximumHistoryCount,"
+            "MaximumVariableCount,MyInvocation,NestedPromptLevel,null,OutputEncoding,PID,PROFILE,"
+            "ProgressPreference,PSBoundParameters,PSCommandPath,PSCulture,PSDefaultParameterValues,PSEdition,"
+            "PSEmailServer,PSHOME,PSScriptRoot,PSSessionApplicationName,PSSessionConfigurationName,"
+            "PSSessionOption,PSUICulture,PSVersionTable,PWD,ShellId,StackTrace,true,VerbosePreference,"
+            "WarningPreference,WhatIfPreference"
+        ).split(",")
+        assert len(listed) == 50
+        assert {n.lower() for n in listed} <= bp._PS_PREDEFINED_VARIABLES
 
     @pytest.mark.parametrize("tool, command", [
         ("Bash", 'D="$TMPDIR"x; ' + RM + '"$D"'),
@@ -11684,7 +12253,12 @@ class TestPowerShellRecursiveRemoveTiersAgree:
         "build, {scratch}/x", "src, {scratch}/x",
         # DEF-1174: a wildcard after a relative directory, read as it
         "build/*", "src/*", "out/x/**",
+        # DEF-2055: a name bound to the temp variable, met only in the one
+        # shape the rung follows (`_BOUND_SHAPE`), so the rest of the cross
+        # is the population it always was
+        "$d/x", "$d/x/y",
     )
+    _BOUND_SHAPE = "$d = $env:TEMP; {v}"
     _QUOTES = ("{}", "'{}'", '"{}"')
     _SHAPES = ("{v}", "{v}; Write-Output done", "if (Test-Path {t}) {{ {v} }}")
 
@@ -11742,7 +12316,8 @@ class TestPowerShellRecursiveRemoveTiersAgree:
                 word = (fill(fill(spelled, "{scratch}", scratch.as_posix(), PS), "{repo}", repo.as_posix(), PS)
                         if style == "{}" else style.format(target))
                 verb = f"{head} {switches} {word}{tail}"
-                command = self._SHAPES[(i + 2 * j) % 3].format(v=verb, t=word)
+                shape = self._BOUND_SHAPE if spelled.startswith("$d") else self._SHAPES[(i + 2 * j) % 3]
+                command = shape.format(v=verb, t=word)
                 asked += 1
                 if wg._ps_dangerous_reason(command, repo, cwd=repo) is not None:
                     continue
@@ -17154,6 +17729,22 @@ class TestRemovedOrRelocatedOperandIsAMutation:
             "gci -Recurse -Include *.pyc | ri"),
         "ps-delete-piped-newline-after-pipe": (
             "PowerShell", "deny", "_PS_PIPED_REMOVE_RE", 'gci "{D}" -Recurse -File |\nri'),
+        # DEF-3066: a loop body piping its variable is fed by the header's
+        # listing; read raw, the block's brace narrowed the ancestor's sweep
+        "ps-ancestor-piped-in-a-loop-body": (
+            "PowerShell", "deny", "_PS_PIPED_REMOVE_RE", 'foreach ($f in (gci "{A}")) { $f | ri -r -fo }'),
+        # air's 22f230: a block its header does not feed has its own pipeline
+        # read; the condition's listing opened the only match before
+        "ps-zone-piped-in-an-if-block": (
+            "PowerShell", "deny", "_PS_PIPED_REMOVE_RE",
+            'if ((gci build).Count -gt 0) { gci "{D}" -Recurse | ri -r }'),
+        "ps-zone-listed-in-an-if-condition": (
+            "PowerShell", "allow", "a condition's listing is no delete: the block's own pipeline "
+            "is read, by itself (the failure-mode review: refused at main)",
+            'if ((gci "{D}").Count -gt 0) { gci build -Recurse | ri -r }'),
+        "ps-zone-reused-loop-variable": (
+            "PowerShell", "deny", "_PS_PIPED_REMOVE_RE",
+            'foreach ($f in (gci build)) { foreach ($f in (gci "{D}" -Recurse)) { $f | ri -r } }'),
         # ── PowerShell: the native single-file deletes and git clean (the
         # failure-mode review: the Bash reader's verbs this tool lacked --
         # `unlink <hook>` deleted the hook under pwsh while Bash refused it) ──
@@ -17614,12 +18205,19 @@ class TestRemovedOrRelocatedOperandIsAMutation:
 
         tree = ast.parse((HOOKS_DIR / "_bash_patterns.py").read_text(encoding="utf-8"))
         readers = {"_iter_removed_or_relocated_operands", "iter_ps_removed_or_relocated_operands"}
+        # a helper that is the one site searching its arm stands for that
+        # arm where a reader calls it (TestCatastrophicLoopCarrier's
+        # site test pins the helper as the regex's only search site)
+        helpers = {"_ps_fed_removes": "_PS_PIPED_REMOVE_RE"}
         searched: set[str] = set()
         seen: set[str] = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef) and node.name in readers:
                 seen.add(node.name)
                 for sub in ast.walk(node):
+                    if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name)
+                            and sub.func.id in helpers):
+                        searched.add(helpers[sub.func.id])
                     if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
                             and sub.func.attr in ("finditer", "search", "match")
                             and isinstance(sub.func.value, ast.Name)

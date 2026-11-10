@@ -1311,9 +1311,21 @@ first; the dangerous-command catch is a secondary slip-catcher):
    module that could, so `-Force $env:TEMP\x` steps off the wall as the
    literal path below the same root does, and draws the one nudge a
    variable draws (2026-11-07; until then it walled as unreadable); a
-   comma array of such paths stays the wall, and so does a path below a
-   name bound to one (`$d = $env:TEMP`, then `-Force $d\x`): this rung
-   reads the text as typed, never through a binding, so `$d` is a variable
+   comma array of such paths stays the wall. A path below a name bound to
+   one is read through the binding in one shape alone: `$d = $env:TEMP`
+   as the first statement (or `${env:TEMP}`, either one double-quoted,
+   and TMP or TMPDIR in place of TEMP), ended by `;` or a line break, then
+   the one remove statement, with no brace, parenthesis, `&`, pipe,
+   backtick, comment or further statement, and a name PowerShell does not
+   predefine, so nothing can rebind or unbind the name before the remove
+   reads it; `-Force $d\x` then gets the verdict the same value spelled in
+   place gets, the one nudge where the hook's own value of the variable is
+   an absolute path below a scratch root, else the wall (2026-11-10).
+   Never inside another shell's program (`pwsh -c "..."` from Bash, a
+   `Start-Process` argument list): the launching shell may expand `$d`
+   before PowerShell parses it, so the wall stands there.
+   Any other bound spelling stays the wall: a binding with a tail, work
+   between the binding and the remove, a remove inside `try`/`finally`
    (spell `$env:TEMP\x` in place).
    A forced remove of several targets is judged element by element, each
    by the rule it meets (on the roster, plainly relative, or a literal path
@@ -1490,7 +1502,8 @@ first; the dangerous-command catch is a secondary slip-catcher):
    (`git ls-files | Remove-Item`) is the same wipe: the cmdlet binds a
    path from the pipeline by value. A stage between the enumerator and
    `xargs`, a single path echoed into it (and its PowerShell twin, a
-   literal item piped into the cmdlet: `'.' | Remove-Item -Recurse`), and
+   literal item piped into the cmdlet: `'.' | Remove-Item -Recurse`, which
+   draws that tool's nudge, never the wall, since 2026-11-10), and
    a shell opened behind the carrier (`xargs sh -c`, the reader roster's
    standing limit) stay declared limits, pinned by
    `tests/test_write_guard.py::TestCatastrophicEnumeratorCarrier::test_classifier_matrix_carrier`
@@ -1568,13 +1581,48 @@ first; the dangerous-command catch is a secondary slip-catcher):
    its in-place twin, among the loop carrier's through-the-hook rows.
 
    The PowerShell statement-form loop over a listing
-   is the remove cmdlet's variable-operand wall already; the item piped
+   is the remove cmdlet's variable-operand wall already, and the item piped
    INTO the cmdlet inside a loop body (`foreach (...) { $f | Remove-Item
-   -Recurse -Force }`) draws that tool's nudge instead -- the listing in
-   the loop header is read as the pipe's source across the block brace --
-   a declared limit pinned by a strict expected-failure row
-   (`tests/test_write_guard.py::TestCatastrophicLoopCarrier::test_the_powershell_carrier_in_the_loop_body_walls_loop`),
-   so the day a reader closes it the row reds. The same Bash text is inert under pwsh.
+   -Recurse -Force }`) meets the same wall: the listing in the loop header
+   is read as the body's feed, its span cut where its group closes, so the
+   body reads as its statement twin (`Get-ChildItem / -Recurse |
+   Remove-Item -Recurse` walls, the same over `src` nudges, over a roster
+   directory passes), forced or not and with the brace spaced or glued to
+   the header, where the body sits on the header's line (a body on a line
+   of its own, or after a `;`, is read as fed by nothing: the record's
+   wall forced, the nudge unforced). Until 2026-11-10 the span ran on
+   across the block brace:
+   spaced, the brace and the loop variable read as a narrowing filter and
+   the body passed silently for every root, the filesystem root included;
+   glued (`){$f|ri -r}`), the same tail read as a flag and walled by
+   accident. The listing feeds only a body whose pipe carries the
+   `foreach` header's own loop variable. A block the header does not
+   feed has its own pipeline read as its statement twin wherever one
+   opens inside it: an `if` whose condition lists a directory and whose
+   block lists and removes (`if ((Get-ChildItem build).Count -gt 0) {
+   Get-ChildItem build -Recurse | Remove-Item -Recurse -Force }` passes,
+   the same over `/` walls), an `else` branch, an inner loop's header (one
+   that reuses the outer loop's variable binds the remove by its own
+   listing); the condition's listing is no delete, on the zone check as
+   on the wall. A block's listing rooted at a variable reads as its
+   statement twin, the header's own variable included (`foreach ($f in
+   (gci build -Directory)) { gci $f -Recurse | ri -r }` walls, as `gci $f
+   -Recurse | ri -r` does): the header's roots are not carried into it.
+   A pipe in a block that carries anything else (another variable, a
+   literal) is fed by nothing, so the record
+   walls it forced and the speed bump nudges it unforced, as it does any
+   recursive remove without the force switch whose target the pipeline
+   binds and no enumerator the guard reads feeds (`'src' | Remove-Item
+   -Recurse`, a variable piped in, a stage such as `Where-Object` between
+   the listing and the remove). What the pipe carries is not read, so a
+   roster item piped in nudges where its operand twin is silent. The
+   `ForEach-Object` body (`Get-ChildItem / -Recurse | ForEach-Object { $_
+   | Remove-Item -Recurse }`, and its `%` alias) is not read as fed by the
+   listing before it, so unforced it nudges where its statement twin
+   walls: the declared limit pinned by
+   `tests/test_write_guard.py::TestCatastrophicLoopCarrier::test_the_powershell_carrier_in_the_loop_body_walls_loop`,
+   with the loop rows and the speed bump's own rows. The same Bash text
+   is inert under pwsh.
 
 Additionally, Bash commands that write to protected paths via redirects
 (`> file`), `tee`, `sed -i`, `cp`/`mv`, `git checkout`/`restore` (the `--`

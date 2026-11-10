@@ -1780,8 +1780,14 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "than passing.",
     ),
     "tests/test_write_guard.py": (
-        50, "adc9c905e3c57c5159b2ccbc037eb7063392235df4e892aafb6b18ffdd2f9023",
+        52, "23c9c0a6dc97c2899f3c81e0305aae117754fbfcd94426600183de2791de3e52",
         "CORRECT_BY_REMEDY",
+        "GREW 50 -> 52 on 2026-11-10 (DEF-488): the assignment-guard contract walks "
+        "every command-position verb regex in `_bash_patterns` "
+        "(`_command_position_verb_regexes(mod).items()`, and a second "
+        "`sorted(vars(mod).items())`), floored at 40, so a shrink can only red it; "
+        "its red was earned by three mutants (a guard dropped from _PATCH_CMD_RE and "
+        "from _DD_OF_RE, a new unguarded verb regex). "
         "GREW 49 -> 50 on 2026-11-08 (the read-only fast path's fix batch, DEF-946): "
         "TestQuotedVerbTailIsUniform::test_write_guard_holds_no_anchored_arm_of_its_own "
         "now loads the pattern path by name and counts the compiled patterns in "
