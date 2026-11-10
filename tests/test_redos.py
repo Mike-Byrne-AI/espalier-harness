@@ -853,8 +853,9 @@ _PS_VERB_EXTRACTION_REGEXES = [
     # (`-Command powershell -Command powershell ...`): the shared switch run
     # read every following pair as switch-plus-value, O(n) at each of the n
     # command positions -- 24 s at 28 KB, one second at 6 KB, at HEAD before
-    # DEF-637's witness row found it. The run is bounded at 64 tokens now
-    # (the receipt's remedy); the DEF-717 dash-bearing rows could not see
+    # DEF-637's witness row found it. The run is unbounded and a switch value
+    # may not be an opener word (the receipt's remedy; a 64-token bound was
+    # tried first and measured failing both ways); the DEF-717 dash-bearing rows could not see
     # this shape because their values were never opener words.
     ("ps_exec_switch_value_is_an_opener", _PS_PATH_FLAG_RE, "powershell -Command"),
 ]
@@ -970,10 +971,16 @@ _C52_BASH_ROWS = [
     ("shell_dash_c_long_option_valued", _bash_patterns._SHELL_DASH_C_RE, "bash --rcfile x"),
     ("shell_dash_cx_cluster", _bash_patterns._SHELL_DASH_C_RE, "bash -cx"),
     ("git_clean", _bash_patterns._GIT_CLEAN_RE, "git clean"),
-    # the here-string opener shares the switch run: its unbounded form read a
-    # shell head word as a switch value and was quadratic on a repeated head
-    # (4.0 s at 28 KB through the write extractor, witnessed by the row above
-    # the day the `-c` opener landed beside it)
+    # the here-string opener shares the switch run: its first unbounded form
+    # read a shell head word as a switch value and was quadratic on a repeated
+    # head (4.0 s at 28 KB through the write extractor, witnessed by the row
+    # above the day the `-c` opener landed beside it). A switch's value may
+    # not be any spelling of a shell head, which keeps the run linear with no
+    # bound (DEF-818 took the bound away); these rows red if a value takes the
+    # bare head word again, the spellings with a directory, an `.exe` or
+    # another case are `test_posix_shell_switch_value_is_never_a_head_spelling`,
+    # and the one-head switch-run floods are
+    # `test_posix_shell_switch_run_linear_on_one_head`
     ("shell_herestring_repeated_head", _bash_patterns._SHELL_HERESTRING_RE, "sh -c"),
     ("shell_herestring_switches", _bash_patterns._SHELL_HERESTRING_RE, "bash --norc -x"),
     ("shell_herestring_opener", _bash_patterns._SHELL_HERESTRING_RE, "bash <<<"),
@@ -3123,6 +3130,89 @@ def test_ps_switch_value_run_linear_on_dash_bearing_values(label, seed):
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
     assert elapsed_ms < _CHAIN_CEILING_MS, f"{label} took {elapsed_ms:.1f}ms"
+
+
+@pytest.mark.parametrize("label,seed,tail", [
+    # bare switches: a value never starts with `-`, so each token is a
+    # switch and never the previous switch's value -- one parse
+    ("short-switches", "-x ", ""),
+    ("long-switches", "--norc ", ""),
+    # the run reaches each opener's tail and fails on an unclosed program
+    ("run-then-open-program", "-x ", "-c 'x"),
+    ("run-then-herestring", "-x ", "<<<"),
+])
+def test_posix_shell_switch_run_linear_on_one_head(label, seed, tail):
+    """DEF-818: the POSIX shell openers' switch run (`bash -x ... -c '...'`,
+    `bash -x ... <<< '...'`) is unbounded, because a bound let a program
+    through behind 65 switches (`tests/test_write_guard.py::
+    test_a_long_switch_run_does_not_hide_a_posix_shell_program`). One head and
+    a 30 KB run, so the whole flood is one opener's run; isolated per opener
+    and through the real extractor. A value that may start with `-` gives a
+    switch run two parses per token and reds these rows. POSIX-only
+    (signal.alarm)."""
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    from _bash_patterns import _candidate_paths_from_bash  # noqa: E402
+
+    payload = "bash " + seed * (_WORST_CASE_BODY_LEN // len(seed)) + tail
+    signal.signal(signal.SIGALRM, _alarm)
+    signal.setitimer(signal.ITIMER_REAL, _CHAIN_CEILING_MS / 1000.0)
+    t = time.time()
+    try:
+        _bash_patterns._SHELL_DASH_C_RE.findall(payload)
+        _bash_patterns._SHELL_HERESTRING_RE.findall(payload)
+        _candidate_paths_from_bash(payload)
+        elapsed_ms = (time.time() - t) * 1000
+    except _Timeout:
+        pytest.fail(
+            f"the POSIX shell switch run exceeded {_CHAIN_CEILING_MS}ms on a 30KB "
+            f"{label} run behind one head (a switch value became ambiguous)"
+        )
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    assert elapsed_ms < _CHAIN_CEILING_MS, f"{label} took {elapsed_ms:.1f}ms"
+
+
+_HEAD_SPELLING_FLOOD_LEN = 2 * _WORST_CASE_BODY_LEN
+
+
+@pytest.mark.parametrize("label,verb", [
+    # a head behind a directory: each opens a start through the `sh -c` exec
+    # arm or the verb prefix, and is a value of the `-c` before it
+    ("slashed-head", "/sh -c"),
+    ("relative-dir-head", "a/sh -c"),
+    # an `.exe` or another case, opened behind a wrapper's path
+    ("wrapper-exe-head", "/a/env -x sh.exe -x"),
+    ("wrapper-upper-head", "/a/ENV -x SH -x"),
+    ("wrapper-upper-exe-head", "/a/env -x SH.EXE -x"),
+])
+def test_posix_shell_switch_value_is_never_a_head_spelling(label, verb):
+    """DEF-818's code review: with the run unbounded, a switch value that is
+    a spelling of a shell head (a directory before it, an `.exe`, another
+    case) opens another start whose run reads the rest of the flood -- the
+    starts x run-length product, 2-6 s at 30 KB on each opener when the
+    refusal took the bare lower-case word alone. 60 KB, isolated per opener,
+    so the quadratic is about four times the 30 KB figure and the wrapper
+    rows (about one second at 30 KB) red with margin. POSIX-only
+    (signal.alarm)."""
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    payload = (verb + " ") * (_HEAD_SPELLING_FLOOD_LEN // (len(verb) + 1))
+    for pattern in (_bash_patterns._SHELL_DASH_C_RE, _bash_patterns._SHELL_HERESTRING_RE):
+        signal.signal(signal.SIGALRM, _alarm)
+        signal.setitimer(signal.ITIMER_REAL, _CI_SAFE_BUDGET_MS / 1000.0)
+        t = time.time()
+        try:
+            pattern.findall(payload)
+            elapsed_ms = (time.time() - t) * 1000
+        except _Timeout:
+            pytest.fail(
+                f"a POSIX shell opener exceeded {_CI_SAFE_BUDGET_MS}ms on a 60KB {label} "
+                f"flood (a head spelling became a switch value)"
+            )
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+        assert elapsed_ms < _CI_SAFE_BUDGET_MS, f"{label} took {elapsed_ms:.1f}ms"
 
 
 @pytest.mark.parametrize("label,seed", [

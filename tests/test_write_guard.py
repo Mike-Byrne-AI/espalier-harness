@@ -15942,6 +15942,13 @@ class TestCrossShellRouting:
             "powershell -EncodedCommand UwBlAHQALQBDAG8AbgB0AGUAbgB0AA==",
             "powershell -File deploy.ps1",
             "pwsh -Command $prog",
+            # a relative write after a POSIX shell program's own `cd` behind
+            # anything but a bare `-c` (DEF-818's reading; air 34fc8c: a zone
+            # write, the after-check's)
+            "bash -x -c 'cd tools/cc/hooks && echo x > x.py'",
+            "bash -l -c 'cd tools/cc/hooks && echo x > x.py'",
+            "bash -lc 'cd tools/cc/hooks && echo x > x.py'",
+            "bash <<< 'cd tools/cc/hooks && echo x > x.py'",
         ):
             assert_hook_allowed(run_bash_guard(cmd, tmp_path))
 
@@ -15969,7 +15976,8 @@ class TestCrossShellRouting:
         # a long switch run before the program is crossed on every opener:
         # a `{0,64}` bound tried on the runs turned these -- commands that
         # RUN -- into allows (code review, driven), so the runs are unbounded
-        # and this row is what a future bound reds on
+        # and these rows, with the POSIX shell openers' rows in the test
+        # below, are what a future bound reds on
         ("Bash", "python3 " + "-B " * 70 + "-c \"open('tools/cc/hooks/x.py','w')\""),
         ("Bash", "pwsh " + "-NoLogo " * 70 + "-c 'Set-Content -Path tools/cc/hooks/x.py -Value 1'"),
         ("PowerShell", "python " + "-B " * 70 + "-c \"open('tools/cc/hooks/x.py','w')\""),
@@ -15977,6 +15985,32 @@ class TestCrossShellRouting:
     ])
     def test_a_long_switch_run_does_not_hide_the_program(self, tmp_path, tool, cmd):
         assert_hook_denied(run_guard_tool(tool, {"command": cmd}, tmp_path))
+
+    @pytest.mark.parametrize("switches", [65, 70])
+    @pytest.mark.parametrize("opener", ["-c", "<<<"], ids=["dash-c", "herestring"])
+    @pytest.mark.parametrize("body", [
+        'f=tools/cc/hooks/x.py; echo x > "$f"',
+        "d=tools/cc; echo x > $d/hooks/x.py",
+        "chmod 000 tools/cc/hooks/write_guard.py",
+    ], ids=["file-var", "dir-var", "chmod"])
+    def test_a_long_switch_run_does_not_hide_a_posix_shell_program(
+        self, tmp_path, switches, opener, body,
+    ):
+        """DEF-818: the Bash tool's two POSIX shell openers (`bash -c '...'`,
+        `bash <<< '...'`) share one switch run. Bounded at 64 switches, it let
+        these three programs -- each denied at 64 switches or fewer -- through
+        at 65 and 70 on both openers (driven on the live guard, judged only),
+        so the run is unbounded and these rows are what a future bound reds
+        on. Its ReDoS rows are in `tests/test_redos.py`."""
+        cmd = "bash " + "-x " * switches + opener + " '" + body + "'"
+        assert_hook_denied(run_bash_guard(cmd, tmp_path))
+
+    def test_a_catastrophic_delete_behind_a_long_switch_run_is_refused(self, tmp_path):
+        """DEF-818: the catastrophic delete behind 65 switches, pinned refused
+        (air 34fc8c). The here-string opener: behind `-c` the wall misses the
+        delete at ONE switch, older than the bound and its own row (§C76)."""
+        cmd = "bash " + "-x " * 65 + "<<< 'rm -rf /'"
+        assert_hook_denied(run_bash_guard(cmd, tmp_path))
 
     # ── PowerShell tool: a bash program behind bash / sh -c ──
 
@@ -16059,6 +16093,9 @@ class TestCrossShellRouting:
             'wsl bash -c "echo x > tools/cc/hooks/x.py"',
             "bash -c $prog",
             "Get-Content prog.sh | bash",
+            # a relative write after the program's own `cd` (DEF-818's
+            # reading; air 34fc8c: a zone write, the after-check's)
+            "bash -c 'cd tools/cc/hooks && echo x > x.py'",
         ):
             assert_hook_allowed(_run_ps_guard(cmd, tmp_path))
 
