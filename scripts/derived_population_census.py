@@ -1003,6 +1003,16 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "CORRECT_BY_PROPERTY",
         "NEW 2026-09-27 (the fourth .claude kind): test_every_deployed_kind_carries_the_marker loops CLAUDE_KIND_GLOBS after a real init asserting file_carries_marker on every deployed body. Deriving is the property (a fifth kind is checked with no new method); the three per-kind methods above it stay literal, so the class keeps an independent side.",
     ),
+    "tests/test_kept_sibling.py": (
+        1, "63563522abf3f49a1b3aeb2c8bfbbb8f3a038253215e18ef76bc18809f66ad40",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-11-09 (DEF-5088): test_no_event_hook_carries_the_block walks "
+        "espalier/surface_contract.py::_CANONICAL_HOOK_SCRIPTS, the wired-hook roster, for the "
+        "kept-sibling block's name. An emptied roster would pass that row and red the same file's "
+        "test_the_population_is_the_takers_that_run_as_scripts, since write_guard and stop_gate "
+        "would then join the armed population it holds them out of; the armed population itself "
+        "is floored there at 21 with six members named.",
+    ),
     "tests/test_init_tier_split.py": (
         4, "2ad479dc7305e0fa0759f62b5425fd50315924ba6dfd41c8ec697235c30a1957",
         "CORRECT_BY_PROPERTY",

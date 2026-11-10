@@ -54,6 +54,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, Callable, Iterator, NamedTuple
@@ -62,7 +63,15 @@ from typing import Any, Callable, Iterator, NamedTuple
 # so it would re-pay that on every tool call. typing is already loaded; NamedTuple
 # gives the same frozen-by-construction value type without the inspect import.
 
-import _hook_utils
+# This module is imported under two spellings: bare, with the hooks directory
+# already on sys.path (write_guard puts it there before loading this module),
+# and as `tools.cc.hooks._speedbump` from the repo root, where nothing has. So
+# it puts its own directory on sys.path the way _bash_patterns does instead of
+# trusting every importer to have done so.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+import _hook_utils  # noqa: E402
 from _hook_utils import (
     STATE_DIR, _read_counter, _write_counter, directory_exists, join_directory,
     joined_directories, lock_file, resolve_in_checkout, say_once, unlock_file,
@@ -93,8 +102,7 @@ sibling_checkouts: Callable[[Path], Any] = getattr(_hook_utils, "sibling_checkou
 import _bash_patterns
 # The CP-GATEWEAKEN body names the maintenance-mode relaunch; pin the env-var to
 # the SoT (_maintenance_mode.ENV_VAR) via an f-string rather than a literal, per
-# the no-literal contract. Sibling import — the importing hook (write_guard) has
-# already inserted hooks_dir on sys.path.
+# the no-literal contract. Sibling import, found through the insert above.
 import _maintenance_mode  # type: ignore[import-not-found]
 
 SPEEDBUMP_SESSION_CAP = 4
@@ -1033,27 +1041,23 @@ def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = 
         # to another shell from nowhere -- that shell puts it where the walk
         # cannot follow, so only its absolute operands can be scratch.
         at = (cwd or root) if index == 0 else None
-        readings = _RmReadings(text, at)
-        for i, (rec, _force, operands) in enumerate(readings.plain):
-            # Need recursion AND at least one operand. Recursion alone, forced
-            # or not (DEF-842): rm prompts only for an unwritable file and only
-            # on a terminal, so the unforced spelling takes what the forced one
-            # takes. An operand-less form (`rm -rf/` globs the slash onto the
-            # flag cluster: a syntax error rm rejects, no target) has nothing
-            # to bump.
-            if not rec or not operands:
-                continue
-            # the roster first: the placed reading costs a binding pass and a
-            # walk, so it is read only for an invocation the roster leaves,
-            # and never for one the carve-out's cap would refuse anyway (a long
-            # operand list already strains the hook's budget)
-            left = sum(not _bash_patterns.on_the_ephemeral_roster(
-                _bash_patterns._shell_unquote(t)) for t in operands)
-            if left > _bash_patterns.TEMP_CARVE_MAX:
-                return True
-            if left and _off_the_ephemeral_roster(
-                    operands, str(root), placed=readings.placed(i)):
-                return True
+        if _rm_readings_ask(text, at, root):
+            return True
+    # DEF-3063: a word echoed or printed into a recursing `xargs` remove
+    # (`echo "$D" | xargs rm -rf`) is that remove's operand, on stdin, so
+    # the readings above see an operand-less remove and pass it. The text is
+    # read once more with every carrier spelled as its direct twin (`rm -rf
+    # "$D"`, spliced in place), so each takes the twin's answer wherever it
+    # sits, a loop body included, whatever its head. The defer above reads
+    # the command, never the twin: a
+    # catastrophic echoed word (`echo / | xargs rm -rf`) is outside the wall
+    # and draws this nudge -- adding the twin to the defer would make it an
+    # allow.
+    for index, text in enumerate(texts):
+        at = (cwd or root) if index == 0 else None
+        twin = _bash_patterns.carrier_fed_remove_twin(text)
+        if twin is not None and _rm_readings_ask(twin, at, root):
+            return True
     # DEF-1151: cmd.exe's own recursive deletes (`cmd //c rd /s /q src`,
     # `del /s`) take the rm reading -- the wall for a catastrophic target
     # (deferred above: `has_catastrophic_recursive_rm` reads them), no
@@ -1087,6 +1091,36 @@ def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = 
             # scratch below a temp root, a relative one keeps the nudge
             if _off_the_ephemeral_roster(roots, str(root), placed=(roots, [None])):
                 return True
+    return False
+
+
+def _rm_readings_ask(text: str, at: Path | None, root: Path) -> bool:
+    """True when an `rm` invocation of one Bash text is worth the nudge:
+    recursive, with an operand off the roster that is not scratch below a
+    temp root (``at``: the directory the text runs in, or ``None`` for a
+    program another shell places). One body for the command, each program
+    it hands a shell, and each carrier's twin (DEF-3063)."""
+    readings = _RmReadings(text, at)
+    for i, (rec, _force, operands) in enumerate(readings.plain):
+        # Need recursion AND at least one operand. Recursion alone, forced
+        # or not (DEF-842): rm prompts only for an unwritable file and only
+        # on a terminal, so the unforced spelling takes what the forced one
+        # takes. An operand-less form (`rm -rf/` globs the slash onto the
+        # flag cluster: a syntax error rm rejects, no target) has nothing
+        # to bump.
+        if not rec or not operands:
+            continue
+        # the roster first: the placed reading costs a binding pass and a
+        # walk, so it is read only for an invocation the roster leaves,
+        # and never for one the carve-out's cap would refuse anyway (a long
+        # operand list already strains the hook's budget)
+        left = sum(not _bash_patterns.on_the_ephemeral_roster(
+            _bash_patterns._shell_unquote(t)) for t in operands)
+        if left > _bash_patterns.TEMP_CARVE_MAX:
+            return True
+        if left and _off_the_ephemeral_roster(
+                operands, str(root), placed=readings.placed(i)):
+            return True
     return False
 
 

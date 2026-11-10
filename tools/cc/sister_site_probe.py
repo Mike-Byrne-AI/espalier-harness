@@ -75,7 +75,50 @@ import unicodedata
 from pathlib import Path
 from typing import NamedTuple
 
-from _json_safe import os_error_text
+# A kept, older sibling is named with its repair, never a traceback that names
+# an attribute: an uncaught exception loads hooks/_start_refusal.py by path and
+# hands it to that module's refuse_kept_siblings. The one text of this block,
+# and why each line is there, is tests/test_kept_sibling.py's ARM_BLOCK.
+if __name__ == "__main__":
+    from types import TracebackType as _KeptTraceback
+
+    _KEPT_FROM = Path(__file__).resolve().parent
+    _KEPT_SCRIPT = Path(__file__).name
+    _KEPT_BEFORE = sys.excepthook
+
+    def _name_a_kept_sibling(kind: type[BaseException], exc: BaseException, tb: _KeptTraceback | None) -> None:
+        sys.excepthook = _KEPT_BEFORE
+        try:
+            import importlib.util
+            at = (_KEPT_FROM if _KEPT_FROM.name == "hooks" else _KEPT_FROM / "hooks") / "_start_refusal.py"
+            spec = importlib.util.spec_from_file_location("_start_refusal_by_path", at)
+            if spec is not None and spec.loader is not None:
+                reader = importlib.util.module_from_spec(spec)
+                sys.modules[spec.name] = reader
+                spec.loader.exec_module(reader)
+                refuse = getattr(reader, "refuse_kept_siblings", None)
+                if callable(refuse):
+                    reconfigure = getattr(sys.stderr, "reconfigure", None)
+                    if callable(reconfigure):
+                        reconfigure(encoding="utf-8", errors="replace")
+                    refuse(_KEPT_SCRIPT)
+        # fail-open: ok deliberate without the reader a kept sibling keeps its traceback, as before
+        except Exception:  # noqa: BLE001, S110
+            pass
+        sys.excepthook(kind, exc, tb)
+
+    sys.excepthook = _name_a_kept_sibling
+
+# This script is loaded under two spellings: run or loaded with this directory
+# already on sys.path, and imported as `tools.cc.sister_site_probe` from the
+# repo root, where nothing has. So it puts its own directory on sys.path the
+# way hooks/_bash_patterns.py does instead of trusting every importer to have
+# done so.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
+from _json_safe import os_error_text  # noqa: E402
 
 
 # Files that DEFINE canonicals — excluded from clique detection. Other files

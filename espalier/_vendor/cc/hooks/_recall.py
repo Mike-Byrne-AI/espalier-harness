@@ -69,6 +69,7 @@ file corpus if the sibling is absent.
 from __future__ import annotations
 
 import math
+import os
 import re
 import sys
 from collections import Counter
@@ -77,12 +78,55 @@ from dataclasses import dataclass
 from itertools import zip_longest
 from pathlib import Path
 
+# A kept, older sibling is named with its repair, never a traceback that names
+# an attribute: an uncaught exception loads hooks/_start_refusal.py by path and
+# hands it to that module's refuse_kept_siblings. The one text of this block,
+# and why each line is there, is tests/test_kept_sibling.py's ARM_BLOCK.
+if __name__ == "__main__":
+    from types import TracebackType as _KeptTraceback
+
+    _KEPT_FROM = Path(__file__).resolve().parent
+    _KEPT_SCRIPT = Path(__file__).name
+    _KEPT_BEFORE = sys.excepthook
+
+    def _name_a_kept_sibling(kind: type[BaseException], exc: BaseException, tb: _KeptTraceback | None) -> None:
+        sys.excepthook = _KEPT_BEFORE
+        try:
+            import importlib.util
+            at = (_KEPT_FROM if _KEPT_FROM.name == "hooks" else _KEPT_FROM / "hooks") / "_start_refusal.py"
+            spec = importlib.util.spec_from_file_location("_start_refusal_by_path", at)
+            if spec is not None and spec.loader is not None:
+                reader = importlib.util.module_from_spec(spec)
+                sys.modules[spec.name] = reader
+                spec.loader.exec_module(reader)
+                refuse = getattr(reader, "refuse_kept_siblings", None)
+                if callable(refuse):
+                    reconfigure = getattr(sys.stderr, "reconfigure", None)
+                    if callable(reconfigure):
+                        reconfigure(encoding="utf-8", errors="replace")
+                    refuse(_KEPT_SCRIPT)
+        # fail-open: ok deliberate without the reader a kept sibling keeps its traceback, as before
+        except Exception:  # noqa: BLE001, S110
+            pass
+        sys.excepthook(kind, exc, tb)
+
+    sys.excepthook = _name_a_kept_sibling
+
+# This module is imported under two spellings: bare, with the hooks directory
+# already on sys.path (the importing hook or script put it there), and as
+# `tools.cc.hooks._recall` from the repo root, where nothing has. So it puts its
+# own directory on sys.path the way _bash_patterns does instead of trusting every
+# importer to have done so.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
 # _hook_utils is the foundational sibling helper (every hook bare-imports it; it is in
 # MANIFEST_FILES + every settings.json deploy). A bare import is the established shape
 # and keeps the helper single-sourced (tests/test_hook_helper_consolidation.py forbids a
 # local re-def). is_self_host_repo returns False for any adopter repo, which is what
 # gates the harness-dev exemplar corpus.
-from _hook_utils import (
+from _hook_utils import (  # noqa: E402
     is_seeded_placeholder,
     is_self_host_repo,
     iter_doc_sections,

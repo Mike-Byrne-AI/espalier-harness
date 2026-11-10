@@ -846,6 +846,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             "test_library_hook_parity",
             "test_self_host_detection_survives_write_guard_refactor",
             "test_hook_helper_consolidation",
+            # A tools/cc module that bare-imports a sibling at its top imports
+            # by its dotted name too, each in a fresh isolated process.
+            "test_dotted_import_finds_the_siblings",
             "test_hook_event_contracts",
             # TP-328 — hook-authoring SKILL.md <-> CANONICAL_HOOK_WIRING parity
             # (guards the doc hook authors read before wiring an enforcement hook).
