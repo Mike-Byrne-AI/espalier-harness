@@ -19,6 +19,7 @@ load-bearing regressions:
 from __future__ import annotations
 
 import gc
+import os
 import re
 import signal
 import sys
@@ -1156,6 +1157,29 @@ class TestCpRmrfTempRoots:
         assert _bash_patterns.below_a_temp_root("x", r, [p + "/sp"], bash=True)
         assert not _bash_patterns.below_a_temp_root("x", r, [p + "/sp", None], bash=True)
         assert not _bash_patterns.below_a_temp_root("x", r, [p + "/sp", r], bash=True)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="8.3 names are a Windows volume's")
+class TestTheHostsShortTempReadsItsLongName:
+    """DEF-1125's measurement, on the host the suite runs on: where its own
+    ``TEMP`` carries an 8.3 short component (GitHub's windows runners were
+    reported to present ``RUNNER~1``), the long spelling comes back with no
+    short component and a literal path below it is scratch. It lives in this
+    serial file because ``post-merge-windows`` runs it on every push to
+    ``main``; `tests/test_write_guard.py` reaches a windows runner only in
+    the advisory portability leg (air's redirect (5)). The skip names the
+    value, so ``-rs`` prints what the host presents; the rows that pin the
+    rule are `tests/test_write_guard.py::TestAShortTempRootReadsItsLongName`.
+    The path is handed to the readers as text; nothing is run."""
+
+    def test_the_hosts_own_temp_reads_in_its_long_form(self):
+        typed = os.environ.get("TEMP", "").replace("\\", "/").rstrip("/")
+        if not _bash_patterns._SHORT_NAME_SHAPE_RE.search(typed):
+            pytest.skip(f"TEMP has no short component here: {typed!r}")
+        long = _bash_patterns._long_path_name(typed)
+        assert long and not _bash_patterns._SHORT_NAME_SHAPE_RE.search(long), (typed, long)
+        assert long in _bash_patterns._vetted_scratch_values(), (typed, long)
+        assert _bash_patterns._is_scratch_literal(long + "/espalier-def-1125-x"), long
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Git for Windows mounts /tmp; elsewhere /tmp is itself")
@@ -2977,6 +3001,10 @@ class TestCommandPositionClassClose:
         "_bash_patterns._SCRATCH_ROOT_VALUE_RE":
             "ENV VALUE -- `match` on the value of TEMP, TMP or TMPDIR, read to "
             "decide whether it can serve as a scratch root; never a command.",
+        "_bash_patterns._SHORT_NAME_SHAPE_RE":
+            "ENV VALUE -- `search` for an 8.3 short component in a vetted TEMP, "
+            "TMP or TMPDIR value, read to decide whether its long spelling is "
+            "asked for (DEF-1125); never a command.",
         "_bash_patterns._MKTEMP_BINDING_RE":
             "BINDING SITE -- `finditer` over the MASKED text for an assignment at "
             "a binding start (`_BINDING_START`, the literal-binding expander's own "

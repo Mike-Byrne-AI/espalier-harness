@@ -10168,12 +10168,18 @@ class TestAShortTempRootReadsItsLongName:
     a Windows host whose temp directory carries a short component
     (``C:\\Users\\SOMEUS~1\\...``) a forced remove of a scratch tree spelled
     long met the wall the rung was built to relieve. The long spelling comes
-    from ``GetLongPathNameW``, which expands short names and follows no
-    junction (driven 2026-11-10: a junction component kept its own name
-    where ``realpath`` left it), and it is vetted as the typed value is, so a
-    long form that is the home, or a parent of it, adds nothing. The fake
-    expander rows read the same on every host; the driven row needs a volume
-    that makes short names, and skips naming why where it has none. These
+    from ``realpath``, asked only of a path with no reparse point along it
+    and kept only with the typed value's shape (`_long_path_name`, which
+    says why not ``GetLongPathNameW``), and it is vetted as the typed value
+    is, so a long form that is the home, or a parent of it, adds nothing.
+    The fake expander rows (a module-level `_long_path_name` patched, since
+    the real one answers only on Windows) read the same on every host and are the required
+    cells' witnesses; the driven rows need a volume that makes short names,
+    skip naming why where it has none, and fail instead on a CI runner. The
+    host's own ``TEMP`` is measured in `tests/test_speedbump_irreversible.py`
+    (`TestTheHostsShortTempReadsItsLongName`), which a windows runner runs
+    on every push to ``main``. Each row's red was earned against a mutant
+    of the reader in a scratch archive (2026-11-10). These
     are test fixtures for a friction guard: a command is handed to it as
     text, never run."""
 
@@ -10210,31 +10216,80 @@ class TestAShortTempRootReadsItsLongName:
         # the short spelling passed before and still does
         assert not self._walls(self.RI + self.SHORT + "/build-cache", "PowerShell")
 
+    @pytest.mark.parametrize("bash", [True, False], ids=["Bash", "PowerShell"])
+    def test_a_long_spelling_below_a_short_temp_takes_the_speed_bumps_carve_out(
+            self, bash, monkeypatch):
+        """Where the long spelling is felt on Bash: a deep ``rm -rf`` meets
+        no wall either way, so its friction is the speed bump's nudge, and
+        the bump's temp-root carve-out (`below_a_temp_root`) reads the same
+        vetted list. Below a short ``TEMP`` the long spelling takes the
+        carve-out as the short one does; with the long spelling left off the
+        list both legs red (driven 2026-11-10; a wall row on Bash does not,
+        since no wall stood there to step off)."""
+        self._env(monkeypatch, {self.SHORT: self.LONG}, TEMP=self.SHORT)
+        bp = _bash_patterns_module()
+        repo = str(Path.home() / "short-temp-no-such-repo").replace("\\", "/")
+        assert bp.below_a_temp_root(self.LONG + "/build-cache", repo, bash=bash)
+        assert bp.below_a_temp_root(self.SHORT + "/build-cache", repo, bash=bash)
+        assert not bp.below_a_temp_root(self.LONG, repo, bash=bash)
+
     @pytest.mark.parametrize("tool", ["Bash", "PowerShell"])
     def test_the_long_spelling_of_the_root_itself_is_the_wall(self, tool, monkeypatch):
+        """No widening at the root: the long spelling of ``TEMP`` and its
+        parent stay the wall. The Bash leg is the pin: before the fix a
+        Bash ``rm -rf`` of the long root met no wall, and the catastrophic
+        reader's temp-root rule walls it now because it reads the same
+        vetted list, so the leg reds with the long spelling left off that
+        list or off that rule's loop (driven 2026-11-10). The PowerShell leg
+        is walled twice over -- that rule, and the rung's strictly-below
+        compare -- and reds only with both broken, so it is the control a
+        single mutation cannot move (the review of 2012cfd2 named it
+        vacuous; the second wall is why)."""
         self._env(monkeypatch, {self.SHORT: self.LONG}, TEMP=self.SHORT)
         verb = "rm -rf " if tool == "Bash" else self.RI
         assert self._walls(verb + self.LONG, tool), tool
         assert self._walls(verb + self.LONG.rsplit("/", 1)[0], tool), (tool, "a parent")
 
-    def test_a_long_form_that_is_the_home_adds_no_root(self, monkeypatch):
+    @pytest.mark.parametrize("long", ["C:/Users/someuser", "C:/Users"],
+                             ids=["home", "parent-of-home"])
+    def test_a_long_form_that_is_the_home_or_a_parent_of_it_adds_no_root(self, long, monkeypatch):
         """The long spelling is vetted as the typed one is: one that names
-        the home directory makes nothing below the home scratch. Drop the
-        vetting and this row steps off the wall."""
+        the home directory, or a directory above it, makes nothing below the
+        home scratch. Drop the vetting of the long form and both rows step
+        off the wall."""
         typed = "C:/Users/someuser/AppData/Local/TEMPOR~1"
         home = "C:/Users/someuser"
-        self._env(monkeypatch, {typed: home}, home=home, TEMP=typed)
+        self._env(monkeypatch, {typed: long}, home=home, TEMP=typed)
         assert self._walls(self.RI + home + "/projects/x", "PowerShell")
 
-    def test_a_value_with_no_short_component_is_never_expanded(self, monkeypatch):
-        """Only a value holding ``~`` asks the expander, so a long TEMP pays
-        nothing it did not pay before."""
+    @pytest.mark.parametrize("value", [
+        LONG,
+        "/home/someuser/~cache/tmp",
+        "/home/someuser/build~1/tmp",
+        "C:/Users/some~user/AppData/Local/Temp",
+    ], ids=["no-tilde", "posix-tilde", "posix-short-shape", "drive-tilde-no-digit"])
+    def test_a_value_without_a_drive_short_component_is_never_expanded(self, value, monkeypatch):
+        """Only a drive-qualified value with a ``~`` and a digit asks the
+        expander, so a long ``TEMP``, and a POSIX ``TMPDIR`` holding a ``~``
+        of any shape, pay nothing they did not pay before and never resolve
+        a path. Gate on any ``~`` and the last three rows ask."""
         asked: list[str] = []
         bp = _bash_patterns_module()
-        self._env(monkeypatch, {}, TEMP=self.LONG)
-        monkeypatch.setattr(bp, "_long_path_name", lambda value: asked.append(value))
-        assert bp._vetted_scratch_values() == [self.LONG]
+        self._env(monkeypatch, {}, TEMP=value)
+        monkeypatch.setattr(bp, "_long_path_name", lambda v: asked.append(v))
+        assert bp._vetted_scratch_values() == [value]
         assert asked == []
+
+    def test_a_short_value_is_asked_once_and_listed_once(self, monkeypatch):
+        """``TEMP`` and ``TMP`` name one directory on most Windows hosts:
+        the list holds each spelling once, the short then the long."""
+        bp = _bash_patterns_module()
+        asked: list[str] = []
+        self._env(monkeypatch, {}, TEMP=self.SHORT, TMP=self.SHORT)
+        monkeypatch.setattr(bp, "_long_path_name",
+                            lambda v: asked.append(v) or {self.SHORT: self.LONG}.get(v))
+        assert bp._vetted_scratch_values() == [self.SHORT, self.LONG]
+        assert asked == [self.SHORT]
 
     @pytest.mark.skipif(sys.platform != "win32", reason="8.3 names are a Windows volume's")
     def test_a_driven_short_temp_passes_its_long_spelling(self, tmp_path):
@@ -10242,28 +10297,97 @@ class TestAShortTempRootReadsItsLongName:
         spelling of a scratch directory, the forced remove spelled long."""
         scratch = tmp_path / "a long scratch root name"
         (scratch / "build-cache").mkdir(parents=True)
-        short = _win32_short_path(str(scratch))
-        if not short or "~" not in short:
-            pytest.skip(f"this volume made no short name: {short!r}")
+        short = self._short_or_skip(scratch)
         project = tmp_path / "proj"
         project.mkdir()
         command = f'{self.RI}"{scratch / "build-cache"}"'
         assert_hook_allowed(_run_ps_guard_with_temp(command, project, short))
 
+    @staticmethod
+    def _short_or_skip(path: Path) -> str:
+        """``path``'s 8.3 spelling. A volume that makes no short names skips
+        the row naming what it read, except on a CI runner, where the row
+        is the required witness of the real expander and a skip would pass
+        it unread: there it fails (the review of 2012cfd2)."""
+        short = _win32_short_path(str(path))
+        if short and "~" in short:
+            return short
+        if os.environ.get("GITHUB_ACTIONS"):
+            pytest.fail(f"this runner's volume made no short name for {path}: {short!r}")
+        pytest.skip(f"this volume made no short name: {short!r}")
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="8.3 names and junctions are a Windows volume's")
+    def test_a_short_temp_through_a_junction_makes_no_work_folder_scratch(self, tmp_path):
+        """Air's redirect (6), the control beside the junction-to-home one
+        (`TestPowerShellScratchRootRung`): ``TEMP`` is the short spelling of
+        a junction onto a work folder. ``realpath`` follows the junction,
+        and the junction's own component, typed short (``ALONGJ~1``),
+        carries a ``~``, so the twin check alone would keep the work folder
+        as a scratch root; the reader's lstat walk finds the reparse point
+        and adds nothing. So a forced remove of the work folder's tree stays
+        the wall, the tree spelled long through the junction keeps the wall
+        it had (toward friction, never past it), and the typed short
+        spelling stays scratch. Drop the lstat walk and the first assert
+        reds (driven 2026-11-10)."""
+        import _winapi
+        work = tmp_path / "a long work folder name"
+        (work / "src").mkdir(parents=True)
+        link = tmp_path / "a long junction name"
+        _winapi.CreateJunction(str(work), str(link))
+        try:
+            short = self._short_or_skip(link)
+            project = tmp_path / "proj"
+            project.mkdir()
+            for _ in range(2):
+                assert_hook_denied(_run_ps_guard_with_temp(
+                    f'{self.RI}"{work / "src"}"', project, short), contains_reason="blocked")
+            assert_hook_denied(_run_ps_guard_with_temp(
+                f'{self.RI}"{link / "src"}"', project, short), contains_reason="blocked")
+            assert_hook_allowed(_run_ps_guard_with_temp(
+                f'{self.RI}"{short}/src"', project, short))
+        finally:
+            os.rmdir(link)
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="the reader answers on Windows alone")
+    @pytest.mark.parametrize("answer", ["subst-drive", "other-component", "other-count"])
+    def test_a_realpath_answer_of_another_shape_adds_nothing(self, answer, tmp_path, monkeypatch):
+        """The shape bound, with a stand-in ``realpath``: a subst or mapped
+        drive resolves onto another volume or another depth with no reparse
+        point the lstat walk can see, so an answer whose drive, component
+        count or long-typed components differ from the typed value's is
+        dropped. Drop the bound and all three red (driven 2026-11-10)."""
+        bp = _bash_patterns_module()
+        parent = tmp_path / "a long parent name"
+        parent.mkdir()
+        short = self._short_or_skip(parent).replace("\\", "/")
+        above = short.split("/")[:-1]
+        long_typed = next(i for i, c in enumerate(above) if i and "~" not in c)
+        parts = {
+            "subst-drive": ["S:", *above[1:]],
+            "other-component": [*above[:long_typed], "elsewhere", *above[long_typed + 1:]],
+            "other-count": [*above, "extra"],
+        }[answer]
+        shaped = "/".join([*parts, "a long parent name"])
+        assert bp._long_path_name(short), short  # the control: the real answer is kept
+        monkeypatch.setattr(bp.os.path, "realpath", lambda value, strict=False: shaped)
+        assert bp._long_path_name(short) is None, (short, shaped)
+
     @pytest.mark.skipif(sys.platform != "win32", reason="8.3 names are a Windows volume's")
-    def test_the_hosts_own_temp_reads_in_its_long_form(self, monkeypatch):
-        """The measurement: where this host's own ``TEMP`` carries a short
-        component (GitHub's windows runners were reported to present
-        ``RUNNER~1``), a path below its long spelling steps off the wall.
-        The skip reason names the value, so ``-rs`` prints what the host
-        presents."""
-        typed = os.environ.get("TEMP", "")
-        if "~" not in typed:
-            pytest.skip(f"TEMP has no short component here: {typed!r}")
-        monkeypatch.setattr(_bash_patterns_module(), "_VETTED_MEMO", {})
-        long = _bash_patterns_module()._long_path_name(typed.replace("\\", "/").rstrip("/"))
-        assert long and "~" not in long, (typed, long)
-        assert not self._walls(self.RI + long + "/espalier-def-1125-x", "PowerShell")
+    def test_a_long_spelling_that_differs_only_in_case_adds_nothing(self, tmp_path):
+        """NTFS compares without case, so a long spelling that differs from
+        the typed value only in case names the same root and adds nothing:
+        a directory whose long name has the short shape (``keep~1``),
+        typed upper. The control types its parent short, so the call answers
+        a new spelling, and shows that answer carries the on-disk case: the
+        row is not passing on a call that failed."""
+        expand = _bash_patterns_module()._long_path_name
+        parent = tmp_path / "a long parent name"
+        (parent / "keep~1").mkdir(parents=True)
+        short_parent = self._short_or_skip(parent).replace("\\", "/")
+        long_parent = expand(short_parent)
+        assert long_parent and long_parent.endswith("/a long parent name"), long_parent
+        assert expand(short_parent + "/KEEP~1") == long_parent + "/keep~1"
+        assert expand(long_parent + "/KEEP~1") is None
 
 
 #: The fixed temp roots, read from the guard's one home for them at

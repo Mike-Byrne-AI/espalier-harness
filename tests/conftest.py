@@ -324,6 +324,27 @@ def _isolate_interpreter_identity_memo():
     _clear_engine_interpreter_memos()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_vetted_scratch_memo():
+    """`_bash_patterns._VETTED_MEMO` keeps the vetted scratch roots per
+    ``(TEMP, TMP, TMPDIR, home)``, and its key holds neither the expander a
+    test patches (`_long_path_name`) nor ``os.name``, so a verdict one test
+    drove would answer the next test's ask under the same environment, and
+    nothing in the hook ever clears it (one hook process serves one call).
+    Cleared around every test, on the live module only: a copy loaded under
+    an alias keeps its own memo and dies with its test (DEF-1125, air's
+    redirect (4))."""
+    _clear_vetted_scratch_memo()
+    yield
+    _clear_vetted_scratch_memo()
+
+
+def _clear_vetted_scratch_memo() -> None:
+    memo = getattr(sys.modules.get("_bash_patterns"), "_VETTED_MEMO", None)
+    if memo is not None:
+        memo.clear()
+
+
 #: Every engine memo of an interpreter verdict, as (module, attribute): read by
 #: the clearer below, and derived against the engine's own module-level
 #: ``_*_VERDICTS`` dicts by
