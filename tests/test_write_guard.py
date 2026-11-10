@@ -17821,6 +17821,222 @@ class TestADirectoryHoldingHarnessGround:
         assert "names `tools/cc/` under" not in reason, reason
 
 
+class TestAnMcpMoveDestinationIsAWrite:
+    """DEF-2026: an MCP move tool writes into the directory it names as its
+    destination and takes nothing from it, as `mv a.txt tools` and
+    `Move-Item a.txt tools` do. So a destination that only ENCLOSES harness
+    ground (`tools` holding `tools/cc/`, `.claude` the settings files, `.github`
+    the harness-guard workflow) is judged as the shells judge it: a write, and
+    allowed. Until this lane `check_mcp` read every path field of a
+    remove-or-relocate tool as taken, and refused such a move with the
+    maintenance relaunch (driven 2026-10-17 on DEF-5012's lane). A destination
+    that is or lies in harness ground stays refused, and so does every operand
+    the tool takes: a move's source, each operand of a delete, a `target` key
+    (a rename's operand), and a destination key in an object that names no
+    source. A name the move lands on harness ground (`settings.json` moved into
+    `.claude/`) stays refused too: the lane's review drove both as false allows
+    of the row's first shape."""
+
+    #: The keys a move names its destination and its source by, spelled here
+    #: and held equal to the guard's sets by the first test, so a key added
+    #: there is driven here.
+    _DESTINATION_KEYS = ("destination", "dest", "dst", "new_path", "to")
+    _SOURCE_KEYS = ("source", "src", "from", "path", "file_path", "old_path", "uri")
+
+    #: Directories that hold harness ground and are none of it.
+    _ENCLOSING = ("tools", "tools/", ".claude", ".github")
+
+    _DIRS = ("tools/cc/hooks", "tools/mine", ".claude", ".github/workflows")
+    _FILES = (".claude/settings.json", ".github/workflows/harness-guard.yml")
+
+    #: No zone, and an adopter zone inside `tools/` (a destination of `tools`
+    #: encloses both the zone and the harness ground).
+    _TOMLS = {"no-zone": None, "a-zone-inside-it": 'protected_paths = ["tools/mine/"]\n'}
+
+    @staticmethod
+    def _wg():
+        _bash_patterns_module()
+        import write_guard as wg
+
+        return wg
+
+    def _tree(self, tmp_path: Path, monkeypatch, toml: str) -> Path:
+        return _zone_tree(tmp_path, monkeypatch, self._TOMLS[toml], self._DIRS, self._FILES)
+
+    def test_the_keys_are_the_guards(self):
+        wg = self._wg()
+        assert frozenset(self._DESTINATION_KEYS) == wg._MCP_DESTINATION_KEYS
+        assert frozenset(self._SOURCE_KEYS) == wg._MCP_SOURCE_KEYS
+
+    @pytest.mark.parametrize("toml", list(_TOMLS))
+    @pytest.mark.parametrize("key", _DESTINATION_KEYS)
+    @pytest.mark.parametrize("destination", _ENCLOSING)
+    def test_a_destination_that_encloses_harness_ground_is_allowed(self, tmp_path, monkeypatch, toml, key, destination):
+        root = self._tree(tmp_path, monkeypatch, toml)
+        reason = _zone_deny_reason(
+            self._wg().check_mcp, {"source": "a.txt", key: destination}, "mcp__fs__move_file", root)
+        assert reason == "", reason
+
+    @pytest.mark.parametrize("payload", [
+        {"moves": [{"source": "a.txt", "destination": "tools"}]},
+        {"source": "a.txt", "to": ["tools", ".claude"]},
+        {"items": [{"from": "a.txt", "to": ".github"}]},
+    ], ids=["a-list-of-moves", "a-list-under-the-key", "a-nested-to"])
+    def test_a_nested_destination_is_read_by_its_own_key(self, tmp_path, monkeypatch, payload):
+        # The leaf walk's governing key is the nearest dict key, and a list
+        # takes its parent's (docs/sharp-edges/protected-zone-mcp-leaf-walk.md).
+        # A list under a canonical field (`destination`) is the malformed
+        # payload's deny whatever its key, so the list cell is under `to`.
+        root = self._tree(tmp_path, monkeypatch, "no-zone")
+        assert _zone_deny_reason(self._wg().check_mcp, payload, "mcp__fs__move_file", root) == ""
+
+    @pytest.mark.parametrize("destination", _ENCLOSING)
+    def test_the_shells_and_the_mcp_tool_read_one_move_alike(self, tmp_path, monkeypatch, destination):
+        root = self._tree(tmp_path, monkeypatch, "no-zone")
+        wg = self._wg()
+        verdicts = {
+            "bash": _zone_deny_reason(wg.check_bash_for_protected_mutations, f"mv a.txt {destination}", root, root),
+            "powershell": _zone_deny_reason(
+                wg.check_powershell_for_protected_mutations, f"Move-Item a.txt {destination}", root, root),
+            "mcp": _zone_deny_reason(
+                wg.check_mcp, {"source": "a.txt", "destination": destination}, "mcp__fs__move_file", root),
+        }
+        assert verdicts == {"bash": "", "powershell": "", "mcp": ""}, verdicts
+
+    @pytest.mark.parametrize("toml", list(_TOMLS))
+    @pytest.mark.parametrize("destination", [
+        "tools/cc", "tools/cc/hooks/x.py", "cc", ".claude/settings.json", ".github/workflows/harness-guard.yml",
+    ])
+    def test_a_destination_that_is_or_lies_in_harness_ground_stays_refused(self, tmp_path, monkeypatch, toml,
+                                                                         destination):
+        root = self._tree(tmp_path, monkeypatch, toml)
+        reason = _zone_deny_reason(
+            self._wg().check_mcp, {"source": "a.txt", "destination": destination}, "mcp__fs__move_file", root)
+        assert reason and "is inside it" not in reason, reason
+
+    @pytest.mark.parametrize("toml", list(_TOMLS))
+    @pytest.mark.parametrize(("tool", "payload"), [
+        ("mcp__fs__move_file", {"source": "tools", "destination": "x"}),
+        ("mcp__fs__rename", {"path": ".github", "new_path": "x"}),
+        ("mcp__fs__move_file", {"from": ".claude", "to": "x"}),
+        ("mcp__fs__delete_file", {"target": "tools"}),
+        ("mcp__fs__remove_directory", {"destination": ".github"}),
+        ("mcp__fs__trash", {"to": ".claude"}),
+        # The review's rows: a `target` is the operand renamed or moved, and a
+        # destination key beside no source key may be the thing moved.
+        ("mcp__fs__rename_file", {"target": "tools", "new_name": "tools2"}),
+        ("mcp__fs__move_file", {"target": "tools", "destination": "elsewhere"}),
+        ("mcp__fs__move", {"to": "tools"}),
+        ("mcp__fs__move_to_recycle_bin", {"target": "tools"}),
+        ("mcp__fs__rename", {"target_uri": "tools", "new_name": "x"}),
+        ("mcp__fs__move", {"target": "tools", "to": "archive"}),
+        ("mcp__fs__move_file", {"path": "a.txt", "target": "tools"}),
+        ("mcp__fs__move_file", {"moves": [{"source": "a.txt", "destination": "x"}, {"to": "tools"}]}),
+    ], ids=["move-source", "rename-path", "move-from", "delete-target", "remove-destination", "trash-to",
+            "rename-target-alone", "move-target-beside-a-destination", "move-to-alone", "recycle-target",
+            "rename-target-uri", "move-target-beside-to", "move-target-beside-a-source", "a-batch-object-unsourced"])
+    def test_an_operand_the_tool_takes_stays_refused(self, tmp_path, monkeypatch, toml, tool, payload):
+        # A delete takes every operand it names, under any key: `destination`
+        # and `to` are a move's destination keys and a delete's operands.
+        root = self._tree(tmp_path, monkeypatch, toml)
+        reason = _zone_deny_reason(self._wg().check_mcp, payload, tool, root)
+        assert "is inside it" in reason, reason
+
+    @pytest.mark.parametrize("toml", list(_TOMLS))
+    @pytest.mark.parametrize(("tool", "payload", "landed"), [
+        ("mcp__fs__move_file", {"source": "settings.json", "destination": ".claude"}, ".claude/settings.json"),
+        ("mcp__fs__move_file", {"source": "x/settings.json", "destination": ".claude/"}, ".claude/settings.json"),
+        ("mcp__fs__move_file", {"source": "x\\settings.json", "destination": ".claude"}, ".claude/settings.json"),
+        ("mcp__fs__move_file", {"source": "harness-guard.yml", "destination": ".github/workflows"},
+         ".github/workflows/harness-guard.yml"),
+        ("mcp__fs__rename", {"from": "harness-guard.yml", "to": ".github/workflows/"},
+         ".github/workflows/harness-guard.yml"),
+        ("mcp__fs__move_file", {"moves": [{"from": "settings.json", "to": ".claude"}]}, ".claude/settings.json"),
+        ("mcp__fs__move_file", {"source": "x/cc", "destination": "."}, "cc"),
+    ], ids=["settings-into-claude", "settings-into-claude-slash", "settings-backslash-source", "guard-into-workflows",
+            "guard-from-to", "a-nested-move", "a-directory-onto-the-zone"])
+    def test_a_name_the_move_lands_on_harness_ground_stays_refused(self, tmp_path, monkeypatch, toml, tool,
+                                                                   payload, landed):
+        root = self._tree(tmp_path, monkeypatch, toml)
+        reason = _zone_deny_reason(self._wg().check_mcp, payload, tool, root)
+        assert reason.startswith(f"Write to protected harness zone blocked: {landed} "), reason
+
+    @pytest.mark.parametrize(("payload", "text"), [
+        # The landed name is judged with the remove reading: a directory that
+        # lands where one holding harness ground stands is refused, as on main.
+        ({"source": "x/workflows", "destination": ".github"}, "is inside it"),
+        # The operands are every taken value in the object and below it.
+        ({"source": "q", "destination": ".claude", "extra": {"file": "x/settings.json"}},
+         "Write to protected harness zone blocked: .claude/settings.json "),
+        # The last component is read after normpath, as the leaf walk reads it.
+        ({"source": "x/settings.json/.", "destination": ".claude"},
+         "Write to protected harness zone blocked: .claude/settings.json "),
+        # A key holding the location's marks names no sourced object: the
+        # round-2 review's collision, read as taken (main's reading).
+        ({"m": {"x": {"source": "a.txt"}}, "m.x": {"to": "tools"}}, "is inside it"),
+        ({"m": [{"source": "a.txt"}], "m[0]": {"to": "tools"}}, "is inside it"),
+    ], ids=["a-landed-directory-holding-ground", "an-operand-below-the-object", "a-dot-component", "a-dotted-key",
+            "a-bracketed-key"])
+    def test_the_landing_read_and_the_object_read_hold_their_edges(self, tmp_path, monkeypatch, payload, text):
+        root = self._tree(tmp_path, monkeypatch, "no-zone")
+        reason = _zone_deny_reason(self._wg().check_mcp, payload, "mcp__fs__move_file", root)
+        assert text in reason, reason
+
+    @pytest.mark.parametrize("key", ["destination", "new_path", "dst"])
+    @pytest.mark.parametrize("spelling", ["lnk", "lnk/"])
+    def test_a_destination_named_through_a_symlink_lands_where_the_file_does(self, tmp_path, monkeypatch, key,
+                                                                            spelling):
+        # The canonical fields resolve, so the landed name is built on what the
+        # link names, as `mv settings.json lnk/` reads it (round-2 review).
+        root = self._tree(tmp_path, monkeypatch, "no-zone")
+        try:
+            os.symlink(root / ".claude", root / "lnk", target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            pytest.skip(f"no symlink on this host: {exc}")
+        reason = _zone_deny_reason(
+            self._wg().check_mcp, {"source": "settings.json", key: spelling}, "mcp__fs__move_file", root)
+        assert reason.startswith("Write to protected harness zone blocked: .claude/settings.json"), reason
+
+    def test_a_destination_that_links_out_of_the_checkout_lands_by_its_spelling_too(self, tmp_path, monkeypatch):
+        # The landed name is judged as spelled and as resolved, either refusing,
+        # as main reads a destination on both layers: a `.claude` that is a link
+        # to a folder outside the checkout still holds the settings file.
+        root = _zone_tree(tmp_path, monkeypatch, None, ("tools/cc/hooks",), ())
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        try:
+            os.symlink(outside, root / ".claude", target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            pytest.skip(f"no symlink on this host: {exc}")
+        reason = _zone_deny_reason(
+            self._wg().check_mcp, {"source": "settings.json", "destination": ".claude"}, "mcp__fs__move_file", root)
+        assert reason.startswith("Write to protected harness zone blocked: .claude/settings.json"), reason
+
+    def test_a_batch_of_moves_is_read_one_object_at_a_time(self, tmp_path, monkeypatch):
+        # Each move's operands are read from its own object, so a long batch
+        # stays a pair per move and never reads as too large to verify.
+        root = self._tree(tmp_path, monkeypatch, "no-zone")
+        payload = {"moves": [{"source": f"a{i}.txt", "destination": "tools"} for i in range(2000)]}
+        assert _zone_deny_reason(self._wg().check_mcp, payload, "mcp__fs__move_file", root) == ""
+
+    @pytest.mark.parametrize(("bash", "powershell", "payload"), [
+        ("mv x/settings.json .claude/", "Move-Item -Path x/settings.json -Destination .claude/",
+         {"source": "x/settings.json", "destination": ".claude/"}),
+        ("mv harness-guard.yml .github/workflows/", "Move-Item -Path harness-guard.yml -Destination .github/workflows/",
+         {"source": "harness-guard.yml", "destination": ".github/workflows/"}),
+    ], ids=["settings", "guard"])
+    def test_the_shells_and_the_mcp_tool_refuse_one_landing_alike(self, tmp_path, monkeypatch, bash, powershell,
+                                                                  payload):
+        root = self._tree(tmp_path, monkeypatch, "no-zone")
+        wg = self._wg()
+        verdicts = {
+            "bash": bool(_zone_deny_reason(wg.check_bash_for_protected_mutations, bash, root, root)),
+            "powershell": bool(_zone_deny_reason(wg.check_powershell_for_protected_mutations, powershell, root, root)),
+            "mcp": bool(_zone_deny_reason(wg.check_mcp, payload, "mcp__fs__move_file", root)),
+        }
+        assert verdicts == {"bash": True, "powershell": True, "mcp": True}, verdicts
+
+
 def _unpaired_zone_denies(source: str) -> list[str]:
     """Each function whose ``_audit_deny`` names a harness one-line template
     with no ``_adopter_zone`` arm ahead of it: such a site gives an adopter's
