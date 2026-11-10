@@ -11192,10 +11192,12 @@ class TestAScratchRootItselfIsTheWall:
         `_PS_TEMP_BINDING_REFUSED` do one job, refusing whatever lets code
         run between a statement's start and its remove, and cannot be one
         object (`_bash_patterns` imports on first use, after write_guard's
-        module-level set; the gate must admit the `$`, `\\`, `:` a binding
+        module-level set; the gate must admit the `$` and `:` a binding
         spells). Pinned instead: what the gate refuses, the lone-delete
         reader refuses too, by its stop set or its line-break set (air's
-        7ad740, item 6)."""
+        7ad740, item 6). The backslash left the stop set with DEF-2068: on
+        PowerShell it is a separator, which the reader folds to `/`; the
+        gate never refused it."""
         import _bash_patterns as bp
 
         wg = _load_write_guard()
@@ -11203,7 +11205,7 @@ class TestAScratchRootItselfIsTheWall:
         # and the exact difference, so a stop the lone-delete reader gains
         # reds here until someone decides whether the gate needs it too (the
         # failure-mode review: the subset alone never sees either set shrink)
-        assert wg._LONE_DELETE_STOPS - bp._PS_TEMP_BINDING_REFUSED == frozenset("!\"$'*:<>?@[\\]~")
+        assert wg._LONE_DELETE_STOPS - bp._PS_TEMP_BINDING_REFUSED == frozenset("!\"$'*:<>?@[]~")
 
     #: Refusals no row can witness alone, each with why it is kept anyway.
     _UNWITNESSED_REFUSALS = {
