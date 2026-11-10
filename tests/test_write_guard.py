@@ -9032,7 +9032,13 @@ class TestCatastrophicRmFlagOrderIndependent:
         assert memos == [
             # `_relief_applies` reads the command's text and nothing else: the
             # flag joins the bases beside it, in `_statement_bases`
-            "_nested_shell_programs_cached", "_relief_applies", "_removed_or_relocated_cached",
+            "_nested_shell_programs_cached",
+            # `_ps_reparse_answers` (DEF-3039) is keyed on the text, the
+            # lookback pattern and its window, and returns, by opener offset,
+            # whether a PowerShell literal span is re-parsed as a program --
+            # read by the masker from the text alone, never from a flag
+            "_ps_reparse_answers",
+            "_relief_applies", "_removed_or_relocated_cached",
             "_resolve_bash_discovered_heads",
             # `_statement_structure` is keyed on the text and the shell alone
             # and returns the text's quote spans and separator offsets -- a
