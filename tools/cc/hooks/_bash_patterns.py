@@ -12497,7 +12497,7 @@ def powershell_removal_lands_catastrophic(
                 command, _hook_utils.directory_exists(at, bash=False))
         except Exception:  # noqa: BLE001 -- the walk is advisory; a fault degrades to the start
             text, statements = powershell_scan_text(command), []
-    fed = {m.start("rmargs"): m for m in _PS_PIPED_REMOVE_RE.finditer(text)}
+    fed = {m.start("rmargs"): m for m in _ps_fed_removes(text)}
     for m in _PS_REMOVE_ITEM_RE.finditer(text):
         here = m.start("args")
         bases: list[str | None]
@@ -13621,6 +13621,63 @@ def powershell_unforced_removal_off_roster(
     return False
 
 
+#: The characters a remove verb's word may hold (`Remove-Item`, `ri`, a
+#: native path such as `/bin/rm` or `rm.exe`), stepped back over to find
+#: what stands before the verb (`_ps_verb_is_piped`).
+_PS_VERB_WORD_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-./\\:")
+
+
+def _ps_verb_is_piped(scan: str, at: int) -> bool:
+    """True when the remove verb whose argument span opens at ``at`` is a
+    pipeline's later stage: the verb's word, a quote and the call operator
+    behind it stepped back over, a lone `|` before them (a line break may
+    follow the pipe, as PowerShell continues a pipeline across one; `||`
+    is the chain operator, which hands the verb nothing). One backward walk
+    over the verb and the blanks before it."""
+    i = at
+    while i > 0 and scan[i - 1] in "'\"":
+        i -= 1
+    while i > 0 and scan[i - 1] in _PS_VERB_WORD_CHARS:
+        i -= 1
+    while i > 0 and scan[i - 1] in " \t'\"":
+        i -= 1
+    if i > 0 and scan[i - 1] == "&":
+        i -= 1
+    while i > 0 and scan[i - 1] in " \t\r\n":
+        i -= 1
+    return i > 0 and scan[i - 1] == "|" and (i < 2 or scan[i - 2] != "|")
+
+
+def powershell_piped_remove_unplaced(scan: str, raw: str | None = None) -> bool:
+    """True when a recursive remove without the force switch takes its
+    target from the pipeline and no enumerator the sweep reader places feeds
+    it (DEF-3066): `'src' | Remove-Item -Recurse`, `$d | ri -r`, `Resolve-Path
+    src | ...`, a stage between (`gci src | Where-Object {...} | ri -r`) and
+    a loop body's `$f | ri -r`. Each names no operand of its own, so the
+    operand reader (`_ps_unforced_recursive_removes`) yields no target and
+    the sweep reader (`_ps_fed_removes`) no root, and the remove took every
+    ordinary item under the bound path with no prompt where its operand twin
+    (`Remove-Item -Recurse src`) nudges. The nudge, never the wall: what the
+    pipeline carries is not read, so a roster item piped in nudges where its
+    twin is silent, and a catastrophic one (`'.' | ...`) nudges where its
+    twin walls -- the declared limit beside the single echoed path. A remove
+    a placed enumerator feeds keeps that reading's roster, narrowed and
+    catastrophic verdicts. The forced form is the record's, which walls an
+    operand-less remove. The pipe-into-a-remove witness gates the walk."""
+    if not _PS_SWEEP_WITNESS_RE.search(scan):
+        return False
+    fed: set[int] | None = None
+    for at, parts, another_shell in _ps_unforced_recursive_removes(scan, raw=raw):
+        if parts or another_shell or not _ps_verb_is_piped(scan, at):
+            continue
+        if fed is None:
+            fed = {m.start("rmargs") for m in _ps_fed_removes(scan)}
+        if at not in fed:
+            return True
+    return False
+
+
 def powershell_recursive_removal_is_catastrophic(
     command: str, root: str | None, cwd: "str | os.PathLike[str] | None" = None,
 ) -> bool:
@@ -13856,7 +13913,7 @@ def _powershell_removal_targets(command: str, raw: str | None = None) -> list[st
     # remove-verb span opens where this reader's argument span does. A
     # NARROWED pipeline vouches for itself (the zone check judges its root
     # by itself, as it does a narrowed find) and contributes nothing here.
-    fed = {m.start("rmargs"): m for m in _PS_PIPED_REMOVE_RE.finditer(command)}
+    fed = {m.start("rmargs"): m for m in _ps_fed_removes(command)}
     out: list[str] = []
     for m in invocations:
         # the operand's own characters, from the raw twin when it indexes the scan
@@ -16026,7 +16083,7 @@ def _ps_find_sweeps(raw: str, scan: str) -> Iterator[tuple[int, list[str], str]]
         yield m.start("args"), [_ps_unquote(r).replace("\\", "/") for r in roots], effect
 
 
-def _ps_pipeline_reading(raw: str, m: "re.Match[str]") -> tuple[list[str], bool, bool, bool]:
+def _ps_pipeline_reading(raw: str, m: "re.Match[str] | _CutPipe") -> tuple[list[str], bool, bool, bool]:
     """``(roots, narrowed, files_only, walks)`` for one enumerator pipeline
     on the PowerShell tool: a `find` head reads by the Bash roots reader
     (its span is find's grammar, not the cmdlet's -- `-type f` would
@@ -16063,13 +16120,170 @@ def _ps_pipeline_reading(raw: str, m: "re.Match[str]") -> tuple[list[str], bool,
     return roots, narrowed, files_only, bool(_PS_RECURSE_SWITCH_RE.search(args))
 
 
+def _ps_block_cut(span: str) -> tuple[int, int]:
+    """``(leave, opener)`` for an enumerator's span whose pipe sits inside a
+    block: ``leave`` the offset of the closer that leaves the group the
+    head sits in, ``opener`` that of the innermost block brace opened after
+    it and still open where the span ends (`foreach ($f in (gci src)) { $f
+    | ri -r }`, `if ((gci build).Count) { ... | ri }`). ``(-1, -1)`` when
+    the pipe is the enumerator's own: no leave, or every bracket opened
+    after it closed before the pipe (`(gci src).Where({ ... }) | ri`, a
+    member call taking a script block). Strings are blank in the scan, so a
+    bracket inside one counts nothing. Linear: one pass."""
+    depth = 0
+    leave = -1
+    opened: list[tuple[str, int]] = []
+    for i, ch in enumerate(span):
+        if leave < 0:
+            if ch in ")}":
+                depth -= 1
+                if depth < 0:
+                    leave = i
+            elif ch in "({":
+                depth += 1
+        elif ch in "({":
+            opened.append((ch, i))
+        elif ch in ")}" and opened:
+            opened.pop()
+    for ch, i in reversed(opened):
+        if ch == "{":
+            return leave, i
+    return -1, -1
+
+
+def _ps_foreach_variable(text: str, at: int) -> str | None:
+    """The loop variable's name when the enumerator head at ``at`` is a
+    `foreach` statement's collection (`foreach ($f in (gci src))`, `foreach
+    ($f in gci src)`), else None. A bounded look behind the head: one search
+    over at most 160 characters."""
+    m = re.search(r"(?i)\bforeach[ \t]*\([ \t]*\$(\w+)[ \t]+in[ \t]*\(?[ \t]*\Z",
+                  text[max(0, at - 160):at])
+    return m.group(1) if m else None
+
+
+def _ps_stage_is_variable(stage: str, name: str) -> bool:
+    """True when a pipe's first stage is the variable ``name`` alone, member
+    access allowed (`$f`, `$f.FullName`); PowerShell names fold case."""
+    s = stage.strip()
+    head = "$" + name
+    if s[:len(head)].lower() != head.lower():
+        return False
+    rest = s[len(head):]
+    return rest == "" or (rest[0] == "." and all(
+        part and part.replace("_", "a").isalnum() for part in rest[1:].split(".")))
+
+
+class _CutPipe:
+    """A `_PS_PIPED_REMOVE_RE` match whose enumerator span ends where its
+    group closes (DEF-3066): the loop header's enumerator read as the feed
+    of the remove in the block after it. Offsets and groups are the match's
+    but for the `args` span, which ends at ``cut`` -- what `_named_span`
+    and the readers ask of a match, and nothing more."""
+
+    __slots__ = ("_m", "_cut")
+
+    def __init__(self, m: "re.Match[str]", cut: int) -> None:
+        self._m = m
+        self._cut = cut
+
+    def start(self, name: str) -> int:
+        return self._m.start(name)
+
+    def end(self, name: str) -> int:
+        return self._cut if name == "args" else self._m.end(name)
+
+    def group(self, name: str) -> "str | None":
+        if name == "args":
+            return self._m.string[self._m.start("args"):self._cut]
+        return self._m.group(name)
+
+
+def _ps_header_feed(text: str, m: "re.Match[str]") -> "re.Match[str] | _CutPipe | None":
+    """What feeds the remove of one `_PS_PIPED_REMOVE_RE` match on ``text``
+    (DEF-3066): the match itself when its pipe is the enumerator's own; when
+    the pipe sits in a block after the enumerator's group, a `_CutPipe`
+    whose span ends at the group's close where the group is a `foreach`
+    header and the block's stage is its loop variable (`foreach ($f in (gci
+    src)) { $f | ri -r }`), else None -- this match's enumerator does not
+    feed the pipe (`if ((gci build).Count) { '/' | ri -r -fo }`, a body
+    piping another variable). None is not "nothing feeds it": an
+    enumerator inside the block may, and only `_ps_piped_remove_matches`,
+    which searches on past this head, can say; it is this helper's one
+    caller (pinned)."""
+    args = m.group("args") or ""
+    leave, opener = _ps_block_cut(args)
+    if leave < 0:
+        return m
+    name = _ps_foreach_variable(text, m.start("head"))
+    if name is None or not _ps_stage_is_variable(args[opener + 1:], name):
+        return None
+    return _CutPipe(m, m.start("args") + leave)
+
+
+def _ps_piped_remove_matches(
+        text: str) -> "Iterator[tuple[re.Match[str], re.Match[str] | _CutPipe | None]]":
+    """``(match, feed)`` for every `_PS_PIPED_REMOVE_RE` match on ``text``,
+    ``feed`` by `_ps_header_feed` -- the one site that searches the regex
+    (the verdict readers through `_ps_fed_removes`, the zone reader here).
+    A match whose pipe sits in a block -- fed by its header or not -- is
+    searched again from just past its head, not past its end: its span ran
+    across the block's brace, so an enumerator inside the span -- the
+    block's own pipeline, an inner loop's header -- opens a match of its
+    own (air's 22f230: `if ((gci build).Count -gt 0) { gci build -Recurse |
+    ri -r -fo }` read the condition's listing as the opener, the block's
+    pipeline never, and walled a clean main allows; an outer `foreach`
+    whose variable an inner loop reuses fed the block from the outer
+    listing and hid the inner one, the failure-mode review). Two fed
+    matches may then share one remove: a reader keyed by the remove keeps
+    the later, the innermost header. A match whose pipe is its own resumes
+    past its end, as `finditer`'s. Each search starts past the last one's
+    head, so the walk ends; an enumerator head is short and a span holds
+    few, so it stays a handful of searches a command."""
+    pos = 0
+    while True:
+        m = _PS_PIPED_REMOVE_RE.search(text, pos)
+        if m is None:
+            return
+        fed = _ps_header_feed(text, m)
+        yield m, fed
+        pos = m.end() if fed is m else m.end("head")
+
+
+def _ps_fed_removes(text: str) -> "Iterator[re.Match[str] | _CutPipe]":
+    """Every enumerator the guard reads as feeding a remove on ``text``
+    (DEF-3066), by `_ps_header_feed`. The regex's head span runs to the
+    first pipe, so in a loop body it read past the loop header's closers
+    into the block (`foreach ($f in (Get-ChildItem / -Recurse)) { $f |
+    Remove-Item -Recurse -Force }`): spaced, `{` and `$f` read as a
+    positional filter, the pipeline as narrowed, and the remove as
+    recognized safe -- a silent allow for every root, where the statement
+    form beside it walls; glued (`){$f|ri -r}`), the same tail read as a
+    flag and walled by accident. Now the header's listing feeds a body that
+    pipes the loop variable, read as its statement twin. A block the header
+    does not feed has its own pipeline read where one opens inside it
+    (`_ps_piped_remove_matches`); a pipe there that carries anything else
+    (a literal, another variable) is fed by nothing: forced, the record
+    walls it as it walls every operand-less forced remove; unforced, the
+    speed bump nudges it. A group's output piped on stays the enumerator's
+    (`(gci src) | ri`, `(gci src).FullName | ri`, `(gci src).Where({ ...
+    }) | ri`). One feed per remove: where two headers feed one remove (an
+    inner loop reusing the outer's variable), the innermost, the later
+    match, is the one that binds it. The three verdict readers and the
+    zone reader take this, so each pipe is read once, by what feeds it."""
+    feeds: dict[int, "re.Match[str] | _CutPipe"] = {}
+    for _m, fed in _ps_piped_remove_matches(text):
+        if fed is not None:
+            feeds[fed.start("rmargs")] = fed
+    yield from feeds.values()
+
+
 def _ps_pipeline_sweeps(raw: str, scan: str) -> Iterator[tuple[int, list[str], bool, bool]]:
     """``(offset, roots, narrowed, wipe)`` for every enumerator piped into a
     remove verb on the pair (DEF-822): ``wipe`` when the remove verb carries
     the recurse switch by any spelling, or the enumeration is files-only --
     the two shapes that take every file under the root (driven: a recursive
     enumeration into a plain remove aborts on the non-interactive prompt)."""
-    for m in _PS_PIPED_REMOVE_RE.finditer(scan):
+    for m in _ps_fed_removes(scan):
         roots, narrowed, files_only, walks = _ps_pipeline_reading(raw, m)
         recursive = bool(_PS_RECURSE_SWITCH_RE.search(_named_span(raw, m, "rmargs")))
         # behind the carrier the remove verb is the native binary, which takes
@@ -16792,7 +17006,7 @@ def _candidate_paths_from_powershell(command: str, _depth: int = 0) -> list[str]
     return paths
 
 
-def _named_span(raw: str, m: "re.Match[str]", name: str, *,
+def _named_span(raw: str, m: "re.Match[str] | _CutPipe", name: str, *,
                 through_quotes: bool = False, powershell: bool = False) -> str:
     """`raw_span` for a NAMED group (``through_quotes`` as there)."""
     start, end = m.start(name), m.end(name)
@@ -16868,11 +17082,18 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
 
     for m in _PS_REMOVE_ITEM_RE.finditer(scan):
         out.extend(("delete", p) for p in named_targets(m))
-    for m in _PS_PIPED_REMOVE_RE.finditer(scan):
+    for fed in _ps_fed_removes(scan):
         # the enumerator's roots, the current location when it names none
         # (DEF-822); a narrowed pipeline is a `sweep` -- its root judged by
-        # itself, as a narrowed find's is
-        roots, narrowed, _files_only, _walks = _ps_pipeline_reading(raw, m)
+        # itself, as a narrowed find's is. DEF-3066: read by what feeds the
+        # remove, as the verdict readers read it -- a loop body piping its
+        # variable by the header's listing cut at the header's close (read
+        # raw, the block's brace and variable narrowed a protected
+        # directory's parent, the review), a block's own pipeline by itself;
+        # a condition's listing whose span ran into a block it does not feed
+        # is no delete (`if ((gci cc).Count) { gci build -Recurse | ri -r }`
+        # refused a clean, the failure-mode review)
+        roots, narrowed, _files_only, _walks = _ps_pipeline_reading(raw, fed)
         out.extend(("sweep" if narrowed else "delete", p) for p in roots)
     for m in _PS_FIND_DELETE_RE.finditer(scan):
         # the find family on this tool (DEF-824): the Bash arm's span reader,

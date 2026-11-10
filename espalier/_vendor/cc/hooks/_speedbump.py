@@ -1008,7 +1008,14 @@ def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = 
             # an absolute root below a temp root that holds no work passes
             if _off_the_ephemeral_roster(roots, str(root), placed=(roots, [None]), bash=False):
                 return True
-        return False
+        # DEF-3066: a recursive remove without the force switch whose target
+        # the pipeline binds (`'src' | Remove-Item -Recurse`, `$f | ri -r` in
+        # a loop body, a stage between the enumerator and the remove) names
+        # no operand for the arm above and no root for the sweep arm, and
+        # took the bound path's items with no prompt where its operand twin
+        # nudges. Unread, it nudges: after the sweep defer, so a placed
+        # enumerator keeps its own verdict.
+        return _bash_patterns.powershell_piped_remove_unplaced(cmd, raw=twin)
     if tool_name != "Bash":
         return False
     # The command and every program it hands to a shell through a reader
