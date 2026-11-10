@@ -267,12 +267,19 @@ class TestTheSentenceSplitter:
 #: nothing a row can red on); and the encoded program and the script file,
 #: two sentences citing the same row, joined into one, which keeps the seeded
 #: docs at the ceiling `scripts/sync_asset_docs.py` holds.
+#: HOOKS 30 -> 31 on 2026-11-09: a bare `rm` naming a governed directory keeps
+#: the zone deny on the Bash tool, which replays rc aliases (the dispatcher's
+#: ruling 267ffc on DEF-4031), pinned in
+#: `TestADeleteThatCannotTakeADirectoryLeavesTheZone`; its citation's hit is
+#: paid for by an internal row id dropped from the loop-variable sentence, so
+#: the seeded docs stay at the ceiling.
 #: HOOKS 30 -> 29 on 2026-11-10 (DEF-3063, air's ruling 2beae0): the loop
 #: carrier's limit for a body piping into `xargs rm -rf` closed -- the body
 #: draws its in-place twin's verdict under any head -- and its sentence went
 #: with it; the PowerShell literal piped into the cmdlet joined the existing
 #: carrier sentence beside the single echoed path (5581ae), so it adds none.
-_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 29, "docs/SHARP_EDGES.md": 5}
+#: Both landed on 2026-11-10: 31 - 1 = 30, re-derived from the merged HOOKS.md.
+_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 30, "docs/SHARP_EDGES.md": 5}
 
 
 def test_the_census_is_the_pinned_population():
