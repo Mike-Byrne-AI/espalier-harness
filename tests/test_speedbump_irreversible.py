@@ -3200,6 +3200,12 @@ class TestCommandPositionClassClose:
         "_bash_patterns._PS_PIPE_GAP_WITNESS_RE":
             "GATE before `_ps_join_pipe_gaps`' walk: a pipe whose gap opens with a "
             "line break or a comment; it names no verb (780c02).",
+        "_bash_patterns._PS_STATEMENT_GAP_WITNESS_RE":
+            "GATE before `_ps_join_pipe_gaps`' walk: a statement opener whose gap "
+            "opens with a block comment; it names no verb (DEF-2070).",
+        "_bash_patterns._PS_GAP_OPENER_RE":
+            "SYNTAX TOKEN -- where a gap `_ps_join_pipe_gaps` reads can open: a "
+            "pipe, a statement separator, `return`/`throw`; it names no verb (DEF-2070).",
         "_bash_patterns._PS_LINE_END_RE":
             "SYNTAX TOKEN -- the next CR or LF, where a line comment in a pipe's "
             "gap ends (`_ps_join_pipe_gaps`); it names no verb (780c02).",
