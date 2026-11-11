@@ -3212,6 +3212,10 @@ class TestCommandPositionClassClose:
             "cmdlet's word there, never over a command, and "
             "`start_process_cmd_line` then requires it at a statement start in code, "
             "so a mention in a double-quoted string is not read (DEF-1071 (e)).",
+        "_bash_patterns._PS_CLOSER_ENDS_RE":
+            "SYNTAX -- matched at the text right after a closer inside the span "
+            "`_PS_PIPED_REMOVE_RE` or `_PS_REMOVE_ITEM_RE` (both anchored) selected: "
+            "whether that closer ends the remove's statement, never a command (DEF-3069).",
         "_bash_patterns._PS_RECURSE_SWITCH_RE":
             "FLAG inside the span `_PS_PIPED_REMOVE_RE` or `_PS_REMOVE_ITEM_RE` "
             "(both anchored) selected: the remove verb's recurse switch by every "

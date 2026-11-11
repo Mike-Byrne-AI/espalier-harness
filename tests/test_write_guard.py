@@ -4457,6 +4457,121 @@ class TestCatastrophicLoopCarrier:
             "_placed_sweeps_land_catastrophic", "iter_placed_loop_removals"}
 
 
+class TestARemoveSpanEndsWhereItsBlockCloses:
+    """DEF-3069 as its class: a PowerShell remove's argument span, piped
+    (`_PS_PIPED_REMOVE_RE`'s `rmargs`) or direct (`_PS_REMOVE_ITEM_RE`'s
+    `args`), ran past the closer of the block or group it sits in, and the
+    regex's matches do not overlap: two sibling blocks on one line read as
+    one remove whose operands were `else { gci dist`, and the second
+    block's listing never opened a match, so its remove had no feed and the
+    record walled it as an operand-less forced remove. Measured at main
+    3df1b84 over twelve block shapes: eight read other than their `;` twin,
+    every one toward refusal (a wall or a nudge where the twin passes). The
+    span now ends at the first closer it did not open, and the search
+    resumes there, so a later remove or listing opens a match of its own.
+    Each block form reads as its statement twin."""
+
+    _PAIRS = [
+        ("if ($c) { gci build | ri -r -fo } else { gci dist | ri -r -fo }", "gci build | ri -r -fo; gci dist | ri -r -fo"),
+        ("try { gci build | ri -r -fo } catch { gci dist | ri -r -fo }", "gci build | ri -r -fo; gci dist | ri -r -fo"),
+        ("if ($c) { gci build | ri -r } else { gci dist | ri -r }", "gci build | ri -r; gci dist | ri -r"),
+        ("if ($c) { ri -r -fo build } else { ri -r -fo dist }", "ri -r -fo build; ri -r -fo dist"),
+        ("if ($c) { gci build | ri -r -fo } else { ri -r -fo dist }", "gci build | ri -r -fo; ri -r -fo dist"),
+        ("if ($c) { ri -r -fo build } else { gci dist | ri -r -fo }", "ri -r -fo build; gci dist | ri -r -fo"),
+        ("$(gci build | ri -r -fo) + $(gci dist | ri -r -fo)", "gci build | ri -r -fo; gci dist | ri -r -fo"),
+        ("if ($c) { gci build | ri -r -fo } else { gci tools/cc | ri -r -fo }",
+         "gci build | ri -r -fo; gci tools/cc | ri -r -fo"),
+        # the deny side: what the second block removes is still read
+        ("if ($c) { gci build | ri -r -fo } else { gci / | ri -r -fo }", "gci build | ri -r -fo; gci / | ri -r -fo"),
+        ("if ($c) { ri -r -fo build } else { ri -r -fo / }", "ri -r -fo build; ri -r -fo /"),
+        ("if ($c) { ri -r -fo build } else { ri -r -fo tools/cc }", "ri -r -fo build; ri -r -fo tools/cc"),
+        ("(gci build | ri -r -fo); (gci dist | ri -r -fo)", "gci build | ri -r -fo; gci dist | ri -r -fo"),
+        # the piped remove's own span, cut: uncut, it read the next block's
+        # recurse switch as this remove's and the plain remove as a wipe
+        ("if ($c) { gci / | ri } else { ri -r build }", "gci / | ri; ri -r build"),
+        # the whole match ends at the cut: the unforced reader asks the
+        # match's own extent for the force switch, and uncut it found the
+        # next block's and dropped the variable remove's nudge
+        ("if ($c) { ri -r $d } else { ri -r -fo build }", "ri -r $d; ri -r -fo build"),
+    ]
+
+    @staticmethod
+    def _project(tmp_path: Path) -> Path:
+        (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True)
+        (tmp_path / "tools" / "cc" / "hooks" / "write_guard.py").write_text("x", encoding="utf-8")
+        return tmp_path
+
+    @pytest.mark.parametrize(("block", "twin"), _PAIRS, ids=[f"pair{i}" for i in range(len(_PAIRS))])
+    def test_a_block_form_reads_as_its_statement_twin(self, tmp_path, block, twin):
+        project = self._project(tmp_path)
+        assert _ps_tier_verdicts(block, project) == _ps_tier_verdicts(twin, project), (block, twin)
+
+    def test_the_rows_own_cleanup_passes_through_the_hook(self, tmp_path):
+        """The row's command, end to end through the hook as the tool call
+        runs it: a build clean in one line, no wall and no nudge."""
+        result = run_guard_from(
+            "PowerShell", "if ($c) { gci build | ri -r -fo } else { gci dist | ri -r -fo }", tmp_path, None)
+        assert _delete_verdict(result) == "allow", result.stdout
+
+    @pytest.mark.parametrize(("cmd", "tier"), [
+        ("ri -r -fo 'a}b', /", "wall"),
+        ('ri -r -fo "a)b", /', "wall"),
+        ("if ($c) { ri -r -fo 'x}' } else { ri -r -fo / }", "wall"),
+        # both reviews of the lane, each driven to a lost verdict on the first
+        # cut: an escaped closer the masker leaves on the scan
+        ("ri a`}b, tools/cc/hooks/write_guard.py", "zone"),
+        ("ri build`) tools/cc", "zone"),
+        # a payload a re-run keeps live, whose inner strings the scan keeps
+        ("iex \"ri -r -fo 'a}b', /\"", "wall"),
+        ("pwsh -c \"ri -r -fo 'a}b', /\"", "wall"),
+        ("iex \"ri 'a}b', tools/cc/hooks/write_guard.py\"", "zone"),
+        ("pwsh -c \"gci / | ri -Exclude 'a}b' -r -fo\"", "wall"),
+        # a script block invoked with arguments: the words after its brace
+        # are its arguments, so they may be the remove's operand
+        ("& { ri -r $args[0] } /", "wall"),
+        ("& { ri $args[0] } tools/cc", "zone"),
+        ("icm { param($p) ri $p } -ArgumentList tools/cc/hooks", "zone"),
+        # stop-parsing: a closer after it is literal text
+        ("rm --% -rf a}b, /", "wall"),
+    ], ids=["single-quoted-brace", "double-quoted-paren", "quoted-brace-in-a-block", "escaped-brace",
+            "escaped-paren", "iex-wall", "pwsh-c-wall", "iex-zone", "pwsh-c-piped", "block-arg-wall",
+            "block-arg-zone", "param-arg-zone", "stop-parsing"])
+    def test_a_closer_that_may_not_end_the_statement_cuts_nothing(self, tmp_path, cmd, tier):
+        """Must-deny: the cut is taken only where the closer certainly ends
+        the remove's statement, read quote- and escape-aware on the span
+        itself, since the scan blanks a string only where the masker can
+        (`_ps_unmatched_closer`). Each row is main's verdict, kept."""
+        assert tier in _ps_tier_verdicts(cmd, self._project(tmp_path)), cmd
+
+    def test_the_remove_regexes_are_named_at_their_walkers_alone(self):
+        """A census of every reference to the two remove regexes across
+        `tools/cc`, not a list of call shapes (the failure-mode review: an
+        alias, a `getattr`, `re.finditer(rx, ...)` or a helper taking the
+        regex as an argument each slipped a call-shape pin): outside its
+        definition, each is named only in its walker -- `_ps_remove_items`,
+        which cuts the span at its block's close and resumes there, and
+        `_ps_piped_remove_matches` (DEF-3066). Grows deliberately."""
+        import ast
+
+        from tests._live_tree import checkout_rglob
+
+        walkers = {"_PS_REMOVE_ITEM_RE": "_ps_remove_items", "_PS_PIPED_REMOVE_RE": "_ps_piped_remove_matches"}
+        found: dict[str, set[str]] = {name: set() for name in walkers}
+        for path in sorted(checkout_rglob(HOOKS_DIR.parent, "*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for top in tree.body:
+                for sub in ast.walk(top):
+                    ref = (sub.id if isinstance(sub, ast.Name) else sub.attr if isinstance(sub, ast.Attribute)
+                           else sub.name if isinstance(sub, ast.alias) else None)
+                    if ref in walkers:
+                        defining = (isinstance(top, ast.Assign) and path.name == "_bash_patterns.py"
+                                    and any(getattr(t, "id", "") == ref for t in top.targets))
+                        if not defining:
+                            where = top.name if isinstance(top, (ast.FunctionDef, ast.ClassDef)) else "<module>"
+                            found[ref].add(f"{path.name}::{where}")
+        assert found == {name: {f"_bash_patterns.py::{walker}"} for name, walker in walkers.items()}, found
+
+
 class TestCpMvQuotedVerbDenied:
     """A quoted verb `'cp' src dst` / `'mv' src dst` (shell quote-removal
     collapses it back to a plain `cp`/`mv`) slipped through `_CP_MV_RE`
@@ -18973,7 +19088,7 @@ class TestRemovedOrRelocatedOperandIsAMutation:
         # a helper that is the one site searching its arm stands for that
         # arm where a reader calls it (TestCatastrophicLoopCarrier's
         # site test pins the helper as the regex's only search site)
-        helpers = {"_ps_fed_removes": "_PS_PIPED_REMOVE_RE"}
+        helpers = {"_ps_fed_removes": "_PS_PIPED_REMOVE_RE", "_ps_remove_items": "_PS_REMOVE_ITEM_RE"}
         searched: set[str] = set()
         seen: set[str] = set()
         for node in ast.walk(tree):
