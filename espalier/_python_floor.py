@@ -83,7 +83,16 @@ def parse_python_version(version_output: str) -> tuple[int, int] | None:
 _SPELLED_VERSION_RE = re.compile(r"Python\s+(\d+\.\d+(?:\.\d+)?[A-Za-z0-9]*)")
 
 
-def does_not_run_sentence(banner: str, where: str = "", *, resolver_names: str = "") -> str:
+#: The bare names the PATH remedy clause names, as the operator's ruling words
+#: them. ``tests/test_python_floor.py`` pins the set to
+#: ``cli.RESOLVER_CANDIDATES``, so a change to the resolver's bare names reds
+#: there before this sentence goes stale (this module imports only ``re`` and
+#: cannot read cli's tuple). ``py -3`` is left out on purpose: it is a spelling,
+#: not a PATH name, and a Python it picks is the sentence's own "Update" remedy.
+PATH_REMEDY_NAMES: tuple[str, ...] = ("python3", "python")
+
+
+def does_not_run_sentence(banner: str, where: str = "", *, path_remedy: bool = False) -> str:
     """The one sentence every surface says about an interpreter below the
     floor (the operator's ruling of 2026-11-07: a dropped Python is dropped,
     never run in a reduced mode): the harness does not run on it, update.
@@ -95,26 +104,24 @@ def does_not_run_sentence(banner: str, where: str = "", *, resolver_names: str =
     (``tools/cc/hooks/session_start.py``, which cannot import this and spells
     the same words) say it of an interpreter already wired, then the re-wire.
 
-    ``resolver_names`` adds one clause, the resolver's remedy, for the two
-    sites that name the resolver's own answer when no candidate clears the
-    floor (TP-706's follow-on, option B of its floor-sentence call: the
-    engine on 3.11 through pipx or uv, PATH ``python3`` at 3.10.12): init's
-    refusal and the read-only warning. The resolver takes the first of its
-    candidates that clears the floor, so a newer Python under any of them is
-    what the wiring would pick. The caller renders the names
-    (``cli.resolver_candidate_names``), so this module, which imports only
-    ``re``, never spells a list that could drift from the resolver's. Off by
-    default: ``espalier/__init__.py`` is the engine itself below the floor, a
-    hook cannot see the resolver, and doctor names a WIRED interpreter, which
-    is below the floor with a good one possibly already on PATH; their words
-    stay the default sentence.
+    ``path_remedy`` adds one clause, the PATH remedy, for the two sites that
+    name the resolver's own answer when no candidate clears the floor
+    (TP-706's follow-on, option B of its floor-sentence call: the engine on
+    3.11 through pipx or uv, PATH ``python3`` at 3.10.12): init's refusal and
+    the read-only warning. The resolver takes the first of its bare names
+    that clears the floor ahead of the launcher, so a newer Python on PATH
+    under either is what the wiring would pick. Off by default:
+    ``espalier/__init__.py`` is the engine itself below the floor, a hook
+    cannot see the resolver, and doctor names a WIRED interpreter, which is
+    below the floor with a good one possibly already on PATH; their words stay
+    the default sentence.
     """
     match = _SPELLED_VERSION_RE.search(banner or "")
     found = match.group(1) if match else f"older than {floor_text()}"
-    path_remedy = (f", or put a Python {floor_text()} or newer where {resolver_names} finds it"
-                   if resolver_names else "")
+    clause = (f", or put a Python {floor_text()} or newer on PATH as "
+              f"{' or '.join(PATH_REMEDY_NAMES)}" if path_remedy else "")
     return (f"The harness does not run on Python {found}{where}. Update to Python "
-            f"{floor_text()} or newer to install and use it{path_remedy}.")
+            f"{floor_text()} or newer to install and use it{clause}.")
 
 
 def meets_python_floor(version_output: str) -> bool:

@@ -1185,6 +1185,11 @@ def _check_python_resolver(
                         f"{BANNER_PROBE_SECONDS} s), and is below the floor. "
                         f"{does_not_run_sentence(late)} Then re-wire the hooks to it. "
                     )
+                    # Keyed on the floor as the below-floor branch is (TP-706):
+                    # left to the `python3` arm, a below-floor `python3` was
+                    # called WORKING here too.
+                    remedy, clears, probed = remedy_answer = remedy_answer or _remedy_hint()
+                    start_hint = _rewire_target_hint(remedy, clears, probed)
                 elif late_start is not None and not late_start.startswith(START_TOO_SLOW):
                     problem = (
                         f"hook interpreter `{cmd}` resolves to `{resolved}` and "
@@ -1368,6 +1373,17 @@ def _check_python_resolver(
                 continue
             if start_hint is not None:
                 hint = start_hint
+            elif py3_present and is_python3_banner(
+                    py3_said := interpreter_banner([shutil.which("python3") or "python3"]) or ""
+            ) and not meets_python_floor(py3_said):
+                # A `python3` whose banner IS a Python 3 below the floor is no
+                # WORKING target: `py3_present` reads identity alone, and the
+                # rewire and the symlink the arm below names would wire that
+                # 3.10. Keyed on the floor as the below-floor branch is
+                # (TP-706); a start that fails, or a banner that never
+                # answered, keeps the arms below.
+                remedy, clears, probed = remedy_answer = remedy_answer or _remedy_hint()
+                hint = _rewire_target_hint(remedy, clears, probed)
             elif py3_present and _interpreter_start_failure(
                 [shutil.which("python3") or "python3"]
             ) is None:

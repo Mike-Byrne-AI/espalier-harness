@@ -424,8 +424,7 @@ class TestFloorAtTheThreeDecisionSites:
         assert "The harness does not run on Python 3.9.6 (python3 at " in warning, warning
         floor = _python_floor.floor_text()
         assert (f"Update to Python {floor} or newer to install and use it, or put a "
-                f"Python {floor} or newer where 'python', 'python3' or 'py -3' finds "
-                f"it.") in warning, warning
+                f"Python {floor} or newer on PATH as python3 or python.") in warning, warning
         assert "anyway" not in warning and "keep working" not in warning, (
             f"the warning still promises a wired, working below-floor "
             f"interpreter: {warning!r}"
@@ -806,6 +805,65 @@ class TestFloorAtTheThreeDecisionSites:
         assert (_python_floor.does_not_run_sentence("Python 3.9.6")
                 + " Then re-wire the hooks to it. ") in joined, joined
         assert "WORKING" not in joined, joined
+        assert (f"nothing named 'python', 'python3' or 'py -3' on PATH starts and "
+                f"clears the {floor} floor, so the rewire has no target yet") in joined, joined
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="sh stub is POSIX")
+    def test_doctor_names_the_rewire_target_beside_a_below_floor_wired_name(
+            self, tmp_path, monkeypatch):
+        """The below-floor finding's other arm (TP-706's code review, driven):
+        wired `python3` answers 3.10.12 and PATH `python` answers 3.12.0, so
+        the rewire has a target, and the hint names it with the command,
+        never the identity-only "a WORKING `python3`" and its symlink."""
+        from espalier import doctor as doctor_module
+
+        stubs = {
+            "python": str(self._stub(tmp_path, "python", "Python 3.12.0")),
+            "python3": str(self._stub(tmp_path, "python3", "Python 3.10.12")),
+        }
+        settings = tmp_path / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text(
+            '{"hooks": {"PreToolUse": [{"hooks": [{"command": "python3"}]}]}}',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(doctor_module.shutil, "which",
+                            lambda x, path=None: stubs.get(str(x).split()[0]))
+        monkeypatch.setattr(doctor_module, "resolves_only_inside", lambda cmd: False)
+        joined = " ".join(doctor_module._check_python_resolver(tmp_path, settings))
+        assert (_python_floor.does_not_run_sentence("Python 3.10.12")
+                + " Then re-wire the hooks to it. ") in joined, joined
+        assert ("`python` starts and clears the floor -- run `python -m espalier "
+                "init . --rewire-interpreter` to rewire the hooks to it.") in joined, joined
+        assert "WORKING" not in joined and "symlink" not in joined, joined
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="sh stub is POSIX")
+    def test_doctor_calls_no_below_floor_python3_working(self, tmp_path, monkeypatch):
+        """The sibling of the row above (TP-706's failure-mode review, driven on
+        Windows): wired `python` is a Store alias, so doctor takes the
+        not-a-Python-3 branch, and PATH `python3` answers 3.10.21. Read by
+        identity alone, the `python3` arm called that one WORKING and named a
+        rewire that refuses and a symlink that wires 3.10."""
+        from espalier import doctor as doctor_module
+
+        alias = ("#!/bin/sh\necho 'Python was not found; run without arguments "
+                 "to install from the Microsoft Store' >&2\nexit 49\n")
+        stubs = {
+            "python": str(write_stub(tmp_path / "python", alias)),
+            "python3": str(self._stub(tmp_path, "python3", "Python 3.10.21")),
+        }
+        settings = tmp_path / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text(
+            '{"hooks": {"PreToolUse": [{"hooks": [{"command": "python"}]}]}}',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(doctor_module.shutil, "which",
+                            lambda x, path=None: stubs.get(str(x).split()[0]))
+        monkeypatch.setattr(doctor_module, "resolves_only_inside", lambda cmd: False)
+        joined = " ".join(doctor_module._check_python_resolver(tmp_path, settings))
+        floor = _python_floor.floor_text()
+        assert "WORKING" not in joined and "symlink" not in joined, joined
         assert (f"nothing named 'python', 'python3' or 'py -3' on PATH starts and "
                 f"clears the {floor} floor, so the rewire has no target yet") in joined, joined
 
@@ -2563,8 +2621,8 @@ class TestADroppedPythonIsRefusedBeforeAnyWrite:
         floor = _python_floor.floor_text()
         assert (f"The harness does not run on Python {found} (python at {stub}). "
                 f"Update to Python {floor} or newer to install and use it, or put a "
-                f"Python {floor} or newer where 'python', 'python3' or 'py -3' finds "
-                f"it. Nothing was written.") in result.stderr, said
+                f"Python {floor} or newer on PATH as python3 or python. Nothing was "
+                f"written.") in result.stderr, said
         assert self._tree(target) == before, (
             f"{words[0]} wrote into a tree it refused: "
             f"{sorted(self._tree(target) - before)}")
@@ -2619,8 +2677,8 @@ class TestADroppedPythonIsRefusedBeforeAnyWrite:
         floor = _python_floor.floor_text()
         assert (f"The harness does not run on Python 3.10.12 (py -3 at {launcher}). "
                 f"Update to Python {floor} or newer to install and use it, or put a "
-                f"Python {floor} or newer where 'python', 'python3' or 'py -3' finds "
-                f"it. Nothing was written.") in result.stderr, said
+                f"Python {floor} or newer on PATH as python3 or python. Nothing was "
+                f"written.") in result.stderr, said
         assert self._tree(target) == before, (
             f"init wrote into a tree it refused: {sorted(self._tree(target) - before)}")
 
@@ -2645,18 +2703,29 @@ class TestTheRefusalNamesTheResolversRemedy:
     @staticmethod
     def _clause() -> str:
         floor = _python_floor.floor_text()
-        return f", or put a Python {floor} or newer where 'python', 'python3' or 'py -3' finds it"
+        return f", or put a Python {floor} or newer on PATH as python3 or python"
 
-    def test_the_sentence_adds_the_clause_only_when_given_the_names(self):
+    def test_the_sentence_adds_the_clause_only_when_asked(self):
         floor = _python_floor.floor_text()
         ruled = (f"The harness does not run on Python 3.10.12. Update to Python "
                  f"{floor} or newer to install and use it.")
         assert _python_floor.does_not_run_sentence("Python 3.10.12") == ruled
+        assert _python_floor.does_not_run_sentence(
+            "Python 3.10.12", path_remedy=True) == ruled[:-1] + self._clause() + "."
+
+    def test_the_clauses_names_are_the_resolvers_bare_names(self):
+        """The clause's names are spelled in `_python_floor`, which cannot
+        import cli, so the set is pinned to `cli.RESOLVER_CANDIDATES`: a bare
+        name added to or dropped from the resolver reds here before the
+        sentence names a remedy the resolver does not try. `py -3` stays out:
+        a spelling, not a PATH name, and a Python it picks is the sentence's
+        own "Update" remedy (TP-706)."""
         from espalier import cli
 
-        assert _python_floor.does_not_run_sentence(
-            "Python 3.10.12", resolver_names=cli.resolver_candidate_names()) == (
-            ruled[:-1] + self._clause() + ".")
+        assert set(_python_floor.PATH_REMEDY_NAMES) == set(cli.RESOLVER_CANDIDATES)
+        clause = _python_floor.does_not_run_sentence("Python 3.10.12", path_remedy=True)
+        named = clause.rsplit(" on PATH as ", 1)[1].rstrip(".").split(" or ")
+        assert set(named) == set(cli.RESOLVER_CANDIDATES), clause
 
     def test_inits_refusal_names_the_resolvers_remedy(self, monkeypatch, capsys):
         from espalier import cli
@@ -2701,13 +2770,41 @@ class TestTheRefusalNamesTheResolversRemedy:
         and names a different wired interpreter), and keeps the ruled words on
         the ruling, not for want of knowing. Doctor names a WIRED interpreter,
         possibly beside a good one already on PATH, where "put one there"
-        points the wrong way; its remedy is the rewire hint instead."""
-        fragment = " or newer where "
+        points the wrong way; its remedy is the rewire hint instead.
+
+        Two halves. The engine side is read as calls, not text: every call of
+        ``does_not_run_sentence`` under ``espalier/`` (the vendored mirror
+        aside) that passes ``path_remedy`` or a ``**`` mapping must sit in one
+        of the two functions, so a spelling the text scan missed, or a new
+        caller in another module, reds here. The hook side and ``__init__``
+        spell the words by hand, so their text must not hold the clause."""
+        allowed = {"_warn_interpreter_below_floor", "_refuse_below_floor_wiring"}
+        found: set[str] = set()
+        for path in sorted((REPO_ROOT / "espalier").rglob("*.py")):
+            if "_vendor" in path.relative_to(REPO_ROOT).parts:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for fn in ast.walk(tree):
+                if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                for node in ast.walk(fn):
+                    if not isinstance(node, ast.Call):
+                        continue
+                    callee = node.func
+                    name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "")
+                    if name != "does_not_run_sentence":
+                        continue
+                    if any(k.arg in (None, "path_remedy") for k in node.keywords):
+                        found.add(f"{path.relative_to(REPO_ROOT).as_posix()}::{fn.name}")
+        assert {site.rsplit("::", 1)[1] for site in found} == allowed, sorted(found)
+        assert all(site.startswith("espalier/cli.py::") for site in found), sorted(found)
+        clause = _python_floor.does_not_run_sentence("Python 3.10.12", path_remedy=True)
+        words = clause.split("install and use it", 1)[1].rstrip(".")
         for rel in ("espalier/__init__.py", "tools/cc/hooks/_start_refusal.py",
-                    "tools/cc/hooks/session_start.py", "espalier/doctor.py"):
+                    "tools/cc/hooks/session_start.py"):
             text = (REPO_ROOT / rel).read_text(encoding="utf-8")
-            assert "install and use it" in text or "does_not_run_sentence" in text, rel
-            assert fragment not in text and "resolver_names=" not in text, (
+            assert "install and use it" in text, rel
+            assert " on PATH as python3 or python" not in text and words not in text, (
                 f"{rel} says the resolver's remedy clause, which the ruling keeps "
                 f"to init's refusal and the read-only warning")
 
