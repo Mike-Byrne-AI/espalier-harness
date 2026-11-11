@@ -1185,7 +1185,7 @@ def _check_python_resolver(
                         f"{BANNER_PROBE_SECONDS} s), and is below the floor. "
                         f"{does_not_run_sentence(late)} Then re-wire the hooks to it. "
                     )
-                    # Keyed on the floor as the below-floor branch is (TP-706):
+                    # Keyed on the floor as the below-floor branch is:
                     # left to the `python3` arm, a below-floor `python3` was
                     # called WORKING here too.
                     remedy, clears, probed = remedy_answer = remedy_answer or _remedy_hint()
@@ -1294,7 +1294,7 @@ def _check_python_resolver(
                     # cannot-start branch's is: the `python3` arm below reads
                     # identity alone, so with `python3` wired and PATH
                     # `python3` at 3.10 it called that one WORKING and sent the
-                    # operator to a rewire that found no target (TP-706).
+                    # operator to a rewire that found no target.
                     remedy, clears, probed = remedy_answer = remedy_answer or _remedy_hint()
                     start_hint = _rewire_target_hint(remedy, clears, probed)
             elif _interpreter_start_unconfirmed([resolved, *flags]) is None:
@@ -1379,8 +1379,8 @@ def _check_python_resolver(
                 # A `python3` whose banner IS a Python 3 below the floor is no
                 # WORKING target: `py3_present` reads identity alone, and the
                 # rewire and the symlink the arm below names would wire that
-                # 3.10. Keyed on the floor as the below-floor branch is
-                # (TP-706); a start that fails, or a banner that never
+                # 3.10. Keyed on the floor as the below-floor branch is;
+                # a start that fails, or a banner that never
                 # answered, keeps the arms below.
                 remedy, clears, probed = remedy_answer = remedy_answer or _remedy_hint()
                 hint = _rewire_target_hint(remedy, clears, probed)

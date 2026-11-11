@@ -2780,7 +2780,9 @@ class TestTheRefusalNamesTheResolversRemedy:
         spell the words by hand, so their text must not hold the clause."""
         allowed = {"_warn_interpreter_below_floor", "_refuse_below_floor_wiring"}
         found: set[str] = set()
-        for path in sorted((REPO_ROOT / "espalier").rglob("*.py")):
+        from tests._live_tree import checkout_rglob
+
+        for path in sorted(checkout_rglob(REPO_ROOT / "espalier", "*.py", root=REPO_ROOT)):
             if "_vendor" in path.relative_to(REPO_ROOT).parts:
                 continue
             tree = ast.parse(path.read_text(encoding="utf-8"))

@@ -106,7 +106,7 @@ def does_not_run_sentence(banner: str, where: str = "", *, path_remedy: bool = F
 
     ``path_remedy`` adds one clause, the PATH remedy, for the two sites that
     name the resolver's own answer when no candidate clears the floor
-    (TP-706's follow-on, option B of its floor-sentence call: the engine on
+    (the floor-sentence call's option B, for the engine on
     3.11 through pipx or uv, PATH ``python3`` at 3.10.12): init's refusal and
     the read-only warning. The resolver takes the first of its bare names
     that clears the floor ahead of the launcher, so a newer Python on PATH
