@@ -16526,21 +16526,56 @@ def _ps_stage_is_variable(stage: str, name: str) -> bool:
         part and part.replace("_", "a").isalnum() for part in rest[1:].split(".")))
 
 
+#: What may follow a closer that certainly ends a remove's statement: nothing,
+#: another closer, or a keyword that continues the block's own statement.
+_PS_CLOSER_ENDS_RE = re.compile(r"[ \t]*(?:\Z|[)}]|(?:else|elseif|catch|finally|while|until)\b)", re.IGNORECASE)
+
+
 def _ps_unmatched_closer(span: str) -> int:
     """The offset in ``span`` of the first `)` or `}` that closes a group the
-    span did not open, else -1 (DEF-3069): where the statement a remove's
-    argument span reads ends, because the block or group it sits in closes
-    there (`if ($c) { gci build | ri -r -fo } else { ... }`, `$(... | ri -r
-    -fo) + ...`). Read on the scan, where a string is blank, so a closer
-    inside one counts nothing. Linear: one pass."""
+    span did not open, where that closer certainly ends the statement a
+    remove's argument span reads, else -1 (DEF-3069): the close of the block
+    or group the remove sits in (`if ($c) { gci build | ri -r -fo } else {
+    ... }`, `$(... | ri -r -fo) + ...`). Certainly: what follows the closer
+    on the span is nothing, another closer, or a keyword that continues the
+    block's statement (`_PS_CLOSER_ENDS_RE`), or after a `)`, an
+    expression's `+`. Anything else keeps the span whole, the reading before
+    the cut: a word after a script block's `}` is that block's argument (`&
+    { ri -r $args[0] } /`), so it may be the remove's operand.
+
+    The scan blanks a string only where the masker can (both reviews of the
+    lane: a string a re-run payload keeps live, `iex 'ri "a}b" ...'`; an
+    escaped closer, which the masker steps over and leaves; the raw text
+    past its cap), so the read is quote- and escape-aware itself: a
+    backtick outside a single-quoted run escapes the next character, a
+    quoted run counts nothing, and an unterminated quote or a stop-parsing
+    `--%` (after which a closer is literal text) is no cut. One pass over
+    the span; the walk that asks it resumes at the cut, so a line of many
+    one-remove blocks reads each block's span once more."""
+    if "--%" in span:
+        return -1
     depth = 0
-    for i, ch in enumerate(span):
-        if ch in "({":
+    quote = ""
+    i, n = 0, len(span)
+    while i < n:
+        ch = span[i]
+        if ch == "`" and quote != "'":
+            i += 2
+            continue
+        if quote:
+            if ch == quote:
+                quote = ""
+        elif ch in "'\"":
+            quote = ch
+        elif ch in "({":
             depth += 1
         elif ch in ")}":
             if depth == 0:
-                return i
+                rest = span[i + 1:]
+                ends = _PS_CLOSER_ENDS_RE.match(rest) or (ch == ")" and rest.lstrip(" \t").startswith("+"))
+                return i if ends else -1
             depth -= 1
+        i += 1
     return -1
 
 
@@ -16618,7 +16653,7 @@ def _ps_piped_remove_matches(
     listing and hid the inner one, the failure-mode review). Two fed
     matches may then share one remove: a reader keyed by the remove keeps
     the later, the innermost header. A match whose pipe is its own resumes
-    past its end, as `finditer`'s. Each search starts past the last one's
+    past its end, as `finditer`'s, or at its remove span's cut (below). Each search starts past the last one's
     head, so the walk ends; an enumerator head is short and a span holds
     few, so it stays a handful of searches a command.
 

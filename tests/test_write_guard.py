@@ -4513,33 +4513,61 @@ class TestARemoveSpanEndsWhereItsBlockCloses:
             "PowerShell", "if ($c) { gci build | ri -r -fo } else { gci dist | ri -r -fo }", tmp_path, None)
         assert _delete_verdict(result) == "allow", result.stdout
 
-    @pytest.mark.parametrize("cmd", [
-        "ri -r -fo 'a}b', /",
-        'ri -r -fo "a)b", /',
-        "if ($c) { ri -r -fo 'x}' } else { ri -r -fo / }",
-    ], ids=["single-quoted-brace", "double-quoted-paren", "quoted-brace-in-a-block"])
-    def test_a_closer_inside_a_string_cuts_nothing(self, tmp_path, cmd):
-        """Must-deny: the cut reads the scan, where a string is blank, so a
-        closer inside a quoted operand never ends the span before the root
-        after it."""
-        assert "wall" in _ps_tier_verdicts(cmd, self._project(tmp_path)), cmd
+    @pytest.mark.parametrize(("cmd", "tier"), [
+        ("ri -r -fo 'a}b', /", "wall"),
+        ('ri -r -fo "a)b", /', "wall"),
+        ("if ($c) { ri -r -fo 'x}' } else { ri -r -fo / }", "wall"),
+        # both reviews of the lane, each driven to a lost verdict on the first
+        # cut: an escaped closer the masker leaves on the scan
+        ("ri a`}b, tools/cc/hooks/write_guard.py", "zone"),
+        ("ri build`) tools/cc", "zone"),
+        # a payload a re-run keeps live, whose inner strings the scan keeps
+        ("iex \"ri -r -fo 'a}b', /\"", "wall"),
+        ("pwsh -c \"ri -r -fo 'a}b', /\"", "wall"),
+        ("iex \"ri 'a}b', tools/cc/hooks/write_guard.py\"", "zone"),
+        ("pwsh -c \"gci / | ri -Exclude 'a}b' -r -fo\"", "wall"),
+        # a script block invoked with arguments: the words after its brace
+        # are its arguments, so they may be the remove's operand
+        ("& { ri -r $args[0] } /", "wall"),
+        ("& { ri $args[0] } tools/cc", "zone"),
+        ("icm { param($p) ri $p } -ArgumentList tools/cc/hooks", "zone"),
+        # stop-parsing: a closer after it is literal text
+        ("rm --% -rf a}b, /", "wall"),
+    ], ids=["single-quoted-brace", "double-quoted-paren", "quoted-brace-in-a-block", "escaped-brace",
+            "escaped-paren", "iex-wall", "pwsh-c-wall", "iex-zone", "pwsh-c-piped", "block-arg-wall",
+            "block-arg-zone", "param-arg-zone", "stop-parsing"])
+    def test_a_closer_that_may_not_end_the_statement_cuts_nothing(self, tmp_path, cmd, tier):
+        """Must-deny: the cut is taken only where the closer certainly ends
+        the remove's statement, read quote- and escape-aware on the span
+        itself, since the scan blanks a string only where the masker can
+        (`_ps_unmatched_closer`). Each row is main's verdict, kept."""
+        assert tier in _ps_tier_verdicts(cmd, self._project(tmp_path)), cmd
 
-    def test_the_remove_regex_is_searched_at_one_site(self):
-        """Every reader of a direct remove takes its invocations from
-        `_ps_remove_items`, which cuts the span at its block's close and
-        resumes there; a reader that searched the regex itself would read
-        the next block's words as its operands again. Grows deliberately."""
+    def test_the_remove_regexes_are_named_at_their_walkers_alone(self):
+        """A census of every reference to the two remove regexes across
+        `tools/cc`, not a list of call shapes (the failure-mode review: an
+        alias, a `getattr`, `re.finditer(rx, ...)` or a helper taking the
+        regex as an argument each slipped a call-shape pin): outside its
+        definition, each is named only in its walker -- `_ps_remove_items`,
+        which cuts the span at its block's close and resumes there, and
+        `_ps_piped_remove_matches` (DEF-3066). Grows deliberately."""
         import ast
 
-        tree = ast.parse((HOOKS_DIR / "_bash_patterns.py").read_text(encoding="utf-8"))
-        sites = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
-                 for sub in ast.walk(node)
-                 if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
-                 and sub.func.attr in ("finditer", "search", "match", "fullmatch")
-                 and getattr(sub.func.value, "id", "") == "_PS_REMOVE_ITEM_RE"}
-        assert sites == {"_ps_remove_items"}, sites
-        for name in ("_speedbump.py", "write_guard.py"):
-            assert "_PS_REMOVE_ITEM_RE." not in (HOOKS_DIR / name).read_text(encoding="utf-8"), name
+        walkers = {"_PS_REMOVE_ITEM_RE": "_ps_remove_items", "_PS_PIPED_REMOVE_RE": "_ps_piped_remove_matches"}
+        found: dict[str, set[str]] = {name: set() for name in walkers}
+        for path in sorted((HOOKS_DIR.parent).rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for top in tree.body:
+                for sub in ast.walk(top):
+                    ref = (sub.id if isinstance(sub, ast.Name) else sub.attr if isinstance(sub, ast.Attribute)
+                           else sub.name if isinstance(sub, ast.alias) else None)
+                    if ref in walkers:
+                        defining = (isinstance(top, ast.Assign) and path.name == "_bash_patterns.py"
+                                    and any(getattr(t, "id", "") == ref for t in top.targets))
+                        if not defining:
+                            where = top.name if isinstance(top, (ast.FunctionDef, ast.ClassDef)) else "<module>"
+                            found[ref].add(f"{path.name}::{where}")
+        assert found == {name: {f"_bash_patterns.py::{walker}"} for name, walker in walkers.items()}, found
 
 
 class TestCpMvQuotedVerbDenied:
@@ -18803,7 +18831,7 @@ class TestRemovedOrRelocatedOperandIsAMutation:
         # a helper that is the one site searching its arm stands for that
         # arm where a reader calls it (TestCatastrophicLoopCarrier's
         # site test pins the helper as the regex's only search site)
-        helpers = {"_ps_fed_removes": "_PS_PIPED_REMOVE_RE"}
+        helpers = {"_ps_fed_removes": "_PS_PIPED_REMOVE_RE", "_ps_remove_items": "_PS_REMOVE_ITEM_RE"}
         searched: set[str] = set()
         seen: set[str] = set()
         for node in ast.walk(tree):
