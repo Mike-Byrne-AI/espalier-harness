@@ -3230,10 +3230,9 @@ class TestCatastrophicEnumeratorCarrier:
         # `xargs` hands to `sh` (its own variable operand is the nudge's)
         ("find . | xargs sh -c 'rm -rf \"$0\"'", None, False),
         ("find . -print0 | xargs -0 sh -c 'rm -rf \"$1\"' _", None, False),
-        # DECLARED: the carrier on the next line -- a Bash-tool joiner never
-        # crosses a newline (the statement census's rule; the twin reads it
-        # under the PowerShell census)
-        ("find . |\n  xargs rm -rf", None, False),
+        # the carrier on the next line: one pipeline, read whole by the
+        # splicer's pipe join, as its twin (declared silent until 780c02)
+        ("find . |\n  xargs rm -rf", None, True),
         ("echo one | xargs rm -rf", None, False),                   # DECLARED: a single stdin path
         ("find . | while read f; do rm -rf \"$f\"; done", None, True),   # DEF-830: the loop carrier, the union's third arm
         ("$doc='find . | xargs rm -rf'", None, False),
@@ -3680,7 +3679,7 @@ class TestCatastrophicLoopCarrier:
         ('for f in "$(find .)"; do rm -rf "$f"; done', None, False),           # one quoted word, not a list -- nor a path word to the word-list head
         ("find . | sort | while read f; do rm -rf \"$f\"; done", None, False),  # DECLARED: a stage between
         ("find . | grep zz | while read f; do rm -rf \"$f\"; done", None, False),
-        ('find . |\n  while read f; do rm -rf "$f"; done', None, False),      # DECLARED: the joiner never crosses a newline
+        ('find . |\n  while read f; do rm -rf "$f"; done', None, True),       # one pipeline: the splicer's pipe join (780c02)
         ('while read f; do rm -rf "$f"; done < files.txt', None, False),       # a file, not an enumerator
         ("echo 'find . | while read f; do rm -rf \"$f\"; done'", None, False),
         ('# find . | while read f; do rm -rf "$f"; done\nls', None, False),
@@ -3849,7 +3848,9 @@ class TestCatastrophicLoopCarrier:
         # nudge (`_pred_rmrf`), so none is a silent wipe; a red here routes
         # to that arm
         ('find . | sort | while read f; do rm -rf "$f"; done', "bump"),
-        ('find . |\n  while read f; do rm -rf "$f"; done', "bump"),
+        # ... the pipe across a line break is no longer one of them: one
+        # pipeline, read whole by the splicer's pipe join (780c02)
+        ('find . |\n  while read f; do rm -rf "$f"; done', "wall"),
         ('while read f; do rm -rf "$f"; done < files.txt', "bump"),
         # the review batch: a later removal after the closer still meets the
         # wall; the guarded body is read; a pipeline inside the body, a
@@ -3906,7 +3907,7 @@ class TestCatastrophicLoopCarrier:
         # its recursive remove's operand, so in every loop no opener reads
         # the carrier-fed body draws the direct twin's (`rm -rf "$f"`)
         # nudge; each drew nothing on main
-        ('find . |\n  while read f; do echo "$f" | xargs rm -rf; done', "bump"),
+        ('find . |\n  while read f; do echo "$f" | xargs rm -rf; done', "wall"),  # one pipeline (780c02)
         ('while read f; do echo "$f" | xargs rm -rf; done < files.txt', "bump"),
         ('for f in sub/a $(ls sub); do echo "$f" | xargs rm -rf; done', "bump"),
         ('find sub | sort | while read f; do echo "$f" | xargs rm -rf; done', "bump"),
@@ -16511,6 +16512,183 @@ class TestPowerShellBacktickContinuation:
         assert_hook_allowed(_run_ps_guard(cmd, tmp_path))
 
 
+#: The one-line twins of `TestAGapAfterAPipeIsRead`, each with the verdict it
+#: gets: `{gap}` is where the pipe's gap goes, `" | "` in the twin itself.
+_PIPE_GAP_TWINS = [
+    ("Bash", "find / -type f{gap}xargs rm -rf", "wall"),
+    ("Bash", "find ~ -type f{gap}xargs rm -rf", "wall"),
+    ("Bash", "find src -type f{gap}xargs rm -r", "bump"),
+    ("PowerShell", "Get-ChildItem C:\\ -Recurse{gap}Remove-Item -Recurse -Force", "wall"),
+    ("PowerShell", "Get-ChildItem ~ -Recurse{gap}Remove-Item -Recurse -Force", "wall"),
+    ("PowerShell", "Get-ChildItem src{gap}Remove-Item -Recurse", "bump"),
+]
+#: Each shell's gaps: what its grammar reads past between a pipe and the
+#: next stage (bash: a newline, comment lines and blank lines, a
+#: backslash-newline; pwsh 7.6.5: line breaks, line and block comments; pwsh
+#: 5.1: a comment glued to a block comment's close, too).
+_PIPE_GAPS = {
+    "Bash": [" | # note\n", " |\n", " |\n  # one\n\n  # two\n  ", " | \\\n"],
+    "PowerShell": [" | <# note #> ", " | # note\n", " |\n", " | <# a #>\n  <# b #> ",
+                   " | <# a #><# b #> ", " | <# a #># b\n"],
+}
+
+
+class TestAGapAfterAPipeIsRead:
+    """A comment or a line break between two pipe stages hid the second stage
+    from every pipe reader: `find / -type f | # c` + newline + `xargs <delete>`
+    and `Get-ChildItem C:\\ -Recurse | <# c #> Remove-Item -Recurse -Force`
+    were allowed where the one-line twin walls, and so were the home and the
+    unforced (nudged) forms -- both shells run each as one pipeline (air's
+    780c02, bash 3.2 and pwsh 7.6.5). In Bash a bare pipe-newline allowed too:
+    the comment's newline is the gap. One join at each shell's scan pre-pass
+    (`_splice_line_continuations`, `powershell_scan_pair`), so every reader
+    of either text reads the stage. A one-off measurement, not a pin: a
+    census over the corpus's pipe rows, rewriting each live pipe with every
+    gap here, found 1224 variants losing a verdict their twin had, and none
+    after (2026-11-10; it rewrote top-level pipes only, so a program another
+    shell reads is DEF-3071's and DEF-3073's, below)."""
+
+    @pytest.mark.parametrize("tool, twin, expect", _PIPE_GAP_TWINS)
+    def test_the_one_line_twin_holds_its_verdict(self, tmp_path, tool, twin, expect):
+        cmd = twin.format(gap=" | ")
+        assert _delete_verdict(run_guard_from(tool, cmd, tmp_path, None)) == expect, cmd
+
+    @pytest.mark.parametrize("tool, twin, expect, gap", [
+        (tool, twin, expect, gap)
+        for tool, twin, expect in _PIPE_GAP_TWINS for gap in _PIPE_GAPS[tool]
+    ])
+    def test_a_gap_keeps_the_twins_verdict(self, tmp_path, tool, twin, expect, gap):
+        cmd = twin.format(gap=gap)
+        assert _delete_verdict(run_guard_from(tool, cmd, tmp_path, None)) == expect, cmd
+
+    @pytest.mark.parametrize("tool, cmd", [
+        # a comment's text is still a comment: the gap ends at its close
+        ("PowerShell", "Get-ChildItem src | <# | Remove-Item C:\\ -Recurse -Force #> Select-Object Name"),
+        ("Bash", "ls src | # | xargs rm -rf /\ngrep x"),
+    ])
+    def test_what_the_gap_holds_stays_inert(self, tmp_path, tool, cmd):
+        assert _delete_verdict(run_guard_from(tool, cmd, tmp_path, None)) == "allow", cmd
+
+    @pytest.mark.parametrize("cmd", [
+        # text the pipe scan blanks is not a gap unless the RAW text is blank
+        # or a comment: a substitution there is a live stage, and dropping it
+        # with the newline would hide the delete it runs
+        "ls src | $(rm -rf /)\necho done",
+        "ls src |\n$(rm -rf /)\necho done",
+    ])
+    def test_live_text_the_scan_blanks_is_no_gap(self, tmp_path, cmd):
+        assert _delete_verdict(run_guard_from("Bash", cmd, tmp_path, None)) == "wall", cmd
+
+    @pytest.mark.parametrize("cmd, joined", [
+        ("find / | # c\nxargs rm", "find / | xargs rm"),
+        ("a |\n\n  # c\n  b\nc", "a |   b\nc"),
+        ("a |&\nb", "a |& b"),
+        # a line that opens a heredoc keeps its newline: the body follows it
+        ("cat <<'EOF' |\nbody\nEOF\nb", "cat <<'EOF' |\nbody\nEOF\nb"),
+        ('a | "x\ny"', 'a | "x\ny"'),
+        ('a |\n"x\ny"', 'a | "x\ny"'),
+    ])
+    def test_the_bash_join(self, cmd, joined):
+        assert _bash_patterns_module().splice_line_continuations(cmd) == joined
+
+    @pytest.mark.parametrize("cmd, joined", [
+        ("a | <# c #> b", "a | b"),
+        ("a |\n # c\n <# d #>\n b", "a | b"),
+        ("a | b", "a | b"),
+        # a comment glued to a block comment's close is one more comment on
+        # pwsh 5.1 (driven), though the masker opens none there
+        ("a | <# c #><# d #> b", "a | b"),
+        ("a | <# c #># d\n b", "a | b"),
+        # inside a string PowerShell re-parses, a gap that ends in it joins;
+        # one whose comment runs past the closing quote is left whole
+        ("iex 'a | <# c #> b'", "iex 'a | b'"),
+        ("iex 'a | # c'; b", "iex 'a | # c'; b"),
+        ("iex 'a | <# c'; b; 'd #>'", "iex 'a | <# c'; b; 'd #>'"),
+    ])
+    def test_the_powershell_join(self, cmd, joined):
+        bp = _bash_patterns_module()
+        raw, scan = bp.powershell_scan_pair(cmd)
+        assert raw == joined and len(scan) == len(raw)
+
+    @pytest.mark.parametrize("cmd, expect", [
+        # the code review's BLOCK: a comment in a re-parsed string's gap ran
+        # past its closing quote, and the join swallowed the delete after it
+        ("iex 'Get-Date | # c'; Remove-Item C:\\ -Recurse -Force", "wall"),
+        ("Invoke-Expression 'Get-Date | #'; Remove-Item C:\\ -Recurse -Force", "wall"),
+        ("iex 'Get-Date | <# c'; Remove-Item C:\\ -Recurse -Force; 'x #>'", "wall"),
+        # a gap wholly inside the string is the program's own, and read
+        ("iex 'Get-ChildItem C:\\ -Recurse | <# c #> Remove-Item -Recurse -Force'", "wall"),
+        # ... its line comment ends where the scan holds the `n escape's line
+        # break (read on raw, the escape ran past the quote: the batch's review)
+        ('iex "Get-ChildItem C:\\ -Recurse | # c`n Remove-Item -Recurse"', "wall"),
+        ('iex "Get-ChildItem src | # c`r`nRemove-Item -Recurse"', "bump"),
+        # a gap left whole inside a string hides no later pipe on its line
+        ("iex 'Get-Date | # c'; Get-ChildItem C:\\ -Recurse | <# x #> Remove-Item -Recurse -Force",
+         "wall"),
+        ("iex 'Get-Date | # c'; Get-ChildItem src | # y\nRemove-Item -Recurse", "bump"),
+    ])
+    def test_a_reparsed_strings_gap_ends_inside_it(self, tmp_path, cmd, expect):
+        assert _delete_verdict(run_guard_from("PowerShell", cmd, tmp_path, None)) == expect, cmd
+
+    @pytest.mark.parametrize("cmd", [
+        # the masker read a comment glued to a block comment's close as live
+        # text, and its `>` blanked the command position after it: allowed
+        # at main, a pipe or none (pwsh 5.1 ran the glued `&` stage, driven)
+        "<# a #><# b #> & 'Remove-Item' C:\\ -Recurse -Force",
+        "Get-ChildItem C:\\ -Recurse | <# a #><# b #> & 'Remove-Item' -Recurse -Force",
+        "Get-ChildItem C:\\ -Recurse | <# a #><# b #> % { $_ | Remove-Item -Recurse -Force }",
+    ])
+    def test_a_comment_glued_to_a_block_comment_is_masked(self, tmp_path, cmd):
+        bp = _bash_patterns_module()
+        # a separator inside the glued comment is blanked, as in any comment
+        assert bp.mask_powershell_inert_syntax("<# a #><# ; #>") == "<# a #><#   #>"
+        assert _delete_verdict(run_guard_from("PowerShell", cmd, tmp_path, None)) == "wall", cmd
+
+    @pytest.mark.parametrize("cmd", [
+        # the other direction, pinned: what the glued comment holds is
+        # comment (pwsh 5.1, driven), so a delete inside it runs nothing
+        "<# a #># ; Remove-Item C:\\ -Recurse -Force",
+        "<# a #><# ; Remove-Item C:\\ -Recurse -Force #>",
+    ])
+    def test_what_a_glued_comment_holds_stays_inert(self, tmp_path, cmd):
+        assert _delete_verdict(run_guard_from("PowerShell", cmd, tmp_path, None)) == "allow", cmd
+
+    def test_a_scan_the_masker_handed_back_raw_joins_nothing(self, tmp_path):
+        # past the masker's cap the scan is the raw text, where a quoted pipe
+        # and comment survive: joined, `| <# '` swallowed the delete (BLOCK)
+        bp = _bash_patterns_module()
+        cmd = ("Write-Output 'x | <# ' ; Remove-Item C:\\ -Recurse -Force ; Write-Output ' #>'"
+               + " " * (bp._ROLE_MAP_CAP + 1))
+        assert bp.powershell_scan_pair(cmd)[0] == cmd
+        assert _delete_verdict(run_guard_from("PowerShell", cmd, tmp_path, None)) == "wall"
+
+    @pytest.mark.parametrize("comment", [200, 1500])
+    def test_a_gap_across_the_bash_cap_is_read(self, tmp_path, comment):
+        # the code review's BLOCK: past 32 KiB, a pipe on the head's last
+        # line whose comment lines cross the cut was joined to its stage in
+        # the whole command while each half spliced on its own, and the cap's
+        # offsets (`_capped_whole`) put the stage in no one's reading
+        bp = _bash_patterns_module()
+        before = bp._BASH_COMMAND_HALF_CAP - 9 - comment // 2
+        head = "true\n" * (before // 5)
+        head += "#" * (before - len(head) - 1) + "\n"
+        cmd = (head + "echo x |\n#" + "c" * comment + "\nrm -rf *\n" + "true\n" * 9000)
+        assert len(cmd) > bp._BASH_COMMAND_CAP
+        assert _delete_verdict(run_guard_from("Bash", cmd, tmp_path, tmp_path)) == "wall"
+
+    @pytest.mark.parametrize("cmd", [
+        "bash -c 'find / -type f |\nxargs rm -rf'",
+        "bash -c 'find / -type f | # c\nxargs rm -rf'",
+        "eval 'find / -type f | # c\nxargs rm -rf'",
+        "bash <<'E'\nfind / -type f | # c\nxargs rm -rf\nE",
+    ])
+    def test_a_program_another_shell_reads_is_not_joined(self, tmp_path, cmd):
+        # DECLARED, DEF-3073: the splicer reads a quoted program and a heredoc
+        # body blanked, so a gap inside one is not joined (the one-line twin
+        # of each walls); the row's fix moves these to the wall
+        assert _delete_verdict(run_guard_from("Bash", cmd, tmp_path, None)) == "allow", cmd
+
+
 class TestShellOutReader:
     """447-A step 3 (§C5): a program under an interpreter head is read for
     the text it hands to a SHELL -- the literal given to `os.system` or
@@ -17378,8 +17556,9 @@ class TestCrossShellRouting:
 class TestTheCoverageContract:
     """The coverage contract for the jobs the parser keeps (docs/HOOKS.md §4,
     decided 2026-10-08, written 2026-10-11): a catastrophic delete, a speed
-    bump and a secret read. Four pins, every row driven through the real hook
-    on a fresh project on 2026-10-11 before it was written:
+    bump and a secret read. Five pins, every row driven through the real hook
+    on a fresh project before it was written (pins 1 to 4 on 2026-10-11,
+    pin 5 on 2026-11-10):
 
     1. On those three jobs an operand the reader cannot resolve is REFUSED
        conservatively, never allowed: the delete draws the confirm-by-re-issue
@@ -17403,6 +17582,11 @@ class TestTheCoverageContract:
        levels deep, on and across both shells. Unpromised but measured: the
        contract promises one level. A red here is re-measured and re-recorded,
        never deleted.
+    5. The PowerShell exception to pin 1, declared: a forced recursive remove
+       of a variable with no literal binding, and a piped sweep of one forced
+       or not, stay the wall on the re-issue too; the unforced remove draws
+       the nudge, as Bash does. A red here is a verdict that moved: the
+       sentence in docs/HOOKS.md moves with it, on purpose.
 
     The named user: the maintainer deciding whether a new spelling report is
     work, who reads the contract's sentence and needs the row that holds it."""
@@ -17420,6 +17604,29 @@ class TestTheCoverageContract:
     ])
     def test_an_unresolvable_operand_on_a_kept_job_draws_the_conservative_verdict(self, tmp_path, cmd, reason):
         assert_hook_denied(run_bash_guard(cmd, tmp_path), contains_reason=reason)
+
+    @pytest.mark.parametrize("cmd, expect", [
+        ("Remove-Item $f -Recurse -Force", ("wall", "wall")),
+        ("Remove-Item -Recurse -Force $f", ("wall", "wall")),
+        ("ri -r -fo $f", ("wall", "wall")),
+        ("$f | Remove-Item -Recurse -Force", ("wall", "wall")),
+        ("gci $f -Recurse | ri -r -fo", ("wall", "wall")),       # a piped sweep of one, forced
+        ("gci $f -Recurse | ri -r", ("wall", "wall")),           # and unforced
+        ("Remove-Item $f -Recurse", ("bump", "allow")),          # the unforced remove: Bash's nudge
+        ("ri -r $f", ("bump", "allow")),
+        ("$f | Remove-Item -Recurse", ("bump", "allow")),
+    ])
+    def test_a_forced_powershell_remove_of_an_unbound_variable_walls_and_the_unforced_nudges(self, tmp_path, cmd, expect):
+        """Pin 5, the PowerShell exception to pin 1 the contract declares
+        (2026-11-10): the forced records wall a variable they cannot read, on
+        the re-issue too, where Bash's `rm -rf $UNBOUND` nudges. Each row is
+        issued twice on one project, so a nudge reads (bump, allow) and a wall
+        (wall, wall) with no speed bump's text; driven on the hook 2026-11-10."""
+        for want in expect:
+            result = run_guard_from("PowerShell", cmd, tmp_path, None)
+            assert _delete_verdict(result) == want, (cmd, want, result.stdout)
+            if want == "wall":
+                assert "Speed-bump" not in result.stdout, (cmd, result.stdout)
 
     @pytest.mark.parametrize("cmd", [
         "echo cm0gLXJmIC4K | base64 -d | sh",      # an encoded program (a recursive delete, encoded)

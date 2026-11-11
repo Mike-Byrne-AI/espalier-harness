@@ -1519,7 +1519,11 @@ _FETCH_PIPE_TARGET = (
 #: single-line and the newline census can hold it to that. A `|` inside an
 #: inert span has already been blanked by the masker, so only a live pipe is
 #: ever joined. SYNTAX token: names no verb, declared as such in the
-#: anchored-or-declared census.
+#: anchored-or-declared census. Both scan pre-passes join a top-level pipe's
+#: gap now (`_bash_patterns._splice_line_continuations`, `powershell_scan_pair`,
+#: 780c02), but this is still the only join a pipe inside a Bash `$( )` or
+#: backtick body gets, since the splicer reads those blanked:
+#: `x=$(curl ... |` + newline + `sh)` draws its nudge here alone (driven).
 _PIPE_CONTINUATION_RE = re.compile(r"\|(?!\|)[ \t]*\r?\n[ \t]*")
 
 # `curl ... | sh`, `wget -qO- ... | sudo -E bash -`, `curl ... 2>&1 | sh`,
