@@ -5114,6 +5114,19 @@ class TestClassA1PathCanonicalization:
         spelling = f"file://{tmp_path.as_posix()}/src/app.py"
         assert not self._denied(spelling, tmp_path, bash=False), spelling
 
+    @pytest.mark.parametrize("spelling", [
+        "file://{root}/%74ools/cc/hooks/write_guard.py",
+        "FILE://{root}/tools/cc/hooks/write_guard.py",
+        "file:{root}/tools/cc/hooks/write_guard.py",
+    ])
+    def test_the_file_uri_limits_are_pinned_as_allows(self, tmp_path, spelling):
+        """A declared limit (docs/FAILURE_MODES.md 6.7): the zone check reads
+        only the lower-case ``file://`` form as a URI, and its escapes as
+        typed, so these spellings of a protected path are not read as it; a
+        zone write, which the coverage contract hands to the after-check. The
+        denied control is test_file_uri_scheme_protected_denied."""
+        assert not self._denied(spelling.format(root=tmp_path.as_posix()), tmp_path, bash=False)
+
     # ── TP-171 (adversarial): fullwidth-solidus traversal (NFKC pre-normpath) ─
     @pytest.mark.parametrize("spelling", [
         "safe／..／tools／cc／hooks／write_guard.py",

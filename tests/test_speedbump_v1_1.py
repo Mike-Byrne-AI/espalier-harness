@@ -283,20 +283,25 @@ class TestCpMcpAnchorReadsLikeTheNormaliser:
 
     @pytest.mark.skipif(os.name == "nt", reason="the file URI of a drive path is a separate spelling")
     def test_an_escaped_file_uri_of_a_checkout_file_is_nudged(self, tmp_path):
-        """A declared limit: the cleaner reads a file URI's escapes as typed,
-        so in a checkout whose path holds a space the escaped spelling of its
-        own file reads as outside it and the edit is nudged, the conservative
-        verdict on a kept job (docs/FAILURE_MODES.md 6.7). Spelled with the
-        escape written out, never via as_uri(), so the row holds an escape on
-        every cell; the raw spelling beside it defers."""
+        """A declared limit: only the lower-case ``file://`` form is read as a
+        URI, and its escapes as typed, so in a checkout whose path holds a
+        space the escaped spelling of its own file reads as outside it, and an
+        upper-case scheme or the single-slash form reads as no place: each edit
+        is nudged, the conservative verdict on a kept job (docs/FAILURE_MODES.md
+        6.7). The escape is written out, never via as_uri(), so the row holds
+        one on every cell; the raw spelling beside it defers. A session that
+        teaches the shared cleaner to decode turns these to defers: flip the
+        row and the FAILURE_MODES sentence with it, never the decode."""
         r = tmp_path.resolve() / "my repo"
         r.mkdir()
-        escaped = "file://" + (r / "src" / "a.py").as_posix().replace(" ", "%20")
-        raw = "file://" + (r / "src" / "a.py").as_posix()
-        assert "%20" in escaped
+        path = (r / "src" / "a.py").as_posix()
         edit = "mcp__filesystem__edit_file"
-        assert _speedbump._pred_mcp_sideeffect(edit, {"path": escaped, "edits": []}, r) is True
-        assert _speedbump._pred_mcp_sideeffect(edit, {"path": raw, "edits": []}, r) is False
+        limits = ["file://" + path.replace(" ", "%20"), "FILE://" + path, "file:" + path]
+        assert "%20" in limits[0]
+        for spelling in limits:
+            fired = _speedbump._pred_mcp_sideeffect(edit, {"path": spelling, "edits": []}, r)
+            assert fired is True, f"the limit row now defers, so update the declared limit: {spelling}"
+        assert _speedbump._pred_mcp_sideeffect(edit, {"path": "file://" + path, "edits": []}, r) is False
 
 
 # ── An always-external verb never defers ───────────────────────────────────
