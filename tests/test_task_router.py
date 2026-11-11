@@ -783,6 +783,10 @@ class TestContextThreshold:
         assert "[HARNESS] Context is 271k, past the handoff threshold (200k" in res.stdout, res.stdout
         assert "run /handoff now (it writes your row)." in res.stdout
         assert "finish it through its own landing" in res.stdout and "commit" not in res.stdout.lower()
+        # A lane the window cannot finish is handed off unfinished, never pushed (DEF-4104).
+        # Quoted: unquoted, the shell reads `<what` as a redirect and the words
+        # as several arguments.
+        assert 'python tools/cc/ship.py handoff --unfinished "<what is left>", which pushes nothing' in res.stdout
         side = tmp_path / ".espalier-state" / "sessions" / "ctx-1.handoff-asked"
         record = json.loads(side.read_text(encoding="utf-8"))
         assert record["tokens"] == 271_000 and record["at"].endswith("Z")
@@ -823,7 +827,8 @@ class TestContextThreshold:
         payload = _threshold_tree(tmp_path, 999_999, push=True)
         res = _run_payload(payload, tmp_path)
         ask = res.stdout.strip()
-        assert ask.isascii() and "\n" not in ask and len(ask) < 700, (len(ask), ask)
+        # 900 since the unfinished lane's clause (DEF-4104): 861 at 999k with the push clause.
+        assert ask.isascii() and "\n" not in ask and len(ask) < 900, (len(ask), ask)
 
     @pytest.mark.parametrize("setting", ["abc", '"200000"', "0", "-1", "1.5"])
     def test_a_setting_that_is_not_a_positive_integer_is_off(self, tmp_path, setting):
@@ -1013,6 +1018,25 @@ class TestOwnClearHeld:
         res = _run_payload({"session_id": "ctx-1", "prompt": "hi"}, tmp_path)
         assert "has been held since" in res.stdout and "git stash" not in res.stdout, res.stdout
         assert "The mod reads again at each turn's end." in res.stdout, res.stdout
+
+    @pytest.mark.parametrize("why, verb", [
+        ("a tracked edit is in flight", "do not commit it: python tools/cc/ship.py handoff --unfinished"),
+        ("HEAD moved since the handoff", f"git reset --soft {'h' * 12}, then python tools/cc/ship.py handoff "
+                                         "--unfinished"),
+        ("a plan is in progress", "python tools/cc/ship.py handoff --unfinished"),
+    ], ids=["edit", "head-moved", "plan"])
+    def test_a_lane_left_unfinished_is_told_its_own_verb_never_commit_and_hand_off(self, tmp_path, why, verb):
+        """The handoff of an unfinished lane armed this clear (its outcome
+        says so): committing the edit and running the plain /handoff would
+        push the half-built lane, or loop on the guard's refusal. The verb is
+        the unfinished handoff again, which folds the edit into its commit and
+        re-arms."""
+        self._marker(tmp_path, clear_held=why, landed=False, outcome="left unfinished: the review is owed")
+        res = _run_payload({"session_id": "ctx-1", "prompt": "Worker tick."}, tmp_path)
+        assert res.returncode == 0, res.stderr
+        assert verb in res.stdout, res.stdout
+        assert "commit it and run /handoff" not in res.stdout and "ship.py arm" not in res.stdout, res.stdout
+        assert res.stdout.isascii(), res.stdout
 
     def test_it_fires_above_an_active_plan(self, tmp_path):
         _write_plan(tmp_path, "in_progress")

@@ -61,7 +61,7 @@ if __name__ == "__main__":
 # this script's own dir to sys.path when run directly; the explicit insert
 # also covers importlib/embedded callers. Mirrors _paths/_freshness_cache.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _json_safe import load_json_dict_safe  # noqa: E402
+from _json_safe import load_json_dict_safe, os_error_text  # noqa: E402
 import _paths  # noqa: E402
 
 # Forced twin of _blueprint_limits.BLUEPRINT_COLD_DIR_NAME. Copied rather
@@ -893,6 +893,66 @@ def cmd_reset():
         print("No active plan.")
     return 0
 
+
+def _shown_from_root(path: Path) -> str:
+    """``path`` named from the repo root where it sits under it, else whole."""
+    try:
+        return path.resolve().relative_to(_paths._repo_root()).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def cmd_restore(source: str) -> int:
+    """Put a plan set aside in the cold store back at the live path, whole:
+    its steps and their statuses as they were. The threshold handoff of an
+    unfinished lane (``ship.py handoff --unfinished``) demotes a plan in
+    progress there, since the own-clear mod holds a window's clear on one,
+    and its brief names this verb for the window it re-primes. ``source`` is read from the working
+    directory, else from the repo root (the brief names it from there). A
+    plan in progress at the live path refuses (two lanes' plans in one file:
+    finish or reset it first); a finished or blocked one in the way is
+    demoted first, so no record is lost; a source that is not a plan, or is
+    the live plan itself, refuses and nothing moves. The source is moved, not
+    copied, so one record is never restored twice."""
+    given = Path(source)
+    src = given if given.is_absolute() or given.exists() else _paths._repo_root() / given
+    live_path = _plan_path()
+    if not src.is_file():
+        print(f"restore: no file at {source}", file=sys.stderr)
+        return 1
+    if src.resolve() == live_path.resolve():
+        print(f"restore: {source} is already the live plan", file=sys.stderr)
+        return 1
+    try:
+        plan = load_json_dict_safe(src.read_bytes(), default=None)
+    except OSError as exc:
+        print(f"restore: {source} could not be read ({os_error_text(exc)})", file=sys.stderr)
+        return 1
+    if not isinstance(plan, dict) or not isinstance(plan.get("steps"), list) or not plan.get("task"):
+        print(f"restore: {source} is not a plan (no task and steps)", file=sys.stderr)
+        return 1
+    live = _load()
+    if live is not None and live.get("status") == "in_progress":
+        print(f"restore: a plan is in progress at {_shown_from_root(live_path)} "
+              f"({live.get('task', '?')}): finish it or reset it first; restore never writes over one",
+              file=sys.stderr)
+        return 1
+    try:
+        demoted = demote_plan(live_path) if live_path.exists() else None
+        live_path.parent.mkdir(parents=True, exist_ok=True)
+        (getattr(_paths, "replace_retrying", None) or os.replace)(src, live_path)
+    except OSError as exc:
+        print(f"restore: the plan could not be moved into place ({os_error_text(exc)})", file=sys.stderr)
+        return 1
+    if demoted is not None:
+        print(f"Demoted the plan in the way to {_shown_from_root(demoted)}.")
+    steps = plan["steps"]
+    passed = sum(1 for s in steps if isinstance(s, dict) and s.get("status") == "passed")
+    print(f"Restored plan: {plan['task']} ({passed} of {len(steps)} steps passed; "
+          f"status {plan.get('status', '?')}).")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Execution plan tracker")
     sub = parser.add_subparsers(dest="action", required=True)
@@ -924,6 +984,9 @@ def main(argv: list[str] | None = None) -> int:
         help="path to JSON file with action_justification dict"
     )
     sub.add_parser("reset", help="clear active plan")
+    p_restore = sub.add_parser("restore", help="put back a plan set aside in cc/_cold/ (by ship.py handoff "
+                                               "--unfinished), never over a plan in progress")
+    p_restore.add_argument("path", help="the set-aside record, from here or from the repo root")
     args = parser.parse_args(argv)
     if args.action == "create":
         return cmd_create(args.task, args.steps,
@@ -948,6 +1011,8 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.action == "reset":
         return cmd_reset()
+    if args.action == "restore":
+        return cmd_restore(args.path)
     return 2
 
 if __name__ == "__main__":
