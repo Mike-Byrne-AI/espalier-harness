@@ -1057,7 +1057,7 @@ class TestDegradedAndHealth:
         assert "Surface:   healthy" in banner
         assert "--mode recover" not in banner
 
-    def test_blueprint_failure_is_flagged(self, tmp_path):
+    def test_blueprint_failure_is_flagged(self, tmp_path, self_host_tree_copy):
         """A failed continuity load surfaces a visible health flag rather than
         injecting a silently-missing blueprint.
 
@@ -1092,9 +1092,11 @@ class TestDegradedAndHealth:
             "an adopter's broken blueprint chain must surface the same health "
             f"flag; banner:\n{adopter}"
         )
-        # NEGATIVE: the live healthy repo must NOT trip it
-        repo = HOOKS_DIR.parent.parent.parent
-        assert "blueprint continuity unavailable" not in mod._build_context(repo, True, False)
+        # NEGATIVE: a healthy self-host tree must NOT trip it. A copy of the
+        # tracked tree, not REPO_ROOT: the build starts a chain where none
+        # exists, which wrote the live chain of every CI checkout (DEF-543).
+        healthy = mod._build_context(self_host_tree_copy, True, False)
+        assert "blueprint continuity unavailable" not in healthy
 
 
 # ─── Whole-banner contracts: allowlist, gating, no-dup, lean, flag ──────────
@@ -1120,20 +1122,21 @@ def _sections(banner: str):
 
 
 class TestBannerContracts:
-    def _repo(self):
-        return HOOKS_DIR.parent.parent.parent
+    """The self-host banner's shape, built on ``self_host_tree_copy``: the normal
+    banner loads the blueprint chain and starts one where none exists, so a build
+    on REPO_ROOT wrote the live chain of every CI checkout (DEF-543)."""
 
-    def test_every_section_is_on_the_allowlist(self):
+    def test_every_section_is_on_the_allowlist(self, self_host_tree_copy):
         mod = _load()
-        banner = mod._build_context(self._repo(), True, False)
+        banner = mod._build_context(self_host_tree_copy, True, False)
         for header in _sections(banner):
             assert any(header.startswith(a) for a in _ALLOWED_SECTIONS), (
                 f"rogue/unexpected banner section: {header!r}"
             )
 
-    def test_no_section_header_appears_twice(self):
+    def test_no_section_header_appears_twice(self, self_host_tree_copy):
         mod = _load()
-        banner = mod._build_context(self._repo(), True, False)
+        banner = mod._build_context(self_host_tree_copy, True, False)
         seen = [h.split(" (")[0].strip() for h in _sections(banner)]
         assert len(seen) == len(set(seen)), f"duplicate section header: {seen}"
 
@@ -1149,23 +1152,25 @@ class TestBannerContracts:
         assert "Orientation (on first response" in banner
         assert "Consult ESPALIER_MEMORY.md" in banner
 
-    def test_banner_stays_lean(self):
-        """This checkout's banner fits the ceiling under the host's cap on hook
+    def test_banner_stays_lean(self, self_host_tree_copy):
+        """The self-host banner fits the ceiling under the host's cap on hook
         context, counted as the host counts (DEF-674). The per-run lines are the
         hook's to pass, so this is the core alone; every tenant at its cap with
-        long per-run lines is TestTheBannerFitsTheHostCap's worst case. Whether
-        the body clips here depends on this checkout's goal and blueprint, so
-        what is asserted is that a clip never goes unsaid: the body is cut only
-        with the advisory naming its loss and its lever, and the tail rides."""
+        long per-run lines is TestTheBannerFitsTheHostCap's worst case. Built on
+        a copy of the tracked tree, so a dev checkout's own goal and blueprint
+        (gitignored) are not read here, as no CI checkout ever had them; whether
+        the body clips depends on them, so what is asserted is that a clip never
+        goes unsaid: the body is cut only with the advisory naming its loss and
+        its lever, and the tail rides."""
         mod = _load()
-        banner = mod._build_context(self._repo(), True, False)
+        banner = mod._build_context(self_host_tree_copy, True, False)
         assert mod._units(banner) <= mod._MAX_CONTEXT_CHARS
         assert "confirm or redirect" in banner
         assert ("[banner body truncated -- budget]" in banner) == (mod._HEALTH_BINDS in banner)
 
-    def test_orientation_tail_always_present(self):
+    def test_orientation_tail_always_present(self, self_host_tree_copy):
         mod = _load()
-        banner = mod._build_context(self._repo(), True, False)
+        banner = mod._build_context(self_host_tree_copy, True, False)
         assert "Orientation (on first response" in banner
         assert "first-thoughts" in banner
         assert "confirm or redirect" in banner
@@ -1834,9 +1839,12 @@ class TestOrientationFootgunLineIsDerived:
         bullet = self._bullet(mod._build_context(tmp_path, False, False))
         assert "docs/STANDING_PRINCIPLES.md" in bullet, bullet
 
-    def test_the_bullet_and_the_corpus_cannot_disagree_on_the_live_tree(self):
+    def test_the_bullet_and_the_corpus_cannot_disagree_on_the_self_host_tree(self, self_host_tree_copy):
+        """Built on a copy of the tracked tree: the normal banner starts a
+        blueprint chain where none exists, so a build on REPO_ROOT wrote the
+        live chain of every CI checkout (DEF-543)."""
         mod = _load()
-        repo = HOOKS_DIR.parent.parent.parent
+        repo = self_host_tree_copy
         bullet = self._bullet(mod._build_context(repo, True, False))
         families = mod._recall.indexed_sources(repo)
         assert len(families) >= 4, families

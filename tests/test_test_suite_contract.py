@@ -191,6 +191,186 @@ def test_live_session_marker_guard_reads_an_absent_dir_as_empty(tmp_path):
     assert _conftest._live_session_markers(tmp_path / "absent") == {}
 
 
+def test_the_chain_watch_reads_its_records_and_an_absent_chain_as_empty(tmp_path):
+    """The blueprint chain is watched by its records (nodes and latest.json):
+    every cognitive_blueprint save writes through a sibling dot temp and holds
+    `.write.lock`, and PostCompact, /handoff, the worktree sweep and a start's
+    demotion write under subdirectories, all the live session's and none a
+    record. Pins that those are dropped for the chain alone (a `reports/` temp
+    is DEF-973's signal and stays), and that an absent chain reads as one
+    holding no record, so a lock alone moves nothing and a record does."""
+    import tests.conftest as _conftest
+
+    chain, reports = _conftest._LIVE_CHAIN_DIR, "reports"
+    watch = (chain, reports)
+    before = _conftest._live_tree_fingerprint(tmp_path, watch)
+    assert before == {chain: frozenset(), reports: None}
+    bp = tmp_path / chain
+    bp.mkdir(parents=True)
+    (bp / ".write.lock").write_text("", encoding="utf-8")
+    (bp / ".latest.json.0a1b2c3d.tmp").write_text("{}", encoding="utf-8")
+    for side in ("compact_summaries", "from-worktrees", "_cold"):
+        (bp / side).mkdir()
+    assert _conftest._live_tree_fingerprint(tmp_path, watch) == before
+    (bp / "latest.json").write_text("{}", encoding="utf-8")
+    (bp / "20261110-210335-b67a85.json").write_text("{}", encoding="utf-8")
+    (tmp_path / reports).mkdir()
+    (tmp_path / reports / ".gate.json.0a1b2c3d.tmp").write_text("{}", encoding="utf-8")
+    after = _conftest._live_tree_fingerprint(tmp_path, watch)
+    assert after[chain] == {"latest.json", "20261110-210335-b67a85.json"}
+    assert after[reports] == {".gate.json.0a1b2c3d.tmp"}
+
+
+def _planted_registry(config: Path, entry: str | None, cwd: Path | None = None) -> Path:
+    """A Claude Code config directory for ``_live_chain_owner``: ``entry`` is
+    ``"none"`` (no sessions directory), ``"empty"``, ``"live"`` (one entry
+    for this live process working in ``cwd``) or ``"torn"`` (an entry that
+    does not parse, under a name that is no pid)."""
+    import os
+
+    config.mkdir(parents=True)
+    if entry == "none":
+        return config
+    sessions = config / "sessions"
+    sessions.mkdir()
+    if entry == "live":
+        record = {"pid": os.getpid(), "sessionId": "planted", "cwd": str(cwd), "kind": "interactive"}
+        (sessions / f"{os.getpid()}.json").write_text(json.dumps(record), encoding="utf-8")
+    elif entry == "torn":
+        (sessions / "planted.json").write_text("{not json", encoding="utf-8")
+    return config
+
+
+@pytest.mark.parametrize(
+    ("registry", "cwd_rel", "red", "owner"),
+    [
+        pytest.param("live", ".", False, "session", id="a-live-session-here"),
+        pytest.param("live", "src", False, "session", id="a-live-session-in-a-subfolder-here"),
+        pytest.param("empty", None, True, "none", id="no-live-session"),
+        pytest.param("none", None, True, "none", id="no-registry-directory-as-on-ci"),
+        pytest.param("live", ".claude/worktrees/w", True, "none",
+                     id="a-worktrees-session-read-from-the-main-checkout"),
+        pytest.param("live", "../elsewhere", True, "none", id="a-live-session-in-another-tree"),
+        pytest.param("torn", None, False, "unread", id="a-registry-that-cannot-be-read"),
+    ],
+)
+def test_a_chain_move_reds_only_where_no_live_session_works_in_the_checkout(
+        tmp_path, registry, cwd_rel, red, owner):
+    """Air's ruling on DEF-543 (8ba9a2): a move of the chain's records reds only
+    where no live Claude Code session's cwd is in this checkout, from Claude
+    Code's own registry (checkout_sync.live_sessions, placed by
+    sessions_in_checkout: the deepest checkout owns a cwd, so a worktree's
+    session does not quiet the main checkout). A missing registry directory, as
+    on every CI runner, reds; one that cannot be read lets the move through
+    (the fixture warns). Each row is one verdict of the gate."""
+    import tests.conftest as _conftest
+
+    root = tmp_path / "main"
+    root.mkdir()
+    root = root.resolve()
+    cwd = None
+    if cwd_rel is not None:
+        cwd = (root / cwd_rel).resolve()
+        cwd.mkdir(parents=True, exist_ok=True)
+    config = _planted_registry(tmp_path / "claude", registry, cwd)
+    chain = _conftest._LIVE_CHAIN_DIR
+    before = {chain: frozenset({"latest.json"}), "reports": None}
+    after = {chain: frozenset({"latest.json", "20261111-101010-0a1b2c.json"}), "reports": None}
+    moves, got = _conftest._attributed_moves(before, after, root, config)
+    assert got == owner
+    assert bool(moves) is red, moves
+    if red:
+        assert moves == [f"{chain} (added: ['20261111-101010-0a1b2c.json']; removed: -)"]
+
+
+def test_a_live_session_excuses_the_chain_alone_and_an_unmoved_chain_reads_nothing(tmp_path):
+    """The registry's excuse is the chain's: a `reports/` move beside it still
+    reds with a session live here. And the registry is read only on a chain
+    move: an absent chain against a lock-only one is no move, so no verdict."""
+    import tests.conftest as _conftest
+
+    root = tmp_path / "main"
+    root.mkdir()
+    root = root.resolve()
+    config = _planted_registry(tmp_path / "claude", "live", root.resolve())
+    chain = _conftest._LIVE_CHAIN_DIR
+    before = {chain: frozenset(), "reports": frozenset()}
+    after = {chain: frozenset({"latest.json"}), "reports": frozenset({"x.json"})}
+    moves, owner = _conftest._attributed_moves(before, after, root, config)
+    assert owner == "session"
+    assert moves == ["reports (added: ['x.json']; removed: -)"]
+
+    watch = (chain,)
+    empty_before = _conftest._live_tree_fingerprint(root, watch)
+    (root / chain).mkdir(parents=True)
+    (root / chain / ".write.lock").write_text("", encoding="utf-8")
+    lock_after = _conftest._live_tree_fingerprint(root, watch)
+    absent_config = tmp_path / "no-claude"
+    assert _conftest._attributed_moves(empty_before, lock_after, root, absent_config) == ([], "")
+
+
+def test_the_session_scrub_unsets_the_project_dir_a_spawn_would_root_in(tmp_path, monkeypatch):
+    """The class's source (air's ruling 8ba9a2, a): a pytest a hook launches
+    inherits CLAUDE_PROJECT_DIR naming this checkout, and a tools/cc script a
+    test spawns with a copy of os.environ roots itself there whatever cwd it
+    is given. Planted: the variable exported at a stand-in live tree, the
+    suite's scrub applied, then cognitive_blueprint's start spawned with
+    env=os.environ.copy() and cwd at a scratch tree: the scratch tree's chain
+    is written and the live one is not. Drop the name from the scrub and the
+    start writes the stand-in live tree."""
+    import os
+    import subprocess
+
+    import tests.conftest as _conftest
+    from tests._interpreter_hosts import HOOK_PYTHON
+    from tests._wait_budget import scaled
+
+    live, scratch = tmp_path / "live", tmp_path / "scratch"
+    for tree in (live, scratch):
+        (tree / "tools" / "cc" / "hooks").mkdir(parents=True)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(live))
+    _conftest._scrub_claude_code_session_env(monkeypatch)
+    result = subprocess.run(
+        [HOOK_PYTHON, str(REPO_ROOT / "tools" / "cc" / "cognitive_blueprint.py"), "start"],
+        env=os.environ.copy(), cwd=str(scratch),
+        capture_output=True, text=True, encoding="utf-8", timeout=scaled(30),
+    )
+    assert result.returncode == 0, result.stderr
+    assert (scratch / "cc" / "blueprints" / "latest.json").is_file(), result.stdout
+    assert not (live / "cc").exists(), sorted(p.name for p in (live / "cc").rglob("*"))
+
+
+def test_live_tree_allowed_keys_on_the_module_stem():
+    """DEF-476: ``_LIVE_TREE_ALLOWED`` was read with the nodeid's path while
+    ``_MARKER_RULES`` and ``_SLOW_FILES`` beside it hold module stems, so an
+    entry in the local form matched nothing and the red it was for persisted.
+    Pins the stem key, and that every entry names a test module that exists."""
+    from types import SimpleNamespace
+
+    import tests.conftest as _conftest
+
+    node = SimpleNamespace(path=Path("tests") / "test_foo.py")
+    assert _conftest._live_tree_allowed_key(node) == "test_foo"
+    tests_dir = Path(__file__).resolve().parent
+    stale = sorted(s for s in _conftest._LIVE_TREE_ALLOWED if not (tests_dir / f"{s}.py").is_file())
+    assert not stale, f"_LIVE_TREE_ALLOWED names no test module: {stale} (keys are stems, test_foo)"
+
+
+def test_the_live_blueprint_chain_stays_watched():
+    """``cc/blueprints`` left ``_LIVE_TREE_WATCH`` once on churn read as a
+    concurrent SessionStart (2026-08-05), and the tests that start a chain on a
+    tree without one (every CI checkout) went unseen until #573's ubuntu leg
+    read one test's new chain in the next (2026-11-10, DEF-543). Its churn is
+    attributed now (``_live_chain_owner``), so dropping it again is never the
+    fix for a red there: attribute the writer instead."""
+    import tests.conftest as _conftest
+
+    assert _conftest._LIVE_CHAIN_DIR == "cc/blueprints"
+    assert _conftest._LIVE_CHAIN_DIR in _conftest._LIVE_TREE_WATCH
+    assert _conftest._is_chain_record("latest.json")
+    assert _conftest._is_chain_record("20261110-210335-b67a85.json")
+
+
 def test_live_tree_watch_is_not_whittled_to_nothing():
     """``conftest._LIVE_TREE_WATCH`` must keep watching something.
 
@@ -209,7 +389,8 @@ def test_live_tree_watch_is_not_whittled_to_nothing():
     observed the watch list being narrowed 4 -> 2 precisely that way.
 
     Deliberately a floor, not an exact pin: the membership is a calibration
-    judgement (both current entries are gitignored build/output dirs), and
+    judgement (every entry is a gitignored output dir; the blueprint chain
+    alone has its own pin, ``test_the_live_blueprint_chain_stays_watched``), and
     pinning the exact set would red on every legitimate recalibration. What
     must never happen silently is the set emptying.
     """
