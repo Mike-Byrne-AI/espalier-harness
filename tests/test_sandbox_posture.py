@@ -511,7 +511,18 @@ class TestDoctorsThreeStates:
     ``allowUnsandboxedCommands`` is read from the config directory the
     environment names, never the real home, and is never written; a ``./``
     entry in the user file counts for nothing (it resolves under
-    ``~/.claude``)."""
+    ``~/.claude``).
+
+    Each test here reads a Linux host whose PATH holds both of the sandbox's
+    dependencies, pinned through the module's host seams, so a run on a
+    stock CI image (no bubblewrap) or a Mac reads the same states;
+    ``TestDoctorSaysWhenTheSandboxCannotStart`` owns the host reads."""
+
+    @pytest.fixture(autouse=True)
+    def _a_linux_host_with_its_dependencies(self, monkeypatch):
+        monkeypatch.setattr(sp, "_host_is_macos", lambda: False)
+        monkeypatch.setattr(sp, "_osrelease", lambda: "6.1.0-generic")
+        monkeypatch.setattr(sp, "_which", lambda name, path: f"/usr/bin/{name}")
 
     def _settings(self, repo: Path, body: dict, name: str = "settings.json") -> None:
         (repo / ".claude").mkdir(exist_ok=True)
@@ -652,6 +663,146 @@ class TestDoctorsThreeStates:
         hits = [w for w in report["warnings"] if w.startswith("sandbox: the posture could not be derived")]
         assert len(hits) == 1 and "_SECRET_PATH_LABEL" in hits[0], report["warnings"]
         assert any("# espalier:managed" in step and "-m espalier init ." in step for step in report["next_steps"]), report["next_steps"]
+
+
+class TestDoctorSaysWhenTheSandboxCannotStart:
+    """DEF-3014. On Linux and WSL2 the sandbox needs ``bubblewrap`` (its
+    binary is ``bwrap``) and ``socat``, and WSL1 has none; where it cannot
+    start, Claude Code runs shell commands unsandboxed, or exits at startup
+    when ``sandbox.failIfUnavailable`` is true (code.claude.com/docs/en/
+    sandboxing, read 2026-11-11). Doctor read the posture from the settings
+    alone and said ``on`` there. It now checks both binaries on the PATH the
+    environment it reads names, and the kernel release for WSL1, on a POSIX
+    host other than macOS (where the sandbox is built in), and warns where
+    the sandbox is on and cannot start. It names the install line and
+    ``failIfUnavailable``, which it never writes: that is the operator's call.
+    Driven 2026-11-11 on this box's WSL2 Ubuntu 24.04: neither package
+    installed, kernel release ``6.18.33.2-microsoft-standard-WSL2``."""
+
+    WSL2 = "6.18.33.2-microsoft-standard-WSL2"
+    WSL1 = "4.4.0-19041-Microsoft"
+
+    def _host(self, monkeypatch, *, macos=False, osrelease="6.1.0-generic", present=("bwrap", "socat")):
+        seen: list[tuple[str, str | None]] = []
+
+        def which(name, path):
+            seen.append((name, path))
+            return f"/usr/bin/{name}" if name in present else None
+
+        monkeypatch.setattr(sp, "_host_is_macos", lambda: macos)
+        monkeypatch.setattr(sp, "_osrelease", lambda: osrelease)
+        monkeypatch.setattr(sp, "_which", which)
+        return seen
+
+    def _state(self, tmp_path, sandbox: dict | None, *, path="/usr/local/bin:/usr/bin", user: dict | None = None):
+        if sandbox is not None:
+            (tmp_path / ".claude").mkdir(exist_ok=True)
+            (tmp_path / ".claude" / "settings.json").write_text(json.dumps({"sandbox": sandbox}), encoding="utf-8")
+        home = tmp_path / "home"
+        (home / ".claude").mkdir(parents=True, exist_ok=True)
+        if user is not None:
+            (home / ".claude" / "settings.json").write_text(json.dumps({"sandbox": user}), encoding="utf-8")
+        env = {"HOME": str(home), "USERPROFILE": str(home), "PATH": path}
+        return sp.read_state(tmp_path, posture=_lists([], []), host_is_windows=False, environ=env)
+
+    def _cannot_start(self, warnings):
+        return [w for w in warnings if "cannot start" in w]
+
+    def test_on_with_both_missing_warns_with_the_install_line_and_the_setting(self, tmp_path, monkeypatch):
+        self._host(monkeypatch, present=())
+        state = self._state(tmp_path, {"enabled": True})
+        info, warnings, steps = sp.doctor_lines(state, remedy_py=PY)
+        hits = self._cannot_start(warnings)
+        assert len(hits) == 1, warnings
+        assert "bubblewrap" in hits[0] and "socat" in hits[0] and "unsandboxed" in hits[0]
+        assert "failIfUnavailable" in hits[0] and "sudo apt-get install bubblewrap socat" in hits[0]
+        assert not any(line.startswith("sandbox: on (") for line in info), info
+        assert any("sudo apt-get install bubblewrap socat" in s and "/sandbox" in s for s in steps), steps
+
+    def test_one_missing_names_that_one_alone(self, tmp_path, monkeypatch):
+        self._host(monkeypatch, present=("bwrap",))
+        state = self._state(tmp_path, {"enabled": True})
+        _info, warnings, _steps = sp.doctor_lines(state, remedy_py=PY)
+        hits = self._cannot_start(warnings)
+        assert len(hits) == 1 and "socat is not on" in hits[0] and "bubblewrap is not" not in hits[0], warnings
+
+    def test_wsl2_without_the_packages_is_read_as_linux(self, tmp_path, monkeypatch):
+        self._host(monkeypatch, osrelease=self.WSL2, present=())
+        state = self._state(tmp_path, {"enabled": True})
+        assert state.wsl1 is False
+        hits = self._cannot_start(sp.doctor_lines(state, remedy_py=PY)[1])
+        assert len(hits) == 1 and "bubblewrap" in hits[0] and "WSL1" not in hits[0], hits
+
+    def test_wsl1_cannot_start_whatever_is_on_path(self, tmp_path, monkeypatch):
+        self._host(monkeypatch, osrelease=self.WSL1)
+        state = self._state(tmp_path, {"enabled": True})
+        assert state.wsl1 is True
+        _info, warnings, steps = sp.doctor_lines(state, remedy_py=PY)
+        hits = self._cannot_start(warnings)
+        assert len(hits) == 1 and "WSL1" in hits[0] and "WSL2" in hits[0] and "bubblewrap" not in hits[0], warnings
+        assert any("wsl --set-version" in s for s in steps), steps
+
+    def test_macos_is_not_checked(self, tmp_path, monkeypatch):
+        seen = self._host(monkeypatch, macos=True, present=())
+        state = self._state(tmp_path, {"enabled": True}, path="")
+        info, warnings, _steps = sp.doctor_lines(state, remedy_py=PY)
+        assert seen == [] and warnings == [], warnings
+        assert any(line.startswith("sandbox: on (") for line in info), info
+
+    def test_all_present_reads_on_as_before(self, tmp_path, monkeypatch):
+        self._host(monkeypatch)
+        state = self._state(tmp_path, {"enabled": True})
+        info, warnings, _steps = sp.doctor_lines(state, remedy_py=PY)
+        assert warnings == [] and any(line.startswith("sandbox: on (") for line in info), (info, warnings)
+
+    def test_off_with_both_missing_is_an_info_line_never_a_warning(self, tmp_path, monkeypatch):
+        self._host(monkeypatch, present=())
+        state = self._state(tmp_path, None)
+        info, warnings, steps = sp.doctor_lines(state, remedy_py=PY)
+        assert warnings == [] and steps == [], warnings
+        assert any("could not start" in line and "sudo apt-get install bubblewrap socat" in line
+                   for line in info), info
+
+    def test_fail_if_unavailable_true_says_claude_code_exits_instead(self, tmp_path, monkeypatch):
+        self._host(monkeypatch, present=())
+        state = self._state(tmp_path, {"enabled": True, "failIfUnavailable": True})
+        assert state.fail_if_unavailable is True
+        hits = self._cannot_start(sp.doctor_lines(state, remedy_py=PY)[1])
+        assert len(hits) == 1 and "exits at startup" in hits[0] and "unsandboxed" not in hits[0], hits
+
+    def test_a_local_false_outranks_a_user_true_for_the_setting(self, tmp_path, monkeypatch):
+        self._host(monkeypatch, present=())
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.local.json").write_text(
+            json.dumps({"sandbox": {"failIfUnavailable": False}}), encoding="utf-8")
+        state = self._state(tmp_path, {"enabled": True}, user={"failIfUnavailable": True})
+        assert state.fail_if_unavailable is False
+        hits = self._cannot_start(sp.doctor_lines(state, remedy_py=PY)[1])
+        assert len(hits) == 1 and "unsandboxed" in hits[0], hits
+
+    def test_the_path_is_read_from_the_environment_given(self, tmp_path, monkeypatch):
+        """The ledger probe passes ``environ`` with an empty PATH; a fix that
+        read PATH from anywhere else would re-pin it."""
+        seen = self._host(monkeypatch)
+        self._state(tmp_path, {"enabled": True}, path="/opt/x/bin")
+        assert seen and {path for _name, path in seen} == {"/opt/x/bin"}, seen
+        assert {name for name, _path in seen} == {"bwrap", "socat"}, seen
+
+    def test_an_empty_path_finds_nothing_through_the_real_lookup(self, tmp_path, monkeypatch):
+        """The ledger probe's own shape, through the module's real ``_which``."""
+        monkeypatch.setattr(sp, "_host_is_macos", lambda: False)
+        monkeypatch.setattr(sp, "_osrelease", lambda: "6.1.0-generic")
+        state = self._state(tmp_path, {"enabled": True}, path="")
+        assert sorted(state.missing_tools) == ["bubblewrap", "socat"], state.missing_tools
+        assert len(sp.doctor_lines(state, remedy_py=PY)[1]) >= 1
+
+    def test_doctor_never_writes_the_setting(self, tmp_path, monkeypatch):
+        self._host(monkeypatch, present=())
+        state = self._state(tmp_path, {"enabled": True})
+        before = (tmp_path / ".claude" / "settings.json").read_bytes()
+        _info, _warnings, steps = sp.doctor_lines(state, remedy_py=PY)
+        assert (tmp_path / ".claude" / "settings.json").read_bytes() == before
+        assert any("failIfUnavailable" in s and "yours" in s for s in steps), steps
 
 
 class TestTheUserSettingsPath:

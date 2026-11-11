@@ -540,6 +540,22 @@ user settings disable the retry, and a guard whose roster cannot be read.
 Doctor reads the project, local and user files; a managed settings file or
 `--settings` is not read.
 
+**Where it cannot start.** On Linux and WSL2 the sandbox needs `bubblewrap`
+and `socat` (`sudo apt-get install bubblewrap socat`, or `sudo dnf install
+bubblewrap socat` on Fedora), and WSL1 has no sandbox at all. Where it cannot
+start, Claude Code runs shell commands unsandboxed, or exits at startup when
+`sandbox.failIfUnavailable` is `true`. A stock Ubuntu 24.04 image carries
+neither package. So on a POSIX host other than macOS, doctor looks for the
+`bwrap` and `socat` binaries on its PATH and reads the kernel release for
+WSL1. Where the sandbox is on and cannot start, it warns, naming the install
+line and the setting; where the sandbox is off, an info line says it could
+not start if turned on. Doctor never writes `failIfUnavailable`: whether a
+session that cannot sandbox should exit is yours. Claude Code's own check is
+the Dependencies tab in `/sandbox`, which also reads ripgrep, the optional
+seccomp filter and Ubuntu's AppArmor restriction on bubblewrap; doctor reads
+none of those. Doctor reads the host it runs on and its own PATH, so run it
+inside the WSL2 distribution to read a session there.
+
 **What it is not.** A replacement for `write_guard`. Measured on macOS, a
 `denyWrite` path refuses shell writes and `git checkout` and not the `Write`
 tool, so the guard's path check on the file tools stays the layer there.

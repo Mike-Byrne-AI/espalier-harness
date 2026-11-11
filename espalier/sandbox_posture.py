@@ -58,6 +58,8 @@ import json
 import os
 import posixpath
 import re
+import shutil
+import sys
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -93,6 +95,15 @@ PROJECT_SETTINGS = ".claude/settings.json"
 LOCAL_SETTINGS = ".claude/settings.local.json"
 USER_SETTINGS = "the user settings"
 DOC = "docs/TROUBLESHOOTING.md"
+FAIL_KEY = "failIfUnavailable"
+#: What the sandbox needs on Linux and WSL2, as ``(binary, package)``: the
+#: binary doctor looks up on PATH and the package the install line names
+#: (code.claude.com/docs/en/sandboxing, read 2026-11-11). macOS has its
+#: sandbox built in; ripgrep ships inside Claude Code; the seccomp filter is
+#: optional; Ubuntu's AppArmor restriction on bubblewrap is not read here.
+LINUX_DEPENDENCIES: tuple[tuple[str, str], ...] = (("bwrap", "bubblewrap"), ("socat", "socat"))
+INSTALL_LINE = "`sudo apt-get install bubblewrap socat` (Fedora: `sudo dnf install bubblewrap socat`)"
+_OSRELEASE = "/proc/sys/kernel/osrelease"
 _WILDCARD = ("*", "?", "[")
 #: A roster spelling is a path or a glob; anything else is a label that
 #: stopped being one (a readability edit), refused by name rather than
@@ -443,6 +454,47 @@ class SandboxState:
     retired: list[str] = field(default_factory=list)
     #: Files or keys the read could not take as the sandbox would: one line each.
     notes: list[str] = field(default_factory=list)
+    #: The packages whose binary is not on the PATH read (Linux and WSL2 only).
+    missing_tools: list[str] = field(default_factory=list)
+    #: The kernel release reads as WSL1, which has no sandbox.
+    wsl1: bool = False
+    #: ``sandbox.failIfUnavailable`` by the highest scope that sets it; ``None`` when unset.
+    fail_if_unavailable: bool | None = None
+    fail_source: str = ""
+
+    @property
+    def cannot_start(self) -> bool:
+        return self.wsl1 or bool(self.missing_tools)
+
+
+# -- the host seams (tests patch these) --------------------------------------------------
+
+
+def _host_is_macos() -> bool:
+    return sys.platform == "darwin"
+
+
+def _osrelease() -> str:
+    """The kernel release (``uname -r``) as Linux and WSL publish it; ``""``
+    where the file is not there (macOS, a test on Windows)."""
+    try:
+        with open(_OSRELEASE, encoding="utf-8", errors="replace") as handle:
+            return handle.read().strip()
+    except OSError:
+        return ""
+
+
+def _which(name: str, path: str | None) -> str | None:
+    return shutil.which(name, path=path)
+
+
+def is_wsl1(release: str) -> bool:
+    """A WSL1 kernel release names Microsoft (``4.4.0-19041-Microsoft``); a
+    WSL2 one names it beside ``WSL2`` or ``-standard``
+    (``6.18.33.2-microsoft-standard-WSL2``, driven 2026-11-11). WSL1 is
+    read from the documented release shape, never driven here."""
+    low = release.lower()
+    return "microsoft" in low and "wsl2" not in low and "-standard" not in low
 
 
 def user_settings_path(environ: Mapping[str, str] | None = None) -> Path | None:
@@ -497,7 +549,14 @@ def read_state(
     of local, project, user that sets it; the posture's entries present in
     the project and local files (a ``./`` entry in the user file resolves
     under ``~/.claude``, so it counts for nothing here); malformed keys named;
-    the user scope's ``allowUnsandboxedCommands``. Never writes."""
+    the user scope's ``allowUnsandboxedCommands`` and ``failIfUnavailable``
+    by the same precedence as ``enabled``. On a POSIX host other than macOS,
+    whether the sandbox can start at all: WSL1 from the kernel release, else
+    ``bwrap`` and ``socat`` on the PATH ``environ`` names (``os.environ``
+    when it is ``None``). Where they are missing Claude Code runs commands
+    unsandboxed, or exits when ``failIfUnavailable`` is true, so a posture
+    read from the settings alone would say ``on`` for a sandbox that never
+    starts (DEF-3014). Never writes."""
     root = Path(root)
     lists = posture.lists if isinstance(posture, Posture) else dict(posture)
     state = SandboxState(supported=not host_is_windows)
@@ -519,6 +578,21 @@ def read_state(
             state.enabled = sandbox["enabled"] is True
             state.source = label
             break
+    for label in (LOCAL_SETTINGS, PROJECT_SETTINGS, USER_SETTINGS):
+        sandbox = _sandbox_of(read.get(label))
+        if sandbox is not None and isinstance(sandbox.get(FAIL_KEY), bool):
+            state.fail_if_unavailable = sandbox[FAIL_KEY]
+            state.fail_source = label
+            break
+    if state.supported and not _host_is_macos():
+        # Linux or WSL: the sandbox needs two binaries, and WSL1 has none.
+        # PATH is the environment's doctor was handed (the ledger probe
+        # passes its own), never a second read of os.environ.
+        state.wsl1 = is_wsl1(_osrelease())
+        if not state.wsl1:
+            search_path = (os.environ if environ is None else environ).get("PATH", os.defpath)
+            state.missing_tools = [package for binary, package in LINUX_DEPENDENCIES
+                                   if not _which(binary, search_path)]
     found: dict[str, list[str]] = {name: [] for name in LISTS}
     for label in (PROJECT_SETTINGS, LOCAL_SETTINGS):
         body = read.get(label)
@@ -568,6 +642,33 @@ def derivation_warning(why: str, *, remedy_py: str) -> tuple[str, str]:
     return warning, step
 
 
+def _why_it_cannot_start(state: SandboxState) -> str:
+    """Why the sandbox cannot start on the host doctor reads, or ``""``."""
+    if state.wsl1:
+        return ("this distribution runs WSL1, and the sandbox requires WSL2 (`wsl -l -v` from PowerShell "
+                "shows the version)")
+    if not state.missing_tools:
+        return ""
+    names = " and ".join(state.missing_tools)
+    verb = "is" if len(state.missing_tools) == 1 else "are"
+    return f"{names} {verb} not on the PATH doctor reads (install: {INSTALL_LINE})"
+
+
+def _start_step(state: SandboxState) -> str:
+    """The step for a sandbox that is on and cannot start: the host fix, the
+    panel that is Claude Code's own check, and the setting left to the
+    operator."""
+    if state.wsl1:
+        fix = ("move this distribution to WSL2 (`wsl --set-version <distro> 2` from PowerShell), or run "
+               "Claude Code without the sandbox")
+    else:
+        fix = (f"install the sandbox's dependencies with {INSTALL_LINE}, restart Claude Code and run "
+               "/sandbox, whose Dependencies tab is Claude Code's own check (it also reads ripgrep, the "
+               "seccomp filter and Ubuntu's AppArmor restriction on bubblewrap, which doctor does not)")
+    return (f"{fix}; whether to set sandbox.{FAIL_KEY} true, so a session that cannot sandbox exits at "
+            "startup rather than run its commands unsandboxed, is yours: doctor never writes it")
+
+
 def doctor_lines(state: SandboxState, *, remedy_py: str) -> tuple[list[str], list[str], list[str]]:
     """``(info, warnings, next steps)`` for the doctor report: the three
     states, the entries, the user scope's retry setting, and the one line on
@@ -578,8 +679,9 @@ def doctor_lines(state: SandboxState, *, remedy_py: str) -> tuple[list[str], lis
     if not state.supported:
         info.append(
             "sandbox: none on native Windows (Claude Code runs shell commands unsandboxed there; this "
-            "line reads the host doctor runs on, and a session inside WSL2 has the sandbox); the "
-            "location layer on this host is the after-check and write_guard's path check"
+            "line reads the host doctor runs on, and a session inside WSL2 has the sandbox where "
+            "bubblewrap and socat are installed there: run doctor inside the distribution to read it); "
+            "the location layer on this host is the after-check and write_guard's path check"
         )
         return info, warnings_out, steps
     n_present = sum(len(v) for v in state.present.values())
@@ -597,7 +699,22 @@ def doctor_lines(state: SandboxState, *, remedy_py: str) -> tuple[list[str], lis
         tally += "; not readable as the sandbox reads it: " + "; ".join(malformed)
     writes = (f"{upgrade_hint(remedy_py)} appends them under your keys"
               if not malformed else "fix the named key by hand first, then " + upgrade_hint(remedy_py))
-    if state.enabled:
+    why_not = _why_it_cannot_start(state)
+    if state.enabled and why_not:
+        if state.fail_if_unavailable:
+            outcome = (f"sandbox.{FAIL_KEY} is true in {state.fail_source}, so Claude Code exits at startup "
+                       "here rather than run a command outside the sandbox")
+        else:
+            outcome = (f"so Claude Code runs shell commands unsandboxed here (sandbox.{FAIL_KEY} true makes "
+                       "it exit at startup instead; doctor never writes it)")
+        line = (f"sandbox: on in the settings (sandbox.enabled true in {state.source}) and cannot start on "
+                f"this host: {why_not}; {outcome}; {tally}")
+        warnings_out.append(f"{line}; {writes}" if (n_missing or malformed) else line)
+        steps.append(_start_step(state))
+        if n_missing or malformed:
+            steps.append(f"then run {upgrade_hint(remedy_py)} to append the missing sandbox deny entries under "
+                         "your keys")
+    elif state.enabled:
         line = f"sandbox: on (sandbox.enabled true in {state.source}); {tally}"
         if n_missing or malformed:
             warnings_out.append(f"{line}; {writes}")
@@ -615,6 +732,8 @@ def doctor_lines(state: SandboxState, *, remedy_py: str) -> tuple[list[str], lis
             f"{LOCAL_SETTINGS} or the user settings; a managed settings file or --settings is not read "
             f"here); {tally}; {writes}, and /sandbox in a session turns the sandbox on"
         )
+        if why_not:
+            info.append(f"sandbox: it could not start on this host if turned on: {why_not}")
     if state.retired:
         info.append("sandbox: entries an earlier init wrote that this engine no longer derives, yours to "
                     "delete: " + "; ".join(state.retired))
