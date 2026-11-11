@@ -743,6 +743,27 @@ class TestTheHandoffLeavesAnUnfinishedLane:
         assert (repo / "cc" / "execution_plan.json").is_file() and _cold_plans(repo) == []
         assert not (repo / ".espalier-state" / "own_clear.json").exists()
 
+    def test_the_threshold_window_arms_its_clear_over_an_unfinished_lane_from_the_cli(
+            self, ship, repo, monkeypatch):
+        """The row's oracle through the command a window types: a lane commit
+        never pushed, the verb run, then the marker armed for the session at
+        HEAD with nothing in flight and nothing pushed. Before the fix no verb
+        did this: the parser refused the flag, read here as the defect itself
+        rather than a crash."""
+        self._ready(ship, repo, monkeypatch)
+        try:
+            rc = ship.main(["handoff", "--unfinished", self.TEXT])
+        except SystemExit as exc:
+            pytest.fail(f"no handoff verb sets an unfinished lane aside and arms its clear "
+                        f"(the parser exited {exc.code})")
+        assert rc == 0
+        assert _git(repo, "ls-remote", "origin", "lane/half") == ""
+        marker = _marker(repo)
+        assert marker["state"] == "armed" and marker["session_id"] == "s-here"
+        assert marker["head"] == _git(repo, "rev-parse", "HEAD")
+        assert _git(repo, "status", "--porcelain", "--untracked-files=no") == ""
+        assert not (repo / "cc" / "execution_plan.json").exists()
+
     def test_it_sets_the_plan_aside_commits_the_edits_and_arms_the_clear(self, ship, repo, monkeypatch, capsys):
         released = self._ready(ship, repo, monkeypatch)
         below = _git(repo, "rev-parse", "HEAD")
