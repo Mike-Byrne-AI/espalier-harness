@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4110",
+ "subject": ".github/workflows/post-merge.yml",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the bound a job needs comes from its last 20 green runs on GitHub, which a ledger probe cannot read offline and which move with every run; the oracle is scripts/ci_job_bounds_census.py, whose verdict for the two jobs reads ok once the bounds are raised",
+ "row_sha": "a49a1e258826",
+ "text_sha": "93a2e225b261",
+ "verified_2026_11_10": "OPEN (filed 2026-11-10; probe driven at filing)"
+}

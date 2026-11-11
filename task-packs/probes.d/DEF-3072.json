@@ -1,0 +1,10 @@
+{
+ "id": "DEF-3072",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c 'import sys; from pathlib import Path; sys.path[:0] = [\"tools/cc/hooks\", \"tools/cc\"]; import write_guard as w; r = Path.cwd(); print(bool(w._bash_dangerous_reason(\"echo '\"'\"'rm -rf /'\"'\"' | bash -x\", r)), bool(w._bash_dangerous_reason(\"echo '\"'\"'rm -rf /'\"'\"' | bash +x\", r)))'",
+ "open_value": "True False",
+ "why_not": null,
+ "row_sha": "3b8f7dc7a38a",
+ "text_sha": "e9498d4c1c64",
+ "verified_2026_11_10": "OPEN (filed 2026-11-10; probe driven at filing here and in the export of HEAD 1b34b468164e)"
+}

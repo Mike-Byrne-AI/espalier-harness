@@ -1301,9 +1301,10 @@ first; the dangerous-command catch is a secondary slip-catcher):
    unforced remove reads the same path the same way. The temp root itself
    (a `.` step, or a trailing dot or space Windows strips, names it too),
    this project's checkout or the home directory under it, a link that
-   resolves onto one, a variable, a glob and a `..` step stay the wall,
-   pinned by
-   `tests/test_write_guard.py::TestPowerShellScratchRootRung::test_everything_else_absolute_is_still_the_wall`.
+   resolves onto one, a glob and a `..` step stay the wall, pinned by
+   `tests/test_write_guard.py::TestPowerShellScratchRootRung::test_everything_else_absolute_is_still_the_wall`,
+   and so does a variable with no literal binding, the coverage contract's
+   declared PowerShell exception (below).
    The temp variables are the exception: `$env:TEMP`, `$env:TMP` or
    `$env:TMPDIR` with a literal path below it is read as the value the hook
    inherits, where the command sets none of the three (an assignment, the
@@ -1517,8 +1518,15 @@ first; the dangerous-command catch is a secondary slip-catcher):
    direct twin `rm -rf "$D"` draws (the nudge for a variable or a source
    directory, silence for a roster word or a temp directory), wherever it
    sits -- the top level, a chain, an `if`, a loop body whatever its head
-   (until 2026-11-09 it drew nothing anywhere). A stage between
-   the echo and `xargs`, the pipe across a line break, and an emit past
+   (until 2026-11-09 it drew nothing anywhere); a top-level pipe across
+   a line break, or a comment between its stages, is one pipeline on
+   either tool and reads as its one-line twin (since 2026-11-10), except
+   inside a Bash command substitution and inside a program handed to
+   another shell (`bash -c '...'`, `eval '...'`, a heredoc fed to a
+   shell), where the line break still ends the reading, and in a
+   PowerShell command the guard cannot read whole (one past its length
+   cap, or holding an unterminated quote). A stage between
+   the echo and `xargs`, and an emit past
    the reader's bounds -- more than four words, a word past 80 characters,
    a separator quoted inside an emitted word, a quoted `echo` -- stay
    outside both tiers.
@@ -2099,6 +2107,11 @@ spellings of them are work:
   since the zone checks answer ahead of the nudge), a secret read is judged on the literal part of its operand, and a
   force push to an unresolvable remote draws its nudge
   (`tests/test_write_guard.py::TestTheCoverageContract::test_an_unresolvable_operand_on_a_kept_job_draws_the_conservative_verdict`).
+  The PowerShell tool is stricter by one declared exception (2026-11-10): a
+  forced recursive `Remove-Item` of a variable with no literal binding, and a
+  piped sweep of one (`gci $f -Recurse | ri -r`), forced or not, stay the wall
+  on the re-issue too, while the unforced `Remove-Item $f -Recurse` draws the
+  nudge as Bash does (pinned in the same test class, each row issued twice).
   A conservative refusal that goes quiet is a defect, not a limit.
 - **Outside it, and seen by no reader.** An encoded program, a script file
   whose contents are the program, and a program assembled from pieces nothing

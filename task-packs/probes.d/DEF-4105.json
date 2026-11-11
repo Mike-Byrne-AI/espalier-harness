@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4105",
+ "subject": ".github/workflows/test.yml",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the oracle is a CI run's log listing each test's time beside its own ceiling; where the report lives (a pytest plugin in the test tree, or a workflow step over the junit report) is the fix's choice, so no one-line probe can name what to look for before it lands",
+ "row_sha": "1e943bca5e5e",
+ "text_sha": "38abb8ee1871",
+ "verified_2026_11_10": "OPEN (filed 2026-11-10; probe driven at filing)"
+}
