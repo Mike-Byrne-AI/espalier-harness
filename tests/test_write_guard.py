@@ -4553,9 +4553,11 @@ class TestARemoveSpanEndsWhereItsBlockCloses:
         `_ps_piped_remove_matches` (DEF-3066). Grows deliberately."""
         import ast
 
+        from tests._live_tree import checkout_rglob
+
         walkers = {"_PS_REMOVE_ITEM_RE": "_ps_remove_items", "_PS_PIPED_REMOVE_RE": "_ps_piped_remove_matches"}
         found: dict[str, set[str]] = {name: set() for name in walkers}
-        for path in sorted((HOOKS_DIR.parent).rglob("*.py")):
+        for path in sorted(checkout_rglob(HOOKS_DIR.parent, "*.py")):
             tree = ast.parse(path.read_text(encoding="utf-8"))
             for top in tree.body:
                 for sub in ast.walk(top):
