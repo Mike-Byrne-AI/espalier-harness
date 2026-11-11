@@ -6977,15 +6977,35 @@ def _statement_words(
     return words, heredoc_op, herestring
 
 
-def _pipe_scan(command: str) -> str:
+def _pipe_scan(
+    command: str, inner: Callable[[int, int], str | None] | None = None,
+) -> str:
     """The command with every quoted span (single, double, ANSI-C), every
     backslash-escaped character and every comment blanked to spaces, the
     same length, newlines outside them kept: the text the pipe arm reads
     separators and consumers from, independent of rule (2). A heredoc body
     is not blanked here (a pipe on a body line would be read as a consumer:
-    the over-read direction, a scan of data as a program)."""
+    the over-read direction, a scan of data as a program).
+
+    ``inner``, where given, is told about the body of each outermost command
+    substitution, backtick substitution, single- and double-quoted span, as
+    ``inner(lo, hi)`` over ``command[lo:hi]`` (an ANSI-C span's body only
+    where it holds no backslash: escapes are not read). A string of that
+    length coming back replaces
+    the body's blank (its delimiters stay blank); None keeps the blank. The
+    splicer's program pre-pass is its one caller (`_splice_program_bodies`,
+    which only collects the spans); every other reader takes the blank."""
     out = list(command)
     n = len(command)
+
+    def blank(lo: int, hi: int, body_lo: int, body_hi: int) -> None:
+        for k in range(lo, hi):
+            out[k] = " "
+        if inner is not None and body_lo < body_hi:
+            seen = inner(body_lo, body_hi)
+            if seen is not None and len(seen) == body_hi - body_lo:
+                out[body_lo:body_hi] = seen
+
     i = 0
     while i < n:
         c = command[i]
@@ -7013,16 +7033,14 @@ def _pipe_scan(command: str) -> str:
                     if depth == 0:
                         break
                 j += 1
-            for k in range(i, min(j + 1, n)):
-                out[k] = " "
+            blank(i, min(j + 1, n), i + 2, min(j, n))
             i = j + 1
             continue
         if c == "`":
             j = i + 1
             while j < n and command[j] != "`":
                 j += 2 if command[j] == "\\" else 1
-            for k in range(i, min(j + 1, n)):
-                out[k] = " "
+            blank(i, min(j + 1, n), i + 1, min(j, n))
             i = j + 1
             continue
         if c == "'" or (c == "$" and i + 1 < n and command[i + 1] == "'"):
@@ -7030,8 +7048,13 @@ def _pipe_scan(command: str) -> str:
             j = i + (2 if ansi else 1)
             while j < n and command[j] != "'":
                 j += 2 if (ansi and command[j] == "\\") else 1
-            for k in range(i, min(j + 1, n)):
-                out[k] = " "
+            # An ANSI-C span's body is the program's text only where it
+            # holds no escape (`eval $'a |` + newline + `b'`); one that does
+            # is not read until its escapes are, so it is never handed on.
+            lo = i + 2 if ansi else i + 1
+            hi = min(j, n)
+            plain = not ansi or "\\" not in command[lo:hi]
+            blank(i, min(j + 1, n), lo, hi if plain else lo)
             i = j + 1
             continue
         if c == '"':
@@ -7039,8 +7062,7 @@ def _pipe_scan(command: str) -> str:
                 j = _close_double_quote(command, i)
             except _UnresolvedShellSyntax:
                 j = n - 1
-            for k in range(i, j + 1):
-                out[k] = " "
+            blank(i, j + 1, i + 1, j)
             i = j + 1
             continue
         if c == "#" and (i == 0 or command[i - 1] in " \t\n;|&("):
@@ -15236,6 +15258,7 @@ def _splice_replacement(match: "re.Match[str]") -> str:
     return "\n" if match.group(1) else ""
 
 
+@functools.lru_cache(maxsize=64)
 def splice_line_continuations(command: str) -> str:
     r"""The Bash readers' ONE raw pre-pass: `_splice_line_continuations`
     (its docstring is the contract -- the order rule, the heredoc rule), then
@@ -15266,6 +15289,76 @@ def splice_line_continuations(command: str) -> str:
 _PIPE_AT_LINE_END_RE = re.compile(r"\|&?[ \t\r]*[\n#]")
 
 
+#: How many programs deep the splicer splices a program inside a program
+#: (`bash -c 'x=$(...)'` is two). Past it a body is left as written: the
+#: under-read direction, a declared bound on spelling depth.
+_SPLICE_PROGRAM_MAX_DEPTH = 8
+
+
+@functools.lru_cache(maxsize=64)
+def _masked_or_raw(command: str) -> str:
+    """`mask_inert_syntax`, or the raw text where the mask would not line up
+    by offset (the masker fails closed to the raw text itself). Memoised, as
+    `_resolve_bash_discovered_heads` is: every reader splices the same text
+    again, and the splicer reads this mask only for a body holding a pipe at
+    a line end -- unmemoised, a 100-line commit message whose lines end in
+    a pipe cost the wall 8% more than main (measured in-process). The masker
+    reads no state but its text (no context variable on its call graph)."""
+    mask = mask_inert_syntax(command)
+    return mask if len(mask) == len(command) else command
+
+
+def _splice_program_bodies(
+    command: str, spans: list[tuple[int, int]], depth: int,
+) -> str:
+    """``command`` with the body of each program a shell reads in place,
+    among ``spans`` (the outermost substitution and quoted bodies holding a
+    pipe at a line end, which the splicer's own scan collected), spliced as
+    a command of its own, one level down: a command substitution
+    (`x=$(find / |` + newline + `...)`, DEF-3071) and a quoted program
+    (`bash -c '...'`, `eval '...'`, DEF-3073). The splicer's pipe join
+    reads `_pipe_scan`, which blanks those bodies whole, so a pipe ending
+    one of their lines was never at a line's live end and the next stage
+    stayed a statement of its own for every reader of both texts. Spliced
+    by the splicer itself, the body gets every rule the top level has --
+    the comment and blank-line gap, the heredoc opener that holds its
+    newline, the terminator a join never eats -- where a flat view of the
+    bodies joined `cat <<X |` to its own body line (the lane's first cut,
+    driven). Which span is a program is the masker's call
+    (`mask_inert_syntax`): a body it keeps verbatim is code; one whose
+    separators it blanked is data and is left alone (`echo 'a |` + newline
+    + `b'`). A quoted word inside a substitution is kept whole by the outer
+    mask and read again by the body's own, one level down. The mask is read
+    only here, so a command whose bodies hold no such pipe pays nothing for
+    it (the operator's 11-08 bound: no per-call weight for a spelling)."""
+    mask = _masked_or_raw(command)
+    out: list[str] = []
+    at = 0
+    for lo, hi in spans:
+        body = command[lo:hi]
+        if mask[lo:hi] != body:
+            continue
+        out.append(command[at:lo])
+        out.append(_splice_line_continuations(body, _depth=depth + 1))
+        at = hi
+    out.append(command[at:])
+    return "".join(out)
+
+
+def _pipe_stage_end(line: str, scan_line: str) -> int | None:
+    """Where ``line``'s pipeline stage ends when its last live character is a
+    pipe (`|` or `|&`) with only blanks, a comment or a lone continuation
+    backslash after it -- the length of the text the join keeps -- else
+    None. ``scan_line`` is `_pipe_scan`'s slice for the line. One home for
+    the splicer's two joins, the top level's and a program body's."""
+    stage = scan_line.rstrip(" \t\r")
+    rest = line[len(stage):]
+    if (stage.endswith("|") or stage.endswith("|&")) and (
+            _blank_or_comment(rest) or rest.strip() == "\\"):
+        return len(stage)
+    return None
+
+
 def _blank_or_comment(text: str) -> bool:
     """``text`` holds nothing bash runs: blanks, or a comment from its first
     word on. Read on the RAW text, beside `_pipe_scan`'s blank: a quoted
@@ -15275,7 +15368,7 @@ def _blank_or_comment(text: str) -> bool:
     return not word or word.startswith("#")
 
 
-def _splice_line_continuations(command: str) -> str:
+def _splice_line_continuations(command: str, _depth: int = 0) -> str:
     r"""Join physical lines a trailing backslash continues, into logical ones.
 
     ⚠ Callers want the public `splice_line_continuations`: this one does NOT
@@ -15328,6 +15421,31 @@ def _splice_line_continuations(command: str) -> str:
     """
     if "\\" not in command and not _PIPE_AT_LINE_END_RE.search(command):
         return command
+    #: The outermost substitution and quoted bodies holding a pipe at a line
+    #: end, collected by the scan below as it blanks them.
+    spans: list[tuple[int, int]] = []
+
+    def collect(lo: int, hi: int) -> None:
+        if (_depth < _SPLICE_PROGRAM_MAX_DEPTH
+                and _PIPE_AT_LINE_END_RE.search(command, lo, hi)):
+            spans.append((lo, hi))
+
+    #: The operators are read on the WHOLE command's quote-blanked twin,
+    #: sliced per line by offset (`_pipe_scan` keeps the length), never on a
+    #: line's own: a quoted span that opened on an earlier line hid nothing
+    #: from a per-line scan, so a heredoc operator mentioned inside a
+    #: multi-line commit message opened a body that never closed and no
+    #: continuation after it was spliced again (both reviews, driven with a
+    #: marker into a hook).
+    scan = _pipe_scan(command, collect)
+    if spans:
+        # A substitution's or an in-place program's own lines, first, as
+        # commands of their own (DEF-3071, DEF-3073): the loop below reads
+        # this scan, which blanks their bodies whole.
+        spliced = _splice_program_bodies(command, spans, _depth)
+        if spliced != command:
+            command = spliced
+            scan = _pipe_scan(command)
     lines = command.split("\n")
     parts: list[str] = []
     #: The line before ended in a pipe, so bash is still reading that
@@ -15343,29 +15461,46 @@ def _splice_line_continuations(command: str) -> str:
     #: line cannot be the terminator -- `x\` + newline + `EOF` is the body
     #: line `xEOF`, and the delimiter is still open (driven with a marker).
     continued = False
-    #: The operators are read on the WHOLE command's quote-blanked twin,
-    #: sliced per line by offset (`_pipe_scan` keeps the length), never on a
-    #: line's own: a quoted span that opened on an earlier line hid nothing
-    #: from a per-line scan, so a heredoc operator mentioned inside a
-    #: multi-line commit message opened a body that never closed and no
-    #: continuation after it was spliced again (both reviews, driven with a
-    #: marker into a hook).
-    scan = _pipe_scan(command)
     last = len(lines) - 1
     offset = 0
     for idx, line in enumerate(lines):
+        start = offset
         scan_line = scan[offset:offset + len(line)]
         offset += len(line) + 1
         if body is not None:
             delim, quoted, strip = body
             probe = line.lstrip("\t") if strip else line
+            cut = None if idx == last else _pipe_stage_end(line, scan_line)
             if not continued and probe.rstrip("\r").strip() == delim:
+                if pipe_open:
+                    # A program body's stage met its terminator: the newline
+                    # before it ends the body, so it is never joined away.
+                    parts.append("\n")
+                    pipe_open = False
                 body = queue.pop(0) if queue else None
                 parts.append(line)
+            elif pipe_open and idx < last and _blank_or_comment(line):
+                continue
+            elif (cut is not None and not _HEREDOC_OPERATOR_RE.search(scan_line)
+                    and _masked_or_raw(command)[start:offset] == command[start:offset]):
+                # A body a shell reads (`bash <<'E'`): the masker kept its
+                # line and the newline after it, so the program's shell
+                # reads that newline, and a pipe at the line's live end
+                # takes its next stage from the lines after it (DEF-3073).
+                # A data body (`cat <<'E'`) is blanked there and joins
+                # nothing; the terminator check above runs first, and a
+                # line opening a heredoc of the program's own holds its
+                # newline for that body, as at the top level.
+                parts.append(line[:cut] + " ")
+                pipe_open = True
+                continued = False
+                continue
             elif quoted:
+                pipe_open = False
                 parts.append(line)
                 continued = False
             else:
+                pipe_open = False
                 text, joined = _spliced_line(line, idx == last)
                 parts.append(text)
                 continued = joined
@@ -15391,12 +15526,12 @@ def _splice_line_continuations(command: str) -> str:
             # ONE pipeline (driven). Joined here, every pipe reader of both
             # texts reads the stage it was hidden from (the comment and the
             # newline went to no reader's stage pattern). A line that opened
-            # a heredoc is left alone: its body follows this newline.
-            stage = scan_line.rstrip(" \t\r")
-            rest = line[len(stage):]
-            if (stage.endswith("|") or stage.endswith("|&")) and (
-                    _blank_or_comment(rest) or rest.strip() == "\\"):
-                parts.append(line[:len(stage)] + " ")
+            # a heredoc is left alone: its body follows this newline. A
+            # substitution's or an in-place program's own lines were joined
+            # by the same rule before this loop (`_splice_program_bodies`).
+            cut = _pipe_stage_end(line, scan_line)
+            if cut is not None:
+                parts.append(line[:cut] + " ")
                 pipe_open = True
                 continue
         text, joined = _spliced_line(line, idx == last)

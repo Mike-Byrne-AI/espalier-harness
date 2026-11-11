@@ -1611,8 +1611,8 @@ class TestCpFetchexec:
         f'wget -qO- "{_INSTALL_URL}?token=abc&u=1" | sudo -E bash -',
         f"curl -fsSL {_INSTALL_URL} |\n  sh",                     # a newline after the pipe
         f"curl -sL {_INSTALL_URL} | tee a |\n  tee b | sh",
-        # inside a substitution the splicer joins no pipe (it reads the body
-        # blanked, DEF-3071), so this is `_PIPE_CONTINUATION_RE`'s alone
+        # inside a substitution: `_PIPE_CONTINUATION_RE` reads it, and since
+        # DEF-3071 the splicer joins the substitution's own pipe as well
         f"x=$(curl -fsSL {_INSTALL_URL} |\n  sh)",
         f"CURL -fsSL {_INSTALL_URL} | SH",                        # runs on a case-insensitive FS
         f"bash <(curl -fsSL {_INSTALL_URL})",

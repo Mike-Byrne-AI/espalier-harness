@@ -1531,14 +1531,13 @@ first; the dangerous-command catch is a secondary slip-catcher):
    direct twin `rm -rf "$D"` draws (the nudge for a variable or a source
    directory, silence for a roster word or a temp directory), wherever it
    sits -- the top level, a chain, an `if`, a loop body whatever its head
-   (until 2026-11-09 it drew nothing anywhere); a top-level pipe across
-   a line break, or a comment between its stages, is one pipeline on
-   either tool and reads as its one-line twin (since 2026-11-10), except
-   inside a Bash command substitution and inside a program handed to
-   another shell (`bash -c '...'`, `eval '...'`, a heredoc fed to a
-   shell), where the line break still ends the reading, and in a
-   PowerShell command the guard cannot read whole (one past its length
-   cap, or holding an unterminated quote). A stage between
+   (until 2026-11-09 it drew nothing anywhere); a pipe across a line
+   break, or a comment between its stages, is one pipeline on either tool
+   and reads as its one-line twin (since 2026-11-10), and so is one inside
+   a Bash command substitution or inside a program a shell reads in place
+   (`bash -c '...'`, `eval '...'`, a heredoc fed to a shell; since
+   2026-11-11), except in a PowerShell command the guard cannot read whole
+   (one past its length cap, or holding an unterminated quote). A stage between
    the echo and `xargs`, and an emit past
    the reader's bounds -- more than four words, a word past 80 characters,
    a separator quoted inside an emitted word, a quoted `echo` -- stay

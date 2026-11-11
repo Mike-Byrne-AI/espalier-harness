@@ -16928,8 +16928,11 @@ class TestAGapAfterAPipeIsRead:
     of either text reads the stage. A one-off measurement, not a pin: a
     census over the corpus's pipe rows, rewriting each live pipe with every
     gap here, found 1224 variants losing a verdict their twin had, and none
-    after (2026-11-10; it rewrote top-level pipes only, so a program another
-    shell reads is DEF-3071's and DEF-3073's, below)."""
+    after (2026-11-10; it rewrote top-level pipes only). A program a shell
+    reads in place -- a substitution, a quoted `-c` or `eval` program, a
+    heredoc fed to a shell -- is spliced as a command of its own first
+    (`_splice_program_bodies`, DEF-3071 and DEF-3073), so a gap inside one
+    is read the same way, below."""
 
     @pytest.mark.parametrize("tool, twin, expect", _PIPE_GAP_TWINS)
     def test_the_one_line_twin_holds_its_verdict(self, tmp_path, tool, twin, expect):
@@ -16970,6 +16973,25 @@ class TestAGapAfterAPipeIsRead:
         ("cat <<'EOF' |\nbody\nEOF\nb", "cat <<'EOF' |\nbody\nEOF\nb"),
         ('a | "x\ny"', 'a | "x\ny"'),
         ('a |\n"x\ny"', 'a | "x\ny"'),
+        # a program a shell reads in place is spliced as its own command
+        # (DEF-3071, DEF-3073), its gaps and its heredoc rules included
+        ("x=$(a |\nb)", "x=$(a | b)"),
+        ("x=`a | # c\nb`", "x=`a | b`"),
+        ("bash -c 'a |\n\n# c\nb'", "bash -c 'a | b'"),
+        ("eval 'a | # c\nb'", "eval 'a | b'"),
+        ("eval $'a |\nb'", "eval $'a | b'"),
+        ("bash -c 'x=$(a |\nb)'", "bash -c 'x=$(a | b)'"),
+        ("bash <<'E'\na | # c\n# d\nb\nE", "bash <<'E'\na | b\nE"),
+        # the program's own heredoc opener holds its newline, and a join
+        # never eats a terminator (the lane's first cut did both, driven)
+        ("bash -c 'cat <<X |\nbody\nX'", "bash -c 'cat <<X |\nbody\nX'"),
+        ("bash <<E\na |\nE\nb", "bash <<E\na | \nE\nb"),
+        # data is not a program: the masker blanks its separators
+        ("cat <<E\na |\nb\nE", "cat <<E\na |\nb\nE"),
+        ("echo 'a |\nb'", "echo 'a |\nb'"),
+        ("x=$(echo 'a |\nb')", "x=$(echo 'a |\nb')"),
+        # an ANSI-C body holding an escape is not read until its escapes are
+        ("eval $'a |\\nb'", "eval $'a |\\nb'"),
     ])
     def test_the_bash_join(self, cmd, joined):
         assert _bash_patterns_module().splice_line_continuations(cmd) == joined
@@ -17059,17 +17081,53 @@ class TestAGapAfterAPipeIsRead:
         assert len(cmd) > bp._BASH_COMMAND_CAP
         assert _delete_verdict(run_guard_from("Bash", cmd, tmp_path, tmp_path)) == "wall"
 
+    #: Where a program a shell reads in place goes: `{p}` is the program.
+    _IN_PLACE_PROGRAMS = {
+        # DEF-3071: a command substitution's body
+        "subst": "x=$({p})", "subst-arg": "echo $({p})", "backtick": "x=`{p}`",
+        "dq-subst": 'echo "$({p})"', "nested-subst": "x=$(echo $({p}))",
+        # DEF-3073: a quoted program and a heredoc fed to a shell
+        "bash-c": "bash -c '{p}'", "sh-c": "sh -c '{p}'", "bash-c-dq": 'bash -c "{p}"',
+        "eval": "eval '{p}'", "eval-dq": 'eval "{p}"', "eval-ansi": "eval $'{p}'",
+        "heredoc-q": "bash <<'E'\n{p}\nE", "heredoc-u": "bash <<E\n{p}\nE",
+        "heredoc-sh": "sh <<'E'\n{p}\nE", "heredoc-dash": "bash <<-'E'\n{p}\nE",
+        "subst-in-bash-c": "bash -c 'x=$({p})'",
+    }
+
+    @pytest.mark.parametrize("form", list(_IN_PLACE_PROGRAMS))
+    @pytest.mark.parametrize("gap", _PIPE_GAPS["Bash"][:3])
+    def test_a_gap_inside_a_program_another_shell_reads_walls(self, tmp_path, form, gap):
+        # DEF-3071, DEF-3073: until 2026-11-11 each was allowed where its
+        # one-line twin walls -- the splicer read the body blanked, so the
+        # pipe ending its line was never at a live end
+        twin = self._IN_PLACE_PROGRAMS[form].format(p="find / -type f | xargs rm -rf")
+        cmd = self._IN_PLACE_PROGRAMS[form].format(p="find / -type f" + gap + "xargs rm -rf")
+        assert _delete_verdict(run_guard_from("Bash", twin, tmp_path, None)) == "wall", twin
+        assert _delete_verdict(run_guard_from("Bash", cmd, tmp_path, None)) == "wall", cmd
+
     @pytest.mark.parametrize("cmd", [
-        "bash -c 'find / -type f |\nxargs rm -rf'",
-        "bash -c 'find / -type f | # c\nxargs rm -rf'",
-        "eval 'find / -type f | # c\nxargs rm -rf'",
-        "bash <<'E'\nfind / -type f | # c\nxargs rm -rf\nE",
+        # a mention stays a mention: the masker blanks a data span's
+        # separators, so nothing in it is spliced as a program
+        "echo 'find / -type f |\nxargs rm -rf'",
+        'printf "find / -type f | # c\nxargs rm -rf"',
+        "cat > notes.md <<'E'\nfind / -type f |\nxargs rm -rf\nE",
+        "x=$(echo 'find / -type f |\nxargs rm -rf')",
+        "git commit -m 'notes |\n# heading\nfind / -type f |\nxargs rm -rf'",
+        "bash -c 'cat <<X |\nfind / -type f |\nxargs rm -rf\nX\nwc -l'",
     ])
-    def test_a_program_another_shell_reads_is_not_joined(self, tmp_path, cmd):
-        # DECLARED, DEF-3073: the splicer reads a quoted program and a heredoc
-        # body blanked, so a gap inside one is not joined (the one-line twin
-        # of each walls); the row's fix moves these to the wall
+    def test_data_inside_or_beside_a_program_is_not_joined(self, tmp_path, cmd):
         assert _delete_verdict(run_guard_from("Bash", cmd, tmp_path, None)) == "allow", cmd
+
+    @pytest.mark.parametrize("cmd", [
+        # a statement after a program's terminator is still read: a join
+        # that ate the terminator would hide it in a body that never closes
+        "bash -c 'bash <<E\nls |\nE\nrm -rf /'",
+        "bash <<E\nls |\nE\nrm -rf /",
+        "bash -c 'cat <<X |\ndata\nX\nrm -rf /'",
+        "x=$(ls |\nwc)\nrm -rf /",
+    ])
+    def test_a_statement_after_a_program_is_still_read(self, tmp_path, cmd):
+        assert _delete_verdict(run_guard_from("Bash", cmd, tmp_path, None)) == "wall", cmd
 
 
 class TestShellOutReader:
