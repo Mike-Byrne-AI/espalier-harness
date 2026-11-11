@@ -647,6 +647,50 @@ def _late_interpreter_hint(cmd: str, remedy: str, clears: bool, written: str) ->
     )
 
 
+def _rewire_target_hint(remedy: str, clears: bool, probed: str) -> str:
+    """The remedy for a wired interpreter the hooks cannot run on (one that
+    cannot start, or one below the floor), keyed on what
+    ``--rewire-interpreter`` would do here rather than on ``python3``: the
+    wired ``python3`` may be this very interpreter, and a working ``python``
+    is as good a target. ``(remedy, clears, probed)`` is :func:`_remedy_hint`'s
+    answer, which the caller already holds. The resolver refuses an
+    interpreter that cannot start or is below the floor, so ``clears`` is True
+    exactly when the rewire has a target; an identity read (is a ``python3``
+    on PATH at all) once said "a WORKING python3 IS on PATH" of a 3.10 one,
+    and the rewire it named found no target."""
+    if clears:
+        # "starts" only of a start that was seen (DEF-5014): the rewire takes
+        # its target on the banner when the probe never answered, so the
+        # remedy stands, and the sentence names the target (what the rewire
+        # WRITES, in a string of its own) and says only what was seen.
+        written = _resolver_hint()
+        unseen = start_unconfirmed_of(written)
+        target_said = (
+            f"`{written}` starts and clears the floor" if unseen is None
+            else f"`{written}` answers as Python {floor_text()}+ ({unseen})")
+        return target_said + (
+            f" -- run `{remedy} -m espalier init . "
+            f"--rewire-interpreter` to rewire the hooks to it."
+        )
+    if (target_unheard := _unheard_on_path()) is not None:
+        # A candidate never answered `--version` (DEF-5015): no proof that
+        # none is installed.
+        return (
+            f"{target_unheard}, so the rewire has no confirmed target yet"
+        ) + (
+            f" -- run `{remedy} -m espalier doctor .` again when the host is "
+            f"less loaded before putting another Python on PATH."
+        )
+    return (
+        f"nothing named {probed} on PATH starts and clears "
+        f"the {floor_text()} floor, so the rewire has no "
+        f"target yet -- put a Python {floor_text()}+ that "
+        f"starts on PATH (a fresh install, or a virtualenv "
+        f"made from one), then run "
+        f"`{remedy} -m espalier init . --rewire-interpreter`."
+    )
+
+
 # sister-site: ok purpose-scoped: the statusLine-fallback host key's seam, NOT _hook_utils._running_by_invoked_path (the interpreter-identity match's seam) -- one body, two concepts; a rule added there must not land here
 def _host_is_windows() -> bool:
     """Seam for the statusLine-fallback host key (tests patch this, not
@@ -1141,6 +1185,11 @@ def _check_python_resolver(
                         f"{BANNER_PROBE_SECONDS} s), and is below the floor. "
                         f"{does_not_run_sentence(late)} Then re-wire the hooks to it. "
                     )
+                    # Keyed on the floor as the below-floor branch is:
+                    # left to the `python3` arm, a below-floor `python3` was
+                    # called WORKING here too.
+                    remedy, clears, probed = remedy_answer = remedy_answer or _remedy_hint()
+                    start_hint = _rewire_target_hint(remedy, clears, probed)
                 elif late_start is not None and not late_start.startswith(START_TOO_SLOW):
                     problem = (
                         f"hook interpreter `{cmd}` resolves to `{resolved}` and "
@@ -1223,47 +1272,9 @@ def _check_python_resolver(
                         f"another virtualenv is one way to get here. "
                     )
                     # Its own remedy, keyed on what `--rewire-interpreter`
-                    # would do here rather than on `python3`: the wired
-                    # `python3` may be this very interpreter, and a working
-                    # `python` is as good a target. The resolver now refuses
-                    # an interpreter that cannot start, so `clears` is True
-                    # exactly when the rewire has a target that starts.
+                    # would do here (`_rewire_target_hint`).
                     remedy, clears, probed = remedy_answer = remedy_answer or _remedy_hint()
-                    if clears:
-                        # "starts" only of a start that was seen (DEF-5014):
-                        # the rewire takes its target on the banner when the
-                        # probe never answered, so the remedy stands, and the
-                        # sentence names the target (what the rewire WRITES,
-                        # in a string of its own) and says only what was seen.
-                        written = _resolver_hint()
-                        unseen = start_unconfirmed_of(written)
-                        target_said = (
-                            f"`{written}` starts and clears the floor" if unseen is None
-                            else f"`{written}` answers as Python {floor_text()}+ ({unseen})")
-                        start_hint = target_said + (
-                            f" -- run `{remedy} -m espalier init . "
-                            f"--rewire-interpreter` to rewire the hooks to it."
-                        )
-                    elif (target_unheard := _unheard_on_path()) is not None:
-                        # A candidate never answered `--version` (DEF-5015): no
-                        # proof that none is installed.
-                        start_hint = (
-                            f"{target_unheard}, so the rewire has no confirmed "
-                            f"target yet"
-                        ) + (
-                            f" -- run `{remedy} -m espalier doctor .` again when "
-                            f"the host is less loaded before putting another "
-                            f"Python on PATH."
-                        )
-                    else:
-                        start_hint = (
-                            f"nothing named {probed} on PATH starts and clears "
-                            f"the {floor_text()} floor, so the rewire has no "
-                            f"target yet -- put a Python {floor_text()}+ that "
-                            f"starts on PATH (a fresh install, or a virtualenv "
-                            f"made from one), then run "
-                            f"`{remedy} -m espalier init . --rewire-interpreter`."
-                        )
+                    start_hint = _rewire_target_hint(remedy, clears, probed)
                 else:
                     # FOUR states, not three (DEF-636). "Is a Python 3" and
                     # "is a Python this package runs on" are different
@@ -1279,6 +1290,13 @@ def _check_python_resolver(
                         f"{does_not_run_sentence(interpreter_banner([resolved, *flags]) or '')} "
                         f"Then re-wire the hooks to it. "
                     )
+                    # The re-wire's remedy is keyed on the floor, as the
+                    # cannot-start branch's is: the `python3` arm below reads
+                    # identity alone, so with `python3` wired and PATH
+                    # `python3` at 3.10 it called that one WORKING and sent the
+                    # operator to a rewire that found no target.
+                    remedy, clears, probed = remedy_answer = remedy_answer or _remedy_hint()
+                    start_hint = _rewire_target_hint(remedy, clears, probed)
             elif _interpreter_start_unconfirmed([resolved, *flags]) is None:
                 continue  # resolves, is Python 3, clears the floor, starts.
             else:
@@ -1355,6 +1373,17 @@ def _check_python_resolver(
                 continue
             if start_hint is not None:
                 hint = start_hint
+            elif py3_present and is_python3_banner(
+                    py3_said := interpreter_banner([shutil.which("python3") or "python3"]) or ""
+            ) and not meets_python_floor(py3_said):
+                # A `python3` whose banner IS a Python 3 below the floor is no
+                # WORKING target: `py3_present` reads identity alone, and the
+                # rewire and the symlink the arm below names would wire that
+                # 3.10. Keyed on the floor as the below-floor branch is;
+                # a start that fails, or a banner that never
+                # answered, keeps the arms below.
+                remedy, clears, probed = remedy_answer = remedy_answer or _remedy_hint()
+                hint = _rewire_target_hint(remedy, clears, probed)
             elif py3_present and _interpreter_start_failure(
                 [shutil.which("python3") or "python3"]
             ) is None:

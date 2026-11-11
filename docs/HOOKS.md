@@ -639,6 +639,12 @@ install-ci` adds one).
   disableAllHooks: true in .claude/settings.json
 ```
 
+A settings file that exists but does not parse as JSON (or cannot be read) is
+not a kill switch: the scan could not answer for it. The `Integrity:` line then
+reads `UNREADABLE SETTINGS (1 file)  ->  fix its JSON; the kill-switch scan could
+not read it` (a kill switch in another file still outranks it), its own warning
+names the file, and the audit log records `session_settings_unreadable`.
+
 On a tree where `espalier install-ci` has written the CI gate (its guard and
 the workflow that runs it), the clause after "Past them," reads instead that
 the CI gate re-checks every pull request regardless of the local setting. The
@@ -2971,10 +2977,17 @@ operator setup is required on the typical distributions:
 **Below the floor.** When the interpreter init would wire is below Python
 3.11, init refuses before it writes any file: it says the harness does not
 run on Python <the version it found> and to update to Python 3.11 or newer
-to install and use it. There is no reduced mode and no partial install.
-`espalier doctor .` says the same of a tree already wired to one, and
-names the command to run after updating:
-`<python> -m espalier init . --rewire-interpreter`. The SessionStart
+to install and use it, or to put a Python 3.11 or newer on PATH as `python3`
+or `python`. That second remedy is for a host whose engine already runs on a
+newer Python than the one on PATH (installed through pipx or uv, say), because
+the hooks are wired to the first of those names that clears the floor. There
+is no reduced mode and no partial install.
+`espalier doctor .` says the floor's sentence of a tree already wired to one,
+then names the interpreter the re-wire would pick and the command,
+`<python> -m espalier init . --rewire-interpreter`, or says that no name it
+tries (`python`, `python3`, `py -3`) finds a Python that clears the floor yet,
+or that one of them did not answer in time, so the re-wire has no confirmed
+target until doctor is run again on a less loaded host. The SessionStart
 banner, run by that interpreter, says the floor's sentence alone and
 points at `espalier doctor .`.
 
