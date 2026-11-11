@@ -246,12 +246,17 @@ TEXT_OVER_OWN_SUBJECT = {
     # lane each-named-assertion-reds-on-its-mutation, the C36 class: each named
     # assertion tightened until its mutation reds; their probes read the old
     # assertion's spelling).
-    "DEF-450", "DEF-476", "DEF-483",
+    # DEF-476 and DEF-543 left on 2026-11-11 with their rows (struck by lane
+    # a-test-writing-the-live-chain-is-seen, the C42 class: the live chain is
+    # watched again, a move of its records attributed by the session
+    # registry; the allowlist keys on the module stem; their probes read the
+    # old watch tuple's and lookup's spelling).
+    "DEF-450", "DEF-483",
     # DEF-519 and DEF-593 left on 2026-10-08 with their rows (struck by lane
     # ledger-oldest-c: contract rule 2 names the live gate; the index parser
     # names the rows it cannot read).
     "DEF-516",
-    "DEF-523", "DEF-543",
+    "DEF-523",
     "DEF-576", "DEF-579", "DEF-588", "DEF-590", "DEF-623", "DEF-629",
     "DEF-644",  # DEF-631 struck 2026-10-09 (the landing-gate lane); its probe retired with it
     "DEF-645", "DEF-649", "DEF-660",
