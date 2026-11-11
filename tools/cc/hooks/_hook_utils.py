@@ -2258,6 +2258,43 @@ def session_marker_path(root: Path, sid: object) -> Path | None:
     return sessions_dir(root) / f"{safe}.json"
 
 
+#: The stamp a first-ask record carries (``task_router`` writes it to the
+#: minute, UTC): a record whose ``at`` is anything else is not one.
+HANDOFF_ASK_STAMP_RE = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\dZ")
+
+
+def handoff_ask_path(root: Path, sid: object) -> Path | None:
+    """``sid``'s first-ask record path (``HANDOFF_ASKED_SUFFIX`` beside its
+    marker), or None for an id nothing survives of. The one spelling of it:
+    ``task_router`` writes and forgets the record here, and the ship driver's
+    unfinished handoff reads it (:func:`recorded_handoff_ask`)."""
+    safe = safe_session_id(sid)
+    if not safe:
+        return None
+    return sessions_dir(root) / f"{safe}{HANDOFF_ASKED_SUFFIX}"
+
+
+def recorded_handoff_ask(root: Path, sid: object) -> tuple[str, int] | None:
+    """``(at, tokens)`` from the first-ask record the prompt router wrote for
+    ``sid`` under ``root`` when it first asked the session for the threshold
+    handoff; None when there is none, it does not parse, or it holds no
+    stamp and figure of the written shape. Never raises."""
+    path = handoff_ask_path(root, sid)
+    if path is None:
+        return None
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError):  # fail-open: ok deliberate -- no record, or one that does not parse: no ask is recorded, which each caller says in its own words
+        return None
+    if not isinstance(record, dict):
+        return None
+    at, tokens = record.get("at"), record.get("tokens")
+    if (isinstance(at, str) and HANDOFF_ASK_STAMP_RE.fullmatch(at)
+            and isinstance(tokens, int) and not isinstance(tokens, bool) and tokens >= 0):
+        return at, tokens
+    return None
+
+
 def _read_marker(path: Path) -> dict[str, Any]:
     """A marker's JSON object, or {} when there is no readable one (the mtime
     is the fact that counts a marker; its JSON is a courtesy)."""

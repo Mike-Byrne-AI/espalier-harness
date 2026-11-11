@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hook_utils import has_active_plan, hook_cwd, say_crash, say_once, read_stdin_safely, resolve_project_root, safe_session_id, touch_session_marker, window_key, atomic_write_text, HANDOFF_GATE_HOLD, HANDOFF_GATE_HOLD_RECHECK_S, handoff_context_threshold, handoff_push_on, read_context_from_transcript, sessions_dir, STATE_DIR, COLD_OPEN_FLAG, HANDOFF_ASKED_SUFFIX, OWN_CLEAR_TOLD_SUFFIX, ONCE_FLAG_PREFIX, TRANSCRIPT_TAIL_BYTES  # noqa: E402
+from _hook_utils import has_active_plan, hook_cwd, say_crash, say_once, read_stdin_safely, resolve_project_root, safe_session_id, touch_session_marker, window_key, atomic_write_text, HANDOFF_GATE_HOLD, HANDOFF_GATE_HOLD_RECHECK_S, handoff_context_threshold, handoff_push_on, read_context_from_transcript, sessions_dir, STATE_DIR, COLD_OPEN_FLAG, handoff_ask_path, recorded_handoff_ask, OWN_CLEAR_TOLD_SUFFIX, ONCE_FLAG_PREFIX, TRANSCRIPT_TAIL_BYTES  # noqa: E402
 import _reinject  # noqa: E402  -- the UserPromptSubmit generative recall dispatch
 
 # Keywords that suggest a multi-step task
@@ -107,13 +107,14 @@ _COLD_OPEN_DIRECTIVE = (
 # "commit and hand off" mid-lane: on a tree with `handoff_push` the handoff's
 # last step opens the lane's pull request with auto-merge armed, and a
 # half-finished lane must not ride that. A lane in hand finishes first; one the
-# window has no room left to finish is parked (`ship.py handoff --park`, which
-# pushes nothing and arms the own-clear, DEF-4104), never pushed.
+# window has no room left to finish is handed off unfinished (`ship.py
+# handoff --unfinished`, which pushes nothing and arms the own-clear,
+# DEF-4104, and runs only in a session this ask was recorded for), never pushed.
 _HANDOFF_ASK = (
     "[HARNESS] Context is {tokens}k, past the handoff threshold ({threshold}k, espalier.toml "
     "handoff_context_tokens). First asked {at} at {tokens0}k. Handoff replaces compaction: if a "
     "lane is in hand, finish it through its own landing and start no new job; where no room is "
-    "left to finish it, run /handoff with its push step python tools/cc/ship.py handoff --park "
+    "left to finish it, run /handoff with its push step python tools/cc/ship.py handoff --unfinished "
     "<what is left>, which pushes nothing and arms the clear; with no lane in hand and no handoff "
     "written since that ask, run /handoff now (it writes your row{push}). "
     "After the handoff take no new job (your own pull request's red or conflict, and a red "
@@ -128,7 +129,6 @@ _CONTEXT_UNREADABLE = (
 )
 _UNREADABLE_KEY = "context_unreadable"
 _SETTING_FAULT_KEY = "context_setting"
-_FIRST_ASK_STAMP_RE = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\dZ")
 
 
 def _setting_fault_once(root: Path, how: str) -> str | None:
@@ -151,10 +151,11 @@ def _forget_first_ask(root: Path, sid: str) -> None:
     """Below the threshold again (a compaction, or a figure that fell), the
     first-ask record is stale: the next crossing is a first ask of its own,
     not a quote of one hours old. Never raises."""
-    if not sid:
+    path = handoff_ask_path(root, sid)
+    if path is None:
         return
     try:
-        (sessions_dir(root) / f"{sid}{HANDOFF_ASKED_SUFFIX}").unlink(missing_ok=True)
+        path.unlink(missing_ok=True)
     except OSError:  # fail-open: ok deliberate -- a record that cannot be removed is quoted once more; the marker's sweep takes it
         pass
 
@@ -164,20 +165,17 @@ def _first_ask(root: Path, sid: str, tokens: int) -> tuple[str, int]:
     asked: read from the session's side file when there is one, else written
     now (this hook is that file's one writer, through the helper every marker
     write uses; the marker's sweeps retire it). A session with no usable id is
-    asked without a record, and ``at`` is now."""
+    asked without a record, and ``at`` is now. The record's path and its
+    reading are ``_hook_utils``'s (``handoff_ask_path``,
+    ``recorded_handoff_ask``), which the ship driver's unfinished handoff
+    reads too: it runs only in a session this hook asked."""
     at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
-    if not sid:
+    path = handoff_ask_path(root, sid)
+    if path is None:
         return at, tokens
-    path = sessions_dir(root) / f"{sid}{HANDOFF_ASKED_SUFFIX}"
-    try:
-        record = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, RecursionError):  # fail-open: ok deliberate -- no record yet, or one that does not parse: this prompt is the first ask, and the write below records it
-        record = None
-    if isinstance(record, dict):
-        held_at, held_tokens = record.get("at"), record.get("tokens")
-        if (isinstance(held_at, str) and _FIRST_ASK_STAMP_RE.fullmatch(held_at)
-                and isinstance(held_tokens, int) and not isinstance(held_tokens, bool) and held_tokens >= 0):
-            return held_at, held_tokens
+    held = recorded_handoff_ask(root, sid)
+    if held is not None:
+        return held
     try:
         atomic_write_text(path, json.dumps({"at": at, "tokens": tokens}))
     except OSError:  # fail-open: ok deliberate -- a state dir that cannot be written costs the record, never the ask; the next prompt asks again as the first
