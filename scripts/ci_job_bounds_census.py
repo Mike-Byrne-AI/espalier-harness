@@ -188,7 +188,13 @@ def serial_marks(files: tuple[str, ...]) -> list[tuple[str, str, float]]:
     read by the suite contract's own parser; a mark it cannot read is ``inf``."""
     if str(REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(REPO_ROOT))
-    from tests.test_test_suite_contract import _declared_timeout_sites
+    try:
+        from tests.test_test_suite_contract import _declared_timeout_sites
+    except ImportError as exc:  # fail-closed: the census refuses by name
+        raise RuntimeError(
+            "tests/test_test_suite_contract.py is not importable from this checkout: the "
+            "serial files' timeout marks are read on the self-host tree only"
+        ) from exc
 
     return [(rel, label, seconds) for rel in files
             for label, seconds, _slow in _declared_timeout_sites((REPO_ROOT / rel).read_text(encoding="utf-8"))]
