@@ -2961,14 +2961,15 @@ operator setup is required on the typical distributions:
 **Below the floor.** When the interpreter init would wire is below Python
 3.11, init refuses before it writes any file: it says the harness does not
 run on Python <the version it found> and to update to Python 3.11 or newer
-to install and use it, or to put a Python 3.11 or newer on PATH as `python3`
-or `python`. That second remedy is for a host whose engine already runs on a
-newer Python than the one on PATH (installed through pipx or uv, say), because
-the hooks are wired to the PATH name init finds. There is no reduced mode and
-no partial install.
-`espalier doctor .` says the same of a tree already wired to one, and
-names the command to run after updating:
-`<python> -m espalier init . --rewire-interpreter`. The SessionStart
+to install and use it, or to put a Python 3.11 or newer where `python`,
+`python3` or `py -3` finds it. That second remedy is for a host whose engine
+already runs on a newer Python than those names find (installed through pipx
+or uv, say), because the hooks are wired to the first of those names that
+clears the floor. There is no reduced mode and no partial install.
+`espalier doctor .` says the floor's sentence of a tree already wired to one,
+then names the interpreter the re-wire would pick and the command,
+`<python> -m espalier init . --rewire-interpreter`, or says that none of
+those names finds a Python that clears the floor yet. The SessionStart
 banner, run by that interpreter, says the floor's sentence alone and
 points at `espalier doctor .`.
 

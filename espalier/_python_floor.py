@@ -83,7 +83,7 @@ def parse_python_version(version_output: str) -> tuple[int, int] | None:
 _SPELLED_VERSION_RE = re.compile(r"Python\s+(\d+\.\d+(?:\.\d+)?[A-Za-z0-9]*)")
 
 
-def does_not_run_sentence(banner: str, where: str = "", *, engine_elsewhere: bool = False) -> str:
+def does_not_run_sentence(banner: str, where: str = "", *, resolver_names: str = "") -> str:
     """The one sentence every surface says about an interpreter below the
     floor (the operator's ruling of 2026-11-07: a dropped Python is dropped,
     never run in a reduced mode): the harness does not run on it, update.
@@ -95,20 +95,24 @@ def does_not_run_sentence(banner: str, where: str = "", *, engine_elsewhere: boo
     (``tools/cc/hooks/session_start.py``, which cannot import this and spells
     the same words) say it of an interpreter already wired, then the re-wire.
 
-    ``engine_elsewhere`` adds one clause, the PATH remedy, for a caller that
-    knows the interpreter it names is not the engine's own (the operator's
-    ruling 5ac0d1 on call 9b8073, option B: the engine on 3.11 through pipx or
-    uv, PATH ``python3`` at 3.10.12). The resolver takes the first of
-    ``python``, ``python3`` and ``py -3`` that clears the floor, so a newer one
-    on PATH under either bare name is what the wiring would pick. Off by
-    default: ``espalier/__init__.py`` is the engine itself below the floor, and
-    a hook cannot see the engine, so neither can say it (their words are
-    pinned to this default sentence).
+    ``resolver_names`` adds one clause, the resolver's remedy, for the two
+    sites that name the resolver's own answer when no candidate clears the
+    floor (TP-706's follow-on, option B of its floor-sentence call: the
+    engine on 3.11 through pipx or uv, PATH ``python3`` at 3.10.12): init's
+    refusal and the read-only warning. The resolver takes the first of its
+    candidates that clears the floor, so a newer Python under any of them is
+    what the wiring would pick. The caller renders the names
+    (``cli.resolver_candidate_names``), so this module, which imports only
+    ``re``, never spells a list that could drift from the resolver's. Off by
+    default: ``espalier/__init__.py`` is the engine itself below the floor, a
+    hook cannot see the resolver, and doctor names a WIRED interpreter, which
+    is below the floor with a good one possibly already on PATH; their words
+    stay the default sentence.
     """
     match = _SPELLED_VERSION_RE.search(banner or "")
     found = match.group(1) if match else f"older than {floor_text()}"
-    path_remedy = (f", or put a Python {floor_text()} or newer on PATH as python3 or python"
-                   if engine_elsewhere else "")
+    path_remedy = (f", or put a Python {floor_text()} or newer where {resolver_names} finds it"
+                   if resolver_names else "")
     return (f"The harness does not run on Python {found}{where}. Update to Python "
             f"{floor_text()} or newer to install and use it{path_remedy}.")
 

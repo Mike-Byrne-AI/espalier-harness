@@ -866,8 +866,12 @@ def _warn_interpreter_below_floor(
         )
     else:
         after = f"After upgrading, re-wire with `{remedy} -m espalier init . --rewire-interpreter`."
+    # The resolver's own answer, below the floor: its remedy rides here as at
+    # the refusal (TP-706's floor-sentence call).
     print(
-        "WARNING: " + does_not_run_sentence(said, f" ({name} at {resolved})")
+        "WARNING: "
+        + does_not_run_sentence(said, f" ({name} at {resolved})",
+                                resolver_names=resolver_candidate_names())
         + _unheard_beside(mute) + " " + after,
         file=sys.stderr,
     )
@@ -919,12 +923,12 @@ def _refuse_below_floor_wiring(verb: str) -> "int | None":
     if _BELOW_FLOOR_ANSWER is None:
         return None
     (name, resolved, said), mute = _BELOW_FLOOR_ANSWER
-    # The engine running this cleared its own floor (`espalier/__init__.py`),
-    # so the interpreter named here is never the engine's: say the PATH remedy
-    # too (the operator's ruling 5ac0d1, option B).
+    # No candidate cleared the floor, so a newer Python under any of the
+    # resolver's names is the other remedy (TP-706's floor-sentence call).
     print(
         f"[{verb}] FAIL: "
-        + does_not_run_sentence(said, f" ({name} at {resolved})", engine_elsewhere=True)
+        + does_not_run_sentence(said, f" ({name} at {resolved})",
+                                resolver_names=resolver_candidate_names())
         + " Nothing was written." + _unheard_beside(mute),
         file=sys.stderr,
     )
