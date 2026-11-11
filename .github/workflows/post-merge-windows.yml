@@ -56,9 +56,11 @@ jobs:
     # tests/test_verify_pins.py, a serial file since DEF-2036; a mark outranks
     # the ceiling below) plus this job's worst green run, 12.9 min over its last
     # 20 runs (median 10.7, 2026-11-11, scripts/ci_job_bounds_census.py): the
-    # floor tests/test_ci_job_bounds.py derives for every job that runs the
+    # floor scripts/ci_job_bounds_census.py reads for every job that runs the
     # serial files (DEF-2038), so a slow test is failed by its own mark, by
-    # name, before the job is killed.
+    # name, before the job is killed. The shallow checkout below skips that
+    # file's controls, so here the floor is conservative by its 15 minutes over
+    # the next mark (900 s); the one rule is kept over a per-job reading.
     timeout-minutes: 45
     steps:
       # A shallow checkout, as the measured portability runs made it: the one

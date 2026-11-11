@@ -257,8 +257,8 @@ jobs:
     # module mark of tests/test_verify_pins.py) plus this job's worst green run,
     # 23.5 min over its last 20 runs (median 17.8, 2026-11-11,
     # scripts/ci_job_bounds_census.py), so a slow test is failed by its own mark,
-    # by name, before the job is killed with none named. tests/test_ci_job_bounds.py
-    # holds the figure and derives the floor; it reds when the serial files change.
+    # by name, before the job is killed with none named. The census prints this
+    # floor at every re-measure; tests/test_ci_job_bounds.py holds the figure.
     timeout-minutes: 55
     strategy:
       fail-fast: false

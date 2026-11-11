@@ -808,6 +808,20 @@ class TestNotSlowLegBound:
         assert wall_s >= release_check.NOT_SLOW_LEG_BOUND_S + 600, (
             wall_s, release_check.NOT_SLOW_LEG_BOUND_S)
 
+    def test_the_derived_bound_outlasts_a_serial_test_at_its_mark(self):
+        """The child runs the serial files unsplit, so its bound keeps the floor
+        every job that runs them keeps (DEF-2038): their worst per-test mark plus
+        the recorded leg, so a hung test is cut by its own mark, naming it, before
+        the child's bound cuts the leg with none named. Twice the leg holds it only
+        while the leg is longer than the mark. Dies to: a re-record under 1800 s
+        on a faster runner, or a serial mark raised past what twice the leg holds."""
+        pytest.importorskip("yaml", reason="PyYAML not installed -- run `pip install -e .[dev]`")
+        from tests.test_ci_job_bounds import _worst_serial_mark
+
+        mark = _worst_serial_mark()
+        assert release_check.NOT_SLOW_LEG_BOUND_S >= mark + release_check.NOT_SLOW_LEG_MEASURED_S, (
+            release_check.NOT_SLOW_LEG_BOUND_S, mark, release_check.NOT_SLOW_LEG_MEASURED_S)
+
     def test_check_tests_pass_hands_the_child_the_derived_bound(self, monkeypatch):
         monkeypatch.setenv("ESPALIER_RELEASE_CHECK_WITH_TESTS", "1")
         seen: dict = {}
