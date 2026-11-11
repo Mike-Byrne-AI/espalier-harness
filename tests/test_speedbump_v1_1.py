@@ -272,9 +272,31 @@ class TestCpMcpAnchorReadsLikeTheNormaliser:
 
     @pytest.mark.skipif(os.name == "nt", reason="the file URI of a drive path is a separate spelling")
     def test_a_file_uri_in_the_checkout_defers(self, tmp_path):
+        # Built raw, as the zone check's own file-URI row is: as_uri() spells
+        # a space in the basetemp as an escape, which the cleaner reads as
+        # typed, so the row would test that limit on a spaced host and this
+        # defer everywhere else.
         r = tmp_path.resolve()
-        tool_input = {"from": (r / "a.txt").as_uri(), "to": (r / "b").as_uri()}
+        tool_input = {"from": "file://" + (r / "a.txt").as_posix(),
+                      "to": "file://" + (r / "b").as_posix()}
         assert _move(tool_input, r) is False
+
+    @pytest.mark.skipif(os.name == "nt", reason="the file URI of a drive path is a separate spelling")
+    def test_an_escaped_file_uri_of_a_checkout_file_is_nudged(self, tmp_path):
+        """A declared limit: the cleaner reads a file URI's escapes as typed,
+        so in a checkout whose path holds a space the escaped spelling of its
+        own file reads as outside it and the edit is nudged, the conservative
+        verdict on a kept job (docs/FAILURE_MODES.md 6.7). Spelled with the
+        escape written out, never via as_uri(), so the row holds an escape on
+        every cell; the raw spelling beside it defers."""
+        r = tmp_path.resolve() / "my repo"
+        r.mkdir()
+        escaped = "file://" + (r / "src" / "a.py").as_posix().replace(" ", "%20")
+        raw = "file://" + (r / "src" / "a.py").as_posix()
+        assert "%20" in escaped
+        edit = "mcp__filesystem__edit_file"
+        assert _speedbump._pred_mcp_sideeffect(edit, {"path": escaped, "edits": []}, r) is True
+        assert _speedbump._pred_mcp_sideeffect(edit, {"path": raw, "edits": []}, r) is False
 
 
 # ── An always-external verb never defers ───────────────────────────────────
