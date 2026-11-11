@@ -59,7 +59,6 @@ import os
 import posixpath
 import re
 import shutil
-import sys
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -466,13 +465,12 @@ class SandboxState:
 # -- the host seams (tests patch these) --------------------------------------------------
 
 
-def _host_is_macos() -> bool:
-    return sys.platform == "darwin"
-
-
 def _osrelease() -> str:
-    """The kernel release (``uname -r``) as Linux and WSL publish it; ``""``
-    where the file is not there (macOS, a test on Windows)."""
+    """The kernel release (``uname -r``) as Linux and WSL publish it under
+    ``/proc``; ``""`` where the file is not there (macOS, whose sandbox is
+    built in, or a test on Windows). It is the Linux witness: the harness
+    compares ``sys.platform`` with ``win32`` alone
+    (``tests/test_axis_registry.py``), so no ``darwin`` read is added."""
     try:
         with open(_OSRELEASE, encoding="utf-8", errors="replace") as handle:
             return handle.read().strip()
@@ -551,7 +549,8 @@ def read_state(
     the project and local files (a ``./`` entry in the user file resolves
     under ``~/.claude``, so it counts for nothing here); malformed keys named;
     the user scope's ``allowUnsandboxedCommands`` and ``failIfUnavailable``
-    by the same precedence as ``enabled``. On a POSIX host other than macOS,
+    by the same precedence as ``enabled``. On Linux and WSL (a host with a
+    kernel release under ``/proc``; macOS has none and its sandbox is built in),
     whether the sandbox can start at all: WSL1 from the kernel release, else
     ``bwrap`` and ``socat`` on the PATH ``environ`` names (``os.environ``
     when it is ``None``). Where they are missing Claude Code runs commands
@@ -585,11 +584,13 @@ def read_state(
             state.fail_if_unavailable = sandbox[FAIL_KEY]
             state.fail_source = label
             break
-    if state.supported and not _host_is_macos():
-        # Linux or WSL: the sandbox needs two binaries, and WSL1 has none.
-        # PATH is the environment's doctor was handed (the ledger probe
-        # passes its own), never a second read of os.environ.
-        state.wsl1 = is_wsl1(_osrelease())
+    release = _osrelease() if state.supported else ""
+    if release:
+        # Linux or WSL (a kernel release under /proc): the sandbox needs two
+        # binaries, and WSL1 has none. PATH is the environment doctor was
+        # handed (the ledger probe passed its own), never a second read of
+        # os.environ.
+        state.wsl1 = is_wsl1(release)
         if not state.wsl1:
             search_path = (os.environ if environ is None else environ).get("PATH", os.defpath)
             state.missing_tools = [package for binary, package in LINUX_DEPENDENCIES

@@ -520,7 +520,6 @@ class TestDoctorsThreeStates:
 
     @pytest.fixture(autouse=True)
     def _a_linux_host_with_its_dependencies(self, monkeypatch):
-        monkeypatch.setattr(sp, "_host_is_macos", lambda: False)
         monkeypatch.setattr(sp, "_osrelease", lambda: "6.1.0-generic")
         monkeypatch.setattr(sp, "_which", lambda name, path: f"/usr/bin/{name}")
 
@@ -672,9 +671,11 @@ class TestDoctorSaysWhenTheSandboxCannotStart:
     when ``sandbox.failIfUnavailable`` is true (code.claude.com/docs/en/
     sandboxing, read 2026-11-11). Doctor read the posture from the settings
     alone and said ``on`` there. It now checks both binaries on the PATH the
-    environment it reads names, and the kernel release for WSL1, on a POSIX
-    host other than macOS (where the sandbox is built in), and warns where
-    the sandbox is on and cannot start. It names the install line and
+    environment it reads names, and the kernel release for WSL1, on a host
+    with a kernel release under /proc (Linux and WSL; macOS has none, and
+    its sandbox is built in; the release is the Linux witness because the
+    harness compares sys.platform with win32 alone), and warns where the
+    sandbox is on and cannot start. It names the install line and
     ``failIfUnavailable``, which it never writes: that is the operator's call.
     Driven 2026-11-11 on this box's WSL2 Ubuntu 24.04: neither package
     installed, kernel release ``6.18.33.2-microsoft-standard-WSL2``."""
@@ -682,14 +683,13 @@ class TestDoctorSaysWhenTheSandboxCannotStart:
     WSL2 = "6.18.33.2-microsoft-standard-WSL2"
     WSL1 = "4.4.0-19041-Microsoft"
 
-    def _host(self, monkeypatch, *, macos=False, osrelease="6.1.0-generic", present=("bwrap", "socat")):
+    def _host(self, monkeypatch, *, osrelease="6.1.0-generic", present=("bwrap", "socat")):
         seen: list[tuple[str, str | None]] = []
 
         def which(name, path):
             seen.append((name, path))
             return f"/usr/bin/{name}" if name in present else None
 
-        monkeypatch.setattr(sp, "_host_is_macos", lambda: macos)
         monkeypatch.setattr(sp, "_osrelease", lambda: osrelease)
         monkeypatch.setattr(sp, "_which", which)
         return seen
@@ -742,8 +742,8 @@ class TestDoctorSaysWhenTheSandboxCannotStart:
         assert len(hits) == 1 and "WSL1" in hits[0] and "WSL2" in hits[0] and "bubblewrap" not in hits[0], warnings
         assert any("wsl --set-version" in s for s in steps), steps
 
-    def test_macos_is_not_checked(self, tmp_path, monkeypatch):
-        seen = self._host(monkeypatch, macos=True, present=())
+    def test_a_host_with_no_kernel_release_like_macos_is_not_checked(self, tmp_path, monkeypatch):
+        seen = self._host(monkeypatch, osrelease="", present=())
         state = self._state(tmp_path, {"enabled": True}, path="")
         info, warnings, _steps = sp.doctor_lines(state, remedy_py=PY)
         assert seen == [] and warnings == [], warnings
@@ -793,7 +793,6 @@ class TestDoctorSaysWhenTheSandboxCannotStart:
         the strike's guard. ``raising=False`` lets it run at a base without
         the seams, where it reds by its assertion (no warning), not by a
         missing name."""
-        monkeypatch.setattr(sp, "_host_is_macos", lambda: False, raising=False)
         monkeypatch.setattr(sp, "_osrelease", lambda: "6.1.0-generic", raising=False)
         state = self._state(tmp_path, {"enabled": True}, path="")
         warnings = sp.doctor_lines(state, remedy_py=PY)[1]
