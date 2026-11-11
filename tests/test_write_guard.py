@@ -13377,26 +13377,33 @@ class TestATypographicQuoteClosesAPowerShellString:
             inner = '"$(Write-Output ' + inner + ')"'
         assert_hook_allowed(_run_ps_guard("Write-Output " + inner, tmp_path))
 
-    def test_a_dispatch_leaves_no_fold_behind(self, tmp_path, monkeypatch):
-        """An in-process smart-quoted dispatch, then the two gates called
-        directly on a straight command: each gives its relief, since the
-        dispatch's raise is reset on the way out (the failure-mode review
-        drove both gates off after one, at the lane's first fix)."""
+    def test_no_fold_reaches_another_judgment(self):
+        """In one process: a fold made outside any judgment (a direct scan, as
+        another test makes), then the straight test run, the typographic one
+        and the straight one again, each judged in-process as the polarity
+        file judges them. Each straight run keeps its relief, the typographic
+        one is denied as the hook denies it, and no raise is left behind (the
+        failure-mode review drove both gates off after one smart-quoted
+        dispatch; the full tier, after a direct scan in another test)."""
         import contextlib
         import io
 
-        _bash_patterns_module()  # puts the hooks folder on sys.path
+        bp = _bash_patterns_module()  # puts the hooks folder on sys.path
         import write_guard as wg
 
-        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
-        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path))
-        monkeypatch.delenv("ESPALIER_MAINTENANCE_MODE", raising=False)
-        with contextlib.redirect_stdout(io.StringIO()):
-            wg._run_main({"tool_name": "PowerShell",
-                          "tool_input": {"command": "Write-Output " + _LDQ + "hi" + _RDQ}})
-        assert _bash_patterns_module().FOLD_MOVED_A_QUOTE.get() is False
-        assert wg._ps_quoted_mentions("$hint = 'gc .env'")
-        assert wg._ps_blank_quoted_spans("pytest 'work/Claude Code/tests'") is not None
+        def denies(command: str) -> bool:
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = wg.check_powershell({"command": command})
+            return bool(rc) or '"deny"' in buf.getvalue()
+
+        typographic = '$env:ESPALIER_STOP_GATE="full"; pytest ' + _LDQ + "work/Claude Code/tests" + _RDQ
+        straight = '$env:ESPALIER_STOP_GATE="full"; pytest "work/Claude Code/tests"'
+        bp.powershell_scan_text("Write-Output " + _LDQ + "hi" + _RDQ)
+        assert not denies(straight)
+        assert denies(typographic)
+        assert not denies(straight)
+        assert bp.FOLD_MOVED_A_QUOTE.get() is False
 
     def test_a_fold_of_a_fold_is_itself_over_a_seeded_sample(self):
         """The cache stores each fold as its own fold (`_PS_FOLDED`), sound only
@@ -13406,6 +13413,9 @@ class TestATypographicQuoteClosesAPowerShellString:
         import random
 
         bp = _bash_patterns_module()
+        # The class itself, U+2018 to U+201E, pinned whole, so the table and the
+        # tokens drawn from it below cannot narrow with it unseen.
+        assert bp.PS_TYPOGRAPHIC_QUOTES == "".join(map(chr, range(0x2018, 0x201F)))
         tokens = [*bp.PS_TYPOGRAPHIC_QUOTES, "'", '"', "$(", ")", "@'\n", "\n'@", '@"\n', '\n"@',
                   "${", "}", "`", "#", "\n", "; ", "gc .env", "x", " "]
         rng = random.Random(2040)

@@ -743,6 +743,45 @@ def _blank_quoted_spans(text: str) -> "str | None":
     return out
 
 
+#: True inside one judgment (`_one_judgment`): the two relief gates read the
+#: fold's raise only here, so a fold made outside any judgment (a direct scan
+#: in a test) reaches no gate, and every judgment starts with it lowered.
+_JUDGING: "contextvars.ContextVar[bool]" = contextvars.ContextVar("_JUDGING", default=False)
+
+
+def _one_judgment(fn: "Callable[..., int]") -> "Callable[..., int]":
+    """``fn``, an entry a judgment starts at (`_run_main`, and the checks an
+    in-process caller calls straight: `check_secret_path_access`,
+    `check_bash_dangerous_patterns`, `check_powershell`), as one judgment:
+    the outermost entry lowers the fold's raise
+    (`_bash_patterns.FOLD_MOVED_A_QUOTE`) as it starts and however it leaves,
+    and a nested one runs inside it unchanged, so the raise the dispatch's
+    fold makes reaches its legs and no other call (the failure-mode review
+    drove both gates off for an in-process caller after one smart-quoted
+    dispatch; the full tier, after a direct scan in another test). The
+    module is read from ``sys.modules``, where the pattern path's plain
+    import puts it, so a read-only call that never loads it loads nothing."""
+    @functools.wraps(fn)
+    def judgment(*args: Any, **kwargs: Any) -> int:
+        if _JUDGING.get():
+            return fn(*args, **kwargs)
+        _lower_the_fold()
+        token = _JUDGING.set(True)
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            _JUDGING.reset(token)
+            _lower_the_fold()
+    return judgment
+
+
+def _lower_the_fold() -> None:
+    """Lower `FOLD_MOVED_A_QUOTE` where the pattern module is loaded."""
+    raised = getattr(sys.modules.get("_bash_patterns"), "FOLD_MOVED_A_QUOTE", None)
+    if isinstance(raised, contextvars.ContextVar):
+        raised.set(False)
+
+
 def _ps_blank_quoted_spans(text: str) -> "str | None":
     """`_blank_quoted_spans` for the two PowerShell gates, or None wherever
     PowerShell can end a string somewhere the Bash grammar the blanking
@@ -763,7 +802,7 @@ def _ps_blank_quoted_spans(text: str) -> "str | None":
     (`_bash_patterns.FOLD_MOVED_A_QUOTE`): no relief, the edge the assign
     kept. A call whose folds moved nothing reads exactly as before."""
     _load_the_pattern_path()
-    if (_bash_patterns.FOLD_MOVED_A_QUOTE.get() or "--%" in text
+    if ((_JUDGING.get() and _bash_patterns.FOLD_MOVED_A_QUOTE.get()) or "--%" in text
             or any(q in text for q in _bash_patterns.PS_TYPOGRAPHIC_QUOTES)):
         return None
     blank = _blank_quoted_spans(text)
@@ -2148,6 +2187,7 @@ def _ps_secret_read_targets(command: str, _depth: int = 0) -> list[str]:
     return out
 
 
+@_one_judgment
 def check_secret_path_access(tool_name: str, tool_input: dict, root: Path) -> int:
     """Deny reads/writes of secret-bearing paths, for READ-ONLY tools too.
 
@@ -2934,6 +2974,7 @@ def check_bash_for_protected_symlinks(command: str, root: Path, cwd: Path | None
     return 0
 
 
+@_one_judgment
 def check_bash_dangerous_patterns(
     tool_input: dict, root: Path | None = None, cwd: Path | None = None,
 ) -> int:
@@ -3163,6 +3204,7 @@ def _derive_the_carve_out_pids() -> None:
     )
 
 
+@_one_judgment
 def check_powershell(
     tool_input: dict, root: Path | None = None, cwd: Path | None = None,
 ) -> int:
@@ -4205,32 +4247,7 @@ def _fold_the_powershell_command(tool_name: str, tool_input: dict) -> dict:
     return {**tool_input, "command": _bash_patterns.fold_powershell_quotes(tool_input["command"])}
 
 
-def _a_dispatch_resets_the_fold(fn: "Callable[..., int]") -> "Callable[..., int]":
-    """``fn`` (`_run_main`) with the fold's raise
-    (`_bash_patterns.FOLD_MOVED_A_QUOTE`) lowered as the call starts and
-    again however it leaves, so no fold reaches another call in the same
-    process (the failure-mode review drove both gates off for an in-process
-    caller after one smart-quoted dispatch). The module is read from
-    ``sys.modules``, where the pattern path's plain import puts it, so a
-    read-only call that never loads it loads nothing here."""
-    @functools.wraps(fn)
-    def dispatch(*args: Any, **kwargs: Any) -> int:
-        _lower_the_fold()
-        try:
-            return fn(*args, **kwargs)
-        finally:
-            _lower_the_fold()
-    return dispatch
-
-
-def _lower_the_fold() -> None:
-    """Lower `FOLD_MOVED_A_QUOTE` where the pattern module is loaded."""
-    raised = getattr(sys.modules.get("_bash_patterns"), "FOLD_MOVED_A_QUOTE", None)
-    if isinstance(raised, contextvars.ContextVar):
-        raised.set(False)
-
-
-@_a_dispatch_resets_the_fold
+@_one_judgment
 def _run_main(data: dict | None = None) -> int:
     if data is None:
         data = _hook_utils.read_stdin_safely()
