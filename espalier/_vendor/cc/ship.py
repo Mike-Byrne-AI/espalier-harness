@@ -1814,6 +1814,34 @@ def _seat_module():
     return _SEAT
 
 
+_PLAN = None
+
+
+def _plan_module():
+    """``execution_plan.py`` beside this script, loaded by path on the park's
+    first need of it (the demotion of a plan in progress); None where it is
+    not here or will not load (a fixture copying a subset of tools/cc, a kept
+    older copy), which the park refuses on before anything moves."""
+    global _PLAN
+    if _PLAN is None:
+        path = Path(__file__).resolve().parent / "execution_plan.py"
+        if not path.is_file():
+            return None
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_ship_execution_plan", path)
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["_ship_execution_plan"] = module  # registered before exec (3.14)
+        try:
+            spec.loader.exec_module(module)
+        except Exception:  # noqa: BLE001 -- fail-open with voice: the park names the missing demotion and refuses
+            sys.modules.pop("_ship_execution_plan", None)
+            return None
+        _PLAN = module
+    return _PLAN if callable(getattr(_PLAN, "demote_plan", None)) else None
+
+
 def _write_own_clear(root: Path, marker: dict) -> None:
     """The marker written whole and renamed into place: ASCII JSON ending in
     a newline, so the mod reads it with nothing beyond a JSON parse. The
@@ -2010,6 +2038,33 @@ def _window_checkout_holds(where: Path) -> str | None:
 #: re-primed window lands the lane before any new job (DEF-4057).
 LAND_FIRST = "THE HANDOFF DID NOT LAND THIS LANE."
 
+#: The first words of the brief's tail after a park (:func:`_park_half_built`):
+#: the re-primed window finishes the lane before any new job (DEF-4104).
+FINISH_FIRST = "THE HANDOFF PARKED THIS LANE HALF-BUILT."
+
+#: The handoff's flag for a lane its window cannot finish, and the subject of
+#: the one commit the park makes of the lane's tracked edits, which the next
+#: window takes back with a soft reset.
+PARK_FLAG = "--park"
+PARK_SUBJECT = "chore(lane): park the half-built lane at the threshold handoff"
+
+#: How many untracked file names a park's brief and line show before a count.
+PARK_UNTRACKED_SHOWN = 8
+
+
+class Parked(NamedTuple):
+    """What a park left, for the brief that names it to the next window: the
+    lane, what is left of it in the window's words, the park commit (empty
+    where the tracked tree was clean), the set-aside plan named from the root
+    and its task (empty where none was in progress), and the untracked files
+    the park left beside the lane."""
+    branch: str
+    text: str
+    park_commit: str
+    plan_record: str
+    plan_task: str
+    untracked: tuple[str, ...]
+
 
 def _brief_text(text: str) -> str:
     """A refusal's text as the brief may carry it: 7-bit ASCII (anything else
@@ -2061,6 +2116,45 @@ def _land_first_tail(held: Held, branch: str, lane_checkout: Path | None = None)
             "or the command the refusal above names (auto-merge that did not arm is armed by hand).")
 
 
+def _finish_first_tail(parked: Parked, lane_checkout: Path | None = None) -> str:
+    """What the re-primed window reads after its role brief when the handoff
+    parked a half-built lane (:func:`_park_half_built`): what is left, where
+    the lane waits (here, unpushed, no pull request, its claims and job
+    live), and the moves that give it back as it was -- the soft reset of the
+    park commit, the restore of the set-aside plan -- before the lane's own
+    procedure resumes. ``lane_checkout`` is the lane's checkout when it is not
+    the one the window was started in (DEF-5046): the tail names it."""
+    lane = _brief_text(parked.branch)
+    spot = "this checkout" if lane_checkout is None else _brief_text(str(lane_checkout))
+    there = "" if lane_checkout is None else " (run the commands below there)"
+    moves = []
+    if parked.park_commit:
+        moves.append(f"git reset --soft HEAD~1 while HEAD is {parked.park_commit[:12]} takes back the tracked "
+                     "edits the park committed")
+    else:
+        moves.append("the park committed nothing (the tracked tree was clean)")
+    if parked.plan_record:
+        # The interpreter this host resolves (DEF-383a: a bare name is not on
+        # every host); none clears the floor here, so the script is named alone.
+        hint = _shared_reader("python_command_hint")
+        word = _brief_text(hint() if hint is not None else "")
+        run = (f"{word} tools/cc/execution_plan.py restore" if word
+               else "tools/cc/execution_plan.py restore (run by a Python the harness supports; none was found "
+                    "here to name)")
+        moves.append(f"{run} {_brief_text(parked.plan_record)} puts back the plan it set aside "
+                     f"({_brief_text(parked.plan_task)})")
+    if parked.untracked:
+        shown = ", ".join(_brief_text(name) for name in parked.untracked[:PARK_UNTRACKED_SHOWN])
+        more = len(parked.untracked) - PARK_UNTRACKED_SHOWN
+        moves.append(f"{len(parked.untracked)} untracked file(s) sit beside it, uncommitted: {shown}"
+                     + (f" and {more} more" if more > 0 else ""))
+    return (f"\n\n{FINISH_FIRST} What is left: {_brief_text(parked.text)}\n"
+            f"The lane {lane} is committed in {spot} and unpushed, with no pull request, its row written; its "
+            f"claims and its job stay live{there}. The window that handed off had no room left to finish it; "
+            "this one finishes it before any new job, through its full procedure and its own landing (/handoff "
+            "opens it): first, " + "; ".join(moves) + ".")
+
+
 #: The mod's own first line for a window with no role brief (register.ts
 #: GENERIC_BRIEF says the same; tests/test_own_clear.py pins the two by
 #: phrase). It rides before a held tail, so a window with no seat name still
@@ -2070,12 +2164,14 @@ GENERIC_BRIEF = ("The previous session handed off and this window was cleared by
                  "clear: start no second one.")
 
 
-def arm_own_clear_here(root: Path, *, held: Held | None = None, by_hand: str | None = None) -> str:
+def arm_own_clear_here(root: Path, *, held: Held | None = None, by_hand: str | None = None,
+                       parked: Parked | None = None) -> str:
     """Arm the marker for the session this shell belongs to: the id Claude
     Code exports (:data:`SESSION_ID_ENV`), HEAD, and the seat's re-prime brief
     -- with, after a handoff that did not land (``held``), the refusal in the
     marker and the lane to land first appended to the brief (an unnamed seat's
-    window reads it after the mod's generic line); or, from the ``arm`` verb,
+    window reads it after the mod's generic line); after a park (``parked``),
+    the lane to finish appended the same way; or, from the ``arm`` verb,
     why it was armed by hand. Only where :func:`_own_clear_gate` lets it:
     elsewhere nothing is armed and the reason is the line."""
     why_not = _own_clear_gate()
@@ -2100,6 +2196,9 @@ def arm_own_clear_here(root: Path, *, held: Held | None = None, by_hand: str | N
         except Refused:
             branch = "(its branch could not be read)"
         brief = (role_brief or GENERIC_BRIEF) + _land_first_tail(held, branch, lane_checkout=root if elsewhere else None)
+    elif parked is not None:
+        landed, outcome = False, f"parked half-built: {parked.text}"
+        brief = (role_brief or GENERIC_BRIEF) + _finish_first_tail(parked, lane_checkout=root if elsewhere else None)
     elif by_hand:
         outcome = f"armed by hand: {by_hand}"
     line = arm_own_clear(where, session_id=session_id, head=head_sha(where), seat=seat, role=role, brief=brief,
@@ -2111,11 +2210,14 @@ def arm_own_clear_here(root: Path, *, held: Held | None = None, by_hand: str | N
     if held is not None:
         line += ("; with the refusal in its brief: this window is done with the lane, and the next window "
                  "lands the lane first")
+    elif parked is not None:
+        line += "; with the lane to finish in its brief: the next window finishes it before any new job"
     elif by_hand:
         line += f" (by hand: {by_hand})"
     if role_brief is None:
         line += (f"; no brief of its own rides it ({how}), so the mod re-primes with "
-                 + ("its generic line and the lane to land" if held is not None else "its own line"))
+                 + ("its generic line and the lane to land" if held is not None or parked is not None
+                    else "its own line"))
     return line
 
 
@@ -3511,9 +3613,132 @@ def _wait_for_pr_head(branch: str, sha: str) -> None:
         time.sleep(POLL_SECONDS)
 
 
+def _park_refusal(text: str) -> Refused:
+    return Refused(f"nothing parked: {text}")
+
+
+def _park_half_built(root: Path, text: str, *, dry_run: bool) -> Parked:
+    """The threshold handoff of a lane its window cannot finish (DEF-4104):
+    the plain handoff's push would open the half-built lane's pull request
+    with auto-merge armed, which the threshold rule forbids, and ``arm``
+    refuses a lane that is not on origin, so until this nothing armed and the
+    seat idled until a hand /clear. The park pushes nothing, opens nothing and
+    releases no claim (the lane's job stays live): it commits the tracked
+    edits as one park commit (:data:`PARK_SUBJECT`), sets a plan in progress
+    aside in the cold store (``execution_plan.demote_plan``, loaded by path),
+    names the untracked files, and returns what the brief tells the next
+    window (:func:`_finish_first_tail`), which ``handoff`` then arms. Those are
+    the three things the own-clear mod holds a clear on, a tracked edit and a
+    plan in progress among them, and the marker is armed at the HEAD the park
+    leaves. The origin rule is the by-hand arm's alone
+    (:func:`_lane_not_on_origin`: a lane cleared past unpushed and
+    unmentioned); this lane is named in the brief, as a held handoff's is.
+
+    Refused before anything moves, each the window's to settle: no text; a
+    window whose mod would read no marker (left as it is, the lane is what
+    that window reads); a checkout two live sessions share; a record file
+    with a conflict marker; a merge, cherry-pick or revert in progress; a
+    detached HEAD or the default branch (no lane to name); a lane whose
+    commits carry no Session Log row (the brief promises it, as the held
+    tail does); and a plan in progress the driver cannot set aside. A plan
+    that fails to move after the commit landed refuses naming the commit,
+    and the same verb run again finishes the park: HEAD already the park
+    commit with a clean tree is read as that commit."""
+    what = " ".join((text or "").split())
+    if not what:
+        raise _park_refusal(f"{PARK_FLAG} takes what is left of the lane, in words the next window reads "
+                            "(the review owed, the step it stopped at)")
+    why_not = _own_clear_gate()
+    if why_not:
+        raise _park_refusal(f"{why_not}. A park arms the clear for a window whose own-clear mod clears it; "
+                            "elsewhere the window is cleared by hand, and the lane left as it is -- its edits, "
+                            "its plan -- is what the next window reads")
+    _refuse_a_shared_checkout(root)
+    _refuse_a_marked_record(root)
+    for head, what_runs in (("MERGE_HEAD", "a merge"), ("CHERRY_PICK_HEAD", "a cherry-pick"),
+                            ("REVERT_HEAD", "a revert")):
+        rc, _, _ = _git("rev-parse", "-q", "--verify", head, cwd=str(root))
+        if rc == 0:
+            raise _park_refusal(f"{what_runs} is in progress ({head} exists): finish or abandon it first; a "
+                                "park would commit it half-made")
+    branch = current_branch()
+    base_ref = _base_ref_offline(root)
+    if base_ref is None:
+        raise _park_refusal("no origin/<default branch> ref is here to tell the lane from the base: "
+                            "git fetch origin, then park")
+    base = base_ref.split("/", 1)[1]
+    if branch == base:
+        raise _park_refusal(f"HEAD is {base}, the default branch, so no lane is there to name: commit the "
+                            "edits (/commit), python tools/cc/ship.py lane moves them to a lane branch, then park")
+    carries = lane_carries_memory_row(base, root)
+    if carries is False:
+        raise _park_refusal(f"this lane's commits carry no Session Log row (no new file under {SESSION_LOG_DIR}): "
+                            "/handoff writes it before this step, and the brief that clears this window says "
+                            "it is written")
+    if carries is None:
+        _note("whether the lane carries its Session Log row could not be read; parking without that check")
+    rc, status, err = _git("status", "--porcelain", "-uno", cwd=str(root))
+    if rc != 0:
+        raise _park_refusal(f"git status failed: {err.strip()[:200]}")
+    edits = [line for line in status.splitlines() if line.strip()]
+    rc, others, _ = _git("ls-files", "--others", "--exclude-standard", cwd=str(root))
+    untracked = tuple(line.strip() for line in others.splitlines() if line.strip()) if rc == 0 else ()
+    plan_path = root / "cc" / "execution_plan.json"
+    try:
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # fail-open: ok deliberate -- no plan file, or one that does not parse: the mod reads that as nothing in progress too
+        plan = None
+    in_progress = isinstance(plan, dict) and plan.get("status") == "in_progress" and bool(plan.get("steps"))
+    task = str(plan.get("task") or "its task unnamed") if in_progress and isinstance(plan, dict) else ""
+    module = _plan_module() if in_progress else None
+    if in_progress and module is None:
+        raise _park_refusal("a plan is in progress and tools/cc/execution_plan.py, which sets it aside, is not "
+                            "beside this script or will not load; the mod holds the clear on the plan")
+    rc, subject, _ = _git("log", "-1", "--format=%s", cwd=str(root))
+    parked_before = rc == 0 and subject.strip() == PARK_SUBJECT and not edits
+    if dry_run:
+        plural = "s" if len(edits) != 1 else ""
+        _say(f"dry-run: the park would commit {len(edits)} tracked edit{plural} of {branch} as {PARK_SUBJECT!r}"
+             + (f", set the plan aside in cc/_cold/ ({task})" if in_progress else ", with no plan in progress")
+             + f", leave {len(untracked)} untracked file(s) beside it, and push nothing")
+        return Parked(branch, what, "", "", task, untracked)
+    park_commit = ""
+    if edits:
+        body = (f"What is left: {what}\n\nThe threshold handoff parked this lane half-built. The window it "
+                "clears takes these edits back with git reset --soft HEAD~1 while HEAD is this commit.")
+        rc, _, err = _git("commit", "--quiet", "-a", "-m", PARK_SUBJECT, "-m", body, cwd=str(root))
+        if rc != 0:
+            raise _park_refusal(f"git commit failed: {err.strip()[:200]}")
+        park_commit = head_sha(root)
+    elif parked_before:
+        park_commit = head_sha(root)
+    plan_record = ""
+    if in_progress and module is not None:
+        try:
+            moved = module.demote_plan(plan_path)
+        except OSError as exc:
+            where = (f"the park commit {park_commit[:12]} holds the tracked edits, but " if park_commit else "")
+            raise Refused(f"{where}the plan could not be set aside ({os_error_text(exc)}), and the mod holds "
+                          "the clear on it: settle that, then run the park again (it reads the park commit "
+                          "as its own)") from None
+        if moved is not None:
+            try:
+                plan_record = Path(moved).resolve().relative_to(root.resolve()).as_posix()
+            except ValueError:
+                plan_record = str(moved)
+    shown = ", ".join(untracked[:PARK_UNTRACKED_SHOWN]) + (" and more" if len(untracked) > PARK_UNTRACKED_SHOWN else "")
+    _say(f"parked {branch} half-built: "
+         + (f"{len(edits)} tracked edit(s) committed as {park_commit[:12]}" if edits else
+            f"the park commit {park_commit[:12]} kept" if park_commit else "nothing to commit")
+         + (f"; the plan ({task}) set aside at {plan_record}" if plan_record else "")
+         + (f"; {len(untracked)} untracked file(s) left beside it ({shown})" if untracked else "")
+         + "; nothing pushed, and the lane's claims stay live")
+    return Parked(branch, what, park_commit, plan_record, task, untracked)
+
+
 def handoff(title: str | None = None, body_file: str | None = None, dry_run: bool = False,
             base_red_ruled: str | None = None, allow_deletions: str | None = None,
-            subjects_body: str | None = None) -> int:
+            subjects_body: str | None = None, park: str | None = None) -> int:
     """/handoff's one push step, then the own-clear's arm. The push
     (:func:`_handoff_push`) runs only when espalier.toml sets ``handoff_push =
     true``, else the commit stays local and the verb says how to push it. Once
@@ -3531,7 +3756,24 @@ def handoff(title: str | None = None, body_file: str | None = None, dry_run: boo
     this, no refusal armed, and three seats sat past the threshold with no
     clear). The arm itself never fails a handoff whose step has run: what
     stops it is said, with the by-hand reset. A dry run says what it would
-    arm."""
+    arm. ``park`` (what is left, in the window's words) takes the place of
+    the push for a lane the window cannot finish (:func:`_park_half_built`):
+    nothing is pushed, and the marker is armed with the lane to finish."""
+    if park is not None:
+        flags = [flag for flag, given in (("--title", title), ("--body-file", body_file),
+                                          (BASE_RED_RULED_FLAG, base_red_ruled),
+                                          (ALLOW_DELETIONS_FLAG, allow_deletions),
+                                          (SUBJECTS_BODY_FLAG, subjects_body)) if given]
+        if flags:
+            raise _park_refusal(f"{PARK_FLAG} pushes nothing, so {', '.join(flags)} has nothing to act on: "
+                                "drop it")
+        parked = _park_half_built(repo_root(), park, dry_run=dry_run)
+        if dry_run:
+            _say("dry-run: the own-clear marker would be armed for this session with the lane to finish in "
+                 "its brief")
+            return 0
+        _arm_or_say(parked=parked)
+        return 0
     try:
         rc = _handoff_push(title, body_file, dry_run, base_red_ruled, allow_deletions, subjects_body)
     except Held as whole:
@@ -3549,12 +3791,17 @@ def handoff(title: str | None = None, body_file: str | None = None, dry_run: boo
     return 0
 
 
-def _arm_or_say(*, held: Held | None = None) -> None:
+def _arm_or_say(*, held: Held | None = None, parked: Parked | None = None) -> None:
     """The handoff's arm, which never fails the handoff: what stops it, the
     root's own read included, is said, with the by-hand reset."""
     try:
         root = repo_root()
-        _say(arm_own_clear_here(root, held=held) if held is not None else arm_own_clear_here(root))
+        if held is not None:
+            _say(arm_own_clear_here(root, held=held))
+        elif parked is not None:
+            _say(arm_own_clear_here(root, parked=parked))
+        else:
+            _say(arm_own_clear_here(root))
     except Exception as exc:  # noqa: BLE001 -- fail-open with voice: the step has run; the reset is said instead
         _note(f"the own-clear marker was not armed ({os_error_text(exc)}); this window will not clear itself, "
               "so it needs a /clear by hand")
@@ -4322,6 +4569,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="push deletions the driver did not make, saying why, as `open` takes it")
     p_hand.add_argument(SUBJECTS_BODY_FLAG, metavar="WHY", dest="subjects_body",
                         help="ship the commit subjects alone as the body, saying why, as `open` takes it")
+    p_hand.add_argument(PARK_FLAG, metavar="WHAT_IS_LEFT", dest="park",
+                        help="the threshold handoff of a lane this window cannot finish: commit its tracked "
+                             "edits, set its plan aside, push nothing, and arm the own-clear with the lane "
+                             "to finish in the brief")
     p_arm = sub.add_parser("arm", help="arm the own-clear marker for this session by hand: after a lane opened "
                                        "by hand (gh pr create), a handoff whose arm did not run, or a pull by "
                                        "hand that moved HEAD under the armed marker (re-armed at HEAD)")
@@ -4356,7 +4607,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.verb == "handoff":
             return handoff(title=args.title, body_file=args.body_file, dry_run=args.dry_run,
                            base_red_ruled=args.base_red_ruled, allow_deletions=args.allow_deletions,
-                           subjects_body=args.subjects_body)
+                           subjects_body=args.subjects_body, park=args.park)
         if args.verb == "arm":
             return arm(why=args.why, dry_run=args.dry_run)
     except Refused as stop:

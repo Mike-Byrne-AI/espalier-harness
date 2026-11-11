@@ -731,6 +731,23 @@ python tools/cc/ship.py handoff
   this checkout, and the verb prints how to push it (`/ship`) and how to opt in.
   Say so in the summary: the next session here reads the row while it stays on
   this branch, but another machine or clone sees it only after a push.
+- **A lane this window cannot finish** (past the handoff threshold, a review
+  or a proof still owed and no room left to run it): end the handoff with
+  `python tools/cc/ship.py handoff --park "<what is left>"` in place of the
+  push, whatever `handoff_push` says. A lane's park is not the row's park
+  above: it pushes nothing and opens no pull request (a half-built lane must
+  not ride auto-merge), and it releases no claim, so the lane's job stays
+  live. It commits the tracked edits as one park commit, sets a plan in
+  progress aside under `cc/_cold/`, names the untracked files it leaves
+  beside the lane, then arms the own-clear with a brief naming the lane, what
+  is left, and the two moves that give it back as it was: `git reset --soft
+  HEAD~1` over the park commit, and `python tools/cc/execution_plan.py
+  restore <the record>`. It refuses before anything moves where no own-clear
+  mod would read the marker (that window is cleared by hand, the lane left as
+  it is), on the default branch or a detached HEAD, during a merge, and on a
+  lane whose commits carry no row (write it first, the steps above). The
+  plain handoff still refuses a dirty tree, so a forgotten commit is caught;
+  the park is a flag you choose.
 
 Either way, say in the `Next:` line what happened -- the URL the driver
 printed, "committed locally, not pushed (handoff_push is off)", or the direct
@@ -742,7 +759,8 @@ after a push that landed, and after a refusal this window is done with -- the
 base red (nothing lands on it; the lane stays here, whole) or a step after a
 landed push refusing (the head wait, the rebind) -- with the refusal in the
 marker and the lane to land first appended to the brief, the refusal still
-printed (exit 1); never after a refusal this window must fix first (a dirty
+printed (exit 1); after a lane's park, with the lane to finish appended the
+same way (exit 0); never after a refusal this window must fix first (a dirty
 tree, a lane behind its remote, a shared checkout), which arms nothing. In a
 window `seat.py launch` started, the own-clear mod clears the window at this
 turn's end and re-primes it from the seat brief, so after the handoff take no

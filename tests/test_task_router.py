@@ -783,6 +783,8 @@ class TestContextThreshold:
         assert "[HARNESS] Context is 271k, past the handoff threshold (200k" in res.stdout, res.stdout
         assert "run /handoff now (it writes your row)." in res.stdout
         assert "finish it through its own landing" in res.stdout and "commit" not in res.stdout.lower()
+        # A lane the window cannot finish is parked, never pushed (DEF-4104).
+        assert "python tools/cc/ship.py handoff --park <what is left>, which pushes nothing" in res.stdout
         side = tmp_path / ".espalier-state" / "sessions" / "ctx-1.handoff-asked"
         record = json.loads(side.read_text(encoding="utf-8"))
         assert record["tokens"] == 271_000 and record["at"].endswith("Z")
@@ -823,7 +825,8 @@ class TestContextThreshold:
         payload = _threshold_tree(tmp_path, 999_999, push=True)
         res = _run_payload(payload, tmp_path)
         ask = res.stdout.strip()
-        assert ask.isascii() and "\n" not in ask and len(ask) < 700, (len(ask), ask)
+        # 900 since the park's clause (DEF-4104): 853 at 999k with the push clause.
+        assert ask.isascii() and "\n" not in ask and len(ask) < 900, (len(ask), ask)
 
     @pytest.mark.parametrize("setting", ["abc", '"200000"', "0", "-1", "1.5"])
     def test_a_setting_that_is_not_a_positive_integer_is_off(self, tmp_path, setting):

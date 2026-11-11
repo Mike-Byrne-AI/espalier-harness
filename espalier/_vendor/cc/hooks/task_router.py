@@ -106,12 +106,16 @@ _COLD_OPEN_DIRECTIVE = (
 # tail. One paragraph, 7-bit ASCII, idempotent by text, and it never says
 # "commit and hand off" mid-lane: on a tree with `handoff_push` the handoff's
 # last step opens the lane's pull request with auto-merge armed, and a
-# half-finished lane must not ride that. A lane in hand finishes first.
+# half-finished lane must not ride that. A lane in hand finishes first; one the
+# window has no room left to finish is parked (`ship.py handoff --park`, which
+# pushes nothing and arms the own-clear, DEF-4104), never pushed.
 _HANDOFF_ASK = (
     "[HARNESS] Context is {tokens}k, past the handoff threshold ({threshold}k, espalier.toml "
     "handoff_context_tokens). First asked {at} at {tokens0}k. Handoff replaces compaction: if a "
-    "lane is in hand, finish it through its own landing and start no new job; with no lane in "
-    "hand and no handoff written since that ask, run /handoff now (it writes your row{push}). "
+    "lane is in hand, finish it through its own landing and start no new job; where no room is "
+    "left to finish it, run /handoff with its push step python tools/cc/ship.py handoff --park "
+    "<what is left>, which pushes nothing and arms the clear; with no lane in hand and no handoff "
+    "written since that ask, run /handoff now (it writes your row{push}). "
     "After the handoff take no new job (your own pull request's red or conflict, and a red "
     "main's revert, are not new work), answer a loop tick in one line, and tell the operator "
     "this window needs a /clear (the loop survives it; start no second one), or, after a lane "

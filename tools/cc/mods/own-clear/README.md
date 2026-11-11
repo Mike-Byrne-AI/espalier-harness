@@ -31,7 +31,11 @@ says the window needs a `/clear` by hand.
    `written_at`. The handoff arms on every end it ran to; a refusal the
    window must fix first (a dirty tree, a lane behind its remote) arms
    nothing, and `python tools/cc/ship.py arm [--why ...]` arms by hand after a
-   lane opened by hand. Only in a window that loaded the mod; with no session
+   lane opened by hand. `python tools/cc/ship.py handoff --park "<what is
+   left>"` arms after parking a lane its window cannot finish: one park commit
+   of its tracked edits, its plan set aside under `cc/_cold/`, nothing pushed,
+   `landed` false, `outcome` naming the park, and the lane to finish appended
+   to `brief`. Only in a window that loaded the mod; with no session
    id in the environment nothing is armed; and an arm that fails never fails
    the handoff whose step has run.
 2. **The clear.** At the end of the main loop's next turn (`turn.complete`,

@@ -83,7 +83,12 @@ request's red or conflict, and a red `main`'s revert, are not new work),
 answers a tick in one line, and tells the operator the window needs a
 `/clear`, which the loop survives. The ask never says "commit and hand off"
 mid-lane, because the handoff's push opens the lane's pull request with
-auto-merge armed and a half-done lane must not ride it. The reset is the
+auto-merge armed and a half-done lane must not ride it. A lane the window
+has no room left to finish is parked instead (`ship.py handoff --park
+"<what is left>"`, `DEF-4104`, ruled by the operator 2026-11-10): one park
+commit of its tracked edits, its plan set aside under `cc/_cold/`, nothing
+pushed and no claim released, and the own-clear armed with a brief naming
+the lane and the two moves that give it back. The reset is the
 seat's own where the launcher started the window (the own-clear, 2026-10-26):
 `seat.py launch` loads the own-clear mod (`tools/cc/mods/own-clear`, a Claude
 Code plugin of function hooks, through `--plugin-dir`), `ship.py handoff`

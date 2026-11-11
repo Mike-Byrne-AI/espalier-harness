@@ -36,6 +36,8 @@ from pathlib import Path
 import pytest
 
 from tests._git_oracle import _git_env
+from tests._interpreter_hosts import HOOK_PYTHON
+from tests._wait_budget import scaled
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TOOLS_CC = REPO_ROOT / "tools" / "cc"
@@ -648,6 +650,271 @@ class _GhBehind:
             self.updated = True
             return 0, "", ""
         raise AssertionError("unplanned gh spawn: " + " ".join(args))
+
+
+def _half_built_lane(repo: Path, *, row: bool = True, plan: bool = True, edits: bool = True) -> None:
+    """A lane mid-build when its window crosses the threshold: one commit of
+    its own never pushed (origin holds main alone), its Session Log row
+    committed, a tracked edit and an untracked file in the tree, and its plan
+    in progress -- the state the mod holds a clear on twice over."""
+    (repo / ".gitignore").write_text("cc/execution_plan.json\ncc/_cold/\n.espalier-state/\n", encoding="utf-8")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "commit", "--quiet", "-m", "ignore the local state")
+    _with_origin(repo)
+    _git(repo, "switch", "--quiet", "-c", "lane/half")
+    (repo / "src.py").write_bytes(b"one\n")
+    _git(repo, "add", "src.py")
+    _git(repo, "commit", "--quiet", "-m", "feat: the first half")
+    if row:
+        rows = repo / "memory" / "session-log.d"
+        rows.mkdir(parents=True)
+        (rows / "2026-11-11-064000-box.md").write_bytes(b"the row\n")
+        _git(repo, "add", "memory")
+        _git(repo, "commit", "--quiet", "-m", "chore(records): the row")
+    if edits:
+        (repo / "src.py").write_bytes(b"one\ntwo\n")
+        (repo / "test_new.py").write_bytes(b"pass\n")
+    if plan:
+        (repo / "cc").mkdir(exist_ok=True)
+        (repo / "cc" / "execution_plan.json").write_text(json.dumps({
+            "task": "the half-built lane", "status": "in_progress",
+            "steps": [{"index": 0, "description": "s0", "status": "passed"},
+                      {"index": 1, "description": "s1", "status": "pending"}]}), encoding="utf-8")
+
+
+def _cold_plans(repo: Path) -> list[Path]:
+    return sorted((repo / "cc" / "_cold").glob("*-execution_plan.json"))
+
+
+class TestTheHandoffParksAHalfBuiltLane:
+    """``ship.py handoff --park "<what is left>"``: the threshold handoff of a
+    lane its window cannot finish (a review or a tier still owed, no room left
+    to run it). The plain handoff's push would open the half-built lane's pull
+    request with auto-merge armed, which the threshold rule forbids, and `arm`
+    refuses a lane not on origin, so until this nothing armed and the seat sat
+    idle until a hand /clear (air-work, 2026-11-07, 1 h 40 min and running;
+    the operator ruled the fix in, option B). The park pushes nothing and
+    opens nothing: it commits the tracked edits as one park commit, sets an
+    in-progress plan aside in the cold store, names the untracked files, keeps
+    the claims, and arms with a tail naming what the next window runs first.
+    REAL-GIT: the row's own oracle is a scratch clone with a bare origin, a
+    lane commit never pushed, the park run, the marker read as armed for the
+    session. Dies to: a park that pushes or releases a claim, a park whose
+    marker the mod would still hold (a tracked edit left, the plan left in
+    progress, the marker at another head), a refusal that changes the tree,
+    or a brief that leaves out the soft reset or the restore."""
+
+    TEXT = "the review is owed: dispatch both reviewers on the lane's diff"
+
+    @staticmethod
+    def _quiet(ship, monkeypatch) -> list[tuple]:
+        """Each verb is a run of its own (the shared-checkout read is asked
+        once a run), and a claim release would be a mail spawn: recorded."""
+        monkeypatch.setitem(ship._SHARED, "asked", False)
+        released: list[tuple] = []
+        monkeypatch.setattr(ship, "_release_claims", lambda *a, **k: released.append(a))
+        return released
+
+    @staticmethod
+    def _untouched(repo: Path, head: str) -> None:
+        assert _git(repo, "rev-parse", "HEAD") == head
+        assert "src.py" in _git(repo, "status", "--porcelain", "--untracked-files=no")
+        assert (repo / "cc" / "execution_plan.json").is_file() and _cold_plans(repo) == []
+        assert not (repo / ".espalier-state" / "own_clear.json").exists()
+
+    def test_the_park_commits_the_edits_sets_the_plan_aside_and_arms_the_clear(
+            self, ship, repo, monkeypatch, capsys):
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        released = self._quiet(ship, monkeypatch)
+        _half_built_lane(repo)
+        below = _git(repo, "rev-parse", "HEAD")
+
+        assert ship.handoff(park=self.TEXT) == 0
+
+        head = _git(repo, "rev-parse", "HEAD")
+        assert _git(repo, "rev-parse", "HEAD~1") == below
+        assert _git(repo, "log", "-1", "--format=%s") == ship.PARK_SUBJECT
+        assert _git(repo, "show", "--format=", "--name-only", "HEAD") == "src.py"
+        assert _git(repo, "ls-remote", "origin", "lane/half") == "", "the park pushed the lane"
+        assert released == [], "the park released the lane's claims, which closes its job"
+        assert not (repo / "cc" / "execution_plan.json").exists()
+        [cold] = _cold_plans(repo)
+        assert json.loads(cold.read_text(encoding="utf-8"))["task"] == "the half-built lane"
+        # The mod's three conditions for its clear, each read the way it reads them.
+        marker = _marker(repo)
+        assert marker["state"] == "armed" and marker["session_id"] == "s-here" and marker["head"] == head
+        assert _git(repo, "status", "--porcelain", "--untracked-files=no") == ""
+        assert marker["landed"] is False and marker["outcome"] == f"parked half-built: {self.TEXT}"
+        brief = marker["brief"]
+        tail = brief[brief.index(ship.FINISH_FIRST):]
+        assert self.TEXT in tail and "lane/half" in tail and "unpushed" in tail
+        assert f"git reset --soft HEAD~1 while HEAD is {head[:12]}" in tail
+        assert f" tools/cc/execution_plan.py restore cc/_cold/{cold.name} puts back the plan" in tail
+        assert "test_new.py" in tail and "THE HANDOFF DID NOT LAND" not in tail
+        assert tail.isascii() and '"' not in tail and "%" not in tail
+        out = capsys.readouterr().out
+        assert "parked lane/half" in out and "nothing pushed" in out
+        assert "own-clear armed" in out and "the lane to finish" in out
+
+    def test_the_two_steps_the_brief_names_give_the_lane_back_as_it_was(self, ship, repo, monkeypatch):
+        """The next window's first moves, driven: the soft reset and the
+        restore leave the edit staged and the plan in progress at its step."""
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        self._quiet(ship, monkeypatch)
+        _half_built_lane(repo)
+        assert ship.handoff(park=self.TEXT) == 0
+        [cold] = _cold_plans(repo)
+
+        _git(repo, "reset", "--soft", "HEAD~1")
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
+        done = subprocess.run([HOOK_PYTHON, str(TOOLS_CC / "execution_plan.py"), "restore",
+                               f"cc/_cold/{cold.name}"], cwd=repo, capture_output=True, text=True,
+                              encoding="utf-8", env=env, timeout=scaled(30))
+
+        assert done.returncode == 0, done.stderr
+        plan = json.loads((repo / "cc" / "execution_plan.json").read_text(encoding="utf-8"))
+        assert plan["status"] == "in_progress" and [s["status"] for s in plan["steps"]] == ["passed", "pending"]
+        assert _git(repo, "diff", "--cached", "--name-only") == "src.py"
+        assert (repo / "src.py").read_bytes() == b"one\ntwo\n"
+
+    def test_a_window_without_the_mod_parks_nothing(self, ship, repo, monkeypatch):
+        """Nothing would read the marker, so nothing would name the parked lane
+        to the next window; left as it is, the lane is what that window reads."""
+        monkeypatch.chdir(repo)
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "s-here")
+        self._quiet(ship, monkeypatch)
+        _half_built_lane(repo)
+        head = _git(repo, "rev-parse", "HEAD")
+        with pytest.raises(ship.Refused, match="nothing parked") as stop:
+            ship.handoff(park=self.TEXT)
+        assert "own-clear mod" in str(stop.value)
+        self._untouched(repo, head)
+
+    def test_a_lane_with_no_row_parks_nothing(self, ship, repo, monkeypatch):
+        """The brief promises the row written (both reviews of 2026-10-30, on
+        the red-base hold): /handoff writes it before this step."""
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        self._quiet(ship, monkeypatch)
+        _half_built_lane(repo, row=False)
+        head = _git(repo, "rev-parse", "HEAD")
+        with pytest.raises(ship.Refused, match="Session Log row"):
+            ship.handoff(park=self.TEXT)
+        self._untouched(repo, head)
+
+    def test_a_merge_in_progress_parks_nothing(self, ship, repo, monkeypatch):
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        self._quiet(ship, monkeypatch)
+        _half_built_lane(repo)
+        head = _git(repo, "rev-parse", "HEAD")
+        (repo / ".git" / "MERGE_HEAD").write_text(head + "\n", encoding="utf-8")
+        with pytest.raises(ship.Refused, match="merge is in progress"):
+            ship.handoff(park=self.TEXT)
+        self._untouched(repo, head)
+
+    def test_the_default_branch_and_a_detached_head_park_nothing(self, ship, repo, monkeypatch):
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        self._quiet(ship, monkeypatch)
+        _with_origin(repo)
+        (repo / "README.md").write_bytes(b"an edit on main\n")
+        with pytest.raises(ship.Refused, match="default branch") as stop:
+            ship.handoff(park=self.TEXT)
+        assert "ship.py lane" in str(stop.value)
+        _git(repo, "switch", "--quiet", "--detach")
+        with pytest.raises(ship.Refused, match="detached HEAD"):
+            ship.handoff(park=self.TEXT)
+        assert _git(repo, "status", "--porcelain", "--untracked-files=no") == "M README.md"
+        assert not (repo / ".espalier-state" / "own_clear.json").exists()
+
+    def test_an_empty_text_or_a_push_flag_parks_nothing(self, ship, repo, monkeypatch):
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        self._quiet(ship, monkeypatch)
+        _half_built_lane(repo)
+        head = _git(repo, "rev-parse", "HEAD")
+        with pytest.raises(ship.Refused, match="what is left"):
+            ship.handoff(park="  ")
+        with pytest.raises(ship.Refused, match="pushes nothing") as stop:
+            ship.handoff(park=self.TEXT, title="feat: x", base_red_ruled="abc")
+        assert "--title" in str(stop.value) and "--base-red-ruled" in str(stop.value)
+        self._untouched(repo, head)
+
+    def test_a_plan_the_driver_cannot_set_aside_parks_nothing(self, ship, repo, monkeypatch):
+        """The plan's demotion is execution_plan.py's, loaded by path; where it
+        is not beside the driver the park refuses before anything moves,
+        rather than commit and leave a plan the mod holds the clear on."""
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        self._quiet(ship, monkeypatch)
+        _half_built_lane(repo)
+        head = _git(repo, "rev-parse", "HEAD")
+        monkeypatch.setattr(ship, "_plan_module", lambda: None)
+        with pytest.raises(ship.Refused, match="execution_plan.py"):
+            ship.handoff(park=self.TEXT)
+        self._untouched(repo, head)
+
+    def test_a_dry_run_says_what_it_would_park_and_changes_nothing(self, ship, repo, monkeypatch, capsys):
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        self._quiet(ship, monkeypatch)
+        _half_built_lane(repo)
+        head = _git(repo, "rev-parse", "HEAD")
+        assert ship.handoff(park=self.TEXT, dry_run=True) == 0
+        self._untouched(repo, head)
+        out = capsys.readouterr().out
+        assert "dry-run" in out and "1 tracked edit" in out and "the half-built lane" in out
+        assert "the own-clear marker would be armed" in out
+
+    def test_a_clean_lane_with_no_plan_parks_with_no_commit(self, ship, repo, monkeypatch):
+        """All of the lane is committed and only its review is owed: nothing to
+        commit or set aside, and the brief says so rather than name a reset."""
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        self._quiet(ship, monkeypatch)
+        _half_built_lane(repo, plan=False, edits=False)
+        head = _git(repo, "rev-parse", "HEAD")
+        assert ship.handoff(park=self.TEXT) == 0
+        assert _git(repo, "rev-parse", "HEAD") == head
+        brief = _marker(repo)["brief"]
+        assert "the park committed nothing" in brief and "git reset" not in brief and "restore" not in brief
+        assert _marker(repo)["head"] == head
+
+    def test_a_second_park_after_one_the_plan_stopped_names_the_park_commit(self, ship, repo, monkeypatch):
+        """The commit landed, then the plan could not be moved (a full disk, a
+        held file): the refusal names the commit, and the same verb run again
+        finishes the park, its brief naming that commit for the reset."""
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        self._quiet(ship, monkeypatch)
+        _half_built_lane(repo)
+        real = ship._plan_module()
+
+        class Stuck:
+            @staticmethod
+            def demote_plan(path):
+                raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(ship, "_plan_module", lambda: Stuck)
+        with pytest.raises(ship.Refused, match="No space left") as stop:
+            ship.handoff(park=self.TEXT)
+        parked = _git(repo, "rev-parse", "HEAD")
+        assert parked[:12] in str(stop.value) and "run the park again" in str(stop.value)
+        assert not (repo / ".espalier-state" / "own_clear.json").exists()
+
+        monkeypatch.setattr(ship, "_plan_module", lambda: real)
+        monkeypatch.setitem(ship._SHARED, "asked", False)
+        assert ship.handoff(park=self.TEXT) == 0
+        assert _git(repo, "rev-parse", "HEAD") == parked
+        assert f"git reset --soft HEAD~1 while HEAD is {parked[:12]}" in _marker(repo)["brief"]
+
+    def test_the_cli_takes_the_flag(self, ship):
+        args = ship.build_parser().parse_args(["handoff", "--park", self.TEXT])
+        assert args.park == self.TEXT
+        assert ship.build_parser().parse_args(["handoff"]).park is None
 
 
 class TestTheCatchUpReArmsTheMarker:
