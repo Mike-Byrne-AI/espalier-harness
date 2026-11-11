@@ -1780,9 +1780,14 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "than passing.",
     ),
     "tests/test_write_guard.py": (
-        52, "23c9c0a6dc97c2899f3c81e0305aae117754fbfcd94426600183de2791de3e52",
+        53, "37fb00827bb6f9e9a53862d23a0ac4d9b85545660263b9328a4140331944ca2f",
         "CORRECT_BY_REMEDY",
-        "GREW 50 -> 52 on 2026-11-10 (DEF-488): the assignment-guard contract walks "
+        "GREW 52 -> 53 on 2026-11-11 (DEF-2040): "
+        "TestATypographicQuoteClosesAPowerShellString::test_a_fold_of_a_fold_is_itself_over_a_seeded_sample "
+        "builds its straight-quote table from `bp.PS_TYPOGRAPHIC_QUOTES`; the same test pins "
+        "that class whole (U+2018 to U+201E) before it reads it, so a shrink reds the pin "
+        "rather than narrowing the table unseen. "
+        "GREW 50 -> 52 on 2026-11-10 (DEF-488):the assignment-guard contract walks "
         "every command-position verb regex in `_bash_patterns` "
         "(`_command_position_verb_regexes(mod).items()`, and a second "
         "`sorted(vars(mod).items())`), floored at 40, so a shrink can only red it; "

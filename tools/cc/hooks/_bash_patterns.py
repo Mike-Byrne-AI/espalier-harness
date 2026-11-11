@@ -4648,7 +4648,20 @@ def _ps_close_double_quote(s: str, i: int) -> int:
     one continues the span. A ``$( ... )`` subexpression may itself contain
     quotes, so its nesting is tracked rather than scanned through.
     """
-    n, j, depth = len(s), i + 1, 0
+    return _ps_expandable_extent(s, i)[0]
+
+
+def _ps_expandable_extent(s: str, i: int, end: "int | None" = None) -> "tuple[int, list[tuple[int, int]]]":
+    """The ONE scan of an expandable string's body from ``i + 1``: the
+    offset it closes at, and the ``(start, stop)`` of each top-level
+    ``$( )`` subexpression's code. With ``end`` None it is a double-quoted
+    string and closes at its quote (`_ps_close_double_quote`); with ``end``
+    it is a here-string's body, which closes there, a quote in it being
+    text. `fold_powershell_quotes` reads the subexpressions from here, so
+    the two never keep two copies of the nesting rule."""
+    n, j, depth = len(s) if end is None else end, i + 1, 0
+    bodies: list[tuple[int, int]] = []
+    start = -1
     while j < n:
         c = s[j]
         if c == "`":
@@ -4656,6 +4669,8 @@ def _ps_close_double_quote(s: str, i: int) -> int:
             continue
         if c == "$" and j + 1 < n and s[j + 1] == "(":
             depth += 1
+            if depth == 1:
+                start = j + 2
             j += 2
             continue
         if depth:
@@ -4663,14 +4678,18 @@ def _ps_close_double_quote(s: str, i: int) -> int:
                 depth += 1
             elif c == ")":
                 depth -= 1
+                if not depth:
+                    bodies.append((start, j))
             j += 1
             continue
-        if c == '"':
+        if c == '"' and end is None:
             if j + 1 < n and s[j + 1] == '"':
                 j += 2
                 continue
-            return j
+            return j, bodies
         j += 1
+    if end is not None:
+        return end, bodies
     raise _UnresolvedShellSyntax("unterminated double quote")
 
 
@@ -4835,6 +4854,161 @@ def _ps_blank_expandable(
         k += 1
 
 
+#: The quote characters PowerShell pairs with a straight quote: U+2018 to
+#: U+201B with the apostrophe, U+201C to U+201E with the double quote. Either
+#: form closes a string either form opens, a doubled mixed pair is an escape,
+#: and a here-string's header and terminator take either (DEF-2040, driven on
+#: Windows PowerShell 5.1, 2026-11-10). This is the language's quote class,
+#: not a spelling roster, and its one home.
+PS_TYPOGRAPHIC_QUOTES = "".join(map(chr, (0x2018, 0x2019, 0x201A, 0x201B, 0x201C, 0x201D, 0x201E)))
+_PS_TYPOGRAPHIC_SINGLES = PS_TYPOGRAPHIC_QUOTES[:4]
+_PS_TYPOGRAPHIC_DOUBLES = PS_TYPOGRAPHIC_QUOTES[4:]
+_PS_QUOTE_FOLD = tuple(zip(PS_TYPOGRAPHIC_QUOTES, "''''" + '"""'))
+
+#: Each text folded this process, and each fold as its own fold: the
+#: dispatch folds the command, then every reader's walk folds the text it is
+#: handed again, which is that fold, so a second walk of it is a lookup. A
+#: fold of a fold is itself (pinned). Bounded: cleared past 64 entries.
+_PS_FOLDED: dict[str, str] = {}
+
+#: Raised by every fold that moves a quote, a cached one included, so the
+#: two relief gates give no relief wherever one moved, on every route a
+#: PowerShell program reaches them by: the PowerShell tool's dispatch, a
+#: program the Bash tool launches, one `Start-Process` carries (DEF-2040; the
+#: code review drove the last two allowed with the bit kept per dispatch).
+#: `write_guard.py::_a_dispatch_resets_the_fold` lowers it for each call.
+FOLD_MOVED_A_QUOTE: "contextvars.ContextVar[bool]" = contextvars.ContextVar(
+    "FOLD_MOVED_A_QUOTE", default=False)
+
+#: Past this many nested ``$( )`` levels a body is returned as typed and not
+#: cached: the reading the walk had before the fold, where the recursion
+#: through the cache otherwise met the interpreter's limit near 496 levels
+#: and the hook denied as a crash (the code review drove it at 500).
+_PS_FOLD_DEPTH_CAP = 64
+
+
+def fold_powershell_quotes(command: str, _depth: int = 0) -> str:
+    """`_fold_powershell_quotes`, the reading, once a text: an ASCII command
+    is returned at once, and a text folded before, or a fold, is looked up.
+    A fold that moved a quote raises `FOLD_MOVED_A_QUOTE`."""
+    if command.isascii() or _depth > _PS_FOLD_DEPTH_CAP:
+        return command
+    done = _PS_FOLDED.get(command)
+    if done is None:
+        done = _fold_powershell_quotes(command, _depth)
+        if len(_PS_FOLDED) > 64:
+            _PS_FOLDED.clear()
+        _PS_FOLDED[command] = done
+        _PS_FOLDED[done] = done
+    if done != command:
+        FOLD_MOVED_A_QUOTE.set(True)
+    return done
+
+
+def _fold_powershell_quotes(command: str, _depth: int = 0) -> str:
+    """``command`` with each typographic quote PowerShell READS AS A QUOTE
+    at this level written as its straight form, so every reader of the
+    PowerShell grammar -- the masker's walk and the raw-word readers that
+    test for a straight quote by hand -- pairs strings the way PowerShell
+    does (DEF-2040). One code point for one: the length and every offset
+    hold.
+
+    Only the quotes PowerShell acts on are folded: each string's opening and
+    closing quote (a here-string's header and terminator), and the quotes
+    of the program inside a ``$( )`` of a double-quoted string or
+    here-string, folded the same way one level down. Every other typographic
+    character is a string's VALUE, which PowerShell hands on as typed, and
+    is left as typed: a value that is another shell's program (`bash -c
+    "echo ’; cat .env"`) is read by that shell's grammar, where it is text --
+    folding it there invented a Bash quote that masked the read (driven: the
+    whole-text fold allowed it, the base denied it). A PowerShell program
+    one level down (`iex`, `pwsh -Command`) is folded where that level is
+    read.
+
+    A doubled escape is one quote of value, its SECOND as typed (driven on
+    PowerShell 5.1: `'x’’y'` holds x, U+2019, y). So a pair whose second
+    quote is straight is written as two straight quotes, the escape every
+    reader knows, and one whose second quote is typographic as two
+    typographic quotes, text to every reader, which keeps the typographic
+    value a Bash body reads as text (a straight pair there allowed
+    `bash -c 'echo ’’; cat .env; echo ’’'`; the failure-mode review drove
+    it). The value then reads with one typographic quote too many, which no
+    reader counts.
+
+    The strings are found by the masker's own walk over a copy with every
+    quote folded, which pairs them exactly as PowerShell does, and the
+    subexpressions by `_ps_expandable_extent`, the scan that closes a
+    double-quoted string. A command that walk cannot read, or one past the
+    masker's cap, is returned as typed, the reading it had before.
+    """
+    if command.isascii() or len(command) > _ROLE_MAP_CAP:
+        return command
+    # A braced variable name holds its quotes as name (`${a’b}` binds a
+    # variable on 5.1), and the walk has no `${ }` reading, so a fold there
+    # paired two names' quotes around a live statement: `${a’b}; Get-Content
+    # .env; ${c’d}` allowed, where the base denied it (the code review drove
+    # it, on the hard tier too). Such a command keeps the base's reading.
+    i = command.find("${")
+    while i != -1:
+        stop = command.find("}", i + 2)
+        name = command[i:] if stop == -1 else command[i:stop + 1]
+        if any(q in name for q in PS_TYPOGRAPHIC_QUOTES):
+            return command
+        i = command.find("${", i + 2)
+    full = command
+    for typographic, straight in _PS_QUOTE_FOLD:
+        if typographic in full:
+            full = full.replace(typographic, straight)
+    if full == command:
+        return command
+    spans: list[tuple[int, int, str]] = []
+    try:
+        _walk_powershell_spans(full, spans)
+    except (_UnresolvedShellSyntax, IndexError):
+        return command
+    out = list(command)
+
+    def pair(k: int) -> None:
+        second = command[k + 1]
+        if second == full[k + 1]:                 # straight: the known escape
+            out[k] = out[k + 1] = second
+        elif command[k] == full[k]:               # straight then typographic
+            out[k] = second
+
+    for open_, close, kind in spans:
+        quote = open_ + 1 if kind[0] == "@" else open_
+        out[quote], out[close] = full[quote], full[close]
+        if kind == "'":
+            k = open_ + 1
+            while k < close:
+                if full[k] == "'":                # inside, only as a pair
+                    pair(k)
+                    k += 2
+                    continue
+                k += 1
+        elif kind in ('"', '@"'):
+            if kind == '"':
+                bodies = _ps_expandable_extent(full, open_)[1]
+            else:
+                bodies = _ps_expandable_extent(full, open_ + 1, close)[1]
+            for start, stop in bodies:
+                out[start:stop] = fold_powershell_quotes(command[start:stop], _depth + 1)
+            if kind == '"':
+                inside = set().union(*(range(a, b) for a, b in bodies)) if bodies else set()
+                k = open_ + 1
+                while k < close:
+                    if k in inside:
+                        k += 1
+                    elif full[k] == "`":
+                        k += 2                    # an escaped quote is value
+                    elif full[k] == '"':          # outside $( ), only as a pair
+                        pair(k)
+                        k += 2
+                    else:
+                        k += 1
+    return "".join(out)
+
+
 def mask_powershell_inert_syntax(command: str) -> str:
     """PowerShell twin of :func:`mask_inert_syntax`.
 
@@ -4897,7 +5071,10 @@ def _walk_powershell_spans(s: str, spans: "list[tuple[int, int, str]] | None" = 
     steps over as ``(open, close, kind)`` -- the opening quote's offset (the
     at-sign of a here-string), the closing quote's, and ``'``, ``"``, ``@'``
     or ``@"`` -- in offset order: PowerShell's quoting read by the ONE walk
-    the mask is, for `_ps_quote_cursor`."""
+    the mask is, for `_ps_quote_cursor`. A typographic quote PowerShell acts
+    on is read as the straight one it pairs with; one in a string's value is
+    text (`fold_powershell_quotes`)."""
+    s = fold_powershell_quotes(s)
     n, i = len(s), 0
     out = list(s)
     #: Where the last block comment's ``#>`` ended: a comment opener there
@@ -10535,8 +10712,12 @@ def powershell_scan_pair(command: str) -> tuple[str, str]:
     holding a line break or a comment becomes one space in both halves
     (`_ps_join_pipe_gaps`, 780c02), so an offset in either half is an offset
     into the joined text, never into ``command``.
-    ``powershell_scan_text`` is the masked half of this pair (pinned).
+    ``powershell_scan_text`` is the masked half of this pair (pinned). The
+    raw half is folded the way the masker's walk reads it
+    (`fold_powershell_quotes`), so a word read from ``raw`` sees the quotes
+    PowerShell pairs (DEF-2040).
     """
+    command = fold_powershell_quotes(command)
     masked, read = _ps_mask_read(command)
     if len(masked) != len(command):
         # Cannot happen (the masker returns the command or a same-length
