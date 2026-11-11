@@ -205,9 +205,12 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
              "tests/test_bounded_spawn.py::TestEveryCopysWindowsBranch::"
              "test_the_timeout_shape_follows_the_platform_the_harness_reads[linux]", ""),
     AxisCell("target_os", "macos", "",
-             "the harness reads darwin nowhere, and its one Mac-differing read is "
-             "platform.system() in tools/cc/hooks/_hook_utils.py::host_orientation_line, from uname, "
-             "which no sys.platform patch reaches (read 2026-10-26): a stand-in cannot make "
+             "the harness reads darwin nowhere, and its two Mac-differing reads are "
+             "platform.system() in tools/cc/hooks/_hook_utils.py::host_orientation_line, from uname "
+             "(read 2026-10-26), and the kernel release file under /proc that "
+             "espalier/sandbox_posture.py::_osrelease reads as the Linux witness for the sandbox's "
+             "dependency check (2026-11-11), absent on macOS; no sys.platform patch reaches either: "
+             "a stand-in cannot make "
              "the harness do anything as macOS that it does not do as linux, so a node at "
              "this value could assert nothing of its own, the born-blind shape"),
     AxisCell("target_os", "windows",

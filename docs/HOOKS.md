@@ -696,18 +696,25 @@ one ASCII paragraph beside the prompt:
 [HARNESS] Context is 271k, past the handoff threshold (200k, espalier.toml
 handoff_context_tokens). First asked 2026-10-26T09:19Z at 271k. Handoff
 replaces compaction: if a lane is in hand, finish it through its own landing
-and start no new job; with no lane in hand, run /handoff now (it writes your
-row, and pushes the lane). After the handoff take no new work, answer a loop
-tick in one line, and tell the operator this window needs a /clear (the loop
-survives it; start no second one), or, after a lane opened by hand, run
-python tools/cc/ship.py arm --why <how>.
+and start no new job; where no room is left to finish it, run /handoff with
+its push step python tools/cc/ship.py handoff --unfinished "<what is left>",
+which pushes nothing and arms the clear; with no lane in hand and no handoff
+written since that ask, run /handoff now (it writes your row, and pushes the
+lane). After the handoff take no new job (your own pull request's red or
+conflict, and a red main's revert, are not new work), answer a loop tick in
+one line, and tell the operator this window needs a /clear (the loop survives
+it; start no second one), or, after a lane opened by hand, run python
+tools/cc/ship.py arm --why <how>.
 ```
 
 The push clause rides only where `handoff_push = true`. The ask is idempotent
 by text: it repeats on every prompt past the figure until the window is
 cleared, and it never says "commit and hand off" mid-lane, because on a tree
 with `handoff_push` the handoff's last step opens the lane's pull request with
-auto-merge armed, and a half-finished lane must not ride that. The first ask
+auto-merge armed, and a half-finished lane must not ride that. A lane the
+window has no room left to finish is set aside instead (`--unfinished`, which
+runs only in a session this ask was recorded for, pushes nothing, and arms the
+own-clear with the lane to finish in its brief; `/handoff` describes it). The first ask
 is recorded beside the session's marker
 (`.espalier-state/sessions/<id>.handoff-asked`, swept with the marker) so the
 later ones can quote it. Absent, `0`, or anything but a positive integer is
@@ -1961,10 +1968,13 @@ side of a last-statement assignment to a variable the command names
 nowhere else, with no pipe, call operator, group or script block anywhere
 (`$hint = 'gc .env'` alone is a mention, and the same with a later
 `iex $hint` is refused), or the one literal in `Write-Host (...)` in a
-command made of Write-Host statements alone. A typographic quote, a `#`
-outside the strings, the stop-parsing token `--%` or a braced variable
-name keeps the first-word reading, since PowerShell can end a string there
-where this reading does not. A grep-shaped search of the
+command made of Write-Host statements alone. The typographic quotes
+PowerShell acts on are read as the straight ones it pairs them with before
+any of this (`_bash_patterns.fold_powershell_quotes`), yet a typographic
+quote anywhere in the command as typed, a `#` outside the strings, the
+stop-parsing token `--%` or a braced variable name keeps the first-word
+reading, since PowerShell can end a string there where this reading does
+not (so `$hint = ‘gc .env’` is refused, a declared false deny). A grep-shaped search of the
 file is not a read verb on either shell, and a mention inside a string or
 comment is inert.
 This is the hook-layer replacement for the `Read()` deny rules `init` no

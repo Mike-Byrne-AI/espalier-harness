@@ -731,6 +731,43 @@ python tools/cc/ship.py handoff
   this checkout, and the verb prints how to push it (`/ship`) and how to opt in.
   Say so in the summary: the next session here reads the row while it stays on
   this branch, but another machine or clone sees it only after a push.
+- **A lane this window cannot finish** (past the handoff threshold, a review
+  or a proof still owed and no room left to run it): end the handoff with
+  `python tools/cc/ship.py handoff --unfinished "<what is left>"` in place of
+  the push, whatever `handoff_push` says. It runs only in a session the
+  prompt router asked for the threshold handoff, with no way past that, so it
+  never becomes the everyday way round the plain handoff's dirty-tree
+  refusal. It pushes nothing and opens no pull request (a half-built lane
+  must not ride auto-merge), and it releases no claim, so the lane's job
+  stays live. It sets a plan in progress aside under `cc/_cold/`, commits the
+  tracked edits as one commit carrying an `Espalier-Unfinished: <lane>`
+  trailer (an empty one where the tracked tree is clean, so the guard below
+  holds where only a review is owed), names the untracked files it leaves
+  beside the lane, then arms the own-clear with a brief naming the lane, what
+  is left, and the two moves that give it back as it was: while HEAD is that
+  commit, `git reset --soft <its parent>` (both named by sha), and
+  `python tools/cc/execution_plan.py restore <the record>` (the commit's body
+  names the record too). Until the reset, every push of the lane through the
+  ship driver (`open`, the handoff's push onto an open pull request,
+  `catch-up`, and `rebind` after a push) refuses and names it; a hand
+  `git push` is not checked, so never push the lane by hand. Where the lane's
+  branch is already on origin (a pull request may be open on it, the seat's
+  own red one the likely case), the brief says so: a hand push there lands the
+  set-aside edits on that pull request, so the soft reset comes first. It refuses
+  before anything moves where no own-clear mod would read the marker (that
+  window is cleared by hand, the lane left as it is), where the session's own
+  checkout is not the lane's and holds a commit origin lacks or a tracked
+  edit, on the default branch or a detached HEAD, during a merge, rebase,
+  cherry-pick or revert, and on a lane whose commits carry no row (write it
+  first, the steps above). Where it sets the lane aside but no marker arms,
+  it prints the moves and exits 1, and running it again once that is settled
+  arms.
+
+<!-- espalier:self-host-only -->
+The landing check (step 7c) reads the working tree, the unfinished lane's
+half-made edits included: a red those edits cause goes into "<what is left>"
+as the next window's to fix, never fixed in this one.
+<!-- /espalier:self-host-only -->
 
 Either way, say in the `Next:` line what happened -- the URL the driver
 printed, "committed locally, not pushed (handoff_push is off)", or the direct
@@ -742,7 +779,8 @@ after a push that landed, and after a refusal this window is done with -- the
 base red (nothing lands on it; the lane stays here, whole) or a step after a
 landed push refusing (the head wait, the rebind) -- with the refusal in the
 marker and the lane to land first appended to the brief, the refusal still
-printed (exit 1); never after a refusal this window must fix first (a dirty
+printed (exit 1); after a lane handed off unfinished, with the lane to finish
+appended the same way (exit 0); never after a refusal this window must fix first (a dirty
 tree, a lane behind its remote, a shared checkout), which arms nothing. In a
 window `seat.py launch` started, the own-clear mod clears the window at this
 turn's end and re-primes it from the seat brief, so after the handoff take no
