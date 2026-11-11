@@ -309,6 +309,84 @@ def test_a_live_session_excuses_the_chain_alone_and_an_unmoved_chain_reads_nothi
     assert _conftest._attributed_moves(empty_before, lock_after, root, absent_config) == ([], "")
 
 
+@pytest.mark.parametrize(
+    ("launch", "planted_by_test", "owner"),
+    [
+        pytest.param("empty-home", True, "none", id="the-tests-own-planted-registry-is-not-read"),
+        pytest.param("empty-home", False, "none", id="no-registry-as-on-ci-by-the-default-path"),
+        pytest.param("stale-config-live-home", False, "session",
+                     id="a-configured-dir-holding-no-registry-does-not-hide-the-default"),
+    ],
+)
+def test_the_registry_is_found_from_the_launch_environment(
+        tmp_path, monkeypatch, launch, planted_by_test, owner):
+    """The fixture reads the registry at its teardown, while the test's own
+    monkeypatch is still in force (it was set up first, so it is undone last):
+    a test that set HOME or CLAUDE_CONFIG_DIR at a registry naming the checkout
+    excused its own chain write, on CI too (the DEF-543 lane's two reviews).
+    The default path reads the environment pytest was launched with, each of
+    its directories on its own: a configured one holding no registry left the
+    default unread and the move red."""
+    import tests.conftest as _conftest
+
+    root = (tmp_path / "main")
+    root.mkdir()
+    root = root.resolve()
+    home = tmp_path / "launch-home"
+    home.mkdir()
+    env = {"CLAUDE_CONFIG_DIR": None, "HOME": str(home), "USERPROFILE": str(home)}
+    if launch == "stale-config-live-home":
+        env["CLAUDE_CONFIG_DIR"] = str(_planted_registry(tmp_path / "stale-config", "none"))
+        _planted_registry(home / ".claude", "live", root)
+    monkeypatch.setattr(_conftest, "_LAUNCH_REGISTRY_ENV", env)
+    test_home = tmp_path / "test-home"
+    test_home.mkdir()
+    monkeypatch.setenv("HOME", str(test_home))
+    monkeypatch.setenv("USERPROFILE", str(test_home))
+    if planted_by_test:
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(_planted_registry(tmp_path / "planted", "live", root)))
+    assert _conftest._live_chain_owner(root) == owner
+
+
+def test_a_chain_move_let_through_is_said_and_a_red_one_is_not():
+    """A seat's run excuses a chain move a live session here could have made,
+    so the fixture says so, naming the test: only a run with no session in the
+    checkout reds it (the DEF-543 lane's failure-mode review). An unread
+    registry is said as before; a red or an unmoved chain says nothing here."""
+    import tests.conftest as _conftest
+
+    node = "tests/test_foo.py::test_bar"
+    said = _conftest._chain_excuse_note(node, "session")
+    assert said and node in said and "live Claude Code session" in said and "CI" in said
+    unread = _conftest._chain_excuse_note(node, "unread")
+    assert unread and node in unread and "could not be read" in unread
+    assert _conftest._chain_excuse_note(node, "none") is None
+    assert _conftest._chain_excuse_note(node, "") is None
+
+
+def test_the_live_tree_fixtures_call_the_helpers_their_tests_pin():
+    """The helpers' tests drive the helpers alone, so a fixture that stopped
+    calling one kept them green: the scrub call dropped from the session
+    fixture, the nodeid lookup DEF-476 replaced, a fingerprint of a narrower
+    watch, the moves read without attribution, the excusal unsaid (each
+    driven green against this file by the DEF-543 lane's reviews). Pins each
+    call in its fixture's body."""
+    import ast
+
+    source = (REPO_ROOT / "tests" / "conftest.py").read_text(encoding="utf-8")
+    bodies = {
+        node.name: ast.get_source_segment(source, node)
+        for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)
+    }
+    scrub = bodies["_isolate_claude_code_session"]
+    assert "_scrub_claude_code_session_env(mp)" in scrub.split("yield")[0]
+    guard = bodies["_no_live_tree_writes"]
+    for call in ("_live_tree_allowed_key(request.node)", "before = _live_tree_fingerprint()",
+                 "after = _live_tree_fingerprint()", "_attributed_moves(before, after)",
+                 "_chain_excuse_note(request.node.nodeid, chain_owner)"):
+        assert call in guard, f"_no_live_tree_writes no longer calls {call}"
+
+
 def test_the_session_scrub_unsets_the_project_dir_a_spawn_would_root_in(tmp_path, monkeypatch):
     """The class's source (air's ruling 8ba9a2, a): a pytest a hook launches
     inherits CLAUDE_PROJECT_DIR naming this checkout, and a tools/cc script a
@@ -338,6 +416,11 @@ def test_the_session_scrub_unsets_the_project_dir_a_spawn_would_root_in(tmp_path
     assert result.returncode == 0, result.stderr
     assert (scratch / "cc" / "blueprints" / "latest.json").is_file(), result.stdout
     assert not (live / "cc").exists(), sorted(p.name for p in (live / "cc").rglob("*"))
+    # The real writer's chain is what the watch reads as records: latest.json
+    # and one node (_is_chain_record is hand-kept against the writer's names).
+    chain = _conftest._LIVE_CHAIN_DIR
+    records = _conftest._live_tree_fingerprint(scratch, (chain,))[chain]
+    assert "latest.json" in records and len(records) == 2, sorted(records)
 
 
 def test_live_tree_allowed_keys_on_the_module_stem():

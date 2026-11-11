@@ -338,10 +338,11 @@ further archive-path rows that had been demoted. Re-verified by execution, not r
 archive` under stage-02's own `-m "not slow and not full_tree"` selection runs **0 failed**.
 Struck rows are on the `record` branch, in the pre-rebuild file the header names, with that evidence.
 
-⚠ **`14f834e` also made a deliberate coverage trade that no row yet carries.** It dropped
-`cc/blueprints` from `_LIVE_TREE_WATCH` — removing the *detector*, not the write. The live-tree
-bootstrap at `tests/test_session_banner.py::test_keep_tail_last_section_alone_over_budget_keeps_that_section` still runs, and `tests/conftest.py::_isolate_interpreter_identity_memo` records the
-trade as *"KNOWN COVERAGE LOSS, accepted deliberately"* with a named follow-up. Tracked below.
+**`14f834e` also made a deliberate coverage trade, since closed.** It dropped `cc/blueprints`
+from `_LIVE_TREE_WATCH` — removing the *detector*, not the write. DEF-543 (struck 2026-11-11)
+put it back, a move of the chain's records attributed by Claude Code's session registry
+(`tests/conftest.py::_live_chain_owner`), and the banner builds it found writing the chain on
+REPO_ROOT build on `self_host_tree_copy`.
 
 ---
 

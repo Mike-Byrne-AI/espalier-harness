@@ -540,13 +540,21 @@ def _isolate_audit_dir(monkeypatch, tmp_path):
 #     where the deepest checkout owns a cwd, so a worktree's session never quiets
 #     the main checkout. A session here moves these names with nothing a test could
 #     attribute it by -- its SessionStart, a stub's deferred demotion at its next
-#     save, a start outside SessionStart -- so the move is let through; with none,
-#     it is this run's. No registry directory (every CI runner) is none; one that
-#     cannot be read in full warns and lets the move through.
+#     save, a start outside SessionStart -- so the move is let through with a
+#     warning naming the test; with none, it is this run's. No registry directory
+#     (every CI runner) is none; one that cannot be read in full warns and lets the
+#     move through. The registry is found from the environment pytest was launched
+#     with (_LAUNCH_REGISTRY_ENV): the read runs at teardown, while a test's own
+#     monkeypatch of HOME or CLAUDE_CONFIG_DIR is still in force, and a test
+#     planting a registry must never excuse its own write.
 # What it does not see, named: a leak on a tree with a session live in it (the
-# seat's own run; a fresh clone and CI see it); a leaked record, finalize or
-# justify, which rewrite names already there (a watch of names, not content); a
-# write under compact_summaries/ (a subdirectory's entries are not this one's).
+# seat's own run warns and passes; a full-tier CI cell, the post-merge proof and
+# a fresh clone red, and a pull request whose tier is the contract slice runs
+# only its contract tests); a leaked record, finalize or justify, which rewrite
+# names already there (a watch of names, not content); a write under
+# compact_summaries/ (a subdirectory's entries are not this one's); a write made
+# by a module-, class- or session-scoped fixture or at collection, which runs
+# outside the per-test fingerprints.
 # The leak the class has hit, a test subprocess inheriting CLAUDE_PROJECT_DIR
 # (docs/SHARP_EDGES.md, "Subprocesses Inheriting CLAUDE_PROJECT_DIR"), is closed
 # at its source: `_isolate_claude_code_session` scrubs it.
@@ -600,22 +608,49 @@ def _checkout_sync():
     return module
 
 
+#: What Claude Code's config directories are found from, as pytest was launched:
+#: `_no_live_tree_writes` reads the registry at its teardown, before the
+#: `monkeypatch` fixture's undo (it was set up first), so a live read would see
+#: the HOME or CLAUDE_CONFIG_DIR the test set (the code review of the DEF-543 lane).
+_LAUNCH_REGISTRY_ENV = {name: os.environ.get(name) for name in ("CLAUDE_CONFIG_DIR", "HOME", "USERPROFILE")}
+
+
+def _launch_config_dirs(cs) -> list[Path]:
+    """``cs.claude_config_dirs()`` under :data:`_LAUNCH_REGISTRY_ENV`, the
+    environment put back as it was once read."""
+    with pytest.MonkeyPatch.context() as mp:
+        for name, value in _LAUNCH_REGISTRY_ENV.items():
+            if value is None:
+                mp.delenv(name, raising=False)
+            else:
+                mp.setenv(name, value)
+        return cs.claude_config_dirs()
+
+
 def _live_chain_owner(root: Path = REPO_ROOT, config_dir: Path | None = None) -> str:
     """Whose a move of ``root``'s blueprint chain is, read from Claude Code's
     session registry: ``"session"`` where a live session works in this
-    checkout, ``"unread"`` where the registry is there and cannot be read in
-    full, ``"none"`` otherwise, a missing registry directory included (every CI
-    runner). ``config_dir`` stands for Claude Code's config directory."""
+    checkout, ``"unread"`` where a registry is there and cannot be read in
+    full, ``"none"`` otherwise, no registry directory at all included (every CI
+    runner). ``config_dir`` stands for Claude Code's config directory; without
+    it, each of the launch environment's directories is read on its own, so a
+    configured one holding no registry does not hide the default's."""
     cs = _checkout_sync()
-    sessions = cs.live_sessions(config_dir)
-    if sessions is None:
-        bases = [config_dir] if config_dir is not None else cs.claude_config_dirs()
+    bases = [config_dir] if config_dir is not None else _launch_config_dirs(cs)
+    owner = "none"
+    for base in bases:
         try:
-            present = bool(bases) and (bases[0] / "sessions").is_dir()
+            if not (base / "sessions").is_dir():
+                continue
         except OSError:
-            present = True
-        return "unread" if present else "none"
-    return "session" if cs.sessions_in_checkout(sessions, root) else "none"
+            owner = "unread"
+            continue
+        sessions = cs.live_sessions(base)
+        if sessions is None:
+            owner = "unread"
+        elif cs.sessions_in_checkout(sessions, root):
+            return "session"
+    return owner
 
 
 def _attributed_moves(before, after, root: Path = REPO_ROOT,
@@ -721,9 +756,26 @@ _LIVE_CHAIN_NOTE = (
     "A test that builds the SessionStart banner on REPO_ROOT "
     "(session_start._build_context, ._load_blueprint) starts a chain wherever "
     "none exists, as on every CI checkout: build it on self_host_tree_copy. A "
-    "tools/cc script spawned with no CLAUDE_PROJECT_DIR and cwd=REPO_ROOT roots "
-    "itself here: give it a scratch project."
+    "tools/cc script spawned with no CLAUDE_PROJECT_DIR and its cwd anywhere in "
+    "REPO_ROOT roots itself here: give it a scratch project."
 )
+
+
+def _chain_excuse_note(nodeid: str, owner: str) -> str | None:
+    """The warning for a chain move let through, or None where none was: a
+    seat's own run must say it excused one, since only a run with no session
+    in the checkout (CI, a fresh clone) reds it."""
+    if owner == "session":
+        return (
+            f"{_LIVE_CHAIN_DIR} moved under {nodeid}, and a live Claude Code session "
+            "works in this checkout and may have moved it, so not failed. If this "
+            "test wrote it, a run with no session here (CI, a fresh clone) reds it.")
+    if owner == "unread":
+        return (
+            f"{_LIVE_CHAIN_DIR} moved under {nodeid}, and Claude Code's session "
+            "registry could not be read in full, so whether a live session in this "
+            "checkout moved it is unknown; not failed. Rerun the file alone.")
+    return None
 
 
 @pytest.fixture(autouse=True)
@@ -741,13 +793,9 @@ def _no_live_tree_writes(request):
     yield
     after = _live_tree_fingerprint()
     moved, chain_owner = _attributed_moves(before, after)
-    if chain_owner == "unread":
-        warnings.warn(
-            f"{_LIVE_CHAIN_DIR} moved under {request.node.nodeid}, and Claude Code's "
-            "session registry could not be read in full, so whether a live session "
-            "in this checkout moved it is unknown; not failed. Rerun the file alone.",
-            stacklevel=1,
-        )
+    excused = _chain_excuse_note(request.node.nodeid, chain_owner)
+    if excused:
+        warnings.warn(excused, stacklevel=1)
     chain_moved = chain_owner == "none" and any(m.startswith(_LIVE_CHAIN_DIR) for m in moved)
     assert not moved, (
         "test added or removed entries in the LIVE repo tree: "
