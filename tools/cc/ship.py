@@ -2082,8 +2082,10 @@ class Unfinished(NamedTuple):
     words, the set-aside commit and its parent, the set-aside plan's record
     (named from the root, or whole where the session's checkout is not the
     lane's) and its task (empty where none was in progress), the untracked
-    files left beside it, and whether the commit is empty (the tracked tree
-    was clean: it carries the trailer alone, so the push guard still holds)."""
+    files left beside it, whether the commit is empty (the tracked tree
+    was clean: it carries the trailer alone, so the push guard still holds),
+    and whether the lane's branch is on origin (its remote-tracking ref, as
+    last fetched: a pull request may then be open on it)."""
     branch: str
     text: str
     commit: str
@@ -2092,6 +2094,7 @@ class Unfinished(NamedTuple):
     plan_task: str
     untracked: tuple[str, ...]
     empty: bool = False
+    on_origin: bool = False
 
 
 def _brief_text(text: str) -> str:
@@ -2171,8 +2174,11 @@ def _restore_words(record: str) -> str:
 def _finish_first_tail(unfinished: Unfinished, lane_checkout: Path | None = None) -> str:
     """What the re-primed window reads after its role brief when the handoff
     left a lane unfinished (:func:`_hand_off_unfinished`): what is left, where
-    the lane waits (here, unpushed, no pull request, its claims and job
-    live), and the moves that give it back as it was -- the soft reset of the
+    the lane waits (here, its claims and job live; unpushed with no pull
+    request, or, where its branch is on origin, with a pull request perhaps
+    open on it, which a hand push would land the set-aside edits on, so the
+    soft reset comes before any push), and the moves that give it back as
+    it was -- the soft reset of the
     set-aside commit, named by its sha and parent, and the restore of the
     set-aside plan -- before the lane's own procedure resumes. ``lane_checkout``
     is the lane's checkout when it is not the one the window was started in
@@ -2198,9 +2204,17 @@ def _finish_first_tail(unfinished: Unfinished, lane_checkout: Path | None = None
         more = len(unfinished.untracked) - UNFINISHED_UNTRACKED_SHOWN
         moves.append(f"{len(unfinished.untracked)} untracked file(s) sit beside it, uncommitted: {shown}"
                      + (f" and {more} more" if more > 0 else ""))
+    # The seat's own red pull request is the likely lane at the threshold, and
+    # the red-cell recipe is fix, commit, git push, then rebind: a hand push
+    # lands the set-aside edits on the open pull request before rebind refuses.
+    waits = (f"The lane {lane} is committed in {spot}, and its branch is on origin (as last fetched), so a pull "
+             "request may be open on it: a hand git push there lands the set-aside edits on that pull request, "
+             "and auto-merge can then merge them on green, so soft-reset first, before any push; its row is "
+             "written" if unfinished.on_origin else
+             f"The lane {lane} is committed in {spot} and unpushed, with no pull request, its row written")
     return (f"\n\n{FINISH_FIRST} What is left: {_brief_text(unfinished.text)}\n"
-            f"The lane {lane} is committed in {spot} and unpushed, with no pull request, its row written; its "
-            f"claims and its job stay live{there}. Stay on this branch until the lane is finished, and switch "
+            f"{waits}; its claims and its job stay live{there}. Stay on this branch until the lane is "
+            "finished, and switch "
             "back to it first if this window starts on another: nothing but this brief names it, and a red "
             "pull request on another lane is worked before the soft reset below, not after (staged edits ride "
             "a branch switch). The window that handed off had no room left to finish it; this one finishes it "
@@ -3862,6 +3876,10 @@ def _hand_off_unfinished(root: Path, text: str, *, dry_run: bool) -> Unfinished:
                                   f"{_unfinished_on_lane(root, base_ref)}")
     rc, others, _ = _git("ls-files", "--others", "--exclude-standard", cwd=str(root))
     untracked = tuple(line.strip() for line in others.splitlines() if line.strip()) if rc == 0 else ()
+    # Offline: the remote-tracking ref as last fetched (no fetch, no gh). On
+    # origin, a pull request may be open, and the brief says so.
+    rc, _, _ = _git("rev-parse", "-q", "--verify", f"refs/remotes/origin/{branch}", cwd=str(root))
+    on_origin = rc == 0
     # The plan the mod holds on, and execution_plan.py writes, is the session's
     # checkout's: the lane checkout's own is it only where the two are one.
     plan_path = (where if elsewhere else root) / "cc" / "execution_plan.json"
@@ -3881,7 +3899,7 @@ def _hand_off_unfinished(root: Path, text: str, *, dry_run: bool) -> Unfinished:
              + (f"the plan ({task}) aside in cc/_cold/, " if in_progress else "no plan aside (none in progress), ")
              + f"commit {len(edits)} tracked edit{plural} of {branch} as {UNFINISHED_SUBJECT!r} with its "
              f"{UNFINISHED_TRAILER} trailer, leave {len(untracked)} untracked file(s) beside it, and push nothing")
-        return Unfinished(branch, what, "", "", "", task, untracked)
+        return Unfinished(branch, what, "", "", "", task, untracked, on_origin=on_origin)
     plan_record, moved = "", None
     if in_progress and module is not None:
         try:
@@ -3941,7 +3959,7 @@ def _hand_off_unfinished(root: Path, text: str, *, dry_run: bool) -> Unfinished:
          + (f"; the plan ({task}) set aside at {plan_record}" if plan_record else "")
          + (f"; {len(untracked)} untracked file(s) left beside it ({shown})" if untracked else "")
          + "; nothing pushed, and the lane's claims stay live")
-    return Unfinished(branch, what, commit, parent, plan_record, task, untracked, empty)
+    return Unfinished(branch, what, commit, parent, plan_record, task, untracked, empty, on_origin)
 
 
 def _plan_named_in(root: Path, commit: str) -> tuple[str, str]:

@@ -787,7 +787,8 @@ class TestTheHandoffLeavesAnUnfinishedLane:
         assert marker["landed"] is False and marker["outcome"] == f"left unfinished: {self.TEXT}"
         brief = marker["brief"]
         tail = brief[brief.index(ship.FINISH_FIRST):]
-        assert self.TEXT in tail and "lane/half" in tail and "unpushed" in tail
+        assert self.TEXT in tail and "lane/half" in tail and "unpushed, with no pull request" in tail
+        assert "is on origin" not in tail
         assert f"while HEAD is {head[:12]}, git reset --soft {below[:12]} takes back" in tail
         assert f" tools/cc/execution_plan.py restore cc/_cold/{cold.name} puts back the plan" in tail
         assert "test_new.py" in tail and "THE HANDOFF DID NOT LAND" not in tail
@@ -800,6 +801,25 @@ class TestTheHandoffLeavesAnUnfinishedLane:
         out = capsys.readouterr().out
         assert "left lane/half unfinished" in out and "nothing pushed" in out
         assert "own-clear armed" in out and "the lane to finish" in out
+
+    def test_a_lane_already_on_origin_is_named_there_with_the_hand_push_it_must_not_take(
+            self, ship, repo, monkeypatch):
+        """The threshold ask makes the seat's own red pull request the likely
+        lane, and the red-cell recipe a window remembers is fix, commit, git
+        push, then rebind: the hand push lands the set-aside edits on the open
+        pull request before rebind refuses, and auto-merge can merge them on
+        green. So a lane whose branch is on origin is said to be there, never
+        unpushed, with the soft reset ahead of any push. Read offline (the
+        remote-tracking ref as last fetched): no fetch, no gh."""
+        self._ready(ship, repo, monkeypatch)
+        _git(repo, "push", "--quiet", "-u", "origin", "lane/half")
+        assert ship.handoff(unfinished=self.TEXT) == 0
+        tail = _marker(repo)["brief"]
+        tail = tail[tail.index(ship.FINISH_FIRST):]
+        assert "unpushed" not in tail and "with no pull request" not in tail
+        assert "its branch is on origin" in tail and "a pull request may be open on it" in tail
+        assert "a hand git push there lands the set-aside edits" in tail and "soft-reset first" in tail
+        assert tail.isascii() and '"' not in tail and "%" not in tail
 
     def test_the_two_moves_the_brief_names_give_the_lane_back_as_it_was(self, ship, repo, monkeypatch):
         """The next window's first moves, driven: the soft reset and the

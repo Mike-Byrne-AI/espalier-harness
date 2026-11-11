@@ -750,7 +750,10 @@ python tools/cc/ship.py handoff
   names the record too). Until the reset, every push of the lane through the
   ship driver (`open`, the handoff's push onto an open pull request,
   `catch-up`, and `rebind` after a push) refuses and names it; a hand
-  `git push` is not checked, so never push the lane by hand. It refuses
+  `git push` is not checked, so never push the lane by hand. Where the lane's
+  branch is already on origin (a pull request may be open on it, the seat's
+  own red one the likely case), the brief says so: a hand push there lands the
+  set-aside edits on that pull request, so the soft reset comes first. It refuses
   before anything moves where no own-clear mod would read the marker (that
   window is cleared by hand, the lane left as it is), where the session's own
   checkout is not the lane's and holds a commit origin lacks or a tracked

@@ -696,18 +696,25 @@ one ASCII paragraph beside the prompt:
 [HARNESS] Context is 271k, past the handoff threshold (200k, espalier.toml
 handoff_context_tokens). First asked 2026-10-26T09:19Z at 271k. Handoff
 replaces compaction: if a lane is in hand, finish it through its own landing
-and start no new job; with no lane in hand, run /handoff now (it writes your
-row, and pushes the lane). After the handoff take no new work, answer a loop
-tick in one line, and tell the operator this window needs a /clear (the loop
-survives it; start no second one), or, after a lane opened by hand, run
-python tools/cc/ship.py arm --why <how>.
+and start no new job; where no room is left to finish it, run /handoff with
+its push step python tools/cc/ship.py handoff --unfinished "<what is left>",
+which pushes nothing and arms the clear; with no lane in hand and no handoff
+written since that ask, run /handoff now (it writes your row, and pushes the
+lane). After the handoff take no new job (your own pull request's red or
+conflict, and a red main's revert, are not new work), answer a loop tick in
+one line, and tell the operator this window needs a /clear (the loop survives
+it; start no second one), or, after a lane opened by hand, run python
+tools/cc/ship.py arm --why <how>.
 ```
 
 The push clause rides only where `handoff_push = true`. The ask is idempotent
 by text: it repeats on every prompt past the figure until the window is
 cleared, and it never says "commit and hand off" mid-lane, because on a tree
 with `handoff_push` the handoff's last step opens the lane's pull request with
-auto-merge armed, and a half-finished lane must not ride that. The first ask
+auto-merge armed, and a half-finished lane must not ride that. A lane the
+window has no room left to finish is set aside instead (`--unfinished`, which
+runs only in a session this ask was recorded for, pushes nothing, and arms the
+own-clear with the lane to finish in its brief; `/handoff` describes it). The first ask
 is recorded beside the session's marker
 (`.espalier-state/sessions/<id>.handoff-asked`, swept with the marker) so the
 later ones can quote it. Absent, `0`, or anything but a positive integer is
