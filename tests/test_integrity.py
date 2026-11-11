@@ -694,6 +694,45 @@ class TestIntegrityBridgeSentinelBackfill:
         assert not module.is_protocol_mismatch(["tools/cc/hooks/write_guard.py"])
         assert not module.is_protocol_mismatch([])
 
+    def test_backfill_builds_the_settings_split_from_an_older_scan(self, tmp_path):
+        # DEF-1023: `integrity verify` reads scan_settings_split. An engine run
+        # against a hook module from before it (a bisect's `git checkout <sha>
+        # -- tools/`) must still say which file it could not read, never raise.
+        # The older scan is the live one with the new name hidden, so the
+        # backfill is held to the real split on the same tree.
+        from espalier._integrity_bridge import _backfill_sentinels
+
+        claude = tmp_path / ".claude"
+        claude.mkdir()
+        (claude / "settings.json").write_text("{\n", encoding="utf-8")
+        (claude / "settings.local.json").write_text(
+            json.dumps({"disableAllHooks": True}), encoding="utf-8"
+        )
+
+        class _PreSplitScan:
+            scan_for_kill_switches = staticmethod(_integrity.scan_for_kill_switches)
+
+        module = _PreSplitScan()
+        _backfill_sentinels(module)
+        assert module.scan_settings_split(tmp_path) == _integrity.scan_settings_split(tmp_path)
+        found, unreadable = module.scan_settings_split(tmp_path)
+        assert [f.split(":")[0] for f in found] == [".claude/settings.local.json"]
+        assert [f.split(":")[0] for f in unreadable] == [".claude/settings.json"]
+
+    def test_backfill_reads_no_unreadable_file_from_a_scan_without_the_opt_in(self, tmp_path):
+        from espalier._integrity_bridge import _backfill_sentinels
+
+        class _Oldest:
+            @staticmethod
+            def scan_for_kill_switches(repo_root):
+                return [".claude/settings.local.json: disableAllHooks: true"]
+
+        module = _Oldest()
+        _backfill_sentinels(module)
+        assert module.scan_settings_split(tmp_path) == (
+            [".claude/settings.local.json: disableAllHooks: true"], [],
+        )
+
     def test_backfill_never_overwrites_a_real_value(self):
         """Negative control: a current module must pass through untouched."""
         from espalier._integrity_bridge import _backfill_sentinels
@@ -791,8 +830,8 @@ class TestKillSwitchScan:
                 assert probes_raise_on_eacces(claude / "settings.json"), (
                     "emulation is not re-raising EACCES; this proves nothing"
                 )
-                # Both arms: the blocking default AND the reporter opt-in, which
-                # reaches a different branch further down the same function.
+                # Both arms: the blocking default AND the reporter opt-in, two
+                # filters over the one pass that tags this file unreadable.
                 assert _integrity.scan_for_kill_switches(tmp_path) == []
                 assert _integrity.scan_for_kill_switches(
                     tmp_path, include_unreadable=True
@@ -1319,6 +1358,61 @@ class TestCLI:
         data = json.loads(result.stdout)
         assert data["kill_switches"]
 
+    def test_verify_says_a_settings_file_it_could_not_parse_was_not_scanned(self, tmp_path):
+        # DEF-1023: a settings.json hand-edited into invalid JSON is not in the
+        # manifest, so the verify branch read it as holding no kill switch and
+        # the whole report came back clean. "Could not tell" is reported under
+        # its own key and on stderr, and exits 2 ("resolve, then re-run": a
+        # project file that does not parse wires no hooks, the kill switch's
+        # effect) with a message of its own: never "Remove them", which would
+        # name a setting nobody can see, and never drift's refresh, which
+        # changes nothing here since settings files are not in the manifest.
+        _seed_minimal_repo(tmp_path)
+        self._cli("integrity", "refresh", str(tmp_path))
+        (tmp_path / ".claude").mkdir(exist_ok=True)
+        (tmp_path / ".claude" / "settings.json").write_text(
+            '{"hooks": {},}\n', encoding="utf-8"
+        )
+        result = self._cli("integrity", "verify", str(tmp_path))
+        assert result.returncode == 2, result.stderr
+        data = json.loads(result.stdout)
+        assert data["integrity_ok"] is True
+        assert data["kill_switches"] == []
+        assert "unreadable_settings" in data, sorted(data)
+        assert [f.split(":")[0] for f in data["unreadable_settings"]] == [".claude/settings.json"]
+        assert ".claude/settings.json" in result.stderr
+        assert "Remove them" not in result.stderr
+        assert "refresh" not in result.stderr  # the manifest verified: no drift remedy
+        assert "could not read 1 settings file" in result.stderr
+
+    def test_verify_says_an_unread_settings_file_on_a_tree_with_no_manifest(self, tmp_path):
+        # The fresh-tree exit says "clean" (no manifest by construction); the
+        # unread-settings branch is asked before it, so it never reads as a pass.
+        _seed_minimal_repo(tmp_path)
+        (tmp_path / ".claude").mkdir(exist_ok=True)
+        (tmp_path / ".claude" / "settings.local.json").write_text("{\n", encoding="utf-8")
+        result = self._cli("integrity", "verify", str(tmp_path))
+        assert result.returncode == 2, (result.stdout, result.stderr)
+        assert ".claude/settings.local.json" in result.stderr
+
+    def test_verify_keeps_a_kill_switch_apart_from_an_unparseable_sibling(self, tmp_path):
+        _seed_minimal_repo(tmp_path)
+        self._cli("integrity", "refresh", str(tmp_path))
+        (tmp_path / ".claude").mkdir(exist_ok=True)
+        (tmp_path / ".claude" / "settings.json").write_text("{\n", encoding="utf-8")
+        (tmp_path / ".claude" / "settings.local.json").write_text(
+            json.dumps({"disableAllHooks": True}), encoding="utf-8"
+        )
+        result = self._cli("integrity", "verify", str(tmp_path))
+        assert result.returncode == 2
+        data = json.loads(result.stdout)
+        assert [f.split(":")[0] for f in data["kill_switches"]] == [".claude/settings.local.json"]
+        assert [f.split(":")[0] for f in data["unreadable_settings"]] == [".claude/settings.json"]
+        # Each says its own thing: the removal names the kill switch alone.
+        remove_line = next(ln for ln in result.stderr.splitlines() if "Remove them" in ln)
+        assert "settings.local.json" in remove_line and "settings.json:" not in remove_line
+        assert "could not read 1 settings file" in result.stderr
+
 
 class TestInitAutoRefresh:
     def test_init_produces_valid_manifest(self, tmp_path):
@@ -1512,6 +1606,57 @@ class TestSummarize:
         assert state["integrity_ok"] is False
         assert state["mismatched_paths"] != []
         assert any("disableAllHooks" in f for f in state["kill_switches"])
+        assert state["unreadable_settings"] == []
+
+    def test_the_split_partitions_the_opt_in_scan_in_its_order(self, tmp_path, monkeypatch):
+        # Both unreadable arms -- a file os.stat refuses and one that does not
+        # parse -- land in the second list, and the kill switches in the first;
+        # together, in candidate order, they are exactly the reporter opt-in.
+        # The stat refusal is driven by a patched os.stat, so it runs on hosts
+        # where chmod denies nothing (the chmod tests skip there).
+        claude = tmp_path / ".claude"
+        claude.mkdir()
+        (claude / "settings.json").write_text(
+            json.dumps({"disableAllHooks": True}), encoding="utf-8"
+        )
+        (claude / "settings.local.json").write_text("{not json\n", encoding="utf-8")
+        refused = os.path.normcase(os.fspath(tmp_path / ".claude" / "settings.json"))
+        real_stat = os.stat
+
+        def _stat(path, *args, **kwargs):
+            if os.path.normcase(os.fspath(path)) == refused:
+                raise PermissionError(13, "denied", os.fspath(path))
+            return real_stat(path, *args, **kwargs)
+
+        found, unreadable = _integrity.scan_settings_split(tmp_path)
+        assert [f.split(":")[0] for f in found] == [".claude/settings.json"]
+        assert [f.split(":")[0] for f in unreadable] == [".claude/settings.local.json"]
+        # settings.json is the first candidate, so its kill switch leads.
+        merged = _integrity.scan_for_kill_switches(tmp_path, include_unreadable=True)
+        assert merged == found + unreadable
+        assert _integrity.scan_for_kill_switches(tmp_path) == found
+
+        monkeypatch.setattr(_integrity.os, "stat", _stat)
+        found, unreadable = _integrity.scan_settings_split(tmp_path)
+        assert found == []
+        assert [u.split(":")[0] for u in unreadable] == [
+            ".claude/settings.json", ".claude/settings.local.json",
+        ]
+        assert "present but unreadable" in unreadable[0]
+        assert _integrity.scan_for_kill_switches(tmp_path, include_unreadable=True) == unreadable
+        assert _integrity.scan_for_kill_switches(tmp_path) == []
+
+    def test_summary_names_an_unparseable_settings_file_apart(self, tmp_path):
+        # DEF-1023: a reporter, so it opts in to the unreadable finding the two
+        # blocking hooks leave off, and keeps it out of the kill-switch list.
+        _seed_minimal_repo(tmp_path)
+        _write_manifest_from_current(tmp_path)
+        claude = tmp_path / ".claude"
+        claude.mkdir()
+        (claude / "settings.json").write_text("{not json\n", encoding="utf-8")
+        state = _integrity.summarize_state(tmp_path)
+        assert state["kill_switches"] == []
+        assert [f.split(":")[0] for f in state["unreadable_settings"]] == [".claude/settings.json"]
 
 
 class TestKillSwitchScanUnreadableSettings:
@@ -1621,6 +1766,8 @@ class TestCheckoutWiringNotice:
         write_wired_settings(tmp_path).write_text("{not json", encoding="utf-8")
         line = _integrity.checkout_wiring_notice(tmp_path)
         assert line is not None and "cannot be read as JSON" in line
+        # The repair refuses a file it cannot parse; the remedy is the JSON.
+        assert "fix its JSON syntax" in line and "wires the gates back" not in line
 
     def test_a_file_holding_no_json_object_is_its_own_line(self, tmp_path):
         """An emptied file and a JSON list both read as "read" with no object:
