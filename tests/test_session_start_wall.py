@@ -49,29 +49,39 @@ for key in [k for k in os.environ if k.startswith("ESPALIER")]:
 os.environ["CLAUDE_PROJECT_DIR"] = str(repo)
 os.environ["ESPALIER_AUDIT_DIR"] = str(repo / ".audit")
 os.environ["ESPALIER_SESSION_CATCH_UP"] = "0"
+# The `__main__` block that starts the hook (it calls main); the floor's block
+# above the imports is another (TP-706), and this interpreter is above it.
+# Read and compiled BEFORE the import, whose module load starts the hook's
+# clock: a script start compiles its module before the first line runs, so
+# the wall never counts this (DEF-5094).
+hook = cc / "hooks" / "session_start.py"
+block = next(n for n in ast.parse(hook.read_text(encoding="utf-8")).body if isinstance(n, ast.If)
+             and getattr(getattr(n.test, "left", None), "id", "") == "__name__"
+             and any(isinstance(c, ast.Call) and getattr(c.func, "id", "") == "main" for c in ast.walk(n)))
+start = compile(ast.Module(body=block.body, type_ignores=[]), str(hook), "exec")
 import session_start as ss
 import _zone_watch
 ss._WALL_SECONDS = wall
 def stall_for(*args, **kwargs):
     time.sleep(stall)
     return ""
-# The network reads answer at once, so the phase a row stalls is reached the
-# same way on an idle box and a loaded CI cell (the code review: 5 of 10 loaded
-# runs reached the banner build past a 2 s wall with the reads live).
+# Every call in a phase a row passes through on the way to the one it stalls
+# answers at once, so that phase is reached the same way on an idle box and a
+# loaded CI cell (the code review: 5 of 10 loaded runs reached the banner build
+# past a 2 s wall with the reads live; DEF-5094: the banner-build row cut at
+# 3.1 s in the pull-request reads, two of its reads left live). The zone
+# baseline's walk is the largest cost before the banner. TestTheDriverCounts-
+# OnlyTheStartItMeasures derives the set from _run_main.
+_zone_watch.take_baseline = lambda *args, **kwargs: True
 ss._open_prs_line = lambda *args, **kwargs: "OPEN-LINE-READ-BEFORE-THE-CUT"
 ss._read_open_prs = ss._read_merged_prs = lambda *args, **kwargs: ""
+ss._post_merge_unread = ss._merged_prs_line = ss._merge_rules_line = lambda *args, **kwargs: ""
 ss._read_merge_rules = lambda *args, **kwargs: ("", -1, "")
 ss._mail_line = ss._engine_line = lambda *args, **kwargs: ""
 owner, _, name = target.rpartition(".")
 if name:
     setattr(_zone_watch if owner == "_zone_watch" else ss, name, stall_for)
-src = Path(ss.__file__).read_text(encoding="utf-8")
-# The `__main__` block that starts the hook (it calls main); the floor's block
-# above the imports is another (TP-706), and this interpreter is above it.
-block = next(n for n in ast.parse(src).body if isinstance(n, ast.If)
-             and getattr(getattr(n.test, "left", None), "id", "") == "__name__"
-             and any(isinstance(c, ast.Call) and getattr(c.func, "id", "") == "main" for c in ast.walk(n)))
-exec(compile(ast.Module(body=block.body, type_ignores=[]), ss.__file__, "exec"), vars(ss))
+exec(start, vars(ss))
 '''
 
 
@@ -107,6 +117,24 @@ def _banners(out: str) -> list[str]:
             for ln in out.splitlines() if ln.startswith('{"hookSpecificOutput"')]
 
 
+def _cut_banner(r: subprocess.CompletedProcess, phase: str) -> str:
+    """The one banner of a start stalled in ``phase``. A cut that names an
+    earlier phase fails as what it is: the start passed the wall before it
+    reached the stall, which is this host's load (DEF-5094), never a cut in
+    the wrong place by the lane under test."""
+    # The head is read as the parametrized row reads it: the cut opening's one
+    # reader is tests/_cut_start.py, and a second copy here reds its one-home
+    # pin (tests/test_quickstart_doctor_example.py). The head names the phase
+    # the cut landed in and its seconds.
+    banners = _banners(r.stdout)
+    assert len(banners) == 1, r.stdout[-2000:]
+    head = banners[0].splitlines()[0]
+    if "(short" in head and f" in the {phase};" not in head:
+        pytest.fail(f"the start passed its wall before it reached the {phase} this row stalls, which is the "
+                    f"load on this host, not a cut in the wrong place: {head}")
+    return banners[0]
+
+
 class TestAStalledPhaseIsCutAtTheWall:
     """Must-deny: a phase that stalls past the wall ends in one short banner
     naming it, never in silence."""
@@ -120,38 +148,35 @@ class TestAStalledPhaseIsCutAtTheWall:
     def test_the_banner_arrives_short_and_names_the_phase_in_flight(self, tmp_path, target, phase):
         r = _start(tmp_path, target)
         assert r.returncode == 0, r.stderr[-2000:]
-        banners = _banners(r.stdout)
-        assert len(banners) == 1, r.stdout[-2000:]
-        head = banners[0].splitlines()[0]
-        assert "SessionStart (short" in head and f"in the {phase}" in head, banners[0][:800]
-        assert "the hooks are loaded" in banners[0], banners[0][:800]
-        assert f"the checks from the {phase} on did not run" in banners[0], banners[0][:800]
+        banner = _cut_banner(r, phase)
+        head = banner.splitlines()[0]
+        assert "SessionStart (short" in head and f"in the {phase}" in head, banner[:800]
+        assert "the hooks are loaded" in banner, banner[:800]
+        assert f"the checks from the {phase} on did not run" in banner, banner[:800]
 
     def test_a_cut_in_the_catch_up_says_a_move_may_still_run(self, tmp_path):
         """The catch-up's git move is never killed, so a session cut there is
         told to read the tree before it edits."""
         r = _start(tmp_path, "_sync_checkout")
-        banners = _banners(r.stdout)
-        assert len(banners) == 1 and "run `git status` before editing" in banners[0], r.stdout[-2000:]
+        banner = _cut_banner(r, "checkout catch-up")
+        assert "run `git status` before editing" in banner, banner[:2000]
 
     def test_the_cut_is_at_the_wall_by_the_banners_own_clock(self, tmp_path):
         r = _start(tmp_path, "_report_integrity_state")
-        banners = _banners(r.stdout)
-        assert len(banners) == 1, r.stdout[-2000:]
-        cut = banners[0].split("cut at ", 1)[1].split(" s", 1)[0]
-        assert _TEST_WALL_SECONDS <= float(cut) < _TEST_WALL_SECONDS + 1.0, banners[0][:400]
+        banner = _cut_banner(r, "integrity check")
+        cut = banner.split("cut at ", 1)[1].split(" s", 1)[0]
+        assert _TEST_WALL_SECONDS <= float(cut) < _TEST_WALL_SECONDS + 1.0, banner[:400]
 
     def test_a_line_read_before_the_cut_is_kept(self, tmp_path):
         r = _start(tmp_path, "_build_context")
-        banners = _banners(r.stdout)
-        assert len(banners) == 1, r.stdout[-2000:]
-        assert "OPEN-LINE-READ-BEFORE-THE-CUT" in banners[0], banners[0][:1200]
+        banner = _cut_banner(r, "banner build")
+        assert "OPEN-LINE-READ-BEFORE-THE-CUT" in banner, banner[:1200]
 
     def test_the_cut_leaves_its_record_before_the_process_ends(self, tmp_path):
         """A cut start is a hook_success to the host, so the transcript no
         longer counts it: the audit record is the count."""
         r = _start(tmp_path, "_report_integrity_state")
-        assert len(_banners(r.stdout)) == 1, r.stdout[-2000:]
+        _cut_banner(r, "integrity check")
         records = [json.loads(ln) for log in (tmp_path / "repo" / ".audit").glob("*.log")
                    for ln in log.read_text(encoding="utf-8").splitlines() if ln.strip()]
         cuts = [rec for rec in records if rec.get("event_type") == "sessionstart_failed_open_wall_cut"]
@@ -263,6 +288,74 @@ class TestTheBudgetsFitTheWall:
                  if isinstance(c, ast.Call) and getattr(c.func, "id", "") == "main"]
         assert len(calls) == 1, [ast.dump(n) for n in blocks]
         assert [getattr(a, "id", "") for a in calls[0].args] == ["_LOAD_T0"], ast.dump(calls[0])
+
+
+class TestTheDriverCountsOnlyTheStartItMeasures:
+    """DEF-5094: a stalled row is green only while the start reaches the phase
+    it stalls inside the 3 s wall, so whatever the driver leaves live before
+    that phase is billed to the row, and a loaded Windows cell turned it into
+    a red that named no defect: the zone-baseline row cut "in the start" at
+    6.1 s (Portability run 42511710052, #530's head), and the banner-build row
+    cut at 3.1 s in the pull-request reads (run 42906546492, #580's head),
+    where two reads the driver did not stub ran live. Measured on the Windows
+    box, cold, idle (four runs each): the start reached the banner build at
+    0.83 to 1.06 s with the driver as it was, the zone baseline about 0.48 s
+    of it."""
+
+    _TREE = ast.parse((HOOKS_DIR / "session_start.py").read_text(encoding="utf-8"))
+    # The phases a stalled row passes through on the way to the one it stalls,
+    # whose work the driver answers at once: the zone baseline (the one walk of
+    # the tree, the largest cost before the banner), and the network reads.
+    _ANSWERED_AT_ONCE = ("zone baseline", "mail scan", "pull-request reads", "merge-rules read", "engine probe")
+    # A phase's failure path, never reached on the driver's start.
+    _NOT_WORK = {"_phase", "_late_load_failed"}
+
+    @staticmethod
+    def _driver() -> ast.Module:
+        return ast.parse(_DRIVER)
+
+    def test_the_driver_parses_the_hook_before_the_hook_starts_its_clock(self):
+        """The hook's clock starts as its module loads, and a script start
+        compiles that module before its first line runs: the driver's own read
+        and parse of the source after ``import session_start`` is time the wall
+        counted and a real start never spends. Dies to: the parse moved back
+        below the import."""
+        body = self._driver().body
+        imports = [n.lineno for n in body if isinstance(n, ast.Import)
+                   and any(a.name == "session_start" for a in n.names)]
+        parses = [n.lineno for n in ast.walk(self._driver()) if isinstance(n, ast.Call)
+                  and getattr(n.func, "attr", "") == "parse" and getattr(n.func.value, "id", "") == "ast"]
+        assert len(imports) == 1 and parses, (imports, parses)
+        assert max(parses) < imports[0], (parses, imports)
+
+    def test_every_call_in_a_phase_it_passes_through_is_answered_at_once(self):
+        """Derived from ``_run_main``, so a read added to one of these phases
+        later is red here, not on a loaded cell: each call to a hook function,
+        or to ``_zone_watch``, made in a phase of ``_ANSWERED_AT_ONCE`` is one
+        the driver replaces. Dies to: any one of the driver's replacements
+        dropped (``_post_merge_unread`` and ``_merged_prs_line`` were the two
+        missing at #580's red)."""
+        func = next(n for n in self._TREE.body if isinstance(n, ast.FunctionDef) and n.name == "_run_main")
+        hook_funcs = {n.name for n in self._TREE.body if isinstance(n, ast.FunctionDef)}
+        marks = sorted((c.lineno, c.args[0].value) for c in ast.walk(func) if isinstance(c, ast.Call)
+                       and getattr(c.func, "id", "") == "_phase" and c.args and isinstance(c.args[0], ast.Constant))
+        assert set(self._ANSWERED_AT_ONCE) <= {name for _, name in marks}, marks
+
+        def phase_of(line: int) -> str:
+            return max((m for m in marks if m[0] <= line), default=(0, ""))[1]
+
+        needed: set[tuple[str, str]] = set()
+        for c in ast.walk(func):
+            if not isinstance(c, ast.Call) or phase_of(c.lineno) not in self._ANSWERED_AT_ONCE:
+                continue
+            if isinstance(c.func, ast.Name) and c.func.id in hook_funcs - self._NOT_WORK:
+                needed.add(("ss", c.func.id))
+            elif isinstance(c.func, ast.Attribute) and getattr(c.func.value, "id", "") == "_zone_watch":
+                needed.add(("_zone_watch", c.func.attr))
+        replaced = {(t.value.id, t.attr) for n in ast.walk(self._driver()) if isinstance(n, ast.Assign)
+                    for t in n.targets if isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name)}
+        assert needed, marks
+        assert not needed - replaced, sorted(needed - replaced)
 
 
 class TestTheWallMechanism:

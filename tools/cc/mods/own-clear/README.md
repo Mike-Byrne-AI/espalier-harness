@@ -31,7 +31,15 @@ says the window needs a `/clear` by hand.
    `written_at`. The handoff arms on every end it ran to; a refusal the
    window must fix first (a dirty tree, a lane behind its remote) arms
    nothing, and `python tools/cc/ship.py arm [--why ...]` arms by hand after a
-   lane opened by hand. Only in a window that loaded the mod; with no session
+   lane opened by hand. `python tools/cc/ship.py handoff --unfinished "<what
+   is left>"`, in a session the prompt router asked for the threshold
+   handoff, arms after setting aside a lane its window cannot finish: its plan
+   set aside under `cc/_cold/`, one commit of its tracked edits (empty where
+   the tracked tree is clean) carrying an `Espalier-Unfinished` trailer,
+   nothing pushed, `landed` false, `outcome` saying it was left unfinished
+   (the prompt router names the unfinished handoff again as the verb for a
+   clear held on it), and the lane to finish appended to `brief`.
+   Only in a window that loaded the mod; with no session
    id in the environment nothing is armed; and an arm that fails never fails
    the handoff whose step has run.
 2. **The clear.** At the end of the main loop's next turn (`turn.complete`,

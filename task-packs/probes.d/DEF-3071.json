@@ -1,0 +1,10 @@
+{
+ "id": "DEF-3071",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c 'import sys; from pathlib import Path; sys.path[:0] = [\"tools/cc/hooks\", \"tools/cc\"]; import write_guard as w; print(bool(w._bash_dangerous_reason(\"x=$(find / -type f |\\nxargs rm -rf)\", Path.cwd())))'",
+ "open_value": "False",
+ "why_not": null,
+ "row_sha": "3c9f075ad08e",
+ "text_sha": "a08afd60e770",
+ "verified_2026_11_10": "OPEN (filed 2026-11-10; probe driven at filing here and in the export of HEAD 1b34b468164e)"
+}

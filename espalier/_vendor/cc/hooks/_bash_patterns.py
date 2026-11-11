@@ -47,7 +47,7 @@ import shlex
 import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import NamedTuple, TypedDict
+from typing import Any, NamedTuple, TypedDict
 
 # Co-located sibling, the one shared path helper (`_msys_drive_to_windows`,
 # DEF-731). This module is imported under TWO spellings: bare, with the hooks
@@ -2227,19 +2227,42 @@ _POWERSHELL_DASH_COMMAND_RE = re.compile(
 #: and, in `tests/test_redos.py`, `test_posix_shell_switch_run_linear_on_one_head`,
 #: `test_posix_shell_switch_value_is_never_a_head_spelling` and the
 #: repeated-head rows.
-_POSIX_SHELL_SWITCH_RUN = (
-    # a short cluster or a long option (`--norc`, `--rcfile FILE`): exclusive
-    # on the second character; the review drove `bash --norc -c` past the
-    # short-only run
-    r"(?:[ \t]+(?:-[A-Za-z]+|--[A-Za-z][\w-]*)(?:[ \t]+(?!(?i:(?:[\w.=/-]*/)?(?:"
-    + _POSIX_SHELL_HEADS + r")(?:\.exe)?)(?=[ \t]|$))[\w.=/][\w.=/-]*)?)*"
+#: One switch of the run and its optional value: a short cluster or a long
+#: option (`--norc`, `--rcfile FILE`), exclusive on the second character; the
+#: review drove `bash --norc -c` past the short-only run. A short cluster
+#: opens on `-` or `+`: bash and sh read `+x`, `+e` and `+O name` / `+o name`
+#: as options before the first operand (each ran the program it hid, bash
+#: 5.2, DEF-3068's batch: `bash +x -c '...'` and `bash -c +e '...'` were a
+#: plain allow beside a walled `bash -c '...'`). A value never opens on `+`
+#: either, so a `+` word is a switch alone and the run keeps one parse.
+_POSIX_SHELL_SWITCH = (
+    r"(?:[-+][A-Za-z]+|--[A-Za-z][\w-]*)(?:[ \t]+(?!(?i:(?:[\w.=/-]*/)?(?:"
+    + _POSIX_SHELL_HEADS + r")(?:\.exe)?)(?=[ \t]|$))[\w.=/][\w.=/-]*)?"
+)
+_POSIX_SHELL_SWITCH_RUN = r"(?:[ \t]+" + _POSIX_SHELL_SWITCH + r")*"
+#: The `-c` cluster: `c` anywhere in it (`-cx`, `-xc`, `-lc`), both letter
+#: runs around the `c` bounded, so the adjacent pair has at most 81 parses
+#: (review: `bash -cx` was missed). ONE home for both tools' openers and the
+#: refusal in the runs after them.
+_POSIX_SHELL_C_CLUSTER = r"-[A-Za-z]{0,8}c[A-Za-z]{0,8}"
+#: The switches between the `-c` cluster and its program (DEF-3068's batch):
+#: a POSIX shell reads every option before its first operand, so `bash -c -x
+#: '...'` and `bash -c -- '...'` run the quoted word as `bash -c '...'` does,
+#: and both were a plain allow where the bare spelling walled. The grammar of
+#: the run before the cluster, except that a cluster holding `c` never opens
+#: a switch here: the opener is then the LAST `-c` cluster before the
+#: program, one split for each, so a flood of clusters stays one pass. A `--`
+#: ends the options, so it comes last. Declared over-read, the run before's
+#: own: a bare word after a switch is read as its value, so in `bash -c -x
+#: true '...'` the quoted word, which is `$0` there, is read as the program.
+_POSIX_SHELL_SWITCH_RUN_AFTER_C = (
+    r"(?:[ \t]+(?!" + _POSIX_SHELL_C_CLUSTER + r"(?=[ \t]|$))"
+    + _POSIX_SHELL_SWITCH + r")*(?:[ \t]+--)?"
 )
 _SHELL_DASH_C_RE = re.compile(
     _CMD_POS + r"(?i:" + _POSIX_SHELL_HEADS + r")" + _EXE_SUFFIX + r"\b" + _QUOTED_VERB_TAIL
-    # `c` anywhere in the cluster (`-cx`, `-xc`, `-lc`): both letter runs
-    # around the `c` bounded, so the adjacent pair has at most 81 parses
-    # (review: `bash -cx` was missed)
-    + _POSIX_SHELL_SWITCH_RUN + r"[ \t]+-[A-Za-z]{0,8}c[A-Za-z]{0,8}[ \t]+"
+    + _POSIX_SHELL_SWITCH_RUN + r"[ \t]+" + _POSIX_SHELL_C_CLUSTER
+    + _POSIX_SHELL_SWITCH_RUN_AFTER_C + r"[ \t]+"
     + r"(?P<word>" + _BASH_QUOTED_WORD + r")"
 )
 
@@ -2258,10 +2281,108 @@ def _posix_shell_c_bodies(command: str, scan: str) -> Iterator[str]:
     verb-roster reader (the secret leg) sees `sh` as the statement's verb and
     nothing past it, and the remove/relocate reader judges a nested delete
     by the grammar that runs it."""
+    for program, _ in _posix_shell_c_programs(command, scan):
+        yield program
+
+
+#: Whether the outer scan opens a command position at a `-c` program's word:
+#: `_CMD_POS_EXEC_QUOTE` ending right where the word starts (its optional
+#: quote is the word's own). Derived from that arm, so it says what the arm
+#: reads and nothing of its own.
+_EXEC_QUOTE_AT_WORD_RE = re.compile(_CMD_POS_EXEC_QUOTE + r"\Z")
+#: Whether a `-c` program's word opens on a prefix `_CMD_POS`'s separator
+#: arm reads and its other arms do not: a wrapper run, an assignment, a
+#: keyword, `!` or a redirect, after the word's quote and blanks. Reached by
+#: the slashed arm (`/usr/bin/env bash -c '...'`) or the standalone exec
+#: quote (`builtin eval bash -c '...'`), the command position the exec quote
+#: opens takes a bare verb only, so `sudo <delete>` there was read in place
+#: by nobody (the code review's 15 rows). Derived from those arms' own
+#: pieces, so it names no spelling of its own.
+_PROGRAM_OPENS_ON_PREFIX_RE = re.compile(
+    r"[\"'][ \t]*(?:" + _CMD_POS_WRAP_RUN + "|" + _CMD_POS_ENV_ASSIGN
+    + "|" + _CMD_POS_KEYWORD + r"[ \t]+"
+    + "|" + _CMD_POS_NEGATE
+    + "|" + _CMD_POS_REDIRECT + ")"
+)
+
+
+def _posix_shell_c_programs(command: str, scan: str) -> Iterator[tuple[str, bool]]:
+    """`_posix_shell_c_bodies`' programs, each with whether the outer scan
+    already reads it in place: the bare `sh -c '...'` spelling, where
+    `_CMD_POS_EXEC_QUOTE` opens a command position at the word, so every
+    record reads the program in the command's own statement and directory
+    chain. Behind a switch or cluster (`bash -lc`, `sh -e -c`, `bash -c --`)
+    no command position opens, and only a reader one level down sees it.
+
+    In place needs four things at once: the opener outside every outer
+    quote (one walk of bash's quoting), the exec quote ending at the word,
+    the word one quoted span holding no quote, backslash, `$` or backtick,
+    and the word not opening on a prefix (`_PROGRAM_OPENS_ON_PREFIX_RE`).
+    Anything else is read one level down, the side that walls. The walk
+    models quotes and backslashes only: `$'...'`, a `#` comment, a heredoc
+    body and `$(...)` flip its parity where their quote characters stand,
+    so it can read an opener as quoted (one level down: the safe side) or
+    as unquoted inside an outer quote (in place, misread: a nudge where
+    one level down would wall, no worse than before DEF-3068)."""
     if len(scan) != len(command):
         scan = command
+    walked, quoted = 0, ""
     for m in _SHELL_DASH_C_RE.finditer(scan):
-        yield _bash_word_text(command[m.start("word"):m.end("word")])
+        at = m.start("word")
+        word = command[at:m.end("word")]
+        # Whether the opener starts outside every quote: one forward walk of
+        # bash's quoting over the raw text, resumed from the last match (the
+        # matches come in order), so a flood of openers stays one pass. An
+        # opener inside an outer program's quotes (`bash -c "bash -c '...'"`)
+        # is read by the outer scan with those quotes still in its operand.
+        # walked to the WORD's start, not the match's: `_CMD_POS` takes an
+        # outer `bash -c "` into the match as its own prefix
+        while walked < at:
+            ch = command[walked]
+            if quoted == "'":
+                quoted = "" if ch == "'" else quoted
+            elif ch == "\\":
+                walked += 1
+            elif quoted == '"':
+                quoted = "" if ch == '"' else quoted
+            elif ch in "'\"":
+                quoted = ch
+            walked += 1
+        # the walk stepped past the start on an escape: unplaced, read as
+        # quoted, the side that reads the program one level down
+        unplaced = walked > at
+        # In place only where the outer scan reads the text the shell runs:
+        # the arm opens at the word, the word is one quoted span holding no
+        # quote, backslash, `$` or backtick, so its quote removal is its
+        # inside, and it opens on a bare verb, the one thing every arm
+        # reaching the exec quote reads after it. Side-by-side segments
+        # (DEF-832: a verb split across two quotes) and a quoted program
+        # inside the program read differently raw, and a bare program left
+        # out here met no tier at all (the failure-mode review's
+        # regression, against the lane's first cut).
+        in_place = (
+            not quoted and not unplaced
+            and _EXEC_QUOTE_AT_WORD_RE.search(scan, m.start(), at) is not None
+            and len(word) >= 2 and word[0] == word[-1] and word[0] in "'\""
+            and not any(ch in word[1:-1] for ch in "'\"\\$`")
+            and _PROGRAM_OPENS_ON_PREFIX_RE.match(word) is None
+        )
+        yield _bash_word_text(word), in_place
+
+
+def _posix_shell_c_programs_unread_in_place(command: str, scan: str) -> Iterator[str]:
+    """The `-c` programs the outer scan does NOT read in place (DEF-3068's
+    batch), the ones a tier hands to itself one level down. The bare
+    spelling is left out: read again one level down it is judged as another
+    shell's program, from the payload's directory and the unknown one, and
+    `cd sub && bash -c 'rm -rf .'` walled where the in-place read nudges
+    (DEF-853's declared row, red on the lane's first cut). Left out, a bare
+    spelling the outer scan reads in place keeps the verdict that reading
+    gives it; every other program, the ones `_posix_shell_c_programs` does
+    not call in place, is read here."""
+    for program, in_place in _posix_shell_c_programs(command, scan):
+        if not in_place:
+            yield program
 
 
 # The carriers of a quoted program on the Bash tool (DEF-1131): a builtin or
@@ -4527,7 +4648,20 @@ def _ps_close_double_quote(s: str, i: int) -> int:
     one continues the span. A ``$( ... )`` subexpression may itself contain
     quotes, so its nesting is tracked rather than scanned through.
     """
-    n, j, depth = len(s), i + 1, 0
+    return _ps_expandable_extent(s, i)[0]
+
+
+def _ps_expandable_extent(s: str, i: int, end: "int | None" = None) -> "tuple[int, list[tuple[int, int]]]":
+    """The ONE scan of an expandable string's body from ``i + 1``: the
+    offset it closes at, and the ``(start, stop)`` of each top-level
+    ``$( )`` subexpression's code. With ``end`` None it is a double-quoted
+    string and closes at its quote (`_ps_close_double_quote`); with ``end``
+    it is a here-string's body, which closes there, a quote in it being
+    text. `fold_powershell_quotes` reads the subexpressions from here, so
+    the two never keep two copies of the nesting rule."""
+    n, j, depth = len(s) if end is None else end, i + 1, 0
+    bodies: list[tuple[int, int]] = []
+    start = -1
     while j < n:
         c = s[j]
         if c == "`":
@@ -4535,6 +4669,8 @@ def _ps_close_double_quote(s: str, i: int) -> int:
             continue
         if c == "$" and j + 1 < n and s[j + 1] == "(":
             depth += 1
+            if depth == 1:
+                start = j + 2
             j += 2
             continue
         if depth:
@@ -4542,14 +4678,18 @@ def _ps_close_double_quote(s: str, i: int) -> int:
                 depth += 1
             elif c == ")":
                 depth -= 1
+                if not depth:
+                    bodies.append((start, j))
             j += 1
             continue
-        if c == '"':
+        if c == '"' and end is None:
             if j + 1 < n and s[j + 1] == '"':
                 j += 2
                 continue
-            return j
+            return j, bodies
         j += 1
+    if end is not None:
+        return end, bodies
     raise _UnresolvedShellSyntax("unterminated double quote")
 
 
@@ -4714,6 +4854,161 @@ def _ps_blank_expandable(
         k += 1
 
 
+#: The quote characters PowerShell pairs with a straight quote: U+2018 to
+#: U+201B with the apostrophe, U+201C to U+201E with the double quote. Either
+#: form closes a string either form opens, a doubled mixed pair is an escape,
+#: and a here-string's header and terminator take either (DEF-2040, driven on
+#: Windows PowerShell 5.1, 2026-11-10). This is the language's quote class,
+#: not a spelling roster, and its one home.
+PS_TYPOGRAPHIC_QUOTES = "".join(map(chr, (0x2018, 0x2019, 0x201A, 0x201B, 0x201C, 0x201D, 0x201E)))
+_PS_TYPOGRAPHIC_SINGLES = PS_TYPOGRAPHIC_QUOTES[:4]
+_PS_TYPOGRAPHIC_DOUBLES = PS_TYPOGRAPHIC_QUOTES[4:]
+_PS_QUOTE_FOLD = tuple(zip(PS_TYPOGRAPHIC_QUOTES, "''''" + '"""'))
+
+#: Each text folded this process, and each fold as its own fold: the
+#: dispatch folds the command, then every reader's walk folds the text it is
+#: handed again, which is that fold, so a second walk of it is a lookup. A
+#: fold of a fold is itself (pinned). Bounded: cleared past 64 entries.
+_PS_FOLDED: dict[str, str] = {}
+
+#: Raised by every fold that moves a quote, a cached one included, so the
+#: two relief gates give no relief wherever one moved, on every route a
+#: PowerShell program reaches them by: the PowerShell tool's dispatch, a
+#: program the Bash tool launches, one `Start-Process` carries (DEF-2040; the
+#: code review drove the last two allowed with the bit kept per dispatch).
+#: `write_guard.py::_a_dispatch_resets_the_fold` lowers it for each call.
+FOLD_MOVED_A_QUOTE: "contextvars.ContextVar[bool]" = contextvars.ContextVar(
+    "FOLD_MOVED_A_QUOTE", default=False)
+
+#: Past this many nested ``$( )`` levels a body is returned as typed and not
+#: cached: the reading the walk had before the fold, where the recursion
+#: through the cache otherwise met the interpreter's limit near 496 levels
+#: and the hook denied as a crash (the code review drove it at 500).
+_PS_FOLD_DEPTH_CAP = 64
+
+
+def fold_powershell_quotes(command: str, _depth: int = 0) -> str:
+    """`_fold_powershell_quotes`, the reading, once a text: an ASCII command
+    is returned at once, and a text folded before, or a fold, is looked up.
+    A fold that moved a quote raises `FOLD_MOVED_A_QUOTE`."""
+    if command.isascii() or _depth > _PS_FOLD_DEPTH_CAP:
+        return command
+    done = _PS_FOLDED.get(command)
+    if done is None:
+        done = _fold_powershell_quotes(command, _depth)
+        if len(_PS_FOLDED) > 64:
+            _PS_FOLDED.clear()
+        _PS_FOLDED[command] = done
+        _PS_FOLDED[done] = done
+    if done != command:
+        FOLD_MOVED_A_QUOTE.set(True)
+    return done
+
+
+def _fold_powershell_quotes(command: str, _depth: int = 0) -> str:
+    """``command`` with each typographic quote PowerShell READS AS A QUOTE
+    at this level written as its straight form, so every reader of the
+    PowerShell grammar -- the masker's walk and the raw-word readers that
+    test for a straight quote by hand -- pairs strings the way PowerShell
+    does (DEF-2040). One code point for one: the length and every offset
+    hold.
+
+    Only the quotes PowerShell acts on are folded: each string's opening and
+    closing quote (a here-string's header and terminator), and the quotes
+    of the program inside a ``$( )`` of a double-quoted string or
+    here-string, folded the same way one level down. Every other typographic
+    character is a string's VALUE, which PowerShell hands on as typed, and
+    is left as typed: a value that is another shell's program (`bash -c
+    "echo ’; cat .env"`) is read by that shell's grammar, where it is text --
+    folding it there invented a Bash quote that masked the read (driven: the
+    whole-text fold allowed it, the base denied it). A PowerShell program
+    one level down (`iex`, `pwsh -Command`) is folded where that level is
+    read.
+
+    A doubled escape is one quote of value, its SECOND as typed (driven on
+    PowerShell 5.1: `'x’’y'` holds x, U+2019, y). So a pair whose second
+    quote is straight is written as two straight quotes, the escape every
+    reader knows, and one whose second quote is typographic as two
+    typographic quotes, text to every reader, which keeps the typographic
+    value a Bash body reads as text (a straight pair there allowed
+    `bash -c 'echo ’’; cat .env; echo ’’'`; the failure-mode review drove
+    it). The value then reads with one typographic quote too many, which no
+    reader counts.
+
+    The strings are found by the masker's own walk over a copy with every
+    quote folded, which pairs them exactly as PowerShell does, and the
+    subexpressions by `_ps_expandable_extent`, the scan that closes a
+    double-quoted string. A command that walk cannot read, or one past the
+    masker's cap, is returned as typed, the reading it had before.
+    """
+    if command.isascii() or len(command) > _ROLE_MAP_CAP:
+        return command
+    # A braced variable name holds its quotes as name (`${a’b}` binds a
+    # variable on 5.1), and the walk has no `${ }` reading, so a fold there
+    # paired two names' quotes around a live statement: `${a’b}; Get-Content
+    # .env; ${c’d}` allowed, where the base denied it (the code review drove
+    # it, on the hard tier too). Such a command keeps the base's reading.
+    i = command.find("${")
+    while i != -1:
+        stop = command.find("}", i + 2)
+        name = command[i:] if stop == -1 else command[i:stop + 1]
+        if any(q in name for q in PS_TYPOGRAPHIC_QUOTES):
+            return command
+        i = command.find("${", i + 2)
+    full = command
+    for typographic, straight in _PS_QUOTE_FOLD:
+        if typographic in full:
+            full = full.replace(typographic, straight)
+    if full == command:
+        return command
+    spans: list[tuple[int, int, str]] = []
+    try:
+        _walk_powershell_spans(full, spans)
+    except (_UnresolvedShellSyntax, IndexError):
+        return command
+    out = list(command)
+
+    def pair(k: int) -> None:
+        second = command[k + 1]
+        if second == full[k + 1]:                 # straight: the known escape
+            out[k] = out[k + 1] = second
+        elif command[k] == full[k]:               # straight then typographic
+            out[k] = second
+
+    for open_, close, kind in spans:
+        quote = open_ + 1 if kind[0] == "@" else open_
+        out[quote], out[close] = full[quote], full[close]
+        if kind == "'":
+            k = open_ + 1
+            while k < close:
+                if full[k] == "'":                # inside, only as a pair
+                    pair(k)
+                    k += 2
+                    continue
+                k += 1
+        elif kind in ('"', '@"'):
+            if kind == '"':
+                bodies = _ps_expandable_extent(full, open_)[1]
+            else:
+                bodies = _ps_expandable_extent(full, open_ + 1, close)[1]
+            for start, stop in bodies:
+                out[start:stop] = fold_powershell_quotes(command[start:stop], _depth + 1)
+            if kind == '"':
+                inside = set().union(*(range(a, b) for a, b in bodies)) if bodies else set()
+                k = open_ + 1
+                while k < close:
+                    if k in inside:
+                        k += 1
+                    elif full[k] == "`":
+                        k += 2                    # an escaped quote is value
+                    elif full[k] == '"':          # outside $( ), only as a pair
+                        pair(k)
+                        k += 2
+                    else:
+                        k += 1
+    return "".join(out)
+
+
 def mask_powershell_inert_syntax(command: str) -> str:
     """PowerShell twin of :func:`mask_inert_syntax`.
 
@@ -4754,12 +5049,21 @@ def mask_powershell_inert_syntax(command: str) -> str:
     than the language does is friction; masking *more* would blank live code.
     Only one of those two errors is a fail-open.
     """
+    return _ps_mask_read(command)[0]
+
+
+def _ps_mask_read(command: str) -> tuple[str, bool]:
+    """`mask_powershell_inert_syntax`'s text, and whether the walk READ
+    ``command`` (``False``: handed back raw, past the length cap or at a
+    span the walk cannot resolve). The fallback's one home, so a reader
+    that must know a surviving pipe is live (`_ps_join_pipe_gaps`) cannot
+    drift from the masker's own conditions."""
     if not command or len(command) > _ROLE_MAP_CAP:
-        return command
+        return command, False
     try:
-        return _walk_powershell_spans(command)
+        return _walk_powershell_spans(command), True
     except (_UnresolvedShellSyntax, IndexError):
-        return command
+        return command, False
 
 
 def _walk_powershell_spans(s: str, spans: "list[tuple[int, int, str]] | None" = None) -> str:
@@ -4767,9 +5071,18 @@ def _walk_powershell_spans(s: str, spans: "list[tuple[int, int, str]] | None" = 
     steps over as ``(open, close, kind)`` -- the opening quote's offset (the
     at-sign of a here-string), the closing quote's, and ``'``, ``"``, ``@'``
     or ``@"`` -- in offset order: PowerShell's quoting read by the ONE walk
-    the mask is, for `_ps_quote_cursor`."""
+    the mask is, for `_ps_quote_cursor`. A typographic quote PowerShell acts
+    on is read as the straight one it pairs with; one in a string's value is
+    text (`fold_powershell_quotes`)."""
+    s = fold_powershell_quotes(s)
     n, i = len(s), 0
     out = list(s)
+    #: Where the last block comment's ``#>`` ended: a comment opener there
+    #: starts a token though no boundary character precedes it (`<# a #><# b
+    #: #>`, `<# a #># b`; pwsh 5.1, driven, a glued `& 'Remove-Item'` stage
+    #: after one ran). Read as live text, the second comment's `>` blanked
+    #: the command-position characters after it.
+    block_end = -1
     while i < n:
         c = s[i]
 
@@ -4874,7 +5187,7 @@ def _walk_powershell_spans(s: str, spans: "list[tuple[int, int, str]] | None" = 
             c == "<"
             and i + 1 < n
             and s[i + 1] == "#"
-            and (i == 0 or s[i - 1] in _PS_TOKEN_BOUNDARY)
+            and (i == 0 or i == block_end or s[i - 1] in _PS_TOKEN_BOUNDARY)
         ):
             # Block comments do NOT nest in PowerShell -- verified: the first
             # closing marker ends the comment, and code after it runs.
@@ -4894,10 +5207,10 @@ def _walk_powershell_spans(s: str, spans: "list[tuple[int, int, str]] | None" = 
             if end < 0:
                 raise _UnresolvedShellSyntax("unterminated block comment")
             _ps_blank_literal(s, out, i + 2, end)
-            i = end + 2
+            i = block_end = end + 2
             continue
 
-        if c == "#" and (i == 0 or s[i - 1] in _PS_TOKEN_BOUNDARY):
+        if c == "#" and (i == 0 or i == block_end or s[i - 1] in _PS_TOKEN_BOUNDARY):
             # WARNING: START AT i+1 -- the hash ITSELF MUST SURVIVE, for the same
             # reason the Bash pass keeps it: a blanked hash leaves an unbroken
             # whitespace run from the separator straight to the comment's first
@@ -7581,6 +7894,20 @@ def _nested_shell_programs(command: str, _depth: int) -> list[str]:
         for program in _shell_out_program_bodies(spliced, pair):
             out.append(program)
             out.extend(_nested_shell_programs(program, _depth + 1))
+        # A POSIX shell's `-c` program the outer scan does not read in place
+        # (DEF-3068's batch), as the hard tier reads it in
+        # `write_guard._bash_dangerous_reason_here`: behind a switch or
+        # cluster (`bash -lc '...'`, `sh -e -c '...'`) its delete drew no
+        # bump where the bare `bash -c '...'` drew one. The bare spelling is
+        # read in place already and is left out here, at the top only, as
+        # the tier leaves it out.
+        c_programs = (
+            _posix_shell_c_programs_unread_in_place(spliced, pair)
+            if _depth == 0 else _posix_shell_c_bodies(spliced, pair)
+        )
+        for program in c_programs:
+            out.append(program)
+            out.extend(_nested_shell_programs(program, _depth + 1))
     return list(dict.fromkeys(out))
 
 
@@ -9449,7 +9776,7 @@ def files_only_removed_operands(command: str, *, powershell: bool = False) -> fr
         raw, scan = _extractor_pair(command)
     mine: "Counter[str]" = Counter()
     if powershell:
-        for m in _PS_REMOVE_ITEM_RE.finditer(scan):
+        for m in _ps_remove_items(scan):
             args = _named_span(raw, m, "args", through_quotes=True, powershell=True)
             if _PS_RECURSE_SWITCH_RE.search(_outside_quotes(args)) or _flags_unseen(args):
                 continue
@@ -10381,17 +10708,23 @@ def powershell_scan_pair(command: str) -> tuple[str, str]:
     blanked the newline or, in a re-parsed expandable span, blanked the
     backtick (DEF-753), so a backtick that survives masking is never inside a
     string -- and the same span is replaced in BOTH strings, which keeps them
-    aligned.
-    ``powershell_scan_text`` is the masked half of this pair, byte-for-byte
-    what it always returned (pinned).
+    aligned. A second join changes length the same way: a live pipe's gap
+    holding a line break or a comment becomes one space in both halves
+    (`_ps_join_pipe_gaps`, 780c02), so an offset in either half is an offset
+    into the joined text, never into ``command``.
+    ``powershell_scan_text`` is the masked half of this pair (pinned). The
+    raw half is folded the way the masker's walk reads it
+    (`fold_powershell_quotes`), so a word read from ``raw`` sees the quotes
+    PowerShell pairs (DEF-2040).
     """
-    masked = mask_powershell_inert_syntax(command)
+    command = fold_powershell_quotes(command)
+    masked, read = _ps_mask_read(command)
     if len(masked) != len(command):
         # Cannot happen (the masker returns the command or a same-length
         # transform), but a consumer reading offsets across a length
         # mismatch would slice the wrong bytes, and the friction direction
         # is to scan the raw command.
-        masked = command
+        masked, read = command, False
     raw_parts: list[str] = []
     scan_parts: list[str] = []
     last = 0
@@ -10403,7 +10736,114 @@ def powershell_scan_pair(command: str) -> tuple[str, str]:
         last = m.end()
     raw_parts.append(command[last:])
     scan_parts.append(masked[last:])
-    return _resolve_ps_command_objects("".join(raw_parts), "".join(scan_parts))
+    raw, scan = _ps_join_pipe_gaps("".join(raw_parts), "".join(scan_parts), read)
+    return _resolve_ps_command_objects(raw, scan)
+
+
+#: A pipe whose gap, past blanks, opens with a line break or a comment: the
+#: only gap `_ps_join_pipe_gaps` rewrites, so a scan without one skips the
+#: walk. A GATE, not a matcher.
+_PS_PIPE_GAP_WITNESS_RE = re.compile(r"\|[ \t]*[\r\n#<]")
+
+#: The next line end, CR or LF: one search, which stops at the first of
+#: either (two `find` calls ran one of them to the end of the text).
+_PS_LINE_END_RE = re.compile(r"[\r\n]")
+
+
+def _ps_join_pipe_gaps(raw: str, scan: str, masker_read: bool) -> tuple[str, str]:
+    """The pair with every gap after a live pipe that holds a comment or a
+    line break replaced by one space, at the same offsets in both halves.
+
+    PowerShell reads a pipeline's next stage past blanks, line breaks, line
+    comments and block comments, so `Get-ChildItem C:\\ -Recurse | <# c #>
+    Remove-Item -Recurse -Force` is one pipeline (pwsh 7.6.5, driven), and
+    every pipe reader's stage pattern stopped at the comment's surviving
+    `<#`. Found on the MASKED half, where a pipe that survives is live and
+    a comment opener is read by the masker's own token-start rule; the
+    masker keeps a comment's delimiters on purpose (they end a blank run, so
+    a commented-out command is not read at command position), which is
+    right everywhere except here, between a pipe and its next stage. A
+    comment glued to a block comment's close opens there too (`<# a #><# b
+    #>`, `<# a #># b`: one gap on pwsh 5.1, driven), as the masker's walk
+    reads it (`block_end` in `_walk_powershell_spans`).
+
+    Two places a surviving pipe is not one the gap is read after: where the
+    masker handed the command back raw (``masker_read`` false, from
+    `_ps_mask_read`), every quoted pipe and comment survives, so nothing is
+    joined -- a declared limit: past the masker's cap, or with a span it
+    cannot resolve (an unterminated quote), a gap hides its stage from a
+    reader that has only the join; and inside a string the masker keeps
+    live because PowerShell re-parses it (`iex '...'`), a gap is joined
+    only where it ends before that string's closing quote (`_ps_quote_cursor`
+    on ``raw``) -- a comment there that runs past the quote is the inner
+    program's, and joining it swallowed the quote and the statement after
+    it (`iex 'Get-Date | # c'; Remove-Item C:\\ -Recurse -Force` walled at
+    main and allowed here, the code review); the walk then resumes after
+    the string, so a later pipe on the line is still read. Both comment
+    ends are read on the SCAN: a comment lies outside every inert span, so
+    the halves agree there, except in a re-parsed expandable string, where
+    the scan holds the line break a `` `n `` escape denotes and the raw the
+    escape (the reviews of the batch).
+
+    Linear: each gap ends at the first character that is not a blank or a
+    comment, a pipe stops it, the next line end is one search from where
+    the walk is, and the next ``#>`` is searched for at most once per
+    position it is reached from (a found one is reused while the walk is
+    short of it)."""
+    if not masker_read or not _PS_PIPE_GAP_WITNESS_RE.search(scan):
+        return raw, scan
+    n = len(scan)
+    quote_at = _ps_quote_cursor(raw)
+    spans: list[tuple[int, int]] = []
+    close_at, close_from = -1, n + 1
+    i = scan.find("|")
+    while 0 <= i < n:
+        j = i + 1
+        while j < n and scan[j] == "|":  # `||`, the pipeline chain operator
+            j += 1
+        start, k, held, glued = j, j, False, -1
+        while k < n:
+            c = scan[k]
+            opens = k == glued or scan[k - 1] in _PS_TOKEN_BOUNDARY
+            if c in " \t":
+                k += 1
+            elif c in "\r\n":
+                held, k = True, k + 1
+            elif c == "<" and scan.startswith("<#", k) and opens:
+                if not (close_from <= k + 2 <= close_at):
+                    close_from, close_at = k + 2, scan.find("#>", k + 2)
+                    if close_at < 0:
+                        close_at = n + 1  # unterminated: the masker left it raw
+                if close_at > n:
+                    break
+                held, k = True, close_at + 2
+                glued = k
+            elif c == "#" and opens:
+                eol = _PS_LINE_END_RE.search(scan, k)
+                held, k = True, (eol.start() if eol else n)
+            else:
+                break
+        if held:
+            quote = quote_at(i)
+            if quote is None or k < quote[1]:
+                spans.append((start, k))
+            else:
+                k = max(j, quote[1] + 1)  # past the string: its line's later pipes
+        i = scan.find("|", max(k, j))
+    if not spans:
+        return raw, scan
+    raw_parts: list[str] = []
+    scan_parts: list[str] = []
+    last = 0
+    for a, b in spans:
+        raw_parts.append(raw[last:a])
+        scan_parts.append(scan[last:a])
+        raw_parts.append(" ")
+        scan_parts.append(" ")
+        last = b
+    raw_parts.append(raw[last:])
+    scan_parts.append(scan[last:])
+    return "".join(raw_parts), "".join(scan_parts)
 
 
 def powershell_scan_text(command: str) -> str:
@@ -11161,8 +11601,34 @@ _PS_STDIN_SHELL_HEADS = _STDIN_SHELL_HEADS
 #: cluster ends in `c`, so `-[A-Za-z]{0,8}c` takes `-lc`, `-ec`, `-xc` and
 #: the bare `-c`. The run before it may also consume a cluster as a switch;
 #: the run gives it back, and a flood of clusters is one pass (registered).
+#: The cluster and what follows it are the Bash opener's (DEF-3068's batch):
+#: letters after the `c` (`-cx`), then switches and a closing `--` between
+#: the cluster and the program (`bash -c -x "..."`, `bash -c -- "..."`), each
+#: a plain allow here where `bash -c "..."` walled. A cluster holding `c`
+#: never opens a switch of that run, so the opener is the last such cluster
+#: and a flood stays one pass; the run's switches are blank-separated, so a
+#: switch is never two. Both runs take a POSIX shell's `+` option (`bash +x
+#: -c "..."`, `bash -c +e "..."`: a plain allow here until DEF-3068's batch,
+#: as on the Bash tool), so the run before the cluster is the shared
+#: `_PS_SWITCH_RUN` with a `+` switch added and `+` refused at a value's
+#: start; the shared run is the interpreter arms' and is left as it is
+#: (pinned to it in `test_the_lookbehind_and_the_arm_share_the_run`). A
+#: `+` switch's body holds no `-`: the shared run's body may, and with
+#: blanks optional between switches a glued `-a-a-a` has 2^n splits
+#: there (pre-existing); a `+` switch taking `-` too gave the glued `+a-a`
+#: word the same blowup, which the time budget refused at 72 characters
+#: where the base allowed it (the failure-mode review, driven).
+_PS_POSIX_SHELL_SWITCH_RUN = (
+    r"[ \t]*(?:(?:[-/][\w:.-]+|\+[\w:.]+)(?:[ \t]+(?!" + _PS_REPARSE_OPENER_WORDS
+    + r"(?=[ \t]|$))[^\s\"'\-/+][^\s]*(?=[ \t]|$))?[ \t]*)*"
+)
+_PS_SHELL_SWITCH_RUN_AFTER_C = (
+    r"(?:(?!" + _POSIX_SHELL_C_CLUSTER + r"[ \t])(?:[-/][\w:.-]+|\+[\w:.]+)(?:[ \t]+(?!"
+    + _PS_REPARSE_OPENER_WORDS + r"(?=[ \t]|$))[^\s\"'\-/+][^\s]*(?=[ \t]|$))?[ \t]+)*"
+)
 _PS_SHELL_C_TAIL = (
-    _PS_INTERP_HEAD_TAIL + _PS_SWITCH_RUN + r"-[A-Za-z]{0,8}c[ \t]+" + _PS_PROGRAM_STRING
+    _PS_INTERP_HEAD_TAIL + _PS_POSIX_SHELL_SWITCH_RUN + _POSIX_SHELL_C_CLUSTER + r"[ \t]+"
+    + _PS_SHELL_SWITCH_RUN_AFTER_C + _PS_PROGRAM_STRING
 )
 _PS_BASH_DASH_C_RE = re.compile(
     _PS_CMD_POS + _PS_EXE_PREFIX + r"(?:" + _POSIX_SHELL_HEADS + r")" + _PS_SHELL_C_TAIL,
@@ -11670,7 +12136,7 @@ def powershell_removal_element_tier(command: str, root: str | None) -> str | Non
     no element at all, a backtick, a comma inside quotes, and any element
     neither rule reads keep the wall."""
     raw, scan = powershell_scan_pair(command)
-    invocations = list(_PS_REMOVE_ITEM_RE.finditer(scan))
+    invocations = list(_ps_remove_items(scan))
     if not invocations:
         return None
     tier, scratch_asked = "allow", 0
@@ -12098,7 +12564,7 @@ def powershell_removal_is_below_a_scratch_root(
     keyword-only and named for that: a caller passing a twin says
     `typed=` beside it (the failure-mode review)."""
     raw, scan = powershell_scan_pair(typed)
-    invocations = list(_PS_REMOVE_ITEM_RE.finditer(scan))
+    invocations = list(_ps_remove_items(scan))
     if not invocations:
         return False
     # A temp variable is read as the value this process inherits (DEF-2049)
@@ -12118,7 +12584,7 @@ def powershell_removal_is_below_a_scratch_root(
         return False
     raw, scan = powershell_scan_pair(bound)
     return _ps_removal_below_a_scratch_root(
-        raw, list(_PS_REMOVE_ITEM_RE.finditer(scan)), root, quiet=False, inherited=inherited)
+        raw, list(_ps_remove_items(scan)), root, quiet=False, inherited=inherited)
 
 
 #: DEF-2055: the one binding the scratch-root rung follows -- the command's
@@ -12145,8 +12611,8 @@ _PS_TEMP_BINDING_RE = re.compile(
 #: `-Exclude:(...)`, is one token no other reader refuses), a second statement
 #: on either separator, a pipe, a backtick (an escape or a line continuation)
 #: and a comment. Its sibling with the same job is `write_guard`'s
-#: `_LONE_DELETE_STOPS`: two sets, since that one refuses the `$`, `\` and
-#: `:` a binding spells; their shared core is pinned in
+#: `_LONE_DELETE_STOPS`: two sets, since that one refuses the `$` and `:` a
+#: binding spells; their shared core is pinned in
 #: `tests/test_write_guard.py::TestAScratchRootItselfIsTheWall`.
 _PS_TEMP_BINDING_REFUSED = frozenset("{}()&;|`#\r\n")
 #: Every name PowerShell predefines (air's 18c1a6): an assignment to a
@@ -12224,7 +12690,7 @@ def _ps_temp_bound_remove(command: str) -> str | None:
 
 
 def _ps_removal_below_a_scratch_root(
-    raw: str, invocations: "list[re.Match[str]]", root: str | None, *,
+    raw: str, invocations: "list[re.Match[str] | _CutPipe]", root: str | None, *,
     quiet: bool, inherited: bool,
 ) -> bool:
     """`powershell_removal_is_below_a_scratch_root`'s read of one text: its
@@ -12498,7 +12964,7 @@ def powershell_removal_lands_catastrophic(
         except Exception:  # noqa: BLE001 -- the walk is advisory; a fault degrades to the start
             text, statements = powershell_scan_text(command), []
     fed = {m.start("rmargs"): m for m in _ps_fed_removes(text)}
-    for m in _PS_REMOVE_ITEM_RE.finditer(text):
+    for m in _ps_remove_items(text):
         here = m.start("args")
         bases: list[str | None]
         if at is None:
@@ -13521,7 +13987,7 @@ def _ps_unforced_recursive_removes(text: str, raw: str | None = None) -> Iterato
     # blanks a `&` inside a quoted path,
     # and under a `cmd` launch leaves the span raw and cut at it), extended
     # past a quote the regex stopped inside (the quoted-operand cut)
-    for m in _PS_REMOVE_ITEM_RE.finditer(text):
+    for m in _ps_remove_items(text):
         args = (_named_span(raw, m, "args", through_quotes=True, powershell=True)
                 if raw is not None and len(raw) == len(text) else m.group("args"))
         if not _PS_RECURSE_SWITCH_RE.search(_outside_quotes(args)):
@@ -13905,7 +14371,7 @@ def _powershell_removal_targets(command: str, raw: str | None = None) -> list[st
     fixed; a docstring that disagrees with its code is worse than none, because
     the reader reasons from a guard that is not there.
     """
-    invocations = list(_PS_REMOVE_ITEM_RE.finditer(command))
+    invocations = list(_ps_remove_items(command))
     if not invocations:
         return None
     # A remove verb fed by an enumerator pipe takes the enumerator's roots
@@ -14793,6 +15259,22 @@ def splice_line_continuations(command: str) -> str:
     return _resolve_bash_discovered_heads(_splice_line_continuations(command))
 
 
+#: A pipe the next thing after which, past blanks, is a line end or a
+#: comment opener: the splicer's pipe join is only possible where this
+#: matches (a superset: it reads the raw text, quotes and all), so a command
+#: without it skips the scan. A GATE, not a matcher.
+_PIPE_AT_LINE_END_RE = re.compile(r"\|&?[ \t\r]*[\n#]")
+
+
+def _blank_or_comment(text: str) -> bool:
+    """``text`` holds nothing bash runs: blanks, or a comment from its first
+    word on. Read on the RAW text, beside `_pipe_scan`'s blank: a quoted
+    span that opens here and closes on a later line is blank in the scan
+    too, and dropping it would cut a live string in half."""
+    word = text.strip()
+    return not word or word.startswith("#")
+
+
 def _splice_line_continuations(command: str) -> str:
     r"""Join physical lines a trailing backslash continues, into logical ones.
 
@@ -14844,10 +15326,14 @@ def _splice_line_continuations(command: str) -> str:
     shape unquoted ran nothing). The operators are read outside quotes and
     comments (``_pipe_scan``), so a quoted mention of ``<<EOF`` opens no body.
     """
-    if "\\" not in command:
+    if "\\" not in command and not _PIPE_AT_LINE_END_RE.search(command):
         return command
     lines = command.split("\n")
     parts: list[str] = []
+    #: The line before ended in a pipe, so bash is still reading that
+    #: pipeline's next stage: a blank or comment-only line here is part of
+    #: the gap it skips (``pipeline '|' newline_list command``).
+    pipe_open = False
     #: (delimiter, quoted, strip_tabs) of every heredoc opened on the logical
     #: line being assembled; their bodies begin once that line ends.
     queue: list[tuple[str, bool, bool]] = []
@@ -14888,6 +15374,9 @@ def _splice_line_continuations(command: str) -> str:
             if idx < last:
                 parts.append("\n")
             continue
+        if pipe_open and idx < last and _blank_or_comment(line):
+            continue
+        pipe_open = False
         for op in _HEREDOC_OPERATOR_RE.finditer(scan_line):
             try:
                 _, spec = _read_heredoc_operator(line, op.start())
@@ -14895,6 +15384,21 @@ def _splice_line_continuations(command: str) -> str:
                 spec = None
             if spec is not None:
                 queue.append((spec[0], not spec[1], spec[2]))
+        if idx < last and not queue:
+            # A line whose last live character is a pipe: bash reads the
+            # next stage from the lines after it, past any blank line and
+            # comment, so `find / | # note` + newline + `xargs <delete>` is
+            # ONE pipeline (driven). Joined here, every pipe reader of both
+            # texts reads the stage it was hidden from (the comment and the
+            # newline went to no reader's stage pattern). A line that opened
+            # a heredoc is left alone: its body follows this newline.
+            stage = scan_line.rstrip(" \t\r")
+            rest = line[len(stage):]
+            if (stage.endswith("|") or stage.endswith("|&")) and (
+                    _blank_or_comment(rest) or rest.strip() == "\\"):
+                parts.append(line[:len(stage)] + " ")
+                pipe_open = True
+                continue
         text, joined = _spliced_line(line, idx == last)
         parts.append(text)
         if joined and idx < last:
@@ -15549,14 +16053,44 @@ def _capped_whole(command: str) -> "tuple[str, int, int] | None":
     the WHOLE command's masked, spliced text -- the net's reading -- and the
     offsets in it where the head the walk read ends and the tail it read
     begins (`_cap_for_scan` keeps the head and the tail, each spliced on its
-    own here). ``lo`` is also where the walk's own text joins them."""
+    own here). ``lo`` is at or before where the walk's own text joins them.
+
+    Each offset is how far that half's own splice IS the whole's text, not
+    its length: a join that straddles a cut reads differently on each side
+    of it. A pipe whose gap of comment lines crosses the head's cut is
+    joined to its next stage in the whole, while the head keeps its last
+    comment line, and the tail never sees the pipe that opened its gap; the
+    lengths put both offsets past the stage, which neither the walk nor the
+    middle then read (`rm -rf *` piped from the head's last line allowed
+    past 32 KiB, the code review). What the halves share with the whole is
+    what the walk read of it, so everything else is the middle's."""
     if len(command) <= _BASH_COMMAND_CAP:
         return None
-    whole = mask_inert_syntax(splice_line_continuations(command))
-    lo = len(splice_line_continuations(command[:_BASH_COMMAND_HALF_CAP]))
-    hi = len(whole) - len(splice_line_continuations(
-        command[len(command) - _BASH_COMMAND_HALF_CAP:]))
-    return whole, lo, hi
+    spliced = splice_line_continuations(command)
+    whole = mask_inert_syntax(spliced)
+    lo = _shared_run(spliced, splice_line_continuations(command[:_BASH_COMMAND_HALF_CAP]))
+    hi = len(whole) - _shared_run(spliced, splice_line_continuations(
+        command[len(command) - _BASH_COMMAND_HALF_CAP:]), tail=True)
+    return whole, lo, max(lo, hi)
+
+
+def _shared_run(text: str, part: str, *, tail: bool = False) -> int:
+    """How many characters ``part`` shares with ``text`` from the start (or,
+    ``tail``, from the end): the whole of ``part`` in one compare when it is
+    an exact prefix (suffix), the usual case, else a binary search over
+    slice compares, logarithmic in the compares."""
+    if text.endswith(part) if tail else text.startswith(part):
+        return len(part)
+    lo, hi = 0, min(len(text), len(part))
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        same = (text[len(text) - mid:] == part[len(part) - mid:] if tail
+                else text[:mid] == part[:mid])
+        if same:
+            lo = mid
+        else:
+            hi = mid - 1
+    return lo
 
 
 def _unplaced_text(
@@ -16173,28 +16707,92 @@ def _ps_stage_is_variable(stage: str, name: str) -> bool:
         part and part.replace("_", "a").isalnum() for part in rest[1:].split(".")))
 
 
+#: What may follow a closer that certainly ends a remove's statement: nothing,
+#: another closer, or a keyword that continues the block's own statement.
+_PS_CLOSER_ENDS_RE = re.compile(r"[ \t]*(?:\Z|[)}]|(?:else|elseif|catch|finally|while|until)\b)", re.IGNORECASE)
+
+
+def _ps_unmatched_closer(span: str) -> int:
+    """The offset in ``span`` of the first `)` or `}` that closes a group the
+    span did not open, where that closer certainly ends the statement a
+    remove's argument span reads, else -1 (DEF-3069): the close of the block
+    or group the remove sits in (`if ($c) { gci build | ri -r -fo } else {
+    ... }`, `$(... | ri -r -fo) + ...`). Certainly: what follows the closer
+    on the span is nothing, another closer, or a keyword that continues the
+    block's statement (`_PS_CLOSER_ENDS_RE`), or after a `)`, an
+    expression's `+`. Anything else keeps the span whole, the reading before
+    the cut: a word after a script block's `}` is that block's argument (`&
+    { ri -r $args[0] } /`), so it may be the remove's operand.
+
+    The scan blanks a string only where the masker can (both reviews of the
+    lane: a string a re-run payload keeps live, `iex 'ri "a}b" ...'`; an
+    escaped closer, which the masker steps over and leaves; the raw text
+    past its cap), so the read is quote- and escape-aware itself: a
+    backtick outside a single-quoted run escapes the next character, a
+    quoted run counts nothing, and an unterminated quote or a stop-parsing
+    `--%` (after which a closer is literal text) is no cut. One pass over
+    the span; the walk that asks it resumes at the cut, so a line of many
+    one-remove blocks reads each block's span once more."""
+    if "--%" in span:
+        return -1
+    depth = 0
+    quote = ""
+    i, n = 0, len(span)
+    while i < n:
+        ch = span[i]
+        if ch == "`" and quote != "'":
+            i += 2
+            continue
+        if quote:
+            if ch == quote:
+                quote = ""
+        elif ch in "'\"":
+            quote = ch
+        elif ch in "({":
+            depth += 1
+        elif ch in ")}":
+            if depth == 0:
+                rest = span[i + 1:]
+                ends = _PS_CLOSER_ENDS_RE.match(rest) or (ch == ")" and rest.lstrip(" \t").startswith("+"))
+                return i if ends else -1
+            depth -= 1
+        i += 1
+    return -1
+
+
 class _CutPipe:
-    """A `_PS_PIPED_REMOVE_RE` match whose enumerator span ends where its
-    group closes (DEF-3066): the loop header's enumerator read as the feed
-    of the remove in the block after it. Offsets and groups are the match's
-    but for the `args` span, which ends at ``cut`` -- what `_named_span`
-    and the readers ask of a match, and nothing more."""
+    """A match with named spans ended early: a `_PS_PIPED_REMOVE_RE`
+    match's enumerator span at its loop header's close (DEF-3066: the
+    header's listing read as the feed of the remove in the block after it),
+    and a remove's argument span, piped (`rmargs`) or direct
+    (`_PS_REMOVE_ITEM_RE`'s `args`), at the closer of the block it sits in
+    (DEF-3069). ``cuts`` maps a group to its new end; the whole match ends
+    where its last group's cut does. Offsets and groups are otherwise the
+    match's -- what `_named_span` and the readers ask of a match, and
+    nothing more."""
 
-    __slots__ = ("_m", "_cut")
+    __slots__ = ("_m", "_cuts")
 
-    def __init__(self, m: "re.Match[str]", cut: int) -> None:
+    def __init__(self, m: "re.Match[str]", cuts: "dict[str, int]") -> None:
         self._m = m
-        self._cut = cut
+        self._cuts = cuts
 
-    def start(self, name: str) -> int:
+    def cut(self, name: str, end: int) -> "_CutPipe":
+        """This match with ``name`` ended at ``end`` as well."""
+        return _CutPipe(self._m, {**self._cuts, name: end})
+
+    def start(self, name: "str | int" = 0) -> int:
         return self._m.start(name)
 
-    def end(self, name: str) -> int:
-        return self._cut if name == "args" else self._m.end(name)
+    def end(self, name: "str | int" = 0) -> int:
+        if name == 0:
+            last = [c for g, c in self._cuts.items() if self._m.end(g) == self._m.end()]
+            return last[0] if last else self._m.end()
+        return self._cuts.get(name, self._m.end(name)) if isinstance(name, str) else self._m.end(name)
 
-    def group(self, name: str) -> "str | None":
-        if name == "args":
-            return self._m.string[self._m.start("args"):self._cut]
+    def group(self, name: "str | int" = 0) -> "str | Any":
+        if name == 0 or (isinstance(name, str) and name in self._cuts):
+            return self._m.string[self.start(name):self.end(name)]
         return self._m.group(name)
 
 
@@ -16217,7 +16815,7 @@ def _ps_header_feed(text: str, m: "re.Match[str]") -> "re.Match[str] | _CutPipe 
     name = _ps_foreach_variable(text, m.start("head"))
     if name is None or not _ps_stage_is_variable(args[opener + 1:], name):
         return None
-    return _CutPipe(m, m.start("args") + leave)
+    return _CutPipe(m, {"args": m.start("args") + leave})
 
 
 def _ps_piped_remove_matches(
@@ -16236,17 +16834,30 @@ def _ps_piped_remove_matches(
     listing and hid the inner one, the failure-mode review). Two fed
     matches may then share one remove: a reader keyed by the remove keeps
     the later, the innermost header. A match whose pipe is its own resumes
-    past its end, as `finditer`'s. Each search starts past the last one's
+    past its end, as `finditer`'s, or at its remove span's cut (below). Each search starts past the last one's
     head, so the walk ends; an enumerator head is short and a span holds
-    few, so it stays a handful of searches a command."""
+    few, so it stays a handful of searches a command.
+
+    DEF-3069: the remove's span (`rmargs`) ends at the first closer it did
+    not open, the close of the block or group the pipeline sits in, and a
+    match whose pipe is its own resumes there, not past its end: two sibling
+    blocks on one line (`if ($c) { gci build | ri -r -fo } else { gci dist
+    | ri -r -fo }`) read the first remove's span across the brace into the
+    second block, so the second listing opened no match and its remove had
+    no feed (the record's wall, where the `;` twin passes)."""
     pos = 0
     while True:
         m = _PS_PIPED_REMOVE_RE.search(text, pos)
         if m is None:
             return
         fed = _ps_header_feed(text, m)
+        own = fed is m
+        close = _ps_unmatched_closer(m.group("rmargs") or "")
+        cut = m.start("rmargs") + close if close >= 0 else -1
+        if cut >= 0 and fed is not None:
+            fed = fed.cut("rmargs", cut) if isinstance(fed, _CutPipe) else _CutPipe(m, {"rmargs": cut})
         yield m, fed
-        pos = m.end() if fed is m else m.end("head")
+        pos = (cut if cut >= 0 else m.end()) if own else m.end("head")
 
 
 def _ps_fed_removes(text: str) -> "Iterator[re.Match[str] | _CutPipe]":
@@ -16275,6 +16886,33 @@ def _ps_fed_removes(text: str) -> "Iterator[re.Match[str] | _CutPipe]":
         if fed is not None:
             feeds[fed.start("rmargs")] = fed
     yield from feeds.values()
+
+
+def _ps_remove_items(text: str) -> "Iterator[re.Match[str] | _CutPipe]":
+    """Every `_PS_REMOVE_ITEM_RE` invocation on ``text`` (the scan), its
+    `args` span ended at the first closer it did not open and the search
+    resumed there (DEF-3069): the span ran across a block's brace, and the
+    regex's matches do not overlap, so `if ($c) { ri -r -fo build } else {
+    ri -r -fo dist }` was one remove whose operands were `build`, `else`,
+    the second verb and `dist` (a nudge where the `;` twin passes), and a
+    remove after a piped one read the next block's words as its own. The
+    one site that searches the regex (pinned): every reader of a direct
+    remove, the speed bump's snapshot reader included, takes its
+    invocations here, so each placement by `start("args")` meets the piped
+    reader's `start("rmargs")` as before."""
+    pos = 0
+    while True:
+        m = _PS_REMOVE_ITEM_RE.search(text, pos)
+        if m is None:
+            return
+        close = _ps_unmatched_closer(m.group("args"))
+        if close < 0:
+            yield m
+            pos = m.end()
+        else:
+            cut = m.start("args") + close
+            yield _CutPipe(m, {"args": cut})
+            pos = cut
 
 
 def _ps_pipeline_sweeps(raw: str, scan: str) -> Iterator[tuple[int, list[str], bool, bool]]:
@@ -16345,8 +16983,16 @@ def _ps_dotnet_sweeps(raw: str, scan: str) -> list[tuple[int, list[str]]]:
 def _ps_has_sweep_witness(command: str) -> bool:
     """The pre-check every sweep consumer runs before a walk: a find delete
     action, a pipe into a remove verb, or a .NET directory delete, anywhere
-    in the uncapped text."""
-    return bool(_FIND_DELETE_ACTION_RE.search(command) or _PS_SWEEP_WITNESS_RE.search(command))
+    in the uncapped text; or a comment opening after a pipe, which the scan
+    pair's gap join (`_ps_join_pipe_gaps`) reads past to the stage this
+    raw-text witness cannot see (a superset costs a walk)."""
+    return bool(_FIND_DELETE_ACTION_RE.search(command) or _PS_SWEEP_WITNESS_RE.search(command)
+                or _PS_PIPE_THEN_COMMENT_RE.search(command))
+
+
+#: A pipe whose gap opens a comment, line or block: the sweep witness's
+#: superset arm (`_ps_has_sweep_witness`). A GATE, not a matcher.
+_PS_PIPE_THEN_COMMENT_RE = re.compile(r"\|[ \t\r\n]*<?#")
 
 
 def iter_ps_unnarrowed_find_delete_roots(command: str) -> Iterator[list[str]]:
@@ -17073,14 +17719,14 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
     raw, scan = _cap_for_scan(raw), _cap_for_scan(scan)
     out: list[tuple[str, str]] = []
 
-    def named_targets(m: "re.Match[str]") -> list[str]:
+    def named_targets(m: "re.Match[str] | _CutPipe") -> list[str]:
         args = _named_span(raw, m, "args", through_quotes=True, powershell=True)
         tokens = _ps_removal_target_tokens(
             args, tokens=_ps_operand_tokens(args), unknown_takes_value=False,
         )
         return [p for t in tokens for p in _ps_list_targets(t)]   # a comma list, each element (DEF-4029)
 
-    for m in _PS_REMOVE_ITEM_RE.finditer(scan):
+    for m in _ps_remove_items(scan):
         out.extend(("delete", p) for p in named_targets(m))
     for fed in _ps_fed_removes(scan):
         # the enumerator's roots, the current location when it names none

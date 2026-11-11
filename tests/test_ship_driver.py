@@ -246,6 +246,7 @@ def _reads(root, branch: str = "lane/x", base: str = "main") -> dict:
         ("gh", "repo", "view"): (0, f"{base}\n", ""),
         ("git", "branch", "--show-current"): (0, f"{branch}\n", ""),
         ("git", "rev-parse", "-q", "--verify", "MERGE_HEAD"): (1, "", ""),   # no merge in progress
+        _UNFINISHED_LOG: (0, "", ""),   # no commit an unfinished handoff made: every push may go
     }
 
 
@@ -407,6 +408,11 @@ def _memory(root: Path, *dates: str) -> None:
 
 #: The read that asks whether this lane's own commits touch the memory file.
 _MEMORY_LOG = ("git", "log", "--format=%h")
+#: The read every push of the lane asks first: a commit the threshold
+#: handoff made of an unfinished lane's edits (ship.UNFINISHED_LOG_FORMAT).
+_UNFINISHED_LOG = ("git", "log", "--format=%x1e%H %P%x1f%(trailers:key=Espalier-Unfinished,valueonly)")
+#: That read's answer on a lane holding one at HEAD.
+_UNFINISHED_AT_HEAD = (0, f"\x1e{HEAD} {'b' * 40}\x1flane/x\n", "")
 #: The read that asks whether this lane's own commits added a Session Log file
 #: (the row's home since 2026-10-10), each commit's fold trailer (read by key)
 #: beside its names so a fold commit's rows are told apart.
@@ -5571,6 +5577,7 @@ _MAKE_IT_REFUSE = {
     "head-is-base": lambda ship, root, mp: ({"branch": "main"}, {("git", "log", "-1"): (0, "...\n", "")}),
     "open-pull-request": lambda ship, root, mp: ({}, {_list_key(): _rows(_pr())}),
     "origin-ahead": lambda ship, root, mp: ({}, {("git", "rev-list", "--count"): (0, "2\n", "")}),
+    "unfinished-commit": lambda ship, root, mp: ({}, {_UNFINISHED_LOG: _UNFINISHED_AT_HEAD}),
     "marked-record": _a_marked_record,
     "shared-checkout": _two_sessions_here,
     "no-session-log-row": _no_row_on_a_handoff_push_tree,
@@ -5840,3 +5847,164 @@ class TestPreflightForecastsEveryRefusalOpenMakesBeforeItsPush:
         out = capsys.readouterr().out
         assert "#41 (lane/y). Whether this lane was pushed could not be read" in out, out
         assert "will refuse this lane" not in out
+
+
+# -- an unfinished lane's set-aside edits ride no push --------------------------
+
+#: The functions of ship.py that push, and are not a push of the lane's branch,
+#: each with why the unfinished-lane guard does not apply.
+_NOT_A_LANE_PUSH = {
+    "release": "pushes the release tag on the base's merge commit, never the lane's branch",
+}
+
+
+#: The spawners a git verb reaches through: ``_git(<verb>, ...)``, and the
+#: argv a runner takes (``RUN``, ``run``, ``run_bounded``).
+_GIT_SPAWNERS = {"_git", "RUN", "run", "run_bounded"}
+
+
+def _push_lines(func: ast.FunctionDef) -> list[int]:
+    """Where ``func`` pushes, by line: a ``_git`` call whose arguments name the
+    verb ``push`` (with options before it, such as ``-C <dir>``), or an argv
+    literal (a list or tuple, at a runner's call or bound to a name) holding
+    ``git`` and then ``push``. Nested functions are read as their own (the
+    census walks every function of the module)."""
+    lines: list[int] = []
+    for node in ast.walk(func):
+        if isinstance(node, ast.Call) and isinstance(node.func, (ast.Name, ast.Attribute)):
+            name = node.func.id if isinstance(node.func, ast.Name) else node.func.attr
+            if name == "_git" and any(isinstance(a, ast.Constant) and a.value == "push" for a in node.args):
+                lines.append(node.lineno)
+        if isinstance(node, (ast.List, ast.Tuple)):
+            words = [e.value for e in node.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+            if "git" in words and "push" in words[words.index("git") + 1:]:
+                lines.append(node.lineno)
+    return lines
+
+
+def _pushes(func: ast.FunctionDef) -> bool:
+    return bool(_push_lines(func))
+
+
+def _functions(tree: ast.Module) -> dict[str, ast.FunctionDef]:
+    """Every function of the module by name, nested ones included."""
+    return {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+
+
+def _guard_line(func: ast.FunctionDef) -> int | None:
+    """The first line ``func`` asks the unfinished reading on: its own call of
+    ``_refuse_an_unfinished_lane``, or its loop over ``PRE_PUSH_CHECKS`` (which
+    holds the ``unfinished-commit`` row)."""
+    lines = [n.lineno for n in ast.walk(func)
+             if (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                 and n.func.id == "_refuse_an_unfinished_lane")
+             or (isinstance(n, ast.For) and isinstance(n.iter, ast.Name) and n.iter.id == "PRE_PUSH_CHECKS")]
+    return min(lines) if lines else None
+
+
+class TestAnUnfinishedLaneRidesNoPush:
+    """The threshold handoff of an unfinished lane (``handoff --unfinished``)
+    commits its tracked edits with an ``Espalier-Unfinished`` trailer for the
+    next window to take back with a soft reset. Its brief says so, but the
+    re-primed window's loop ranks its own red pull request first, and the
+    catch-up and the handoff push HEAD: so every ship-driver push of the lane
+    refuses while the commit is on it (``_unfinished_on_lane``, one reading),
+    and so does ``rebind``, which a hand push is followed by. Dies to: a push
+    site added without the guard (the census, over every function and every
+    spelling of a git push), a site whose guard sits after its push, or a row
+    park that moves the branch before the guard is asked."""
+
+    def test_every_push_in_the_driver_asks_the_unfinished_reading_first_or_is_named(self):
+        """Each function that pushes asks the reading on a line before its
+        first push: a guard placed after the push refuses a lane already on
+        origin. Every function of the module is read, nested ones included."""
+        tree = ast.parse(SHIP.read_text(encoding="utf-8"))
+        functions = _functions(tree)
+        pushing = sorted(name for name, func in functions.items() if _pushes(func))
+        assert {"open_pr", "_handoff_push", "catch_up", "release"} <= set(pushing), pushing
+        unguarded = []
+        for name in pushing:
+            if name in _NOT_A_LANE_PUSH:
+                continue
+            guard, first_push = _guard_line(functions[name]), min(_push_lines(functions[name]))
+            if guard is None or guard >= first_push:
+                unguarded.append((name, guard, first_push))
+        assert unguarded == [], ("a push of the lane that does not first ask whether it holds an unfinished "
+                                 "commit (call _refuse_an_unfinished_lane before it, or name it in "
+                                 f"_NOT_A_LANE_PUSH with why): {unguarded}")
+        assert set(_NOT_A_LANE_PUSH) <= set(pushing), "a name in _NOT_A_LANE_PUSH no longer pushes"
+        source = SHIP.read_text(encoding="utf-8")
+        assert 'PrePushCheck("unfinished-commit"' in source
+
+    def test_the_detector_sees_each_spelling_of_a_push_and_nothing_else(self):
+        """A push the census cannot see is a push it cannot hold to the
+        guard: the four spellings below are seen, a push word in prose and a
+        fetch are not."""
+        planted = ast.parse(
+            "def a(r):\n    _git('push', 'origin', 'x', cwd=r)\n"
+            "def b(r):\n    RUN(['git', '-C', r, 'push', 'origin'])\n"
+            "def c(r):\n    argv = ('git', 'push', 'origin', 'HEAD')\n    return run_bounded(argv)\n"
+            "def d(r):\n    _git('-C', r, 'push')\n"
+            "def e(r):\n    _say('push the lane, then rebind')\n    _git('fetch', 'origin')\n")
+        seen = {name for name, func in _functions(planted).items() if _pushes(func)}
+        assert seen == {"a", "b", "c", "d"}, seen
+
+    def test_the_handoff_asks_before_it_parks_a_row(self):
+        """The handoff's two row parks each move the branch (a reset onto the
+        merge base, or onto the pull request's head): an empty unfinished
+        commit beside the rows must be refused before either reads the lane
+        as rows alone."""
+        func = _functions(ast.parse(SHIP.read_text(encoding="utf-8")))["_handoff_push"]
+        parks = [n.lineno for n in ast.walk(func) if isinstance(n, ast.Call)
+                 and isinstance(n.func, ast.Name) and n.func.id == "_park_the_row"]
+        assert len(parks) == 2 and _guard_line(func) < min(parks), (_guard_line(func), parks)
+
+    def test_rebind_refuses_with_an_unfinished_commit_on_the_lane(self, ship, tmp_path, monkeypatch):
+        """A hand `git push` then `rebind` (ship.md's red-cell recipe) would
+        bind the marker over the set-aside edits: the re-bind asks first."""
+        _bind_clock(ship, monkeypatch)
+        answers = _rebind_answers(tmp_path)
+        answers[_UNFINISHED_LOG] = _UNFINISHED_AT_HEAD
+        spawns = _arm(ship, answers)
+        with pytest.raises(ship.Refused, match="a push would carry them half-made"):
+            ship.rebind()
+        assert spawns.count(("gh", "pr", "edit")) == 0
+
+    def test_the_handoff_onto_an_open_pull_request_refuses_and_arms_nothing(self, ship, tmp_path, monkeypatch):
+        _toml(tmp_path, "handoff_push = true\n")
+        answers = TestHandoffVerb._existing_pr_answers(tmp_path)
+        answers[_UNFINISHED_LOG] = _UNFINISHED_AT_HEAD
+        spawns = _arm(ship, answers)
+        armed: list[str] = []
+        monkeypatch.setattr(ship, "arm_own_clear_here", lambda root, **kw: armed.append("arm") or "armed")
+        with pytest.raises(ship.Refused, match="a push would carry them half-made") as stop:
+            ship.handoff()
+        assert "Espalier-Unfinished: lane/x" in str(stop.value) and "git reset --soft" in str(stop.value)
+        assert spawns.count(("git", "push")) == 0 and armed == []
+
+    def test_open_refuses_before_its_push(self, ship, tmp_path, forget_guard):
+        _write_guard(tmp_path)
+        answers = _open_answers(tmp_path)
+        answers[_UNFINISHED_LOG] = _UNFINISHED_AT_HEAD
+        spawns = _arm(ship, answers)
+        with pytest.raises(ship.Refused, match="a push would carry them half-made"):
+            ship.open_pr()
+        assert spawns.count(("git", "push")) == 0 and spawns.count(("gh", "pr", "create")) == 0
+
+    def test_catch_up_refuses_on_either_arm_before_it_moves(self, ship, tmp_path, monkeypatch):
+        """The server's arm (an update-branch, then a pull onto HEAD) and the
+        conflicting arm (a merge here, then a push) both refuse first."""
+        _bind_clock(ship, monkeypatch)
+        answers = _catch_up_answers(tmp_path)
+        answers[_UNFINISHED_LOG] = _UNFINISHED_AT_HEAD
+        spawns = _arm(ship, answers)
+        with pytest.raises(ship.Refused, match="a push would carry them half-made"):
+            ship.catch_up()
+        assert spawns.count(("gh", "pr", "update-branch")) == 0 and spawns.count(("git", "pull")) == 0
+        monkeypatch.setitem(ship._SHARED, "asked", False)
+        answers = TestCatchUpConflict()._answers(tmp_path)
+        answers[_UNFINISHED_LOG] = _UNFINISHED_AT_HEAD
+        spawns = _arm(ship, answers)
+        with pytest.raises(ship.Refused, match="a push would carry them half-made"):
+            ship.catch_up()
+        assert spawns.count(("git", "push")) == 0 and spawns.count(("git", "merge")) == 0

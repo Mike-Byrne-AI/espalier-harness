@@ -3791,7 +3791,14 @@ both normalizers (resolve-based and FS-free) close both shapes. Pinned by
   **frozen** under the workflow-toolbelt governing frame — a crafted bypass,
   not a plausible operator slip — rather than closed (see §6.10). Not owed work.
 - Other path-bearing URI schemes / percent-encoded keys (downstream-MCP-server
-  dependent — only exploitable if the server decodes before writing).
+  dependent — only exploitable if the server decodes before writing). A
+  percent-encoded `file://` path (a checkout whose path holds a space spells
+  it `%20`) reads as outside the checkout: the MCP speed bump nudges it and the
+  zone check does not read it as the protected path, a declared limit; an
+  upper-case `FILE://` scheme and the single-slash `file:/abs` form are also
+  not read as a URI, each pinned at allow on both checks. Decoding in the
+  shared cleaner is the shape if a real session or a decoding MCP server shows
+  one.
 - ~~The Bash-channel `normalize_bash_path` fullwidth sister-site~~ — closed
   (annotated 2026-09-14): the Bash channel now NFKC-folds before
   `normpath` like the Write channel; pinned over both channels by

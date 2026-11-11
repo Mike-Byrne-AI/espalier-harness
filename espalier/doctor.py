@@ -2018,7 +2018,9 @@ def _check_sandbox_posture(repo_root: Path) -> tuple[list[str], list[str], list[
     ``allowUnsandboxedCommands`` (read through ``CLAUDE_CONFIG_DIR`` or the
     home, never written), and the one line on what the posture is not. A
     warning, each with its own step, only when the sandbox is on and entries
-    are missing or a key is not the shape the sandbox reads, or when the
+    are missing or a key is not the shape the sandbox reads, when the sandbox
+    is on and cannot start on this host (Linux or WSL2 without ``bwrap`` or
+    ``socat`` on PATH, or WSL1: ``sandbox_posture.read_state``), or when the
     derivation cannot read the deployed guard's roster (named, never a silent
     empty list: that guard's own secret-read deny is then in doubt too).
     ``_host_is_windows`` is the seam tests patch."""

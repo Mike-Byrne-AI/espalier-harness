@@ -775,10 +775,36 @@ def scan_for_kill_switches(
     It defaults False so the two BLOCKING consumers (``write_guard``, which
     denies every tool call on any finding, and ``config_guard``) keep their
     current behaviour: denying on an unparseable settings.json would block the
-    edit that repairs it. Reporters and gates that cannot lock anyone out --
-    ``session_start``, ``doctor``, ``ci_guard`` -- pass True.
+    edit that repairs it. A reporter, which locks nobody out, opts in:
+    ``session_start._report_integrity_state`` passes True, and the
+    ``integrity verify`` command and ``summarize_state`` read the same finding
+    apart through ``scan_settings_split``. (``doctor`` and ``ci_guard`` do not
+    call this scan: ``espalier/selfcheck.py::check_live_kill_switch_absent``
+    and ``ci_guard.scan_unreadable_settings`` are scanners of their own.)
     """
-    findings: list[str] = []
+    return [
+        text for unreadable, text in _scan_settings(repo_root)
+        if include_unreadable or not unreadable
+    ]
+
+
+def scan_settings_split(repo_root: Path) -> tuple[list[str], list[str]]:
+    """``(kill_switches, unreadable)``: the kill-switch findings, and apart from
+    them the settings files that exist but could not be read or parsed, so the
+    scan could not answer for them. For a reporter that must not read "could
+    not tell" as "none", and must not tell anyone to remove a setting it never
+    saw (``integrity verify``, ``summarize_state``)."""
+    found: list[str] = []
+    unreadable: list[str] = []
+    for is_unreadable, text in _scan_settings(repo_root):
+        (unreadable if is_unreadable else found).append(text)
+    return found, unreadable
+
+
+def _scan_settings(repo_root: Path) -> list[tuple[bool, str]]:
+    """Each finding in candidate order, flagged True where it says a settings
+    file exists but could not be read or parsed (no kill-switch verdict)."""
+    findings: list[tuple[bool, str]] = []
     for rel in _SETTINGS_CANDIDATES:
         path = repo_root / rel
         rel_norm = str(rel).replace("\\", "/")
@@ -799,11 +825,10 @@ def scan_for_kill_switches(
         except (FileNotFoundError, NotADirectoryError):
             continue
         except OSError:
-            if include_unreadable:
-                findings.append(
-                    f"{rel_norm}: present but unreadable -- kill-switch scan "
-                    "could not answer for this file"
-                )
+            findings.append((True,
+                f"{rel_norm}: present but unreadable -- kill-switch scan "
+                "could not answer for this file"
+            ))
             continue
         data = _load_settings_json(path)
         if data is None:
@@ -815,13 +840,12 @@ def scan_for_kill_switches(
             # mid-edit. Reporting it unconditionally would deny the very Edit
             # needed to repair it -- a self-inflicted lockout, strictly worse
             # than the fail-open. So reporters opt IN and blockers do not.
-            if include_unreadable:
-                findings.append(
-                    f"{rel_norm}: unreadable settings file "
-                    f"(kill-switch scan could not run)"
-                )
+            findings.append((True,
+                f"{rel_norm}: unreadable settings file "
+                f"(kill-switch scan could not run)"
+            ))
             continue
-        findings.extend(_find_kill_switches(rel_norm, data))
+        findings.extend((False, f) for f in _find_kill_switches(rel_norm, data))
     return findings
 
 
@@ -1279,7 +1303,11 @@ def checkout_wiring_notice(repo_root: Path) -> str | None:
     repair = ("`espalier merge-settings --repair` wires the gates back; `espalier doctor .` "
               "names the fault")
     if state == "unreadable":
-        return f"{where} cannot be read as JSON (unreadable, or malformed), {loses}; {repair}"
+        # merge-settings --repair refuses a file it cannot parse, so the fix
+        # named here is the JSON itself (DEF-1023's review, driven: rc 1).
+        return (f"{where} cannot be read as JSON (unreadable, or malformed), {loses}; fix its "
+                "JSON syntax (or its permissions), which `espalier merge-settings --repair` "
+                "cannot do; `espalier doctor .` names the fault")
     if not isinstance(data, dict):
         return f"{where} holds no JSON object (an empty file, or a list), {loses}; {repair}"
     voided_by, unwired = _gate_wiring(data, repo_root)
@@ -1939,11 +1967,14 @@ def tail_audit(
 
 
 def summarize_state(repo_root: Path) -> dict:
-    """Run both checks and return a structured summary."""
+    """Run both checks and return a structured summary. A reporter, so it
+    names a settings file the scan could not read (``unreadable_settings``),
+    apart from the kill switches it found."""
     ok, mismatched = verify_integrity(repo_root)
-    findings = scan_for_kill_switches(repo_root)
+    findings, unreadable = scan_settings_split(repo_root)
     return {
         "integrity_ok": ok,
         "mismatched_paths": mismatched,
         "kill_switches": findings,
+        "unreadable_settings": unreadable,
     }

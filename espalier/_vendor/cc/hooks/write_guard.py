@@ -68,6 +68,8 @@ permissionDecision="deny") -- see "The time budget" below `_deny_mcp`.
 from __future__ import annotations
 
 import contextlib
+import contextvars
+import functools
 import io
 import json
 import os
@@ -304,7 +306,8 @@ try:
     _WRITE_GUARD_HELPER_NAMES = (
         "ADOPTER_ZONE_KEYS", "DENIED", "MCPPayloadUnverifiable", "MCP_CONTENT_KEYS", "MCP_LEAFWALK_MAX_NODES",
         "MCP_PATH_FIELDS",
-        "MUTATION_TOOLS", "RECALL_LOG_NAME", "STATE_DIR", "_append_jsonl", "_locked_increment",
+        "MUTATION_TOOLS", "RECALL_LOG_NAME", "STATE_DIR", "_append_jsonl", "_clean_path_prefixes",
+        "_is_abs_leaf", "_locked_increment",
         "_msys_drive_to_windows", "_read_counter", "_rel_under_root", "_telemetry_enabled",
         "_write_counter", "adopter_protected_prefixes", "adopter_zone_for", "atomic_write_text", "directory_exists", "git_bash_tmp_mount",
         "git_bash_tmp_tail", "harness_protected_prefixes", "host_orientation_line", "iter_mcp_path_leaves",
@@ -741,9 +744,43 @@ def _blank_quoted_spans(text: str) -> "str | None":
     return out
 
 
-#: The quote characters PowerShell pairs with a straight quote, U+2018 to
-#: U+201E, which `_QUOTED_SPAN`'s Bash grammar does not read at all.
-_PS_TYPOGRAPHIC_QUOTES = "‘’‚‛“”„"
+#: True inside one judgment (`_one_judgment`): the two relief gates read the
+#: fold's raise only here, so a fold made outside any judgment (a direct scan
+#: in a test) reaches no gate, and every judgment starts with it lowered.
+_JUDGING: "contextvars.ContextVar[bool]" = contextvars.ContextVar("_JUDGING", default=False)
+
+
+def _one_judgment(fn: "Callable[..., int]") -> "Callable[..., int]":
+    """``fn``, an entry a judgment starts at (`_run_main`, and the checks an
+    in-process caller calls straight: `check_secret_path_access`,
+    `check_bash_dangerous_patterns`, `check_powershell`), as one judgment:
+    the outermost entry lowers the fold's raise
+    (`_bash_patterns.FOLD_MOVED_A_QUOTE`) as it starts and however it leaves,
+    and a nested one runs inside it unchanged, so the raise the dispatch's
+    fold makes reaches its legs and no other call (the failure-mode review
+    drove both gates off for an in-process caller after one smart-quoted
+    dispatch; the full tier, after a direct scan in another test). The
+    module is read from ``sys.modules``, where the pattern path's plain
+    import puts it, so a read-only call that never loads it loads nothing."""
+    @functools.wraps(fn)
+    def judgment(*args: Any, **kwargs: Any) -> int:
+        if _JUDGING.get():
+            return fn(*args, **kwargs)
+        _lower_the_fold()
+        token = _JUDGING.set(True)
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            _JUDGING.reset(token)
+            _lower_the_fold()
+    return judgment
+
+
+def _lower_the_fold() -> None:
+    """Lower `FOLD_MOVED_A_QUOTE` where the pattern module is loaded."""
+    raised = getattr(sys.modules.get("_bash_patterns"), "FOLD_MOVED_A_QUOTE", None)
+    if isinstance(raised, contextvars.ContextVar):
+        raised.set(False)
 
 
 def _ps_blank_quoted_spans(text: str) -> "str | None":
@@ -757,8 +794,17 @@ def _ps_blank_quoted_spans(text: str) -> "str | None":
     hold a quote. The backtick and the here-string are opaque to both gates
     before this is read. Each way the gate gives no relief and the
     quote-blind deny stands, so a plain `# note` after a test run is a
-    declared false deny."""
-    if any(q in text for q in _PS_TYPOGRAPHIC_QUOTES) or "--%" in text:
+    declared false deny. Every reader of a PowerShell program folds its
+    typographic delimiters to straight ones first (DEF-2040), and both gates
+    read texts made from a fold (one of them a masked half), so a fold that
+    moved a quote anywhere in this call, on any route (the PowerShell tool,
+    a program the Bash tool launches, one `Start-Process` carries), is read
+    here as the typographic quote it was typed with
+    (`_bash_patterns.FOLD_MOVED_A_QUOTE`): no relief, the edge the assign
+    kept. A call whose folds moved nothing reads exactly as before."""
+    _load_the_pattern_path()
+    if ((_JUDGING.get() and _bash_patterns.FOLD_MOVED_A_QUOTE.get()) or "--%" in text
+            or any(q in text for q in _bash_patterns.PS_TYPOGRAPHIC_QUOTES)):
         return None
     blank = _blank_quoted_spans(text)
     if blank is None or "#" in blank or "${" in blank:
@@ -2142,6 +2188,7 @@ def _ps_secret_read_targets(command: str, _depth: int = 0) -> list[str]:
     return out
 
 
+@_one_judgment
 def check_secret_path_access(tool_name: str, tool_input: dict, root: Path) -> int:
     """Deny reads/writes of secret-bearing paths, for READ-ONLY tools too.
 
@@ -2689,14 +2736,20 @@ _LONE_DELETE_FLAGS = frozenset({"-force", "-path", "-literalpath", "-confirm", "
 #: separator, a drive or provider colon. Read on the words left once
 #: `-Confirm:$false`, the one allowlisted word holding two of them, is taken
 #: out whole. A non-ASCII character ends it too (a dash PowerShell reads as
-#: one).
+#: one). A backslash is not on it: PowerShell's escape is the backtick, and on
+#: Windows a backslash in a bare word is a path separator (driven on 5.1),
+#: which the reader folds to `/` as the zone check does on every host, so
+#: `tools\cc` is read as `tools/cc` and a rooted `\x` or a UNC `\\server` as
+#: the absolute spelling it is (DEF-2068). pwsh on POSIX is not driven: where
+#: it reads the backslash as a name character, the entry it names is
+#: `tools\cc` itself, which no zone is, so the relief spares nothing there.
 #: Its sibling with the same "nothing runs between" job is
 #: `_bash_patterns._PS_TEMP_BINDING_REFUSED` (DEF-2055's binding gate). The two
 #: cannot be one object: `_bash_patterns` imports on first use, after this
-#: module-level set is built, and the gate must admit the `$`, `\` and `:` a
+#: module-level set is built, and the gate must admit the `$` and `:` a
 #: binding spells. Their shared core is pinned in
 #: `tests/test_write_guard.py::TestAScratchRootItselfIsTheWall`.
-_LONE_DELETE_STOPS = frozenset(";&|`{}()[]@'\"<>*?~#!$\\:")
+_LONE_DELETE_STOPS = frozenset(";&|`{}()[]@'\"<>*?~#!$:")
 #: The whitespace Python's ``split`` breaks on and a statement cannot hold
 #: alone: a line break, and the separators the shell does not split on.
 #: Read on the whole command.
@@ -2717,7 +2770,11 @@ def _a_lone_file_delete(command: str, raw: str, at: "Path | None", root: Path, r
       definition or expansion, so no redefined verb or default-parameter
       table can change what runs (the host loads no profile); ASCII only;
     * every flag is on ``_LONE_DELETE_FLAGS`` (`-Confirm:$false` read as one
-      whole word), and the one operand is ``raw`` as spelled, relative;
+      whole word), and the one operand is ``raw`` as spelled, relative, a
+      backslash read as `/` (DEF-2068: a separator on Windows, never
+      PowerShell's escape; `Remove-Item tools\\cc` kept 5.1's has-children
+      refusal as the forward-slash spelling does, driven 2026-11-10; pwsh
+      on POSIX not driven, see ``_LONE_DELETE_STOPS``);
     * the operand, joined to the directory the command runs in and read
       with lstat, is a real directory holding an entry, and the path the
       zone check resolved (``resolved``), so the two reads name one
@@ -2734,7 +2791,9 @@ def _a_lone_file_delete(command: str, raw: str, at: "Path | None", root: Path, r
     non-recursive, and main's alias-proof deny stands there."""
     if not command.isascii() or not _LONE_DELETE_BREAKS.isdisjoint(command.strip(" \t")):
         return False
-    words = [w for w in command.split() if w.lower() != "-confirm:$false"]
+    # The separator fold first, so the rooted, UNC and climbing spellings
+    # below are refused in either form (DEF-2068).
+    words = [w.replace("\\", "/") for w in command.split() if w.lower() != "-confirm:$false"]
     if not _LONE_DELETE_STOPS.isdisjoint("".join(words)):
         return False
     if not words or words[0].lower() not in _LONE_DELETE_VERBS:
@@ -2746,9 +2805,10 @@ def _a_lone_file_delete(command: str, raw: str, at: "Path | None", root: Path, r
         if word.startswith(("-", "/")) or ".." in word.split("/"):
             return False
         operands.append(word)
-    if operands != [raw]:
+    spelled = raw.replace("\\", "/")
+    if operands != [spelled]:
         return False
-    path = Path(at or root) / raw
+    path = Path(at or root) / spelled
     try:
         st = os.lstat(path)
         if not stat.S_ISDIR(st.st_mode) or getattr(st, "st_file_attributes", 0) & _REPARSE_POINT:
@@ -2915,6 +2975,7 @@ def check_bash_for_protected_symlinks(command: str, root: Path, cwd: Path | None
     return 0
 
 
+@_one_judgment
 def check_bash_dangerous_patterns(
     tool_input: dict, root: Path | None = None, cwd: Path | None = None,
 ) -> int:
@@ -3095,6 +3156,26 @@ def _bash_dangerous_reason_here(
                 reason = _bash_dangerous_reason(program, root, _depth + 1, cwd=cwd)
                 if reason:
                     return reason
+            # A POSIX shell's `-c` program (DEF-3068): the same records one
+            # level down. The exec-quote command position opens only after a
+            # bare `-c`, so behind a switch or cluster (`bash -lc '...'`, `sh
+            # -e -c '...'`, `bash -c -- '...'`) the outer scan never read the
+            # program's delete, and every record of this tier was a plain
+            # allow there while the bare spelling walled. The bare spelling
+            # is left out: the outer scan reads it in place, from its own
+            # statement's directory, and read here as well it walled `cd sub
+            # && bash -c 'rm -rf .'`, which nudges (DEF-853's declared row).
+            # Only at the top: inside another shell's program every program
+            # is judged as another shell's already, and an inner bare one
+            # left out there met no tier (the failure-mode review).
+            c_programs = (
+                _bash_patterns._posix_shell_c_programs_unread_in_place(spliced, pair)
+                if _depth == 0 else _bash_patterns._posix_shell_c_bodies(spliced, pair)
+            )
+            for program in c_programs:
+                reason = _bash_dangerous_reason(program, root, _depth + 1, cwd=cwd)
+                if reason:
+                    return reason
     return None
 
 
@@ -3124,6 +3205,7 @@ def _derive_the_carve_out_pids() -> None:
     )
 
 
+@_one_judgment
 def check_powershell(
     tool_input: dict, root: Path | None = None, cwd: Path | None = None,
 ) -> int:
@@ -4148,6 +4230,25 @@ def _judge(seen: list[dict] | None = None) -> int:
         )
 
 
+def _fold_the_powershell_command(tool_name: str, tool_input: dict) -> dict:
+    """``tool_input`` with the PowerShell tool's command read as PowerShell
+    pairs its quotes: each typographic quote it acts on folded to its
+    straight form, a string's value kept as typed (DEF-2040), on a copy.
+    `_run_main` calls this once, ahead of every leg that reads the command:
+    the secret read, the hard tier, the zone checks, the snapshot and the
+    bump. One code point for one, so no offset moves. Every PowerShell call
+    loads the pattern path anyway; this loads it a few lines sooner. A fold
+    that moved a quote takes the two relief gates' relief away
+    (`_bash_patterns.FOLD_MOVED_A_QUOTE`, raised by any fold that moved a
+    quote and read in `_ps_blank_quoted_spans`), the assign's edge, until
+    the dispatch ends (`_a_dispatch_resets_the_fold`)."""
+    if tool_name != "PowerShell" or not isinstance(tool_input.get("command"), str):
+        return tool_input
+    _load_the_pattern_path()
+    return {**tool_input, "command": _bash_patterns.fold_powershell_quotes(tool_input["command"])}
+
+
+@_one_judgment
 def _run_main(data: dict | None = None) -> int:
     if data is None:
         data = _hook_utils.read_stdin_safely()
@@ -4156,6 +4257,8 @@ def _run_main(data: dict | None = None) -> int:
     tool_input = data.get("tool_input", {})
     if not isinstance(tool_input, dict):
         tool_input = {}
+    # Ahead of every leg that reads the command (DEF-2040).
+    tool_input = _fold_the_powershell_command(tool_name, tool_input)
     root = _resolve_project_root()
     # A payload the guard could not read allows (there is nothing to check)
     # but never silently: the record and the line say so, once a session.

@@ -3812,19 +3812,20 @@ at all. Three traps, each pinned by `tests/test_speedbump_v1_1.py`:
   residual is the *other* direction: verb-not-leading forms (`bulk_delete`) fall
   silent — the intended v1.1 under-fire. Pinned by `TestCpMcpOverFireGuard`.
 - **Defer local-filesystem MCP ops to write_guard.** `mcp__filesystem__move_file`
-  matches the `move` verb but is a *local* op carrying a path-shaped field
-  (`source`/`destination`) — write_guard's protected-zone domain
-  (`write_guard.check_mcp` / `_deny_mcp`), not an external side effect. The
-  speed-bump call site (`_speedbump.check` in `write_guard._run_main`) runs
-  *before* that hard-deny, so without a guard the soft nudge preempts
-  the security deny, producing a confusing soft-then-hard two-stage and a factually
-  wrong "leaves the repo" reminder. Fix: if `tool_input` carries any
-  `_hook_utils.MCP_PATH_FIELDS` value, return silent (defer) — sister to CP-RMRF
-  deferring to the `rm` hard-deny. Pinned by `TestCpMcpDefersToWriteGuard` and the
-  pre-existing `test_blocks_mcp_move_via_destination_field` (which now passes
-  unchanged because the hard-deny owns the move in one round).
+  matches the `move` verb but is a *local* op — write_guard's protected-zone domain
+  (`write_guard.check_mcp` / `_deny_mcp`, which answers before the bump since
+  DEF-986), not an external side effect, and a nudge there would tell it, falsely,
+  that it "leaves the repo". The defer is read from what the payload names
+  (`_speedbump._mcp_names_a_place_in_the_checkout`, next section), never from its key
+  names — sister to CP-RMRF deferring to the `rm` hard-deny. Pinned by
+  `TestCpMcpDefersToWriteGuard`; a zone move such as
+  `test_blocks_mcp_move_via_destination_field` is refused by write_guard
+  before the bump is asked.
 
-Posture: **bias toward silent** (under-fire) on the first ship — an MCP write is
+Posture: **bias toward silent** (under-fire) on the first ship, with one deliberate
+exception since DEF-5101: a deferrable verb whose input names no absolute place in the
+checkout is nudged, relative local writes included ("The MCP side-effect defer reads the
+places a payload names", below; do not "fix" it back to a key list). An MCP write is
 external-irreversible but not the PyPI-burn tier, and a false nag on a benign read
 trains re-issue-without-reading. Keying was id-only (one flag for the whole class,
 one nudge per session) until 2026-09-13, when `flag_key` gained the tool name beside
@@ -4078,18 +4079,48 @@ regex rewrite this central must prove both coverage and that it cannot catastrop
 backtrack. Generalizable to any git-subcommand guard: parse the global-option prefix and
 match flag *clusters*, never a bare `git\s+<verb>`.
 
-## `MCP_PATH_FIELDS` is a local-fs defer set, not an "is this a side-effect" filter
+## The MCP side-effect defer reads the places a payload names, never its key names
 
-`_speedbump._pred_mcp_sideeffect` defers to write_guard when an MCP tool carries a
-path-shaped field (a `mcp__filesystem__move_file` is write_guard's protected-zone domain,
-not an external side effect). The trap: deferring on the *broad* `_hook_utils.MCP_PATH_FIELDS`
-— which includes the generic external-payload fields `target` / `uri` / `target_uri` —
-silently silenced real external side effects (`send_email{target}`, `trigger_webhook{uri}`,
-`send_sms{target}` got no nudge from either tier). Defer ONLY on a local-filesystem subset
-(`path`/`file_path`/`destination`/`new_path`/`src`/`dst`); a real local move still carries
-`destination`, so it keeps deferring, while an external send carrying `target` now fires.
-Do not narrow the shared `MCP_PATH_FIELDS` itself — other callers rely on its breadth;
-narrow speed-bump-locally with a module-scope `_LOCAL_FS_FIELDS`.
+`_speedbump._pred_mcp_sideeffect` defers to write_guard when an MCP call is a local
+filesystem op. Two key-set readings of that failed, one in each direction. The broad
+`_hook_utils.MCP_PATH_FIELDS` (it holds `target` / `uri` / `target_uri`) silenced real
+external side effects (`send_email{target}`, `trigger_webhook{uri}` got no nudge from
+either tier). The six top-level keys that replaced it (`path`/`file_path`/`destination`/
+`new_path`/`src`/`dst`) told a move keyed `from`/`to`, any batch of moves and a create keyed
+`output_path` that they left the repo, and deferred a bucket-to-bucket move on its
+`destination` key (DEF-5101). A finite key set cannot name every server's keys.
+
+The defer now reads every non-content string leaf through the leaf walk
+(`_hook_utils.iter_mcp_path_leaves`, write_guard's own reading) and steps aside when one is
+absolute as the normaliser reads it (`_is_abs_leaf` on the cleaned spelling, so `~/` and
+`file://` count) and its normalised text is not anchored (inside the checkout or a sibling
+worktree). Read by shape instead ("no leading slash"), an id like `t:1`, or a drive spelling
+on POSIX, would read as inside and silence a remote delete. Only a deferrable verb asks:
+`send`, `post`, `publish` and `trigger` (`_speedbump._MCP_ALWAYS_EXTERNAL_VERBS`) leave
+the checkout whatever the call names, so a `send_file` naming a checkout file is nudged.
+The costs, each pinned in `tests/test_speedbump_v1_1.py`:
+
+- **A relative leaf is no evidence either way.** An MCP server resolves it against its own
+  working directory, which the hook cannot see, so a local write spelled relative (or as
+  `$CLAUDE_PROJECT_DIR/x`, which cleans to a relative path) is nudged once per tool.
+- **Nothing vetoes the defer.** An edit's `oldText` holding `/usr/bin/env` is text, not where
+  the call lands. What is left is a create, update, delete or edit whose input names a
+  checkout file under any key (a `source_file`, a log path, a title that starts with a path).
+  It goes silent, a server shape none here has. The checkout root itself (a `cwd` or
+  `repo_path`) is the call's context and no evidence.
+- **A deferrable fire says what the hook could not see.** It fires only when nothing in the
+  input is placed in the checkout by an absolute path, so its text (`_MCP_DEFERRABLE_BODY`,
+  through `body_for`) says the input "names no place inside the checkout the hook can see",
+  never that the call "leaves the repo", which is false for a local write spelled relative.
+- **A deferrable verb's nudge spends its own budget.** `CP-MCP-SIDEEFFECT` is cap-governed,
+  and its deferrable-verb fires count against `_MCP_DEFERRABLE_COUNTER`, not the shared
+  `SPEEDBUMP_COUNTER` (`SpeedBump.budget_for`). So four relative local writes cannot spend
+  the slots `CP-COMPACT` and a real send share.
+- **The defer is read after the verb.** A read, a send and a call with no side-effect verb
+  pay nothing for it, and a Bash call never reaches it.
+
+Do not narrow the shared `MCP_PATH_FIELDS` to serve this. Other callers rely on its
+breadth, and the defer reads no key set at all.
 
 ## The recall corpus must gate harness-internal entries for adopters
 

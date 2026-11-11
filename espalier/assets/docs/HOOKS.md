@@ -639,6 +639,12 @@ install-ci` adds one).
   disableAllHooks: true in .claude/settings.json
 ```
 
+A settings file that exists but does not parse as JSON (or cannot be read) is
+not a kill switch: the scan could not answer for it. The `Integrity:` line then
+reads `UNREADABLE SETTINGS (1 file)  ->  fix its JSON; the kill-switch scan could
+not read it` (a kill switch in another file still outranks it), its own warning
+names the file, and the audit log records `session_settings_unreadable`.
+
 On a tree where `espalier install-ci` has written the CI gate (its guard and
 the workflow that runs it), the clause after "Past them," reads instead that
 the CI gate re-checks every pull request regardless of the local setting. The
@@ -696,18 +702,25 @@ one ASCII paragraph beside the prompt:
 [HARNESS] Context is 271k, past the handoff threshold (200k, espalier.toml
 handoff_context_tokens). First asked 2026-10-26T09:19Z at 271k. Handoff
 replaces compaction: if a lane is in hand, finish it through its own landing
-and start no new job; with no lane in hand, run /handoff now (it writes your
-row, and pushes the lane). After the handoff take no new work, answer a loop
-tick in one line, and tell the operator this window needs a /clear (the loop
-survives it; start no second one), or, after a lane opened by hand, run
-python tools/cc/ship.py arm --why <how>.
+and start no new job; where no room is left to finish it, run /handoff with
+its push step python tools/cc/ship.py handoff --unfinished "<what is left>",
+which pushes nothing and arms the clear; with no lane in hand and no handoff
+written since that ask, run /handoff now (it writes your row, and pushes the
+lane). After the handoff take no new job (your own pull request's red or
+conflict, and a red main's revert, are not new work), answer a loop tick in
+one line, and tell the operator this window needs a /clear (the loop survives
+it; start no second one), or, after a lane opened by hand, run python
+tools/cc/ship.py arm --why <how>.
 ```
 
 The push clause rides only where `handoff_push = true`. The ask is idempotent
 by text: it repeats on every prompt past the figure until the window is
 cleared, and it never says "commit and hand off" mid-lane, because on a tree
 with `handoff_push` the handoff's last step opens the lane's pull request with
-auto-merge armed, and a half-finished lane must not ride that. The first ask
+auto-merge armed, and a half-finished lane must not ride that. A lane the
+window has no room left to finish is set aside instead (`--unfinished`, which
+runs only in a session this ask was recorded for, pushes nothing, and arms the
+own-clear with the lane to finish in its brief; `/handoff` describes it). The first ask
 is recorded beside the session's marker
 (`.espalier-state/sessions/<id>.handoff-asked`, swept with the marker) so the
 later ones can quote it. Absent, `0`, or anything but a positive integer is
@@ -1301,9 +1314,10 @@ first; the dangerous-command catch is a secondary slip-catcher):
    unforced remove reads the same path the same way. The temp root itself
    (a `.` step, or a trailing dot or space Windows strips, names it too),
    this project's checkout or the home directory under it, a link that
-   resolves onto one, a variable, a glob and a `..` step stay the wall,
-   pinned by
-   `tests/test_write_guard.py::TestPowerShellScratchRootRung::test_everything_else_absolute_is_still_the_wall`.
+   resolves onto one, a glob and a `..` step stay the wall, pinned by
+   `tests/test_write_guard.py::TestPowerShellScratchRootRung::test_everything_else_absolute_is_still_the_wall`,
+   and so does a variable with no literal binding, the coverage contract's
+   declared PowerShell exception (below).
    The temp variables are the exception: `$env:TEMP`, `$env:TMP` or
    `$env:TMPDIR` with a literal path below it is read as the value the hook
    inherits, where the command sets none of the three (an assignment, the
@@ -1517,8 +1531,15 @@ first; the dangerous-command catch is a secondary slip-catcher):
    direct twin `rm -rf "$D"` draws (the nudge for a variable or a source
    directory, silence for a roster word or a temp directory), wherever it
    sits -- the top level, a chain, an `if`, a loop body whatever its head
-   (until 2026-11-09 it drew nothing anywhere). A stage between
-   the echo and `xargs`, the pipe across a line break, and an emit past
+   (until 2026-11-09 it drew nothing anywhere); a top-level pipe across
+   a line break, or a comment between its stages, is one pipeline on
+   either tool and reads as its one-line twin (since 2026-11-10), except
+   inside a Bash command substitution and inside a program handed to
+   another shell (`bash -c '...'`, `eval '...'`, a heredoc fed to a
+   shell), where the line break still ends the reading, and in a
+   PowerShell command the guard cannot read whole (one past its length
+   cap, or holding an unterminated quote). A stage between
+   the echo and `xargs`, and an emit past
    the reader's bounds -- more than four words, a word past 80 characters,
    a separator quoted inside an emitted word, a quoted `echo` -- stay
    outside both tiers.
@@ -1779,7 +1800,21 @@ the shell on stdin) is read by the PowerShell extractor, read-verb roster
 and dangerous records, and `bash -c "..."` / `sh -c '...'` on the
 PowerShell tool (the head bare or given by path, the `-c` bare or clustered
 as `-lc`) by the Bash ones -- one level down, and a program that re-enters
-the first shell one level further, no more. A program piped to `-Command -`
+the first shell one level further, no more. Switches and a `--` between
+the `-c` and its program (`bash -c -- '...'`, `bash -c -x '...'`), and a
+shell's `+` options on either side of the `-c` (`bash +x -c '...'`, `bash -c
++e '...'`, `bash +O extglob -c '...'`), are read on both tools. On the Bash tool a POSIX shell's `-c` program the outer scan
+does not read as the shell receives it -- behind a switch or cluster
+(`bash -lc '...'`, `sh -e -c '...'`, `bash -c -- '...'`), behind a head the
+command position does not open at (`bash.exe -c`, `BASH -c`), opening on a
+prefix the exec quote's command position does not read (a wrapper, an
+assignment, a keyword, `!` or a redirect: `bash -c 'sudo ...'`), holding a
+quote, a backslash, a `$` or a backtick, inside another program's quotes
+(`eval "bash -c '...'"`), or spelled as
+side-by-side quoted segments -- meets the Bash dangerous records and the
+confirm-once nudge one level down, as another shell's program: from the
+payload's directory and the unknown one, since no command position opens
+for it in the outer command. A program piped to `-Command -`
 on the Bash tool (`echo '...' | pwsh -Command -`, `cat <<'EOF' | pwsh
 -Command -`) is read as the stage before the pipe, like an interpreter's;
 `-File <script>` there means the pipe is data. `-EncodedCommand`, `-File
@@ -1788,7 +1823,11 @@ is inlined first), `wsl bash -c` and a relative write after a `cd` inside a
 POSIX shell program anywhere but behind a bare `-c` on the Bash tool (`bash
 -lc 'cd tools/cc/hooks && echo x > x.py'`, a here-string, the PowerShell
 tool's `bash -c`: a zone write, which the coverage contract hands to the
-after-check) are declared limits, pinned by `tests/test_write_guard.py::TestCrossShellRouting::test_bash_tool_declared_limits_are_pinned`
+after-check), and a delete in such a program after a `cd` earlier in the
+outer command, judged from the payload's directory and not the `cd`'s
+(`cd sub && bash -lc 'rm -rf .'` is refused where the bare `-c` spelling
+nudges, and so is each kind of program above the outer scan does not read in
+place, one row per kind), are declared limits, pinned by `tests/test_write_guard.py::TestCrossShellRouting::test_bash_tool_declared_limits_are_pinned`
 and `tests/test_write_guard.py::TestCrossShellRouting::test_powershell_tool_declared_limits_are_pinned`;
 `cmd /c` is a third grammar the hook has no extractor for
 (`tests/test_write_guard.py::TestCrossShellRouting::test_cmd_c_verdicts_are_pinned_not_claimed`).
@@ -1935,10 +1974,13 @@ side of a last-statement assignment to a variable the command names
 nowhere else, with no pipe, call operator, group or script block anywhere
 (`$hint = 'gc .env'` alone is a mention, and the same with a later
 `iex $hint` is refused), or the one literal in `Write-Host (...)` in a
-command made of Write-Host statements alone. A typographic quote, a `#`
-outside the strings, the stop-parsing token `--%` or a braced variable
-name keeps the first-word reading, since PowerShell can end a string there
-where this reading does not. A grep-shaped search of the
+command made of Write-Host statements alone. The typographic quotes
+PowerShell acts on are read as the straight ones it pairs them with before
+any of this (`_bash_patterns.fold_powershell_quotes`), yet a typographic
+quote anywhere in the command as typed, a `#` outside the strings, the
+stop-parsing token `--%` or a braced variable name keeps the first-word
+reading, since PowerShell can end a string there where this reading does
+not (so `$hint = ‘gc .env’` is refused, a declared false deny). A grep-shaped search of the
 file is not a read verb on either shell, and a mention inside a string or
 comment is inert.
 This is the hook-layer replacement for the `Read()` deny rules `init` no
@@ -2078,6 +2120,11 @@ spellings of them are work:
   since the zone checks answer ahead of the nudge), a secret read is judged on the literal part of its operand, and a
   force push to an unresolvable remote draws its nudge
   (`tests/test_write_guard.py::TestTheCoverageContract::test_an_unresolvable_operand_on_a_kept_job_draws_the_conservative_verdict`).
+  The PowerShell tool is stricter by one declared exception (2026-11-10): a
+  forced recursive `Remove-Item` of a variable with no literal binding, and a
+  piped sweep of one (`gci $f -Recurse | ri -r`), forced or not, stay the wall
+  on the re-issue too, while the unforced `Remove-Item $f -Recurse` draws the
+  nudge as Bash does (pinned in the same test class, each row issued twice).
   A conservative refusal that goes quiet is a defect, not a limit.
 - **Outside it, and seen by no reader.** An encoded program, a script file
   whose contents are the program, and a program assembled from pieces nothing

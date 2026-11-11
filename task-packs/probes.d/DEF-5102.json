@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5102",
+ "subject": "tools/cc/ci_guard.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the defect is the absence of an arm, whose name the fix gives; the oracle is a scratch clone with a bare origin: a lane carrying an Espalier-Unfinished commit, ci_guard run over the pull request's base..head, then its exit read as a failure naming the trailer; until the fix names that arm, no one-line probe can drive it",
+ "row_sha": "5faee19d8d7c",
+ "text_sha": "1bbef3ef313b",
+ "verified_2026_11_11": "OPEN (filed 2026-11-11; probe driven at filing)"
+}

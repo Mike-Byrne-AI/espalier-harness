@@ -525,3 +525,102 @@ class TestTheCheckoutWiringNotice:
         assert result.returncode == 0, result.stderr
         assert "settings.json" not in result.stderr, result.stderr
         assert (tmp_path / PLAN_REL).is_file()
+
+
+# -- restore: a plan set aside comes back whole --------------------------------
+
+def _cold_plans(repo: Path) -> list[Path]:
+    return sorted((repo / "cc" / "_cold").glob("*-execution_plan.json"))
+
+
+def _live_plan(repo: Path) -> dict:
+    return json.loads((repo / PLAN_REL).read_text(encoding="utf-8"))
+
+
+class TestRestorePutsBackASetAsidePlan:
+    """``restore <path>`` is the other half of a set-aside: the threshold
+    handoff of an unfinished lane (``ship.py handoff --unfinished``) demotes a plan in progress to
+    ``cc/_cold/`` so the own-clear mod, which holds the clear on a plan in
+    progress, can clear the window; the re-primed window puts it back with its
+    steps and their statuses as they were. Dies to: a restore over another
+    plan in progress (two lanes' plans in one file), a finished plan in the way
+    unlinked instead of demoted, a source that is not a plan accepted, or a
+    restore that copies and leaves the cold record to be restored twice."""
+
+    def test_a_demoted_plan_comes_back_whole_and_leaves_the_cold_store(self, tmp_path):
+        _create(tmp_path, steps=3)
+        assert _run(["mark", "0", "passed"], tmp_path).returncode == 0
+        before = _live_plan(tmp_path)
+        assert _run(["reset"], tmp_path).returncode == 0
+        [cold] = _cold_plans(tmp_path)
+
+        result = _run(["restore", str(cold)], tmp_path)
+
+        assert result.returncode == 0, result.stderr
+        assert _live_plan(tmp_path) == before
+        assert _cold_plans(tmp_path) == []
+        assert "Restored plan: test task" in result.stdout and "1 of 3 steps passed" in result.stdout
+        assert result.stdout.isascii()
+
+    def test_a_path_named_from_the_repo_root_restores_from_a_subdirectory(self, tmp_path):
+        """The unfinished handoff's brief names the record from the repo root
+        (``cc/_cold/<stamp>-execution_plan.json``); a session standing in a
+        subdirectory still finds it."""
+        (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True)   # the root marker _paths walks up to
+        _create(tmp_path)
+        assert _run(["reset"], tmp_path).returncode == 0
+        [cold] = _cold_plans(tmp_path)
+        sub = tmp_path / "tools"
+
+        result = _run(["restore", cold.relative_to(tmp_path).as_posix()], sub)
+
+        assert result.returncode == 0, result.stderr
+        assert (tmp_path / PLAN_REL).is_file() and _cold_plans(tmp_path) == []
+
+    def test_a_plan_in_progress_is_never_overwritten(self, tmp_path):
+        _create(tmp_path)
+        assert _run(["reset"], tmp_path).returncode == 0
+        [cold] = _cold_plans(tmp_path)
+        assert _run(["create", "--task", "the other lane", "--steps", "s0|s1"], tmp_path).returncode == 0
+
+        result = _run(["restore", str(cold)], tmp_path)
+
+        assert result.returncode == 1
+        assert "in progress" in result.stderr and "the other lane" in result.stderr, result.stderr
+        assert _live_plan(tmp_path)["task"] == "the other lane"
+        assert _cold_plans(tmp_path) == [cold]
+
+    def test_a_finished_plan_in_the_way_is_demoted_first(self, tmp_path):
+        _create(tmp_path)
+        assert _run(["reset"], tmp_path).returncode == 0
+        [cold] = _cold_plans(tmp_path)
+        assert _run(["create", "--task", "finished", "--steps", "only"], tmp_path).returncode == 0
+        assert _run(["mark", "0", "passed"], tmp_path).returncode == 0
+
+        result = _run(["restore", str(cold)], tmp_path)
+
+        assert result.returncode == 0, result.stderr
+        assert _live_plan(tmp_path)["task"] == "test task"
+        [kept] = _cold_plans(tmp_path)
+        assert kept != cold and json.loads(kept.read_text(encoding="utf-8"))["task"] == "finished"
+        assert f"Demoted the plan in the way to cc/_cold/{kept.name}." in result.stdout, result.stdout
+
+    def test_a_file_that_is_not_a_plan_is_refused_and_nothing_moves(self, tmp_path):
+        _create(tmp_path)
+        before = _live_plan(tmp_path)
+        (tmp_path / "junk.json").write_text('{"not": "a plan"}', encoding="utf-8")
+        (tmp_path / "torn.json").write_text("{", encoding="utf-8")
+        for name in ("junk.json", "torn.json", "missing.json"):
+            result = _run(["restore", name], tmp_path)
+            assert result.returncode == 1, name
+            assert "not a plan" in result.stderr or "no file" in result.stderr, result.stderr
+        assert _live_plan(tmp_path) == before
+
+    def test_the_live_plan_itself_is_not_a_source(self, tmp_path):
+        _create(tmp_path)
+        _run(["mark", "0", "passed"], tmp_path)
+        _run(["mark", "1", "passed"], tmp_path)
+        _run(["mark", "2", "passed"], tmp_path)
+        result = _run(["restore", PLAN_REL], tmp_path)
+        assert result.returncode == 1 and "already the live plan" in result.stderr, result.stderr
+        assert (tmp_path / PLAN_REL).is_file()

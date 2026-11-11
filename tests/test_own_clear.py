@@ -36,6 +36,8 @@ from pathlib import Path
 import pytest
 
 from tests._git_oracle import _git_env
+from tests._interpreter_hosts import HOOK_PYTHON
+from tests._wait_budget import scaled
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TOOLS_CC = REPO_ROOT / "tools" / "cc"
@@ -648,6 +650,492 @@ class _GhBehind:
             self.updated = True
             return 0, "", ""
         raise AssertionError("unplanned gh spawn: " + " ".join(args))
+
+
+def _half_built_lane(repo: Path, *, row: bool = True, plan: bool = True, edits: bool = True) -> None:
+    """A lane mid-build when its window crosses the threshold: one commit of
+    its own never pushed (origin holds main alone), its Session Log row
+    committed, a tracked edit and an untracked file in the tree, and its plan
+    in progress -- the state the mod holds a clear on twice over."""
+    (repo / ".gitignore").write_text("cc/execution_plan.json\ncc/_cold/\n.espalier-state/\n", encoding="utf-8")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "commit", "--quiet", "-m", "ignore the local state")
+    _with_origin(repo)
+    _git(repo, "switch", "--quiet", "-c", "lane/half")
+    (repo / "src.py").write_bytes(b"one\n")
+    _git(repo, "add", "src.py")
+    _git(repo, "commit", "--quiet", "-m", "feat: the first half")
+    if row:
+        rows = repo / "memory" / "session-log.d"
+        rows.mkdir(parents=True)
+        (rows / "2026-11-11-064000-box.md").write_bytes(b"the row\n")
+        _git(repo, "add", "memory")
+        _git(repo, "commit", "--quiet", "-m", "chore(records): the row")
+    if edits:
+        (repo / "src.py").write_bytes(b"one\ntwo\n")
+        (repo / "test_new.py").write_bytes(b"pass\n")
+    if plan:
+        (repo / "cc").mkdir(exist_ok=True)
+        (repo / "cc" / "execution_plan.json").write_text(json.dumps({
+            "task": "the half-built lane", "status": "in_progress",
+            "steps": [{"index": 0, "description": "s0", "status": "passed"},
+                      {"index": 1, "description": "s1", "status": "pending"}]}), encoding="utf-8")
+
+
+def _asked(repo: Path, session_id: str = "s-here") -> None:
+    """The prompt router's first-ask record for the session, as it writes it
+    when the context first passes the threshold."""
+    side = repo / ".espalier-state" / "sessions"
+    side.mkdir(parents=True, exist_ok=True)
+    (side / f"{session_id}.handoff-asked").write_text(json.dumps({"at": "2026-11-11T07:08Z", "tokens": 350875}),
+                                                     encoding="utf-8")
+
+
+def _cold_plans(repo: Path) -> list[Path]:
+    return sorted((repo / "cc" / "_cold").glob("*-execution_plan.json"))
+
+
+class TestTheHandoffLeavesAnUnfinishedLane:
+    """``ship.py handoff --unfinished "<what is left>"``: the threshold handoff
+    of a lane its window cannot finish (a review or a tier still owed, no room
+    left to run it). The plain handoff's push would open the half-built lane's
+    pull request with auto-merge armed, which the threshold rule forbids, and
+    `arm` refuses a lane not on origin, so until this nothing armed and the
+    seat sat idle until a hand /clear (air-work, 2026-11-07, 1 h 40 min and
+    running; the operator ruled the fix in, option B). It runs only in a
+    session the prompt router asked for the threshold handoff, pushes nothing
+    and opens nothing: it sets an in-progress plan aside in the cold store,
+    commits the tracked edits as one commit carrying the
+    ``Espalier-Unfinished`` trailer, names the untracked files, keeps the
+    claims, and arms with a tail naming what the next window runs first.
+    REAL-GIT: the row's own oracle is a scratch clone with a bare origin, a
+    lane commit never pushed, the verb run, the marker read as armed for the
+    session. Dies to: a run that pushes or releases a claim, a marker the mod
+    would still hold (a tracked edit left, the plan left in progress, the
+    marker at another head), a refusal that changes the tree, a run in a
+    session never asked, or a brief that leaves out the soft reset or the
+    restore."""
+
+    TEXT = "the review is owed: dispatch both reviewers on the lane's diff"
+
+    @staticmethod
+    def _quiet(ship, monkeypatch) -> list[tuple]:
+        """Each verb is a run of its own (the shared-checkout read is asked
+        once a run), and a claim release would be a mail spawn: recorded."""
+        monkeypatch.setitem(ship._SHARED, "asked", False)
+        released: list[tuple] = []
+        monkeypatch.setattr(ship, "_release_claims", lambda *a, **k: released.append(a))
+        return released
+
+    def _ready(self, ship, repo, monkeypatch, **lane) -> list[tuple]:
+        """A mod window past the threshold on a half-built lane."""
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        released = self._quiet(ship, monkeypatch)
+        _half_built_lane(repo, **lane)
+        _asked(repo)
+        return released
+
+    @staticmethod
+    def _untouched(repo: Path, head: str) -> None:
+        assert _git(repo, "rev-parse", "HEAD") == head
+        assert "src.py" in _git(repo, "status", "--porcelain", "--untracked-files=no")
+        assert (repo / "cc" / "execution_plan.json").is_file() and _cold_plans(repo) == []
+        assert not (repo / ".espalier-state" / "own_clear.json").exists()
+
+    def test_the_threshold_window_arms_its_clear_over_an_unfinished_lane_from_the_cli(
+            self, ship, repo, monkeypatch):
+        """The row's oracle through the command a window types: a lane commit
+        never pushed, the verb run, then the marker armed for the session at
+        HEAD with nothing in flight and nothing pushed. Before the fix no verb
+        did this: the parser refused the flag, read here as the defect itself
+        rather than a crash."""
+        self._ready(ship, repo, monkeypatch)
+        try:
+            rc = ship.main(["handoff", "--unfinished", self.TEXT])
+        except SystemExit as exc:
+            pytest.fail(f"no handoff verb sets an unfinished lane aside and arms its clear "
+                        f"(the parser exited {exc.code})")
+        assert rc == 0
+        assert _git(repo, "ls-remote", "origin", "lane/half") == ""
+        marker = _marker(repo)
+        assert marker["state"] == "armed" and marker["session_id"] == "s-here"
+        assert marker["head"] == _git(repo, "rev-parse", "HEAD")
+        assert _git(repo, "status", "--porcelain", "--untracked-files=no") == ""
+        assert not (repo / "cc" / "execution_plan.json").exists()
+
+    def test_it_sets_the_plan_aside_commits_the_edits_and_arms_the_clear(self, ship, repo, monkeypatch, capsys):
+        released = self._ready(ship, repo, monkeypatch)
+        below = _git(repo, "rev-parse", "HEAD")
+
+        assert ship.handoff(unfinished=self.TEXT) == 0
+
+        head = _git(repo, "rev-parse", "HEAD")
+        assert _git(repo, "rev-parse", "HEAD~1") == below
+        assert _git(repo, "log", "-1", "--format=%s") == ship.UNFINISHED_SUBJECT
+        assert _git(repo, "log", "-1", "--format=%(trailers:key=Espalier-Unfinished,valueonly)") == "lane/half"
+        assert _git(repo, "show", "--format=", "--name-only", "HEAD") == "src.py"
+        assert _git(repo, "ls-remote", "origin", "lane/half") == "", "the verb pushed the lane"
+        assert released == [], "the verb released the lane's claims, which closes its job"
+        assert not (repo / "cc" / "execution_plan.json").exists()
+        [cold] = _cold_plans(repo)
+        assert json.loads(cold.read_text(encoding="utf-8"))["task"] == "the half-built lane"
+        # The mod's three conditions for its clear, each read the way it reads them.
+        marker = _marker(repo)
+        assert marker["state"] == "armed" and marker["session_id"] == "s-here" and marker["head"] == head
+        assert _git(repo, "status", "--porcelain", "--untracked-files=no") == ""
+        assert marker["landed"] is False and marker["outcome"] == f"left unfinished: {self.TEXT}"
+        brief = marker["brief"]
+        tail = brief[brief.index(ship.FINISH_FIRST):]
+        assert self.TEXT in tail and "lane/half" in tail and "unpushed, with no pull request" in tail
+        assert "is on origin" not in tail
+        assert f"while HEAD is {head[:12]}, git reset --soft {below[:12]} takes back" in tail
+        assert f" tools/cc/execution_plan.py restore cc/_cold/{cold.name} puts back the plan" in tail
+        assert "test_new.py" in tail and "THE HANDOFF DID NOT LAND" not in tail
+        # Only the brief names the lane after the clear: the window stays on it,
+        # and the guard's reach is said as it is (the driver's verbs, not git).
+        assert "Stay on this branch" in tail and "a hand git push is not checked" in tail
+        assert tail.isascii() and '"' not in tail and "%" not in tail
+        # The commit carries the record too, for a window cleared by hand.
+        assert f"restore cc/_cold/{cold.name}" in _git(repo, "log", "-1", "--format=%B")
+        out = capsys.readouterr().out
+        assert "left lane/half unfinished" in out and "nothing pushed" in out
+        assert "own-clear armed" in out and "the lane to finish" in out
+
+    def test_a_lane_already_on_origin_is_named_there_with_the_hand_push_it_must_not_take(
+            self, ship, repo, monkeypatch):
+        """The threshold ask makes the seat's own red pull request the likely
+        lane, and the red-cell recipe a window remembers is fix, commit, git
+        push, then rebind: the hand push lands the set-aside edits on the open
+        pull request before rebind refuses, and auto-merge can merge them on
+        green. So a lane whose branch is on origin is said to be there, never
+        unpushed, with the soft reset ahead of any push. Read offline (the
+        remote-tracking ref as last fetched): no fetch, no gh."""
+        self._ready(ship, repo, monkeypatch)
+        _git(repo, "push", "--quiet", "-u", "origin", "lane/half")
+        assert ship.handoff(unfinished=self.TEXT) == 0
+        tail = _marker(repo)["brief"]
+        tail = tail[tail.index(ship.FINISH_FIRST):]
+        assert "unpushed" not in tail and "with no pull request" not in tail
+        assert "its branch is on origin" in tail and "a pull request may be open on it" in tail
+        assert "a hand git push there lands the set-aside edits" in tail and "soft-reset first" in tail
+        assert tail.isascii() and '"' not in tail and "%" not in tail
+
+    def test_the_two_moves_the_brief_names_give_the_lane_back_as_it_was(self, ship, repo, monkeypatch):
+        """The next window's first moves, driven: the soft reset and the
+        restore leave the edit staged and the plan in progress at its step,
+        and the lane holds no unfinished commit any more."""
+        self._ready(ship, repo, monkeypatch)
+        below = _git(repo, "rev-parse", "HEAD")
+        assert ship.handoff(unfinished=self.TEXT) == 0
+        [cold] = _cold_plans(repo)
+
+        _git(repo, "reset", "--soft", below)
+        env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
+        done = subprocess.run([HOOK_PYTHON, str(TOOLS_CC / "execution_plan.py"), "restore",
+                               f"cc/_cold/{cold.name}"], cwd=repo, capture_output=True, text=True,
+                              encoding="utf-8", env=env, timeout=scaled(30))
+
+        assert done.returncode == 0, done.stderr
+        plan = json.loads((repo / "cc" / "execution_plan.json").read_text(encoding="utf-8"))
+        assert plan["status"] == "in_progress" and [s["status"] for s in plan["steps"]] == ["passed", "pending"]
+        assert _git(repo, "diff", "--cached", "--name-only") == "src.py"
+        assert (repo / "src.py").read_bytes() == b"one\ntwo\n"
+        assert ship._unfinished_on_lane(repo, "origin/main") is None
+
+    def test_a_lane_holding_the_commit_refuses_every_push_naming_the_reset(self, ship, repo, monkeypatch):
+        """The guard the tail cannot be: the re-primed window's loop ranks its
+        own red pull request first, and a catch-up or a handoff would push
+        HEAD with the set-aside edits on it. The reading names the commit,
+        its parent and the soft reset; with a commit on top it says so."""
+        self._ready(ship, repo, monkeypatch)
+        below = _git(repo, "rev-parse", "HEAD")
+        assert ship.handoff(unfinished=self.TEXT) == 0
+        head = _git(repo, "rev-parse", "HEAD")
+        words = ship._unfinished_on_lane(repo, "origin/main")
+        assert words is not None and head[:12] in words and "Espalier-Unfinished: lane/half" in words
+        assert f"while HEAD is {head[:12]}, git reset --soft {below[:12]}" in words
+        with pytest.raises(ship.Refused, match="a push would carry them half-made"):
+            ship._refuse_an_unfinished_lane(repo, "origin/main")
+        (repo / "more.py").write_bytes(b"x\n")
+        _git(repo, "add", "more.py")
+        _git(repo, "commit", "--quiet", "-m", "feat: more on top")
+        assert "HEAD has moved past it" in ship._unfinished_on_lane(repo, "origin/main")
+
+    def test_a_session_the_router_never_asked_is_refused_and_nothing_moves(self, ship, repo, monkeypatch):
+        """No escape flag: outside the threshold this would become the
+        everyday way past the plain handoff's dirty-tree refusal."""
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        self._quiet(ship, monkeypatch)
+        _half_built_lane(repo)
+        head = _git(repo, "rev-parse", "HEAD")
+        _asked(repo, session_id="another-session")
+        with pytest.raises(ship.Refused, match="has not asked this session for the threshold handoff") as stop:
+            ship.handoff(unfinished=self.TEXT)
+        # The remedy names the whole flow, never the bare push verb a window
+        # holding a half-built lane must not run.
+        assert "then /handoff" in str(stop.value) and "ship.py handoff" not in str(stop.value)
+        self._untouched(repo, head)
+        (repo / ".espalier-state" / "sessions" / "s-here.handoff-asked").write_text('{"at": "soon"}',
+                                                                                    encoding="utf-8")
+        with pytest.raises(ship.Refused, match="has not asked this session"):
+            ship.handoff(unfinished=self.TEXT)
+        self._untouched(repo, head)
+
+    def test_a_missing_ask_reader_is_refused_naming_the_repair(self, ship, repo, monkeypatch):
+        self._ready(ship, repo, monkeypatch)
+        head = _git(repo, "rev-parse", "HEAD")
+        monkeypatch.setattr(ship._paths, "hooks_module", lambda name: None)
+        with pytest.raises(ship.Refused, match="recorded_handoff_ask") as stop:
+            ship.handoff(unfinished=self.TEXT)
+        assert "espalier upgrade --execute ." in str(stop.value)
+        self._untouched(repo, head)
+
+    def test_a_window_without_the_mod_is_refused(self, ship, repo, monkeypatch):
+        """Nothing would read the marker, so nothing would name the lane to
+        the next window; left as it is, the lane is what that window reads."""
+        monkeypatch.chdir(repo)
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "s-here")
+        self._quiet(ship, monkeypatch)
+        _half_built_lane(repo)
+        _asked(repo)
+        head = _git(repo, "rev-parse", "HEAD")
+        with pytest.raises(ship.Refused, match="nothing set aside") as stop:
+            ship.handoff(unfinished=self.TEXT)
+        assert "own-clear mod" in str(stop.value)
+        self._untouched(repo, head)
+
+    def test_a_lane_with_no_row_is_refused(self, ship, repo, monkeypatch):
+        """The brief promises the row written (both reviews of 2026-10-30, on
+        the red-base hold): /handoff writes it before this step."""
+        self._ready(ship, repo, monkeypatch, row=False)
+        head = _git(repo, "rev-parse", "HEAD")
+        with pytest.raises(ship.Refused, match="Session Log row"):
+            ship.handoff(unfinished=self.TEXT)
+        self._untouched(repo, head)
+
+    @pytest.mark.parametrize("state", ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge"])
+    def test_an_operation_in_progress_is_refused(self, ship, repo, monkeypatch, state):
+        """A commit in the middle of one would seal it half-made into the
+        lane; read by the checkout catch-up's own reading."""
+        self._ready(ship, repo, monkeypatch)
+        head = _git(repo, "rev-parse", "HEAD")
+        target = repo / ".git" / state
+        if state == "rebase-merge":
+            target.mkdir()
+        else:
+            target.write_text(head + "\n", encoding="utf-8")
+        with pytest.raises(ship.Refused, match="is in progress"):
+            ship.handoff(unfinished=self.TEXT)
+        self._untouched(repo, head)
+
+    def test_the_default_branch_and_a_detached_head_are_refused(self, ship, repo, monkeypatch):
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        self._quiet(ship, monkeypatch)
+        _with_origin(repo)
+        _asked(repo)
+        (repo / "README.md").write_bytes(b"an edit on main\n")
+        with pytest.raises(ship.Refused, match="default branch") as stop:
+            ship.handoff(unfinished=self.TEXT)
+        assert "ship.py lane" in str(stop.value)
+        _git(repo, "switch", "--quiet", "--detach")
+        with pytest.raises(ship.Refused, match="detached HEAD"):
+            ship.handoff(unfinished=self.TEXT)
+        assert _git(repo, "status", "--porcelain", "--untracked-files=no") == "M README.md"
+        assert not (repo / ".espalier-state" / "own_clear.json").exists()
+
+    def test_an_empty_text_or_a_push_flag_is_refused(self, ship, repo, monkeypatch):
+        self._ready(ship, repo, monkeypatch)
+        head = _git(repo, "rev-parse", "HEAD")
+        with pytest.raises(ship.Refused, match="what is left"):
+            ship.handoff(unfinished="  ")
+        with pytest.raises(ship.Refused, match="pushes nothing") as stop:
+            ship.handoff(unfinished=self.TEXT, title="feat: x", base_red_ruled="abc")
+        assert "--title" in str(stop.value) and "--base-red-ruled" in str(stop.value)
+        self._untouched(repo, head)
+
+    def test_a_plan_the_driver_cannot_set_aside_is_refused(self, ship, repo, monkeypatch):
+        """The plan's demotion is execution_plan.py's, loaded by path; where it
+        is not beside the driver the verb refuses before anything moves."""
+        self._ready(ship, repo, monkeypatch)
+        head = _git(repo, "rev-parse", "HEAD")
+        monkeypatch.setattr(ship, "_plan_module", lambda: None)
+        with pytest.raises(ship.Refused, match="execution_plan.py"):
+            ship.handoff(unfinished=self.TEXT)
+        self._untouched(repo, head)
+
+    def test_a_demotion_that_fails_changes_nothing(self, ship, repo, monkeypatch):
+        """Demote first, commit second: a plan that cannot move stops the verb
+        before the commit, so the window is as it was."""
+        self._ready(ship, repo, monkeypatch)
+        head = _git(repo, "rev-parse", "HEAD")
+
+        class Stuck:
+            @staticmethod
+            def demote_plan(path):
+                raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(ship, "_plan_module", lambda: Stuck)
+        with pytest.raises(ship.Refused, match="No space left") as stop:
+            ship.handoff(unfinished=self.TEXT)
+        assert "nothing was committed" in str(stop.value)
+        self._untouched(repo, head)
+
+    def test_a_commit_that_fails_puts_the_plan_back(self, ship, repo, monkeypatch):
+        self._ready(ship, repo, monkeypatch)
+        head = _git(repo, "rev-parse", "HEAD")
+        real = ship._git
+
+        def failing_commit(*args, **kw):
+            if args and args[0] == "commit":
+                return 1, "", "fatal: the hook said no"
+            return real(*args, **kw)
+
+        monkeypatch.setattr(ship, "_git", failing_commit)
+        with pytest.raises(ship.Refused, match="the hook said no") as stop:
+            ship.handoff(unfinished=self.TEXT)
+        assert "the plan is back where it was" in str(stop.value)
+        self._untouched(repo, head)
+
+    def test_a_dry_run_says_what_it_would_do_and_changes_nothing(self, ship, repo, monkeypatch, capsys):
+        self._ready(ship, repo, monkeypatch)
+        head = _git(repo, "rev-parse", "HEAD")
+        assert ship.handoff(unfinished=self.TEXT, dry_run=True) == 0
+        self._untouched(repo, head)
+        out = capsys.readouterr().out
+        assert "dry-run" in out and "1 tracked edit" in out and "the half-built lane" in out
+        assert "the own-clear marker would be armed" in out
+
+    def test_a_clean_lane_gets_an_empty_commit_that_guards_its_push(self, ship, repo, monkeypatch):
+        """All of the lane is committed and only its review is owed (the row's
+        own case): the commit is empty, but it carries the trailer, so every
+        ship-driver push of the half-built lane still refuses; the brief names
+        the soft reset that drops it, and no restore."""
+        self._ready(ship, repo, monkeypatch, plan=False, edits=False)
+        below = _git(repo, "rev-parse", "HEAD")
+        assert ship.handoff(unfinished=self.TEXT) == 0
+        head = _git(repo, "rev-parse", "HEAD")
+        assert head != below and _git(repo, "rev-parse", "HEAD~1") == below
+        assert _git(repo, "show", "--format=", "--name-only", "HEAD") == ""
+        assert _git(repo, "log", "-1", "--format=%(trailers:key=Espalier-Unfinished,valueonly)") == "lane/half"
+        assert ship._unfinished_on_lane(repo, "origin/main") is not None
+        brief = _marker(repo)["brief"]
+        assert f"while HEAD is {head[:12]}, git reset --soft {below[:12]} drops it" in brief
+        assert "restore" not in brief and _marker(repo)["head"] == head
+
+    def test_a_session_checkout_holding_work_is_refused_before_anything_moves(self, ship, repo, monkeypatch):
+        """The lane is here and the session was started in another checkout
+        of the clone, which the mod reads (DEF-5046): a commit there origin
+        lacks, or a tracked edit there, would make the arm refuse after the
+        lane was committed, and `arm` refuses an unpushed lane. Read first."""
+        self._ready(ship, repo, monkeypatch)
+        head = _git(repo, "rev-parse", "HEAD")
+        wt = _worktree_of(repo)   # a lane of its own there, one commit origin lacks
+        monkeypatch.setenv("ESPALIER_OWN_CLEAR_ROOT", str(wt))
+        _asked(wt)
+        with pytest.raises(ship.Refused, match="the checkout this session's mod reads") as stop:
+            ship.handoff(unfinished=self.TEXT)
+        assert "origin does not have" in str(stop.value)
+        self._untouched(repo, head)
+        _git(wt, "reset", "--quiet", "--hard", "origin/main")
+        (wt / "README.md").write_bytes(b"an edit in the window's checkout\n")
+        monkeypatch.setitem(ship._SHARED, "asked", False)
+        with pytest.raises(ship.Refused, match="tracked edit"):
+            ship.handoff(unfinished=self.TEXT)
+        self._untouched(repo, head)
+
+    def test_the_plan_set_aside_is_the_one_the_sessions_mod_reads(self, ship, repo, monkeypatch):
+        """execution_plan.py writes under the session's own checkout, which
+        the mod reads: that plan is the one set aside, the lane checkout's
+        left alone, and the restore is named by its full path."""
+        self._ready(ship, repo, monkeypatch)
+        wt = repo.parent / "window"
+        _git(repo, "worktree", "add", "--quiet", "--detach", str(wt), "origin/main")
+        (wt / "cc").mkdir(exist_ok=True)
+        (wt / "cc" / "execution_plan.json").write_text(json.dumps({
+            "task": "the window's plan", "status": "in_progress",
+            "steps": [{"index": 0, "description": "s0", "status": "pending"}]}), encoding="utf-8")
+        monkeypatch.setenv("ESPALIER_OWN_CLEAR_ROOT", str(wt))
+        _asked(wt)
+
+        assert ship.handoff(unfinished=self.TEXT) == 0
+
+        assert not (wt / "cc" / "execution_plan.json").exists()
+        [cold] = _cold_plans(wt)
+        assert (repo / "cc" / "execution_plan.json").is_file() and _cold_plans(repo) == []
+        marker = _marker(wt)
+        assert marker["state"] == "armed" and marker["head"] == _git(wt, "rev-parse", "HEAD")
+        assert f"restore {cold.resolve()} puts back the plan it set aside (the window's plan)" in marker["brief"]
+
+    def test_an_arm_that_does_not_arm_prints_the_moves_and_exits_1(self, ship, repo, monkeypatch, capsys):
+        """The arm is the whole point of this verb: where it does not happen
+        (a marker that cannot be written, a hold), the moves are printed for
+        the window a hand /clear starts, and the exit is 1. Run again once
+        that is settled, the verb reads its own commit, and the plan's record
+        from that commit's body, and arms."""
+        self._ready(ship, repo, monkeypatch)
+        below = _git(repo, "rev-parse", "HEAD")
+        real = ship.arm_own_clear_here
+        monkeypatch.setattr(ship, "arm_own_clear_here", lambda root, **kw: "own-clear not armed: a test hold")
+        assert ship.handoff(unfinished=self.TEXT) == 1
+        out = capsys.readouterr().out
+        head = _git(repo, "rev-parse", "HEAD")
+        [cold] = _cold_plans(repo)
+        assert "own-clear not armed: a test hold" in out and ship.FINISH_FIRST in out
+        assert f"while HEAD is {head[:12]}, git reset --soft {below[:12]}" in out
+        assert f"restore cc/_cold/{cold.name}" in out and "run it again" in out
+        assert not (repo / ".espalier-state" / "own_clear.json").exists()
+
+        monkeypatch.setattr(ship, "arm_own_clear_here", real)
+        monkeypatch.setitem(ship._SHARED, "asked", False)
+        assert ship.handoff(unfinished=self.TEXT) == 0
+        assert _git(repo, "rev-parse", "HEAD") == head
+        assert f"restore cc/_cold/{cold.name} puts back the plan" in _marker(repo)["brief"]
+
+        def broken(root, **kw):
+            raise OSError("read-only state directory")
+
+        monkeypatch.setattr(ship, "arm_own_clear_here", broken)
+        monkeypatch.setitem(ship._SHARED, "asked", False)
+        assert ship.handoff(unfinished=self.TEXT) == 1
+        assert "read-only state directory" in capsys.readouterr().out
+
+    def test_the_outcome_the_driver_writes_is_the_one_the_router_reads(self, ship):
+        """The prompt router names the unfinished lane's own verb on a held
+        clear by the marker's outcome: the two spell its opening alike."""
+        prompt_hook = _load("task_router_own_clear_under_test", "hooks/task_router.py")
+        assert ship.UNFINISHED_OUTCOME == prompt_hook._UNFINISHED_OUTCOME
+
+    def test_a_second_run_amends_its_own_commit_and_names_it(self, ship, repo, monkeypatch):
+        """Run again before the clear (an arm that failed, edits made since):
+        one unfinished commit, amended, its parent the same; with nothing new,
+        HEAD is read as that commit. One below HEAD is refused."""
+        self._ready(ship, repo, monkeypatch)
+        below = _git(repo, "rev-parse", "HEAD")
+        assert ship.handoff(unfinished=self.TEXT) == 0
+        first = _git(repo, "rev-parse", "HEAD")
+        (repo / "src.py").write_bytes(b"one\ntwo\nthree\n")
+        monkeypatch.setitem(ship._SHARED, "asked", False)
+        assert ship.handoff(unfinished="still owed: the review") == 0
+        second = _git(repo, "rev-parse", "HEAD")
+        assert second != first and _git(repo, "rev-parse", "HEAD~1") == below
+        assert f"while HEAD is {second[:12]}, git reset --soft {below[:12]}" in _marker(repo)["brief"]
+        monkeypatch.setitem(ship._SHARED, "asked", False)
+        assert ship.handoff(unfinished="still owed: the review") == 0
+        assert _git(repo, "rev-parse", "HEAD") == second
+        (repo / "on_top.py").write_bytes(b"x\n")
+        _git(repo, "add", "on_top.py")
+        _git(repo, "commit", "--quiet", "-m", "feat: on top")
+        monkeypatch.setitem(ship._SHARED, "asked", False)
+        with pytest.raises(ship.Refused, match="below HEAD"):
+            ship.handoff(unfinished="again")
+
+    def test_the_cli_takes_the_flag(self, ship):
+        args = ship.build_parser().parse_args(["handoff", "--unfinished", self.TEXT])
+        assert args.unfinished == self.TEXT
+        assert ship.build_parser().parse_args(["handoff"]).unfinished is None
 
 
 class TestTheCatchUpReArmsTheMarker:

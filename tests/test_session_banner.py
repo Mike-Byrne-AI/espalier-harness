@@ -1571,7 +1571,7 @@ class TestIntegrityReachesTheBanner:
     the value the banner renders -- across every state, plus the rendering itself.
     """
 
-    def _summary(self, monkeypatch, *, ok, mismatched, kill=(), raises=False, root=Path(".")):
+    def _summary(self, monkeypatch, *, ok, mismatched, kill=(), unreadable=(), raises=False, root=Path(".")):
         mod = _load()
 
         class _Stub:
@@ -1580,8 +1580,8 @@ class TestIntegrityReachesTheBanner:
             is_protocol_mismatch = staticmethod(mod._integrity.is_protocol_mismatch)
             _linked_worktree_main = staticmethod(mod._integrity._linked_worktree_main)
 
-            def scan_for_kill_switches(self, root, include_unreadable=False):
-                return list(kill)
+            def scan_settings_split(self, root):
+                return (list(kill), list(unreadable))
 
             def verify_integrity(self, root):
                 if raises:
@@ -1672,6 +1672,19 @@ class TestIntegrityReachesTheBanner:
             monkeypatch, ok=False, mismatched=["a.py"], kill=["disableAllHooks"]
         )
         assert "KILL-SWITCH" in summary and "DRIFT" not in summary
+
+    def test_a_settings_file_it_could_not_read_is_not_a_kill_switch(self, monkeypatch):
+        # DEF-1023: a file the scan could not parse holds no setting to remove,
+        # so the line says what it is; a real kill switch still outranks it.
+        unread = [".claude/settings.local.json: unreadable settings file (kill-switch scan could not run)"]
+        _mod, summary = self._summary(monkeypatch, ok=True, mismatched=[], unreadable=unread)
+        assert summary.startswith("UNREADABLE SETTINGS (1 file)"), summary
+        assert "KILL-SWITCH" not in summary and "remove it" not in summary
+        assert summary.isascii()
+        _mod, summary = self._summary(
+            monkeypatch, ok=True, mismatched=[], kill=["disableAllHooks"], unreadable=unread
+        )
+        assert summary.startswith("KILL-SWITCH (1 setting)"), summary
 
     def test_a_failed_check_never_reports_ok(self, monkeypatch):
         # The blind-detector guard: a check that raised has verified NOTHING, and
@@ -4506,6 +4519,15 @@ class TestPermissionsLine:
         assert "KILL-SWITCH" not in mod._report_integrity_state(tmp_path)
         self._settings(tmp_path, "settings.json", json.dumps({"disableAllHooks": True}))
         assert "KILL-SWITCH" in mod._report_integrity_state(tmp_path)
+
+    def test_the_integrity_line_reads_an_unparseable_file_as_unreadable(self, tmp_path):
+        # DEF-1023, driven through the real scan: a trailing comma in the local
+        # file read as "KILL-SWITCH (1 setting) -> remove it" before.
+        mod = _load()
+        self._settings(tmp_path, "settings.local.json", '{"permissions": {},}\n')
+        summary = mod._report_integrity_state(tmp_path)
+        assert summary.startswith("UNREADABLE SETTINGS (1 file)"), summary
+        assert "KILL-SWITCH" not in summary
 
     def test_banner_carries_the_line_only_when_given(self, tmp_path):
         mod = _load()
