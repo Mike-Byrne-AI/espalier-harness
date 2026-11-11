@@ -2547,9 +2547,11 @@ class TestADroppedPythonIsRefusedBeforeAnyWrite:
         said = result.stdout + result.stderr
         assert result.returncode == 1, said
         stub = tmp_path / "bin" / "python"
+        floor = _python_floor.floor_text()
         assert (f"The harness does not run on Python {found} (python at {stub}). "
-                f"Update to Python {_python_floor.floor_text()} or newer to install "
-                f"and use it. Nothing was written.") in result.stderr, said
+                f"Update to Python {floor} or newer to install and use it, or put a "
+                f"Python {floor} or newer on PATH as python3 or python. Nothing was "
+                f"written.") in result.stderr, said
         assert self._tree(target) == before, (
             f"{words[0]} wrote into a tree it refused: "
             f"{sorted(self._tree(target) - before)}")
@@ -2601,11 +2603,64 @@ class TestADroppedPythonIsRefusedBeforeAnyWrite:
         )
         said = result.stdout + result.stderr
         assert result.returncode == 1, said
+        floor = _python_floor.floor_text()
         assert (f"The harness does not run on Python 3.10.12 (py -3 at {launcher}). "
-                f"Update to Python {_python_floor.floor_text()} or newer to install "
-                f"and use it. Nothing was written.") in result.stderr, said
+                f"Update to Python {floor} or newer to install and use it, or put a "
+                f"Python {floor} or newer on PATH as python3 or python. Nothing was "
+                f"written.") in result.stderr, said
         assert self._tree(target) == before, (
             f"init wrote into a tree it refused: {sorted(self._tree(target) - before)}")
+
+
+class TestTheRefusalNamesThePathRemedy:
+    """TP-706's follow-on (air's assign 01afca; the operator's ruling 5ac0d1 on
+    call 9b8073, option B): where the interpreter the hooks would be wired to is
+    not the engine's own -- the pack's trigger, the engine on 3.11 through pipx
+    or uv and PATH ``python3`` at 3.10.12 -- the refusal adds one clause naming
+    that remedy. It still refuses first, before any write, and still says it
+    does not run on the version first; no compatibility path, no prompt.
+
+    The clause is the caller's to ask for, because only some sites can tell
+    the two interpreters apart: a command the engine runs has passed the
+    engine's own floor (``espalier/__init__.py``), so the interpreter it names
+    is never the engine's; ``__init__`` is the engine itself below the floor,
+    and a hook cannot see the engine at all, so those keep the sentence as
+    ruled (pinned by the hook rows that use the default sentence as their
+    oracle). In process, so it runs on every host: the POSIX stub rows in
+    :class:`TestADroppedPythonIsRefusedBeforeAnyWrite` drive the same words
+    through a real subprocess.
+    """
+
+    def test_the_sentence_adds_the_clause_only_when_the_engine_is_elsewhere(self):
+        floor = _python_floor.floor_text()
+        ruled = (f"The harness does not run on Python 3.10.12. Update to Python "
+                 f"{floor} or newer to install and use it.")
+        assert _python_floor.does_not_run_sentence("Python 3.10.12") == ruled
+        assert _python_floor.does_not_run_sentence(
+            "Python 3.10.12", engine_elsewhere=True) == (
+            f"The harness does not run on Python 3.10.12. Update to Python "
+            f"{floor} or newer to install and use it, or put a Python {floor} or "
+            f"newer on PATH as python3 or python.")
+
+    def test_inits_refusal_names_the_path_remedy(self, monkeypatch, capsys):
+        from espalier import cli
+
+        answer = (("python3", "/usr/bin/python3", "Python 3.10.12"), None)
+        monkeypatch.setattr(cli, "_BELOW_FLOOR_ANSWER", None)
+
+        def resolver() -> str:
+            cli._BELOW_FLOOR_ANSWER = answer
+            return "python3"
+
+        monkeypatch.setattr(cli, "_detect_python_command", resolver)
+        capsys.readouterr()
+        assert cli._refuse_below_floor_wiring("init") == 1
+        floor = _python_floor.floor_text()
+        assert capsys.readouterr().err == (
+            f"[init] FAIL: The harness does not run on Python 3.10.12 (python3 at "
+            f"/usr/bin/python3). Update to Python {floor} or newer to install and "
+            f"use it, or put a Python {floor} or newer on PATH as python3 or python. "
+            f"Nothing was written.\n")
 
 
 class TestTheEngineSaysTheFloorFirst:

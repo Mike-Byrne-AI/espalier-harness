@@ -919,8 +919,12 @@ def _refuse_below_floor_wiring(verb: str) -> "int | None":
     if _BELOW_FLOOR_ANSWER is None:
         return None
     (name, resolved, said), mute = _BELOW_FLOOR_ANSWER
+    # The engine running this cleared its own floor (`espalier/__init__.py`),
+    # so the interpreter named here is never the engine's: say the PATH remedy
+    # too (the operator's ruling 5ac0d1, option B).
     print(
-        f"[{verb}] FAIL: " + does_not_run_sentence(said, f" ({name} at {resolved})")
+        f"[{verb}] FAIL: "
+        + does_not_run_sentence(said, f" ({name} at {resolved})", engine_elsewhere=True)
         + " Nothing was written." + _unheard_beside(mute),
         file=sys.stderr,
     )
