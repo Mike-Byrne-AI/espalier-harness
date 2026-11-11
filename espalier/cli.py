@@ -866,8 +866,11 @@ def _warn_interpreter_below_floor(
         )
     else:
         after = f"After upgrading, re-wire with `{remedy} -m espalier init . --rewire-interpreter`."
+    # The resolver's own answer, below the floor: the PATH remedy rides here as
+    # at the refusal.
     print(
-        "WARNING: " + does_not_run_sentence(said, f" ({name} at {resolved})")
+        "WARNING: "
+        + does_not_run_sentence(said, f" ({name} at {resolved})", path_remedy=True)
         + _unheard_beside(mute) + " " + after,
         file=sys.stderr,
     )
@@ -919,8 +922,12 @@ def _refuse_below_floor_wiring(verb: str) -> "int | None":
     if _BELOW_FLOOR_ANSWER is None:
         return None
     (name, resolved, said), mute = _BELOW_FLOOR_ANSWER
+    # No candidate cleared the floor, so a newer Python on PATH under one of
+    # the resolver's bare names is the other remedy (the launcher's pick is
+    # the sentence's own "Update").
     print(
-        f"[{verb}] FAIL: " + does_not_run_sentence(said, f" ({name} at {resolved})")
+        f"[{verb}] FAIL: "
+        + does_not_run_sentence(said, f" ({name} at {resolved})", path_remedy=True)
         + " Nothing was written." + _unheard_beside(mute),
         file=sys.stderr,
     )
