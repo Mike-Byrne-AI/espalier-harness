@@ -4486,6 +4486,13 @@ class TestARemoveSpanEndsWhereItsBlockCloses:
         ("if ($c) { ri -r -fo build } else { ri -r -fo / }", "ri -r -fo build; ri -r -fo /"),
         ("if ($c) { ri -r -fo build } else { ri -r -fo tools/cc }", "ri -r -fo build; ri -r -fo tools/cc"),
         ("(gci build | ri -r -fo); (gci dist | ri -r -fo)", "gci build | ri -r -fo; gci dist | ri -r -fo"),
+        # the piped remove's own span, cut: uncut, it read the next block's
+        # recurse switch as this remove's and the plain remove as a wipe
+        ("if ($c) { gci / | ri } else { ri -r build }", "gci / | ri; ri -r build"),
+        # the whole match ends at the cut: the unforced reader asks the
+        # match's own extent for the force switch, and uncut it found the
+        # next block's and dropped the variable remove's nudge
+        ("if ($c) { ri -r $d } else { ri -r -fo build }", "ri -r $d; ri -r -fo build"),
     ]
 
     @staticmethod
