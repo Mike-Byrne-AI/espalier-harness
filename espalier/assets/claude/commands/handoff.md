@@ -741,17 +741,30 @@ python tools/cc/ship.py handoff
   must not ride auto-merge), and it releases no claim, so the lane's job
   stays live. It sets a plan in progress aside under `cc/_cold/`, commits the
   tracked edits as one commit carrying an `Espalier-Unfinished: <lane>`
-  trailer, names the untracked files it leaves beside the lane, then arms the
-  own-clear with a brief naming the lane, what is left, and the two moves
-  that give it back as it was: while HEAD is that commit, `git reset --soft
-  <its parent>` (both named by sha), and `python tools/cc/execution_plan.py
-  restore <the record>`. Until the reset, every push of the lane through the
+  trailer (an empty one where the tracked tree is clean, so the guard below
+  holds where only a review is owed), names the untracked files it leaves
+  beside the lane, then arms the own-clear with a brief naming the lane, what
+  is left, and the two moves that give it back as it was: while HEAD is that
+  commit, `git reset --soft <its parent>` (both named by sha), and
+  `python tools/cc/execution_plan.py restore <the record>` (the commit's body
+  names the record too). Until the reset, every push of the lane through the
   ship driver (`open`, the handoff's push onto an open pull request,
-  `catch-up`) refuses and names it. It refuses before anything moves where no
-  own-clear mod would read the marker (that window is cleared by hand, the
-  lane left as it is), on the default branch or a detached HEAD, during a
-  merge, rebase, cherry-pick or revert, and on a lane whose commits carry no
-  row (write it first, the steps above).
+  `catch-up`, and `rebind` after a push) refuses and names it; a hand
+  `git push` is not checked, so never push the lane by hand. It refuses
+  before anything moves where no own-clear mod would read the marker (that
+  window is cleared by hand, the lane left as it is), where the session's own
+  checkout is not the lane's and holds a commit origin lacks or a tracked
+  edit, on the default branch or a detached HEAD, during a merge, rebase,
+  cherry-pick or revert, and on a lane whose commits carry no row (write it
+  first, the steps above). Where it sets the lane aside but no marker arms,
+  it prints the moves and exits 1, and running it again once that is settled
+  arms.
+
+<!-- espalier:self-host-only -->
+The landing check (step 7c) reads the working tree, the unfinished lane's
+half-made edits included: a red those edits cause goes into "<what is left>"
+as the next window's to fix, never fixed in this one.
+<!-- /espalier:self-host-only -->
 
 Either way, say in the `Next:` line what happened -- the URL the driver
 printed, "committed locally, not pushed (handoff_push is off)", or the direct

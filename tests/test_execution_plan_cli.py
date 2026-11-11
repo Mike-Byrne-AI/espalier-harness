@@ -539,7 +539,7 @@ def _live_plan(repo: Path) -> dict:
 
 class TestRestorePutsBackASetAsidePlan:
     """``restore <path>`` is the other half of a set-aside: the threshold
-    handoff's park (``ship.py handoff --park``) demotes a plan in progress to
+    handoff of an unfinished lane (``ship.py handoff --unfinished``) demotes a plan in progress to
     ``cc/_cold/`` so the own-clear mod, which holds the clear on a plan in
     progress, can clear the window; the re-primed window puts it back with its
     steps and their statuses as they were. Dies to: a restore over another
@@ -563,7 +563,7 @@ class TestRestorePutsBackASetAsidePlan:
         assert result.stdout.isascii()
 
     def test_a_path_named_from_the_repo_root_restores_from_a_subdirectory(self, tmp_path):
-        """The park's brief names the record from the repo root
+        """The unfinished handoff's brief names the record from the repo root
         (``cc/_cold/<stamp>-execution_plan.json``); a session standing in a
         subdirectory still finds it."""
         (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True)   # the root marker _paths walks up to

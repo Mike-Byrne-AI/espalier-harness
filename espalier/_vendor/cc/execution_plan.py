@@ -904,10 +904,10 @@ def _shown_from_root(path: Path) -> str:
 
 def cmd_restore(source: str) -> int:
     """Put a plan set aside in the cold store back at the live path, whole:
-    its steps and their statuses as they were. The threshold handoff's park
-    (``ship.py handoff --park``) demotes a plan in progress there, since the
-    own-clear mod holds a window's clear on one, and its brief names this
-    verb for the window it re-primes. ``source`` is read from the working
+    its steps and their statuses as they were. The threshold handoff of an
+    unfinished lane (``ship.py handoff --unfinished``) demotes a plan in
+    progress there, since the own-clear mod holds a window's clear on one,
+    and its brief names this verb for the window it re-primes. ``source`` is read from the working
     directory, else from the repo root (the brief names it from there). A
     plan in progress at the live path refuses (two lanes' plans in one file:
     finish or reset it first); a finished or blocked one in the way is
@@ -984,8 +984,8 @@ def main(argv: list[str] | None = None) -> int:
         help="path to JSON file with action_justification dict"
     )
     sub.add_parser("reset", help="clear active plan")
-    p_restore = sub.add_parser("restore", help="put back a plan set aside in cc/_cold/ (the threshold park's), "
-                                               "never over a plan in progress")
+    p_restore = sub.add_parser("restore", help="put back a plan set aside in cc/_cold/ (by ship.py handoff "
+                                               "--unfinished), never over a plan in progress")
     p_restore.add_argument("path", help="the set-aside record, from here or from the repo root")
     args = parser.parse_args(argv)
     if args.action == "create":

@@ -115,7 +115,7 @@ _HANDOFF_ASK = (
     "handoff_context_tokens). First asked {at} at {tokens0}k. Handoff replaces compaction: if a "
     "lane is in hand, finish it through its own landing and start no new job; where no room is "
     "left to finish it, run /handoff with its push step python tools/cc/ship.py handoff --unfinished "
-    "<what is left>, which pushes nothing and arms the clear; with no lane in hand and no handoff "
+    "\"<what is left>\", which pushes nothing and arms the clear; with no lane in hand and no handoff "
     "written since that ask, run /handoff now (it writes your row{push}). "
     "After the handoff take no new job (your own pull request's red or conflict, and a red "
     "main's revert, are not new work), answer a loop tick in one line, and tell the operator "
@@ -280,6 +280,26 @@ _OWN_CLEAR_HOLD_VERBS = (
 )
 _OWN_CLEAR_HOLD_FALLBACK = "The mod reads again at each turn's end."
 
+#: The opening of the marker's ``outcome`` after the handoff of an unfinished
+#: lane (``ship.py handoff --unfinished``; ship.UNFINISHED_OUTCOME writes it,
+#: tests/test_own_clear.py pins the two). Its held clear takes these verbs: to
+#: commit the edit and run the plain /handoff would push the half-built lane,
+#: or loop on the driver's refusal of its trailer commit.
+_UNFINISHED_OUTCOME = "left unfinished: "
+_UNFINISHED_HOLD_VERBS = (
+    ("a tracked edit is in flight",
+     "What resolves it: this window's lane was left unfinished, so do not commit it: python tools/cc/ship.py "
+     "handoff --unfinished \"<what is left>\" again folds the edit into the set-aside commit and re-arms the "
+     "marker (git status --short --untracked-files=no names it)."),
+    ("HEAD moved since the handoff",
+     "What resolves it: this window's lane was left unfinished: git reset --soft {head}, then python "
+     "tools/cc/ship.py handoff --unfinished \"<what is left>\" again folds what moved into the set-aside commit "
+     "and re-arms the marker."),
+    ("a plan is in progress",
+     "What resolves it: this window's lane was left unfinished: python tools/cc/ship.py handoff --unfinished "
+     "\"<what is left>\" again sets the plan aside and re-arms the marker."),
+)
+
 
 #: What the mod wrote at the clear into THIS session, said once on the first
 #: prompt after it: the SessionStart banner runs beneath the mod's handler and
@@ -332,6 +352,9 @@ def _own_clear_advisory(root: Path, sid: str) -> str | None:
     if held:
         cause = held.split(" (", 1)[0].strip()
         verb = next((text for key, text in _OWN_CLEAR_HOLD_VERBS if cause == key), _OWN_CLEAR_HOLD_FALLBACK)
+        if str(marker.get("outcome") or "").startswith(_UNFINISHED_OUTCOME):
+            own = next((text for key, text in _UNFINISHED_HOLD_VERBS if cause == key), None)
+            verb = own.format(head=_plain(marker.get("head") or "<the marker's head>", 40)[:12]) if own else verb
         turns = marker.get("clear_held_turns")
         earlier = (f" (the engine refused an earlier ask {count} time(s))"
                    if isinstance(count, int) and count > 0 else "")
