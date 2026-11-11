@@ -789,12 +789,59 @@ class TestDoctorSaysWhenTheSandboxCannotStart:
         assert {name for name, _path in seen} == {"bwrap", "socat"}, seen
 
     def test_an_empty_path_finds_nothing_through_the_real_lookup(self, tmp_path, monkeypatch):
-        """The ledger probe's own shape, through the module's real ``_which``."""
-        monkeypatch.setattr(sp, "_host_is_macos", lambda: False)
-        monkeypatch.setattr(sp, "_osrelease", lambda: "6.1.0-generic")
+        """The ledger probe's own shape, through the module's real ``_which``:
+        the strike's guard. ``raising=False`` lets it run at a base without
+        the seams, where it reds by its assertion (no warning), not by a
+        missing name."""
+        monkeypatch.setattr(sp, "_host_is_macos", lambda: False, raising=False)
+        monkeypatch.setattr(sp, "_osrelease", lambda: "6.1.0-generic", raising=False)
         state = self._state(tmp_path, {"enabled": True}, path="")
+        warnings = sp.doctor_lines(state, remedy_py=PY)[1]
+        assert len(self._cannot_start(warnings)) == 1, warnings
         assert sorted(state.missing_tools) == ["bubblewrap", "socat"], state.missing_tools
-        assert len(sp.doctor_lines(state, remedy_py=PY)[1]) >= 1
+
+    def test_the_step_with_the_setting_true_does_not_offer_to_set_it(self, tmp_path, monkeypatch):
+        """Review of 0dc56fd2: the step asked whether to set a key the
+        warning above it said was already true."""
+        self._host(monkeypatch, present=())
+        state = self._state(tmp_path, {"enabled": True, "failIfUnavailable": True})
+        _info, _warnings, steps = sp.doctor_lines(state, remedy_py=PY)
+        assert len(steps) == 1, steps
+        assert "whether to set" not in steps[0] and "exits at startup" in steps[0], steps
+        assert ".claude/settings.json" in steps[0] and "never writes" in steps[0], steps
+
+    def test_a_malformed_key_keeps_the_by_hand_step_ahead_of_the_upgrade(self, tmp_path, monkeypatch):
+        self._host(monkeypatch, present=())
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_text(
+            json.dumps({"sandbox": {"enabled": True, "filesystem": {"denyWrite": "./tools/cc"}}}), encoding="utf-8")
+        home = tmp_path / "home"
+        env = {"HOME": str(home), "USERPROFILE": str(home), "PATH": "/usr/bin"}
+        state = sp.read_state(tmp_path, posture=_lists(["./tools/cc"], []), host_is_windows=False, environ=env)
+        _info, warnings, steps = sp.doctor_lines(state, remedy_py=PY)
+        assert len(self._cannot_start(warnings)) == 1 and "denyWrite is not a list" in warnings[0], warnings
+        assert len(steps) == 2 and "fix the sandbox key" in steps[1], steps
+        assert steps[1].index("fix the sandbox key") < steps[1].index("upgrade"), steps
+
+    def test_the_warning_names_the_binary_it_looked_for(self, tmp_path, monkeypatch):
+        self._host(monkeypatch, present=("socat",))
+        state = self._state(tmp_path, {"enabled": True})
+        hits = self._cannot_start(sp.doctor_lines(state, remedy_py=PY)[1])
+        assert len(hits) == 1 and "bwrap (from bubblewrap) is not on" in hits[0], hits
+
+    @pytest.mark.parametrize("release, wsl1", [
+        ("4.4.0-19041-Microsoft", True),
+        ("4.4.0-22621-Microsoft", True),
+        ("6.18.33.2-microsoft-standard-WSL2", False),
+        ("5.15.0-microsoft-custom", False),
+        ("6.6.0-microsoft", False),
+        ("6.1.0-21-amd64", False),
+        ("", False),
+    ], ids=["wsl1-19041", "wsl1-22621", "wsl2-stock", "wsl2-custom", "wsl2-bare", "debian", "no-release"])
+    def test_wsl1_is_read_from_its_one_kernel_shape(self, release, wsl1):
+        """A custom WSL2 kernel must not read as WSL1: that claim would skip
+        the dependency check and name the wrong fix."""
+        assert sp.is_wsl1(release) is wsl1
 
     def test_doctor_never_writes_the_setting(self, tmp_path, monkeypatch):
         self._host(monkeypatch, present=())

@@ -462,10 +462,6 @@ class SandboxState:
     fail_if_unavailable: bool | None = None
     fail_source: str = ""
 
-    @property
-    def cannot_start(self) -> bool:
-        return self.wsl1 or bool(self.missing_tools)
-
 
 # -- the host seams (tests patch these) --------------------------------------------------
 
@@ -488,13 +484,18 @@ def _which(name: str, path: str | None) -> str | None:
     return shutil.which(name, path=path)
 
 
+_WSL1_RELEASE_RE = re.compile(r"^4\.4\.0-\d+-Microsoft\b")
+
+
 def is_wsl1(release: str) -> bool:
-    """A WSL1 kernel release names Microsoft (``4.4.0-19041-Microsoft``); a
-    WSL2 one names it beside ``WSL2`` or ``-standard``
-    (``6.18.33.2-microsoft-standard-WSL2``, driven 2026-11-11). WSL1 is
-    read from the documented release shape, never driven here."""
-    low = release.lower()
-    return "microsoft" in low and "wsl2" not in low and "-standard" not in low
+    """WSL1 reports one fixed kernel shape, ``4.4.0-<Windows build>-Microsoft``
+    (no Linux kernel runs under it); a WSL2 one is a real kernel naming
+    ``microsoft`` beside ``-standard`` or ``WSL2``
+    (``6.18.33.2-microsoft-standard-WSL2``, driven 2026-11-11). Anything
+    else, a custom WSL2 kernel included, reads as Linux and gets the
+    dependency check: a wrong WSL1 claim would skip it. The WSL1 shape is
+    the documented one, never driven here."""
+    return bool(_WSL1_RELEASE_RE.match(release.strip()))
 
 
 def user_settings_path(environ: Mapping[str, str] | None = None) -> Path | None:
@@ -649,7 +650,11 @@ def _why_it_cannot_start(state: SandboxState) -> str:
                 "shows the version)")
     if not state.missing_tools:
         return ""
-    names = " and ".join(state.missing_tools)
+    binaries = {package: binary for binary, package in LINUX_DEPENDENCIES}
+    names = " and ".join(
+        package if binaries.get(package, package) == package else f"{binaries[package]} (from {package})"
+        for package in state.missing_tools
+    )
     verb = "is" if len(state.missing_tools) == 1 else "are"
     return f"{names} {verb} not on the PATH doctor reads (install: {INSTALL_LINE})"
 
@@ -665,6 +670,10 @@ def _start_step(state: SandboxState) -> str:
         fix = (f"install the sandbox's dependencies with {INSTALL_LINE}, restart Claude Code and run "
                "/sandbox, whose Dependencies tab is Claude Code's own check (it also reads ripgrep, the "
                "seccomp filter and Ubuntu's AppArmor restriction on bubblewrap, which doctor does not)")
+    if state.fail_if_unavailable:
+        return (f"{fix}; until then Claude Code exits at startup here, since sandbox.{FAIL_KEY} is true in "
+                f"{state.fail_source}: setting it false instead, so a session runs its commands unsandboxed, "
+                "is yours, and doctor never writes it")
     return (f"{fix}; whether to set sandbox.{FAIL_KEY} true, so a session that cannot sandbox exits at "
             "startup rather than run its commands unsandboxed, is yours: doctor never writes it")
 
@@ -712,8 +721,11 @@ def doctor_lines(state: SandboxState, *, remedy_py: str) -> tuple[list[str], lis
         warnings_out.append(f"{line}; {writes}" if (n_missing or malformed) else line)
         steps.append(_start_step(state))
         if n_missing or malformed:
-            steps.append(f"then run {upgrade_hint(remedy_py)} to append the missing sandbox deny entries under "
-                         "your keys")
+            steps.append(
+                ("then fix the sandbox key the warning names in .claude/settings.json by hand, and "
+                 if malformed else "then ")
+                + f"run {upgrade_hint(remedy_py)} to append the missing sandbox deny entries under your keys"
+            )
     elif state.enabled:
         line = f"sandbox: on (sandbox.enabled true in {state.source}); {tally}"
         if n_missing or malformed:

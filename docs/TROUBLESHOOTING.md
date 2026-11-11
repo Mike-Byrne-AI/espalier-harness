@@ -544,10 +544,10 @@ Doctor reads the project, local and user files; a managed settings file or
 and `socat` (`sudo apt-get install bubblewrap socat`, or `sudo dnf install
 bubblewrap socat` on Fedora), and WSL1 has no sandbox at all. Where it cannot
 start, Claude Code runs shell commands unsandboxed, or exits at startup when
-`sandbox.failIfUnavailable` is `true`. A stock Ubuntu 24.04 image carries
-neither package. So on a POSIX host other than macOS, doctor looks for the
-`bwrap` and `socat` binaries on its PATH and reads the kernel release for
-WSL1. Where the sandbox is on and cannot start, it warns, naming the install
+`sandbox.failIfUnavailable` is `true`. A minimal or WSL Ubuntu image can
+carry neither package. So on a POSIX host other
+than macOS, doctor looks for the `bwrap` and `socat` binaries on its PATH and
+reads the kernel release for WSL1. Where the sandbox is on and cannot start, it warns, naming the install
 line and the setting; where the sandbox is off, an info line says it could
 not start if turned on. Doctor never writes `failIfUnavailable`: whether a
 session that cannot sandbox should exit is yours. Claude Code's own check is
