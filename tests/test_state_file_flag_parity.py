@@ -336,6 +336,19 @@ _ALLOWED_FLAGS = {
     # cleaned: it is a record, and a red older than the window is never
     # written to it.
     "board-checks.jsonl",
+    # A DIRECTORY holding the one copy of an edit a wedge restore discarded
+    # (DEF-3009): written by hooks/_start_refusal.py::_save_before_restore just
+    # before the guard lets a restore to HEAD through, one <stem>-<stamp>.py.txt
+    # each; read by the operator, and by checkout_sync.py (_KEPT_STATE_REL),
+    # which keeps a worktree holding one, named, until it is read. Never
+    # cleaned by a glob: it is the only copy. CI's state dir never holds one,
+    # so only a checkout that went through a restore sees this name.
+    "wedge-restore",
+    # tools/cc/ledger_row.py's MINTED_FALLBACK: the clone's id reservations
+    # ({kind: {number: seat}}), written and read by its mint/file verbs through
+    # record_path, here only for a scratch tree outside git (a clone keeps them
+    # under its git directory, espalier/minted_ids.json). A record, not a flag.
+    "minted_ids.json",
 }
 
 

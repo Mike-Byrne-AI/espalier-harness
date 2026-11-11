@@ -13786,7 +13786,13 @@ def cmd_integrity(args: argparse.Namespace) -> int:
         return 0
 
     if action == "verify":
-        findings = integrity.scan_for_kill_switches(repo_root)
+        # A reporter locks nobody out, so it opts in to the settings file the
+        # scan could not read, which the two blocking hooks leave off (a deny
+        # there would block the edit that repairs the file). It is reported
+        # apart: "could not tell" is not "none", and it is not a setting to
+        # remove, so it has its own key and its own exit-2 message below
+        # (DEF-1023).
+        findings, unreadable = integrity.scan_settings_split(repo_root)
         ok, mismatched = integrity.verify_integrity(repo_root)
         algorithm = _manifest_algorithm(integrity, repo_root)
         print(json.dumps({
@@ -13794,6 +13800,7 @@ def cmd_integrity(args: argparse.Namespace) -> int:
             "integrity_ok": ok,
             "mismatched": mismatched,
             "kill_switches": findings,
+            "unreadable_settings": unreadable,
         }, indent=2, sort_keys=True))
         if ok and algorithm is not None and algorithm != integrity.MANIFEST_HASH_ALGORITHM:
             # A legacy raw-bytes manifest verifies clean on the tree it was written
@@ -13818,6 +13825,20 @@ def cmd_integrity(args: argparse.Namespace) -> int:
                 f"{findings}. Remove them before continuing.",
                 file=sys.stderr,
             )
+        if unreadable:
+            # Exit 2, "resolve, then re-run" (docs/CLI_EXIT_CODES.md), never
+            # drift's 1: a refresh on this tree changes nothing, since settings
+            # files are not in the manifest. Asked before the exit-0 arms below
+            # for a tree with no manifest (a seat, a source checkout).
+            print(
+                f"The kill-switch scan could not read {plural(len(unreadable), 'settings file')}: "
+                + "; ".join(unreadable)
+                + ". Fix the JSON (or the permissions) and re-run. A project "
+                ".claude/settings.json that does not parse wires no hooks while it "
+                "stays that way.",
+                file=sys.stderr,
+            )
+        if findings or unreadable:
             return 2
         if not ok:
             py = _remedy_py()  # the interpreter to spell in a remedy (DEF-758)
@@ -16739,7 +16760,8 @@ def build_parser() -> argparse.ArgumentParser:
              "kill-switch; see docs/CLI_EXIT_CODES.md)",
         description="Verify the protected-file manifest (.espalier/integrity.json) "
                     "against disk, or refresh it after intended edits. `verify` exits "
-                    "2 on a kill-switch setting, 1 on hash drift, 0 when clean.",
+                    "2 on a kill-switch setting or a settings file it could not read, "
+                    "1 on hash drift, 0 when clean.",
     )
     p_int.add_argument("action", choices=["verify", "refresh"])
     _add_repo_arg(p_int, optional=True)

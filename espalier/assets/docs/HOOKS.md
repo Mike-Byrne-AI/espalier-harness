@@ -639,6 +639,12 @@ install-ci` adds one).
   disableAllHooks: true in .claude/settings.json
 ```
 
+A settings file that exists but does not parse as JSON (or cannot be read) is
+not a kill switch: the scan could not answer for it. The `Integrity:` line then
+reads `UNREADABLE SETTINGS (1 file)  ->  fix its JSON; the kill-switch scan could
+not read it` (a kill switch in another file still outranks it), its own warning
+names the file, and the audit log records `session_settings_unreadable`.
+
 On a tree where `espalier install-ci` has written the CI gate (its guard and
 the workflow that runs it), the clause after "Past them," reads instead that
 the CI gate re-checks every pull request regardless of the local setting. The

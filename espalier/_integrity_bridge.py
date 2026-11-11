@@ -99,3 +99,32 @@ def _backfill_sentinels(module) -> None:
         module.PROTOCOL_MISMATCH_PREFIXES = _LEGACY_PROTOCOL_MISMATCH_PREFIXES
     if not hasattr(module, "is_protocol_mismatch"):
         module.is_protocol_mismatch = _legacy_is_protocol_mismatch
+    if not hasattr(module, "scan_settings_split") and hasattr(module, "scan_for_kill_switches"):
+        module.scan_settings_split = _legacy_scan_settings_split(module)
+
+
+def _legacy_scan_settings_split(module):
+    """``scan_settings_split`` for a producer that predates it (DEF-1023), built
+    from the two modes of its ``scan_for_kill_switches``: the blockers' default
+    is the kill switches, and what the reporter opt-in adds beside them is the
+    unreadable files (the default's findings are an ordered subsequence of the
+    opt-in's). A producer older still, with no ``include_unreadable``, reports
+    no unreadable file, which is all it could ever say."""
+    scan = module.scan_for_kill_switches
+
+    def split(repo_root):
+        found = list(scan(repo_root))
+        try:
+            everything = list(scan(repo_root, include_unreadable=True))
+        except TypeError:
+            return found, []
+        remaining = list(found)
+        unreadable = []
+        for entry in everything:
+            if remaining and entry == remaining[0]:
+                remaining.pop(0)
+            else:
+                unreadable.append(entry)
+        return found, unreadable
+
+    return split

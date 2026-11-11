@@ -117,7 +117,7 @@ activates once you create a manifest via `espalier integrity refresh .`.
 
 ```bash
 espalier integrity refresh .  # create manifest; activates hash-drift checks
-espalier integrity verify .   # 0=clean, 1=drift, 2=kill-switch found
+espalier integrity verify .   # 0=clean, 1=drift, 2=kill-switch or unreadable settings
 ```
 
 **Guarantee layer (opt-in, one manual step).** `espalier install-ci` +

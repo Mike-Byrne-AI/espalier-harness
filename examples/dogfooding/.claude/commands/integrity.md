@@ -28,7 +28,13 @@ gitignored, so the normal commit path cannot carry one).
 python -m espalier integrity verify .
 ```
 
-Reports any files whose hash has changed since the last refresh.
+Reports any files whose hash has changed since the last refresh, and any
+kill-switch setting in the active settings files (exit 2). A settings file that
+exists but does not parse as JSON (or cannot be read) is not in the manifest and
+holds no answer: it is listed under `unreadable_settings`, apart from
+`kill_switches`, and the run exits 2 with a message of its own naming the file
+(fix the JSON and re-run; a refresh changes nothing, since settings files are
+not in the manifest).
 
 ## Refresh after intentional changes
 

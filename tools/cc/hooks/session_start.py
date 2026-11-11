@@ -2911,8 +2911,24 @@ def _report_integrity_state(root: Path) -> str:
     # Reporter, not a blocker: SessionStart cannot deny per the hook protocol,
     # so surfacing an unparseable settings file here costs nothing and is the
     # earliest place the operator can see that the kill-switch scan could not
-    # actually run.
-    findings = _integrity.scan_for_kill_switches(root, include_unreadable=True)
+    # actually run. Said apart from a kill switch: a file the scan could not
+    # read holds no setting to remove, and counting it as one put "KILL-SWITCH
+    # ... remove it" on the banner for a trailing comma (DEF-1023).
+    findings, unreadable = _integrity.scan_settings_split(root)
+    if unreadable:
+        _integrity.append_audit(
+            root,
+            {"event_type": "session_settings_unreadable",
+             "details": {"findings": unreadable}},
+        )
+        _hook_utils.advise(
+            "[WARN] Espalier-Harness could not read "
+            f"{_hook_utils.plural(len(unreadable), 'settings file')} during "
+            "SessionStart, so the kill-switch scan could not answer for "
+            "them. Fix each file (its JSON syntax, or its permissions) and "
+            "start a session again."
+            "\n  Findings:\n  " + "\n  ".join(unreadable),
+        )
     if findings:
         _integrity.append_audit(
             root,
@@ -3005,6 +3021,11 @@ def _report_integrity_state(root: Path) -> str:
         return (
             f"KILL-SWITCH ({_hook_utils.plural(len(findings), 'setting')})"
             "  ->  remove it; enforcement is disabled"
+        )
+    if unreadable:
+        return (
+            f"UNREADABLE SETTINGS ({_hook_utils.plural(len(unreadable), 'file')})"
+            "  ->  fix its JSON; the kill-switch scan could not read it"
         )
     if unwired:
         return (
