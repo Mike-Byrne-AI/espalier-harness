@@ -5229,6 +5229,19 @@ class TestClassA1PathCanonicalization:
         spelling = f"file://{tmp_path.as_posix()}/src/app.py"
         assert not self._denied(spelling, tmp_path, bash=False), spelling
 
+    @pytest.mark.parametrize("spelling", [
+        "file://{root}/%74ools/cc/hooks/write_guard.py",
+        "FILE://{root}/tools/cc/hooks/write_guard.py",
+        "file:{root}/tools/cc/hooks/write_guard.py",
+    ])
+    def test_the_file_uri_limits_are_pinned_as_allows(self, tmp_path, spelling):
+        """A declared limit (docs/FAILURE_MODES.md 6.7): the zone check reads
+        only the lower-case ``file://`` form as a URI, and its escapes as
+        typed, so these spellings of a protected path are not read as it; a
+        zone write, which the coverage contract hands to the after-check. The
+        denied control is test_file_uri_scheme_protected_denied."""
+        assert not self._denied(spelling.format(root=tmp_path.as_posix()), tmp_path, bash=False)
+
     # ── TP-171 (adversarial): fullwidth-solidus traversal (NFKC pre-normpath) ─
     @pytest.mark.parametrize("spelling", [
         "safe／..／tools／cc／hooks／write_guard.py",
@@ -5500,10 +5513,12 @@ class TestClassA2MCPLeafWalk:
     arbitrary keys + arbitrary nesting, so the fix walks EVERY string leaf.
 
     These are END-TO-END through the real ``write_guard.py`` subprocess using
-    ``mcp__filesystem__write_file`` — whose verb (``write``) matches neither
-    speed-bump verb regex, so the speed-bump stays silent and the protected-
-    zone branch owns the decision. MAINTENANCE_MODE is popped so the check
-    runs; the deny is attributed to the protected-zone layer via the
+    ``mcp__filesystem__write_file``. Its verb (``write``) is a side-effect
+    verb of the MCP speed bump, which answers after this layer: an allow cell
+    here names its file relative, a place the bump cannot see, so the bump may
+    nudge it once, and ``_assert_zone_allows`` reads that nudge as the bump's
+    (no zone hint) and the re-issue as allowed. MAINTENANCE_MODE is popped so
+    the check runs; the deny is attributed to the protected-zone layer via the
     ``Harness self-edits`` hint (a speed-bump deny carries no such hint), so a
     speed-bump deny cannot make these pass for the wrong reason.
 
@@ -5537,11 +5552,19 @@ class TestClassA2MCPLeafWalk:
         assert self._HINT in reason, f"deny not from the protected-zone layer: {reason!r}"
         assert expect_path in reason, f"deny reason missing path {expect_path!r}: {reason!r}"
 
-    def _assert_allowed(self, result):
-        assert result.returncode == 0, result.stderr
-        if result.stdout.strip():
-            hso = json.loads(result.stdout).get("hookSpecificOutput", {})
-            assert hso.get("permissionDecision") != "deny", result.stdout
+    def _assert_zone_allows(self, tool_input, tmp_path):
+        """The zone layer allows the write: the first answer is an allow, or
+        the MCP side-effect speed bump's one nudge (its id, no zone hint), and
+        the identical re-issue is allowed."""
+        for attempt in (1, 2):
+            result = self._run(self._mcp(tool_input), tmp_path)
+            assert result.returncode == 0, result.stderr
+            hso = json.loads(result.stdout).get("hookSpecificOutput", {}) if result.stdout.strip() else {}
+            if hso.get("permissionDecision") != "deny":
+                return
+            reason = hso.get("permissionDecisionReason", "")
+            assert attempt == 1, f"the re-issue was denied: {reason!r}"
+            assert "[CP-MCP-SIDEEFFECT]" in reason and self._HINT not in reason, reason
 
     # ── §12.2 locked DENY corpus (every nested/non-canonical row RED on HEAD) ──
     @pytest.mark.parametrize("tool_input,expect", [
@@ -5571,19 +5594,16 @@ class TestClassA2MCPLeafWalk:
 
     # ── ALLOW negatives — the fix must NOT over-block (regression guards) ──────
     def test_benign_deep_nested_path_allowed(self, tmp_path):
-        self._assert_allowed(self._run(self._mcp(
-            {"batch": {"files": [{"path": "src/app.py", "content": "x"}]}}), tmp_path))
+        self._assert_zone_allows({"batch": {"files": [{"path": "src/app.py", "content": "x"}]}}, tmp_path)
 
     def test_content_leaf_starting_with_protected_prefix_allowed(self, tmp_path):
         # A data payload under a content key must NOT be treated as a write
         # target even when it lexically starts with a protected prefix.
-        self._assert_allowed(self._run(self._mcp(
-            {"path": "notes.txt", "content": "cc/ to: ops@example.com\nsee tools/cc/"}), tmp_path))
+        self._assert_zone_allows({"path": "notes.txt", "content": "cc/ to: ops@example.com\nsee tools/cc/"}, tmp_path)
 
     def test_allowlisted_nested_blueprint_write_allowed(self, tmp_path):
         # cc/blueprints/ is allowlisted-in-protected; nested writes there allow.
-        self._assert_allowed(self._run(self._mcp(
-            {"files": [{"path": "cc/blueprints/session.json", "content": "{}"}]}), tmp_path))
+        self._assert_zone_allows({"files": [{"path": "cc/blueprints/session.json", "content": "{}"}]}, tmp_path)
 
 
 class TestClassA2LeafWalkUnit:
