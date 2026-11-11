@@ -4457,6 +4457,84 @@ class TestCatastrophicLoopCarrier:
             "_placed_sweeps_land_catastrophic", "iter_placed_loop_removals"}
 
 
+class TestARemoveSpanEndsWhereItsBlockCloses:
+    """DEF-3069 as its class: a PowerShell remove's argument span, piped
+    (`_PS_PIPED_REMOVE_RE`'s `rmargs`) or direct (`_PS_REMOVE_ITEM_RE`'s
+    `args`), ran past the closer of the block or group it sits in, and the
+    regex's matches do not overlap: two sibling blocks on one line read as
+    one remove whose operands were `else { gci dist`, and the second
+    block's listing never opened a match, so its remove had no feed and the
+    record walled it as an operand-less forced remove. Measured at main
+    3df1b84 over twelve block shapes: eight read other than their `;` twin,
+    every one toward refusal (a wall or a nudge where the twin passes). The
+    span now ends at the first closer it did not open, and the search
+    resumes there, so a later remove or listing opens a match of its own.
+    Each block form reads as its statement twin."""
+
+    _PAIRS = [
+        ("if ($c) { gci build | ri -r -fo } else { gci dist | ri -r -fo }", "gci build | ri -r -fo; gci dist | ri -r -fo"),
+        ("try { gci build | ri -r -fo } catch { gci dist | ri -r -fo }", "gci build | ri -r -fo; gci dist | ri -r -fo"),
+        ("if ($c) { gci build | ri -r } else { gci dist | ri -r }", "gci build | ri -r; gci dist | ri -r"),
+        ("if ($c) { ri -r -fo build } else { ri -r -fo dist }", "ri -r -fo build; ri -r -fo dist"),
+        ("if ($c) { gci build | ri -r -fo } else { ri -r -fo dist }", "gci build | ri -r -fo; ri -r -fo dist"),
+        ("if ($c) { ri -r -fo build } else { gci dist | ri -r -fo }", "ri -r -fo build; gci dist | ri -r -fo"),
+        ("$(gci build | ri -r -fo) + $(gci dist | ri -r -fo)", "gci build | ri -r -fo; gci dist | ri -r -fo"),
+        ("if ($c) { gci build | ri -r -fo } else { gci tools/cc | ri -r -fo }",
+         "gci build | ri -r -fo; gci tools/cc | ri -r -fo"),
+        # the deny side: what the second block removes is still read
+        ("if ($c) { gci build | ri -r -fo } else { gci / | ri -r -fo }", "gci build | ri -r -fo; gci / | ri -r -fo"),
+        ("if ($c) { ri -r -fo build } else { ri -r -fo / }", "ri -r -fo build; ri -r -fo /"),
+        ("if ($c) { ri -r -fo build } else { ri -r -fo tools/cc }", "ri -r -fo build; ri -r -fo tools/cc"),
+        ("(gci build | ri -r -fo); (gci dist | ri -r -fo)", "gci build | ri -r -fo; gci dist | ri -r -fo"),
+    ]
+
+    @staticmethod
+    def _project(tmp_path: Path) -> Path:
+        (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True)
+        (tmp_path / "tools" / "cc" / "hooks" / "write_guard.py").write_text("x", encoding="utf-8")
+        return tmp_path
+
+    @pytest.mark.parametrize(("block", "twin"), _PAIRS, ids=[f"pair{i}" for i in range(len(_PAIRS))])
+    def test_a_block_form_reads_as_its_statement_twin(self, tmp_path, block, twin):
+        project = self._project(tmp_path)
+        assert _ps_tier_verdicts(block, project) == _ps_tier_verdicts(twin, project), (block, twin)
+
+    def test_the_rows_own_cleanup_passes_through_the_hook(self, tmp_path):
+        """The row's command, end to end through the hook as the tool call
+        runs it: a build clean in one line, no wall and no nudge."""
+        result = run_guard_from(
+            "PowerShell", "if ($c) { gci build | ri -r -fo } else { gci dist | ri -r -fo }", tmp_path, None)
+        assert _delete_verdict(result) == "allow", result.stdout
+
+    @pytest.mark.parametrize("cmd", [
+        "ri -r -fo 'a}b', /",
+        'ri -r -fo "a)b", /',
+        "if ($c) { ri -r -fo 'x}' } else { ri -r -fo / }",
+    ], ids=["single-quoted-brace", "double-quoted-paren", "quoted-brace-in-a-block"])
+    def test_a_closer_inside_a_string_cuts_nothing(self, tmp_path, cmd):
+        """Must-deny: the cut reads the scan, where a string is blank, so a
+        closer inside a quoted operand never ends the span before the root
+        after it."""
+        assert "wall" in _ps_tier_verdicts(cmd, self._project(tmp_path)), cmd
+
+    def test_the_remove_regex_is_searched_at_one_site(self):
+        """Every reader of a direct remove takes its invocations from
+        `_ps_remove_items`, which cuts the span at its block's close and
+        resumes there; a reader that searched the regex itself would read
+        the next block's words as its operands again. Grows deliberately."""
+        import ast
+
+        tree = ast.parse((HOOKS_DIR / "_bash_patterns.py").read_text(encoding="utf-8"))
+        sites = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+                 for sub in ast.walk(node)
+                 if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
+                 and sub.func.attr in ("finditer", "search", "match", "fullmatch")
+                 and getattr(sub.func.value, "id", "") == "_PS_REMOVE_ITEM_RE"}
+        assert sites == {"_ps_remove_items"}, sites
+        for name in ("_speedbump.py", "write_guard.py"):
+            assert "_PS_REMOVE_ITEM_RE." not in (HOOKS_DIR / name).read_text(encoding="utf-8"), name
+
+
 class TestCpMvQuotedVerbDenied:
     """A quoted verb `'cp' src dst` / `'mv' src dst` (shell quote-removal
     collapses it back to a plain `cp`/`mv`) slipped through `_CP_MV_RE`

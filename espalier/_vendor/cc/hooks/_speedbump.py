@@ -2632,7 +2632,7 @@ def _ps_remove_item_snapshot_candidates(command: str, at: Path) -> list[Path]:
             command, directory_exists(at, bash=False))
     except Exception:  # noqa: BLE001 -- the walk is advisory; a fault degrades to the start
         text, statements = _bash_patterns.powershell_scan_text(command), []
-    for m in _bash_patterns._PS_REMOVE_ITEM_RE.finditer(text):
+    for m in _bash_patterns._ps_remove_items(text):
         here = m.start("args")
         dirs = next((ds for s, e, ds in statements if s <= here < e), (".",))
         bases = [join_directory(at, d, bash=False) for d in dirs]
