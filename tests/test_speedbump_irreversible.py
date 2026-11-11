@@ -3198,17 +3198,17 @@ class TestCommandPositionClassClose:
             "GATE, the sweep witness's superset arm: a comment opening in a pipe's "
             "gap opens the walk, which reads the scan pair's joined stage (780c02).",
         "_bash_patterns._PS_PIPE_GAP_WITNESS_RE":
-            "GATE before `_ps_join_pipe_gaps`' walk: a pipe whose gap opens with a "
+            "GATE before `_ps_join_command_gaps`' walk: a pipe whose gap opens with a "
             "line break or a comment; it names no verb (780c02).",
         "_bash_patterns._PS_STATEMENT_GAP_WITNESS_RE":
-            "GATE before `_ps_join_pipe_gaps`' walk: a statement opener whose gap "
+            "GATE before `_ps_join_command_gaps`' walk: a statement opener whose gap "
             "opens with a block comment; it names no verb (DEF-2070).",
         "_bash_patterns._PS_GAP_OPENER_RE":
-            "SYNTAX TOKEN -- where a gap `_ps_join_pipe_gaps` reads can open: a "
+            "SYNTAX TOKEN -- where a gap `_ps_join_command_gaps` reads can open: a "
             "pipe, a statement separator, `return`/`throw`; it names no verb (DEF-2070).",
         "_bash_patterns._PS_LINE_END_RE":
             "SYNTAX TOKEN -- the next CR or LF, where a line comment in a pipe's "
-            "gap ends (`_ps_join_pipe_gaps`); it names no verb (780c02).",
+            "gap ends (`_ps_join_command_gaps`); it names no verb (780c02).",
         "_bash_patterns._PIPE_AT_LINE_END_RE":
             "GATE before the splicer's pipe join: a pipe followed, past blanks, by a "
             "line end or a comment opener; it names no verb (780c02).",
