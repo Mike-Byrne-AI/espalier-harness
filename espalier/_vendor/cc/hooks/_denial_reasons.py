@@ -698,7 +698,7 @@ HARNESS_ENV_PREFIX_INLINE = (
     "\n  Do: prefix the command you actually want it for, which works and is "
     f"allowed -- `{_maintenance_mode.ENV_VAR}=1 pytest -q`, or in cmd, where "
     "`set` reaches every later statement of that cmd, "
-    f"`cmd /c \"set {_maintenance_mode.ENV_VAR}=1 && pytest -q\"`, and the same "
+    f"`cmd /c \"set \"{_maintenance_mode.ENV_VAR}=1\" && pytest -q\"`, and the same "
     "prefix works on whatever command you use to drive a hook you just "
     "edited. To change the CURRENT session, exit and relaunch from your "
     f"own terminal with {_maintenance_mode.relaunch_hint()}, "

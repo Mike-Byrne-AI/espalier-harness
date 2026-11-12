@@ -19764,9 +19764,15 @@ class TestRemovedOrRelocatedOperandIsAMutation:
         assert_hook_denied(second, contains_reason="protected harness zone")
 
     #: cmd's recursive forms, and each again behind cmd's existence test (the
-    #: guarded cleanup, a program only cmd's grammar reads)
+    #: guarded cleanup, a program only cmd's grammar reads). A program that
+    #: opens with a quote takes the test inside it: `/c if exist t "rd ..."`
+    #: names a program called `rd ...` and runs nothing (driven on Windows
+    #: PowerShell 5.1 with an echo, DEF-1071 wave 1), where
+    #: `/c "if exist t rd ..."` runs the delete
     _CMD_FORMS = [f for f in _LAUNCH_FORMS if "-cmd-" in f[0]] + [
-        (f[0] + "-guarded", f[1], f[2].replace("/c ", "/c if exist {t} ", 1))
+        (f[0] + "-guarded", f[1],
+         f[2].replace('/c "', '/c "if exist {t} ', 1) if '/c "' in f[2]
+         else f[2].replace("/c ", "/c if exist {t} ", 1))
         for f in _LAUNCH_FORMS if "-cmd-" in f[0]]
 
     @pytest.mark.parametrize("form", _CMD_FORMS, ids=[f[0] for f in _CMD_FORMS])

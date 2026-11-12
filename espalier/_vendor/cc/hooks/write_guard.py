@@ -1234,6 +1234,7 @@ def _cmd_program_sets_then_launches(program: str, depth: int) -> bool:
     statements at each depth (a nested program is a statement's own words,
     read once there). A later statement that is a test run whose operands
     hold no launch is not one (`_cmd_test_run_holds_no_launch`)."""
+    _load_the_pattern_path()
     armed = False
     for line in program.splitlines():
         for words in _bash_patterns._cmd_statements(line):
