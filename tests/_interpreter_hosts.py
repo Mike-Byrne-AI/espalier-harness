@@ -256,6 +256,71 @@ def build_cannot_start(
     return bin_dir
 
 
+#: What :func:`build_venv_over`'s below-floor outside names answer ``--version``.
+OUTSIDE_BELOW_FLOOR_BANNER = "Python 3.10.12"
+
+#: The venv-shim forwarder: answers the resolver's venv probe (the
+#: ``ESPALIER_PROBE`` program, ``cli._ask_resolves_only_inside_a_virtualenv``)
+#: with this stand-in venv's prefix and a base outside it, and runs this
+#: interpreter for anything else.
+_VENV_SHIM_FORWARDER = (
+    "import json, subprocess, sys\n"
+    "args = sys.argv[1:]\n"
+    "if len(args) >= 2 and args[0] == '-c' and 'ESPALIER_PROBE' in args[1]:\n"
+    "    print('ESPALIER_PROBE' + json.dumps([{prefix!r}, {base!r}]))\n"
+    "    sys.exit(0)\n"
+    "sys.exit(subprocess.call([sys.executable, *args]))\n"
+)
+
+
+def _native_forwarder(bin_dir: Path, name: str, forwarder: Path) -> Path:
+    if os.name == "nt":
+        return _write(bin_dir / f"{name}.cmd", f'@"{sys.executable}" "{forwarder}" %*', crlf=True)
+    exe = shlex.quote(sys.executable)
+    return _write(bin_dir / name, f'#!/bin/sh\nexec {exe} {shlex.quote(str(forwarder))} "$@"', crlf=False)
+
+
+def build_venv_over(root: Path, outside: str, *, names: tuple[str, ...] = ("python", "python3"),
+                    outside_names: tuple[str, ...] | None = None) -> tuple[Path, Path, Path]:
+    """An activated virtualenv whose ``names`` are shims that run this
+    interpreter, over an outside bin dir (``DEF-2069``): ``(venv, venv_bin,
+    outside_bin)``, the two bins to go first on PATH in that order.
+
+    ``outside`` says what ``outside_names`` (default: ``names``) are once the
+    venv is off PATH: ``"below"`` answers :data:`OUTSIDE_BELOW_FLOOR_BANNER`
+    and starts (it runs this interpreter for anything but ``--version``),
+    ``"store"`` is the Store alias, ``"working"`` runs this interpreter, and
+    ``"none"`` leaves the dir empty. The venv is a stand-in: a
+    ``pyvenv.cfg`` one level above its bin dir, as ``_venv.venv_root_of``
+    reads one, and shims that answer the resolver's probe with that prefix.
+    Native flavour only."""
+    if outside not in ("below", "store", "working", "none"):
+        raise ValueError(f"unknown outside {outside!r}")
+    venv = root / "venv"
+    venv_bin = venv / ("Scripts" if os.name == "nt" else "bin")
+    venv_bin.mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("home = elsewhere\n", encoding="utf-8")
+    base = root / "base"
+    base.mkdir()
+    shim = _write(venv_bin / "_venv_shim.py",
+                  _VENV_SHIM_FORWARDER.format(prefix=str(venv), base=str(base)), crlf=False)
+    for name in names:
+        _native_forwarder(venv_bin, name, shim)
+    outside_bin = root / "outside"
+    outside_bin.mkdir()
+    write = _cmd_stub if os.name == "nt" else _sh_stub
+    for name in (names if outside_names is None else outside_names):
+        if outside == "below":
+            old = _write(outside_bin / f"_{name}_old.py",
+                         _old_default_forwarder(OUTSIDE_BELOW_FLOOR_BANNER), crlf=False)
+            _native_forwarder(outside_bin, name, old)
+        elif outside == "store":
+            write(outside_bin, name, working=False)
+        elif outside == "working":
+            write(outside_bin, name, working=True)
+    return venv, venv_bin, outside_bin
+
+
 def build_host(root: Path, shape: str, flavour: str = NATIVE) -> Path:
     """Build ``shape`` under ``root`` in ``flavour`` and return its bin dir."""
     if shape not in SHAPES:

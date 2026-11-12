@@ -2732,6 +2732,9 @@ class TestTheRefusalNamesTheResolversRemedy:
 
         answer = (("python3", "/usr/bin/python3", "Python 3.10.12"), None)
         monkeypatch.setattr(cli, "_BELOW_FLOOR_ANSWER", None)
+        # The faked answer is not this host's: read live, a runner's own
+        # `python3` elsewhere on PATH adds the outside-the-virtualenv clause.
+        monkeypatch.setattr(cli, "_below_floor_outside_venv", lambda name, resolved: None)
 
         def resolver() -> str:
             cli._BELOW_FLOOR_ANSWER = answer
@@ -2752,6 +2755,7 @@ class TestTheRefusalNamesTheResolversRemedy:
         monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", False)
         monkeypatch.setattr(cli, "_BELOW_FLOOR_REFUSING", False)
         monkeypatch.setattr(cli, "_remedy_interpreter", lambda **_: ("python3.12", True))
+        monkeypatch.setattr(cli, "_below_floor_outside_venv", lambda name, resolved: None)  # as above
         capsys.readouterr()
         cli._warn_interpreter_below_floor(("python3", "/usr/bin/python3", "Python 3.10.12"))
         floor = _python_floor.floor_text()
@@ -3564,3 +3568,167 @@ class TestTheFloorHasNoParserShims:
         assert _module_top_imports(f"try:\n    import {parser}\nexcept ImportError:\n    pass\n", parser) == [2]
         assert _module_top_imports(f"class C:\n    from {parser} import loads\n", parser) == [2]
         assert _module_top_imports(f"def read():\n    import {parser}\n", parser) == []
+
+
+class TestAVenvShimOverAnOutsidePython:
+    """DEF-2069: inside an activated virtualenv on a Python that clears the
+    floor, a name that resolves outside the venv to a Python below the floor,
+    or to no Python at all (the Store alias), read as host-wide. ``init``
+    wired it at rc 0, and the shell Claude Code starts from found the 3.10 or
+    the alias. Venv-only now means nothing outside clears the floor and
+    starts (``_venv.outside_reading``); the resolver, doctor and the rewire
+    read it alike, and a below-floor answer outranks the venv-only fallback.
+    Driven first on the Windows box (2026-11-12, a 3.11.9 venv over uv's
+    CPython 3.10.21): the resolver answered ``python`` and the refusal None."""
+
+    @staticmethod
+    def _host(tmp_path, monkeypatch, outside, **kwargs):
+        from tests import _interpreter_hosts as hosts
+
+        venv, venv_bin, outside_bin = hosts.build_venv_over(tmp_path / "host", outside, **kwargs)
+        monkeypatch.setenv("PATH", os.pathsep.join([str(venv_bin), str(outside_bin)]))
+        monkeypatch.setenv("VIRTUAL_ENV", str(venv))
+        return venv, outside_bin
+
+    @staticmethod
+    def _which(name):
+        import shutil
+
+        hit = shutil.which(name)
+        assert hit, f"precondition: {name} resolves on the stand-in PATH"
+        return hit
+
+    def test_a_below_floor_python_outside_is_refused_before_any_write(self, tmp_path, monkeypatch, capsys):
+        from espalier import _venv, cli
+
+        venv, outside_bin = self._host(tmp_path, monkeypatch, "below")
+        assert cli._resolves_only_inside_a_virtualenv("python", self._which("python")) is True
+        assert _venv.resolves_only_inside("python") is True
+        assert cli._refuse_below_floor_wiring("init") == 1
+        err = capsys.readouterr().err
+        assert "[init] FAIL" in err and "3.10.12" in err and "Nothing was written." in err, err
+        # Both places named, and the remedy's place: PATH outside the venv,
+        # never Claude Code launched from it (air's ruling 20e1d4).
+        assert f"outside the virtualenv at {venv}" in err and str(outside_bin) in err, err
+        assert "launching Claude Code from the virtualenv is no fix" in err, err
+
+    def test_the_warning_spells_the_running_interpreter_not_the_venv_name(self, tmp_path, monkeypatch, capsys):
+        """The read-only warning's remedy: the venv's own name clears the floor
+        in this shell only, so it is not spelled as the re-wire, and the
+        sentence never says that nothing here clears the floor."""
+        from espalier import cli
+
+        self._host(tmp_path, monkeypatch, "below")
+        assert cli._remedy_interpreter()[1] is False
+        capsys.readouterr()
+        cli._INTERPRETER_WARNING_EMITTED = False
+        assert cli._detect_python_command() == "python"
+        err = capsys.readouterr().err
+        assert "WARNING: " in err, f"precondition: the warning was said: {err!r}"
+        assert "nor the interpreter running this command" not in err, err
+        assert "outside the virtualenv, re-wire: `<that interpreter> -m espalier init . --rewire-interpreter`" in err, err
+        assert "deactivated" not in err, err
+        # Neither the venv's shim nor the interpreter running this is spelled.
+        assert self._which("python") not in err and sys.executable not in err, err
+
+    def test_a_store_alias_outside_reads_as_venv_only(self, tmp_path, monkeypatch, capsys):
+        """The fail-open variant: outside, the name is no Python at all. It
+        reads venv-only, so doctor names it; with no other candidate the
+        documented venv-only fallback still answers, silently."""
+        from espalier import _venv, cli
+
+        self._host(tmp_path, monkeypatch, "store")
+        assert cli._resolves_only_inside_a_virtualenv("python", self._which("python")) is True
+        assert _venv.resolves_only_inside("python") is True
+        assert cli._refuse_below_floor_wiring("init") is None
+        assert cli._detect_python_command() == "python"
+
+    def test_a_working_python_outside_is_still_host_wide(self, tmp_path, monkeypatch):
+        """The control: a floor-clearing Python outside the venv keeps the name
+        host-wide, so nothing a working host wires changes."""
+        from espalier import _venv, cli
+
+        self._host(tmp_path, monkeypatch, "working")
+        assert cli._resolves_only_inside_a_virtualenv("python", self._which("python")) is False
+        assert _venv.resolves_only_inside("python") is False
+        assert cli._refuse_below_floor_wiring("init") is None
+        assert cli._detect_python_command() == "python"
+
+    def test_a_host_wide_below_floor_name_outranks_the_venv_only_fallback(self, tmp_path, monkeypatch, capsys):
+        """The ranking: ``python`` resolves only inside the venv, and a
+        ``python3`` that is a 3.10 is on PATH outside it. The venv-only
+        fallback is for a host with no Python 3 outside the venv, so this one
+        refuses, naming the 3.10."""
+        from espalier import cli
+
+        _venv_root, outside_bin = self._host(tmp_path, monkeypatch, "below", names=("python",),
+                                             outside_names=("python3",))
+        assert cli._resolves_only_inside_a_virtualenv("python", self._which("python")) is True
+        assert cli._refuse_below_floor_wiring("init") == 1
+        err = capsys.readouterr().err
+        assert "python3 at" in err and str(outside_bin) in err, err
+
+    def test_the_rewire_refuses_a_target_that_runs_only_inside_the_venv(self, tmp_path, monkeypatch):
+        """The rewire leg: a wired ``python3`` (a 3.10 outside the venv) was
+        rewritten to the venv's ``python`` from inside it. Its target check now
+        reads the venv, which ``os.defpath`` never did on Windows."""
+        from espalier import cli
+
+        venv, _outside = self._host(tmp_path, monkeypatch, "below")
+        settings = tmp_path / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        body = json.dumps({"hooks": {"PreToolUse": [{"matcher": "*", "hooks": [
+            {"type": "command", "command": "python3 tools/cc/hooks/write_guard.py"}]}]}}, indent=2)
+        settings.write_text(body, encoding="utf-8")
+        before = settings.read_bytes()
+        result = cli.rewire_interpreter_in_settings(settings)
+        assert result.status == cli.REWIRE_NO_TARGET, result
+        assert result.inside_venv == str(venv), result
+        assert settings.read_bytes() == before
+        assert list(settings.parent.glob("settings.json.bak*")) == []
+
+    def test_doctor_names_what_the_wired_name_finds_outside(self, tmp_path, monkeypatch):
+        from espalier import doctor
+
+        _venv_root, outside_bin = self._host(tmp_path, monkeypatch, "below")
+        settings = tmp_path / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text('{"hooks": {"PreToolUse": [{"hooks": [{"command": "python"}]}]}}',
+                            encoding="utf-8")
+        joined = " ".join(doctor._check_python_resolver(tmp_path, settings))
+        assert "only inside the virtualenv" in joined, joined
+        assert str(outside_bin) in joined and "does not start and meet" in joined, joined
+
+    def test_an_outside_banner_that_never_answers_keeps_the_name_host_wide(self, tmp_path, monkeypatch):
+        """The lane's failure-mode review, driven: on a loaded box the outside
+        base Python's ``--version`` misses both tries, and a healthy venv read
+        as venv-only, so doctor and the rewire reported a fault that was not
+        there. No answer is no verdict (DEF-5015): the pre-DEF-2069 reading."""
+        import shutil
+
+        from espalier import _venv, cli
+
+        _venv_root, outside_bin = self._host(tmp_path, monkeypatch, "working")
+        outside = shutil.which("python", path=str(outside_bin))
+        real = _python_floor._ask_banner
+
+        def mute_outside(argv, *args, **kwargs):
+            if argv and os.path.normcase(str(argv[0])) == os.path.normcase(str(outside)):
+                return None
+            return real(argv, *args, **kwargs)
+
+        monkeypatch.setattr(_python_floor, "_ask_banner", mute_outside)
+        assert _python_floor.banner_unanswered_of(outside) is not None, "precondition: the outside banner is mute"
+        assert _venv.resolves_only_inside("python") is False
+        assert cli._resolves_only_inside_a_virtualenv("python", self._which("python")) is False
+
+    def test_nothing_outside_keeps_the_fallbacks_remedy_spelling(self, tmp_path, monkeypatch):
+        """The lane's code review: with nothing outside the venv (the settled
+        venv-only fallback ``init`` still wires), the remedy kept spelling the
+        name; reading it as failing persisted a machine path into the
+        adopter's records. Only a failing Python outside moves the remedy."""
+        from espalier import cli
+
+        self._host(tmp_path, monkeypatch, "none")
+        assert cli._runs_a_failing_python_outside_its_venv("python") is None
+        assert cli._remedy_interpreter(persisted=True) == ("python", True)

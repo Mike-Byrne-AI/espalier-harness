@@ -15,8 +15,10 @@ that venv?") but ask *different* questions of the interpreter itself:
 - ``doctor`` asks whether an ALREADY-WIRED name resolves into a venv, keyed on
   the raw ``shutil.which`` result.
 
-Only the containment predicate is common; it lives here so the two cannot
-drift into near-identical helpers with different preconditions.
+The containment predicate and the outside reading (:func:`outside_reading`:
+what the name resolves to without the venv, and whether that runs the
+harness) are common; they live here so the two cannot drift into
+near-identical helpers with different preconditions.
 """
 from __future__ import annotations
 
@@ -65,29 +67,71 @@ def path_without(root: Path) -> str:
     )
 
 
-def resolves_only_inside(name: str) -> bool:
-    """True when ``name`` resolves on ``PATH`` ONLY via a virtualenv.
+def outside_reading(name: str, root: Path) -> tuple[bool, str | None]:
+    """``(venv_only, outside)``: what ``name`` resolves to once every ``PATH``
+    entry inside the virtualenv at ``root`` is gone, and whether that leaves
+    it venv-only.
 
-    The wired-name question: it resolves for the shell asking, and will not
-    resolve for the shell Claude Code is actually launched from. Returns False
-    when the name does not resolve at all — that is a different finding, owned
-    by the existing unresolvable-interpreter check.
+    Venv-only means no interpreter that runs the harness is left: nothing
+    resolves, or what resolves does not clear the floor and start
+    (``interpreter_meets_floor``). Resolving to SOMETHING is not the question
+    (``DEF-2069``). A venv shim over a 3.10 ``python``, or over a Store alias
+    that is no Python at all, read as host-wide, and the shell Claude Code
+    is launched from found the 3.10 (every hook refused) or the alias (every
+    hook exited outside {0, 2}, so every guard failed open). The one home of
+    that question: the resolver's venv-only test, doctor's wired-name check
+    (:func:`resolves_only_inside`) and the rewire's target check all read it.
     """
+    outside = shutil.which(name, path=path_without(root))
+    if outside is None:
+        return True, None
+    # Lazy: `_python_floor` is the engine's floor module, and this one is
+    # imported by modules `_python_floor`'s importers import.
+    from espalier._python_floor import banner_unanswered_of, interpreter_meets_floor
+    if interpreter_meets_floor(outside):
+        return False, outside
+    # A banner that never answered is no verdict either way (DEF-5015): a
+    # loaded host does that to a working base interpreter, so the name keeps
+    # its pre-DEF-2069 reading, host-wide, rather than a healthy venv reading
+    # broken under load (the lane's failure-mode review, driven).
+    if banner_unanswered_of(outside) is not None:
+        return False, outside
+    return True, outside
+
+
+def wired_venv_root(name: str) -> Path | None:
+    """The virtualenv ``name`` resolves into on this ``PATH``, or None: the
+    venv its hit sits in, else the active one (``VIRTUAL_ENV``) when the hit
+    is inside it. None when the name does not resolve."""
     hit = shutil.which(name)
     if not hit:
-        return False
+        return None
     root = venv_root_of(hit)
+    if root is not None:
+        return root
+    active = os.environ.get("VIRTUAL_ENV")
+    if not active:
+        return None
+    try:
+        return Path(active) if Path(hit).is_relative_to(Path(active)) else None
+    except (OSError, ValueError):
+        return None
+
+
+def resolves_only_inside(name: str) -> bool:
+    """True when ``name`` resolves on ``PATH`` to a Python that runs the
+    harness ONLY via a virtualenv (:func:`outside_reading`).
+
+    The wired-name question: it resolves for the shell asking, and will not
+    resolve to a working Python for the shell Claude Code is actually
+    launched from. Returns False when the name does not resolve at all — that
+    is a different finding, owned by the existing unresolvable-interpreter
+    check.
+    """
+    root = wired_venv_root(name)
     if root is None:
-        active = os.environ.get("VIRTUAL_ENV")
-        if not active:
-            return False
-        try:
-            if not Path(hit).is_relative_to(Path(active)):
-                return False
-        except (OSError, ValueError):
-            return False
-        root = Path(active)
-    return shutil.which(name, path=path_without(root)) is None
+        return False
+    return outside_reading(name, root)[0]
 
 
 def interpreter_token(command: str) -> str:
