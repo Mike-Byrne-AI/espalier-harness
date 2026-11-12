@@ -2575,6 +2575,12 @@ class TestCatchUp:
             ship.catch_up()
         assert "cannot fast-forward lane/x" in str(stop.value)
         assert spawns.count(("gh", "pr", "edit")) == 0
+        # The push it names reads origin's copy first (DEF-5102, _ahead_words).
+        monkeypatch.setitem(ship._SHARED, "asked", False)
+        monkeypatch.setattr(ship, "_ahead_words", lambda branch, cwd: f"AHEAD-WORDS for {branch}")
+        _arm(ship, _catch_up_answers(tmp_path, pull=(1, "", "not possible to fast-forward")))
+        with pytest.raises(ship.Refused, match=r"; AHEAD-WORDS for lane/x, then run catch-up again$"):
+            ship.catch_up()
 
 
 # ── the merge-first path: open, the handoff's push, catch-up ─────────────────
@@ -6044,6 +6050,32 @@ class TestAnUnfinishedLaneRidesNoPush:
         _arm(ship, {("git", "fetch"): (0, "", ""), ("git", "rev-list", "--count"): (0, "1\n", ""),
                     _UNFINISHED_LOG: (0, f"\x1e{tip} {'d' * 40}\x1f\n", "")})
         assert "git merge origin/lane/x" in ship._origin_ahead_refusal("lane/x", str(tmp_path))
+
+    def test_the_park_and_catch_up_read_origins_copy_before_they_move_onto_it(self, ship, tmp_path, monkeypatch):
+        """Failure-mode re-review MINOR-2 (the park driven): the handoff's
+        park onto an open pull request resets this branch to origin's copy,
+        and catch-up's server arm updates that copy and pulls it here; where
+        a hand push left the set-aside commit there, either brings it back
+        while the local lane reads clean. Each refuses first, moving nothing.
+        Dies to: either read dropped, or read from the local lane alone."""
+        on_origin = (0, f"\x1e{'c' * 40} {'d' * 40}\x1flane/x\n", "")
+        key = (*_UNFINISHED_LOG, "HEAD..origin/lane/x")
+        monkeypatch.setattr(ship, "_ahead_words", lambda branch, cwd: "AHEAD-WORDS")
+        _toml(tmp_path, "handoff_push = true\n")
+        answers = TestHandoffVerb._existing_pr_answers(tmp_path)
+        answers[key] = on_origin
+        spawns = _arm(ship, answers)
+        with pytest.raises(ship.Refused, match="bring its set-aside commit back: AHEAD-WORDS"):
+            ship.handoff()
+        assert spawns.count(("git", "reset")) == 0 and spawns.count(("git", "push")) == 0
+        monkeypatch.setitem(ship._SHARED, "asked", False)
+        _bind_clock(ship, monkeypatch)
+        answers = _catch_up_answers(tmp_path)
+        answers[key] = on_origin
+        spawns = _arm(ship, answers)
+        with pytest.raises(ship.Refused, match="bring its set-aside commit back: AHEAD-WORDS"):
+            ship.catch_up()
+        assert spawns.count(("gh", "pr", "update-branch")) == 0 and spawns.count(("git", "pull")) == 0
 
     def test_every_text_that_names_a_push_reads_origins_copy_first(self, ship, tmp_path, monkeypatch):
         """A plain push onto an origin holding commits HEAD lacks is rejected,

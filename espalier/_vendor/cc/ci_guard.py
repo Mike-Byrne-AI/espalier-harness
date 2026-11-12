@@ -307,8 +307,9 @@ def _print_unfinished(found: list[tuple[str, str, str]], base: str, head: str,
     lane = (env.get("GITHUB_HEAD_REF") or "").strip() or trailer_lane
     base_ref = (env.get("GITHUB_BASE_REF") or "").strip() or (env.get("DEFAULT_BRANCH") or "").strip()
     below = shlex.quote(f"origin/{base_ref}") if base_ref else base
-    moves = ["  git fetch origin",
-             f"  git reset --soft $(git merge-base {below} HEAD)",
+    # Chained and quoted: a fetch that fails runs no reset, and an empty
+    # target is git's error, never a reset to nothing that exits 0.
+    moves = [f'  git fetch origin && git reset --soft "$(git merge-base {below} HEAD)"',
              "  # right from any HEAD: every commit of the lane, the set-aside ones with them, staged,"
              " measured from the base as origin holds it now"]
     if head != "HEAD":
@@ -323,7 +324,10 @@ def _print_unfinished(found: list[tuple[str, str, str]], base: str, head: str,
     if ship_driver.is_file():
         after = ["  # push before any ship-driver verb: each refuses until the branch on origin is rewritten"]
         if marked:
-            after.append("  python tools/cc/ship.py rebind  # binds the approval marker in the title to the new head")
+            # The comment on its own line: an interactive zsh without
+            # interactivecomments passes a trailing one to the command.
+            after += ["  # then bind the approval marker in the title to the new head:",
+                      "  python tools/cc/ship.py rebind"]
     else:
         after = ["  # then bind the approval marker in the title to the new head"] if marked else []
     print(

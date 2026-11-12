@@ -2894,10 +2894,10 @@ class TestUnfinishedLaneArm:
         tip, _merged = self._base_moves_and_the_lane_merges_it(fresh_repo)
         result = self._pr(fresh_repo, tip, head=None)
         assert result.returncode == 2, result.stdout
-        assert f"git reset --soft $(git merge-base {tip} HEAD)" in result.stdout
-        assert "while HEAD is" not in result.stdout and "  git fetch origin\n" in result.stdout
+        assert f'  git fetch origin && git reset --soft "$(git merge-base {tip} HEAD)"\n' in result.stdout
+        assert "while HEAD is" not in result.stdout
         named = self._pr(fresh_repo, tip, head=None, extra={"GITHUB_BASE_REF": "main"}).stdout
-        assert "git reset --soft $(git merge-base origin/main HEAD)" in named and tip not in named
+        assert 'git reset --soft "$(git merge-base origin/main HEAD)"' in named and tip not in named
 
     def test_the_computed_reset_is_guarded_by_its_head_and_any_other_head_lands_clean(self, fresh_repo):
         """Failure-mode MAJOR-2, driven: a window that took the commit back by
@@ -2911,7 +2911,7 @@ class TestUnfinishedLaneArm:
         base = self._lane(fresh_repo)
         commit, parent = self._set_aside(fresh_repo, "lane/half")
         out = self._pr(fresh_repo, base, extra={"GITHUB_BASE_REF": "main"}).stdout
-        assert "  git fetch origin\n  git reset --soft $(git merge-base origin/main HEAD)\n  # right from any HEAD" in out
+        assert '  git fetch origin && git reset --soft "$(git merge-base origin/main HEAD)"\n  # right from any HEAD' in out
         assert (f"  # or, while HEAD is {commit[:12]}, the head this run read, git reset --soft {parent[:12]} "
                 "in its place keeps the commits below") in out
         assert f"\n  git reset --soft {parent[:12]}" not in out, "the computed reset printed as a command"
@@ -2995,7 +2995,7 @@ class TestUnfinishedLaneArm:
         driver.parent.mkdir(parents=True, exist_ok=True)
         driver.write_text("# a stand-in for the deployed driver\n", encoding="utf-8")
         out = self._pr(fresh_repo, base, title=marked).stdout
-        assert "  python tools/cc/ship.py rebind  # binds" in out
+        assert "  # then bind the approval marker in the title to the new head:\n  python tools/cc/ship.py rebind" in out
         # The push goes first: until origin's branch is rewritten each verb
         # refuses (the origin-ahead refusal names this same lease push).
         assert "# push before any ship-driver verb" in out
@@ -3022,8 +3022,10 @@ class TestUnfinishedLaneArm:
         commands = [line.strip() for line in block if not line.strip().startswith("#")]
         assert "a merge follows it" in " ".join(comments)
         assert all(not set("'\"()") & set(line) for line in comments), comments
-        assert [line.split()[0] for line in commands] == ["git", "git", "git", "python"], commands
-        assert commands[2].startswith("git diff --cached --quiet && git push "), commands
+        assert [line.split()[0] for line in commands] == ["git", "git", "python"], commands
+        assert commands[0].startswith("git fetch origin && git reset --soft "), commands
+        assert commands[1].startswith("git diff --cached --quiet && git push "), commands
+        assert commands[2] == "python tools/cc/ship.py rebind", "a trailing comment an interactive zsh passes on"
 
     def test_the_moves_pasted_whole_leave_origins_branch_alone_until_the_finish_is_committed(
             self, fresh_repo, tmp_path):

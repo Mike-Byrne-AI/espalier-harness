@@ -837,7 +837,8 @@ class TestTheHandoffLeavesAnUnfinishedLane:
         self._ready(ship, repo, monkeypatch)
         _git(repo, "push", "--quiet", "-u", "origin", "lane/half")
         (repo / ".github" / "workflows").mkdir(parents=True)
-        (repo / ".github" / "workflows" / "harness-guard.yml").write_bytes(b"name: Harness Guard\n")
+        (repo / ".github" / "workflows" / "harness-guard.yml").write_bytes(
+            b"name: Harness Guard\n# an adopter's own: espalier's parked beside it as .new\n")
         (repo / "tools" / "cc").mkdir(parents=True)
         (repo / "tools" / "cc" / "ci_guard.py").write_bytes(b"# an older gate, before the arm\n")
         _git(repo, "add", ".github", "tools")
@@ -845,15 +846,18 @@ class TestTheHandoffLeavesAnUnfinishedLane:
         assert not ship._guard_fails_unfinished(repo), "a gate without the arm read as one with it"
         (repo / "tools" / "cc" / "ci_guard.py").write_text(f'{ship.UNFINISHED_GUARD_NAME} = "x"\n',
                                                             encoding="utf-8")
-        _git(repo, "add", "tools/cc/ci_guard.py")
+        assert not ship._guard_fails_unfinished(repo), "a workflow that never runs the gate read as running it"
+        (repo / ".github" / "workflows" / "harness-guard.yml").write_bytes(
+            b"name: Harness Guard\njobs:\n  verify:\n    steps:\n      - run: python tools/cc/ci_guard.py\n")
+        _git(repo, "add", "tools/cc/ci_guard.py", ".github")
         _git(repo, "commit", "--quiet", "-m", "ci: the arm")   # the lane's tracked edit stays unstaged
         assert ship.handoff(unfinished=self.TEXT) == 0
         tail = _marker(repo)["brief"]
         tail = tail[tail.index(ship.FINISH_FIRST):]
         assert ("the Harness Guard check then fails the pull request, which holds its merge where verify is a "
                 "required check, until a force push takes the commit off, so never push it by hand") in tail
-        assert ("where the Harness Guard check fails on them (auto-merge merges them on green where verify is not "
-                "a required check) and only a force push takes them off") in tail
+        assert ("where the Harness Guard check fails on them (auto-merge merges them on the required checks' "
+                "green where verify is not one of them) and only a force push takes them off") in tail
         assert "nothing in this tree checks" not in tail
         assert tail.isascii() and '"' not in tail and "%" not in tail
         (repo / ".github" / "workflows" / "harness-guard.yml").unlink()

@@ -2117,7 +2117,11 @@ def _guard_fails_unfinished(root: Path) -> bool:
     workflow = root / ".github" / "workflows" / "harness-guard.yml"
     gate = root / "tools" / "cc" / "ci_guard.py"
     try:
-        return workflow.is_file() and UNFINISHED_GUARD_NAME in gate.read_text(encoding="utf-8", errors="replace")
+        # The workflow runs the gate: an adopter's own harness-guard.yml, with
+        # espalier's parked beside it as .new, may never run it.
+        return (workflow.is_file() and "tools/cc/ci_guard.py" in workflow.read_text(encoding="utf-8",
+                                                                                     errors="replace")
+                and UNFINISHED_GUARD_NAME in gate.read_text(encoding="utf-8", errors="replace"))
     except OSError:
         return False
 
@@ -2235,8 +2239,8 @@ def _finish_first_tail(unfinished: Unfinished, lane_checkout: Path | None = None
     # The seat's own red pull request is the likely lane at the threshold, and
     # the red-cell recipe is fix, commit, git push, then rebind: a hand push
     # lands the set-aside edits on the open pull request before rebind refuses.
-    landing = ("where the Harness Guard check fails on them (auto-merge merges them on green where verify is not "
-               "a required check)" if unfinished.guarded else
+    landing = ("where the Harness Guard check fails on them (auto-merge merges them on the required checks' green "
+               "where verify is not one of them)" if unfinished.guarded else
                "where auto-merge merges them on green (nothing in this tree checks them)")
     waits = (f"The lane {lane} is committed in {spot}, and its branch is on origin (as last fetched), so a pull "
              "request may be open on it: a hand git push there lands the set-aside edits on that pull request, "
@@ -3102,9 +3106,27 @@ def _origin_ahead_refusal(branch: str, cwd: str) -> str | None:
     behind = _remote_has_commits_we_lack(branch, cwd)
     if not behind:
         return None
-    return _ahead_words(branch, cwd) or (f"origin/{branch} has {behind} commit(s) this HEAD does not reach: "
-                                         f"merge them in (git merge origin/{branch}); never rebase or force-push "
-                                         "a pushed lane")
+    return _ahead_words(branch, cwd) or (
+        f"origin/{branch} has {behind} commit(s) this HEAD does not reach, and git could not list them: read git "
+        f"log HEAD..origin/{branch} first; where one carries {UNFINISHED_TRAILER}, a merge brings that set-aside "
+        f"commit back, and the brief's soft reset then the lease push take it off; else merge them in (git merge "
+        f"origin/{branch}); never rebase or force-push a pushed lane")
+
+
+def _refuse_set_aside_on_origin(root: Path, branch: str) -> None:
+    """Stop a verb that moves this branch onto origin's copy, or has GitHub
+    move that copy (the handoff's park onto an open pull request, which
+    resets to it; catch-up, whose server arm updates it and pulls it here),
+    while that copy holds a set-aside commit HEAD lacks: the move brings the
+    commit back here (DEF-5102's failure-mode re-review, the park driven).
+    Origin's copy is read as last fetched, offline, as the lane's own
+    refusal reads it: a hand push from this checkout moves that ref itself,
+    and one from another clone is seen from the next fetch. A read git
+    cannot answer is no verdict. The words are :func:`_ahead_words`'."""
+    records = _commit_records(str(root), f"HEAD..origin/{branch}") or []
+    if any(record[2] for record in records):
+        raise Refused("this verb would move the lane onto origin's copy and bring its set-aside commit back: "
+                      + (_ahead_words(branch, str(root)) or "read git log HEAD..origin/" + branch))
 
 
 def _ahead_words(branch: str, cwd: str) -> str | None:
@@ -4288,6 +4310,9 @@ def _handoff_push(title: str | None, body_file: str | None, dry_run: bool,
     # A handoff whose commits since the pull request's head are rows alone
     # parks them rather than push a record onto the lane's running checks:
     # ahead of the merge-first and the fold below, each a push that cancels.
+    # The park moves this branch onto origin's copy (reset --keep), which a
+    # hand push may have left holding the set-aside commit: refused first.
+    _refuse_set_aside_on_origin(root, branch)
     if _park_the_row(root, str(pr.get("baseRefName") or base), dry_run=dry_run, branch=branch, pr=pr):
         _red_base_note(root, str(pr.get("baseRefName") or base), pr, branch, base_red_ruled)
         if not dry_run:
@@ -4360,6 +4385,9 @@ def catch_up() -> int:
     # would ride the next push (the re-primed window's loop ranks its own red
     # pull request first, ahead of the brief that says to take them back).
     _refuse_an_unfinished_lane(root, f"origin/{pr.get('baseRefName') or default_branch()}")
+    # ...and origin's copy: the server's arm updates the branch holding a
+    # set-aside commit a hand push put there, then pulls it back here.
+    _refuse_set_aside_on_origin(root, branch)
     number = str(pr["number"])
     mergeable, state = _known_mergeable(branch, pr)
     if mergeable == "CONFLICTING" or state == "DIRTY":
