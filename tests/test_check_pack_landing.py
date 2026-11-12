@@ -605,3 +605,19 @@ def test_terminal_packs_is_the_one_population_the_three_done_readers_share(tmp_p
     assert check_pack_landing.roadmap_packs(done) == ["TP-2-roadmap.md"]
     assert [n for n, _ in check_pack_landing.incomplete_landings(done)] == ["TP-3-incomplete.md"]
     assert check_pack_landing.terminal_packs(tmp_path / "absent") == []
+
+
+class TestTheFolderGuardKnowsTheRecordDirectories:
+    """``unclassified_dirs`` names a folder under ``task-packs/`` that no role
+    claims, so a new status folder is never scanned by nothing in silence. The
+    ledger's record directories (its rows, its probes and a row's lineage) are
+    no pack location; read from the loader, a new one is known on arrival."""
+
+    def test_the_record_directories_are_known_and_a_new_folder_is_named(self, tmp_path):
+        """Dies to: a folder guard that does not read the loader's record
+        directories, which reported ledger.d/ and probes.d/ as folders checked
+        by nothing from 2026-10-13 on, and would add lineage.d/."""
+        packs = tmp_path / "task-packs"
+        for name in ("Done", "Deferred", "ledger.d", "probes.d", "lineage.d", "Bogus"):
+            (packs / name).mkdir(parents=True)
+        assert check_pack_landing.unclassified_dirs(packs) == ["Bogus"]

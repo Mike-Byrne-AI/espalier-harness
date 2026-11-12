@@ -3115,10 +3115,10 @@ class TestCommandPositionClassClose:
             "of the command line an anchored `_PS_START_PROCESS_OPENER_RE` match hands "
             "the shell it starts (DEF-3011).",
         "_bash_patterns._PS_SUBEXPRESSION_RE":
-            "SYNTAX TOKEN -- the `$(` of a subexpression, found on the masked scan "
-            "(the masker blanks one inside a single-quoted string); its program "
-            "runs wherever it stands, so it has no command position to anchor on "
-            "(DEF-1131).",
+            "SYNTAX TOKEN -- the `$(` of a subexpression or the `@(` of an array "
+            "subexpression, found on the masked scan (the masker blanks one inside "
+            "a single-quoted string); its program runs wherever it stands, so it "
+            "has no command position to anchor on (DEF-1131, DEF-2075).",
         # ── DEF-1039: the write-nothing redirects CP-COMPACT sets aside ──
         "_speedbump._INERT_REDIRECT_RE":
             "SYNTAX TOKEN -- matches an fd duplication, a closed fd or a null-sink / "
