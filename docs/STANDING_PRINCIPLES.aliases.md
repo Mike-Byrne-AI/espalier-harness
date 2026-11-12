@@ -38,6 +38,8 @@ upper bound on what a stranger's phrasing would get — direction, not magnitude
 
 **Second blind round, 2026-09-04** — the same protocol, run again: a fresh author was given this file and the principles doc, forbidden everything else, and asked afterwards to list every file it opened (two). It wrote 219 lines across all nineteen principles. Before any of them touched this file the round was judged on the held-out arm at `recall_union(top=2)`: uncontested **13/24 → 16/24**, none lost; contested 12/24 → 12/24 (three gained, three lost). Guards unchanged: heading@1 84.4%, heading union@any 95.9%, stripped@1 83.3%, off-topic leak 29, must-answer 0 silenced, must-rank 0 wrong. **One guard failed on the full set and was repaired by a rule, not by hand:** three principles stopped winning a query made of their own title — §7's fifth line carried `make` and tied §1's two-word title (the tie then falls to the source-string tie-break), §7's own title fell below a SHARP_EDGES entry that cites it once its block passed four lines, and §13's block tipped a same-titled `memory/` twin sitting 1.4% away. The rule, fixed before any held-out number was read at it: per-block prefix caps in the author's order, extended one block at a time in principle order while every principle still wins its own name. Result: §7 keeps 4 of its 11 lines, §13 keeps 10 of 12, every other block is whole — 210 lines — and the held-out result at that configuration is the same 16/24 with the same three rows gained. **Cost, recorded rather than tuned away:** one two-token stripped heading query for §16 left the front door's four (stripped union@any 93.2% → 92.8%), and on the scored 16-row arm §16 lost one paraphrase while §7 and §13 each gained one — §16 is one of nine blocks that took all twelve lines and, its author said unprompted, the most diffuse (the section's honest symptom is a stall, not a mechanism). The next round should give §16 fewer, sharper lines, not more; pruning them now, having seen which queries moved, would be tuning against the benchmark. No held-out row was seen by the author. **Two checks on that claim, run after the adversarial pass asked for them:** (1) §7's four new lines paraphrase a §7 held-out row closely (token overlap 0.31, the highest of any alias-row pair) — both authors read §7's own case study, which is convergence, not copying — and an A/B with those four lines removed leaves the uncontested set byte-identical at 16/24, so they bought none of the gain (on the unscored contested arm they are worth one row: 11 with them, 12 without — recorded, since the contested pin stayed at 11); (2) this header used to quote a §12 held-out query verbatim, which made it an open channel whatever the author did with it — the row is deleted from the fixture and a containment/near-duplicate gate now guards every alias line against both arms. ⚠ The instrument that scored the capped set first merged it against a sidecar that already held the uncapped round, doubling every bag; that read was discarded and the base pinned to the pre-round file before the number above was taken.
 
+**§20's block, 2026-11-12** — written the same way by a fresh author given this file and the principles doc alone; it named those two, its own output file, and the folder note `docs/CLAUDE.md` the harness injected when it read inside `docs/`, which holds no query. No held-out or scored row was seen, the retriever was not run, and no line was changed after it was written.
+
 **Editing.** One `## N. <title>` block per principle, titles byte-identical to the
 live doc; `tests/test_recall.py` derives both sets and reds on any mismatch, so a
 renamed or removed principle cannot silently orphan its aliases. Prefer ordinary words
@@ -447,3 +449,26 @@ a bag-of-words index and costs length normalisation.
 - a monitor that agrees with every answer
 - name the specific breakage first then write the alarm
 - recognises three spellings and misses a hundred others
+
+## 20. Ask whether the layer can reach the goal before you fix the class
+
+- patching the same parser for the twentieth time
+- every new bash quirk needs yet another regex
+- the blocklist of bad variants will never be complete
+- an endless race against new ways to write one instruction
+- are we safeguarding at a spot that can never see the result
+- inspect the outcome after it runs not the string beforehand
+- guessing what a script will do instead of watching what it did
+- centralised everything into one helper and the bugs kept coming
+- bug reports keep piling up against one component
+- this module's backlog never shrinks
+- each patch exposes a near-identical bug a week later
+- the tokenizer keeps sprouting special cases
+- should I quit patching and change approach
+- a losing battle against arbitrary outside data
+- working at the wrong level of abstraction
+- sanitise upstream where the data originates instead of downstream
+- some operations are irreversible so they need a preemptive block
+- allowlist the known good instead of chasing every bad pattern
+- static string matching versus what actually executes
+- a heuristic that approximates what will really happen

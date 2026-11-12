@@ -444,6 +444,13 @@ Not evaluated:          {N items}     → surfaces missing
 - **Architecture violations** — cross-layer imports that violate the project's stated layer model (example from Espalier-Harness: `tools/cc/` importing `espalier`, or `espalier/scanners/` using third-party deps)
 - **Hook contract violations** — exit 1 in hooks, block without JSON on stdout
 - **Security issues** — path traversal in file writes, command injection in subprocess calls
+- **A fix in a layer that cannot reach its goal** — is this fix in a layer
+  that can reach its goal, or one more instance in a layer that cannot? A
+  parser accepting one more shape, or a check predicting an effect it could
+  observe, is the tell; name the layer that could reach the goal. It is a
+  WARN, never on its own a BLOCK. The five questions are `FIVE_QUESTIONS` in
+  `tools/cc/ledger_row.py`, which `lineage <id>` prints when the row sits in
+  a chain or a cluster.
 - **Dead code** — unused imports, unreachable branches, stale commented-out code
 - **Platform hazards** — hardcoded path separators, un-normalized paths
 - **Scope/implementation mismatch** — when reviewing a task-pack
@@ -481,7 +488,14 @@ Evidence:   {concrete code snippet or line}
 Impact:     {what breaks or degrades}
 Fix:        {smallest safe correction}
 Confidence: HIGH | MEDIUM | LOW
+Sibling of: {(sibling of DEF-N) when this is a further instance of the ledger row the change fixes, else none}
 ```
+
+Where the change fixes a ledger row and an issue is a further instance of
+it, the `Sibling of:` line says so in the words `(sibling of DEF-N)`,
+naming that row, and the verdict line names it too (the lead is what the
+next session sees), so the handoff's row and the session that files the
+issue can copy the id into `ledger_row.py file --sibling-of`.
 
 Review summary:
 

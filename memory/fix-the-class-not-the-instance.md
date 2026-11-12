@@ -4,7 +4,9 @@
 **Linked from:** root `CLAUDE.md` Core Rule 12 · `docs/STANDING_PRINCIPLES.md` §8 ·
                  [[sister-site-compression]] · [[premise-check-before-authoring-a-fix]]
 
-Before authoring any fix, ask one question: **is this defect one site of a class?**
+Ask the layer questions first ([[check-the-layer-before-the-class]]): a class fix in a
+layer that cannot reach the goal is a bigger fix aimed at the same symptom. Then, before
+authoring any fix, ask: **is this defect one site of a class?**
 If it is, the unit of work is the class, not the site. Fixing the site and moving on
 is how a class stays open — and an open class is re-found by the next review as new
 work, at full price.
