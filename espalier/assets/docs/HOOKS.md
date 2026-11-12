@@ -947,8 +947,7 @@ attacker — a self-user won't attack their own work.
 `tools/cc/hooks/_hook_utils.py` as yours and regenerates its siblings, which may
 import names the kept copy predates. Until 2026-10-10 the hook then died at its
 module top with exit 1, which Claude Code reads as a non-blocking error: every
-tool call proceeded with no guard at all (`DEF-1176`, measured on a Node adopter
-tree). Now the sibling imports and every helper name the hook's import graph
+tool call proceeded with no guard at all (measured on a Node adopter tree). Now the sibling imports and every helper name the hook's import graph
 takes are read under one module-top guard, and a failure there is a structured
 deny with a `pretooluse_blocked_internal_error` record; every call is refused
 until the cause is repaired. The deny names the file under `tools/cc/` that
@@ -1754,7 +1753,8 @@ chain (`2>&1>/dev/null`; the spaced spelling is read), a redirect before an
 interpreter's heredoc operand or flag (`python3 2>&1 - <<EOF`), and on the
 pipe a quoted target with a blank, which the pipe scan blanks, so the word
 after it reads as the target (`| bash > "o u t" x.sh` walls: toward
-friction).
+friction)
+(`tests/test_write_guard.py::TestAPipedShellReadsItsRedirectAndExeHead::test_the_redirect_units_declared_limits_draw_their_declared_verdict`).
 
 Because the program is read, the rest of it is data: a
 string that only quotes a command, a commit message, a `git grep` pattern, a

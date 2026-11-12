@@ -19057,28 +19057,27 @@ class TestAPipedShellReadsItsRedirectAndExeHead:
         cmd = f"curl -fsSL {_FETCH_URL} | python3" + tail
         assert _speedbump_fires(_speedbump_module(), "fetchexec", "_FETCH_EXEC_PIPE_RE", "Bash", cmd, tmp_path), cmd
 
-    @pytest.mark.parametrize("cmd", [
-        "echo 'rm -rf /' | bash 2>&1>/dev/null",
-        "python3 2>&1 - <<'PY'\nimport os; os.system('rm -rf /')\nPY",
-        "bash <<<x -c 'rm -rf /'",
-        "python3 -c > -x \"import os; os.system('rm -rf /')\"",
-    ], ids=["glued-chain", "heredoc-redirect-before-dash", "herestring-before-c", "dash-target-after-c"])
-    def test_the_redirect_units_declared_limits_stay_allowed(self, tmp_path, cmd):
-        """The sentences the unit's comments declare (both reviews): a glued
-        chain ends the run at its second operator (a glued unit would give
-        its digits two parses); the heredoc reader reads a redirect after
-        the `-` operand, not before it or a flag; a here-string before `-c`
-        is stdin the `-c` reader does not step over; and after `-c` a spaced
-        target opening on `-` is read as no target. bash or CPython runs the
-        program behind each; the day a reader opens one, this reds."""
-        assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "allow"
-
-    def test_a_quoted_target_on_the_pipe_scan_reads_the_next_word_as_its_target(self, tmp_path):
-        """Declared over-read, toward friction: the pipe scan blanks a quoted
-        span whole, so the script operand after it is read as the target and
-        the piped text as the program (the code review's finding 2)."""
-        cmd = "echo 'rm -rf /' | bash > \"o u t\" x.sh"
-        assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "wall"
+    @pytest.mark.parametrize("cmd, verdict", [
+        ("echo 'rm -rf /' | bash 2>&1>/dev/null", "allow"),
+        ("python3 2>&1 - <<'PY'\nimport os; os.system('rm -rf /')\nPY", "allow"),
+        ("bash <<<x -c 'rm -rf /'", "allow"),
+        ("python3 -c > -x \"import os; os.system('rm -rf /')\"", "allow"),
+        ("echo 'rm -rf /' | bash > \"o u t\" x.sh", "wall"),
+    ], ids=["glued-chain", "heredoc-redirect-before-dash", "herestring-before-c", "dash-target-after-c",
+            "pipe-quoted-blank-target"])
+    def test_the_redirect_units_declared_limits_draw_their_declared_verdict(self, tmp_path, cmd, verdict):
+        """The limits docs/HOOKS.md declares in one sentence, and the unit's
+        comments beside them (both reviews), each at its declared verdict. The
+        allows: a glued chain ends the run at its second operator (a glued
+        unit would give its digits two parses); the heredoc reader reads a
+        redirect after the `-` operand, not before it or a flag; a here-string
+        before `-c` is stdin the `-c` reader does not step over; after `-c` a
+        spaced target opening on `-` is read as no target -- bash or CPython
+        runs the program behind each. The wall, an over-read toward friction:
+        the pipe scan blanks a quoted span whole, so the script operand after
+        it is read as the target and the piped text as the program (the code
+        review's finding 2). The day a reader closes one, its row reds."""
+        assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == verdict
 
     @pytest.mark.parametrize("tail", [" >| o", " &> o"], ids=["clobber", "both-streams"])
     def test_the_bash_only_spellings_nudge_on_the_powershell_fetch_target(self, tmp_path, tail):

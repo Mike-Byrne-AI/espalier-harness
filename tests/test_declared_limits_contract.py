@@ -293,7 +293,14 @@ class TestTheSentenceSplitter:
 #: with it; the PowerShell literal piped into the cmdlet joined the existing
 #: carrier sentence beside the single echoed path (5581ae), so it adds none.
 #: Both landed on 2026-11-10: 31 - 1 = 30, re-derived from the merged HOOKS.md.
-_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 32, "docs/SHARP_EDGES.md": 5}  # +2 on 2026-11-12: the false allow/deny key
+#: HOOKS 32 -> 33 on 2026-11-12, re-derived from the merged HOOKS.md: the piped
+#: shell's redirect limits (a glued chain, a redirect before a heredoc operand,
+#: a quoted blank target on the pipe), one sentence whose "Declared limits"
+#: opening the widened key reads, pinned in
+#: `TestAPipedShellReadsItsRedirectAndExeHead`; its citation's hit is paid for by
+#: an internal row id dropped from the kept-helper sentence, so the seeded docs
+#: stay at the ceiling.
+_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 33, "docs/SHARP_EDGES.md": 5}  # +2 on 2026-11-12: the false allow/deny key
 
 
 def test_the_census_is_the_pinned_population():
