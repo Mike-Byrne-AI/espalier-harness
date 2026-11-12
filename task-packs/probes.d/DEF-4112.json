@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4112",
+ "subject": "tests/conftest.py",
+ "cmd": "python3 -c \"import ast;t=ast.parse(open('tests/conftest.py',encoding='utf-8').read());print(sorted({f.name for f in ast.walk(t) if isinstance(f,ast.FunctionDef) for n in ast.walk(f) if isinstance(n,ast.Call) and getattr(n.func,'id','')=='_live_tree_fingerprint'})==['_no_live_tree_writes'])\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "61555e86fd5d",
+ "text_sha": "c7eddd355330",
+ "verified_2026_11_11": "OPEN (filed 2026-11-11; probe driven at filing here and in the export of HEAD 9a6eec192540)"
+}
