@@ -62,10 +62,12 @@ from espalier._venv import (
     interpreter_site_token,
     interpreter_token,
     names_a_python,
-    path_without,
+    outside_reading,
+    resolves_only_inside,
     shell_cut_path,
     statusline_shim_dotted,
     statusline_shim_end,
+    wired_venv_root,
 )
 from espalier.analyze import HARNESS_OUTPUT_PREFIXES, fingerprint_repo
 from espalier.assets import (
@@ -739,11 +741,30 @@ def _resolves_only_inside_a_virtualenv(name: str, resolved: str) -> bool:
     sitecustomize banner, a corporate ``.pth`` or a deprecation notice printed
     before it cannot silently disable the guard.
 
+    Resolving outside the venv is not enough (``DEF-2069``): the name is
+    venv-only unless what it resolves to there clears the floor and starts
+    (:func:`espalier._venv.outside_reading`). A 3.11 venv shim over a 3.10
+    ``python`` read as host-wide, was wired, and every hook refused in the
+    next shell; over a Store alias, every guard failed open.
+
     Each answer is kept for the process (:data:`_VENV_ONLY_VERDICTS`): the
     resolver runs again for every remedy a run spells, and on a loaded host
     each ask is a spawn of up to 5 s (``DEF-5014``'s failure-mode review drove
     13 of them in one ``init``).
     """
+    return _venv_only_reading(name, resolved)[0]
+
+
+def _venv_only_outside(name: str, resolved: str) -> str | None:
+    """What ``name`` resolves to outside the virtualenv its candidate at
+    ``resolved`` sits in, or None (no venv, or nothing outside). The kept
+    reading :func:`_resolves_only_inside_a_virtualenv` answers from, so the
+    resolver asks no second spawn for it."""
+    return _venv_only_reading(name, resolved)[1]
+
+
+def _venv_only_reading(name: str, resolved: str) -> "tuple[bool, str | None]":
+    """``(venv_only, outside)`` for the candidate, kept per process."""
     try:
         st = os.stat(resolved)
         key: tuple[object, ...] | None = (
@@ -753,20 +774,20 @@ def _resolves_only_inside_a_virtualenv(name: str, resolved: str) -> bool:
         key = None
     if key is not None and key in _VENV_ONLY_VERDICTS:
         return _VENV_ONLY_VERDICTS[key]
-    verdict = _ask_resolves_only_inside_a_virtualenv(name, resolved)
+    reading = _ask_resolves_only_inside_a_virtualenv(name, resolved)
     if key is not None:
-        _VENV_ONLY_VERDICTS[key] = verdict
-    return verdict
+        _VENV_ONLY_VERDICTS[key] = reading
+    return reading
 
 
-#: Each :func:`_resolves_only_inside_a_virtualenv` answer this process has
-#: asked for, keyed on the name, its path, PATH and the file (device, inode,
-#: size, modification time).
-_VENV_ONLY_VERDICTS: dict[tuple[object, ...], bool] = {}
+#: Each :func:`_venv_only_reading` answer this process has asked for, keyed on
+#: the name, its path, PATH and the file (device, inode, size, modification
+#: time).
+_VENV_ONLY_VERDICTS: "dict[tuple[object, ...], tuple[bool, str | None]]" = {}
 
 
-def _ask_resolves_only_inside_a_virtualenv(name: str, resolved: str) -> bool:
-    """The spawn half of :func:`_resolves_only_inside_a_virtualenv`, unkept."""
+def _ask_resolves_only_inside_a_virtualenv(name: str, resolved: str) -> "tuple[bool, str | None]":
+    """The spawn half of :func:`_venv_only_reading`, unkept."""
     import subprocess
     try:
         probe = run_no_stdin(
@@ -780,15 +801,15 @@ def _ask_resolves_only_inside_a_virtualenv(name: str, resolved: str) -> bool:
                 payload = json.loads(line[len("ESPALIER_PROBE"):])  # json-dict-safe: ok -- probe emits a 2-element LIST, guarded by the isinstance/len check below
                 break
         if not isinstance(payload, list) or len(payload) != 2:
-            return False
+            return False, None
         cand_prefix = Path(payload[0]).resolve()
         cand_base = Path(payload[1]).resolve()
     except (subprocess.SubprocessError, OSError, ValueError):
         # ValueError covers json.JSONDecodeError (a subclass).
-        return False
+        return False, None
     if cand_prefix == cand_base:
-        return False  # the candidate is not a venv shim
-    return shutil.which(name, path=path_without(cand_prefix)) is None
+        return False, None  # the candidate is not a venv shim
+    return outside_reading(name, cand_prefix)
 
 
 #: The bare names `_detect_python_command` probes, in order: `python` first
@@ -857,7 +878,16 @@ def _warn_interpreter_below_floor(
     # below-floor interpreter -- in which case no interpreter can be spelled
     # yet and saying so beats spelling the broken one.
     remedy, _clears = _remedy_interpreter()
-    if remedy == name:
+    if _below_floor_outside_venv(name, resolved) is not None:
+        # A venv shim hides the answer (DEF-2069): the interpreter running
+        # this is the venv's, so spelling it would send the operator back to
+        # the venv; the re-wire runs with the newer Python outside it.
+        after = (
+            "After installing it, re-wire with it, from a shell with the "
+            "virtualenv deactivated: `<that interpreter> -m espalier init . "
+            "--rewire-interpreter`."
+        )
+    elif remedy == name:
         after = (
             "After upgrading, re-wire with the new interpreter: "
             "`<that interpreter> -m espalier init . --rewire-interpreter` "
@@ -870,10 +900,47 @@ def _warn_interpreter_below_floor(
     # at the refusal.
     print(
         "WARNING: "
-        + does_not_run_sentence(said, f" ({name} at {resolved})", path_remedy=True)
+        + does_not_run_sentence(said, _below_floor_where(name, resolved), path_remedy=True)
+        + _below_floor_venv_clause(name, resolved)
         + _unheard_beside(mute) + " " + after,
         file=sys.stderr,
     )
+
+
+def _below_floor_outside_venv(name: str, resolved: str) -> "Path | None":
+    """The virtualenv whose shim hides the below-floor answer ``name`` at
+    ``resolved`` from this shell (DEF-2069), or None: the name resolves here
+    to another file, the venv's, which clears the floor, while the shell
+    Claude Code starts from finds ``resolved``. ``Path("")`` names an
+    unknown venv (the shim's ``pyvenv.cfg`` unread and no ``VIRTUAL_ENV``)."""
+    here = shutil.which(name)
+    if not here or _same_file(here, resolved):
+        return None
+    return wired_venv_root(name) or Path("")
+
+
+def _below_floor_where(name: str, resolved: str) -> str:
+    """``" (python3 at /usr/bin/python3)"``, the below-floor answer named, or
+    ``" (python at ..., outside the virtualenv at ...)"`` where a venv shim
+    hides it here: both places named, the floor sentence's own words after."""
+    venv = _below_floor_outside_venv(name, resolved)
+    if venv is None:
+        return f" ({name} at {resolved})"
+    at = f" at {venv}" if str(venv) not in ("", ".") else ""
+    return f" ({name} at {resolved}, outside the virtualenv{at})"
+
+
+def _below_floor_venv_clause(name: str, resolved: str) -> str:
+    """The sentence after the floor sentence where a venv shim hides the
+    below-floor answer, else "": the remedy's place is PATH outside the venv,
+    never Claude Code launched from it, since settings.json outlives the
+    shell (air's ruling 20e1d4 on DEF-2069)."""
+    if _below_floor_outside_venv(name, resolved) is None:
+        return ""
+    return (f" Inside the virtualenv `{name}` is its own, but the hooks run under "
+            f"the PATH Claude Code is launched with, which does not have it: the "
+            f"newer Python goes on PATH outside the virtualenv, and launching "
+            f"Claude Code from the virtualenv is no fix.")
 
 
 def _unheard_beside(mute: "tuple[str, str] | None") -> str:
@@ -927,7 +994,8 @@ def _refuse_below_floor_wiring(verb: str) -> "int | None":
     # the sentence's own "Update").
     print(
         f"[{verb}] FAIL: "
-        + does_not_run_sentence(said, f" ({name} at {resolved})", path_remedy=True)
+        + does_not_run_sentence(said, _below_floor_where(name, resolved), path_remedy=True)
+        + _below_floor_venv_clause(name, resolved)
         + " Nothing was written." + _unheard_beside(mute),
         file=sys.stderr,
     )
@@ -1091,7 +1159,12 @@ def _detect_python_command() -> str:
 
     A candidate that resolves ONLY inside an activated virtualenv is
     rejected: the shim vanishes with the shell, but settings.json outlives
-    it. See :func:`_resolves_only_inside_a_virtualenv`.
+    it. See :func:`_resolves_only_inside_a_virtualenv`. Only means: outside
+    the venv the name resolves to nothing that clears the floor and starts
+    (``DEF-2069``). A working Python 3 below the floor found there is this
+    host's below-floor answer, and any below-floor answer outranks the
+    venv-only fallback, which is kept for a host with no Python 3 outside the
+    venv at all.
 
     A candidate whose banner reads as a Python 3 must also START
     (:func:`_python_floor.interpreter_start_failure`): ``--version`` is
@@ -1200,6 +1273,16 @@ def _detect_python_command() -> str:
                 # the deliberate python-first order documented above.
                 if last_resort is None:
                     last_resort = candidate
+                # What the next shell finds under this name, when it is a
+                # working Python 3 below the floor, is this host's below-floor
+                # answer (DEF-2069): the name wired here runs it there, so a
+                # writing command refuses naming it, as for a host-wide one.
+                outside = _venv_only_outside(candidate, path)
+                if below_floor is None and outside:
+                    said = interpreter_banner([outside])
+                    if (said and is_below_floor_python3(said)
+                            and interpreter_start_failure([outside]) is None):
+                        below_floor = (candidate, outside, said)
                 continue
             # A start the probe never saw (DEF-5014): kept, while a later
             # candidate whose start was seen outranks it (see the docstring).
@@ -1273,8 +1356,12 @@ def _detect_python_command() -> str:
             if (said and is_below_floor_python3(said)
                     and interpreter_start_failure([launcher_path, *flags]) is None):
                 below_floor = (LAUNCHER_CANDIDATE, launcher_path, said)
-    if last_resort is not None:
-        return last_resort
+    # A below-floor answer outranks the venv-only fallback (DEF-2069): that
+    # fallback is for a host with no Python 3 outside the venv, where the
+    # literal `python` would name nothing. Where a too-old one is there, the
+    # venv's name runs it, or nothing, in the shell Claude Code starts from,
+    # so the writing commands refuse before any write instead (the 2026-11-07
+    # ruling), and the read-only callers name what this host has.
     if below_floor is not None:
         # Returned, so the read-only callers can name it; recorded, so every
         # command that would WRITE it refuses instead (the 2026-11-07 ruling:
@@ -1284,6 +1371,8 @@ def _detect_python_command() -> str:
         _BELOW_FLOOR_ANSWER = (below_floor, mute)
         _warn_interpreter_below_floor(below_floor, mute)
         return below_floor[0]
+    if last_resort is not None:
+        return last_resort
     if mute is not None:
         _warn_interpreter_unanswered(mute[0], mute[1], first_probe or first_failure)
         return mute[0]
@@ -1343,7 +1432,10 @@ def _remedy_interpreter(*, persisted: bool = False) -> tuple[str, bool]:
     for text written into the adopter's tree.
     """
     py = _detect_python_command()
-    if interpreter_meets_floor(py):
+    # A name that clears the floor here only through a virtualenv is one the
+    # rewire refuses as its target (DEF-2069), so it is not the True answer.
+    venv_only = len(interpreter_argv(py)) == 1 and resolves_only_inside(py)
+    if not venv_only and interpreter_meets_floor(py):
         if sys.executable and start_unconfirmed_of(py) is not None:
             return _remedy_program_word(sys.executable, persisted=persisted), True
         return py, True
@@ -9316,6 +9408,18 @@ def _report_interpreter_rewire(settings_path: Path) -> str:
             f"create one.",
             file=sys.stderr,
         )
+    elif result.status == REWIRE_NO_TARGET and result.inside_venv:
+        # The best candidate clears the floor only inside a virtualenv
+        # (DEF-2069): "install one" is not the remedy, this shell is.
+        print(
+            f"WARN: --rewire-interpreter's best candidate `{result.detail}` runs "
+            f"a Python {floor_text()}+ only inside the virtualenv at "
+            f"`{result.inside_venv}`; once that is off PATH, as in the shell "
+            f"Claude Code is launched from, it does not. No interpreter was "
+            f"changed. Re-run from a shell with the virtualenv deactivated and "
+            f"a Python {floor_text()} or newer on PATH.",
+            file=sys.stderr,
+        )
     elif result.status == REWIRE_NO_TARGET and (unheard := _unheard_on_path()):
         # A candidate never answered `--version` (DEF-5015), the best one or
         # one a below-floor answer outranked: no proof none is installed, so
@@ -9409,6 +9513,10 @@ class RewireResult:
     #: whose start was seen is on PATH (DEF-5014). Reported, never folded into
     #: an all-clear that says it starts.
     unconfirmed: list = field(default_factory=list)
+    #: On ``REWIRE_NO_TARGET``: the virtualenv the best candidate runs a
+    #: Python that clears the floor only inside (DEF-2069), or "" when it
+    #: fails the floor in this shell too.
+    inside_venv: str = ""
 
 
 def _swap_interpreter_token(command: str, new_name: str) -> str:
@@ -9866,7 +9974,12 @@ def rewire_interpreter_in_settings(
             declined.append((where, container[key]))
             continue
         spelling = _launcher_spelling_of(container, key, token)
-        if not interpreter_meets_floor(spelling):
+        # A name that clears the floor here only through a virtualenv runs
+        # something that does not, or nothing, in the shell Claude Code starts
+        # from (DEF-2069): read stale, as doctor reads it. No spawn outside a
+        # venv (`_venv.wired_venv_root` reads the file system and the env).
+        if (len(interpreter_argv(spelling)) == 1 and resolves_only_inside(spelling)) \
+                or not interpreter_meets_floor(spelling):
             # A banner that never answered (DEF-5015) is unseen, never stale:
             # the floor check does not accept it, and it is no refusal either.
             if banner_unanswered_of(spelling) is not None:
@@ -9896,6 +10009,14 @@ def rewire_interpreter_in_settings(
     # defect this function exists to close.
     if not interpreter_meets_floor(target):
         return RewireResult(REWIRE_NO_TARGET, detail=target, unconfirmed=left)
+    # The same floor, read for the shell the file outlives (DEF-2069): a
+    # target that clears it here only through a virtualenv runs a too-old
+    # Python, or nothing, once the venv is off PATH. `os.defpath` below names
+    # no system directory on Windows, so that check never saw it there.
+    inside = wired_venv_root(target) if len(interpreter_argv(target)) == 1 else None
+    if inside is not None and resolves_only_inside(target):
+        return RewireResult(REWIRE_NO_TARGET, detail=target, unconfirmed=left,
+                            inside_venv=str(inside))
 
     # ⚠ DEF-636, RE-CREATED INSIDE ITS OWN REPAIR, and driven on this host: the
     # floor above is checked against the PATH of the shell running THIS command,

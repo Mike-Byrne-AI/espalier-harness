@@ -23,11 +23,12 @@ from espalier._venv import (
     git_bash_path,
     interpreter_site_quoted,
     interpreter_site_token,
+    outside_reading,
     resolves_only_inside,
     statusline_shim_called,
     statusline_shim_dotted,
     statusline_shim_end,
-    venv_root_of,
+    wired_venv_root,
 )
 from espalier._integrity_bridge import load_integrity_module
 from espalier._text import plural
@@ -1141,13 +1142,19 @@ def _check_python_resolver(
             # into the branch below -- that hint offers "symlink <cmd> ->
             # python3", and here `python3` is the venv's own, so following it
             # makes the breakage permanent.
-            root = venv_root_of(shutil.which(cmd) or "") or Path(
-                os.environ.get("VIRTUAL_ENV", "")
-            )
+            # The root the predicate read, never a second derivation of it.
+            root = wired_venv_root(head) or Path(os.environ.get("VIRTUAL_ENV", ""))
             py = py or _remedy_py()
+            # What it finds outside, when it finds something (DEF-2069): a
+            # below-floor Python or a non-Python there is the same breakage.
+            outside = outside_reading(head, root)[1]
+            beyond = ("" if outside is None else
+                      f" (outside it, `{outside}`, which does not start and "
+                      f"meet Python {floor_text()}+)")
             issues.append(
-                f"hook interpreter `{cmd}` resolves only inside the virtualenv "
-                f"at `{root}`. Hooks spawn under the PATH Claude Code is "
+                f"hook interpreter `{cmd}` resolves to a Python that runs the "
+                f"harness only inside the virtualenv at `{root}`{beyond}. "
+                f"Hooks spawn under the PATH Claude Code is "
                 f"launched with, which will not have this virtualenv activated "
                 f"-- they will fail to start and every blocking guard fails "
                 f"open. Re-run `{py} -m espalier init . --rewire-interpreter` "
