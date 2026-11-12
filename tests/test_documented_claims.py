@@ -3612,3 +3612,171 @@ class TestEveryDocNamingAFoldedRecordNamesItsFolder:
         (tmp_path / "docs" / "m.md").write_bytes(body.encode("utf-8"))
         assert _fold_bad_markers(tmp_path, ["docs/m.md"]) == ["docs/m.md:1", "docs/m.md:2", "docs/m.md:3",
                                                                "docs/m.md:4"]
+
+
+# ---------------------------------------------------------------------------
+# A guard row names its coverage-contract basis (the operator's ruling of
+# 2026-11-12, the sixth content rule the ledger verb shares)
+# ---------------------------------------------------------------------------
+from tests._ledger_rules import GUARD_ROWS_RULED_WITHOUT_A_BASIS, guard_rows  # noqa: E402
+from tests._record_paths import record_fragments  # noqa: E402
+
+_GUARD_SITE = "tools/cc/hooks/write_guard.py::_secret_read_targets"
+
+
+def _guard_row_file(text: str, *, site: str = _GUARD_SITE, index_site: str | None = None,
+                    struck: bool = False, rid: str = "DEF-9") -> str:
+    """A row file in the verbs' own shape: its class line, member row and index row."""
+    cell = f"~~`{rid}`~~" if struck else f"`{rid}`"
+    return (f"<!-- class: §C0 -->\n| {cell} | {site} | {text} | minor | HYGIENE | MAINTAINER |\n"
+            f"| {cell} | §C0 | {index_site or site} |\n")
+
+
+class TestGuardRowsNameTheirContractBasis:
+    """A live guard row (its location names write_guard.py, _bash_patterns.py,
+    _speedbump.py or tests/test_write_guard.py) carries one sentence opening
+    "Contract basis:" that names the kept job its finding is on (a catastrophic
+    delete, a speed bump, a secret read: docs/HOOKS.md, the coverage contract
+    for the jobs the parser keeps) or the real session that recorded the slip.
+    The guard-row metric read a basis by a regex over each row's text, misread
+    two rows and found none in a third, and each was settled by reading the row
+    by hand; the rule moves the check to the filing, where `ledger_row.py`
+    runs it before it writes (`tests/_ledger_rules.py::breaks`)."""
+
+    @staticmethod
+    def _view_text() -> str:
+        return record_fragments().ledger_view_at(REPO_ROOT / "task-packs" / "FORWARD_LEDGER.md").text
+
+    def test_every_live_guard_row_names_its_basis(self):
+        """Dies to: a guard row filed, or re-pinned, with no basis sentence."""
+        rows = guard_rows(self._view_text())
+        assert rows, "no live guard row read from the ledger: the population reader is blind"
+        missing = sorted(f"{rid} ({where}): {why}" for rid, (where, why) in rows.items()
+                         if why is not None and rid not in GUARD_ROWS_RULED_WITHOUT_A_BASIS)
+        assert not missing, ("live guard rows with no coverage-contract basis; write the sentence with "
+                             "`ledger_row.py repin <id> --text-file ...`:\n  " + "\n  ".join(missing))
+
+    def test_each_ruled_exception_is_a_live_guard_row_still_without_one(self):
+        """Dies to: an exception kept after its row was struck, left the
+        population, or gained the sentence, or one added for a row filed after
+        the calibration commit: the baseline only shrinks."""
+        rows = guard_rows(self._view_text())
+        stale = sorted(rid for rid in GUARD_ROWS_RULED_WITHOUT_A_BASIS
+                       if rid not in rows or rows[rid][1] is None)
+        assert not stale, (f"drop these from GUARD_ROWS_RULED_WITHOUT_A_BASIS in tests/_ledger_rules.py "
+                           f"(struck, not a guard row, or now naming a basis): {stale}")
+        assert all(reason.strip() for reason in GUARD_ROWS_RULED_WITHOUT_A_BASIS.values())
+        # Shrink-only: a row filed after the calibration commit carries the sentence.
+        late = sorted(set(GUARD_ROWS_RULED_WITHOUT_A_BASIS) - self._CALIBRATION_IDS)
+        assert not late, f"an exception for a row the calibration commit did not hold live: {late}"
+
+    @pytest.mark.parametrize(("text", "named"), [
+        # One row's words the metric's regex missed, which named its basis.
+        ("Loses folders with no prompt. Contract basis: the speed bump's job, plain syntax. Out of the row: "
+         "a piped item.", True),
+        # Another row's words, which named a kept job with no sentence: the rule wants the sentence.
+        ("It is message text on a kept job (the speed bumps), a keep class under a ruling.", False),
+        ("Contract basis: a real-session record, the 2026-09-30 handoff.", True),
+        ("**A wall.** Contract basis: the catastrophic delete, plain syntax", True),
+        # A period inside a path or a symbol does not end the sentence.
+        ("Contract basis: per `docs/HOOKS.md` and `_bash_patterns.py`, the secret-read leg.", True),
+        # The sentence names no job, and a job named after it ends is not its basis.
+        ("Contract basis: plain syntax. The speed bump fires on the re-issue.", False),
+        ("Contract basis: plain syntax", False),
+        # The sentence ends at a period followed by whitespace, whatever comes next.
+        ("Contract basis: plain syntax. the speed bump fires.", False),
+        ("Contract basis: plain syntax. 2026-11-12 the speed bump fires.", False),
+        # A name negated in its own clause is no basis; one in another clause still is.
+        ("Contract basis: not a secret read, and no real session recorded it.", False),
+        ("Contract basis: none of the kept jobs; never a speed bump.", False),
+        ("Contract basis: the secret read, not a zone write.", True),
+        ("Contract basis: not a zone write; the secret read.", True),
+        # The marker opens a sentence; a word glued to it is not one.
+        ("NoContract basis: the secret read.", False),
+        # An escaped pipe stays inside the text cell.
+        ("a \\| b, and Contract basis: the secret read.", True),
+    ])
+    def test_the_sentence_is_read_where_it_is_written(self, text, named):
+        """Dies to: the sentence read to the cell's end (the job after it
+        counts), a sentence end that wants a capital after the period, a
+        negated name read as a basis, the marker found glued to a word, or the
+        cells split on an escaped pipe."""
+        rows = guard_rows(_guard_row_file(text))
+        assert list(rows) == ["DEF-9"]
+        assert (rows["DEF-9"][1] is None) is named, rows
+
+    @pytest.mark.parametrize(("site", "index_site", "struck", "guard"), [
+        (_GUARD_SITE, None, False, True),
+        ("tools/cc/hooks/_speedbump.py::_FORCE_PUSH_RE", None, False, True),
+        ("tests/test_write_guard.py::TestTheCoverageContract", None, False, True),
+        # The index row's location counts, as the metric reads it.
+        ("espalier/cli.py::main", "tools/cc/hooks/_bash_patterns.py::_CMD_POS", False, True),
+        # A bench row is out, and a struck row has nothing left to measure.
+        ("bench/corpus/BC-1.json; tools/cc/hooks/write_guard.py", None, False, False),
+        (_GUARD_SITE, None, True, False),
+        # A module of the same stem elsewhere is not the guard's, nor a path that only ends like it.
+        ("espalier/write_guard.py::x", None, False, False),
+        ("mytools/cc/hooks/write_guard.py::x", None, False, False),
+        ("tools/cc/hooks/write_guard.pyc", None, False, False),
+    ])
+    def test_the_population_is_the_location_cell(self, site, index_site, struck, guard):
+        """Dies to: the location read from the text cell, the index row's
+        location ignored, a bench or struck row counted, or a path matched
+        without its boundaries."""
+        rows = guard_rows(_guard_row_file("no basis here", site=site, index_site=index_site, struck=struck))
+        assert ("DEF-9" in rows) is guard, rows
+
+    def test_a_guard_path_named_only_in_the_text_is_not_a_guard_row(self):
+        assert guard_rows(_guard_row_file("it reads tools/cc/hooks/write_guard.py", site="espalier/cli.py")) == {}
+
+    def test_a_row_of_another_table_is_not_read_as_a_member(self):
+        """In the view, a row of the dropped list names a guard module in its
+        second cell, which is prose there. Dies to: every table row read as a
+        member row."""
+        text = ("### §C0 Standalone\n\n| `DEF-9` | espalier/cli.py | x | nit |\n\n## §6 Dropped\n\n"
+                f"| `CLO-9` | `{_GUARD_SITE}` runs three statements under no lock. | Declined |\n")
+        assert guard_rows(text) == {}
+
+    def test_the_verb_refuses_a_guard_row_without_one_and_lets_a_ruled_row_through(self):
+        """The rule as the ledger verb runs it, before it writes. Dies to: the
+        rule left out of ``breaks``, or a ruled exception refused on a repin."""
+        from tests._ledger_rules import GUARD_BASIS_RULE, breaks
+
+        rel = "task-packs/ledger.d/DEF-9.md"
+        assert GUARD_BASIS_RULE in [r for r, _ in breaks(rel, _guard_row_file("no basis"), notes=[])]
+        assert GUARD_BASIS_RULE not in [r for r, _ in breaks(
+            rel, _guard_row_file("Contract basis: the secret read."), notes=[])]
+        ruled = sorted(GUARD_ROWS_RULED_WITHOUT_A_BASIS)[0]
+        assert GUARD_BASIS_RULE not in [r for r, _ in breaks(
+            f"task-packs/ledger.d/{ruled}.md", _guard_row_file("no basis", rid=ruled), notes=[])]
+
+    #: The commit the rule was calibrated at: the guard-row metric's reader
+    #: read these fifteen live guard rows there on 2026-11-12, by hand, and
+    #: the pin holds the rule's reader to the same set.
+    _CALIBRATION_COMMIT = "2fe13dda7de781eb4e8b8ed077d1151c21fd1b3b"
+    _CALIBRATION_IDS = frozenset({
+        "DEF-1071", "DEF-2001", "DEF-2055", "DEF-2071", "DEF-2072", "DEF-2073", "DEF-2074", "DEF-2075",
+        "DEF-3072", "DEF-4061", "DEF-4109", "DEF-5049", "DEF-682", "DEF-972", "DEF-980",
+    })
+
+    def test_the_population_is_the_metrics_at_the_calibration_commit(self):
+        """The rule and the metric read one population. Dies to: a location
+        match that drifts from the metric's (a bare stem, the text cell, bench
+        rows counted), seen as a different set at a commit neither can move."""
+        import importlib.util
+
+        def git(*args: str) -> subprocess.CompletedProcess:
+            return subprocess.run(["git", "-C", str(REPO_ROOT), *args], capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace", timeout=45, check=False)
+
+        if git("cat-file", "-e", f"{self._CALIBRATION_COMMIT}^{{commit}}").returncode != 0:
+            pytest.skip("the calibration commit is not in this tree's history (a shallow clone or an export)")
+        spec = importlib.util.spec_from_file_location("_dc_ledger_trend", REPO_ROOT / "scripts" / "ledger_trend.py")
+        trend = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = trend
+        spec.loader.exec_module(trend)
+        ledger = git("show", f"{self._CALIBRATION_COMMIT}:task-packs/FORWARD_LEDGER.md")  # ledger-read: a past commit, viewed below
+        assert ledger.returncode == 0, ledger.stderr
+        rows = trend._row_files_at(REPO_ROOT, self._CALIBRATION_COMMIT, "task-packs/ledger.d")
+        view = record_fragments().ledger_view_from_texts(ledger.stdout, rows)
+        assert set(guard_rows(view.text)) == self._CALIBRATION_IDS

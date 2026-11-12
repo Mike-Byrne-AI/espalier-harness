@@ -7,8 +7,9 @@
  "inputs": [
   "tools/cc/hooks/write_guard.py"
  ],
- "row_sha": "dd2b49d0cd57",
- "text_sha": "c0151df06280",
+ "row_sha": "7e5756be554d",
+ "text_sha": "2c50b75cc52f",
  "verified_2026_11_08": "OPEN (filed 2026-11-08; probe driven at filing here and in the export of HEAD 57832897b3ba)",
- "verified_2026_11_10": "STILL_OPEN (re-pinned value unchanged on 2026-11-10: a bound spelling in the gate's one shape now draws the in-place nudge (_ps_temp_bound_remove), for every spelling the pre-pass binds (bare, braced, double-quoted, TMPDIR, a line-break end; air 7ad740); the row stays live for every other bound shape, and its probe moves to one) [changed: probe, text]"
+ "verified_2026_11_10": "STILL_OPEN (re-pinned value unchanged on 2026-11-10: a bound spelling in the gate's one shape now draws the in-place nudge (_ps_temp_bound_remove), for every spelling the pre-pass binds (bare, braced, double-quoted, TMPDIR, a line-break end; air 7ad740); the row stays live for every other bound shape, and its probe moves to one) [changed: probe, text]",
+ "verified_2026_11_12": "STILL_OPEN (re-pinned value unchanged on 2026-11-12: the row names its coverage-contract basis in one sentence, as the sixth content rule asks; the claim and its value stand) [changed: text]"
 }
