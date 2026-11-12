@@ -836,21 +836,20 @@ class TestTheHandoffLeavesAnUnfinishedLane:
         or from the gate alone."""
         self._ready(ship, repo, monkeypatch)
         _git(repo, "push", "--quiet", "-u", "origin", "lane/half")
-        (repo / ".github" / "workflows").mkdir(parents=True)
-        (repo / ".github" / "workflows" / "harness-guard.yml").write_bytes(
-            b"name: Harness Guard\n# an adopter's own: espalier's parked beside it as .new\n")
-        (repo / "tools" / "cc").mkdir(parents=True)
-        (repo / "tools" / "cc" / "ci_guard.py").write_bytes(b"# an older gate, before the arm\n")
-        _git(repo, "add", ".github", "tools")
-        _git(repo, "commit", "--quiet", "-m", "ci: the guard")
+        workflow = repo / ".github" / "workflows" / "harness-guard.yml"
+        gate = repo / "tools" / "cc" / "ci_guard.py"
+        workflow.parent.mkdir(parents=True)
+        gate.parent.mkdir(parents=True)
+        workflow.write_bytes(b"name: Harness Guard\njobs:\n  verify:\n    steps:\n      - run: python tools/cc/ci_guard.py\n")
+        gate.write_bytes(b"# an older gate, before the arm\n")
         assert not ship._guard_fails_unfinished(repo), "a gate without the arm read as one with it"
-        (repo / "tools" / "cc" / "ci_guard.py").write_text(f'{ship.UNFINISHED_GUARD_NAME} = "x"\n',
-                                                            encoding="utf-8")
+        gate.write_text(f'{ship.UNFINISHED_GUARD_NAME} = "x"\n', encoding="utf-8")
+        ran = workflow.read_bytes()
+        workflow.write_bytes(b"name: Harness Guard\n# an adopter's own: espalier's parked beside it as .new\n")
         assert not ship._guard_fails_unfinished(repo), "a workflow that never runs the gate read as running it"
-        (repo / ".github" / "workflows" / "harness-guard.yml").write_bytes(
-            b"name: Harness Guard\njobs:\n  verify:\n    steps:\n      - run: python tools/cc/ci_guard.py\n")
-        _git(repo, "add", "tools/cc/ci_guard.py", ".github")
-        _git(repo, "commit", "--quiet", "-m", "ci: the arm")   # the lane's tracked edit stays unstaged
+        workflow.write_bytes(ran)
+        _git(repo, "add", ".github", "tools")
+        _git(repo, "commit", "--quiet", "-m", "ci: the guard")   # the lane's tracked edit stays unstaged
         assert ship.handoff(unfinished=self.TEXT) == 0
         tail = _marker(repo)["brief"]
         tail = tail[tail.index(ship.FINISH_FIRST):]

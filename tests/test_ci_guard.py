@@ -2952,6 +2952,8 @@ class TestUnfinishedLaneArm:
         out = self._pr(fresh_repo, base, extra={"GITHUB_HEAD_REF": "lane/other"}).stdout
         assert f"--force-with-lease=lane/other:{commit} origin HEAD:lane/other" in out
         assert "HEAD:lane/half" not in out and "Espalier-Unfinished: lane/half" in out
+        # Read first: the push replaces each commit there (the dispatcher's d17646, point 4).
+        assert "  # read git log HEAD..origin/lane/other first: the push replaces each commit there" in out
         fallback = self._pr(fresh_repo, base).stdout
         assert f"--force-with-lease=lane/half:{commit} origin HEAD:lane/half" in fallback
 
