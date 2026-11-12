@@ -1827,6 +1827,11 @@ class TestARemedysProgramWordRunsInEveryShell:
         monkeypatch.setattr(sys, "executable", self.SPACED)
         monkeypatch.setattr(sys, "platform", "win32")
         monkeypatch.setattr(cli, "_detect_python_command", lambda: "python")
+        # The stand-in name runs no failing Python outside a virtualenv: read
+        # live, the host's own PATH decides (a venv `python` over a failing
+        # outside one makes the resolver's answer not the True one), which
+        # redded the release-readiness gate's runner.
+        monkeypatch.setattr(cli, "_runs_a_failing_python_outside_its_venv", lambda spelling: None)
         monkeypatch.setattr(cli, "interpreter_meets_floor", lambda p: p == self.SPACED)
         monkeypatch.setattr(cli, "windows_short_path", lambda p: short)
         monkeypatch.setattr(cli, "_POWERSHELL_CALL_NOTE_SAID", False)
