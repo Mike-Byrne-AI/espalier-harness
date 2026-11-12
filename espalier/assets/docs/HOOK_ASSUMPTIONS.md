@@ -232,7 +232,7 @@ Typed `action_justification` capture and auto-justification from plan metadata r
 
 ---
 
-## Measured latency footprint (2026-07-24 snapshot — not continuously re-verified)
+## Measured latency footprint (dated snapshots — not continuously re-verified)
 
 A one-off latency measurement, recorded here because it is the harness's only
 answer to its own *direction ≠ magnitude* discipline on hook cost: prior review
@@ -267,41 +267,58 @@ before quoting it; do not cite it as current.
 
 ### write_guard, per call kind (2026-11-12 snapshot)
 
-`write_guard.py` runs on every tool call (matcher `*`). A Read, Grep, Glob or
-TodoWrite returns before its pattern path loads; every Bash, PowerShell,
-mutation and MCP call loads it. Each kind below was spawned 30 times the way
-Claude Code spawns the hook (the wired interpreter with `-B` and
-`tools/cc/hooks/write_guard.py`, the payload on stdin), shuffled, each spawn in an empty project of its own, beside a
-bare interpreter start as the control. Every call was allowed. No test run
-shared the box while the timings ran (they held the lock the test tiers take);
-the load average was read and is reported, never waited for. Medians in ms, the
+`write_guard.py` runs on every tool call (matcher `*`). At the commits below, a
+Read, Grep, Glob or TodoWrite returned before its pattern path loaded, and every
+Bash, PowerShell, mutation and MCP call loaded it. Each kind below was spawned
+30 times the way Claude Code spawns the hook (`<python>
+tools/cc/hooks/write_guard.py`, the payload on stdin), with `-B` added so the
+run writes no bytecode cache, shuffled, each spawn in an empty project of its
+own, beside a bare interpreter start as the control. Every call was allowed.
+The timings held the lock the test tiers take, so no test run shared the box;
+the load was read and is reported, never waited for. Medians in ms, the
 interquartile range in brackets.
 
-| Host | Python | Load, start to end | Control | Read | Bash `ls -la` | MCP read | MCP write |
+| Host | Python | Load during the run | Control | Read | Bash `ls -la` | MCP read | MCP write |
 |---|---|---|---|---|---|---|---|
-| macOS laptop, 8 cores, 8 GB, at commit b3eefcf | 3.14.7 | 4.69 to 4.56 | 34.6 (32.4–36.6) | 132.0 (126.1–138.9) | 303.2 (297.1–313.5) | 302.9 (297.8–308.4) | 300.1 (294.3–317.9) |
+| macOS laptop, 8 cores, 8 GB, at commit b3eefcf | 3.14.7, a venv | 1-minute load average 4.69 to 4.56 | 34.6 (32.4–36.6) | 132.0 (126.1–138.9) | 303.2 (297.1–313.5) | 302.9 (297.8–308.4) | 300.1 (294.3–317.9) |
+| Windows 11, at commit 43d8879 | 3.11.9, a venv | CPU 14% busy (Windows has no load average) | 37.9 (36.7–40.5) | 174.7 (166.7–188.2) | 423.8 (417.1–440.6) | 422.4 (416.5–431.5) | 420.7 (416.3–440.0) |
+
+The Windows run started just after a pull, with four of the hook's modules
+holding a stale bytecode cache. Every `-B` spawn recompiles such a module,
+where a live call rewrites its cache once, so that row may overstate a warm
+call; other work was running on that box during it.
 
 The portable part, again, is the shape:
 
-- **On that host the pattern path is about 170 ms of a 300 ms call** (the Bash
-  median less the Read median), and an MCP read pays what a Bash call pays: the
-  path loads whole for any call it judges.
-- **The cost is the regular expressions the path compiles.** That tree's path
-  compiles 206,695 characters of pattern (308 distinct patterns; 61 of them embed
-  one shared 1,580-character command-position fragment, 70% of the characters),
-  and its two pattern modules import in 180.3 ms (171.2–182.1, 10 fresh
-  interpreters). A candidate change that grew the shared fragment to 4,301
+- **On both hosts the pattern path is most of a judged call**: about 170 ms of
+  a 300 ms call on the macOS laptop and about 250 of 420 on Windows (the Bash
+  median less the Read median; the Bash and MCP-read medians are 2.30 and 2.29
+  times the Read median on the laptop, 2.43 and 2.42 on Windows). At those
+  commits an MCP read paid what a Bash call paid: the path loaded whole for any
+  call it judged.
+- **The cost is the regular expressions the path compiles.** On the macOS
+  laptop, b3eefcf's path compiles 206,695 characters of pattern (308 distinct
+  patterns; 61 of them embed one shared 1,580-character command-position
+  fragment, 70% of the characters), and its two pattern modules, which compile
+  most of it, import in 180.3 ms (171.2–182.1, 10 fresh interpreters, 1-minute
+  load 4.56 to 4.60). A candidate change that grew the shared fragment to 4,301
   characters (never merged) compiled 387,130 characters with fewer patterns
-  (288), and imported in 282.9 ms (276.3–289.2). So compiled characters track
-  the cost, and the pattern count does not.
-- **The hook's 4 s deadline was never met in real sessions on that host**: no
-  time-budget record in the 47 daily audit logs of its two checkouts, 2026-10-13
-  to 2026-11-12. On that host the deadline is a concern for a test run under
-  load, not for a session.
+  (288), and imported in 282.9 ms (276.3–289.2). On Windows, 43d8879's path
+  compiles 207,203 characters and the two imports take 202.5 ms (195.6–203.9),
+  against 337.8 (329.7–350.1) for the candidate. So, across those two trees on
+  both hosts, compiled characters track the cost, and the pattern count does
+  not.
+- **The hook's time budget was never reached in real sessions on the macOS
+  laptop**: no refusal at the 3.5 s judgment budget or the 4 s hard deadline in
+  the 47 daily audit logs of its two checkouts, 2026-10-13 to 2026-11-12. On
+  Windows, over the same days, five such refusals across its two checkouts, all
+  on 2026-10-14, and none since. On the laptop the deadline is a concern for a
+  test run under load, not for a session.
 
 Method: the source repository's per-call cost census (`--calls 30`,
-`--compile`, `--import-time --rounds 10`, each on one interpreter). Re-measure
-before quoting it; do not cite it as current.
+`--compile`, `--import-time --rounds 10`, each on one interpreter). The
+compiled size is held inside a band by the source repository's own tests; the
+timings are not. Re-measure before quoting them; do not cite them as current.
 
 ---
 
