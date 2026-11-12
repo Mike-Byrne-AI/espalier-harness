@@ -64,6 +64,8 @@ import pytest
 from espalier.harness_config import CANONICAL_HOOK_WIRING, GOVERNANCE_BLOCKING_HOOKS
 from tests._hook_spawn import RetryAllowance, retry_a_budget_miss
 from tests._live_tree import checkout_glob, copy_checkout
+from tests._temp_sweep import write_lock
+from tests._wait_budget import scaled
 
 # timeout-exempt: headroom, not cost -- the module-scoped `cells` fixture lands in the first `cells` test each xdist worker runs, 21 to 48 s of the ini's 60 s across 19 Linux full-tier cells (2026-11-07/08, DEF-2056), so each class whose tests request it carries this ceiling, and so does each class whose rows reach `_run_payload` or `_run_hook`, whose 45 s spawn retries a budget refusal once and so needs twice that under the ceiling less 10 s (DEF-2057, pinned in tests/test_test_suite_contract.py); the module stays in the fast slice and its other tests keep the ini's
 _CELLS_CEILING_S = 180
@@ -379,10 +381,13 @@ def _warm_cc() -> Path:
     ``copy_checkout`` copies git's tracked files alone, so a copy starts with
     no bytecode and its first mutating spawn compiled ``_bash_patterns`` and
     its siblings inside the guard's budget. Built under a lock: the pools'
-    threads reach it at once."""
+    threads reach it at once. Its dir carries this process's pid lock, so a
+    killed run's copy (about 5 MB a worker) goes at the suite's next session
+    start (tests/_temp_sweep.py); a run that ends removes it at exit."""
     with _WARM_LOCK:
         if not _WARM:
             template = Path(tempfile.mkdtemp(prefix="kept-helper-cc-")) / "cc"
+            write_lock(template.parent)
             copy_checkout(CC_DIR, template, ignore=shutil.ignore_patterns("__pycache__"))
             compileall.compile_dir(str(template), quiet=2)
             atexit.register(shutil.rmtree, template.parent, True)
@@ -1598,8 +1603,15 @@ class TestTheCopiedTreeIsWarm:
             [sys.executable, "-c",
              f"import sys; sys.path.insert(0, {str(hooks)!r}); import _maintenance_mode as m; "
              "print(getattr(m, 'PLANTED_HERE', 0))"],
-            capture_output=True, text=True, encoding="utf-8", env=_ENV, cwd=str(tmp_path), timeout=45)
+            capture_output=True, text=True, encoding="utf-8", env=_ENV, cwd=str(tmp_path), timeout=scaled(45))
         assert r.returncode == 0 and r.stdout.strip() == "1", (r.stdout, r.stderr)
+
+    def test_the_warm_template_carries_this_processs_lock_under_an_owned_prefix(self):
+        from tests import _temp_sweep
+
+        work = _warm_cc().parent
+        assert work.name.startswith(_temp_sweep.OWNED_PREFIXES), work.name
+        assert _temp_sweep.lock_pid(work) == os.getpid(), "a killed run's warm copy would never be swept"
 
     def test_the_spawn_pools_are_no_wider_than_the_cores(self):
         assert 1 <= _POOL_WIDTH <= min(6, os.cpu_count() or 1)
