@@ -45,11 +45,16 @@ this contract was written to catch, earned against the detector it uses.
 from __future__ import annotations
 
 import ast
+import atexit
+import compileall
+import importlib.util
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,6 +64,8 @@ import pytest
 from espalier.harness_config import CANONICAL_HOOK_WIRING, GOVERNANCE_BLOCKING_HOOKS
 from tests._hook_spawn import RetryAllowance, retry_a_budget_miss
 from tests._live_tree import checkout_glob, copy_checkout
+from tests._temp_sweep import deleter, remove, write_lock
+from tests._wait_budget import scaled
 
 # timeout-exempt: headroom, not cost -- the module-scoped `cells` fixture lands in the first `cells` test each xdist worker runs, 21 to 48 s of the ini's 60 s across 19 Linux full-tier cells (2026-11-07/08, DEF-2056), so each class whose tests request it carries this ceiling, and so does each class whose rows reach `_run_payload` or `_run_hook`, whose 45 s spawn retries a budget refusal once and so needs twice that under the ceiling less 10 s (DEF-2057, pinned in tests/test_test_suite_contract.py); the module stays in the fast slice and its other tests keep the ini's
 _CELLS_CEILING_S = 180
@@ -357,8 +364,45 @@ class Cell:
     audit: str = ""  # the cell's audit records, read before its tree goes
 
 
+#: The width of the two fixtures' spawn pools (`cells`, `restores`): six, or
+#: the runner's cores where it has fewer. Six threads on windows-latest's four
+#: vCPUs each started a guard whose 4.0 s budget the others' CPU ate; 12 of the
+#: leg's 20 budget misses in 15 runs were this file's (DEF-4114). Not divided by
+#: the xdist worker count: at one thread `cells` would run about six times its
+#: 21 to 48 s against `_CELLS_CEILING_S`.
+_POOL_WIDTH = max(1, min(6, os.cpu_count() or 1))
+
+_WARM_LOCK = threading.Lock()
+_WARM: list[Path] = []
+
+
+def _warm_cc() -> Path:
+    """One copy of ``tools/cc`` per test process, its bytecode compiled once.
+    ``copy_checkout`` copies git's tracked files alone, so a copy starts with
+    no bytecode and its first mutating spawn compiled ``_bash_patterns`` and
+    its siblings inside the guard's budget. Built under a lock: the pools'
+    threads reach it at once. Its dir carries this process's pid lock, so a
+    killed run's copy (about 5 MB a worker) goes at the suite's next session
+    start (tests/_temp_sweep.py); a run that ends removes it at exit."""
+    with _WARM_LOCK:
+        if not _WARM:
+            template = Path(tempfile.mkdtemp(prefix="kept-helper-cc-")) / "cc"
+            write_lock(template.parent)
+            # The sweep's own delete: the lock goes last, so a copy that will
+            # not go at exit keeps its lock for the next start.
+            atexit.register(remove, template.parent, deleter())
+            copy_checkout(CC_DIR, template, ignore=shutil.ignore_patterns("__pycache__"))
+            compileall.compile_dir(str(template), quiet=2)
+            _WARM.append(template)
+        return _WARM[0]
+
+
 def _copy_cc(root: Path) -> None:
-    copy_checkout(CC_DIR, root / "tools" / "cc", ignore=shutil.ignore_patterns("__pycache__"))
+    """``tools/cc`` under ``root``, warm: a copy of `_warm_cc`'s template with
+    its mtimes kept, so each module's bytecode stays valid. A plant changes its
+    file's size, which invalidates that file's bytecode, so the planted source
+    is what runs (`TestTheCopiedTreeIsWarm` pins both)."""
+    shutil.copytree(_warm_cc(), root / "tools" / "cc", dirs_exist_ok=True)
 
 
 def _run_hook(root: Path, hook: str, event: str, timeout: int = 45,
@@ -459,7 +503,7 @@ def cells(tmp_path_factory) -> list[Cell]:
         for name in sorted(BUDGET_NAMES):
             jobs.append((hook, event, name, "reporter"))
     allowance = RetryAllowance()  # the build's budget retries, shared by its threads (DEF-2057)
-    with ThreadPoolExecutor(max_workers=6) as pool:
+    with ThreadPoolExecutor(max_workers=_POOL_WIDTH) as pool:
         return list(pool.map(lambda j: _cell(base, j, allowance), jobs))
 
 
@@ -929,7 +973,7 @@ def restores(tmp_path_factory) -> list[Restore]:
         shutil.rmtree(root, ignore_errors=True)
         return result
 
-    with ThreadPoolExecutor(max_workers=6) as pool:
+    with ThreadPoolExecutor(max_workers=_POOL_WIDTH) as pool:
         return list(pool.map(one, enumerate(_RESTORE_TABLE)))
 
 
@@ -1299,6 +1343,9 @@ def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
 
 def _committed_copy(root: Path) -> None:
     _copy_cc(root)
+    # The warm copy's bytecode is never committed, as a real checkout's is not:
+    # a tracked `.pyc` that a spawn rewrites would be a modified file to git.
+    (root / ".gitignore").write_text("__pycache__/\n", encoding="utf-8")
     for args in (("init", "-q", "-b", "main"), ("add", "-A"), ("commit", "-q", "-m", "base")):
         assert _git(root, *args).returncode == 0, args
 
@@ -1523,3 +1570,57 @@ class TestTheGuardIsReachable:
                 capture_output=True, text=True, encoding="utf-8", env={**_ENV, "CLAUDE_PROJECT_DIR": str(root)},
                 cwd=str(root), timeout=45)
             assert r.returncode == 1 and "KeyError" in r.stderr and not r.stdout.strip(), (hook, r.stdout, r.stderr)
+
+
+class TestTheCopiedTreeIsWarm:
+    """DEF-4114: the copies these spawns run in carry valid bytecode, a plant
+    still runs its own source, and the two spawn pools are no wider than the
+    runner's cores."""
+
+    def test_a_copied_tree_carries_valid_bytecode_for_the_pattern_module(self, tmp_path):
+        _copy_cc(tmp_path)
+        src = tmp_path / "tools" / "cc" / "hooks" / "_bash_patterns.py"
+        pyc = Path(importlib.util.cache_from_source(str(src)))
+        assert pyc.is_file(), f"no bytecode beside the copy's {src.name}: its first spawn compiles it in the budget"
+        data = pyc.read_bytes()
+        assert data[:4] == importlib.util.MAGIC_NUMBER, "bytecode of another interpreter"
+        flags = int.from_bytes(data[4:8], "little")
+        if flags == 0:  # timestamp bytecode: the copy's own mtime and size
+            st = src.stat()
+            assert int.from_bytes(data[8:12], "little") == int(st.st_mtime) & 0xFFFFFFFF
+            assert int.from_bytes(data[12:16], "little") == st.st_size & 0xFFFFFFFF
+        else:  # hash bytecode (SOURCE_DATE_EPOCH set): the copy's own bytes
+            assert data[8:16] == importlib.util.source_hash(src.read_bytes())
+
+    def test_a_plant_in_a_warm_copy_runs_its_own_source_at_the_same_mtime(self, tmp_path):
+        # The worst case: the plant keeps the source's mtime, so only its
+        # size tells the bytecode it is stale. Every plant in this file also
+        # takes a fresh mtime, so each tells it both ways.
+        _copy_cc(tmp_path)
+        hooks = tmp_path / "tools" / "cc" / "hooks"
+        module = hooks / "_maintenance_mode.py"
+        before = module.stat()
+        module.write_bytes(module.read_bytes() + b"\nPLANTED_HERE = 1\n")
+        os.utime(module, ns=(before.st_atime_ns, before.st_mtime_ns))
+        r = subprocess.run(
+            [sys.executable, "-c",
+             f"import sys; sys.path.insert(0, {str(hooks)!r}); import _maintenance_mode as m; "
+             "print(getattr(m, 'PLANTED_HERE', 0))"],
+            capture_output=True, text=True, encoding="utf-8", env=_ENV, cwd=str(tmp_path), timeout=scaled(45))
+        assert r.returncode == 0 and r.stdout.strip() == "1", (r.stdout, r.stderr)
+
+    def test_the_warm_template_carries_this_processs_lock_under_an_owned_prefix(self):
+        from tests import _temp_sweep
+
+        work = _warm_cc().parent
+        assert work.name.startswith(_temp_sweep.OWNED_PREFIXES), work.name
+        assert _temp_sweep.lock_is_ours(work), "a killed run's warm copy would never be swept"
+
+    def test_the_spawn_pools_are_no_wider_than_the_cores(self):
+        assert 1 <= _POOL_WIDTH <= min(6, os.cpu_count() or 1)
+        tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+        widths = [kw.value for node in ast.walk(tree) if isinstance(node, ast.Call)
+                  and getattr(node.func, "id", None) == "ThreadPoolExecutor"
+                  for kw in node.keywords if kw.arg == "max_workers"]
+        assert len(widths) == 2 and all(isinstance(w, ast.Name) and w.id == "_POOL_WIDTH" for w in widths), \
+            [ast.dump(w) for w in widths]

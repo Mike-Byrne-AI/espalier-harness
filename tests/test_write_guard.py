@@ -11649,6 +11649,20 @@ def _recursive_delete_launch_forms() -> list[tuple[str, str, str]]:
         forms.append((f"ps-cmd-stopparse-{verb}", "PowerShell", "cmd --% /c " + verb + " /s /q {t}"))
         forms.append((f"ps-cmd-saps-{verb}", "PowerShell",
                       "Start-Process cmd -ArgumentList '/c " + verb + " /s /q {t}'"))
+        # DEF-1071 wave 1: the program read hands cmd the stop-parsing
+        # token's text verbatim to a pipe or a line break, its `&&` included,
+        # and a line as typed that opens with a quote loses it and the line's
+        # last one, as cmd reads it (the quoted form was read before, by the
+        # outer words; the verbatim read keeps it)
+        forms.append((f"ps-cmd-stopparse-chain-{verb}", "PowerShell",
+                      "cmd --% /c echo x && " + verb + " /s /q {t}"))
+        forms.append((f"ps-cmd-stopparse-quoted-{verb}", "PowerShell",
+                      'cmd --% /c "' + verb + ' /s /q {t}"'))
+        # the argument list's program as typed, opening with a quote: the
+        # reader applies cmd's quote rule to every program it hands on, once
+        # (the failure-mode review: this one allowed at the lane's first build)
+        forms.append((f"ps-cmd-saps-quoted-{verb}", "PowerShell",
+                      "Start-Process cmd -ArgumentList '/c \"" + verb + " /s /q {t}\"'"))
     for word in re.findall(r"[\w-]+", bp._PS_REMOVE_VERB_WORDS):
         forms.append((f"ps-word-{word.lower()}", "PowerShell", word + " -Recurse {t}"))
     words = {w.lower() for w in re.findall(r"[\w-]+", bp._PS_REMOVE_VERB_WORDS)}
@@ -11728,7 +11742,7 @@ class TestEveryLaunchFormMeetsTheRecursiveDeleteWall:
             "env", "sudo", "doas", "command", "time", "nohup", "timeout", "xargs", "exec",
             "nice", "ionice", "stdbuf", "setsid", "strace", "ltrace", "watch", "script",
             "chrt", "taskset", "unbuffer", "torify", "proxychains"]
-        assert len(_LAUNCH_FORMS) == 76, len(_LAUNCH_FORMS)
+        assert len(_LAUNCH_FORMS) == 88, len(_LAUNCH_FORMS)
 
     def test_xargs_is_the_pipe_carrier_and_no_wrapper_on_the_powershell_tool(self):
         """`xargs` hands the remove verb its operands from the pipe on this
@@ -12680,10 +12694,14 @@ class TestPowerShellRecursiveRemoveTiersAgree:
         form_id, _tool, template = form
         family = next(k for k in self._SWITCHES if form_id.startswith(k))
         # the text after the target stays (the argument list's closing quote),
-        # and a target inside that list is quoted as cmd reads quotes
+        # and a target inside that list is quoted as cmd reads quotes; so is
+        # one behind the stop-parsing token, which PowerShell hands cmd as
+        # typed (driven on Windows PowerShell 5.1: `cmd --% /c dir /b /s
+        # 'src\*'` names no file, its single quotes reaching cmd)
         head, tail = template.split("{t}")
         head = head[:head.index(" -" if family != "ps-cmd-" else " /s")]
-        quotes = self._QUOTES if not tail else ("{}", '"{}"', "{}")
+        cmd_quotes = bool(tail) or "--%" in template
+        quotes = ("{}", '"{}"', "{}") if cmd_quotes else self._QUOTES
         repo, scratch = tmp_path / "repo", tmp_path / "scratch"
         (repo / "build").mkdir(parents=True)
         (scratch / "clone" / ".git").mkdir(parents=True)
@@ -20019,9 +20037,15 @@ class TestRemovedOrRelocatedOperandIsAMutation:
         assert_hook_denied(second, contains_reason="protected harness zone")
 
     #: cmd's recursive forms, and each again behind cmd's existence test (the
-    #: guarded cleanup, a program only cmd's grammar reads)
+    #: guarded cleanup, a program only cmd's grammar reads). A program that
+    #: opens with a quote takes the test inside it: `/c if exist t "rd ..."`
+    #: names a program called `rd ...` and runs nothing (driven on Windows
+    #: PowerShell 5.1 with an echo, DEF-1071 wave 1), where
+    #: `/c "if exist t rd ..."` runs the delete
     _CMD_FORMS = [f for f in _LAUNCH_FORMS if "-cmd-" in f[0]] + [
-        (f[0] + "-guarded", f[1], f[2].replace("/c ", "/c if exist {t} ", 1))
+        (f[0] + "-guarded", f[1],
+         f[2].replace('/c "', '/c "if exist {t} ', 1) if '/c "' in f[2]
+         else f[2].replace("/c ", "/c if exist {t} ", 1))
         for f in _LAUNCH_FORMS if "-cmd-" in f[0]]
 
     @pytest.mark.parametrize("form", _CMD_FORMS, ids=[f[0] for f in _CMD_FORMS])
