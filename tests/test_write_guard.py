@@ -16949,7 +16949,7 @@ class TestAGapAfterAPipeIsRead:
     after (2026-11-10; it rewrote top-level pipes only). A program a shell
     reads in place -- a substitution, a quoted `-c` or `eval` program, a
     heredoc fed to a shell -- is spliced as a command of its own first
-    (`_splice_program_bodies`, DEF-3071 and DEF-3073), so a gap inside one
+    (`_splice_in_place_bodies`, DEF-3071 and DEF-3073), so a gap inside one
     is read the same way, below."""
 
     @pytest.mark.parametrize("tool, twin, expect", _PIPE_GAP_TWINS)

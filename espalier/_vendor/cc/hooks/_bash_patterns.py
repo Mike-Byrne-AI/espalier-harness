@@ -6992,7 +6992,7 @@ def _pipe_scan(
     ``inner(lo, hi)`` over ``command[lo:hi]`` (an ANSI-C span's body only
     where it holds no backslash: escapes are not read); the scan is the
     same either way. The splicer's program pre-pass is its one caller (it
-    collects the spans for `_splice_program_bodies`); every other reader
+    collects the spans for `_splice_in_place_bodies`); every other reader
     takes the blank."""
     out = list(command)
     n = len(command)
@@ -15305,7 +15305,7 @@ def _masked_or_raw(command: str) -> str:
     return mask if len(mask) == len(command) else command
 
 
-def _splice_program_bodies(
+def _splice_in_place_bodies(
     command: str, spans: list[tuple[int, int]], depth: int, scan: str,
 ) -> str:
     """``command`` with the body of each program a shell reads in place,
@@ -15521,7 +15521,7 @@ def _splice_line_continuations(command: str, _depth: int = 0) -> str:
         # A substitution's or an in-place program's own lines, first, as
         # commands of their own (DEF-3071, DEF-3073): the loop below reads
         # this scan, which blanks their bodies whole.
-        spliced = _splice_program_bodies(command, spans, _depth, scan)
+        spliced = _splice_in_place_bodies(command, spans, _depth, scan)
         if spliced != command:
             command = spliced
             scan = _pipe_scan(command)
@@ -15622,7 +15622,7 @@ def _splice_line_continuations(command: str, _depth: int = 0) -> str:
             # newline went to no reader's stage pattern). A line that opened
             # a heredoc is left alone: its body follows this newline. A
             # substitution's or an in-place program's own lines were joined
-            # by the same rule before this loop (`_splice_program_bodies`).
+            # by the same rule before this loop (`_splice_in_place_bodies`).
             cut = _pipe_stage_end(line, scan_line)
             if cut is not None:
                 parts.append(line[:cut] + " ")
