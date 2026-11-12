@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5104",
+ "subject": "tools/cc/ledger_row.py",
+ "cmd": "python3 -c \"import json, pathlib, re; d = pathlib.Path('task-packs'); rows = [p for p in (d / 'probes.d').glob('*.json') if re.search(r'filed (2026-11-(1[2-9]|[23][0-9])|2026-12|20[3-9][0-9]|202[7-9])', json.dumps(json.loads(p.read_text(encoding='utf-8')))) and (d / 'ledger.d' / (p.stem + '.md')).is_file() and 'C0 -->' in (d / 'ledger.d' / (p.stem + '.md')).read_text(encoding='utf-8').splitlines()[0]]; print('under_20=' + str(len(rows) < 20))\"",
+ "open_value": "under_20=True",
+ "why_not": null,
+ "row_sha": "53bc6e9fde86",
+ "text_sha": "564d02511a81",
+ "verified_2026_11_12": "OPEN (filed 2026-11-12; probe driven at filing here and in the export of HEAD 428bb9f9467c)"
+}

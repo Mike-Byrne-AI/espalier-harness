@@ -250,6 +250,15 @@ problem. Files an operating system or an editor leaves (`.DS_Store`, a swap file
 backup) and a directory's README or CLAUDE.md are never read as rows. A tree that has not
 opted in refuses on every problem, as the verbs always did.
 
+**5. A sibling names its parent at filing.** A row that is a further instance of a row
+already filed on the same job (a fix's review found it, or the fix left it) is filed with
+`tools/cc/ledger_row.py file --sibling-of <id>` (repeatable; the parent live or struck), which
+records the parents in `task-packs/lineage.d/<id>.json`, a file no strike or repin touches, so
+a chain survives the strike of a row in its middle. A finding written up as `(sibling of
+DEF-N)` in a handoff or a review carries the id to copy. `python3 tools/cc/ledger_row.py
+lineage <id>` reads a row's chain and its site family's standalone count before a plan
+proposes a fix; it writes nothing.
+
 
 ## How to read a status tag
 
