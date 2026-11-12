@@ -864,6 +864,48 @@ class TestTheHandoffLeavesAnUnfinishedLane:
         _git(repo, "add", "more.py")
         _git(repo, "commit", "--quiet", "-m", "feat: more on top")
         assert "HEAD has moved past it" in ship._unfinished_on_lane(repo, "origin/main")
+        assert f"git reset --soft {below[:12]}" in ship._unfinished_on_lane(repo, "origin/main")
+
+    def test_a_merge_of_the_base_after_the_commit_names_the_merge_base_reset(self, ship, repo, monkeypatch):
+        """A reset to the set-aside commit's parent stages the merged base's
+        tree as the lane's own change, so a file the base has since removed
+        rides the landing back in (air's drive, redirect e55404); after a
+        merge of the base the reading names the lane's merge-base with it,
+        and that reset recommits the lane's own files alone."""
+        self._ready(ship, repo, monkeypatch)
+        below = _git(repo, "rev-parse", "HEAD")
+        assert ship.handoff(unfinished=self.TEXT) == 0
+        _git(repo, "switch", "--quiet", "main")
+        (repo / "c.txt").write_bytes(b"c\n")
+        _git(repo, "add", "c.txt")
+        _git(repo, "commit", "--quiet", "-m", "feat: c on the base")
+        merged = _git(repo, "rev-parse", "HEAD")
+        _git(repo, "push", "--quiet", "origin", "main")
+        _git(repo, "switch", "--quiet", "lane/half")
+        _git(repo, "merge", "--quiet", "--no-edit", "origin/main")
+        (repo / "l2.py").write_bytes(b"l = 2\n")
+        _git(repo, "add", "l2.py")
+        _git(repo, "commit", "--quiet", "-m", "feat: more after the merge")
+        _git(repo, "switch", "--quiet", "main")
+        _git(repo, "rm", "--quiet", "c.txt")
+        _git(repo, "commit", "--quiet", "-m", "revert: c off the base")
+        _git(repo, "push", "--quiet", "origin", "main")
+        _git(repo, "switch", "--quiet", "lane/half")
+        _git(repo, "fetch", "--quiet", "origin")
+        head = _git(repo, "rev-parse", "HEAD")
+        words = ship._unfinished_on_lane(repo, "origin/main")
+        assert words is not None and "a merge of origin/main follows it" in words
+        assert f"git reset --soft {merged[:12]}" in words and f"git reset --soft {below[:12]}" not in words
+
+        def recommitted(target: str) -> list[str]:
+            _git(repo, "reset", "--quiet", "--soft", target)
+            _git(repo, "commit", "--quiet", "-m", "feat: the finished lane")
+            names = _git(repo, "diff", "--name-only", "origin/main...HEAD").split()
+            _git(repo, "reset", "--quiet", "--hard", head)
+            return names
+
+        assert "c.txt" in recommitted(below), "the hazard the parent reset carries"
+        assert "c.txt" not in recommitted(merged)
 
     def test_a_session_the_router_never_asked_is_refused_and_nothing_moves(self, ship, repo, monkeypatch):
         """No escape flag: outside the threshold this would become the

@@ -226,11 +226,20 @@ request's own range carrying the `Espalier-Unfinished` trailer, the commit
 `python tools/cc/ship.py handoff --unfinished` makes of a lane's half-built
 edits for the next window to take back. Every push the ship driver makes
 refuses on it, so a hand `git push` is how it reaches a pull request, where
-auto-merge would land the half-built edits on green. The commit stays in the
-range until the branch is rewritten (the driver never force-pushes), so the
-red names the soft reset to its parent, the finish, and the
-`git push --force-with-lease` that takes it off. A push event is not judged:
-there the commit has already merged.
+auto-merge would land the half-built edits on green. The range is the pull
+request's own commits, from its base to the head under review (the checkout's
+`HEAD` is GitHub's test merge). The commit stays in that range until the
+branch is rewritten (the driver never force-pushes), so the red names a soft
+reset, the finish, and the `git push --force-with-lease` that takes it off,
+bound to the head the run read. The reset goes to the commit's parent, or,
+where a merge of the base follows it, to the lane's merge-base with the base:
+a reset to the parent would stage the base's merged changes as the lane's own,
+and a file the base has since removed would land again. Push before any
+ship-driver verb, which reads origin's branch as ahead of the lane and names a
+merge of it, bringing the commit back. Git's own trailer rule reads it, so a
+commit whose message's last paragraph only quotes the trailer line reds too,
+until it is reworded. A push event is not judged: there the commit has already
+merged.
 
 ### On a pull request: put the bound marker in the PR title
 

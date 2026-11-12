@@ -3720,6 +3720,26 @@ def _unfinished_commits(root: Path, base_ref: str) -> list[tuple[str, str, str]]
     return None if records is None else [record for record in records if record[2]]
 
 
+def _moved_past_reset_words(root: Path, base_ref: str, sha: str, parent: str) -> str:
+    """The soft reset for a lane whose HEAD has moved past its set-aside
+    commit: to that commit's parent while no merge follows it; after a merge
+    of the base, to the lane's merge-base with the base, since a reset to the
+    parent stages the merged base's tree as the lane's own change and a file
+    the base has since removed rides the landing back in. A git that cannot
+    say which is the merge-base, named as a command: it is right either way,
+    and folds every commit of the lane into the one recommit."""
+    rc, merges, _ = _git("rev-list", "--merges", f"{sha}..HEAD", cwd=str(root))
+    if rc == 0 and not merges.strip():
+        return (f"HEAD has moved past it: git reset --soft {parent[:12]} takes it back with every commit after "
+                "it, staged, to recommit the finished work without its trailer")
+    rc_base, below, _ = _git("merge-base", base_ref, "HEAD", cwd=str(root)) if rc == 0 else (1, "", "")
+    target = below.strip()[:12] if rc_base == 0 and below.strip() else f"$(git merge-base {base_ref} HEAD)"
+    return (f"HEAD has moved past it, and a merge of {base_ref} follows it: git reset --soft {target} (the "
+            f"lane's merge-base with {base_ref}; a reset to its parent would stage the base's merged changes "
+            "as the lane's own) takes it back with every commit of the lane, staged, to recommit the finished "
+            "work without its trailer")
+
+
 def _unfinished_on_lane(root: Path, base_ref: str) -> str | None:
     """Why the lane at ``root`` must not be pushed, or None: it holds the
     commit the threshold handoff made of an unfinished lane's tracked edits
@@ -3736,11 +3756,9 @@ def _unfinished_on_lane(root: Path, base_ref: str) -> str | None:
     found = [record for record in records or [] if record[2]]
     if not records or not found:
         return None
-    sha, parent, lane = found[-1]   # the oldest: a reset to its parent takes back every one after it
+    sha, parent, lane = found[-1]   # the oldest: a reset below it takes back every one after it
     at_head = records[0][0] == sha and len(found) == 1
-    move = (_soft_reset_words(sha, parent) if at_head else
-            f"HEAD has moved past it: git reset --soft {parent[:12]} takes it back with every commit after it, "
-            "staged, to recommit the finished work without its trailer")
+    move = (_soft_reset_words(sha, parent) if at_head else _moved_past_reset_words(root, base_ref, sha, parent))
     return (f"the lane holds {sha[:12]}, the commit the threshold handoff made of the unfinished lane "
             f"{lane}'s tracked edits ({UNFINISHED_TRAILER}: {lane}), and a push would carry them half-made: "
             f"{move}, then finish the lane and push it")

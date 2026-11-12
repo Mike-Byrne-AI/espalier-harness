@@ -203,16 +203,31 @@ _CI_UNFINISHED_TRAILER = "Espalier-Unfinished"
 _CI_UNFINISHED_LOG_FORMAT = f"%x1e%H %P%x1f%(trailers:key={_CI_UNFINISHED_TRAILER},valueonly)"
 
 
-def unfinished_commits(base: str, cwd: str | None = None) -> list[tuple[str, str, str]]:
-    """The commits of ``base..HEAD`` that carry the unfinished-lane trailer,
+def pr_range_head(env: dict[str, str], cwd: str | None = None) -> str:
+    """Where a pull request's own commits end: the head under review
+    (``PR_HEAD_SHA``) where the workflow forwarded it and the checkout holds
+    it. On a pull request ``HEAD`` is GitHub's test merge of the head into the
+    base, so a merge reads as following every commit of the lane. ``HEAD``
+    only where the head is not here: its range holds every commit of the
+    pull request's, and more."""
+    head = pr_head_sha(env)
+    if head and _git(["cat-file", "-e", f"{head}^{{commit}}"], cwd=cwd).returncode == 0:
+        return head
+    return "HEAD"
+
+
+def unfinished_commits(base: str, head: str = "HEAD", cwd: str | None = None) -> list[tuple[str, str, str]]:
+    """The commits of ``base..head`` that carry the unfinished-lane trailer,
     newest first, as ``(sha, first parent, the trailer's value)``: read the way
     the ship driver reads them (``ship.py::_lane_commit_records``), git's own
     trailer parsing, so a key quoted in a paragraph that is not the message's
-    last is prose. A range git cannot read raises: not read is not clean."""
-    result = _git(["log", f"--format={_CI_UNFINISHED_LOG_FORMAT}", f"{base}..HEAD"], cwd=cwd)
+    last is prose. The limit of that rule: a message whose last paragraph
+    quotes the trailer line is read as carrying it, and reds until it is
+    reworded. A range git cannot read raises: not read is not clean."""
+    result = _git(["log", f"--format={_CI_UNFINISHED_LOG_FORMAT}", f"{base}..{head}"], cwd=cwd)
     if result.returncode != 0:
         raise RuntimeError(
-            f"git log over {base}..HEAD failed (rc={result.returncode}): {result.stderr.strip()}"
+            f"git log over {base}..{head} failed (rc={result.returncode}): {result.stderr.strip()}"
         )
     found = []
     for record in result.stdout.split("\x1e")[1:]:
@@ -223,17 +238,49 @@ def unfinished_commits(base: str, cwd: str | None = None) -> list[tuple[str, str
     return found
 
 
-def _print_unfinished(found: list[tuple[str, str, str]], env: dict[str, str], cwd: str | None) -> None:
+def _unfinished_reset(oldest: str, parent: str, base: str, head: str,
+                      cwd: str | None) -> tuple[str, str]:
+    """The soft reset that takes the set-aside commit back, and why that one:
+    its parent while no merge follows it in the pull request's range; after a
+    merge of the base, the lane's merge-base with the base, since a reset to
+    the parent stages the merged base's tree as the lane's own change, and a
+    file the base has since removed rides the landing back in. Where the head
+    is not here the merge-base is named as a command, computed in the lane's
+    checkout. A read git cannot answer raises: not read is not clean."""
+    merges = _git(["rev-list", "--merges", f"{oldest}..{head}"], cwd=cwd)
+    if merges.returncode != 0:
+        raise RuntimeError(
+            f"git rev-list over {oldest}..{head} failed (rc={merges.returncode}): {merges.stderr.strip()}"
+        )
+    if not merges.stdout.strip():
+        return (parent[:12] or f"{oldest[:12]}^",
+                "takes back the set-aside edits and every commit after them, staged")
+    why = ("a merge of the base follows it, so this is the lane's merge-base with the base: a reset to "
+           "its parent would stage the base's merged changes as the lane's own")
+    if head == "HEAD":
+        return f"$(git merge-base {base} HEAD)", why
+    found = _git(["merge-base", base, head], cwd=cwd)
+    if found.returncode != 0 or not found.stdout.strip():
+        raise RuntimeError(
+            f"git merge-base {base} {head} failed (rc={found.returncode}): {found.stderr.strip()}"
+        )
+    return found.stdout.strip()[:12], why
+
+
+def _print_unfinished(found: list[tuple[str, str, str]], base: str, head: str,
+                      env: dict[str, str], cwd: str | None) -> None:
     """The red for a pull request holding a set-aside commit, with the moves
     that clear it. A commit on origin stays in the pull request's range until
     the branch is rewritten, and the ship driver never force-pushes, so the
     soft reset the driver's brief names cannot clear this alone: the lease
     push is the move that does, bound to the head this run read where the
-    workflow forwarded it."""
-    sha, parent, lane = found[-1]  # the oldest: a reset to its parent takes back every one after it
-    head = pr_head_sha(env)
-    lease = shlex.quote(f"--force-with-lease={lane}:{head}") if head else "--force-with-lease"
-    lease_note = ("the lease refuses if the branch moved since this run read it" if head else
+    workflow forwarded it, and it goes before any driver verb, which reads
+    origin's branch as ahead of the lane and names a merge of it."""
+    sha, parent, lane = found[-1]  # the oldest: a reset below it takes back every one after it
+    target, why = _unfinished_reset(sha, parent, base, head, cwd)
+    reviewed = pr_head_sha(env)
+    lease = shlex.quote(f"--force-with-lease={lane}:{reviewed}") if reviewed else "--force-with-lease"
+    lease_note = ("the lease refuses if the branch moved since this run read it" if reviewed else
                   "the lease is your remote-tracking ref of the branch: fetch it first")
     print(
         "Harness Guard: this pull request holds the commit the ship driver's "
@@ -253,13 +300,17 @@ def _print_unfinished(found: list[tuple[str, str, str]], env: dict[str, str], cw
         "land the half-built edits on green. A commit on origin stays in the pull\n"
         "request's range until the branch is rewritten (the ship driver never\n"
         "force-pushes), so in the lane's checkout:\n"
-        f"  git reset --soft {parent[:12] or sha[:12] + '^'}\n"
-        "    (takes back the set-aside edits and every commit after them, staged)\n"
+        f"  git reset --soft {target}\n"
+        f"    ({why})\n"
         "  finish the lane, and commit it\n"
         f"  git push {lease} origin {shlex.quote(f'HEAD:{lane}')}\n"
         f"    ({lease_note})\n"
-        "then bind the title's approval marker to the new head where it carries one"
-        + (" (python tools/cc/ship.py rebind)." if ship_driver.is_file() else ".")
+        + ("Push before any ship-driver verb: until origin's branch is rewritten the\n"
+           "verbs read it as ahead of the lane and name a merge of it, which brings the\n"
+           "set-aside commit back. Then python tools/cc/ship.py rebind binds the\n"
+           "title's approval marker to the new head where it carries one."
+           if ship_driver.is_file() else
+           "Then bind the title's approval marker to the new head where it carries one.")
     )
 
 
@@ -1423,9 +1474,10 @@ def run(env: dict[str, str], cwd: str | None = None) -> int:
     # harness change anyone approved. A push event is past the merge, and no
     # push of the lane clears it there, so it is not judged.
     if env.get("GITHUB_EVENT_NAME", "") in _PR_EVENTS:
-        unfinished = unfinished_commits(base, cwd=cwd)
+        head = pr_range_head(env, cwd=cwd)
+        unfinished = unfinished_commits(base, head, cwd=cwd)
         if unfinished:
-            _print_unfinished(unfinished, env, cwd)
+            _print_unfinished(unfinished, base, head, env, cwd)
             return 2
 
     paths = changed_paths(base, cwd=cwd)

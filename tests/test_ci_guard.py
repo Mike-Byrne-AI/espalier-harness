@@ -2766,6 +2766,94 @@ class TestUnfinishedLaneArm:
               "-m", "The last paragraph is prose."], fresh_repo, _git_env())
         assert self._pr(fresh_repo, base).returncode == 0
 
+    def test_a_last_paragraph_quoting_the_trailer_line_reds(self, fresh_repo):
+        """The declared limit of git's trailer rule: a message whose last
+        paragraph quotes the trailer line carries it, and reds until it is
+        reworded."""
+        ship = _ship_home()
+        base = self._lane(fresh_repo)
+        _git(["commit", "--quiet", "--allow-empty", "-m", "docs: the arm",
+              "-m", f"{ship.UNFINISHED_TRAILER}: lane/half"], fresh_repo, _git_env())
+        assert self._pr(fresh_repo, base).returncode == 2
+
+    @staticmethod
+    def _base_moves_and_the_lane_merges_it(repo: Path) -> tuple[str, str]:
+        """The base adds c.txt after the set-aside commit, the lane merges the
+        base and goes on, then the base removes c.txt again (air's drive,
+        redirect e55404). Returns the base's tip and the merged base commit."""
+        env = _git_env()
+        _git(["checkout", "-q", "main"], repo, env)
+        _commit(repo, "c.txt", "c\n", "feat: c on the base")
+        merged = _head(repo)
+        _git(["checkout", "-q", "lane/half"], repo, env)
+        _git(["merge", "-q", "--no-edit", "main"], repo, env)
+        _commit(repo, "l2.py", "l = 2\n", "feat: more after the merge")
+        _git(["checkout", "-q", "main"], repo, env)
+        _git(["rm", "-q", "c.txt"], repo, env)
+        _git(["commit", "-q", "-m", "revert: c off the base"], repo, env)
+        tip = _head(repo)
+        _git(["checkout", "-q", "lane/half"], repo, env)
+        return tip, merged
+
+    def test_a_merge_of_the_base_after_it_names_the_merge_base_reset_which_lands_clean(self, fresh_repo):
+        """A reset to the set-aside commit's parent stages the merged base's
+        tree as the lane's own change, so a file the base has since removed
+        rides the landing back in; the merge-base reset the red names lands
+        the lane's files alone, and the gate passes the recommitted head."""
+        env = _git_env()
+        self._lane(fresh_repo)
+        _commit_sha, parent = self._set_aside(fresh_repo, "lane/half")
+        tip, merged = self._base_moves_and_the_lane_merges_it(fresh_repo)
+        head = _head(fresh_repo)
+        result = self._pr(fresh_repo, tip, head=head)
+        assert result.returncode == 2, result.stdout
+        assert f"git reset --soft {merged[:12]}" in result.stdout
+        assert f"git reset --soft {parent[:12]}" not in result.stdout
+
+        def recommitted(target: str) -> tuple[list[str], int]:
+            _git(["reset", "-q", "--soft", target], fresh_repo, env)
+            _git(["commit", "-q", "-m", "feat: the finished lane"], fresh_repo, env)
+            names = _git(["diff", "--name-only", f"{tip}...HEAD"], fresh_repo).stdout.split()
+            verdict = self._pr(fresh_repo, tip).returncode
+            _git(["reset", "-q", "--hard", head], fresh_repo, env)
+            return names, verdict
+
+        assert "c.txt" in recommitted(parent)[0], "the hazard the parent reset carries"
+        names, verdict = recommitted(merged)
+        assert sorted(names) == ["done.py", "half.py", "l2.py"] and verdict == 0
+
+    def test_the_range_ends_at_the_reviewed_head_not_the_test_merge(self, fresh_repo):
+        """Verify's checkout on a pull request is GitHub's test merge of the
+        head into the base, so a range ending at HEAD reads a merge after
+        every commit of the lane and would name the wider reset."""
+        env = _git_env()
+        self._lane(fresh_repo)
+        _commit_sha, parent = self._set_aside(fresh_repo, "lane/half")
+        head = _head(fresh_repo)
+        _git(["checkout", "-q", "main"], fresh_repo, env)
+        _commit(fresh_repo, "other.txt", "o\n", "feat: the base moves")
+        tip = _head(fresh_repo)
+        _git(["checkout", "-q", "--detach", tip], fresh_repo, env)
+        _git(["merge", "-q", "--no-edit", head], fresh_repo, env)
+        assert _head(fresh_repo) not in (tip, head)
+        result = self._pr(fresh_repo, tip, head=head)
+        assert result.returncode == 2, result.stdout
+        assert f"git reset --soft {parent[:12]}" in result.stdout
+
+    def test_a_head_the_checkout_lacks_reads_its_head(self, fresh_repo):
+        base = self._lane(fresh_repo)
+        self._set_aside(fresh_repo, "lane/half")
+        result = self._pr(fresh_repo, base, head="f" * 40)
+        assert result.returncode == 2, result.stdout + result.stderr
+
+    def test_without_the_head_a_merge_names_the_merge_base_as_a_command(self, fresh_repo):
+        self._lane(fresh_repo)
+        self._set_aside(fresh_repo, "lane/half")
+        tip, _merged = self._base_moves_and_the_lane_merges_it(fresh_repo)
+        result = self._pr(fresh_repo, tip, head=None)
+        assert result.returncode == 2, result.stdout
+        assert f"git reset --soft $(git merge-base {tip} HEAD)" in result.stdout
+
     def test_a_commit_already_in_the_base_is_not_the_pull_requests(self, fresh_repo):
         self._set_aside(fresh_repo, "main")
         base = self._lane(fresh_repo)
@@ -2795,11 +2883,16 @@ class TestUnfinishedLaneArm:
     def test_the_rebind_is_named_only_where_the_driver_is(self, fresh_repo):
         base = self._lane(fresh_repo)
         self._set_aside(fresh_repo, "lane/half")
-        assert "ship.py rebind" not in self._pr(fresh_repo, base).stdout
+        bare = self._pr(fresh_repo, base).stdout
+        assert "ship.py rebind" not in bare and "ship-driver verb" not in bare
         driver = fresh_repo / "tools" / "cc" / "ship.py"
         driver.parent.mkdir(parents=True, exist_ok=True)
         driver.write_text("# a stand-in for the deployed driver\n", encoding="utf-8")
-        assert "python tools/cc/ship.py rebind" in self._pr(fresh_repo, base).stdout
+        out = self._pr(fresh_repo, base).stdout
+        assert "python tools/cc/ship.py rebind" in out
+        # The push goes first: until origin's branch is rewritten the driver's
+        # verbs name a merge of it, which brings the set-aside commit back.
+        assert "Push before any ship-driver verb" in out
 
     def test_the_guards_copies_are_the_drivers(self):
         """The guard imports no sibling (CI runs it from the pull request's own
