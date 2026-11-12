@@ -120,7 +120,7 @@ _HANDOFF_ASK = (
     "After the handoff take no new job (your own pull request's red or conflict, and a red "
     "main's revert, are not new work), answer a loop tick in one line, and tell the operator "
     "this window needs a /clear (the loop survives it; start no second one), or, after a lane "
-    "opened by hand, run python tools/cc/ship.py arm --why <how>."
+    "opened by hand, run python tools/cc/ship.py arm --why <how> and its auto-merge verb."
 )
 _CONTEXT_UNREADABLE = (
     "[HARNESS] handoff_context_tokens is set, but the context could not be read from this "

@@ -2421,6 +2421,20 @@ class TestMergedRedReceiver:
         line = mod._merged_prs_line(json.dumps([_merged_row(46, rollup)]), local_has_commit=_pulled)
         assert line.endswith("red after merge: leg-0?, leg-1?, leg-2?, ...") and line.isascii()
 
+    def test_an_unarmed_open_row_names_the_verb_that_arms_it_and_a_draft_names_none(self):
+        """A row reading auto-merge off names the ship driver's verb (never
+        `arm`, which arms the own-clear marker): the words alone, from the
+        row the listing already read, since the hook cuts itself at its
+        wall. A draft merges nothing, so its row names no arm."""
+        mod = _load()
+        pr = {"number": 41, "state": "OPEN", "headRefName": "lane/y", "baseRefName": "main",
+              "isDraft": False, "mergeStateStatus": "CLEAN", "autoMergeRequest": None, "statusCheckRollup": []}
+        assert mod._pr_summary(pr) == (
+            "#41 lane/y -- no checks reported; auto-merge not armed; on its branch, "
+            "tools/cc/ship.py auto-merge arms it")
+        pr["isDraft"] = True
+        assert mod._pr_summary(pr) == "#41 lane/y -- draft; no checks reported; auto-merge not armed"
+
     def test_a_red_on_an_open_pull_request_no_longer_reads_as_a_hold(self):
         """The sibling clause in `_pr_summary`: a conflict holds, a behind lane
         names its catch-up, and a red alone names the command that says whether

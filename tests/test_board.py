@@ -185,6 +185,19 @@ class TestOpenPullRequests:
         assert "#8 lane/b [win-2]: behind the base (holds only under the up-to-date rule); auto-merge not armed" in text
         assert text.isascii()
 
+    def test_an_unarmed_row_names_the_verb_that_arms_it_and_a_draft_names_none(self, board):
+        """The remedy is the ship driver's verb on the lane's own seat (never
+        `arm`, which arms the own-clear marker); a draft merges nothing."""
+        row = {"number": 8, "headRefName": "lane/b", "seat": "win-2", "mergeStateStatus": "CLEAN",
+               "isDraft": False, "autoMergeRequest": None}
+        assert board._pr_line(row).endswith(
+            "; auto-merge not armed: its seat's `tools/cc/ship.py auto-merge` arms it")
+        assert board._pr_line({**row, "isDraft": True}) == "#8 lane/b [win-2]: draft; auto-merge not armed"
+        assert board._pr_line({**row, "autoMergeRequest": {"x": 1}}).endswith("; auto-merge armed")
+        # A pull request no seat owns (a bot's, one opened by hand) is no seat's to arm.
+        for seat in ("", None):
+            assert "ship.py auto-merge" not in board._pr_line({**row, "seat": seat}), seat
+
     def test_a_pull_request_no_claim_names_shows_the_seat_its_label_names(self, board, monkeypatch, tmp_path):
         """DEF-4044: the seat label the ship driver stamps names a lane no claim
         does, here as on the records line and in the overlap notice; a claim

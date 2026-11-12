@@ -74,7 +74,9 @@ python tools/cc/ship.py handoff
 ```
 
 A lane opened by hand (`gh pr create` outside the driver) ran no verb and armed
-nothing; the same arm, by hand, on a clean tracked tree:
+nothing: its pull request's auto-merge is armed by the `auto-merge` verb (Step
+3), and the own-clear marker by the same arm the handoff makes, by hand, on a
+clean tracked tree:
 
 ```bash
 python tools/cc/ship.py arm --why "<how the lane was opened>"
@@ -271,8 +273,11 @@ fails or lists nothing refuses with the lane still unpushed; one push; the pull
 request created with its title carrying `HARNESS-UPDATE-APPROVED@<head7>` when
 the diff touches a protected path -- **bound at creation**, so there is one
 event, one check run and no title edit for a race to lose; auto-merge armed and
-read back (a repository whose setting is off is named: merge by hand once the
-checks are green). The
+read back, the pull request's state first: gh merges one that nothing holds at
+once and prints nothing, so the verb says `merged at once`, never that the arm
+did not take (a repository whose setting is off is named: once it is on, the
+`auto-merge` verb in Step 3 arms it, or merge by hand once the checks are
+green). The
 body is `--body-file <path>` for prose -- a file, never a heredoc, so a
 backtick in the prose is text and not a command. Without it, the body is this
 seat's Session Log rows that the lane's own commits added (a fold's rows left
@@ -306,7 +311,7 @@ is still open; a lane that builds on this one waits for the merge.
 
 ## Step 3: When a check goes red, the head moves, or the lane falls behind
 
-Six shapes to recognise:
+Seven shapes to recognise:
 
 - **`verify` red, its message naming two heads** -- the marker is bound to a
   head that is no longer the pull request's (you pushed after binding), or a run
@@ -445,6 +450,26 @@ Six shapes to recognise:
   changes, or a Python module one import away from one, run `catch-up` so CI
   tests the combination before it merges. A move elsewhere is said nowhere:
   the merge-tested green stands.
+- **Auto-merge off on an open pull request** (`status` prints `auto-merge not
+  armed:` with the verb, and the banner's and the board's rows name it) -- it
+  was disarmed on a red base, disabled by hand, or the pull request was opened
+  by hand. `rebind`, `catch-up` and `handoff` never re-arm it, so a deliberate
+  disarm stays off until you arm it again:
+
+  ```bash
+  python tools/cc/ship.py auto-merge
+  ```
+
+  The arm `open` makes, read back the same way: gh merges a pull request that
+  nothing holds at once, silently, and its auto-merge then reads off, so the
+  verb reads the state first and says `merged at once` (pull the base), never
+  `NOT armed`. Already armed, it writes nothing. Before it writes, it refuses
+  what `open` refuses before it arms -- a red base, unless the lane is a
+  `revert/` lane or `--base-red-ruled <ack id>` names a ruling that holds --
+  and what `rebind` refuses before it binds: HEAD not the pull request's head
+  (push first) and a lane holding an unfinished handoff's commit; a draft
+  too, which merges nothing (mark it ready first). `--dry-run` names the arm
+  and writes nothing. Not `arm`: that verb arms the own-clear marker.
 
 ```bash
 python tools/cc/ship.py status

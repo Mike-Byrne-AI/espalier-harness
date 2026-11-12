@@ -35,6 +35,12 @@ Verbs (each stands alone and derives what it needs from git and gh):
                          and notes this seat's other open pull request
     rebind               after an exceptional second push: re-bind the title
                          to the pull request's head, forcing a fresh run
+    auto-merge           arm auto-merge on the branch's open pull request and
+                         read it back, the arm `open` makes, where it went off
+                         after the open or the pull request was opened by
+                         hand; refuses what `open` refuses before it arms (a
+                         red base) and what `rebind` refuses before it binds
+                         (HEAD not the head); already armed, it writes nothing
     catch-up             under an up-to-date rule: merge the base in -- on the
                          server when GitHub reads the lane clean, locally with
                          the record files resolved by shape when it reads it
@@ -51,6 +57,8 @@ Verbs (each stands alone and derives what it needs from git and gh):
                          other red stands; otherwise says what does
     release vX.Y.Z       after the merge: tag the merge commit, push that one
                          tag, create the release
+    fold                 bring the parked Session Log rows in and prune past
+                         the slack: the step before a push `open` does not make
     handoff              /handoff's one push step: pushes only when
                          espalier.toml sets handoff_push = true (off by
                          default: a push is outward-facing), else says so;
@@ -64,7 +72,8 @@ Verbs (each stands alone and derives what it needs from git and gh):
                          the window; a held refusal rides the marker and the
                          lane to land first rides the brief
     arm [--why ...]      the same arm by hand, for a lane opened by hand
-                         (gh pr create ran no verb): a clean tree, a lane on
+                         (gh pr create ran no verb; its auto-merge is the
+                         auto-merge verb's): a clean tree, a lane on
                          origin; over a marker already armed for this session
                          it re-arms at HEAD when a pull by hand moved it (no
                          commit of the lane's own in the move), the brief
@@ -263,7 +272,7 @@ def _gh_json(*args: str, cwd: str | None = None) -> object:
     caller reads it for. Unparseable output is a refusal that quotes stderr."""
     rc, out, err = _gh(*args, cwd=cwd)
     try:
-        return json.loads(out or "")  # json-dict-safe: ok every caller isinstance-checks the answer before a deref (pr_for_branch, _read_required, open_pr, rebind)
+        return json.loads(out or "")  # json-dict-safe: ok every caller isinstance-checks the answer before a deref (pr_for_branch, _read_required, _arm_auto_merge, rebind)
     except ValueError:
         raise Refused(f"gh {' '.join(args[:2])} answered rc={rc} with no JSON: {err.strip() or out.strip() or 'nothing'}") from None
 
@@ -343,7 +352,7 @@ def pr_for_branch(branch: str, state: str = "open") -> dict | None:
     merged or closed one with the same head name must never take an edit)."""
     rows = _gh_json("pr", "list", "--head", branch, "--state", state, "--limit", "1",
                     "--json", "number,title,url,state,headRefOid,baseRefName,mergeStateStatus,mergeable,"
-                              "autoMergeRequest,mergeCommit")
+                              "autoMergeRequest,mergeCommit,isDraft")
     if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
         return None
     return rows[0]
@@ -958,7 +967,8 @@ def _revert_lane_ruling_note(base: str, cwd: str, root: Path | None) -> None:
 
 
 def red_base_verdict(base: str, branch: str, prs: list[dict], cwd: str, *, ruled: str | None = None,
-                     root: Path | None = None) -> tuple[str | None, str | None]:
+                     root: Path | None = None,
+                     verbs: tuple[str, ...] = ("open", "handoff")) -> tuple[str | None, str | None]:
     """``(refusal, ruling)``: why `open` must not arm this lane now, or the
     line that says the dispatcher's ruling ``ruled`` (an ack id, given as
     :data:`BASE_RED_RULED_FLAG`) lets it land on the red base, with the
@@ -993,12 +1003,15 @@ def red_base_verdict(base: str, branch: str, prs: list[dict], cwd: str, *, ruled
             return None, (f"{red} -- let through by the dispatcher's ruling {ruled} ({sender}'s gridlock ack "
                           f"naming run {run_id}: {text[:RULING_TEXT_CHARS]})")
         return (f"{red}. {BASE_RED_RULED_FLAG} {ruled}: {problem}. Nothing lands on a red base but the revert "
-                "(from a revert/ lane, which `open` lets through), a re-run where the red was a flake, or a "
-                "ruling that holds" + armed_words), None
-    return (f"{red}. Nothing lands on a red base but the revert (from a revert/ lane, which `open` lets "
+                f"(from a revert/ lane, which `{verbs[0]}` lets through), a re-run where the red was a flake, "
+                "or a ruling that holds" + armed_words), None
+    # The verbs that take the flag are the caller's: `auto-merge` names itself,
+    # since `open` cannot run on a pull request already open.
+    takes_flag = " or ".join(f"`{verb}`" for verb in verbs)
+    return (f"{red}. Nothing lands on a red base but the revert (from a revert/ lane, which `{verbs[0]}` lets "
             "through), a re-run where the red was a flake, or, where the failing test is outside every "
             "suspect's diff and reproduces at the last green base, the fix landed forward on the "
-            f"dispatcher's ruling: {BASE_RED_RULED_FLAG} <ack id> on `open` or `handoff`, the ack opening "
+            f"dispatcher's ruling: {BASE_RED_RULED_FLAG} <ack id> on {takes_flag}, the ack opening "
             f"`{RULING_HEAD}{run_id}` with --lane {branch}" + armed_words), None
 
 
@@ -2572,7 +2585,8 @@ def arm(why: str | None = None, dry_run: bool = False) -> int:
     """The handoff's last act by hand: arm the own-clear marker for this
     session, for a lane opened by hand (``gh pr create`` ran no verb, so no
     marker: air-work's #353, 2026-10-30, its window left past the threshold)
-    or a handoff whose arm did not run. The handoff's gates
+    or a handoff whose arm did not run. It arms no auto-merge: a lane opened
+    by hand arms that with :func:`auto_merge`. The handoff's gates
     (:func:`_own_clear_gate`) refuse by name here; a dirty tracked tree
     refuses first (the mod would hold the clear on it anyway, and this verb
     should not promise one); a lane that is not on origin refuses and names
@@ -3662,23 +3676,101 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
             pr = pr_for_branch(branch, "open")
             if pr is None:
                 raise Refused(f"the pull request was created ({url or 'no URL printed'}) but cannot be found by "
-                              f"branch yet: arm it by hand once it lists (gh pr merge <n> --auto --merge)")
+                              f"branch yet: once it lists, {AUTO_MERGE_VERB} on this branch arms it")
             number = str(pr["number"])
-        rc, _, err = _gh("pr", "merge", number, "--auto", "--merge", cwd=str(root))
-        if rc != 0:
-            raise Refused(f"auto-merge did not arm for #{number} ({err.strip()}): merge by hand once the checks are green -- {url}")
-        armed = _gh_json("pr", "view", number, "--json", "autoMergeRequest", cwd=str(root))
-        if not isinstance(armed, dict) or not armed.get("autoMergeRequest"):
-            raise Refused(f"auto-merge reads back as NOT armed on #{number}: arm it by hand (gh pr merge {number} --auto --merge) -- {url}")
+        merged = _arm_auto_merge(number, url, str(root))
     except Refused as exc:
         _release_claims(root, branch, "Lane pushed; claims closed.")
         # The lane is on origin: what refused is the next window's to finish,
         # and a handoff running this arms the own-clear on it.
         raise Held(f"the push landed, then: {exc}", landed=True) from None
-    _say(f"#{number} open, auto-merge armed, one push: {url}")
+    if merged:
+        _say(f"#{number} merged at once, one push: nothing held it, so gh merged it as it armed; "
+             f"pull {base}: {url}")
+    else:
+        _say(f"#{number} open, auto-merge armed, one push: {url}")
     # The release first: a notice that is slow or interrupted never leaves the claims live.
     _release_claims(root, branch, f"Lane shipped as #{number}; claims closed.")
     _overlap_notice(root, branch, base, number, sha)
+    return 0
+
+
+#: The verb that arms auto-merge on the branch's open pull request, named
+#: wherever auto-merge reads off: the arm's refusals here, `status`, the
+#: board's pull request row and the banner's Open PRs tail (those two keep
+#: the words as literals, since neither imports this driver).
+AUTO_MERGE_VERB = "tools/cc/ship.py auto-merge"
+
+
+def _arm_auto_merge(number: str, url: str, cwd: str) -> bool:
+    """Arm auto-merge on pull request ``number`` and read it back: True when
+    gh merged it as it armed, False when it reads armed, and a refusal naming
+    :data:`AUTO_MERGE_VERB` otherwise. gh merges a pull request that nothing
+    holds at once and prints nothing, and its ``autoMergeRequest`` then reads
+    null, so the read takes ``state`` and ``mergedAt`` first: a merge is never
+    refused as an arm that did not take. The one place ``--auto`` is passed;
+    `open` and `auto-merge` are its two callers, and no other verb arms, so a
+    deliberate disarm (the board's advice on a red base) stays off until a
+    seat arms it again."""
+    rc, _, err = _gh("pr", "merge", number, "--auto", "--merge", cwd=cwd)
+    if rc != 0:
+        raise Refused(f"auto-merge did not arm for #{number} ({err.strip()}): once that is fixed, "
+                      f"{AUTO_MERGE_VERB} arms it, or merge by hand once the checks are green -- {url}")
+    read = _gh_json("pr", "view", number, "--json", "state,mergedAt,autoMergeRequest", cwd=cwd)
+    if isinstance(read, dict) and (str(read.get("state") or "").upper() == "MERGED" or read.get("mergedAt")):
+        return True
+    if not isinstance(read, dict) or not read.get("autoMergeRequest"):
+        raise Refused(f"auto-merge reads back as NOT armed on #{number}: {AUTO_MERGE_VERB} arms it again -- {url}")
+    return False
+
+
+def auto_merge(dry_run: bool = False, base_red_ruled: str | None = None) -> int:
+    """Arm auto-merge on the branch's open pull request and read it back
+    (:func:`_arm_auto_merge`, the arm `open` makes at creation), for a pull
+    request whose auto-merge went off after it opened -- disarmed on a red
+    base, disabled by hand -- or that was opened by hand. Already armed: said,
+    nothing written. Refused, before anything is written, as `rebind` refuses
+    before it binds -- no open pull request, a lane holding an unfinished
+    handoff's commit, HEAD not the pull request's head (push first) -- and as
+    `open` refuses before it arms: a red base, unless the lane is a revert or
+    :data:`BASE_RED_RULED_FLAG` names a ruling that holds. A draft merges
+    nothing, so it is refused too. No other verb arms auto-merge: `rebind`,
+    `catch-up` and `handoff` leave a disarm as it is."""
+    root = repo_root()
+    _wiring_note(root)
+    branch = current_branch()
+    pr = _require_open_pr(branch)
+    number = str(pr["number"])
+    url = str(pr.get("url") or "")
+    if pr.get("autoMergeRequest"):
+        _say(f"#{number}: auto-merge is already armed; nothing written: {url}")
+        return 0
+    if pr.get("isDraft"):
+        raise Refused(f"#{number} is a draft, which merges nothing: mark it ready for review "
+                      f"(gh pr ready {number}), then run auto-merge again")
+    named = str(pr.get("baseRefName") or "")
+    base = named or default_branch()
+    _refuse_an_unfinished_lane(root, f"origin/{named}" if named else (_base_ref_offline(root) or "origin/main"))
+    sha = head_sha()
+    if not str(pr.get("headRefOid", "")).startswith(sha):
+        # rebind's push first, word for word: where origin's copy holds commits
+        # HEAD lacks, a plain push is rejected, so the words say what goes first.
+        ahead = _ahead_words(branch, str(root))
+        raise Refused(f"push first: HEAD {sha[:7]} is not #{number}'s head {str(pr.get('headRefOid', ''))[:7]}"
+                      + (f"; before the push, {ahead}" if ahead else ""))
+    refusal, ruling = red_base_verdict(base, branch, _open_prs(str(root)) or [], str(root),
+                                       ruled=base_red_ruled, root=root, verbs=("auto-merge",))
+    if refusal:
+        raise Refused(refusal)
+    if ruling:
+        _say(ruling)
+    if dry_run:
+        _say(f"dry-run: gh pr merge {number} --auto --merge")
+        return 0
+    if _arm_auto_merge(number, url, str(root)):
+        _say(f"#{number} merged at once: nothing held it, so gh merged it as it armed; pull {base}: {url}")
+    else:
+        _say(f"#{number}: auto-merge armed and read back: {url}")
     return 0
 
 
@@ -4850,6 +4942,10 @@ def status() -> int:
     armed = "armed" if pr.get("autoMergeRequest") else "not armed"
     _say(f"#{number} {pr.get('state')} merge-state={pr.get('mergeStateStatus')} auto-merge {armed} head={str(pr.get('headRefOid', ''))[:7]}")
     _say(f"title: {pr.get('title')}")
+    if pr.get("state") == "OPEN" and not pr.get("autoMergeRequest") and not pr.get("isDraft"):
+        # Off on an open pull request (disarmed on a red base, disabled by
+        # hand, opened by hand): the remedy is the driver's verb, never `arm`.
+        _say(f"auto-merge not armed: {AUTO_MERGE_VERB} arms it and reads it back")
     if pr.get("state") == "OPEN":
         reading = _read_required(number, str(root), str(pr.get("mergeStateStatus") or "").upper(),
                                  str(pr.get("headRefOid") or ""))
@@ -4973,6 +5069,11 @@ def build_parser() -> argparse.ArgumentParser:
                              "(the body records it)")
     p_rebind = sub.add_parser("rebind", help="re-bind the title marker to the pull request's head")
     p_rebind.add_argument("--dry-run", action="store_true")
+    p_auto = sub.add_parser("auto-merge", help="arm auto-merge on the branch's open pull request and read it "
+                                               "back (`arm` arms the own-clear marker, not this)")
+    p_auto.add_argument("--dry-run", action="store_true")
+    p_auto.add_argument(BASE_RED_RULED_FLAG, metavar="ACK_ID", dest="base_red_ruled",
+                        help="arm on a red base by the dispatcher's ruling, as `open` takes it")
     sub.add_parser("catch-up", help="merge the base in (on the server when clean; locally, record files "
                                     "resolved by shape, when GitHub reads the lane CONFLICTING), re-arm the "
                                     "own-clear marker at the new head, re-bind")
@@ -5002,7 +5103,8 @@ def build_parser() -> argparse.ArgumentParser:
                              "finish in the brief (only after the prompt router's threshold ask)")
     p_arm = sub.add_parser("arm", help="arm the own-clear marker for this session by hand: after a lane opened "
                                        "by hand (gh pr create), a handoff whose arm did not run, or a pull by "
-                                       "hand that moved HEAD under the armed marker (re-armed at HEAD)")
+                                       "hand that moved HEAD under the armed marker (re-armed at HEAD); "
+                                       "auto-merge is the auto-merge verb's")
     p_arm.add_argument("--why", help="why it is armed by hand (recorded in the marker)")
     p_arm.add_argument("--dry-run", action="store_true")
     return parser
@@ -5021,6 +5123,8 @@ def main(argv: list[str] | None = None) -> int:
                            allow_deletions=args.allow_deletions, subjects_body=args.subjects_body)
         if args.verb == "rebind":
             return rebind(dry_run=args.dry_run)
+        if args.verb == "auto-merge":
+            return auto_merge(dry_run=args.dry_run, base_red_ruled=args.base_red_ruled)
         if args.verb == "catch-up":
             return catch_up()
         if args.verb == "status":
