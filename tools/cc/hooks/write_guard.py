@@ -2128,7 +2128,9 @@ def _ps_secret_read_targets(command: str, _depth: int = 0) -> list[str]:
     out: list[str] = []
     aware = not _a_boundary_sits_in_a_quote(scan, _PS_STATEMENT_BOUNDARY_RE)
     # The scan keeps the command's offsets wherever no backtick joined a
-    # line, and a backtick is opaque to the gate, which then reads nothing.
+    # line, no gap was joined and no block comment became one blank (the
+    # pair's three changes of length), and a backtick is opaque to the gate,
+    # which then reads nothing: past any of them the old split stands.
     # The outer command alone: a carrier body runs in its caller's scope, so
     # the variable it binds reaches later statements the body cannot see.
     mentions = (_ps_quoted_mentions(command)
