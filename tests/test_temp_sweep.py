@@ -274,6 +274,11 @@ _MAKERS_AT_PIN = 47  # 2026-11-02 (DEF-811's shared fixture builder), aliases in
 _CM_SMALL = "a context manager, removed at exit; a kill leaves "
 _IN_BASETEMP = "made inside the test's tmp_path, removed with the session's basetemp"
 _UNLOCKED_MAKERS: dict[str, str] = {
+    "scripts/guard_cost_census.py::main": _CM_SMALL + (
+        "one guard-cost-census-* folder: the spawns' empty temp projects, an archive of tools/cc "
+        "and its audit records; a hand-run census, so a kill is the operator's"),
+    "scripts/guard_cost_census.py::_new_project":
+        "made inside main's context-managed folder, so it goes with that folder",
     "bench/end_to_end/runner.py::run_scenario":
         "removed in its own finally unless --keep-work-dir; a paid, hand-run bench, so a kill is the operator's",
     "bench/guard_metamorphic.py::_spelling_rc": _CM_SMALL + "an empty dir or one probe file",

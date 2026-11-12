@@ -433,7 +433,7 @@ This pack builds an instrument and a set of questions. It closes no defect class
 
 ## Landing
 
-- State: DRAFT
+- State: LANDED (2026-11-12 local). Task 1-A on `lane/ledger-trend-first-parent` (2026-10-11); Tasks 2-A and 3-A as #602; Task 4-A and this stanza on `lane/the-layer-questions-before-the-class` (assign 3243eb).
 - Task 0-A (draft 1's alarm): REFUTED 2026-10-07; see Task 0.
 - Task 0-B (merge-level lineage): NOT RUN 2026-10-08, its oracle cannot see lineage on this tree; its exit taken. See Task 0.
 - Tasks 2-A and 3-A: BUILT 2026-11-12 on `lane/a-row-filed-as-a-sibling-keeps-its-parent` (assign 921f79; the store ruled in ea78f6, the chain print in df777e; request c90117's five recommendations taken):
@@ -445,9 +445,10 @@ This pack builds an instrument and a set of questions. It closes no defect class
   - **Refutation measurement:** the two advisories add 6 to 7 ms to a filing on this tree (5 runs, in process); `lineage <id>` takes 0.086 s in process, 0.40 s wall. Under the one-second line.
   - **The pre-registered reviews' triggers, filed in this lane** (failure-mode review F2 and F8; air's note 46f055): `DEF-5103`, open until 20 rows carry `--sibling-of` (the chain review, and 2-A's first-ten check reads the same files); `DEF-5104`, open until 20 standalone filings since 2026-11-12 (the cluster review); `DEF-5105`, no repair for a forgotten flag. A row's probe going STRIKE_CANDIDATE is the review's trigger. The cluster advisory fired on `DEF-5105` itself, at 5 live standalone rows on `tools:ledger_row`. Still a decision, not built (F3): an artifact for the plan's answers.
   - **The five questions** are one ASCII constant, `ledger_row.py::FIVE_QUESTIONS`, with no internal ids: question 3 drops its pack reference and question 4 its section sign, since `tests/test_no_provenance_in_shipped_code.py` reads every line of a shipped `tools/cc/` module. Task 4-A writes `memory/check-the-layer-before-the-class.md` from it and adds the parity pin there, since the note does not exist yet; the pin maps the note's fuller wording to the constant either by quoting the constant word for word or by 0-C's first-sentence form (Task 0-C, "How the brief differed").
-- Commits:
-- Suite:
-- Earn-the-red:
-- Red-team:
-- Reach:
-- Date:
+- Task 4-A: BUILT 2026-11-12. `memory/check-the-layer-before-the-class.md` quotes each `FIVE_QUESTIONS` line word for word, in order, with the fuller wording around it (the pin's first form); Core Rule 12 asks §16, then the layer, then the class; `docs/STANDING_PRINCIPLES.md` §20, earned by 0-C, names the companion move by its title ("the guard by location") rather than `TP-476`, since that doc is provenance-scanned and an id there reds `tests/test_no_provenance_in_shipped_code.py`, and still calls it proposed, not proven; its alias block was written blind (the sidecar's header records the files the author opened); both reviewer bodies ask the layer question, as a WARN or ROUGH-EDGE never on its own a stop, with a `Sibling of:` field; `ledger_row.py class` prints the questions after it opens a class. The tells §20 and the note name are stated as built: the chain advisory stays recording-only under 0-B's exit, and recurrence at a consolidated site has no counter.
+- Commits: `286e1396` (4-A), `d6debcad` (the reviews' batch), then this stanza and the strike.
+- Suite: `python3 scripts/proof_tier.py --base origin/main --run` at `d6debcad`, full tier, `proof: PASS -- 4 of 4`: mypy clean, ruff clean, 31,368 passed (parallel leg, 43:31), 3,041 passed (serial leg, 19:39). The stanza and the strike after it earn the contract slice and the ledger tests.
+- Earn-the-red: each new test seen red against its named mutation, the component mutated, never a fixture: the class print dropped; a constant word changed, a question dropped from the note, two swapped; `CHAIN_ADVISORY_PRINTS` flipped; the class note's pointer removed; the handoff sentence cut from step 2.
+- Red-team: code-reviewer REQUEST CHANGES (1 WARN, 2 NIT) and failure-mode-reviewer REQUEST CHANGES (6 gaps, 4 rough edges), on a snapshot clone, landed as one batch. Taken: the questions' print claims corrected where the chain advisory prints none; the handoff's sibling sentence moved from the goal step, which a seat with no goal doc skips, into the session-row step; the class note points to the layer note first; the reviewer bodies' severity and `Sibling of:` field; Rule 12's order; §20's evidence (four lanes' reviews led to sibling rows, not every one a spelling; the exception untested; the grader given first sentences); `TP-477`'s copy of the questions replaced by a pointer to their home; question 1's and 5's non-discrimination in the note. Left, as the hop it is, a sibling of `DEF-5105`: the five dispatch bodies do not pass the reviewer the ids of the rows a lane fixes (F2's other half). Not taken: the note's own-title rank (F10; the principle wins its title, the note answers its descriptive queries).
+- Reach: not a class closure; no reach claimed. The one row-shaped item, Task 1's identity, closed with 1-A.
+- Date: 2026-10-07 (draft 1); 2026-11-12 (landed, local).

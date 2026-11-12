@@ -12,6 +12,28 @@ While pre-1.0, minor version bumps may include breaking changes.
 
 ### Added
 
+- **A row filed as a sibling of another keeps its parent, and the ledger asks
+  whether a fix's layer can reach its goal.** `tools/cc/ledger_row.py file
+  --sibling-of <id>` (repeatable) records the parents in a file of the
+  child's own under `task-packs/lineage.d/`, which a strike never touches, so
+  a chain survives the strike of a row in its middle; an unknown parent is
+  refused.
+  - **Advice, never a refusal:** a filing into the standalone class that makes
+    five live standalone rows on one site family prints a cluster advisory; a
+    chain advisory records lineage and prints one line, saying at twenty rows
+    that its thresholds are due for review. Its full print waits for that
+    review's ruling and a constant in `ledger_row.py`.
+  - **At plan time:** `ledger_row.py lineage <id>` (read-only, exit 0) prints
+    a row's chain, its site family's standalone count and, when either is at
+    its threshold, five questions about the fix's layer. `/implement-task` and
+    `/implement-pack` run it for each row the work names.
+  - **Where the questions are printed:** the cluster advisory, the `lineage`
+    verb at its thresholds, and the `class` verb, which prints them after it
+    opens a class. The `code-reviewer` and `failure-mode-reviewer` agents ask
+    the layer question of each fix, as advice, and mark a finding that is a
+    further instance of the row being fixed `(sibling of DEF-N)`; `/handoff`
+    writes an unfiled one into the session's row for the filer to copy.
+
 - **Ledger ids are minted from a per-seat block.** `espalier.toml` gains an
   `[id_blocks]` table: one line per seat (`git config espalier.machine`), one
   `DEF`/`INV`/`TP` range each, with `_unnamed` as the shared range for a clone

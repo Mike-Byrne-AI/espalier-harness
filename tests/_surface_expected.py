@@ -248,6 +248,10 @@ EXPECTED_SCRIPT_NAMES = frozenset({  # class: literal
     # 2026-11-08: each CI job's timeout-minutes against its last 20 green runs,
     # the re-measure DEF-1178's bounds lacked (post-merge's 75 cut 2 of its last 22).
     "ci_job_bounds_census.py",
+    # 2026-11-12 (TP-707 1-A): what write_guard costs a call -- per-kind spawn
+    # times under the box lock, the pattern path's compile proxy and the two
+    # pattern modules' import time, at this checkout or at any commit.
+    "guard_cost_census.py",
     "derived_population_census.py",
     "final_release_matrix.py",
     # 2026-09-22: the release gate -- the full proof tier in a fresh clone per
