@@ -1554,8 +1554,8 @@ first; the dangerous-command catch is a secondary slip-catcher):
    body that removes a fixed operand instead of the variable is the rm
    tier's own.
 
-   A for loop over a bare word list is read as well
-   (DEF-837): it has no enumerator, so each listed word is judged as the
+   A for loop over a bare word list is read as well:
+   it has no enumerator, so each listed word is judged as the
    direct remove of that word is -- `for f in *; do rm -rf "$f"; done`
    draws the wall `rm -rf *` draws where that directory is the checkout,
    the home or the root, and inside a build directory too, since a loop
@@ -1833,7 +1833,9 @@ launcher before the shell (`| wsl bash`, `| wsl`, `| sudo bash`,
 `| env bash`, `| busybox sh`) and a versioned name (`| bash-5.2`,
 `| ksh93`) open no reading; and a here-string before a quoted string that
 ends the stage is read only as quoted text, which an apostrophe in its
-body can misplace. Open gaps, not limits: a backtick escape inside a
+body can misplace; each is pinned at allow in
+`tests/test_write_guard.py::TestCrossShellRouting::test_powershell_tool_declared_limits_are_pinned`.
+Open gaps, not limits: a backtick escape inside a
 double-quoted program (`` `n ``, `` `t ``) is read as its two characters,
 on that spelling and behind `bash -c` alike; a comment that ends in a
 backslash hides the next line from the wall, on both tools; and a program
