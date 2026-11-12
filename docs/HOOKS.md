@@ -1954,7 +1954,12 @@ the words that put a command behind them -- `then`, `do`, `!`, `{`, a
 leading assignment, a case arm, a leading redirect and a wrapper run with
 its flags (`sudo -u root`, `timeout 5`, `nohup`) -- and an input redirect's
 source is a read (`cat < .env`, `done < .env`), except a copier's, which
-never reads its stdin. The two rosters are pinned to
+never reads its stdin. Before the verb is read, a command substitution that
+prints nothing is taken out, as bash takes it out before it runs the next
+word: an empty body, a backtick comment (`` `# note` cat .env ``) or `:` with
+literal words (`$(: note) cat .env`), outside single quotes. A body that runs
+anything else is not evaluated, so `$(true) cat .env` is a declared false
+allow. The two rosters are pinned to
 each other class for class, and a program handed to the other shell
 (`powershell -Command "Get-Content .env"` on Bash, `sh -c 'cat .env'` on
 PowerShell) is read with that shell's roster. A program a carrier runs out

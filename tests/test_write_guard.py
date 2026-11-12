@@ -13316,6 +13316,17 @@ class TestSecretPathAccess:
     def test_a_substitution_that_runs_no_read_is_allowed(self, command, tmp_path):
         assert_hook_allowed(run_guard_tool("Bash", {"command": command}, tmp_path))
 
+    # A declared limit (docs/HOOKS.md, the secret-read paragraph): a body that
+    # runs anything but `:` is not evaluated, so these read the file on bash
+    # and are allowed here. The day a lane reads them, this row reds and the
+    # sentence is rewritten on purpose.
+    @pytest.mark.parametrize("command", [
+        "$(true) cat .env",
+        "$(: $(id)) cat .env",
+    ])
+    def test_a_substitution_the_leg_does_not_evaluate_is_a_declared_limit(self, command, tmp_path):
+        assert_hook_allowed(run_guard_tool("Bash", {"command": command}, tmp_path))
+
     # DEF-1045: a statement that opens with a quoted string is a mention when
     # nothing in the command can run it. A positive gate with two arms, each
     # read on the raw command: the right-hand side of an assignment that is
