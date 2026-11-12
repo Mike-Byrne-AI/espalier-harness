@@ -46,6 +46,11 @@ For one bounded change, one main proof path, or a small localized edit.
    beside `files:` / `proof:` / `rollback:`, so they are greppable in the plan
    file rather than living only in the transcript (a body line with no
    artifact behind it is the one that gets skipped).
+   **Then, for each live forward-ledger row the work will fix, run
+   `python tools/cc/ledger_row.py lineage <id>`** (read-only, exit 0): when it
+   prints the five questions, the row sits in a chain of siblings or a cluster
+   of standalone rows on one site family, and the plan answers them before it
+   proposes a fix.
 
 2. **Present plan and wait for approval.** List what changes, in what order, and what test proves each change.
 

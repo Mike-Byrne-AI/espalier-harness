@@ -132,13 +132,14 @@ MEMORY = "ESPALIER_MEMORY.md"
 LEDGER = "task-packs/FORWARD_LEDGER.md"
 PROBES = "task-packs/LEDGER_PROBES.json"
 #: The fragment directories (``_record_fragments.FRAGMENT_DIRS``): the Session
-#: Log's, the changelog's, and the forward ledger's rows and probes. On the
-#: roster, so the conflict-marker scans read every file under them, but never
-#: resolved by shape -- a fragment is written by the one verb that owns its
-#: name, so a conflict on one is two writers on one name (two lanes striking
-#: one row), and the merge refuses it by name.
+#: Log's, the changelog's, and the forward ledger's rows, probes and lineage.
+#: On the roster, so the conflict-marker scans read every file under them, but
+#: never resolved by shape -- a fragment is written by the one verb that owns
+#: its name, so a conflict on one is two writers on one name (two lanes striking
+#: one row, or filing one id), and the merge refuses it by name.
 FRAGMENT_DIRS: tuple[str, ...] = ("memory/session-log.d/", "changelog.d/",
-                                  "task-packs/ledger.d/", "task-packs/probes.d/")
+                                  "task-packs/ledger.d/", "task-packs/probes.d/",
+                                  "task-packs/lineage.d/")
 ROSTER: tuple[str, ...] = (MEMORY, LEDGER, PROBES, *FRAGMENT_DIRS)
 
 
@@ -155,6 +156,7 @@ _FRAGMENT_NAMES: dict[str, "re.Pattern[str]"] = {
     "changelog.d/": _FRAGMENT_NAME_RE,
     "task-packs/ledger.d/": re.compile(r"^([A-Z]{2,5}-\d+[a-z]*)\.md$"),
     "task-packs/probes.d/": re.compile(r"^([A-Z]{2,5}-\d+[a-z]*)\.json$"),
+    "task-packs/lineage.d/": re.compile(r"^([A-Z]{2,5}-\d+[a-z]*)\.json$"),
 }
 
 

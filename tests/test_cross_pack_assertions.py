@@ -110,6 +110,10 @@ _LOCATION_DIRS = {
     #              carries the gitignored Done/ from the fold on, and skipped in CI.
     "ledger.d": ("ledger.d",),
     "probes.d": ("probes.d",),
+    # lineage.d/ -> not a pack location: a row's recorded parents, one JSON
+    #              file per child row (TP-475, 2026-11-12); named for the same
+    #              sibling-folder guard, and nothing is enforceable there.
+    "lineage.d": ("lineage.d",),
 }
 _ENFORCEABLE_LOCATIONS = frozenset({"in-flight"})
 

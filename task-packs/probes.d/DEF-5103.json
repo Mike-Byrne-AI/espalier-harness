@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5103",
+ "subject": "tools/cc/ledger_row.py",
+ "cmd": "python3 -c \"import pathlib; print('under_20=' + str(len(list(pathlib.Path('task-packs/lineage.d').glob('*.json'))) < 20))\"",
+ "open_value": "under_20=True",
+ "why_not": null,
+ "row_sha": "0e447714c95d",
+ "text_sha": "480d0c28e80a",
+ "verified_2026_11_12": "OPEN (filed 2026-11-12; probe driven at filing here and in the export of HEAD 428bb9f9467c)"
+}

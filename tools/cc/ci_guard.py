@@ -986,20 +986,22 @@ _RECORD_FILES: tuple[str, ...] = (
     "changelog.d/",
     "task-packs/ledger.d/",
     "task-packs/probes.d/",
+    "task-packs/lineage.d/",
 )
 #: A dated fragment: ``<YYYY-MM-DD>-...md`` (``_record_fragments.SESSION_LOG_NAME_RE``
 #: and ``CHANGELOG_NAME_RE`` both open this way; this file imports nothing).
 _FRAGMENT_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9._-]*\.md$")
 #: The name this harness writes under each fragment directory: dated for the
 #: Session Log and the changelog, the row's or probe's id for the forward
-#: ledger's two (a probe file is ``.json``). A copy of
-#: ``_record_fragments.FRAGMENT_NAMES``'s rule, pinned equal to record_merge's
-#: and _hook_utils'.
+#: ledger's two (a probe file is ``.json``), the child row's id for its lineage
+#: (``.json``). A copy of ``_record_fragments.FRAGMENT_NAMES``'s rule, pinned
+#: equal to record_merge's and _hook_utils'.
 _FRAGMENT_NAMES: dict[str, "re.Pattern[str]"] = {
     "memory/session-log.d/": _FRAGMENT_NAME_RE,
     "changelog.d/": _FRAGMENT_NAME_RE,
     "task-packs/ledger.d/": re.compile(r"^([A-Z]{2,5}-\d+[a-z]*)\.md$"),
     "task-packs/probes.d/": re.compile(r"^([A-Z]{2,5}-\d+[a-z]*)\.json$"),
+    "task-packs/lineage.d/": re.compile(r"^([A-Z]{2,5}-\d+[a-z]*)\.json$"),
 }
 #: Git's conflict-marker heads at the default marker size (the opener, the
 #: separator, the closer and diff3's base line): a line whose first seven

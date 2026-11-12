@@ -490,9 +490,10 @@ _SHIP_DECISIONS = {
     "changelog.d/": ("public", "unreleased changelog entries, which the release fold reads"),
     "task-packs/ledger.d/": ("public", "the forward ledger's rows, which ship with the ledger"),
     "task-packs/probes.d/": ("public", "the ledger's probes, which ship with the roster"),
+    "task-packs/lineage.d/": ("public", "a row's recorded parents, which ship with the rows they link"),
 }
 _DIR_TOKEN_RE = re.compile(
-    r"(?<![\w.-])((?:[\w.-]+/)*(?:session-log|changelog|ledger|probes)\.d)(?=/|$|[^\w.-])")
+    r"(?<![\w.-])((?:[\w.-]+/)*(?:session-log|changelog|ledger|probes|lineage)\.d)(?=/|$|[^\w.-])")
 
 
 def _dir_literals(root: Path) -> dict[str, list[str]]:
@@ -506,7 +507,7 @@ def _dir_literals(root: Path) -> dict[str, list[str]]:
             if "/_vendor/" in rel or "/assets/" in rel:
                 continue
             text = p.read_text(encoding="utf-8", errors="replace")
-            if not any(f"{name}.d" in text for name in ("session-log", "changelog", "ledger", "probes")):
+            if not any(f"{name}.d" in text for name in ("session-log", "changelog", "ledger", "probes", "lineage")):
                 continue
             tree = ast.parse(text)
             docs = set()

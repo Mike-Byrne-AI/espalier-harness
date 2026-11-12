@@ -177,6 +177,7 @@ task-packs/*
 !task-packs/LEDGER_PROBES.json
 !task-packs/ledger.d/
 !task-packs/probes.d/
+!task-packs/lineage.d/
 !task-packs/TP-*.md
 !task-packs/Deferred/
 task-packs/Deferred/*
