@@ -1,0 +1,10 @@
+{
+ "id": "DEF-3077",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c 'import sys; from pathlib import Path; sys.path[:0] = [\"tools/cc/hooks\", \"tools/cc\"]; import write_guard as w; r = Path.cwd(); q = chr(39); p = \"echo \" + q + \"rm -rf /\" + q + \" | \"; print(bool(w._bash_dangerous_reason(p + \"bash\", r)), bool(w._bash_dangerous_reason(p + \"bash 2>&1\", r)), bool(w._bash_dangerous_reason(p + \"BASH.exe\", r)))'",
+ "open_value": "True False False",
+ "why_not": null,
+ "row_sha": "9dd54b0edd77",
+ "text_sha": "d5352cd7adcd",
+ "verified_2026_11_12": "OPEN (filed 2026-11-12; probe driven at filing here and in the export of HEAD 43d8879b0206)"
+}

@@ -2053,7 +2053,38 @@ def iter_hardlink_operands(command: str) -> Iterator[str]:
 # the PowerShell twin's
 # quadratic was the opener-word value, fixed there by refusing it. A bound
 # here is a coverage hole with no receipt.
-_INTERP_SWITCH_RUN = r"(?:-[\w.-]+(?:[ \t]+[\w./:=,@%+~][\w./:=,@%+~-]*)?[ \t]+)*"
+#: A redirect word among a head's switches (DEF-3077, widened by air's
+#: fb2b3f: the word sits after the head, in the shared switch runs, so the
+#: class fix lives in the runs, not in each reader). The shell removes every
+#: redirect before the head reads its arguments, so `bash 2>/dev/null -c
+#: '...'`, `bash -c >&2 '...'`, `python3 2>&1 -c "..."` and `node -e >log
+#: "..."` run the program the bare spelling runs (Git Bash 5.2.37, CPython,
+#: Node and Perl, harmless programs, driven). Input redirects too: a `-c` or
+#: `-e` program is an operand, not stdin. Never a heredoc's `<<`, a
+#: here-string's `<<<` or a process substitution's `<(`, the operators the
+#: readers end at. One unit: fd digits or a `{name}`, the operator, then at
+#: most one target, glued or after blanks; a spaced target never opens on
+#: `-` or `+`, so a switch after a redirect is a switch (one parse), and no
+#: target begins another redirect. A target is one-character items and whole
+#: quoted spans (`_CMD_POS_REDIRECT`'s linear shape, kept apart from it so
+#: the compile census's 1,580 stays put), or a one-level `>(...)`. Every
+#: run that holds the unit is blank-led, so its digits never glue to a word.
+#: Over-read, toward friction: a redirect with no target before a word
+#: (`bash > -c '...'`, a file named `-c`) reads the word as a switch.
+#: The unit opens on a lookahead of the characters a redirect can start with,
+#: so a switch word fails it at one character rather than after the optional
+#: fd arm (semantics-free; the inline class back within main's spread).
+_SWITCH_REDIRECT_TCHAR = r"""(?:'[^'\n]*'|"[^"\n]*"|[^\s;|&<>()'"`])"""
+_SWITCH_REDIRECT_TARGET = (
+    r"(?:(?![0-9]*[<>]|\{\w+\}[<>])" + _SWITCH_REDIRECT_TCHAR + r"+|>\([^()\n]*\))"
+)
+_SWITCH_REDIRECT = (
+    r"(?=[0-9{&<>])(?:[0-9]+|\{\w+\})?(?:&?>[>|&]?|<(?![<(])[&>]?)"
+    + r"(?:" + _SWITCH_REDIRECT_TARGET + r"|[ \t]+(?![-+])" + _SWITCH_REDIRECT_TARGET + r")?"
+)
+_INTERP_SWITCH_RUN = (
+    r"(?:(?:-[\w.-]+(?:[ \t]+[\w./:=,@%+~][\w./:=,@%+~-]*)?|" + _SWITCH_REDIRECT + r")[ \t]+)*"
+)
 #: A program operand is ONE bash WORD (DEF-832), not one quoted span: bash
 #: concatenates adjacent segments -- a single-quoted span, an ANSI-C span, a
 #: double-quoted or locale span, a bare run -- with each segment's quote
@@ -2089,11 +2120,11 @@ _BASH_QUOTED_WORD = (
 )
 _INLINE_C_TAIL = (
     r"""[\w.-]*""" + _QUOTED_VERB_TAIL + r"""[ \t]+""" + _INTERP_SWITCH_RUN
-    + r"""-c[ \t]+(?P<word>""" + _BASH_QUOTED_WORD + r""")"""
+    + r"""-c[ \t]+(?:""" + _SWITCH_REDIRECT + r"""[ \t]+)*(?P<word>""" + _BASH_QUOTED_WORD + r""")"""
 )
 _INLINE_E_TAIL = (
     r"""[\w.-]*""" + _QUOTED_VERB_TAIL + r"""[ \t]+""" + _INTERP_SWITCH_RUN
-    + r"""-e[ \t]+(?P<word>""" + _BASH_QUOTED_WORD + r""")"""
+    + r"""-e[ \t]+(?:""" + _SWITCH_REDIRECT + r"""[ \t]+)*(?P<word>""" + _BASH_QUOTED_WORD + r""")"""
 )
 # `(?i:...)` on the NAME only: a whole-pattern IGNORECASE leaked onto
 # `_CMD_POS`'s wrapper and keyword arms for this one opener (code review).
@@ -2240,7 +2271,7 @@ _POSIX_SHELL_SWITCH = (
     r"(?:[-+][A-Za-z]+|--[A-Za-z][\w-]*)(?:[ \t]+(?!(?i:(?:[\w.=/-]*/)?(?:"
     + _POSIX_SHELL_HEADS + r")(?:\.exe)?)(?=[ \t]|$))[\w.=/][\w.=/-]*)?"
 )
-_POSIX_SHELL_SWITCH_RUN = r"(?:[ \t]+" + _POSIX_SHELL_SWITCH + r")*"
+_POSIX_SHELL_SWITCH_RUN = r"(?:[ \t]+(?:" + _POSIX_SHELL_SWITCH + r"|" + _SWITCH_REDIRECT + r"))*"
 #: The `-c` cluster: `c` anywhere in it (`-cx`, `-xc`, `-lc`), both letter
 #: runs around the `c` bounded, so the adjacent pair has at most 81 parses
 #: (review: `bash -cx` was missed). ONE home for both tools' openers and the
@@ -2263,8 +2294,9 @@ _POSIX_SHELL_C_CLUSTER = r"-" + _POSIX_SHELL_C_LETTERS
 #: own: a bare word after a switch is read as its value, so in `bash -c -x
 #: true '...'` the quoted word, which is `$0` there, is read as the program.
 _POSIX_SHELL_SWITCH_RUN_AFTER_C = (
-    r"(?:[ \t]+(?!" + _POSIX_SHELL_C_CLUSTER + r"(?=[ \t]|$))"
-    + _POSIX_SHELL_SWITCH + r")*(?:[ \t]+--)?"
+    r"(?:[ \t]+(?:(?!" + _POSIX_SHELL_C_CLUSTER + r"(?=[ \t]|$))"
+    + _POSIX_SHELL_SWITCH + r"|" + _SWITCH_REDIRECT + r"))*"
+    + r"(?:[ \t]+--(?:[ \t]+" + _SWITCH_REDIRECT + r")*)?"
 )
 _SHELL_DASH_C_RE = re.compile(
     _CMD_POS + r"(?i:" + _POSIX_SHELL_HEADS + r")" + _EXE_SUFFIX + r"\b" + _QUOTED_VERB_TAIL
@@ -2618,8 +2650,10 @@ _PY_WRITE_RES: tuple[re.Pattern[str], ...] = (
 # consume the `=`. Whitespace is never REQUIRED (SHARP_EDGES: exclude `=`, never
 # require whitespace -- `python3<<'PY'` is a real invocation). Known misses,
 # named rather than widened: a valued flag before the operand (`-W ignore -
-# <<EOF`) and a redirect between the operand and the operator (`- 2>/dev/null
-# <<EOF`). Three over-captures, also named (each fails toward friction, never
+# <<EOF`) and an input redirect between the operand and the operator (`- <f
+# <<EOF`: the later stdin redirect, the heredoc, is still the program). An
+# output redirect there (`- 2>/dev/null <<EOF`) is read, DEF-3077's
+# `_OUTPUT_REDIRECT_RUN` below. Three over-captures, also named (each fails toward friction, never
 # open): (1) the mask relief above holds only when EVERY top-level head of the
 # command is on `_NON_REPARSING_HEADS` -- `sed <<'MD' > notes.md`, `awk`, `git`
 # or an interpreter as head leaves the whole command raw, and a documentation
@@ -2647,11 +2681,42 @@ _PY_WRITE_RES: tuple[re.Pattern[str], ...] = (
 #: the drift check subtracts them. Case-insensitive on the head only: the
 #: Windows spelling is `PowerShell`, and the inline opener already folds.
 _INTERP_ALTERNATION = "python|pypy|node|ruby|perl|" + _POWERSHELL_HEADS
+#: The output redirects a stdin-fed head may carry before the point its
+#: reader reads to -- a pipe reader's statement end, a heredoc's `<<`, a
+#: here-string's `<<<`, the fetch bump's next token (DEF-3077: a redirect
+#: word beside a stdin-fed head hid the program from each). Stdout or stderr
+#: sent to a file or joined (`>out`, `2>&1`, `&>log`, `>>a 2>>b`, `>|f`,
+#: `{fd}>f`, a `${VAR}` or `> >(cmd)` target, a quoted target a scan
+#: blanked): bash 5.2.37 ran the program behind each (driven). Each redirect
+#: is one unit: its operator (fd digits or a `{name}` after a blank only, or
+#: `&`; then `>` and at most one of `>`, `|`, `&`) and at most one target (a
+#: word that does not begin another redirect, or a one-level process
+#: substitution); the next redirect is blank-led. So an operand or a `-c`
+#: after a redirect ends the run where it stands and refuses the match as it
+#: would with no redirect, and the run has one parse: a word never starts a
+#: redirect, a target's blanks are its own only when a word follows, and the
+#: fd digits never follow a word character (both reviews: a digit opener
+#: glued to the switch run before it, and a `|` read both as a clobber and
+#: as a new pipe, were quadratic; `tests/test_redos.py`). A reader that ends
+#: at a separator refuses the `|` or `&` a redirect's own operator holds, so
+#: backing out of `>&` or `>|` never ends it there. An input redirect (`<`)
+#: is not in it: a stdin redirect gives the head another program. Kept out
+#: of `_CMD_POS_NO_VERB` (air's f480b4: the compile ratchet).
+_OUTPUT_REDIRECT_OP = r"(?:(?<![^ \t])(?:[0-9]+|\{\w+\})|&)?>[>|&]?"
+_OUTPUT_REDIRECT_TARGET = (
+    r"(?:[ \t]*(?:(?![0-9]*>|\{\w+\}>)[^\s;|&<>()]+|>\([^()\n]*\)))?"
+)
+_OUTPUT_REDIRECT_RUN = (
+    _OUTPUT_REDIRECT_OP + _OUTPUT_REDIRECT_TARGET
+    + r"(?:[ \t]+" + _OUTPUT_REDIRECT_OP + _OUTPUT_REDIRECT_TARGET + r")*"
+)
 _INTERP_STDIN_RE = re.compile(
     _CMD_POS
     + r"\b((?i:" + _INTERP_ALTERNATION + r"))[\w.-]*" + _QUOTED_VERB_TAIL
     + r"[ \t]*(?:-[A-Za-z]+[ \t]+)*"
-    + r"(?:-[ \t]+(?:[^\s<>;|&][^\s<>;|&]*[ \t]+){0,8}|-)?<<"
+    + r"(?:-[ \t]+(?:[^\s<>;|&][^\s<>;|&]*[ \t]+){0,8}|-)?"
+    # DEF-3077: output redirects before the heredoc (`python3 - 2>&1 <<'PY'`)
+    + r"(?:" + _OUTPUT_REDIRECT_RUN + r"[ \t]*)?<<"
 )
 
 #: Inner write patterns per interpreter for a program delivered on stdin. The
@@ -6846,11 +6911,38 @@ _SHELL_PIPE_SWITCH_RUN = (
     r"(?:[ \t]+[\w./:=,@%~][\w./:=,@%+~-]*)?)*"
     r"(?:[ \t]+--(?:[ \t]+[\w./:=,@%+~-]+)*)?"
 )
+#: The pipe reader's statement end after its output redirects
+#: (`_OUTPUT_REDIRECT_RUN`, DEF-3077: `| bash >/dev/null 2>&1` reads the
+#: piped program as the bare `| bash` does): a separator, but never the `|`
+#: or `&` a redirect's own operator holds (`>|`, `>&`, `&>`), so backing out
+#: of a redirect cannot end the statement inside it (`| bash 2>&1 < f`, the
+#: reviews' over-read, stays data). `| bash < file` reads the file, and the
+#: pipe is data. Declared limit: an input redirect on another descriptor
+#: (`| bash 3<f`) leaves the pipe the shell's stdin, but a `<` ends the run
+#: all the same.
+_PIPE_STATEMENT_END = r"(?:$|[;\n\r)}]|(?<!>)\||(?<!>)&(?!>))"
+#: Group 2's head reads as the `-c` reader's head does (DEF-1161's class):
+#: any case and an `.exe` suffix (`| BASH`, `| bash.exe`, `| Sh.EXE`; a
+#: Windows shell resolves each to the one program, Git Bash driven), the
+#: suffix outside the group so the head the consumers get is the name.
+#: Declared limit: a launch wrapper ahead of the piped shell (`| env bash`)
+#: is a chain past the one wrapper level the pipe already is (40ec7f), and
+#: following it would compose the wrapper run after every pipe. Declared
+#: limit: a quoted head (`| "bash"`, Git's `bash.exe` by a quoted full path),
+#: a backslashed one and a drive-letter path the `-c` reader reads are not
+#: read here: the pipe scan blanks a quoted span and the path prefix holds
+#: no `:` (40ec7f: an unusual wrapper argument). A clobber's `|` (`>| sh`,
+#: a file named sh) is never a pipe.
 _INTERP_PIPE_RE = re.compile(
-    r"\|[ \t]*(?:(?:#[^\n]*)?\n[ \t]*)?(?:[\w./-]*/)?"
+    r"(?<!>)\|[ \t]*(?:(?:#[^\n]*)?\n[ \t]*)?"
+    # DEF-3077 (air's fb2b3f, site 5): output redirects before the head
+    # (`| 2>/dev/null bash`); an input redirect there gives the head another
+    # stdin, so it is not in the run and the pipe stays data
+    + r"(?:" + _OUTPUT_REDIRECT_OP + _OUTPUT_REDIRECT_TARGET + r"[ \t]+)*"
+    r"(?:[\w./-]*/)?"
     r"(?:((?i:" + _INTERP_ALTERNATION + r"))[\w.-]*" + _INTERP_PIPE_SWITCH_RUN
-    + r"|(" + _POSIX_SHELL_HEADS + r")\b" + _SHELL_PIPE_SWITCH_RUN + r")"
-    r"(?:[ \t]+-)?(?=[ \t]*(?:$|[;|&\n\r)}]))"
+    + r"|((?i:" + _POSIX_SHELL_HEADS + r"))" + _EXE_SUFFIX + r"\b" + _SHELL_PIPE_SWITCH_RUN + r")"
+    r"(?:[ \t]+-)?(?=[ \t]*(?:" + _OUTPUT_REDIRECT_RUN + r")?[ \t]*" + _PIPE_STATEMENT_END + r")"
 )
 
 #: A POSIX shell fed its program by here-string (`bash <<< "..."`, bare or
@@ -6862,6 +6954,8 @@ _SHELL_HERESTRING_RE = re.compile(
     _CMD_POS + r"(?i:" + _POSIX_SHELL_HEADS + r")" + _EXE_SUFFIX + r"\b" + _QUOTED_VERB_TAIL
     # the shared switch run (§C52): unbounded, and linear because a value is
     # never a spelling of a shell head, see `_POSIX_SHELL_SWITCH_RUN`
+    # DEF-3077: the run holds the redirects too (`bash 2>&1 <<< '...'`,
+    # `bash 2>&1 -x <<< '...'`), so no second redirect run sits after it
     + _POSIX_SHELL_SWITCH_RUN + r"[ \t]*<<<[ \t]*"
 )
 

