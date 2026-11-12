@@ -1803,7 +1803,16 @@ as `-lc`) by the Bash ones -- one level down, and a program that re-enters
 the first shell one level further, no more. Switches and a `--` between
 the `-c` and its program (`bash -c -- '...'`, `bash -c -x '...'`), and a
 shell's `+` options on either side of the `-c` (`bash +x -c '...'`, `bash -c
-+e '...'`, `bash +O extglob -c '...'`), are read on both tools. On the Bash tool a POSIX shell's `-c` program the outer scan
++e '...'`, `bash +O extglob -c '...'`), are read on both tools. On the
+PowerShell tool a string piped into a POSIX shell (`'...' | bash`, `echo
+'...' | sh`, a here-string, `bash -` or `bash -s`, the head bare or given by
+path as Git's `bash.exe`) is that shell's program and meets the Bash ones the
+same way, with the BOM and the carriage returns Windows PowerShell hands a
+native pipe taken out; a head that only begins with a shell's name
+(`shasum`) and a shell given a script operand (`| bash script.sh`) leave the
+pipe as data. A backtick escape inside a double-quoted program (`` `n ``,
+`` `t ``) is still read as its two characters, on that spelling and behind
+`bash -c` alike: an open gap, not a limit. On the Bash tool a POSIX shell's `-c` program the outer scan
 does not read as the shell receives it -- behind a switch or cluster
 (`bash -lc '...'`, `sh -e -c '...'`, `bash -c -- '...'`), behind a head the
 command position does not open at (`bash.exe -c`, `BASH -c`), opening on a
