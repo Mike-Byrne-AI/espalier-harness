@@ -373,9 +373,12 @@ def test_the_live_tree_fixtures_call_the_helpers_their_tests_pin():
     call in its fixture's body."""
     import ast
 
+    from tests._source_segment import segment, source_lines
+
     source = (REPO_ROOT / "tests" / "conftest.py").read_text(encoding="utf-8")
+    lines = source_lines(source)
     bodies = {
-        node.name: ast.get_source_segment(source, node)
+        node.name: segment(lines, node)
         for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)
     }
     scrub = bodies["_isolate_claude_code_session"]
