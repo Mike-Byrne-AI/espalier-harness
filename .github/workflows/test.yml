@@ -253,12 +253,13 @@ jobs:
     needs: tier
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
-    # DEF-1178: above the measured worst case, 7.0 min (18 runs to 2026-10-16),
-    # and ten minutes above the largest per-test timeout in the serial files
-    # (1800 s, the module mark of tests/test_verify_pins.py, a serial file since
-    # DEF-2036), so a slow test is failed by its own mark, by name, before the job
-    # is killed with none named (tests/test_ci_job_bounds.py derives the floor).
-    timeout-minutes: 40
+    # DEF-2038: the largest per-test timeout in the serial files (1800 s, the
+    # module mark of tests/test_verify_pins.py) plus this job's worst green run,
+    # 23.5 min over its last 20 runs (median 17.8, 2026-11-11,
+    # scripts/ci_job_bounds_census.py), so a slow test is failed by its own mark,
+    # by name, before the job is killed with none named. The census prints this
+    # floor at every re-measure; tests/test_ci_job_bounds.py holds the figure.
+    timeout-minutes: 55
     strategy:
       fail-fast: false
       matrix:
@@ -318,8 +319,9 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     # The `test` cells' leg on one interpreter, measured on its own: 1.5x the
-    # worst of its last 20 green runs, 58.5 min (2026-11-09, the bounds census).
-    timeout-minutes: 90
+    # worst of its last 20 green runs, 61.6 min (median 45.8, 2026-11-11, the
+    # bounds census; 58.5 on 2026-11-09).
+    timeout-minutes: 95
 
     steps:
       - name: Keep the temp dir on the runner's disk

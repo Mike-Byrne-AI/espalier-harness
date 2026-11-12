@@ -94,6 +94,65 @@ def _portability_test_step() -> str:
     return str(step["run"])
 
 
+def _serial_file_jobs() -> dict[tuple[str, str], dict]:
+    """Every job that runs the serial files, by the census's one derivation
+    (scripts/ci_job_bounds_census.py::job_runs_the_serial_files, over each job's
+    own lines), so a job added tomorrow that runs them is held the day it lands
+    and the census's re-measure reads the same set."""
+    census, files, suite = _census(), _serial_files(), _suite_jobs()
+    out: dict[tuple[str, str], dict] = {}
+    for name in _workflows():
+        for job_id, meta in census.read_bounds((WORKFLOWS / name).read_text(encoding="utf-8")).items():
+            if census.job_runs_the_serial_files(meta["lines"], files):
+                out[(name, job_id)] = suite[(name, job_id)]
+    return out
+
+
+def _worst_serial_mark() -> float:
+    """The longest per-test timeout mark in the serial files, in seconds, read by
+    the suite contract's own parser (every form it reads: a keyword, an alias, a
+    module constant), the parser the census's ``serial_marks`` reads them by; a
+    mark it cannot read fails here rather than reading as no mark."""
+    from tests.test_test_suite_contract import _declared_timeout_sites
+
+    sites = [(rel, label, seconds) for rel in _serial_files()
+             for label, seconds, _slow in _declared_timeout_sites((REPO_ROOT / rel).read_text(encoding="utf-8"))]
+    unread = [f"{rel}::{label}" for rel, label, seconds in sites if seconds == float("inf")]
+    assert not unread, f"a timeout mark the parser cannot read, so the floor cannot judge it: {unread}"
+    assert sites, "no per-test timeout mark in the serial files: the floor reads nothing"
+    return max(seconds for _rel, _label, seconds in sites)
+
+
+#: DEF-2038. Each job that runs the serial files, with the worst of its last 20
+#: green runs in minutes: the whole job (checkout, install and, on a job that runs
+#: both legs, the parallel one too), read by `python3
+#: scripts/ci_job_bounds_census.py` on the date below, while the serial files were
+#: those below. The reason for the floor: a test that hangs must be cut by its own
+#: timeout, naming it, before the job's bound cuts the job with none named. A test
+#: at its mark adds at most the mark to such a run, so the bound holds the worst
+#: mark plus this worst (one test at its mark; it is conservative on a shallow
+#: checkout, where tests/test_verify_pins.py's controls skip). The margin this
+#: replaced was a flat 600 s on a 7.0-minute leg of 2026-10-16, which had grown to
+#: 23.5 by this read. The census prints the floor at every re-measure, so growth
+#: inside the files reads RAISE there; these figures are what each bound was last
+#: set from, and a serial file added reds the roster test below until they cover it.
+_SERIAL_JOBS_MEASURED_ON = "2026-11-11"
+_SERIAL_JOBS_MEASURED_WORST = {
+    ("test.yml", "test-serial"): 23.5,  # median 17.8; 80 cells, 20 runs
+    ("post-merge.yml", "full-tier"): 86.6,  # median 66.9; both legs in series
+    ("post-merge-windows.yml", "serial-leg"): 12.9,  # median 10.7
+    ("portability.yml", "portability"): 125.1,  # median 74.4; 55 cells, 20 runs
+    ("clean-checkout.yml", "clean-checkout"): 110.0,  # median 87.3
+    ("release.yml", "release-check"): 47.8,  # median 37.6
+}
+_SERIAL_FILES_MEASURED = (
+    "tests/test_redos.py", "tests/test_speedbump_irreversible.py", "tests/test_hooks.py",
+    "tests/test_write_guard_time_budget.py", "tests/test_guard_metamorphic.py",
+    "tests/test_powershell_reachability_differential.py", "tests/test_wheel_payload.py",
+    "tests/test_declared_limits_contract.py", "tests/test_axis_registry.py", "tests/test_verify_pins.py",
+)
+
+
 class TestEveryJobThatRunsTheSuiteIsBounded:
     def test_the_derived_population_holds_the_full_suite_jobs(self):
         assert _FULL_SUITE_JOBS <= set(_suite_jobs()), sorted(_suite_jobs())
@@ -110,25 +169,6 @@ class TestEveryJobThatRunsTheSuiteIsBounded:
             f"(DEF-1178): {unbounded}"
         )
 
-    def test_the_serial_cell_outlasts_its_slowest_tests_own_timeout(self):
-        """The serial leg holds the suite's longest per-test timeouts; a job bound
-        at or under one of them kills the job with no test named where the
-        test's own mark would have failed it by name. Ten minutes on top cover
-        the install and the leg's other files (its worst whole run: 7.0 min).
-        The marks are read by the suite contract's own parser (every form it
-        reads: a keyword, an alias, a module constant), and a mark it cannot
-        read fails here rather than reading as no mark."""
-        from tests.test_test_suite_contract import _declared_timeout_sites
-
-        sites = [(rel, label, seconds) for rel in _serial_files()
-                 for label, seconds, _slow in _declared_timeout_sites((REPO_ROOT / rel).read_text(encoding="utf-8"))]
-        unread = [f"{rel}::{label}" for rel, label, seconds in sites if seconds == float("inf")]
-        assert not unread, f"a timeout mark the parser cannot read, so the floor cannot judge it: {unread}"
-        assert sites, "no per-test timeout mark in the serial files: the floor below reads nothing"
-        worst = max(seconds for _rel, _label, seconds in sites)
-        bound = _suite_jobs()[("test.yml", "test-serial")]["timeout-minutes"]
-        assert bound * 60 >= worst + 600, (bound, worst)
-
     @pytest.mark.parametrize("workflow, job_id", [("test.yml", "test-serial"), ("post-merge.yml", "full-tier")])
     def test_the_jobs_that_run_verify_pins_on_full_history_keep_it(self, workflow, job_id):
         """tests/test_verify_pins.py is a serial file (DEF-2036) whose control
@@ -139,6 +179,122 @@ class TestEveryJobThatRunsTheSuiteIsBounded:
         job = _suite_jobs()[(workflow, job_id)]
         (checkout,) = [s for s in job["steps"] if str(s.get("uses", "")).startswith("actions/checkout@")]
         assert (checkout.get("with") or {}).get("fetch-depth") == 0, checkout
+
+
+class TestEveryJobThatRunsTheSerialFilesOutlastsTheirMarks:
+    """DEF-2038: the serial files hold the suite's longest per-test marks, and the
+    jobs that run them were bounded by a flat margin that did not grow with the
+    leg (test-serial's 40 under a 23.5-minute worst run and a 30-minute mark).
+    Each such job's bound is the worst mark, read live, plus the job's own dated
+    measured worst; the roster is derived both ways and records the serial files
+    it was measured over."""
+
+    def test_the_measured_roster_is_the_derived_population(self):
+        """Dies to: a job that runs the serial files with no measured figure (a
+        new one, or one the derivation stopped reading), or a figure kept for a
+        job that no longer runs them."""
+        assert set(_SERIAL_JOBS_MEASURED_WORST) == set(_serial_file_jobs()), sorted(_serial_file_jobs())
+
+    def test_the_figures_cover_every_serial_file_that_runs_today(self):
+        """Dies to: a serial file added with the figures left as they were, which
+        is how the 600 s margin outlived the leg it was set on. A file dropped
+        only loosens the floor, so it does not red."""
+        added = sorted(set(_serial_files()) - set(_SERIAL_FILES_MEASURED))
+        assert not added, (
+            f"serial files added since the jobs were measured on {_SERIAL_JOBS_MEASURED_ON}: {added}. "
+            "The census cannot read a list that has no runs yet, so add each new file's measured "
+            "serial-leg time to the figures of the jobs that run it now, raise any bound the floor then "
+            "asks for, add the files here, and re-measure with python3 scripts/ci_job_bounds_census.py "
+            "once the jobs have 20 runs (its floor column judges them from then on).")
+
+    @pytest.mark.parametrize("key", sorted(_SERIAL_JOBS_MEASURED_WORST), ids="/".join)
+    def test_its_bound_holds_the_worst_mark_plus_its_measured_run(self, key):
+        """Dies to: a bound cut under the worst mark plus the job's worst run, or a
+        mark raised past what the bound holds. The job is read by PyYAML and the
+        floor unrounded (the census rounds it up to five); that the census derives
+        the same jobs is the roster test's to say."""
+        bound = _suite_jobs()[key]["timeout-minutes"]
+        floor_s = _worst_serial_mark() + _SERIAL_JOBS_MEASURED_WORST[key] * 60
+        assert bound * 60 >= floor_s, (
+            f"{key}: timeout-minutes {bound} is under the serial files' worst mark plus the job's "
+            f"measured worst ({floor_s / 60:.1f} min)")
+
+    def test_the_floor_is_the_mark_plus_the_worst_rounded_up_to_five(self):
+        """Dies to: the mark read as minutes, or seconds and minutes added raw, or
+        rounding down."""
+        floor = _census().serial_floor
+        assert floor(23.5, 1800) == 55
+        assert floor(25.0, 1800) == 55
+        assert floor(25.1, 1800) == 60
+        assert floor(12.9, 900) == 30
+
+    def test_the_census_needs_the_floor_where_it_outranks_the_rule(self, monkeypatch, tmp_path, capsys):
+        """Dies to: the census judging a job that runs the serial files by the
+        1.5x rule alone, which reads ok on test-serial up to a 36.7-minute worst
+        while the floor breaks past 25 (both reviewers of DEF-2038)."""
+        census = _census()
+        (tmp_path / "ci.yml").write_text(
+            "jobs:\n  serial:\n    timeout-minutes: 55\n    steps:\n"
+            "      - run: python scripts/proof_tier.py --run --tier full --leg serial\n"
+            "  parallel:\n    timeout-minutes: 55\n    steps:\n"
+            "      - run: python scripts/proof_tier.py --run --tier full --leg parallel\n",
+            encoding="utf-8")
+        monkeypatch.setattr(census, "WORKFLOWS", tmp_path)
+        monkeypatch.setattr(census, "measure", lambda wf, jobs, runs, scan, repo: {
+            j: {"greens": [26.0], "green_runs": 20, "cancels": [], "cuts": 0, "cut_max": None, "unread": 0}
+            for j in jobs})
+        assert census.main(["--json"]) == 0
+        import json
+        rows = {r["job"]: r for r in json.loads(capsys.readouterr().out)["rows"]}
+        assert rows["serial"]["serial"] and rows["serial"]["floor"] == 60, rows["serial"]
+        assert rows["serial"]["needed"] == 60 and rows["serial"]["verdict"] == "RAISE"
+        assert not rows["parallel"]["serial"] and rows["parallel"]["verdict"] == "ok", rows["parallel"]
+
+    @pytest.mark.parametrize("command, opt_in, runs_them", [
+        ("python scripts/proof_tier.py --run --tier full", False, True),
+        ("python scripts/proof_tier.py --run --tier full --heavy", False, True),
+        ('python scripts/proof_tier.py --run --tier "$TIER" --leg serial', False, True),
+        ('python scripts/proof_tier.py --run --tier "$TIER" --leg "$LEG"', False, True),
+        ('python scripts/proof_tier.py --run --tier "$TIER" --leg parallel', False, False),
+        ('python scripts/proof_tier.py --run --tier "$TIER" --leg=parallel', False, False),
+        ('python scripts/proof_tier.py --run --leg "parallel"', False, False),
+        ("python scripts/proof_tier.py --base origin/main", False, False),
+        ('python -m pytest -q -n 1 -m "not heavy_e2e" $serial', False, True),
+        ('python3 -m pytest -q "${serial}"', False, True),
+        ("python -m pytest -q", False, True),
+        ("timeout 600 pytest -q", False, True),
+        ("python -m pytest tests/test_wheel_payload.py -q", False, True),
+        ("python -m pytest tests/test_verify_pins.py::TestIsolation -q", False, True),
+        ("python -m pytest tests/test_scope_walker.py -q", False, False),
+        ("python scripts/fresh_clone_gate.py --python 3.11", False, True),
+        ("python scripts/final_release_matrix.py", False, True),
+        ("python scripts/release_check.py", True, True),
+        ("python scripts/release_check.py", False, False),
+        ("pip install build pytest setuptools", False, False),
+        ('timeout 120 du -xh "$tmp/pytest-of-$(id -un)"', False, False),
+        ('echo "pytest printed no summary line"', False, False),
+    ])
+    def test_the_derivation_reads_each_way_a_command_runs_them(self, command, opt_in, runs_them):
+        assert _census().command_runs_the_serial_files(command, _serial_files(), opt_in) is runs_them
+
+    @pytest.mark.parametrize("lines, runs_them", [
+        (["      - run: |", "          python scripts/proof_tier.py --run --tier full \\",
+          "            --leg parallel"], False),
+        (["      - run: |", "          python scripts/proof_tier.py --run --tier full \\",
+          "            --leg serial"], True),
+        (["      - run: python scripts/proof_tier.py --run --leg parallel  # not --leg serial"], False),
+        (["      - run: python scripts/proof_tier.py --run --leg parallel && "
+          "python scripts/proof_tier.py --run --leg serial"], True),
+        (["    env:", "      ESPALIER_RELEASE_CHECK_WITH_TESTS: 1", "      - run: python scripts/release_check.py"],
+         True),
+        (["    env:", "      ESPALIER_RELEASE_CHECK_WITH_TESTS: 'true'", "      - run: python scripts/release_check.py"],
+         False),
+    ])
+    def test_a_job_s_lines_are_read_as_commands(self, lines, runs_them):
+        """Dies to: a continuation left split, a trailing comment read as a flag,
+        a second command on the line read as the first's, or an opt-in other than
+        the exact 1 release_check.py reads."""
+        assert _census().job_runs_the_serial_files(lines, _serial_files()) is runs_them
 
 
 class TestTheSuitesTempLivesOnTheRunnerDisk:
@@ -454,18 +610,6 @@ class TestThePostMergeWindowsLegKeepsItsContracts:
         assert match and str(step["env"]["PYTEST_TIMEOUT"]) == match.group(1), (step.get("env"), match and match.group(1))
         assert step.get("shell") == "bash"
 
-    def test_its_bound_outlasts_the_serial_files_longest_mark(self):
-        """The test-serial cell's rule, applied to this job: a bound at or under
-        a serial file's own mark kills the job with no test named where the
-        mark would have failed it by name. Dies to: the bound cut back to twice
-        the measured run (ten), under the serial files' worst mark (1800 s,
-        tests/test_verify_pins.py's, since DEF-2036)."""
-        from tests.test_test_suite_contract import _declared_timeout_sites
-
-        _workflow, job = self._leg()
-        worst = max(seconds for rel in _serial_files()
-                    for _label, seconds, _slow in _declared_timeout_sites((REPO_ROOT / rel).read_text(encoding="utf-8")))
-        assert worst < float("inf") and job["timeout-minutes"] * 60 >= worst + 600, (job["timeout-minutes"], worst)
 
 
 class TestThePortabilityDispatchKeepsTheLegsApart:

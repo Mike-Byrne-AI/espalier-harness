@@ -383,13 +383,15 @@ def test_demo_script_quotes_match_the_live_deny_clause_by_clause():
     )
 
 
-def test_demo_storyboard_other_quoted_outputs_are_pinned_too():
+def test_demo_storyboard_other_quoted_outputs_are_pinned_too(tmp_path):
     """The storyboard's two other quoted hook outputs. The plan-gate deny is
     formatted in-process from the live template with the storyboard's own
     arguments -- ``missing`` for a tree that never had a plan, the adopter
     exemption hint -- so the pin does not depend on this checkout's plan state.
     The maintenance-mode advisory is the guard's own stderr with the variable
-    set.
+    set, rooted at a scratch project: on this checkout the guard's
+    once-a-session bypass flag landed in the live ``.espalier-state/``, so the
+    live session's own bypass record was never written (DEF-2051).
 
     The headings are the OUTPUT's name, never a beat number: the hero was
     re-cut twice (2026-09-28, 2026-10-02) and a beat-keyed marker stranded
@@ -410,16 +412,20 @@ def test_demo_storyboard_other_quoted_outputs_are_pinned_too():
         live_plan, "bench/demo/STORYBOARD.md plan-gate block",
     )
 
-    env = {**os.environ, "ESPALIER_MAINTENANCE_MODE": "1"}
+    project = tmp_path / "project"
+    project.mkdir()
+    env = {**os.environ, "ESPALIER_MAINTENANCE_MODE": "1", "CLAUDE_PROJECT_DIR": str(project)}
     result = run_hook_through(
-        [sys.executable, "tools/cc/hooks/write_guard.py"],
+        [sys.executable, str(REPO_ROOT / "tools" / "cc" / "hooks" / "write_guard.py")],
         input=json.dumps({"tool_name": "Edit", "tool_input": {
             "file_path": "tools/cc/hooks/session_start.py",
             "old_string": "a", "new_string": "b"}}),
-        cwd=str(REPO_ROOT),
+        cwd=str(project),
         env=env,
     )
     assert result.returncode == 0, result.stderr
+    # The guard rooted itself at the scratch project: its bypass flag is there.
+    assert (project / ".espalier-state" / "maintenance_bypass_recorded_write_guard").is_file()
     advisory = [ln for ln in result.stderr.splitlines() if "MAINTENANCE_MODE" in ln]
     assert advisory, f"the guard wrote no maintenance advisory: {result.stderr!r}"
     doc_line = _fenced_block_after(text, "The maintenance-mode advisory")

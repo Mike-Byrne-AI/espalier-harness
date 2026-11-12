@@ -240,15 +240,28 @@ def _isolate_claude_code_session():
     stand down without the mod, so a test modelling a mod window that left
     the variable to the launching shell passed in a seat's tier and failed
     on CI (#414's ``test (3.11)`` cell, 2026-11-01); a test of either sets
-    what it models."""
+    what it models. The project directory goes too
+    (:func:`_scrub_claude_code_session_env`)."""
     with pytest.MonkeyPatch.context() as mp:
         # Spelled alone: tests/test_check_ledger_probes.py pins this literal
         # against the ledger probe runner's strip, its twin.
         mp.delenv("CLAUDECODE", raising=False)
-        for name in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "ESPALIER_OWN_CLEAR",
-                     "ESPALIER_OWN_CLEAR_ROOT", "ESPALIER_OWN_CLEAR_LOG"):
-            mp.delenv(name, raising=False)
+        _scrub_claude_code_session_env(mp)
         yield
+
+
+def _scrub_claude_code_session_env(mp) -> None:
+    """Unset what a Claude Code window exports beside ``CLAUDECODE``: its
+    identity, its own-clear mod, and ``CLAUDE_PROJECT_DIR``. A pytest a hook
+    launches (stop_gate's pytest gate spawns with no ``env=``) inherits the
+    project directory naming this checkout, and a ``tools/cc`` script a test
+    spawned with a copy of ``os.environ`` then rooted itself there whatever
+    ``cwd`` the test gave it, writing the live blueprint chain (DEF-543). The
+    Bash tool's shell leaves it unset and CI never sets it, so a test that
+    needs a root passes its own. ``mp`` is a ``pytest.MonkeyPatch``."""
+    for name in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "ESPALIER_OWN_CLEAR",
+                 "ESPALIER_OWN_CLEAR_ROOT", "ESPALIER_OWN_CLEAR_LOG", "CLAUDE_PROJECT_DIR"):
+        mp.delenv(name, raising=False)
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -497,54 +510,195 @@ def _isolate_audit_dir(monkeypatch, tmp_path):
 #
 # Same reasoning, measured 2026-08-05 on a fresh clone: `espalier_harness.egg-info`
 # is created by `pip install -e .[dev]` (so it appears mid-suite on any tree that
-# installs during the run) and `cc/blueprints` is written by a concurrent Claude
-# Code SessionStart. Neither is attributable to the test that happens to straddle
-# it — both produced `None -> N entries` ERRORs pinned on arbitrary tests. A guard
-# that fires on churn it cannot attribute is noise, and noise gets silenced.
+# installs during the run) and is not attributable to the test that happens to
+# straddle it -- it produced `None -> N entries` ERRORs pinned on arbitrary tests. A
+# guard that fires on churn it cannot attribute is noise, and noise gets silenced.
 #
-# SCOPE, stated because it is not obvious and a review had to measure it: this guard
-# is DEV-TREE-ONLY. Both remaining entries are gitignored with zero tracked files, so
-# on a fresh clone neither directory exists, every fingerprint is None, and the
-# fixture passes without observing anything. That is not a defect to fix by re-adding
-# a watched path — it is what watching *output* directories means. The guard earns
-# its keep on the maintainer's tree, where it caught a real order-dependence bug; it
-# is not, and cannot be, a clone-side check. Non-emptiness is pinned by
+# `cc/blueprints`, the live blueprint chain, left this watch on that measurement,
+# read then as a concurrent Claude Code SessionStart. The round's own record of
+# the run (memory/CONVERGENCE_LEDGER.md, R9: plain pytest on a fresh `git clone`,
+# `cc/blueprints (None -> 3 entries)`) is the shape a test's bootstrap leaves --
+# latest.json, a node and `.write.lock` -- so the guard was most likely right.
+# It is back (DEF-543), ATTRIBUTED rather than allowlisted: the live session's
+# churn lands on whichever test is running, so no _LIVE_TREE_ALLOWED entry could
+# name it.
+#   * Its RECORDS only (_is_chain_record: the non-dot `*.json` names, its nodes and
+#     latest.json). Every cognitive_blueprint `_save` writes through a sibling
+#     `.<name>.<hex>.tmp` and holds `.write.lock`
+#     (tools/cc/cognitive_blueprint.py::_atomic_write_text, ::_acquire_write_lock),
+#     so the session's every Stop (Gate 4's finalize) and SubagentStop moves dot
+#     entries there, and rewrites its node and latest.json in place, which moves no
+#     name (measured 2026-11-10 on a copy of the live chain: three finalizes, 123
+#     names before and after each); PostCompact and /handoff write under
+#     compact_summaries/, the worktree sweep under from-worktrees/
+#     (tools/cc/checkout_sync.py::_SAVED_REL), and a start's demotion under _cold/.
+#     None of those is a record, and a directory holding none reads as an absent
+#     one; a leak leaves a record (a node, latest.json).
+#   * A move of the records reds only where no live Claude Code session works in
+#     this checkout (_live_chain_owner): Claude Code's own session registry
+#     (tools/cc/checkout_sync.py::live_sessions), placed by ::sessions_in_checkout,
+#     where the deepest checkout owns a cwd, so a worktree's session never quiets
+#     the main checkout. A session here moves these names with nothing a test could
+#     attribute it by -- its SessionStart, a stub's deferred demotion at its next
+#     save, a start outside SessionStart -- so the move is let through with a
+#     warning naming the test; with none, it is this run's. No registry directory
+#     (every CI runner) is none; one that cannot be read in full warns and lets the
+#     move through. The registry is found from the environment pytest was launched
+#     with (_LAUNCH_REGISTRY_ENV): the read runs at teardown, while a test's own
+#     monkeypatch of HOME or CLAUDE_CONFIG_DIR is still in force, and a test
+#     planting a registry must never excuse its own write.
+# What it does not see, named: a leak on a tree with a session live in it (the
+# seat's own run warns and passes; a full-tier CI cell, the post-merge proof and
+# a fresh clone red, and a pull request whose tier is the contract slice runs
+# only its contract tests); a leaked record, finalize or justify, which rewrite
+# names already there (a watch of names, not content); a write under
+# compact_summaries/ (a subdirectory's entries are not this one's); a write made
+# by a module-, class- or session-scoped fixture or at collection, which runs
+# outside the per-test fingerprints.
+# The leak the class has hit, a test subprocess inheriting CLAUDE_PROJECT_DIR
+# (docs/SHARP_EDGES.md, "Subprocesses Inheriting CLAUDE_PROJECT_DIR"), is closed
+# at its source: `_isolate_claude_code_session` scrubs it.
+# "No test leaks it today", which this block said until 2026-11-10, was false: a
+# write audit over the whole suite in a fresh clone (the DEF-543 lane) found tests
+# that build the SessionStart banner on REPO_ROOT, and `_load_blueprint` starts a
+# chain wherever none exists -- every CI checkout, where #573's ubuntu leg read the
+# first build's new chain in the next. They build on `self_host_tree_copy` now.
+#
+# SCOPE, stated because it is not obvious and a review had to measure it: these
+# directories are gitignored with zero tracked files, so on a fresh clone none
+# exists. `bench/results` and `reports` stay None there and the guard observes
+# nothing of them -- it earns its keep on the maintainer's tree, where it caught a
+# real order-dependence bug. The chain is the exception: a test that creates it
+# from nothing is the shape CI sees, and it reds there. Non-emptiness is pinned by
 # tests/test_test_suite_contract.py::test_live_tree_watch_is_not_whittled_to_nothing,
 # so the list cannot be quietly emptied to clear a red.
-#
-# KNOWN COVERAGE LOSS, accepted deliberately: dropping `cc/blueprints` removes the
-# one watcher for a bug class this repo HAS hit — a leaked CLAUDE_PROJECT_DIR making
-# a test subprocess write into the real blueprint tree (docs/SHARP_EDGES.md,
-# "Subprocesses Inheriting CLAUDE_PROJECT_DIR"). No test leaks it today: both
-# cognitive_blueprint subprocess callers pin CLAUDE_PROJECT_DIR to tmp_path. The
-# better long-term fix is to watch it again and allowlist the specific straddling
-# tests via _LIVE_TREE_ALLOWED, not to leave it unwatched — recorded here so the
-# trade stays visible instead of being silently made.
 _LIVE_TREE_WATCH = (
     "bench/results",
     "reports",
+    "cc/blueprints",
 )
+_LIVE_CHAIN_DIR = "cc/blueprints"  # one of the watch, pinned so by the suite contract
+
+
+def _is_chain_record(name: str) -> bool:
+    """A blueprint chain record: a node or latest.json, never a writer's dot
+    temp or lock and never a subdirectory (compact_summaries/, _cold/, ...)."""
+    return name.endswith(".json") and not name.startswith(".")
+
+
+_CHECKOUT_SYNC_ALIAS = "_conftest_checkout_sync"
+
+
+def _checkout_sync():
+    """``tools/cc/checkout_sync.py``, loaded by path under an alias on the first
+    chain move (a test that swaps the bare name in never reaches this read)."""
+    module = sys.modules.get(_CHECKOUT_SYNC_ALIAS)
+    if module is None:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            _CHECKOUT_SYNC_ALIAS, REPO_ROOT / "tools" / "cc" / "checkout_sync.py")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[_CHECKOUT_SYNC_ALIAS] = module
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            sys.modules.pop(_CHECKOUT_SYNC_ALIAS, None)
+            raise
+    return module
+
+
+#: What Claude Code's config directories are found from, as pytest was launched:
+#: `_no_live_tree_writes` reads the registry at its teardown, before the
+#: `monkeypatch` fixture's undo (it was set up first), so a live read would see
+#: the HOME or CLAUDE_CONFIG_DIR the test set (the code review of the DEF-543 lane).
+_LAUNCH_REGISTRY_ENV = {name: os.environ.get(name) for name in ("CLAUDE_CONFIG_DIR", "HOME", "USERPROFILE")}
+
+
+def _launch_config_dirs(cs) -> list[Path]:
+    """``cs.claude_config_dirs()`` under :data:`_LAUNCH_REGISTRY_ENV`, the
+    environment put back as it was once read."""
+    with pytest.MonkeyPatch.context() as mp:
+        for name, value in _LAUNCH_REGISTRY_ENV.items():
+            if value is None:
+                mp.delenv(name, raising=False)
+            else:
+                mp.setenv(name, value)
+        return cs.claude_config_dirs()
+
+
+def _live_chain_owner(root: Path = REPO_ROOT, config_dir: Path | None = None) -> str:
+    """Whose a move of ``root``'s blueprint chain is, read from Claude Code's
+    session registry: ``"session"`` where a live session works in this
+    checkout, ``"unread"`` where a registry is there and cannot be read in
+    full, ``"none"`` otherwise, no registry directory at all included (every CI
+    runner). ``config_dir`` stands for Claude Code's config directory; without
+    it, each of the launch environment's directories is read on its own, so a
+    configured one holding no registry does not hide the default's."""
+    cs = _checkout_sync()
+    bases = [config_dir] if config_dir is not None else _launch_config_dirs(cs)
+    owner = "none"
+    for base in bases:
+        try:
+            if not (base / "sessions").is_dir():
+                continue
+        except OSError:
+            owner = "unread"
+            continue
+        sessions = cs.live_sessions(base)
+        if sessions is None:
+            owner = "unread"
+        elif cs.sessions_in_checkout(sessions, root):
+            return "session"
+    return owner
+
+
+def _attributed_moves(before, after, root: Path = REPO_ROOT,
+                      config_dir: Path | None = None) -> tuple[list[str], str]:
+    """The moves `_no_live_tree_writes` reds on, and the chain's owner (``""``
+    where its records did not move): a chain move a live session in this
+    checkout could have made, or one the registry cannot place, is dropped."""
+    owner = ""
+    if before.get(_LIVE_CHAIN_DIR) != after.get(_LIVE_CHAIN_DIR):
+        owner = _live_chain_owner(root, config_dir)
+        if owner != "none":
+            before = {k: v for k, v in before.items() if k != _LIVE_CHAIN_DIR}
+            after = {k: v for k, v in after.items() if k != _LIVE_CHAIN_DIR}
+    return _live_tree_moves(before, after), owner
 
 # Tests that add or remove live-tree entries BY DESIGN. Empty on purpose: the
 # calibration pass found no test that genuinely needs to, once the one real
 # offender was redirected to tmp. A new entry here is a deliberate, reviewed
-# exception with a stated reason — never a way to silence a red.
+# exception with a stated reason — never a way to silence a red. Keyed on the
+# test module's STEM (`test_foo` for tests/test_foo.py), the form `_MARKER_RULES`
+# and `_SLOW_FILES` hold (DEF-476: a path key matched an entry in that form never).
 _LIVE_TREE_ALLOWED: set[str] = set()
+
+
+def _live_tree_allowed_key(node) -> str:
+    """The key `_LIVE_TREE_ALLOWED` is read with for ``node``: its module's stem."""
+    return node.path.stem
 
 
 def _live_tree_fingerprint(root: Path = REPO_ROOT, watch=_LIVE_TREE_WATCH):
     """The entry SET per watched dir. A set, not a count: a test that adds one
     entry while another entry goes away (its own doing, or -- under xdist -- a
     sibling worker's) leaves the count unchanged and would pass, a false green
-    in the one guard the parallel default leans on (2026-09-06)."""
+    in the one guard the parallel default leans on (2026-09-06). The chain's
+    set holds its records alone (`_is_chain_record`), and an absent chain reads
+    as one holding none: a lock or a temp alone is no record."""
     out = {}
     for rel in watch:
         d = root / rel
         try:
             # live-tree: ok -- a guard of writes into the live tree sees every entry, the ones git ignores included
-            out[rel] = frozenset(os.listdir(d))
+            names = os.listdir(d)
         except OSError:
-            out[rel] = None
+            out[rel] = frozenset() if rel == _LIVE_CHAIN_DIR else None
+            continue
+        if rel == _LIVE_CHAIN_DIR:
+            names = [n for n in names if _is_chain_record(n)]
+        out[rel] = frozenset(names)
     return out
 
 
@@ -556,7 +710,9 @@ def _live_tree_moves(before, after):
         if before[k] != after[k]:
             b = before[k] or frozenset()
             a = after[k] or frozenset()
-            moved.append(f"{k} (added: {sorted(a - b) or '-'}; removed: {sorted(b - a) or '-'})")
+            note = ("the directory was created; " if before[k] is None
+                    else "the directory was removed; " if after[k] is None else "")
+            moved.append(f"{k} ({note}added: {sorted(a - b) or '-'}; removed: {sorted(b - a) or '-'})")
     return sorted(moved)
 
 
@@ -593,6 +749,35 @@ def _live_tree_xdist_note() -> str:
     )
 
 
+_LIVE_CHAIN_NOTE = (
+    "\ncc/blueprints is the live blueprint chain, and no live Claude Code session "
+    "works in this checkout (Claude Code's session registry, placed by "
+    "tools/cc/checkout_sync.py::sessions_in_checkout), so the move is this run's. "
+    "A test that builds the SessionStart banner on REPO_ROOT "
+    "(session_start._build_context, ._load_blueprint) starts a chain wherever "
+    "none exists, as on every CI checkout: build it on self_host_tree_copy. A "
+    "tools/cc script spawned with no CLAUDE_PROJECT_DIR and its cwd anywhere in "
+    "REPO_ROOT roots itself here: give it a scratch project."
+)
+
+
+def _chain_excuse_note(nodeid: str, owner: str) -> str | None:
+    """The warning for a chain move let through, or None where none was: a
+    seat's own run must say it excused one, since only a run with no session
+    in the checkout (CI, a fresh clone) reds it."""
+    if owner == "session":
+        return (
+            f"{_LIVE_CHAIN_DIR} moved under {nodeid}, and a live Claude Code session "
+            "works in this checkout and may have moved it, so not failed. If this "
+            "test wrote it, a run with no session here (CI, a fresh clone) reds it.")
+    if owner == "unread":
+        return (
+            f"{_LIVE_CHAIN_DIR} moved under {nodeid}, and Claude Code's session "
+            "registry could not be read in full, so whether a live session in this "
+            "checkout moved it is unknown; not failed. Rerun the file alone.")
+    return None
+
+
 @pytest.fixture(autouse=True)
 def _no_live_tree_writes(request):
     """Fail a test that adds or removes entries in a watched live-tree dir.
@@ -601,21 +786,27 @@ def _no_live_tree_writes(request):
     directory, so the fix (redirect the module constant at the call site) is
     immediate rather than a bisect.
     """
-    if request.node.nodeid.split("::")[0] in _LIVE_TREE_ALLOWED:
+    if _live_tree_allowed_key(request.node) in _LIVE_TREE_ALLOWED:
         yield
         return
     before = _live_tree_fingerprint()
     yield
     after = _live_tree_fingerprint()
-    moved = _live_tree_moves(before, after)
+    moved, chain_owner = _attributed_moves(before, after)
+    excused = _chain_excuse_note(request.node.nodeid, chain_owner)
+    if excused:
+        warnings.warn(excused, stacklevel=1)
+    chain_moved = chain_owner == "none" and any(m.startswith(_LIVE_CHAIN_DIR) for m in moved)
     assert not moved, (
         "test added or removed entries in the LIVE repo tree: "
         + ", ".join(moved)
         + ".\nThis makes the suite order-dependent — a sibling that scans the "
         "live repo will see different state depending on whether this test ran "
         "first. Redirect the writer to tmp_path (monkeypatch the module-level "
-        "output constant), or add this file to _LIVE_TREE_ALLOWED with the "
-        "reason it genuinely cannot be isolated."
+        "output constant), or add this file's module stem (test_foo for "
+        "tests/test_foo.py) to _LIVE_TREE_ALLOWED with the reason it genuinely "
+        "cannot be isolated."
+        + (_LIVE_CHAIN_NOTE if chain_moved else "")
         + _live_tree_xdist_note()
     )
 

@@ -116,28 +116,34 @@ def test_new_session_sources_pinned_against_protocol_doc():
 # ── unit: the compact-orientation variant (TP-240) ──────────────────────────
 
 
-def test_compact_source_selects_compact_variant():
+def test_compact_source_selects_compact_variant(self_host_tree_copy):
     """source=="compact" -> the mid-session compact banner; any other source ->
     the normal banner. The compact variant signals the re-orient and OMITS the
-    start-of-session MEMORY digest."""
+    start-of-session MEMORY digest. Built on a private copy of the tree: the
+    normal banner loads the blueprint chain and starts one where none exists, so
+    on REPO_ROOT it wrote the live chain of every CI checkout (DEF-543)."""
     ss = _import_session_start()
-    compact = ss._build_context(REPO_ROOT, True, False, "compact")
-    normal = ss._build_context(REPO_ROOT, True, False, "startup")
+    compact = ss._build_context(self_host_tree_copy, True, False, "compact")
+    normal = ss._build_context(self_host_tree_copy, True, False, "startup")
     assert "POST-COMPACTION RE-ORIENT" in compact
     assert "POST-COMPACTION RE-ORIENT" not in normal
     assert "MEMORY (recent sessions" not in compact  # the stale digest is dropped
 
 
-def test_noncompact_sources_keep_normal_banner_byte_identical():
+def test_noncompact_sources_keep_normal_banner_byte_identical(self_host_tree_copy, monkeypatch):
     """Every NON-compact source yields the SAME normal banner (the `source` param
     is inert off the compact path). Neutralize the per-session _reinject host line
     first -- its counter makes two consecutive real calls differ for a reason
-    unrelated to `source`."""
+    unrelated to `source`. Built on a private copy of the tree whose chain the
+    first build starts: on REPO_ROOT that first build wrote the live chain of a
+    tree without one, and the next build read it, so the base and the sources
+    differed on #573's ubuntu leg for a reason unrelated to `source` (DEF-543)."""
     ss = _import_session_start()
-    ss._reinject.check = lambda *a, **k: []
-    base = ss._build_context(REPO_ROOT, True, False, "")
+    monkeypatch.setattr(ss._reinject, "check", lambda *a, **k: [])
+    ss._build_context(self_host_tree_copy, True, False, "")  # starts the copy's chain
+    base = ss._build_context(self_host_tree_copy, True, False, "")
     for src in ("startup", "clear", "resume", "bogus"):
-        assert ss._build_context(REPO_ROOT, True, False, src) == base, (
+        assert ss._build_context(self_host_tree_copy, True, False, src) == base, (
             f"non-compact source {src!r} drifted from the baseline banner"
         )
     assert "POST-COMPACTION RE-ORIENT" not in base

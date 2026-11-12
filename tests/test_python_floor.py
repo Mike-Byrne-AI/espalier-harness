@@ -422,8 +422,9 @@ class TestFloorAtTheThreeDecisionSites:
         # The 2026-11-07 ruling: the one sentence, naming the version found
         # and the floor, and never the 2026-09-03 promise that it is wired.
         assert "The harness does not run on Python 3.9.6 (python3 at " in warning, warning
-        assert (f"Update to Python {_python_floor.floor_text()} or newer to install "
-                f"and use it.") in warning, warning
+        floor = _python_floor.floor_text()
+        assert (f"Update to Python {floor} or newer to install and use it, or put a "
+                f"Python {floor} or newer on PATH as python3 or python.") in warning, warning
         assert "anyway" not in warning and "keep working" not in warning, (
             f"the warning still promises a wired, working below-floor "
             f"interpreter: {warning!r}"
@@ -795,6 +796,76 @@ class TestFloorAtTheThreeDecisionSites:
             f"the finding must not claim it is not a Python 3 -- it is, and the "
             f"remedy differs: {joined!r}"
         )
+        # The sentence stays as ruled (doctor names a WIRED interpreter), and
+        # the re-wire's hint is keyed on the floor: every name here answers
+        # 3.9.6, so the rewire has no target. Read by identity alone, the
+        # `python3` arm said "a WORKING `python3` IS on PATH" of that 3.9.6
+        # and named a rewire that returns no_target (TP-706).
+        floor = _python_floor.floor_text()
+        assert (_python_floor.does_not_run_sentence("Python 3.9.6")
+                + " Then re-wire the hooks to it. ") in joined, joined
+        assert "WORKING" not in joined, joined
+        assert (f"nothing named 'python', 'python3' or 'py -3' on PATH starts and "
+                f"clears the {floor} floor, so the rewire has no target yet") in joined, joined
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="sh stub is POSIX")
+    def test_doctor_names_the_rewire_target_beside_a_below_floor_wired_name(
+            self, tmp_path, monkeypatch):
+        """The below-floor finding's other arm (TP-706's code review, driven):
+        wired `python3` answers 3.10.12 and PATH `python` answers 3.12.0, so
+        the rewire has a target, and the hint names it with the command,
+        never the identity-only "a WORKING `python3`" and its symlink."""
+        from espalier import doctor as doctor_module
+
+        stubs = {
+            "python": str(self._stub(tmp_path, "python", "Python 3.12.0")),
+            "python3": str(self._stub(tmp_path, "python3", "Python 3.10.12")),
+        }
+        settings = tmp_path / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text(
+            '{"hooks": {"PreToolUse": [{"hooks": [{"command": "python3"}]}]}}',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(doctor_module.shutil, "which",
+                            lambda x, path=None: stubs.get(str(x).split()[0]))
+        monkeypatch.setattr(doctor_module, "resolves_only_inside", lambda cmd: False)
+        joined = " ".join(doctor_module._check_python_resolver(tmp_path, settings))
+        assert (_python_floor.does_not_run_sentence("Python 3.10.12")
+                + " Then re-wire the hooks to it. ") in joined, joined
+        assert ("`python` starts and clears the floor -- run `python -m espalier "
+                "init . --rewire-interpreter` to rewire the hooks to it.") in joined, joined
+        assert "WORKING" not in joined and "symlink" not in joined, joined
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="sh stub is POSIX")
+    def test_doctor_calls_no_below_floor_python3_working(self, tmp_path, monkeypatch):
+        """The sibling of the row above (TP-706's failure-mode review, driven on
+        Windows): wired `python` is a Store alias, so doctor takes the
+        not-a-Python-3 branch, and PATH `python3` answers 3.10.21. Read by
+        identity alone, the `python3` arm called that one WORKING and named a
+        rewire that refuses and a symlink that wires 3.10."""
+        from espalier import doctor as doctor_module
+
+        alias = ("#!/bin/sh\necho 'Python was not found; run without arguments "
+                 "to install from the Microsoft Store' >&2\nexit 49\n")
+        stubs = {
+            "python": str(write_stub(tmp_path / "python", alias)),
+            "python3": str(self._stub(tmp_path, "python3", "Python 3.10.21")),
+        }
+        settings = tmp_path / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text(
+            '{"hooks": {"PreToolUse": [{"hooks": [{"command": "python"}]}]}}',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(doctor_module.shutil, "which",
+                            lambda x, path=None: stubs.get(str(x).split()[0]))
+        monkeypatch.setattr(doctor_module, "resolves_only_inside", lambda cmd: False)
+        joined = " ".join(doctor_module._check_python_resolver(tmp_path, settings))
+        floor = _python_floor.floor_text()
+        assert "WORKING" not in joined and "symlink" not in joined, joined
+        assert (f"nothing named 'python', 'python3' or 'py -3' on PATH starts and "
+                f"clears the {floor} floor, so the rewire has no target yet") in joined, joined
 
     @pytest.mark.skipif(sys.platform == "win32", reason="sh stub is POSIX")
     def test_hook_side_probe_refuses_a_below_floor_interpreter(self, tmp_path):
@@ -2547,9 +2618,11 @@ class TestADroppedPythonIsRefusedBeforeAnyWrite:
         said = result.stdout + result.stderr
         assert result.returncode == 1, said
         stub = tmp_path / "bin" / "python"
+        floor = _python_floor.floor_text()
         assert (f"The harness does not run on Python {found} (python at {stub}). "
-                f"Update to Python {_python_floor.floor_text()} or newer to install "
-                f"and use it. Nothing was written.") in result.stderr, said
+                f"Update to Python {floor} or newer to install and use it, or put a "
+                f"Python {floor} or newer on PATH as python3 or python. Nothing was "
+                f"written.") in result.stderr, said
         assert self._tree(target) == before, (
             f"{words[0]} wrote into a tree it refused: "
             f"{sorted(self._tree(target) - before)}")
@@ -2601,11 +2674,141 @@ class TestADroppedPythonIsRefusedBeforeAnyWrite:
         )
         said = result.stdout + result.stderr
         assert result.returncode == 1, said
+        floor = _python_floor.floor_text()
         assert (f"The harness does not run on Python 3.10.12 (py -3 at {launcher}). "
-                f"Update to Python {_python_floor.floor_text()} or newer to install "
-                f"and use it. Nothing was written.") in result.stderr, said
+                f"Update to Python {floor} or newer to install and use it, or put a "
+                f"Python {floor} or newer on PATH as python3 or python. Nothing was "
+                f"written.") in result.stderr, said
         assert self._tree(target) == before, (
             f"init wrote into a tree it refused: {sorted(self._tree(target) - before)}")
+
+
+class TestTheRefusalNamesTheResolversRemedy:
+    """TP-706's follow-on (option B of its floor-sentence call, as the
+    dispatcher scoped it): where the resolver's own answer is below the floor
+    and no candidate clears it -- the pack's trigger, the engine on 3.11
+    through pipx or uv and PATH ``python3`` at 3.10.12 -- init's refusal and
+    the read-only warning add one clause naming the other remedy: a newer
+    Python under any of the resolver's names. It still refuses first, before
+    any write, and still says it does not run on the version first; no
+    compatibility path, no prompt.
+
+    The clause is the caller's to ask for, and the caller renders the names
+    (``cli.resolver_candidate_names``), so a fourth candidate reaches the
+    sentence without a second list. In process, so these run on every host;
+    the POSIX stub rows in :class:`TestADroppedPythonIsRefusedBeforeAnyWrite`
+    drive the same words through a real subprocess.
+    """
+
+    @staticmethod
+    def _clause() -> str:
+        floor = _python_floor.floor_text()
+        return f", or put a Python {floor} or newer on PATH as python3 or python"
+
+    def test_the_sentence_adds_the_clause_only_when_asked(self):
+        floor = _python_floor.floor_text()
+        ruled = (f"The harness does not run on Python 3.10.12. Update to Python "
+                 f"{floor} or newer to install and use it.")
+        assert _python_floor.does_not_run_sentence("Python 3.10.12") == ruled
+        assert _python_floor.does_not_run_sentence(
+            "Python 3.10.12", path_remedy=True) == ruled[:-1] + self._clause() + "."
+
+    def test_the_clauses_names_are_the_resolvers_bare_names(self):
+        """The clause's names are spelled in `_python_floor`, which cannot
+        import cli, so the set is pinned to `cli.RESOLVER_CANDIDATES`: a bare
+        name added to or dropped from the resolver reds here before the
+        sentence names a remedy the resolver does not try. `py -3` stays out:
+        a spelling, not a PATH name, and a Python it picks is the sentence's
+        own "Update" remedy (TP-706)."""
+        from espalier import cli
+
+        assert set(_python_floor.PATH_REMEDY_NAMES) == set(cli.RESOLVER_CANDIDATES)
+        clause = _python_floor.does_not_run_sentence("Python 3.10.12", path_remedy=True)
+        named = clause.rsplit(" on PATH as ", 1)[1].rstrip(".").split(" or ")
+        assert set(named) == set(cli.RESOLVER_CANDIDATES), clause
+
+    def test_inits_refusal_names_the_resolvers_remedy(self, monkeypatch, capsys):
+        from espalier import cli
+
+        answer = (("python3", "/usr/bin/python3", "Python 3.10.12"), None)
+        monkeypatch.setattr(cli, "_BELOW_FLOOR_ANSWER", None)
+
+        def resolver() -> str:
+            cli._BELOW_FLOOR_ANSWER = answer
+            return "python3"
+
+        monkeypatch.setattr(cli, "_detect_python_command", resolver)
+        capsys.readouterr()
+        assert cli._refuse_below_floor_wiring("init") == 1
+        floor = _python_floor.floor_text()
+        assert capsys.readouterr().err == (
+            f"[init] FAIL: The harness does not run on Python 3.10.12 (python3 at "
+            f"/usr/bin/python3). Update to Python {floor} or newer to install and "
+            f"use it{self._clause()}. Nothing was written.\n")
+
+    def test_the_read_only_warning_names_the_resolvers_remedy(self, monkeypatch, capsys):
+        from espalier import cli
+
+        monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", False)
+        monkeypatch.setattr(cli, "_BELOW_FLOOR_REFUSING", False)
+        monkeypatch.setattr(cli, "_remedy_interpreter", lambda **_: ("python3.12", True))
+        capsys.readouterr()
+        cli._warn_interpreter_below_floor(("python3", "/usr/bin/python3", "Python 3.10.12"))
+        floor = _python_floor.floor_text()
+        assert capsys.readouterr().err == (
+            f"WARNING: The harness does not run on Python 3.10.12 (python3 at "
+            f"/usr/bin/python3). Update to Python {floor} or newer to install and "
+            f"use it{self._clause()}. After upgrading, re-wire with "
+            f"`python3.12 -m espalier init . --rewire-interpreter`.\n")
+
+    def test_the_sites_that_name_another_interpreter_keep_the_ruled_words(self):
+        """The clause rides only where the resolver's answer is named with no
+        candidate clearing the floor. ``espalier/__init__.py`` is the engine
+        itself below the floor. ``_start_refusal`` is a hook run by the
+        interpreter it names. ``session_start``'s wired-interpreter line could
+        tell (``banner_below_floor`` exits first, so it runs on 3.11 or newer
+        and names a different wired interpreter), and keeps the ruled words on
+        the ruling, not for want of knowing. Doctor names a WIRED interpreter,
+        possibly beside a good one already on PATH, where "put one there"
+        points the wrong way; its remedy is the rewire hint instead.
+
+        Two halves. The engine side is read as calls, not text: every call of
+        ``does_not_run_sentence`` under ``espalier/`` (the vendored mirror
+        aside) that passes ``path_remedy`` or a ``**`` mapping must sit in one
+        of the two functions, so a spelling the text scan missed, or a new
+        caller in another module, reds here. The hook side and ``__init__``
+        spell the words by hand, so their text must not hold the clause."""
+        allowed = {"_warn_interpreter_below_floor", "_refuse_below_floor_wiring"}
+        found: set[str] = set()
+        from tests._live_tree import checkout_rglob
+
+        for path in sorted(checkout_rglob(REPO_ROOT / "espalier", "*.py", root=REPO_ROOT)):
+            if "_vendor" in path.relative_to(REPO_ROOT).parts:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for fn in ast.walk(tree):
+                if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                for node in ast.walk(fn):
+                    if not isinstance(node, ast.Call):
+                        continue
+                    callee = node.func
+                    name = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "")
+                    if name != "does_not_run_sentence":
+                        continue
+                    if any(k.arg in (None, "path_remedy") for k in node.keywords):
+                        found.add(f"{path.relative_to(REPO_ROOT).as_posix()}::{fn.name}")
+        assert {site.rsplit("::", 1)[1] for site in found} == allowed, sorted(found)
+        assert all(site.startswith("espalier/cli.py::") for site in found), sorted(found)
+        clause = _python_floor.does_not_run_sentence("Python 3.10.12", path_remedy=True)
+        words = clause.split("install and use it", 1)[1].rstrip(".")
+        for rel in ("espalier/__init__.py", "tools/cc/hooks/_start_refusal.py",
+                    "tools/cc/hooks/session_start.py"):
+            text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+            assert "install and use it" in text, rel
+            assert " on PATH as python3 or python" not in text and words not in text, (
+                f"{rel} says the resolver's remedy clause, which the ruling keeps "
+                f"to init's refusal and the read-only warning")
 
 
 class TestTheEngineSaysTheFloorFirst:

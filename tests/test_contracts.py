@@ -626,6 +626,11 @@ class TestShippedRootsDoNotImportTests:
             "own reader of its skip reasons (the population IS the test tree, so the derivation lives "
             "beside it); the generator is self-host only and ships in neither the sdist nor the wheel, "
             "and tests/README.md has no adopter copy", None),
+        ("scripts/ci_job_bounds_census.py", "tests.test_test_suite_contract"): (
+            "the CI bounds census reads the serial files' per-test timeout marks with the suite "
+            "contract's own parser (`_declared_timeout_sites`, the one home of what a mark is, so the "
+            "census and the contract cannot read a mark two ways); the census is self-host only and "
+            "ships in neither the sdist nor the wheel", None),
     }
 
     @staticmethod

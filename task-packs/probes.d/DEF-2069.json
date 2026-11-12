@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2069",
+ "subject": "espalier/cli.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "needs two real interpreters of different versions on one PATH, one of them in an activated venv; driven by hand at filing on the Windows box (a 3.11.9 venv beside uv CPython 3.10.21)",
+ "row_sha": "4b103608608b",
+ "text_sha": "c565f0c5b7ab",
+ "verified_2026_11_10": "OPEN (filed 2026-11-10; probe driven at filing)"
+}
