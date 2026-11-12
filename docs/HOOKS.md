@@ -1745,7 +1745,16 @@ live -- a here-string, a heredoc body or the stage piped in -- and awk's
 "path"`, `>>`, sed's `w path` command and flag) meet the write extractor. A
 program on a POSIX shell's stdin by here-string or pipe (`bash <<< "..."`,
 `sh<<<'...'`, `echo "..." | sh`, `printf '%s' '...' 2>/dev/null | bash`) is
-read the same way.
+read the same way, behind the shell's own output redirects as well (`echo
+"..." | bash 2>&1 -x`, `| 2>/dev/null bash`, `python3 - 2>"e r" <<'PY'`) and
+with its head in capitals or with `.exe` (`| BASH.exe`); an input redirect
+after the head (`| bash < f`) or a script operand gives it another program,
+and the piped text is data. Declared limits, each pinned: a glued redirect
+chain (`2>&1>/dev/null`; the spaced spelling is read), a redirect before an
+interpreter's heredoc operand or flag (`python3 2>&1 - <<EOF`), and on the
+pipe a quoted target with a blank, which the pipe scan blanks, so the word
+after it reads as the target (`| bash > "o u t" x.sh` walls: toward
+friction).
 
 Because the program is read, the rest of it is data: a
 string that only quotes a command, a commit message, a `git grep` pattern, a
@@ -1803,7 +1812,11 @@ as `-lc`) by the Bash ones -- one level down, and a program that re-enters
 the first shell one level further, no more. Switches and a `--` between
 the `-c` and its program (`bash -c -- '...'`, `bash -c -x '...'`), and a
 shell's `+` options on either side of the `-c` (`bash +x -c '...'`, `bash -c
-+e '...'`, `bash +O extglob -c '...'`), are read on both tools. On the Bash tool a POSIX shell's `-c` program the outer scan
++e '...'`, `bash +O extglob -c '...'`), are read on both tools. A redirect
+word among them (`bash 2>/dev/null -c '...'`, `bash -lc 2>&1 '...'`,
+`python3 2>&1 -c "..."`) is read on the Bash tool only: the PowerShell
+tool's openers take none, since PowerShell's redirect set is its own
+(declared, pinned). On the Bash tool a POSIX shell's `-c` program the outer scan
 does not read as the shell receives it -- behind a switch or cluster
 (`bash -lc '...'`, `sh -e -c '...'`, `bash -c -- '...'`), behind a head the
 command position does not open at (`bash.exe -c`, `BASH -c`), opening on a

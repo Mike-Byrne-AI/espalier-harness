@@ -2070,7 +2070,13 @@ def iter_hardlink_operands(command: str) -> Iterator[str]:
 #: the compile census's 1,580 stays put), or a one-level `>(...)`. Every
 #: run that holds the unit is blank-led, so its digits never glue to a word.
 #: Over-read, toward friction: a redirect with no target before a word
-#: (`bash > -c '...'`, a file named `-c`) reads the word as a switch.
+#: (`bash > -c '...'`, a file named `-c`) reads the word as a switch. After
+#: `-c` or `-e` that reading is a miss instead: the inline joints take no
+#: switch, so `python3 -c > -x "..."` is unread (declared, both reviews).
+#: Declared limit: a here-string or heredoc before `-c` (`bash <<<x -c
+#: '...'`) is stdin the `-c` program ignores, but the unit never opens on
+#: `<<`, the operator the stdin readers end at, so the `-c` reader stops
+#: there too.
 #: The unit opens on a lookahead of the characters a redirect can start with,
 #: so a switch word fails it at one character rather than after the optional
 #: fd arm (semantics-free; the inline class back within main's spread).
@@ -2642,7 +2648,7 @@ _PY_WRITE_RES: tuple[re.Pattern[str], ...] = (
 #     patterns read.
 # Grammar: interpreter, optional single-letter flags, then EITHER nothing OR a
 # `-` operand (optionally followed by a bounded run of script arguments), then
-# `<<`. A script or module operand (`python3 script.py <<EOF`, `python3 -m
+# an optional run of output redirects (`_OUTPUT_REDIRECT_RUN`), then `<<`. A script or module operand (`python3 script.py <<EOF`, `python3 -m
 # json.tool <<EOF`) does not match: there the body is DATA, not the program.
 # An assignment whose name collides with an interpreter (`python3=/opt/bin/py`)
 # is excluded by the grammar itself, not by a `(?!=)` guard: after the name only
@@ -2651,9 +2657,12 @@ _PY_WRITE_RES: tuple[re.Pattern[str], ...] = (
 # require whitespace -- `python3<<'PY'` is a real invocation). Known misses,
 # named rather than widened: a valued flag before the operand (`-W ignore -
 # <<EOF`) and an input redirect between the operand and the operator (`- <f
-# <<EOF`: the later stdin redirect, the heredoc, is still the program). An
-# output redirect there (`- 2>/dev/null <<EOF`) is read, DEF-3077's
-# `_OUTPUT_REDIRECT_RUN` below. Three over-captures, also named (each fails toward friction, never
+# <<EOF`: the later stdin redirect, the heredoc, is still the program), and
+# an output redirect BEFORE the operand or a flag (`python3 2>&1 - <<EOF`,
+# `python3 >f -u <<EOF`; both reviews of DEF-3077: interleaving the unit
+# with the flags would give a redirect two parses beside the run after the
+# operand). An output redirect after the operand or the flags (`-
+# 2>/dev/null <<EOF`) is read, DEF-3077's `_OUTPUT_REDIRECT_RUN` below. Three over-captures, also named (each fails toward friction, never
 # open): (1) the mask relief above holds only when EVERY top-level head of the
 # command is on `_NON_REPARSING_HEADS` -- `sed <<'MD' > notes.md`, `awk`, `git`
 # or an interpreter as head leaves the whole command raw, and a documentation
@@ -2666,7 +2675,8 @@ _PY_WRITE_RES: tuple[re.Pattern[str], ...] = (
 # real spellings for no measured gain.
 # ReDoS: every adjacent quantifier pair is mutually exclusive (`[\w.-]` vs
 # `[ \t]`, `-`+letter vs `-`+space, a token vs its trailing spaces) and the
-# argument run is bounded, so the pattern is linear on any input; pinned in
+# argument run is bounded; the redirect run is not bounded, and its linearity
+# rests on its one parse per unit, pinned by the redirect rows in
 # `tests/test_redos.py` beside the other extraction regexes.
 #: The interpreters that read their program from stdin. ONE literal: the opener's
 #: alternation and the dispatch table's keys are both derived from it, and the
@@ -2702,13 +2712,25 @@ _INTERP_ALTERNATION = "python|pypy|node|ruby|perl|" + _POWERSHELL_HEADS
 #: backing out of `>&` or `>|` never ends it there. An input redirect (`<`)
 #: is not in it: a stdin redirect gives the head another program. Kept out
 #: of `_CMD_POS_NO_VERB` (air's f480b4: the compile ratchet).
+#: A target is the switch unit's (`_SWITCH_REDIRECT_TCHAR`: one-character
+#: items and whole quoted spans, so `2>"e r"` is one target where the scan
+#: keeps the quotes), and a spaced target never opens on `-` or `+`, so a
+#: switch after a redirect is a switch and a pipe reader's switch run, which
+#: interleaves the unit, keeps one parse (both reviews of the widened lane).
+#: Declared limits: a glued chain (`2>&1>/dev/null`) ends the run at its
+#: second operator, since a glued unit after a target would give its digits
+#: two parses; the spaced spelling is read. The pipe scan blanks a quoted
+#: span whole, so there a quoted target is blanks and a word after it is
+#: read as the target (`| bash > "o u t" x.sh` walls: toward friction).
 _OUTPUT_REDIRECT_OP = r"(?:(?<![^ \t])(?:[0-9]+|\{\w+\})|&)?>[>|&]?"
+_NOT_A_REDIRECT_WORD = r"(?![0-9]*>|\{\w+\}>)"
 _OUTPUT_REDIRECT_TARGET = (
-    r"(?:[ \t]*(?:(?![0-9]*>|\{\w+\}>)[^\s;|&<>()]+|>\([^()\n]*\)))?"
+    r"(?:(?:[ \t]+(?![-+]))?(?:" + _NOT_A_REDIRECT_WORD + _SWITCH_REDIRECT_TCHAR
+    + r"+|>\([^()\n]*\)))?"
 )
+_OUTPUT_REDIRECT_UNIT = _OUTPUT_REDIRECT_OP + _OUTPUT_REDIRECT_TARGET
 _OUTPUT_REDIRECT_RUN = (
-    _OUTPUT_REDIRECT_OP + _OUTPUT_REDIRECT_TARGET
-    + r"(?:[ \t]+" + _OUTPUT_REDIRECT_OP + _OUTPUT_REDIRECT_TARGET + r")*"
+    _OUTPUT_REDIRECT_UNIT + r"(?:[ \t]+" + _OUTPUT_REDIRECT_UNIT + r")*"
 )
 _INTERP_STDIN_RE = re.compile(
     _CMD_POS
@@ -6901,15 +6923,24 @@ _POSIX_SHELL_HEAD_SET = frozenset(_POSIX_SHELL_HEADS.split("|"))
 #: its clusters. Declared over-read: a bare word after a shell's switch is
 #: read as its value, so `| bash -e script.sh` and `| bash -- script.sh`
 #: wall although the pipe is that script's data.
+#: DEF-3077 (both reviews of the widened lane): each run interleaves one
+#: output redirect (`_OUTPUT_REDIRECT_UNIT`) with its switches, so `| bash
+#: 2>&1 -x`, `| bash &>f -s` and `| python3 2>&1 -u` read as the bare
+#: spelling does; a value never begins a redirect (`_NOT_A_REDIRECT_WORD`),
+#: and the reader takes no second redirect run after it, so the run has one
+#: parse.
 _INTERP_PIPE_SWITCH_RUN = (
-    r"(?:[ \t]+-(?!(?:c|e|m|E|f|F|File)(?:[ \t]|$))[\w.-]+"
-    r"(?:[ \t]+[\w./:=,@%+~][\w./:=,@%+~-]*)?)*"
+    r"(?:[ \t]+(?:-(?!(?:c|e|m|E|f|F|File)(?:[ \t]|$))[\w.-]+"
+    r"(?:[ \t]+" + _NOT_A_REDIRECT_WORD + r"[\w./:=,@%+~][\w./:=,@%+~-]*)?"
+    r"|" + _OUTPUT_REDIRECT_UNIT + r"))*"
 )
 _SHELL_PIPE_SWITCH_RUN = (
-    r"(?:[ \t]+(?:(?!--(?:[ \t]|$))(?![-+]" + _POSIX_SHELL_C_LETTERS + r"(?:[ \t]|$))"
+    r"(?:[ \t]+(?:(?:(?!--(?:[ \t]|$))(?![-+]" + _POSIX_SHELL_C_LETTERS + r"(?:[ \t]|$))"
     r"[-+][\w.-]+|\+(?=[ \t]|$))"
-    r"(?:[ \t]+[\w./:=,@%~][\w./:=,@%+~-]*)?)*"
-    r"(?:[ \t]+--(?:[ \t]+[\w./:=,@%+~-]+)*)?"
+    r"(?:[ \t]+" + _NOT_A_REDIRECT_WORD + r"[\w./:=,@%~][\w./:=,@%+~-]*)?"
+    r"|" + _OUTPUT_REDIRECT_UNIT + r"))*"
+    r"(?:[ \t]+--(?:[ \t]+(?:" + _OUTPUT_REDIRECT_UNIT + r"|" + _NOT_A_REDIRECT_WORD
+    + r"[\w./:=,@%+~-]+))*)?"
 )
 #: The pipe reader's statement end after its output redirects
 #: (`_OUTPUT_REDIRECT_RUN`, DEF-3077: `| bash >/dev/null 2>&1` reads the
@@ -6940,9 +6971,14 @@ _INTERP_PIPE_RE = re.compile(
     # stdin, so it is not in the run and the pipe stays data
     + r"(?:" + _OUTPUT_REDIRECT_OP + _OUTPUT_REDIRECT_TARGET + r"[ \t]+)*"
     r"(?:[\w./-]*/)?"
-    r"(?:((?i:" + _INTERP_ALTERNATION + r"))[\w.-]*" + _INTERP_PIPE_SWITCH_RUN
-    + r"|((?i:" + _POSIX_SHELL_HEADS + r"))" + _EXE_SUFFIX + r"\b" + _SHELL_PIPE_SWITCH_RUN + r")"
-    r"(?:[ \t]+-)?(?=[ \t]*(?:" + _OUTPUT_REDIRECT_RUN + r")?[ \t]*" + _PIPE_STATEMENT_END + r")"
+    # a redirect glued to the head (`| bash>/dev/null`) is the one unit read
+    # with no blank before it; the rest sit in the switch runs, and after
+    # the `-` operand
+    r"(?:((?i:" + _INTERP_ALTERNATION + r"))[\w.-]*(?:" + _OUTPUT_REDIRECT_UNIT + r")?"
+    + _INTERP_PIPE_SWITCH_RUN
+    + r"|((?i:" + _POSIX_SHELL_HEADS + r"))" + _EXE_SUFFIX + r"\b(?:" + _OUTPUT_REDIRECT_UNIT
+    + r")?" + _SHELL_PIPE_SWITCH_RUN + r")"
+    r"(?:[ \t]+-(?:[ \t]+" + _OUTPUT_REDIRECT_UNIT + r")*)?(?=[ \t]*" + _PIPE_STATEMENT_END + r")"
 )
 
 #: A POSIX shell fed its program by here-string (`bash <<< "..."`, bare or

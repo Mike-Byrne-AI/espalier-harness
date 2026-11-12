@@ -78,9 +78,12 @@ def _open_quote(text: str) -> tuple[str, int]:
     return state, opened
 
 
-#: cmd.exe's program switch at the end of the text before a quote: ``/c`` or
-#: ``/k`` (``//c`` as Git Bash spells it), after a blank or at the start.
-_CMD_PROGRAM_SWITCH_END = re.compile(r"(?:^|\s)//?[ckCK]\s+$")
+#: cmd.exe's program switch at the end of the text before a quote: ``/c``,
+#: ``/k`` or ``/r`` (cmd's synonym for ``/c``), after a blank or at the start,
+#: the quote glued to it or after blanks. Not Git Bash's ``//c``: bash reads
+#: that text's quotes before cmd sees it, so the rule is cmd's own quoting
+#: only (the failure-mode review).
+_CMD_PROGRAM_SWITCH_END = re.compile(r"(?:^|\s)/[ckrCKR]\s*$")
 
 
 def fill(template: str, name: str, path: str, shell: str = SH) -> str:
@@ -93,8 +96,8 @@ def fill(template: str, name: str, path: str, shell: str = SH) -> str:
     handed to another shell (``-ArgumentList '/c rd /s /q {t}'``), so it is
     double-quoted, which that shell reads and the outer one keeps literal.
 
-    For ``CMD``, a double-quoted string that opens right after cmd's ``/c``
-    or ``/k`` quotes nothing: cmd strips that outer pair and reads the
+    For ``CMD``, a double-quoted string that opens right after cmd's ``/c``,
+    ``/k`` or ``/r`` quotes nothing: cmd strips that outer pair and reads the
     program inside it bare (``cmd --% /c "rd /s /q {t}"``), so a placeholder
     in it is quoted as a bare one is (``... /q "<path>""``), which keeps the
     spaced path one word to cmd (#608's four ``ps-cmd-stopparse-quoted-*``

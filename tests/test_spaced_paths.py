@@ -82,9 +82,12 @@ class TestFill:
         # ps-cmd-stopparse-quoted-* rows)
         assert fill('cmd --% /c "rd /s /q {t}"', "{t}", SPACED, CMD) == (
             f'cmd --% /c "rd /s /q "{SPACED}""')
-        assert fill('cmd //C "del /s /q {t}/*"', "{t}", SPACED, CMD) == (
-            f'cmd //C "del /s /q "{SPACED}/*""')
+        assert fill('cmd /C "del /s /q {t}/*"', "{t}", SPACED, CMD) == (
+            f'cmd /C "del /s /q "{SPACED}/*""')
+        assert fill('cmd /r"rd /s /q {t}"', "{t}", SPACED, CMD) == f'cmd /r"rd /s /q "{SPACED}""'
         assert fill('cmd /k "dir {t}"', "{t}", PLAIN, CMD) == f'cmd /k "dir {PLAIN}"'
+        # Git Bash's //c text is bash's to unquote first: today's rule
+        assert fill('cmd //c "del /s /q {t}"', "{t}", SPACED, CMD) == f'cmd //c "del /s /q {SPACED}"'
         # any other double-quoted string is the fixture's own quoting, and
         # another shell's fill keeps today's rule
         assert fill('cmd /c rd /s /q "{t}"', "{t}", SPACED, CMD) == f'cmd /c rd /s /q "{SPACED}"'
