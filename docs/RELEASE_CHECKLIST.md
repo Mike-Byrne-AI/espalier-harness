@@ -619,13 +619,14 @@ Sequence (each step verifies the previous):
    is the development tree from the seed on). Read the listing; do not assume:
    ```bash
    unzip -l dist/espalier-harness-*-release.zip | grep -c 'task-packs/FORWARD_LEDGER.md'   # expect: 1
-   unzip -l dist/espalier-harness-*-release.zip | grep -c -e 'task-packs/ledger.d/' -e 'task-packs/probes.d/'  # expect: the count below
-   git ls-files task-packs/ledger.d task-packs/probes.d | wc -l
+   unzip -l dist/espalier-harness-*-release.zip | grep -c -e 'task-packs/ledger.d/' -e 'task-packs/probes.d/' -e 'task-packs/lineage.d/'  # expect: the count below
+   git ls-files task-packs/ledger.d task-packs/probes.d task-packs/lineage.d | wc -l
    ```
 
    The rows and probes filed one file each (`ledger_fragments`, 2026-10-13) are
    the tracker too: a zip that carries the two files but not the row files ships
-   a ledger missing every row filed since.
+   a ledger missing every row filed since. So are the lineage files (2026-11-12):
+   without them every row filed as a sibling of another ships with no parent.
 
    ⚠ **If `ESPALIER_MEMORY.md` or either release doc appears in the zip, STOP** —
    the two exclusion boundaries (classify and export-ignore) have disagreed, which

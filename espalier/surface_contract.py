@@ -676,8 +676,10 @@ SHIPPED_TASK_PACK_FILES: tuple[str, ...] = (
 # repository opts in: they complete the ledger and the roster above, so every
 # file directly under them ships with those two (the self-host `.gitignore`
 # re-includes the same two directories whole). One level only: a file nested
-# deeper is nobody's record.
-SHIPPED_TASK_PACK_DIRS: tuple[str, ...] = ("task-packs/ledger.d/", "task-packs/probes.d/")
+# deeper is nobody's record. A row's lineage files (2026-11-12) complete it the
+# same way, in either ledger mode.
+SHIPPED_TASK_PACK_DIRS: tuple[str, ...] = ("task-packs/ledger.d/", "task-packs/probes.d/",
+                                           "task-packs/lineage.d/")
 # The two locations whose packs SHIP: a `TP-*.md` directly under `task-packs/`
 # (active) or `task-packs/Deferred/` (drafted and held). Everything else a pack
 # can be -- landed in `Done/`, folded in `Merged/`, abandoned in `Scrapped/`, or

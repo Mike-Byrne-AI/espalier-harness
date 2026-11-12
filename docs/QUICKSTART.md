@@ -222,6 +222,7 @@ __pycache__/
 !/task-packs/LEDGER_PROBES.json
 !/task-packs/ledger.d/
 !/task-packs/probes.d/
+!/task-packs/lineage.d/
 ```
 <!-- required-gitignore: END generated region -->
 

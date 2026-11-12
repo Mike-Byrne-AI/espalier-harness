@@ -1618,6 +1618,10 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # own definition
             "test_handoff_mechanics",
             "test_ledger_row",
+            # The same verbs on the same fixture ledger, for a row's lineage
+            # and the two filing advisories: the files the verb leaves are the
+            # thing under test.
+            "test_ledger_lineage",
             # Drives tools/cc/record_merge.py through real `git merge` in a
             # bare-origin-plus-two-clones scratch repo (two machines' handoffs
             # colliding on the record files) and replays the live PR 88 x main

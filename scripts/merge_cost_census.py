@@ -78,9 +78,10 @@ PROBES = "task-packs/LEDGER_PROBES.json"
 RECORD_FILES = ("ESPALIER_MEMORY.md", LEDGER, PROBES)
 #: The same records written one file per change (the Session Log and the
 #: changelog since 2026-10-10, the ledger's rows and probes where a repository
-#: opts in since 2026-10-13): a conflict under one is still a record-file
-#: conflict (two writers on one name).
-RECORD_DIRS = ("memory/session-log.d/", "changelog.d/", "task-packs/ledger.d/", "task-packs/probes.d/")
+#: opts in since 2026-10-13, a row's lineage since 2026-11-12): a conflict
+#: under one is still a record-file conflict (two writers on one name).
+RECORD_DIRS = ("memory/session-log.d/", "changelog.d/", "task-packs/ledger.d/", "task-packs/probes.d/",
+               "task-packs/lineage.d/")
 REPORTS = ("catch-ups", "conflicts", "blocks", "stale")
 DEFAULT_REPORTS = REPORTS[:3]
 #: The probes roster's stored total: the one block class a derived count removes.

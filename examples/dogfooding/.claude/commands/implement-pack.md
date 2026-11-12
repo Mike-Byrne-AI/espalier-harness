@@ -110,6 +110,12 @@ reachability analysis. Both gates run before any sub-task executes.
    Claude-Code-internal capability invoked directly from this
    slash-command body by naming the subagent (`subagent_type='<name>'`).
 
+   Then, for each live forward-ledger row the pack will fix, run
+   `python tools/cc/ledger_row.py lineage <id>` (read-only, exit 0): when it
+   prints the five questions, the row sits in a chain of siblings or a
+   cluster of standalone rows on one site family, and the execution plan
+   answers them before it proposes a fix.
+
 0-B. **Pre-flight scope-check.** Before reading the pack as input,
    run `python -m espalier scope-check <pack-path>` to surface the reference graph
    for every symbol the pack proposes to change. Exit code semantics:

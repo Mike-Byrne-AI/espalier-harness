@@ -4522,6 +4522,7 @@ RECORD_FILES: tuple[str, ...] = (
     "changelog.d/",
     "task-packs/ledger.d/",
     "task-packs/probes.d/",
+    "task-packs/lineage.d/",
 )
 
 
@@ -4530,7 +4531,8 @@ RECORD_FILES: tuple[str, ...] = (
 _FRAGMENT_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9._-]*\.md$")
 #: The name this harness writes under each fragment directory (dated for the
 #: Session Log and the changelog, the row's or probe's id for the forward
-#: ledger's two): ci_guard's and record_merge's map, pinned equal. Another
+#: ledger's two, the child row's id for its lineage): ci_guard's and
+#: record_merge's map, pinned equal. Another
 #: tool's entry in an adopter's own ``changelog.d/`` (scriv, towncrier) is not
 #: a record file, so its setext underline is never called a conflict marker
 #: (review of #179).
@@ -4539,6 +4541,7 @@ _FRAGMENT_NAMES: "dict[str, re.Pattern[str]]" = {
     "changelog.d/": _FRAGMENT_NAME_RE,
     "task-packs/ledger.d/": re.compile(r"^([A-Z]{2,5}-\d+[a-z]*)\.md$"),
     "task-packs/probes.d/": re.compile(r"^([A-Z]{2,5}-\d+[a-z]*)\.json$"),
+    "task-packs/lineage.d/": re.compile(r"^([A-Z]{2,5}-\d+[a-z]*)\.json$"),
 }
 
 
