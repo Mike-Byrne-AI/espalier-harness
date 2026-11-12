@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -2328,13 +2329,23 @@ class TestWorkflowAssetForwardsEveryGateInput:
         block = step.split("run:", 1)[0]
         return set(_re.findall(r"^\s+([A-Z_]+):", block, flags=_re.MULTILINE))
 
+    #: Read by the gate and never forwarded: the runner sets each on every step
+    #: of the events the gate reads it on, and an env: entry cannot overwrite a
+    #: GITHUB_* or RUNNER_* name, so a forward would restate it, and a change to
+    #: the packaged workflow makes install-ci park an adopter's copy as .new
+    #: (the dispatcher's ruling on DEF-5102, ack d17646). Where it is unset
+    #: (merge_group, a local run) the gate falls back by itself.
+    RUNNER_DEFAULTS = frozenset({"GITHUB_HEAD_REF", "GITHUB_BASE_REF"})
+
     def test_every_env_key_the_gate_reads_is_forwarded(self):
         import re as _re
+        assert all(_re.match(r"(GITHUB|RUNNER)_", name) for name in self.RUNNER_DEFAULTS), self.RUNNER_DEFAULTS
         source = CI_GUARD.read_text(encoding="utf-8")
         read = set(_re.findall(r'env\.get\("([A-Z_]+)"', source))
         assert read, "the derivation found no env reads; the regex is wrong, not the gate"
+        assert self.RUNNER_DEFAULTS <= read, "an exempt name the gate no longer reads: drop it"
         forwarded = self._asset_env_keys(self.ASSET.read_text(encoding="utf-8"))
-        missing = sorted(read - forwarded)
+        missing = sorted(read - forwarded - self.RUNNER_DEFAULTS)
         assert not missing, (
             f"ci_guard reads {missing} but the workflow asset's 'Check protected "
             f"paths' env block does not forward it/them -- add the forward to "
@@ -2900,9 +2911,10 @@ class TestUnfinishedLaneArm:
         base = self._lane(fresh_repo)
         commit, parent = self._set_aside(fresh_repo, "lane/half")
         out = self._pr(fresh_repo, base, extra={"GITHUB_BASE_REF": "main"}).stdout
-        assert f"  # while HEAD is {commit[:12]}, the head this run read: " in out
-        assert f"  git reset --soft {parent[:12]}\n  # from any other HEAD" in out
-        assert "  git fetch origin\n  git reset --soft $(git merge-base origin/main HEAD)\n" in out
+        assert "  git fetch origin\n  git reset --soft $(git merge-base origin/main HEAD)\n  # right from any HEAD" in out
+        assert (f"  # or, while HEAD is {commit[:12]}, the head this run read, git reset --soft {parent[:12]} "
+                "in its place keeps the commits below") in out
+        assert f"\n  git reset --soft {parent[:12]}" not in out, "the computed reset printed as a command"
         # The window moved on before it read the red.
         _git(["reset", "-q", "--soft", parent], fresh_repo, env)
         _git(["commit", "-q", "-m", "feat: the finished lane"], fresh_repo, env)
@@ -3010,7 +3022,49 @@ class TestUnfinishedLaneArm:
         commands = [line.strip() for line in block if not line.strip().startswith("#")]
         assert "a merge follows it" in " ".join(comments)
         assert all(not set("'\"()") & set(line) for line in comments), comments
-        assert [line.split()[0] for line in commands] == ["git", "git", "git", "git", "python"], commands
+        assert [line.split()[0] for line in commands] == ["git", "git", "git", "python"], commands
+        assert commands[2].startswith("git diff --cached --quiet && git push "), commands
+
+    def test_the_moves_pasted_whole_leave_origins_branch_alone_until_the_finish_is_committed(
+            self, fresh_repo, tmp_path):
+        """Code-reviewer's re-review MAJOR, driven: the block once held two
+        resets and the push as commands, and pasted whole into bash it reset
+        twice and force-pushed the lane down to its merge-base, emptying the
+        pull request. Now one reset is a command and the push runs only once
+        nothing is staged: the paste takes the edits back and stops; after the
+        finish is committed, the push line alone lands it and the gate passes."""
+        bash = shutil.which("bash")
+        if bash is None:
+            pytest.skip("no bash on this host to paste into")
+        env = _git_env()
+        origin = tmp_path / "origin.git"
+        _git(["init", "-q", "--bare", str(origin)], tmp_path, env)
+        _git(["remote", "add", "origin", str(origin)], fresh_repo, env)
+        _git(["push", "-q", "origin", "main"], fresh_repo, env)
+        base = self._lane(fresh_repo)
+        commit, _parent = self._set_aside(fresh_repo, "lane/half")
+        _git(["push", "-q", "origin", "lane/half"], fresh_repo, env)    # the hand push
+        refs = {"GITHUB_BASE_REF": "main", "GITHUB_HEAD_REF": "lane/half"}
+        out = self._pr(fresh_repo, base, extra=refs).stdout
+        block = out.split("so in the lane's checkout:\n", 1)[1]
+        script = tmp_path / "paste.sh"
+        script.write_text(block + "\n", encoding="utf-8")
+        shell_env = {**os.environ, **env}
+        subprocess.run([bash, str(script)], cwd=str(fresh_repo), env=shell_env, capture_output=True,
+                       text=True, timeout=60)
+
+        def on_origin() -> str:
+            return _git(["ls-remote", "origin", "refs/heads/lane/half"], fresh_repo).stdout.split()[0]
+
+        assert on_origin() == commit, "the whole paste pushed before the finish was committed"
+        assert "half.py" in _git(["diff", "--cached", "--name-only"], fresh_repo).stdout.split()
+        _git(["commit", "-q", "-m", "feat: the finished lane"], fresh_repo, env)
+        [push] = [line.strip() for line in block.splitlines() if "git push" in line]
+        done = subprocess.run([bash, "-c", push], cwd=str(fresh_repo), env=shell_env, capture_output=True,
+                              text=True, timeout=60)
+        assert done.returncode == 0, done.stderr
+        assert on_origin() == _head(fresh_repo)
+        assert self._pr(fresh_repo, base, extra=refs).returncode == 0
 
     def test_the_guards_copies_are_the_drivers(self):
         """The guard imports no sibling (CI runs it from the pull request's own

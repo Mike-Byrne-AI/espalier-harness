@@ -247,6 +247,8 @@ def _reads(root, branch: str = "lane/x", base: str = "main") -> dict:
         ("git", "branch", "--show-current"): (0, f"{branch}\n", ""),
         ("git", "rev-parse", "-q", "--verify", "MERGE_HEAD"): (1, "", ""),   # no merge in progress
         _UNFINISHED_LOG: (0, "", ""),   # no commit an unfinished handoff made: every push may go
+        # ...and origin's copy holds none of the lane's (its brief's push words, DEF-5102)
+        ("git", "merge-base", "--is-ancestor"): (1, "", ""),
     }
 
 
@@ -6020,12 +6022,43 @@ class TestAnUnfinishedLaneRidesNoPush:
         left unsaid."""
         tip, set_aside = "a" * 40, "c" * 40
         log = (0, f"\x1e{tip} {set_aside}\x1f\n\x1e{set_aside} {'d' * 40}\x1flane/x\n", "")
-        _arm(ship, {("git", "fetch"): (0, "", ""), ("git", "rev-list", "--count"): (0, "2\n", ""),
-                    _UNFINISHED_LOG: log})
+        table = {("git", "fetch"): (0, "", ""), ("git", "rev-list", "--count"): (0, "2\n", ""),
+                 _UNFINISHED_LOG: log, ("git", "reflog"): (0, f"{tip}\n{set_aside}\n", ""),
+                 ("git", "rev-list", "origin/lane/x"): (0, "", "")}
+        spawns = _arm(ship, table)
         words = ship._origin_ahead_refusal("lane/x", str(tmp_path))
         assert words is not None and set_aside[:12] in words and "Espalier-Unfinished: lane/x" in words
         assert f"git push --force-with-lease=lane/x:{tip} origin HEAD:lane/x" in words
-        assert "the 1 other commit(s) there that HEAD does not reach" in words and "git merge" not in words
+        assert "the 1 other commit(s) there too, each once on this branch here" in words and "git merge" not in words
+        [left] = spawns.matching(("git", "rev-list", "origin/lane/x"))
+        assert left[3:6] == ["--not", "HEAD", tip] and left[-1] == set_aside, left
+        # A commit there this branch never held (another clone pushed it): the
+        # lease would drop it on a push git calls a success, so the merge is
+        # named, and the read of the reflog failing names it too (DEF-5102,
+        # the dispatcher's verifier drove the loss).
+        for answer in ((0, f"{'e' * 40}\n", ""), (1, "", "fatal")):
+            _arm(ship, {**table, ("git", "rev-list", "origin/lane/x"): answer})
+            words = ship._origin_ahead_refusal("lane/x", str(tmp_path))
+            assert "git merge origin/lane/x" in words and "--force-with-lease" not in words, words
+            assert "the unfinished-lane refusal then names the reset" in words
         _arm(ship, {("git", "fetch"): (0, "", ""), ("git", "rev-list", "--count"): (0, "1\n", ""),
                     _UNFINISHED_LOG: (0, f"\x1e{tip} {'d' * 40}\x1f\n", "")})
         assert "git merge origin/lane/x" in ship._origin_ahead_refusal("lane/x", str(tmp_path))
+
+    def test_every_text_that_names_a_push_reads_origins_copy_first(self, ship, tmp_path, monkeypatch):
+        """A plain push onto an origin holding commits HEAD lacks is rejected,
+        and git's hint is a pull, which brings a set-aside commit back: the
+        open pull request's refusal, rebind's push first and catch-up's
+        fast-forward refusal each name what _ahead_words says (the
+        dispatcher's ruling on DEF-5102, Core Rule 12). Dies to: a site that
+        names the plain push alone."""
+        ahead: list[str] = []
+        monkeypatch.setattr(ship, "_ahead_words", lambda branch, cwd: ahead.append(branch) or "AHEAD-WORDS")
+        _arm(ship, {**_reads(tmp_path), _list_key("lane/x"): _rows(_pr())})
+        st = ship.PrePushState(tmp_path, "main", "lane/x")
+        assert ship._open_pull_request_refusal(st).endswith("; before the push, AHEAD-WORDS")
+        _bind_clock(ship, monkeypatch)
+        _arm(ship, _rebind_answers(tmp_path, head="f" * 40))
+        with pytest.raises(ship.Refused, match=r"push first: .*; before the push, AHEAD-WORDS$"):
+            ship.rebind()
+        assert ahead == ["lane/x", "lane/x"]

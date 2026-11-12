@@ -101,9 +101,10 @@ jobs:
           # ci_guard reads GITHUB_EVENT_NAME via
           # os.environ to route the approval-marker check by trigger
           # (PR-like events accept only PR_TITLE; push accepts only
-          # commit-msg; others refuse). Actions exposes
-          # github.event_name as a context but does not auto-export
-          # it to the env, so this explicit forward is required.
+          # commit-msg; others refuse). The runner sets it on every step,
+          # and an env: entry cannot overwrite a GITHUB_* name, so this
+          # line restates the runner's value: it is kept so this block
+          # reads as the declaration of the script's inputs.
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           # ci_guard reads GITHUB_ACTOR for the narrow Dependabot
           # action-bump allowance (dependabot_action_bump_allowed).
@@ -124,15 +125,6 @@ jobs:
           # resolves its diff base to the INITIAL COMMIT, every protected path
           # reads as changed, and the push fails closed.
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          # ci_guard's red for a pull request holding the set-aside commit of
-          # an unfinished lane (`ship.py handoff --unfinished`) names the push
-          # that takes it off: to the pull request's own branch, and its soft
-          # reset from the lane's merge-base with the base as origin holds it.
-          # The runner sets both on pull_request events; forwarded so this
-          # block stays the complete declaration (GITHUB_ACTOR above). Lost,
-          # the red falls back to the trailer's branch and DEFAULT_BRANCH.
-          GITHUB_HEAD_REF: ${{ github.head_ref }}
-          GITHUB_BASE_REF: ${{ github.base_ref }}
         run: python tools/cc/ci_guard.py
 
   detect-source:

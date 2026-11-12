@@ -873,6 +873,9 @@ class TestTheHandoffLeavesAnUnfinishedLane:
         assert ship.handoff(unfinished=self.TEXT) == 0
         set_aside = _git(repo, "rev-parse", "HEAD")
         _git(repo, "push", "--quiet", "-u", "origin", "lane/half")       # the hand push
+        # Before the reset the lane's own refusal says the push is then the lease push.
+        assert "origin/lane/half holds it too, so the push is then the git push --force-with-lease" in (
+            ship._unfinished_on_lane(repo, "origin/main") or "")
         _git(repo, "reset", "--quiet", "--soft", below)                  # the brief's first move
         _git(repo, "commit", "--quiet", "-m", "feat: the finished lane")
         words = ship._origin_ahead_refusal("lane/half", str(repo))
@@ -885,6 +888,47 @@ class TestTheHandoffLeavesAnUnfinishedLane:
         trailers = _git(repo, "log", "--format=%(trailers:key=Espalier-Unfinished,valueonly)",
                         "origin/main..origin/lane/half")
         assert trailers == "" and _git(repo, "rev-parse", "origin/lane/half") == _git(repo, "rev-parse", "HEAD")
+
+    def test_a_commit_another_clone_pushed_is_merged_in_never_leased_away(self, ship, repo, monkeypatch, tmp_path):
+        """The dispatcher's verifier drove it (ack d17646): a lease bound to
+        origin's head as fetched still drops a commit another clone pushed
+        before the fetch, and git exits 0. The lease is named only where every
+        commit origin holds and HEAD lacks was once on this branch here (its
+        reflog); else the merge, which brings the set-aside commit back, the
+        lane's refusal then names the merge-base reset, and the reflog holds
+        the merge, so the next read names the lease, which lands the other
+        clone's file. Dies to: the lease named from origin's head alone."""
+        self._ready(ship, repo, monkeypatch)
+        below = _git(repo, "rev-parse", "HEAD")
+        assert ship.handoff(unfinished=self.TEXT) == 0
+        _git(repo, "push", "--quiet", "-u", "origin", "lane/half")       # the hand push
+        other = tmp_path / "other"
+        _git(tmp_path, "clone", "--quiet", "--branch", "lane/half", _git(repo, "remote", "get-url", "origin"),
+             str(other))
+        for key, value in (("user.name", "o"), ("user.email", "o@example.invalid"), ("commit.gpgsign", "false")):
+            _git(other, "config", key, value)
+        (other / "c.txt").write_bytes(b"from the other clone\n")
+        _git(other, "add", "c.txt")
+        _git(other, "commit", "--quiet", "-m", "feat: the other clone's commit")
+        _git(other, "push", "--quiet", "origin", "lane/half")
+        _git(repo, "reset", "--quiet", "--soft", below)                  # the brief's first move
+        _git(repo, "commit", "--quiet", "-m", "feat: the finished lane")
+        words = ship._origin_ahead_refusal("lane/half", str(repo))
+        assert words is not None and "1 commit(s) there were never on this branch here" in words
+        assert "git merge origin/lane/half" in words and "--force-with-lease" not in words
+        _git(repo, "merge", "--quiet", "--no-edit", "origin/lane/half")
+        moved = ship._unfinished_on_lane(repo, "origin/main") or ""
+        target = _git(repo, "merge-base", "origin/main", "HEAD")
+        assert "a merge follows it" in moved and f"git reset --soft {target[:12]}" in moved
+        _git(repo, "reset", "--quiet", "--soft", target)
+        _git(repo, "commit", "--quiet", "-m", "feat: the finished lane, recommitted")
+        tip = _git(repo, "rev-parse", "origin/lane/half")
+        words = ship._origin_ahead_refusal("lane/half", str(repo))
+        assert words is not None and f"git push --force-with-lease=lane/half:{tip} origin HEAD:lane/half" in words
+        _git(repo, "push", "--quiet", f"--force-with-lease=lane/half:{tip}", "origin", "HEAD:lane/half")
+        assert ship._origin_ahead_refusal("lane/half", str(repo)) is None
+        assert ship._unfinished_on_lane(repo, "origin/main") is None
+        assert _git(repo, "show", "origin/lane/half:c.txt") == "from the other clone"
 
     def test_the_two_moves_the_brief_names_give_the_lane_back_as_it_was(self, ship, repo, monkeypatch):
         """The next window's first moves, driven: the soft reset and the

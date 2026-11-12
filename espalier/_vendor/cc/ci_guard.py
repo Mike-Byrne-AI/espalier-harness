@@ -278,13 +278,17 @@ def _print_unfinished(found: list[tuple[str, str, str]], base: str, head: str,
     push is the move that does, bound to the head this run read where the
     workflow forwarded it, to the pull request's own branch (the runner's
     ``GITHUB_HEAD_REF``; the trailer's value, the branch the commit was made
-    on, only where that is unset). The reset this run computes is right only
-    while the lane's checkout is at the head it read, so it is printed with
-    that guard, beside the one that is right from any HEAD: the lane's
-    merge-base with the base as origin holds it now, fetched first. Every
-    line that is not a command is a shell comment holding no quote or
-    parenthesis, so a block pasted whole runs the commands and nothing else
-    (an interactive zsh without interactivecomments reads a comment as a
+    on, only where that is unset). One reset is a command: the one right
+    from any HEAD, to the lane's merge-base with the base as origin holds it
+    now, fetched first. The reset this run computes keeps the commits below
+    the set-aside one but is right only while the lane's checkout is at the
+    head it read, so it is a comment naming that guard: two resets run in a
+    row compute the second from the first's HEAD, and a merge below it is
+    lost. The push runs only once nothing is staged, so a block pasted
+    whole takes the edits back and stops before it (a Windows PowerShell
+    that cannot read ``&&`` runs no push at all). Every line that is not a
+    command is a shell comment holding no quote or parenthesis (an
+    interactive zsh without interactivecomments reads a comment as a
     command named ``#``, which fails alone). What was found is printed
     before the reads that name the reset, so a read that fails still says
     why."""
@@ -303,15 +307,14 @@ def _print_unfinished(found: list[tuple[str, str, str]], base: str, head: str,
     lane = (env.get("GITHUB_HEAD_REF") or "").strip() or trailer_lane
     base_ref = (env.get("GITHUB_BASE_REF") or "").strip() or (env.get("DEFAULT_BRANCH") or "").strip()
     below = shlex.quote(f"origin/{base_ref}") if base_ref else base
-    moves = []
+    moves = ["  git fetch origin",
+             f"  git reset --soft $(git merge-base {below} HEAD)",
+             "  # right from any HEAD: every commit of the lane, the set-aside ones with them, staged,"
+             " measured from the base as origin holds it now"]
     if head != "HEAD":
         target, why = _unfinished_reset(sha, parent, base, head, cwd)
-        moves += [f"  # while HEAD is {head[:12]}, the head this run read: {why}",
-                  f"  git reset --soft {target}",
-                  "  # from any other HEAD, a checkout that has moved since:"]
-    moves += ["  git fetch origin",
-              f"  git reset --soft $(git merge-base {below} HEAD)",
-              "  # every commit of the lane, staged, measured from the base as origin holds it now"]
+        moves.append(f"  # or, while HEAD is {head[:12]}, the head this run read, git reset --soft {target} in its"
+                     f" place keeps the commits below the set-aside one: {why}")
     lease = shlex.quote(f"--force-with-lease={lane}:{reviewed}") if reviewed else "--force-with-lease"
     lease_note = ("the lease refuses if the branch moved since this run read it" if reviewed else
                   "the lease is your remote-tracking ref of the branch: fetch it first")
@@ -331,8 +334,10 @@ def _print_unfinished(found: list[tuple[str, str, str]], base: str, head: str,
         "request's range until the branch is rewritten (the ship driver never\n"
         "force-pushes), so in the lane's checkout:\n"
         + "\n".join(moves) + "\n"
-        "  # then finish the lane, commit it, and push it over the set-aside commit:\n"
-        f"  git push {lease} origin {shlex.quote(f'HEAD:{lane}')}\n"
+        f"  # read git log HEAD..origin/{lane} first: the push replaces each commit there, so one another\n"
+        "  # clone pushed and this checkout never held is merged in before it, never pushed over\n"
+        "  # then finish the lane and commit it; the push over the set-aside commit runs only once nothing is staged:\n"
+        f"  git diff --cached --quiet && git push {lease} origin {shlex.quote(f'HEAD:{lane}')}\n"
         f"  # {lease_note}"
         + "".join(f"\n{line}" for line in after)
     )

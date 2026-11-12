@@ -232,15 +232,17 @@ request's own commits, from its base to the head under review (the checkout's
 branch is rewritten (the driver never force-pushes), so the red names a soft
 reset, the finish, and the `git push --force-with-lease` that takes it off,
 bound to the head the run read and pushed to the pull request's own branch
-(`GITHUB_HEAD_REF`; the trailer's branch only where that is unset). The reset
-the run computes is right only while the lane's checkout is at that head, and
-is printed with that guard: to the commit's parent, or, where a merge follows
-it, to the lane's merge-base with the base, since a reset to the parent would
-stage the base's merged changes as the lane's own and a file the base has
-since removed would land again. From any other `HEAD` the red names
-`git fetch origin` and a reset to the lane's merge-base with the base as
-origin holds it now (`GITHUB_BASE_REF`), which folds every commit of the lane
-into one. Every line of those moves that is not a command is a shell comment.
+(`GITHUB_HEAD_REF`; the trailer's branch only where that is unset). The one
+reset it prints as a command is right from any `HEAD`: `git fetch origin`,
+then a reset to the lane's merge-base with the base as origin holds it now
+(`GITHUB_BASE_REF`), which folds every commit of the lane into one. Beside it,
+as a comment, is the reset that keeps the commits below the set-aside one,
+right only while the lane's checkout is at the head the run read: to the
+commit's parent, or, where a merge follows it, to the lane's merge-base with
+the base, since a reset to the parent would stage the base's merged changes as
+the lane's own and a file the base has since removed would land again. The
+push runs only once nothing is staged, so the moves pasted whole take the
+edits back and stop before it; every other line is a shell comment.
 Push before any ship-driver verb: each refuses until origin's branch is
 rewritten, and the driver's own push refusal names the same lease push rather
 than a merge of origin's branch, which would bring the commit back. Git's own
@@ -249,8 +251,9 @@ opening with `Espalier-Unfinished:` reds too, prose included, until it is
 reworded. Never amend the set-aside commit by hand: an amend that drops the
 trailer leaves its half-built edits where neither the driver nor this check
 reads them. A push event is not judged: there the commit has already merged.
-The workflow forwards `GITHUB_HEAD_REF` and `GITHUB_BASE_REF`; an older one
-that does not still gets both from the runner on a pull request.
+The runner sets `GITHUB_HEAD_REF` and `GITHUB_BASE_REF` on a pull request;
+where neither is set (a merge queue, a local run) the red names the trailer's
+branch and `DEFAULT_BRANCH`.
 
 ### On a pull request: put the bound marker in the PR title
 
