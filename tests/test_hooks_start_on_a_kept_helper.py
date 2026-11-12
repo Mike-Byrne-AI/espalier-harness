@@ -1611,7 +1611,7 @@ class TestTheCopiedTreeIsWarm:
 
         work = _warm_cc().parent
         assert work.name.startswith(_temp_sweep.OWNED_PREFIXES), work.name
-        assert _temp_sweep.lock_pid(work) == os.getpid(), "a killed run's warm copy would never be swept"
+        assert _temp_sweep.lock_is_ours(work), "a killed run's warm copy would never be swept"
 
     def test_the_spawn_pools_are_no_wider_than_the_cores(self):
         assert 1 <= _POOL_WIDTH <= min(6, os.cpu_count() or 1)
