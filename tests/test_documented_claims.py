@@ -666,6 +666,12 @@ class TestSecurityMarkerCoverage:
         # self-expiry assertion on a release export. It guards no tool call
         # and no protected path. Classified `contract` (DEF-670).
         "test_export_guard",
+        # test_guard_cost_census matches the "guard" token nominally: its
+        # subject is scripts/guard_cost_census.py, which times write_guard's
+        # calls and counts its compiles. It pins no deny and no protected path
+        # (an ordinary call's allow is its precondition for a figure, not the
+        # behaviour under test). Classified `integration` (TP-707 1-A).
+        "test_guard_cost_census",
         # test_freshness_hook_count_migration matches the "hook" token by
         # name: its subject is the freshness manifest's hook-count literal
         # against the live wiring -- a tree-wide truth a re-pin can break,

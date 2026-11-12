@@ -4085,6 +4085,11 @@ _PRIVATE_HOOK_RUNNERS: dict[str, int] = {
     "test_edge_cases.py": 1,
     "test_governance_audit_log.py": 3,
     "test_guard_false_positives.py": 1,
+    # 2026-11-12 (TP-707 1-A): `_run` spawns scripts/guard_cost_census.py, not a
+    # hook; it names HOOK_PYTHON because the module holds its own pid as a
+    # fixture lock's holder, and the census spawns the guard itself, as wired,
+    # which is what it measures (the shared runner cannot be its argv).
+    "test_guard_cost_census.py": 1,
     "test_hook_protocol.py": 1,
     "test_hook_regression.py": 1,
     "test_hook_unicode_stdin.py": 1,

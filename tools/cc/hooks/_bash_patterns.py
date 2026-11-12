@@ -5059,31 +5059,59 @@ def mask_powershell_inert_syntax(command: str) -> str:
     return _ps_mask_read(command)[0]
 
 
-def _ps_mask_read(command: str) -> tuple[str, bool]:
+def _ps_mask_read(
+    command: str, blocks: "list[tuple[int, int]] | None" = None,
+) -> tuple[str, bool]:
     """`mask_powershell_inert_syntax`'s text, and whether the walk READ
     ``command`` (``False``: handed back raw, past the length cap or at a
     span the walk cannot resolve). The fallback's one home, so a reader
     that must know a surviving pipe is live (`_ps_join_command_gaps`) cannot
-    drift from the masker's own conditions."""
+    drift from the masker's own conditions. ``blocks`` receives the block
+    comments the walk read (`_walk_powershell_spans`), and is emptied where
+    the walk did not read the command."""
     if not command or len(command) > _ROLE_MAP_CAP:
         return command, False
     try:
-        return _walk_powershell_spans(command), True
+        return _walk_powershell_spans(command, None, blocks), True
     except (_UnresolvedShellSyntax, IndexError):
+        if blocks is not None:
+            blocks.clear()
         return command, False
 
 
-def _walk_powershell_spans(s: str, spans: "list[tuple[int, int, str]] | None" = None) -> str:
+def _walk_powershell_spans(
+    s: str,
+    spans: "list[tuple[int, int, str]] | None" = None,
+    blocks: "list[tuple[int, int]] | None" = None,
+) -> str:
     """The masker's walk. ``spans``, when given, receives every string it
     steps over as ``(open, close, kind)`` -- the opening quote's offset (the
     at-sign of a here-string), the closing quote's, and ``'``, ``"``, ``@'``
     or ``@"`` -- in offset order: PowerShell's quoting read by the ONE walk
     the mask is, for `_ps_quote_cursor`. A typographic quote PowerShell acts
     on is read as the straight one it pairs with; one in a string's value is
-    text (`fold_powershell_quotes`)."""
+    text (`fold_powershell_quotes`).
+
+    ``blocks``, when given, receives every block comment the walk reads as
+    ``(open, end)``, the ``<`` of its ``<#`` and the offset past its ``#>``,
+    in offset order: the ONE record of which ``<#`` opened a comment, which
+    `powershell_scan_pair` reads to make each one blank (DEF-2072) and the
+    re-parse lookback below reads past (DEF-2071). It is kept whether or not
+    a caller asks, wherever the text holds ``<#``, since the lookback needs
+    it; a text without one pays a substring test."""
     s = fold_powershell_quotes(s)
     n, i = len(s), 0
     out = list(s)
+    #: The block comments read so far, for the re-parse lookback: a comment
+    #: between a re-parser and the string it hands over is a blank to
+    #: PowerShell (`iex <# c #> 'gc .env'` runs the string; Windows
+    #: PowerShell 5.1, driven), so the lookback reads it as one (DEF-2071).
+    # A list a caller passes is this walk's alone: emptied first, since an
+    # entry left from another walk would rebuild the lookback's window wrongly
+    # and be kept under this text's answers (the failure-mode review).
+    if blocks is not None:
+        blocks.clear()
+    read = blocks if blocks is not None else ([] if "<#" in s else None)
     #: Where the last block comment's ``#>`` ended: a comment opener there
     #: starts a token though no boundary character precedes it (`<# a #><# b
     #: #>`, `<# a #># b`; pwsh 5.1, driven, a glued `& 'Remove-Item'` stage
@@ -5136,7 +5164,7 @@ def _walk_powershell_spans(s: str, spans: "list[tuple[int, int, str]] | None" = 
                     # means live. The `$s = @'...'@; iex $s` spelling is NOT
                     # reached here (the opener is not adjacent) and is declared
                     # out of scope with the indirection class.
-                    if not _ps_span_is_reparsed(s, i):
+                    if not _ps_span_is_reparsed(s, i, read):
                         _ps_blank_literal(s, out, j, end)
                 else:
                     # An expandable body behind a re-parser keeps its
@@ -5144,7 +5172,7 @@ def _walk_powershell_spans(s: str, spans: "list[tuple[int, int, str]] | None" = 
                     # carries the measurement).
                     _ps_blank_expandable(
                         s, out, j, end,
-                        reparsed=_ps_expandable_is_reparsed(s, i, j, end),
+                        reparsed=_ps_expandable_is_reparsed(s, i, j, end, read),
                     )
                 if spans is not None:
                     spans.append((i, end, "@" + quote))
@@ -5166,7 +5194,7 @@ def _walk_powershell_spans(s: str, spans: "list[tuple[int, int, str]] | None" = 
             # real invocation. Driven: `iex '$env:VAR=1; <cmd>'` sets the
             # variable and runs the command against real pwsh. Asked only when
             # the span holds something to blank (DEF-3039).
-            if not _ps_literal_is_kept_live(s, i, i + 1, j):
+            if not _ps_literal_is_kept_live(s, i, i + 1, j, read):
                 _ps_blank_literal(s, out, i + 1, j)
             if spans is not None:
                 spans.append((i, j, "'"))
@@ -5183,7 +5211,7 @@ def _walk_powershell_spans(s: str, spans: "list[tuple[int, int, str]] | None" = 
             # asked, every expandable span was blanked wholesale and the
             # double-quoted twin of a HARD single-quoted program ALLOWED.
             _ps_blank_expandable(
-                s, out, i + 1, j, reparsed=_ps_expandable_is_reparsed(s, i, i + 1, j),
+                s, out, i + 1, j, reparsed=_ps_expandable_is_reparsed(s, i, i + 1, j, read),
             )
             if spans is not None:
                 spans.append((i, j, '"'))
@@ -5214,6 +5242,8 @@ def _walk_powershell_spans(s: str, spans: "list[tuple[int, int, str]] | None" = 
             if end < 0:
                 raise _UnresolvedShellSyntax("unterminated block comment")
             _ps_blank_literal(s, out, i + 2, end)
+            if read is not None:
+                read.append((i, end + 2))
             i = block_end = end + 2
             continue
 
@@ -10239,7 +10269,10 @@ _PS_REPARSE_LOOKBACK = 2048
 @functools.lru_cache(maxsize=8)
 def _ps_reparse_answers(s: str, rx: object, lookback: int) -> "dict[int, bool]":
     """The lookback's answers for one text, by opener offset. The answer is a
-    function of the text, the offset, the pattern and the window, and one
+    function of the text, the offset, the pattern and the window -- and, under
+    the key that pairs the pattern with ``"blocks"``, of the masker walk's
+    comment record, itself a function of the text while the walk is the one
+    caller that passes it (`_ps_span_is_reparsed`) -- and one
     judgment walks the same text seven times (DEF-3039, measured through the
     two PowerShell checks), so a span that must ask pays the lookback once.
     Keyed on the pattern and the window too, so a test that swaps either is
@@ -10248,20 +10281,66 @@ def _ps_reparse_answers(s: str, rx: object, lookback: int) -> "dict[int, bool]":
     return {}
 
 
-def _ps_span_is_reparsed(s: str, opener: int) -> bool:
+def _ps_span_is_reparsed(
+    s: str, opener: int, blocks: "list[tuple[int, int]] | None" = None,
+) -> bool:
     """True when the span opening at ``opener`` is handed to a re-parser.
     Searched with ``pos``/``endpos`` (the ``$`` anchor holds at ``endpos``),
     never on a slice, and over a bounded lookback; answered once per text and
-    offset (`_ps_reparse_answers`)."""
+    offset (`_ps_reparse_answers`).
+
+    ``blocks`` is the masker walk's record of the block comments it has read
+    before ``opener`` (`_walk_powershell_spans`). Where one ends inside the
+    window, the window is read with each such comment as one blank, as
+    PowerShell reads it: `iex <# c #> 'Get-Date; gc .env'` runs the string
+    (DEF-2071; Windows PowerShell 5.1, driven), and the switch run cannot
+    step over the comment's words. That reading is a slice, rebuilt from the
+    window with the character before it kept so a word boundary at its start
+    reads as on the text, and its answers are kept apart from the plain
+    ones, since a caller with no record (a reader of the scan, where the
+    pair has already made each comment one blank) asks of the same text."""
+    lo = max(0, opener - _PS_REPARSE_LOOKBACK)
+    if blocks and blocks[-1][1] > lo:
+        answers = _ps_reparse_answers(
+            s, (_PS_REPARSED_SPAN_BEFORE, "blocks"), _PS_REPARSE_LOOKBACK)
+        hit = answers.get(opener)
+        if hit is None:
+            # The window is measured in the text as PowerShell reads it, each
+            # comment one character, so a long comment does not push the
+            # opener out of it (the reviews of the batch: a 2 KB comment
+            # after `iex` walled at 2030 characters and allowed at 2040).
+            # Walked back from the opener: at most the window's length of
+            # gaps and of comments, so the cost a span pays stays bounded.
+            budget, at, k = _PS_REPARSE_LOOKBACK, opener, len(blocks)
+            pieces: list[str] = []
+            while k and budget > 0:
+                a, b = blocks[k - 1]
+                if b > at:          # cannot happen: the walk records in order
+                    break
+                if at - b >= budget:
+                    break
+                pieces.append(s[b:at])
+                pieces.append(" ")
+                budget -= at - b + 1
+                at, k = a, k - 1
+            start = max(0, at - max(budget, 0))
+            pieces.append(s[start:at])
+            pieces.append(s[start - 1] if start else "")
+            window = "".join(reversed(pieces))
+            hit = answers[opener] = bool(
+                _PS_REPARSED_SPAN_BEFORE.search(window, 1 if start else 0))
+        return hit
     answers = _ps_reparse_answers(s, _PS_REPARSED_SPAN_BEFORE, _PS_REPARSE_LOOKBACK)
     hit = answers.get(opener)
     if hit is None:
         hit = answers[opener] = bool(
-            _PS_REPARSED_SPAN_BEFORE.search(s, max(0, opener - _PS_REPARSE_LOOKBACK), opener))
+            _PS_REPARSED_SPAN_BEFORE.search(s, lo, opener))
     return hit
 
 
-def _ps_expandable_is_reparsed(s: str, opener: int, a: int, b: int) -> bool:
+def _ps_expandable_is_reparsed(
+    s: str, opener: int, a: int, b: int, blocks: "list[tuple[int, int]] | None" = None,
+) -> bool:
     """`_ps_span_is_reparsed` for an EXPANDABLE span ``s[a:b]``, asked only
     when the answer can change the mask. The two modes of
     ``_ps_blank_expandable`` differ only on command-position characters and
@@ -10273,11 +10352,13 @@ def _ps_expandable_is_reparsed(s: str, opener: int, a: int, b: int) -> bool:
     for k in range(a, b):
         ch = s[k]
         if ch == "`" or ch in _PS_INERTABLE_SYNTAX:
-            return _ps_span_is_reparsed(s, opener)
+            return _ps_span_is_reparsed(s, opener, blocks)
     return False
 
 
-def _ps_literal_is_kept_live(s: str, opener: int, a: int, b: int) -> bool:
+def _ps_literal_is_kept_live(
+    s: str, opener: int, a: int, b: int, blocks: "list[tuple[int, int]] | None" = None,
+) -> bool:
     """Whether the masker keeps the single-quoted span ``s[a:b]`` live rather
     than blanking it: `_ps_span_is_reparsed`, asked only when the answer can
     change the mask, as `_ps_expandable_is_reparsed` is for its twin.
@@ -10293,7 +10374,7 @@ def _ps_literal_is_kept_live(s: str, opener: int, a: int, b: int) -> bool:
     directly too: its body always holds line breaks, which are on the list."""
     if _PS_INERTABLE_SYNTAX.isdisjoint(s[a:b]):
         return False
-    return _ps_span_is_reparsed(s, opener)
+    return _ps_span_is_reparsed(s, opener, blocks)
 
 
 #: The WORDS PowerShell resolves to `Remove-Item` -- the cmdlet and its
@@ -10779,16 +10860,22 @@ def powershell_scan_pair(command: str) -> tuple[str, str]:
     ``powershell_scan_text`` is the masked half of this pair (pinned). The
     raw half is folded the way the masker's walk reads it
     (`fold_powershell_quotes`), so a word read from ``raw`` sees the quotes
-    PowerShell pairs (DEF-2040).
+    PowerShell pairs (DEF-2040). Before either join, each block comment the
+    masker read is ONE blank in both halves, its delimiters and words
+    included (`_ps_blocks_as_one_blank`, DEF-2071/2072): a third change of
+    length, made where the command holds ``<#``.
     """
     command = fold_powershell_quotes(command)
-    masked, read = _ps_mask_read(command)
+    blocks: "list[tuple[int, int]] | None" = [] if "<#" in command else None
+    masked, read = _ps_mask_read(command, blocks)
     if len(masked) != len(command):
         # Cannot happen (the masker returns the command or a same-length
         # transform), but a consumer reading offsets across a length
         # mismatch would slice the wrong bytes, and the friction direction
         # is to scan the raw command.
-        masked, read = command, False
+        masked, read, blocks = command, False, None
+    if blocks:
+        command, masked = _ps_blocks_as_one_blank(command, masked, blocks)
     raw_parts: list[str] = []
     scan_parts: list[str] = []
     last = 0
@@ -10802,6 +10889,36 @@ def powershell_scan_pair(command: str) -> tuple[str, str]:
     scan_parts.append(masked[last:])
     raw, scan = _ps_join_command_gaps("".join(raw_parts), "".join(scan_parts), read)
     return _resolve_ps_command_objects(raw, scan)
+
+
+def _ps_blocks_as_one_blank(
+    raw: str, scan: str, blocks: "list[tuple[int, int]]",
+) -> tuple[str, str]:
+    """The pair with each block comment the masker read (``blocks``, from
+    `_walk_powershell_spans`) replaced by ONE space at the same offsets in
+    both halves (DEF-2071, DEF-2072): PowerShell reads a block comment as a
+    blank between tokens, its words included, so `Get-Content <# c #> .env`
+    and `Get-Content <# c #>.env` read the dotenv and `iex <# c #> 'gc
+    .env'` runs its string (Windows PowerShell 5.1, driven). The masker kept
+    the delimiters and the words between them, so a reader of either half
+    took the comment's words for operands (`<#`, `c`) and stopped at its
+    `#>`, and a carrier's opener sat a comment away from its program. A
+    comment the masker did not open (glued to a word, `note<# x`; inside a
+    string PowerShell re-parses, which is the inner program's) is not in
+    the record and stays as typed. Asked only where the command holds
+    ``<#``; linear in the text."""
+    raw_parts: list[str] = []
+    scan_parts: list[str] = []
+    last = 0
+    for a, b in blocks:
+        raw_parts.append(raw[last:a])
+        scan_parts.append(scan[last:a])
+        raw_parts.append(" ")
+        scan_parts.append(" ")
+        last = b
+    raw_parts.append(raw[last:])
+    scan_parts.append(scan[last:])
+    return "".join(raw_parts), "".join(scan_parts)
 
 
 #: A pipe whose gap, past blanks, opens with a line break or a comment: the
@@ -10843,10 +10960,11 @@ def _ps_join_command_gaps(raw: str, scan: str, masker_read: bool) -> tuple[str, 
     Remove-Item -Recurse -Force` is one pipeline (pwsh 7.6.5, driven), and
     every pipe reader's stage pattern stopped at the comment's surviving
     `<#`. Found on the MASKED half, where a pipe that survives is live and
-    a comment opener is read by the masker's own token-start rule; the
-    masker keeps a comment's delimiters on purpose (they end a blank run, so
-    a commented-out command is not read at command position), which is
-    right everywhere except here, between a pipe and its next stage. A
+    a comment opener is read by the masker's own token-start rule. Since
+    DEF-2071/2072 the pair arrives here with every block comment the masker
+    read already one blank (`_ps_blocks_as_one_blank`), so the block-comment
+    branches below meet only the ones it did not read: a gap inside a string
+    PowerShell re-parses, and the `=<#` glued case. A
     comment glued to a block comment's close opens there too (`<# a #><# b
     #>`, `<# a #># b`: one gap on pwsh 5.1, driven), as the masker's walk
     reads it (`block_end` in `_walk_powershell_spans`).
@@ -11002,7 +11120,8 @@ def powershell_scan_text(command: str) -> str:
     `-Force /` straight past the other three -- the write leg could not backstop
     the forge because `cc/blueprints/` is legitimately writable there.
 
-    ⚠ The join SHORTENS the string. The masker's same-length, same-offset
+    ⚠ The join SHORTENS the string, and so do the pipe and statement gap
+    join and each block comment made one blank (`powershell_scan_pair`). The masker's same-length, same-offset
     contract does not survive it, so nothing downstream may report an offset into
     this text against the raw command; every consumer reads slices of THIS text
     -- except the interpreter arm, which reads `powershell_scan_pair` and gets
@@ -11971,8 +12090,10 @@ def _ps_literal_text(command: str, m: "re.Match[str]") -> str:
 # openers' one roster (`_PS_REPARSE_OPENER_WORDS`, `_PS_SCRIPTBLOCK_CREATE`)
 # read for the program each one runs. `Invoke-Expression` / `iex` runs its
 # string, `pwsh` / `powershell` the value of `-Command`, `cmd` what follows
-# `/c` or `/k`, `[scriptblock]::Create` its argument, and a subexpression
-# `$(...)`, in an expandable string or as an argument, its own. The operand is a
+# `/c` or `/k`, `[scriptblock]::Create` its argument, a subexpression
+# `$(...)` its own, as an argument or inside an expandable string, and an
+# array subexpression `@(...)` its own outside every string (`$(` alone runs
+# inside one). The operand is a
 # string literal, bare or in parentheses: such a string is data until a
 # carrier runs it, and is read where it runs. A variable an earlier
 # assignment bound to one (`$c = '...'; iex $c`) is that literal by the time
@@ -11999,10 +12120,50 @@ _SHELL_COMMAND_SWITCH_RE = re.compile(_SHELL_COMMAND_SWITCH)
 _CMD_PROGRAM_SWITCH_RE = re.compile(r"[/-][ck]", re.IGNORECASE)
 #: The switch words read past a `pwsh` or `cmd` head before its program.
 _PS_CARRIER_SWITCHES_MAX = 64
-#: A subexpression's opener: its program runs wherever it stands, inside an
-#: expandable string or not. The masker blanks the `(` of one inside a
-#: single-quoted string, which is a mention.
-_PS_SUBEXPRESSION_RE = re.compile(r"\$\(")
+#: A subexpression's opener, `$(` or an array subexpression's `@(`: its
+#: program runs, so `$a = @(Get-Content .env)` reads the file as `$(...)`
+#: does (DEF-2075). `$(` runs inside an expandable string too; `@(` there is
+#: text, and so is either inside a string a carrier re-parses until that
+#: carrier's program is read one level down. The masker blanks the `(` of one
+#: inside a single-quoted string, which is a mention.
+_PS_SUBEXPRESSION_RE = re.compile(r"[$@]\(")
+#: The value an array subexpression's body opens with when it is an array of
+#: strings (`@('gc .env', 'ls')`): a quote, or a here-string's at-sign and
+#: quote. Such a body runs nothing at its head; a statement after a separator
+#: in it is read by the cut of the level it sits in.
+_PS_QUOTE_FIRST_BODY = ("'", '"', "@'", '@"')
+_PS_QUOTE_FOLD_MAP = dict(_PS_QUOTE_FOLD)
+
+
+def _ps_string_extents(command: str) -> list[tuple[int, int]]:
+    """The extents of the strings the masker's walk steps over at this level,
+    merged and in offset order: ``(open, close)``, both inclusive. Empty
+    where the walk cannot resolve the text, so every opener reads as live
+    there (the guard refuses, never allows, on a text it cannot pair)."""
+    spans: list[tuple[int, int, str]] = []
+    try:
+        _walk_powershell_spans(command, spans)
+    except (_UnresolvedShellSyntax, IndexError):
+        return []
+    merged: list[tuple[int, int]] = []
+    for start, end, _kind in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            if end > merged[-1][1]:
+                merged[-1] = (merged[-1][0], end)
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _ps_array_body(command: str, cursor: int, close: int, pieces: list[str]) -> Iterator[str]:
+    """The program of one `@(` body: ``pieces`` (its text before each nested
+    subexpression, that subexpression written empty) and the rest of the text
+    to ``close``; nothing when it opens with a string (`_PS_QUOTE_FIRST_BODY`)."""
+    body = "".join(pieces) + command[cursor:close]
+    # a typographic quote opens a string here as its straight form does
+    head = "".join(_PS_QUOTE_FOLD_MAP.get(c, c) for c in body.lstrip()[:2])
+    if body.strip() and not head.startswith(_PS_QUOTE_FIRST_BODY):
+        yield body
 
 
 def ps_paren_closers(scan: str) -> dict[int, int]:
@@ -12106,15 +12267,45 @@ def _ps_carrier_program_bodies(command: str, scan: str) -> Iterator[str]:
             k += 1
         if grammar == "ps" and not (k < len(spans) and spans[k][0] <= here):
             yield program
+    # A `$(` body is read one level down, whole, and a subexpression inside
+    # it is read there. An `@(` body spends no level (DEF-2075's review): it
+    # is yielded with each subexpression nested in it written empty, and each
+    # of those is read at this level as if it stood alone, so `@( $( $( gc
+    # .env ) ) )` keeps the two levels `$( $( gc .env ) )` has, and a nest
+    # of any depth is read in one pass over the text.
+    if "@(" not in scan and "$(" not in scan:
+        return
     closers = ps_paren_closers(scan)
+    strings = _ps_string_extents(command) if "@(" in scan else []
+    opens = [start for start, _end in strings]
     read_to = 0
+    #: `[cursor, close, pieces]` of each `@(` open around the next opener
+    arrays: list[list[Any]] = []
     for m in _PS_SUBEXPRESSION_RE.finditer(scan):
-        if m.start() < read_to:
+        here = m.start()
+        if here < read_to:
             continue
-        read_to = closers[m.end() - 1]
-        program = command[m.end():read_to]
+        array = scan[here] == "@"
+        if array:
+            k = bisect.bisect_right(opens, here) - 1
+            if k >= 0 and here <= strings[k][1]:
+                continue    # text in a string at this level
+        close = closers[m.end() - 1]
+        while arrays and arrays[-1][1] <= here:
+            yield from _ps_array_body(command, *arrays.pop())
+        if arrays:
+            parent = arrays[-1]
+            parent[2].append(command[parent[0]:here] + scan[here] + "()")
+            parent[0] = min(close + 1, len(command))
+        if array:
+            arrays.append([m.end(), close, []])
+            continue
+        read_to = close
+        program = command[m.end():close]
         if program.strip():
             yield program
+    while arrays:
+        yield from _ps_array_body(command, *arrays.pop())
 
 
 def _ps_stdin_program_bodies(command: str, scan: str) -> Iterator[tuple[str, str]]:

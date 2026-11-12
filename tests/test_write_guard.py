@@ -13707,6 +13707,157 @@ class TestATypographicQuoteClosesAPowerShellString:
         assert_hook_allowed(_run_ps_guard(command, tmp_path))
 
 
+class TestAnArraySubexpressionsProgramIsRead:
+    """DEF-2075: PowerShell runs the program inside an array subexpression
+    `@( )` wherever it stands, as it runs a `$( )`'s. Driven on Windows
+    PowerShell 5.1 (2026-11-12, a scratch file): `$a = @(Get-Content .env)`
+    and `@(gc .env)` each read it. The secret-read leg read a `$( )`'s
+    program one level down and blanked a `@(` as an argument's paren, so every
+    read below allowed at the lane's base while its `$( )` twin was refused.
+    The blanking stays, for `Get-Content @('.env')` reads its operand
+    through it; the program is read beside it."""
+
+    @pytest.mark.parametrize("command", [
+        "@(gc .env)",
+        "$a = @(Get-Content .env)",
+        "@(Get-Content -Path .env)",
+        "Write-Output @(Get-Content .env)",
+        "$a = @(\n  Get-Content .env\n)",
+        "$x = @( @(gc .env) )",
+    ], ids=["bare", "assigned", "path-switch", "as-an-argument", "multi-line", "nested"])
+    def test_a_read_inside_an_array_subexpression_is_refused(self, command, tmp_path):
+        assert_hook_denied(run_guard_tool("PowerShell", {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    def test_an_array_of_the_path_is_still_read_as_the_operand(self, tmp_path):
+        assert_hook_denied(run_guard_tool("PowerShell", {"command": "Get-Content @('.env')"}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("command", [
+        "Write-Host '@(gc .env)'",
+        # PowerShell expands `$( )` inside a double-quoted string, never `@( )`
+        'Write-Host "@(gc .env)"',
+        "$a = @('a', 'b')",
+        "$a = @(Get-Content a.txt)",
+        "$a = @(Get-ChildItem)",
+    ], ids=["single-quoted-mention", "double-quoted-mention", "an-array-of-strings", "another-file",
+            "no-read"])
+    def test_what_is_not_a_secret_read_stays_allowed(self, command, tmp_path):
+        assert_hook_allowed(run_guard_tool("PowerShell", {"command": command}, tmp_path))
+
+    # The rows below are the lane's code and failure-mode reviews, judged in
+    # process (the hook rows above drive the same leg end to end).
+
+    @staticmethod
+    def _denied(tool: str, command: str, project: Path) -> bool:
+        import contextlib
+        import io
+
+        wg = _load_write_guard()
+        with contextlib.redirect_stdout(io.StringIO()):
+            return bool(wg.check_secret_path_access(tool, {"command": command}, project))
+
+    @pytest.mark.parametrize("command", [
+        # a carrier's program is read one level down, where `@(` stands bare
+        'iex "@(gc .env)"',
+        "iex '@(gc .env)'",
+        # a nest of `@(` spends no level: each was allowed while one did, and
+        # the first two are refused at the lane's base, through the `$(` they hold
+        "@( $( $( gc .env ) ) )",
+        "$( @( $( gc .env ) ) )",
+        '$a = @(foo "$(bar $(gc .env))")',
+        "@(@(@(gc .env)))",
+        # Windows PowerShell 5.1 prints `a@` and then runs the group (driven)
+        "a@(gc .env)",
+        # a statement after the array's first value runs, and is read by the cut
+        "$c = @('x'; gc .env)",
+    ], ids=["iex-double", "iex-single", "array-around-two-subexpressions",
+            "array-between-subexpressions", "subexpressions-in-an-array's-string",
+            "three-arrays", "glued-to-a-word", "after-a-value"])
+    def test_a_read_the_reviews_drove_is_refused(self, command, tmp_path):
+        assert self._denied("PowerShell", command, tmp_path)
+
+    @pytest.mark.parametrize("command", [
+        # `@(` in a string a carrier re-parses is text at both levels
+        "iex \"Write-Output '@(gc .env)'\"",
+        "iex 'Write-Output \"@(gc .env)\"'",
+        "pwsh -Command \"Write-Host 'load lines with @(Get-Content .env)'\"",
+        "[scriptblock]::Create(\"Write-Output '@(gc .env)'\")",
+        # an array of strings is a value (driven: `@('gc probe.txt')` reads nothing)
+        "$cmds = @('gc .env')",
+        "@('Get-Content .env','Get-Date')",
+        '@("cat .env","ls")',
+        "Write-Host @('type .env')",
+        "$a = @('cat','.env')",
+        "$a = @(‘gc .env’)",
+        "$s = @(@'\ngc .env\n'@)",
+        # comments and here-strings
+        "# @(gc .env)",
+        "<# @(gc .env) #> Write-Output a",
+        "$s = @'\n@(gc .env)\n'@",
+        '$s = @"\n@(gc .env)\n"@',
+        # a hashtable and a splat open with `@` and no paren
+        "$h = @{ k = 1 }",
+        "Write-Output @args",
+    ], ids=["iex-double-mention", "iex-single-mention", "pwsh-mention", "scriptblock-mention",
+            "array-of-one-string", "array-of-two-strings", "array-of-double-quoted", "array-argument",
+            "array-of-words", "typographic-quotes", "here-string-value", "line-comment",
+            "block-comment", "literal-here-string", "expandable-here-string", "hashtable", "splat"])
+    def test_a_mention_or_a_value_the_reviews_drove_stays_allowed(self, command, tmp_path):
+        assert not self._denied("PowerShell", command, tmp_path)
+
+    @pytest.mark.parametrize(("command", "refused"), [
+        ("pwsh -Command '$a = @(Get-Content .env)'", True),
+        ("powershell -Command '@(gc .env)'", True),
+        ("pwsh -Command 'Write-Host \"@(gc .env)\"'", False),
+    ], ids=["pwsh-array-read", "powershell-array-read", "pwsh-mention"])
+    def test_the_bash_tool_reads_the_program_it_hands_powershell(self, command, refused, tmp_path):
+        assert self._denied("Bash", command, tmp_path) is refused
+
+    def test_every_execution_wrapper_of_the_differential_refuses_both_read_spellings(self, tmp_path):
+        """The class, not the site (Core Rule 12): the PowerShell
+        reachability differential's execution contexts each run the command
+        they wrap (driven on pwsh there), and its `array-subexpression` row is
+        DEF-2075's; at the lane's base that row alone allowed both spellings.
+        Its inert containers hold each `@(` read as a mention."""
+        prd = self._differential()
+        wrappers = prd.EXECUTION_WRAPPERS
+        assert any(name == "array-subexpression" for name, _ in wrappers)
+        missed = [(name, read) for name, template in wrappers for read in ("Get-Content .env", "gc .env")
+                  if not self._denied("PowerShell", template.format(cmd=read, nested="powershell"),
+                                      tmp_path)]
+        assert missed == []
+        refused = [(name, body) for name, template in prd.LITERAL_CONTAINERS + prd.EXPANDABLE_CONTAINERS
+                   for body in ("@(gc .env)", "$a = @(Get-Content .env)", "Write-Output @(gc .env)")
+                   if self._denied("PowerShell", template.format(body=body), tmp_path)]
+        assert refused == []
+
+    @staticmethod
+    def _differential() -> ModuleType:
+        """The differential loaded by path under a private name; the bench
+        directory it puts on sys.path and the rehearsal it imports by name
+        are taken back out."""
+        import importlib.util
+
+        saved_path = list(sys.path)
+        saved = {n: sys.modules.get(n) for n in ("powershell_guard_rehearsal", "_ps_reach_diff_2075")}
+        try:
+            spec = importlib.util.spec_from_file_location(
+                "_ps_reach_diff_2075", _BENCH_DIR / "powershell_reachability_differential.py")
+            assert spec is not None and spec.loader is not None
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = mod
+            spec.loader.exec_module(mod)
+            return mod
+        finally:
+            sys.path[:] = saved_path
+            for n, m in saved.items():
+                if m is None:
+                    sys.modules.pop(n, None)
+                else:
+                    sys.modules[n] = m
+
+
 class TestQuotedProgramsAreReadAsPrograms:
     """DEF-1131: a carrier runs a program out of a quoted string -- Bash
     ``eval``, ``script -c``, ``watch`` and ``su -c``; PowerShell
@@ -15049,7 +15200,8 @@ class TestPowerShellLiteralSpanLookback:
         calls: list = []
         real = bp._ps_span_is_reparsed
         monkeypatch.setattr(
-            bp, "_ps_span_is_reparsed", lambda s, o: (calls.append(o), real(s, o))[1],
+            bp, "_ps_span_is_reparsed",
+            lambda s, o, *a: (calls.append(o), real(s, o, *a))[1],
         )
         return bp, calls
 
@@ -17119,12 +17271,14 @@ class TestAGapAfterAPipeIsRead:
         assert _bash_patterns_module().splice_line_continuations(cmd) == joined
 
     @pytest.mark.parametrize("cmd, joined", [
-        ("a | <# c #> b", "a | b"),
+        # a block comment the masker opens is one blank before the join runs
+        # (DEF-2071/2072), so a gap of blanks alone is left as it stands
+        ("a | <# c #> b", "a |   b"),
         ("a |\n # c\n <# d #>\n b", "a | b"),
         ("a | b", "a | b"),
         # a comment glued to a block comment's close is one more comment on
-        # pwsh 5.1 (driven), though the masker opens none there
-        ("a | <# c #><# d #> b", "a | b"),
+        # pwsh 5.1 (driven), and the masker opens it too (`block_end`)
+        ("a | <# c #><# d #> b", "a |    b"),
         ("a | <# c #># d\n b", "a | b"),
         # inside a string PowerShell re-parses, a gap that ends in it joins;
         # one whose comment runs past the closing quote is left whole
@@ -17394,13 +17548,16 @@ class TestAStatementStartGapIsRead:
         assert_hook_allowed(_run_ps_guard(cmd, tmp_path))
 
     @pytest.mark.parametrize("cmd, joined", [
-        ("<# c #> b", " b"),
-        ("  <# c #> b", " b"),
-        ("a; <# c #> b", "a; b"),
-        ("a; <# c #><# d #> b", "a; b"),
-        ("a\n<# c #> b", "a\n b"),
-        ("$x = <# c #>b", "$x = b"),
-        ("return <# c #> b", "return b"),
+        # each comment the masker reads is one blank before the join runs
+        # (DEF-2071/2072, `TestABlockCommentIsOneBlank`), so a gap of blanks
+        # around it is left as it stands: the readers step over blanks
+        ("<# c #> b", "  b"),
+        ("  <# c #> b", "    b"),
+        ("a; <# c #> b", "a;   b"),
+        ("a; <# c #><# d #> b", "a;    b"),
+        ("a\n<# c #> b", "a\n  b"),
+        ("$x = <# c #>b", "$x =  b"),
+        ("return <# c #> b", "return   b"),
         # glued to `=`, the masker leaves the comment glued and the join
         # closes it on the raw half; in an argument that over-reads
         ("$x =<# c #> b", "$x = b"),
@@ -17410,10 +17567,10 @@ class TestAStatementStartGapIsRead:
         # DECLARED: a quote in it is an unterminated string to the masker,
         # which hands the command back raw, so nothing is joined
         ("$x =<# don't #> b", "$x =<# don't #> b"),
-        # a line comment, an argument's comment and a comment the masker
-        # does not open are left as they are
+        # a line comment and a comment the masker does not open are left as
+        # they are; an argument's comment is one blank, as everywhere
         ("a; # c\nb", "a; # c\nb"),
-        ("a b <# c #> d", "a b <# c #> d"),
+        ("a b <# c #> d", "a b   d"),
         ("a;x<# c #> b", "a;x<# c #> b"),
         # inside a string PowerShell re-parses, a gap that ends in it joins;
         # one whose comment runs past the closing quote is left whole
@@ -17451,6 +17608,142 @@ class TestAStatementStartGapIsRead:
     def test_a_braced_names_quote_hides_no_statement(self, tmp_path):
         cmd = "${a'b}; Get-Content .env; ${c'd}"
         assert_hook_denied(_run_ps_guard(cmd, tmp_path), contains_reason="Secret-path access blocked")
+
+
+class TestABlockCommentIsOneBlank:
+    """DEF-2071 and DEF-2072 (assign 2dff29, operator ruling d74016 (b)):
+    the masker kept a block comment's `<#`, `#>` and the words between them,
+    so a reader of either half of the scan pair took the comment's words for
+    operands and stopped at its `#>` (`Get-Content <# c #> .env`), and a
+    carrier's opener sat a comment away from its program (`iex <# c #> 'gc
+    .env'`); and the re-parse lookback inside the masker could not step over
+    the comment, so a re-parsed string's separators were blanked and its
+    second statement sat at no command position (`iex <# c #> 'Get-Date;
+    <delete>'`, the delete-wall twin, filed and closed here). Every spelling
+    below allows at origin/main fe5b478 and runs on Windows PowerShell 5.1
+    (driven with a harmless payload: a block comment is a blank there, its
+    words included). The masker's walk now records each comment it reads
+    (`_walk_powershell_spans`' ``blocks``): the pair makes each one blank in
+    both halves (`_ps_blocks_as_one_blank`) and the lookback reads the window
+    past them (`_ps_span_is_reparsed`'s ``blocks``). A comment the masker
+    does not open (glued to a word; inside a re-parsed string) is not in the
+    record, so DEF-2073's glued shape is not read here."""
+
+    @pytest.mark.parametrize("cmd", [
+        # DEF-2071: the carrier's opener a comment away from its program
+        "iex <# c #> 'Get-Content .env'",
+        "Invoke-Expression <# c #> 'gc .env'",
+        "iex <# a #><# b #> 'gc .env'",
+        "iex <# c #> 'Get-Date; Get-Content .env'",
+        'iex <# c #> "Get-Date; Get-Content .env"',
+        # DEF-2072: a comment in an operand slot
+        "Get-Content <# c #> .env",
+        "gc -Raw <# c #> .env",
+        "Get-Content -Path <# c #> .env",
+        "Get-Content <# c #>.env",
+    ])
+    def test_a_read_past_a_comment_is_refused(self, tmp_path, cmd):
+        assert_hook_denied(_run_ps_guard(cmd, tmp_path), contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("cmd", [
+        "iex <# c #> 'Get-Date; Remove-Item C:\\ -Recurse -Force'",
+        'iex <# c #> "Get-Date; Remove-Item C:\\ -Recurse -Force"',
+        # the window is measured with each comment one character (the
+        # reviews: a comment past 2 KB pushed the opener out of a window cut
+        # in typed offsets), and the record reaches both here-string sites;
+        # many comments past the window, as an ordinary script holds them:
+        # 20 of 120 characters, 2400 typed past the 2048 lookback (a count
+        # in the hundreds is a flood: `test_a_comment_flood_before_a_carrier
+        # _is_refused`)
+        "iex <#" + "x" * 2100 + "#> 'Get-Date; Remove-Item C:\\ -Recurse -Force'",
+        "iex " + ("<#" + "x" * 115 + "#> ") * 20 + "'Get-Date; Remove-Item C:\\ -Recurse -Force'",
+        "iex <# c #> @'\nGet-Date; Remove-Item C:\\ -Recurse -Force\n'@",
+        'iex <# c #> @"\nGet-Date; Remove-Item C:\\ -Recurse -Force\n"@',
+    ], ids=["literal", "expandable", "one-long-comment", "many-comments",
+            "literal-here-string", "expandable-here-string"])
+    def test_a_delete_a_carrier_runs_past_a_comment_walls(self, tmp_path, cmd):
+        assert _delete_verdict(run_guard_from("PowerShell", cmd, tmp_path, None)) == "wall"
+
+    def test_a_comment_flood_before_a_carrier_is_refused(self, tmp_path):
+        """400 one-character comments before the carrier: each reads as one
+        blank, and the readers' cost on a run of blanks is main's, quadratic
+        (about 0.6 s here in-process, 3.6 s on a CI cell, where the budget
+        refused the spawned row on both attempts; a carrier behind 2400 plain
+        blanks costs 2.7 s at origin/main 3cb7c0d, comments or none). The
+        flood is refused whichever answers: the wall in-process, as here, or
+        the budget's refusal in the hook, which is also a deny (the coverage
+        contract's answer to a crafted flood, operator 40ec7f)."""
+        import sys
+        sys.path.insert(0, str(HOOKS_DIR))
+        import write_guard as wg
+        cmd = "iex " + "<#x#> " * 400 + "'Get-Date; Remove-Item C:\\ -Recurse -Force'"
+        assert wg._ps_dangerous_reason(cmd, tmp_path, cwd=tmp_path) is not None
+
+    @pytest.mark.parametrize("cmd", [
+        # what a comment holds is comment; a comment in argument position
+        # leaves the word after it the argument it is; a glued opener opens
+        # nothing; a mention in a string stays a mention
+        "Write-Host hi <# c #> Get-Content .env",
+        "<# Get-Content .env #> Write-Host hi",
+        "Write-Output note<# x #> .env",
+        "Write-Host '<# c #> Get-Content .env'",
+        "Get-Content <# c #> README.md",
+        "iex <# c #> 'Get-Content README.md'",
+    ])
+    def test_what_is_not_a_read_stays_allowed(self, tmp_path, cmd):
+        assert_hook_allowed(_run_ps_guard(cmd, tmp_path))
+
+    @pytest.mark.parametrize("cmd, raw", [
+        ("Get-Content <# c #> .env", "Get-Content   .env"),
+        ("Get-Content <# c #>.env", "Get-Content  .env"),
+        ("iex <# a #><# b #> 'x'", "iex    'x'"),
+        ("Write-Output a <# x\n y #> b", "Write-Output a   b"),
+        # not opened by the masker: glued to a word, or inside a string
+        ("Write-Output a<# c #>b", "Write-Output a<# c #>b"),
+        ("Write-Host '<# c #>'", "Write-Host '<# c #>'"),
+        # an unterminated comment: the masker hands the command back raw
+        ("Get-Content <# c .env", "Get-Content <# c .env"),
+    ])
+    def test_the_pair(self, cmd, raw):
+        got, scan = _bash_patterns_module().powershell_scan_pair(cmd)
+        assert got == raw and len(scan) == len(got)
+
+    def test_the_lookback_reads_past_the_comments_it_is_given(self):
+        bp = _bash_patterns_module()
+        s = "iex <# c #> 'Get-Date; Get-Content .env'"
+        opener = s.index("'")
+        blocks = [(4, 11)]
+        # its answers are kept apart from the plain ones, whichever is asked
+        # first: a reader of the scan asks with no record
+        assert bp._ps_span_is_reparsed(s, opener) is False
+        assert bp._ps_span_is_reparsed(s, opener, blocks) is True
+        t = "iex <# d #> 'Get-Date; Get-Content .env'"
+        assert bp._ps_span_is_reparsed(t, opener, blocks) is True
+        assert bp._ps_span_is_reparsed(t, opener) is False
+        # a comment straddling the typed window's start, and one longer than
+        # the window: each is one character of the window read
+        n = bp._PS_REPARSE_LOOKBACK
+        for body in ("x" * (n - 10), "x" * (n + 50)):
+            u = "iex <#" + body + "#> 'a; b'"
+            assert bp._ps_span_is_reparsed(u, u.index("'"), [(4, 8 + len(body))]) is True
+
+    def test_a_list_passed_twice_holds_the_second_walk_alone(self):
+        bp = _bash_patterns_module()
+        blocks: list = []
+        bp._walk_powershell_spans("a <# b #> c", None, blocks)
+        bp._walk_powershell_spans("x y <# z #>", None, blocks)
+        assert blocks == [(4, 11)]
+        # and a walk that cannot read the text leaves no record behind
+        assert bp._ps_mask_read("<# a #> 'open", blocks) == ("<# a #> 'open", False)
+        assert blocks == []
+
+    def test_a_text_without_an_opener_keeps_no_record(self):
+        bp = _bash_patterns_module()
+        blocks: list = []
+        bp._walk_powershell_spans("Get-Content a.txt # <# not a block", None, blocks)
+        assert blocks == []
+        bp._walk_powershell_spans("a <# b #> c <# d #>", None, blocks)
+        assert blocks == [(2, 9), (12, 19)]
 
 
 class TestShellOutReader:
