@@ -1167,7 +1167,11 @@ def _ps_harness_env_prefix_is_benign(command: str) -> bool:
 # anything else (`&& pytest -q`) is allowed. A launch the outer shell runs once
 # cmd has returned (an unquoted `cmd /c set ... && claude`) never sees the
 # variable, nor does a launch in the outer cmd after a nested one set it, and
-# both are allowed. Stated cost, toward the deny: a line break ends a statement
+# both are allowed. A later statement that is a test run is read by DEF-1044's
+# relief, as both env-prefix arms read one, its operands double-quoted whole
+# (cmd's quote; a word holding a single quote keeps the deny). A separator the
+# outer shell hands on as a word (`\&\&`, `'&'`, a backtick-escaped `&`) reaches
+# cmd bare and splits there. Stated cost, toward the deny: a line break ends a statement
 # here, so a launch on a later line of a program cmd is handed is refused,
 # whether or not cmd runs that line (not driven; bd4d97 (4) accepted it).
 #
@@ -1197,29 +1201,46 @@ def _cmd_set_launches_claude(scan: str, *, bash: bool, raw: str | None = None) -
     ``raw`` is an offset-aligned unmasked twin to read the program from
     (PowerShell's scan pair); default ``scan``. Each program is read to its
     statement's end, past a cmd it starts (which inherits the variable), and
-    through cmd's own quote rule (`_bash_patterns._cmd_line_unquoted`), which
-    the separator scan this replaced stood in for by stepping over a quote at
-    each statement start."""
+    through cmd's own quote rule, which the reader applies once
+    (`_bash_patterns._cmd_line_unquoted`) and the separator scan this
+    replaced stood in for by stepping over a quote at each statement
+    start."""
     _load_the_pattern_path()
     for _at, program in _bash_patterns.iter_cmd_programs(
             scan if raw is None else raw, scan, bash=bash, to_statement_end=True):
-        if _cmd_program_sets_then_launches(_bash_patterns._cmd_line_unquoted(program), 0):
+        if _cmd_program_sets_then_launches(program, 0):
             return True
     return False
+
+
+def _cmd_test_run_holds_no_launch(words: list[str]) -> bool:
+    """DEF-1044's relief for one of cmd's statements, as both env-prefix
+    arms take it (`_a_test_run_holds_no_launch`): ``words`` from the verb
+    on, a word holding a blank handed to it double-quoted whole: cmd's split
+    has removed the quotes such a word needed, and cmd honours no other kind.
+    False for a word still holding a quote: a single quote the relief
+    would read as one cmd does not, so that shape keeps the deny."""
+    if not words or any("'" in w or '"' in w for w in words):
+        return False
+    command = " ".join([words[0]] + ['"' + w + '"' if any(ch in w for ch in " \t") else w
+                                     for w in words[1:]])
+    return _a_test_run_holds_no_launch(command, _BASH_OPAQUE)
 
 
 def _cmd_program_sets_then_launches(program: str, depth: int) -> bool:
     """True when a statement of cmd's ``program`` sets a harness variable and
     a later one launches ``claude``; a cmd a statement starts is read the
-    same way, to the delete reader's depth. Linear in the program: one split,
-    then one pass over its statements (a nested program is a statement's own
-    words, read once)."""
+    same way, to the delete reader's depth. One split and one pass over the
+    statements at each depth (a nested program is a statement's own words,
+    read once there). A later statement that is a test run whose operands
+    hold no launch is not one (`_cmd_test_run_holds_no_launch`)."""
     armed = False
     for line in program.splitlines():
         for words in _bash_patterns._cmd_statements(line):
-            if armed and _statement_launches_claude(" ".join(words)):
-                return True
             k = _bash_patterns._cmd_statement_head(words)
+            if (armed and _statement_launches_claude(" ".join(words))
+                    and not _cmd_test_run_holds_no_launch(words[k:])):
+                return True
             if k >= len(words):
                 continue
             low = words[k].lstrip("@").lower()

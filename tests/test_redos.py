@@ -3291,6 +3291,36 @@ def test_the_cmd_set_check_scales_linearly_on_a_set_flood(label, unit):
     assert verdict is None, f"{label}: {verdict}"
 
 
+def _ps_cmd_set_check(payload: str) -> bool:
+    """The cmd `set` check alone over a PowerShell command, as the hard tier
+    hands it the scan pair."""
+    write_guard._load_the_pattern_path()
+    raw, scan = write_guard._bash_patterns.powershell_scan_pair(payload)
+    return write_guard._cmd_set_launches_claude(scan, bash=False, raw=raw)
+
+
+def test_the_cmd_set_check_reads_an_opener_flood_once():
+    """The set check reads each program to its outer statement's end, past a
+    later opener, and skips an opener inside a program already read; without
+    the skip a run of openers in one statement is re-read from each, and an
+    assignment-prefixed flood on PowerShell went from 28 ms to 51 s at 60 KB
+    (the code review, the skip removed in memory; no polarity row reds on its
+    removal, so this row is its pin). Pair rule on the check alone, as the
+    set flood's. Who: the operator whose generated script starts cmd once a
+    line inside one statement."""
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    unit = "$a = cmd /c x "
+
+    def make(n: int) -> str:
+        return unit * (n // len(unit))
+
+    verdict = _ps_body_scaling_verdict(
+        _ps_cmd_set_check, make(4 * _WORST_CASE_BODY_LEN), make(2 * _WORST_CASE_BODY_LEN), make(64),
+    )
+    assert verdict is None, f"opener-flood: {verdict}"
+
+
 @pytest.mark.parametrize("label,seed", [
     # the cmdlet word in a valued parameter: the exec-quote arm opens a
     # command position at each, and each walked to the statement's end

@@ -11657,6 +11657,11 @@ def _recursive_delete_launch_forms() -> list[tuple[str, str, str]]:
                       "cmd --% /c echo x && " + verb + " /s /q {t}"))
         forms.append((f"ps-cmd-stopparse-quoted-{verb}", "PowerShell",
                       'cmd --% /c "' + verb + ' /s /q {t}"'))
+        # the argument list's program as typed, opening with a quote: the
+        # reader applies cmd's quote rule to every program it hands on, once
+        # (the failure-mode review: this one allowed at the lane's first build)
+        forms.append((f"ps-cmd-saps-quoted-{verb}", "PowerShell",
+                      "Start-Process cmd -ArgumentList '/c \"" + verb + " /s /q {t}\"'"))
     for word in re.findall(r"[\w-]+", bp._PS_REMOVE_VERB_WORDS):
         forms.append((f"ps-word-{word.lower()}", "PowerShell", word + " -Recurse {t}"))
     words = {w.lower() for w in re.findall(r"[\w-]+", bp._PS_REMOVE_VERB_WORDS)}
@@ -11736,7 +11741,7 @@ class TestEveryLaunchFormMeetsTheRecursiveDeleteWall:
             "env", "sudo", "doas", "command", "time", "nohup", "timeout", "xargs", "exec",
             "nice", "ionice", "stdbuf", "setsid", "strace", "ltrace", "watch", "script",
             "chrt", "taskset", "unbuffer", "torify", "proxychains"]
-        assert len(_LAUNCH_FORMS) == 84, len(_LAUNCH_FORMS)
+        assert len(_LAUNCH_FORMS) == 88, len(_LAUNCH_FORMS)
 
     def test_xargs_is_the_pipe_carrier_and_no_wrapper_on_the_powershell_tool(self):
         """`xargs` hands the remove verb its operands from the pipe on this

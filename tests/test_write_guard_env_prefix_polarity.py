@@ -339,6 +339,16 @@ _CMD_SET_STATEMENTS = [
     # quote skip; the statement reader needs cmd's own rule to keep them)
     ("ps", "cmd --% /c \"set {var}=1 && {run}\""),
     ("ps", "Start-Process cmd -ArgumentList '/c \"set {var}=1 && {run}\"'"),
+    # a separator the outer shell hands on as a word of its own reaches cmd
+    # bare, and cmd splits there (Git Bash and Windows PowerShell 5.1, driven
+    # by the code review: `cmd //c echo a \& echo b` prints both lines); the
+    # rejoin quoted it, so the lane's first build allowed all four
+    ("bash", "cmd //c set {var}=1 \\&\\& {run}"),
+    ("bash", "cmd //c set {var}=1 '&' {run}"),
+    ("ps", "cmd /c set {var}=1 '&&' {run}"),
+    ("ps", "cmd /c set {var}=1 `& {run}"),
+    # cmd in cmd in cmd: the nesting cap's row, which allows with the cap at 1
+    ("bash", "cmd //c 'cmd /c \"cmd /c set {var}=1 ^& {run}\"'"),
 ]
 _CMD_SET_REACH += [(shell, t.format(var=ENV_VAR, run="claude -p x"))
                    for shell, t in _CMD_SET_STATEMENTS]
@@ -400,6 +410,10 @@ def test_cmd_exe_set_then_claude_denies(shell, command):
     ("bash", f"cmd //c 'cmd /c set {ENV_VAR}=1 & claude -p x'"),
     ("ps", f'cmd /c "set {ENV_VAR}=claude"'),
     ("ps", f'cmd /c "set {ENV_VAR}=1 & echo x > claude"'),
+    # a declared limit (operator 06a10a's basis, DEF-1071's closing): an
+    # argument list built in a `$( )` subexpression is read by no reader;
+    # its plain list is the deny row in `_CMD_SET_REACH` above
+    ("ps", f"Start-Process cmd -ArgumentList $('/c set {ENV_VAR}=1 && claude -p x')"),
 ])
 def test_cmd_exe_set_before_a_real_invocation_is_allowed(shell, command):
     assert not _denies(_dispatch(shell), command)
@@ -878,6 +892,35 @@ def test_bash_the_relief_covers_the_maintenance_loops_other_shapes(command):
 ])
 def test_powershell_the_relief_covers_the_maintenance_loops_other_shapes(command):
     assert not _denies(wg.check_powershell, command), command
+
+
+# The relief inside cmd (DEF-1071 wave 1, the dispatcher's b5ba52 (3)): the
+# `set` check took no relief, so a test run past a folder named for Claude
+# stayed refused inside cmd while both env-prefix arms allowed it. cmd's split
+# removes its quotes, so a word holding a blank is handed to the relief
+# double-quoted whole; cmd honours no single quote, so a word holding one
+# keeps the deny.
+@pytest.mark.parametrize("shell,command", [
+    ("bash", f"cmd //c 'set {ENV_VAR}=1 && pytest -q \"{_SPACED_TESTS}\"'"),
+    ("ps", f"cmd /c 'set {ENV_VAR}=1 && pytest -q \"{_SPACED_TESTS}\"'"),
+    ("bash", f"cmd //c 'set {ENV_VAR}=1 && python -m pytest -k \"claude and not slow\"'"),
+    ("ps", f"cmd /c 'set {STOP}=full && python -m pytest -k \"claude and not slow\"'"),
+])
+def test_cmd_set_before_a_test_runs_quoted_operand_is_allowed(shell, command):
+    assert not _denies(_dispatch(shell), command), command
+
+
+@pytest.mark.parametrize("shell,command", [
+    # the launcher read whole as the run's operand, on both tools
+    ("bash", f"cmd //c 'set {ENV_VAR}=1 && pytest -q \"work/Claude Code/claude\"'"),
+    ("ps", f"cmd /c 'set {ENV_VAR}=1 && pytest -q \"work/Claude Code/claude\"'"),
+    # a single quote cmd does not honour: kept refused, the stated cost
+    ("ps", f"cmd /c \"set {ENV_VAR}=1 && pytest -q '{_SPACED_TESTS}'\""),
+    # a launch in a later statement of the same cmd
+    ("bash", f"cmd //c 'set {ENV_VAR}=1 && pytest -q \"{_SPACED_TESTS}\" & claude -p x'"),
+])
+def test_cmd_set_before_a_launch_a_test_run_carries_still_denies(shell, command):
+    assert _denies(_dispatch(shell), command), command
 
 
 # The gate's other side. Each row keeps today's refusal, because the quoted

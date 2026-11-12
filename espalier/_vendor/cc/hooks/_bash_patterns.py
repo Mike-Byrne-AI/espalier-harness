@@ -13205,7 +13205,7 @@ _PS_CMD_REMOVE_OPENER_RE = re.compile(
 )
 #: Where the outer shell ends the statement cmd is started in: its statement
 #: separators and a group's close. A redirection is the outer shell's and is
-#: stepped over (`_cmd_outer_words`).
+#: stepped over (`_cmd_outer_words_to`).
 _CMD_OUTER_STOP_BASH = frozenset(";&|\n\r()`")
 _CMD_OUTER_STOP_PS = frozenset(";&|\n\r(){}")
 #: cmd's delete builtins, by the verb they are: `rmdir` is `rd`, `erase` is
@@ -13231,8 +13231,8 @@ def _cmd_program_at(text: str, at: int) -> int | None:
     after its ``/c`` or ``/k`` switch (``//c`` from Git Bash, glued
     ``/c"..."`` too), past any other switches (``/d``, ``/s``, ``/v:on``).
     None when it carries neither -- an interactive cmd runs nothing it was
-    handed. The one switch walk for the harness-variable check
-    (`write_guard._cmd_program`, DEF-1070) and the delete reader below. A
+    handed. The one switch walk, for `iter_cmd_programs`, the program
+    read of the harness-variable check (DEF-1070) and the delete reader. A
     switch ends at a blank, a quote or the next ``/``: cmd reads a glued
     run (``/d/c``) as two switches, and a walk that skipped to the blank
     swallowed the ``/c`` and read no program at all (the code review).
@@ -13737,11 +13737,6 @@ def ps_start_process_ps_programs(raw: str, scan: str) -> Iterator[str]:
             yield program
 
 
-def _cmd_outer_words(text: str, start: int, stop: int, *, bash: bool) -> list[str]:
-    """`_cmd_outer_words_to`'s words alone."""
-    return _cmd_outer_words_to(text, start, stop, bash=bash)[0]
-
-
 def _cmd_outer_words_to(text: str, start: int, stop: int, *, bash: bool) -> tuple[list[str], int]:
     """The words the outer shell hands cmd after its ``/c``, read from
     ``start`` to the outer statement's end (or ``stop``) by that shell's
@@ -14072,8 +14067,9 @@ def _cmd_line_unquoted(line: str) -> str:
     """cmd's own reading of a ``/c`` command line it receives as typed: one
     that opens with a quote loses that quote and the line's last one, the
     text after it kept (cmd's documented rule when ``/s`` or its narrow
-    keep-the-quotes case does not apply, and the common case). A line the
-    outer shell's words were rejoined into never opens with one."""
+    keep-the-quotes case does not apply, and the common case). A line
+    rejoined from the outer shell's words opens with one only where its
+    first word does (a quote the outer shell handed on)."""
     s = line.lstrip(" \t")
     if not s.startswith('"'):
         return line
@@ -14094,8 +14090,9 @@ def iter_cmd_programs(
     scan): the outer shell's words up to its statement's end or the next
     opener (so a flood of openers is read in one pass), rejoined as cmd's
     command line; on PowerShell, the stop-parsing token's text verbatim to
-    a pipe or a line break, as PowerShell hands it on (cmd's own quote rule
-    applied, `_cmd_line_unquoted`), and a Start-Process argument list.
+    a pipe or a line break, as PowerShell hands it on, and a Start-Process
+    argument list; each through cmd's own quote rule, once, here
+    (`_cmd_line_unquoted`).
     ``to_statement_end`` reads each program past a later opener to its
     statement's end and skips an opener inside a program already read, so
     the reading stays one pass: the harness-variable check, whose variable a
@@ -14118,7 +14115,7 @@ def iter_cmd_programs(
             # the statement's own words (DEF-1071 (e)): read that line
             got = start_process_cmd_line(raw, m)
             if got is not None:
-                yield got
+                yield got[0], _cmd_line_unquoted(got[1])
             continue
         if start is None:
             continue
@@ -14143,11 +14140,17 @@ def iter_cmd_programs(
             continue
         # what the outer shell hands cmd, rejoined as its command line: the
         # first word is the program cmd strips its quotes from; a later word
-        # holding a blank or any of cmd's own metacharacters is one quoted
-        # argument: bare, `_cmd_statements` would split `R&D\\x.py` at the
-        # `&` (the quoted-operand cut, driven 2026-10-07)
-        yield start, " ".join(
-            [words[0]] + ['"' + w + '"' if any(ch in w for ch in " \t&|()<>^;,") else w for w in words[1:]])
+        # holding a blank is one quoted argument, and for the delete reader
+        # so is one holding any of cmd's own metacharacters: bare,
+        # `_cmd_statements` would split `R&D\\x.py` at the `&` (the
+        # quoted-operand cut, driven 2026-10-07). The harness-variable check
+        # (``to_statement_end``) quotes for a blank alone: Git Bash and
+        # Windows PowerShell 5.1 hand cmd a separator word bare (`cmd //c
+        # echo a \\& echo b` prints both lines, the code review, driven), and
+        # a split there reads toward the deny.
+        meta = " \t" if to_statement_end else " \t&|()<>^;,"
+        yield start, _cmd_line_unquoted(" ".join(
+            [words[0]] + ['"' + w + '"' if any(ch in w for ch in meta) else w for w in words[1:]]))
 
 
 def iter_cmd_remove_targets(command: str) -> Iterator[list[str]]:
