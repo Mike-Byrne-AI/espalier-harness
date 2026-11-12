@@ -11,39 +11,55 @@ Usage::
 
     python3 scripts/guard_cost_census.py --calls 30 [--kind bash ...] [--json]
     python3 scripts/guard_cost_census.py --compile [--json]
-    python3 scripts/guard_cost_census.py --import-time --rounds 10 [--json]
+    python3 scripts/guard_cost_census.py --import-time --rounds 10 [--cold] [--json]
     python3 scripts/guard_cost_census.py --compile --at caae022 --json
 
-``--calls N`` spawns the guard N times for each call kind (a bare interpreter
-start as the control, a Read, a Bash ``ls -la``, an MCP read and an MCP write),
-shuffled, each spawn in a temp project of its own, the way the wiring starts it
+``--calls N`` spawns the guard N times for each call kind (a Read, a Bash ``ls
+-la``, an MCP read, an MCP write) beside a bare interpreter start as the control,
+which is always timed, shuffled, each spawn in an empty temp project of its own
+(no settings file, no ``espalier.toml``), the way the wiring starts it
 (``<python> -B <tools/cc/hooks/write_guard.py>``, the payload on stdin), and
 prints each kind's median, IQR, min and max in milliseconds beside the decisions
-it saw. A reader nets the interpreter's own start out with the control row. The
-MCP write names a file inside its temp project, so the zone layer allows it; a
-nudge is reported as the decision seen, never as a different cost. Each spawn's
-project is its own, so a one-shot nudge an earlier spawn spent cannot change a
-later one's decision, whatever the shuffle.
+it saw. A guard call starts two interpreters (the thin parent and its judging
+child) and the control one, so the control nets out one start. ``-B`` writes no
+cache: a checkout's existing cache is read, and an ``--at`` tree has none, so
+its figure is the no-cache one. The MCP write names a file inside its temp
+project, so the zone layer allows it. Each spawn's project is its own, so a
+one-shot nudge an earlier spawn spent cannot change a later one's decision. A
+row whose decisions are not what an ordinary call gets (``allow``; ``exit 0`` for
+the control) is tagged ``decisions mixed`` and the run exits
+``DECISIONS_MIXED_EXIT``: its figure is not a cost. A refusal at the guard's
+deadline reads ``deny (time budget)``, and the guard's own budget records are
+counted per kind before the run's audit folder goes.
 
 ``--compile`` records every ``re._compile`` call while ``_bash_patterns``,
 ``_speedbump`` and ``write_guard`` import and ``_load_the_pattern_path`` runs, in
 a fresh interpreter (``-I -B``): the distinct patterns (keyed by pattern and
-flags), the characters of the distinct string patterns, the shared fragment
+flags) and the characters of the distinct string patterns, those again for the
+compiles whose call stack passes through the hooks folder (the standard
+library's own differ by interpreter), the shared fragment
 ``_bash_patterns._CMD_POS_NO_VERB``'s length (and ``_CMD_POS``'s), and how many
-of the patterns, and how many of their characters, embed it. A tree whose
-``write_guard`` has no ``_load_the_pattern_path`` (before DEF-946, 2026-11-08) is
-read by its imports alone, and the output says so. A run that records no pattern
-at all exits 1: a loader that loaded nothing must not read as a small figure.
+of the patterns, and of their characters, embed it. ``loader_ran`` and
+``fragment_found`` say whether those two were there: a tree whose
+``write_guard`` has no ``_load_the_pattern_path`` (before DEF-946, 2026-11-08)
+is read by its imports alone and says so, and on this checkout that is an error,
+since the loader's own compiles would go uncounted. A run that records no pattern
+prints no figure and exits 1.
 
 ``--import-time --rounds N`` times the two pattern modules' import in N fresh
-interpreters, each with no bytecode cache (``-B`` and a ``pycache_prefix`` at an
-empty folder), so a checkout and an ``--at`` tree compare like for like.
+interpreters, each reading the bytecode cache a warm-up run wrote into a private
+``pycache_prefix`` (what a session's spawn reads); ``--cold`` gives every round
+an empty prefix instead, so the figure carries the source compile.
 
 ``--at <sha>`` runs any of the three against ``git archive <sha> tools/cc`` in a
 temp folder (a commit only a closed pull request reaches needs its ref fetched
 first: ``git fetch origin pull/516/head``). ``--root <dir>`` reads another
 folder's ``tools/cc`` instead (a fixture, a second checkout). ``--json`` prints
-one JSON object.
+one JSON object. Beside every figure: the tree (on this checkout, whether its
+``tools/cc`` is ``origin/main``'s as the local ref has it), the interpreter, the
+cache state of every module a spawn imports, the lock, and the load average at
+the start and the end (on Windows, which has none, the CPU's busy share over the
+run).
 
 **The box lock.** ``--calls`` and ``--import-time`` time, so they hold the box
 lock the test tiers take (ruling 3a): the file ``$ESPALIER_BOX_LOCK`` names,
@@ -54,16 +70,19 @@ old default path is read as its new one, the holder record carries
 ``build_record``'s keys and is stamped when the lock is taken, a waiter names its
 holder at once and every ``REPORT_S``, ``ESPALIER_BOX_LOCK_WAIT_S`` bounds the
 wait with ``DID_NOT_RUN_EXIT``, every outcome appends one line to
-``<lock path>.log``, and the record is cleared at release. Inside a holder (the
-inherited ``ESPALIER_BOX_LOCK_HOLDER`` names the live pid in the record) it
-passes through. With the variable unset it runs unguarded and says
-``unguarded`` beside every figure. ``--compile`` counts and takes no lock.
+``<lock path>.log``, and the record is cleared at release. One difference: a
+tier waits unbounded where the variable is unset, and the census, always an
+agent's run under a Bash call's ten-minute cap, waits ``DEFAULT_WAIT_S``. Inside
+a holder (the inherited ``ESPALIER_BOX_LOCK_HOLDER`` names the live pid in the
+record) it passes through. With the lock variable unset it runs unguarded and
+says ``unguarded`` beside every figure. ``--compile`` counts and takes no lock.
 
 Every child's environment drops ``ESPALIER_MAINTENANCE_MODE`` and every
 ``CLAUDE_*`` variable, sets ``CLAUDE_PROJECT_DIR`` to the spawn's temp project and
-``ESPALIER_AUDIT_DIR`` to a temp folder, so no state lands in the checkout, no
-session's markers are touched and no record reaches ``~/.espalier/audit``.
-Stdlib only, self-host; output is ASCII.
+``ESPALIER_AUDIT_DIR`` to a temp folder, so no state lands in the checkout and no
+session's markers are touched; where the guard rejects that folder (a ``TMPDIR``
+outside its safe roots) its records reach ``~/.espalier/audit``, and the output
+says so. Stdlib only, self-host; output is ASCII.
 """
 from __future__ import annotations
 
@@ -87,12 +106,21 @@ from typing import Any, Callable, TextIO
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 KINDS = ("control", "read", "bash", "mcp_read", "mcp_write")
+#: The decision an ordinary call of each kind gets; any other makes the row's
+#: figure something other than a cost.
+EXPECTED_DECISION = {"control": "exit 0", "read": "allow", "bash": "allow", "mcp_read": "allow", "mcp_write": "allow"}
 #: How long one spawn may take: the guard's own deadline is 4 s from its first
 #: line and the wired timeout 5 s, so a spawn past this is a hang, not a cost.
 SPAWN_TIMEOUT_S = 30.0
 #: One fresh interpreter's compile or import read, which imports the hooks once.
 CHILD_TIMEOUT_S = 120.0
 GIT_TIMEOUT_S = 60.0
+#: How often a long --calls run says how far it is.
+PROGRESS_S = 30.0
+#: The exit of a --calls run with a row whose decisions are not the ordinary ones.
+DECISIONS_MIXED_EXIT = 3
+#: The guard's records of a refusal or allow at its deadline.
+BUDGET_EVENTS = ("pretooluse_blocked_time_budget", "pretooluse_failed_open_time_budget")
 
 # The box lock, as tests/_box_lock.py names it (pinned equal by the test).
 LOCK_KEY = "ESPALIER_BOX_LOCK"
@@ -101,6 +129,10 @@ WAIT_KEY = "ESPALIER_BOX_LOCK_WAIT_S"
 DID_NOT_RUN_EXIT = 75
 POLL_S = 0.25
 REPORT_S = 30.0
+#: The census's wait where ``WAIT_KEY`` is unset: under a Bash call's ten-minute
+#: cap, so a run behind a seat's tier ends with ``DID_NOT_RUN_EXIT`` rather than
+#: being cut by the cap or backgrounded into timing the box later (DEF-4056).
+DEFAULT_WAIT_S = 540.0
 
 
 def _json_safe() -> Any:
@@ -127,16 +159,16 @@ def _ascii(text: str) -> str:
 
 
 def summarize(values: list[float]) -> dict:
-    """``n``, median, the quartiles (``statistics.quantiles``' exclusive method,
-    named so a default change cannot move it; one value is its own quartiles),
-    min and max."""
+    """``n``, median, the quartiles (``statistics.quantiles``' inclusive method,
+    named so a default change cannot move it, and inside min and max at every
+    n; one value is its own quartiles), min and max."""
     data = sorted(values)
     if not data:
         return {"n": 0, "median": None, "q1": None, "q3": None, "min": None, "max": None}
     if len(data) == 1:
         q1 = q3 = data[0]
     else:
-        q1, _, q3 = statistics.quantiles(data, n=4, method="exclusive")
+        q1, _, q3 = statistics.quantiles(data, n=4, method="inclusive")
     return {"n": len(data), "median": statistics.median(data), "q1": q1, "q3": q3,
             "min": data[0], "max": data[-1]}
 
@@ -149,6 +181,34 @@ def load_average() -> list[float] | None:
         return None
 
 
+def system_times() -> tuple[int, int] | None:
+    """Windows: the CPU's (busy, total) time so far, from ``GetSystemTimes``
+    (kernel time includes idle); None elsewhere or where it cannot be read."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        idle, kernel, user = wintypes.FILETIME(), wintypes.FILETIME(), wintypes.FILETIME()
+        if not ctypes.windll.kernel32.GetSystemTimes(ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user)):
+            return None
+
+        def value(ft: Any) -> int:
+            return (ft.dwHighDateTime << 32) | ft.dwLowDateTime
+
+        i, k, u = value(idle), value(kernel), value(user)
+        return (k - i) + u, k + u
+    except (AttributeError, OSError, ValueError):
+        return None
+
+
+def cpu_busy(start: tuple[int, int] | None, end: tuple[int, int] | None) -> float | None:
+    """The CPU's busy share between two :func:`system_times` reads."""
+    if start is None or end is None or end[1] <= start[1]:
+        return None
+    return round((end[0] - start[0]) / (end[1] - start[1]), 3)
+
+
 # -- The tree a run reads ----------------------------------------------------
 
 
@@ -157,24 +217,43 @@ def _git(*args: str, cwd: Path = REPO_ROOT, text: bool = True, timeout: float = 
                        **({"encoding": "utf-8", "errors": "replace"} if text else {}))
 
 
-def checkout_tree() -> dict:
-    """This checkout: its HEAD and whether ``tools/cc`` holds uncommitted edits
-    (a figure from such a tree is not HEAD's)."""
-    head = _git("rev-parse", "HEAD")
-    dirty = _git("status", "--porcelain", "--", "tools/cc")
-    return {"kind": "checkout", "root": str(REPO_ROOT),
-            "head": head.stdout.strip() if head.returncode == 0 else None,
-            "tools_cc_edited": bool(dirty.stdout.strip()) if dirty.returncode == 0 else None}
+def _git_line(*args: str, cwd: Path = REPO_ROOT) -> tuple[int, str] | None:
+    """``(returncode, stripped stdout)``, or None where git cannot be run."""
+    try:
+        proc = _git(*args, cwd=cwd)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    return proc.returncode, proc.stdout.strip()
+
+
+def checkout_tree(root: Path = REPO_ROOT) -> dict:
+    """A checkout: its HEAD and branch, whether ``tools/cc`` holds uncommitted
+    edits, and whether its ``tools/cc`` is the local ``origin/main``'s (no fetch:
+    as of the ref's last fetch), None where a read cannot be made."""
+    def out(*args: str) -> str | None:
+        got = _git_line(*args, cwd=root)
+        return got[1] if got and got[0] == 0 and got[1] else None
+
+    status = _git_line("status", "--porcelain", "--", "tools/cc", cwd=root)
+    edited = bool(status[1]) if status and status[0] == 0 else None
+    origin = out("rev-parse", "--verify", "--quiet", "origin/main^{commit}")
+    same: bool | None = None
+    if origin is not None and edited is not None:
+        diff = _git_line("diff", "--quiet", "origin/main", "HEAD", "--", "tools/cc", cwd=root)
+        same = None if diff is None or diff[0] not in (0, 1) else (diff[0] == 0 and not edited)
+    return {"kind": "checkout", "root": str(root), "head": out("rev-parse", "HEAD"),
+            "branch": out("rev-parse", "--abbrev-ref", "HEAD"), "tools_cc_edited": edited,
+            "origin_main": origin, "tools_cc_is_origin_main": same}
 
 
 def archive_tree(at: str, dest: Path) -> dict:
     """``git archive <at> tools/cc`` extracted under ``dest``. Raises
     ``SystemExit`` with a reason where ``at`` names no commit here."""
-    resolved = _git("rev-parse", "--verify", "--quiet", f"{at}^{{commit}}")
-    if resolved.returncode != 0 or not resolved.stdout.strip():
+    resolved = _git_line("rev-parse", "--verify", "--quiet", f"{at}^{{commit}}")
+    if not resolved or resolved[0] != 0 or not resolved[1]:
         raise SystemExit(f"guard_cost_census: {at!r} names no commit in this clone; a commit only a closed "
                          "pull request reaches needs its ref fetched first (git fetch origin pull/<n>/head)")
-    sha = resolved.stdout.strip()
+    sha = resolved[1]
     archived = _git("archive", "--format=tar", sha, "tools/cc", text=False)
     if archived.returncode != 0:
         raise SystemExit(f"guard_cost_census: git archive {sha} tools/cc failed: "
@@ -191,10 +270,31 @@ def hooks_of(root: Path) -> Path:
     return root / "tools" / "cc" / "hooks"
 
 
-def bytecode_cache_present(hooks: Path) -> bool:
-    """Whether the hooks folder holds this interpreter's compiled ``write_guard``:
-    a spawn reads it where it is there (``-B`` only stops a write)."""
-    return (hooks / "__pycache__" / f"write_guard.{sys.implementation.cache_tag}.pyc").is_file()
+def pyc_state(source: Path) -> str:
+    """``fresh``, ``stale`` or ``absent``: this interpreter's cached bytecode for
+    ``source`` against the source's mtime and size (a hash-based cache reads
+    ``hashed``)."""
+    try:
+        cached = Path(importlib.util.cache_from_source(str(source)))
+        head = cached.read_bytes()[:16]
+    except (NotImplementedError, OSError):
+        return "absent"
+    if len(head) < 16 or head[:4] != importlib.util.MAGIC_NUMBER:
+        return "stale"
+    if int.from_bytes(head[4:8], "little") & 1:
+        return "hashed"
+    try:
+        st = source.stat()
+    except OSError:
+        return "absent"
+    fresh = (int.from_bytes(head[8:12], "little") == int(st.st_mtime) & 0xFFFFFFFF
+             and int.from_bytes(head[12:16], "little") == st.st_size & 0xFFFFFFFF)
+    return "fresh" if fresh else "stale"
+
+
+def cache_state(modules: list[str]) -> dict[str, str]:
+    """:func:`pyc_state` of each module file a spawn imports."""
+    return {Path(m).name: pyc_state(Path(m)) for m in modules}
 
 
 # -- The children's environment ----------------------------------------------
@@ -234,8 +334,9 @@ def payload(kind: str, project: Path) -> dict:
 
 def decision(kind: str, returncode: int, stdout: str) -> str:
     """What the spawn answered: the control's exit; for the guard, ``allow``
-    (exit 0, no decision), ``deny`` or ``ask``, ``nudge <CP-id>`` for a
-    speed-bump checkpoint, ``block`` for exit 2, ``error`` otherwise."""
+    (exit 0, no decision), ``deny`` or ``ask``, ``deny (time budget)`` for a
+    refusal at its deadline, ``nudge <CP-id>`` for a speed-bump checkpoint,
+    ``block`` for exit 2, ``error`` otherwise."""
     if kind == "control":
         return f"exit {returncode}"
     if returncode == 2:
@@ -249,11 +350,15 @@ def decision(kind: str, returncode: int, stdout: str) -> str:
         doc = json.loads(text)
     except ValueError:
         return "unreadable output"
-    out = doc.get("hookSpecificOutput") if isinstance(doc, dict) else None
+    if not isinstance(doc, dict):
+        return "unreadable output"
+    out = doc.get("hookSpecificOutput")
     out = out if isinstance(out, dict) else {}
     verdict = out.get("permissionDecision")
     if verdict in ("deny", "ask"):
         reason = str(out.get("permissionDecisionReason", ""))
+        if "time budget" in reason.lower():
+            return f"{verdict} (time budget)"
         cp = next((w.strip(".,:;()[]`'\"") for w in reason.split() if w.strip("[(`'\"").startswith("CP-")), None)
         return f"nudge {cp}" if cp else str(verdict)
     return "allow (with context)" if out.get("additionalContext") else "allow"
@@ -265,9 +370,33 @@ def _new_project(base: Path) -> Path:
     return project
 
 
+def budget_records(audit: Path, kind_of: dict[str, str]) -> dict[str, int]:
+    """The guard's deadline records in the run's audit folder, per kind: each
+    spawn's project has its own name, which is its audit file's prefix."""
+    counts: dict[str, int] = {}
+    # The guard names the file by tools/cc/hooks/_integrity.py::_safe_slug's rule.
+    slug_of = {"".join(c if c.isascii() and (c.isalnum() or c in "_.-") else "_" for c in name).strip("_"): k
+               for name, k in kind_of.items()}
+    for log in sorted(audit.glob("*.log")):
+        kind = next((k for slug, k in slug_of.items() if log.name.startswith(slug + "-")), "unknown")
+        try:
+            lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            try:
+                event = json.loads(line).get("event_type")
+            except (ValueError, AttributeError):
+                continue
+            if event in BUDGET_EVENTS:
+                counts[kind] = counts.get(kind, 0) + 1
+    return counts
+
+
 def time_calls(root: Path, n: int, kinds: tuple[str, ...], scratch: Path,
-               *, shuffle: Callable[[list], None] = random.shuffle) -> dict:
+               *, shuffle: Callable[[list], None] = random.shuffle, stream: TextIO | None = None) -> dict:
     """N spawns of each kind, in ``shuffle``'s order, each in a project of its own."""
+    stream = stream if stream is not None else sys.stderr
     hook = hooks_of(root) / "write_guard.py"
     audit = scratch / "audit"
     audit.mkdir(exist_ok=True)
@@ -275,40 +404,65 @@ def time_calls(root: Path, n: int, kinds: tuple[str, ...], scratch: Path,
     shuffle(order)
     times: dict[str, list[float]] = {k: [] for k in kinds}
     seen: dict[str, dict[str, int]] = {k: {} for k in kinds}
-    for kind in order:
+    kind_of: dict[str, str] = {}
+    rejected = False
+    last = time.monotonic()
+    for done, kind in enumerate(order):
+        if time.monotonic() - last >= PROGRESS_S:
+            print(f"guard_cost_census: {done} of {len(order)} spawns", file=stream, flush=True)
+            last = time.monotonic()
         project = _new_project(scratch)
+        kind_of[project.name] = kind
         if kind == "control":
             argv, data = [sys.executable, "-B", "-c", "pass"], b""
         else:
             argv, data = [sys.executable, "-B", str(hook)], json.dumps(payload(kind, project)).encode("utf-8")
         started = time.perf_counter()
-        proc = run_bounded(argv, input=data, capture_output=True, cwd=str(project),
-                           env=child_env(project, audit), timeout=SPAWN_TIMEOUT_S)
-        times[kind].append((time.perf_counter() - started) * 1000.0)
-        said = decision(kind, proc.returncode, proc.stdout.decode("utf-8", "replace"))
+        try:
+            proc = run_bounded(argv, input=data, capture_output=True, cwd=str(project),
+                               env=child_env(project, audit), timeout=SPAWN_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            said = f"timed out ({SPAWN_TIMEOUT_S:g} s)"
+        else:
+            times[kind].append((time.perf_counter() - started) * 1000.0)
+            said = decision(kind, proc.returncode, proc.stdout.decode("utf-8", "replace"))
+            rejected = rejected or b"[_audit_dir] WARN" in proc.stderr
         seen[kind][said] = seen[kind].get(said, 0) + 1
-    return {k: {**summarize(times[k]), "decisions": seen[k]} for k in kinds}
+    budget = budget_records(audit, kind_of)
+    rows = {k: {**summarize(times[k]), "decisions": seen[k], "budget_records": budget.get(k, 0),
+                "as_expected": set(seen[k]) == {EXPECTED_DECISION[k]}} for k in kinds}
+    return {"kinds": rows, "audit_dir_rejected": rejected}
 
 
-# -- --compile ---------------------------------------------------------------
+# -- --compile and --import-time ---------------------------------------------
 
 #: Run in a fresh ``-I -B`` interpreter with the hooks folder as its argument:
-#: the recorder is in place before the first hook module imports.
+#: the recorder is in place before the first hook module imports, and a compile
+#: whose call stack passes through the hooks folder is the hooks' own.
 COMPILE_CHILD = r'''
 import json, os, re, sys
 hooks = sys.argv[1]
 sys.path.insert(0, hooks)
+inside = os.path.join(hooks, "")
 seen = {}
+ours = set()
 original = re._compile
 def record(pattern, flags):
     text = pattern if isinstance(pattern, (str, bytes)) else getattr(pattern, "pattern", repr(pattern))
     key = (text, int(flags))
     seen[key] = seen.get(key, 0) + 1
+    frame = sys._getframe(1)
+    while frame is not None:
+        if frame.f_code.co_filename.startswith(inside):
+            ours.add(key)
+            break
+        frame = frame.f_back
     return original(pattern, flags)
 re._compile = record
 re.purge()
 import _bash_patterns
 import _speedbump
+loader_ran = False
 if not os.path.isfile(os.path.join(hooks, "write_guard.py")):
     method = "the two pattern modules imported; this tree has no write_guard.py"
 else:
@@ -318,24 +472,36 @@ else:
         method = "imports alone: this tree's write_guard has no _load_the_pattern_path (before DEF-946)"
     else:
         loader()
+        loader_ran = True
         method = "imports and write_guard._load_the_pattern_path"
 re._compile = original
 fragment = getattr(_bash_patterns, "_CMD_POS_NO_VERB", None)
 cmd_pos = getattr(_bash_patterns, "_CMD_POS", None)
+found = isinstance(fragment, str) and bool(fragment)
 texts = [k[0] for k in seen if isinstance(k[0], str)]
-embedding = [t for t in texts if isinstance(fragment, str) and fragment and fragment in t]
+embedding = [t for t in texts if found and fragment in t]
+tools_cc = os.path.dirname(os.path.abspath(hooks))
+modules = sorted({os.path.abspath(m.__file__) for m in list(sys.modules.values())
+                  if isinstance(getattr(m, "__file__", None), str)
+                  and os.path.abspath(m.__file__).startswith(os.path.join(tools_cc, ""))
+                  and os.path.basename(m.__file__) != "write_guard.py"})
 print(json.dumps({
     "method": method,
+    "loader_ran": loader_ran,
+    "fragment_found": found,
     "patterns": len(seen),
     "compiled_chars": sum(len(t) for t in texts),
-    "fragment_len": len(fragment) if isinstance(fragment, str) else None,
+    "hooks_patterns": len(ours),
+    "hooks_chars": sum(len(k[0]) for k in ours if isinstance(k[0], str)),
+    "fragment_len": len(fragment) if found else None,
     "cmd_pos_len": len(cmd_pos) if isinstance(cmd_pos, str) else None,
     "embedding_patterns": len(embedding),
     "embedding_chars": sum(len(t) for t in embedding),
+    "modules": modules,
 }))
 '''
 
-#: Run in a fresh ``-I -B`` interpreter with no bytecode cache to read: the two
+#: Run in a fresh interpreter with the hooks folder as its argument: the two
 #: pattern modules' import, timed in that interpreter.
 IMPORT_CHILD = r'''
 import json, sys, time
@@ -349,31 +515,45 @@ print(json.dumps({"bash_patterns": (t1 - t0) * 1000.0, "speedbump": (t2 - t1) * 
 '''
 
 
-def _child(code: str, hooks: Path, scratch: Path, *extra: str) -> dict:
+def _child(code: str, hooks: Path, scratch: Path, *flags: str) -> dict:
     """One fresh interpreter running ``code`` over ``hooks``; its last stdout
     line as JSON. Raises ``SystemExit`` naming the child's error otherwise."""
-    proc = run_bounded([sys.executable, "-I", "-B", *extra, "-c", code, str(hooks)], capture_output=True,
-                       text=True, encoding="utf-8", errors="replace", cwd=str(scratch),
-                       env=child_env(None, scratch / "audit"), timeout=CHILD_TIMEOUT_S)
+    try:
+        proc = run_bounded([sys.executable, *flags, "-c", code, str(hooks)], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", cwd=str(scratch),
+                           env=child_env(None, scratch / "audit"), timeout=CHILD_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        raise SystemExit(f"guard_cost_census: the child over {hooks} ran past {CHILD_TIMEOUT_S:g} s") from None
     lines = [line for line in proc.stdout.splitlines() if line.strip()]
+    tail = " | ".join(proc.stderr.strip().splitlines()[-3:])
     if proc.returncode != 0 or not lines:
-        tail = " | ".join(proc.stderr.strip().splitlines()[-3:])
         raise SystemExit(_ascii(f"guard_cost_census: the child over {hooks} exited {proc.returncode}: {tail}"))
-    return json.loads(lines[-1])
+    try:
+        return json.loads(lines[-1])
+    except ValueError:
+        raise SystemExit(_ascii(f"guard_cost_census: the child over {hooks} printed no figure: "
+                                f"{lines[-1][:120]}")) from None
 
 
 def compile_counts(hooks: Path, scratch: Path) -> dict:
-    return _child(COMPILE_CHILD, hooks, scratch)
+    return _child(COMPILE_CHILD, hooks, scratch, "-I", "-B")
 
 
-def import_times(hooks: Path, rounds: int, scratch: Path) -> dict:
-    """``rounds`` fresh interpreters, each with a ``pycache_prefix`` at an empty
-    folder of its own, so none reads a bytecode cache."""
+def import_times(hooks: Path, rounds: int, scratch: Path, *, cold: bool = False) -> dict:
+    """``rounds`` fresh interpreters. Warm (the default): a first run writes the
+    whole import's bytecode into a private ``pycache_prefix`` and every round
+    reads it. Cold: every round gets an empty prefix of its own and ``-B``."""
     per: dict[str, list[float]] = {"bash_patterns": [], "speedbump": [], "both": []}
+    warm = scratch / "pycache-warm"
+    if not cold:
+        warm.mkdir()
+        _child(IMPORT_CHILD, hooks, scratch, "-I", "-X", f"pycache_prefix={warm}")
     for i in range(rounds):
-        empty = scratch / f"pycache-{i}"
-        empty.mkdir()
-        got = _child(IMPORT_CHILD, hooks, scratch, "-X", f"pycache_prefix={empty}")
+        prefix = warm
+        if cold:
+            prefix = scratch / f"pycache-{i}"
+            prefix.mkdir()
+        got = _child(IMPORT_CHILD, hooks, scratch, "-I", "-B", "-X", f"pycache_prefix={prefix}")
         per["bash_patterns"].append(got["bash_patterns"])
         per["speedbump"].append(got["speedbump"])
         per["both"].append(got["bash_patterns"] + got["speedbump"])
@@ -527,17 +707,24 @@ def _who(record: dict | None) -> str:
 
 def waiting_line(record: dict | None, waited_s: float) -> str:
     """What a waiter prints: the holder's seat, lane, pid and how long it has
-    held (its record's start, else this wait), then the head of its argv."""
+    held (its record's start, else this wait), then the head of its argv
+    (``tests/_box_lock.py::waiting_line`` under its ceiling; the census leaves
+    the past-the-ceiling advice to the tiers)."""
     held_min = int(waited_s // 60)
-    started = (record or {}).get("started")
-    if isinstance(started, str):
+    if record and "pid" in record:
         try:
-            since = datetime.fromisoformat(started.replace("Z", "+00:00"))
-            held_min = int((datetime.now(timezone.utc) - since).total_seconds() // 60)
-        except ValueError:
-            pass
-    if record:
-        who = f"{record.get('seat') or '?'} {record.get('lane') or '?'} (pid {record.get('pid')}, held {held_min} min)"
+            pid: int | None = int(record.get("pid"))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            pid = None
+        started = record.get("started")
+        if isinstance(started, str):
+            try:
+                since = datetime.fromisoformat(started.replace("Z", "+00:00"))
+                held_min = int((datetime.now(timezone.utc) - since).total_seconds() // 60)
+            except ValueError:
+                pass
+        shown = pid if pid is not None else "?"
+        who = f"{record.get('seat') or '?'} {record.get('lane') or '?'} (pid {shown}, held {held_min} min)"
     else:
         who = "no holder record"
     argv = [str(a) for a in ((record or {}).get("argv") or [])]
@@ -586,6 +773,8 @@ class BoxLock:
         assert self.fh is not None and self.path is not None and self.record is not None
         started = time.monotonic()
         bound = wait_bound(os.environ.get(WAIT_KEY), stream=self.stream)
+        if bound is None:
+            bound = DEFAULT_WAIT_S
         last_report: float | None = None
         while True:
             if _JSON_SAFE.try_lock_file(self.fh):
@@ -612,8 +801,11 @@ class BoxLock:
             now = time.monotonic()
             if last_report is None or now - last_report >= REPORT_S:
                 print(waiting_line(record, now - started), file=self.stream, flush=True)
+                if last_report is None:
+                    print(f"box lock: the census waits at most {bound:g} s ({WAIT_KEY} sets it)",
+                          file=self.stream, flush=True)
                 last_report = now
-            if bound is not None and time.monotonic() - started >= bound:
+            if time.monotonic() - started >= bound:
                 waited = time.monotonic() - started
                 log_outcome(self.path, "gave_up", self.record, self.holder_seen, waited,
                             why=f"{WAIT_KEY}={bound:g}", stream=self.stream)
@@ -651,10 +843,6 @@ class BoxLock:
             out["waited_s"] = round(self.waited_s, 3)
         return out
 
-    @property
-    def unguarded(self) -> bool:
-        return self.outcome == "unguarded"
-
 
 # -- Rendering ---------------------------------------------------------------
 
@@ -663,62 +851,91 @@ def _ms(value: float | None) -> str:
     return "-" if value is None else f"{value:.1f}"
 
 
-def _load_text(load: list[float] | None) -> str:
-    return "n/a (no load average on this platform)" if load is None else " ".join(f"{x:.2f}" for x in load)
+def _load_text(load: dict) -> str:
+    if load.get("cpu_busy") is not None:
+        return f"cpu busy {load['cpu_busy']:.3f} over the run (this platform has no load average)"
+    if load.get("start") is None:
+        return "n/a (no load average on this platform)"
+    return (" ".join(f"{x:.2f}" for x in load["start"]) + " at the start, "
+            + " ".join(f"{x:.2f}" for x in (load.get("end") or [])) + " at the end")
 
 
 def _tree_text(tree: dict) -> str:
     if tree["kind"] == "checkout":
         edited = {True: ", tools/cc edited", False: "", None: ", tools/cc state unread"}[tree["tools_cc_edited"]]
-        return f"checkout {tree['root']} at {(tree['head'] or '?')[:12]}{edited}"
+        main = {True: "origin/main's", False: f"NOT origin/main's ({(tree['origin_main'] or '?')[:12]})",
+                None: "unread against origin/main"}[tree["tools_cc_is_origin_main"]]
+        return (f"checkout {tree['root']} at {(tree['head'] or '?')[:12]} on {tree['branch'] or '?'}"
+                f"{edited}; tools/cc {main}")
     if tree["kind"] == "archive":
         return f"git archive of {tree['commit'][:12]} ({tree['at']}) tools/cc"
     return f"folder {tree['root']}"
 
 
-def _lock_text(lock: dict) -> str:
-    text = lock["outcome"]
-    if lock.get("holder"):
-        h = lock["holder"]
-        text += f" ({'behind' if lock['outcome'] == 'waited' else 'holder'} {h.get('seat')} {h.get('lane')} pid {h.get('pid')})"
-    if lock.get("why"):
-        text += f" ({lock['why']})"
-    return text
+def tags(result: dict) -> list[str]:
+    """What every figure of the run carries beside it."""
+    out: list[str] = []
+    lock = result.get("lock", {}).get("outcome")
+    if lock == "unguarded":
+        out.append("unguarded")
+    elif lock == "inside":
+        out.append("inside a holder")
+    if result["tree"].get("tools_cc_is_origin_main") is False:
+        out.append("not origin/main's tools/cc")
+    if "stale" in result.get("bytecode_cache", {}).values():
+        out.append("cache stale")
+    return out
 
 
 def render(result: dict) -> str:
-    head = [f"guard cost census -- {result['mode']}",
-            f"tree:    {_tree_text(result['tree'])}",
-            f"python:  {result['python']['version']} ({result['python']['executable']})"]
-    tag = "  [unguarded]" if result.get("lock", {}).get("outcome") == "unguarded" else ""
+    lines = [f"guard cost census -- {result['mode']}",
+             f"tree:    {_tree_text(result['tree'])}",
+             f"python:  {result['python']['version']} ({result['python']['executable']})"]
     if result["mode"] == "compile":
         c = result["compile"]
-        head += [f"method:  {c['method']}",
-                 f"patterns compiled (distinct):      {c['patterns']}",
-                 f"characters compiled (distinct):    {c['compiled_chars']}",
-                 f"_CMD_POS_NO_VERB length:           {c['fragment_len']}",
-                 f"_CMD_POS length:                   {c['cmd_pos_len']}",
-                 f"patterns embedding the fragment:   {c['embedding_patterns']}",
-                 f"characters in those patterns:      {c['embedding_chars']}"]
-        return "\n".join(head)
-    head += [f"lock:    {_lock_text(result['lock'])}",
-             f"load:    {_load_text(result['load']['start'])} at the start, {_load_text(result['load']['end'])} at the end"]
+        lines += [f"method:  {c['method']}",
+                  f"patterns compiled (distinct):      {c['patterns']} ({c['hooks_patterns']} from the hooks folder)",
+                  f"characters compiled (distinct):    {c['compiled_chars']} ({c['hooks_chars']} from the hooks folder)",
+                  f"_CMD_POS_NO_VERB length:           {c['fragment_len']}",
+                  f"_CMD_POS length:                   {c['cmd_pos_len']}",
+                  f"patterns embedding the fragment:   {c['embedding_patterns']}",
+                  f"characters in those patterns:      {c['embedding_chars']}"]
+        return _ascii("\n".join(lines))
+    lock = result["lock"]
+    held = lock["outcome"] + (f" ({lock['why']})" if lock.get("why") else "")
+    if lock.get("holder"):
+        h = lock["holder"]
+        held += f" ({h.get('seat')} {h.get('lane')} pid {h.get('pid')})"
+    lines += [f"lock:    {held}", f"load:    {_load_text(result['load'])}"]
+    run_tags = tags(result)
     if result["mode"] == "calls":
-        head += [f"bytecode cache for write_guard: {'present' if result['bytecode_cache'] else 'absent'}",
-                 f"n={result['n']} a kind, shuffled, ms per spawn",
-                 f"{'kind':10} {'n':>3} {'median':>8} {'q1-q3':>17} {'min':>8} {'max':>8}  decisions"]
+        cache = result["bytecode_cache"]
+        counts = {s: sum(1 for v in cache.values() if v == s) for s in sorted(set(cache.values()))}
+        lines += ["project: an empty temp folder a spawn (no settings file, no espalier.toml)",
+                  "cache:   " + (", ".join(f"{n} {s}" for s, n in counts.items()) or "no module read")
+                  + " (the modules a spawn imports)",
+                  f"n={result['n']} a kind, shuffled, ms per spawn; a guard call starts two interpreters, the control one",
+                  f"{'kind':10} {'n':>3} {'median':>8} {'q1-q3':>17} {'min':>8} {'max':>8}  decisions"]
         for kind, row in result["kinds"].items():
             seen = ", ".join(f"{d} x{c}" for d, c in sorted(row["decisions"].items()))
+            if row["budget_records"]:
+                seen += f"; {row['budget_records']} budget record(s)"
+            row_tags = run_tags + ([] if row["as_expected"] else ["decisions mixed"])
             iqr = f"{_ms(row['q1'])}-{_ms(row['q3'])}"
-            head.append(f"{kind:10} {row['n']:>3} {_ms(row['median']):>8} {iqr:>17} {_ms(row['min']):>8} "
-                        f"{_ms(row['max']):>8}  {seen}{tag}")
+            lines.append(f"{kind:10} {row['n']:>3} {_ms(row['median']):>8} {iqr:>17} {_ms(row['min']):>8} "
+                         f"{_ms(row['max']):>8}  {seen}" + (f"  [{', '.join(row_tags)}]" if row_tags else ""))
+        if result["audit_dir_rejected"]:
+            lines.append("note:    the guard rejected the run's audit folder, so its records went to ~/.espalier/audit")
     else:
-        head += [f"rounds={result['rounds']}, a fresh interpreter each, no bytecode cache, ms",
-                 f"{'module':14} {'median':>8} {'q1-q3':>17} {'min':>8} {'max':>8}"]
+        lines += [f"rounds={result['rounds']}, a fresh interpreter each, "
+                  + ("no bytecode cache (the source compile is in the figure)" if result["cold"]
+                     else "reading a warmed private bytecode cache") + ", ms",
+                  f"{'module':14} {'median':>8} {'q1-q3':>17} {'min':>8} {'max':>8}"]
         for name, row in result["import_time"].items():
             iqr = f"{_ms(row['q1'])}-{_ms(row['q3'])}"
-            head.append(f"{name:14} {_ms(row['median']):>8} {iqr:>17} {_ms(row['min']):>8} {_ms(row['max']):>8}{tag}")
-    return _ascii("\n".join(head))
+            lines.append(f"{name:14} {_ms(row['median']):>8} {iqr:>17} {_ms(row['min']):>8} {_ms(row['max']):>8}"
+                         + (f"  [{', '.join(run_tags)}]" if run_tags else ""))
+    return _ascii("\n".join(lines))
 
 
 # -- Main --------------------------------------------------------------------
@@ -730,8 +947,9 @@ def _parser() -> argparse.ArgumentParser:
     mode.add_argument("--calls", type=int, metavar="N", help="time N spawns of each call kind")
     mode.add_argument("--compile", action="store_true", help="the compile proxy, from a fresh interpreter")
     mode.add_argument("--import-time", action="store_true", help="time the two pattern modules' import")
-    p.add_argument("--rounds", type=int, default=10, help="--import-time's fresh interpreters (default 10)")
-    p.add_argument("--kind", action="append", choices=KINDS, help="--calls: only this kind (repeatable)")
+    p.add_argument("--rounds", type=int, help="--import-time: fresh interpreters (default 10)")
+    p.add_argument("--cold", action="store_true", help="--import-time: no bytecode cache in any round")
+    p.add_argument("--kind", action="append", choices=KINDS[1:], help="--calls: only this kind (repeatable; the control always runs)")
     where = p.add_mutually_exclusive_group()
     where.add_argument("--at", metavar="SHA", help="read git archive SHA tools/cc instead of this checkout")
     where.add_argument("--root", type=Path, help="read DIR/tools/cc instead of this checkout")
@@ -739,59 +957,83 @@ def _parser() -> argparse.ArgumentParser:
     return p
 
 
+def _refusal(args: argparse.Namespace) -> str | None:
+    if args.calls is not None and args.calls < 1:
+        return "--calls takes 1 or more"
+    if args.kind and args.calls is None:
+        return "--kind goes with --calls"
+    if (args.rounds is not None or args.cold) and not args.import_time:
+        return "--rounds and --cold go with --import-time"
+    if args.rounds is not None and args.rounds < 1:
+        return "--rounds takes 1 or more"
+    if args.at is not None and not args.at.strip():
+        return "--at takes a commit"
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    if args.calls is not None and args.calls < 1:
-        print("guard_cost_census: --calls takes 1 or more", file=sys.stderr)
+    refusal = _refusal(args)
+    if refusal:
+        print(f"guard_cost_census: {refusal}", file=sys.stderr)
         return 2
-    if args.rounds < 1:
-        print("guard_cost_census: --rounds takes 1 or more", file=sys.stderr)
-        return 2
-    with tempfile.TemporaryDirectory(prefix="guard-cost-census-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="guard-cost-census-", ignore_cleanup_errors=True) as tmp:
         # Resolved: on macOS the temp folder is under /var, a link to /private/var,
         # and a payload path spelled through the link sits outside the root the
         # guard resolves, which no real project's own path does.
         scratch = Path(tmp).resolve()
         (scratch / "audit").mkdir()
-        if args.at:
-            tree = archive_tree(args.at, scratch / "tree")
-            root = scratch / "tree"
+        if args.at is not None:
+            tree, root = archive_tree(args.at, scratch / "tree"), scratch / "tree"
         elif args.root:
             root = args.root.resolve()
             tree = {"kind": "folder", "root": str(root)}
         else:
-            root, tree = REPO_ROOT, checkout_tree()
+            root, tree = REPO_ROOT, checkout_tree(REPO_ROOT)
         hooks = hooks_of(root)
         if not (hooks / "_bash_patterns.py").is_file():
             print(f"guard_cost_census: {hooks} holds no _bash_patterns.py", file=sys.stderr)
             return 2
         result: dict = {"tree": tree, "python": {"version": platform.python_version(),
                                                   "executable": sys.executable}}
+        status = 0
         if args.compile:
-            result.update(mode="compile", compile=compile_counts(hooks, scratch))
-            if not result["compile"]["patterns"]:
-                print(render(result) if not args.json else json.dumps(result, indent=1))
+            counts = compile_counts(hooks, scratch)
+            if not counts["patterns"]:
                 print("guard_cost_census: the pattern path recorded no pattern at all: the loader loaded "
                       "nothing, which is no figure", file=sys.stderr)
                 return 1
+            if tree["kind"] == "checkout" and not counts["loader_ran"]:
+                print("guard_cost_census: this checkout's write_guard has no _load_the_pattern_path, so the "
+                      "loader's own compiles would go uncounted; an older tree is read with --at", file=sys.stderr)
+                return 1
+            result.update(mode="compile", compile=counts)
         else:
             lock = BoxLock()
-            lock.acquire()
             try:
-                start = load_average()
+                lock.acquire()
+                start, times_start = load_average(), system_times()
                 if args.calls is not None:
-                    kinds = tuple(k for k in KINDS if not args.kind or k in args.kind)
-                    result.update(mode="calls", n=args.calls, bytecode_cache=bytecode_cache_present(hooks),
-                                  kinds=time_calls(root, args.calls, kinds, scratch))
+                    kinds = ("control", *[k for k in KINDS[1:] if not args.kind or k in args.kind])
+                    modules = compile_counts(hooks, scratch)["modules"]
+                    result.update(mode="calls", n=args.calls, bytecode_cache=cache_state(modules),
+                                  **time_calls(root, args.calls, kinds, scratch))
+                    if not all(row["as_expected"] for row in result["kinds"].values()):
+                        status = DECISIONS_MIXED_EXIT
                 else:
-                    result.update(mode="import-time", rounds=args.rounds,
-                                  import_time=import_times(hooks, args.rounds, scratch))
-                end = load_average()
+                    result.update(mode="import-time", rounds=args.rounds or 10, cold=args.cold,
+                                  import_time=import_times(hooks, args.rounds or 10, scratch, cold=args.cold))
+                end, times_end = load_average(), system_times()
             finally:
                 lock.release()
-            result.update(lock=lock.summary(), load={"start": start, "end": end}, unguarded=lock.unguarded)
-    print(json.dumps(result, indent=1) if args.json else render(result))
-    return 0
+            result.update(lock=lock.summary(), load={"start": start, "end": end,
+                                                     "cpu_busy": cpu_busy(times_start, times_end)})
+        result["tags"] = tags(result)
+        result["unguarded"] = "unguarded" in result["tags"]
+        if result["mode"] == "calls":
+            result["decisions_as_expected"] = status == 0
+        print(json.dumps(result, indent=1) if args.json else render(result))
+        return status
 
 
 if __name__ == "__main__":
