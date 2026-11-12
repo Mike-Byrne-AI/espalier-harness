@@ -817,7 +817,8 @@ class TestClassVerb:
         before = tree["ledger"].read_text(encoding="utf-8")
         assert lr.main(_args(tree, "--dry-run", "class", "C7", "--title", "T",
                              "--population", "HYGIENE", "--audience", "MAINTAINER")) == 0
-        assert "| [§C7](#c7--t) |" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "| [§C7](#c7--t) |" in out and lr.FIVE_QUESTIONS[0] not in out
         assert tree["ledger"].read_text(encoding="utf-8") == before
 
 

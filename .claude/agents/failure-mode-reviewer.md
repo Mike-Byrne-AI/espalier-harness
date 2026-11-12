@@ -186,8 +186,10 @@ more instance in a layer that cannot?** A sweep widens a fix inside its
 own layer. When the change is the next of a run of sibling fixes on one
 job (a parser accepting one more shape, a check predicting an effect it
 could observe), say so as a finding and name the layer that could reach
-the goal; `python tools/cc/ledger_row.py lineage <id>` prints the five
-questions that test it.
+the goal. Such a finding is a ROUGH-EDGE, its trigger the rows it names,
+and never on its own the reason for REQUEST CHANGES. The five questions
+that test it are `FIVE_QUESTIONS` in `tools/cc/ledger_row.py`, which
+`lineage <id>` prints when the row sits in a chain or a cluster.
 
 When the change fixed a problem in one site, **every site with the
 same pattern must also be fixed.** This isn't about adversaries; it's
@@ -307,12 +309,14 @@ Class:        {BC-NNN if it matches a documented class, or "new failure class"}
 Trigger:      {minimal sequence of operator/AI/refactor actions that produces the failure}
 Detection:    {what would have caught it; why it doesn't}
 Fix:          {smallest mechanical correction; ideally with a regression test}
+Sibling of:   {(sibling of DEF-N) when this is a further instance of the ledger row the change fixes, else none}
 ```
 
-A finding that is a further instance of the ledger row this change fixes
-says so in the words `(sibling of DEF-N)`, naming that row, so the
-handoff's note and the session that files it can copy the id into
-`ledger_row.py file --sibling-of`.
+Where the change fixes a ledger row and a finding is a further instance
+of it, the `Sibling of:` line says so in the words `(sibling of DEF-N)`,
+naming that row, and the verdict line names it too (the lead is what the
+next session sees), so the handoff's row and the session that files the
+finding can copy the id into `ledger_row.py file --sibling-of`.
 
 Severity labels:
 

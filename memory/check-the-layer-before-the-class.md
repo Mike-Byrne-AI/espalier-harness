@@ -44,10 +44,17 @@ shape was known, are in `task-packs/TP-475-know-when-work-is-worth-doing.md`'s M
 
 A chain of siblings on one job, a cluster of standalone rows on one site family, and a
 defect recurring at a site already consolidated. `tools/cc/ledger_row.py` prints the
-questions at each: the chain and cluster advisories at filing, `lineage <id>` at plan time
-(`/implement-task` step 1, `/implement-pack` step 0-A), and the `class` verb when it opens
-a class. The two reviewer bodies ask the layer question of every fix. None of it refuses:
-a gate on a count teaches the filer to suppress ([[gating-on-count-manufactures-findings]]).
+questions today in three places: the cluster advisory at filing, `lineage <id>` at plan
+time (`/implement-task` step 1, `/implement-pack` step 0-A) when the row sits in a chain or
+a cluster, and the `class` verb when it opens a class. The chain advisory is
+recording-only, one line, until its threshold review rules (`CHAIN_ADVISORY_PRINTS`). No
+tool counts the third tell: question 5 is how it is noticed. The two reviewer bodies ask
+the layer question of every fix, as advice. None of it refuses: a gate on a count teaches
+the filer to suppress ([[gating-on-count-manufactures-findings]]).
+
+**What the questions do not do.** In the one blind grading, question 1 was answered yes
+on every row and question 5 could not be answered from a headline; questions 2 and 3
+carried the separation. A job sentence that passes question 1 is not an answer on its own.
 
 **Counter-warning.** A move can relocate a defect rather than close it
 ([[a-fixed-fail-open-can-move-rather-than-close]]): re-run the whole oracle after a

@@ -493,6 +493,7 @@ class TestTheFiveQuestions:
             assert q.isascii(), q
             assert not re.search(r"\b[A-Z]{2,5}-\d+", q), q
 
+    @pytest.mark.contract
     def test_the_memory_note_quotes_each_question_word_for_word_in_order(self, lr):
         """The note holds the questions' fuller wording and the constant the
         text a tree prints, so the two drift apart unless one quotes the
@@ -507,3 +508,35 @@ class TestTheFiveQuestions:
         at = [plain.find(q) for q in lr.FIVE_QUESTIONS]
         assert -1 not in at, [q for q, i in zip(lr.FIVE_QUESTIONS, at) if i == -1]
         assert at == sorted(at), "the note lists the questions in another order"
+
+
+def _plain(rel: str) -> str:
+    """``rel``'s text with markdown emphasis and line wraps read as plain text."""
+    import re
+
+    return re.sub(r"\s+", " ", (REPO_ROOT / rel).read_text(encoding="utf-8").replace("**", ""))
+
+
+@pytest.mark.contract
+class TestTheLayerQuestionsReachTheirReaders:
+    """The hops a parent id and the questions travel, each pinned where a
+    reviewer of this lane found it could silently break."""
+
+    def test_the_handoff_writes_a_sibling_finding_into_the_row_every_seat_writes(self):
+        """A seat with no goal doc skips the goal step, so a sentence there
+        never reaches a worker seat's handoff. Dies to: the sentence moved
+        back out of the session-row step."""
+        text = _plain(".claude/commands/handoff.md")
+        row_step = text.split("## 2. Write the session row", 1)[1].split("## 3.", 1)[0]
+        assert "(sibling of DEF-N)" in row_step and "--sibling-of DEF-N" in row_step
+
+    def test_the_class_note_sends_its_reader_to_the_layer_note_first(self):
+        """Core Rule 12 names the class note its sole home. Dies to: the
+        class note's pointer to the layer questions removed."""
+        assert "[[check-the-layer-before-the-class]]" in _plain("memory/fix-the-class-not-the-instance.md")
+
+    def test_the_note_says_what_the_chain_advisory_prints_today(self, lr):
+        """Dies to: the full chain print turned on while the note still
+        calls the advisory recording-only, or the reverse."""
+        says_recording = "chain advisory is recording-only" in _plain("memory/check-the-layer-before-the-class.md")
+        assert says_recording is (not lr.CHAIN_ADVISORY_PRINTS)

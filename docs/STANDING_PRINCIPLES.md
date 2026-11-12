@@ -625,32 +625,32 @@ of a name. Consolidation alone stalls when the one question left at the chokepoi
 "recognise every shape of an open input". The guard's command parser is that chokepoint:
 in the 20 commits after the public tree's opening squash, 2026-09-24 to 2026-10-07, it
 grew by 1,446 net lines, and 14 of those commits were fixes (`git log --no-merges
---numstat`, re-measured 2026-11-12), while each fix lane's review found the next spelling.
+--numstat`, re-measured 2026-11-12), while four fix lanes' reviews each led to one to
+three sibling rows on the same job, not every one a spelling.
 
 **Ask before the class question.** The five questions have their sole home in
 `memory/check-the-layer-before-the-class.md`; the text a tree prints is
-`tools/cc/ledger_row.py::FIVE_QUESTIONS`, which a test pins to the note. They ask for the
-job in words that do not name the mechanism; whether the fix observes the effect or
-predicts it; whether the input is closed and ours or open and someone else's; whether a
-slip would produce the instance; and whether the defect is arriving at a site already
-moved once. The tells that they are due are a chain of siblings on one job, a cluster of
-standalone rows on one site family, and recurrence at a consolidated site, and the ledger
-tools print the questions at each.
+`tools/cc/ledger_row.py::FIVE_QUESTIONS`, which a test pins to the note; read them there,
+since a summary here would drift from both. The tells that they are due are a chain of
+siblings on one job, a cluster of standalone rows on one site family, and recurrence at a
+consolidated site. The note says which of the three a tool prints the questions at today;
+the last is noticed only by asking.
 
 **Where the prediction must stay.** An effect that cannot be undone (a delete, a push, a
 release, a secret read) leaves no later layer to observe it, so the predicting check stays,
 and one question is asked once for the whole job: which forms would a slip produce? That
 answer is a coverage contract, and the forms outside it are declared limits, not work.
-Without this exception the questions route away jobs no layer can take; the blind
-back-test routed the speed-bump and project-root delete rows away until it was added (the
-operator's wording, 2026-10-08).
+Without this exception the questions route away jobs no layer can take: before it existed,
+the blind back-test routed the speed-bump and project-root delete rows away, and the
+operator worded the exception from that (2026-10-08). The exception has not been
+re-tested.
 
 **This reconciles §17 with keeping the guards.** "Move the catch earlier" and "move the
 check to where the effect is" agree once the layers are named: the early check stays as
 the cheap optimisation, and the end check becomes the guarantee.
 
-**Evidence, held to what it shows.** A blind grader, given the questions and an answering
-rule fixed before any row was read, routed 26 of 29 guard rows away and 0 of 22 rows on
+**Evidence, held to what it shows.** A blind grader, given each question's first sentence
+and an answering rule fixed before any row was read, routed 26 of 29 guard rows away and 0 of 22 rows on
 the CLI's own code (2026-10-08). That shows the questions do not route everything away. It
 does not show they route away only wrong-layer work: the CLI is an easy contrast, and the
 two questions that carried the separation describe nearly any reader of shell text. The
