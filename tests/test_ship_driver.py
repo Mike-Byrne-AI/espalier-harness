@@ -6008,3 +6008,24 @@ class TestAnUnfinishedLaneRidesNoPush:
         with pytest.raises(ship.Refused, match="a push would carry them half-made"):
             ship.catch_up()
         assert spawns.count(("git", "push")) == 0 and spawns.count(("git", "merge")) == 0
+
+    def test_origin_ahead_with_the_commit_names_the_lease_to_origins_head_and_the_other_commits(self, ship, tmp_path):
+        """Failure-mode MAJOR-1: where a commit origin holds and HEAD lacks
+        carries the trailer, a merge brings it back, so the refusal names the
+        lease push. The lease binds origin's head as read, which is the first
+        record of HEAD..origin/<branch>, never the set-aside commit below it,
+        and a commit there that is not the set-aside one is said to be
+        replaced too (real-git drive: tests/test_own_clear.py). Dies to: the
+        merge words kept, a lease bound to the set-aside commit, the others
+        left unsaid."""
+        tip, set_aside = "a" * 40, "c" * 40
+        log = (0, f"\x1e{tip} {set_aside}\x1f\n\x1e{set_aside} {'d' * 40}\x1flane/x\n", "")
+        _arm(ship, {("git", "fetch"): (0, "", ""), ("git", "rev-list", "--count"): (0, "2\n", ""),
+                    _UNFINISHED_LOG: log})
+        words = ship._origin_ahead_refusal("lane/x", str(tmp_path))
+        assert words is not None and set_aside[:12] in words and "Espalier-Unfinished: lane/x" in words
+        assert f"git push --force-with-lease=lane/x:{tip} origin HEAD:lane/x" in words
+        assert "the 1 other commit(s) there that HEAD does not reach" in words and "git merge" not in words
+        _arm(ship, {("git", "fetch"): (0, "", ""), ("git", "rev-list", "--count"): (0, "1\n", ""),
+                    _UNFINISHED_LOG: (0, f"\x1e{tip} {'d' * 40}\x1f\n", "")})
+        assert "git merge origin/lane/x" in ship._origin_ahead_refusal("lane/x", str(tmp_path))

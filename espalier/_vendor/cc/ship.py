@@ -2084,8 +2084,10 @@ class Unfinished(NamedTuple):
     lane's) and its task (empty where none was in progress), the untracked
     files left beside it, whether the commit is empty (the tracked tree
     was clean: it carries the trailer alone, so the push guard still holds),
-    and whether the lane's branch is on origin (its remote-tracking ref, as
-    last fetched: a pull request may then be open on it)."""
+    whether the lane's branch is on origin (its remote-tracking ref, as
+    last fetched: a pull request may then be open on it), and whether this
+    tree's Harness Guard fails a pull request holding the commit
+    (:func:`_guard_fails_unfinished`)."""
     branch: str
     text: str
     commit: str
@@ -2095,6 +2097,29 @@ class Unfinished(NamedTuple):
     untracked: tuple[str, ...]
     empty: bool = False
     on_origin: bool = False
+    guarded: bool = False
+
+
+#: The name the Harness Guard's gate (``tools/cc/ci_guard.py``) defines where
+#: it fails a pull request holding the set-aside commit (DEF-5102): its copy
+#: of :data:`UNFINISHED_TRAILER`, pinned equal by tests/test_ci_guard.py.
+UNFINISHED_GUARD_NAME = "_CI_UNFINISHED_TRAILER"
+
+
+def _guard_fails_unfinished(root: Path) -> bool:
+    """Does this tree's Harness Guard fail a pull request holding the
+    set-aside commit? Read from the tree, offline: the workflow is there and
+    its gate carries the arm (:data:`UNFINISHED_GUARD_NAME`). An install-ci
+    tree from before the arm keeps its older gate (``upgrade`` never refreshes
+    it), and an init-only tree has no gate: there nothing checks a hand push.
+    Whether ``verify`` is a required check is GitHub's to say, not the
+    tree's, so the brief names that condition rather than claim it."""
+    workflow = root / ".github" / "workflows" / "harness-guard.yml"
+    gate = root / "tools" / "cc" / "ci_guard.py"
+    try:
+        return workflow.is_file() and UNFINISHED_GUARD_NAME in gate.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
 
 
 def _brief_text(text: str) -> str:
@@ -2189,12 +2214,14 @@ def _finish_first_tail(unfinished: Unfinished, lane_checkout: Path | None = None
     # starts in; the soft reset is the lane checkout's.
     there = "" if lane_checkout is None else " (run the soft reset there; the restore runs from this checkout)"
     moves = []
+    hand_push = ("a hand git push skips the driver, and the Harness Guard check then fails the pull request, "
+                 "which holds its merge where verify is a required check, until a force push takes the commit off"
+                 if unfinished.guarded else
+                 "a hand git push skips the driver, and nothing in this tree checks it")
     if unfinished.commit:
         moves.append(_soft_reset_words(unfinished.commit, unfinished.parent, empty=unfinished.empty)
                      + f" (every ship-driver push of the lane -- open, handoff, catch-up, rebind -- refuses while "
-                       f"its {UNFINISHED_TRAILER} commit is on it; a hand git push skips the driver, and where the "
-                       "Harness Guard check runs it fails the pull request until a force push takes the commit off, "
-                       "so never push it by hand)")
+                       f"its {UNFINISHED_TRAILER} commit is on it; {hand_push}, so never push it by hand)")
     else:
         moves.append("no commit was made")
     if unfinished.plan_record:
@@ -2208,10 +2235,12 @@ def _finish_first_tail(unfinished: Unfinished, lane_checkout: Path | None = None
     # The seat's own red pull request is the likely lane at the threshold, and
     # the red-cell recipe is fix, commit, git push, then rebind: a hand push
     # lands the set-aside edits on the open pull request before rebind refuses.
+    landing = ("where the Harness Guard check fails on them (auto-merge merges them on green where verify is not "
+               "a required check)" if unfinished.guarded else
+               "where auto-merge merges them on green (nothing in this tree checks them)")
     waits = (f"The lane {lane} is committed in {spot}, and its branch is on origin (as last fetched), so a pull "
              "request may be open on it: a hand git push there lands the set-aside edits on that pull request, "
-             "where the Harness Guard check fails on them (auto-merge merges them on green where it does not "
-             "run) and only a force push takes them off, so soft-reset first, before any push; its row is "
+             f"{landing} and only a force push takes them off, so soft-reset first, before any push; its row is "
              "written" if unfinished.on_origin else
              f"The lane {lane} is committed in {spot} and unpushed, with no pull request, its row written")
     return (f"\n\n{FINISH_FIRST} What is left: {_brief_text(unfinished.text)}\n"
@@ -3065,12 +3094,36 @@ def _origin_ahead_refusal(branch: str, cwd: str) -> str | None:
     commits HEAD does not reach (:func:`_remote_has_commits_we_lack`) -- with
     the one way past, or None. `open` asks it as one of
     :data:`PRE_PUSH_CHECKS`, and the handoff's push onto an open pull
-    request in the same words."""
+    request in the same words.
+
+    The way past is a merge, except where a commit origin holds and HEAD
+    lacks carries :data:`UNFINISHED_TRAILER`: a hand push put the threshold
+    handoff's set-aside commit there, and the next window took it back with
+    the brief's soft reset. A merge would bring the set-aside edits back, and
+    :func:`_unfinished_on_lane` would then name the reset again, the two
+    refusals alternating with no way out (DEF-5102, driven two rounds). There
+    the way past is the lease push the driver never makes itself, bound to
+    origin's head as this read found it (the range's first record: origin's
+    head is never one HEAD reaches here)."""
     behind = _remote_has_commits_we_lack(branch, cwd)
     if not behind:
         return None
-    return (f"origin/{branch} has {behind} commit(s) this HEAD does not reach: merge them in "
-            f"(git merge origin/{branch}); never rebase or force-push a pushed lane")
+    records = _commit_records(cwd, f"HEAD..origin/{branch}") or []
+    found = [record for record in records if record[2]]
+    if not found:
+        return (f"origin/{branch} has {behind} commit(s) this HEAD does not reach: merge them in "
+                f"(git merge origin/{branch}); never rebase or force-push a pushed lane")
+    sha, _parent, lane = found[-1]
+    tip = records[0][0]
+    others = behind - len(found)
+    replaced = (f"; it replaces the {others} other commit(s) there that HEAD does not reach too, so run it only "
+                "where HEAD holds the work of each" if others > 0 else "")
+    return (f"origin/{branch} holds {sha[:12]}, the commit the threshold handoff made of the unfinished lane "
+            f"{lane}'s tracked edits ({UNFINISHED_TRAILER}: {lane}), which a hand push put there, and a merge of "
+            f"origin/{branch} would bring those edits back: once the lane is finished and committed without it "
+            f"(the brief's soft reset first), git push --force-with-lease={branch}:{tip} origin HEAD:{branch} "
+            f"takes it off (the lease refuses if origin's branch moved since this read{replaced}), then run this "
+            "verb again")
 
 
 # ------------------------------------------------ open's refusals before its push --
@@ -3696,16 +3749,24 @@ def _unfinished_refusal(text: str) -> Refused:
 
 def _lane_commit_records(root: Path, base_ref: str) -> list[tuple[str, str, str]] | None:
     """Every commit of the lane (``base_ref..HEAD``), newest first -- HEAD's
-    the first -- as ``(sha, first parent, the value of its
-    :data:`UNFINISHED_TRAILER`, '' on a commit without one)``; None when git
-    cannot answer. One read."""
-    rc, out, _ = _git("log", f"--format={UNFINISHED_LOG_FORMAT}", f"{base_ref}..HEAD", cwd=str(root))
+    the first -- as :func:`_commit_records` gives them; None when git cannot
+    answer. One read."""
+    return _commit_records(str(root), f"{base_ref}..HEAD")
+
+
+def _commit_records(cwd: str, revisions: str) -> list[tuple[str, str, str]] | None:
+    """Every commit of ``revisions`` (a range), newest first, as ``(sha,
+    first parent, the value of its :data:`UNFINISHED_TRAILER`, '' on a commit
+    without one)``; None when git cannot answer. One read: the lane's own
+    (:func:`_lane_commit_records`) and origin's commits HEAD lacks
+    (:func:`_origin_ahead_refusal`)."""
+    rc, out, _ = _git("log", f"--format={UNFINISHED_LOG_FORMAT}", revisions, cwd=cwd)
     if rc != 0:
         return None
     records = []
     for record in out.split("\x1e")[1:]:
-        head, _sep, value = record.partition("\x1f")
-        shas, value = head.split(), value.strip()
+        ids, _sep, value = record.partition("\x1f")
+        shas, value = ids.split(), value.strip()
         if shas:
             records.append((shas[0], shas[1] if len(shas) > 1 else "",
                             value.splitlines()[0].strip() if value else ""))
@@ -3723,7 +3784,8 @@ def _unfinished_commits(root: Path, base_ref: str) -> list[tuple[str, str, str]]
 def _moved_past_reset_words(root: Path, base_ref: str, sha: str, parent: str) -> str:
     """The soft reset for a lane whose HEAD has moved past its set-aside
     commit: to that commit's parent while no merge follows it; after a merge
-    of the base, to the lane's merge-base with the base, since a reset to the
+    (of the base, or of origin's copy of the lane: either can stage the
+    base's tree), to the lane's merge-base with the base, since a reset to the
     parent stages the merged base's tree as the lane's own change and a file
     the base has since removed rides the landing back in. A git that cannot
     say which is the merge-base, named as a command: it is right either way,
@@ -3734,7 +3796,7 @@ def _moved_past_reset_words(root: Path, base_ref: str, sha: str, parent: str) ->
                 "it, staged, to recommit the finished work without its trailer")
     rc_base, below, _ = _git("merge-base", base_ref, "HEAD", cwd=str(root)) if rc == 0 else (1, "", "")
     target = below.strip()[:12] if rc_base == 0 and below.strip() else f"$(git merge-base {base_ref} HEAD)"
-    return (f"HEAD has moved past it, and a merge of {base_ref} follows it: git reset --soft {target} (the "
+    return (f"HEAD has moved past it, and a merge follows it: git reset --soft {target} (the "
             f"lane's merge-base with {base_ref}; a reset to its parent would stage the base's merged changes "
             "as the lane's own) takes it back with every commit of the lane, staged, to recommit the finished "
             "work without its trailer")
@@ -3900,6 +3962,7 @@ def _hand_off_unfinished(root: Path, text: str, *, dry_run: bool) -> Unfinished:
     # origin, a pull request may be open, and the brief says so.
     rc, _, _ = _git("rev-parse", "-q", "--verify", f"refs/remotes/origin/{branch}", cwd=str(root))
     on_origin = rc == 0
+    guarded = _guard_fails_unfinished(root)
     # The plan the mod holds on, and execution_plan.py writes, is the session's
     # checkout's: the lane checkout's own is it only where the two are one.
     plan_path = (where if elsewhere else root) / "cc" / "execution_plan.json"
@@ -3919,7 +3982,7 @@ def _hand_off_unfinished(root: Path, text: str, *, dry_run: bool) -> Unfinished:
              + (f"the plan ({task}) aside in cc/_cold/, " if in_progress else "no plan aside (none in progress), ")
              + f"commit {len(edits)} tracked edit{plural} of {branch} as {UNFINISHED_SUBJECT!r} with its "
              f"{UNFINISHED_TRAILER} trailer, leave {len(untracked)} untracked file(s) beside it, and push nothing")
-        return Unfinished(branch, what, "", "", "", task, untracked, on_origin=on_origin)
+        return Unfinished(branch, what, "", "", "", task, untracked, on_origin=on_origin, guarded=guarded)
     plan_record, moved = "", None
     if in_progress and module is not None:
         try:
@@ -3979,7 +4042,7 @@ def _hand_off_unfinished(root: Path, text: str, *, dry_run: bool) -> Unfinished:
          + (f"; the plan ({task}) set aside at {plan_record}" if plan_record else "")
          + (f"; {len(untracked)} untracked file(s) left beside it ({shown})" if untracked else "")
          + "; nothing pushed, and the lane's claims stay live")
-    return Unfinished(branch, what, commit, parent, plan_record, task, untracked, empty, on_origin)
+    return Unfinished(branch, what, commit, parent, plan_record, task, untracked, empty, on_origin, guarded)
 
 
 def _plan_named_in(root: Path, commit: str) -> tuple[str, str]:

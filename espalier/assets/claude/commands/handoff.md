@@ -750,10 +750,19 @@ python tools/cc/ship.py handoff
   names the record too). Until the reset, every push of the lane through the
   ship driver (`open`, the handoff's push onto an open pull request,
   `catch-up`, and `rebind` after a push) refuses and names it; a hand
-  `git push` is not checked, so never push the lane by hand. Where the lane's
-  branch is already on origin (a pull request may be open on it, the seat's
-  own red one the likely case), the brief says so: a hand push there lands the
-  set-aside edits on that pull request, so the soft reset comes first. It refuses
+  `git push` skips the driver, so never push the lane by hand. Where the tree's
+  Harness Guard carries the check (its workflow, and a `tools/cc/ci_guard.py`
+  from `install-ci` since the check landed), it fails a pull request holding
+  the commit, and holds its merge where `verify` is a required check; the brief
+  says which, read from the tree. Where the lane's branch is already on origin
+  (a pull request may be open on it, the seat's own red one the likely case),
+  the brief says so: a hand push there lands the set-aside edits on that pull
+  request, and only a force push takes them off, so the soft reset comes first.
+  If the commit reached origin anyway, the driver's push then refuses naming
+  the `git push --force-with-lease` that takes it off (never a merge of
+  origin's branch, which brings it back). Never amend the set-aside commit by
+  hand: an amend that drops the trailer leaves the lane's half-built edits
+  where no check reads them. It refuses
   before anything moves where no own-clear mod would read the marker (that
   window is cleared by hand, the lane left as it is), where the session's own
   checkout is not the lane's and holds a commit origin lacks or a tracked

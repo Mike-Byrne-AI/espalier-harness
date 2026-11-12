@@ -60,8 +60,11 @@ def _run_guard(repo: Path, env_overrides: dict | None = None) -> subprocess.Comp
     # would leak into these subprocesses and silently satisfy the allowance —
     # turning any future deny-expecting workflow fixture green once a week and
     # red the rest of the time. Scrub every ambient input the guard consults.
+    # GITHUB_HEAD_REF and GITHUB_BASE_REF are set by the runner on every step
+    # of a pull_request run, this suite's own included (DEF-5102's red reads
+    # them for its push target and its reset).
     for k in ("BASE_SHA", "BEFORE_SHA", "PR_TITLE", "PR_HEAD_SHA", "GITHUB_ACTOR",
-              "GITHUB_EVENT_NAME"):
+              "GITHUB_EVENT_NAME", "GITHUB_HEAD_REF", "GITHUB_BASE_REF", "DEFAULT_BRANCH"):
         env.pop(k, None)
     if env_overrides:
         env.update({k: v for k, v in env_overrides.items() if v is not None})
@@ -2690,8 +2693,8 @@ class TestUnfinishedLaneArm:
 
     @staticmethod
     def _pr(repo: Path, base: str, event: str = "pull_request", *, title: str = "feat: a lane",
-            head: str | None = "") -> subprocess.CompletedProcess:
-        env = {"GITHUB_EVENT_NAME": event, "BASE_SHA": base, "PR_TITLE": title}
+            head: str | None = "", extra: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+        env = {"GITHUB_EVENT_NAME": event, "BASE_SHA": base, "PR_TITLE": title, **(extra or {})}
         if head is not None:
             env["PR_HEAD_SHA"] = head or _head(repo)
         return _run_guard(repo, env)
@@ -2731,12 +2734,36 @@ class TestUnfinishedLaneArm:
         assert "Espalier-Unfinished" in result.stdout and "does NOT override" in result.stdout
 
     def test_a_commit_past_it_still_fails(self, fresh_repo):
+        """The lease is bound to the head the run read, never to the
+        set-aside commit (code-reviewer MINOR-1: with the commit at the head
+        the two are one, so only a commit past it tells them apart)."""
         base = self._lane(fresh_repo)
         commit, parent = self._set_aside(fresh_repo, "lane/half")
         _commit(fresh_repo, "more.py", "z = 3\n", "feat: more")
+        head = _head(fresh_repo)
         result = self._pr(fresh_repo, base)
         assert result.returncode == 2, result.stdout
         assert commit[:12] in result.stdout and f"git reset --soft {parent[:12]}" in result.stdout
+        assert f"--force-with-lease=lane/half:{head} origin HEAD:lane/half" in result.stdout
+        assert f":{commit} " not in result.stdout and f"while HEAD is {head[:12]}" in result.stdout
+
+    def test_a_merge_before_the_commit_names_its_parent(self, fresh_repo):
+        """A merge below the set-aside commit is in its parent's tree
+        already, so the parent reset is right and the red never says a merge
+        follows it (code-reviewer MINOR-2: a scan from the base, not from the
+        commit, would)."""
+        env = _git_env()
+        self._lane(fresh_repo)
+        _git(["checkout", "-q", "main"], fresh_repo, env)
+        _commit(fresh_repo, "c.txt", "c\n", "feat: c on the base")
+        tip = _head(fresh_repo)
+        _git(["checkout", "-q", "lane/half"], fresh_repo, env)
+        _git(["merge", "-q", "--no-edit", "main"], fresh_repo, env)
+        _commit_sha, parent = self._set_aside(fresh_repo, "lane/half")
+        result = self._pr(fresh_repo, tip)
+        assert result.returncode == 2, result.stdout
+        assert f"git reset --soft {parent[:12]}" in result.stdout
+        assert "a merge follows it" not in result.stdout
 
     def test_the_reset_names_the_oldest_ones_parent(self, fresh_repo):
         base = self._lane(fresh_repo)
@@ -2847,12 +2874,74 @@ class TestUnfinishedLaneArm:
         assert result.returncode == 2, result.stdout + result.stderr
 
     def test_without_the_head_a_merge_names_the_merge_base_as_a_command(self, fresh_repo):
+        """No head to guard a computed reset by, so only the reset that is
+        right from any HEAD is named, after the fetch that brings the base the
+        lane checkout may lack (failure-mode NIT: without it the command's
+        target was empty and the reset did nothing, rc 0)."""
         self._lane(fresh_repo)
         self._set_aside(fresh_repo, "lane/half")
         tip, _merged = self._base_moves_and_the_lane_merges_it(fresh_repo)
         result = self._pr(fresh_repo, tip, head=None)
         assert result.returncode == 2, result.stdout
         assert f"git reset --soft $(git merge-base {tip} HEAD)" in result.stdout
+        assert "while HEAD is" not in result.stdout and "  git fetch origin\n" in result.stdout
+        named = self._pr(fresh_repo, tip, head=None, extra={"GITHUB_BASE_REF": "main"}).stdout
+        assert "git reset --soft $(git merge-base origin/main HEAD)" in named and tip not in named
+
+    def test_the_computed_reset_is_guarded_by_its_head_and_any_other_head_lands_clean(self, fresh_repo):
+        """Failure-mode MAJOR-2, driven: a window that took the commit back by
+        the brief's reset, finished, committed and merged the base, then ran
+        the red's parent reset as printed, staged the merged base's tree as
+        the lane's own, and a file the base had since removed landed again
+        (the guard read rc 0). The computed reset is printed for the head the
+        run read, and any other HEAD gets the lane's merge-base with the base
+        as origin holds it, which lands the lane's files alone."""
+        env = _git_env()
+        base = self._lane(fresh_repo)
+        commit, parent = self._set_aside(fresh_repo, "lane/half")
+        out = self._pr(fresh_repo, base, extra={"GITHUB_BASE_REF": "main"}).stdout
+        assert f"  # while HEAD is {commit[:12]}, the head this run read: " in out
+        assert f"  git reset --soft {parent[:12]}\n  # from any other HEAD" in out
+        assert "  git fetch origin\n  git reset --soft $(git merge-base origin/main HEAD)\n" in out
+        # The window moved on before it read the red.
+        _git(["reset", "-q", "--soft", parent], fresh_repo, env)
+        _git(["commit", "-q", "-m", "feat: the finished lane"], fresh_repo, env)
+        _git(["checkout", "-q", "main"], fresh_repo, env)
+        _commit(fresh_repo, "c.txt", "c\n", "feat: c on the base")
+        _git(["checkout", "-q", "lane/half"], fresh_repo, env)
+        _git(["merge", "-q", "--no-edit", "main"], fresh_repo, env)
+        _git(["checkout", "-q", "main"], fresh_repo, env)
+        _git(["rm", "-q", "c.txt"], fresh_repo, env)
+        _git(["commit", "-q", "-m", "revert: c off the base"], fresh_repo, env)
+        _git(["checkout", "-q", "lane/half"], fresh_repo, env)
+        _git(["update-ref", "refs/remotes/origin/main", "main"], fresh_repo, env)   # what the fetch brings
+        moved = _head(fresh_repo)
+
+        def landed(target: str) -> list[str]:
+            _git(["reset", "-q", "--soft", target], fresh_repo, env)
+            _git(["commit", "-q", "-m", "feat: the finished lane, recommitted"], fresh_repo, env)
+            names = _git(["diff", "--name-only", "main...HEAD"], fresh_repo).stdout.split()
+            _git(["reset", "-q", "--hard", moved], fresh_repo, env)
+            return names
+
+        assert "c.txt" in landed(parent), "the hazard the unguarded reset carried"
+        below = _git(["merge-base", "origin/main", "HEAD"], fresh_repo).stdout.strip()
+        assert sorted(landed(below)) == ["done.py", "half.py"]
+
+    def test_the_push_goes_to_the_pull_requests_branch_not_the_trailers(self, fresh_repo):
+        """A set-aside commit cherry-picked onto another lane keeps its
+        trailer's value (failure-mode MINOR, driven with -x), so a push named
+        from the trailer went to that other branch: the lease refused it as
+        stale, or, with no head to bind, overwrote it. The runner names the
+        pull request's own branch on every pull request event; the trailer is
+        the fallback alone."""
+        base = self._lane(fresh_repo, "lane/other")
+        commit, _parent = self._set_aside(fresh_repo, "lane/half")
+        out = self._pr(fresh_repo, base, extra={"GITHUB_HEAD_REF": "lane/other"}).stdout
+        assert f"--force-with-lease=lane/other:{commit} origin HEAD:lane/other" in out
+        assert "HEAD:lane/half" not in out and "Espalier-Unfinished: lane/half" in out
+        fallback = self._pr(fresh_repo, base).stdout
+        assert f"--force-with-lease=lane/half:{commit} origin HEAD:lane/half" in fallback
 
     def test_a_commit_already_in_the_base_is_not_the_pull_requests(self, fresh_repo):
         self._set_aside(fresh_repo, "main")
@@ -2880,19 +2969,48 @@ class TestUnfinishedLaneArm:
         assert result.returncode == 2, result.stdout
         assert "origin 'HEAD:lane/a;b'" in result.stdout
 
-    def test_the_rebind_is_named_only_where_the_driver_is(self, fresh_repo):
+    def test_the_rebind_is_named_only_where_the_driver_is_and_the_title_holds_a_marker(self, fresh_repo):
+        """``rebind`` binds a marker into any title, so naming it where the
+        title carries none would add one nobody approved (failure-mode NIT)."""
         base = self._lane(fresh_repo)
         self._set_aside(fresh_repo, "lane/half")
-        bare = self._pr(fresh_repo, base).stdout
+        marked = f"feat: a lane HARNESS-UPDATE-APPROVED@{_head(fresh_repo)[:7]}"
+        bare = self._pr(fresh_repo, base, title=marked).stdout
         assert "ship.py rebind" not in bare and "ship-driver verb" not in bare
+        assert "# then bind the approval marker in the title to the new head" in bare
+        assert "approval marker in the title" not in self._pr(fresh_repo, base).stdout
         driver = fresh_repo / "tools" / "cc" / "ship.py"
         driver.parent.mkdir(parents=True, exist_ok=True)
         driver.write_text("# a stand-in for the deployed driver\n", encoding="utf-8")
-        out = self._pr(fresh_repo, base).stdout
-        assert "python tools/cc/ship.py rebind" in out
-        # The push goes first: until origin's branch is rewritten the driver's
-        # verbs name a merge of it, which brings the set-aside commit back.
-        assert "Push before any ship-driver verb" in out
+        out = self._pr(fresh_repo, base, title=marked).stdout
+        assert "  python tools/cc/ship.py rebind  # binds" in out
+        # The push goes first: until origin's branch is rewritten each verb
+        # refuses (the origin-ahead refusal names this same lease push).
+        assert "# push before any ship-driver verb" in out
+        unmarked = self._pr(fresh_repo, base).stdout
+        assert "rebind" not in unmarked and "# push before any ship-driver verb" in unmarked
+
+    def test_every_line_of_the_moves_but_a_command_is_a_plain_shell_comment(self, fresh_repo):
+        """Pasted whole, the moves run as commands and nothing else: every
+        other line is a comment holding no quote or parenthesis (failure-mode
+        NIT, driven: a why line's apostrophes swallowed the push line under
+        bash -n and zsh -n; an interactive zsh without interactivecomments
+        reads a comment as a command named #, which fails alone)."""
+        driver = fresh_repo / "tools" / "cc" / "ship.py"
+        self._lane(fresh_repo)
+        self._set_aside(fresh_repo, "lane/half")
+        tip, _merged = self._base_moves_and_the_lane_merges_it(fresh_repo)
+        driver.parent.mkdir(parents=True, exist_ok=True)
+        driver.write_text("# a stand-in for the deployed driver\n", encoding="utf-8")
+        title = f"feat: a lane HARNESS-UPDATE-APPROVED@{_head(fresh_repo)[:7]}"
+        out = self._pr(fresh_repo, tip, title=title, extra={"GITHUB_BASE_REF": "main"}).stdout
+        block = out.split("so in the lane's checkout:\n", 1)[1].splitlines()
+        assert block and all(line.startswith("  ") for line in block), block
+        comments = [line.strip() for line in block if line.strip().startswith("#")]
+        commands = [line.strip() for line in block if not line.strip().startswith("#")]
+        assert "a merge follows it" in " ".join(comments)
+        assert all(not set("'\"()") & set(line) for line in comments), comments
+        assert [line.split()[0] for line in commands] == ["git", "git", "git", "git", "python"], commands
 
     def test_the_guards_copies_are_the_drivers(self):
         """The guard imports no sibling (CI runs it from the pull request's own
@@ -2902,3 +3020,29 @@ class TestUnfinishedLaneArm:
         ship = _ship_home()
         assert ci._CI_UNFINISHED_TRAILER == ship.UNFINISHED_TRAILER
         assert ci._CI_UNFINISHED_LOG_FORMAT == ship.UNFINISHED_LOG_FORMAT
+        # The name the driver's brief reads the guard's reach by.
+        assert ship.UNFINISHED_GUARD_NAME == "_CI_UNFINISHED_TRAILER" and hasattr(ci, ship.UNFINISHED_GUARD_NAME)
+
+    def test_the_guard_reads_what_the_driver_reads(self, fresh_repo):
+        """The pins above are two constants; the read around them (the log's
+        flags, the range, the parse) is pinned here, over one lane holding
+        each shape at once: a set-aside commit, an empty one, one merged in
+        as a second parent, and a commit quoting the key in prose
+        (failure-mode MINOR: a --first-parent added to either read stayed
+        green)."""
+        env = _git_env()
+        ci = _load_by_path("_ci_guard_unfinished_read", CI_GUARD)
+        ship = _ship_home()
+        base = self._lane(fresh_repo)
+        _git(["checkout", "-q", "-b", "side", base], fresh_repo, env)
+        self._set_aside(fresh_repo, "side")
+        _git(["checkout", "-q", "lane/half"], fresh_repo, env)
+        _git(["merge", "-q", "--no-edit", "side"], fresh_repo, env)
+        self._set_aside(fresh_repo, "lane/half")
+        self._set_aside(fresh_repo, "lane/half", edits=False)
+        _git(["commit", "--quiet", "--allow-empty", "-m", "docs: the arm",
+              "-m", f"{ship.UNFINISHED_TRAILER}: lane/half is what the gate reads.",
+              "-m", "The last paragraph is prose."], fresh_repo, env)
+        guard = ci.unfinished_commits(base, "HEAD", cwd=str(fresh_repo))
+        assert ship._unfinished_commits(fresh_repo, base) == guard
+        assert len(guard) == 3 and {value for _sha, _parent, value in guard} == {"side", "lane/half"}
