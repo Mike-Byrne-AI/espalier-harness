@@ -1637,6 +1637,11 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # drivers' shared reader, driven on the frozen #312/#313 rollups.
             "test_post_merge",
             "test_red_after_merge_census",
+            # TP-707 1-A: drives scripts/guard_cost_census.py as a child, which
+            # spawns this checkout's write_guard once a kind and takes a fixture
+            # box lock this process holds: the spawn and the kernel lock are the
+            # thing under test (fast; slow-exempt).
+            "test_guard_cost_census",
             # Drives tools/cc/_symbols.py's lane reader through real git in a
             # scratch repository (a merge-base, a moved base, the working tree
             # and untracked files, a move with renames off): what git reports
