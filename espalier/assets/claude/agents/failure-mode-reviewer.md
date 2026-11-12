@@ -181,6 +181,14 @@ check, a single test case.
 
 ### Step 3 — Sister-site sweep
 
+Ask first: **is this fix in a layer that can reach its goal, or one
+more instance in a layer that cannot?** A sweep widens a fix inside its
+own layer. When the change is the next of a run of sibling fixes on one
+job (a parser accepting one more shape, a check predicting an effect it
+could observe), say so as a finding and name the layer that could reach
+the goal; `python tools/cc/ledger_row.py lineage <id>` prints the five
+questions that test it.
+
 When the change fixed a problem in one site, **every site with the
 same pattern must also be fixed.** This isn't about adversaries; it's
 about pattern-blindness. Future-you will refactor one site and forget
@@ -300,6 +308,11 @@ Trigger:      {minimal sequence of operator/AI/refactor actions that produces th
 Detection:    {what would have caught it; why it doesn't}
 Fix:          {smallest mechanical correction; ideally with a regression test}
 ```
+
+A finding that is a further instance of the ledger row this change fixes
+says so in the words `(sibling of DEF-N)`, naming that row, so the
+handoff's note and the session that files it can copy the id into
+`ledger_row.py file --sibling-of`.
 
 Severity labels:
 

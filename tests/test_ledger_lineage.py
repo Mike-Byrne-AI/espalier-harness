@@ -492,3 +492,18 @@ class TestTheFiveQuestions:
         for q in lr.FIVE_QUESTIONS:
             assert q.isascii(), q
             assert not re.search(r"\b[A-Z]{2,5}-\d+", q), q
+
+    def test_the_memory_note_quotes_each_question_word_for_word_in_order(self, lr):
+        """The note holds the questions' fuller wording and the constant the
+        text a tree prints, so the two drift apart unless one quotes the
+        other: each constant line is in the note word for word, numbered, in
+        order, once its markdown emphasis and line wraps are read as plain
+        text. Dies to: a word of one constant line changed, a question
+        dropped from the note, two questions swapped."""
+        import re
+
+        note = (REPO_ROOT / "memory" / "check-the-layer-before-the-class.md").read_text(encoding="utf-8")
+        plain = re.sub(r"\s+", " ", note.replace("**", ""))
+        at = [plain.find(q) for q in lr.FIVE_QUESTIONS]
+        assert -1 not in at, [q for q, i in zip(lr.FIVE_QUESTIONS, at) if i == -1]
+        assert at == sorted(at), "the note lists the questions in another order"
