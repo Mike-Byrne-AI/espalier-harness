@@ -265,6 +265,44 @@ Method: wall-clock around each hook subprocess on the Edit/Write path; N≥80 pe
 measurement with 5–8 warmup runs discarded; Python 3.14.2, Darwin. Re-measure
 before quoting it; do not cite it as current.
 
+### write_guard, per call kind (2026-11-12 snapshot)
+
+`write_guard.py` runs on every tool call (matcher `*`). A Read, Grep, Glob or
+TodoWrite returns before its pattern path loads; every Bash, PowerShell,
+mutation and MCP call loads it. Each kind below was spawned 30 times the way
+Claude Code spawns the hook (the wired interpreter with `-B` and
+`tools/cc/hooks/write_guard.py`, the payload on stdin), shuffled, each spawn in an empty project of its own, beside a
+bare interpreter start as the control. Every call was allowed. No test run
+shared the box while the timings ran (they held the lock the test tiers take);
+the load average was read and is reported, never waited for. Medians in ms, the
+interquartile range in brackets.
+
+| Host | Python | Load, start to end | Control | Read | Bash `ls -la` | MCP read | MCP write |
+|---|---|---|---|---|---|---|---|
+| macOS laptop, 8 cores, 8 GB, at commit b3eefcf | 3.14.7 | 4.69 to 4.56 | 34.6 (32.4–36.6) | 132.0 (126.1–138.9) | 303.2 (297.1–313.5) | 302.9 (297.8–308.4) | 300.1 (294.3–317.9) |
+
+The portable part, again, is the shape:
+
+- **On that host the pattern path is about 170 ms of a 300 ms call** (the Bash
+  median less the Read median), and an MCP read pays what a Bash call pays: the
+  path loads whole for any call it judges.
+- **The cost is the regular expressions the path compiles.** That tree's path
+  compiles 206,695 characters of pattern (308 distinct patterns; 61 of them embed
+  one shared 1,580-character command-position fragment, 70% of the characters),
+  and its two pattern modules import in 180.3 ms (171.2–182.1, 10 fresh
+  interpreters). A candidate change that grew the shared fragment to 4,301
+  characters (never merged) compiled 387,130 characters with fewer patterns
+  (288), and imported in 282.9 ms (276.3–289.2). So compiled characters track
+  the cost, and the pattern count does not.
+- **The hook's 4 s deadline was never met in real sessions on that host**: no
+  time-budget record in the 47 daily audit logs of its two checkouts, 2026-10-13
+  to 2026-11-12. On that host the deadline is a concern for a test run under
+  load, not for a session.
+
+Method: the source repository's per-call cost census (`--calls 30`,
+`--compile`, `--import-time --rounds 10`, each on one interpreter). Re-measure
+before quoting it; do not cite it as current.
+
 ---
 
 ## What this catalog is not

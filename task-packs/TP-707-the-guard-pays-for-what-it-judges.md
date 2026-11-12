@@ -452,10 +452,19 @@ past 1b34b46, so a hard-coded
 | **Total** | **22.5 h** (Wave 1 alone 5.5 h; Wave 2's 17 h only on the operator's yes, ruling 1a) |
 
 ## Landing
-- State: DRAFT
+- State: DRAFT (ruled 2026-11-12, ack `20261112T160700Z-air-421d04` on request `20261112T155757Z-air-work-38081f`: the pack outlives Wave 1, since Sub-task ordering step 5 puts Wave 2 to the operator after Wave 1 lands; its pack-table row stays live)
+- Wave 1 (the instrument; ruling 1a):
+  - 1-A: LANDED 2026-11-12 (#605, b3eefcf, seat air-work). The first proof, read at a `git archive` of each commit: `--compile` at 1b34b46 reads 298 patterns, 204,539 characters, the 1,580-character fragment and 61 embedding patterns (144,558 characters), and at caae022 4,301 and 387,130. The draft's 301, 204,553 and 387,144 carry 3 patterns and 14 characters from the draft run's own input: the prototype re-run on the archive reads the census's figures.
+  - Task 0 on the Air, 2026-11-12 at b3eefcf, Python 3.14.7, the box lock taken for every timed line, load 4.6 to 5.8. `--calls 30`, medians in ms (IQR): control 34.6 (32.4 to 36.6), Read 132.0 (126.1 to 138.9), Bash `ls -la` 303.2 (297.1 to 313.5), MCP read 302.9 (297.8 to 308.4), MCP write 300.1 (294.3 to 317.9); all 150 calls allowed. `--compile`: 308 patterns, 206,695 characters (207,211 on 3.11: the standard library's compiles a hook frame reaches move by interpreter), the fragment 1,580, 61 embedding patterns holding 65 copies. `--at caae022`: 288 patterns, 387,130 characters, the fragment 4,301. `--import-time --rounds 10`: 180.3 ms (171.2 to 182.1) at b3eefcf, 282.9 (276.3 to 289.2) at caae022.
+    - R3 HOLDS on the Air: 102.7 ms apart, outside both IQRs, so 1-B is built.
+    - R1, the Air's half: the Bash and MCP-read medians are 2.30 times the Read median, well past 25%; the pattern path is about 170 ms of a 300 ms call. Carried to the friction question; acts on nothing in Wave 1.
+    - R2, the Air's half: no record of either budget event in 47 daily audit logs (the main checkout and `work`), 2026-10-13 to 2026-11-12. Carried to the friction question.
+  - Task 0 on Windows (1-C): not run yet. It goes to the first Windows seat under two jobs (ack 421d04, the queue in `20261112T142359Z-air-c24e84`); none was under two at 16:07Z.
+  - 1-B: BUILT on `lane/the-guard-cost-snapshot`. `tests/test_guard_compile_ratchet.py` at ceilings of 228,000 compiled characters (206,695 plus 10% is 227,365) and 1,750 for the fragment (1,738), its integration `_MARKER_RULES` row and its `TestSecurityMarkerCoverage` exemption. 1-B's arithmetic restated at b3eefcf: caught, caae022 (both ceilings, and its missing loader) and the smallest growth past either, 21,306 compiled characters or the fragment past 1,750 (+171). Not caught (ruling 2b): one 100-character alternation (the fragment 1,680; 65 copies, +6,500 compiled characters, +3.1%), though a second reds on the fragment (1,780); and a second copy of the fragment in one pattern (+1,580, +0.8%), thirteen passing and the fourteenth red (+22,120).
+  - 1-D: the Air's row BUILT on the same lane, in `docs/HOOK_ASSUMPTIONS.md` ("write_guard, per call kind (2026-11-12 snapshot)") and its assets twin by the sync. The Windows row waits for 1-C's note.
 - Commits:
 - Suite:
 - Earn-the-red:
 - Red-team:
-- Reach:
+- Reach: no row closed or filed (see Reach); R1 and R2 above are the friction question's, not rows.
 - Date:
