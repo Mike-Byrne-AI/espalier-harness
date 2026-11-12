@@ -10,10 +10,10 @@
   size of the one that never merged (4,301 characters of fragment, 387,130
   compiled), not a single 100-character alternation or a second copy of the
   fragment in one pattern. It also reds where the loader compiles no pattern of
-  its own, where no pattern read embeds the fragment, and where a new cached
-  compile appears that the count cannot see. The pinned reading carries where,
-  on what interpreter and against which per-call figure it was taken, and the
-  limits follow from it.
+  its own, where no pattern read embeds the fragment, and where a new compile
+  behind a `functools` cache decorator appears, which the count cannot see.
+  The pinned reading carries where, on what interpreter and against which
+  per-call figure it was taken, and the limits follow from it.
 - **The cost census reports the loader's own share**: `--compile` prints the
   patterns `write_guard`'s pattern-path loader compiles first (8 patterns and
   8,997 characters at the pinned reading; the imports compile the rest).

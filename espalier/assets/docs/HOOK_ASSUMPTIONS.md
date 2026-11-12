@@ -238,7 +238,8 @@ A one-off latency measurement, recorded here because it is the harness's only
 answer to its own *direction ≠ magnitude* discipline on hook cost: prior review
 established the *direction* (the `*`-matcher hooks do per-call I/O), and this
 measures the *magnitude*. **It is a snapshot, not a pinned contract** — no test
-asserts it, and it will drift as the hook layer changes.
+asserts it (the 2026-11-12 snapshot's compiled size, below, is the exception:
+the source repository's tests hold it), and it will drift as the hook layer changes.
 
 Measured on one macOS laptop (Python 3.14.2, Darwin) — **your numbers will
 differ, and the conclusion below is the portable part, not the milliseconds.**
@@ -291,7 +292,8 @@ call; other work was running on that box during it.
 The portable part, again, is the shape:
 
 - **On both hosts the pattern path is most of a judged call**: about 170 ms of
-  a 300 ms call on the macOS laptop and about 250 of 420 on Windows (the Bash
+  a 300 ms call on the macOS laptop and about 250 of 420 on Windows, an upper
+  bound since that run's modules read stale (the Bash
   median less the Read median; the Bash and MCP-read medians are 2.30 and 2.29
   times the Read median on the laptop, 2.43 and 2.42 on Windows). At those
   commits an MCP read paid what a Bash call paid: the path loaded whole for any

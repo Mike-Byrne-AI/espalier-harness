@@ -110,7 +110,9 @@ RULE = ("Past a ceiling, a growth owes a measured per-call figure at or under ma
         "Under a floor, the change that lowered the figure moves the band down in its own lane. "
         "Either way, re-pin: run scripts/guard_cost_census.py --compile --json at the lane's head, replace "
         "PINNED from it, and name the --calls lines or the ruling's ack id in PINNED['per_call']; the limits "
-        "follow. A red on main whose suspects were each green against their own base is their sum: the later "
+        "follow, and the rows that hold literal arithmetic (the limits, TestWhatTheLineCatches, the synthetic "
+        "trees) are re-derived from the new PINNED; fragment_copies is counted by hand, a copy per embedding. "
+        "A red on main whose suspects were each green against their own base is their sum: the later "
         "merge re-lands with the re-pin (TP-707 1-B).")
 
 
@@ -133,8 +135,8 @@ def breaches(figures: dict) -> list[str]:
         found.append("the census did not run write_guard._load_the_pattern_path, so the loader's own "
                      f"compiles went uncounted ({WHERE})")
     elif not figures.get("loader_patterns"):
-        found.append("write_guard._load_the_pattern_path compiled no pattern of its own: a loader that "
-                     "loads nothing is not a path that costs nothing")
+        found.append("write_guard._load_the_pattern_path compiled no pattern of its own, so its compiles "
+                     "moved to import or were dropped; read the per-call figure either way")
     if not figures.get("hooks_patterns"):
         found.append("the census read no pattern compiled from the hooks folder")
     if not figures.get("fragment_found"):
@@ -263,8 +265,8 @@ class TestTheFloorCheck:
     def test_a_loader_that_compiles_nothing_reds_though_the_figure_sits_in_the_band(self):
         # b3eefcf with the loader stubbed: the imports' 300 patterns, 95.6%.
         got = breaches({**BASE, "hooks_patterns": 300, "hooks_chars": 197_698, "loader_patterns": 0})
-        assert got == ["write_guard._load_the_pattern_path compiled no pattern of its own: a loader that "
-                       "loads nothing is not a path that costs nothing"]
+        assert got == ["write_guard._load_the_pattern_path compiled no pattern of its own, so its compiles "
+                       "moved to import or were dropped; read the per-call figure either way"]
 
     def test_a_family_compiled_outside_the_count_reds_on_the_embedding_floor(self):
         got = breaches({**BASE, "embedding_patterns": 0})
@@ -362,8 +364,8 @@ class TestTheLiveFigure:
         got = caught.value
         assert (got.figures["loader_ran"], got.figures["loader_patterns"], got.figures["hooks_chars"]) == (
             True, 0, 205_400), got.figures
-        assert got.problems == ["write_guard._load_the_pattern_path compiled no pattern of its own: a loader "
-                                "that loads nothing is not a path that costs nothing"], got.problems
+        assert got.problems == ["write_guard._load_the_pattern_path compiled no pattern of its own, so its compiles "
+                                "moved to import or were dropped; read the per-call figure either way"], got.problems
 
     def test_a_tree_that_compiles_nothing_is_read_as_no_pattern_and_reds(self, tmp_path):
         scratch = _hooks_tree(tmp_path, bash_patterns=_fragment(1_580), loader_body="pass")
