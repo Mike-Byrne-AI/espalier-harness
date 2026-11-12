@@ -2647,3 +2647,165 @@ class TestRecordFileMarkersRedText:
         memory = tmp_path / "ESPALIER_MEMORY.md"
         memory.write_text("# Memory\n\n```\n " + _OPEN + " HEAD\n " + _MID + "\n```\n", encoding="utf-8")
         assert ci.check_record_file_markers(cwd=str(tmp_path)) == []
+
+
+def _ship_home():
+    """The ship driver, loaded by path under an alias: the one home of the
+    trailer the threshold handoff stamps (``UNFINISHED_TRAILER``) and of the
+    read the driver refuses a push on (``UNFINISHED_LOG_FORMAT``)."""
+    return _load_by_path("_ship_unfinished_home", ROOT / "tools" / "cc" / "ship.py")
+
+
+class TestUnfinishedLaneArm:
+    """DEF-5102. ``ship.py handoff --unfinished`` commits a threshold window's
+    half-built edits as one commit carrying ``Espalier-Unfinished: <lane>``,
+    and every ship-driver push of the lane refuses while it is there; a hand
+    ``git push`` is not the driver, so the commit reached the lane's open pull
+    request and auto-merge merged it on green. The gate now fails a pull
+    request whose own commits hold one, whatever the title says, and names
+    the move that takes it off: once on origin the commit stays in the pull
+    request's range (the driver never force-pushes), so a soft reset alone
+    cannot clear it. Dies to: the arm removed; the range widened past the
+    base or narrowed to HEAD alone; the marker let waive it; the reset named
+    at the newest commit's parent; the push named without the lease."""
+
+    PR_LIKE_EVENTS = ["pull_request", "pull_request_target", "merge_group"]
+
+    @staticmethod
+    def _set_aside(repo: Path, lane: str, *, edits: bool = True) -> tuple[str, str]:
+        """The commit the threshold handoff makes, spelled the way the driver
+        spells it (subject, body, then the trailer as the last paragraph);
+        returns the commit and its parent."""
+        ship = _ship_home()
+        env = _git_env()
+        parent = _head(repo)
+        if edits:
+            # Keyed on the parent, so a second set-aside has edits of its own.
+            (repo / "half.py").write_text(f"x = {parent[:12]!r}  # half-built\n", encoding="utf-8")
+            _git(["add", "half.py"], repo, env)
+        made = [] if edits else ["--allow-empty"]
+        _git(["commit", "--quiet", *made, "-m", ship.UNFINISHED_SUBJECT, "-m", "What is left: the rest",
+              "-m", f"{ship.UNFINISHED_TRAILER}: {lane}"], repo, env)
+        return _head(repo), parent
+
+    @staticmethod
+    def _pr(repo: Path, base: str, event: str = "pull_request", *, title: str = "feat: a lane",
+            head: str | None = "") -> subprocess.CompletedProcess:
+        env = {"GITHUB_EVENT_NAME": event, "BASE_SHA": base, "PR_TITLE": title}
+        if head is not None:
+            env["PR_HEAD_SHA"] = head or _head(repo)
+        return _run_guard(repo, env)
+
+    @staticmethod
+    def _lane(repo: Path, lane: str = "lane/half") -> str:
+        base = _head(repo)
+        _git(["checkout", "-b", lane], repo, _git_env())
+        _commit(repo, "done.py", "y = 2\n", "feat: the finished part")
+        return base
+
+    @pytest.mark.parametrize("event", PR_LIKE_EVENTS)
+    def test_a_pull_request_holding_the_commit_fails(self, event, fresh_repo):
+        base = self._lane(fresh_repo)
+        commit, parent = self._set_aside(fresh_repo, "lane/half")
+        result = self._pr(fresh_repo, base, event)
+        assert result.returncode == 2, result.stdout + result.stderr
+        out = result.stdout
+        assert "Espalier-Unfinished: lane/half" in out and commit[:12] in out
+        assert f"git reset --soft {parent[:12]}" in out
+        assert f"git push --force-with-lease=lane/half:{commit} origin HEAD:lane/half" in out
+
+    def test_an_empty_set_aside_commit_fails_too(self, fresh_repo):
+        """On a clean tracked tree the handoff still makes one commit, the
+        trailer alone, so the push guard holds where only a review is owed."""
+        base = self._lane(fresh_repo)
+        self._set_aside(fresh_repo, "lane/half", edits=False)
+        assert self._pr(fresh_repo, base).returncode == 2
+
+    def test_the_approval_marker_does_not_waive_it(self, fresh_repo):
+        base = self._lane(fresh_repo)
+        _commit(fresh_repo, "tools/cc/hooks/write_guard.py", "x = 1\n", "hook edit")
+        self._set_aside(fresh_repo, "lane/half")
+        head = _head(fresh_repo)
+        result = self._pr(fresh_repo, base, title=f"HARNESS-UPDATE-APPROVED@{head[:7]}: a lane", head=head)
+        assert result.returncode == 2, result.stdout
+        assert "Espalier-Unfinished" in result.stdout and "does NOT override" in result.stdout
+
+    def test_a_commit_past_it_still_fails(self, fresh_repo):
+        base = self._lane(fresh_repo)
+        commit, parent = self._set_aside(fresh_repo, "lane/half")
+        _commit(fresh_repo, "more.py", "z = 3\n", "feat: more")
+        result = self._pr(fresh_repo, base)
+        assert result.returncode == 2, result.stdout
+        assert commit[:12] in result.stdout and f"git reset --soft {parent[:12]}" in result.stdout
+
+    def test_the_reset_names_the_oldest_ones_parent(self, fresh_repo):
+        base = self._lane(fresh_repo)
+        first, parent = self._set_aside(fresh_repo, "lane/half")
+        _commit(fresh_repo, "more.py", "z = 3\n", "feat: more")
+        second, _ = self._set_aside(fresh_repo, "lane/half")
+        assert second != first and _git(["rev-parse", "HEAD~2"], fresh_repo).stdout.strip() == first
+        result = self._pr(fresh_repo, base)
+        assert result.returncode == 2, result.stdout
+        assert f"git reset --soft {parent[:12]}" in result.stdout
+        assert first[:12] in result.stdout and second[:12] in result.stdout
+
+    def test_a_pull_request_without_one_passes(self, fresh_repo):
+        base = self._lane(fresh_repo)
+        _commit(fresh_repo, "more.py", "z = 3\n", "feat: more")
+        assert self._pr(fresh_repo, base).returncode == 0
+
+    def test_the_trailer_quoted_in_a_message_body_is_not_one(self, fresh_repo):
+        """Git's trailer reading, the driver's own: the key quoted in a
+        paragraph that is not the last one is prose, never the trailer."""
+        ship = _ship_home()
+        base = self._lane(fresh_repo)
+        (fresh_repo / "doc.md").write_text("doc\n", encoding="utf-8")
+        _git(["add", "doc.md"], fresh_repo, _git_env())
+        _git(["commit", "--quiet", "-m", "docs: the arm",
+              "-m", f"{ship.UNFINISHED_TRAILER}: lane/half is what the gate reads.",
+              "-m", "The last paragraph is prose."], fresh_repo, _git_env())
+        assert self._pr(fresh_repo, base).returncode == 0
+
+    def test_a_commit_already_in_the_base_is_not_the_pull_requests(self, fresh_repo):
+        self._set_aside(fresh_repo, "main")
+        base = self._lane(fresh_repo)
+        assert self._pr(fresh_repo, base).returncode == 0
+
+    def test_a_push_event_is_not_judged(self, fresh_repo):
+        """On a push the commit has merged, and no push of the lane clears it."""
+        base = _head(fresh_repo)
+        self._set_aside(fresh_repo, "main")
+        result = _run_guard(fresh_repo, {"GITHUB_EVENT_NAME": "push", "BEFORE_SHA": base})
+        assert result.returncode == 0, result.stdout
+
+    def test_without_the_head_the_lease_reads_the_remote_tracking_ref(self, fresh_repo):
+        base = self._lane(fresh_repo)
+        self._set_aside(fresh_repo, "lane/half")
+        result = self._pr(fresh_repo, base, head=None)
+        assert result.returncode == 2, result.stdout
+        assert "git push --force-with-lease origin HEAD:lane/half" in result.stdout
+
+    def test_a_branch_a_shell_would_split_is_quoted(self, fresh_repo):
+        base = self._lane(fresh_repo)
+        self._set_aside(fresh_repo, "lane/a;b")
+        result = self._pr(fresh_repo, base)
+        assert result.returncode == 2, result.stdout
+        assert "origin 'HEAD:lane/a;b'" in result.stdout
+
+    def test_the_rebind_is_named_only_where_the_driver_is(self, fresh_repo):
+        base = self._lane(fresh_repo)
+        self._set_aside(fresh_repo, "lane/half")
+        assert "ship.py rebind" not in self._pr(fresh_repo, base).stdout
+        driver = fresh_repo / "tools" / "cc" / "ship.py"
+        driver.parent.mkdir(parents=True, exist_ok=True)
+        driver.write_text("# a stand-in for the deployed driver\n", encoding="utf-8")
+        assert "python tools/cc/ship.py rebind" in self._pr(fresh_repo, base).stdout
+
+    def test_the_guards_copies_are_the_drivers(self):
+        """The guard imports no sibling (CI runs it from the pull request's own
+        tree), and install-ci deploys it without the driver, so it keeps a
+        copy of the trailer and of the driver's read; the driver is the home."""
+        ci = _load_by_path("_ci_guard_unfinished", CI_GUARD)
+        ship = _ship_home()
+        assert ci._CI_UNFINISHED_TRAILER == ship.UNFINISHED_TRAILER
+        assert ci._CI_UNFINISHED_LOG_FORMAT == ship.UNFINISHED_LOG_FORMAT

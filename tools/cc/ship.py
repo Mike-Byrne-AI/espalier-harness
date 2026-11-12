@@ -2192,8 +2192,9 @@ def _finish_first_tail(unfinished: Unfinished, lane_checkout: Path | None = None
     if unfinished.commit:
         moves.append(_soft_reset_words(unfinished.commit, unfinished.parent, empty=unfinished.empty)
                      + f" (every ship-driver push of the lane -- open, handoff, catch-up, rebind -- refuses while "
-                       f"its {UNFINISHED_TRAILER} commit is on it; a hand git push is not checked, so never push "
-                       "it by hand)")
+                       f"its {UNFINISHED_TRAILER} commit is on it; a hand git push skips the driver, and where the "
+                       "Harness Guard check runs it fails the pull request until a force push takes the commit off, "
+                       "so never push it by hand)")
     else:
         moves.append("no commit was made")
     if unfinished.plan_record:
@@ -2209,7 +2210,8 @@ def _finish_first_tail(unfinished: Unfinished, lane_checkout: Path | None = None
     # lands the set-aside edits on the open pull request before rebind refuses.
     waits = (f"The lane {lane} is committed in {spot}, and its branch is on origin (as last fetched), so a pull "
              "request may be open on it: a hand git push there lands the set-aside edits on that pull request, "
-             "and auto-merge can then merge them on green, so soft-reset first, before any push; its row is "
+             "where the Harness Guard check fails on them (auto-merge merges them on green where it does not "
+             "run) and only a force push takes them off, so soft-reset first, before any push; its row is "
              "written" if unfinished.on_origin else
              f"The lane {lane} is committed in {spot} and unpushed, with no pull request, its row written")
     return (f"\n\n{FINISH_FIRST} What is left: {_brief_text(unfinished.text)}\n"

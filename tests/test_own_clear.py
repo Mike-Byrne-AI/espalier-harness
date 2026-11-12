@@ -793,8 +793,10 @@ class TestTheHandoffLeavesAnUnfinishedLane:
         assert f" tools/cc/execution_plan.py restore cc/_cold/{cold.name} puts back the plan" in tail
         assert "test_new.py" in tail and "THE HANDOFF DID NOT LAND" not in tail
         # Only the brief names the lane after the clear: the window stays on it,
-        # and the guard's reach is said as it is (the driver's verbs, not git).
-        assert "Stay on this branch" in tail and "a hand git push is not checked" in tail
+        # and the guard's reach is said as it is (the driver's verbs, not git;
+        # the Harness Guard check at the pull request, DEF-5102).
+        assert "Stay on this branch" in tail and "a hand git push skips the driver" in tail
+        assert "the Harness Guard check runs it fails the pull request until a force push" in tail
         assert tail.isascii() and '"' not in tail and "%" not in tail
         # The commit carries the record too, for a window cleared by hand.
         assert f"restore cc/_cold/{cold.name}" in _git(repo, "log", "-1", "--format=%B")
@@ -819,6 +821,7 @@ class TestTheHandoffLeavesAnUnfinishedLane:
         assert "unpushed" not in tail and "with no pull request" not in tail
         assert "its branch is on origin" in tail and "a pull request may be open on it" in tail
         assert "a hand git push there lands the set-aside edits" in tail and "soft-reset first" in tail
+        assert "the Harness Guard check fails on them" in tail and "only a force push takes them off" in tail
         assert tail.isascii() and '"' not in tail and "%" not in tail
 
     def test_the_two_moves_the_brief_names_give_the_lane_back_as_it_was(self, ship, repo, monkeypatch):

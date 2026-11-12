@@ -23,6 +23,9 @@ Behavior:
   one operator's gitignored file it is that operator's posture (the hooks
   stop treating it as a kill-switch, DEF-1108), but committed it switches
   permission prompts off for every clone.
+- UNCONDITIONAL on a pull request: if base..HEAD holds a commit carrying
+  `Espalier-Unfinished` (the ship driver's threshold handoff of a lane its
+  window could not finish), fail with the move that takes it off the branch.
 - Otherwise exit 0.
 
 Stdlib-only. Respects the tools/cc/ zero-espalier-import rule by hard-coding
@@ -38,6 +41,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -186,6 +190,77 @@ def changed_paths(base: str, cwd: str | None = None) -> list[str]:
         if line.strip()
     ]
     return paths
+
+
+#: The trailer the ship driver's threshold handoff (``ship.py handoff
+#: --unfinished``) stamps on the one commit it makes of a lane's half-built
+#: edits, valued with the lane's branch, and the driver's own read of it over
+#: a lane's commits. Their home is ``tools/cc/ship.py`` (``UNFINISHED_TRAILER``,
+#: ``UNFINISHED_LOG_FORMAT``): this guard imports no sibling (``_git`` above
+#: says why) and install-ci deploys it without the driver, so it keeps a copy,
+#: pinned equal by ``tests/test_ci_guard.py::TestUnfinishedLaneArm``.
+_CI_UNFINISHED_TRAILER = "Espalier-Unfinished"
+_CI_UNFINISHED_LOG_FORMAT = f"%x1e%H %P%x1f%(trailers:key={_CI_UNFINISHED_TRAILER},valueonly)"
+
+
+def unfinished_commits(base: str, cwd: str | None = None) -> list[tuple[str, str, str]]:
+    """The commits of ``base..HEAD`` that carry the unfinished-lane trailer,
+    newest first, as ``(sha, first parent, the trailer's value)``: read the way
+    the ship driver reads them (``ship.py::_lane_commit_records``), git's own
+    trailer parsing, so a key quoted in a paragraph that is not the message's
+    last is prose. A range git cannot read raises: not read is not clean."""
+    result = _git(["log", f"--format={_CI_UNFINISHED_LOG_FORMAT}", f"{base}..HEAD"], cwd=cwd)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"git log over {base}..HEAD failed (rc={result.returncode}): {result.stderr.strip()}"
+        )
+    found = []
+    for record in result.stdout.split("\x1e")[1:]:
+        head, _sep, value = record.partition("\x1f")
+        shas, value = head.split(), value.strip()
+        if shas and value:
+            found.append((shas[0], shas[1] if len(shas) > 1 else "", value.splitlines()[0].strip()))
+    return found
+
+
+def _print_unfinished(found: list[tuple[str, str, str]], env: dict[str, str], cwd: str | None) -> None:
+    """The red for a pull request holding a set-aside commit, with the moves
+    that clear it. A commit on origin stays in the pull request's range until
+    the branch is rewritten, and the ship driver never force-pushes, so the
+    soft reset the driver's brief names cannot clear this alone: the lease
+    push is the move that does, bound to the head this run read where the
+    workflow forwarded it."""
+    sha, parent, lane = found[-1]  # the oldest: a reset to its parent takes back every one after it
+    head = pr_head_sha(env)
+    lease = shlex.quote(f"--force-with-lease={lane}:{head}") if head else "--force-with-lease"
+    lease_note = ("the lease refuses if the branch moved since this run read it" if head else
+                  "the lease is your remote-tracking ref of the branch: fetch it first")
+    print(
+        "Harness Guard: this pull request holds the commit the ship driver's "
+        "threshold handoff made of an unfinished lane's half-built edits. The "
+        f"{APPROVAL_MARKER} marker does NOT override this check."
+    )
+    print("")
+    print("Set-aside commits (newest first):")
+    for commit, _parent, value in found:
+        print(f"  - {commit[:12]} ({_CI_UNFINISHED_TRAILER}: {value})")
+    print("")
+    ship_driver = (Path(cwd) if cwd else Path.cwd()) / "tools" / "cc" / "ship.py"
+    print(
+        "`ship.py handoff --unfinished` sets a lane's edits aside in that commit for\n"
+        "the next window to take back and finish, and every push the ship driver\n"
+        "makes refuses on it; a hand `git push` put it here, where auto-merge would\n"
+        "land the half-built edits on green. A commit on origin stays in the pull\n"
+        "request's range until the branch is rewritten (the ship driver never\n"
+        "force-pushes), so in the lane's checkout:\n"
+        f"  git reset --soft {parent[:12] or sha[:12] + '^'}\n"
+        "    (takes back the set-aside edits and every commit after them, staged)\n"
+        "  finish the lane, and commit it\n"
+        f"  git push {lease} origin {shlex.quote(f'HEAD:{lane}')}\n"
+        f"    ({lease_note})\n"
+        "then bind the title's approval marker to the new head where it carries one"
+        + (" (python tools/cc/ship.py rebind)." if ship_driver.is_file() else ".")
+    )
 
 
 def is_protected(rel_path: str, *, self_host: bool = True) -> bool:
@@ -1340,6 +1415,19 @@ def run(env: dict[str, str], cwd: str | None = None) -> int:
         return 2
 
     base = resolve_base(env, cwd=cwd)
+
+    # Unconditional on a pull request (DEF-5102): the ship driver refuses
+    # every push of a lane holding its unfinished-lane commit, but a hand
+    # `git push` is not the driver, and this check is the one every push to
+    # a pull request reaches. No marker waives it: half-built edits are not a
+    # harness change anyone approved. A push event is past the merge, and no
+    # push of the lane clears it there, so it is not judged.
+    if env.get("GITHUB_EVENT_NAME", "") in _PR_EVENTS:
+        unfinished = unfinished_commits(base, cwd=cwd)
+        if unfinished:
+            _print_unfinished(unfinished, env, cwd)
+            return 2
+
     paths = changed_paths(base, cwd=cwd)
     self_host = _ci_self_host_posture(base, cwd=cwd)
     offenders = [p for p in paths if is_protected(p, self_host=self_host)]

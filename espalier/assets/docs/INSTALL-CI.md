@@ -221,6 +221,17 @@ fenced example in the memory file) is read as one too: indent the quote by one
 space. A marker already on the default branch reds every open pull request
 until a fix merges; each other lane then catches up.
 
+On a pull request one more check is unconditional: a commit in the pull
+request's own range carrying the `Espalier-Unfinished` trailer, the commit
+`python tools/cc/ship.py handoff --unfinished` makes of a lane's half-built
+edits for the next window to take back. Every push the ship driver makes
+refuses on it, so a hand `git push` is how it reaches a pull request, where
+auto-merge would land the half-built edits on green. The commit stays in the
+range until the branch is rewritten (the driver never force-pushes), so the
+red names the soft reset to its parent, the finish, and the
+`git push --force-with-lease` that takes it off. A push event is not judged:
+there the commit has already merged.
+
 ### On a pull request: put the bound marker in the PR title
 
 ```
