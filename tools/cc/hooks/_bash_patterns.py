@@ -6770,11 +6770,34 @@ _POSIX_SHELL_HEAD_SET = frozenset(_POSIX_SHELL_HEADS.split("|"))
 #: a script and refuses it too. ReDoS: every adjacent quantifier pair is
 #: mutually exclusive (a path prefix ends on `/`, a switch starts on `-`, a
 #: value on a non-dash, the trailing `-` sits alone before the lookahead).
-_INTERP_PIPE_RE = re.compile(
-    r"\|[ \t]*(?:(?:#[^\n]*)?\n[ \t]*)?(?:[\w./-]*/)?"
-    r"(?:((?i:" + _INTERP_ALTERNATION + r"))[\w.-]*|(" + _POSIX_SHELL_HEADS + r")\b)"
+#:
+#: Each head group carries its own option run (DEF-3072). An interpreter's
+#: switches open on `-` alone (`python +x` is a script operand). A POSIX
+#: shell's open on `-` or `+`: bash and sh read `+x`, `+e` and `+O name` as
+#: options before the first operand, and `-e`, `-f`, `-m`, `-E` there are
+#: options too, never the program -- bash 5.2 ran the piped program under
+#: every one of them, where the shared run read `-` switches and the
+#: interpreter's program flags, so `echo '...' | bash +x` was a plain allow
+#: beside a walled `| bash -x`. Only a `c` cluster of either sign gives a
+#: shell its program (`+c` runs its operand as `-c` does, driven), so it
+#: alone refuses the match, at the `-c` opener's own bound. The value class
+#: is the run's own, less `+` as its first character, so a `+` word is a
+#: switch alone and the run keeps one parse; the head-spelling refusal of
+#: `_POSIX_SHELL_SWITCH` is not needed here, since a reader that starts at a
+#: pipe opens no second start inside a value, and taking it would stop the
+#: run at `bash -s -- x` and `bash --rcfile ~/.r`.
+_INTERP_PIPE_SWITCH_RUN = (
     r"(?:[ \t]+-(?!(?:c|e|m|E|f|F|File)(?:[ \t]|$))[\w.-]+"
     r"(?:[ \t]+[\w./:=,@%+~][\w./:=,@%+~-]*)?)*"
+)
+_SHELL_PIPE_SWITCH_RUN = (
+    r"(?:[ \t]+(?![-+][A-Za-z]{0,8}c[A-Za-z]{0,8}(?:[ \t]|$))[-+][\w.-]+"
+    r"(?:[ \t]+[\w./:=,@%~][\w./:=,@%+~-]*)?)*"
+)
+_INTERP_PIPE_RE = re.compile(
+    r"\|[ \t]*(?:(?:#[^\n]*)?\n[ \t]*)?(?:[\w./-]*/)?"
+    r"(?:((?i:" + _INTERP_ALTERNATION + r"))[\w.-]*" + _INTERP_PIPE_SWITCH_RUN
+    + r"|(" + _POSIX_SHELL_HEADS + r")\b" + _SHELL_PIPE_SWITCH_RUN + r")"
     r"(?:[ \t]+-)?(?=[ \t]*(?:$|[;|&\n\r)}]))"
 )
 

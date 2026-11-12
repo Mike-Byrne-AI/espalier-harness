@@ -3170,6 +3170,8 @@ def test_posix_shell_switch_run_linear_on_one_head(label, seed, tail):
     from _bash_patterns import _candidate_paths_from_bash  # noqa: E402
     from _bash_patterns import _candidate_paths_from_powershell  # noqa: E402
 
+    import _speedbump  # noqa: E402
+
     payload = "bash " + seed * (_WORST_CASE_BODY_LEN // len(seed)) + tail
     signal.signal(signal.SIGALRM, _alarm)
     signal.setitimer(signal.ITIMER_REAL, _CHAIN_CEILING_MS / 1000.0)
@@ -3178,6 +3180,11 @@ def test_posix_shell_switch_run_linear_on_one_head(label, seed, tail):
         _bash_patterns._SHELL_DASH_C_RE.findall(payload)
         _bash_patterns._SHELL_HERESTRING_RE.findall(payload)
         _bash_patterns._PS_BASH_DASH_C_RE.findall(payload)
+        # DEF-3072: the wall's pipe reader behind a pipe lead, and the two
+        # bump arms that read a shell's switches
+        _bash_patterns._INTERP_PIPE_RE.findall("x | " + payload)
+        _speedbump._FETCH_EXEC_SUBST_RE.findall(payload)
+        _speedbump._FETCH_EXEC_PROCSUB_RE.findall(payload)
         _candidate_paths_from_bash(payload)
         _candidate_paths_from_powershell(payload)
         elapsed_ms = (time.time() - t) * 1000

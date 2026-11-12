@@ -1611,22 +1611,36 @@ _FETCH_INNER_POS = (
 
 # `bash <(curl ...)`, `source <(curl ...)`, `. <(wget -qO- ...)`, `python3
 # <(curl ...)`: the interpreter (or `source` / `.`) at command position with a
-# fetch inside a process substitution among its arguments.
+# fetch inside a process substitution among its arguments. A shell's switches
+# open on `-` or `+` and each may carry one value word, which opens on neither
+# sign nor `<` (DEF-3072: `bash +x <(curl ...)`, `bash -o pipefail <(...)` and
+# `bash +O extglob <(...)` drew no nudge); a scripter's open on `-` alone,
+# since `python +x` is a script operand. Both runs stay bounded at eight.
 _FETCH_EXEC_PROCSUB_RE = re.compile(
-    _bash_patterns._CMD_POS + r"(?:" + _FETCH_INTERPRETER + r"|source|\.)"
+    _bash_patterns._CMD_POS + r"(?:" + _FETCH_SHELL
     + _bash_patterns._QUOTED_VERB_TAIL   # the verb in quotes (DEF-5080)
-    + r"(?:[ \t]+-[^\s;&|]+){0,8}[ \t]+<(?=\()" + _FETCH_INNER_POS + _FETCH_HEAD,
+    + r"(?:[ \t]+[-+][^\s;&|]+(?:[ \t]+[^-+<\s;&|][^\s;&|]*)?){0,8}"
+    + r"|(?:" + _FETCH_SCRIPTER + r"|source|\.)" + _bash_patterns._QUOTED_VERB_TAIL
+    + r"(?:[ \t]+-[^\s;&|]+){0,8})"
+    + r"[ \t]+<(?=\()" + _FETCH_INNER_POS + _FETCH_HEAD,
     re.IGNORECASE,
 )
 
 # `bash -c "$(curl ...)"`, `bash -lc "$(curl ...)"`, `sh -ec "$(wget ...)"`,
 # `eval "$(curl ...)"`, the backtick spelling of the same: the fetch's OUTPUT
-# becomes the program. The `-c` may sit in a cluster (`-lc`, `-ec`).
+# becomes the program. A shell's opener is the `-c` reader's own (DEF-3072):
+# the shared switch run before the cluster (`bash -x -c`, `bash +x -c`), the
+# cluster with its `c` anywhere (`-lc`, `-cx`), and the run after it (`bash -c
+# -- "$(...)"`), where the bare `-[A-Za-z]*c\b` read the cluster alone and drew
+# no nudge behind any switch. python keeps its cluster.
 _FETCH_EXEC_SUBST_RE = re.compile(
     _bash_patterns._CMD_POS
     # either head in quotes closes its quote before the space (DEF-5080)
     + r"(?:eval" + _bash_patterns._QUOTED_VERB_TAIL
-    + r"|(?:" + _FETCH_SHELL + r"|python[0-9.]*)" + _bash_patterns._QUOTED_VERB_TAIL
+    + r"|" + _FETCH_SHELL + _bash_patterns._QUOTED_VERB_TAIL
+    + _bash_patterns._POSIX_SHELL_SWITCH_RUN + r"[ \t]+" + _bash_patterns._POSIX_SHELL_C_CLUSTER
+    + _bash_patterns._POSIX_SHELL_SWITCH_RUN_AFTER_C
+    + r"|python[0-9.]*" + _bash_patterns._QUOTED_VERB_TAIL
     + r"[ \t]+-[A-Za-z]*c\b)"
     r"[ \t]+[\"']?(?:\$(?=\()|(?=`))" + _FETCH_INNER_POS + _FETCH_HEAD,
     re.IGNORECASE,
