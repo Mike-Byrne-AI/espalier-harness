@@ -1780,8 +1780,14 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "than passing.",
     ),
     "tests/test_write_guard.py": (
-        53, "37fb00827bb6f9e9a53862d23a0ac4d9b85545660263b9328a4140331944ca2f",
+        55, "86b097eeb9646bf4d1e85fae537e2e047429dac5a34facb88fb369fa21d3915c",
         "CORRECT_BY_REMEDY",
+        "GREW 53 -> 55 on 2026-11-12 (DEF-3072): one new line, counted as an all-any and "
+        "a comprehension: TestAShellsOptionHidesNoPipedProgram::"
+        "test_a_switched_shell_fetch_meets_the_nudge asserts `any(...)` over "
+        "`_speedbump_readings(sb, \"fetchexec\", \"Bash\", cmd)`, the same positive shape as "
+        "the readings rows already adjudicated here: an empty or narrowed reading makes "
+        "`any` false and reds the row, so a shrink cannot pass unseen. "
         "GREW 52 -> 53 on 2026-11-11 (DEF-2040): "
         "TestATypographicQuoteClosesAPowerShellString::test_a_fold_of_a_fold_is_itself_over_a_seeded_sample "
         "builds its straight-quote table from `bp.PS_TYPOGRAPHIC_QUOTES`; the same test pins "
