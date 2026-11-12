@@ -2732,6 +2732,9 @@ class TestTheRefusalNamesTheResolversRemedy:
 
         answer = (("python3", "/usr/bin/python3", "Python 3.10.12"), None)
         monkeypatch.setattr(cli, "_BELOW_FLOOR_ANSWER", None)
+        # The faked answer is not this host's: read live, a runner's own
+        # `python3` elsewhere on PATH adds the outside-the-virtualenv clause.
+        monkeypatch.setattr(cli, "_below_floor_outside_venv", lambda name, resolved: None)
 
         def resolver() -> str:
             cli._BELOW_FLOOR_ANSWER = answer
@@ -2752,6 +2755,7 @@ class TestTheRefusalNamesTheResolversRemedy:
         monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", False)
         monkeypatch.setattr(cli, "_BELOW_FLOOR_REFUSING", False)
         monkeypatch.setattr(cli, "_remedy_interpreter", lambda **_: ("python3.12", True))
+        monkeypatch.setattr(cli, "_below_floor_outside_venv", lambda name, resolved: None)  # as above
         capsys.readouterr()
         cli._warn_interpreter_below_floor(("python3", "/usr/bin/python3", "Python 3.10.12"))
         floor = _python_floor.floor_text()

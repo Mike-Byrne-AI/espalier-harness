@@ -1947,6 +1947,9 @@ class TestAWindowsProgramWordHasForwardSlashes:
         monkeypatch.setattr(sys, "executable", exe)
         monkeypatch.setattr(sys, "platform", "win32")
         monkeypatch.setattr(cli, "_detect_python_command", lambda: "python")
+        # As `_below_floor_on_path` does: read live under the win32 patch, the
+        # outside-venv reading's `shutil.which` reaches `_winapi`, None on Linux.
+        monkeypatch.setattr(cli, "_runs_a_failing_python_outside_its_venv", lambda spelling: None)
         monkeypatch.setattr(cli, "interpreter_meets_floor", lambda p: p == exe)
         monkeypatch.setattr(cli, "windows_short_path", lambda p: None)
         monkeypatch.setattr(cli, "_POWERSHELL_CALL_NOTE_SAID", False)
