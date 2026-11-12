@@ -1092,8 +1092,8 @@ text is `git restore [--source=HEAD] [--] <file>`, `git checkout -- <file>` or
   Bash call. Their refusals name the same restore, to run from a terminal: a
   Bash call meets `write_guard`, which judges it as any other.
 
-Pinned by `tests/test_hooks_start_on_a_kept_helper.py`, whose end-to-end class
-runs the named command with real git and starts the guard again.
+An end-to-end test runs the named command with real git and starts the guard
+again.
 
 It blocks three categories of tool calls (kill-switch and protected-zone
 first; the dangerous-command catch is a secondary slip-catcher):
@@ -1945,7 +1945,7 @@ aliases, a comma list of sources and a `-PSPath` source included)
 are caught on that tool as the Bash forms are on Bash; a bare `icacls PATH` or `attrib PATH` displays and
 is a read, and a bare or `&`-called quoted executable path before any of
 these heads (`& "C:\Windows\System32\icacls.exe" <hook> /deny ...`) is the
-head, behind either wrapper quote kind -- and since DEF-791 (2026-09-13) the
+head, behind either wrapper quote kind -- and the
 call operator with a quoted command name (`& 'Set-Content' <hook> x`, `&
 "git" reset --hard`, `& 'C:\Program Files\Git\cmd\git.exe' reset --hard`) is
 read by every PowerShell verb arm and by the git discard bump, not only by
@@ -1992,7 +1992,15 @@ the words that put a command behind them -- `then`, `do`, `!`, `{`, a
 leading assignment, a case arm, a leading redirect and a wrapper run with
 its flags (`sudo -u root`, `timeout 5`, `nohup`) -- and an input redirect's
 source is a read (`cat < .env`, `done < .env`), except a copier's, which
-never reads its stdin. The two rosters are pinned to
+never reads its stdin. Before the verb is read, a command substitution that
+prints nothing is taken out, as bash takes it out before it runs the next
+word: an empty body, a backtick comment (`` `# note` cat .env ``) or `:` with
+plain words (`$(: note) cat .env`), outside single quotes. A body that runs
+anything else is not evaluated, and a `:` note holding a quote, an escape, an
+expansion or an operator is kept as typed, so `$(true) cat .env` and
+`$(: 'note') cat .env` are a declared false allow, pinned by
+`tests/test_write_guard.py::TestSecretPathAccess::test_a_substitution_the_leg_does_not_evaluate_is_a_declared_limit`.
+The two rosters are pinned to
 each other class for class, and a program handed to the other shell
 (`powershell -Command "Get-Content .env"` on Bash, `sh -c 'cat .env'` on
 PowerShell) is read with that shell's roster. A program a carrier runs out
@@ -2021,7 +2029,9 @@ any of this (`_bash_patterns.fold_powershell_quotes`), yet a typographic
 quote anywhere in the command as typed, a `#` outside the strings, the
 stop-parsing token `--%` or a braced variable name keeps the first-word
 reading, since PowerShell can end a string there where this reading does
-not (so `$hint = ‘gc .env’` is refused, a declared false deny). A grep-shaped search of the
+not (so `$hint = ‘gc .env’` is refused, a declared false deny, pinned by
+`tests/test_write_guard.py::TestATypographicQuoteClosesAPowerShellString::test_a_folded_quote_takes_the_gates_relief_away`).
+A grep-shaped search of the
 file is not a read verb on either shell, and a mention inside a string or
 comment is inert.
 This is the hook-layer replacement for the `Read()` deny rules `init` no

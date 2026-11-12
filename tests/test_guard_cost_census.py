@@ -230,12 +230,18 @@ class TestCallsAgainstTheCheckout:
             assert proc.returncode == 2 and "guard_cost_census:" in proc.stderr, (args, proc.stderr)
 
 
+#: A stand-in guard that refuses on its deadline and writes the record. Its log
+#: is named as tools/cc/hooks/_integrity.py::audit_path names the real one, by
+#: ``_safe_slug``'s rule, which strips a trailing ``_``: a raw folder name left a
+#: mkdtemp name ending in ``_`` (one in 37) uncounted, a red on about one run in
+#: nineteen (run 43251681324, the perturbed cell).
 _BUDGET_GUARD = '''\
-import json, os, sys
+import json, os, re, sys
 from datetime import datetime, timezone
 if __name__ == "__main__":
     sys.stdin.read()
-    project = os.path.basename(os.environ["CLAUDE_PROJECT_DIR"])
+    name = os.path.basename(os.environ["CLAUDE_PROJECT_DIR"])
+    project = re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_") or "repo"
     day = datetime.now(timezone.utc).strftime("%Y%m%d")
     with open(os.path.join(os.environ["ESPALIER_AUDIT_DIR"], f"{project}-{day}.log"), "a", encoding="utf-8") as log:
         log.write(json.dumps({"event_type": "pretooluse_blocked_time_budget", "details": {}}) + "\\n")
@@ -253,6 +259,23 @@ class TestDecisionsThatAreNotACost:
         row = result["kinds"]["bash"]
         assert (row["decisions"], row["budget_records"], row["as_expected"]) == ({"deny (time budget)": 2}, 2, False)
         assert (result["kinds"]["control"]["as_expected"], result["decisions_as_expected"]) == (True, False)
+
+    def test_a_project_name_ending_in_an_underscore_is_counted(self, tmp_path, monkeypatch):
+        # The draw the two tests here leave to tempfile, fixed: the stand-in
+        # guard's record for a folder named with a trailing `_` is counted
+        # under its own kind (it read "unknown" with the raw folder name).
+        import runpy
+        guard = tmp_path / "budget_guard.py"
+        guard.write_text(_BUDGET_GUARD, encoding="utf-8")
+        audit = tmp_path / "census-audit"   # the suite's own fixtures hold `audit`
+        audit.mkdir()
+        project = tmp_path / "p-abcdefg_"
+        project.mkdir()
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(audit))
+        monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
+        runpy.run_path(str(guard), run_name="__main__")
+        assert census.budget_records(audit, {project.name: "bash"}) == {"bash": 1}
 
     def test_the_text_tags_the_mixed_row_alone(self, tmp_path):
         root = _fixture_hooks(tmp_path, write_guard=_BUDGET_GUARD)

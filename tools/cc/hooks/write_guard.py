@@ -1856,6 +1856,97 @@ def _split_glued_input_redirects(words: "list[tuple[str, str]]") -> "list[tuple[
     return out
 
 
+#: What makes a `:` body more than plain words (DEF-2074), each member pinned
+#: by a row of `test_the_drop_takes_out_only_a_span_that_prints_nothing`: an
+#: expansion (`$`, a backtick) or an operator (`;`, `&`, `|`, a newline, a
+#: redirect, a paren) can run a program that prints, and a quote, an escape
+#: or a `#` can move where bash closes the span past the first `)` the drop
+#: closes at (a quoted or escaped `)`, a comment that swallows it). A body
+#: holding one stays as typed: the leg reads it as it did before the drop.
+_NOT_A_LITERAL_WORD = frozenset("$`\\\"'()<>|&;\n#")
+
+
+def _expands_to_nothing(body: str, backtick: bool) -> bool:
+    """Whether a command substitution's ``body`` prints nothing for certain:
+    empty, a comment (a backtick span's alone: in `$(` a comment swallows its
+    own `)`), or `:` with plain words, none of `_NOT_A_LITERAL_WORD` (DEF-2074).
+    A body that runs anything else, `$(true)` and a nested substitution among
+    them, is left as it reads, and so is a `:` note holding a quote: the leg
+    does not evaluate a program to learn that it prints nothing."""
+    s = body.strip(" \t")
+    if not s:
+        return True
+    if backtick and s.startswith("#"):
+        return "\n" not in s
+    return s[0] == ":" and (len(s) == 1 or s[1] in " \t") and not _NOT_A_LITERAL_WORD.intersection(s)
+
+
+def _closing_backtick(text: str, start: int) -> int:
+    """The index of the backtick that closes a span opened before ``start``,
+    past any escaped one (an odd run of backslashes before it); -1 if none."""
+    j = start
+    while True:
+        j = text.find("`", j)
+        if j == -1:
+            return -1
+        k = j - 1
+        while k >= start and text[k] == "\\":
+            k -= 1
+        if (j - 1 - k) % 2 == 0:
+            return j
+        j += 1
+
+
+def _drop_empty_substitutions(text: str) -> str:
+    """``text`` with each command substitution that expands to nothing taken
+    out, as bash takes it out before it reads the command: `` `# c` cat .env ``
+    and `$(: c) cat .env` run `cat` (DEF-2074; the inline-comment idiom), and
+    the head read took the span's pieces for the verb. Read outside single
+    quotes (inside them a backtick and `$(` are literal); inside double quotes
+    the span goes and the quotes stay, the empty word bash makes. A span that
+    may print stays, and so does one that never closes. The drop takes out
+    only what bash takes out: at a statement's head that gives the leg the
+    verb bash runs, and among a verb's operands it can take out a word bash
+    never reads (a path inside a `:` note). A command holding an ANSI-C
+    string (`$'...'`, whose escaped quote this walk does not model) is left as
+    typed. The result no longer shares offsets with ``text``."""
+    if "`" not in text and "$(" not in text or "$'" in text:
+        return text
+    out: list[str] = []
+    i, n = 0, len(text)
+    single = double = False
+    close = 0   # the first `)` at or past the scan; -1 once none is left
+    while i < n:
+        ch = text[i]
+        if single:
+            single = ch != "'"
+        elif ch == "\\" and i + 1 < n:
+            out.append(text[i:i + 2])
+            i += 2
+            continue
+        elif ch == "'" and not double:
+            single = True
+        elif ch == '"':
+            double = not double
+        elif ch == "`":
+            end = _closing_backtick(text, i + 1)
+            if end != -1:
+                if not _expands_to_nothing(text[i + 1:end], backtick=True):
+                    out.append(text[i:end + 1])
+                i = end + 1
+                continue
+        elif text.startswith("$(", i):     # `$((` arithmetic: its body opens `(`, never empty
+            if close != -1 and close < i + 2:   # one search per `)`, so a run of openers stays linear
+                close = text.find(")", i + 2)
+            end = close
+            if end != -1 and _expands_to_nothing(text[i + 2:end], backtick=False):
+                i = end + 1
+                continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _input_redirect_sources(args:"list[tuple[str, str]]", sources: list[str]) -> "list[tuple[str, str]]":
     """``args`` without their input redirects, each source added to
     ``sources``: `cat < .env` reads `.env` as `cat .env` does (DEF-1132).
@@ -1928,6 +2019,12 @@ def _secret_read_targets_one(command: str, _depth: int = 0) -> list[str]:
     if heredoc != -1:
         line_end = command.find("\n", heredoc)
         masked = masked[:line_end] if line_end != -1 else masked
+    # A substitution that prints nothing goes before the statement cut, as
+    # bash drops it whole: a `;` or a `|` inside `` `# a; b` `` is the
+    # comment's text, not a boundary (DEF-2074). Nothing below indexes
+    # `command` by an offset into `masked`; the program readers take `command`
+    # and `scan`, which keep every span.
+    masked = _drop_empty_substitutions(masked)
 
     out: list[str] = []
     aware = not _a_boundary_sits_in_a_quote(masked, _STATEMENT_BOUNDARY_RE)
