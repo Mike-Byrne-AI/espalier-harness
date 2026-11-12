@@ -5106,6 +5106,11 @@ def _walk_powershell_spans(
     #: between a re-parser and the string it hands over is a blank to
     #: PowerShell (`iex <# c #> 'gc .env'` runs the string; Windows
     #: PowerShell 5.1, driven), so the lookback reads it as one (DEF-2071).
+    # A list a caller passes is this walk's alone: emptied first, since an
+    # entry left from another walk would rebuild the lookback's window wrongly
+    # and be kept under this text's answers (the failure-mode review).
+    if blocks is not None:
+        blocks.clear()
     read = blocks if blocks is not None else ([] if "<#" in s else None)
     #: Where the last block comment's ``#>`` ended: a comment opener there
     #: starts a token though no boundary character precedes it (`<# a #><# b
@@ -10264,7 +10269,10 @@ _PS_REPARSE_LOOKBACK = 2048
 @functools.lru_cache(maxsize=8)
 def _ps_reparse_answers(s: str, rx: object, lookback: int) -> "dict[int, bool]":
     """The lookback's answers for one text, by opener offset. The answer is a
-    function of the text, the offset, the pattern and the window, and one
+    function of the text, the offset, the pattern and the window -- and, under
+    the key that pairs the pattern with ``"blocks"``, of the masker walk's
+    comment record, itself a function of the text while the walk is the one
+    caller that passes it (`_ps_span_is_reparsed`) -- and one
     judgment walks the same text seven times (DEF-3039, measured through the
     two PowerShell checks), so a span that must ask pays the lookback once.
     Keyed on the pattern and the window too, so a test that swaps either is
@@ -10297,21 +10305,30 @@ def _ps_span_is_reparsed(
             s, (_PS_REPARSED_SPAN_BEFORE, "blocks"), _PS_REPARSE_LOOKBACK)
         hit = answers.get(opener)
         if hit is None:
-            k = len(blocks)
-            while k and blocks[k - 1][1] > lo:
-                k -= 1
-            pieces = [s[lo - 1] if lo else ""]
-            at = lo
-            for a, b in blocks[k:]:
-                if b > opener:
+            # The window is measured in the text as PowerShell reads it, each
+            # comment one character, so a long comment does not push the
+            # opener out of it (the reviews of the batch: a 2 KB comment
+            # after `iex` walled at 2030 characters and allowed at 2040).
+            # Walked back from the opener: at most the window's length of
+            # gaps and of comments, so the cost a span pays stays bounded.
+            budget, at, k = _PS_REPARSE_LOOKBACK, opener, len(blocks)
+            pieces: list[str] = []
+            while k and budget > 0:
+                a, b = blocks[k - 1]
+                if b > at:          # cannot happen: the walk records in order
                     break
-                pieces.append(s[at:max(a, at)])
+                if at - b >= budget:
+                    break
+                pieces.append(s[b:at])
                 pieces.append(" ")
-                at = b
-            pieces.append(s[at:opener])
-            window = "".join(pieces)
+                budget -= at - b + 1
+                at, k = a, k - 1
+            start = max(0, at - max(budget, 0))
+            pieces.append(s[start:at])
+            pieces.append(s[start - 1] if start else "")
+            window = "".join(reversed(pieces))
             hit = answers[opener] = bool(
-                _PS_REPARSED_SPAN_BEFORE.search(window, 1 if lo else 0))
+                _PS_REPARSED_SPAN_BEFORE.search(window, 1 if start else 0))
         return hit
     answers = _ps_reparse_answers(s, _PS_REPARSED_SPAN_BEFORE, _PS_REPARSE_LOOKBACK)
     hit = answers.get(opener)
@@ -11103,7 +11120,8 @@ def powershell_scan_text(command: str) -> str:
     `-Force /` straight past the other three -- the write leg could not backstop
     the forge because `cc/blueprints/` is legitimately writable there.
 
-    ⚠ The join SHORTENS the string. The masker's same-length, same-offset
+    ⚠ The join SHORTENS the string, and so do the pipe and statement gap
+    join and each block comment made one blank (`powershell_scan_pair`). The masker's same-length, same-offset
     contract does not survive it, so nothing downstream may report an offset into
     this text against the raw command; every consumer reads slices of THIS text
     -- except the interpreter arm, which reads `powershell_scan_pair` and gets

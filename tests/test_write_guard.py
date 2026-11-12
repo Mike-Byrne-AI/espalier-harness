@@ -14952,7 +14952,8 @@ class TestPowerShellLiteralSpanLookback:
         calls: list = []
         real = bp._ps_span_is_reparsed
         monkeypatch.setattr(
-            bp, "_ps_span_is_reparsed", lambda s, o: (calls.append(o), real(s, o))[1],
+            bp, "_ps_span_is_reparsed",
+            lambda s, o, *a: (calls.append(o), real(s, o, *a))[1],
         )
         return bp, calls
 
@@ -17022,12 +17023,14 @@ class TestAGapAfterAPipeIsRead:
         assert _bash_patterns_module().splice_line_continuations(cmd) == joined
 
     @pytest.mark.parametrize("cmd, joined", [
-        ("a | <# c #> b", "a | b"),
+        # a block comment the masker opens is one blank before the join runs
+        # (DEF-2071/2072), so a gap of blanks alone is left as it stands
+        ("a | <# c #> b", "a |   b"),
         ("a |\n # c\n <# d #>\n b", "a | b"),
         ("a | b", "a | b"),
         # a comment glued to a block comment's close is one more comment on
-        # pwsh 5.1 (driven), though the masker opens none there
-        ("a | <# c #><# d #> b", "a | b"),
+        # pwsh 5.1 (driven), and the masker opens it too (`block_end`)
+        ("a | <# c #><# d #> b", "a |    b"),
         ("a | <# c #># d\n b", "a | b"),
         # inside a string PowerShell re-parses, a gap that ends in it joins;
         # one whose comment runs past the closing quote is left whole
@@ -17397,7 +17400,15 @@ class TestABlockCommentIsOneBlank:
     @pytest.mark.parametrize("cmd", [
         "iex <# c #> 'Get-Date; Remove-Item C:\\ -Recurse -Force'",
         'iex <# c #> "Get-Date; Remove-Item C:\\ -Recurse -Force"',
-    ])
+        # the window is measured with each comment one character (the
+        # reviews: a comment past 2 KB pushed the opener out of a window cut
+        # in typed offsets), and the record reaches both here-string sites
+        "iex <#" + "x" * 2100 + "#> 'Get-Date; Remove-Item C:\\ -Recurse -Force'",
+        "iex " + "<#x#> " * 400 + "'Get-Date; Remove-Item C:\\ -Recurse -Force'",
+        "iex <# c #> @'\nGet-Date; Remove-Item C:\\ -Recurse -Force\n'@",
+        'iex <# c #> @"\nGet-Date; Remove-Item C:\\ -Recurse -Force\n"@',
+    ], ids=["literal", "expandable", "one-long-comment", "many-comments",
+            "literal-here-string", "expandable-here-string"])
     def test_a_delete_a_carrier_runs_past_a_comment_walls(self, tmp_path, cmd):
         assert _delete_verdict(run_guard_from("PowerShell", cmd, tmp_path, None)) == "wall"
 
@@ -17442,6 +17453,22 @@ class TestABlockCommentIsOneBlank:
         t = "iex <# d #> 'Get-Date; Get-Content .env'"
         assert bp._ps_span_is_reparsed(t, opener, blocks) is True
         assert bp._ps_span_is_reparsed(t, opener) is False
+        # a comment straddling the typed window's start, and one longer than
+        # the window: each is one character of the window read
+        n = bp._PS_REPARSE_LOOKBACK
+        for body in ("x" * (n - 10), "x" * (n + 50)):
+            u = "iex <#" + body + "#> 'a; b'"
+            assert bp._ps_span_is_reparsed(u, u.index("'"), [(4, 8 + len(body))]) is True
+
+    def test_a_list_passed_twice_holds_the_second_walk_alone(self):
+        bp = _bash_patterns_module()
+        blocks: list = []
+        bp._walk_powershell_spans("a <# b #> c", None, blocks)
+        bp._walk_powershell_spans("x y <# z #>", None, blocks)
+        assert blocks == [(4, 11)]
+        # and a walk that cannot read the text leaves no record behind
+        assert bp._ps_mask_read("<# a #> 'open", blocks) == ("<# a #> 'open", False)
+        assert blocks == []
 
     def test_a_text_without_an_opener_keeps_no_record(self):
         bp = _bash_patterns_module()
