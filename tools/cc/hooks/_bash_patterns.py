@@ -11924,8 +11924,10 @@ def _ps_literal_text(command: str, m: "re.Match[str]") -> str:
 # openers' one roster (`_PS_REPARSE_OPENER_WORDS`, `_PS_SCRIPTBLOCK_CREATE`)
 # read for the program each one runs. `Invoke-Expression` / `iex` runs its
 # string, `pwsh` / `powershell` the value of `-Command`, `cmd` what follows
-# `/c` or `/k`, `[scriptblock]::Create` its argument, and a subexpression
-# `$(...)` or array subexpression `@(...)`, in an expandable string or as an argument, its own. The operand is a
+# `/c` or `/k`, `[scriptblock]::Create` its argument, a subexpression
+# `$(...)` its own, as an argument or inside an expandable string, and an
+# array subexpression `@(...)` its own outside every string (`$(` alone runs
+# inside one). The operand is a
 # string literal, bare or in parentheses: such a string is data until a
 # carrier runs it, and is read where it runs. A variable an earlier
 # assignment bound to one (`$c = '...'; iex $c`) is that literal by the time
@@ -11953,11 +11955,49 @@ _CMD_PROGRAM_SWITCH_RE = re.compile(r"[/-][ck]", re.IGNORECASE)
 #: The switch words read past a `pwsh` or `cmd` head before its program.
 _PS_CARRIER_SWITCHES_MAX = 64
 #: A subexpression's opener, `$(` or an array subexpression's `@(`: its
-#: program runs wherever it stands, `$(` inside an expandable string or not,
-#: so `$a = @(Get-Content .env)` reads the file as `$(...)` does (DEF-2075).
-#: The masker blanks the `(` of one inside a single-quoted string, which is a
-#: mention.
+#: program runs, so `$a = @(Get-Content .env)` reads the file as `$(...)`
+#: does (DEF-2075). `$(` runs inside an expandable string too; `@(` there is
+#: text, and so is either inside a string a carrier re-parses until that
+#: carrier's program is read one level down. The masker blanks the `(` of one
+#: inside a single-quoted string, which is a mention.
 _PS_SUBEXPRESSION_RE = re.compile(r"[$@]\(")
+#: The value an array subexpression's body opens with when it is an array of
+#: strings (`@('gc .env', 'ls')`): a quote, or a here-string's at-sign and
+#: quote. Such a body runs nothing at its head; a statement after a separator
+#: in it is read by the cut of the level it sits in.
+_PS_QUOTE_FIRST_BODY = ("'", '"', "@'", '@"')
+_PS_QUOTE_FOLD_MAP = dict(_PS_QUOTE_FOLD)
+
+
+def _ps_string_extents(command: str) -> list[tuple[int, int]]:
+    """The extents of the strings the masker's walk steps over at this level,
+    merged and in offset order: ``(open, close)``, both inclusive. Empty
+    where the walk cannot resolve the text, so every opener reads as live
+    there (the guard refuses, never allows, on a text it cannot pair)."""
+    spans: list[tuple[int, int, str]] = []
+    try:
+        _walk_powershell_spans(command, spans)
+    except (_UnresolvedShellSyntax, IndexError):
+        return []
+    merged: list[tuple[int, int]] = []
+    for start, end, _kind in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            if end > merged[-1][1]:
+                merged[-1] = (merged[-1][0], end)
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _ps_array_body(command: str, cursor: int, close: int, pieces: list[str]) -> Iterator[str]:
+    """The program of one `@(` body: ``pieces`` (its text before each nested
+    subexpression, that subexpression written empty) and the rest of the text
+    to ``close``; nothing when it opens with a string (`_PS_QUOTE_FIRST_BODY`)."""
+    body = "".join(pieces) + command[cursor:close]
+    # a typographic quote opens a string here as its straight form does
+    head = "".join(_PS_QUOTE_FOLD_MAP.get(c, c) for c in body.lstrip()[:2])
+    if body.strip() and not head.startswith(_PS_QUOTE_FIRST_BODY):
+        yield body
 
 
 def ps_paren_closers(scan: str) -> dict[int, int]:
@@ -12061,15 +12101,45 @@ def _ps_carrier_program_bodies(command: str, scan: str) -> Iterator[str]:
             k += 1
         if grammar == "ps" and not (k < len(spans) and spans[k][0] <= here):
             yield program
+    # A `$(` body is read one level down, whole, and a subexpression inside
+    # it is read there. An `@(` body spends no level (DEF-2075's review): it
+    # is yielded with each subexpression nested in it written empty, and each
+    # of those is read at this level as if it stood alone, so `@( $( $( gc
+    # .env ) ) )` keeps the two levels `$( $( gc .env ) )` has, and a nest
+    # of any depth is read in one pass over the text.
+    if "@(" not in scan and "$(" not in scan:
+        return
     closers = ps_paren_closers(scan)
+    strings = _ps_string_extents(command) if "@(" in scan else []
+    opens = [start for start, _end in strings]
     read_to = 0
+    #: `[cursor, close, pieces]` of each `@(` open around the next opener
+    arrays: list[list[Any]] = []
     for m in _PS_SUBEXPRESSION_RE.finditer(scan):
-        if m.start() < read_to:
+        here = m.start()
+        if here < read_to:
             continue
-        read_to = closers[m.end() - 1]
-        program = command[m.end():read_to]
+        array = scan[here] == "@"
+        if array:
+            k = bisect.bisect_right(opens, here) - 1
+            if k >= 0 and here <= strings[k][1]:
+                continue    # text in a string at this level
+        close = closers[m.end() - 1]
+        while arrays and arrays[-1][1] <= here:
+            yield from _ps_array_body(command, *arrays.pop())
+        if arrays:
+            parent = arrays[-1]
+            parent[2].append(command[parent[0]:here] + scan[here] + "()")
+            parent[0] = min(close + 1, len(command))
+        if array:
+            arrays.append([m.end(), close, []])
+            continue
+        read_to = close
+        program = command[m.end():close]
         if program.strip():
             yield program
+    while arrays:
+        yield from _ps_array_body(command, *arrays.pop())
 
 
 def _ps_stdin_program_bodies(command: str, scan: str) -> Iterator[tuple[str, str]]:

@@ -13648,6 +13648,118 @@ class TestAnArraySubexpressionsProgramIsRead:
     def test_what_is_not_a_secret_read_stays_allowed(self, command, tmp_path):
         assert_hook_allowed(run_guard_tool("PowerShell", {"command": command}, tmp_path))
 
+    # The rows below are the lane's code and failure-mode reviews, judged in
+    # process (the hook rows above drive the same leg end to end).
+
+    @staticmethod
+    def _denied(tool: str, command: str, project: Path) -> bool:
+        import contextlib
+        import io
+
+        wg = _load_write_guard()
+        with contextlib.redirect_stdout(io.StringIO()):
+            return bool(wg.check_secret_path_access(tool, {"command": command}, project))
+
+    @pytest.mark.parametrize("command", [
+        # a carrier's program is read one level down, where `@(` stands bare
+        'iex "@(gc .env)"',
+        "iex '@(gc .env)'",
+        # a nest of `@(` spends no level: each was allowed while one did, and
+        # the first two are refused at the lane's base, through the `$(` they hold
+        "@( $( $( gc .env ) ) )",
+        "$( @( $( gc .env ) ) )",
+        '$a = @(foo "$(bar $(gc .env))")',
+        "@(@(@(gc .env)))",
+        # Windows PowerShell 5.1 prints `a@` and then runs the group (driven)
+        "a@(gc .env)",
+        # a statement after the array's first value runs, and is read by the cut
+        "$c = @('x'; gc .env)",
+    ], ids=["iex-double", "iex-single", "array-around-two-subexpressions",
+            "array-between-subexpressions", "subexpressions-in-an-array's-string",
+            "three-arrays", "glued-to-a-word", "after-a-value"])
+    def test_a_read_the_reviews_drove_is_refused(self, command, tmp_path):
+        assert self._denied("PowerShell", command, tmp_path)
+
+    @pytest.mark.parametrize("command", [
+        # `@(` in a string a carrier re-parses is text at both levels
+        "iex \"Write-Output '@(gc .env)'\"",
+        "iex 'Write-Output \"@(gc .env)\"'",
+        "pwsh -Command \"Write-Host 'load lines with @(Get-Content .env)'\"",
+        "[scriptblock]::Create(\"Write-Output '@(gc .env)'\")",
+        # an array of strings is a value (driven: `@('gc probe.txt')` reads nothing)
+        "$cmds = @('gc .env')",
+        "@('Get-Content .env','Get-Date')",
+        '@("cat .env","ls")',
+        "Write-Host @('type .env')",
+        "$a = @('cat','.env')",
+        "$a = @(‘gc .env’)",
+        "$s = @(@'\ngc .env\n'@)",
+        # comments and here-strings
+        "# @(gc .env)",
+        "<# @(gc .env) #> Write-Output a",
+        "$s = @'\n@(gc .env)\n'@",
+        '$s = @"\n@(gc .env)\n"@',
+        # a hashtable and a splat open with `@` and no paren
+        "$h = @{ k = 1 }",
+        "Write-Output @args",
+    ], ids=["iex-double-mention", "iex-single-mention", "pwsh-mention", "scriptblock-mention",
+            "array-of-one-string", "array-of-two-strings", "array-of-double-quoted", "array-argument",
+            "array-of-words", "typographic-quotes", "here-string-value", "line-comment",
+            "block-comment", "literal-here-string", "expandable-here-string", "hashtable", "splat"])
+    def test_a_mention_or_a_value_the_reviews_drove_stays_allowed(self, command, tmp_path):
+        assert not self._denied("PowerShell", command, tmp_path)
+
+    @pytest.mark.parametrize(("command", "refused"), [
+        ("pwsh -Command '$a = @(Get-Content .env)'", True),
+        ("powershell -Command '@(gc .env)'", True),
+        ("pwsh -Command 'Write-Host \"@(gc .env)\"'", False),
+    ], ids=["pwsh-array-read", "powershell-array-read", "pwsh-mention"])
+    def test_the_bash_tool_reads_the_program_it_hands_powershell(self, command, refused, tmp_path):
+        assert self._denied("Bash", command, tmp_path) is refused
+
+    def test_every_execution_wrapper_of_the_differential_refuses_both_read_spellings(self, tmp_path):
+        """The class, not the site (Core Rule 12): the PowerShell
+        reachability differential's execution contexts each run the command
+        they wrap (driven on pwsh there), and its `array-subexpression` row is
+        DEF-2075's; at the lane's base that row alone allowed both spellings.
+        Its inert containers hold each `@(` read as a mention."""
+        prd = self._differential()
+        wrappers = prd.EXECUTION_WRAPPERS
+        assert any(name == "array-subexpression" for name, _ in wrappers)
+        missed = [(name, read) for name, template in wrappers for read in ("Get-Content .env", "gc .env")
+                  if not self._denied("PowerShell", template.format(cmd=read, nested="powershell"),
+                                      tmp_path)]
+        assert missed == []
+        refused = [(name, body) for name, template in prd.LITERAL_CONTAINERS + prd.EXPANDABLE_CONTAINERS
+                   for body in ("@(gc .env)", "$a = @(Get-Content .env)", "Write-Output @(gc .env)")
+                   if self._denied("PowerShell", template.format(body=body), tmp_path)]
+        assert refused == []
+
+    @staticmethod
+    def _differential() -> ModuleType:
+        """The differential loaded by path under a private name; the bench
+        directory it puts on sys.path and the rehearsal it imports by name
+        are taken back out."""
+        import importlib.util
+
+        saved_path = list(sys.path)
+        saved = {n: sys.modules.get(n) for n in ("powershell_guard_rehearsal", "_ps_reach_diff_2075")}
+        try:
+            spec = importlib.util.spec_from_file_location(
+                "_ps_reach_diff_2075", _BENCH_DIR / "powershell_reachability_differential.py")
+            assert spec is not None and spec.loader is not None
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = mod
+            spec.loader.exec_module(mod)
+            return mod
+        finally:
+            sys.path[:] = saved_path
+            for n, m in saved.items():
+                if m is None:
+                    sys.modules.pop(n, None)
+                else:
+                    sys.modules[n] = m
+
 
 class TestQuotedProgramsAreReadAsPrograms:
     """DEF-1131: a carrier runs a program out of a quoted string -- Bash

@@ -1960,7 +1960,10 @@ each other class for class, and a program handed to the other shell
 PowerShell) is read with that shell's roster. A program a carrier runs out
 of a string is read as a program too: Bash `eval`, `watch`, `script -c` and
 `su -c`; PowerShell `Invoke-Expression` / `iex`, `pwsh -Command`, `cmd /c`,
-`[scriptblock]::Create` and a `$(...)` subexpression, including a string
+`[scriptblock]::Create`, a `$(...)` subexpression (as an argument or inside
+an expandable string) and an `@(...)` array subexpression outside every
+string (`$a = @(Get-Content .env)`; an array of strings, `@('gc .env')`, is
+a value, and a nest of `@(` spends none of the levels a nest of `$(` does), including a string
 bound to a variable earlier in the same command (`$c = 'gc .env';
 iex $c`), and the program a `Start-Process` of powershell, pwsh, bash or sh
 carries after the started shell's `-Command` or `-c`. A carrier
