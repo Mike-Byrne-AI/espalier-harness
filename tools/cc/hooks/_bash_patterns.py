@@ -11718,7 +11718,9 @@ if not {interp for interp, _ in _PS_INLINE_PROGRAM_RES} <= set(_STDIN_PROGRAM_WR
 
 #: The heads that read a program from stdin when piped to, ONE literal: the
 #: opener's alternation and the dispatch below are both derived from it.
-_PS_STDIN_HEAD_ALTERNATION = "python|pypy|py|node|ruby|perl|" + _POWERSHELL_HEADS
+_PS_STDIN_HEAD_ALTERNATION = (
+    "python|pypy|py|node|ruby|perl|" + _POWERSHELL_HEADS + "|" + _POSIX_SHELL_HEADS
+)
 #: Head -> `_STDIN_PROGRAM_WRITE_RES` key; the two shells are absent because
 #: their program is PowerShell and is re-scanned, not pattern-matched.
 _PS_STDIN_DISPATCH: dict[str, str] = {
@@ -11727,6 +11729,16 @@ _PS_STDIN_DISPATCH: dict[str, str] = {
 }
 #: The same roster the Bash leg routes out to (DEF-637): one literal, two legs.
 _PS_STDIN_SHELL_HEADS = _STDIN_SHELL_HEADS
+#: The POSIX shells a PowerShell string can be piped into (DEF-3075): Git's
+#: `bash.exe` behind PowerShell 5.1 runs the piped text, so its program is
+#: Bash and reaches the Bash readers through `_ps_shell_program_bodies`, never
+#: the dispatch above. The `-c` reader's roster (`_POSIX_SHELL_HEADS`).
+_PS_STDIN_POSIX_HEADS = _POSIX_SHELL_HEAD_SET
+#: The gate before that reader's pass: a POSIX shell's name as a word of its
+#: own, so a command naming none (nearly every one) pays one linear search.
+_PS_STDIN_POSIX_HINT_RE = re.compile(
+    r"(?<![\w-])(?:" + _POSIX_SHELL_HEADS + r")(?:\.exe)?(?![\w-])", re.IGNORECASE
+)
 #: A bash program behind `bash -c` / `sh -c` on the PowerShell tool (DEF-637,
 #: the other direction): the head may be an executable given by path
 #: (`& 'C:\Program Files\Git\bin\bash.exe' -c "..."`), the switch run is
@@ -11777,7 +11789,7 @@ _PS_BASH_DASH_C_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 if set(_PS_STDIN_HEAD_ALTERNATION.split("|")) != (
-    set(_PS_STDIN_DISPATCH) | _PS_STDIN_SHELL_HEADS
+    set(_PS_STDIN_DISPATCH) | _PS_STDIN_SHELL_HEADS | _PS_STDIN_POSIX_HEADS
 ):
     raise RuntimeError(
         "PowerShell stdin-head roster drift: the alternation and the dispatch disagree"
@@ -11796,7 +11808,7 @@ if not set(_PS_STDIN_DISPATCH.values()) <= set(_STDIN_PROGRAM_WRITE_RES):
 #: is dropped by the consumer, since the file is the program there.
 _PS_INTERP_STDIN_RE = re.compile(
     _PS_CMD_POS + _PS_EXE_PREFIX + r"(" + _PS_STDIN_HEAD_ALTERNATION + r")"
-    + r"[\w.-]*" + _QUOTED_VERB_TAIL
+    + r"(?P<suffix>[\w.-]*)" + _QUOTED_VERB_TAIL
     + r"(?:(?=[ \t])(?P<run>" + _PS_SWITCH_RUN + r")(?:-[ \t]*)?)?"
     + r"(?=$|[;|&\n\r)}])",
     re.IGNORECASE,
@@ -11882,6 +11894,33 @@ def _ps_program_literal_before_pipe(segment: str) -> str:
     return segment
 
 
+def _ps_posix_program_before_pipe(segment: str) -> str:
+    """The Bash program a POSIX shell piped to on the PowerShell leg receives
+    (DEF-3075): the last here-string when the segment ends in one, else the
+    last quoted string, each by its own kind (the reason is
+    `_ps_shell_program_bodies`'s comment). The BOM and every CR are taken out:
+    Windows PowerShell 5.1 hands a native pipe its text behind a BOM and with
+    CRLF line ends, and the line a BOM fails or a CR ends is still read here,
+    so the judgment never rests on what the shell would fail to run. A segment
+    with no literal is no program text this reader can see: nothing."""
+    body = ""
+    if segment.rstrip().endswith(("'@", '"@')):
+        last_hs = None
+        for last_hs in _PS_HERE_STRING_RE.finditer(segment):
+            pass
+        if last_hs is not None:
+            body = last_hs.group(2)
+            if last_hs.group(1) == '"':
+                body = _ps_unescape_program(body)
+    if not body:
+        last = None
+        for last in _PS_PROGRAM_STRING_RE.finditer(segment):
+            pass
+        if last is not None:
+            body = _ps_literal_text(segment, last)
+    return body.replace("﻿", "").replace("\r", "")
+
+
 def _ps_shell_program_bodies(command: str, scan: str) -> Iterator[str]:
     """Yield every bash program a PowerShell command hands to `bash` / `sh`
     (DEF-637): the quoted `-c` operand, opener on ``scan``, body from the raw
@@ -11896,6 +11935,14 @@ def _ps_shell_program_bodies(command: str, scan: str) -> Iterator[str]:
     for grammar, program in ps_start_process_shell_programs(command, scan):
         if grammar == "bash":
             yield program
+    # a string piped into a POSIX shell is its program (DEF-3075): `'...' |
+    # bash`, `| & 'C:\Program Files\Git\bin\bash.exe'`
+    if "|" in scan and _PS_STDIN_POSIX_HINT_RE.search(scan):
+        for head, segment in _ps_stdin_program_bodies(command, scan):
+            if head in _PS_STDIN_POSIX_HEADS:
+                program = _ps_posix_program_before_pipe(segment)
+                if program.strip():
+                    yield program
     for m in _PS_BASH_DASH_C_RE.finditer(scan):
         # By the literal's OWN kind, not `_ps_unescape_program`'s
         # all-four-forms fold: inside a single-quoted PowerShell string `""`
@@ -12086,6 +12133,8 @@ def _ps_stdin_program_bodies(command: str, scan: str) -> Iterator[tuple[str, str
         run = m.group("run") or ""
         if head in _PS_STDIN_SHELL_HEADS and _PS_STDIN_FILE_SWITCH_RE.search(run):
             continue  # `-File x.ps1`: the file is the program, the pipe is data
+        if head in _PS_STDIN_POSIX_HEADS and m.group("suffix").lower() not in ("", ".exe"):
+            continue  # `| shasum`, `| sha256sum`: another program, not the shell
         i = bisect.bisect_left(boundaries, m.start())
         start = boundaries[i - 1] + 1 if i else 0
         yield head, command[start:m.start()]
@@ -17984,6 +18033,8 @@ def _candidate_paths_from_powershell(command: str, _depth: int = 0) -> list[str]
             for om in rx.finditer(body):
                 paths.append(om.group(2))
     for head, segment in _ps_stdin_program_bodies(raw, command):
+        if head in _PS_STDIN_POSIX_HEADS:
+            continue  # a Bash program: `_ps_shell_program_bodies` below (DEF-3075)
         if head in _PS_STDIN_SHELL_HEADS:
             if _depth < _PS_STDIN_MAX_DEPTH:
                 program = _ps_program_literal_before_pipe(segment)
@@ -18153,6 +18204,8 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
     for interp, body in _ps_inline_program_bodies(raw, scan):
         out.extend(_program_effects(interp, body))
     for head, segment in _ps_stdin_program_bodies(raw, scan):
+        if head in _PS_STDIN_POSIX_HEADS:
+            continue  # a Bash program: `_ps_shell_program_bodies` below (DEF-3075)
         if head in _PS_STDIN_SHELL_HEADS:
             if _depth < _PS_STDIN_MAX_DEPTH:
                 program = _ps_program_literal_before_pipe(segment)

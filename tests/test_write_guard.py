@@ -12163,6 +12163,103 @@ class TestAShellStartedByStartProcessMeetsItsDirectFormsTiers:
         assert list(bp.ps_start_process_shell_programs(raw, scan)) == want
 
 
+class TestAStringPipedIntoAPosixShellMeetsItsDirectFormsTiers:
+    """DEF-3075: a string piped from PowerShell into a POSIX shell draws, on
+    every tier of the PowerShell tool, the verdict the same program draws as
+    `bash -c '...'`. Windows PowerShell 5.1 pipes the string into Git's
+    `bash.exe`, which runs it (line 1 behind a BOM that fails it, every line
+    ended in CRLF, so line 2 onward runs: driven with harmless programs),
+    and until this lane no POSIX shell head opened the PowerShell stdin
+    reader, so a delete of the root piped that way was a plain allow. The
+    same DIFFERENTIAL as the Start-Process class above: the direct form is
+    the oracle. Each row is a test fixture for a friction guard, handed to
+    the classifier as text and never run."""
+
+    _PROGRAMS = TestAShellStartedByStartProcessMeetsItsDirectFormsTiers._BASH_PROGRAMS
+    #: The pipe spellings; ``{p}`` is the program.
+    _PIPES = [
+        ("bare", "'{p}' | bash"),
+        ("dash", "'{p}' | bash -"),
+        ("sh", "'{p}' | sh"),
+        ("zsh-after-a-statement", "Get-Date; '{p}' | zsh"),
+        ("exe", "'{p}' | bash.exe"),
+        ("switch", "'{p}' | bash -s"),
+        ("echo", "echo '{p}' | bash"),
+        ("write-output", "Write-Output '{p}' | bash"),
+        ("double-quoted", "\"{p}\" | bash"),
+        ("git-by-path", "'{p}' | & 'C:\\Program Files\\Git\\bin\\bash.exe'"),
+        ("git-short-path", "'{p}' | C:\\PROGRA~1\\Git\\bin\\bash.exe"),
+        ("second-line", "\"echo hi\n{p}\" | bash"),
+        ("here-string", "@'\necho hi\n{p}\n'@ | bash"),
+        ("crlf-here-string", "@'\r\necho hi\r\n{p}\r\n'@ | bash"),
+        ("bom", "'\ufeff{p}' | bash"),
+    ]
+    # one iterable, the only one a class-scope comprehension can see by name
+    _CASES = [(f"{sid}-{pid}", pipe, program)
+              for (sid, pipe), (pid, program) in __import__("itertools").product(_PIPES, _PROGRAMS)]
+
+    @staticmethod
+    def _project(tmp_path: Path) -> Path:
+        return TestAShellStartedByStartProcessMeetsItsDirectFormsTiers._project(tmp_path)
+
+    def test_the_piped_delete_of_the_root_meets_the_wall(self, tmp_path):
+        """The row's own probe, by tier name: the wall, as `bash -c` meets it."""
+        project = self._project(tmp_path)
+        for pipe in ("'rm -rf /' | bash", "'rm -rf /' | & 'C:\\Program Files\\Git\\bin\\bash.exe'"):
+            assert "wall" in _ps_tier_verdicts(pipe, project), pipe
+
+    @pytest.mark.parametrize("case", _CASES, ids=[c[0] for c in _CASES])
+    def test_the_piped_program_draws_its_direct_forms_verdict(self, case, tmp_path):
+        _id, pipe, program = case
+        project = self._project(tmp_path)
+        assert _ps_tier_verdicts(pipe.format(p=program), project) == _ps_tier_verdicts(
+            f"bash -c '{program}'", project)
+
+    #: Not a POSIX shell, or not its piped program: a program whose name
+    #: begins with a shell's (`shasum`), a script operand (the file is the
+    #: program, the pipe is data), a mention, and a string piped nowhere.
+    _NOT_A_PIPED_PROGRAM = [
+        ("shasum", "'rm -rf .' | shasum"),
+        ("sha256sum", "'rm -rf .' | sha256sum -"),
+        ("bashate", "'rm -rf .' | bashate"),
+        ("script-operand", "'rm -rf .' | bash script.sh"),
+        ("mention", "Write-Output \"'rm -rf .' | bash\""),
+        ("write-host", "Write-Host 'rm -rf .'"),
+        ("no-literal", "Get-Content notes.txt | bash"),
+    ]
+
+    @pytest.mark.parametrize("row", _NOT_A_PIPED_PROGRAM, ids=[r[0] for r in _NOT_A_PIPED_PROGRAM])
+    def test_what_is_not_a_piped_program_draws_no_tier(self, row, tmp_path):
+        _id, command = row
+        assert _ps_tier_verdicts(command, self._project(tmp_path)) == frozenset()
+
+    def test_the_posix_heads_never_reach_the_interpreter_dispatch(self):
+        """The import-time roster check holds with the POSIX heads in it, and
+        the dispatch keys none of them: a head it keyed would be read as an
+        interpreter's program, and one the consumers did not skip would raise
+        KeyError inside the guard."""
+        bp = _bash_patterns_module()
+        heads = set(bp._PS_STDIN_HEAD_ALTERNATION.split("|"))
+        assert bp._PS_STDIN_POSIX_HEADS <= heads
+        assert heads == set(bp._PS_STDIN_DISPATCH) | bp._PS_STDIN_SHELL_HEADS | bp._PS_STDIN_POSIX_HEADS
+        assert not bp._PS_STDIN_POSIX_HEADS & (set(bp._PS_STDIN_DISPATCH) | bp._PS_STDIN_SHELL_HEADS)
+
+    _READER = [
+        ("bare", "'rm -rf /' | bash", ["rm -rf /"]),
+        ("doubled-quote-kept", "'echo ''x''' | bash", ["echo 'x'"]),
+        ("bom-and-crs-out", "@'\r\n\ufeffrm -rf /\r\n'@ | bash", ["rm -rf /"]),
+        ("not-a-shell", "'rm -rf /' | shasum", []),
+        ("python-stays-its-own", "'print(1)' | python -", []),
+    ]
+
+    @pytest.mark.parametrize("row", _READER, ids=[r[0] for r in _READER])
+    def test_the_reader_yields_the_program_the_shell_runs(self, row):
+        _id, command, want = row
+        bp = _bash_patterns_module()
+        raw, scan = bp.powershell_scan_pair(command)
+        assert list(bp._ps_shell_program_bodies(raw, scan)) == want
+
+
 class TestTheCmdDeleteReaderReadsEachBranch:
     """The cmd delete reader (`_bash_patterns.iter_cmd_recursive_removes`)
     branch by branch, at the reader: the targets each launch hands the
