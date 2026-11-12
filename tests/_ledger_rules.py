@@ -11,11 +11,13 @@ that owns it. A tree without this file (an adopter's) runs no rule, since the
 rules are this repository's own.
 
 Stdlib and the suite's light helpers only, never pytest at import: the verb
-imports it outside a test session. Five rules run. Over the drafted row's text:
+imports it outside a test session. Six rules run. Over the drafted row's text:
 the maintenance switch named beside two or more of its bypass hooks but not all
 (``TestBypassRosterCarriers``), a restated memory line cap
-(``TestMemoryCapPopulation``), and a cited production-source path or symbol
-the tree does not hold (``TestDocSourceCitations``). Over the drafted probe:
+(``TestMemoryCapPopulation``), a cited production-source path or symbol
+the tree does not hold (``TestDocSourceCitations``), and a live guard row
+whose text names no coverage-contract basis
+(``TestGuardRowsNameTheirContractBasis``). Over the drafted probe:
 the probe-shape ratchet's two rules (``TestProbeShapesAreRatcheted``), a probe
 that reads text out of its own subject and one whose program spawns a bare
 interpreter, each with its per-id baseline, which lives here. The cited-path
@@ -45,6 +47,7 @@ PAPERWORK_PROBE_RULE = ("tests/test_check_ledger_probes.py::TestProbeShapesAreRa
                         "test_no_new_probe_is_satisfiable_by_its_own_fixs_paperwork")
 LITERAL_SPAWN_RULE = ("tests/test_check_ledger_probes.py::TestProbeShapesAreRatcheted::"
                       "test_no_new_probe_spawns_a_literal_interpreter_inside_its_program")
+GUARD_BASIS_RULE = "tests/test_documented_claims.py::TestGuardRowsNameTheirContractBasis"
 
 
 def maintenance_bypass_callers(hooks_dir: Path = HOOKS_DIR,
@@ -376,6 +379,124 @@ SPAWNS_A_LITERAL_INTERPRETER: frozenset[str] = frozenset()
 LITERAL_SPAWN_RE = re.compile(r"""\[\s*['"]python3?['"]\s*,""")
 
 
+#: A guard row (the operator's ruling of 2026-11-12, the guard-row metric's
+#: population): a live row whose location cell -- the member row's second cell,
+#: or the third cell of an index row for its id -- names one of the guard's
+#: three modules or its test file by path. A location that opens with
+#: ``bench/`` is a bench row, and out.
+GUARD_LOCATION_RE = re.compile(
+    r"(?<![\w./-])(?:tools/cc/hooks/(?:write_guard|_bash_patterns|_speedbump)\.py|tests/test_write_guard\.py)"
+    r"(?!\w)")
+#: The sentence a guard row's text carries: it opens with ``Contract basis:``
+#: and runs to its first period followed by whitespace, or to the cell's end.
+#: A period inside a path or a symbol is followed by no space and does not end
+#: it; an abbreviation does, so the sentence says its job without one.
+BASIS_SENTENCE_RE = re.compile(r"(?<![^\s*(])Contract basis:(.*?)(?:\.(?=\s)|$)")
+#: A word that negates a name in its own clause (from the clause's last comma,
+#: semicolon, colon or bracket): "not a secret read" names no basis.
+_NEGATION_RE = re.compile(r"\b(?:no|not|none|neither|nor|never)\b", re.IGNORECASE)
+_CLAUSE_BREAK_RE = re.compile(r"[,;:()]")
+#: What the sentence names: one of the three jobs the coverage contract keeps
+#: (docs/HOOKS.md, "The coverage contract for the jobs the parser keeps": a
+#: catastrophic delete, the speed bumps, a secret read) or a real-session
+#: record of the slip. The metric read a basis by a looser regex over the whole
+#: text, which missed one row's words and found another's in a clause naming
+#: no job; a sentence the filer writes is checked when the row is written. A
+#: basis the operator adds is one more line here.
+BASIS_NAMES: tuple[str, ...] = (
+    r"catastrophic[- ]delete",
+    r"speed[- ]?bump",
+    r"secret[- ]read",
+    r"real[- ]session",
+)
+BASIS_NAMES_RE = re.compile("|".join(BASIS_NAMES), re.IGNORECASE)
+#: Live guard rows ruled to stay live with neither basis, each with the ruling
+#: that keeps it: no basis is written for a row whose own text records none.
+#: The owning test reds on an id here that is struck, gone, no longer a guard
+#: row, or now carrying the sentence, until it is dropped, and on an id the
+#: calibration commit did not hold live: a row filed since carries the
+#: sentence, so the set only shrinks.
+GUARD_ROWS_RULED_WITHOUT_A_BASIS: dict[str, str] = {
+    "DEF-1071": ("ruling 06a10a: wave 2 is a declared limit, and the row stays live for wave 1's own "
+                 "engineering; a nested-session launch is not one of the three kept jobs, and no real "
+                 "session recorded the slip"),
+    "DEF-682": ("ruling 90a8cc: the gap is declined and the row stays live in the ledger's declared-limit "
+                "form, since neither verb takes a decline; the sync advisory is not one of the three kept "
+                "jobs, and the transcripts it counts hold none of its own case"),
+    "DEF-972": ("operator call 88e7e8: the stop gate's test-command variable is the anti-self-disable "
+                "floor, outside the three kept jobs, and its text records no session; the call decides "
+                "between a fourth basis and a limit"),
+}
+_TABLE_ROW_RE = re.compile(r"^\|\s*(~~)?`")
+_ROW_ID_RE = re.compile(r"`([A-Z]{2,5}-\d+[a-z]*)`")
+_INDEX_SECTION_RE = re.compile(r"§C\d+")
+_SECTION_HEADING_RE = re.compile(r"^### (§C\d+)\b")
+
+
+def _cells(line: str) -> list[str]:
+    """A table line's cells, split on the pipes the ledger does not escape."""
+    return [c.strip() for c in re.split(r"(?<!\\)\|", line.strip())[1:-1]]
+
+
+def _names_a_basis(sentence: str) -> bool:
+    """Whether the sentence names a basis no word in its own clause negates."""
+    for m in BASIS_NAMES_RE.finditer(sentence):
+        before = sentence[:m.start()]
+        cut = max((b.end() for b in _CLAUSE_BREAK_RE.finditer(before)), default=0)
+        if not _NEGATION_RE.search(before[cut:]):
+            return True
+    return False
+
+
+def guard_rows(text: str) -> dict[str, tuple[str, str | None]]:
+    """``{id: (the guard path its location names, why it has no basis or None)}``
+    for each live guard row in ``text`` (a row file, the ledger file, or the
+    view of both). A row's id is the first in its id cell; a struck row has
+    nothing left to measure and is not read. In a text that holds class
+    headings, a member row is one inside a class section (from its ``### §CN``
+    heading to the next ``## ``, the generator's bounds), so a row of another
+    table (the dropped list, a crosswalk) is not read as one; a row file and
+    the verb's drafted lines hold no heading, and every row there is read.
+    Read only what is in ``text``: a co-id row is read under its first id,
+    and the drafted lines a repin passes on a tree keeping rows in one file
+    are the member row alone, so a guard path named only in an index row is
+    read there at the next whole-tree test, not at the repin."""
+    index_locations: dict[str, list[str]] = {}
+    members: list[tuple[str, str, str]] = []
+    lines = text.splitlines()
+    in_class = not any(_SECTION_HEADING_RE.match(line) for line in lines)
+    for line in lines:
+        if _SECTION_HEADING_RE.match(line):
+            in_class = True
+            continue
+        if line.startswith("## "):
+            in_class = False
+            continue
+        if not _TABLE_ROW_RE.match(line):
+            continue
+        cells = _cells(line)
+        ids = _ROW_ID_RE.findall(cells[0]) if cells else []
+        if len(cells) < 3 or not ids:
+            continue
+        if _INDEX_SECTION_RE.fullmatch(cells[1]):
+            for rid in ids:
+                index_locations.setdefault(rid, []).append(cells[2])
+        elif in_class and not cells[0].startswith("~~"):
+            members.append((ids[0], cells[1], cells[2]))
+    out: dict[str, tuple[str, str | None]] = {}
+    for rid, site, body in members:
+        names = [m.group(0) for loc in (site, *index_locations.get(rid, ()))
+                 if not loc.lstrip("`").startswith("bench/") and (m := GUARD_LOCATION_RE.search(loc))]
+        if not names:
+            continue
+        said = [m.group(1) for m in BASIS_SENTENCE_RE.finditer(body)]
+        why = (None if any(_names_a_basis(s) for s in said)
+               else "its 'Contract basis:' sentence names none of the kept jobs or a real session" if said
+               else "no sentence in its text opens with 'Contract basis:'")
+        out[rid] = (names[0], why)
+    return out
+
+
 def cited_path_phantoms(rel: str, text: str) -> list[tuple[str, str]]:
     """``(citation, kind)`` for each backtick production-source citation in
     ``text`` (the row at ``rel``) that the tree does not resolve, through the
@@ -419,6 +540,15 @@ def _cited_path_breaks(rel: str, text: str) -> list[str]:
             f"cites {cite}, a symbol its file does not define" for cite, kind in cited_path_phantoms(rel, text)]
 
 
+def _basis_breaks(text: str) -> list[str]:
+    return [f"{rid} is a guard row (its location names {where}) and {why}: run the finding through the "
+            "coverage contract (docs/HOOKS.md, the jobs the parser keeps) and write one sentence opening "
+            "'Contract basis:' that names its kept job (a catastrophic delete, a speed bump, a secret read) "
+            "or the real session that recorded the slip; a finding with neither is a limit sentence, not a row"
+            for rid, (where, why) in guard_rows(text).items()
+            if why is not None and rid not in GUARD_ROWS_RULED_WITHOUT_A_BASIS]
+
+
 def _paperwork_breaks(probe: dict) -> list[str]:
     if not is_trap_shaped(probe) or (probe.get("id") or "") in TEXT_OVER_OWN_SUBJECT:
         return []
@@ -448,7 +578,8 @@ def breaks(rel: str, text: str, probe: dict | None = None, *, notes: list[str] |
     if text:
         rules += [(BYPASS_ROSTER_RULE, lambda: _roster_breaks(rel, text, hooks_dir)),
                   (MEMORY_CAP_RULE, lambda: _cap_breaks(rel, text)),
-                  (CITED_PATH_RULE, lambda: _cited_path_breaks(rel, text))]
+                  (CITED_PATH_RULE, lambda: _cited_path_breaks(rel, text)),
+                  (GUARD_BASIS_RULE, lambda: _basis_breaks(text))]
     if probe and probe.get("cmd"):
         rules += [(PAPERWORK_PROBE_RULE, lambda: _paperwork_breaks(probe)),
                   (LITERAL_SPAWN_RULE, lambda: _spawn_breaks(probe))]
