@@ -23,6 +23,7 @@ from tests._hook_assertions import assert_hook_allowed, assert_hook_denied
 from tests._hook_spawn import BUDGET_FALLBACK, BUDGET_REFUSAL, holds_a_budget_refusal, run_hook_through
 from tests._spaced_paths import CMD, PS, SH, fill, quoted, skip_unless_plain
 from tests._symlink_support import requires_symlink
+from tests._wait_budget import scaled
 
 HOOKS_DIR = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
 
@@ -13245,14 +13246,17 @@ class TestSecretPathAccess:
         assert binaries == set(_roster_words(bp._CMD_POS_WRAPPER_BINARIES)) - {"env"}
 
     # DEF-2074: a command substitution that expands to nothing -- a backtick
-    # comment (the inline-comment idiom), `:` with literal words, or an empty
+    # comment (the inline-comment idiom), `:` with plain words, or an empty
     # body -- leaves the next word as the command, and the head read took the
-    # substitution's pieces for the verb. Every row below but the last allowed at main
-    # b3eefcf, and each read the file on bash 3.2.57 (driven 2026-11-12 on a
-    # scratch file under these spellings). The named user: an operator whose
-    # agent annotates a command line with the backtick comment and reads a
-    # secret with no refusal, where `cat .env` is refused.
-    @pytest.mark.parametrize("command", [
+    # substitution's pieces for the verb. Every row here but the last allowed
+    # at main b3eefcf (the control, refused there, reads its glued word as a
+    # path), and the three comments holding a separator allowed at the lane's
+    # first placement too, which dropped a span after the statement cut. Bash
+    # reads the file under each (`test_bash_reads_the_file_as_each_substitution_row_says`).
+    # The named user: an operator whose agent annotates a command line with
+    # the backtick comment and reads a secret with no refusal, where
+    # `cat .env` is refused.
+    _SUBSTITUTION_READS = (
         "`# c` cat .env",
         "$(: c) cat .env",
         "$() cat .env",
@@ -13271,12 +13275,44 @@ class TestSecretPathAccess:
         "`# c` cp .env /tmp/x",
         'X="it\'s" `# c` cat .env',           # a quote inside double quotes opens nothing
         "`# a \\` b` cat .env",               # an escaped backtick is the comment's text
+        "`# a; b` cat .env",                  # a separator in a comment is the comment's text
+        "`# a | b` cat .env",
+        "`# a && b` cat .env",
         'cat "$(: c)".env',  # a control: refused at main, its glued word read as a path
-    ])
+    )
+    # Where bash runs no read: a quoted empty substitution is an empty command
+    # name, a single-quoted one is literal, a double-quoted one is an echo's
+    # text, a substitution with output runs that output as the command, and a
+    # path inside a `:` note is a word bash never reads (refused at main, where
+    # the split read the note's words as the verb's operands: a relief, pinned).
+    _SUBSTITUTION_NO_READS = (
+        '"$(: c)" cat .env',
+        "'$(: c)' cat .env",
+        "echo '`# c` cat .env'",
+        'echo "`# c` cat .env"',
+        "`echo x` cat .env",
+        "cat notes.txt $(: .env)",
+    )
+    # A declared limit (docs/HOOKS.md, the secret-read paragraph): a body that
+    # runs anything but `:` is not evaluated, and a `:` note holding a quote,
+    # an escape or an expansion is kept as typed, so these read the file on
+    # bash and are allowed here. The day a lane reads them, this row reds and
+    # the sentence is rewritten on purpose.
+    _SUBSTITUTION_LIMITS = (
+        "$(true) cat .env",
+        "$(: $(id)) cat .env",
+        "$(: `id`) cat .env",
+        "$(: 'note') cat .env",
+    )
+
+    @pytest.mark.parametrize("command", _SUBSTITUTION_READS)
     def test_a_read_behind_a_substitution_that_expands_to_nothing_is_refused(self, command, tmp_path):
         assert_hook_denied(run_guard_tool("Bash", {"command": command}, tmp_path),
                            contains_reason="Secret-path access blocked")
 
+    # Each member of `_NOT_A_LITERAL_WORD` and each branch of the walk keeps
+    # a row: a body holding the member stays as typed, so an edit that widens
+    # or narrows the drop reds here.
     @pytest.mark.parametrize("text, dropped", [
         ("`# c` cat .env", " cat .env"),
         ("$(: a b) cat .env", " cat .env"),
@@ -13289,7 +13325,26 @@ class TestSecretPathAccess:
         ("$(true) y", "$(true) y"),           # not evaluated: a named limit
         ("$(: $x) y", "$(: $x) y"),           # an expansion is not a literal word
         ("$(:x) y", "$(:x) y"),               # a command named `:x` is not `:`
-        ("$(: a; b) y", "$(: a; b) y"),
+        ("$(: a; b) y", "$(: a; b) y"),       # `;` runs `b`
+        ("$(: a & b) y", "$(: a & b) y"),     # a lone `&` runs `b` (no boundary for this leg)
+        ("$(: a | b) y", "$(: a | b) y"),     # a pipe runs `b`
+        ("$(: a\nb) y", "$(: a\nb) y"),       # a newline runs the next line
+        ("$(: a > f) y", "$(: a > f) y"),     # a redirect is not a plain word
+        ("$(: a < f) y", "$(: a < f) y"),
+        ("$(: `b`) y", "$(: `b`) y"),         # a backtick runs a nested program
+        ("$(: ')') y", "$(: ')') y"),         # a quoted `)` moves the close past the first
+        ('$(: ")") y', '$(: ")") y'),
+        ("$(: \\)) y", "$(: \\)) y"),         # an escaped `)` moves it too
+        ("$(: (a)) y", "$(: (a)) y"),         # a nested `(`
+        ("`: a)` y", "`: a)` y"),             # a `)` in a backtick body
+        ("$(: a #b) y", "$(: a #b) y"),       # a comment swallows the `)` in `$(`
+        ("$(# c) x", "$(# c) x"),             # so the comment arm is a backtick span's alone
+        ("$(: a) b) y", " b) y"),             # the span closes at the first `)`
+        ("$(: a) $(: b) y", "  y"),           # each span finds its own `)`
+        ("$(: a y", "$(: a y"),               # a `$(` that never closes stays
+        ('X="`# c`" y', 'X="" y'),            # a backtick span inside double quotes goes
+        ("`# c\nd` y", "`# c\nd` y"),         # a comment past a newline runs the next line
+        ("$'\\'' '$(: c)' x", "$'\\'' '$(: c)' x"),  # an ANSI-C string: left as typed
         ("$((1)) y", "$((1)) y"),
         ("ls -la", "ls -la"),
     ])
@@ -13297,35 +13352,57 @@ class TestSecretPathAccess:
         assert _load_write_guard()._drop_empty_substitutions(text) == dropped
 
     def test_a_backtick_comment_that_ends_at_a_newline_runs_the_next_line(self):
-        # The statement split cuts at a newline before the drop reads a span,
-        # so the predicate is held alone: such a body is not empty.
+        # The drop reads the command before the statement cut, so a backtick
+        # comment that runs past a newline reaches the predicate whole: bash
+        # runs the line after the `#`, so the body is not empty.
         guard = _load_write_guard()
         assert guard._expands_to_nothing("# c\ncat .env", backtick=True) is False
         assert guard._expands_to_nothing("# c", backtick=True) is True
 
-    # Where bash runs no read: a quoted empty substitution is an empty command
-    # name, a single-quoted one is literal, a double-quoted one is an echo's
-    # text, and a substitution with output runs that output as the command.
-    @pytest.mark.parametrize("command", [
-        '"$(: c)" cat .env',
-        "'$(: c)' cat .env",
-        "echo '`# c` cat .env'",
-        'echo "`# c` cat .env"',
-        "`echo x` cat .env",
-    ])
+    @pytest.mark.parametrize("command", _SUBSTITUTION_NO_READS)
     def test_a_substitution_that_runs_no_read_is_allowed(self, command, tmp_path):
         assert_hook_allowed(run_guard_tool("Bash", {"command": command}, tmp_path))
 
-    # A declared limit (docs/HOOKS.md, the secret-read paragraph): a body that
-    # runs anything but `:` is not evaluated, so these read the file on bash
-    # and are allowed here. The day a lane reads them, this row reds and the
-    # sentence is rewritten on purpose.
-    @pytest.mark.parametrize("command", [
-        "$(true) cat .env",
-        "$(: $(id)) cat .env",
-    ])
+    @pytest.mark.parametrize("command", _SUBSTITUTION_LIMITS)
     def test_a_substitution_the_leg_does_not_evaluate_is_a_declared_limit(self, command, tmp_path):
         assert_hook_allowed(run_guard_tool("Bash", {"command": command}, tmp_path))
+
+    # The program readers anchor on the command position, whose separators
+    # hold the backtick and `)` (`_bash_patterns._CMD_POS_SEP`), so they read
+    # past a span between words without the drop (refused at main as well);
+    # pinned here so an edit to that class reds.
+    @pytest.mark.parametrize("command", [
+        "`# c` bash -c 'cat .env'",
+        "`# c` eval 'cat .env'",
+    ])
+    def test_a_program_reader_reads_past_a_substitution_that_prints_nothing(self, command, tmp_path):
+        assert_hook_denied(run_guard_tool("Bash", {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    def test_a_bash_program_the_powershell_tool_carries_is_read_past_the_span(self, tmp_path):
+        # A program handed to bash from the PowerShell tool is read with the
+        # Bash roster, the drop included (allowed at main b3eefcf).
+        assert_hook_denied(_run_ps_guard("bash -c '`# c` cat .env'", tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    # Bash is the oracle for the rows above (/bin/bash 3.2.57 on the Air, bash
+    # 5 on the Linux cells): the dotenv's marker reaches stdout under each read
+    # row and each declared limit, and under no row that runs no read. The
+    # copier row reads with no output and writes outside the folder, so it is
+    # left out; every row runs in its own scratch folder.
+    @pytest.mark.skipif(not Path("/bin/bash").exists(), reason="the oracle is a real /bin/bash")
+    @pytest.mark.parametrize("command, reads", [
+        *((c, True) for c in _SUBSTITUTION_READS if " cp " not in c),
+        *((c, False) for c in _SUBSTITUTION_NO_READS),
+        *((c, True) for c in _SUBSTITUTION_LIMITS),
+    ])
+    def test_bash_reads_the_file_as_each_substitution_row_says(self, command, reads, tmp_path):
+        (tmp_path / ".env").write_text("MARKER_DEF_2074=1\n", encoding="utf-8")
+        (tmp_path / "notes.txt").write_text("notes\n", encoding="utf-8")
+        proc = subprocess.run(["/bin/bash", "--noprofile", "--norc", "-c", command], cwd=str(tmp_path),
+                              capture_output=True, text=True, timeout=scaled(10),
+                              env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LC_ALL": "C"})
+        assert ("MARKER_DEF_2074" in proc.stdout) is reads
 
     # DEF-1045: a statement that opens with a quoted string is a mention when
     # nothing in the command can run it. A positive gate with two arms, each
