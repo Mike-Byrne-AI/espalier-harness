@@ -17547,8 +17547,9 @@ class TestABlockCommentIsOneBlank:
     (`_walk_powershell_spans`' ``blocks``): the pair makes each one blank in
     both halves (`_ps_blocks_as_one_blank`) and the lookback reads the window
     past them (`_ps_span_is_reparsed`'s ``blocks``). A comment the masker
-    does not open (glued to a word; inside a re-parsed string) is not in the
-    record, so DEF-2073's glued shape is not read here."""
+    does not open (glued to an argument's word; inside a re-parsed string) is
+    not in the record; a glued one PowerShell opens is, since DEF-2073
+    (`TestAGluedCommentOpens`)."""
 
     @pytest.mark.parametrize("cmd", [
         # DEF-2071: the carrier's opener a comment away from its program
@@ -17665,6 +17666,288 @@ class TestABlockCommentIsOneBlank:
         assert blocks == []
         bp._walk_powershell_spans("a <# b #> c <# d #>", None, blocks)
         assert blocks == [(2, 9), (12, 19)]
+
+    @pytest.mark.parametrize("cmd, bump", [
+        ("git reset <# c #> --hard", "_pred_discard"),
+        ("git checkout <# c #> -- .", "_pred_discard"),
+        ("git clean <# c #> -fd", "_pred_gitclean"),
+    ])
+    def test_a_commented_discard_draws_its_bump(self, tmp_path, cmd, bump):
+        """79ba0b (5), fixed on #603's lane and unpinned there: each drew no
+        bump at its base fe5b478, where the comment's words sat between the
+        verb and its flag."""
+        import sys
+        sys.path.insert(0, str(HOOKS_DIR))
+        import _speedbump as sb
+        assert getattr(sb, bump)("PowerShell", {"command": cmd}, tmp_path)
+
+    def test_a_comment_inside_a_re_parsed_string_hides_no_read(self, tmp_path):
+        """79ba0b (5): the comment is the inner program's, one blank to it."""
+        assert_hook_denied(
+            _run_ps_guard("iex 'gc <# c #> .env'", tmp_path), contains_reason="Secret-path access blocked",
+        )
+
+
+#: DEF-2073's population: every spelling Windows PowerShell 5.1's tokenizer
+#: (`[System.Management.Automation.Language.Parser]::ParseInput`, nothing
+#: run) reads with no parse error, each with the offsets where it reads a
+#: block comment, among the 175 measured on 2026-11-12 (22 parse errors left
+#: out: nothing runs there). The walk agrees on every one of these.
+_GLUED_POPULATION = (
+    ('$x<# c #>; gc y.txt', (2,)),
+    ('$x <# c #>; gc y.txt', (3,)),
+    ('${x}<# c #>; gc y.txt', (4,)),
+    ('$env:x<# c #>; gc y.txt', (6,)),
+    ('$global:x<# c #>; gc y.txt', (9,)),
+    ('$x.y<# c #>; gc y.txt', (4,)),
+    ('$x[0]<# c #>; gc y.txt', (5,)),
+    ('$_<# c #>; gc y.txt', (2,)),
+    ('$$<# c #>; gc y.txt', (2,)),
+    ('$?<# c #>; gc y.txt', (2,)),
+    ('$^<# c #>; gc y.txt', (2,)),
+    ('$x1_<# c #>; gc y.txt', (4,)),
+    ('$x = 1<# c #>; gc y.txt', (6,)),
+    ('$x=$y<# c #>; gc y.txt', (5,)),
+    ('Write-Output $x<# c #>; gc y.txt', ()),
+    ('Write-Output $env:x<# c #>; gc y.txt', ()),
+    ('Write-Output $x.y<# c #>; gc y.txt', (17,)),
+    ('Write-Output a$x<# c #>; gc y.txt', ()),
+    ('Write-Output note<# c #>; gc y.txt', ()),
+    ('Write-Output 1<# c #>; gc y.txt', ()),
+    ("Write-Output 'a'<# c #>; gc y.txt", (16,)),
+    ('Write-Output "a"<# c #>; gc y.txt', (16,)),
+    ('Write-Output (1)<# c #>; gc y.txt', (16,)),
+    ('Write-Output -x<# c #>; gc y.txt', ()),
+    ('gc -Path:<# c #> y.txt', (9,)),
+    ('gc -Path: <# c #> y.txt', (10,)),
+    ('gc -LiteralPath:<# c #> y.txt', (16,)),
+    ('gc -Path:y<# c #>; gc y.txt', ()),
+    ('gc -Path:$x<# c #>; gc y.txt', ()),
+    ('Write-Output a:<# c #>; gc y.txt', ()),
+    ('Write-Output -:<# c #>; gc y.txt', ()),
+    ('Write-Output --:<# c #>; gc y.txt', ()),
+    ('Write-Output -1:<# c #>; gc y.txt', ()),
+    ('$x:y<# c #>; gc y.txt', (4,)),
+    ('1+$x<# c #>; gc y.txt', (4,)),
+    ('$x,$y<# c #>; gc y.txt', (5,)),
+    ('$x|<# c #>gc y.txt', (3,)),
+    ('if ($x<# c #>) { gc y.txt }', (6,)),
+    ('"$x<# c #>"; gc y.txt', ()),
+    ('Write-Output $x[0]<# c #>; gc y.txt', (18,)),
+    ('Write-Output $x.y.z<# c #>; gc y.txt', (19,)),
+    ('Write-Output $x.y()<# c #>; gc y.txt', (19,)),
+    ("Write-Output a'b'<# c #>; gc y.txt", ()),
+    ("Write-Output 'a'b<# c #>; gc y.txt", ()),
+    ('Write-Output a"b"<# c #>; gc y.txt', ()),
+    ("Write-Output 'a''b'<# c #>; gc y.txt", (19,)),
+    ('[int]<# c #>; gc y.txt', (5,)),
+    ('[int]$x<# c #>; gc y.txt', (7,)),
+    ('$x = gc a<# c #>; gc y.txt', ()),
+    ('$x = $y<# c #>; gc y.txt', (7,)),
+    ('$x += $y<# c #>; gc y.txt', (8,)),
+    ('$x = (gc a)<# c #>; gc y.txt', (11,)),
+    ('& $x<# c #>; gc y.txt', ()),
+    ('. $x<# c #>; gc y.txt', ()),
+    ('gc a | % { $_<# c #> }; gc y.txt', (13,)),
+    ('Write-Output a,$x<# c #>; gc y.txt', ()),
+    ('Write-Output ($x)<# c #>; gc y.txt', (17,)),
+    ('Write-Output @x<# c #>; gc y.txt', ()),
+    ('gc -P:<# c #> y.txt', (6,)),
+    ('gc -_a:<# c #> y.txt', (7,)),
+    ('gc -?:<# c #> y.txt', (6,)),
+    ('gc -a?:<# c #> y.txt', (7,)),
+    ('gc -a.b:<# c #> y.txt', ()),
+    ("gc '-Path:'<# c #> y.txt", (11,)),
+    ('-1<# c #>; gc y.txt', (2,)),
+    ('$x=1<# c #>; gc y.txt', (4,)),
+    ('1<# c #>; gc y.txt', (1,)),
+    ('0x1<# c #>; gc y.txt', (3,)),
+    ('1kb<# c #>; gc y.txt', (3,)),
+    ('$x;$y<# c #>; gc y.txt', (5,)),
+    ('$y<# c #>; gc y.txt', (2,)),
+    ('{ $x<# c #> }; gc y.txt', (4,)),
+    ('foreach ($i in $x<# c #>) { gc y.txt }', (17,)),
+    ('$x -and $y<# c #>; gc y.txt', (10,)),
+    ('!$x<# c #>; gc y.txt', (3,)),
+    ('-not $x<# c #>; gc y.txt', (7,)),
+    ('$x.y = 1<# c #>; gc y.txt', (8,)),
+    ('$x::y<# c #>; gc y.txt', (5,)),
+    ('[x]::y<# c #>; gc y.txt', (6,)),
+    ('${a b}<# c #>; gc y.txt', (6,)),
+    ('$x:a.b<# c #>; gc y.txt', (6,)),
+    ('-join $x<# c #>; gc y.txt', (8,)),
+    ('-foo $x<# c #>; gc y.txt', ()),
+    ('-x<# c #>; gc y.txt', ()),
+    ('-bnot 1<# c #>; gc y.txt', (7,)),
+    ('[System.IO.File]<# c #>; gc y.txt', (16,)),
+    ('[string[]]$x<# c #>; gc y.txt', (12,)),
+    ('Write-Output [int]$x<# c #>; gc y.txt', ()),
+    ('Write-Output [int]<# c #>; gc y.txt', ()),
+    ('Write-Output $x::y<# c #>; gc y.txt', (18,)),
+    ('Write-Output $env:x.y<# c #>; gc y.txt', (21,)),
+    ('$x = 1 + 2<# c #>; gc y.txt', (10,)),
+    ('$x = 1.5e3<# c #>; gc y.txt', (10,)),
+    ('$x = 0xFFkb<# c #>; gc y.txt', (11,)),
+    ('$x = 1l<# c #>; gc y.txt', (7,)),
+    ('$x = .5<# c #>; gc y.txt', (7,)),
+    ('$x=1kb<# c #>; gc y.txt', (6,)),
+    ('$x = gc 1<# c #>; gc y.txt', ()),
+    ('$x = & gc $y.z<# c #>; gc y.txt', (14,)),
+    ('gc a | gc $x<# c #>; gc y.txt', ()),
+    ('$x | gc -Path:<# c #> y.txt', (14,)),
+    ('$a = 1,$x<# c #>; gc y.txt', (9,)),
+    ('$a -f $x<# c #>; gc y.txt', (8,)),
+    ('Write-Output (gc a)$x.y<# c #>; gc y.txt', (23,)),
+    ('Write-Output a$x.y<# c #>; gc y.txt', ()),
+    ('Write-Output $x[0]x<# c #>; gc y.txt', ()),
+    ("Write-Output ''<# c #>; gc y.txt", (15,)),
+    ("Write-Output a 'b'<# c #>; gc y.txt", (18,)),
+    ("'a'<# c #>; gc y.txt", (3,)),
+    ('"a"<# c #>; gc y.txt', (3,)),
+    ("$x = 'a'<# c #>; gc y.txt", (8,)),
+    ("gc -Path 'a'<# c #> y.txt", (12,)),
+    ('Write-Output "a`"b"<# c #>; gc y.txt', (19,)),
+    ('Write-Output $x.y()z<# c #>; gc y.txt', ()),
+    ('Write-Output $x.y-z<# c #>; gc y.txt', ()),
+    ('Write-Output -Path:$x<# c #>; gc y.txt', ()),
+    ('$x = $y.z<# c #>; gc y.txt', (9,)),
+    ('$x.y.z = $a[1]<# c #>; gc y.txt', (14,)),
+    ('$x[0] = 1<# c #>; gc y.txt', (9,)),
+    ('$x = -1<# c #>; gc y.txt', (7,)),
+    ('$x = !$y<# c #>; gc y.txt', (8,)),
+    ('$x = @(1)<# c #>; gc y.txt', (9,)),
+    ('$x = @{}<# c #>; gc y.txt', (8,)),
+    ("$x -replace 'a',$y<# c #>; gc y.txt", (18,)),
+    ("Write-Output $x -replace 'a',$y<# c #>; gc y.txt", ()),
+    ('1..3<# c #>; gc y.txt', (4,)),
+    ('$x..$y<# c #>; gc y.txt', (6,)),
+    ('.5<# c #>; gc y.txt', (2,)),
+    ('. $x.y<# c #>; gc y.txt', (6,)),
+    ('-foo $x.y<# c #>; gc y.txt', (9,)),
+    ('-split $x<# c #>; gc y.txt', (9,)),
+    ('<# a #> $x<# c #>; gc y.txt', (0, 10)),
+    ('<# a #>$x<# c #>; gc y.txt', (0, 9)),
+    ('Write-Output <# a #> $x<# c #>; gc y.txt', (13,)),
+    ('$x <# a #> = $y<# c #>; gc y.txt', (3, 15)),
+    ("gc 'a'<# c #>'b'; gc y.txt", (6,)),
+    ("Write-Output 'a'<# c #><# d #>; gc y.txt", (16, 23)),
+    ('Write-Output "a"x"b"<# c #>; gc y.txt', ()),
+    ('Write-Output $x.y<# c #>x; gc y.txt', (17,)),
+    ('Write-Output $x.y z $w.v<# c #>; gc y.txt', (24,)),
+    ('Write-Output $x.y,$w.v<# c #>; gc y.txt', (22,)),
+    ('Write-Output -Path: $x.y<# c #>; gc y.txt', (24,)),
+    ('Get-Item -Path:<# c #>y.txt', (15,)),
+    ('Get-Item -Path:<# c #><# d #>y.txt', (15, 22)),
+    ('$x = gc -Path:<# c #> y.txt', (14,)),
+    ('$x = (gc -Path:<# c #> y.txt)', (15,)),
+    ('[int]$x = 1<# c #>; gc y.txt', (11,)),
+    ('$x[$y.z]<# c #>; gc y.txt', (8,)),
+    ('$x = "a $y"<# c #>; gc y.txt', (11,)),
+)
+
+#: Where the walk and 5.1 still differ: (spelling, 5.1's offsets, the walk's).
+#: The braced name is read wider, on main as here (the declared limit beside
+#: `${<#}`); the other three are unusual spellings left narrower, inside the
+#: coverage contract (40ec7f).
+_GLUED_RESIDUE = (
+    ('Write-Output ${x}<# c #>; gc y.txt', (), (17,)),
+    ('$a:b:c<# c #>; gc y.txt', (6,), ()),
+    ('gc -a`:<# c #> y.txt', (7,), ()),
+    ("$x = [int]'1'<# c #>; gc y.txt", (13,), ()),
+)
+
+
+class TestAGluedCommentOpens:
+    """DEF-2073 (assign 263556, with 79ba0b's residue): the masker left every
+    `<#` glued to the character before it unopened, the rule
+    `_PS_TOKEN_BOUNDARY` keeps for an argument (`Write-Output note<# x`), so
+    `$x<# c #>; Get-Content .env` read as `$x<# c #` and a line comment: the
+    `;` after the close was gone and no statement opened. Windows PowerShell
+    5.1 runs the read (driven on a scratch file, 2026-11-12, with the colon
+    switch `Get-Content -Path:<# c #> <file>` and the string `Write-Output
+    'a'<# c #>; Get-Content <file>`), and prints `<#` and `c` for `Write-Output
+    $x<# c #>; Get-Content <file>`, which reads nothing. The walk now asks
+    `_ps_glued_opener_opens`: the mode of the statement the token sits in, and
+    the token's shape."""
+
+    def test_the_walk_reads_each_comment_powershell_reads(self):
+        bp = _bash_patterns_module()
+        off = []
+        for cmd, starts in _GLUED_POPULATION:
+            blocks: list = []
+            bp._walk_powershell_spans(cmd, None, blocks)
+            if tuple(a for a, _ in blocks) != starts:
+                off.append((cmd, starts, tuple(a for a, _ in blocks)))
+        assert not off, off
+
+    def test_the_residue_is_where_the_walk_and_powershell_still_differ(self):
+        bp = _bash_patterns_module()
+        for cmd, _ps, walk in _GLUED_RESIDUE:
+            blocks: list = []
+            bp._walk_powershell_spans(cmd, None, blocks)
+            assert tuple(a for a, _ in blocks) == walk, cmd
+
+    @pytest.mark.parametrize("cmd", [
+        "$x<# c #>; Get-Content .env",
+        "$env:USERPROFILE<# c #>; Get-Content .env",
+        "$x = 1<# c #>; gc .env",
+        "Write-Output $x.Name<# c #>; Get-Content .env",
+        "Write-Output 'a'<# c #>; Get-Content .env",
+        "Get-Content -Path:<# c #> .env",
+        "$x | gc -LiteralPath:<# c #> .env",
+        "[int]$x<# c #>; gc .env",
+        "if ($x<# c #>) { Get-Content .env }",
+    ])
+    def test_a_read_past_a_glued_comment_is_refused(self, tmp_path, cmd):
+        assert_hook_denied(_run_ps_guard(cmd, tmp_path), contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("cmd", [
+        # absorbed into an argument on 5.1: the `;` is live, the delete runs
+        "Write-Output $x<# ; Remove-Item C:\\ -Recurse -Force #>",
+        "& $x<# ; Remove-Item C:\\ -Recurse -Force #>",
+        "gc -Path:y<# ; Remove-Item C:\\ -Recurse -Force #>",
+        "-foo $x<# ; Remove-Item C:\\ -Recurse -Force #>",
+    ])
+    def test_an_opener_powershell_absorbs_hides_no_delete(self, tmp_path, cmd):
+        assert _delete_verdict(_run_ps_guard(cmd, tmp_path)) == "wall"
+
+    def test_a_line_comment_powershell_reads_stays_allowed(self, tmp_path):
+        # absorbed: `#>; Get-Content .env` is a line comment on 5.1
+        assert_hook_allowed(_run_ps_guard("Write-Output $x<# c #>; Get-Content .env", tmp_path))
+
+    def test_a_backtick_escaped_blank_opens_a_comment_powershell_does_not(self):
+        """Declared limit (79ba0b (2)): 5.1 reads no comment here, so its
+        `;` is live; the walk opens one after the escaped blank."""
+        bp = _bash_patterns_module()
+        import sys
+        sys.path.insert(0, str(HOOKS_DIR))
+        import write_guard as wg
+        cmd = "Write-Output a` <# ; Get-Content .env #>"
+        blocks: list = []
+        bp._walk_powershell_spans(cmd, None, blocks)
+        assert [a for a, _ in blocks] == [cmd.index("<#")]
+        assert ".env" not in wg._ps_secret_read_targets(cmd)
+
+    def test_a_braced_names_opener_opens_a_comment_powershell_does_not(self):
+        """Declared limit (79ba0b (2)): `${<#}` is a variable's name on 5.1."""
+        bp = _bash_patterns_module()
+        import sys
+        sys.path.insert(0, str(HOOKS_DIR))
+        import write_guard as wg
+        cmd = "${<#}; Get-Content .env #>"
+        blocks: list = []
+        bp._walk_powershell_spans(cmd, None, blocks)
+        assert [a for a, _ in blocks] == [2]
+        assert ".env" not in wg._ps_secret_read_targets(cmd)
+
+    def test_an_opener_after_stop_parsing_opens_a_comment_powershell_does_not(self):
+        """Declared limit (79ba0b (2)): past `--%` 5.1 hands the line to the
+        native program as it is typed, so no comment opens there."""
+        bp = _bash_patterns_module()
+        cmd = "cmd /c --% echo <# & type .env #>"
+        blocks: list = []
+        bp._walk_powershell_spans(cmd, None, blocks)
+        assert [a for a, _ in blocks] == [cmd.index("<#")]
 
 
 class TestShellOutReader:

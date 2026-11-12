@@ -947,8 +947,7 @@ attacker — a self-user won't attack their own work.
 `tools/cc/hooks/_hook_utils.py` as yours and regenerates its siblings, which may
 import names the kept copy predates. Until 2026-10-10 the hook then died at its
 module top with exit 1, which Claude Code reads as a non-blocking error: every
-tool call proceeded with no guard at all (`DEF-1176`, measured on a Node adopter
-tree). Now the sibling imports and every helper name the hook's import graph
+tool call proceeded with no guard at all (measured on a Node adopter tree). Now the sibling imports and every helper name the hook's import graph
 takes are read under one module-top guard, and a failure there is a structured
 deny with a `pretooluse_blocked_internal_error` record; every call is refused
 until the cause is repaired. The deny names the file under `tools/cc/` that
@@ -1685,7 +1684,7 @@ it is still read as a statement boundary -- so a message variable DECLARED
 with one of those, quoting a delete with a separator in it, is refused where
 the same message stored by a bare assignment is data. Not a simple oversight:
 under an array or an integer attribute (`-a`, `-i`) bash evaluates such a
-value and a substitution inside it runs (measured on bash 3.2, 2026-09-19), so
+value and a substitution inside it runs (on bash 3.2, driven 2026-09-19), so
 the relief a bare assignment gets cannot be handed to these builtins by name
 alone. A name given an evaluating attribute EARLIER in the command has the
 same effect on a later bare assignment to it, and is relieved today: the
@@ -1907,7 +1906,7 @@ aliases, a comma list of sources and a `-PSPath` source included)
 are caught on that tool as the Bash forms are on Bash; a bare `icacls PATH` or `attrib PATH` displays and
 is a read, and a bare or `&`-called quoted executable path before any of
 these heads (`& "C:\Windows\System32\icacls.exe" <hook> /deny ...`) is the
-head, behind either wrapper quote kind -- and since DEF-791 (2026-09-13) the
+head, behind either wrapper quote kind -- and since 2026-09-13 the
 call operator with a quoted command name (`& 'Set-Content' <hook> x`, `&
 "git" reset --hard`, `& 'C:\Program Files\Git\cmd\git.exe' reset --hard`) is
 read by every PowerShell verb arm and by the git discard bump, not only by
@@ -2155,6 +2154,27 @@ spellings of them are work:
   reader unless a real session records the slip (the last bullet's rule). One
   level of a program handed to a shell as a quoted string (`bash -c '...'`,
   `pwsh -Command "..."`) is not this shape; it stays in the contract above.
+- **The PowerShell comment reader, by ruling (2026-11-12).** A `<#` block
+  comment is read where PowerShell opens one, a `<#` glued to the token
+  before it included where that token lets PowerShell open it (a variable in
+  an expression, a variable's member, a colon-bound switch, a string that
+  starts its token), and three unusual spellings are read as a comment
+  PowerShell does not open, so a statement inside it goes unread. An opener
+  after a backtick-escaped blank (``Write-Output a` <# ; ... #>``) is a
+  declared limit, pinned by
+  `tests/test_write_guard.py::TestAGluedCommentOpens::test_a_backtick_escaped_blank_opens_a_comment_powershell_does_not`.
+  An opener inside a braced variable name (`${<#}; ... #>`) is a declared
+  limit, pinned by
+  `tests/test_write_guard.py::TestAGluedCommentOpens::test_a_braced_names_opener_opens_a_comment_powershell_does_not`.
+  An opener after the stop-parsing token (`cmd /c --% echo <# & ... #>`),
+  whose line PowerShell hands the native program as typed, is a declared
+  limit, pinned by
+  `tests/test_write_guard.py::TestAGluedCommentOpens::test_an_opener_after_stop_parsing_opens_a_comment_powershell_does_not`.
+  A run of blanks or comments thousands long costs the PowerShell readers
+  time that grows with its square, a declared limit under the timeout
+  sentence above: such a flood before a re-parsed string is refused, by the
+  wall or the time budget, pinned by
+  `tests/test_write_guard.py::TestABlockCommentIsOneBlank::test_a_comment_flood_before_a_carrier_is_refused`.
 - The protected-zone write is not one of the three jobs. Its path check lets an
   unresolvable operand through, and the after-check reports the write when it
   lands, for the zones it watches
@@ -2553,7 +2573,7 @@ block, or `[reflect] clean -- 24 files, surface coherent` on a clean pass:
 The reflect findings are informational — they surface drift, they don't
 block work.
 
-**The plan-mode bridge (INV-8).** The same `*` matcher makes this the hook
+**The plan-mode bridge.** The same `*` matcher makes this the hook
 that sees an APPROVED `ExitPlanMode`: Claude Code fires PostToolUse for that
 tool only once the user approves the plan (a rejection fails the tool and
 reaches PostToolUseFailure, never this hook). On an approval the hook writes

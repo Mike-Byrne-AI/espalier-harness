@@ -279,7 +279,14 @@ class TestTheSentenceSplitter:
 #: with it; the PowerShell literal piped into the cmdlet joined the existing
 #: carrier sentence beside the single echoed path (5581ae), so it adds none.
 #: Both landed on 2026-11-10: 31 - 1 = 30, re-derived from the merged HOOKS.md.
-_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 30, "docs/SHARP_EDGES.md": 5}
+#: HOOKS 30 -> 34 on 2026-11-12 (DEF-2073's lane, air's rulings 79ba0b and
+#: 40ec7f): the PowerShell comment reader's three spellings read wider than the
+#: language (a backtick-escaped blank, a braced name, past `--%`) and the
+#: readers' cost on a long run of blanks, each its own sentence with its row in
+#: `TestAGluedCommentOpens` or `TestABlockCommentIsOneBlank`; the four cites'
+#: hits are paid by three internal ids and a dated "measured" dropped
+#: elsewhere in HOOKS.md, so the seeded docs stay at the ceiling.
+_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 34, "docs/SHARP_EDGES.md": 5}
 
 
 def test_the_census_is_the_pinned_population():

@@ -4631,9 +4631,129 @@ _PS_INERTABLE_SYNTAX = frozenset(";|(){}&=<>\n\r")
 #: Measured against pwsh 7.6.5 by tokenising `Write-Output note<CH><# ... #>`
 #: for every candidate: 17 of 27 characters leave the opener glued to the
 #: argument, where it opens nothing. Only whitespace and true delimiters start
-#: a token. Being NARROWER than the language here costs friction; being wider
-#: blanks live code, and that is the only one of the two that is a fail-open.
+#: a token. Being wider than the language here blanks live code (the comment's
+#: body, separators and all); being narrower is a fail-open too wherever the
+#: comment's `#>` follows a blank, since that `#` then opens a line comment
+#: that blanks the statements after it (DEF-2073: `$x<# c #>; Get-Content
+#: .env` read as `$x<# c #   ...`). `_ps_glued_opener_opens` reads the glued
+#: openers PowerShell opens after all.
 _PS_TOKEN_BOUNDARY = frozenset(" \t\n\r;|&(){},")
+
+#: DEF-2073: the glued openers PowerShell opens. Measured on Windows
+#: PowerShell 5.1's own tokenizer (`[Parser]::ParseInput`, 175 spellings,
+#: none run): in EXPRESSION mode a `<#` opens after any token (`$x<# c #>; gc
+#: y` is a variable, a comment and a second statement), and in ARGUMENT mode
+#: only after a token the argument reader does not glue on: a variable with a
+#: member or an index (`Write-Output $x.y<#`, `$x[0]<#`), a colon-bound
+#: switch (`gc -Path:<# c #> y`, 79ba0b's residue) and a string that starts
+#: its token (`Write-Output 'a'<#`); after a bare variable, a number or a word
+#: there it is absorbed into the argument (`Write-Output $x<#`, `-x<#`,
+#: `note<#`), and so is it after `-a.b:` and in `$x -eq:<#`. Each arm below
+#: is a shape 5.1 opens; one they do not name stays unopened, the side this
+#: rule was on before (`tests/test_write_guard.py::TestAGluedCommentOpens`
+#: holds the population).
+_PS_GLUED_VARIABLE = r"\$(?:\{[^{}]*\}|[$?^]|(?:[A-Za-z_]\w*:)?\w+)"
+_PS_GLUED_MEMBER = r"(?:\.[A-Za-z_]\w*|\[[^\[\]]*\]|::\w+)"
+#: In expression mode: a variable (members allowed), a type literal or a
+#: number ending the token, at its start or after an operator or a cast glued
+#: before it (`$x=1<#`, `[int]$x<#`).
+_PS_GLUED_EXPRESSION_END = (
+    r"(?:^|(?<=[!+\-*/%=,.\]]))(?:" + _PS_GLUED_VARIABLE + _PS_GLUED_MEMBER + r"*"
+    r"|(?:\[[\w.]+(?:\[\])?\])+" + _PS_GLUED_MEMBER + r"*"
+    r"|-?(?:0[xX][0-9a-fA-F]+|(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?)"
+    r"[lLdD]?(?:[kKmMgGtTpP][bB])?)$"
+)
+#: In argument mode: the whole token is a variable with a member, or a switch
+#: bound by its colon.
+_PS_GLUED_ARGUMENT_TOKEN = (
+    r"(?:" + _PS_GLUED_VARIABLE + _PS_GLUED_MEMBER + r"+|-[A-Za-z_?][\w?]*:)"
+)
+#: An assignment's left side, whose right side is read for its own mode
+#: (`$x = $y<#` opens, `$x = gc a<#` does not).
+_PS_GLUED_ASSIGNMENT = _PS_GLUED_VARIABLE + _PS_GLUED_MEMBER + r"*[ \t]*[-+*/%]?=(?!=)[ \t]*"
+#: A statement whose first character is one of these is an expression; one
+#: that opens on `-` or `.` is one where a number or a unary operator follows
+#: (`-1`, `.5`, `-not $x`), and a command otherwise (`-foo $x<#` and the
+#: dot-source `. $x<#` absorb it).
+_PS_EXPRESSION_HEAD = frozenset("$0123456789'\"[(!@")
+_PS_UNARY_HEAD = r"(?:-(?:[\d.]|(?:not|bnot|join|split)(?![\w-]))|\.\d)"
+#: The characters that end the statement before a token (`&&` too, below; a
+#: lone `&` is the call operator, whose statement is a command).
+_PS_STATEMENT_STOP = frozenset(";|({}\n\r")
+
+
+def _ps_glued_opener_opens(
+    s: str,
+    out: "list[str]",
+    i: int,
+    block_end: int,
+    quote_open: int,
+    quote_end: int,
+    blocks: "list[tuple[int, int]] | None",
+    memo: "list[int]",
+) -> bool:
+    """Whether the ``<#`` at ``i``, glued to the character before it, opens a
+    block comment (DEF-2073; the measurement is above `_PS_GLUED_VARIABLE`).
+
+    ``quote_open`` and ``quote_end`` are the last quoted span the walk stepped
+    over, its opening quote's offset and the offset past its close (-1 before
+    any); ``out`` is the walk's mask, final before ``i``, where a separator
+    inside a string is a blank; and ``memo`` holds the token start and the
+    statement start this walk last found, with the offsets they were found
+    from, so a run of glued openers on one statement reads each character
+    once (`[token from, token start, statement from, statement start]`, all
+    -1 at the walk's start)."""
+    if i == quote_end:
+        q = quote_open
+        return q == 0 or q == block_end or s[q - 1] in _PS_TOKEN_BOUNDARY
+    # The token: back to a boundary character or the last comment's close.
+    t, k = -1, i - 1
+    floor = max(block_end, memo[0], 0)
+    while k >= floor:
+        if s[k] in _PS_TOKEN_BOUNDARY:
+            t = k + 1
+            break
+        k -= 1
+    if t < 0:
+        t = block_end if floor == block_end or memo[1] < 0 else memo[1]
+        t = max(t, 0)
+    memo[0], memo[1] = i, t
+    # The statement: back to a separator on the mask.
+    stmt, k = -1, t - 1
+    floor = max(memo[2], 0)
+    while k >= floor:
+        ch = out[k]
+        if ch in _PS_STATEMENT_STOP or (ch == "&" and k > 0 and out[k - 1] == "&"):
+            stmt = k + 1
+            break
+        k -= 1
+    if stmt < 0:
+        stmt = memo[3] if memo[2] >= 0 and memo[3] >= 0 else 0
+    memo[2], memo[3] = t, stmt
+    # Its head, past blanks, the comments read, and an assignment's left side.
+    p = stmt
+    assignment = re.compile(_PS_GLUED_ASSIGNMENT)
+    while p < t:
+        if s[p] in " \t":
+            p += 1
+            continue
+        if blocks and s.startswith("<#", p):
+            at = bisect.bisect_left(blocks, (p,))
+            if at < len(blocks) and blocks[at][0] == p:
+                p = blocks[at][1]
+                continue
+        m = assignment.match(s, p, t)
+        if m is not None and m.end() > p:
+            p = m.end()
+            continue
+        break
+    head = s[p] if p < len(s) else ""
+    tok = s[t:i]
+    if head in _PS_EXPRESSION_HEAD or (
+        head in ("-", ".") and re.compile(_PS_UNARY_HEAD, re.IGNORECASE).match(s, p) is not None
+    ):
+        return re.search(_PS_GLUED_EXPRESSION_END, tok) is not None
+    return re.fullmatch(_PS_GLUED_ARGUMENT_TOKEN, tok) is not None
 
 
 def _ps_at_line_start(s: str, i: int) -> bool:
@@ -5118,6 +5238,10 @@ def _walk_powershell_spans(
     #: after one ran). Read as live text, the second comment's `>` blanked
     #: the command-position characters after it.
     block_end = -1
+    #: The last quoted span stepped over (its opening quote, the offset past
+    #: its close) and `_ps_glued_opener_opens`' memo, for a glued opener.
+    quote_open = quote_end = -1
+    glued_memo = [-1, -1, -1, -1]
     while i < n:
         c = s[i]
 
@@ -5198,6 +5322,7 @@ def _walk_powershell_spans(
                 _ps_blank_literal(s, out, i + 1, j)
             if spans is not None:
                 spans.append((i, j, "'"))
+            quote_open, quote_end = i, j + 1
             i = j + 1
             continue
 
@@ -5215,6 +5340,7 @@ def _walk_powershell_spans(
             )
             if spans is not None:
                 spans.append((i, j, '"'))
+            quote_open, quote_end = i, j + 1
             i = j + 1
             continue
 
@@ -5222,7 +5348,15 @@ def _walk_powershell_spans(
             c == "<"
             and i + 1 < n
             and s[i + 1] == "#"
-            and (i == 0 or i == block_end or s[i - 1] in _PS_TOKEN_BOUNDARY)
+            and (
+                i == 0
+                or i == block_end
+                or s[i - 1] in _PS_TOKEN_BOUNDARY
+                # glued: opened where PowerShell opens it (DEF-2073)
+                or _ps_glued_opener_opens(
+                    s, out, i, block_end, quote_open, quote_end, read, glued_memo,
+                )
+            )
         ):
             # Block comments do NOT nest in PowerShell -- verified: the first
             # closing marker ends the comment, and code after it runs.
