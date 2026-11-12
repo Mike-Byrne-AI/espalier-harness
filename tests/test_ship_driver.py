@@ -3106,11 +3106,15 @@ class TestTheAutoMergeVerb:
         assert "#7 is a draft" in str(stop.value) and "gh pr ready 7" in str(stop.value)
         assert spawns.count(("gh", "pr", "merge")) == 0
 
-    def test_a_head_the_pull_request_does_not_have_is_refused_push_first(self, ship, tmp_path):
+    def test_a_head_the_pull_request_does_not_have_is_refused_push_first(self, ship, tmp_path, monkeypatch):
+        """rebind's push first, word for word: the push it names reads
+        origin's copy first (_ahead_words)."""
+        monkeypatch.setattr(ship, "_ahead_words", lambda branch, cwd: f"AHEAD-WORDS for {branch}")
         spawns = _arm(ship, _auto_merge_answers(tmp_path, pr=_pr(armed=False, head="f" * 40)))
         with pytest.raises(ship.Refused) as stop:
             ship.auto_merge()
-        assert f"push first: HEAD {SHORT} is not #7's head fffffff" in str(stop.value)
+        assert f"push first: HEAD {SHORT} is not #7's head fffffff; before the push, AHEAD-WORDS for lane/x" \
+            in str(stop.value)
         assert spawns.count(("gh", "pr", "merge")) == 0
 
     def test_a_lane_holding_an_unfinished_handoffs_commit_is_refused(self, ship, tmp_path):

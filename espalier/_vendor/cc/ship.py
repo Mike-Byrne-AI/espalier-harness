@@ -3753,7 +3753,11 @@ def auto_merge(dry_run: bool = False, base_red_ruled: str | None = None) -> int:
     _refuse_an_unfinished_lane(root, f"origin/{named}" if named else (_base_ref_offline(root) or "origin/main"))
     sha = head_sha()
     if not str(pr.get("headRefOid", "")).startswith(sha):
-        raise Refused(f"push first: HEAD {sha[:7]} is not #{number}'s head {str(pr.get('headRefOid', ''))[:7]}")
+        # rebind's push first, word for word: where origin's copy holds commits
+        # HEAD lacks, a plain push is rejected, so the words say what goes first.
+        ahead = _ahead_words(branch, str(root))
+        raise Refused(f"push first: HEAD {sha[:7]} is not #{number}'s head {str(pr.get('headRefOid', ''))[:7]}"
+                      + (f"; before the push, {ahead}" if ahead else ""))
     refusal, ruling = red_base_verdict(base, branch, _open_prs(str(root)) or [], str(root),
                                        ruled=base_red_ruled, root=root, verbs=("auto-merge",))
     if refusal:
