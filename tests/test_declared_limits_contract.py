@@ -65,7 +65,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DECLARING_DOCS = ("docs/HOOKS.md", "docs/SHARP_EDGES.md")
 
 #: The declaration key. Narrow on purpose -- see the module docstring.
-_PHRASE = re.compile(r"declared[ -]limits?|\(declared\)|declared a (?:\w+ )?limit", re.IGNORECASE)
+#: ``declared false allow`` / ``deny`` joined 2026-11-12 (DEF-2074's review): two
+#: HOOKS.md sentences spelled a limit that way, cited no pin, and the key missed both.
+_PHRASE = re.compile(r"declared[ -]limits?|\(declared\)|declared a (?:\w+ )?limit|declared false (?:allow|deny)",
+                     re.IGNORECASE)
 #: A backticked node id under tests/: the file, then one or more ``::`` segments
 #: (a class, a nested class, a function). No brackets: parametrised rows are
 #: cited by their function.
@@ -167,6 +170,17 @@ class TestTheSentenceSplitter:
         got = declared_limit_sentences(para)
         assert len(got) == 1, got
         assert cited_node_ids(got[0]) == [("tests/test_write_guard.py", ("TestX", "test_y"))]
+
+    def test_a_declared_false_allow_or_deny_is_a_declaring_sentence(self):
+        # DEF-2074's review: the docs spell a limit "a declared false allow"
+        # (or deny), which the key missed, so two such sentences cited no pin.
+        para = (
+            "So `x` is a declared false allow, pinned by `tests/test_a.py::test_b`.\n"
+            "And `y` is refused, a declared false deny. Plain prose follows."
+        )
+        got = declared_limit_sentences(para)
+        assert len(got) == 2, got
+        assert cited_node_ids(got[0]) and not cited_node_ids(got[1]), got
 
     def test_a_declaring_sentence_ending_in_a_backtick_is_seen(self):
         para = (
@@ -279,14 +293,16 @@ class TestTheSentenceSplitter:
 #: with it; the PowerShell literal piped into the cmdlet joined the existing
 #: carrier sentence beside the single echoed path (5581ae), so it adds none.
 #: Both landed on 2026-11-10: 31 - 1 = 30, re-derived from the merged HOOKS.md.
-#: HOOKS 30 -> 34 on 2026-11-12 (DEF-2073's lane, air's rulings 79ba0b and
-#: 40ec7f): the PowerShell comment reader's three spellings read wider than the
-#: language (a backtick-escaped blank, a braced name, past `--%`) and the
-#: readers' cost on a long run of blanks, each its own sentence with its row in
-#: `TestAGluedCommentOpens` or `TestABlockCommentIsOneBlank`; the four cites'
-#: hits are paid by three internal ids and a dated "measured" dropped
-#: elsewhere in HOOKS.md, so the seeded docs stay at the ceiling.
-_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 34, "docs/SHARP_EDGES.md": 5}
+#: HOOKS 32 -> 36 on 2026-11-12 (DEF-2073's lane, air's rulings 79ba0b and
+#: 40ec7f), re-derived from the HOOKS.md merged with main's 32 (+2 on
+#: 2026-11-12: the false allow/deny key): the PowerShell comment reader's three
+#: spellings read wider than the language (a backtick-escaped blank, a braced
+#: name, past `--%`) and the readers' cost on a long run of blanks, each its
+#: own sentence with its row in `TestAGluedCommentOpens` or
+#: `TestABlockCommentIsOneBlank`; the four cites' hits are paid by two internal
+#: ids and two dated "measured"s dropped elsewhere in HOOKS.md, so the seeded
+#: docs stay at the ceiling.
+_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 36, "docs/SHARP_EDGES.md": 5}
 
 
 def test_the_census_is_the_pinned_population():
