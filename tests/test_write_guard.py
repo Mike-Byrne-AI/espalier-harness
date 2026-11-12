@@ -13423,6 +13423,222 @@ class TestSecretPathAccess:
                               env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LC_ALL": "C"})
         assert ("MARKER_DEF_2074" in proc.stdout) is reads
 
+    # DEF-5107: both legs ended a read verb's operands at the first redirect
+    # spelled from `>`, and read one numbered by its stream (`2>`, `*>`) as an
+    # operand, its target too. Bash and PowerShell take each redirect and its
+    # target out wherever they stand and read every operand around them, so a
+    # redirect before the operand hid the read, and a stream's redirect after
+    # a copier's destination read the destination as a source. Three spellings
+    # reached the same through the cut: a `>` glued behind a word was never
+    # cut off, the Bash statement cut read the `|` of `>|` as a pipe, and the
+    # PowerShell cut read the `&` of `2>&1` as its call operator. Every read
+    # row allowed at main 61e0ab4 but the three the failure-mode review found
+    # the lane's first cut allowing (refused at main too), every relief row
+    # was refused there but the labelled controls, and the controls kept
+    # their verdicts. The named users: an operator whose agent
+    # runs the project-setup idiom `cp .env.example .env 2>/dev/null` and is
+    # refused a copy that reads no secret, and one whose agent prints a dotenv
+    # with the redirect first and meets no refusal, where `cat .env > out.txt`
+    # is refused.
+    _REDIRECT_FIRST_BASH_READS = (
+        "cat > out.txt .env",
+        "cat >out.txt .env",
+        "cat >/dev/stderr .env",
+        "cat >> out.txt .env",
+        "cat >| out.txt .env",
+        "cat >&2 .env",
+        "cat &> out.txt .env",
+        "cat >& out.txt .env",
+        "cat 2>/dev/null >out.txt .env",
+        "cat > 'out file.txt' .env",          # a quoted target is one word
+        "head -1 > out.txt .env",
+        "sed -n p > out.txt .env",
+        "cp > out.txt .env copy.txt",         # the copy reads its first operand
+        "if true; then cat > out.txt .env; fi",
+        "cat .env>out.txt",                   # a `>` glued behind the operand
+        "cat>out.txt .env",                   # ... and behind the verb
+        "sudo cat > out.txt .env",            # hook only: the oracle never runs sudo
+        # refused at main too: an input redirect glued behind a stream's target
+        # or a duplication, and an arithmetic comparison, are not a target's end
+        "cat 2>err.txt<.env",
+        "cat >&2<.env",
+        "head -n $((3>1?1:2)) .env",
+    )
+    _REDIRECT_FIRST_BASH_NO_READS = (
+        "cp .env.example .env 2>/dev/null",   # the copy reads the template alone
+        "cp .env.example .env 2>/dev/null || true",
+        "cp -n .env.example .env 2>&1",
+        "cat notes.txt 2> .env.err",          # a stream's target is a write
+        "cat notes.txt 1> .env.out",
+        "cat notes.txt > .env.out",           # a control: allowed at main
+        "cat notes.txt>.env.out",             # a control: allowed at main
+        # what the limit below keeps: a substitution's words, as the target,
+        # are never read (a control: allowed at main)
+        "cat notes.txt > $(echo .env.out)",
+    )
+    # Where the leg keeps main's stop: a statement holding a substitution
+    # (`$(`, a backtick, `>(`), which the word split cuts into several words,
+    # so a redirect's target there may be more than the one word it takes. A
+    # redirect spelled from `>` ends the operands in such a statement, as it
+    # ended every one at main, and bash reads the file under each row: a
+    # declared false allow (docs/HOOKS.md, the secret-read paragraph). The day
+    # a lane reads them, this row reds and the sentence is rewritten.
+    _REDIRECT_FIRST_BASH_LIMITS = (
+        "cat > $(echo out.txt) .env",
+        "cat > `echo out.txt` .env",
+        "cat <(echo x) > out.txt .env",
+        "cat > out\\ file.txt .env",           # a backslash: the quote-blind split
+        "cat > >(cat > out.txt) .env",        # hook only: the inner cat outlives the shell
+    )
+    _REDIRECT_FIRST_PS_READS = (
+        "Get-Content > out.txt .env",
+        "Get-Content >out.txt .env",
+        "Get-Content >> out.txt .env",
+        "Get-Content 2>&1 .env",
+        "Get-Content *>&1 .env",
+        "Get-Content > out.txt -Path .env",
+        "gc > out.txt .env",
+        "Copy-Item > log.txt .env copy.txt",
+    )
+    _REDIRECT_FIRST_PS_NO_READS = (
+        "Copy-Item .env.example .env 2>$null",
+        "Get-Content notes.txt 2> .env.err",
+        "Get-Content notes.txt *> .env.out",
+        "Get-Content notes.txt > .env.out",   # a control: allowed at main
+        # a control: allowed at main. pwsh reads a `>` glued behind a word as
+        # part of the path (driven: "Cannot find path '.env>out.txt'"), so the
+        # leg cuts it on Bash alone
+        "Get-Content .env>out.txt",
+        # a control: allowed at main. `<` is reserved on PowerShell (a parse
+        # error), so the leg drops the source the shared predicate reads
+        "Get-Content < .env",
+        'Get-Content notes.txt > $(".env.out")',   # a control: the limit's other half
+    )
+    # The PowerShell twin of the limit above: a `$(` or `@(` subexpression,
+    # or a backtick escape (the quote-blind split), ends the operands there.
+    _REDIRECT_FIRST_PS_LIMITS = (
+        'Get-Content > $("out.txt") .env',
+        'Get-Content > @("out.txt") .env',
+        "Get-Content > out`.txt .env",
+    )
+
+    @pytest.mark.parametrize("tool, command", [
+        *(("Bash", c) for c in _REDIRECT_FIRST_BASH_READS),
+        *(("PowerShell", c) for c in _REDIRECT_FIRST_PS_READS),
+    ])
+    def test_a_read_around_a_redirect_is_refused(self, tool, command, tmp_path):
+        assert_hook_denied(run_guard_tool(tool, {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("tool, command", [
+        *(("Bash", c) for c in _REDIRECT_FIRST_BASH_NO_READS),
+        *(("PowerShell", c) for c in _REDIRECT_FIRST_PS_NO_READS),
+    ])
+    def test_a_redirect_target_is_never_read(self, tool, command, tmp_path):
+        assert_hook_allowed(run_guard_tool(tool, {"command": command}, tmp_path))
+
+    @pytest.mark.parametrize("tool, command", [
+        ("Bash", "cat .env > out.txt"),
+        ("Bash", "cat 2>&1 .env"),
+        ("Bash", "cat .env 2>/dev/null"),
+        ("Bash", "cat > out.txt < .env"),
+        ("Bash", "cat $(echo notes.txt) .env > out.txt"),
+        # a stream's redirect never ends the operands, a substitution beside it or not
+        ("Bash", "cat 2>/dev/null .env $(echo notes.txt)"),
+        ("PowerShell", "Get-Content .env > out.txt"),
+        ("PowerShell", "Get-Content .env 2>&1"),
+        ("PowerShell", "Get-Content 2> err.txt .env"),
+    ])
+    def test_the_redirect_controls_stay_refused(self, tool, command, tmp_path):
+        assert_hook_denied(run_guard_tool(tool, {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("tool, command", [
+        *(("Bash", c) for c in _REDIRECT_FIRST_BASH_LIMITS),
+        *(("PowerShell", c) for c in _REDIRECT_FIRST_PS_LIMITS),
+    ])
+    def test_a_redirect_into_a_substitution_is_a_declared_limit(self, tool, command, tmp_path):
+        assert_hook_allowed(run_guard_tool(tool, {"command": command}, tmp_path))
+
+    # Each branch of the Bash leg's glued cut keeps a row: a verdict cannot
+    # see the stream-number or the operator-run branch (the piece they keep
+    # whole names no secret either way), so the split is read directly.
+    @pytest.mark.parametrize("raw, pieces", [
+        ("cat<.env", ["cat", "<.env"]),
+        ("done<.env", ["done", "<.env"]),
+        (".env>out", [".env", ">out"]),
+        ("cat>out", ["cat", ">out"]),
+        ("cat<.env>out", ["cat", "<.env", ">out"]),   # each glued redirect its own word
+        ("a>>b", ["a", ">>b"]),                       # an operator run is one cut
+        ("x2>y", ["x2", ">y"]),                       # digits behind a word are the word's
+        ("*>x", ["*", ">x"]),                         # a glob, then the redirect
+        ("2>x", ["2>x"]),                             # a stream number opens the redirect
+        ("0<x", ["0<x"]),
+        ("2>x<.env", ["2>x", "<.env"]),               # ... and the scan goes on past it
+        (">x<.env", [">x", "<.env"]),
+        (">x", [">x"]),                               # a redirect word already
+        ("cat<<EOF", ["cat<<EOF"]),                   # a heredoc, as before `>` joined
+        ("a<>b", ["a<>b"]),                           # a read-write open
+        ("ls", ["ls"]),
+    ])
+    def test_the_glued_cut_takes_each_redirect_off_its_word(self, raw, pieces):
+        got = _load_write_guard()._split_glued_redirects([(raw, raw)])
+        assert [r for r, _ in got] == pieces
+        assert _load_write_guard()._split_glued_redirects([(f"'{raw}'", raw)]) == [(f"'{raw}'", raw)]
+
+    @staticmethod
+    def _plant_the_redirect_folder(folder: Path) -> None:
+        (folder / ".env").write_text("MARKER_DEF_5107=1\n", encoding="utf-8")
+        (folder / ".env.example").write_text("EXAMPLE=1\n", encoding="utf-8")
+        (folder / "notes.txt").write_text("notes\n", encoding="utf-8")
+
+    @staticmethod
+    def _the_marker_left_the_dotenv(folder: Path, proc: "subprocess.CompletedProcess[str]") -> bool:
+        """Whether the dotenv's marker reached stdout, stderr or any other
+        file of the folder: UTF-8, or the UTF-16 Windows PowerShell 5.1
+        writes through a redirect."""
+        marker = "MARKER_DEF_5107"
+        if marker in proc.stdout or marker in proc.stderr:
+            return True
+        return any(marker.encode() in p.read_bytes() or marker.encode("utf-16-le") in p.read_bytes()
+                   for p in folder.iterdir() if p.is_file() and p.name != ".env")
+
+    # The shells are the oracle for every row above that they can run (bash
+    # 3.2.57 on the Air and 5 on the Linux cells; pwsh 7 where one is on PATH,
+    # and Windows PowerShell 5.1 beside it): the dotenv's marker leaves the
+    # dotenv under each read row and each declared limit, and under no relief
+    # row. Each row runs in its own scratch folder, every operand relative to
+    # it; the `sudo` row is the hook's alone.
+    @pytest.mark.skipif(not Path("/bin/bash").exists(), reason="the oracle is a real /bin/bash")
+    @pytest.mark.parametrize("command, reads", [
+        *((c, True) for c in _REDIRECT_FIRST_BASH_READS if not c.startswith("sudo ")),
+        *((c, False) for c in _REDIRECT_FIRST_BASH_NO_READS),
+        *((c, True) for c in _REDIRECT_FIRST_BASH_LIMITS if ">(" not in c),
+    ])
+    def test_bash_reads_the_file_as_each_redirect_row_says(self, command, reads, tmp_path):
+        self._plant_the_redirect_folder(tmp_path)
+        proc = subprocess.run(["/bin/bash", "--noprofile", "--norc", "-c", command], cwd=str(tmp_path),
+                              capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=scaled(10),
+                              env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LC_ALL": "C"})
+        assert self._the_marker_left_the_dotenv(tmp_path, proc) is reads, (proc.stdout, proc.stderr)
+
+    @pytest.mark.parametrize("command, reads", [
+        *((c, True) for c in _REDIRECT_FIRST_PS_READS),
+        *((c, False) for c in _REDIRECT_FIRST_PS_NO_READS),
+        *((c, True) for c in _REDIRECT_FIRST_PS_LIMITS),
+    ])
+    def test_powershell_reads_the_file_as_each_redirect_row_says(self, command, reads, tmp_path):
+        import shutil
+        shell = shutil.which("pwsh") or shutil.which("powershell")
+        if shell is None:
+            pytest.skip("no pwsh or powershell on PATH to run the row")
+        self._plant_the_redirect_folder(tmp_path)
+        proc = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command", command],
+                              cwd=str(tmp_path), capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=scaled(30))
+        assert self._the_marker_left_the_dotenv(tmp_path, proc) is reads, (proc.stdout, proc.stderr)
+
     # DEF-1045: a statement that opens with a quoted string is a mention when
     # nothing in the command can run it. A positive gate with two arms, each
     # read on the raw command: the right-hand side of an assignment that is

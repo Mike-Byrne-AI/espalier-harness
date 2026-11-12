@@ -947,8 +947,7 @@ attacker — a self-user won't attack their own work.
 `tools/cc/hooks/_hook_utils.py` as yours and regenerates its siblings, which may
 import names the kept copy predates. Until 2026-10-10 the hook then died at its
 module top with exit 1, which Claude Code reads as a non-blocking error: every
-tool call proceeded with no guard at all (`DEF-1176`, measured on a Node adopter
-tree). Now the sibling imports and every helper name the hook's import graph
+tool call proceeded with no guard at all (measured on a Node adopter tree). Now the sibling imports and every helper name the hook's import graph
 takes are read under one module-top guard, and a failure there is a structured
 deny with a `pretooluse_blocked_internal_error` record; every call is refused
 until the cause is repaired. The deny names the file under `tools/cc/` that
@@ -1954,7 +1953,17 @@ the words that put a command behind them -- `then`, `do`, `!`, `{`, a
 leading assignment, a case arm, a leading redirect and a wrapper run with
 its flags (`sudo -u root`, `timeout 5`, `nohup`) -- and an input redirect's
 source is a read (`cat < .env`, `done < .env`), except a copier's, which
-never reads its stdin. Before the verb is read, a command substitution that
+never reads its stdin. On both shells a redirect and its target leave the
+verb's operands wherever they stand, as the shell takes them out before it
+runs the verb: `cat > out.txt .env` and `Get-Content > out.txt .env` are
+refused as `cat .env > out.txt` is, and a target is a write, so
+`cp .env.example .env 2>/dev/null` runs. In a statement holding a command
+or process substitution, a PowerShell `$( )` or `@( )` subexpression, or
+an escape (a backslash on Bash, a backtick on PowerShell), where a target
+can be several words, a redirect spelled from `>` still ends the
+operands, so `cat > $(mktemp) .env` is a declared false allow, pinned by
+`tests/test_write_guard.py::TestSecretPathAccess::test_a_redirect_into_a_substitution_is_a_declared_limit`.
+Before the verb is read, a command substitution that
 prints nothing is taken out, as bash takes it out before it runs the next
 word: an empty body, a backtick comment (`` `# note` cat .env ``) or `:` with
 plain words (`$(: note) cat .env`), outside single quotes. A body that runs
