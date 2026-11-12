@@ -1,10 +1,11 @@
 {
  "id": "DEF-3075",
  "subject": "tools/cc/hooks/_bash_patterns.py",
- "cmd": "python -c 'import sys; from pathlib import Path; sys.path[:0] = [\"tools/cc/hooks\", \"tools/cc\"]; import write_guard as w; r = Path.cwd(); print(bool(w._ps_dangerous_reason(\"bash -c '\"'\"'rm -rf /'\"'\"'\", r)), bool(w._ps_dangerous_reason(\"'\"'\"'rm -rf /'\"'\"' | bash\", r)))'",
- "open_value": "True False",
+ "cmd": "python -c 'import sys; from pathlib import Path; sys.path[:0] = [\"tools/cc/hooks\", \"tools/cc\"]; import write_guard as w; r = Path.cwd(); q = chr(39); d = q + \"rm -rf /\" + q; g = q + chr(92).join([\"C:\", \"Program Files\", \"Git\", \"bin\", \"bash.exe\"]) + q; print(bool(w._ps_dangerous_reason(\"bash -c \" + d, r)), bool(w._ps_dangerous_reason(d + \" | bash\", r)), bool(w._ps_dangerous_reason(d + \" | & \" + g, r)))'",
+ "open_value": "True False False",
  "why_not": null,
- "row_sha": "74932bdf1506",
- "text_sha": "aa77055ffe5a",
- "verified_2026_11_11": "OPEN (filed 2026-11-11; probe driven at filing here and in the export of HEAD d92eba057b20)"
+ "row_sha": "789500f5073a",
+ "text_sha": "16919bddc4d4",
+ "verified_2026_11_11": "OPEN (filed 2026-11-11; probe driven at filing here and in the export of HEAD d92eba057b20)",
+ "verified_2026_11_12": "STILL_OPEN (re-pinned 'True False' -> 'True False False' on 2026-11-12: widened to Git's bash.exe by path, the spelling that runs a piped string on this box; the claim stands) [changed: probe, open value, text]"
 }

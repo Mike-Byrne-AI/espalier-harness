@@ -2205,7 +2205,8 @@ _POWERSHELL_DASH_COMMAND_RE = re.compile(
 # adjacent segments concatenated by the shell; no bare-first arm -- a bare
 # program is one word and names nothing).
 #: A POSIX shell's switch run before its program operand, ONE home for the
-#: `-c` opener below and the here-string opener (`_SHELL_HERESTRING_RE`).
+#: `-c` opener below, the here-string opener (`_SHELL_HERESTRING_RE`) and the
+#: speed bump's substitution arm (`_speedbump._FETCH_EXEC_SUBST_RE`).
 #: Each switch may carry one bare value, which never starts with `-` (so a
 #: value is never the next switch) and is never a spelling of a shell head:
 #: a head opens another opener's start, so a value that can be one gives
@@ -2243,8 +2244,14 @@ _POSIX_SHELL_SWITCH_RUN = r"(?:[ \t]+" + _POSIX_SHELL_SWITCH + r")*"
 #: The `-c` cluster: `c` anywhere in it (`-cx`, `-xc`, `-lc`), both letter
 #: runs around the `c` bounded, so the adjacent pair has at most 81 parses
 #: (review: `bash -cx` was missed). ONE home for both tools' openers and the
-#: refusal in the runs after them.
-_POSIX_SHELL_C_CLUSTER = r"-[A-Za-z]{0,8}c[A-Za-z]{0,8}"
+#: refusal in the runs after them. Its letters are their own fragment, so
+#: the wall's pipe run (`_SHELL_PIPE_SWITCH_RUN`), which refuses the cluster
+#: of either sign, is built from the same bound. The speed bump composes the
+#: cluster and both runs into `_speedbump._FETCH_EXEC_SUBST_RE` (compiled
+#: IGNORECASE there, so its `-C` reads as a cluster: a nudge, the over-read
+#: direction).
+_POSIX_SHELL_C_LETTERS = r"[A-Za-z]{0,8}c[A-Za-z]{0,8}"
+_POSIX_SHELL_C_CLUSTER = r"-" + _POSIX_SHELL_C_LETTERS
 #: The switches between the `-c` cluster and its program (DEF-3068's batch):
 #: a POSIX shell reads every option before its first operand, so `bash -c -x
 #: '...'` and `bash -c -- '...'` run the quoted word as `bash -c '...'` does,
@@ -6764,12 +6771,13 @@ _POSIX_SHELL_HEAD_SET = frozenset(_POSIX_SHELL_HEADS.split("|"))
 #: newline and an optional comment: the program is the stage BEFORE the pipe
 #: (DEF-745). Group 1 is an interpreter head (a version or bundle suffix
 #: admitted, as the stdin opener admits it), group 2 a POSIX shell head with
-#: no suffix (`shasum` and `shellcheck` are not shells). A switch that GIVES
-#: the program (`-c`, `-e`, `-m`, `-E`, `-f`, `-F`, `-File`, a `-Command`
-#: with a value) refuses the match: the pipe is data then. A bare operand is
-#: a script and refuses it too. ReDoS: every adjacent quantifier pair is
-#: mutually exclusive (a path prefix ends on `/`, a switch starts on `-`, a
-#: value on a non-dash, the trailing `-` sits alone before the lookahead).
+#: no suffix (`shasum` and `shellcheck` are not shells). An interpreter's
+#: switch that GIVES the program (`-c`, `-e`, `-m`, `-E`, `-f`, `-F`,
+#: `-File`, a `-Command` with a value) refuses the match: the pipe is data
+#: then. A bare operand with no switch before it is a script and refuses it
+#: too. ReDoS: every adjacent quantifier pair is mutually exclusive (a path
+#: prefix ends on `/`, a switch starts on `-` (or `+` for a shell), a value
+#: on neither, the trailing `-` sits alone before the lookahead).
 #:
 #: Each head group carries its own option run (DEF-3072). An interpreter's
 #: switches open on `-` alone (`python +x` is a script operand). A POSIX
@@ -6780,19 +6788,33 @@ _POSIX_SHELL_HEAD_SET = frozenset(_POSIX_SHELL_HEADS.split("|"))
 #: interpreter's program flags, so `echo '...' | bash +x` was a plain allow
 #: beside a walled `| bash -x`. Only a `c` cluster of either sign gives a
 #: shell its program (`+c` runs its operand as `-c` does, driven), so it
-#: alone refuses the match, at the `-c` opener's own bound. The value class
-#: is the run's own, less `+` as its first character, so a `+` word is a
-#: switch alone and the run keeps one parse; the head-spelling refusal of
-#: `_POSIX_SHELL_SWITCH` is not needed here, since a reader that starts at a
-#: pipe opens no second start inside a value, and taking it would stop the
-#: run at `bash -s -- x` and `bash --rcfile ~/.r`.
+#: alone refuses the match, built from the `-c` opener's own letters
+#: (`_POSIX_SHELL_C_LETTERS`). A bare `--` ends the options: every word after
+#: it is an argument, a cluster included, so `| bash -s -- -lc` and `| bash
+#: -s -- -c cfg` run the piped program (bash 5.2, driven) and are read. A
+#: bare `+` is a switch too (a no-op one; `| bash -x +` ran it). The value
+#: class is the run's own, less `+` as its first character, so a `+` word is
+#: a switch alone and the run keeps one parse. The shared
+#: `_POSIX_SHELL_SWITCH` grammar is not taken here: its switches are letters
+#: only, it has no bare `--` and its values hold no `~`, so it would stop the
+#: run at `bash -s -- x` and `bash --rcfile ~/.r`; a reader that starts at a
+#: pipe opens no second start inside a value, so its head-spelling refusal is
+#: not needed. Declared limits: after `-s` the first operand ends the options
+#: too, so a cluster after one (`| bash -s foo -lc`) is an argument the run
+#: refuses as a program (a plain allow); a `c` cluster's program that reads
+#: stdin itself (`| bash -lc bash`) is the exact `-c`'s own limit, extended to
+#: its clusters. Declared over-read: a bare word after a shell's switch is
+#: read as its value, so `| bash -e script.sh` and `| bash -- script.sh`
+#: wall although the pipe is that script's data.
 _INTERP_PIPE_SWITCH_RUN = (
     r"(?:[ \t]+-(?!(?:c|e|m|E|f|F|File)(?:[ \t]|$))[\w.-]+"
     r"(?:[ \t]+[\w./:=,@%+~][\w./:=,@%+~-]*)?)*"
 )
 _SHELL_PIPE_SWITCH_RUN = (
-    r"(?:[ \t]+(?![-+][A-Za-z]{0,8}c[A-Za-z]{0,8}(?:[ \t]|$))[-+][\w.-]+"
+    r"(?:[ \t]+(?:(?!--(?:[ \t]|$))(?![-+]" + _POSIX_SHELL_C_LETTERS + r"(?:[ \t]|$))"
+    r"[-+][\w.-]+|\+(?=[ \t]|$))"
     r"(?:[ \t]+[\w./:=,@%~][\w./:=,@%+~-]*)?)*"
+    r"(?:[ \t]+--(?:[ \t]+[\w./:=,@%+~-]+)*)?"
 )
 _INTERP_PIPE_RE = re.compile(
     r"\|[ \t]*(?:(?:#[^\n]*)?\n[ \t]*)?(?:[\w./-]*/)?"

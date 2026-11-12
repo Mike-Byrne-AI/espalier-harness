@@ -3154,6 +3154,13 @@ def test_ps_switch_value_run_linear_on_dash_bearing_values(label, seed):
     ("plus-switch-values-then-open-program", "+O extglob ", "-c 'x"),
     ("plus-and-minus-alternating", "+x -x ", "-c 'x"),
     ("cluster-and-plus-alternating", "-c +e ", "'x"),
+    # DEF-3072's review batch: the pipe run's bare `--`, which only a bare
+    # `--` opens (a switch refuses it), its argument words after it, and a
+    # bare `+`, which a `+` switch's body never begins
+    ("dashdash-then-words", "-- ", ""),
+    ("switch-dashdash-cluster", "-x -- -lc ", "'x"),
+    ("bare-plus", "+ ", "'x"),
+    ("plus-switch-and-bare-plus", "+x + ", "'x"),
 ])
 def test_posix_shell_switch_run_linear_on_one_head(label, seed, tail):
     """DEF-818: the POSIX shell openers' switch run (`bash -x ... -c '...'`,
@@ -3222,8 +3229,13 @@ def test_posix_shell_switch_value_is_never_a_head_spelling(label, verb):
     (signal.alarm)."""
     if not hasattr(signal, "SIGALRM"):
         pytest.skip("signal.alarm not available on this platform")
+    import _speedbump  # noqa: E402
+
     payload = (verb + " ") * (_HEAD_SPELLING_FLOOD_LEN // (len(verb) + 1))
-    for pattern in (_bash_patterns._SHELL_DASH_C_RE, _bash_patterns._SHELL_HERESTRING_RE):
+    # the bump's substitution arm composes the same run (DEF-3072), linear
+    # only while its shell heads stay a subset of the run's refused spellings
+    for pattern in (_bash_patterns._SHELL_DASH_C_RE, _bash_patterns._SHELL_HERESTRING_RE,
+                    _speedbump._FETCH_EXEC_SUBST_RE):
         signal.signal(signal.SIGALRM, _alarm)
         signal.setitimer(signal.ITIMER_REAL, _CI_SAFE_BUDGET_MS / 1000.0)
         t = time.time()
@@ -5432,7 +5444,11 @@ def test_cmd_pos_linear_on_repeated_prefix_run(token):
 @pytest.mark.parametrize("arm,unit", [
     ("_FETCH_EXEC_PROCSUB_RE", "env -i bash <( "),
     ("_FETCH_EXEC_SUBST_RE", 'env -i bash -c "$('),
-], ids=["procsub", "subst"])
+    # DEF-3072: the shell arms read switches now, so a valued switch reaches
+    # deeper before failing (about twice the bare row's time, driven)
+    ("_FETCH_EXEC_PROCSUB_RE", "env -i bash -o pipefail <( "),
+    ("_FETCH_EXEC_SUBST_RE", 'env -i bash -o pipefail -c -- "$('),
+], ids=["procsub", "subst", "procsub-valued-switch", "subst-valued-switch"])
 def test_the_fetch_arms_inner_position_does_not_compound_the_anchor(arm, unit):
     """DEF-3033: the speed bump's substitution arms read the fetch verb at a
     second command position behind their opener. Composing the whole
