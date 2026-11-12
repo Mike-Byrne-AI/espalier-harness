@@ -18,12 +18,15 @@ Usage::
 -la``, an MCP read, an MCP write) beside a bare interpreter start as the control,
 which is always timed, shuffled, each spawn in an empty temp project of its own
 (no settings file, no ``espalier.toml``), the way the wiring starts it
-(``<python> -B <tools/cc/hooks/write_guard.py>``, the payload on stdin), and
+(``<python> <tools/cc/hooks/write_guard.py>``, the payload on stdin) with
+``-B`` added, and
 prints each kind's median, IQR, min and max in milliseconds beside the decisions
 it saw. A guard call starts two interpreters (the thin parent and its judging
 child) and the control one, so the control nets out one start. ``-B`` writes no
 cache: a checkout's existing cache is read, and an ``--at`` tree has none, so
-its figure is the no-cache one. The MCP write names a file inside its temp
+its figure is the no-cache one. The wiring passes no ``-B``, so after a pull a
+live call rewrites a stale module's cache once, where every census spawn
+recompiles it: a row whose modules read stale overstates a warm live call. The MCP write names a file inside its temp
 project, so the zone layer allows it. Each spawn's project is its own, so a
 one-shot nudge an earlier spawn spent cannot change a later one's decision. A
 row whose decisions are not what an ordinary call gets (``allow``; ``exit 0`` for
@@ -37,7 +40,9 @@ counted per kind before the run's audit folder goes.
 a fresh interpreter (``-I -B``): the distinct patterns (keyed by pattern and
 flags) and the characters of the distinct string patterns, those again for the
 compiles whose call stack passes through the hooks folder (the standard
-library's own differ by interpreter), the shared fragment
+library's own differ by interpreter), the hooks-folder patterns the loader
+compiled first (``loader_patterns``, ``loader_chars``: the imports compile the
+rest), the shared fragment
 ``_bash_patterns._CMD_POS_NO_VERB``'s length (and ``_CMD_POS``'s), and how many
 of the patterns, and of their characters, embed it. ``loader_ran`` and
 ``fragment_found`` say whether those two were there: a tree whose
@@ -465,6 +470,7 @@ re.purge()
 import _bash_patterns
 import _speedbump
 loader_ran = False
+loaded = set()
 if not os.path.isfile(os.path.join(hooks, "write_guard.py")):
     method = "the two pattern modules imported; this tree has no write_guard.py"
 else:
@@ -473,8 +479,10 @@ else:
     if loader is None:
         method = "imports alone: this tree's write_guard has no _load_the_pattern_path (before DEF-946)"
     else:
+        before = set(ours)
         loader()
         loader_ran = True
+        loaded = ours - before
         method = "imports and write_guard._load_the_pattern_path"
 re._compile = original
 fragment = getattr(_bash_patterns, "_CMD_POS_NO_VERB", None)
@@ -495,6 +503,8 @@ print(json.dumps({
     "compiled_chars": sum(len(t) for t in texts),
     "hooks_patterns": len(ours),
     "hooks_chars": sum(len(k[0]) for k in ours if isinstance(k[0], str)),
+    "loader_patterns": len(loaded),
+    "loader_chars": sum(len(k[0]) for k in loaded if isinstance(k[0], str)),
     "fragment_len": len(fragment) if found else None,
     "cmd_pos_len": len(cmd_pos) if isinstance(cmd_pos, str) else None,
     "embedding_patterns": len(embedding),
@@ -898,6 +908,7 @@ def render(result: dict) -> str:
         lines += [f"method:  {c['method']}",
                   f"patterns compiled (distinct):      {c['patterns']} ({c['hooks_patterns']} from the hooks folder)",
                   f"characters compiled (distinct):    {c['compiled_chars']} ({c['hooks_chars']} from the hooks folder)",
+                  f"first compiled by the loader:      {c['loader_patterns']} patterns, {c['loader_chars']} characters",
                   f"_CMD_POS_NO_VERB length:           {c['fragment_len']}",
                   f"_CMD_POS length:                   {c['cmd_pos_len']}",
                   f"patterns embedding the fragment:   {c['embedding_patterns']}",

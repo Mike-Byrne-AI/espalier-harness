@@ -1642,6 +1642,11 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # box lock this process holds: the spawn and the kernel lock are the
             # thing under test (fast; slow-exempt).
             "test_guard_cost_census",
+            # TP-707 1-B: reads this checkout's hooks through the census's
+            # compile reader, a fresh interpreter, so an import elsewhere in
+            # the run cannot hide a growth: the child is the thing under test
+            # (fast; slow-exempt).
+            "test_guard_compile_ratchet",
             # Drives tools/cc/_symbols.py's lane reader through real git in a
             # scratch repository (a merge-base, a moved base, the working tree
             # and untracked files, a move with renames off): what git reports

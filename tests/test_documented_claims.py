@@ -672,6 +672,11 @@ class TestSecurityMarkerCoverage:
         # (an ordinary call's allow is its precondition for a figure, not the
         # behaviour under test). Classified `integration` (TP-707 1-A).
         "test_guard_cost_census",
+        # test_guard_compile_ratchet matches the "guard" token nominally: it
+        # holds what write_guard's pattern path compiles under a ceiling, a
+        # size, and pins no deny and no protected path. Classified
+        # `integration` (TP-707 1-B).
+        "test_guard_compile_ratchet",
         # test_freshness_hook_count_migration matches the "hook" token by
         # name: its subject is the freshness manifest's hook-count literal
         # against the live wiring -- a tree-wide truth a re-pin can break,
