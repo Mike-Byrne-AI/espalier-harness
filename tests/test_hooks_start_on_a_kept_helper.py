@@ -64,7 +64,7 @@ import pytest
 from espalier.harness_config import CANONICAL_HOOK_WIRING, GOVERNANCE_BLOCKING_HOOKS
 from tests._hook_spawn import RetryAllowance, retry_a_budget_miss
 from tests._live_tree import checkout_glob, copy_checkout
-from tests._temp_sweep import write_lock
+from tests._temp_sweep import deleter, remove, write_lock
 from tests._wait_budget import scaled
 
 # timeout-exempt: headroom, not cost -- the module-scoped `cells` fixture lands in the first `cells` test each xdist worker runs, 21 to 48 s of the ini's 60 s across 19 Linux full-tier cells (2026-11-07/08, DEF-2056), so each class whose tests request it carries this ceiling, and so does each class whose rows reach `_run_payload` or `_run_hook`, whose 45 s spawn retries a budget refusal once and so needs twice that under the ceiling less 10 s (DEF-2057, pinned in tests/test_test_suite_contract.py); the module stays in the fast slice and its other tests keep the ini's
@@ -388,9 +388,11 @@ def _warm_cc() -> Path:
         if not _WARM:
             template = Path(tempfile.mkdtemp(prefix="kept-helper-cc-")) / "cc"
             write_lock(template.parent)
+            # The sweep's own delete: the lock goes last, so a copy that will
+            # not go at exit keeps its lock for the next start.
+            atexit.register(remove, template.parent, deleter())
             copy_checkout(CC_DIR, template, ignore=shutil.ignore_patterns("__pycache__"))
             compileall.compile_dir(str(template), quiet=2)
-            atexit.register(shutil.rmtree, template.parent, True)
             _WARM.append(template)
         return _WARM[0]
 
@@ -1591,8 +1593,9 @@ class TestTheCopiedTreeIsWarm:
             assert data[8:16] == importlib.util.source_hash(src.read_bytes())
 
     def test_a_plant_in_a_warm_copy_runs_its_own_source_at_the_same_mtime(self, tmp_path):
-        # The plant keeps the source's mtime, so only its size tells the
-        # bytecode it is stale: what every plant in this file relies on.
+        # The worst case: the plant keeps the source's mtime, so only its
+        # size tells the bytecode it is stale. Every plant in this file also
+        # takes a fresh mtime, so each tells it both ways.
         _copy_cc(tmp_path)
         hooks = tmp_path / "tools" / "cc" / "hooks"
         module = hooks / "_maintenance_mode.py"
