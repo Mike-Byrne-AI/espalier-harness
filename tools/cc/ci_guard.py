@@ -23,6 +23,11 @@ Behavior:
   one operator's gitignored file it is that operator's posture (the hooks
   stop treating it as a kill-switch, DEF-1108), but committed it switches
   permission prompts off for every clone.
+- UNCONDITIONAL on a pull request: if the pull request's own range (its base
+  to the head under review, never the checkout's HEAD, which is GitHub's test
+  merge) holds a commit carrying `Espalier-Unfinished` (the ship driver's
+  threshold handoff of a lane its window could not finish), fail with the
+  moves that take it off the branch.
 - Otherwise exit 0.
 
 Stdlib-only. Respects the tools/cc/ zero-espalier-import rule by hard-coding
@@ -38,6 +43,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -186,6 +192,160 @@ def changed_paths(base: str, cwd: str | None = None) -> list[str]:
         if line.strip()
     ]
     return paths
+
+
+#: The trailer the ship driver's threshold handoff (``ship.py handoff
+#: --unfinished``) stamps on the one commit it makes of a lane's half-built
+#: edits, valued with the lane's branch, and the driver's own read of it over
+#: a lane's commits. Their home is ``tools/cc/ship.py`` (``UNFINISHED_TRAILER``,
+#: ``UNFINISHED_LOG_FORMAT``): this guard imports no sibling (``_git`` above
+#: says why) and install-ci deploys it without the driver, so it keeps a copy,
+#: pinned equal by ``tests/test_ci_guard.py::TestUnfinishedLaneArm``.
+_CI_UNFINISHED_TRAILER = "Espalier-Unfinished"
+_CI_UNFINISHED_LOG_FORMAT = f"%x1e%H %P%x1f%(trailers:key={_CI_UNFINISHED_TRAILER},valueonly)"
+
+
+def pr_range_head(env: dict[str, str], cwd: str | None = None) -> str:
+    """Where a pull request's own commits end: the head under review
+    (``PR_HEAD_SHA``) where the workflow forwarded it and the checkout holds
+    it. On a pull request ``HEAD`` is GitHub's test merge of the head into the
+    base, so a merge reads as following every commit of the lane. ``HEAD``
+    only where the head is not here: its range holds every commit of the
+    pull request's, and more."""
+    head = pr_head_sha(env)
+    if head and _git(["cat-file", "-e", f"{head}^{{commit}}"], cwd=cwd).returncode == 0:
+        return head
+    return "HEAD"
+
+
+def unfinished_commits(base: str, head: str = "HEAD", cwd: str | None = None) -> list[tuple[str, str, str]]:
+    """The commits of ``base..head`` that carry the unfinished-lane trailer,
+    newest first, as ``(sha, first parent, the trailer's value)``: read the way
+    the ship driver reads them (``ship.py::_lane_commit_records``), git's own
+    trailer parsing, so a key quoted in a paragraph that is not the message's
+    last is prose. The limit of that rule: a message whose last paragraph
+    quotes the trailer line is read as carrying it, and reds until it is
+    reworded. A range git cannot read raises: not read is not clean."""
+    result = _git(["log", f"--format={_CI_UNFINISHED_LOG_FORMAT}", f"{base}..{head}"], cwd=cwd)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"git log over {base}..{head} failed (rc={result.returncode}): {result.stderr.strip()}"
+        )
+    found = []
+    for record in result.stdout.split("\x1e")[1:]:
+        ids, _sep, value = record.partition("\x1f")
+        shas, value = ids.split(), value.strip()
+        if shas and value:
+            found.append((shas[0], shas[1] if len(shas) > 1 else "", value.splitlines()[0].strip()))
+    return found
+
+
+def _unfinished_reset(oldest: str, parent: str, base: str, head: str,
+                      cwd: str | None) -> tuple[str, str]:
+    """The soft reset that takes the set-aside commit back from ``head`` (a
+    commit this checkout holds), and why that one: its parent while no merge
+    follows it in the pull request's range; after a merge, the lane's
+    merge-base with the base, since a reset to the parent stages the merged
+    base's tree as the lane's own change, and a file the base has since
+    removed rides the landing back in. A read git cannot answer raises: not
+    read is not clean."""
+    merges = _git(["rev-list", "--merges", f"{oldest}..{head}"], cwd=cwd)
+    if merges.returncode != 0:
+        raise RuntimeError(
+            f"git rev-list over {oldest}..{head} failed (rc={merges.returncode}): {merges.stderr.strip()}"
+        )
+    if not merges.stdout.strip():
+        return (parent[:12] or f"{oldest[:12]}^",
+                "takes back the set-aside edits and every commit after them, staged")
+    # Printed on a shell comment line: no apostrophe or parenthesis, which an
+    # interactive zsh (no interactivecomments) would read as shell.
+    why = ("a merge follows it, so this is the merge-base of the lane with the base: a reset to its "
+           "parent would stage the merged base changes as changes of the lane")
+    found = _git(["merge-base", base, head], cwd=cwd)
+    if found.returncode != 0 or not found.stdout.strip():
+        raise RuntimeError(
+            f"git merge-base {base} {head} failed (rc={found.returncode}): {found.stderr.strip()}"
+        )
+    return found.stdout.strip()[:12], why
+
+
+def _print_unfinished(found: list[tuple[str, str, str]], base: str, head: str,
+                      env: dict[str, str], cwd: str | None) -> None:
+    """The red for a pull request holding a set-aside commit, with the moves
+    that clear it. A commit on origin stays in the pull request's range until
+    the branch is rewritten, and the ship driver never force-pushes, so the
+    soft reset the driver's brief names cannot clear this alone: the lease
+    push is the move that does, bound to the head this run read where the
+    workflow forwarded it, to the pull request's own branch (the runner's
+    ``GITHUB_HEAD_REF``; the trailer's value, the branch the commit was made
+    on, only where that is unset). One reset is a command: the one right
+    from any HEAD, to the lane's merge-base with the base as origin holds it
+    now, fetched first. The reset this run computes keeps the commits below
+    the set-aside one but is right only while the lane's checkout is at the
+    head it read, so it is a comment naming that guard: two resets run in a
+    row compute the second from the first's HEAD, and a merge below it is
+    lost. The push runs only once nothing is staged, so a block pasted
+    whole takes the edits back and stops before it (a Windows PowerShell
+    that cannot read ``&&`` runs no push at all). Every line that is not a
+    command is a shell comment holding no quote or parenthesis (an
+    interactive zsh without interactivecomments reads a comment as a
+    command named ``#``, which fails alone). What was found is printed
+    before the reads that name the reset, so a read that fails still says
+    why."""
+    sha, parent, trailer_lane = found[-1]  # the oldest: a reset below it takes back every one after it
+    print(
+        "Harness Guard: this pull request holds the commit the ship driver's "
+        "threshold handoff made of an unfinished lane's half-built edits. The "
+        f"{APPROVAL_MARKER} marker does NOT override this check."
+    )
+    print("")
+    print("Set-aside commits (newest first):")
+    for commit, _parent, value in found:
+        print(f"  - {commit[:12]} ({_CI_UNFINISHED_TRAILER}: {value})", flush=True)
+    print("")
+    reviewed = pr_head_sha(env)
+    lane = (env.get("GITHUB_HEAD_REF") or "").strip() or trailer_lane
+    base_ref = (env.get("GITHUB_BASE_REF") or "").strip() or (env.get("DEFAULT_BRANCH") or "").strip()
+    below = shlex.quote(f"origin/{base_ref}") if base_ref else base
+    # Chained and quoted: a fetch that fails runs no reset, and an empty
+    # target is git's error, never a reset to nothing that exits 0.
+    moves = [f'  git fetch origin && git reset --soft "$(git merge-base {below} HEAD)"',
+             "  # right from any HEAD: every commit of the lane, the set-aside ones with them, staged,"
+             " measured from the base as origin holds it now"]
+    if head != "HEAD":
+        target, why = _unfinished_reset(sha, parent, base, head, cwd)
+        moves.append(f"  # or, while HEAD is {head[:12]}, the head this run read, git reset --soft {target} in its"
+                     f" place keeps the commits below the set-aside one: {why}")
+    lease = shlex.quote(f"--force-with-lease={lane}:{reviewed}") if reviewed else "--force-with-lease"
+    lease_note = ("the lease refuses if the branch moved since this run read it" if reviewed else
+                  "the lease is your remote-tracking ref of the branch: fetch it first")
+    marked = bool(approved_shas(env.get("PR_TITLE", "")))
+    ship_driver = (Path(cwd) if cwd else Path.cwd()) / "tools" / "cc" / "ship.py"
+    if ship_driver.is_file():
+        after = ["  # push before any ship-driver verb: each refuses until the branch on origin is rewritten"]
+        if marked:
+            # A comment, never a command: this runs in CI, where the reader's
+            # interpreter cannot be resolved, and neither bare name runs on
+            # every host (tests/test_portability_contract.py).
+            after.append("  # then the ship driver verb tools/cc/ship.py rebind, run by your Python, binds the"
+                         " approval marker in the title to the new head")
+    else:
+        after = ["  # then bind the approval marker in the title to the new head"] if marked else []
+    print(
+        "`ship.py handoff --unfinished` sets a lane's edits aside in that commit for\n"
+        "the next window to take back and finish, and every push the ship driver\n"
+        "makes refuses on it; a hand `git push` put it here, where auto-merge would\n"
+        "land the half-built edits on green. A commit on origin stays in the pull\n"
+        "request's range until the branch is rewritten (the ship driver never\n"
+        "force-pushes), so in the lane's checkout:\n"
+        + "\n".join(moves) + "\n"
+        f"  # read git log HEAD..origin/{lane} first: the push replaces each commit there, so one another\n"
+        "  # clone pushed and this checkout never held is merged in before it, never pushed over\n"
+        "  # then finish the lane and commit it; the push over the set-aside commit runs only once nothing is staged:\n"
+        f"  git diff --cached --quiet && git push {lease} origin {shlex.quote(f'HEAD:{lane}')}\n"
+        f"  # {lease_note}"
+        + "".join(f"\n{line}" for line in after)
+    )
 
 
 def is_protected(rel_path: str, *, self_host: bool = True) -> bool:
@@ -1340,6 +1500,20 @@ def run(env: dict[str, str], cwd: str | None = None) -> int:
         return 2
 
     base = resolve_base(env, cwd=cwd)
+
+    # Unconditional on a pull request (DEF-5102): the ship driver refuses
+    # every push of a lane holding its unfinished-lane commit, but a hand
+    # `git push` is not the driver, and this check is the one every push to
+    # a pull request reaches. No marker waives it: half-built edits are not a
+    # harness change anyone approved. A push event is past the merge, and no
+    # push of the lane clears it there, so it is not judged.
+    if env.get("GITHUB_EVENT_NAME", "") in _PR_EVENTS:
+        head = pr_range_head(env, cwd=cwd)
+        unfinished = unfinished_commits(base, head, cwd=cwd)
+        if unfinished:
+            _print_unfinished(unfinished, base, head, env, cwd)
+            return 2
+
     paths = changed_paths(base, cwd=cwd)
     self_host = _ci_self_host_posture(base, cwd=cwd)
     offenders = [p for p in paths if is_protected(p, self_host=self_host)]

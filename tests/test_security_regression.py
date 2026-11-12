@@ -198,7 +198,7 @@ def test_regression_unmarked_settings_change(tmp_path):
     # ci_guard reads, including GITHUB_ACTOR (the Dependabot allowance) and
     # GITHUB_EVENT_NAME, or a real runner's values leak into the subprocess.
     for k in ("BASE_SHA", "BEFORE_SHA", "PR_TITLE", "PR_HEAD_SHA", "GITHUB_ACTOR",
-              "GITHUB_EVENT_NAME"):
+              "GITHUB_EVENT_NAME", "GITHUB_HEAD_REF", "GITHUB_BASE_REF", "DEFAULT_BRANCH"):
         env_run.pop(k, None)
     result = subprocess.run(
         [sys.executable, str(CI_GUARD)],
