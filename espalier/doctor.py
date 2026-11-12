@@ -1157,9 +1157,9 @@ def _check_python_resolver(
                 f"Hooks spawn under the PATH Claude Code is "
                 f"launched with, which will not have this virtualenv activated "
                 f"-- they will fail to start and every blocking guard fails "
-                f"open. Re-run `{py} -m espalier init . --rewire-interpreter` "
-                f"from a shell with the virtualenv deactivated so a host-wide "
-                f"interpreter name is wired."
+                f"open. Put a Python {floor_text()} or newer on PATH outside "
+                f"the virtualenv, then re-run `{py} -m espalier init . "
+                f"--rewire-interpreter` so a host-wide interpreter name is wired."
             )
         else:
             # THREE states, not two. The old `elif which(cmd) is None` collapsed

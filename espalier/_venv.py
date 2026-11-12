@@ -87,8 +87,16 @@ def outside_reading(name: str, root: Path) -> tuple[bool, str | None]:
         return True, None
     # Lazy: `_python_floor` is the engine's floor module, and this one is
     # imported by modules `_python_floor`'s importers import.
-    from espalier._python_floor import interpreter_meets_floor
-    return not interpreter_meets_floor(outside), outside
+    from espalier._python_floor import banner_unanswered_of, interpreter_meets_floor
+    if interpreter_meets_floor(outside):
+        return False, outside
+    # A banner that never answered is no verdict either way (DEF-5015): a
+    # loaded host does that to a working base interpreter, so the name keeps
+    # its pre-DEF-2069 reading, host-wide, rather than a healthy venv reading
+    # broken under load (the lane's failure-mode review, driven).
+    if banner_unanswered_of(outside) is not None:
+        return False, outside
+    return True, outside
 
 
 def wired_venv_root(name: str) -> Path | None:

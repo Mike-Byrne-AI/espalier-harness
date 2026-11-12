@@ -3622,7 +3622,8 @@ class TestAVenvShimOverAnOutsidePython:
         err = capsys.readouterr().err
         assert "WARNING: " in err, f"precondition: the warning was said: {err!r}"
         assert "nor the interpreter running this command" not in err, err
-        assert "virtualenv deactivated: `<that interpreter> -m espalier init . --rewire-interpreter`" in err, err
+        assert "outside the virtualenv, re-wire: `<that interpreter> -m espalier init . --rewire-interpreter`" in err, err
+        assert "deactivated" not in err, err
         # Neither the venv's shim nor the interpreter running this is spelled.
         assert self._which("python") not in err and sys.executable not in err, err
 
@@ -3693,3 +3694,37 @@ class TestAVenvShimOverAnOutsidePython:
         joined = " ".join(doctor._check_python_resolver(tmp_path, settings))
         assert "only inside the virtualenv" in joined, joined
         assert str(outside_bin) in joined and "does not start and meet" in joined, joined
+
+    def test_an_outside_banner_that_never_answers_keeps_the_name_host_wide(self, tmp_path, monkeypatch):
+        """The lane's failure-mode review, driven: on a loaded box the outside
+        base Python's ``--version`` misses both tries, and a healthy venv read
+        as venv-only, so doctor and the rewire reported a fault that was not
+        there. No answer is no verdict (DEF-5015): the pre-DEF-2069 reading."""
+        import shutil
+
+        from espalier import _venv, cli
+
+        _venv_root, outside_bin = self._host(tmp_path, monkeypatch, "working")
+        outside = shutil.which("python", path=str(outside_bin))
+        real = _python_floor._ask_banner
+
+        def mute_outside(argv, *args, **kwargs):
+            if argv and os.path.normcase(str(argv[0])) == os.path.normcase(str(outside)):
+                return None
+            return real(argv, *args, **kwargs)
+
+        monkeypatch.setattr(_python_floor, "_ask_banner", mute_outside)
+        assert _python_floor.banner_unanswered_of(outside) is not None, "precondition: the outside banner is mute"
+        assert _venv.resolves_only_inside("python") is False
+        assert cli._resolves_only_inside_a_virtualenv("python", self._which("python")) is False
+
+    def test_nothing_outside_keeps_the_fallbacks_remedy_spelling(self, tmp_path, monkeypatch):
+        """The lane's code review: with nothing outside the venv (the settled
+        venv-only fallback ``init`` still wires), the remedy kept spelling the
+        name; reading it as failing persisted a machine path into the
+        adopter's records. Only a failing Python outside moves the remedy."""
+        from espalier import cli
+
+        self._host(tmp_path, monkeypatch, "none")
+        assert cli._runs_a_failing_python_outside_its_venv("python") is None
+        assert cli._remedy_interpreter(persisted=True) == ("python", True)

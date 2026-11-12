@@ -883,9 +883,8 @@ def _warn_interpreter_below_floor(
         # this is the venv's, so spelling it would send the operator back to
         # the venv; the re-wire runs with the newer Python outside it.
         after = (
-            "After installing it, re-wire with it, from a shell with the "
-            "virtualenv deactivated: `<that interpreter> -m espalier init . "
-            "--rewire-interpreter`."
+            "After installing it outside the virtualenv, re-wire: "
+            "`<that interpreter> -m espalier init . --rewire-interpreter`."
         )
     elif remedy == name:
         after = (
@@ -1432,10 +1431,9 @@ def _remedy_interpreter(*, persisted: bool = False) -> tuple[str, bool]:
     for text written into the adopter's tree.
     """
     py = _detect_python_command()
-    # A name that clears the floor here only through a virtualenv is one the
+    # A name that runs a failing Python outside its virtualenv is one the
     # rewire refuses as its target (DEF-2069), so it is not the True answer.
-    venv_only = len(interpreter_argv(py)) == 1 and resolves_only_inside(py)
-    if not venv_only and interpreter_meets_floor(py):
+    if not _runs_a_failing_python_outside_its_venv(py) and interpreter_meets_floor(py):
         if sys.executable and start_unconfirmed_of(py) is not None:
             return _remedy_program_word(sys.executable, persisted=persisted), True
         return py, True
@@ -1447,6 +1445,22 @@ def _remedy_interpreter(*, persisted: bool = False) -> tuple[str, bool]:
         # to put a durable interpreter on PATH first.
         return _remedy_program_word(sys.executable, persisted=persisted), False
     return py, False
+
+
+def _runs_a_failing_python_outside_its_venv(spelling: str) -> "Path | None":
+    """The virtualenv a bare name resolves into here, when outside it the name
+    resolves to something that does not clear the floor and start (a too-old
+    Python, a Store alias), else None (DEF-2069). A name with NOTHING outside
+    is the documented venv-only fallback ``init`` still wires, so it is not
+    this: the remedy keeps spelling it, and the rewire keeps wiring it, as
+    ``init`` does (the lane's code review: a venv path persisted otherwise)."""
+    if len(interpreter_argv(spelling)) != 1:
+        return None
+    root = wired_venv_root(spelling)
+    if root is None:
+        return None
+    venv_only, outside = outside_reading(spelling, root)
+    return root if venv_only and outside is not None else None
 
 
 def _unheard_on_path(patient_seconds: int = 0) -> str | None:
@@ -9416,8 +9430,8 @@ def _report_interpreter_rewire(settings_path: Path) -> str:
             f"a Python {floor_text()}+ only inside the virtualenv at "
             f"`{result.inside_venv}`; once that is off PATH, as in the shell "
             f"Claude Code is launched from, it does not. No interpreter was "
-            f"changed. Re-run from a shell with the virtualenv deactivated and "
-            f"a Python {floor_text()} or newer on PATH.",
+            f"changed. Put a Python {floor_text()} or newer on PATH outside "
+            f"the virtualenv, then re-run this.",
             file=sys.stderr,
         )
     elif result.status == REWIRE_NO_TARGET and (unheard := _unheard_on_path()):
@@ -9489,7 +9503,7 @@ REWIRE_NO_FILE = "no_file"         # no settings.json to rewire
 REWIRE_UNREADABLE = "unreadable"   # a parent of settings.json denies traversal; detail = OS message
 REWIRE_PARSE_ERROR = "parse_error"  # settings.json is not valid JSON
 REWIRE_NOT_OBJECT = "not_object"   # top-level JSON is not an object
-REWIRE_NO_TARGET = "no_target"     # nothing on PATH clears the floor either
+REWIRE_NO_TARGET = "no_target"     # nothing on PATH clears the floor either, or only inside a venv (inside_venv)
 REWIRE_DUPLICATE_KEYS = "duplicate_keys"  # settings.json has a repeated key
 
 
@@ -10013,8 +10027,8 @@ def rewire_interpreter_in_settings(
     # target that clears it here only through a virtualenv runs a too-old
     # Python, or nothing, once the venv is off PATH. `os.defpath` below names
     # no system directory on Windows, so that check never saw it there.
-    inside = wired_venv_root(target) if len(interpreter_argv(target)) == 1 else None
-    if inside is not None and resolves_only_inside(target):
+    inside = _runs_a_failing_python_outside_its_venv(target)
+    if inside is not None:
         return RewireResult(REWIRE_NO_TARGET, detail=target, unconfirmed=left,
                             inside_venv=str(inside))
 
