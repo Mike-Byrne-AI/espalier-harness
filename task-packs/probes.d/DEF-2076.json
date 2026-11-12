@@ -1,0 +1,14 @@
+{
+ "id": "DEF-2076",
+ "subject": "espalier/cli.py",
+ "cmd": "python -c 'import contextlib, io, os, pathlib, tempfile; from tests import _interpreter_hosts as h; from espalier import cli; v, vb, ob = h.build_venv_over(pathlib.Path(tempfile.mkdtemp()) / \"host\", \"store\"); os.environ[\"PATH\"] = os.pathsep.join([str(vb), str(ob)]); os.environ[\"VIRTUAL_ENV\"] = str(v); e = io.StringIO(); c = contextlib.redirect_stderr(e); c.__enter__(); w = cli._detect_python_command(); c.__exit__(None, None, None); print(w == \"python\" and not e.getvalue().strip())'",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  "tests/_interpreter_hosts.py",
+  "espalier/_venv.py"
+ ],
+ "row_sha": "da694ff160d3",
+ "text_sha": "d50a2dc95e3e",
+ "verified_2026_11_11": "OPEN (filed 2026-11-11; probe driven at filing here and in the export of HEAD fef28b782f0b)"
+}
