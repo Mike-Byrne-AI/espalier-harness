@@ -4,7 +4,7 @@
  "cmd": "python -c 'import sys; from pathlib import Path; sys.path[:0] = [\"tools/cc/hooks\", \"tools/cc\"]; import write_guard as w; r = Path.cwd(); b = chr(96); dq = chr(34); print(bool(w._ps_dangerous_reason(\"bash -c \" + dq + \"rm -rf /\" + dq, r)), bool(w._ps_dangerous_reason(\"bash -c \" + dq + \"echo hi\" + b + \"nrm -rf /\" + dq, r)), bool(w._ps_dangerous_reason(dq + \"echo hi\" + b + \"nrm -rf /\" + dq + \" | bash\", r)))'",
  "open_value": "True False False",
  "why_not": null,
- "row_sha": "5972dfe49dc4",
- "text_sha": "e38b720caba7",
- "verified_2026_11_12": "OPEN (filed 2026-11-12; probe driven at filing here and in the export of HEAD 86867b2e902b)"
+ "row_sha": "8903f010d1ea",
+ "text_sha": "7224700dd25c",
+ "verified_2026_11_12": "STILL_OPEN (re-pinned value unchanged on 2026-11-12: the interpreter reader's exposure driven through the hook process, no longer inferred) [changed: text]"
 }
