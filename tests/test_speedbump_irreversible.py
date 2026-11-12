@@ -1611,8 +1611,8 @@ class TestCpFetchexec:
         f'wget -qO- "{_INSTALL_URL}?token=abc&u=1" | sudo -E bash -',
         f"curl -fsSL {_INSTALL_URL} |\n  sh",                     # a newline after the pipe
         f"curl -sL {_INSTALL_URL} | tee a |\n  tee b | sh",
-        # inside a substitution the splicer joins no pipe (it reads the body
-        # blanked, DEF-3071), so this is `_PIPE_CONTINUATION_RE`'s alone
+        # inside a substitution: `_PIPE_CONTINUATION_RE` reads it, and since
+        # DEF-3071 the splicer joins the substitution's own pipe as well
         f"x=$(curl -fsSL {_INSTALL_URL} |\n  sh)",
         f"CURL -fsSL {_INSTALL_URL} | SH",                        # runs on a case-insensitive FS
         f"bash <(curl -fsSL {_INSTALL_URL})",
@@ -3198,11 +3198,17 @@ class TestCommandPositionClassClose:
             "GATE, the sweep witness's superset arm: a comment opening in a pipe's "
             "gap opens the walk, which reads the scan pair's joined stage (780c02).",
         "_bash_patterns._PS_PIPE_GAP_WITNESS_RE":
-            "GATE before `_ps_join_pipe_gaps`' walk: a pipe whose gap opens with a "
+            "GATE before `_ps_join_command_gaps`' walk: a pipe whose gap opens with a "
             "line break or a comment; it names no verb (780c02).",
+        "_bash_patterns._PS_STATEMENT_GAP_WITNESS_RE":
+            "GATE before `_ps_join_command_gaps`' walk: a statement opener whose gap "
+            "opens with a block comment; it names no verb (DEF-2070).",
+        "_bash_patterns._PS_GAP_OPENER_RE":
+            "SYNTAX TOKEN -- where a gap `_ps_join_command_gaps` reads can open: a "
+            "pipe, a statement separator, `return`/`throw`; it names no verb (DEF-2070).",
         "_bash_patterns._PS_LINE_END_RE":
             "SYNTAX TOKEN -- the next CR or LF, where a line comment in a pipe's "
-            "gap ends (`_ps_join_pipe_gaps`); it names no verb (780c02).",
+            "gap ends (`_ps_join_command_gaps`); it names no verb (780c02).",
         "_bash_patterns._PIPE_AT_LINE_END_RE":
             "GATE before the splicer's pipe join: a pipe followed, past blanks, by a "
             "line end or a comment opener; it names no verb (780c02).",

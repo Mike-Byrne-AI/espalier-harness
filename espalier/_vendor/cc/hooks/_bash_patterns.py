@@ -5063,7 +5063,7 @@ def _ps_mask_read(command: str) -> tuple[str, bool]:
     """`mask_powershell_inert_syntax`'s text, and whether the walk READ
     ``command`` (``False``: handed back raw, past the length cap or at a
     span the walk cannot resolve). The fallback's one home, so a reader
-    that must know a surviving pipe is live (`_ps_join_pipe_gaps`) cannot
+    that must know a surviving pipe is live (`_ps_join_command_gaps`) cannot
     drift from the masker's own conditions."""
     if not command or len(command) > _ROLE_MAP_CAP:
         return command, False
@@ -7022,15 +7022,32 @@ def _statement_words(
     return words, heredoc_op, herestring
 
 
-def _pipe_scan(command: str) -> str:
+def _pipe_scan(
+    command: str, inner: Callable[[int, int], None] | None = None,
+) -> str:
     """The command with every quoted span (single, double, ANSI-C), every
     backslash-escaped character and every comment blanked to spaces, the
     same length, newlines outside them kept: the text the pipe arm reads
     separators and consumers from, independent of rule (2). A heredoc body
     is not blanked here (a pipe on a body line would be read as a consumer:
-    the over-read direction, a scan of data as a program)."""
+    the over-read direction, a scan of data as a program).
+
+    ``inner``, where given, is told about the body of each outermost command
+    substitution, backtick substitution, single- and double-quoted span, as
+    ``inner(lo, hi)`` over ``command[lo:hi]`` (an ANSI-C span's body only
+    where it holds no backslash: escapes are not read); the scan is the
+    same either way. The splicer's program pre-pass is its one caller (it
+    collects the spans for `_splice_in_place_bodies`); every other reader
+    takes the blank."""
     out = list(command)
     n = len(command)
+
+    def blank(lo: int, hi: int, body_lo: int, body_hi: int) -> None:
+        for k in range(lo, hi):
+            out[k] = " "
+        if inner is not None and body_lo < body_hi:
+            inner(body_lo, body_hi)
+
     i = 0
     while i < n:
         c = command[i]
@@ -7058,16 +7075,14 @@ def _pipe_scan(command: str) -> str:
                     if depth == 0:
                         break
                 j += 1
-            for k in range(i, min(j + 1, n)):
-                out[k] = " "
+            blank(i, min(j + 1, n), i + 2, min(j, n))
             i = j + 1
             continue
         if c == "`":
             j = i + 1
             while j < n and command[j] != "`":
                 j += 2 if command[j] == "\\" else 1
-            for k in range(i, min(j + 1, n)):
-                out[k] = " "
+            blank(i, min(j + 1, n), i + 1, min(j, n))
             i = j + 1
             continue
         if c == "'" or (c == "$" and i + 1 < n and command[i + 1] == "'"):
@@ -7075,8 +7090,13 @@ def _pipe_scan(command: str) -> str:
             j = i + (2 if ansi else 1)
             while j < n and command[j] != "'":
                 j += 2 if (ansi and command[j] == "\\") else 1
-            for k in range(i, min(j + 1, n)):
-                out[k] = " "
+            # An ANSI-C span's body is the program's text only where it
+            # holds no escape (`eval $'a |` + newline + `b'`); one that does
+            # is not read until its escapes are, so it is never handed on.
+            lo = i + 2 if ansi else i + 1
+            hi = min(j, n)
+            plain = not ansi or "\\" not in command[lo:hi]
+            blank(i, min(j + 1, n), lo, hi if plain else lo)
             i = j + 1
             continue
         if c == '"':
@@ -7084,8 +7104,7 @@ def _pipe_scan(command: str) -> str:
                 j = _close_double_quote(command, i)
             except _UnresolvedShellSyntax:
                 j = n - 1
-            for k in range(i, j + 1):
-                out[k] = " "
+            blank(i, j + 1, i + 1, j)
             i = j + 1
             continue
         if c == "#" and (i == 0 or command[i - 1] in " \t\n;|&("):
@@ -10755,7 +10774,7 @@ def powershell_scan_pair(command: str) -> tuple[str, str]:
     string -- and the same span is replaced in BOTH strings, which keeps them
     aligned. A second join changes length the same way: a live pipe's gap
     holding a line break or a comment becomes one space in both halves
-    (`_ps_join_pipe_gaps`, 780c02), so an offset in either half is an offset
+    (`_ps_join_command_gaps`, 780c02), so an offset in either half is an offset
     into the joined text, never into ``command``.
     ``powershell_scan_text`` is the masked half of this pair (pinned). The
     raw half is folded the way the masker's walk reads it
@@ -10781,23 +10800,43 @@ def powershell_scan_pair(command: str) -> tuple[str, str]:
         last = m.end()
     raw_parts.append(command[last:])
     scan_parts.append(masked[last:])
-    raw, scan = _ps_join_pipe_gaps("".join(raw_parts), "".join(scan_parts), read)
+    raw, scan = _ps_join_command_gaps("".join(raw_parts), "".join(scan_parts), read)
     return _resolve_ps_command_objects(raw, scan)
 
 
 #: A pipe whose gap, past blanks, opens with a line break or a comment: the
-#: only gap `_ps_join_pipe_gaps` rewrites, so a scan without one skips the
-#: walk. A GATE, not a matcher.
+#: pipe gap `_ps_join_command_gaps` rewrites, so a scan without one, and
+#: without a statement gap, skips the walk. A GATE, not a matcher.
 _PS_PIPE_GAP_WITNESS_RE = re.compile(r"\|[ \t]*[\r\n#<]")
+
+#: A statement opener whose gap, past blanks, opens with a block comment
+#: (DEF-2070): the text's start, or `_PS_CMD_POS_SEP`'s separator class less
+#: the pipe (whose gap the witness above reads), or `return`/`throw`. A line
+#: comment there needs no join, since the line break that ends it opens the
+#: statement. A GATE, not a matcher; asked only where the scan holds `<#`.
+#: WARNING: this and `_PS_GAP_OPENER_RE` below spell `_PS_CMD_POS_SEP`'s
+#: openers as literals (the hot path parses nothing back out of a regex), so
+#: an opener added there is added here too:
+#: `tests/test_write_guard.py::TestAStatementStartGapIsRead::test_the_opener_sets_agree`
+#: derives the three sets by matching and asserts they agree.
+_PS_STATEMENT_GAP_WITNESS_RE = re.compile(
+    r"(?:^|[;\n\r(){}&=]|\b(?:return|throw))[ \t]*<#", re.IGNORECASE)
+
+#: Where a gap the walk reads can open: a pipe, a separator of
+#: `_PS_CMD_POS_SEP`'s class, or `return`/`throw` (the witness above's
+#: openers, the text's start apart). A SYNTAX TOKEN, not a matcher.
+_PS_GAP_OPENER_RE = re.compile(r"[|;\n\r(){}&=]|\b(?:return|throw)\b", re.IGNORECASE)
 
 #: The next line end, CR or LF: one search, which stops at the first of
 #: either (two `find` calls ran one of them to the end of the text).
 _PS_LINE_END_RE = re.compile(r"[\r\n]")
 
 
-def _ps_join_pipe_gaps(raw: str, scan: str, masker_read: bool) -> tuple[str, str]:
-    """The pair with every gap after a live pipe that holds a comment or a
-    line break replaced by one space, at the same offsets in both halves.
+def _ps_join_command_gaps(raw: str, scan: str, masker_read: bool) -> tuple[str, str]:
+    """The pair with every gap before a command replaced by one space, at the
+    same offsets in both halves: a live pipe's gap that holds a comment or a
+    line break, and a statement opener's gap that holds a block comment
+    (DEF-2070, below; named for the pipe until then).
 
     PowerShell reads a pipeline's next stage past blanks, line breaks, line
     comments and block comments, so `Get-ChildItem C:\\ -Recurse | <# c #>
@@ -10812,12 +10851,12 @@ def _ps_join_pipe_gaps(raw: str, scan: str, masker_read: bool) -> tuple[str, str
     #>`, `<# a #># b`: one gap on pwsh 5.1, driven), as the masker's walk
     reads it (`block_end` in `_walk_powershell_spans`).
 
-    Two places a surviving pipe is not one the gap is read after: where the
-    masker handed the command back raw (``masker_read`` false, from
+    Two places a surviving opener is not one the gap is read after: where
+    the masker handed the command back raw (``masker_read`` false, from
     `_ps_mask_read`), every quoted pipe and comment survives, so nothing is
     joined -- a declared limit: past the masker's cap, or with a span it
-    cannot resolve (an unterminated quote), a gap hides its stage from a
-    reader that has only the join; and inside a string the masker keeps
+    cannot resolve (an unterminated quote), a gap hides its pipeline stage
+    or its statement from a reader that has only the join; and inside a string the masker keeps
     live because PowerShell re-parses it (`iex '...'`), a gap is joined
     only where it ends before that string's closing quote (`_ps_quote_cursor`
     on ``raw``) -- a comment there that runs past the quote is the inner
@@ -10830,30 +10869,77 @@ def _ps_join_pipe_gaps(raw: str, scan: str, masker_read: bool) -> tuple[str, str
     the scan holds the line break a `` `n `` escape denotes and the raw the
     escape (the reviews of the batch).
 
+    The same join opens a statement (DEF-2070): a block comment where a
+    statement starts kept its `#>` on the scan, so the word after it sat at
+    no command position, and `<# c #> Get-Content .env` hid its read from
+    every reader of either half (Windows PowerShell 5.1 runs it, driven). So
+    the walk reads a gap after the text's start, after each live separator
+    of `_PS_CMD_POS_SEP`'s class and after `return`/`throw` as well
+    (`_PS_GAP_OPENER_RE`). Such a gap holds blanks and block comments only:
+    a line break there is itself a separator, which opens the statement
+    after a line comment, so the join leaves both as they are. Only what
+    the masker read as a comment is joined (its own token-start rule), so a
+    comment's text never reaches a reader, and an argument's comment, after
+    a word, is never at an opener. One opener is read past the masker's rule:
+    a `<#` glued to `=` (`$x =<# c #> Get-Content .env`, which Windows
+    PowerShell 5.1 runs, driven; the code review). The masker leaves it
+    glued, as it is after `=` in an argument (`Write-Output a=<# x`), so its
+    delimiters may be blanks on the scan, and that gap is read on ``raw``:
+    its blanks, a comment glued to the close, and the close itself, a block
+    comment's first `#>` whatever it holds. In an argument that over-reads
+    the words after the comment as a statement, friction on a rare spelling
+    rather than a hidden read; and a quote inside such a comment (`$x =<#
+    don't #> gc .env`) is an unterminated string to the masker, which hands
+    the command back raw: the declared limit below, nothing joined.
+
     Linear: each gap ends at the first character that is not a blank or a
     comment, a pipe stops it, the next line end is one search from where
     the walk is, and the next ``#>`` is searched for at most once per
     position it is reached from (a found one is reused while the walk is
     short of it)."""
-    if not masker_read or not _PS_PIPE_GAP_WITNESS_RE.search(scan):
+    if not masker_read:
+        return raw, scan
+    pipes = "|" in scan and _PS_PIPE_GAP_WITNESS_RE.search(scan) is not None
+    statements = "<#" in scan and _PS_STATEMENT_GAP_WITNESS_RE.search(scan) is not None
+    if not (pipes or statements):
         return raw, scan
     n = len(scan)
     quote_at = _ps_quote_cursor(raw)
     spans: list[tuple[int, int]] = []
     close_at, close_from = -1, n + 1
-    i = scan.find("|")
-    while 0 <= i < n:
-        j = i + 1
-        while j < n and scan[j] == "|":  # `||`, the pipeline chain operator
-            j += 1
+    raw_close_at, raw_close_from = -1, n + 1
+    # ``i`` is the opener's offset, -1 for the text's start; with no
+    # statement gap the walk visits pipes alone, as it did before DEF-2070
+    if statements:
+        i, pipe, j = -1, False, 0
+    else:
+        i = scan.find("|")
+        pipe, j = True, i + 1
+    while i < n:
+        if pipe:
+            while j < n and scan[j] == "|":  # `||`, the pipeline chain operator
+                j += 1
         start, k, held, glued = j, j, False, -1
+        eq = i >= 0 and scan[i] == "="
         while k < n:
             c = scan[k]
-            opens = k == glued or scan[k - 1] in _PS_TOKEN_BOUNDARY
-            if c in " \t":
+            opens = k == 0 or k == glued or scan[k - 1] in _PS_TOKEN_BOUNDARY
+            if c in " \t" and (not eq or raw[k] in " \t"):
                 k += 1
-            elif c in "\r\n":
+            elif pipe and c in "\r\n":
                 held, k = True, k + 1
+            elif eq and (k == start or k == glued) and raw.startswith("<#", k):
+                # `=<#`: a comment the masker left glued, read on ``raw``
+                # (and a comment glued to its close), where the scan may
+                # hold the masker's blanks for its delimiters
+                if not (raw_close_from <= k + 2 <= raw_close_at):
+                    raw_close_from, raw_close_at = k + 2, raw.find("#>", k + 2)
+                    if raw_close_at < 0:
+                        raw_close_at = n + 1
+                if raw_close_at > n:
+                    break
+                held, k = True, raw_close_at + 2
+                glued = k
             elif c == "<" and scan.startswith("<#", k) and opens:
                 if not (close_from <= k + 2 <= close_at):
                     close_from, close_at = k + 2, scan.find("#>", k + 2)
@@ -10863,18 +10949,29 @@ def _ps_join_pipe_gaps(raw: str, scan: str, masker_read: bool) -> tuple[str, str
                     break
                 held, k = True, close_at + 2
                 glued = k
-            elif c == "#" and opens:
+            elif pipe and c == "#" and opens:
                 eol = _PS_LINE_END_RE.search(scan, k)
                 held, k = True, (eol.start() if eol else n)
             else:
                 break
         if held:
-            quote = quote_at(i)
+            quote = quote_at(i) if i >= 0 else None
             if quote is None or k < quote[1]:
                 spans.append((start, k))
             else:
                 k = max(j, quote[1] + 1)  # past the string: its line's later pipes
-        i = scan.find("|", max(k, j))
+        at = max(k, j)
+        if statements:
+            m = _PS_GAP_OPENER_RE.search(scan, at)
+            if m is None:
+                break
+            i, j = m.start(), m.end()
+            pipe = scan[i] == "|"
+        else:
+            i = scan.find("|", at)
+            if i < 0:
+                break
+            pipe, j = True, i + 1
     if not spans:
         return raw, scan
     raw_parts: list[str] = []
@@ -15281,6 +15378,7 @@ def _splice_replacement(match: "re.Match[str]") -> str:
     return "\n" if match.group(1) else ""
 
 
+@functools.lru_cache(maxsize=64)
 def splice_line_continuations(command: str) -> str:
     r"""The Bash readers' ONE raw pre-pass: `_splice_line_continuations`
     (its docstring is the contract -- the order rule, the heredoc rule), then
@@ -15311,6 +15409,158 @@ def splice_line_continuations(command: str) -> str:
 _PIPE_AT_LINE_END_RE = re.compile(r"\|&?[ \t\r]*[\n#]")
 
 
+#: How many programs deep the splicer splices a program inside a program
+#: (`bash -c 'x=$(...)'` is two). Past it a body is left as written: the
+#: under-read direction, a declared bound on spelling depth.
+_SPLICE_PROGRAM_MAX_DEPTH = 8
+
+
+@functools.lru_cache(maxsize=64)
+def _masked_or_raw(command: str) -> str:
+    """`mask_inert_syntax`, or the raw text where the mask would not line up
+    by offset (the masker fails closed to the raw text itself). Memoised, as
+    `_resolve_bash_discovered_heads` is: every reader splices the same text
+    again, and the splicer reads this mask only for a body holding a pipe at
+    a line end -- unmemoised, a 100-line commit message whose lines end in
+    a pipe cost the wall 8% more than main (measured in-process). The masker
+    reads no state but its text (no context variable on its call graph)."""
+    mask = mask_inert_syntax(command)
+    return mask if len(mask) == len(command) else command
+
+
+def _splice_in_place_bodies(
+    command: str, spans: list[tuple[int, int]], depth: int, scan: str,
+) -> str:
+    """``command`` with the body of each program a shell reads in place,
+    among ``spans`` (the outermost substitution and quoted bodies holding a
+    pipe at a line end, which the splicer's own scan collected), spliced as
+    a command of its own, one level down: a command substitution
+    (`x=$(find / |` + newline + `...)`, DEF-3071) and a quoted program
+    (`bash -c '...'`, `eval '...'`, DEF-3073). The splicer's pipe join
+    reads `_pipe_scan`, which blanks those bodies whole, so a pipe ending
+    one of their lines was never at a line's live end and the next stage
+    stayed a statement of its own for every reader of both texts. Spliced
+    by the splicer itself, the body gets every rule the top level has --
+    the comment and blank-line gap, the heredoc opener that holds its
+    newline, the terminator a join never eats -- where a flat view of the
+    bodies joined `cat <<X |` to its own body line (the lane's first cut,
+    driven). Which span is a program is the masker's call
+    (`mask_inert_syntax`): a body it keeps verbatim is code; one whose
+    separators it blanked is data and is left alone (`echo 'a |` + newline
+    + `b'`). A quoted word inside a substitution is kept whole by the outer
+    mask and read again by the body's own, one level down. The mask is read
+    only here, so a command whose bodies hold no such pipe pays nothing for
+    it (the operator's 11-08 bound: no per-call weight for a spelling).
+
+    A double-quoted word the masker blanked in part (a separator in its
+    text: `echo "a; $(...)"`) is data around code: its own substitutions
+    are spliced where the mask kept them (the code review, driven: 16 of 21
+    such words were left unread). A span holding a line that spells a
+    delimiter a heredoc outside the spans opened is left alone: `_pipe_scan`
+    does not blank a heredoc body, so an apostrophe in a data body opens a
+    span that runs past its terminator, and splicing it joined a stage onto
+    the terminator (the code review, driven: `| - | - |` + newline +
+    `EOF`). ``scan`` is the command's `_pipe_scan`, where those operators
+    are read."""
+    mask = _masked_or_raw(command)
+    delims = _heredoc_delimiters(command, scan)
+    out: list[str] = []
+    at = 0
+    for lo, hi in spans:
+        body = command[lo:hi]
+        if delims and _spells_a_delimiter(body, delims):
+            continue
+        if mask[lo:hi] == body:
+            spliced = _splice_line_continuations(body, _depth=depth + 1)
+        elif command[lo - 1:lo] == '"':
+            spliced = _splice_quoted_substitutions(body, mask[lo:hi], depth)
+        else:
+            continue
+        out.append(command[at:lo])
+        out.append(spliced)
+        at = hi
+    out.append(command[at:])
+    return "".join(out)
+
+
+def _splice_quoted_substitutions(body: str, mask: str, depth: int) -> str:
+    """A double-quoted word's ``body`` with each substitution in it holding a
+    pipe at a line end spliced as a command of its own, where ``mask`` (the
+    command's mask over the word) kept it verbatim: bash runs a substitution
+    inside double quotes whatever the word's other text is. The word's text
+    is scanned as a command, so an apostrophe in it (a literal inside double
+    quotes) hides a substitution after it: the under-read direction."""
+    subs: list[tuple[int, int]] = []
+
+    def collect(lo: int, hi: int) -> None:
+        if ((body[lo - 2:lo] == "$(" or body[lo - 1:lo] == "`")
+                and _PIPE_AT_LINE_END_RE.search(body, lo, hi)):
+            subs.append((lo, hi))
+
+    _pipe_scan(body, collect)
+    out: list[str] = []
+    at = 0
+    for lo, hi in subs:
+        if mask[lo:hi] != body[lo:hi]:
+            continue
+        out.append(body[at:lo])
+        out.append(_splice_line_continuations(body[lo:hi], _depth=depth + 1))
+        at = hi
+    out.append(body[at:])
+    return "".join(out)
+
+
+def _heredoc_delimiters(command: str, scan: str) -> frozenset[str]:
+    """Every delimiter a heredoc operator ``scan`` (``command``'s
+    `_pipe_scan`) holds names: a line spelling one may end some body, so
+    the splicer never joins a stage onto it."""
+    found: set[str] = set()
+    for op in _HEREDOC_OPERATOR_RE.finditer(scan):
+        try:
+            _, spec = _read_heredoc_operator(command, op.start())
+        except _UnresolvedShellSyntax:
+            continue
+        if spec is not None:
+            found.add(spec[0])
+    return frozenset(found)
+
+
+def _masked_through_terminator(
+    command: str, lines: list[str], idx: int, start: int, body: tuple[str, bool, bool],
+) -> str:
+    """`_masked_or_raw` of ``command`` through the terminator of the heredoc
+    ``body`` that line ``idx`` (at offset ``start``) sits in, or of the whole
+    command where none follows: the statements after a body never decide
+    whether the masker keeps it."""
+    delim, _quoted, strip = body
+    end = start
+    for line in lines[idx:]:
+        end += len(line) + 1
+        probe = line.lstrip("\t") if strip else line
+        if probe.rstrip("\r").strip() == delim:
+            return _masked_or_raw(command[:end - 1])
+    return _masked_or_raw(command)
+
+
+def _spells_a_delimiter(text: str, delims: frozenset[str]) -> bool:
+    """A line of ``text`` is, past blanks, one of ``delims``."""
+    return any(line.strip() in delims for line in text.split("\n"))
+
+
+def _pipe_stage_end(line: str, scan_line: str) -> int | None:
+    """Where ``line``'s pipeline stage ends when its last live character is a
+    pipe (`|` or `|&`) with only blanks, a comment or a lone continuation
+    backslash after it -- the length of the text the join keeps -- else
+    None. ``scan_line`` is `_pipe_scan`'s slice for the line. One home for
+    the splicer's two joins, the top level's and a program body's."""
+    stage = scan_line.rstrip(" \t\r")
+    rest = line[len(stage):]
+    if (stage.endswith("|") or stage.endswith("|&")) and (
+            _blank_or_comment(rest) or rest.strip() == "\\"):
+        return len(stage)
+    return None
+
+
 def _blank_or_comment(text: str) -> bool:
     """``text`` holds nothing bash runs: blanks, or a comment from its first
     word on. Read on the RAW text, beside `_pipe_scan`'s blank: a quoted
@@ -15320,7 +15570,7 @@ def _blank_or_comment(text: str) -> bool:
     return not word or word.startswith("#")
 
 
-def _splice_line_continuations(command: str) -> str:
+def _splice_line_continuations(command: str, _depth: int = 0) -> str:
     r"""Join physical lines a trailing backslash continues, into logical ones.
 
     ⚠ Callers want the public `splice_line_continuations`: this one does NOT
@@ -15373,6 +15623,31 @@ def _splice_line_continuations(command: str) -> str:
     """
     if "\\" not in command and not _PIPE_AT_LINE_END_RE.search(command):
         return command
+    #: The outermost substitution and quoted bodies holding a pipe at a line
+    #: end, collected by the scan below as it blanks them.
+    spans: list[tuple[int, int]] = []
+
+    def collect(lo: int, hi: int) -> None:
+        if (_depth < _SPLICE_PROGRAM_MAX_DEPTH
+                and _PIPE_AT_LINE_END_RE.search(command, lo, hi)):
+            spans.append((lo, hi))
+
+    #: The operators are read on the WHOLE command's quote-blanked twin,
+    #: sliced per line by offset (`_pipe_scan` keeps the length), never on a
+    #: line's own: a quoted span that opened on an earlier line hid nothing
+    #: from a per-line scan, so a heredoc operator mentioned inside a
+    #: multi-line commit message opened a body that never closed and no
+    #: continuation after it was spliced again (both reviews, driven with a
+    #: marker into a hook).
+    scan = _pipe_scan(command, collect)
+    if spans:
+        # A substitution's or an in-place program's own lines, first, as
+        # commands of their own (DEF-3071, DEF-3073): the loop below reads
+        # this scan, which blanks their bodies whole.
+        spliced = _splice_in_place_bodies(command, spans, _depth, scan)
+        if spliced != command:
+            command = spliced
+            scan = _pipe_scan(command)
     lines = command.split("\n")
     parts: list[str] = []
     #: The line before ended in a pipe, so bash is still reading that
@@ -15388,29 +15663,61 @@ def _splice_line_continuations(command: str) -> str:
     #: line cannot be the terminator -- `x\` + newline + `EOF` is the body
     #: line `xEOF`, and the delimiter is still open (driven with a marker).
     continued = False
-    #: The operators are read on the WHOLE command's quote-blanked twin,
-    #: sliced per line by offset (`_pipe_scan` keeps the length), never on a
-    #: line's own: a quoted span that opened on an earlier line hid nothing
-    #: from a per-line scan, so a heredoc operator mentioned inside a
-    #: multi-line commit message opened a body that never closed and no
-    #: continuation after it was spliced again (both reviews, driven with a
-    #: marker into a hook).
-    scan = _pipe_scan(command)
+    #: The heredoc delimiters the command names, read on first need.
+    delims: frozenset[str] | None = None
     last = len(lines) - 1
     offset = 0
     for idx, line in enumerate(lines):
+        start = offset
         scan_line = scan[offset:offset + len(line)]
         offset += len(line) + 1
         if body is not None:
             delim, quoted, strip = body
             probe = line.lstrip("\t") if strip else line
+            cut = None if idx == last else _pipe_stage_end(line, scan_line)
+            if pipe_open and probe.rstrip("\r").strip() != delim:
+                # A joined stage never runs onto a line that may end another
+                # body: a heredoc the program opened inside this one closes
+                # there (the code review, driven: `body |` + newline + `X`).
+                if delims is None:
+                    delims = _heredoc_delimiters(command, scan)
+                if line.strip() in delims:
+                    parts.append("\n")
+                    pipe_open = False
             if not continued and probe.rstrip("\r").strip() == delim:
+                if pipe_open:
+                    # A program body's stage met its terminator: the newline
+                    # before it ends the body, so it is never joined away.
+                    parts.append("\n")
+                    pipe_open = False
                 body = queue.pop(0) if queue else None
                 parts.append(line)
+            elif pipe_open and idx < last and _blank_or_comment(line):
+                continue
+            elif (cut is not None and not _HEREDOC_OPERATOR_RE.search(scan_line)
+                    and _masked_through_terminator(command, lines, idx, start, body)[start:offset]
+                    == command[start:offset]):
+                # A body a shell reads (`bash <<'E'`): the masker kept its
+                # line and the newline after it, so the program's shell
+                # reads that newline, and a pipe at the line's live end
+                # takes its next stage from the lines after it (DEF-3073).
+                # A data body (`cat <<'E'`) is blanked there and joins
+                # nothing; the terminator check above runs first, and a
+                # line opening a heredoc of the program's own holds its
+                # newline for that body, as at the top level. The mask is
+                # read through this body's terminator, so a later head the
+                # masker cannot resolve (`make`) does not hand back the raw
+                # text and read a data body as code (the code review).
+                parts.append(line[:cut] + " ")
+                pipe_open = True
+                continued = False
+                continue
             elif quoted:
+                pipe_open = False
                 parts.append(line)
                 continued = False
             else:
+                pipe_open = False
                 text, joined = _spliced_line(line, idx == last)
                 parts.append(text)
                 continued = joined
@@ -15436,12 +15743,12 @@ def _splice_line_continuations(command: str) -> str:
             # ONE pipeline (driven). Joined here, every pipe reader of both
             # texts reads the stage it was hidden from (the comment and the
             # newline went to no reader's stage pattern). A line that opened
-            # a heredoc is left alone: its body follows this newline.
-            stage = scan_line.rstrip(" \t\r")
-            rest = line[len(stage):]
-            if (stage.endswith("|") or stage.endswith("|&")) and (
-                    _blank_or_comment(rest) or rest.strip() == "\\"):
-                parts.append(line[:len(stage)] + " ")
+            # a heredoc is left alone: its body follows this newline. A
+            # substitution's or an in-place program's own lines were joined
+            # by the same rule before this loop (`_splice_in_place_bodies`).
+            cut = _pipe_stage_end(line, scan_line)
+            if cut is not None:
+                parts.append(line[:cut] + " ")
                 pipe_open = True
                 continue
         text, joined = _spliced_line(line, idx == last)
@@ -17029,7 +17336,7 @@ def _ps_has_sweep_witness(command: str) -> bool:
     """The pre-check every sweep consumer runs before a walk: a find delete
     action, a pipe into a remove verb, or a .NET directory delete, anywhere
     in the uncapped text; or a comment opening after a pipe, which the scan
-    pair's gap join (`_ps_join_pipe_gaps`) reads past to the stage this
+    pair's gap join (`_ps_join_command_gaps`) reads past to the stage this
     raw-text witness cannot see (a superset costs a walk)."""
     return bool(_FIND_DELETE_ACTION_RE.search(command) or _PS_SWEEP_WITNESS_RE.search(command)
                 or _PS_PIPE_THEN_COMMENT_RE.search(command))

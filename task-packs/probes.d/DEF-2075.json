@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2075",
+ "subject": "tools/cc/hooks/write_guard.py",
+ "cmd": "python -c 'import os, sys; os.environ.pop(\"ESPALIER_MAINTENANCE_MODE\", None); sys.path[:0] = [\"tools/cc/hooks\", \"tools/cc\"]; import write_guard as w; p = lambda c: \".env\" in w._ps_secret_read_targets(c); print(p(\"@(gc .env)\"), p(\"$a = @(Get-Content .env)\"))'",
+ "open_value": "False False",
+ "why_not": null,
+ "row_sha": "cfd4ea6fafa3",
+ "text_sha": "e2181b30c96b",
+ "verified_2026_11_11": "OPEN (filed 2026-11-11; probe driven at filing here and in the export of HEAD 24384588e2cd)"
+}

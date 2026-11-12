@@ -9381,6 +9381,11 @@ class TestCatastrophicRmFlagOrderIndependent:
             # a compiled pattern, compiled on first use: no key a flag could
             # be missing from, and no verdict
             "_carrier_fed_remove_re",
+            # `_masked_or_raw` (DEF-3071, DEF-3073) is keyed on the text and
+            # returns its mask, or the text itself: the masker's transform,
+            # which reads no flag (its call graph is pinned stateless in
+            # `TestAGapAfterAPipeIsRead`)
+            "_masked_or_raw",
             # `_relief_applies` reads the command's text and nothing else: the
             # flag joins the bases beside it, in `_statement_bases`
             "_nested_shell_programs_cached",
@@ -9401,6 +9406,10 @@ class TestCatastrophicRmFlagOrderIndependent:
             # grammar and program text: a reading the judges are handed,
             # which carries no verdict a flag could change
             "ps_start_process_shell_launches",
+            # `splice_line_continuations` (DEF-3071, DEF-3073) is the Bash
+            # readers' one raw pre-pass, keyed on the text: a transform every
+            # reader is handed, never a judge, and stateless the same way
+            "splice_line_continuations",
         ], memos
 
     @pytest.mark.parametrize("text, at, kind", [
@@ -14805,9 +14814,18 @@ class TestQuotedTargetSurvivesTheRoot:
         driven). The extractor falls back to scanning the raw command."""
         bp = _bash_patterns_module()
         orig = bp.mask_inert_syntax
+        # the splicer's memos hold masks computed by the real masker, and
+        # would hold this drifted one for the tests after this one
+        memos = (bp._masked_or_raw, bp.splice_line_continuations)
+        for memo in memos:
+            memo.cache_clear()
         monkeypatch.setattr(bp, "mask_inert_syntax", lambda c: " " + orig(c))
         project = projects["plain"]
-        assert self._denied("Bash", "echo x > tools/cc/hooks/write_guard.py", project)
+        try:
+            assert self._denied("Bash", "echo x > tools/cc/hooks/write_guard.py", project)
+        finally:
+            for memo in memos:
+                memo.cache_clear()
 
     #: The spellings `raw_operand` reads SHORT on purpose: a glued quote and a
     #: backslash-escaped quote inside the span (the row records both as out of
@@ -16928,8 +16946,11 @@ class TestAGapAfterAPipeIsRead:
     of either text reads the stage. A one-off measurement, not a pin: a
     census over the corpus's pipe rows, rewriting each live pipe with every
     gap here, found 1224 variants losing a verdict their twin had, and none
-    after (2026-11-10; it rewrote top-level pipes only, so a program another
-    shell reads is DEF-3071's and DEF-3073's, below)."""
+    after (2026-11-10; it rewrote top-level pipes only). A program a shell
+    reads in place -- a substitution, a quoted `-c` or `eval` program, a
+    heredoc fed to a shell -- is spliced as a command of its own first
+    (`_splice_in_place_bodies`, DEF-3071 and DEF-3073), so a gap inside one
+    is read the same way, below."""
 
     @pytest.mark.parametrize("tool, twin, expect", _PIPE_GAP_TWINS)
     def test_the_one_line_twin_holds_its_verdict(self, tmp_path, tool, twin, expect):
@@ -16970,6 +16991,32 @@ class TestAGapAfterAPipeIsRead:
         ("cat <<'EOF' |\nbody\nEOF\nb", "cat <<'EOF' |\nbody\nEOF\nb"),
         ('a | "x\ny"', 'a | "x\ny"'),
         ('a |\n"x\ny"', 'a | "x\ny"'),
+        # a program a shell reads in place is spliced as its own command
+        # (DEF-3071, DEF-3073), its gaps and its heredoc rules included
+        ("x=$(a |\nb)", "x=$(a | b)"),
+        ("x=`a | # c\nb`", "x=`a | b`"),
+        ("bash -c 'a |\n\n# c\nb'", "bash -c 'a | b'"),
+        ("eval 'a | # c\nb'", "eval 'a | b'"),
+        ("eval $'a |\nb'", "eval $'a | b'"),
+        ("bash -c 'x=$(a |\nb)'", "bash -c 'x=$(a | b)'"),
+        ("bash <<'E'\na | # c\n# d\nb\nE", "bash <<'E'\na | b\nE"),
+        # the program's own heredoc opener holds its newline, and a join
+        # never eats a terminator (the lane's first cut did both, driven)
+        ("bash -c 'cat <<X |\nbody\nX'", "bash -c 'cat <<X |\nbody\nX'"),
+        ("bash <<E\na |\nE\nb", "bash <<E\na | \nE\nb"),
+        # ... nor a terminator of a heredoc the program opened inside its
+        # body, nor one an apostrophe in a data body ran a quote past (the
+        # code review, driven: both were joined)
+        ("bash <<'E'\ncat <<'X'\nbody |\nX\nb\nE", "bash <<'E'\ncat <<'X'\nbody | \nX\nb\nE"),
+        ("cat > R.md <<EOF\nDon't.\n| a |\n| - |\nEOF\nb", "cat > R.md <<EOF\nDon't.\n| a |\n| - |\nEOF\nb"),
+        # a double-quoted word's own substitution is spliced, its text is not
+        ('echo "a; $(b |\nc)"', 'echo "a; $(b | c)"'),
+        # data is not a program: the masker blanks its separators
+        ("cat <<E\na |\nb\nE", "cat <<E\na |\nb\nE"),
+        ("echo 'a |\nb'", "echo 'a |\nb'"),
+        ("x=$(echo 'a |\nb')", "x=$(echo 'a |\nb')"),
+        # an ANSI-C body holding an escape is not read until its escapes are
+        ("eval $'a |\\nb'", "eval $'a |\\nb'"),
     ])
     def test_the_bash_join(self, cmd, joined):
         assert _bash_patterns_module().splice_line_continuations(cmd) == joined
@@ -17059,17 +17106,254 @@ class TestAGapAfterAPipeIsRead:
         assert len(cmd) > bp._BASH_COMMAND_CAP
         assert _delete_verdict(run_guard_from("Bash", cmd, tmp_path, tmp_path)) == "wall"
 
+    #: Where a program a shell reads in place goes: `{p}` is the program.
+    _IN_PLACE_PROGRAMS = {
+        # DEF-3071: a command substitution's body
+        "subst": "x=$({p})", "subst-arg": "echo $({p})", "backtick": "x=`{p}`",
+        "dq-subst": 'echo "$({p})"', "nested-subst": "x=$(echo $({p}))",
+        # ... inside a double-quoted word whose other text the masker blanks
+        # (a separator, a pipe): the word is data, its substitution is not
+        "dq-subst-sep": 'echo "a; $({p})"', "dq-backtick-pipe": 'git commit -m "a | b `{p}`"',
+        # DEF-3073: a quoted program and a heredoc fed to a shell
+        "bash-c": "bash -c '{p}'", "sh-c": "sh -c '{p}'", "bash-c-dq": 'bash -c "{p}"',
+        "eval": "eval '{p}'", "eval-dq": 'eval "{p}"', "eval-ansi": "eval $'{p}'",
+        "heredoc-q": "bash <<'E'\n{p}\nE", "heredoc-u": "bash <<E\n{p}\nE",
+        "heredoc-sh": "sh <<'E'\n{p}\nE", "heredoc-dash": "bash <<-'E'\n{p}\nE",
+        "subst-in-bash-c": "bash -c 'x=$({p})'",
+    }
+
+    @pytest.mark.parametrize("form", list(_IN_PLACE_PROGRAMS))
+    @pytest.mark.parametrize("gap", _PIPE_GAPS["Bash"][:3])
+    def test_a_gap_inside_a_program_another_shell_reads_walls(self, tmp_path, form, gap):
+        # DEF-3071, DEF-3073: until 2026-11-11 each was allowed where its
+        # one-line twin walls -- the splicer read the body blanked, so the
+        # pipe ending its line was never at a live end
+        twin = self._IN_PLACE_PROGRAMS[form].format(p="find / -type f | xargs rm -rf")
+        cmd = self._IN_PLACE_PROGRAMS[form].format(p="find / -type f" + gap + "xargs rm -rf")
+        assert _delete_verdict(run_guard_from("Bash", twin, tmp_path, None)) == "wall", twin
+        assert _delete_verdict(run_guard_from("Bash", cmd, tmp_path, None)) == "wall", cmd
+
     @pytest.mark.parametrize("cmd", [
-        "bash -c 'find / -type f |\nxargs rm -rf'",
-        "bash -c 'find / -type f | # c\nxargs rm -rf'",
-        "eval 'find / -type f | # c\nxargs rm -rf'",
-        "bash <<'E'\nfind / -type f | # c\nxargs rm -rf\nE",
+        # a mention stays a mention: the masker blanks a data span's
+        # separators, so nothing in it is spliced as a program
+        "echo 'find / -type f |\nxargs rm -rf'",
+        'printf "find / -type f | # c\nxargs rm -rf"',
+        "cat > notes.md <<'E'\nfind / -type f |\nxargs rm -rf\nE",
+        "x=$(echo 'find / -type f |\nxargs rm -rf')",
+        "git commit -m 'notes |\n# heading\nfind / -type f |\nxargs rm -rf'",
+        "bash -c 'cat <<X |\nfind / -type f |\nxargs rm -rf\nX\nwc -l'",
+        # a head after the body the masker cannot resolve does not make the
+        # body code: the mask is read through its terminator (the code
+        # review, driven: walled on the lane's first cut, allowed at main)
+        "cat > notes.md <<E\nfind / -type f |\nxargs rm -rf\nE\nmake",
     ])
-    def test_a_program_another_shell_reads_is_not_joined(self, tmp_path, cmd):
-        # DECLARED, DEF-3073: the splicer reads a quoted program and a heredoc
-        # body blanked, so a gap inside one is not joined (the one-line twin
-        # of each walls); the row's fix moves these to the wall
+    def test_data_inside_or_beside_a_program_is_not_joined(self, tmp_path, cmd):
         assert _delete_verdict(run_guard_from("Bash", cmd, tmp_path, None)) == "allow", cmd
+
+    @pytest.mark.parametrize("cmd", [
+        # a statement after a program's terminator is still read: a join
+        # that ate the terminator would hide it in a body that never closes
+        "bash -c 'bash <<E\nls |\nE\nrm -rf /'",
+        "bash <<E\nls |\nE\nrm -rf /",
+        "bash -c 'cat <<X |\ndata\nX\nrm -rf /'",
+        "x=$(ls |\nwc)\nrm -rf /",
+        "bash <<'E'\ncat <<'X'\nbody |\nX\nrm -rf /\nE",
+        "cat > R.md <<EOF\nDon't edit.\n| a | b |\n| - | - |\nEOF\nrm -rf /",
+    ])
+    def test_a_statement_after_a_program_is_still_read(self, tmp_path, cmd):
+        assert _delete_verdict(run_guard_from("Bash", cmd, tmp_path, None)) == "wall", cmd
+
+    @pytest.mark.parametrize("depth, expect", [(8, "wall"), (9, "allow")])
+    def test_the_program_depth_bound_is_pinned(self, tmp_path, depth, expect):
+        # `_SPLICE_PROGRAM_MAX_DEPTH`: a program that many substitutions deep
+        # is spliced; one deeper is left as written, the under-read direction
+        # (the one-line twin walls at every depth). A change to the bound
+        # reds here, on purpose
+        prog = "find / -type f |\nxargs rm -rf"
+        twin = "find / -type f | xargs rm -rf"
+        for _ in range(depth):
+            prog, twin = f"echo $({prog})", f"echo $({twin})"
+        assert _delete_verdict(run_guard_from("Bash", twin, tmp_path, None)) == "wall"
+        assert _delete_verdict(run_guard_from("Bash", prog, tmp_path, None)) == expect
+
+    @pytest.mark.parametrize("memo", ["_masked_or_raw", "splice_line_continuations"])
+    def test_a_memoised_splice_reads_no_state(self, memo):
+        """The two memos hold the operator's cost bound (DEF-3071, DEF-3073):
+        an answer is served by the text alone, so nothing on their call graph
+        may read a context variable, the environment or a `global` -- a read
+        added there later would serve a stale answer and red nothing else
+        (the failure-mode review). A static walk over the module's own
+        functions, a name read as a call where one shares a function's name
+        (a superset)."""
+        import ast
+        bp = _bash_patterns_module()
+        tree = ast.parse(Path(bp.__file__).read_text(encoding="utf-8"))
+        defs = {n.name: n for n in tree.body
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        context_vars = {
+            t.id for n in tree.body if isinstance(n, (ast.Assign, ast.AnnAssign))
+            and isinstance(n.value, ast.Call)
+            and ast.unparse(n.value.func).endswith("ContextVar")
+            for t in (n.targets if isinstance(n, ast.Assign) else [n.target])
+            if isinstance(t, ast.Name)
+        }
+        assert context_vars, "the module's context variables were not found"
+        seen, todo, reads = set(), [memo], []
+        while todo:
+            name = todo.pop()
+            if name in seen:
+                continue
+            seen.add(name)
+            for node in ast.walk(defs[name]):
+                if isinstance(node, ast.Name) and node.id in context_vars:
+                    reads.append((name, node.id))
+                elif isinstance(node, ast.Name) and node.id in defs:
+                    todo.append(node.id)
+                elif isinstance(node, ast.Global):
+                    reads.append((name, "global " + ", ".join(node.names)))
+                elif (isinstance(node, ast.Attribute) and node.attr in ("environ", "getenv")
+                      and isinstance(node.value, ast.Name) and node.value.id == "os"):
+                    reads.append((name, "os." + node.attr))
+        assert "mask_inert_syntax" in seen, sorted(seen)
+        assert not reads, reads
+
+
+class TestAStatementStartGapIsRead:
+    """DEF-2070 (assign ef0470, narrowed by 5565c3): a block comment where a
+    statement starts hid the statement from every reader of the scan pair.
+    The masker keeps the comment's `<#` and `#>` (they end a blank run, so a
+    commented-out command is not read at command position), and no command
+    position opens after a `#>`, so `<# c #> Get-Content .env` read a dotenv
+    and `<# c #> Set-Content tools/cc/hooks/x.py y` wrote a hook, each allowed
+    where its bare twin is refused (driven at 9c47d43 through the hook; every
+    spelling below runs on Windows PowerShell 5.1, driven on a scratch file).
+    The pipe's gap join (`_ps_join_command_gaps`, DEF-3066) now reads every
+    statement opener: blanks and block comments after the text's start, a
+    live `;` line break `(` `)` `{` `}` `&` `=`, or `return`/`throw`, become
+    one space in both halves. A line comment there was already read, since its
+    line break opens the statement (the controls)."""
+
+    @pytest.mark.parametrize("cmd", [
+        "<# c #> Get-Content .env",
+        "<# c #>Get-Content .env",
+        "  <# c #> Get-Content .env",
+        "<# a #> <# b #> Get-Content .env",
+        "<# a #><# b #> Get-Content .env",
+        "<# one\ntwo #> Get-Content .env",
+        "Get-Date; <# c #> Get-Content .env",
+        "Get-Date\n<# c #> gc .env",
+        "Get-Date\r\n<# c #> gc .env",
+        "if ($true) { <# c #> Get-Content .env }",
+        "$x = <# c #> Get-Content .env",
+        "$x = (<# c #> Get-Content .env)",
+        "function f { return <# c #> Get-Content .env }",
+        "& <# c #> 'Get-Content' .env",
+        "<# c #> . ./.env",
+        # the reviews of the batch: one row for each opener a one-character
+        # narrowing of `_PS_GAP_OPENER_RE` dropped with every row still green
+        # (`}`, a bare `throw`, a lone CR), and the `=` a comment is glued to
+        "if ($true) {} <# c #> Get-Content .env",
+        "try {} finally {} <# c #> gc .env",
+        "throw <# c #> gc .env",
+        "Get-Date\r<# c #> gc .env",
+        "$x =<# c #> Get-Content .env",
+        "$x+=<# c #>Get-Content .env",
+    ])
+    def test_a_read_after_a_comment_is_refused(self, tmp_path, cmd):
+        assert_hook_denied(_run_ps_guard(cmd, tmp_path), contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("cmd", [
+        "<# c #> Set-Content tools/cc/hooks/x.py y",
+        "Get-Date; <# c #> Set-Content tools/cc/hooks/x.py y",
+        "$x =<# c #> Set-Content tools/cc/hooks/x.py y",
+    ])
+    def test_a_write_after_a_comment_is_refused(self, tmp_path, cmd):
+        assert_hook_denied(_run_ps_guard(cmd, tmp_path),
+                           contains_reason="protected harness zone blocked")
+
+    def test_a_delete_after_a_comment_walls(self, tmp_path):
+        cmd = "<# c #> Remove-Item C:\\ -Recurse -Force"
+        assert _delete_verdict(run_guard_from("PowerShell", cmd, tmp_path, None)) == "wall"
+
+    @pytest.mark.parametrize("cmd", [
+        # the controls: read before the fix as after it
+        "# c\nGet-Content .env",
+        "Get-Date # c\nGet-Content .env",
+        "throw <# c #> (Get-Content .env)",
+    ])
+    def test_a_line_comment_there_was_already_read(self, tmp_path, cmd):
+        assert_hook_denied(_run_ps_guard(cmd, tmp_path), contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("cmd", [
+        # what a comment holds is comment, and a comment in argument position
+        # opens no statement: the word after it is the argument it is
+        "<# Get-Content .env #> Write-Host hi",
+        "<# .SYNOPSIS\n  Get-Content .env reads it\n#>\nfunction f { 1 }",
+        "Write-Host hi <# c #> Get-Content .env",
+        "Write-Host '<# c #> Get-Content .env'",
+        "<# c #> Get-Content README.md",
+    ])
+    def test_what_is_not_a_statement_stays_allowed(self, tmp_path, cmd):
+        assert_hook_allowed(_run_ps_guard(cmd, tmp_path))
+
+    @pytest.mark.parametrize("cmd, joined", [
+        ("<# c #> b", " b"),
+        ("  <# c #> b", " b"),
+        ("a; <# c #> b", "a; b"),
+        ("a; <# c #><# d #> b", "a; b"),
+        ("a\n<# c #> b", "a\n b"),
+        ("$x = <# c #>b", "$x = b"),
+        ("return <# c #> b", "return b"),
+        # glued to `=`, the masker leaves the comment glued and the join
+        # closes it on the raw half; in an argument that over-reads
+        ("$x =<# c #> b", "$x = b"),
+        ("$x =<# a #><# b #> c", "$x = c"),
+        ("Write-Output a=<# x #> b", "Write-Output a= b"),
+        ("$x =<# c", "$x =<# c"),
+        # DECLARED: a quote in it is an unterminated string to the masker,
+        # which hands the command back raw, so nothing is joined
+        ("$x =<# don't #> b", "$x =<# don't #> b"),
+        # a line comment, an argument's comment and a comment the masker
+        # does not open are left as they are
+        ("a; # c\nb", "a; # c\nb"),
+        ("a b <# c #> d", "a b <# c #> d"),
+        ("a;x<# c #> b", "a;x<# c #> b"),
+        # inside a string PowerShell re-parses, a gap that ends in it joins;
+        # one whose comment runs past the closing quote is left whole
+        ("iex 'a; <# c #> b'", "iex 'a; b'"),
+        ("iex 'a; <# c'; b; 'd #>'", "iex 'a; <# c'; b; 'd #>'"),
+    ])
+    def test_the_join(self, cmd, joined):
+        raw, scan = _bash_patterns_module().powershell_scan_pair(cmd)
+        assert raw == joined and len(scan) == len(raw)
+
+    def test_the_opener_sets_agree(self):
+        # the walk's two opener literals spell `_PS_CMD_POS_SEP`'s openers by
+        # hand (the failure-mode review: three hand-kept lists, nothing tying
+        # them), so each set is derived here by matching and the three agree:
+        # an opener added to one and not the others reds this test
+        bp = _bash_patterns_module()
+        sep = re.compile(bp._PS_CMD_POS_SEP, re.IGNORECASE)
+        chars = [chr(c) for c in range(33, 127)] + ["\n", "\r"]
+        # (a lone blank matches the `^` arm's blank run, so blanks are left out)
+        seps = {ch for ch in chars if sep.fullmatch(ch)}
+        assert seps >= set(";|\n\r(){}&="), sorted(seps)
+        openers = {ch for ch in chars if bp._PS_GAP_OPENER_RE.fullmatch(ch)}
+        witness = {ch for ch in chars if bp._PS_STATEMENT_GAP_WITNESS_RE.fullmatch(ch + "<#")}
+        assert openers == seps, sorted(openers ^ seps)
+        assert witness == seps - {"|"}, sorted(witness ^ (seps - {"|"}))
+        for word in ("return", "throw", "exit", "break", "continue", "if", "else"):
+            in_sep = sep.fullmatch(word + " ") is not None
+            assert (bp._PS_GAP_OPENER_RE.fullmatch(word) is not None) == in_sep, word
+            assert (bp._PS_STATEMENT_GAP_WITNESS_RE.fullmatch(word + " <#") is not None) == in_sep, word
+
+    @pytest.mark.xfail(strict=True, reason=(
+        "find 2 of note 716623, its control on this lane (ef0470): two braced "
+        "variable names' straight quotes pair around the statement between "
+        "them, since _walk_powershell_spans has no `${ }` reading"))
+    def test_a_braced_names_quote_hides_no_statement(self, tmp_path):
+        cmd = "${a'b}; Get-Content .env; ${c'd}"
+        assert_hook_denied(_run_ps_guard(cmd, tmp_path), contains_reason="Secret-path access blocked")
 
 
 class TestShellOutReader:
