@@ -17402,15 +17402,34 @@ class TestABlockCommentIsOneBlank:
         'iex <# c #> "Get-Date; Remove-Item C:\\ -Recurse -Force"',
         # the window is measured with each comment one character (the
         # reviews: a comment past 2 KB pushed the opener out of a window cut
-        # in typed offsets), and the record reaches both here-string sites
+        # in typed offsets), and the record reaches both here-string sites;
+        # many comments past the window, as an ordinary script holds them:
+        # 20 of 120 characters, 2400 typed past the 2048 lookback (a count
+        # in the hundreds is a flood: `test_a_comment_flood_before_a_carrier
+        # _is_refused`)
         "iex <#" + "x" * 2100 + "#> 'Get-Date; Remove-Item C:\\ -Recurse -Force'",
-        "iex " + "<#x#> " * 400 + "'Get-Date; Remove-Item C:\\ -Recurse -Force'",
+        "iex " + ("<#" + "x" * 115 + "#> ") * 20 + "'Get-Date; Remove-Item C:\\ -Recurse -Force'",
         "iex <# c #> @'\nGet-Date; Remove-Item C:\\ -Recurse -Force\n'@",
         'iex <# c #> @"\nGet-Date; Remove-Item C:\\ -Recurse -Force\n"@',
     ], ids=["literal", "expandable", "one-long-comment", "many-comments",
             "literal-here-string", "expandable-here-string"])
     def test_a_delete_a_carrier_runs_past_a_comment_walls(self, tmp_path, cmd):
         assert _delete_verdict(run_guard_from("PowerShell", cmd, tmp_path, None)) == "wall"
+
+    def test_a_comment_flood_before_a_carrier_is_refused(self, tmp_path):
+        """400 one-character comments before the carrier: each reads as one
+        blank, and the readers' cost on a run of blanks is main's, quadratic
+        (about 0.6 s here in-process, 3.6 s on a CI cell, where the budget
+        refused the spawned row on both attempts; a carrier behind 2400 plain
+        blanks costs 2.7 s at origin/main 3cb7c0d, comments or none). The
+        flood is refused whichever answers: the wall in-process, as here, or
+        the budget's refusal in the hook, which is also a deny (the coverage
+        contract's answer to a crafted flood, operator 40ec7f)."""
+        import sys
+        sys.path.insert(0, str(HOOKS_DIR))
+        import write_guard as wg
+        cmd = "iex " + "<#x#> " * 400 + "'Get-Date; Remove-Item C:\\ -Recurse -Force'"
+        assert wg._ps_dangerous_reason(cmd, tmp_path, cwd=tmp_path) is not None
 
     @pytest.mark.parametrize("cmd", [
         # what a comment holds is comment; a comment in argument position
