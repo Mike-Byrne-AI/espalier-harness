@@ -2128,6 +2128,11 @@ def new_class(section: str, *, ledger: Path, probes: Path, title: str, populatio
     _print_noted(pending, "section")
     gen._atomic_write(ledger, new_text)
     print(f"opened {name} ({population} / {audience}); regions converged")
+    # A class groups the rows and moves no fix: asked here, where one forms,
+    # the questions reach the job before its next fix is planned in a layer
+    # that cannot reach the goal.
+    print("\n".join(_questions("  a class groups the rows; it does not move the fix. Before its "
+                               "first fix, ask whether the rows' layer can reach the goal:")))
     return 0
 
 

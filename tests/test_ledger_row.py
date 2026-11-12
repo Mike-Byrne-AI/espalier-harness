@@ -797,11 +797,28 @@ class TestClassVerb:
         assert why in capsys.readouterr().err
         assert tree["ledger"].read_text(encoding="utf-8") == before
 
+    def test_opening_a_class_asks_the_layer_questions_after_it_says_so(self, lr, tree, capsys):
+        """A class groups rows and moves no fix, so the verb that forms one
+        asks whether the rows' layer can reach the job's goal. Dies to: the
+        print dropped from the verb's success path."""
+        assert self._class(lr, tree, "C7", "--title", "Make X do Y",
+                           "--population", "HYGIENE", "--audience", "MAINTAINER") == 0
+        out = capsys.readouterr().out
+        after = out.split("opened §C7", 1)[1]
+        assert all(q in after for q in lr.FIVE_QUESTIONS), out
+
+    def test_a_refused_class_asks_nothing(self, lr, tree, capsys):
+        assert self._class(lr, tree, "C1", "--title", "Again",
+                           "--population", "HYGIENE", "--audience", "MAINTAINER") == 2
+        captured = capsys.readouterr()
+        assert lr.FIVE_QUESTIONS[0] not in captured.out + captured.err
+
     def test_dry_run_writes_nothing(self, lr, tree, capsys):
         before = tree["ledger"].read_text(encoding="utf-8")
         assert lr.main(_args(tree, "--dry-run", "class", "C7", "--title", "T",
                              "--population", "HYGIENE", "--audience", "MAINTAINER")) == 0
-        assert "| [§C7](#c7--t) |" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "| [§C7](#c7--t) |" in out and lr.FIVE_QUESTIONS[0] not in out
         assert tree["ledger"].read_text(encoding="utf-8") == before
 
 
