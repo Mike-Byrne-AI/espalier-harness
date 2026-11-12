@@ -2997,7 +2997,7 @@ class TestUnfinishedLaneArm:
         driver.parent.mkdir(parents=True, exist_ok=True)
         driver.write_text("# a stand-in for the deployed driver\n", encoding="utf-8")
         out = self._pr(fresh_repo, base, title=marked).stdout
-        assert "  # then bind the approval marker in the title to the new head:\n  python tools/cc/ship.py rebind" in out
+        assert "  # then the ship driver verb tools/cc/ship.py rebind, run by your Python, binds" in out
         # The push goes first: until origin's branch is rewritten each verb
         # refuses (the origin-ahead refusal names this same lease push).
         assert "# push before any ship-driver verb" in out
@@ -3024,10 +3024,9 @@ class TestUnfinishedLaneArm:
         commands = [line.strip() for line in block if not line.strip().startswith("#")]
         assert "a merge follows it" in " ".join(comments)
         assert all(not set("'\"()") & set(line) for line in comments), comments
-        assert [line.split()[0] for line in commands] == ["git", "git", "python"], commands
+        assert [line.split()[0] for line in commands] == ["git", "git"], commands
         assert commands[0].startswith("git fetch origin && git reset --soft "), commands
         assert commands[1].startswith("git diff --cached --quiet && git push "), commands
-        assert commands[2] == "python tools/cc/ship.py rebind", "a trailing comment an interactive zsh passes on"
 
     def test_the_moves_pasted_whole_leave_origins_branch_alone_until_the_finish_is_committed(
             self, fresh_repo, tmp_path):
@@ -3055,7 +3054,7 @@ class TestUnfinishedLaneArm:
         script.write_text(block + "\n", encoding="utf-8")
         shell_env = {**os.environ, **env}
         subprocess.run([bash, str(script)], cwd=str(fresh_repo), env=shell_env, capture_output=True,
-                       text=True, timeout=60)
+                       text=True, encoding="utf-8", timeout=30)
 
         def on_origin() -> str:
             return _git(["ls-remote", "origin", "refs/heads/lane/half"], fresh_repo).stdout.split()[0]
@@ -3065,7 +3064,7 @@ class TestUnfinishedLaneArm:
         _git(["commit", "-q", "-m", "feat: the finished lane"], fresh_repo, env)
         [push] = [line.strip() for line in block.splitlines() if "git push" in line]
         done = subprocess.run([bash, "-c", push], cwd=str(fresh_repo), env=shell_env, capture_output=True,
-                              text=True, timeout=60)
+                              text=True, encoding="utf-8", timeout=30)
         assert done.returncode == 0, done.stderr
         assert on_origin() == _head(fresh_repo)
         assert self._pr(fresh_repo, base, extra=refs).returncode == 0

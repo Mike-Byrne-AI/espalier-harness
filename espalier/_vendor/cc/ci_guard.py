@@ -324,10 +324,11 @@ def _print_unfinished(found: list[tuple[str, str, str]], base: str, head: str,
     if ship_driver.is_file():
         after = ["  # push before any ship-driver verb: each refuses until the branch on origin is rewritten"]
         if marked:
-            # The comment on its own line: an interactive zsh without
-            # interactivecomments passes a trailing one to the command.
-            after += ["  # then bind the approval marker in the title to the new head:",
-                      "  python tools/cc/ship.py rebind"]
+            # A comment, never a command: this runs in CI, where the reader's
+            # interpreter cannot be resolved, and neither bare name runs on
+            # every host (tests/test_portability_contract.py).
+            after.append("  # then the ship driver verb tools/cc/ship.py rebind, run by your Python, binds the"
+                         " approval marker in the title to the new head")
     else:
         after = ["  # then bind the approval marker in the title to the new head"] if marked else []
     print(
