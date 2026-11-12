@@ -1151,16 +1151,25 @@ def _ps_harness_env_prefix_is_benign(command: str) -> bool:
 # classifier 2026-10-02; on real cmd.exe the unquoted spelling sets `1 `, which
 # every reader strips, and the quoted and no-space spellings set exactly `1`).
 #
-# Judged in code, not by one more regex: the opener is found at a command
-# position -- the anchors the records use, so an opener quoted inside prose is a
-# mention -- and its program is split on cmd's separators by a plain scan, so
-# there is no nested quantifier for tests/test_redos.py to argue about. The
-# polarity is the `$env:` arm's: the variable reaches every later statement of
-# the cmd process, so the WHOLE remainder is scanned for a launch, and a `set`
-# followed by anything else (`&& pytest -q`) is allowed. Stated cost, toward the
-# deny: a launch the OUTER shell runs after cmd returns (an unquoted
-# `cmd /c set ... && claude`, chained by Bash or PowerShell 7) never sees the
-# variable and is still refused.
+# Judged in code, not by one more regex, and by the delete reader's own two
+# readers (DEF-1071 wave 1): the program cmd is handed is
+# `_bash_patterns.iter_cmd_programs`'s -- the opener at a command position (the
+# anchors the records use, so an opener quoted inside prose is a mention), the
+# outer shell's words up to its statement's end (past a cmd the program
+# starts), or on PowerShell the stop-parsing token's line or a Start-Process
+# argument list -- and its statements are cmd's (`_bash_patterns._cmd_statements`: `^`
+# escapes, quotes keep a separator, a redirection's target is no word), each
+# verb found past `call`, `@` and an `if` condition by the delete reader's
+# prefix walk (`_bash_patterns._cmd_statement_head`). A cmd a statement starts
+# is read the same way, to the delete reader's depth. The polarity is the
+# `$env:` arm's: the variable reaches every later statement of the cmd process,
+# so each later statement is scanned for a launch, and a `set` followed by
+# anything else (`&& pytest -q`) is allowed. A launch the outer shell runs once
+# cmd has returned (an unquoted `cmd /c set ... && claude`) never sees the
+# variable, nor does a launch in the outer cmd after a nested one set it, and
+# both are allowed. Stated cost, toward the deny: a line break ends a statement
+# here, so a launch on a later line of a program cmd is handed is refused,
+# whether or not cmd runs that line (not driven; bd4d97 (4) accepted it).
 #
 # The openers are the delete reader's (`_bash_patterns._CMD_REMOVE_OPENER_RE`
 # and `_PS_CMD_REMOVE_OPENER_RE`, DEF-1071 (a)): cmd by name, with `.exe`, in
@@ -1173,52 +1182,55 @@ def _ps_harness_env_prefix_is_benign(command: str) -> bool:
 # `_bash_patterns._PS_CMD_POS` spells before cmd is read in any case too, as
 # PowerShell reads it; the old pair was compiled without that flag.
 #
-# A statement start inside a cmd program: the program's own start, or the end
-# of a `&`, `&&`, `|`, `||` or `(`.
-_CMD_SEPARATOR_RE = re.compile(r"&&?|\|\|?|\(")
+# The words after a statement's `set`: a harness variable assigned, after
+# `/a` or `/p`, its quotes already removed by cmd's word split.
 _CMD_HARNESS_SET_RE = re.compile(
-    r"set[ \t]+(?:/[ap][ \t]+)?\"?"
+    r"(?:/[ap][ \t]+)?"
     rf"(?:{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE)[ \t]*=",
     re.IGNORECASE,
 )
 
 
-def _cmd_program(text: str, at: int) -> str | None:
-    """The program a cmd opener ending at ``at`` runs: the text after its ``/c``
-    or ``/k`` switch (``//c`` from Git Bash, glued ``/c"..."`` too), past any
-    other switches (``/d``, ``/s``, ``/v:on``). None when it carries neither --
-    an interactive cmd runs nothing it was handed. The switch walk is
-    `_bash_patterns._cmd_program_at`'s, which the delete reader shares
-    (DEF-1151)."""
+def _cmd_set_launches_claude(scan: str, *, bash: bool, raw: str | None = None) -> bool:
+    """True when a program cmd is handed on ``scan`` sets a harness variable
+    in one statement and launches ``claude`` in a later one of the same cmd.
+    ``raw`` is an offset-aligned unmasked twin to read the program from
+    (PowerShell's scan pair); default ``scan``. Each program is read to its
+    statement's end, past a cmd it starts (which inherits the variable), and
+    through cmd's own quote rule (`_bash_patterns._cmd_line_unquoted`), which
+    the separator scan this replaced stood in for by stepping over a quote at
+    each statement start."""
     _load_the_pattern_path()
-    start = _bash_patterns._cmd_program_at(text, at)
-    return None if start is None else text[start:]
+    for _at, program in _bash_patterns.iter_cmd_programs(
+            scan if raw is None else raw, scan, bash=bash, to_statement_end=True):
+        if _cmd_program_sets_then_launches(_bash_patterns._cmd_line_unquoted(program), 0):
+            return True
+    return False
 
 
-def _cmd_set_launches_claude(scan: str, opener_re: "re.Pattern[str]", program_text: str | None = None) -> bool:
-    """True when a cmd opener at a command position in ``scan`` runs a program
-    that sets a harness variable at a statement start and launches ``claude``
-    anywhere after it. ``program_text`` is an offset-aligned unmasked twin to
-    read the program from (PowerShell's scan pair); default ``scan``."""
-    _load_the_pattern_path()
-    source = scan if program_text is None else program_text
-    for opener in opener_re.finditer(scan):
-        program = _cmd_program(source, opener.end())
-        if program is None:
-            # a cmd started by Start-Process reads its program from the
-            # argument list (DEF-1071 (e), the delete reader's twin)
-            got = _bash_patterns.start_process_cmd_line(source, opener)
-            if got is not None:
-                program = got[1]
-        if program is None:
-            continue
-        starts = [0, *(m.end() for m in _CMD_SEPARATOR_RE.finditer(program))]
-        for start in starts:
-            while start < len(program) and program[start] in " \t\"'@":
-                start += 1
-            found = _CMD_HARNESS_SET_RE.match(program, start)
-            if found and _statement_launches_claude(program[found.end():]):
+def _cmd_program_sets_then_launches(program: str, depth: int) -> bool:
+    """True when a statement of cmd's ``program`` sets a harness variable and
+    a later one launches ``claude``; a cmd a statement starts is read the
+    same way, to the delete reader's depth. Linear in the program: one split,
+    then one pass over its statements (a nested program is a statement's own
+    words, read once)."""
+    armed = False
+    for line in program.splitlines():
+        for words in _bash_patterns._cmd_statements(line):
+            if armed and _statement_launches_claude(" ".join(words)):
                 return True
+            k = _bash_patterns._cmd_statement_head(words)
+            if k >= len(words):
+                continue
+            low = words[k].lstrip("@").lower()
+            if low == "set" and _CMD_HARNESS_SET_RE.match(" ".join(words[k + 1:])):
+                armed = True
+                continue
+            base = re.split(r"[/\\]", low)[-1]
+            if base in ("cmd", "cmd.exe") and depth < _bash_patterns._CMD_NEST_MAX:
+                nested = _bash_patterns._cmd_nested_program(words[k + 1:])
+                if nested is not None and _cmd_program_sets_then_launches(nested, depth + 1):
+                    return True
     return False
 
 
@@ -3061,7 +3073,7 @@ def _bash_dangerous_reason_here(
     # cmd.exe's `set` of a harness variable before a launch (DEF-1070): the
     # env-prefix record's lesson, reached through `cmd /c` instead of an
     # assignment. Ahead of the maintenance gate, as that record is.
-    if _cmd_set_launches_claude(scan, _bash_patterns._CMD_REMOVE_OPENER_RE):
+    if _cmd_set_launches_claude(scan, bash=True):
         return _denial_reasons.HARNESS_ENV_PREFIX_INLINE
     # Flag-order-independent backstop for the catastrophic recursive-delete
     # class. The two literal `rm -rf /` / `rm -rf *` records above match ONLY
@@ -3329,7 +3341,7 @@ def _ps_dangerous_reason_here(
             return entry.message or _denial_reasons.format_dangerous_ps(entry.pid)
     # The Bash twin's cmd.exe `set` check (DEF-1070): the opener read at a
     # command position in the masked text, its program from the unmasked twin.
-    if _cmd_set_launches_claude(command, _bash_patterns._PS_CMD_REMOVE_OPENER_RE, raw):
+    if _cmd_set_launches_claude(command, bash=False, raw=raw):
         return _denial_reasons.HARNESS_ENV_PREFIX_INLINE
     # A recursive remove WITHOUT the force switch (DEF-842), which the records
     # above never match: it still takes every item that is not hidden or

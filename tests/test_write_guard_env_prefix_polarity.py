@@ -314,6 +314,35 @@ _CMD_SET_BY_PATH_OR_QUOTED = [
 _CMD_SET_REACH += [(shell, t.format(var=ENV_VAR, run="claude -p x"))
                    for shell, t in _CMD_SET_BY_PATH_OR_QUOTED]
 
+# DEF-1071 wave 1: the check reads cmd's own statements, by the delete
+# reader's grammar (`_bash_patterns._cmd_statements`) and the program it is
+# handed by the outer shell. The check's own separator scan found the `set`
+# only right after a separator, so each of these allowed: a `call` or an `if`
+# condition before it, and a cmd that cmd's own program starts, its program
+# quoted or its separators escaped with cmd's `^`. Read twice, as the list
+# above is.
+_CMD_SET_STATEMENTS = [
+    ("bash", "cmd //c 'call set {var}=1 && {run}'"),
+    ("ps", "cmd /c \"call set {var}=1 & {run}\""),
+    ("bash", "cmd //c 'if 1==1 set {var}=1 & {run}'"),
+    ("ps", "cmd /c \"if not defined X set {var}=1 & {run}\""),
+    ("bash", "cmd //c 'cmd /c \"set {var}=1 && {run}\"'"),
+    ("bash", "cmd //c 'cmd /c set {var}=1 ^&^& {run}'"),
+    ("ps", "cmd /c 'cmd /d /c \"set {var}=1 & {run}\"'"),
+    # the set in cmd, the launch in a cmd it starts, which inherits the
+    # variable: the program is read to its statement's end, past the inner
+    # opener (the dispatcher's verifier, d8d77f)
+    ("bash", "cmd //c 'set {var}=1 && cmd /c {run}'"),
+    ("ps", "cmd /c \"set {var}=1 & cmd /d /c {run}\""),
+    # cmd's line as typed, opening with a quote: cmd drops that quote and the
+    # line's last one (these denied before the move too, by the old scan's
+    # quote skip; the statement reader needs cmd's own rule to keep them)
+    ("ps", "cmd --% /c \"set {var}=1 && {run}\""),
+    ("ps", "Start-Process cmd -ArgumentList '/c \"set {var}=1 && {run}\"'"),
+]
+_CMD_SET_REACH += [(shell, t.format(var=ENV_VAR, run="claude -p x"))
+                   for shell, t in _CMD_SET_STATEMENTS]
+
 
 def _dispatch(shell: str):
     return wg.check_powershell if shell == "ps" else wg.check_bash_dangerous_patterns
@@ -359,6 +388,18 @@ def test_cmd_exe_set_then_claude_denies(shell, command):
     ("bash", f"/opt/xcmd //c 'set {ENV_VAR}=1 && claude -p x'"),
     ("ps", f"Get-Item C:\\Windows\\System32\\cmd.exe; Write-Output 'cmd /c set {ENV_VAR}=1 && claude -p x'"),
     ("bash", "\"cmd\" //c 'set ESPALIER_OTHER=1 && claude -p x'"),
+    # DEF-1071 wave 1's twins, then what reading cmd's own statements stops
+    # refusing: a launch the OUTER shell runs once cmd has returned (the
+    # variable lived and died in cmd's process), a launch in the outer cmd
+    # after a nested cmd set the variable (a child's environment never
+    # reaches its parent), and the word in the value or a redirection's
+    # target, neither of which cmd runs
+    *[(shell, t.format(var=ENV_VAR, run="pytest -q")) for shell, t in _CMD_SET_STATEMENTS],
+    ("bash", f"cmd //c set {ENV_VAR}=1 && claude -p x"),
+    ("ps", f"cmd /c set {ENV_VAR}=1; claude -p x"),
+    ("bash", f"cmd //c 'cmd /c set {ENV_VAR}=1 & claude -p x'"),
+    ("ps", f'cmd /c "set {ENV_VAR}=claude"'),
+    ("ps", f'cmd /c "set {ENV_VAR}=1 & echo x > claude"'),
 ])
 def test_cmd_exe_set_before_a_real_invocation_is_allowed(shell, command):
     assert not _denies(_dispatch(shell), command)
