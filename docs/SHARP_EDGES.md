@@ -5956,7 +5956,10 @@ two or more of the bypass hooks
 (`tests/test_maintenance_mode.py::TestBypassRosterCarriers`; write "the
 maintenance switch" in words), a restated memory line cap
 (`tests/test_documented_claims.py::TestMemoryCapPopulation`), a cited path the
-tree cannot resolve, and the probe-shape ratchet in
+tree cannot resolve, a live guard row with no coverage-contract basis
+(`tests/test_documented_claims.py::TestGuardRowsNameTheirContractBasis`: one
+sentence opening "Contract basis:" that names the kept job or the real session
+that recorded the slip, since 2026-11-12), and the probe-shape ratchet in
 `tests/test_check_ledger_probes.py`. A pack id no pack holds, a relative link the
 release archive lacks and the probe file's own contracts still red only in the
 contract tier (`DEF-5069`); the repair is `repin --text-file`, never a hand edit,

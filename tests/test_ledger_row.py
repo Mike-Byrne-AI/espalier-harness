@@ -3212,14 +3212,14 @@ class TestTheContentRulesRunBeforeTheWrite:
         import tests._ledger_rules as rules
         from tests.test_doc_test_citations import _symbol_phantom
         names = [v for k, v in vars(rules).items() if k.endswith("_RULE") and isinstance(v, str)]
-        assert len(names) == 5, names
+        assert len(names) == 6, names
         for node in names:
             path, _, sym = node.partition("::")
             assert (REPO_ROOT / path).is_file() and not _symbol_phantom(path, sym), node
 
     def test_one_rule_that_cannot_run_leaves_the_others_running(self, monkeypatch):
         """Each rule runs on its own: one that raises is a note naming it,
-        and the rest still report. Mutation: one try around all five."""
+        and the rest still report. Mutation: one try around them all."""
         import tests._ledger_rules as rules
         monkeypatch.setattr(rules, "_cap_breaks", lambda rel, text: 1 / 0)
         notes: list[str] = []
@@ -3237,10 +3237,10 @@ class TestTheShippedVerbRunsTheRealRules:
     here instead of turning into a note the filing scrolls past. Pins every
     rule reaching the verb, because each break is named by its test."""
 
-    def test_a_dry_run_filing_names_all_five_rules_and_runs_every_one(self, tmp_path):
+    def test_a_dry_run_filing_names_all_six_rules_and_runs_every_one(self, tmp_path):
         if not (REPO_ROOT / ".git").exists() or not (REPO_ROOT / "tests" / "_ledger_rules.py").is_file():
             pytest.skip("needs this repository's own checkout: its rules, and git's list of tracked files")
-        from tests._ledger_rules import (BYPASS_ROSTER_RULE, CITED_PATH_RULE, LITERAL_SPAWN_RULE,
+        from tests._ledger_rules import (BYPASS_ROSTER_RULE, CITED_PATH_RULE, GUARD_BASIS_RULE, LITERAL_SPAWN_RULE,
                                          MEMORY_CAP_RULE, PAPERWORK_PROBE_RULE, maintenance_bypass_callers)
         from tests._surface_expected import EXPECTED_MEMORY_MD_CAP
         hooks = sorted(maintenance_bypass_callers())[:2]
@@ -3253,11 +3253,12 @@ class TestTheShippedVerbRunsTheRealRules:
         env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
         proc = subprocess.run(
             [sys.executable, str(REPO_ROOT / "tools" / "cc" / "ledger_row.py"), "--root", str(REPO_ROOT),
-             "--dry-run", "file", "DEF-999999", "--section", "C0", "--anchor", "a", "--text-file", str(body),
+             "--dry-run", "file", "DEF-999999", "--section", "C0", "--anchor", "tools/cc/hooks/write_guard.py::main",
+             "--text-file", str(body),
              "--severity", "nit", "--subject", "README.md", "--probe-cmd", probe, "--open-value", "True",
              "--population", "HYGIENE", "--audience", "MAINTAINER"],
             cwd=tmp_path, env=env, capture_output=True, text=True, encoding="utf-8", timeout=50)
         named = {rule for rule in (BYPASS_ROSTER_RULE, MEMORY_CAP_RULE, CITED_PATH_RULE, PAPERWORK_PROBE_RULE,
-                                   LITERAL_SPAWN_RULE) if f"content rule, {rule}:" in proc.stderr}
-        assert len(named) == 5, proc.stderr
+                                   LITERAL_SPAWN_RULE, GUARD_BASIS_RULE) if f"content rule, {rule}:" in proc.stderr}
+        assert len(named) == 6, proc.stderr
         assert "not run" not in proc.stderr and "could not be" not in proc.stderr, proc.stderr

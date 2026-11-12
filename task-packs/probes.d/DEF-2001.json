@@ -4,7 +4,8 @@
  "cmd": null,
  "open_value": null,
  "why_not": "a design gap gated on a measurement: Task 0 reads the after-check's audit records and decides whether a latch is built at all, so no structure it must satisfy can be named before then",
- "row_sha": "b02c759ac57e",
- "text_sha": "4a4b2771fc64",
- "verified_2026_10_12": "OPEN (filed 2026-10-12; probe driven at filing)"
+ "row_sha": "d6a36bc12fae",
+ "text_sha": "cb22da0c9d5a",
+ "verified_2026_10_12": "OPEN (filed 2026-10-12; probe driven at filing)",
+ "verified_2026_11_12": "STILL_OPEN (re-pinned value unchanged on 2026-11-12: the row names its coverage-contract basis in one sentence, as the sixth content rule asks; the claim and its value stand) [changed: text]"
 }
