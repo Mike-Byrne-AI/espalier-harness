@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2071",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c 'import sys; sys.path[:0] = [\"tools/cc/hooks\", \"tools/cc\"]; import write_guard as w; r = lambda c: bool(w._ps_secret_read_targets(c)); print(r(\"iex <# c #> \\x27Get-Content .env\\x27\"), r(\"Invoke-Expression <# c #> \\x27gc .env\\x27\"))'",
+ "open_value": "False False",
+ "why_not": null,
+ "row_sha": "c289de79003b",
+ "text_sha": "42ea20620ede",
+ "verified_2026_11_11": "OPEN (filed 2026-11-11; probe driven at filing here and in the export of HEAD 686b16fa98c4)"
+}

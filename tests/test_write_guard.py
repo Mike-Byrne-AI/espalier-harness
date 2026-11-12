@@ -17072,6 +17072,144 @@ class TestAGapAfterAPipeIsRead:
         assert _delete_verdict(run_guard_from("Bash", cmd, tmp_path, None)) == "allow", cmd
 
 
+class TestAStatementStartGapIsRead:
+    """DEF-2070 (assign ef0470, narrowed by 5565c3): a block comment where a
+    statement starts hid the statement from every reader of the scan pair.
+    The masker keeps the comment's `<#` and `#>` (they end a blank run, so a
+    commented-out command is not read at command position), and no command
+    position opens after a `#>`, so `<# c #> Get-Content .env` read a dotenv
+    and `<# c #> Set-Content tools/cc/hooks/x.py y` wrote a hook, each allowed
+    where its bare twin is refused (driven at 9c47d43 through the hook; every
+    spelling below runs on Windows PowerShell 5.1, driven on a scratch file).
+    The pipe's gap join (`_ps_join_command_gaps`, DEF-3066) now reads every
+    statement opener: blanks and block comments after the text's start, a
+    live `;` line break `(` `)` `{` `}` `&` `=`, or `return`/`throw`, become
+    one space in both halves. A line comment there was already read, since its
+    line break opens the statement (the controls)."""
+
+    @pytest.mark.parametrize("cmd", [
+        "<# c #> Get-Content .env",
+        "<# c #>Get-Content .env",
+        "  <# c #> Get-Content .env",
+        "<# a #> <# b #> Get-Content .env",
+        "<# a #><# b #> Get-Content .env",
+        "<# one\ntwo #> Get-Content .env",
+        "Get-Date; <# c #> Get-Content .env",
+        "Get-Date\n<# c #> gc .env",
+        "Get-Date\r\n<# c #> gc .env",
+        "if ($true) { <# c #> Get-Content .env }",
+        "$x = <# c #> Get-Content .env",
+        "$x = (<# c #> Get-Content .env)",
+        "function f { return <# c #> Get-Content .env }",
+        "& <# c #> 'Get-Content' .env",
+        "<# c #> . ./.env",
+        # the reviews of the batch: one row for each opener a one-character
+        # narrowing of `_PS_GAP_OPENER_RE` dropped with every row still green
+        # (`}`, a bare `throw`, a lone CR), and the `=` a comment is glued to
+        "if ($true) {} <# c #> Get-Content .env",
+        "try {} finally {} <# c #> gc .env",
+        "throw <# c #> gc .env",
+        "Get-Date\r<# c #> gc .env",
+        "$x =<# c #> Get-Content .env",
+        "$x+=<# c #>Get-Content .env",
+    ])
+    def test_a_read_after_a_comment_is_refused(self, tmp_path, cmd):
+        assert_hook_denied(_run_ps_guard(cmd, tmp_path), contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("cmd", [
+        "<# c #> Set-Content tools/cc/hooks/x.py y",
+        "Get-Date; <# c #> Set-Content tools/cc/hooks/x.py y",
+        "$x =<# c #> Set-Content tools/cc/hooks/x.py y",
+    ])
+    def test_a_write_after_a_comment_is_refused(self, tmp_path, cmd):
+        assert_hook_denied(_run_ps_guard(cmd, tmp_path),
+                           contains_reason="protected harness zone blocked")
+
+    def test_a_delete_after_a_comment_walls(self, tmp_path):
+        cmd = "<# c #> Remove-Item C:\\ -Recurse -Force"
+        assert _delete_verdict(run_guard_from("PowerShell", cmd, tmp_path, None)) == "wall"
+
+    @pytest.mark.parametrize("cmd", [
+        # the controls: read before the fix as after it
+        "# c\nGet-Content .env",
+        "Get-Date # c\nGet-Content .env",
+        "throw <# c #> (Get-Content .env)",
+    ])
+    def test_a_line_comment_there_was_already_read(self, tmp_path, cmd):
+        assert_hook_denied(_run_ps_guard(cmd, tmp_path), contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("cmd", [
+        # what a comment holds is comment, and a comment in argument position
+        # opens no statement: the word after it is the argument it is
+        "<# Get-Content .env #> Write-Host hi",
+        "<# .SYNOPSIS\n  Get-Content .env reads it\n#>\nfunction f { 1 }",
+        "Write-Host hi <# c #> Get-Content .env",
+        "Write-Host '<# c #> Get-Content .env'",
+        "<# c #> Get-Content README.md",
+    ])
+    def test_what_is_not_a_statement_stays_allowed(self, tmp_path, cmd):
+        assert_hook_allowed(_run_ps_guard(cmd, tmp_path))
+
+    @pytest.mark.parametrize("cmd, joined", [
+        ("<# c #> b", " b"),
+        ("  <# c #> b", " b"),
+        ("a; <# c #> b", "a; b"),
+        ("a; <# c #><# d #> b", "a; b"),
+        ("a\n<# c #> b", "a\n b"),
+        ("$x = <# c #>b", "$x = b"),
+        ("return <# c #> b", "return b"),
+        # glued to `=`, the masker leaves the comment glued and the join
+        # closes it on the raw half; in an argument that over-reads
+        ("$x =<# c #> b", "$x = b"),
+        ("$x =<# a #><# b #> c", "$x = c"),
+        ("Write-Output a=<# x #> b", "Write-Output a= b"),
+        ("$x =<# c", "$x =<# c"),
+        # DECLARED: a quote in it is an unterminated string to the masker,
+        # which hands the command back raw, so nothing is joined
+        ("$x =<# don't #> b", "$x =<# don't #> b"),
+        # a line comment, an argument's comment and a comment the masker
+        # does not open are left as they are
+        ("a; # c\nb", "a; # c\nb"),
+        ("a b <# c #> d", "a b <# c #> d"),
+        ("a;x<# c #> b", "a;x<# c #> b"),
+        # inside a string PowerShell re-parses, a gap that ends in it joins;
+        # one whose comment runs past the closing quote is left whole
+        ("iex 'a; <# c #> b'", "iex 'a; b'"),
+        ("iex 'a; <# c'; b; 'd #>'", "iex 'a; <# c'; b; 'd #>'"),
+    ])
+    def test_the_join(self, cmd, joined):
+        raw, scan = _bash_patterns_module().powershell_scan_pair(cmd)
+        assert raw == joined and len(scan) == len(raw)
+
+    def test_the_opener_sets_agree(self):
+        # the walk's two opener literals spell `_PS_CMD_POS_SEP`'s openers by
+        # hand (the failure-mode review: three hand-kept lists, nothing tying
+        # them), so each set is derived here by matching and the three agree:
+        # an opener added to one and not the others reds this test
+        bp = _bash_patterns_module()
+        sep = re.compile(bp._PS_CMD_POS_SEP, re.IGNORECASE)
+        chars = [chr(c) for c in range(33, 127)] + ["\n", "\r"]
+        # (a lone blank matches the `^` arm's blank run, so blanks are left out)
+        seps = {ch for ch in chars if sep.fullmatch(ch)}
+        assert seps >= set(";|\n\r(){}&="), sorted(seps)
+        openers = {ch for ch in chars if bp._PS_GAP_OPENER_RE.fullmatch(ch)}
+        witness = {ch for ch in chars if bp._PS_STATEMENT_GAP_WITNESS_RE.fullmatch(ch + "<#")}
+        assert openers == seps, sorted(openers ^ seps)
+        assert witness == seps - {"|"}, sorted(witness ^ (seps - {"|"}))
+        for word in ("return", "throw", "exit", "break", "continue", "if", "else"):
+            in_sep = sep.fullmatch(word + " ") is not None
+            assert (bp._PS_GAP_OPENER_RE.fullmatch(word) is not None) == in_sep, word
+            assert (bp._PS_STATEMENT_GAP_WITNESS_RE.fullmatch(word + " <#") is not None) == in_sep, word
+
+    @pytest.mark.xfail(strict=True, reason=(
+        "find 2 of note 716623, its control on this lane (ef0470): two braced "
+        "variable names' straight quotes pair around the statement between "
+        "them, since _walk_powershell_spans has no `${ }` reading"))
+    def test_a_braced_names_quote_hides_no_statement(self, tmp_path):
+        cmd = "${a'b}; Get-Content .env; ${c'd}"
+        assert_hook_denied(_run_ps_guard(cmd, tmp_path), contains_reason="Secret-path access blocked")
+
+
 class TestShellOutReader:
     """447-A step 3 (§C5): a program under an interpreter head is read for
     the text it hands to a SHELL -- the literal given to `os.system` or

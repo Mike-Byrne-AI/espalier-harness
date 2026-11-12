@@ -5056,7 +5056,7 @@ def _ps_mask_read(command: str) -> tuple[str, bool]:
     """`mask_powershell_inert_syntax`'s text, and whether the walk READ
     ``command`` (``False``: handed back raw, past the length cap or at a
     span the walk cannot resolve). The fallback's one home, so a reader
-    that must know a surviving pipe is live (`_ps_join_pipe_gaps`) cannot
+    that must know a surviving pipe is live (`_ps_join_command_gaps`) cannot
     drift from the masker's own conditions."""
     if not command or len(command) > _ROLE_MAP_CAP:
         return command, False
@@ -10710,7 +10710,7 @@ def powershell_scan_pair(command: str) -> tuple[str, str]:
     string -- and the same span is replaced in BOTH strings, which keeps them
     aligned. A second join changes length the same way: a live pipe's gap
     holding a line break or a comment becomes one space in both halves
-    (`_ps_join_pipe_gaps`, 780c02), so an offset in either half is an offset
+    (`_ps_join_command_gaps`, 780c02), so an offset in either half is an offset
     into the joined text, never into ``command``.
     ``powershell_scan_text`` is the masked half of this pair (pinned). The
     raw half is folded the way the masker's walk reads it
@@ -10736,23 +10736,43 @@ def powershell_scan_pair(command: str) -> tuple[str, str]:
         last = m.end()
     raw_parts.append(command[last:])
     scan_parts.append(masked[last:])
-    raw, scan = _ps_join_pipe_gaps("".join(raw_parts), "".join(scan_parts), read)
+    raw, scan = _ps_join_command_gaps("".join(raw_parts), "".join(scan_parts), read)
     return _resolve_ps_command_objects(raw, scan)
 
 
 #: A pipe whose gap, past blanks, opens with a line break or a comment: the
-#: only gap `_ps_join_pipe_gaps` rewrites, so a scan without one skips the
-#: walk. A GATE, not a matcher.
+#: pipe gap `_ps_join_command_gaps` rewrites, so a scan without one, and
+#: without a statement gap, skips the walk. A GATE, not a matcher.
 _PS_PIPE_GAP_WITNESS_RE = re.compile(r"\|[ \t]*[\r\n#<]")
+
+#: A statement opener whose gap, past blanks, opens with a block comment
+#: (DEF-2070): the text's start, or `_PS_CMD_POS_SEP`'s separator class less
+#: the pipe (whose gap the witness above reads), or `return`/`throw`. A line
+#: comment there needs no join, since the line break that ends it opens the
+#: statement. A GATE, not a matcher; asked only where the scan holds `<#`.
+#: WARNING: this and `_PS_GAP_OPENER_RE` below spell `_PS_CMD_POS_SEP`'s
+#: openers as literals (the hot path parses nothing back out of a regex), so
+#: an opener added there is added here too:
+#: `tests/test_write_guard.py::TestAStatementStartGapIsRead::test_the_opener_sets_agree`
+#: derives the three sets by matching and asserts they agree.
+_PS_STATEMENT_GAP_WITNESS_RE = re.compile(
+    r"(?:^|[;\n\r(){}&=]|\b(?:return|throw))[ \t]*<#", re.IGNORECASE)
+
+#: Where a gap the walk reads can open: a pipe, a separator of
+#: `_PS_CMD_POS_SEP`'s class, or `return`/`throw` (the witness above's
+#: openers, the text's start apart). A SYNTAX TOKEN, not a matcher.
+_PS_GAP_OPENER_RE = re.compile(r"[|;\n\r(){}&=]|\b(?:return|throw)\b", re.IGNORECASE)
 
 #: The next line end, CR or LF: one search, which stops at the first of
 #: either (two `find` calls ran one of them to the end of the text).
 _PS_LINE_END_RE = re.compile(r"[\r\n]")
 
 
-def _ps_join_pipe_gaps(raw: str, scan: str, masker_read: bool) -> tuple[str, str]:
-    """The pair with every gap after a live pipe that holds a comment or a
-    line break replaced by one space, at the same offsets in both halves.
+def _ps_join_command_gaps(raw: str, scan: str, masker_read: bool) -> tuple[str, str]:
+    """The pair with every gap before a command replaced by one space, at the
+    same offsets in both halves: a live pipe's gap that holds a comment or a
+    line break, and a statement opener's gap that holds a block comment
+    (DEF-2070, below; named for the pipe until then).
 
     PowerShell reads a pipeline's next stage past blanks, line breaks, line
     comments and block comments, so `Get-ChildItem C:\\ -Recurse | <# c #>
@@ -10767,12 +10787,12 @@ def _ps_join_pipe_gaps(raw: str, scan: str, masker_read: bool) -> tuple[str, str
     #>`, `<# a #># b`: one gap on pwsh 5.1, driven), as the masker's walk
     reads it (`block_end` in `_walk_powershell_spans`).
 
-    Two places a surviving pipe is not one the gap is read after: where the
-    masker handed the command back raw (``masker_read`` false, from
+    Two places a surviving opener is not one the gap is read after: where
+    the masker handed the command back raw (``masker_read`` false, from
     `_ps_mask_read`), every quoted pipe and comment survives, so nothing is
     joined -- a declared limit: past the masker's cap, or with a span it
-    cannot resolve (an unterminated quote), a gap hides its stage from a
-    reader that has only the join; and inside a string the masker keeps
+    cannot resolve (an unterminated quote), a gap hides its pipeline stage
+    or its statement from a reader that has only the join; and inside a string the masker keeps
     live because PowerShell re-parses it (`iex '...'`), a gap is joined
     only where it ends before that string's closing quote (`_ps_quote_cursor`
     on ``raw``) -- a comment there that runs past the quote is the inner
@@ -10785,30 +10805,77 @@ def _ps_join_pipe_gaps(raw: str, scan: str, masker_read: bool) -> tuple[str, str
     the scan holds the line break a `` `n `` escape denotes and the raw the
     escape (the reviews of the batch).
 
+    The same join opens a statement (DEF-2070): a block comment where a
+    statement starts kept its `#>` on the scan, so the word after it sat at
+    no command position, and `<# c #> Get-Content .env` hid its read from
+    every reader of either half (Windows PowerShell 5.1 runs it, driven). So
+    the walk reads a gap after the text's start, after each live separator
+    of `_PS_CMD_POS_SEP`'s class and after `return`/`throw` as well
+    (`_PS_GAP_OPENER_RE`). Such a gap holds blanks and block comments only:
+    a line break there is itself a separator, which opens the statement
+    after a line comment, so the join leaves both as they are. Only what
+    the masker read as a comment is joined (its own token-start rule), so a
+    comment's text never reaches a reader, and an argument's comment, after
+    a word, is never at an opener. One opener is read past the masker's rule:
+    a `<#` glued to `=` (`$x =<# c #> Get-Content .env`, which Windows
+    PowerShell 5.1 runs, driven; the code review). The masker leaves it
+    glued, as it is after `=` in an argument (`Write-Output a=<# x`), so its
+    delimiters may be blanks on the scan, and that gap is read on ``raw``:
+    its blanks, a comment glued to the close, and the close itself, a block
+    comment's first `#>` whatever it holds. In an argument that over-reads
+    the words after the comment as a statement, friction on a rare spelling
+    rather than a hidden read; and a quote inside such a comment (`$x =<#
+    don't #> gc .env`) is an unterminated string to the masker, which hands
+    the command back raw: the declared limit below, nothing joined.
+
     Linear: each gap ends at the first character that is not a blank or a
     comment, a pipe stops it, the next line end is one search from where
     the walk is, and the next ``#>`` is searched for at most once per
     position it is reached from (a found one is reused while the walk is
     short of it)."""
-    if not masker_read or not _PS_PIPE_GAP_WITNESS_RE.search(scan):
+    if not masker_read:
+        return raw, scan
+    pipes = "|" in scan and _PS_PIPE_GAP_WITNESS_RE.search(scan) is not None
+    statements = "<#" in scan and _PS_STATEMENT_GAP_WITNESS_RE.search(scan) is not None
+    if not (pipes or statements):
         return raw, scan
     n = len(scan)
     quote_at = _ps_quote_cursor(raw)
     spans: list[tuple[int, int]] = []
     close_at, close_from = -1, n + 1
-    i = scan.find("|")
-    while 0 <= i < n:
-        j = i + 1
-        while j < n and scan[j] == "|":  # `||`, the pipeline chain operator
-            j += 1
+    raw_close_at, raw_close_from = -1, n + 1
+    # ``i`` is the opener's offset, -1 for the text's start; with no
+    # statement gap the walk visits pipes alone, as it did before DEF-2070
+    if statements:
+        i, pipe, j = -1, False, 0
+    else:
+        i = scan.find("|")
+        pipe, j = True, i + 1
+    while i < n:
+        if pipe:
+            while j < n and scan[j] == "|":  # `||`, the pipeline chain operator
+                j += 1
         start, k, held, glued = j, j, False, -1
+        eq = i >= 0 and scan[i] == "="
         while k < n:
             c = scan[k]
-            opens = k == glued or scan[k - 1] in _PS_TOKEN_BOUNDARY
-            if c in " \t":
+            opens = k == 0 or k == glued or scan[k - 1] in _PS_TOKEN_BOUNDARY
+            if c in " \t" and (not eq or raw[k] in " \t"):
                 k += 1
-            elif c in "\r\n":
+            elif pipe and c in "\r\n":
                 held, k = True, k + 1
+            elif eq and (k == start or k == glued) and raw.startswith("<#", k):
+                # `=<#`: a comment the masker left glued, read on ``raw``
+                # (and a comment glued to its close), where the scan may
+                # hold the masker's blanks for its delimiters
+                if not (raw_close_from <= k + 2 <= raw_close_at):
+                    raw_close_from, raw_close_at = k + 2, raw.find("#>", k + 2)
+                    if raw_close_at < 0:
+                        raw_close_at = n + 1
+                if raw_close_at > n:
+                    break
+                held, k = True, raw_close_at + 2
+                glued = k
             elif c == "<" and scan.startswith("<#", k) and opens:
                 if not (close_from <= k + 2 <= close_at):
                     close_from, close_at = k + 2, scan.find("#>", k + 2)
@@ -10818,18 +10885,29 @@ def _ps_join_pipe_gaps(raw: str, scan: str, masker_read: bool) -> tuple[str, str
                     break
                 held, k = True, close_at + 2
                 glued = k
-            elif c == "#" and opens:
+            elif pipe and c == "#" and opens:
                 eol = _PS_LINE_END_RE.search(scan, k)
                 held, k = True, (eol.start() if eol else n)
             else:
                 break
         if held:
-            quote = quote_at(i)
+            quote = quote_at(i) if i >= 0 else None
             if quote is None or k < quote[1]:
                 spans.append((start, k))
             else:
                 k = max(j, quote[1] + 1)  # past the string: its line's later pipes
-        i = scan.find("|", max(k, j))
+        at = max(k, j)
+        if statements:
+            m = _PS_GAP_OPENER_RE.search(scan, at)
+            if m is None:
+                break
+            i, j = m.start(), m.end()
+            pipe = scan[i] == "|"
+        else:
+            i = scan.find("|", at)
+            if i < 0:
+                break
+            pipe, j = True, i + 1
     if not spans:
         return raw, scan
     raw_parts: list[str] = []
@@ -16984,7 +17062,7 @@ def _ps_has_sweep_witness(command: str) -> bool:
     """The pre-check every sweep consumer runs before a walk: a find delete
     action, a pipe into a remove verb, or a .NET directory delete, anywhere
     in the uncapped text; or a comment opening after a pipe, which the scan
-    pair's gap join (`_ps_join_pipe_gaps`) reads past to the stage this
+    pair's gap join (`_ps_join_command_gaps`) reads past to the stage this
     raw-text witness cannot see (a superset costs a walk)."""
     return bool(_FIND_DELETE_ACTION_RE.search(command) or _PS_SWEEP_WITNESS_RE.search(command)
                 or _PS_PIPE_THEN_COMMENT_RE.search(command))
