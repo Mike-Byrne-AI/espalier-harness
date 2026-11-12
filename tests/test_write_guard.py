@@ -13400,7 +13400,8 @@ class TestSecretPathAccess:
         (tmp_path / ".env").write_text("MARKER_DEF_2074=1\n", encoding="utf-8")
         (tmp_path / "notes.txt").write_text("notes\n", encoding="utf-8")
         proc = subprocess.run(["/bin/bash", "--noprofile", "--norc", "-c", command], cwd=str(tmp_path),
-                              capture_output=True, text=True, timeout=scaled(10),
+                              capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=scaled(10),
                               env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LC_ALL": "C"})
         assert ("MARKER_DEF_2074" in proc.stdout) is reads
 
