@@ -793,8 +793,11 @@ class TestTheHandoffLeavesAnUnfinishedLane:
         assert f" tools/cc/execution_plan.py restore cc/_cold/{cold.name} puts back the plan" in tail
         assert "test_new.py" in tail and "THE HANDOFF DID NOT LAND" not in tail
         # Only the brief names the lane after the clear: the window stays on it,
-        # and the guard's reach is said as it is (the driver's verbs, not git).
-        assert "Stay on this branch" in tail and "a hand git push is not checked" in tail
+        # and the guard's reach is said as it is (the driver's verbs, not git;
+        # this tree has no Harness Guard, so nothing checks a hand push).
+        assert "Stay on this branch" in tail and "a hand git push skips the driver" in tail
+        assert "nothing in this tree checks it, so never push it by hand" in tail
+        assert "Harness Guard" not in tail
         assert tail.isascii() and '"' not in tail and "%" not in tail
         # The commit carries the record too, for a window cleared by hand.
         assert f"restore cc/_cold/{cold.name}" in _git(repo, "log", "-1", "--format=%B")
@@ -819,7 +822,116 @@ class TestTheHandoffLeavesAnUnfinishedLane:
         assert "unpushed" not in tail and "with no pull request" not in tail
         assert "its branch is on origin" in tail and "a pull request may be open on it" in tail
         assert "a hand git push there lands the set-aside edits" in tail and "soft-reset first" in tail
+        assert "nothing in this tree checks them" in tail and "only a force push takes them off" in tail
+        assert "Harness Guard" not in tail
         assert tail.isascii() and '"' not in tail and "%" not in tail
+
+    def test_a_tree_whose_guard_carries_the_arm_says_the_pull_request_fails(self, ship, repo, monkeypatch):
+        """The brief claims the Harness Guard check only where this tree's
+        gate carries the arm and the workflow runs it: an install-ci tree from
+        before it keeps its older gate (upgrade never refreshes it) and an
+        init-only tree has none (failure-mode MINOR). Whether verify is a
+        required check is GitHub's to say, so the hold on the merge is named
+        as that condition. Dies to: the claim made from the workflow alone,
+        or from the gate alone."""
+        self._ready(ship, repo, monkeypatch)
+        _git(repo, "push", "--quiet", "-u", "origin", "lane/half")
+        workflow = repo / ".github" / "workflows" / "harness-guard.yml"
+        gate = repo / "tools" / "cc" / "ci_guard.py"
+        workflow.parent.mkdir(parents=True)
+        gate.parent.mkdir(parents=True)
+        workflow.write_bytes(b"name: Harness Guard\njobs:\n  verify:\n    steps:\n      - run: python tools/cc/ci_guard.py\n")
+        gate.write_bytes(b"# an older gate, before the arm\n")
+        assert not ship._guard_fails_unfinished(repo), "a gate without the arm read as one with it"
+        gate.write_text(f'{ship.UNFINISHED_GUARD_NAME} = "x"\n', encoding="utf-8")
+        ran = workflow.read_bytes()
+        workflow.write_bytes(b"name: Harness Guard\n# an adopter's own: espalier's parked beside it as .new\n")
+        assert not ship._guard_fails_unfinished(repo), "a workflow that never runs the gate read as running it"
+        workflow.write_bytes(ran)
+        _git(repo, "add", ".github", "tools")
+        _git(repo, "commit", "--quiet", "-m", "ci: the guard")   # the lane's tracked edit stays unstaged
+        assert ship.handoff(unfinished=self.TEXT) == 0
+        tail = _marker(repo)["brief"]
+        tail = tail[tail.index(ship.FINISH_FIRST):]
+        assert ("the Harness Guard check then fails the pull request, which holds its merge where verify is a "
+                "required check, until a force push takes the commit off, so never push it by hand") in tail
+        assert ("where the Harness Guard check fails on them (auto-merge merges them on the required checks' "
+                "green where verify is not one of them) and only a force push takes them off") in tail
+        assert "nothing in this tree checks" not in tail
+        assert tail.isascii() and '"' not in tail and "%" not in tail
+        (repo / ".github" / "workflows" / "harness-guard.yml").unlink()
+        assert not ship._guard_fails_unfinished(repo), "a gate with no workflow to run it read as one"
+
+    def test_a_set_aside_commit_a_hand_push_put_on_origin_names_the_lease_push_never_the_merge(
+            self, ship, repo, monkeypatch):
+        """Failure-mode MAJOR-1, driven two rounds: with the set-aside commit
+        on origin by a hand push and the brief's soft reset run, the
+        origin-ahead refusal named a merge of origin's branch, the merge
+        brought the commit back, the unfinished refusal named the reset, and
+        round again, neither naming the way out. The refusal now names the
+        lease push, bound to origin's head; run, it ends the loop: both
+        refusals stand down and origin's branch holds no set-aside commit."""
+        self._ready(ship, repo, monkeypatch)
+        below = _git(repo, "rev-parse", "HEAD")
+        assert ship.handoff(unfinished=self.TEXT) == 0
+        set_aside = _git(repo, "rev-parse", "HEAD")
+        _git(repo, "push", "--quiet", "-u", "origin", "lane/half")       # the hand push
+        # Before the reset the lane's own refusal says the push is then the lease push.
+        assert "origin/lane/half holds it too, so the push is then the git push --force-with-lease" in (
+            ship._unfinished_on_lane(repo, "origin/main") or "")
+        _git(repo, "reset", "--quiet", "--soft", below)                  # the brief's first move
+        _git(repo, "commit", "--quiet", "-m", "feat: the finished lane")
+        words = ship._origin_ahead_refusal("lane/half", str(repo))
+        assert words is not None and set_aside[:12] in words and "Espalier-Unfinished: lane/half" in words
+        assert f"git push --force-with-lease=lane/half:{set_aside} origin HEAD:lane/half" in words
+        assert "git merge origin/lane/half" not in words and "other commit" not in words
+        _git(repo, "push", "--quiet", f"--force-with-lease=lane/half:{set_aside}", "origin", "HEAD:lane/half")
+        assert ship._origin_ahead_refusal("lane/half", str(repo)) is None
+        assert ship._unfinished_on_lane(repo, "origin/main") is None
+        trailers = _git(repo, "log", "--format=%(trailers:key=Espalier-Unfinished,valueonly)",
+                        "origin/main..origin/lane/half")
+        assert trailers == "" and _git(repo, "rev-parse", "origin/lane/half") == _git(repo, "rev-parse", "HEAD")
+
+    def test_a_commit_another_clone_pushed_is_merged_in_never_leased_away(self, ship, repo, monkeypatch, tmp_path):
+        """The dispatcher's verifier drove it (ack d17646): a lease bound to
+        origin's head as fetched still drops a commit another clone pushed
+        before the fetch, and git exits 0. The lease is named only where every
+        commit origin holds and HEAD lacks was once on this branch here (its
+        reflog); else the merge, which brings the set-aside commit back, the
+        lane's refusal then names the merge-base reset, and the reflog holds
+        the merge, so the next read names the lease, which lands the other
+        clone's file. Dies to: the lease named from origin's head alone."""
+        self._ready(ship, repo, monkeypatch)
+        below = _git(repo, "rev-parse", "HEAD")
+        assert ship.handoff(unfinished=self.TEXT) == 0
+        _git(repo, "push", "--quiet", "-u", "origin", "lane/half")       # the hand push
+        other = tmp_path / "other"
+        _git(tmp_path, "clone", "--quiet", "--branch", "lane/half", _git(repo, "remote", "get-url", "origin"),
+             str(other))
+        for key, value in (("user.name", "o"), ("user.email", "o@example.invalid"), ("commit.gpgsign", "false")):
+            _git(other, "config", key, value)
+        (other / "c.txt").write_bytes(b"from the other clone\n")
+        _git(other, "add", "c.txt")
+        _git(other, "commit", "--quiet", "-m", "feat: the other clone's commit")
+        _git(other, "push", "--quiet", "origin", "lane/half")
+        _git(repo, "reset", "--quiet", "--soft", below)                  # the brief's first move
+        _git(repo, "commit", "--quiet", "-m", "feat: the finished lane")
+        words = ship._origin_ahead_refusal("lane/half", str(repo))
+        assert words is not None and "1 commit(s) there were never on this branch here" in words
+        assert "git merge origin/lane/half" in words and "--force-with-lease" not in words
+        _git(repo, "merge", "--quiet", "--no-edit", "origin/lane/half")
+        moved = ship._unfinished_on_lane(repo, "origin/main") or ""
+        target = _git(repo, "merge-base", "origin/main", "HEAD")
+        assert "a merge follows it" in moved and f"git reset --soft {target[:12]}" in moved
+        _git(repo, "reset", "--quiet", "--soft", target)
+        _git(repo, "commit", "--quiet", "-m", "feat: the finished lane, recommitted")
+        tip = _git(repo, "rev-parse", "origin/lane/half")
+        words = ship._origin_ahead_refusal("lane/half", str(repo))
+        assert words is not None and f"git push --force-with-lease=lane/half:{tip} origin HEAD:lane/half" in words
+        _git(repo, "push", "--quiet", f"--force-with-lease=lane/half:{tip}", "origin", "HEAD:lane/half")
+        assert ship._origin_ahead_refusal("lane/half", str(repo)) is None
+        assert ship._unfinished_on_lane(repo, "origin/main") is None
+        assert _git(repo, "show", "origin/lane/half:c.txt") == "from the other clone"
 
     def test_the_two_moves_the_brief_names_give_the_lane_back_as_it_was(self, ship, repo, monkeypatch):
         """The next window's first moves, driven: the soft reset and the
@@ -861,6 +973,48 @@ class TestTheHandoffLeavesAnUnfinishedLane:
         _git(repo, "add", "more.py")
         _git(repo, "commit", "--quiet", "-m", "feat: more on top")
         assert "HEAD has moved past it" in ship._unfinished_on_lane(repo, "origin/main")
+        assert f"git reset --soft {below[:12]}" in ship._unfinished_on_lane(repo, "origin/main")
+
+    def test_a_merge_of_the_base_after_the_commit_names_the_merge_base_reset(self, ship, repo, monkeypatch):
+        """A reset to the set-aside commit's parent stages the merged base's
+        tree as the lane's own change, so a file the base has since removed
+        rides the landing back in (air's drive, redirect e55404); after a
+        merge of the base the reading names the lane's merge-base with it,
+        and that reset recommits the lane's own files alone."""
+        self._ready(ship, repo, monkeypatch)
+        below = _git(repo, "rev-parse", "HEAD")
+        assert ship.handoff(unfinished=self.TEXT) == 0
+        _git(repo, "switch", "--quiet", "main")
+        (repo / "c.txt").write_bytes(b"c\n")
+        _git(repo, "add", "c.txt")
+        _git(repo, "commit", "--quiet", "-m", "feat: c on the base")
+        merged = _git(repo, "rev-parse", "HEAD")
+        _git(repo, "push", "--quiet", "origin", "main")
+        _git(repo, "switch", "--quiet", "lane/half")
+        _git(repo, "merge", "--quiet", "--no-edit", "origin/main")
+        (repo / "l2.py").write_bytes(b"l = 2\n")
+        _git(repo, "add", "l2.py")
+        _git(repo, "commit", "--quiet", "-m", "feat: more after the merge")
+        _git(repo, "switch", "--quiet", "main")
+        _git(repo, "rm", "--quiet", "c.txt")
+        _git(repo, "commit", "--quiet", "-m", "revert: c off the base")
+        _git(repo, "push", "--quiet", "origin", "main")
+        _git(repo, "switch", "--quiet", "lane/half")
+        _git(repo, "fetch", "--quiet", "origin")
+        head = _git(repo, "rev-parse", "HEAD")
+        words = ship._unfinished_on_lane(repo, "origin/main")
+        assert words is not None and "a merge follows it" in words
+        assert f"git reset --soft {merged[:12]}" in words and f"git reset --soft {below[:12]}" not in words
+
+        def recommitted(target: str) -> list[str]:
+            _git(repo, "reset", "--quiet", "--soft", target)
+            _git(repo, "commit", "--quiet", "-m", "feat: the finished lane")
+            names = _git(repo, "diff", "--name-only", "origin/main...HEAD").split()
+            _git(repo, "reset", "--quiet", "--hard", head)
+            return names
+
+        assert "c.txt" in recommitted(below), "the hazard the parent reset carries"
+        assert "c.txt" not in recommitted(merged)
 
     def test_a_session_the_router_never_asked_is_refused_and_nothing_moves(self, ship, repo, monkeypatch):
         """No escape flag: outside the threshold this would become the

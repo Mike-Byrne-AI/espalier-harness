@@ -381,6 +381,19 @@ class TestSlashCommandSurface:
         text = (REPO_ROOT / ".claude" / "commands" / "handoff.md").read_text(encoding="utf-8")
         assert "cognitive_blueprint.py finalize" in text
 
+    def test_the_unfinished_paragraph_says_what_reads_a_hand_push(self):
+        """DEF-5102: the body said a hand push of a set-aside lane is not
+        checked, the brief's old words; a pull request's Harness Guard now
+        fails on it where the tree carries the check, and the driver's push
+        names the lease push that takes it off, never a merge."""
+        text = (REPO_ROOT / ".claude" / "commands" / "handoff.md").read_text(encoding="utf-8")
+        start = text.index('handoff --unfinished "<what is left>"` in place of')
+        paragraph = " ".join(text[start:text.index("<!-- espalier:self-host-only -->", start)].split())
+        assert "is not checked" not in paragraph
+        assert "it fails a pull request holding the commit" in paragraph
+        assert "git push --force-with-lease" in paragraph and "never a merge of origin's branch" in paragraph
+        assert "Never amend the set-aside commit by hand" in paragraph
+
 
 # ── Rendered command docs ─────────────────────────────────────────────────────
 

@@ -101,9 +101,10 @@ jobs:
           # ci_guard reads GITHUB_EVENT_NAME via
           # os.environ to route the approval-marker check by trigger
           # (PR-like events accept only PR_TITLE; push accepts only
-          # commit-msg; others refuse). Actions exposes
-          # github.event_name as a context but does not auto-export
-          # it to the env, so this explicit forward is required.
+          # commit-msg; others refuse). The runner sets it on every step,
+          # and an env: entry cannot overwrite a GITHUB_* name, so this
+          # line restates the runner's value: it is kept so this block
+          # reads as the declaration of the script's inputs.
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           # ci_guard reads GITHUB_ACTOR for the narrow Dependabot
           # action-bump allowance (dependabot_action_bump_allowed).
