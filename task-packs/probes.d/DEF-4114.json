@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4114",
+ "subject": "tests/test_hooks_start_on_a_kept_helper.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "a timing miss on a loaded windows-latest runner under xdist: no one-liner on this tree reads it, and a drive on the Air does not load the runner it misses on; the oracle is the leg's verdict across runs, read as a census of the HookSpawnRetried warnings in the Windows job logs (2 of 8 runs red, 2 saved, 2026-11-11 05:12Z to 2026-11-12 00:25Z); the fix lands with that census re-read over the next 8 portability runs and a drive that times the staged let-through spawn on Windows",
+ "row_sha": "1d3d5812ccb4",
+ "text_sha": "e550c32f8216",
+ "verified_2026_11_11": "OPEN (filed 2026-11-11; probe driven at filing)"
+}
