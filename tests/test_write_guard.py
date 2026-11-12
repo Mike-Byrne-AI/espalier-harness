@@ -9381,6 +9381,11 @@ class TestCatastrophicRmFlagOrderIndependent:
             # a compiled pattern, compiled on first use: no key a flag could
             # be missing from, and no verdict
             "_carrier_fed_remove_re",
+            # `_masked_or_raw` (DEF-3071, DEF-3073) is keyed on the text and
+            # returns its mask, or the text itself: the masker's transform,
+            # which reads no flag (its call graph is pinned stateless in
+            # `TestAGapAfterAPipeIsRead`)
+            "_masked_or_raw",
             # `_relief_applies` reads the command's text and nothing else: the
             # flag joins the bases beside it, in `_statement_bases`
             "_nested_shell_programs_cached",
@@ -9401,6 +9406,10 @@ class TestCatastrophicRmFlagOrderIndependent:
             # grammar and program text: a reading the judges are handed,
             # which carries no verdict a flag could change
             "ps_start_process_shell_launches",
+            # `splice_line_continuations` (DEF-3071, DEF-3073) is the Bash
+            # readers' one raw pre-pass, keyed on the text: a transform every
+            # reader is handed, never a judge, and stateless the same way
+            "splice_line_continuations",
         ], memos
 
     @pytest.mark.parametrize("text, at, kind", [
@@ -14805,9 +14814,18 @@ class TestQuotedTargetSurvivesTheRoot:
         driven). The extractor falls back to scanning the raw command."""
         bp = _bash_patterns_module()
         orig = bp.mask_inert_syntax
+        # the splicer's memos hold masks computed by the real masker, and
+        # would hold this drifted one for the tests after this one
+        memos = (bp._masked_or_raw, bp.splice_line_continuations)
+        for memo in memos:
+            memo.cache_clear()
         monkeypatch.setattr(bp, "mask_inert_syntax", lambda c: " " + orig(c))
         project = projects["plain"]
-        assert self._denied("Bash", "echo x > tools/cc/hooks/write_guard.py", project)
+        try:
+            assert self._denied("Bash", "echo x > tools/cc/hooks/write_guard.py", project)
+        finally:
+            for memo in memos:
+                memo.cache_clear()
 
     #: The spellings `raw_operand` reads SHORT on purpose: a glued quote and a
     #: backslash-escaped quote inside the span (the row records both as out of
@@ -16986,6 +17004,13 @@ class TestAGapAfterAPipeIsRead:
         # never eats a terminator (the lane's first cut did both, driven)
         ("bash -c 'cat <<X |\nbody\nX'", "bash -c 'cat <<X |\nbody\nX'"),
         ("bash <<E\na |\nE\nb", "bash <<E\na | \nE\nb"),
+        # ... nor a terminator of a heredoc the program opened inside its
+        # body, nor one an apostrophe in a data body ran a quote past (the
+        # code review, driven: both were joined)
+        ("bash <<'E'\ncat <<'X'\nbody |\nX\nb\nE", "bash <<'E'\ncat <<'X'\nbody | \nX\nb\nE"),
+        ("cat > R.md <<EOF\nDon't.\n| a |\n| - |\nEOF\nb", "cat > R.md <<EOF\nDon't.\n| a |\n| - |\nEOF\nb"),
+        # a double-quoted word's own substitution is spliced, its text is not
+        ('echo "a; $(b |\nc)"', 'echo "a; $(b | c)"'),
         # data is not a program: the masker blanks its separators
         ("cat <<E\na |\nb\nE", "cat <<E\na |\nb\nE"),
         ("echo 'a |\nb'", "echo 'a |\nb'"),
@@ -17086,6 +17111,9 @@ class TestAGapAfterAPipeIsRead:
         # DEF-3071: a command substitution's body
         "subst": "x=$({p})", "subst-arg": "echo $({p})", "backtick": "x=`{p}`",
         "dq-subst": 'echo "$({p})"', "nested-subst": "x=$(echo $({p}))",
+        # ... inside a double-quoted word whose other text the masker blanks
+        # (a separator, a pipe): the word is data, its substitution is not
+        "dq-subst-sep": 'echo "a; $({p})"', "dq-backtick-pipe": 'git commit -m "a | b `{p}`"',
         # DEF-3073: a quoted program and a heredoc fed to a shell
         "bash-c": "bash -c '{p}'", "sh-c": "sh -c '{p}'", "bash-c-dq": 'bash -c "{p}"',
         "eval": "eval '{p}'", "eval-dq": 'eval "{p}"', "eval-ansi": "eval $'{p}'",
@@ -17114,6 +17142,10 @@ class TestAGapAfterAPipeIsRead:
         "x=$(echo 'find / -type f |\nxargs rm -rf')",
         "git commit -m 'notes |\n# heading\nfind / -type f |\nxargs rm -rf'",
         "bash -c 'cat <<X |\nfind / -type f |\nxargs rm -rf\nX\nwc -l'",
+        # a head after the body the masker cannot resolve does not make the
+        # body code: the mask is read through its terminator (the code
+        # review, driven: walled on the lane's first cut, allowed at main)
+        "cat > notes.md <<E\nfind / -type f |\nxargs rm -rf\nE\nmake",
     ])
     def test_data_inside_or_beside_a_program_is_not_joined(self, tmp_path, cmd):
         assert _delete_verdict(run_guard_from("Bash", cmd, tmp_path, None)) == "allow", cmd
@@ -17125,9 +17157,65 @@ class TestAGapAfterAPipeIsRead:
         "bash <<E\nls |\nE\nrm -rf /",
         "bash -c 'cat <<X |\ndata\nX\nrm -rf /'",
         "x=$(ls |\nwc)\nrm -rf /",
+        "bash <<'E'\ncat <<'X'\nbody |\nX\nrm -rf /\nE",
+        "cat > R.md <<EOF\nDon't edit.\n| a | b |\n| - | - |\nEOF\nrm -rf /",
     ])
     def test_a_statement_after_a_program_is_still_read(self, tmp_path, cmd):
         assert _delete_verdict(run_guard_from("Bash", cmd, tmp_path, None)) == "wall", cmd
+
+    @pytest.mark.parametrize("depth, expect", [(8, "wall"), (9, "allow")])
+    def test_the_program_depth_bound_is_pinned(self, tmp_path, depth, expect):
+        # `_SPLICE_PROGRAM_MAX_DEPTH`: a program that many substitutions deep
+        # is spliced; one deeper is left as written, the under-read direction
+        # (the one-line twin walls at every depth). A change to the bound
+        # reds here, on purpose
+        prog = "find / -type f |\nxargs rm -rf"
+        twin = "find / -type f | xargs rm -rf"
+        for _ in range(depth):
+            prog, twin = f"echo $({prog})", f"echo $({twin})"
+        assert _delete_verdict(run_guard_from("Bash", twin, tmp_path, None)) == "wall"
+        assert _delete_verdict(run_guard_from("Bash", prog, tmp_path, None)) == expect
+
+    @pytest.mark.parametrize("memo", ["_masked_or_raw", "splice_line_continuations"])
+    def test_a_memoised_splice_reads_no_state(self, memo):
+        """The two memos hold the operator's cost bound (DEF-3071, DEF-3073):
+        an answer is served by the text alone, so nothing on their call graph
+        may read a context variable, the environment or a `global` -- a read
+        added there later would serve a stale answer and red nothing else
+        (the failure-mode review). A static walk over the module's own
+        functions, a name read as a call where one shares a function's name
+        (a superset)."""
+        import ast
+        bp = _bash_patterns_module()
+        tree = ast.parse(Path(bp.__file__).read_text(encoding="utf-8"))
+        defs = {n.name: n for n in tree.body
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        context_vars = {
+            t.id for n in tree.body if isinstance(n, (ast.Assign, ast.AnnAssign))
+            and isinstance(n.value, ast.Call)
+            and ast.unparse(n.value.func).endswith("ContextVar")
+            for t in (n.targets if isinstance(n, ast.Assign) else [n.target])
+            if isinstance(t, ast.Name)
+        }
+        assert context_vars, "the module's context variables were not found"
+        seen, todo, reads = set(), [memo], []
+        while todo:
+            name = todo.pop()
+            if name in seen:
+                continue
+            seen.add(name)
+            for node in ast.walk(defs[name]):
+                if isinstance(node, ast.Name) and node.id in context_vars:
+                    reads.append((name, node.id))
+                elif isinstance(node, ast.Name) and node.id in defs:
+                    todo.append(node.id)
+                elif isinstance(node, ast.Global):
+                    reads.append((name, "global " + ", ".join(node.names)))
+                elif (isinstance(node, ast.Attribute) and node.attr in ("environ", "getenv")
+                      and isinstance(node.value, ast.Name) and node.value.id == "os"):
+                    reads.append((name, "os." + node.attr))
+        assert "mask_inert_syntax" in seen, sorted(seen)
+        assert not reads, reads
 
 
 class TestShellOutReader:

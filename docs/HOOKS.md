@@ -1536,7 +1536,8 @@ first; the dangerous-command catch is a secondary slip-catcher):
    and reads as its one-line twin (since 2026-11-10), and so is one inside
    a Bash command substitution or inside a program a shell reads in place
    (`bash -c '...'`, `eval '...'`, a heredoc fed to a shell; since
-   2026-11-11), except in a PowerShell command the guard cannot read whole
+   2026-11-11; a body more than eight such programs deep is left as
+   written), except in a PowerShell command the guard cannot read whole
    (one past its length cap, or holding an unterminated quote). A stage between
    the echo and `xargs`, and an emit past
    the reader's bounds -- more than four words, a word past 80 characters,

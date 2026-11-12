@@ -6978,7 +6978,7 @@ def _statement_words(
 
 
 def _pipe_scan(
-    command: str, inner: Callable[[int, int], str | None] | None = None,
+    command: str, inner: Callable[[int, int], None] | None = None,
 ) -> str:
     """The command with every quoted span (single, double, ANSI-C), every
     backslash-escaped character and every comment blanked to spaces, the
@@ -6990,11 +6990,10 @@ def _pipe_scan(
     ``inner``, where given, is told about the body of each outermost command
     substitution, backtick substitution, single- and double-quoted span, as
     ``inner(lo, hi)`` over ``command[lo:hi]`` (an ANSI-C span's body only
-    where it holds no backslash: escapes are not read). A string of that
-    length coming back replaces
-    the body's blank (its delimiters stay blank); None keeps the blank. The
-    splicer's program pre-pass is its one caller (`_splice_program_bodies`,
-    which only collects the spans); every other reader takes the blank."""
+    where it holds no backslash: escapes are not read); the scan is the
+    same either way. The splicer's program pre-pass is its one caller (it
+    collects the spans for `_splice_program_bodies`); every other reader
+    takes the blank."""
     out = list(command)
     n = len(command)
 
@@ -7002,9 +7001,7 @@ def _pipe_scan(
         for k in range(lo, hi):
             out[k] = " "
         if inner is not None and body_lo < body_hi:
-            seen = inner(body_lo, body_hi)
-            if seen is not None and len(seen) == body_hi - body_lo:
-                out[body_lo:body_hi] = seen
+            inner(body_lo, body_hi)
 
     i = 0
     while i < n:
@@ -15309,7 +15306,7 @@ def _masked_or_raw(command: str) -> str:
 
 
 def _splice_program_bodies(
-    command: str, spans: list[tuple[int, int]], depth: int,
+    command: str, spans: list[tuple[int, int]], depth: int, scan: str,
 ) -> str:
     """``command`` with the body of each program a shell reads in place,
     among ``spans`` (the outermost substitution and quoted bodies holding a
@@ -15330,19 +15327,101 @@ def _splice_program_bodies(
     + `b'`). A quoted word inside a substitution is kept whole by the outer
     mask and read again by the body's own, one level down. The mask is read
     only here, so a command whose bodies hold no such pipe pays nothing for
-    it (the operator's 11-08 bound: no per-call weight for a spelling)."""
+    it (the operator's 11-08 bound: no per-call weight for a spelling).
+
+    A double-quoted word the masker blanked in part (a separator in its
+    text: `echo "a; $(...)"`) is data around code: its own substitutions
+    are spliced where the mask kept them (the code review, driven: 16 of 21
+    such words were left unread). A span holding a line that spells a
+    delimiter a heredoc outside the spans opened is left alone: `_pipe_scan`
+    does not blank a heredoc body, so an apostrophe in a data body opens a
+    span that runs past its terminator, and splicing it joined a stage onto
+    the terminator (the code review, driven: `| - | - |` + newline +
+    `EOF`). ``scan`` is the command's `_pipe_scan`, where those operators
+    are read."""
     mask = _masked_or_raw(command)
+    delims = _heredoc_delimiters(command, scan)
     out: list[str] = []
     at = 0
     for lo, hi in spans:
         body = command[lo:hi]
-        if mask[lo:hi] != body:
+        if delims and _spells_a_delimiter(body, delims):
+            continue
+        if mask[lo:hi] == body:
+            spliced = _splice_line_continuations(body, _depth=depth + 1)
+        elif command[lo - 1:lo] == '"':
+            spliced = _splice_quoted_substitutions(body, mask[lo:hi], depth)
+        else:
             continue
         out.append(command[at:lo])
-        out.append(_splice_line_continuations(body, _depth=depth + 1))
+        out.append(spliced)
         at = hi
     out.append(command[at:])
     return "".join(out)
+
+
+def _splice_quoted_substitutions(body: str, mask: str, depth: int) -> str:
+    """A double-quoted word's ``body`` with each substitution in it holding a
+    pipe at a line end spliced as a command of its own, where ``mask`` (the
+    command's mask over the word) kept it verbatim: bash runs a substitution
+    inside double quotes whatever the word's other text is. The word's text
+    is scanned as a command, so an apostrophe in it (a literal inside double
+    quotes) hides a substitution after it: the under-read direction."""
+    subs: list[tuple[int, int]] = []
+
+    def collect(lo: int, hi: int) -> None:
+        if ((body[lo - 2:lo] == "$(" or body[lo - 1:lo] == "`")
+                and _PIPE_AT_LINE_END_RE.search(body, lo, hi)):
+            subs.append((lo, hi))
+
+    _pipe_scan(body, collect)
+    out: list[str] = []
+    at = 0
+    for lo, hi in subs:
+        if mask[lo:hi] != body[lo:hi]:
+            continue
+        out.append(body[at:lo])
+        out.append(_splice_line_continuations(body[lo:hi], _depth=depth + 1))
+        at = hi
+    out.append(body[at:])
+    return "".join(out)
+
+
+def _heredoc_delimiters(command: str, scan: str) -> frozenset[str]:
+    """Every delimiter a heredoc operator ``scan`` (``command``'s
+    `_pipe_scan`) holds names: a line spelling one may end some body, so
+    the splicer never joins a stage onto it."""
+    found: set[str] = set()
+    for op in _HEREDOC_OPERATOR_RE.finditer(scan):
+        try:
+            _, spec = _read_heredoc_operator(command, op.start())
+        except _UnresolvedShellSyntax:
+            continue
+        if spec is not None:
+            found.add(spec[0])
+    return frozenset(found)
+
+
+def _masked_through_terminator(
+    command: str, lines: list[str], idx: int, start: int, body: tuple[str, bool, bool],
+) -> str:
+    """`_masked_or_raw` of ``command`` through the terminator of the heredoc
+    ``body`` that line ``idx`` (at offset ``start``) sits in, or of the whole
+    command where none follows: the statements after a body never decide
+    whether the masker keeps it."""
+    delim, _quoted, strip = body
+    end = start
+    for line in lines[idx:]:
+        end += len(line) + 1
+        probe = line.lstrip("\t") if strip else line
+        if probe.rstrip("\r").strip() == delim:
+            return _masked_or_raw(command[:end - 1])
+    return _masked_or_raw(command)
+
+
+def _spells_a_delimiter(text: str, delims: frozenset[str]) -> bool:
+    """A line of ``text`` is, past blanks, one of ``delims``."""
+    return any(line.strip() in delims for line in text.split("\n"))
 
 
 def _pipe_stage_end(line: str, scan_line: str) -> int | None:
@@ -15442,7 +15521,7 @@ def _splice_line_continuations(command: str, _depth: int = 0) -> str:
         # A substitution's or an in-place program's own lines, first, as
         # commands of their own (DEF-3071, DEF-3073): the loop below reads
         # this scan, which blanks their bodies whole.
-        spliced = _splice_program_bodies(command, spans, _depth)
+        spliced = _splice_program_bodies(command, spans, _depth, scan)
         if spliced != command:
             command = spliced
             scan = _pipe_scan(command)
@@ -15461,6 +15540,8 @@ def _splice_line_continuations(command: str, _depth: int = 0) -> str:
     #: line cannot be the terminator -- `x\` + newline + `EOF` is the body
     #: line `xEOF`, and the delimiter is still open (driven with a marker).
     continued = False
+    #: The heredoc delimiters the command names, read on first need.
+    delims: frozenset[str] | None = None
     last = len(lines) - 1
     offset = 0
     for idx, line in enumerate(lines):
@@ -15471,6 +15552,15 @@ def _splice_line_continuations(command: str, _depth: int = 0) -> str:
             delim, quoted, strip = body
             probe = line.lstrip("\t") if strip else line
             cut = None if idx == last else _pipe_stage_end(line, scan_line)
+            if pipe_open and probe.rstrip("\r").strip() != delim:
+                # A joined stage never runs onto a line that may end another
+                # body: a heredoc the program opened inside this one closes
+                # there (the code review, driven: `body |` + newline + `X`).
+                if delims is None:
+                    delims = _heredoc_delimiters(command, scan)
+                if line.strip() in delims:
+                    parts.append("\n")
+                    pipe_open = False
             if not continued and probe.rstrip("\r").strip() == delim:
                 if pipe_open:
                     # A program body's stage met its terminator: the newline
@@ -15482,7 +15572,8 @@ def _splice_line_continuations(command: str, _depth: int = 0) -> str:
             elif pipe_open and idx < last and _blank_or_comment(line):
                 continue
             elif (cut is not None and not _HEREDOC_OPERATOR_RE.search(scan_line)
-                    and _masked_or_raw(command)[start:offset] == command[start:offset]):
+                    and _masked_through_terminator(command, lines, idx, start, body)[start:offset]
+                    == command[start:offset]):
                 # A body a shell reads (`bash <<'E'`): the masker kept its
                 # line and the newline after it, so the program's shell
                 # reads that newline, and a pipe at the line's live end
@@ -15490,7 +15581,10 @@ def _splice_line_continuations(command: str, _depth: int = 0) -> str:
                 # A data body (`cat <<'E'`) is blanked there and joins
                 # nothing; the terminator check above runs first, and a
                 # line opening a heredoc of the program's own holds its
-                # newline for that body, as at the top level.
+                # newline for that body, as at the top level. The mask is
+                # read through this body's terminator, so a later head the
+                # masker cannot resolve (`make`) does not hand back the raw
+                # text and read a data body as code (the code review).
                 parts.append(line[:cut] + " ")
                 pipe_open = True
                 continued = False
