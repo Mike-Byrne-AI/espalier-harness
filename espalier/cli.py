@@ -5269,17 +5269,19 @@ REQUIRED_GITIGNORE = (
 #: of ``REQUIRED_GITIGNORE`` on purpose: every reader of that tuple -- the
 #: coverage probe, the tracked- and untracked-conflict checks, doctor, the
 #: retire on uninstall -- reads its members as paths to IGNORE, and a ``!``
-#: member would read as "ignore the ledger" in all of them. The two directory
-#: entries hold the ledger's rows and probes as one file each, where a
-#: repository sets ``ledger_fragments = true``: without them each file the
-#: verbs write is silently untracked. A member ending in ``/`` is a directory,
-#: matched by prefix (``_is_reincluded``).
+#: member would read as "ignore the ledger" in all of them. The first two
+#: directory entries hold the ledger's rows and probes as one file each, where
+#: a repository sets ``ledger_fragments = true``; the third holds a row's
+#: lineage (``ledger_row.py file --sibling-of``) in either mode. Without them
+#: each file the verbs write is silently untracked. A member ending in ``/`` is
+#: a directory, matched by prefix (``_is_reincluded``).
 GITIGNORE_REINCLUDES = (
     "!/task-packs/CLAUDE.md",
     "!/task-packs/FORWARD_LEDGER.md",
     "!/task-packs/LEDGER_PROBES.json",
     "!/task-packs/ledger.d/",
     "!/task-packs/probes.d/",
+    "!/task-packs/lineage.d/",
 )
 #: The rule the re-includes sit under, and the one spelling of it a tree
 #: initialised before they existed carries in the harness block.
@@ -6957,7 +6959,8 @@ def _ignore_snippet_lines(repo_root: Path) -> list[str]:
             lines.add(rel)
     # The ledger's rows and probes as one file each, where a repository opts in
     # (ledger_fragments): the verbs rewrite them as they rewrite the two files.
-    for d in ("task-packs/ledger.d", "task-packs/probes.d"):
+    # A row's lineage files, in either mode: the file verb writes them.
+    for d in ("task-packs/ledger.d", "task-packs/probes.d", "task-packs/lineage.d"):
         if (repo_root / d).is_dir():
             lines.add(d + "/")
     return sorted(lines)

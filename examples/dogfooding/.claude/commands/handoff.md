@@ -509,6 +509,10 @@ last-second finding, a hunch you didn't chase, a dangling thread. The structured
 artifacts capture what's *settled*; this captures what's *fresh and perishable*.
 Replace the prior session's note — it does not accumulate. The session OPENS by
 reasoning over this note, so write it to prime that first-thoughts read.
+A finding this session's review left unfiled that is a further instance of a
+row the lane worked on is written with the words `(sibling of DEF-N)`, naming
+that row: the session that files it copies the id into
+`tools/cc/ledger_row.py file --sibling-of DEF-N`, so the chain is recorded.
 
 **If the file is absent:**
 <!-- espalier:self-host-only -->

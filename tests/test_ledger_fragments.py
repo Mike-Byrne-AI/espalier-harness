@@ -2067,6 +2067,7 @@ class TestTheRecordPredicates:
         ("task-packs/LEDGER_PROBES.json", True, False),
         ("task-packs/ledger.d/DEF-9.md", True, False),
         ("task-packs\\probes.d\\DEF-9.json", True, False),
+        ("task-packs/lineage.d/DEF-9.json", True, False),
         ("memory/session-log.d/2026-10-13-120000-air.md", False, True),
         ("changelog.d/2026-10-13-lane.md", False, True),
         ("task-packs/TP-1-x.md", False, False),

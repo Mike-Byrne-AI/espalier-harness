@@ -50,6 +50,18 @@ Usage::
     python3 tools/cc/ledger_row.py repin DEF-665 --open-value 39 \
         --reason "pyproject still caps at 60 s; count moved 31 -> 39" [--text-file /tmp/665.md]
 
+    # a row that is a further instance of one already filed on the same job
+    # says so: --sibling-of DEF-695 (repeatable; a row live or struck) records
+    # its parent in a lineage file no strike touches. With it, the chain
+    # advisory reads the chain (recording-only until twenty rows carry the
+    # flag, one line meanwhile); a filing into the standalone class C0 prints
+    # the cluster advisory once its site family holds five live rows there.
+    # Both are stderr advice: neither refuses or changes the exit code.
+
+    # read a row's chain and its site family's standalone count before
+    # planning a fix for it: read-only, no lock, exit 0 on every id
+    python3 tools/cc/ledger_row.py lineage DEF-697
+
     # --kind INV mints an INV id; an explicit id (file DEF-2005 ...) must sit in
     # the block this seat mints from while espalier.toml [id_blocks] exists
 
@@ -807,6 +819,9 @@ class _Pending:
         self.ledger, self.probes = ledger, probes
         self.rows: dict[Path, str | None] = {}
         self.probe_files: dict[Path, dict | None] = {}
+        #: The lineage file a filing with ``--sibling-of`` writes, by path:
+        #: written after the row and before the probe, and never removed.
+        self.lineage: dict[Path, dict] = {}
         #: The ids the verb acts on; a problem naming one refuses even when the
         #: tree carried it before (``_converge``).
         self.ids: set[str] = set(ids)
@@ -832,6 +847,7 @@ class _Pending:
                 if not isinstance(frag, str):
                     out.update(_FRAG.row_ids(frag.member))
         out.update(path.stem for path in self.probe_files)
+        out.update(path.stem for path in self.lineage)
         return out
 
     def held(self, gen) -> "list[dict] | None":
@@ -967,6 +983,12 @@ def _write_pending_probes(gen, pending: _Pending, *, removals: bool) -> None:
             gen._atomic_write(path, json.dumps(entry, indent=1, ensure_ascii=False) + "\n")
 
 
+def _write_pending_lineage(gen, pending: _Pending) -> None:
+    for path, entry in pending.lineage.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        gen._atomic_write(path, json.dumps(entry, indent=1, ensure_ascii=False) + "\n")
+
+
 def _universal_newlines(data: bytes) -> bytes:
     """``data`` with its line ends read as a text-mode read reads them:
     ``\\r\\n`` and a lone ``\\r`` each become ``\\n``."""
@@ -1004,7 +1026,9 @@ def _commit_both(gen, *, ledger: Path, probes: Path, new_text: str, data: dict,
     first left a struck row still carrying a probe, which no verb could clear
     (failure-mode reviews). A probe
     file's removal always goes first: removing one never leaves a probe behind
-    a row.
+    a row. A filing's lineage file (``--sibling-of``) goes after its row and
+    before its probe, so a filing cut off anywhere before its probe is still
+    the one its re-run finishes, the lineage file with it.
 
     Where the tree keeps rows as files (``_Pending.scoped``), convergence
     refuses on what the write leaves worse and on problems about the rows it
@@ -1042,6 +1066,7 @@ def _commit_both(gen, *, ledger: Path, probes: Path, new_text: str, data: dict,
         # skips re-lines nothing.
         if new_text.encode("utf-8") != _universal_newlines(ledger.read_bytes()):  # ledger-read: the file's own bytes, to skip an unchanged write
             gen._atomic_write(ledger, new_text)
+        _write_pending_lineage(gen, pending)
         if write_roster and not probes_first:
             _replace(sidecar, probes)
         _write_pending_probes(gen, pending, removals=False)
@@ -2096,15 +2121,234 @@ def new_class(section: str, *, ledger: Path, probes: Path, title: str, populatio
     return 0
 
 
+# Lineage. A row filed as a sibling of another (``file --sibling-of``) records
+# its parents in a file of its own beside the ledger, ``<child id>.json``
+# under the loader's lineage directory (``_record_fragments.lineage_fragment_dir``),
+# in either ledger mode. ``file`` alone writes one; ``strike`` and ``repin``
+# never read or write it. A strike retires its row's probe, so a parent kept in
+# a probe entry, or anywhere else a strike rewrites, would vanish with its row
+# and cut every chain through it. One file per child, never a shared map: two
+# lanes filing two children never write one file. The two filing advisories
+# and the ``lineage`` verb read the lineage files and the current ledger only,
+# no history, and none of them refuses or changes an exit code.
+
+#: The advisories' thresholds. First guesses, each to be reviewed once it has
+#: twenty filings behind it: fired on more than half is noise; never fired is
+#: reported, and never lowered to make it speak.
+CHAIN_DEPTH_AT = 2            # a sibling of a sibling
+CHAIN_FAN_OUT_AT = 3          # a parent's third child, the new row counted
+CLUSTER_AT = 5                # live standalone rows on one site family, the new row counted
+#: The chain advisory is recording-only until this many rows carry
+#: ``--sibling-of``: it prints one line saying so, and at the figure the line
+#: says the threshold review is due. The full print waits for that review.
+CHAIN_RECORDING_UNTIL = 20
+#: Whether the chain advisory prints the chain and the questions when it
+#: fires. Off while recording: a filer who reads that a chain would fire can
+#: change what it files, and that shapes the very data the review reads; what
+#: would have fired is derivable afterwards from the lineage files and each
+#: row's filing commit. Turned on by a ruling on that review, never by a count.
+CHAIN_ADVISORY_PRINTS = False
+#: The standalone class: rows filed into no class of their own.
+STANDALONE_SECTION = "§C0"
+#: Asked before the class question, when a chain or a standalone cluster says
+#: a job keeps producing rows: whether the layer the fixes sit in can reach
+#: the job's goal at all. ASCII, and no internal ids: this text deploys.
+FIVE_QUESTIONS: tuple[str, ...] = (
+    "1. State the job without naming the mechanism. If the job can only be written in the "
+    "mechanism's own words (spellings, shapes, anchors, row forms), the fix is aimed at the "
+    "mechanism, not the job.",
+    "2. Does the fix observe the effect, or predict it from a representation?",
+    "3. Is the input closed and ours, or open and someone else's? Open input plus prediction is "
+    "enumerating badness: move the check. Closed input we own: own the producer and make the "
+    "consumer strict. Except where the effect cannot be undone (a delete, a push, a release, a "
+    "secret read): no later layer can help there, so the prediction stays, and question 4, asked "
+    "once for the whole job, decides which forms are work.",
+    "4. Would a slip plausibly produce this instance? If not, it is a declared limit, not work. "
+    "Where a whole job must stay in a predicting layer, ask this once for the job, not once per row.",
+    "5. Was this already moved once, and are defects arriving at the new site? Then the move was "
+    "consolidation, and the next one is re-targeting.",
+)
+#: A path in a site cell: a file with an extension, or a directory ending in
+#: ``/``, either slash read as ``/``; the first one found is the row's site.
+_SITE_PATH = re.compile(r"(?<![\w./-])((?:\.?[\w-]+/)*\.?[\w*-]+\.[A-Za-z0-9]+|(?:\.?[\w-]+/)+[\w*.-]*)")
+
+
+def site_family(site: str) -> str | None:
+    """A row's site family, ``<top directory>:<module stem>``, from its site
+    cell: the first path in the cell, a ``::symbol`` dropped
+    (``tools/cc/hooks/write_guard.py::f`` is ``tools:write_guard``; a file at
+    the root is ``.:<stem>``; a dotfile keeps its whole name). None where the
+    cell names no path. The FIRST path, not one in a backtick span: a site cell
+    opens with its site, and its spans are the detail after it (measured on
+    this tree's 113 live standalone rows, 2026-11-12: span-first re-keyed six,
+    every one onto a path the row only mentions). One job can span several
+    families, as a guard spread over modules does; this is a key, not a job."""
+    m = _SITE_PATH.search(site.replace("\\", "/"))
+    if not m:
+        return None
+    parts = m.group(1).split("::")[0].rstrip("/").split("/")
+    top = parts[0] if len(parts) > 1 else "."
+    leaf = parts[-1]
+    stem = leaf if leaf.startswith(".") or "." not in leaf else leaf.split(".")[0]
+    return f"{top}:{stem}"
+
+
+def _row_family(rid: str, text: str) -> str | None:
+    """The site family of ``rid``'s member row in the view ``text``."""
+    found = _member_line(rid, text, struck_ok=True)
+    if found is None:
+        return None
+    cells = _GEN.member_cells(found[1])
+    return site_family(cells[1]) if len(cells) > 1 else None
+
+
+def _standalone_on(family: str, text: str, *, besides: str | None = None) -> int:
+    """The live standalone rows whose site family is ``family`` in the view
+    ``text``, the row ``besides`` left out (the caller counts it itself)."""
+    n = 0
+    for row in _GEN.ledger_sections(text).get(STANDALONE_SECTION, []):
+        if _GEN._is_struck(row) or (besides and besides in _GEN.cell_ids(row)):
+            continue
+        cells = _GEN.member_cells(row)
+        if len(cells) > 1 and site_family(cells[1]) == family:
+            n += 1
+    return n
+
+
+def _depth(rid: str, lineage: dict[str, tuple[str, ...]], _seen: frozenset[str] = frozenset()) -> int:
+    """How many siblings deep ``rid`` sits: 0 for a row with no recorded
+    parent, else 1 + its deepest parent's. A cycle (only a hand edit makes one)
+    ends where it repeats."""
+    parents = [p for p in lineage.get(rid, ()) if p not in _seen]
+    if not parents:
+        return 0
+    return 1 + max(_depth(p, lineage, _seen | {rid}) for p in parents)
+
+
+def _to_root(rid: str, lineage: dict[str, tuple[str, ...]]) -> list[str]:
+    """``[rid, parent, ..., root]`` along the deepest parent at each step."""
+    path = [rid]
+    while True:
+        parents = [p for p in lineage.get(path[-1], ()) if p not in path]
+        if not parents:
+            return path
+        path.append(max(parents, key=lambda p: (_depth(p, lineage, frozenset(path)), p)))
+
+
+def _children(rid: str, lineage: dict[str, tuple[str, ...]]) -> list[str]:
+    return sorted(c for c, parents in lineage.items() if rid in parents)
+
+
+def _chain_reading(rid: str, lineage: dict[str, tuple[str, ...]]) -> tuple[int, str | None, int]:
+    """``(depth, the parent with the most children, its children's count)``."""
+    depth = _depth(rid, lineage)
+    widest = max(lineage.get(rid, ()), key=lambda p: (len(_children(p, lineage)), p), default=None)
+    return depth, widest, len(_children(widest, lineage)) if widest else 0
+
+
+def _chain_fires(depth: int, fan_out: int) -> bool:
+    return depth >= CHAIN_DEPTH_AT or fan_out >= CHAIN_FAN_OUT_AT
+
+
+def _questions(lead: str) -> list[str]:
+    return [lead, *(f"    {q}" for q in FIVE_QUESTIONS)]
+
+
+def _chain_lines(rid: str, lineage: dict[str, tuple[str, ...]], text: str) -> list[str]:
+    """The chain by id, the parents' children and the root's site family."""
+    path = _to_root(rid, lineage)
+    lines = [f"  chain, child to root: {' -> '.join(path)}"]
+    others = [p for p in lineage.get(rid, ()) if p not in path]
+    if others:
+        lines.append(f"  also a sibling of: {', '.join(others)}")
+    for parent in lineage.get(rid, ()):
+        lines.append(f"  {parent}'s children: {', '.join(_children(parent, lineage))}")
+    family = _row_family(path[-1], text)
+    lines.append(f"  the root's site family: {family or 'none (its site cell names no path)'}")
+    return lines
+
+
+def _chain_advisory(rid: str, lineage: dict[str, tuple[str, ...]], text: str) -> list[str]:
+    """The chain advisory for a filing with ``--sibling-of``, ``lineage``
+    holding the new row's parents. While recording, one line; with the print
+    on, the chain and the questions when it fires, nothing when it does not."""
+    carrying = len(lineage)
+    if not CHAIN_ADVISORY_PRINTS:
+        if carrying < CHAIN_RECORDING_UNTIL:
+            return [f"chain advisory: recording-only until {CHAIN_RECORDING_UNTIL} rows carry "
+                    f"--sibling-of ({carrying} now)"]
+        return [f"chain advisory: recording-only until {CHAIN_RECORDING_UNTIL} rows carry --sibling-of "
+                f"({carrying} now): the threshold review is due; the full print stays off until it is ruled"]
+    depth, widest, fan_out = _chain_reading(rid, lineage)
+    if not _chain_fires(depth, fan_out):
+        return []
+    why = " and ".join(w for w in (
+        f"depth {depth}, a sibling of a sibling" if depth >= CHAIN_DEPTH_AT else "",
+        f"{widest} has {fan_out} children" if fan_out >= CHAIN_FAN_OUT_AT else "") if w)
+    return [f"chain advisory: {rid} extends a chain ({why}): one job keeps producing rows",
+            *_chain_lines(rid, lineage, text),
+            *_questions("  before the next fix on this job, ask whether its layer can reach the goal:")]
+
+
+def _cluster_advisory(rid: str, anchor: str, text: str) -> list[str]:
+    """The standalone-cluster advisory for a filing into the standalone class:
+    the live standalone rows on the new row's site family, the new row
+    counted; at ``CLUSTER_AT`` a class may be waiting to be opened."""
+    family = site_family(anchor)
+    if family is None:
+        return ["cluster advisory: the site cell names no path, so this row is counted on no site family"]
+    count = _standalone_on(family, text, besides=rid) + 1
+    if count < CLUSTER_AT:
+        return []
+    return [f"cluster advisory: this is live standalone row {count} on {family} (this one counted; "
+            f"the advisory fires at {CLUSTER_AT}): a class may be waiting to be opened",
+            *_questions("  answer these for the job, then open a class with the class verb if the rows "
+                        "are one unit of work:")]
+
+
+def lineage_report(rid: str, *, ledger: Path) -> tuple[list[str], list[str]]:
+    """``(the report, its notes)`` for ``lineage <id>``: the row's chain to
+    its root and its parents' and its own children, its site family and that
+    family's live standalone count, and the five questions when the chain or
+    the family is at its threshold. Read-only: no lock, nothing written."""
+    try:
+        text = _FRAG.ledger_view_at(ledger).text
+        lineage, problems = _FRAG.lineage_at(ledger)
+    except (OSError, ValueError) as exc:  # strict decode: UnicodeDecodeError is a ValueError
+        return [f"{rid}: the ledger could not be read ({type(exc).__name__}); nothing to report"], []
+    notes = [f"a lineage file left out: {p}" for p in problems]
+    if _member_line(rid, text, struck_ok=True) is None:
+        return [f"{rid}: no row in the ledger, live or struck, carries this id; nothing to report"], notes
+    family = _row_family(rid, text)
+    standalone = _standalone_on(family, text) if family else 0
+    on_family = (f"site family {family}, {standalone} live standalone row(s) on it" if family
+                 else "its site cell names no path, so no site family")
+    depth, _widest, fan_out = _chain_reading(rid, lineage)
+    own = _children(rid, lineage)
+    if not lineage.get(rid) and not own and standalone < CLUSTER_AT:
+        return [f"{rid}: no recorded lineage (it names no parent and no row names it); {on_family}"], notes
+    lines = [f"{rid}: depth {depth}" + (f", the widest parent's children {fan_out}" if lineage.get(rid) else "")
+             + f"; {on_family}"]
+    if lineage.get(rid):
+        lines += _chain_lines(rid, lineage, text)
+    if own:
+        lines.append(f"  {rid}'s own children: {', '.join(own)}")
+    if _chain_fires(depth, fan_out) or standalone >= CLUSTER_AT:
+        lines += _questions("  the plan answers these before it proposes a fix:")
+    return lines, notes
+
+
 def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str | None,
              anchor: str, index_anchor: str | None, text_file: Path, severity: str,
              probe_cmd: str, open_value: str, subject: str, why_not: str | None,
              day: str, dry_run: bool, root: Path,
              population: str | None = None, audience: str | None = None,
-             inputs: list[str] | None = None, no_base: bool = False) -> int:
+             inputs: list[str] | None = None, no_base: bool = False,
+             sibling_of: list[str] | None = None) -> int:
     gen = _load("generate_ledger_regions")
     file_text = ledger.read_text(encoding="utf-8")
     pending = _Pending(ledger, probes, (rid,))
+    parents = list(dict.fromkeys(sibling_of or ()))   # in the order given, each once
     # Where the row goes is the repository's setting (espalier.toml
     # ledger_fragments); every lookup below reads the view either way, so a
     # row or class that lives in a file is seen like one in the ledger.
@@ -2141,6 +2385,40 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str |
         print(f"ledger_row: {rid} already has a file under {row_file.parent.name}/ or "
               f"{probe_file.parent.name}/ (a second home for one id); nothing filed", file=sys.stderr)
         return 2
+    # Each parent is a row the ledger has, live or struck, and never the row
+    # itself: a typo would record a chain through no row and cut it there.
+    for parent in parents:
+        if parent == rid:
+            print(f"ledger_row: --sibling-of {parent} names the row being filed; nothing filed", file=sys.stderr)
+            return 2
+        if _member_line(parent, text, struck_ok=True) is None:
+            print(f"ledger_row: --sibling-of {parent} names no row in the ledger, live or struck (a typo "
+                  "would cut the chain there); nothing filed", file=sys.stderr)
+            return 2
+    lineage_file = _FRAG.lineage_fragment_dir(ledger) / f"{rid}.json"
+    if lineage_file.exists():
+        # A finishing filing may meet its own lineage file (cut off after it
+        # and before its probe): the same parents are the same filing, and it
+        # is written again by nobody. Anything else is refused by name.
+        try:
+            own_text: str | None = lineage_file.read_text(encoding="utf-8")  # ledger-read: this row's lineage file, not the ledger or its roster, parsed by the loader's lineage_from_texts
+        except (OSError, UnicodeDecodeError):  # named below as a file that does not parse
+            own_text = None
+        recorded, problems = _FRAG.lineage_from_texts([(lineage_file.name, own_text)])
+        if not finishing or problems:
+            print(f"ledger_row: {rid} already has a lineage file, "
+                  f"{lineage_file.parent.name}/{lineage_file.name}"
+                  + (", and no row" if not finishing else ", which does not parse")
+                  + "; nothing filed: remove it if it is a leftover", file=sys.stderr)
+            return 2
+        if list(recorded.get(rid, ())) != parents:
+            print(f"ledger_row: {rid} has a live row and no probe (a filing cut off before its probe), and its "
+                  f"lineage file names {', '.join(recorded.get(rid, ())) or 'no parent'} where these arguments "
+                  f"give {', '.join(parents) or 'none'}; nothing written: run `file {rid}` again with the "
+                  f"arguments it was filed with, or strike {rid} to give it up", file=sys.stderr)
+            return 2
+    elif parents:
+        pending.lineage[lineage_file] = {"id": rid, "sibling_of": parents}
     section = section if section.startswith("§") else f"§{section}"
     if as_files:
         # A row file has no position: the view places it by id after its
@@ -2299,12 +2577,17 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str |
     if _content_rules_refuse(root, pending, ledger=ledger, legacy=f"{new_line}\n{new_index}", probe=entry,
                              dry_run=dry_run):
         return 2
+    advisories = _filing_advisories(rid, parents, section=section, anchor=anchor, ledger=ledger, text=text)
     if dry_run:
         if finishing:
             print(f"(finishing {rid}: its row is there, so only its probe would be written)")
         print(new_line); print(new_index); print(json.dumps(entry, indent=1))
         if as_files:
             print(f"(as {row_file.parent.name}/{row_file.name} and {probe_file.parent.name}/{probe_file.name})")
+        if pending.lineage:
+            print(f"(its lineage as {lineage_file.parent.name}/{lineage_file.name}: a sibling of "
+                  f"{', '.join(parents)})")
+        _print_advisories(advisories)
         return 0
     data = _load_probes(probes, ledger_text=file_text)
     if data is None:
@@ -2319,13 +2602,43 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str |
         # Not "cut off before its probe": a strike cut off after retiring its
         # probe leaves the same row, and the tool cannot tell the two apart.
         print(f"finished {rid}: its row was there with no probe, so only the probe was written (row_sha "
-              f"{entry['row_sha']}); regions converged. If a strike of {rid} was what was cut off, strike it again")
+              f"{entry['row_sha']}"
+              + (f"; its lineage file too, a sibling of {', '.join(parents)}" if pending.lineage else "")
+              + f"); regions converged. If a strike of {rid} was what was cut off, strike it again")
     elif rc == 0:
         where = (f"as {row_file.parent.name}/{row_file.name}" if as_files
                  else f"after {after}" if after else "as the first row")
-        print(f"filed {rid} {where} in {section}; probe added (row_sha {entry['row_sha']}); "
-              "regions converged")
+        print(f"filed {rid} {where} in {section}; probe added (row_sha {entry['row_sha']})"
+              + (f"; lineage recorded, a sibling of {', '.join(parents)}" if parents else "")
+              + "; regions converged")
+    if rc == 0:
+        _print_advisories(advisories)
     return rc
+
+
+def _filing_advisories(rid: str, parents: list[str], *, section: str, anchor: str, ledger: Path,
+                       text: str) -> list[str]:
+    """The chain advisory (a filing with ``--sibling-of``) and the
+    standalone-cluster advisory (a filing into the standalone class), with a
+    note for each lineage file that could not be read. Advice only: never a
+    refusal, never an exit code, and a reading that fails is said and skipped."""
+    out: list[str] = []
+    if parents:
+        try:
+            lineage, problems = _FRAG.lineage_at(ledger)
+        except OSError as exc:
+            out.append(f"chain advisory: the lineage files could not be read ({type(exc).__name__}); skipped")
+        else:
+            out += [f"note -- a lineage file left out: {p}" for p in problems]
+            out += _chain_advisory(rid, {**lineage, rid: tuple(parents)}, text)
+    if section == STANDALONE_SECTION:
+        out += _cluster_advisory(rid, anchor, text)
+    return out
+
+
+def _print_advisories(lines: list[str]) -> None:
+    for line in lines:
+        print(line if line.startswith(" ") else f"ledger_row: {line}", file=sys.stderr)
 
 
 def repin(rid: str, *, ledger: Path, probes: Path, open_value: str | None, reason: str,
@@ -2705,6 +3018,15 @@ def main(argv: list[str] | None = None) -> int:
     fi.add_argument("--population", choices=list(_GEN.POPULATIONS),
                     help="with --audience: the row's own tags (a section MIXED on either axis: §C0, or a one-axis-MIXED class where the classed cell must repeat the class tag)")
     fi.add_argument("--audience", choices=list(_GEN.AUDIENCES))
+    fi.add_argument("--sibling-of", action="append", metavar="ID",
+                    help="a row this one is a sibling of: the same job, a further instance a fix of that "
+                         "row found or left (repeatable). It must be a row the ledger has, live or "
+                         "struck. Recorded in a lineage file of this row's own, which no strike or "
+                         "repin touches, so a chain survives the strike of a row in its middle")
+    li = sub.add_parser("lineage", help="read-only: a row's chain of siblings to its root, its site family's "
+                                        "standalone count, and the questions when either is at its "
+                                        "threshold; takes no lock, writes nothing, exits 0")
+    li.add_argument("rid")
     mi = sub.add_parser("mint", help="reserve the next free id or pack number in this seat's block, print it, "
                                      "and record it for this checkout (no tracked file is written)")
     mi.add_argument("--kind", choices=list(ID_KINDS), required=True)
@@ -2751,6 +3073,17 @@ def main(argv: list[str] | None = None) -> int:
     root = _GEN.find_root(args.root)
     ledger = Path(args.ledger) if args.ledger else root / "task-packs" / "FORWARD_LEDGER.md"
     probes = Path(args.probes) if args.probes else root / "task-packs" / "LEDGER_PROBES.json"
+    if args.verb == "lineage":
+        # A reader: no claims, no lock, nothing written, and exit 0 on every
+        # id, a tree with no ledger included (its output is what a plan reads).
+        if not ledger.is_file():
+            print(f"{args.rid}: no ledger at {ledger}; nothing to report")
+            return 0
+        report, notes = lineage_report(args.rid, ledger=ledger)
+        for line in notes:
+            print(f"ledger_row: note -- {line}", file=sys.stderr)
+        print("\n".join(report))
+        return 0
     if not ledger.is_file():
         # Every verb reads the ledger. Without this the lock's O_CREAT beside a
         # missing task-packs/ raised FileNotFoundError before a word was said
@@ -2995,7 +3328,7 @@ def _dispatch(ap: argparse.ArgumentParser, args: argparse.Namespace, *, ledger: 
                   subject=args.subject, why_not=args.why_not, day=args.date,
                   dry_run=args.dry_run, root=root,
                   population=args.population, audience=args.audience,
-                  inputs=args.inputs, no_base=args.no_base)
+                  inputs=args.inputs, no_base=args.no_base, sibling_of=args.sibling_of)
     if rc != 0 and held:
         _unreserve(root, *held)
     return rc
