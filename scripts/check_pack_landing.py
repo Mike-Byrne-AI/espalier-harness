@@ -67,6 +67,23 @@ TERMINAL_DIRS = _PACK_SCOPE.TERMINAL_DIRS
 NON_TERMINAL_DIRS = _PACK_SCOPE.NON_TERMINAL_DIRS
 UNSTAMPABLE_DIRS = _PACK_SCOPE.UNSTAMPABLE_DIRS
 
+
+def _record_dirs() -> tuple[str, ...]:
+    """The forward ledger's record directories under ``task-packs/`` (its rows,
+    its probes and a row's lineage), read from the loader's ``FRAGMENT_DIRS``
+    so a new one is known here on arrival. No pack location: no pack is
+    checked there, and the folder guard below names none of them."""
+    path = REPO_ROOT / "tools" / "cc" / "_record_fragments.py"
+    spec = importlib.util.spec_from_file_location("_check_pack_landing_record_fragments", path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    prefix = PACKS_ROOT.name + "/"
+    return tuple(d[len(prefix):].rstrip("/") for d in mod.FRAGMENT_DIRS if d.startswith(prefix))
+
+
+RECORD_DIRS = _record_dirs()
+
 # The ``State:`` marker inside a pack's ``## Landing`` stanza -- the SoT for
 # whether a pack landed. The top-of-file ``## Status`` block carries its own
 # ``State:`` (the authoring state, e.g. DRAFT), so landed_state() scopes to the
@@ -224,7 +241,7 @@ def unclassified_dirs(packs_root: Path = PACKS_ROOT) -> list[str]:
     """
     if not packs_root.is_dir():
         return []
-    known = set(TERMINAL_DIRS) | set(NON_TERMINAL_DIRS) | set(UNSTAMPABLE_DIRS)
+    known = set(TERMINAL_DIRS) | set(NON_TERMINAL_DIRS) | set(UNSTAMPABLE_DIRS) | set(RECORD_DIRS)
     return sorted(
         d.name for d in packs_root.iterdir()
         if d.is_dir() and not d.name.startswith(".") and d.name not in known
