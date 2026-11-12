@@ -3420,6 +3420,10 @@ class TestCommandPositionClassClose:
         "_bash_patterns._PS_STDIN_SEGMENT_BOUNDARY_RE":
             "SPLITTER -- the PowerShell separator set, found once per call so a "
             "piped-stdin opener's segment is bisected, never rescanned (DEF-712).",
+        "_bash_patterns._PS_STDIN_POSIX_HINT_RE":
+            "GATE -- a POSIX shell's name as a word, searched only to skip the "
+            "piped-stdin reader's pass on a command naming none; the anchored "
+            "`_PS_INTERP_STDIN_RE` decides the command (DEF-3075).",
         "_bash_patterns._PS_STDIN_FILE_SWITCH_RE":
             "FLAG -- `-File <script>` inside the switch run an anchored "
             "`_PS_INTERP_STDIN_RE` match captured; the consumer drops the match "
