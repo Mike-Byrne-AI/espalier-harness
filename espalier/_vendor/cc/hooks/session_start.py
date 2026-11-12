@@ -1562,7 +1562,13 @@ def _pr_summary(pr: dict, required_red: list[str] | None = None,
         checks += f", behind {base}"
         behind = True
     if not pr.get("autoMergeRequest"):
-        tail = "auto-merge not armed"
+        # Off on an open row: the remedy is the ship driver's verb on the
+        # lane's branch (never `arm`, which arms the own-clear marker), in
+        # words alone -- this row is the listing's, and the hook makes no
+        # read for it. A draft merges nothing, so it names no arm. The
+        # driver's AUTO_MERGE_VERB and the board's row say the same verb.
+        tail = ("auto-merge not armed" if pr.get("isDraft")
+                else "auto-merge not armed; on its branch, tools/cc/ship.py auto-merge arms it")
     elif held:
         # The server cannot make this merge (GitHub honours no merge driver);
         # the ship driver's catch-up makes it locally with the record files --

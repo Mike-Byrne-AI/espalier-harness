@@ -2311,6 +2311,9 @@ class TestTheMemoryFileIsReadLikeAnyOperatorWrittenRecord:
             ship.open_pr()
         assert "auto-merge did not arm for #7" in str(stop.value)
         assert "https://example.invalid/pull/7" in str(stop.value)
+        # The arm by hand is the driver's verb, never a gh line to type.
+        assert "tools/cc/ship.py auto-merge" in str(stop.value)
+        assert "gh pr merge" not in str(stop.value)
 
     def test_auto_merge_that_reads_back_unarmed_is_refused(
             self, ship, tmp_path, forget_guard):
@@ -2319,6 +2322,34 @@ class TestTheMemoryFileIsReadLikeAnyOperatorWrittenRecord:
         with pytest.raises(ship.Refused) as stop:
             ship.open_pr()
         assert "reads back as NOT armed" in str(stop.value)
+        assert "tools/cc/ship.py auto-merge" in str(stop.value)
+        assert "gh pr merge" not in str(stop.value)
+
+    def test_a_pull_request_gh_merged_as_it_armed_reads_merged_never_not_armed(
+            self, ship, tmp_path, forget_guard, capsys):
+        """`gh pr merge --auto` on a pull request nothing holds merges it at
+        once and prints nothing, and its autoMergeRequest then reads null
+        (measured 2026-10-15 on #211). The read-back takes state and mergedAt
+        first, so a lane that landed and merged is said as merged, rc 0, and
+        its claims close, where a read of autoMergeRequest alone refused it as
+        NOT armed."""
+        _write_guard(tmp_path)
+        merged = json.dumps({"state": "MERGED", "mergedAt": "2026-11-12T05:00:00Z", "autoMergeRequest": None})
+        spawns = _arm(ship, _open_answers(tmp_path, armed=merged))
+        assert ship.open_pr() == 0
+        out = capsys.readouterr().out
+        assert "#7 merged at once" in out
+        assert "NOT armed" not in out
+        view = spawns.matching(("gh", "pr", "view"))[-1]
+        assert {"state", "mergedAt", "autoMergeRequest"} <= set(view[view.index("--json") + 1].split(","))
+
+    def test_an_open_pull_request_that_reads_armed_is_said_armed(
+            self, ship, tmp_path, forget_guard, capsys):
+        _write_guard(tmp_path)
+        armed = json.dumps({"state": "OPEN", "mergedAt": None, "autoMergeRequest": {"enabledAt": "x"}})
+        _arm(ship, _open_answers(tmp_path, armed=armed))
+        assert ship.open_pr() == 0
+        assert "#7 open, auto-merge armed, one push" in capsys.readouterr().out
 
     def test_a_diff_that_fails_is_refused_before_the_create(
             self, ship, tmp_path, forget_guard):
@@ -2971,6 +3002,183 @@ class TestStatus:
         assert f"merged as {SHORT}" in out
         assert "auto-merge not armed" in out
         assert spawns.count(("gh", "pr", "checks")) == 0
+        assert "tools/cc/ship.py auto-merge" not in out, "a merged pull request has nothing to arm"
+
+    def test_an_open_pull_request_reading_unarmed_names_the_verb_that_arms_it(self, ship, tmp_path, capsys):
+        spawns = _arm(ship, _status_answers(tmp_path, open_rows=_rows(_pr(armed=False))))
+        assert ship.status() == 0
+        assert "auto-merge not armed: tools/cc/ship.py auto-merge arms it and reads it back" in capsys.readouterr().out
+        assert spawns.mutations == []
+
+    def test_an_armed_or_draft_pull_request_names_no_arm(self, ship, tmp_path, capsys):
+        for pr in (_pr(armed=True), {**_pr(armed=False), "isDraft": True}):
+            _arm(ship, _status_answers(tmp_path, open_rows=_rows(pr)))
+            assert ship.status() == 0
+            assert "tools/cc/ship.py auto-merge" not in capsys.readouterr().out, pr
+
+
+# ── auto-merge: the arm `open` makes, on a pull request already open ─────────
+
+def _auto_merge_answers(root, *, branch="lane/x", pr=None, merge=(0, "", ""),
+                        view='{"state": "OPEN", "mergedAt": null, "autoMergeRequest": {"enabledAt": "x"}}',
+                        open_prs="[]", base_runs="[]") -> dict:
+    answers = _reads(root, branch=branch)
+    answers.update({
+        _list_key(branch): _rows(pr if pr is not None else _pr(armed=False)),
+        ("git", "rev-parse", "HEAD"): (0, f"{HEAD}\n", ""),
+        ("gh", "pr", "list", "--state", "open"): (0, open_prs, ""),   # the red base's armed lanes
+        ("gh", "run", "list", "--workflow", "post-merge.yml"): (0, base_runs, ""),
+        ("gh", "pr", "merge"): merge,
+        ("gh", "pr", "view"): (0, view, ""),
+    })
+    return answers
+
+
+class TestTheAutoMergeVerb:
+    """A seat whose open pull request reads auto-merge off re-arms it with the
+    driver, never a gh line typed by hand (and never `arm`, which arms the
+    own-clear marker): the verb runs the arm `open` makes and reads it back,
+    and refuses before it writes what `open` refuses before it arms and what
+    `rebind` refuses before it binds."""
+
+    def test_an_unarmed_pull_request_is_armed_and_read_back(self, ship, tmp_path, capsys):
+        spawns = _arm(ship, _auto_merge_answers(tmp_path))
+        assert ship.auto_merge() == 0
+        assert spawns.matching(("gh", "pr", "merge")) == [["gh", "pr", "merge", "7", "--auto", "--merge"]]
+        view = spawns.matching(("gh", "pr", "view"))[0]
+        assert {"state", "mergedAt", "autoMergeRequest"} <= set(view[view.index("--json") + 1].split(","))
+        assert "#7: auto-merge armed and read back" in capsys.readouterr().out
+
+    def test_an_armed_pull_request_is_said_and_nothing_is_written(self, ship, tmp_path, capsys):
+        spawns = _arm(ship, _auto_merge_answers(tmp_path, pr=_pr(armed=True)))
+        assert ship.auto_merge() == 0
+        assert spawns.count(("gh", "pr", "merge")) == 0
+        assert spawns.mutations == []
+        assert "#7: auto-merge is already armed; nothing written" in capsys.readouterr().out
+
+    def test_a_pull_request_gh_merged_as_it_armed_reads_merged(self, ship, tmp_path, capsys):
+        view = json.dumps({"state": "MERGED", "mergedAt": "2026-11-12T05:00:00Z", "autoMergeRequest": None})
+        _arm(ship, _auto_merge_answers(tmp_path, view=view))
+        assert ship.auto_merge() == 0
+        out = capsys.readouterr().out
+        assert "#7 merged at once" in out and "pull main" in out and "NOT armed" not in out
+
+    def test_an_arm_that_reads_back_off_is_refused_naming_the_verb(self, ship, tmp_path):
+        _arm(ship, _auto_merge_answers(tmp_path, view='{"state": "OPEN", "autoMergeRequest": null}'))
+        with pytest.raises(ship.Refused) as stop:
+            ship.auto_merge()
+        assert "reads back as NOT armed on #7" in str(stop.value)
+        assert "tools/cc/ship.py auto-merge arms it again" in str(stop.value)
+
+    def test_an_arm_gh_refuses_is_refused_with_its_reason(self, ship, tmp_path):
+        _arm(ship, _auto_merge_answers(tmp_path, merge=(1, "", "Pull request is in clean status")))
+        with pytest.raises(ship.Refused) as stop:
+            ship.auto_merge()
+        assert "auto-merge did not arm for #7 (Pull request is in clean status)" in str(stop.value)
+
+    def test_no_open_pull_request_is_refused(self, ship, tmp_path):
+        answers = _auto_merge_answers(tmp_path)
+        answers[_list_key("lane/x")] = (0, "[]", "")
+        spawns = _arm(ship, answers)
+        with pytest.raises(ship.Refused) as stop:
+            ship.auto_merge()
+        assert "no open pull request for lane/x" in str(stop.value)
+        assert spawns.count(("gh", "pr", "merge")) == 0
+
+    def test_a_draft_is_refused_with_the_ready_step(self, ship, tmp_path):
+        spawns = _arm(ship, _auto_merge_answers(tmp_path, pr={**_pr(armed=False), "isDraft": True}))
+        with pytest.raises(ship.Refused) as stop:
+            ship.auto_merge()
+        assert "#7 is a draft" in str(stop.value) and "gh pr ready 7" in str(stop.value)
+        assert spawns.count(("gh", "pr", "merge")) == 0
+
+    def test_a_head_the_pull_request_does_not_have_is_refused_push_first(self, ship, tmp_path):
+        spawns = _arm(ship, _auto_merge_answers(tmp_path, pr=_pr(armed=False, head="f" * 40)))
+        with pytest.raises(ship.Refused) as stop:
+            ship.auto_merge()
+        assert f"push first: HEAD {SHORT} is not #7's head fffffff" in str(stop.value)
+        assert spawns.count(("gh", "pr", "merge")) == 0
+
+    def test_a_lane_holding_an_unfinished_handoffs_commit_is_refused(self, ship, tmp_path):
+        """An armed auto-merge lands the set-aside edits whole, so the verb
+        asks the one reading every push of the lane asks."""
+        answers = _auto_merge_answers(tmp_path)
+        answers[_UNFINISHED_LOG] = _UNFINISHED_AT_HEAD
+        spawns = _arm(ship, answers)
+        with pytest.raises(ship.Refused) as stop:
+            ship.auto_merge()
+        assert "the commit the threshold handoff made" in str(stop.value)
+        assert spawns.count(("gh", "pr", "merge")) == 0
+
+    def test_a_red_base_is_refused_and_names_the_armed_lanes_to_disarm(self, ship, tmp_path):
+        """The board tells an armed lane on a red base to disarm: a re-arm
+        that skipped the read would land on that base."""
+        others = json.dumps([{"number": 41, "headRefName": "lane/y", "autoMergeRequest": {"x": 1}},
+                             {"number": 7, "headRefName": "lane/x", "autoMergeRequest": None}])
+        spawns = _arm(ship, _auto_merge_answers(tmp_path, open_prs=others, base_runs=_RED_BASE))
+        with pytest.raises(ship.Refused) as stop:
+            ship.auto_merge()
+        text = str(stop.value)
+        assert "main red after merge: post-merge.yml run 900" in text and "Nothing lands on a red base" in text
+        assert "#41 (gh pr merge --disable-auto 41)" in text
+        assert spawns.count(("gh", "pr", "merge")) == 0
+
+    def test_a_revert_lane_arms_on_a_red_base(self, ship, tmp_path):
+        branch = "revert/abc1234"
+        spawns = _arm(ship, _auto_merge_answers(tmp_path, branch=branch, base_runs=_RED_BASE))
+        assert ship.auto_merge() == 0
+        assert spawns.count(("gh", "pr", "merge")) == 1
+
+    def test_a_ruling_that_holds_lets_it_arm_on_a_red_base_and_says_so(self, ship, tmp_path, monkeypatch, capsys):
+        seen = {}
+
+        def ruling(root, ack_id, run_id, *, branch=""):
+            seen.update(ack=ack_id, run=run_id, branch=branch)
+            return "air", None, "gridlock: fix forward run 900 for lane/x"
+
+        monkeypatch.setattr(ship, "red_base_ruling", ruling)
+        spawns = _arm(ship, _auto_merge_answers(tmp_path, base_runs=_RED_BASE))
+        assert ship.auto_merge(base_red_ruled="20261112T000000Z-air-ab12cd") == 0
+        assert seen == {"ack": "20261112T000000Z-air-ab12cd", "run": "900", "branch": "lane/x"}
+        assert spawns.count(("gh", "pr", "merge")) == 1
+        assert "let through by the dispatcher's ruling 20261112T000000Z-air-ab12cd" in capsys.readouterr().out
+
+    def test_a_dry_run_names_the_arm_and_writes_nothing(self, ship, tmp_path, capsys):
+        spawns = _arm(ship, _auto_merge_answers(tmp_path))
+        assert ship.auto_merge(dry_run=True) == 0
+        assert spawns.count(("gh", "pr", "merge")) == 0 and spawns.mutations == []
+        assert "dry-run: gh pr merge 7 --auto --merge" in capsys.readouterr().out
+
+    def test_the_verb_and_its_flags_parse_from_the_command_line(self, ship, tmp_path):
+        spawns = _arm(ship, _auto_merge_answers(tmp_path))
+        assert ship.main(["auto-merge", "--dry-run"]) == 0
+        assert ship.main(["auto-merge", "--dry-run", "--base-red-ruled", "20261112T000000Z-air-ab12cd"]) == 0
+        assert spawns.count(("gh", "pr", "merge")) == 0
+
+    def test_open_and_auto_merge_are_the_only_arms(self, ship):
+        """One place passes `--auto`, and only `open` and `auto-merge` call
+        it: `rebind`, `catch-up` and `handoff` re-arming on their own would
+        undo a deliberate disarm (the board's advice on a red base)."""
+        import ast
+        tree = ast.parse(Path(ship.__file__).read_text(encoding="utf-8"))
+        functions = [f for f in ast.walk(tree) if isinstance(f, ast.FunctionDef)]
+        holders = {f.name for f in functions
+                   if any(isinstance(c, ast.Constant) and c.value == "--auto" for c in ast.walk(f))}
+        callers = {f.name for f in functions
+                   if any(isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == "_arm_auto_merge"
+                          for c in ast.walk(f))}
+        assert holders == {"_arm_auto_merge"}
+        assert callers == {"open_pr", "auto_merge"}
+
+    def test_the_board_and_the_banner_name_the_drivers_verb(self, ship):
+        """Neither imports the driver, so each keeps the verb as a literal: a
+        rename here that left them behind would send a seat to a verb that
+        does not exist."""
+        cc = Path(ship.__file__).resolve().parent
+        assert ship.AUTO_MERGE_VERB == "tools/cc/ship.py auto-merge"
+        assert ship.AUTO_MERGE_VERB.split()[-1] in {c for c in ship.build_parser()._subparsers._group_actions[0].choices}
+        for reader in (cc / "board.py", cc / "hooks" / "session_start.py"):
+            assert ship.AUTO_MERGE_VERB in reader.read_text(encoding="utf-8"), reader.name
 
 
 # ── rerun: a required cell a lost runner ended ───────────────────────────────

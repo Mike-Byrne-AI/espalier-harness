@@ -1635,6 +1635,11 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run, now: datetime
 
 def _pr_line(pr: dict) -> str:
     auto = "auto-merge armed" if pr.get("autoMergeRequest") else "auto-merge not armed"
+    if not pr.get("autoMergeRequest") and not pr.get("isDraft"):
+        # The remedy is the ship driver's verb (its AUTO_MERGE_VERB, a literal
+        # here since the board never imports the driver), never `arm`, which
+        # arms the own-clear marker; a draft merges nothing, so it names none.
+        auto += ": its seat's `tools/cc/ship.py auto-merge` arms it"
     if pr.get("seat") is None:
         seat = " [seat unread: the mail could not be read]"
     else:

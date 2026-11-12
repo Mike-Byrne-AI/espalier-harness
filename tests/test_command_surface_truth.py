@@ -119,6 +119,19 @@ class TestShipCommandBody:
                     named.add(line.split()[2])
         assert named == verbs, (sorted(named ^ verbs))
 
+    def test_the_drivers_docstring_lists_every_verb_and_no_other(self):
+        """The module docstring's Verbs block is the driver's own list (the
+        parser's help is one line each). Pinned both ways, since a list
+        checked only for drops stays green over an invented verb: `fold`
+        was missing from it until the auto-merge verb's lane."""
+        import ast
+        import re
+        doc = ast.get_docstring(ast.parse(self._DRIVER.read_text(encoding="utf-8"))) or ""
+        block = doc.split("Verbs (", 1)[1].split("\n\n", 2)[1]
+        listed = set(re.findall(r"^    ([a-z][a-z-]*)", block, flags=re.MULTILINE))
+        verbs = self._driver_verbs()
+        assert listed == verbs, sorted(listed ^ verbs)
+
     def test_no_bash_block_mutates_the_remote_except_through_the_driver(self):
         """The order the driver enforces (push before bind, bind at creation,
         strip then re-bind, catch up then pull then re-bind, check the tag
