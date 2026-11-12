@@ -13610,6 +13610,45 @@ class TestATypographicQuoteClosesAPowerShellString:
         assert_hook_allowed(_run_ps_guard(command, tmp_path))
 
 
+class TestAnArraySubexpressionsProgramIsRead:
+    """DEF-2075: PowerShell runs the program inside an array subexpression
+    `@( )` wherever it stands, as it runs a `$( )`'s. Driven on Windows
+    PowerShell 5.1 (2026-11-12, a scratch file): `$a = @(Get-Content .env)`
+    and `@(gc .env)` each read it. The secret-read leg read a `$( )`'s
+    program one level down and blanked a `@(` as an argument's paren, so every
+    read below allowed at the lane's base while its `$( )` twin was refused.
+    The blanking stays, for `Get-Content @('.env')` reads its operand
+    through it; the program is read beside it."""
+
+    @pytest.mark.parametrize("command", [
+        "@(gc .env)",
+        "$a = @(Get-Content .env)",
+        "@(Get-Content -Path .env)",
+        "Write-Output @(Get-Content .env)",
+        "$a = @(\n  Get-Content .env\n)",
+        "$x = @( @(gc .env) )",
+    ], ids=["bare", "assigned", "path-switch", "as-an-argument", "multi-line", "nested"])
+    def test_a_read_inside_an_array_subexpression_is_refused(self, command, tmp_path):
+        assert_hook_denied(run_guard_tool("PowerShell", {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    def test_an_array_of_the_path_is_still_read_as_the_operand(self, tmp_path):
+        assert_hook_denied(run_guard_tool("PowerShell", {"command": "Get-Content @('.env')"}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("command", [
+        "Write-Host '@(gc .env)'",
+        # PowerShell expands `$( )` inside a double-quoted string, never `@( )`
+        'Write-Host "@(gc .env)"',
+        "$a = @('a', 'b')",
+        "$a = @(Get-Content a.txt)",
+        "$a = @(Get-ChildItem)",
+    ], ids=["single-quoted-mention", "double-quoted-mention", "an-array-of-strings", "another-file",
+            "no-read"])
+    def test_what_is_not_a_secret_read_stays_allowed(self, command, tmp_path):
+        assert_hook_allowed(run_guard_tool("PowerShell", {"command": command}, tmp_path))
+
+
 class TestQuotedProgramsAreReadAsPrograms:
     """DEF-1131: a carrier runs a program out of a quoted string -- Bash
     ``eval``, ``script -c``, ``watch`` and ``su -c``; PowerShell

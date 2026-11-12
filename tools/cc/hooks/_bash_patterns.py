@@ -11925,7 +11925,7 @@ def _ps_literal_text(command: str, m: "re.Match[str]") -> str:
 # read for the program each one runs. `Invoke-Expression` / `iex` runs its
 # string, `pwsh` / `powershell` the value of `-Command`, `cmd` what follows
 # `/c` or `/k`, `[scriptblock]::Create` its argument, and a subexpression
-# `$(...)`, in an expandable string or as an argument, its own. The operand is a
+# `$(...)` or array subexpression `@(...)`, in an expandable string or as an argument, its own. The operand is a
 # string literal, bare or in parentheses: such a string is data until a
 # carrier runs it, and is read where it runs. A variable an earlier
 # assignment bound to one (`$c = '...'; iex $c`) is that literal by the time
@@ -11952,10 +11952,12 @@ _SHELL_COMMAND_SWITCH_RE = re.compile(_SHELL_COMMAND_SWITCH)
 _CMD_PROGRAM_SWITCH_RE = re.compile(r"[/-][ck]", re.IGNORECASE)
 #: The switch words read past a `pwsh` or `cmd` head before its program.
 _PS_CARRIER_SWITCHES_MAX = 64
-#: A subexpression's opener: its program runs wherever it stands, inside an
-#: expandable string or not. The masker blanks the `(` of one inside a
-#: single-quoted string, which is a mention.
-_PS_SUBEXPRESSION_RE = re.compile(r"\$\(")
+#: A subexpression's opener, `$(` or an array subexpression's `@(`: its
+#: program runs wherever it stands, `$(` inside an expandable string or not,
+#: so `$a = @(Get-Content .env)` reads the file as `$(...)` does (DEF-2075).
+#: The masker blanks the `(` of one inside a single-quoted string, which is a
+#: mention.
+_PS_SUBEXPRESSION_RE = re.compile(r"[$@]\(")
 
 
 def ps_paren_closers(scan: str) -> dict[int, int]:
