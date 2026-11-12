@@ -13244,6 +13244,78 @@ class TestSecretPathAccess:
         assert builtins == set(_roster_words(bp._CMD_POS_WRAPPER_BUILTINS))
         assert binaries == set(_roster_words(bp._CMD_POS_WRAPPER_BINARIES)) - {"env"}
 
+    # DEF-2074: a command substitution that expands to nothing -- a backtick
+    # comment (the inline-comment idiom), `:` with literal words, or an empty
+    # body -- leaves the next word as the command, and the head read took the
+    # substitution's pieces for the verb. Every row below but the last allowed at main
+    # b3eefcf, and each read the file on bash 3.2.57 (driven 2026-11-12 on a
+    # scratch file under these spellings). The named user: an operator whose
+    # agent annotates a command line with the backtick comment and reads a
+    # secret with no refusal, where `cat .env` is refused.
+    @pytest.mark.parametrize("command", [
+        "`# c` cat .env",
+        "$(: c) cat .env",
+        "$() cat .env",
+        "$(:) cat .env",
+        "$( : two words ) cat .env",
+        "`#c`cat .env",
+        "$(: c)cat .env",
+        "ca`# c`t .env",
+        "echo hi; `# c` cat .env",
+        "if true; then `# c` cat .env; fi",
+        "X=1 $(: c) cat .env",
+        "nice `# c` cat .env",
+        "`# c` nice cat .env",
+        "`# c` head -1 .env",
+        "`# c` cat < .env",
+        "`# c` cp .env /tmp/x",
+        'X="it\'s" `# c` cat .env',           # a quote inside double quotes opens nothing
+        "`# a \\` b` cat .env",               # an escaped backtick is the comment's text
+        'cat "$(: c)".env',  # a control: refused at main, its glued word read as a path
+    ])
+    def test_a_read_behind_a_substitution_that_expands_to_nothing_is_refused(self, command, tmp_path):
+        assert_hook_denied(run_guard_tool("Bash", {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("text, dropped", [
+        ("`# c` cat .env", " cat .env"),
+        ("$(: a b) cat .env", " cat .env"),
+        ("$() x", " x"),
+        ('"$(: c)" x', '"" x'),
+        ("'$(: c)' x", "'$(: c)' x"),
+        ("\\`# c` x", "\\`# c` x"),           # an escaped opener opens nothing
+        ("`# c x", "`# c x"),                 # a span that never closes stays
+        ("`echo x` y", "`echo x` y"),         # a body that prints stays
+        ("$(true) y", "$(true) y"),           # not evaluated: a named limit
+        ("$(: $x) y", "$(: $x) y"),           # an expansion is not a literal word
+        ("$(:x) y", "$(:x) y"),               # a command named `:x` is not `:`
+        ("$(: a; b) y", "$(: a; b) y"),
+        ("$((1)) y", "$((1)) y"),
+        ("ls -la", "ls -la"),
+    ])
+    def test_the_drop_takes_out_only_a_span_that_prints_nothing(self, text, dropped):
+        assert _load_write_guard()._drop_empty_substitutions(text) == dropped
+
+    def test_a_backtick_comment_that_ends_at_a_newline_runs_the_next_line(self):
+        # The statement split cuts at a newline before the drop reads a span,
+        # so the predicate is held alone: such a body is not empty.
+        guard = _load_write_guard()
+        assert guard._expands_to_nothing("# c\ncat .env", backtick=True) is False
+        assert guard._expands_to_nothing("# c", backtick=True) is True
+
+    # Where bash runs no read: a quoted empty substitution is an empty command
+    # name, a single-quoted one is literal, a double-quoted one is an echo's
+    # text, and a substitution with output runs that output as the command.
+    @pytest.mark.parametrize("command", [
+        '"$(: c)" cat .env',
+        "'$(: c)' cat .env",
+        "echo '`# c` cat .env'",
+        'echo "`# c` cat .env"',
+        "`echo x` cat .env",
+    ])
+    def test_a_substitution_that_runs_no_read_is_allowed(self, command, tmp_path):
+        assert_hook_allowed(run_guard_tool("Bash", {"command": command}, tmp_path))
+
     # DEF-1045: a statement that opens with a quoted string is a mention when
     # nothing in the command can run it. A positive gate with two arms, each
     # read on the raw command: the right-hand side of an assignment that is

@@ -1822,6 +1822,84 @@ def _split_glued_input_redirects(words: "list[tuple[str, str]]") -> "list[tuple[
     return out
 
 
+#: What makes a `:` body more than literal words: an expansion, a quote, an
+#: escape, a redirect or an operator could run something or print (DEF-2074).
+_NOT_A_LITERAL_WORD = frozenset("$`\\\"'()<>|&;\n")
+
+
+def _expands_to_nothing(body: str, backtick: bool) -> bool:
+    """Whether a command substitution's ``body`` prints nothing for certain:
+    empty, a comment (a backtick span's alone: in `$(` a comment swallows its
+    own `)`), or `:` with literal words (DEF-2074). A body that runs anything
+    else, `$(true)` and a nested substitution among them, is left as it reads:
+    the leg does not evaluate a program to learn that it prints nothing."""
+    s = body.strip(" \t")
+    if not s:
+        return True
+    if backtick and s.startswith("#"):
+        return "\n" not in s
+    return s[0] == ":" and (len(s) == 1 or s[1] in " \t") and not _NOT_A_LITERAL_WORD.intersection(s)
+
+
+def _closing_backtick(text: str, start: int) -> int:
+    """The index of the backtick that closes a span opened before ``start``,
+    past any escaped one (an odd run of backslashes before it); -1 if none."""
+    j = start
+    while True:
+        j = text.find("`", j)
+        if j == -1:
+            return -1
+        k = j - 1
+        while k >= start and text[k] == "\\":
+            k -= 1
+        if (j - 1 - k) % 2 == 0:
+            return j
+        j += 1
+
+
+def _drop_empty_substitutions(text: str) -> str:
+    """``text`` with each command substitution that expands to nothing taken
+    out, as bash takes it out before it reads the command: `` `# c` cat .env ``
+    and `$(: c) cat .env` run `cat` (DEF-2074; the inline-comment idiom), and
+    the head read took the span's pieces for the verb. Read outside single
+    quotes, where a backtick and `$(` are literal; inside double quotes the
+    span goes and the quotes stay, the empty word bash makes. A span that may
+    print stays, and so does one that never closes: the drop only adds a head
+    to read, never hides one."""
+    if "`" not in text and "$(" not in text:
+        return text
+    out: list[str] = []
+    i, n = 0, len(text)
+    single = double = False
+    while i < n:
+        ch = text[i]
+        if single:
+            single = ch != "'"
+        elif ch == "\\" and i + 1 < n:
+            out.append(text[i:i + 2])
+            i += 2
+            continue
+        elif ch == "'" and not double:
+            single = True
+        elif ch == '"':
+            double = not double
+        elif ch == "`":
+            end = _closing_backtick(text, i + 1)
+            if end != -1:
+                if not _expands_to_nothing(text[i + 1:end], backtick=True):
+                    out.append(text[i:end + 1])
+                i = end + 1
+                continue
+        elif text.startswith("$(", i):     # `$((` arithmetic: its body opens `(`, never empty
+            end = text.find(")", i + 2)
+            if end != -1 and _expands_to_nothing(text[i + 2:end], backtick=False):
+                i = end + 1
+                continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _input_redirect_sources(args:"list[tuple[str, str]]", sources: list[str]) -> "list[tuple[str, str]]":
     """``args`` without their input redirects, each source added to
     ``sources``: `cat < .env` reads `.env` as `cat .env` does (DEF-1132).
@@ -1904,6 +1982,7 @@ def _secret_read_targets_one(command: str, _depth: int = 0) -> list[str]:
         arm = _CASE_ARM_RE.match(text)  # `x) cat .env` after `;;` or a newline
         if arm is not None:
             text = text[arm.end():]
+        text = _drop_empty_substitutions(text)  # `` `# c` cat .env `` runs `cat`
         words = _split_glued_input_redirects(
             _quote_aware_words(text, _TOKEN_SPLIT_RE, _BASH_OPAQUE)
             if aware else _split_words(text, _TOKEN_SPLIT_RE))
