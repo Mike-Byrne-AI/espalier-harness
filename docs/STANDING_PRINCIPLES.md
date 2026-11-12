@@ -607,3 +607,75 @@ future; drive it once, in situ, and record what it printed.
 
 **Origin: the operator, 2026-09-02** — *"Write a new gate's mutation test before the
 gate. If I can't state the mutation that reds it, I don't have a gate yet."*
+
+## 20. Ask whether the layer can reach the goal before you fix the class
+
+A fix is checked inside the frame it is handed. The row states the cause at the reader;
+the class question (Core Rule 12, §18) answers with a bigger fix in the same layer; the
+reviewer finds the next sibling; the plan builds what it is given; §16 names the user
+truthfully. Every gate passes, and none asks whether the layer the fix sits in can reach
+the job's goal at all. **A fix whose layer cannot reach its goal passes every gate**, and
+the stream of rows behind it does not stop.
+
+**Two kinds of move, and only one had a name here.** *Consolidation* turns many sites into
+one chokepoint or one derived list; §14 and §18 are its doctrine, and it stops sibling
+sites spreading. *Re-targeting* changes what is checked: the effect instead of a
+prediction of it, the producer instead of every shape at the consumer, behaviour instead
+of a name. Consolidation alone stalls when the one question left at the chokepoint is
+"recognise every shape of an open input". The guard's command parser is that chokepoint:
+in the 20 commits after the public tree's opening squash, 2026-09-24 to 2026-10-07, it
+grew by 1,446 net lines, and 14 of those commits were fixes (`git log --no-merges
+--numstat`, re-measured 2026-11-12), while four fix lanes' reviews each led to one to
+three sibling rows on the same job, not every one a spelling.
+
+**Ask before the class question.** The five questions have their sole home in
+`memory/check-the-layer-before-the-class.md`; the text a tree prints is
+`tools/cc/ledger_row.py::FIVE_QUESTIONS`, which a test pins to the note; read them there,
+since a summary here would drift from both. The tells that they are due are a chain of
+siblings on one job, a cluster of standalone rows on one site family, and recurrence at a
+consolidated site. The note says which of the three a tool prints the questions at today;
+the last is noticed only by asking.
+
+**Where the prediction must stay.** An effect that cannot be undone (a delete, a push, a
+release, a secret read) leaves no later layer to observe it, so the predicting check stays,
+and one question is asked once for the whole job: which forms would a slip produce? That
+answer is a coverage contract, and the forms outside it are declared limits, not work.
+Without this exception the questions route away jobs no layer can take: before it existed,
+the blind back-test routed the speed-bump and project-root delete rows away, and the
+operator worded the exception from that (2026-10-08). The exception has not been
+re-tested.
+
+**This reconciles §17 with keeping the guards.** "Move the catch earlier" and "move the
+check to where the effect is" agree once the layers are named: the early check stays as
+the cheap optimisation, and the end check becomes the guarantee.
+
+**Evidence, held to what it shows.** A blind grader, given each question's first sentence
+and an answering rule fixed before any row was read, routed 26 of 29 guard rows away and 0 of 22 rows on
+the CLI's own code (2026-10-08). That shows the questions do not route everything away. It
+does not show they route away only wrong-layer work: the CLI is an easy contrast, and the
+two questions that carried the separation describe nearly any reader of shell text. The
+re-targeted classes the repo has closed (`§C69`, `§C67`, `§C55`) had their titles written
+once the fix shape was known, so "re-targeted classes close" partly selects for itself.
+The guard by location, which checks where a write lands rather than how its command is
+spelled, is the instance this principle **proposes**, not one it proves, until its third
+wave has struck rows and no new stream follows at the parser's layer.
+
+**A caution against the obvious over-correction.** A move can relocate a defect rather
+than close it (`memory/a-fixed-fail-open-can-move-rather-than-close.md`): re-targeting is
+not safer for being a move, and the whole oracle is re-run after it as after any fix. And
+the questions are never a gate, since a refusal keyed on a count teaches the filer to
+suppress (`memory/gating-on-count-manufactures-findings.md`).
+
+**Prior art,** as the pack that introduced this section cited it, from memory and not
+re-read for this text: Saltzer, Reed and Clark, "End-to-End Arguments in System Design"
+(1984), that a function can be completely implemented only where the knowledge lives;
+Saltzer and Schroeder (1975) on complete mediation; Ranum (2005) on enumerating badness;
+King (2019), "Parse, don't validate".
+
+**Origin: the operator, 2026-10-07** — *"We want to know when something is 'worth doing'
+and when something is 'banging against a brick wall'"*, and, once the first answer was
+refuted by its own back-test: *"If we are in that patchwork mode, that is a good trigger
+to check. Sibbling sites keep poping up, or many fixes same issue, also signes. The issue
+is sometimes we are targeting 'the symptom' not 'the real issue' and we want to build
+systems that helpo with that."* The operator chose a principle of its own over a paragraph
+under §15 on 2026-10-08.

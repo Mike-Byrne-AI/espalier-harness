@@ -157,6 +157,12 @@ Update only durable repo operating knowledge:
   request is already open and this row is all the handoff adds to it, either
   of which step 8 parks instead; where it is off, nothing is pushed and no pull
   request will appear, so say the lane is committed locally)
+- a finding this session's review left unfiled that is a further instance of
+  a row the lane worked on, written with the words `(sibling of DEF-N)`
+  naming that row: this row is the committed record every seat reads, written
+  on every seat before step 5 commits it, and the session that files the
+  finding copies the id into `tools/cc/ledger_row.py file --sibling-of DEF-N`,
+  so the chain is recorded
 
 Keep the row compact: it is one line, and the digest shows its bold headline.
 
@@ -509,12 +515,8 @@ last-second finding, a hunch you didn't chase, a dangling thread. The structured
 artifacts capture what's *settled*; this captures what's *fresh and perishable*.
 Replace the prior session's note — it does not accumulate. The session OPENS by
 reasoning over this note, so write it to prime that first-thoughts read.
-A finding this session's review left unfiled that is a further instance of a
-row the lane worked on is written with the words `(sibling of DEF-N)`, naming
-that row, here and in this session's Session Log row (step 2): the row is the
-committed record every seat reads, where this note may reach no other
-checkout. The session that files the finding copies the id into
-`tools/cc/ledger_row.py file --sibling-of DEF-N`, so the chain is recorded.
+A finding left unfiled that step 2's row marks `(sibling of DEF-N)` is marked
+the same way here.
 
 **If the file is absent:**
 <!-- espalier:self-host-only -->

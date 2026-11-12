@@ -25,14 +25,9 @@
 
 Consolidation stalls when the one remaining question is "recognise every shape". Each new shape is then one more fix in the same place, and that place grows: the guard parser grew by +1,446 net lines and 14 fix commits from 2026-09-24 to 2026-10-07.
 
-**The routing questions** (`TP-475` Task 4) pick the candidates:
-1. State the job without naming the mechanism.
-2. Effect or prediction?
-3. Closed input of ours, or open input of someone else's?
-4. Would a slip produce it?
-5. Already moved once, with defects arriving at the new site?
+**The routing questions** pick the candidates. Their sole home is `memory/check-the-layer-before-the-class.md` (the text a tree prints is `tools/cc/ledger_row.py::FIVE_QUESTIONS`); read them there, not from a copy here. The list this pack first carried predated question 3's exception, added 2026-10-08: an effect that cannot be undone stays predicted, and question 4, asked once for the whole job, decides which forms are work.
 
-A live class is a candidate when question 1 can only be answered in the mechanism's own words today, and question 3 has an answer that removes the enumeration.
+A live class is a candidate when question 1 can only be answered in the mechanism's own words today, and question 3 has an answer that removes the enumeration without falling under that exception.
 
 **The hope, and the caveat.** The operator asked for a method that "eventually trims code and makes things more reliable".
 - Re-targeting can delete code, because a reader that learned many shapes becomes a check of one form, or a tool's output.
