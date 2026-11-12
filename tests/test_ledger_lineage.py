@@ -178,6 +178,18 @@ class TestASiblingRecordsItsParents:
         assert _file(lr, t, "DEF-5", "DEF-1") == 2
         assert "already has a lineage file" in capsys.readouterr().err
 
+    @_BOTH_MODES
+    def test_a_lineage_path_that_cannot_be_a_directory_refuses_with_nothing_written(
+            self, lr, tmp_path, opted_in, capsys):
+        """Dies to: the lineage directory made at its own write, after the
+        row's, which leaves a row with no probe and a traceback (code review)."""
+        t = _tree(tmp_path, opted_in=opted_in)
+        _lineage_file(t, "DEF-5").parent.write_text("not a directory\n", encoding="utf-8")
+        before = _snapshot(tmp_path)
+        assert _file(lr, t, "DEF-5", "DEF-1") == 2
+        assert "the lineage directory" in capsys.readouterr().err
+        assert _snapshot(tmp_path) == before
+
     def test_a_dry_run_names_the_lineage_file_and_writes_nothing(self, lr, tmp_path, capsys):
         t = _tree(tmp_path, opted_in=True)
         before = _snapshot(tmp_path)
@@ -254,7 +266,8 @@ class TestTheChainAdvisory:
         assert _file(lr, t, "DEF-6", "DEF-5") == 0       # a grandchild: it would fire
         err = capsys.readouterr().err
         lines = [ln for ln in err.splitlines() if "chain advisory" in ln]
-        assert lines == ["ledger_row: chain advisory: recording-only until 20 rows carry --sibling-of (2 now)"], err
+        assert lines == ["ledger_row: chain advisory: recording-only until 20 rows carry --sibling-of (2 now), "
+                         "so what it prints does not shape what is filed"], err
         assert "child to root" not in err and lr.FIVE_QUESTIONS[0] not in err
 
     def test_at_the_recording_figure_the_line_says_the_review_is_due(self, lr, tmp_path, monkeypatch, capsys):
@@ -264,7 +277,9 @@ class TestTheChainAdvisory:
         assert "(1 now)" in capsys.readouterr().err
         assert _file(lr, t, "DEF-6", "DEF-1") == 0
         err = capsys.readouterr().err
-        assert "(2 now): the threshold review is due; the full print stays off until it is ruled" in err
+        assert ("chain advisory: recording-only; 2 rows carry --sibling-of, enough to review its thresholds "
+                "(CHAIN_DEPTH_AT, CHAIN_FAN_OUT_AT); CHAIN_ADVISORY_PRINTS in ledger_row.py turns the full "
+                "print on") in err, err
         assert "child to root" not in err
 
     def test_with_the_print_on_a_grandchild_fires_in_a_dry_run(self, lr, tmp_path, monkeypatch, capsys):
@@ -319,7 +334,9 @@ class TestTheClusterAdvisory:
                      pre=("--dry-run",)) == 0
         err = capsys.readouterr().err
         assert "cluster advisory: this is live standalone row 5 on tools:write_guard" in err, err
+        assert "  the others: DEF-10, DEF-11, DEF-12, DEF-13" in err
         assert all(q in err for q in lr.FIVE_QUESTIONS)
+        assert err.rstrip().endswith(lr.FIVE_QUESTIONS[-1]), "the advisory ends on the class verb, not the questions"
         assert _snapshot(tmp_path) == before
 
     def test_mixed_families_do_not_fire(self, lr, tmp_path, capsys):
@@ -380,12 +397,47 @@ class TestTheLineageVerb:
         assert rc == 0 and "site family tools:write_guard, 5 live standalone row(s) on it" in out, out
         assert all(q in out for q in lr.FIVE_QUESTIONS)
 
-    def test_a_row_with_neither_is_one_line(self, lr, tmp_path, capsys):
+    def test_a_row_with_neither_is_one_line_saying_why_once(self, lr, tmp_path, capsys):
+        """Dies to: "no recorded lineage" printed alike on a tree where no
+        filer has passed the flag yet, which a planner reads as "not in a
+        chain" (failure-mode review)."""
         t = _tree(tmp_path, opted_in=True)
         rc, out = _lineage(lr, t, "DEF-2", capsys)
         assert rc == 0
+        assert out.splitlines() == ["DEF-2: no recorded lineage (no row on this tree carries --sibling-of yet); "
+                                    "its site cell names no path, so no site family"], out
+        assert _file(lr, t, "DEF-5", "DEF-1") == 0
+        rc, out = _lineage(lr, t, "DEF-2", capsys)
         assert out.splitlines() == ["DEF-2: no recorded lineage (it names no parent and no row names it); "
                                     "its site cell names no path, so no site family"], out
+
+    def test_a_struck_row_on_a_cluster_family_prints_no_questions(self, lr, tmp_path, capsys):
+        """Dies to: the cluster's questions printed for a struck row, which a
+        pack cites as history and no plan will fix (failure-mode review: one
+        pack's ids printed them 24 times, 22 for struck rows)."""
+        t = _tree(tmp_path, opted_in=True, c0_rows=_C0_ROWS)
+        assert _file(lr, t, "DEF-20", section="C0", after="DEF-15", anchor=f"{_GUARD}::g") == 0
+        assert _file(lr, t, "DEF-21", section="C0", after="DEF-15", anchor=f"{_GUARD}::h") == 0
+        assert _strike(lr, t, "DEF-10") == 0
+        rc, out = _lineage(lr, t, "DEF-10", capsys)
+        assert rc == 0 and "5 live standalone row(s) on it" in out, out
+        assert lr.FIVE_QUESTIONS[0] not in out
+        rc, out = _lineage(lr, t, "DEF-11", capsys)
+        assert lr.FIVE_QUESTIONS[0] in out, out
+
+    def test_a_root_with_no_row_here_is_named_and_reported(self, lr, tmp_path, capsys):
+        """Dies to: a root the ledger no longer holds reported as a row whose
+        site names no path, and the root itself as an id nothing names."""
+        t = _tree(tmp_path, opted_in=True)
+        assert _file(lr, t, "DEF-5", "DEF-1") == 0
+        text = t["ledger"].read_text(encoding="utf-8")
+        t["ledger"].write_text("\n".join(ln for ln in text.split("\n") if not ln.startswith("| `DEF-1` |")),
+                               encoding="utf-8")
+        rc, out = _lineage(lr, t, "DEF-5", capsys)
+        assert rc == 0 and "the root's site family: none (the root has no row in this ledger)" in out, out
+        rc, out = _lineage(lr, t, "DEF-1", capsys)
+        assert rc == 0 and "no row in this ledger, though a lineage file names it" in out, out
+        assert "DEF-1's own children: DEF-5" in out
 
     def test_an_id_in_no_row_is_one_line_and_exit_0(self, lr, tmp_path, capsys):
         t = _tree(tmp_path, opted_in=False)

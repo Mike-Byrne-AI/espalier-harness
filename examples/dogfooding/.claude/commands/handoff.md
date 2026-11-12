@@ -511,7 +511,9 @@ Replace the prior session's note — it does not accumulate. The session OPENS b
 reasoning over this note, so write it to prime that first-thoughts read.
 A finding this session's review left unfiled that is a further instance of a
 row the lane worked on is written with the words `(sibling of DEF-N)`, naming
-that row: the session that files it copies the id into
+that row, here and in this session's Session Log row (step 2): the row is the
+committed record every seat reads, where this note may reach no other
+checkout. The session that files the finding copies the id into
 `tools/cc/ledger_row.py file --sibling-of DEF-N`, so the chain is recorded.
 
 **If the file is absent:**

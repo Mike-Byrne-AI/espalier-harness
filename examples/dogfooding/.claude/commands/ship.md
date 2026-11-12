@@ -119,7 +119,7 @@ clean; conflicts only on the record files (`ESPALIER_MEMORY.md`,
 `task-packs/FORWARD_LEDGER.md`, and `task-packs/LEDGER_PROBES.json` where a
 tree still keeps one), which `open` merges in first and resolves by shape; or
 conflicts elsewhere -- a row file under `task-packs/ledger.d/`,
-`task-packs/probes.d/`, `memory/session-log.d/` or `changelog.d/` written by
+`task-packs/probes.d/`, `task-packs/lineage.d/`, `memory/session-log.d/` or `changelog.d/` written by
 both sides among them -- which `open` notes and pushes past -- the pull
 request then reads DIRTY until you merge by hand.
 
@@ -212,8 +212,8 @@ beside the driver): every row either side added is kept, every row either side
 evicted is dropped, the memory file is pruned back to its cap with the
 merged-in rows kept, the ledger's counts are re-derived, the probes roster is
 unioned by id. Where those rows are files of their own instead (the Session Log
-under `memory/session-log.d/`, the ledger's class rows and its probes under
-`task-packs/ledger.d/` and `task-packs/probes.d/`), two lanes add two files and
+under `memory/session-log.d/`, the ledger's class rows, its probes and a row's lineage under
+`task-packs/ledger.d/`, `task-packs/probes.d/` and `task-packs/lineage.d/`), two lanes add two files and
 nothing collides. The merge commit rides the one push, so the pull request is born
 mergeable. GitHub's own merge honours no merge driver, so a lane pushed
 conflicting sits `CONFLICTING` until a hand resolves it; this is that hand. A
@@ -374,7 +374,7 @@ Seven shapes to recognise:
   `git add -A` or `git add .`, which stage the record files with their conflict
   markers. Leave those to the resolver: a hand merge of one reads its derived
   counts right and totals them wrong. A row file under `memory/session-log.d/`,
-  `changelog.d/`, `task-packs/ledger.d/` or `task-packs/probes.d/` that conflicts
+  `changelog.d/`, `task-packs/ledger.d/`, `task-packs/probes.d/` or `task-packs/lineage.d/` that conflicts
   is two writers on one name, which the resolver refuses: keep one side by hand
   (`git checkout --ours -- <path>` or `--theirs`; where one side deleted it,
   `git rm -- <path>` keeps the deletion and `git add -- <path>` the other side).

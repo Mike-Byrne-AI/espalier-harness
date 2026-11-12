@@ -101,7 +101,7 @@ This also reconciles §17 ("move the catch earlier") with keeping the guards. Th
 3. **Task 3** — the advisories, both advice and never a refusal, at two moments:
    - **where the next member is born (filing):**
      - **a chain advisory:** at `file --sibling-of`, when the new row makes a chain two deep, or the parent's third sibling;
-     - **a standalone-cluster advisory:** at `file --section C0`, when the row's site family already holds five or more live standalone rows.
+     - **a standalone-cluster advisory:** at `file --section C0`, when the filing makes five or more live standalone rows on the row's site family, the new row counted (amended 2026-11-12).
    - **where the layer is chosen (plan time):** a read-only `ledger_row.py lineage <id>` prints a row's chain and its site family's standalone count. `/implement-task` step 1 and `/implement-pack` step 0-A run it for every row the work names. When it reports a chain or a cluster, the plan answers the five questions before it proposes a fix.
 
    All three print the five questions of Task 4.
@@ -254,6 +254,7 @@ Second part: `scripts/ledger_trend.py::render` checks the reconciliation identit
 
 - `tools/cc/ledger_row.py::file_row` gains `--sibling-of <id>` (repeatable). Each named id must exist in the ledger, live or struck; an unknown id is refused, because a typo would silently cut a chain.
 - **Where it is stored** *(amended 2026-11-12, the dispatcher's ruling on the store)*: one file per child, `task-packs/lineage.d/<child id>.json`, of the form `{"id": child_id, "sibling_of": [parent_id, ...]}`, in either ledger mode. `file_row` alone writes it, after the row and before the probe, so a filing cut off before its probe is finished by its re-run, the lineage file with it (a missing file written, the same parents kept, other parents refused).
+  - **A limit, stated:** the parents live only in the filing's arguments until its lineage file is written, so a re-run that finishes a cut filing records the parents it is given, and an id-less re-run (`_own_cut_filings`) given no `--sibling-of` finishes the row with none.
   - **`::strike` and `::repin` never read or write it.** Strike deletes the struck row's probe entry, and since the probes became files it unlinks the struck row's probe file, so lineage kept inside a probe would vanish with its parent and cut every chain through it.
   - The ledger's markdown grammar is unchanged. Lineage is owned by its one writer rather than parsed out of a cell, which is the re-targeting this pack argues for, applied to itself.
   - **Why not the drafted stores.** The draft's top-level `_lineage` map in `task-packs/LEDGER_PROBES.json` predates the probes' fold into one file each (2026-10-14): one shared map is what two lanes would both rewrite, the failure the fold removed. A line in the child's own row file was refused because the row file's reader refuses an unknown line today, a row-format change needs expand-then-contract across the seats, and an adopter tree that keeps no row files would have nowhere to put it. A new record directory adds a record and changes none.
@@ -276,7 +277,8 @@ The two filing advisories print to stderr, exit 0, and never refuse. The plan-ti
   - fire when depth >= 2 (a sibling of a sibling) or fan-out >= 3;
   - print the chain by id, the job, and the five questions.
 - **The standalone-cluster advisory,** in `file_row` when `--section` is `C0`:
-  - compute the new row's site family (the k2 key of 0-A) and count the live `§C0` rows with the same family in the current ledger;
+  - compute the new row's site family (the k2 key of 0-A) and count the live `§C0` rows with the same family in the current ledger, the new row counted, so the advisory fires when the filing makes five (amended 2026-11-12; the verb's count below is the same count);
+  - **the key, as built** (`ledger_row.py::site_family`; no definition existed in the tree): the first path in the site cell, a file with an extension or a directory ending in `/`, either slash read as `/`, its `::symbol` dropped; the family is `<top directory>:<module stem>`, `.` for a root file, a dotfile keeping its whole name, none where the cell names no path;
   - fire at 5 or more, and suggest `ledger_row.py class` with the five questions.
   - Today this would fire for five k2 families (k2 keys by module, so the guard is three of them; corrected 2026-10-08 from "three families"):
     - the three guard modules (7 rows each on `_bash_patterns`, `write_guard` and `_speedbump`);
@@ -441,7 +443,7 @@ This pack builds an instrument and a set of questions. It closes no defect class
   - **The key is the first path in the site cell,** as 0-A's k2 read it. A backtick span read first was measured worse: it re-keyed 6 of the 113 rows, each onto a path the row only mentions.
   - **The verb prints the questions at fan-out 3 too,** beside depth 2 and a family at 5, so the verb and the chain advisory share one predicate.
   - **Refutation measurement:** the two advisories add 6 to 7 ms to a filing on this tree (5 runs, in process); `lineage <id>` takes 0.086 s in process, 0.40 s wall. Under the one-second line.
-  - **The five questions** are one ASCII constant, `ledger_row.py::FIVE_QUESTIONS`, with no internal ids. Task 4-A writes its memory note from it and adds the parity pin there, since the note does not exist yet.
+  - **The five questions** are one ASCII constant, `ledger_row.py::FIVE_QUESTIONS`, with no internal ids: question 3 drops its pack reference and question 4 its section sign, since `tests/test_no_provenance_in_shipped_code.py` reads every line of a shipped `tools/cc/` module. Task 4-A writes `memory/check-the-layer-before-the-class.md` from it and adds the parity pin there, since the note does not exist yet; the pin maps the note's fuller wording to the constant either by quoting the constant word for word or by 0-C's first-sentence form (Task 0-C, "How the brief differed").
 - Commits:
 - Suite:
 - Earn-the-red:

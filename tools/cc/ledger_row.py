@@ -1052,6 +1052,16 @@ def _commit_both(gen, *, ledger: Path, probes: Path, new_text: str, data: dict,
                 print(f"  [{d.get('region')}] {d.get('detail')}", file=sys.stderr)
             return 2
         _print_noted(pending, what)
+        # The lineage directory is made before the first write: a path there
+        # that cannot be a directory (a file of that name) then refuses the
+        # filing with nothing written, never after its row (code review).
+        for path in pending.lineage:
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                print(f"ledger_row: nothing written: the lineage directory {path.parent} cannot be made "
+                      f"({type(exc).__name__}: {exc})", file=sys.stderr)
+                return 2
         _write_pending_probes(gen, pending, removals=True)
         if write_roster and probes_first:
             _replace(sidecar, probes)
@@ -2147,6 +2157,8 @@ CHAIN_RECORDING_UNTIL = 20
 #: change what it files, and that shapes the very data the review reads; what
 #: would have fired is derivable afterwards from the lineage files and each
 #: row's filing commit. Turned on by a ruling on that review, never by a count.
+#: The ``lineage`` verb prints a chain in full regardless: it is read at plan
+#: time, for a row already filed, so it shapes the fix and not the filing.
 CHAIN_ADVISORY_PRINTS = False
 #: The standalone class: rows filed into no class of their own.
 STANDALONE_SECTION = "§C0"
@@ -2202,17 +2214,18 @@ def _row_family(rid: str, text: str) -> str | None:
     return site_family(cells[1]) if len(cells) > 1 else None
 
 
-def _standalone_on(family: str, text: str, *, besides: str | None = None) -> int:
-    """The live standalone rows whose site family is ``family`` in the view
-    ``text``, the row ``besides`` left out (the caller counts it itself)."""
-    n = 0
+def _standalone_on(family: str, text: str, *, besides: str | None = None) -> list[str]:
+    """The first id of each live standalone row whose site family is
+    ``family`` in the view ``text``, the row ``besides`` left out (the caller
+    counts it itself)."""
+    out: list[str] = []
     for row in _GEN.ledger_sections(text).get(STANDALONE_SECTION, []):
         if _GEN._is_struck(row) or (besides and besides in _GEN.cell_ids(row)):
             continue
         cells = _GEN.member_cells(row)
         if len(cells) > 1 and site_family(cells[1]) == family:
-            n += 1
-    return n
+            out.append((_GEN.cell_ids(row) or ["?"])[0])
+    return out
 
 
 def _depth(rid: str, lineage: dict[str, tuple[str, ...]], _seen: frozenset[str] = frozenset()) -> int:
@@ -2264,7 +2277,10 @@ def _chain_lines(rid: str, lineage: dict[str, tuple[str, ...]], text: str) -> li
     for parent in lineage.get(rid, ()):
         lines.append(f"  {parent}'s children: {', '.join(_children(parent, lineage))}")
     family = _row_family(path[-1], text)
-    lines.append(f"  the root's site family: {family or 'none (its site cell names no path)'}")
+    lines.append(f"  the root's site family: {family}" if family else
+                 "  the root's site family: none (the root has no row in this ledger)"
+                 if _member_line(path[-1], text, struck_ok=True) is None else
+                 "  the root's site family: none (its site cell names no path)")
     return lines
 
 
@@ -2276,9 +2292,10 @@ def _chain_advisory(rid: str, lineage: dict[str, tuple[str, ...]], text: str) ->
     if not CHAIN_ADVISORY_PRINTS:
         if carrying < CHAIN_RECORDING_UNTIL:
             return [f"chain advisory: recording-only until {CHAIN_RECORDING_UNTIL} rows carry "
-                    f"--sibling-of ({carrying} now)"]
-        return [f"chain advisory: recording-only until {CHAIN_RECORDING_UNTIL} rows carry --sibling-of "
-                f"({carrying} now): the threshold review is due; the full print stays off until it is ruled"]
+                    f"--sibling-of ({carrying} now), so what it prints does not shape what is filed"]
+        return [f"chain advisory: recording-only; {carrying} rows carry --sibling-of, enough to review "
+                f"its thresholds (CHAIN_DEPTH_AT, CHAIN_FAN_OUT_AT); CHAIN_ADVISORY_PRINTS in "
+                f"{Path(__file__).name} turns the full print on"]
     depth, widest, fan_out = _chain_reading(rid, lineage)
     if not _chain_fires(depth, fan_out):
         return []
@@ -2297,13 +2314,16 @@ def _cluster_advisory(rid: str, anchor: str, text: str) -> list[str]:
     family = site_family(anchor)
     if family is None:
         return ["cluster advisory: the site cell names no path, so this row is counted on no site family"]
-    count = _standalone_on(family, text, besides=rid) + 1
+    others = _standalone_on(family, text, besides=rid)
+    count = len(others) + 1
     if count < CLUSTER_AT:
         return []
     return [f"cluster advisory: this is live standalone row {count} on {family} (this one counted; "
-            f"the advisory fires at {CLUSTER_AT}): a class may be waiting to be opened",
-            *_questions("  answer these for the job, then open a class with the class verb if the rows "
-                        "are one unit of work:")]
+            f"the advisory fires at {CLUSTER_AT}): one job may keep producing rows",
+            f"  the others: {', '.join(others)}",
+            "  a class groups the rows; it does not move the fix. Before opening one with the class "
+            "verb, answer these for the job:",
+            *(f"    {q}" for q in FIVE_QUESTIONS)]
 
 
 def lineage_report(rid: str, *, ledger: Path) -> tuple[list[str], list[str]]:
@@ -2317,23 +2337,39 @@ def lineage_report(rid: str, *, ledger: Path) -> tuple[list[str], list[str]]:
     except (OSError, ValueError) as exc:  # strict decode: UnicodeDecodeError is a ValueError
         return [f"{rid}: the ledger could not be read ({type(exc).__name__}); nothing to report"], []
     notes = [f"a lineage file left out: {p}" for p in problems]
-    if _member_line(rid, text, struck_ok=True) is None:
+    found = _member_line(rid, text, struck_ok=True)
+    if found is None and rid not in lineage and not any(rid in ps for ps in lineage.values()):
         return [f"{rid}: no row in the ledger, live or struck, carries this id; nothing to report"], notes
-    family = _row_family(rid, text)
-    standalone = _standalone_on(family, text) if family else 0
+    family = _row_family(rid, text) if found else None
+    standalone = len(_standalone_on(family, text)) if family else 0
     on_family = (f"site family {family}, {standalone} live standalone row(s) on it" if family
+                 else "no row in this ledger, though a lineage file names it" if found is None
                  else "its site cell names no path, so no site family")
-    depth, _widest, fan_out = _chain_reading(rid, lineage)
+    # The cluster's questions are for a live standalone row, the one a plan
+    # will fix: a struck row cited as history, or a classed row, is no
+    # standalone cluster's (failure-mode review: one pack's 48 ids printed
+    # the questions 24 times, 22 of them for struck rows).
+    in_cluster = (found is not None and not _GEN._is_struck(found[1]) and standalone >= CLUSTER_AT
+                  and _section_holding(text, rid) == STANDALONE_SECTION)
+    try:
+        depth, _widest, fan_out = _chain_reading(rid, lineage)
+        _to_root(rid, lineage)
+    except RecursionError:  # a hand-made chain deeper than the interpreter recurses
+        return [f"{rid}: the recorded chain is too deep to read; {on_family}"], notes
     own = _children(rid, lineage)
-    if not lineage.get(rid) and not own and standalone < CLUSTER_AT:
-        return [f"{rid}: no recorded lineage (it names no parent and no row names it); {on_family}"], notes
+    if not lineage.get(rid) and not own and not in_cluster:
+        # Said once where nothing is recorded yet, so "no lineage" is never
+        # read as "not in a chain" on a tree where no filer passed the flag.
+        why = ("it names no parent and no row names it" if lineage
+               else "no row on this tree carries --sibling-of yet")
+        return [f"{rid}: no recorded lineage ({why}); {on_family}"], notes
     lines = [f"{rid}: depth {depth}" + (f", the widest parent's children {fan_out}" if lineage.get(rid) else "")
              + f"; {on_family}"]
     if lineage.get(rid):
         lines += _chain_lines(rid, lineage, text)
     if own:
         lines.append(f"  {rid}'s own children: {', '.join(own)}")
-    if _chain_fires(depth, fan_out) or standalone >= CLUSTER_AT:
+    if _chain_fires(depth, fan_out) or in_cluster:
         lines += _questions("  the plan answers these before it proposes a fix:")
     return lines, notes
 
@@ -2393,7 +2429,8 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str |
             return 2
         if _member_line(parent, text, struck_ok=True) is None:
             print(f"ledger_row: --sibling-of {parent} names no row in the ledger, live or struck (a typo "
-                  "would cut the chain there); nothing filed", file=sys.stderr)
+                  "would cut the chain there); nothing filed. A row filed on a lane not merged here yet: "
+                  "catch this checkout up first, then file again with the flag", file=sys.stderr)
             return 2
     lineage_file = _FRAG.lineage_fragment_dir(ledger) / f"{rid}.json"
     if lineage_file.exists():
@@ -2630,7 +2667,10 @@ def _filing_advisories(rid: str, parents: list[str], *, section: str, anchor: st
             out.append(f"chain advisory: the lineage files could not be read ({type(exc).__name__}); skipped")
         else:
             out += [f"note -- a lineage file left out: {p}" for p in problems]
-            out += _chain_advisory(rid, {**lineage, rid: tuple(parents)}, text)
+            try:
+                out += _chain_advisory(rid, {**lineage, rid: tuple(parents)}, text)
+            except RecursionError:  # a hand-made chain deeper than the interpreter recurses
+                out.append("chain advisory: the recorded chain is too deep to read; skipped")
     if section == STANDALONE_SECTION:
         out += _cluster_advisory(rid, anchor, text)
     return out
