@@ -836,6 +836,10 @@ _PS_VERB_EXTRACTION_REGEXES = [
     ("ps_exe_prefix_bare", _PS_PERMISSION_RE, "C:\\a\\b\\attrib.exe +R"),
     ("ps_interp_stdin", _PS_INTERP_STDIN_RE, "| python -"),
     ("ps_interp_stdin_switches", _PS_INTERP_STDIN_RE, "| pwsh -NoProfile -Command -;"),
+    # DEF-3075: the opener's tail takes a redirect and a comment, and opens
+    # on a call operator after the pipe; each on its repeated seed.
+    ("ps_interp_stdin_redirect", _PS_INTERP_STDIN_RE, "| bash 2>&1 "),
+    ("ps_interp_stdin_call_operator", _PS_INTERP_STDIN_RE, "| & bash "),
     ("ps_python_switch_values", _PS_PYTHON_DASH_C_RE, "python -W ignore"),
     # DEF-637 (§C49), registered the day they landed: the cross-shell openers
     # on their repeated heads and repeated switch runs, and the two coverage
@@ -3033,6 +3037,7 @@ def test_walker_scaling_judgement_routes_an_under_floor_sample_by_cause(
     (_PS_PERL_DASH_E_RE, "perl -e 'open(F, \">x\")'"),
     (_PS_INTERP_STDIN_RE, "@'\nx\n'@ | python -"),
     (_PS_INTERP_STDIN_RE, "'x' | pwsh -NoProfile -ExecutionPolicy Bypass -Command -"),
+    (_PS_INTERP_STDIN_RE, "'x' | bash 2>&1"),
     (_PS_HERE_STRING_RE, "$x = @'\nline one\nline two\n'@"),
 ])
 def test_ps_interpreter_regex_still_matches(pattern, payload):

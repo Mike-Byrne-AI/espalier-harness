@@ -1805,14 +1805,30 @@ the `-c` and its program (`bash -c -- '...'`, `bash -c -x '...'`), and a
 shell's `+` options on either side of the `-c` (`bash +x -c '...'`, `bash -c
 +e '...'`, `bash +O extglob -c '...'`), are read on both tools. On the
 PowerShell tool a string piped into a POSIX shell (`'...' | bash`, `echo
-'...' | sh`, a here-string, `bash -` or `bash -s`, the head bare or given by
-path as Git's `bash.exe`) is that shell's program and meets the Bash ones the
-same way, with the BOM and the carriage returns Windows PowerShell hands a
-native pipe taken out; a head that only begins with a shell's name
-(`shasum`) and a shell given a script operand (`| bash script.sh`) leave the
-pipe as data. A backtick escape inside a double-quoted program (`` `n ``,
-`` `t ``) is still read as its two characters, on that spelling and behind
-`bash -c` alike: an open gap, not a limit. On the Bash tool a POSIX shell's `-c` program the outer scan
+'...' | sh`, a here-string, `bash -` or `bash -s`, the head bare, behind the
+call operator `| & bash` or given by path as Git's `bash.exe`, a redirect or
+comment after it, `| bash 2>&1`) is that shell's program and meets the Bash
+ones the same way: every literal of the stage before the pipe, one line
+each as PowerShell pipes them (`'set -e', 'rm -rf out' | bash`), each by its
+own quote kind and by the doubled-quote fold too, a wall on either reading
+being the wall, with the BOM and the carriage returns Windows PowerShell
+hands a native pipe taken out. The opener's redirect, comment and call
+operator serve every piped head, `| python - 2>&1` and `| & pwsh -Command -`
+included. A head that only begins with a shell's name (`shasum`) and a
+shell given a script operand with no switch before it (`| bash script.sh`)
+leave the pipe as data; a switch before the operand (`| bash -x
+script.sh`) takes it as the switch's value, and the pipe is read: an
+over-read, the refusing direction. Declared limits: only the stage
+immediately before the pipe, outside parentheses, is read, so a literal in
+`(...)` or `@(...)`, one in a variable a tier does not inline, or one behind a middle stage (`| Out-String
+| bash`), is not; a launcher before the shell (`| wsl bash`, `| sudo bash`,
+`| env bash`, `| busybox sh`) and a versioned name (`| bash-5.2`, `| ksh93`)
+open no reading; and a here-string before a quoted string that ends the
+stage is not read. A backtick escape inside a double-quoted program (`` `n
+``, `` `t ``) is still read as its two characters, on that spelling and
+behind `bash -c` alike: an open gap, not a limit.
+
+On the Bash tool a POSIX shell's `-c` program the outer scan
 does not read as the shell receives it -- behind a switch or cluster
 (`bash -lc '...'`, `sh -e -c '...'`, `bash -c -- '...'`), behind a head the
 command position does not open at (`bash.exe -c`, `BASH -c`), opening on a

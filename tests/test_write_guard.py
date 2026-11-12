@@ -7,6 +7,7 @@ bypass patterns so a future maintainer doesn't mistakenly "fix" them here.
 """
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import re
@@ -12193,10 +12194,31 @@ class TestAStringPipedIntoAPosixShellMeetsItsDirectFormsTiers:
         ("here-string", "@'\necho hi\n{p}\n'@ | bash"),
         ("crlf-here-string", "@'\r\necho hi\r\n{p}\r\n'@ | bash"),
         ("bom", "'\ufeff{p}' | bash"),
+        # the statement goes on past the head (both reviews, driven ALLOWING
+        # before the opener's tail took a redirect and a comment)
+        ("redirect-merge", "'{p}' | bash 2>&1"),
+        ("redirect-all", "'{p}' | bash *>&1"),
+        ("redirect-null", "'{p}' | bash 2>$null"),
+        ("redirect-file", "'{p}' | bash > out.txt"),
+        ("redirect-glued", "'{p}' | bash>out.txt"),
+        ("comment", "'{p}' | bash # run it"),
+        # the bare call operator after the pipe (both reviews, driven ALLOWING)
+        ("call-operator", "'{p}' | & bash"),
+        ("call-operator-exe", "'{p}' | & bash.exe 2>&1"),
+        ("call-operator-short-path", "'{p}' | & C:\\PROGRA~1\\Git\\bin\\bash.exe"),
+        # every literal of the stage, one line each (both reviews, driven
+        # ALLOWING with the program first)
+        ("array-program-first", "'{p}', 'echo ok' | bash"),
+        ("array-program-last", "'echo ok', '{p}' | bash"),
+        ("write-output-two-args", "Write-Output '{p}' 'echo ok' | bash"),
+        ("two-here-strings", "@'\n{p}\n'@, @'\necho ok\n'@ | bash"),
+        # a double-quoted here-string, read by its own kind (code review)
+        ("dq-here-string", "@\"\necho hi\n{p}\n\"@ | bash"),
+        ("dq-here-string-doubled-quotes", "@\"\necho \"\"\n{p}\necho \"\"\n\"@ | bash"),
     ]
     # one iterable, the only one a class-scope comprehension can see by name
     _CASES = [(f"{sid}-{pid}", pipe, program)
-              for (sid, pipe), (pid, program) in __import__("itertools").product(_PIPES, _PROGRAMS)]
+              for (sid, pipe), (pid, program) in itertools.product(_PIPES, _PROGRAMS)]
 
     @staticmethod
     def _project(tmp_path: Path) -> Path:
@@ -12223,6 +12245,12 @@ class TestAStringPipedIntoAPosixShellMeetsItsDirectFormsTiers:
         ("sha256sum", "'rm -rf .' | sha256sum -"),
         ("bashate", "'rm -rf .' | bashate"),
         ("script-operand", "'rm -rf .' | bash script.sh"),
+        # a redirect after the operand reads no operand away (the opener's tail)
+        ("script-operand-redirect", "'rm -rf .' | bash script.sh 2>&1"),
+        ("shasum-redirect", "'rm -rf .' | shasum 2>&1"),
+        ("call-operator-shasum", "'rm -rf .' | & shasum"),
+        # a call operator that follows no pipe: no stdin program
+        ("call-operator-no-pipe", "'rm -rf .'; & bash"),
         ("mention", "Write-Output \"'rm -rf .' | bash\""),
         ("write-host", "Write-Host 'rm -rf .'"),
         ("no-literal", "Get-Content notes.txt | bash"),
@@ -12250,6 +12278,21 @@ class TestAStringPipedIntoAPosixShellMeetsItsDirectFormsTiers:
         ("bom-and-crs-out", "@'\r\n\ufeffrm -rf /\r\n'@ | bash", ["rm -rf /"]),
         ("not-a-shell", "'rm -rf /' | shasum", []),
         ("python-stays-its-own", "'print(1)' | python -", []),
+        ("redirect", "'rm -rf x' | bash 2>&1", ["rm -rf x"]),
+        ("call-operator", "'rm -rf x' | & bash", ["rm -rf x"]),
+        ("every-literal-one-per-line", "'rm -rf x', 'echo ok' | bash", ["rm -rf x\necho ok"]),
+        # a double-quoted here-string folds no doubled quote (by kind), and the
+        # fold is the second reading (code review, the BLOCK)
+        ("dq-here-string-by-kind",
+         "@\"\necho \"\"; rm -rf x; echo \"\"\n\"@ | bash",
+         ['echo ""; rm -rf x; echo ""', 'echo "; rm -rf x; echo "']),
+        ("dq-here-string-backtick", "@\"\necho `$HOME `\"x`\"\n\"@ | bash", ['echo $HOME "x"']),
+        # a double-quoted string keeps `''`, its fold the second reading, on
+        # the pipe and on the `-c` reader alike (code review)
+        ("dq-doubled-single-quote", "\"echo ''; rm -rf x\" | bash",
+         ["echo ''; rm -rf x", "echo '; rm -rf x"]),
+        ("dash-c-dq-doubled-single-quote", "bash -c \"echo ''; rm -rf x\"",
+         ["echo ''; rm -rf x", "echo '; rm -rf x"]),
     ]
 
     @pytest.mark.parametrize("row", _READER, ids=[r[0] for r in _READER])
@@ -12258,6 +12301,36 @@ class TestAStringPipedIntoAPosixShellMeetsItsDirectFormsTiers:
         bp = _bash_patterns_module()
         raw, scan = bp.powershell_scan_pair(command)
         assert list(bp._ps_shell_program_bodies(raw, scan)) == want
+
+    def test_a_delete_between_doubled_quotes_meets_the_wall(self, tmp_path):
+        """The code review's BLOCK and its `-c` twin, by tier name: a delete
+        of the root between two `echo ""` lines of a double-quoted
+        here-string, and between two `echo ''` of a double-quoted `-c`
+        program, each meet the wall the single-quoted spelling meets."""
+        project = self._project(tmp_path)
+        for command in ("@\"\necho \"\"\nrm -rf /\necho \"\"\n\"@ | bash",
+                        "@\"\necho \"\"; rm -rf /; echo \"\"\n\"@ | bash",
+                        "bash -c \"echo ''; rm -rf /; echo ''\"",
+                        "\"echo ''; rm -rf /; echo ''\" | bash"):
+            assert "wall" in _ps_tier_verdicts(command, project), command
+
+    #: The opener's tail and call operator serve every head, not the POSIX
+    #: shells alone: the interpreter and PowerShell-shell twins of the rows
+    #: above, each a protected write the zone tier finds (the failure-mode
+    #: review drove each ALLOWING on the opener's first cut).
+    _OTHER_HEADS = [
+        ("python-redirect", "\"open('tools/cc/hooks/write_guard.py','w')\" | python - 2>&1"),
+        ("python-call-operator", "\"open('tools/cc/hooks/write_guard.py','w')\" | & python -"),
+        ("pwsh-redirect",
+         "'Set-Content tools/cc/hooks/write_guard.py x' | pwsh -NoProfile -Command - *>&1"),
+        ("pwsh-every-literal",
+         "'Set-Content tools/cc/hooks/write_guard.py x', 'Get-Date' | pwsh -Command -"),
+    ]
+
+    @pytest.mark.parametrize("row", _OTHER_HEADS, ids=[r[0] for r in _OTHER_HEADS])
+    def test_the_opener_serves_every_head_alike(self, row, tmp_path):
+        _id, command = row
+        assert "zone" in _ps_tier_verdicts(command, self._project(tmp_path)), command
 
 
 class TestTheCmdDeleteReaderReadsEachBranch:
@@ -18508,6 +18581,13 @@ class TestCrossShellRouting:
             # a relative write after the program's own `cd` (DEF-818's
             # reading; air 34fc8c: a zone write, the after-check's)
             "bash -c 'cd tools/cc/hooks && echo x > x.py'",
+            # the piped reader's declared limits (DEF-3075, docs/HOOKS.md): a
+            # launcher before the shell, a parenthesised stage, a middle
+            # stage, a versioned name
+            "'echo x > tools/cc/hooks/x.py' | wsl bash",
+            "('echo x > tools/cc/hooks/x.py') | bash",
+            "'echo x > tools/cc/hooks/x.py' | Out-String | bash",
+            "'echo x > tools/cc/hooks/x.py' | bash-5.2",
         ):
             assert_hook_allowed(_run_ps_guard(cmd, tmp_path))
 
