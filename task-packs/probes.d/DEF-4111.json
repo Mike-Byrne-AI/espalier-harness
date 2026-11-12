@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4111",
+ "subject": "tests/conftest.py",
+ "cmd": "python3 -c \"import sys;sys.path[:0]=['.','tests'];import conftest as c;c._live_chain_owner=lambda *a,**k:'session';b={k:frozenset() for k in c._LIVE_TREE_WATCH};b[c._LIVE_CHAIN_DIR]=frozenset({'latest.json'});a=dict(b);a[c._LIVE_CHAIN_DIR]=frozenset();print(c._attributed_moves(b,a)[0]==[])\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "f37a3f0794f0",
+ "text_sha": "70e2f4d6c621",
+ "verified_2026_11_11": "OPEN (filed 2026-11-11; probe driven at filing here and in the export of HEAD 9a6eec192540)"
+}
