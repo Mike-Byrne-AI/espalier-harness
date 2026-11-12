@@ -74,7 +74,9 @@ python tools/cc/ship.py handoff
 ```
 
 A lane opened by hand (`gh pr create` outside the driver) ran no verb and armed
-nothing; the same arm, by hand, on a clean tracked tree:
+nothing: its pull request's auto-merge is armed by the `auto-merge` verb (Step
+3), and the own-clear marker by the same arm the handoff makes, by hand, on a
+clean tracked tree:
 
 ```bash
 python tools/cc/ship.py arm --why "<how the lane was opened>"
@@ -274,7 +276,8 @@ event, one check run and no title edit for a race to lose; auto-merge armed and
 read back, the pull request's state first: gh merges one that nothing holds at
 once and prints nothing, so the verb says `merged at once`, never that the arm
 did not take (a repository whose setting is off is named: once it is on, the
-`auto-merge` verb in Step 3 arms it). The
+`auto-merge` verb in Step 3 arms it, or merge by hand once the checks are
+green). The
 body is `--body-file <path>` for prose -- a file, never a heredoc, so a
 backtick in the prose is text and not a command. Without it, the body is this
 seat's Session Log rows that the lane's own commits added (a fold's rows left

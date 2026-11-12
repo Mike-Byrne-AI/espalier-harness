@@ -2336,7 +2336,11 @@ class TestTheMemoryFileIsReadLikeAnyOperatorWrittenRecord:
         _write_guard(tmp_path)
         merged = json.dumps({"state": "MERGED", "mergedAt": "2026-11-12T05:00:00Z", "autoMergeRequest": None})
         spawns = _arm(ship, _open_answers(tmp_path, armed=merged))
-        assert ship.open_pr() == 0
+        try:
+            rc = ship.open_pr()
+        except ship.Refused as stop:
+            pytest.fail(f"a pull request gh merged as it armed was refused: {stop}")
+        assert rc == 0
         out = capsys.readouterr().out
         assert "#7 merged at once" in out
         assert "NOT armed" not in out
@@ -3075,6 +3079,8 @@ class TestTheAutoMergeVerb:
         with pytest.raises(ship.Refused) as stop:
             ship.auto_merge()
         assert "auto-merge did not arm for #7 (Pull request is in clean status)" in str(stop.value)
+        # A repository with auto-merge off has nothing to fix: the hand merge stays named.
+        assert "or merge by hand once the checks are green" in str(stop.value)
 
     def test_no_open_pull_request_is_refused(self, ship, tmp_path):
         answers = _auto_merge_answers(tmp_path)
@@ -3121,6 +3127,10 @@ class TestTheAutoMergeVerb:
         text = str(stop.value)
         assert "main red after merge: post-merge.yml run 900" in text and "Nothing lands on a red base" in text
         assert "#41 (gh pr merge --disable-auto 41)" in text
+        # The flag goes on this verb: `open` cannot run on an open pull request,
+        # and a handoff onto one re-arms nothing.
+        assert f"{ship.BASE_RED_RULED_FLAG} <ack id> on `auto-merge`," in text
+        assert "which `auto-merge` lets through" in text and "`open` or `handoff`" not in text
         assert spawns.count(("gh", "pr", "merge")) == 0
 
     def test_a_revert_lane_arms_on_a_red_base(self, ship, tmp_path):
@@ -3157,18 +3167,29 @@ class TestTheAutoMergeVerb:
 
     def test_open_and_auto_merge_are_the_only_arms(self, ship):
         """One place passes `--auto`, and only `open` and `auto-merge` call
-        it: `rebind`, `catch-up` and `handoff` re-arming on their own would
-        undo a deliberate disarm (the board's advice on a red base)."""
+        it: `rebind`, `catch-up` and a handoff onto an open pull request
+        re-arming on their own would undo a deliberate disarm (the board's
+        advice on a red base). Read through every call level, so a verb that
+        reached the arm through `auto_merge` or `open_pr` is seen too; the
+        handoff reaches it only through `_handoff_push`'s open where no pull
+        request is open."""
         import ast
         tree = ast.parse(Path(ship.__file__).read_text(encoding="utf-8"))
-        functions = [f for f in ast.walk(tree) if isinstance(f, ast.FunctionDef)]
-        holders = {f.name for f in functions
+        functions = {f.name: f for f in ast.walk(tree) if isinstance(f, ast.FunctionDef)}
+        holders = {name for name, f in functions.items()
                    if any(isinstance(c, ast.Constant) and c.value == "--auto" for c in ast.walk(f))}
-        callers = {f.name for f in functions
-                   if any(isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == "_arm_auto_merge"
-                          for c in ast.walk(f))}
+        calls = {name: {c.func.id for c in ast.walk(f) if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
+                 for name, f in functions.items()}
+        reach = {"_arm_auto_merge"}
+        while True:
+            more = {name for name, called in calls.items() if called & reach} - reach
+            if not more:
+                break
+            reach |= more
         assert holders == {"_arm_auto_merge"}
-        assert callers == {"open_pr", "auto_merge"}
+        assert {name for name, called in calls.items() if "_arm_auto_merge" in called} == {"open_pr", "auto_merge"}
+        assert reach - {"_arm_auto_merge"} == {"open_pr", "auto_merge", "_handoff_push", "handoff", "main"}
+        assert not reach & {"rebind", "catch_up", "_rebind_then_rearm_own_clear", "arm"}
 
     def test_the_board_and_the_banner_name_the_drivers_verb(self, ship):
         """Neither imports the driver, so each keeps the verb as a literal: a
@@ -3179,6 +3200,10 @@ class TestTheAutoMergeVerb:
         assert ship.AUTO_MERGE_VERB.split()[-1] in {c for c in ship.build_parser()._subparsers._group_actions[0].choices}
         for reader in (cc / "board.py", cc / "hooks" / "session_start.py"):
             assert ship.AUTO_MERGE_VERB in reader.read_text(encoding="utf-8"), reader.name
+        # The router's threshold ask is held under a character cap, so it names
+        # the verb beside `arm` by its name alone.
+        verb = ship.AUTO_MERGE_VERB.split()[-1]
+        assert f"its {verb} verb" in (cc / "hooks" / "task_router.py").read_text(encoding="utf-8")
 
 
 # ── rerun: a required cell a lost runner ended ───────────────────────────────

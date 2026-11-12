@@ -787,8 +787,9 @@ turn's end and re-primes it from the seat brief, so after the handoff take no
 new job and end the turn (a loop tick queued as the turn ends runs first, and
 the clear runs after it); in any other window tell the operator it needs a
 `/clear`. A lane opened by hand (`gh pr create` outside the driver) ran no
-verb and armed nothing: `python tools/cc/ship.py arm --why "<how>"` arms by
-hand on a clean tree. Shipping here, after the row, is the order that costs one
+verb and armed nothing: `python tools/cc/ship.py auto-merge` arms its pull
+request's auto-merge, and `python tools/cc/ship.py arm --why "<how>"` arms the
+own-clear by hand on a clean tree. Shipping here, after the row, is the order that costs one
 check cycle per lane and lands the row with the lane: a lane shipped mid-session
 leaves this commit's row parked on the seat's records ref, read by no banner
 until the next lane's push folds it in, or, where this handoff adds more than

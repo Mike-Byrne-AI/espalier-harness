@@ -72,7 +72,8 @@ Verbs (each stands alone and derives what it needs from git and gh):
                          the window; a held refusal rides the marker and the
                          lane to land first rides the brief
     arm [--why ...]      the same arm by hand, for a lane opened by hand
-                         (gh pr create ran no verb): a clean tree, a lane on
+                         (gh pr create ran no verb; its auto-merge is the
+                         auto-merge verb's): a clean tree, a lane on
                          origin; over a marker already armed for this session
                          it re-arms at HEAD when a pull by hand moved it (no
                          commit of the lane's own in the move), the brief
@@ -966,7 +967,8 @@ def _revert_lane_ruling_note(base: str, cwd: str, root: Path | None) -> None:
 
 
 def red_base_verdict(base: str, branch: str, prs: list[dict], cwd: str, *, ruled: str | None = None,
-                     root: Path | None = None) -> tuple[str | None, str | None]:
+                     root: Path | None = None,
+                     verbs: tuple[str, ...] = ("open", "handoff")) -> tuple[str | None, str | None]:
     """``(refusal, ruling)``: why `open` must not arm this lane now, or the
     line that says the dispatcher's ruling ``ruled`` (an ack id, given as
     :data:`BASE_RED_RULED_FLAG`) lets it land on the red base, with the
@@ -1001,12 +1003,15 @@ def red_base_verdict(base: str, branch: str, prs: list[dict], cwd: str, *, ruled
             return None, (f"{red} -- let through by the dispatcher's ruling {ruled} ({sender}'s gridlock ack "
                           f"naming run {run_id}: {text[:RULING_TEXT_CHARS]})")
         return (f"{red}. {BASE_RED_RULED_FLAG} {ruled}: {problem}. Nothing lands on a red base but the revert "
-                "(from a revert/ lane, which `open` lets through), a re-run where the red was a flake, or a "
-                "ruling that holds" + armed_words), None
-    return (f"{red}. Nothing lands on a red base but the revert (from a revert/ lane, which `open` lets "
+                f"(from a revert/ lane, which `{verbs[0]}` lets through), a re-run where the red was a flake, "
+                "or a ruling that holds" + armed_words), None
+    # The verbs that take the flag are the caller's: `auto-merge` names itself,
+    # since `open` cannot run on a pull request already open.
+    takes_flag = " or ".join(f"`{verb}`" for verb in verbs)
+    return (f"{red}. Nothing lands on a red base but the revert (from a revert/ lane, which `{verbs[0]}` lets "
             "through), a re-run where the red was a flake, or, where the failing test is outside every "
             "suspect's diff and reproduces at the last green base, the fix landed forward on the "
-            f"dispatcher's ruling: {BASE_RED_RULED_FLAG} <ack id> on `open` or `handoff`, the ack opening "
+            f"dispatcher's ruling: {BASE_RED_RULED_FLAG} <ack id> on {takes_flag}, the ack opening "
             f"`{RULING_HEAD}{run_id}` with --lane {branch}" + armed_words), None
 
 
@@ -2545,7 +2550,8 @@ def arm(why: str | None = None, dry_run: bool = False) -> int:
     """The handoff's last act by hand: arm the own-clear marker for this
     session, for a lane opened by hand (``gh pr create`` ran no verb, so no
     marker: air-work's #353, 2026-10-30, its window left past the threshold)
-    or a handoff whose arm did not run. The handoff's gates
+    or a handoff whose arm did not run. It arms no auto-merge: a lane opened
+    by hand arms that with :func:`auto_merge`. The handoff's gates
     (:func:`_own_clear_gate`) refuse by name here; a dirty tracked tree
     refuses first (the mod would hold the clear on it anyway, and this verb
     should not promise one); a lane that is not on origin refuses and names
@@ -3556,7 +3562,7 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
             pr = pr_for_branch(branch, "open")
             if pr is None:
                 raise Refused(f"the pull request was created ({url or 'no URL printed'}) but cannot be found by "
-                              f"branch yet: arm it by hand once it lists (gh pr merge <n> --auto --merge)")
+                              f"branch yet: once it lists, {AUTO_MERGE_VERB} on this branch arms it")
             number = str(pr["number"])
         merged = _arm_auto_merge(number, url, str(root))
     except Refused as exc:
@@ -3595,7 +3601,7 @@ def _arm_auto_merge(number: str, url: str, cwd: str) -> bool:
     rc, _, err = _gh("pr", "merge", number, "--auto", "--merge", cwd=cwd)
     if rc != 0:
         raise Refused(f"auto-merge did not arm for #{number} ({err.strip()}): once that is fixed, "
-                      f"{AUTO_MERGE_VERB} arms it -- {url}")
+                      f"{AUTO_MERGE_VERB} arms it, or merge by hand once the checks are green -- {url}")
     read = _gh_json("pr", "view", number, "--json", "state,mergedAt,autoMergeRequest", cwd=cwd)
     if isinstance(read, dict) and (str(read.get("state") or "").upper() == "MERGED" or read.get("mergedAt")):
         return True
@@ -3635,7 +3641,7 @@ def auto_merge(dry_run: bool = False, base_red_ruled: str | None = None) -> int:
     if not str(pr.get("headRefOid", "")).startswith(sha):
         raise Refused(f"push first: HEAD {sha[:7]} is not #{number}'s head {str(pr.get('headRefOid', ''))[:7]}")
     refusal, ruling = red_base_verdict(base, branch, _open_prs(str(root)) or [], str(root),
-                                       ruled=base_red_ruled, root=root)
+                                       ruled=base_red_ruled, root=root, verbs=("auto-merge",))
     if refusal:
         raise Refused(refusal)
     if ruling:
@@ -4931,7 +4937,8 @@ def build_parser() -> argparse.ArgumentParser:
                              "finish in the brief (only after the prompt router's threshold ask)")
     p_arm = sub.add_parser("arm", help="arm the own-clear marker for this session by hand: after a lane opened "
                                        "by hand (gh pr create), a handoff whose arm did not run, or a pull by "
-                                       "hand that moved HEAD under the armed marker (re-armed at HEAD)")
+                                       "hand that moved HEAD under the armed marker (re-armed at HEAD); "
+                                       "auto-merge is the auto-merge verb's")
     p_arm.add_argument("--why", help="why it is armed by hand (recorded in the marker)")
     p_arm.add_argument("--dry-run", action="store_true")
     return parser

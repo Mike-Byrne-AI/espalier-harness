@@ -132,6 +132,18 @@ class TestShipCommandBody:
         verbs = self._driver_verbs()
         assert listed == verbs, sorted(listed ^ verbs)
 
+    def test_step_threes_shape_count_is_its_bullets(self):
+        """Step 3 opens with how many shapes it lists, a count kept by hand:
+        each verb a lane adds there moves it, so the word is held to the
+        bullets beneath it."""
+        import re
+        step = self._text().split("## Step 3", 1)[1].split("\n## ", 1)[0]
+        said = re.search(r"^(\w+) shapes to recognise:", step, flags=re.MULTILINE)
+        assert said, "Step 3 says how many shapes it lists"
+        words = ("zero one two three four five six seven eight nine ten eleven twelve").split()
+        bullets = len(re.findall(r"^- \*\*", step, flags=re.MULTILINE))
+        assert said.group(1).lower() == words[bullets], (said.group(1), bullets)
+
     def test_no_bash_block_mutates_the_remote_except_through_the_driver(self):
         """The order the driver enforces (push before bind, bind at creation,
         strip then re-bind, catch up then pull then re-bind, check the tag
