@@ -17297,13 +17297,16 @@ class TestAStatementStartGapIsRead:
         assert_hook_allowed(_run_ps_guard(cmd, tmp_path))
 
     @pytest.mark.parametrize("cmd, joined", [
-        ("<# c #> b", " b"),
-        ("  <# c #> b", " b"),
-        ("a; <# c #> b", "a; b"),
-        ("a; <# c #><# d #> b", "a; b"),
-        ("a\n<# c #> b", "a\n b"),
-        ("$x = <# c #>b", "$x = b"),
-        ("return <# c #> b", "return b"),
+        # each comment the masker reads is one blank before the join runs
+        # (DEF-2071/2072, `TestABlockCommentIsOneBlank`), so a gap of blanks
+        # around it is left as it stands: the readers step over blanks
+        ("<# c #> b", "  b"),
+        ("  <# c #> b", "    b"),
+        ("a; <# c #> b", "a;   b"),
+        ("a; <# c #><# d #> b", "a;    b"),
+        ("a\n<# c #> b", "a\n  b"),
+        ("$x = <# c #>b", "$x =  b"),
+        ("return <# c #> b", "return   b"),
         # glued to `=`, the masker leaves the comment glued and the join
         # closes it on the raw half; in an argument that over-reads
         ("$x =<# c #> b", "$x = b"),
@@ -17313,10 +17316,10 @@ class TestAStatementStartGapIsRead:
         # DECLARED: a quote in it is an unterminated string to the masker,
         # which hands the command back raw, so nothing is joined
         ("$x =<# don't #> b", "$x =<# don't #> b"),
-        # a line comment, an argument's comment and a comment the masker
-        # does not open are left as they are
+        # a line comment and a comment the masker does not open are left as
+        # they are; an argument's comment is one blank, as everywhere
         ("a; # c\nb", "a; # c\nb"),
-        ("a b <# c #> d", "a b <# c #> d"),
+        ("a b <# c #> d", "a b   d"),
         ("a;x<# c #> b", "a;x<# c #> b"),
         # inside a string PowerShell re-parses, a gap that ends in it joins;
         # one whose comment runs past the closing quote is left whole
@@ -17354,6 +17357,99 @@ class TestAStatementStartGapIsRead:
     def test_a_braced_names_quote_hides_no_statement(self, tmp_path):
         cmd = "${a'b}; Get-Content .env; ${c'd}"
         assert_hook_denied(_run_ps_guard(cmd, tmp_path), contains_reason="Secret-path access blocked")
+
+
+class TestABlockCommentIsOneBlank:
+    """DEF-2071 and DEF-2072 (assign 2dff29, operator ruling d74016 (b)):
+    the masker kept a block comment's `<#`, `#>` and the words between them,
+    so a reader of either half of the scan pair took the comment's words for
+    operands and stopped at its `#>` (`Get-Content <# c #> .env`), and a
+    carrier's opener sat a comment away from its program (`iex <# c #> 'gc
+    .env'`); and the re-parse lookback inside the masker could not step over
+    the comment, so a re-parsed string's separators were blanked and its
+    second statement sat at no command position (`iex <# c #> 'Get-Date;
+    <delete>'`, the delete-wall twin, filed and closed here). Every spelling
+    below allows at origin/main fe5b478 and runs on Windows PowerShell 5.1
+    (driven with a harmless payload: a block comment is a blank there, its
+    words included). The masker's walk now records each comment it reads
+    (`_walk_powershell_spans`' ``blocks``): the pair makes each one blank in
+    both halves (`_ps_blocks_as_one_blank`) and the lookback reads the window
+    past them (`_ps_span_is_reparsed`'s ``blocks``). A comment the masker
+    does not open (glued to a word; inside a re-parsed string) is not in the
+    record, so DEF-2073's glued shape is not read here."""
+
+    @pytest.mark.parametrize("cmd", [
+        # DEF-2071: the carrier's opener a comment away from its program
+        "iex <# c #> 'Get-Content .env'",
+        "Invoke-Expression <# c #> 'gc .env'",
+        "iex <# a #><# b #> 'gc .env'",
+        "iex <# c #> 'Get-Date; Get-Content .env'",
+        'iex <# c #> "Get-Date; Get-Content .env"',
+        # DEF-2072: a comment in an operand slot
+        "Get-Content <# c #> .env",
+        "gc -Raw <# c #> .env",
+        "Get-Content -Path <# c #> .env",
+        "Get-Content <# c #>.env",
+    ])
+    def test_a_read_past_a_comment_is_refused(self, tmp_path, cmd):
+        assert_hook_denied(_run_ps_guard(cmd, tmp_path), contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("cmd", [
+        "iex <# c #> 'Get-Date; Remove-Item C:\\ -Recurse -Force'",
+        'iex <# c #> "Get-Date; Remove-Item C:\\ -Recurse -Force"',
+    ])
+    def test_a_delete_a_carrier_runs_past_a_comment_walls(self, tmp_path, cmd):
+        assert _delete_verdict(run_guard_from("PowerShell", cmd, tmp_path, None)) == "wall"
+
+    @pytest.mark.parametrize("cmd", [
+        # what a comment holds is comment; a comment in argument position
+        # leaves the word after it the argument it is; a glued opener opens
+        # nothing; a mention in a string stays a mention
+        "Write-Host hi <# c #> Get-Content .env",
+        "<# Get-Content .env #> Write-Host hi",
+        "Write-Output note<# x #> .env",
+        "Write-Host '<# c #> Get-Content .env'",
+        "Get-Content <# c #> README.md",
+        "iex <# c #> 'Get-Content README.md'",
+    ])
+    def test_what_is_not_a_read_stays_allowed(self, tmp_path, cmd):
+        assert_hook_allowed(_run_ps_guard(cmd, tmp_path))
+
+    @pytest.mark.parametrize("cmd, raw", [
+        ("Get-Content <# c #> .env", "Get-Content   .env"),
+        ("Get-Content <# c #>.env", "Get-Content  .env"),
+        ("iex <# a #><# b #> 'x'", "iex    'x'"),
+        ("Write-Output a <# x\n y #> b", "Write-Output a   b"),
+        # not opened by the masker: glued to a word, or inside a string
+        ("Write-Output a<# c #>b", "Write-Output a<# c #>b"),
+        ("Write-Host '<# c #>'", "Write-Host '<# c #>'"),
+        # an unterminated comment: the masker hands the command back raw
+        ("Get-Content <# c .env", "Get-Content <# c .env"),
+    ])
+    def test_the_pair(self, cmd, raw):
+        got, scan = _bash_patterns_module().powershell_scan_pair(cmd)
+        assert got == raw and len(scan) == len(got)
+
+    def test_the_lookback_reads_past_the_comments_it_is_given(self):
+        bp = _bash_patterns_module()
+        s = "iex <# c #> 'Get-Date; Get-Content .env'"
+        opener = s.index("'")
+        blocks = [(4, 11)]
+        # its answers are kept apart from the plain ones, whichever is asked
+        # first: a reader of the scan asks with no record
+        assert bp._ps_span_is_reparsed(s, opener) is False
+        assert bp._ps_span_is_reparsed(s, opener, blocks) is True
+        t = "iex <# d #> 'Get-Date; Get-Content .env'"
+        assert bp._ps_span_is_reparsed(t, opener, blocks) is True
+        assert bp._ps_span_is_reparsed(t, opener) is False
+
+    def test_a_text_without_an_opener_keeps_no_record(self):
+        bp = _bash_patterns_module()
+        blocks: list = []
+        bp._walk_powershell_spans("Get-Content a.txt # <# not a block", None, blocks)
+        assert blocks == []
+        bp._walk_powershell_spans("a <# b #> c <# d #>", None, blocks)
+        assert blocks == [(2, 9), (12, 19)]
 
 
 class TestShellOutReader:
