@@ -13490,7 +13490,7 @@ _PS_CMD_REMOVE_OPENER_RE = re.compile(
 )
 #: Where the outer shell ends the statement cmd is started in: its statement
 #: separators and a group's close. A redirection is the outer shell's and is
-#: stepped over (`_cmd_outer_words`).
+#: stepped over (`_cmd_outer_words_to`).
 _CMD_OUTER_STOP_BASH = frozenset(";&|\n\r()`")
 _CMD_OUTER_STOP_PS = frozenset(";&|\n\r(){}")
 #: cmd's delete builtins, by the verb they are: `rmdir` is `rd`, `erase` is
@@ -13516,8 +13516,8 @@ def _cmd_program_at(text: str, at: int) -> int | None:
     after its ``/c`` or ``/k`` switch (``//c`` from Git Bash, glued
     ``/c"..."`` too), past any other switches (``/d``, ``/s``, ``/v:on``).
     None when it carries neither -- an interactive cmd runs nothing it was
-    handed. The one switch walk for the harness-variable check
-    (`write_guard._cmd_program`, DEF-1070) and the delete reader below. A
+    handed. The one switch walk, for `iter_cmd_programs`, the program
+    read of the harness-variable check (DEF-1070) and the delete reader. A
     switch ends at a blank, a quote or the next ``/``: cmd reads a glued
     run (``/d/c``) as two switches, and a walk that skipped to the blank
     swallowed the ``/c`` and read no program at all (the code review).
@@ -14022,13 +14022,14 @@ def ps_start_process_ps_programs(raw: str, scan: str) -> Iterator[str]:
             yield program
 
 
-def _cmd_outer_words(text: str, start: int, stop: int, *, bash: bool) -> list[str]:
+def _cmd_outer_words_to(text: str, start: int, stop: int, *, bash: bool) -> tuple[list[str], int]:
     """The words the outer shell hands cmd after its ``/c``, read from
     ``start`` to the outer statement's end (or ``stop``) by that shell's
     quoting -- Bash: a backslash escapes outside quotes and before ``$ ` "
     \\`` inside double ones; PowerShell: the backtick -- with a redirection
     (``2>nul``, ``>$null``, ``2>&1``) stepped over, its target included. An
-    unterminated quote runs to the end. Linear: one pass."""
+    unterminated quote runs to the end. Linear: one pass. With the words,
+    the offset where the read stopped: the statement's end, or ``stop``."""
     stops = _CMD_OUTER_STOP_BASH if bash else _CMD_OUTER_STOP_PS
     esc = "\\" if bash else "`"
     words: list[str] = []
@@ -14093,7 +14094,7 @@ def _cmd_outer_words(text: str, start: int, stop: int, *, bash: bool) -> list[st
         i += 1
     if cur or have:
         words.append("".join(cur))
-    return words
+    return words, min(i, stop)
 
 
 def _cmd_statements(program: str) -> list[list[str]]:
@@ -14225,6 +14226,28 @@ def _cmd_statement_targets(
     and a ``do``, ``else`` or ``call`` before the verb are stepped over.
     ``recursive_only=False`` is the zone reader's reading: every delete, its
     operands as spelled (a ``del`` pattern included), recursive or not."""
+    k = _cmd_statement_head(words)
+    if k >= len(words):
+        return
+    head = words[k].lstrip("@")
+    low = head.lower()
+    args = words[k + 1:]
+    base = re.split(r"[/\\]", low)[-1]
+    if base in ("cmd", "cmd.exe") and depth < _CMD_NEST_MAX:
+        program = _cmd_nested_program(args)
+        if program is not None:
+            for stmt in _cmd_statements(program):
+                yield from _cmd_statement_targets(stmt, depth + 1, recursive_only)
+        return
+    yield from _cmd_verb_targets(low, args, recursive_only)
+
+
+def _cmd_statement_head(words: list[str]) -> int:
+    """The index of a cmd statement's verb in its ``words``: ``if``
+    conditions and a ``do``, ``else`` or ``call`` before it stepped over
+    (``len(words)`` where none is left). The one prefix walk of both cmd
+    readers, the delete reader's and the harness-variable check's
+    (`write_guard._cmd_set_launches_claude`, DEF-1071 wave 1)."""
     k = 0
     while k < len(words):
         low = words[k].lower().lstrip("@")
@@ -14245,21 +14268,24 @@ def _cmd_statement_targets(
                 k += 1                    # `a==b`, one word
             continue
         break
-    if k >= len(words):
-        return
-    head = words[k].lstrip("@")
-    low = head.lower()
-    args = words[k + 1:]
+    return k
+
+
+def _cmd_nested_program(args: list[str]) -> str | None:
+    """The program a cmd that a cmd statement starts runs, from the words
+    after its head: the rest after its ``/c`` or ``/k`` (glued too), joined
+    as cmd's command line; None where it carries neither."""
+    for n, w in enumerate(args):
+        if w.lower().startswith(("/c", "/k", "//c", "//k")):
+            rest = w.lstrip("/")[1:]
+            return " ".join(([rest] if rest else []) + args[n + 1:])
+    return None
+
+
+def _cmd_verb_targets(low: str, args: list[str], recursive_only: bool) -> Iterator[list[str]]:
+    """The delete verb ``low`` (a statement's head, lowered) with its
+    ``args``: `_cmd_statement_targets`'s reading of one delete."""
     base = re.split(r"[/\\]", low)[-1]
-    if base in ("cmd", "cmd.exe") and depth < _CMD_NEST_MAX:
-        for n, w in enumerate(args):
-            if w.lower().startswith(("/c", "/k", "//c", "//k")):
-                rest = w.lstrip("/")[1:]
-                program = " ".join(([rest] if rest else []) + args[n + 1:])
-                for stmt in _cmd_statements(program):
-                    yield from _cmd_statement_targets(stmt, depth + 1, recursive_only)
-                return
-        return
     if base in ("rm", "rm.exe"):
         recursive, done_opts, targets = False, False, []
         for w in args:
@@ -14316,38 +14342,100 @@ def iter_cmd_recursive_removes(
     every delete cmd runs, for the Bash zone reader."""
     if "cmd" not in scan.lower():
         return
+    for at, program in iter_cmd_programs(raw, scan, bash=bash):
+        for stmt in _cmd_statements(program):
+            for targets in _cmd_statement_targets(stmt, 0, recursive_only):
+                yield at, targets
+
+
+def _cmd_line_unquoted(line: str) -> str:
+    """cmd's own reading of a ``/c`` command line it receives as typed: one
+    that opens with a quote loses that quote and the line's last one, the
+    text after it kept (cmd's documented rule when ``/s`` or its narrow
+    keep-the-quotes case does not apply, and the common case). A line
+    rejoined from the outer shell's words opens with one only where its
+    first word does (a quote the outer shell handed on)."""
+    s = line.lstrip(" \t")
+    if not s.startswith('"'):
+        return line
+    last = s.rfind('"')
+    return s[1:last] + s[last + 1:] if last > 0 else s[1:]
+
+
+def iter_cmd_programs(
+    raw: str, scan: str, *, bash: bool, to_statement_end: bool = False,
+) -> Iterator[tuple[int, str]]:
+    """``(offset, program)`` for every program cmd.exe is handed on
+    ``scan``: the text cmd receives, for `_cmd_statements` to split. The
+    one program read of both cmd readers, the delete reader
+    (`iter_cmd_recursive_removes`) and the harness-variable check
+    (`write_guard._cmd_set_launches_claude`, DEF-1071 wave 1). The opener
+    is matched at a command position of the outer shell, the program read
+    from ``raw`` at the same offsets (one length; a mismatch reads the
+    scan): the outer shell's words up to its statement's end or the next
+    opener (so a flood of openers is read in one pass), rejoined as cmd's
+    command line; on PowerShell, the stop-parsing token's text verbatim to
+    a pipe or a line break, as PowerShell hands it on, and a Start-Process
+    argument list; each through cmd's own quote rule, once, here
+    (`_cmd_line_unquoted`).
+    ``to_statement_end`` reads each program past a later opener to its
+    statement's end and skips an opener inside a program already read, so
+    the reading stays one pass: the harness-variable check, whose variable a
+    cmd started inside the program inherits, reads that one as a statement
+    of the program. ``offset`` is where the program begins; offsets
+    ascend."""
+    if "cmd" not in scan.lower():
+        return
     if len(raw) != len(scan):
         raw = scan
     opener_re = _CMD_REMOVE_OPENER_RE if bash else _PS_CMD_REMOVE_OPENER_RE
     openers = list(opener_re.finditer(scan))
+    read_to = 0
     for k, m in enumerate(openers):
+        if m.start() < read_to:
+            continue                      # inside a program already read whole
         start = _cmd_program_at(raw, m.end())
         if start is None and not bash:
             # Start-Process hands cmd its program as an argument list, not in
             # the statement's own words (DEF-1071 (e)): read that line
             got = start_process_cmd_line(raw, m)
             if got is not None:
-                for stmt in _cmd_statements(got[1]):
-                    for targets in _cmd_statement_targets(stmt, 0, recursive_only):
-                        yield got[0], targets
+                yield got[0], _cmd_line_unquoted(got[1])
             continue
         if start is None:
             continue
-        stop = max(start, openers[k + 1].start()) if k + 1 < len(openers) else len(raw)
-        words = _cmd_outer_words(raw, start, stop, bash=bash)
+        if to_statement_end or k + 1 == len(openers):
+            stop = len(raw)
+        else:
+            stop = max(start, openers[k + 1].start())
+        if not bash and raw[m.end():start].lstrip(" \t").startswith(_PS_STOP_PARSING):
+            # behind the stop-parsing token PowerShell hands cmd the rest of
+            # the line as typed, its `;` and `&&` included, up to a pipe
+            end = start
+            while end < stop and raw[end] not in "|\r\n":
+                end += 1
+            if to_statement_end:
+                read_to = end
+            yield start, _cmd_line_unquoted(raw[start:end])
+            continue
+        words, end = _cmd_outer_words_to(raw, start, stop, bash=bash)
+        if to_statement_end:
+            read_to = end
         if not words:
             continue
         # what the outer shell hands cmd, rejoined as its command line: the
         # first word is the program cmd strips its quotes from; a later word
-        # holding a blank is one quoted argument
-        # a word holding a blank or any of cmd's own metacharacters is one
-        # quoted argument: bare, `_cmd_statements` would split `R&D\\x.py` at
-        # the `&` (the quoted-operand cut, driven 2026-10-07)
-        program = " ".join(
-            [words[0]] + ['"' + w + '"' if any(ch in w for ch in " \t&|()<>^;,") else w for w in words[1:]])
-        for stmt in _cmd_statements(program):
-            for targets in _cmd_statement_targets(stmt, 0, recursive_only):
-                yield start, targets
+        # holding a blank is one quoted argument, and for the delete reader
+        # so is one holding any of cmd's own metacharacters: bare,
+        # `_cmd_statements` would split `R&D\\x.py` at the `&` (the
+        # quoted-operand cut, driven 2026-10-07). The harness-variable check
+        # (``to_statement_end``) quotes for a blank alone: Git Bash and
+        # Windows PowerShell 5.1 hand cmd a separator word bare (`cmd //c
+        # echo a \\& echo b` prints both lines, the code review, driven), and
+        # a split there reads toward the deny.
+        meta = " \t" if to_statement_end else " \t&|()<>^;,"
+        yield start, _cmd_line_unquoted(" ".join(
+            [words[0]] + ['"' + w + '"' if any(ch in w for ch in meta) else w for w in words[1:]]))
 
 
 def iter_cmd_remove_targets(command: str) -> Iterator[list[str]]:

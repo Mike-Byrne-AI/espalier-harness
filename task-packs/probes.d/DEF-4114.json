@@ -3,8 +3,9 @@
  "subject": "tests/test_hooks_start_on_a_kept_helper.py",
  "cmd": null,
  "open_value": null,
- "why_not": "a timing miss on a loaded windows-latest runner under xdist: no one-liner on this tree reads it, and a drive on the Air does not load the runner it misses on; the oracle is the leg's verdict across runs, read as a census of the HookSpawnRetried warnings in the Windows job logs (2 of 8 runs red, 2 saved, 2026-11-11 05:12Z to 2026-11-12 00:25Z); the fix lands with that census re-read over the next 8 portability runs and a drive that times the staged let-through spawn on Windows",
- "row_sha": "1d3d5812ccb4",
- "text_sha": "e550c32f8216",
- "verified_2026_11_11": "OPEN (filed 2026-11-11; probe driven at filing)"
+ "why_not": "a timing miss on a loaded 4-vCPU windows-latest runner under xdist: no one-liner on this tree reads it, and a drive on a 24-core box does not load as that runner does (2026-11-12: no spawn there reached 4.0 s); the oracle is the leg's verdict across runs, read as a census of the HookSpawnRetried warnings and budget refusals in the Windows job logs, counted by root; the fix lands with that census re-read over the next 8 portability runs",
+ "row_sha": "9795cdd417a5",
+ "text_sha": "a64f17cdaf5b",
+ "verified_2026_11_11": "OPEN (filed 2026-11-11; probe driven at filing)",
+ "verified_2026_11_12": "STILL_OPEN (re-pinned value unchanged on 2026-11-12: the dispatcher's census (04e3f8: 20 misses in 15 runs, 12 in the kept-helper file) and its ruled fix added, the row's fix shape replaced by that ruling; the claim stands, open until the pre-registered 8-run re-read) [changed: anchor, text, why not]"
 }

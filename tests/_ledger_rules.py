@@ -417,9 +417,6 @@ BASIS_NAMES_RE = re.compile("|".join(BASIS_NAMES), re.IGNORECASE)
 #: calibration commit did not hold live: a row filed since carries the
 #: sentence, so the set only shrinks.
 GUARD_ROWS_RULED_WITHOUT_A_BASIS: dict[str, str] = {
-    "DEF-1071": ("ruling 06a10a: wave 2 is a declared limit, and the row stays live for wave 1's own "
-                 "engineering; a nested-session launch is not one of the three kept jobs, and no real "
-                 "session recorded the slip"),
     "DEF-682": ("ruling 90a8cc: the gap is declined and the row stays live in the ledger's declared-limit "
                 "form, since neither verb takes a decline; the sync advisory is not one of the three kept "
                 "jobs, and the transcripts it counts hold none of its own case"),
