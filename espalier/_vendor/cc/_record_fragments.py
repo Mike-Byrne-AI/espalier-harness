@@ -87,13 +87,15 @@ except ImportError:  # fail-open: ok deliberate -- tools/cc is not on sys.path (
 #: The fragment directories, repo-relative with forward slashes, no trailing
 #: slash. ``FRAGMENT_DIRS`` spells them with one, the form the record-file
 #: lists use for a directory entry. The forward ledger's two (its rows and its
-#: probes) are defined with the ledger section below.
+#: probes) are defined with the ledger section below, and so is its third: the
+#: lineage files, one per row filed as a sibling of another, naming its parents.
 SESSION_LOG_DIR = "memory/session-log.d"
 CHANGELOG_DIR = "changelog.d"
 LEDGER_DIR = "task-packs/ledger.d"
 PROBES_DIR = "task-packs/probes.d"
+LINEAGE_DIR = "task-packs/lineage.d"
 FRAGMENT_DIRS: tuple[str, ...] = (SESSION_LOG_DIR + "/", CHANGELOG_DIR + "/",
-                                  LEDGER_DIR + "/", PROBES_DIR + "/")
+                                  LEDGER_DIR + "/", PROBES_DIR + "/", LINEAGE_DIR + "/")
 
 MEMORY_FILE = "ESPALIER_MEMORY.md"
 CHANGELOG_FILE = "CHANGELOG.md"
@@ -802,6 +804,8 @@ LEDGER_FRAGMENTS_KEY = "ledger_fragments"
 _ID_SHAPE = r"[A-Z]{2,5}-\d+[a-z]*"
 LEDGER_NAME_RE = re.compile(rf"^({_ID_SHAPE})\.md$")
 PROBE_NAME_RE = re.compile(rf"^({_ID_SHAPE})\.json$")
+#: A lineage file's name: the child row's id, the probe files' spelling.
+LINEAGE_NAME_RE = re.compile(rf"^({_ID_SHAPE})\.json$")
 #: The one other name either directory may hold: its own README, which no
 #: reader takes as a record and no gate calls a stray.
 DIRECTORY_README = "README.md"
@@ -828,7 +832,7 @@ def never_a_record(name: str) -> bool:
             or name in _OS_DROPPINGS or name.lower() in _DIRECTORY_DOCS)
 #: The name a writer gives a file under each fragment directory: a dated name
 #: for the Session Log and the changelog, the row's or probe's id for the
-#: ledger's two. The record-file lists' copies (``ci_guard``, ``_hook_utils``,
+#: ledger's two, and the child row's id for its lineage. The record-file lists' copies (``ci_guard``, ``_hook_utils``,
 #: ``record_merge``) read one pattern per directory and are pinned to these,
 #: so another tool's file in a directory of the same name is not a record file.
 FRAGMENT_NAMES: dict[str, "re.Pattern[str]"] = {
@@ -836,6 +840,7 @@ FRAGMENT_NAMES: dict[str, "re.Pattern[str]"] = {
     CHANGELOG_DIR + "/": CHANGELOG_NAME_RE,
     LEDGER_DIR + "/": LEDGER_NAME_RE,
     PROBES_DIR + "/": PROBE_NAME_RE,
+    LINEAGE_DIR + "/": LINEAGE_NAME_RE,
 }
 #: ``generate_ledger_regions._SECTION_HEADING``.
 _SECTION_HEADING_RE = re.compile(r"^### (§C\d+)\b")
@@ -853,10 +858,12 @@ _ID_PARTS_RE = re.compile(r"^([A-Z]+)-(\d+)([a-z]*)$")
 def is_ledger_record(rel: str) -> bool:
     """Whether a repo-relative path (either slash) is the forward ledger's
     record wherever a row lives: the ledger, its roster, or a file under one of
-    their two directories. The one answer for a rule that exempts (or reads)
-    the ledger by name, so a row in its own file is held the same way."""
+    their two directories or the lineage files'. The one answer for a rule that
+    exempts (or reads) the ledger by name, so a row in its own file is held the
+    same way."""
     rel = rel.replace("\\", "/")
-    return rel in (LEDGER_FILE, PROBES_FILE) or rel.startswith((LEDGER_DIR + "/", PROBES_DIR + "/"))
+    return rel in (LEDGER_FILE, PROBES_FILE) or rel.startswith((LEDGER_DIR + "/", PROBES_DIR + "/",
+                                                                 LINEAGE_DIR + "/"))
 
 
 def is_dated_fragment(rel: str) -> bool:
@@ -1084,6 +1091,55 @@ def ledger_fragment_dir(ledger: Path) -> Path:
 def probe_fragment_dir(probes: Path) -> Path:
     """The probe-file directory beside a roster file."""
     return probes.parent / PROBES_DIR.rsplit("/", 1)[1]
+
+
+def lineage_fragment_dir(ledger: Path) -> Path:
+    """The lineage-file directory beside a ledger file, whichever way the
+    ledger keeps its rows: one ``<child id>.json`` for each row filed as a
+    sibling of another, written by ``ledger_row.py file`` alone and never by a
+    strike or a repin, so a chain survives the strike of a row in its middle."""
+    return ledger.parent / LINEAGE_DIR.rsplit("/", 1)[1]
+
+
+def lineage_from_texts(texts: "Sequence[tuple[str, str | None]]") -> tuple[dict[str, tuple[str, ...]], list[str]]:
+    """``{child id: (parent id, ...)}`` from ``(name, text)`` pairs, and the
+    problems: a name that is not an id, a file that cannot be read or does not
+    parse, an ``id`` field that is not its name, a parent list that is not a
+    list of ids. A problem file is named and left out; its child reads as a
+    row with no recorded parent, never as a refusal (the readers advise)."""
+    import json  # here, not at the top: _record_fragments.py keeps it off its Session Log readers' path
+    out: dict[str, tuple[str, ...]] = {}
+    problems: list[str] = []
+    for name, text in texts:
+        m = LINEAGE_NAME_RE.match(name)
+        if not m:
+            if not never_a_record(name):
+                problems.append(f"{LINEAGE_DIR}/{name}: not named <id>.json")
+            continue
+        if text is None:
+            problems.append(f"{LINEAGE_DIR}/{name}: cannot be read as UTF-8")
+            continue
+        try:
+            data = json.loads(text[1:] if text.startswith(_BOM) else text)
+        except ValueError as exc:
+            problems.append(f"{LINEAGE_DIR}/{name}: not JSON ({exc})")
+            continue
+        parents = data.get("sibling_of") if isinstance(data, dict) else None
+        if not isinstance(data, dict) or data.get("id") != m.group(1):
+            problems.append(f"{LINEAGE_DIR}/{name}: its id field is not {m.group(1)}")
+            continue
+        if (not isinstance(parents, list) or not parents
+                or not all(isinstance(p, str) and LINEAGE_NAME_RE.match(p + ".json") for p in parents)):
+            problems.append(f"{LINEAGE_DIR}/{name}: sibling_of is not a list of row ids")
+            continue
+        out[m.group(1)] = tuple(parents)
+    return out, problems
+
+
+def lineage_at(ledger: Path) -> tuple[dict[str, tuple[str, ...]], list[str]]:
+    """The lineage beside the ledger at ``ledger`` (``lineage_from_texts``);
+    no directory is no lineage, and no problem."""
+    return lineage_from_texts(fragment_texts(lineage_fragment_dir(ledger)))
 
 
 def ledger_view_at(ledger: Path, ledger_text: str | None = None) -> LedgerView:

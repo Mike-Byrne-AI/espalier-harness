@@ -106,6 +106,8 @@ tests/fixtures/pre_pack_tp104/*.py.txt -text
 # file's own row went with the file at the fold (2026-10-14).
 task-packs/ledger.d/*.md text eol=lf
 task-packs/probes.d/*.json text eol=lf
+# And a row's lineage file (2026-11-12), written the same way in either mode.
+task-packs/lineage.d/*.json text eol=lf
 # Two machines' lanes each prepend a bullet under `## [Unreleased]`, so the
 # changelog conflicts whenever two lanes land between syncs (three times on
 # 2026-10-05 alone). `union` keeps both sides' lines in a LOCAL merge, which is

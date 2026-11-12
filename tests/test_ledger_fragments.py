@@ -1610,7 +1610,14 @@ class TestTheFilesAreTrackedAndShip:
     ``task-packs/*``, so without the two directory lines every file was
     silently untracked while ``file`` reported success (measured 2026-10-13)."""
 
-    _SHAPES = ("task-packs/ledger.d/DEF-9.md", "task-packs/probes.d/DEF-9.json")
+    _SHAPES = ("task-packs/ledger.d/DEF-9.md", "task-packs/probes.d/DEF-9.json", "task-packs/lineage.d/DEF-9.json")
+
+    def test_the_shapes_cover_every_record_directory_under_task_packs(self, frag):
+        """Dies to: a record directory the loader gains and this hand-kept list
+        does not, whose files the two blocks below would then never check
+        (failure-mode review: lineage.d's re-include went unpinned)."""
+        assert {rel.rsplit("/", 1)[0] + "/" for rel in self._SHAPES} == {
+            d for d in frag.FRAGMENT_DIRS if d.startswith("task-packs/")}
 
     @staticmethod
     def _ignored(repo: Path, rel: str) -> bool:
@@ -1655,7 +1662,7 @@ class TestTheFilesAreTrackedAndShip:
 
 _CENSUS_ROOTS = ("tools/cc", "scripts", "espalier", "tests")
 #: The records by name: the two files and the two directories.
-_RECORD_NAMES = ("FORWARD_LEDGER.md", "LEDGER_PROBES.json", "ledger.d", "probes.d")
+_RECORD_NAMES = ("FORWARD_LEDGER.md", "LEDGER_PROBES.json", "ledger.d", "probes.d", "lineage.d")
 _VERB_MODULES = ("ledger_row", "generate_ledger_regions", "check_ledger_probes", "record_merge")
 #: An expression that names a ledger record (a path, a constant such as
 #: ``_LEDGER`` or ``PROBES``, a variable named for one), never a module's own
@@ -2067,6 +2074,7 @@ class TestTheRecordPredicates:
         ("task-packs/LEDGER_PROBES.json", True, False),
         ("task-packs/ledger.d/DEF-9.md", True, False),
         ("task-packs\\probes.d\\DEF-9.json", True, False),
+        ("task-packs/lineage.d/DEF-9.json", True, False),
         ("memory/session-log.d/2026-10-13-120000-air.md", False, True),
         ("changelog.d/2026-10-13-lane.md", False, True),
         ("task-packs/TP-1-x.md", False, False),

@@ -1960,7 +1960,10 @@ each other class for class, and a program handed to the other shell
 PowerShell) is read with that shell's roster. A program a carrier runs out
 of a string is read as a program too: Bash `eval`, `watch`, `script -c` and
 `su -c`; PowerShell `Invoke-Expression` / `iex`, `pwsh -Command`, `cmd /c`,
-`[scriptblock]::Create` and a `$(...)` subexpression, including a string
+`[scriptblock]::Create`, a `$(...)` subexpression (as an argument or inside
+an expandable string) and an `@(...)` array subexpression outside every
+string (`$a = @(Get-Content .env)`; an array of strings, `@('gc .env')`, is
+a value, and a nest of `@(` spends none of the levels a nest of `$(` does), including a string
 bound to a variable earlier in the same command (`$c = 'gc .env';
 iex $c`), and the program a `Start-Process` of powershell, pwsh, bash or sh
 carries after the started shell's `-Command` or `-c`. A carrier
@@ -2282,9 +2285,10 @@ validates the result:
 - Any non-allowlisted write in a protected zone → integrity drift check
 - The record files (`ESPALIER_MEMORY.md`, `task-packs/FORWARD_LEDGER.md`,
   `task-packs/LEDGER_PROBES.json`, and the record files kept one per change under
-  four fragment directories: `memory/session-log.d/`, `changelog.d/`, and the
+  five fragment directories: `memory/session-log.d/`, `changelog.d/`, the
   ledger's rows and probes under `task-packs/ledger.d/` and
-  `task-packs/probes.d/`, a probe file's JSON included) → scans the written file for a leftover
+  `task-packs/probes.d/`, a probe file's JSON included, and a row's lineage
+  under `task-packs/lineage.d/`) → scans the written file for a leftover
   merge-conflict marker (a line opening with git's seven-character head and
   a space, or nothing). The finding names the file and the lines on the tool
   result, like every finding of this hook (below), and the catch belongs at
