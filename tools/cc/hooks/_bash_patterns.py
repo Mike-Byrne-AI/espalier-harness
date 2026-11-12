@@ -12027,18 +12027,44 @@ def _ps_stage_literals(segment: str) -> list[tuple[str, str]]:
     return [(kind, body) for _, kind, body in found]
 
 
-def _ps_program_literal_before_pipe(segment: str) -> str:
-    """The PowerShell program a piped shell receives: every literal of the
-    stage (`_ps_stage_literals`), one per line as PowerShell pipes them, a
-    here-string raw and a quoted string through `_ps_unescape_program`; else
+def _ps_piped_program_readings(segment: str) -> list[str]:
+    """Every reading of the program a shell piped to on the PowerShell leg
+    receives, from the literals of the stage before the pipe
+    (`_ps_stage_literals`), each literal by `_ps_bash_readings`: the literals
+    joined one per line, by kind and folded, and, when the stage holds more
+    than one, each literal alone, both ways. A wall on any reading is the
+    wall. The BOM and every CR are taken out: Windows PowerShell 5.1 hands a
+    native pipe its text behind a BOM and ends each element in CRLF, and the
+    line a BOM fails or a CR ends is still read here, so the judgment never
+    rests on what the shell would fail to run. The CR out of the separator
+    is a bare LF, which a backslash or a comment at an element's end carries
+    into the next element (`'echo \\', '<a delete> #' | bash`: a backslash
+    before CR LF escapes the CR, so the next element runs), and the joined
+    reading alone hid the delete the first cut walled (batch review, driven
+    ALLOWING); each literal alone keeps every verdict a literal has by
+    itself (`test_the_stage_reads_each_literal_by_itself`). A stage with no
+    literal is no program text this reader can see: nothing."""
+    pairs = [_ps_bash_readings(kind, body) for kind, body in _ps_stage_literals(segment)]
+    candidates = ["\n".join(p[0] for p in pairs), "\n".join(p[1] for p in pairs)]
+    if len(pairs) > 1:
+        candidates += [text for pair in pairs for text in pair]
+    programs: list[str] = []
+    for candidate in candidates:
+        text = candidate.replace("﻿", "").replace("\r", "")
+        if text.strip() and text not in programs:
+            programs.append(text)
+    return programs
+
+
+def _ps_program_literals_before_pipe(segment: str) -> list[str]:
+    """The PowerShell programs a piped PowerShell shell may receive: the
+    readings of `_ps_piped_program_readings`, so a double-quoted literal's
+    `''` is read as the two characters the shell gets beside the fold (the
+    batch review: `"Write-Host ''; <a hook write>; Write-Host ''" | pwsh
+    -Command -` drew no tier, the fold reading the write as quoted); else
     the whole segment (nothing literal to extract -- `Get-Content x | pwsh -c
     -` -- and a re-scan of the segment finds nothing, correctly)."""
-    literals = _ps_stage_literals(segment)
-    if not literals:
-        return segment
-    return "\n".join(
-        body if kind[0] == "@" else _ps_unescape_program(body) for kind, body in literals
-    )
+    return _ps_piped_program_readings(segment) or [segment]
 
 
 def _ps_bash_readings(kind: str, body: str) -> tuple[str, str]:
@@ -12065,19 +12091,8 @@ def _ps_bash_readings(kind: str, body: str) -> tuple[str, str]:
 
 def _ps_posix_programs_before_pipe(segment: str) -> list[str]:
     """The Bash program a POSIX shell piped to on the PowerShell leg receives
-    (DEF-3075), in each of its readings (`_ps_bash_readings`): every literal
-    of the stage, one per line. The BOM and every CR are taken out: Windows
-    PowerShell 5.1 hands a native pipe its text behind a BOM and with CRLF
-    line ends, and the line a BOM fails or a CR ends is still read here, so
-    the judgment never rests on what the shell would fail to run. A stage
-    with no literal is no program text this reader can see: nothing."""
-    pairs = [_ps_bash_readings(kind, body) for kind, body in _ps_stage_literals(segment)]
-    programs: list[str] = []
-    for side in (0, 1):
-        text = "\n".join(p[side] for p in pairs).replace("\ufeff", "").replace("\r", "")
-        if text.strip() and text not in programs:
-            programs.append(text)
-    return programs
+    (DEF-3075), in each of its readings (`_ps_piped_program_readings`)."""
+    return _ps_piped_program_readings(segment)
 
 
 def _ps_shell_program_bodies(command: str, scan: str) -> Iterator[str]:
@@ -18284,8 +18299,8 @@ def _candidate_paths_from_powershell(command: str, _depth: int = 0) -> list[str]
     for head, segment in _ps_stdin_program_bodies(raw, command):
         if head in _PS_STDIN_SHELL_HEADS:
             if _depth < _PS_STDIN_MAX_DEPTH:
-                program = _ps_program_literal_before_pipe(segment)
-                paths.extend(_candidate_paths_from_powershell(program, _depth + 1))
+                for program in _ps_program_literals_before_pipe(segment):
+                    paths.extend(_candidate_paths_from_powershell(program, _depth + 1))
             continue
         for rx in _STDIN_PROGRAM_WRITE_RES[_PS_STDIN_DISPATCH[head]]:
             for om in rx.finditer(segment):
@@ -18453,8 +18468,8 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
     for head, segment in _ps_stdin_program_bodies(raw, scan):
         if head in _PS_STDIN_SHELL_HEADS:
             if _depth < _PS_STDIN_MAX_DEPTH:
-                program = _ps_program_literal_before_pipe(segment)
-                out.extend(iter_ps_removed_or_relocated_operands(program, _depth + 1))
+                for program in _ps_program_literals_before_pipe(segment):
+                    out.extend(iter_ps_removed_or_relocated_operands(program, _depth + 1))
             continue
         out.extend(_program_effects(_PS_STDIN_DISPATCH[head], segment))
     if _depth < _PS_STDIN_MAX_DEPTH:

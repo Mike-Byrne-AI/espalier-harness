@@ -12261,11 +12261,79 @@ class TestAStringPipedIntoAPosixShellMeetsItsDirectFormsTiers:
         _id, command = row
         assert _ps_tier_verdicts(command, self._project(tmp_path)) == frozenset()
 
+    #: An element that ends in a backslash or in a comment ending in one,
+    #: before the program: PowerShell ends each element in CRLF, so the next
+    #: element runs, and the joined reading (the CR out) spliced it into the
+    #: first (batch review, driven ALLOWING against a first cut that walled).
+    #: ``{p}`` is the program.
+    _ELEMENT_ENDS = [
+        ("backslash", "'echo \\', '{p} #' | bash"),
+        ("backslash-dq", "\"echo \\\", \"{p} #\" | bash"),
+        ("backslash-write-output", "Write-Output 'echo \\' '{p} #' | bash"),
+        ("backslash-here-strings", "@'\necho \\\n'@, @'\n{p} #\n'@ | bash"),
+        ("comment-backslash", "'echo ok #\\', '{p}' | bash"),
+    ]
+    _ELEMENT_CASES = [(f"{sid}-{pid}", pipe, program)
+                      for (sid, pipe), (pid, program) in itertools.product(_ELEMENT_ENDS, _PROGRAMS)]
+
+    @pytest.mark.parametrize("case", _ELEMENT_CASES, ids=[c[0] for c in _ELEMENT_CASES])
+    def test_an_elements_end_hides_no_next_element(self, case, tmp_path):
+        _id, pipe, program = case
+        project = self._project(tmp_path)
+        assert _ps_tier_verdicts(pipe.format(p=program), project) == _ps_tier_verdicts(
+            f"bash -c '{program}'", project)
+
+    @staticmethod
+    def _literal_source(kind: str, body: str) -> str:
+        if kind[0] == "@":
+            return f"{kind}\n{body}\n{kind[1]}@"
+        quote = "'" if kind == "sq" else '"'
+        return f"{quote}{body}{quote}"
+
+    _MULTI_LITERAL_PIPES = [row for row in _PIPES if row[0] in {
+        "array-program-first", "array-program-last", "write-output-two-args", "two-here-strings",
+    }] + _ELEMENT_ENDS
+    _MULTI_LITERAL = [(f"{sid}-{pid}", pipe, program)
+                      for (sid, pipe), (pid, program) in itertools.product(_MULTI_LITERAL_PIPES, _PROGRAMS)]
+
+    @pytest.mark.parametrize("case", _MULTI_LITERAL, ids=[c[0] for c in _MULTI_LITERAL])
+    def test_the_stage_reads_each_literal_by_itself(self, case, tmp_path):
+        """The property the batch review asked for in place of a row per
+        hole: a stage of several literals draws every tier each of its
+        literals draws piped alone, so the joined reading can never lose a
+        verdict a single literal has."""
+        _id, pipe, program = case
+        bp = _bash_patterns_module()
+        command = pipe.format(p=program)
+        segment = command.rsplit("|", 1)[0]
+        literals = bp._ps_stage_literals(segment)
+        assert len(literals) > 1, command
+        project = self._project(tmp_path)
+        whole = _ps_tier_verdicts(command, project)
+        for kind, body in literals:
+            alone = _ps_tier_verdicts(f"{self._literal_source(kind, body)} | bash", project)
+            assert alone <= whole, (command, kind, body)
+
+    def test_the_producer_hands_each_head_to_its_own_reader(self):
+        """`_ps_stdin_program_bodies` yields the POSIX heads with
+        ``posix=True`` and never without it, so the interpreter dispatch,
+        which keys no POSIX head, is never handed one (batch review)."""
+        bp = _bash_patterns_module()
+        for command, is_posix in (("'rm -rf x' | bash", True), ("'rm -rf x' | & bash 2>&1", True),
+                                  ("'print(1)' | python -", False),
+                                  ("'Get-Date' | pwsh -Command -", False)):
+            raw, scan = bp.powershell_scan_pair(command)
+            default = [head for head, _ in bp._ps_stdin_program_bodies(raw, scan)]
+            posix = [head for head, _ in bp._ps_stdin_program_bodies(raw, scan, posix=True)]
+            assert not set(default) & bp._PS_STDIN_POSIX_HEADS, command
+            assert set(posix) <= bp._PS_STDIN_POSIX_HEADS, command
+            assert bool(posix) is is_posix and bool(default) is not is_posix, command
+
     def test_the_posix_heads_never_reach_the_interpreter_dispatch(self):
         """The import-time roster check holds with the POSIX heads in it, and
         the dispatch keys none of them: a head it keyed would be read as an
-        interpreter's program, and one the consumers did not skip would raise
-        KeyError inside the guard."""
+        interpreter's program, and the producer hands the POSIX heads to
+        their own reader alone (`test_the_producer_hands_each_head_to_its_own_reader`)."""
         bp = _bash_patterns_module()
         heads = set(bp._PS_STDIN_HEAD_ALTERNATION.split("|"))
         assert bp._PS_STDIN_POSIX_HEADS <= heads
@@ -12280,7 +12348,10 @@ class TestAStringPipedIntoAPosixShellMeetsItsDirectFormsTiers:
         ("python-stays-its-own", "'print(1)' | python -", []),
         ("redirect", "'rm -rf x' | bash 2>&1", ["rm -rf x"]),
         ("call-operator", "'rm -rf x' | & bash", ["rm -rf x"]),
-        ("every-literal-one-per-line", "'rm -rf x', 'echo ok' | bash", ["rm -rf x\necho ok"]),
+        # joined one per line, then each literal alone (the batch review: a
+        # backslash or a comment at an element's end carried the next one)
+        ("every-literal-one-per-line", "'rm -rf x', 'echo ok' | bash",
+         ["rm -rf x\necho ok", "rm -rf x", "echo ok"]),
         # a double-quoted here-string folds no doubled quote (by kind), and the
         # fold is the second reading (code review, the BLOCK)
         ("dq-here-string-by-kind",
@@ -12325,6 +12396,11 @@ class TestAStringPipedIntoAPosixShellMeetsItsDirectFormsTiers:
          "'Set-Content tools/cc/hooks/write_guard.py x' | pwsh -NoProfile -Command - *>&1"),
         ("pwsh-every-literal",
          "'Set-Content tools/cc/hooks/write_guard.py x', 'Get-Date' | pwsh -Command -"),
+        # a double-quoted literal's `''` is two characters, read by kind beside
+        # the fold (batch review: no tier on main, the first cut and the batch)
+        ("pwsh-dq-doubled-single-quote",
+         "\"Write-Host ''; Set-Content tools/cc/hooks/write_guard.py x; Write-Host ''\""
+         " | pwsh -Command -"),
     ]
 
     @pytest.mark.parametrize("row", _OTHER_HEADS, ids=[r[0] for r in _OTHER_HEADS])
@@ -18588,6 +18664,26 @@ class TestCrossShellRouting:
             "('echo x > tools/cc/hooks/x.py') | bash",
             "'echo x > tools/cc/hooks/x.py' | Out-String | bash",
             "'echo x > tools/cc/hooks/x.py' | bash-5.2",
+            # every other limit docs/HOOKS.md lists, and the stage operators it
+            # names beside them (the batch review drove each to allow)
+            "@('echo x > tools/cc/hooks/x.py') | bash",
+            "$prog | bash",
+            "'echo x > tools/cc/hooks/x.py' | wsl",
+            "'echo x > tools/cc/hooks/x.py' | sudo bash",
+            "'echo x > tools/cc/hooks/x.py' | env bash",
+            "'echo x > tools/cc/hooks/x.py' | busybox sh",
+            "'echo x > tools/cc/hooks/x.py' | ksh93",
+            # the plus is not read as one string (a zone write split across
+            # it is seen by an accident of the join; this spelling is not)
+            "'rm -rf ' + '/' | bash",
+            "'echo x > {0}' -f 'tools/cc/hooks/x.py' | bash",
+            "('echo x', 'tools/cc/hooks/x.py') -join ' > ' | bash",
+            "\"echo x > $dir/x.py\" | bash",
+            "(@'\necho x > tools/cc/hooks/x.py\n'@).Replace(\"`r\", '') | bash",
+            "(@'\necho x > tools/cc/hooks/x.py\n'@) -replace \"`r\", '' | bash",
+            # a here-string before a quoted string that ends the stage, its
+            # body holding an odd count of apostrophes
+            "@'\necho it's\necho x > tools/cc/hooks/x.py\n'@, 'echo ok' | bash",
         ):
             assert_hook_allowed(_run_ps_guard(cmd, tmp_path))
 

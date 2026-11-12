@@ -1808,25 +1808,36 @@ PowerShell tool a string piped into a POSIX shell (`'...' | bash`, `echo
 '...' | sh`, a here-string, `bash -` or `bash -s`, the head bare, behind the
 call operator `| & bash` or given by path as Git's `bash.exe`, a redirect or
 comment after it, `| bash 2>&1`) is that shell's program and meets the Bash
-ones the same way: every literal of the stage before the pipe, one line
-each as PowerShell pipes them (`'set -e', 'rm -rf out' | bash`), each by its
-own quote kind and by the doubled-quote fold too, a wall on either reading
-being the wall, with the BOM and the carriage returns Windows PowerShell
-hands a native pipe taken out. The opener's redirect, comment and call
-operator serve every piped head, `| python - 2>&1` and `| & pwsh -Command -`
-included. A head that only begins with a shell's name (`shasum`) and a
-shell given a script operand with no switch before it (`| bash script.sh`)
-leave the pipe as data; a switch before the operand (`| bash -x
-script.sh`) takes it as the switch's value, and the pipe is read: an
-over-read, the refusing direction. Declared limits: only the stage
-immediately before the pipe, outside parentheses, is read, so a literal in
-`(...)` or `@(...)`, one in a variable a tier does not inline, or one behind a middle stage (`| Out-String
-| bash`), is not; a launcher before the shell (`| wsl bash`, `| sudo bash`,
-`| env bash`, `| busybox sh`) and a versioned name (`| bash-5.2`, `| ksh93`)
-open no reading; and a here-string before a quoted string that ends the
-stage is not read. A backtick escape inside a double-quoted program (`` `n
-``, `` `t ``) is still read as its two characters, on that spelling and
-behind `bash -c` alike: an open gap, not a limit.
+ones the same way: every literal of the stage before the pipe, joined one
+line each (`'set -e', 'rm -rf out' | bash`) and, where the stage holds
+several, each alone too, each by its own quote kind and by the
+doubled-quote fold; a wall on any reading is the wall. The BOM and the
+carriage returns Windows PowerShell hands a native pipe are taken out; the
+CR that ends each element is what keeps a trailing backslash from joining
+the next element to it in the shell, so the each-alone readings are what
+keep that element's verdict. A program piped to a PowerShell shell
+(`| pwsh -Command -`) is re-read in the same readings by the zone and
+remove readers. The opener's redirect, comment and call operator serve
+every piped head, `| python - 2>&1` and `| & pwsh -Command -` included. A
+head that only begins with a shell's name (`shasum`) and a shell given a
+script operand with no switch before it (`| bash script.sh`) leave the pipe
+as data; a switch before the operand (`| bash -x script.sh`) takes it as
+the switch's value, and the pipe is read: an over-read, the refusing
+direction. Declared limits: only the stage immediately before the pipe,
+outside parentheses, is read, so a literal in `(...)` or `@(...)`, one in a
+variable a tier does not inline, one behind a middle stage
+(`| Out-String | bash`), and a string an operator builds (a `+`, `-f`,
+`-join`, a variable inside a double-quoted string, a `.Replace()` or
+`-replace` on a parenthesised here-string) are not read as the program; a
+launcher before the shell (`| wsl bash`, `| wsl`, `| sudo bash`,
+`| env bash`, `| busybox sh`) and a versioned name (`| bash-5.2`,
+`| ksh93`) open no reading; and a here-string before a quoted string that
+ends the stage is read only as quoted text, which an apostrophe in its
+body can misplace. Open gaps, not limits: a backtick escape inside a
+double-quoted program (`` `n ``, `` `t ``) is read as its two characters,
+on that spelling and behind `bash -c` alike; a comment that ends in a
+backslash hides the next line from the wall, on both tools; and a program
+piped to `pwsh -Command -` meets no wall.
 
 On the Bash tool a POSIX shell's `-c` program the outer scan
 does not read as the shell receives it -- behind a switch or cluster

@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2079",
+ "subject": "tools/cc/hooks/write_guard.py",
+ "cmd": "python -c 'import sys; from pathlib import Path; sys.path[:0] = [\"tools/cc/hooks\", \"tools/cc\"]; import write_guard as w; r = Path.cwd(); q = chr(39); d = \"Remove-Item -Recurse -Force C:\" + chr(92); print(bool(w._ps_dangerous_reason(\"pwsh -Command \" + q + d + q, r)), bool(w._ps_dangerous_reason(q + d + q + \" | pwsh -Command -\", r)))'",
+ "open_value": "True False",
+ "why_not": null,
+ "row_sha": "d56c56a227ac",
+ "text_sha": "5939f96e1634",
+ "verified_2026_11_12": "OPEN (filed 2026-11-12; probe driven at filing here and in the export of HEAD 43d8879b0206)"
+}
