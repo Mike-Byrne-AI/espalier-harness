@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""What ``write_guard`` costs a call, measured: TP-707's instrument (Wave 1, 1-A).
+"""What ``write_guard`` costs a call, measured: the per-call cost instrument.
 
 ``write_guard.py`` is wired on PreToolUse with matcher ``*``, so every tool call
 starts it, and every Bash, PowerShell, mutation and ``mcp__`` call loads its
@@ -259,10 +259,10 @@ def archive_tree(at: str, dest: Path) -> dict:
         raise SystemExit(f"guard_cost_census: git archive {sha} tools/cc failed: "
                          + archived.stderr.decode("utf-8", "replace").strip()[:200])
     with tarfile.open(fileobj=io.BytesIO(archived.stdout)) as tar:
-        if hasattr(tarfile, "data_filter"):
-            tar.extractall(dest, filter="data")
-        else:  # an interpreter without the extraction filters (3.11 before 3.11.4)
-            tar.extractall(dest)  # noqa: S202 -- git's own archive of this clone's commit
+        if not hasattr(tarfile, "data_filter"):
+            raise SystemExit("guard_cost_census: --at needs tarfile's extraction filters (Python 3.11.4 or later); "
+                             "update the interpreter")
+        tar.extractall(dest, filter="data")
     return {"kind": "archive", "at": at, "commit": sha, "root": str(dest)}
 
 
@@ -414,9 +414,11 @@ def time_calls(root: Path, n: int, kinds: tuple[str, ...], scratch: Path,
         project = _new_project(scratch)
         kind_of[project.name] = kind
         if kind == "control":
-            argv, data = [sys.executable, "-B", "-c", "pass"], b""
+            argv = [sys.executable, "-B", "-c", "pass"]
+            data = b""
         else:
-            argv, data = [sys.executable, "-B", str(hook)], json.dumps(payload(kind, project)).encode("utf-8")
+            argv = [sys.executable, "-B", str(hook)]
+            data = json.dumps(payload(kind, project)).encode("utf-8")
         started = time.perf_counter()
         try:
             proc = run_bounded(argv, input=data, capture_output=True, cwd=str(project),
@@ -942,7 +944,7 @@ def render(result: dict) -> str:
 
 
 def _parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="What write_guard costs a call (TP-707's instrument).")
+    p = argparse.ArgumentParser(description="What write_guard costs a call, measured.")
     mode = p.add_mutually_exclusive_group(required=True)
     mode.add_argument("--calls", type=int, metavar="N", help="time N spawns of each call kind")
     mode.add_argument("--compile", action="store_true", help="the compile proxy, from a fresh interpreter")
