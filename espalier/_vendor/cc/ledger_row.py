@@ -1060,7 +1060,7 @@ def _commit_both(gen, *, ledger: Path, probes: Path, new_text: str, data: dict,
                 path.parent.mkdir(parents=True, exist_ok=True)
             except OSError as exc:
                 print(f"ledger_row: nothing written: the lineage directory {path.parent} cannot be made "
-                      f"({type(exc).__name__}: {exc})", file=sys.stderr)
+                      f"({type(exc).__name__})", file=sys.stderr)
                 return 2
         _write_pending_probes(gen, pending, removals=True)
         if write_roster and probes_first:
