@@ -3252,6 +3252,75 @@ def test_posix_shell_switch_value_is_never_a_head_spelling(label, verb):
         assert elapsed_ms < _CI_SAFE_BUDGET_MS, f"{label} took {elapsed_ms:.1f}ms"
 
 
+def _cmd_set_check(payload: str) -> bool:
+    """The cmd `set` check alone over a Bash command, as the hard tier
+    hands it the masked, spliced scan."""
+    write_guard._load_the_pattern_path()
+    bp = write_guard._bash_patterns
+    return write_guard._cmd_set_launches_claude(
+        bp.splice_line_continuations(bp.mask_inert_syntax(payload)), bash=True)
+
+
+@pytest.mark.parametrize("label,unit", [
+    ("set-flood", "& set ESPALIER_MAINTENANCE_MODE=1 "),
+    ("call-set-flood", "& call set ESPALIER_STOP_GATE=full "),
+    ("set-and-words-flood", "&set ESPALIER_MAINTENANCE_MODE=1 x x x x x x x "),
+])
+def test_the_cmd_set_check_scales_linearly_on_a_set_flood(label, unit):
+    """DEF-1071's flood: the cmd `set` check re-read the rest of the program
+    for a launch from every `set` it found at a statement start, so a run of
+    harness `set` units was quadratic (the row: about 6 s at about 10 KB on
+    2026-10-03; at 3a83b07 on the Windows box 730 / 3046 ms at 30 / 60 KB,
+    and 1319 / 6184 ms with words between, past the chain ceiling). Read by
+    cmd's own statement split since DEF-1071 wave 1, each statement once:
+    7.1 / 14.1 and 9.2 / 18.8 ms. Judged by the pair rule on the check alone,
+    at four and two times the cap, so the linear reader's half-size sample
+    clears the sample floor on a host twice as fast (the hook's cap is the
+    entry's, not the reader's). POSIX-only (signal.alarm). Who: the operator
+    whose pasted cmd script of `set` lines a quadratic check would hold past
+    the time budget."""
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+
+    def make(n: int) -> str:
+        return "cmd //c '" + unit * (n // len(unit)) + "'"
+
+    verdict = _ps_body_scaling_verdict(
+        _cmd_set_check, make(4 * _WORST_CASE_BODY_LEN), make(2 * _WORST_CASE_BODY_LEN), make(64),
+    )
+    assert verdict is None, f"{label}: {verdict}"
+
+
+def _ps_cmd_set_check(payload: str) -> bool:
+    """The cmd `set` check alone over a PowerShell command, as the hard tier
+    hands it the scan pair."""
+    write_guard._load_the_pattern_path()
+    raw, scan = write_guard._bash_patterns.powershell_scan_pair(payload)
+    return write_guard._cmd_set_launches_claude(scan, bash=False, raw=raw)
+
+
+def test_the_cmd_set_check_reads_an_opener_flood_once():
+    """The set check reads each program to its outer statement's end, past a
+    later opener, and skips an opener inside a program already read; without
+    the skip a run of openers in one statement is re-read from each, and an
+    assignment-prefixed flood on PowerShell went from 28 ms to 51 s at 60 KB
+    (the code review, the skip removed in memory; no polarity row reds on its
+    removal, so this row is its pin). Pair rule on the check alone, as the
+    set flood's. Who: the operator whose generated script starts cmd once a
+    line inside one statement."""
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    unit = "$a = cmd /c x "
+
+    def make(n: int) -> str:
+        return unit * (n // len(unit))
+
+    verdict = _ps_body_scaling_verdict(
+        _ps_cmd_set_check, make(4 * _WORST_CASE_BODY_LEN), make(2 * _WORST_CASE_BODY_LEN), make(64),
+    )
+    assert verdict is None, f"opener-flood: {verdict}"
+
+
 @pytest.mark.parametrize("label,seed", [
     # the cmdlet word in a valued parameter: the exec-quote arm opens a
     # command position at each, and each walked to the statement's end

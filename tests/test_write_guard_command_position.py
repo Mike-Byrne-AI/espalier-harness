@@ -1113,3 +1113,12 @@ class TestTheAnchorFamilyLimits:
                              ids=[i for i, _ in _ANCHOR_FAMILY_CONTROLS])
     def test_each_limit_s_control_one_step_inside_is_denied(self, cmd, tmp_path):
         assert_hook_denied(run_bash_guard(cmd, tmp_path))
+
+    def test_a_start_process_list_built_in_a_subexpression_is_pinned_as_an_allow(self, tmp_path):
+        """DEF-1071's closing (the dispatcher's b5ba52 (2), on 40ec7f's basis):
+        `_bash_patterns.ps_start_process_arguments` opens `@( )` and `( )`
+        only, so a cmd program handed in a `$( )` list is read by none of its
+        three readers (cmd's delete reader, the shell-program reader and the
+        harness-variable check), its plain list beside it the control."""
+        assert_hook_allowed(_run_ps_guard("Start-Process cmd -ArgumentList $('/c rd /s /q C:\\')", tmp_path))
+        assert_hook_denied(_run_ps_guard("Start-Process cmd -ArgumentList '/c rd /s /q C:\\'", tmp_path))

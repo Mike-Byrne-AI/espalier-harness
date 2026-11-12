@@ -3568,21 +3568,17 @@ class TestCommandPositionClassClose:
             "pipe itself, the one separator that hands a stage to its consumer; "
             "searched on `_pipe_scan`, where a quoted `| sh` is blank, so a "
             "mention opens nothing (DEF-745).",
-        # ── DEF-1070 (2026-10-03): the cmd.exe `set` arm. Both read the program
-        # a cmd opener hands its /c or /k switch; the openers themselves
-        # compose `_CMD_POS` / `_PS_CMD_POS`, so a quoted mention of `cmd`
-        # hands these two nothing to read. ──
-        "write_guard._CMD_SEPARATOR_RE":
-            "SPLITTER -- cmd.exe's separator set (`&`, `&&`, `|`, `||`, `(`), "
-            "found over the program an anchored cmd opener runs, to list its "
-            "statement starts; it names no verb. A `^&` or a quoted `&` still "
-            "counts, so that imprecision adds a statement start (toward a deny) "
-            "rather than dropping one.",
+        # ── DEF-1070 (2026-10-03): the cmd.exe `set` arm. It reads the program
+        # a cmd opener hands its /c or /k switch; the openers compose
+        # `_CMD_POS` / `_PS_CMD_POS` (`_bash_patterns.iter_cmd_programs`), so a
+        # quoted mention of `cmd` hands it nothing to read. Since DEF-1071
+        # wave 1 cmd's own statement split (`_bash_patterns._cmd_statements`)
+        # replaces the arm's separator regex. ──
         "write_guard._CMD_HARNESS_SET_RE":
-            "INNER-LANGUAGE -- cmd.exe's `set` of a harness variable, `match`ed "
-            "only at the statement starts the splitter lists, inside the program "
-            "an anchored cmd opener runs; never searched, so a `set` inside an "
-            "`echo` argument is not read as a statement.",
+            "INNER-LANGUAGE -- the words after a cmd.exe statement's `set` verb "
+            "(found by the delete reader's prefix walk over cmd's own statement "
+            "split): a harness variable assigned. `match`ed only there, never "
+            "searched, so a `set` inside an `echo` argument is not read.",
         # ── NOT-SHELL: matches an MCP tool-name segment, not shell text. ──
         "_speedbump._MCP_SIDEEFFECT_VERB_RE":
             "NOT-SHELL -- MCP tool-name verb segment.",
