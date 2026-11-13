@@ -17797,6 +17797,137 @@ class TestAGapAfterAPipeIsRead:
         assert not reads, reads
 
 
+#: (tool, command, verdict) rows for DEF-2078: a comment that ends in a
+#: backslash, then a delete on the next line. bash ends a comment at its
+#: newline whatever the comment holds, so the delete runs; the splicer joined
+#: the pair anyway and the delete went into the comment.
+_COMMENT_BACKSLASH_ROWS = [
+    ("Bash", "echo ok #\\\nrm -rf /", "wall"),
+    ("Bash", "echo ok # note \\\nrm -rf /", "wall"),
+    ("Bash", "# step one \\\nrm -rf /", "wall"),
+    ("Bash", "echo ok #\\\nrm -rf ~", "wall"),
+    ("Bash", "echo ok # c \\\nrm -r src", "bump"),
+    ("Bash", "echo ok # c \\\r\nrm -rf /", "wall"),
+    # the same comment in a program a shell reads: a substitution, a quoted
+    # program, a heredoc fed to a shell, and a heredoc opener's own line
+    ("Bash", "x=$(echo ok #\\\nrm -rf /)", "wall"),
+    ("Bash", "echo $(echo ok #\\\nrm -rf /)", "wall"),
+    ("Bash", 'echo "$(echo ok #\\\nrm -rf /)"', "wall"),
+    ("Bash", "bash -c 'echo ok #\\\nrm -rf /'", "wall"),
+    ("Bash", "eval 'echo ok #\\\nrm -rf /'", "wall"),
+    ("Bash", "bash <<'E'\necho ok #\\\nrm -rf /\nE", "wall"),
+    ("Bash", "cat <<E # c \\\nbody\nE\nrm -rf /", "wall"),
+    ("PowerShell", "bash -c 'echo ok #\\\nrm -rf /'", "wall"),
+]
+
+#: The other side: a backslash-newline bash does join keeps its join, and a
+#: `#` that opens no comment ends nothing.
+_COMMENT_BACKSLASH_JOINS = [
+    ("Bash", "rm -rf \\\n/", "wall"),
+    ("Bash", "echo ok # c\nrm -rf /", "wall"),
+    ("Bash", "find / -type f | # c \\\nxargs rm -rf", "wall"),
+    ("Bash", "find / -type f |\n# c \\\nxargs rm -rf", "wall"),
+    # double quotes and an unquoted heredoc body join the pair before the
+    # program is read, so the program is one comment
+    ("Bash", 'bash -c "echo ok #\\\nrm -rf /"', "allow"),
+    ("Bash", "bash <<E\necho ok #\\\nrm -rf /\nE", "allow"),
+    # a `#` glued to a continued word is mid-word (bash reads `x#y`)
+    ("Bash", "rm -rf /tmp/x\\\n#y \\\n/", "wall"),
+    # a quote the masker reads across lines holds the `#`, a heredoc body's
+    # apostrophe included
+    ("Bash", "echo 'start\n#' ; rm -rf \\\n/", "wall"),
+    ("Bash", "cat <<EOF\nit's\nEOF\necho 'a\n#' ; rm -rf \\\n/", "wall"),
+    # a mention in a message stays a mention
+    ("Bash", "git commit -m 'one #\\\nrm -rf / is gone'", "allow"),
+    # a backtick body joins the pair before it is read: one comment
+    ("Bash", "x=`echo ok #\\\nrm -rf /`", "allow"),
+    # ... and the `#` glued behind a continuation is mid-word for the masker
+    # too, so the statement after it is live
+    ("Bash", "echo a\\\n#b;rm -rf /", "wall"),
+]
+
+#: (program, stdouts) the real-shell oracle runs: echo alone, every variable
+#: bound in the program itself, each row's stdout one of those it names. A
+#: comment ends at its newline in each place a shell reads one; double
+#: quotes, a backtick body and an unquoted heredoc body join first. Inside a
+#: `$( )`, bash 3.2 joins the pair, the comment swallows the closing paren
+#: and the command is refused unparsed (an empty stdout, nothing run); dash
+#: and zsh run the next line, and no shell drops it while running the rest.
+_COMMENT_BACKSLASH_ORACLE = [
+    ("echo one #\\\necho two", ("one\ntwo\n",)),
+    ("echo one # c \\\necho two", ("one\ntwo\n",)),
+    ('x=$(echo one #\\\necho two); echo "$x"', ("one\ntwo\n", "")),
+    ('echo "$(echo one #\\\necho two)"', ("one\ntwo\n", "")),
+    ("bash -c 'echo one #\\\necho two'", ("one\ntwo\n",)),
+    ("eval 'echo one #\\\necho two'", ("one\ntwo\n",)),
+    ("bash <<'E'\necho one #\\\necho two\nE", ("one\ntwo\n",)),
+    ('bash -c "echo one #\\\necho two"', ("one\n",)),
+    ("bash <<E\necho one #\\\necho two\nE", ("one\n",)),
+    ('x=`echo one #\\\necho two`; echo "$x"', ("one\n",)),
+    ('echo "one #\\\ntwo"', ("one #two\n",)),
+    ("echo one\\\n#two \\\nthree", ("one#two three\n",)),
+    ("echo one \\\n#two \\\necho three", ("one\nthree\n",)),
+]
+
+#: The shells the oracle asks, where the box has them: bash (3.2 on the Air,
+#: 5 on the Linux cells), dash and zsh, each with no startup files.
+_COMMENT_ORACLE_SHELLS = [
+    argv for argv in (["/bin/bash", "--noprofile", "--norc"], ["/bin/dash"], ["/bin/zsh", "-f"])
+    if Path(argv[0]).exists()
+]
+
+
+class TestACommentEndsAtItsNewline:
+    """DEF-2078: a comment that ends in a backslash hid the next line from the
+    Bash wall, on the Bash tool and in a `bash -c` program on the PowerShell
+    tool: the splicer (`_splice_line_continuations`) joined a backslash-newline
+    wherever it stood, and bash discards a comment raw to its newline, so the
+    backslash continues nothing. The splicer now reads where a comment ends
+    from the masker's own walk (`_walk_shell_roles`), which the wall already
+    trusts to call a comment inert, so the two agree; in a substitution, a
+    quoted program and a heredoc a shell reads, the same."""
+
+    @pytest.mark.parametrize("tool, cmd, expect", _COMMENT_BACKSLASH_ROWS)
+    def test_the_line_after_the_comment_is_read(self, tmp_path, tool, cmd, expect):
+        assert _delete_verdict(run_guard_from(tool, cmd, tmp_path, None)) == expect, cmd
+
+    @pytest.mark.parametrize("tool, cmd, expect", _COMMENT_BACKSLASH_JOINS)
+    def test_a_join_bash_makes_is_kept(self, tmp_path, tool, cmd, expect):
+        assert _delete_verdict(run_guard_from(tool, cmd, tmp_path, None)) == expect, cmd
+
+    @pytest.mark.parametrize("cmd, spliced", [
+        ("echo ok #\\\nrm -rf /", "echo ok #\\\nrm -rf /"),
+        ("echo ok # c \\\r\nb", "echo ok # c \\\r\nb"),
+        ("rm -rf \\\n/", "rm -rf /"),
+        ('echo "a #\\\nb"', 'echo "a #b"'),
+        ("x=$(a #\\\nb)", "x=$(a #\\\nb)"),
+        ("bash -c 'a #\\\nb'", "bash -c 'a #\\\nb'"),
+        ("cat <<E\na #\\\nb\nE", "cat <<E\na #b\nE"),
+        ("cat <<E # c \\\nbody\nE\nb", "cat <<E # c \\\nbody\nE\nb"),
+        ("echo a\\\n#b \\\nc", "echo a#b c"),
+        ("echo a \\\n#b \\\nc", "echo a #b \\\nc"),
+        ("a #\\\\\nb", "a #\\\\\nb"),
+        # a data body's apostrophe opens no quote for the comment reader, so
+        # the quoted `#` after it ends nothing and the continuation joins
+        ("cat <<EOF\nit's\nEOF\necho 'a\n#' ; rm -rf \\\n/",
+         "cat <<EOF\nit's\nEOF\necho 'a\n#' ; rm -rf /"),
+    ])
+    def test_the_splice(self, cmd, spliced):
+        assert _bash_patterns_module().splice_line_continuations(cmd) == spliced
+
+    @pytest.mark.skipif(not _COMMENT_ORACLE_SHELLS, reason="the oracle is a real POSIX shell")
+    @pytest.mark.parametrize("argv", _COMMENT_ORACLE_SHELLS, ids=lambda a: Path(a[0]).name)
+    @pytest.mark.parametrize("program, stdouts", _COMMENT_BACKSLASH_ORACLE)
+    def test_each_shell_reads_the_comment_as_the_row_says(self, argv, program, stdouts, tmp_path):
+        proc = subprocess.run([*argv, "-c", program], cwd=str(tmp_path),
+                              capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=scaled(10),
+                              env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LC_ALL": "C"})
+        assert proc.stdout in stdouts, (program, proc.stdout, proc.stderr)
+        # an empty stdout is the parse refusal, never a run that printed nothing
+        assert proc.stdout or proc.returncode != 0, (program, proc.stderr)
+
+
 class TestAStatementStartGapIsRead:
     """DEF-2070 (assign ef0470, narrowed by 5565c3): a block comment where a
     statement starts hid the statement from every reader of the scan pair.
