@@ -4711,14 +4711,16 @@ _PS_GROUP_CLOSE = frozenset(")}")
 #: friction, never a statement the token-start rule reads.
 _PS_GLUED_OPENING: "contextvars.ContextVar[bool]" = contextvars.ContextVar(
     "_PS_GLUED_OPENING", default=True)
-#: Set once the reader opens a glued opener in this process. A hook call is
+#: Set once the two readings decide an opener differently in this process
+#: (`_ps_opener_reading`), either way round. A hook call is
 #: one process, so there it is per call; a test process keeps it, which only
 #: adds second readings.
 _PS_GLUED_OPENED = [False]
 
 
 def glued_opener_opened() -> bool:
-    """Whether the walk has opened a glued opener in this process."""
+    """Whether the two readings have decided an opener differently in this
+    process, so the call is judged on both."""
     return _PS_GLUED_OPENED[0]
 
 
@@ -4821,8 +4823,12 @@ def _ps_glued_opener_opens(
         floor = max(block_end, memo[0], 0)
         while k >= floor:
             if s[k] in _PS_TOKEN_BOUNDARY and _ps_boundary_kind(s, k) != 2:
-                t = k + 1
-                break
+                if not (s[k] == "}" and _ps_closes_braced_name(s, k)):
+                    t = k + 1
+                    break
+                # a braced name is part of its token (`${x}<#`, `${x}.y<#`):
+                # on to its `$`, which the step below passes
+                k = s.rfind("{", 0, k) - 1
             k -= 1
         if t < 0:
             t = block_end if floor == block_end or memo[1] < 0 else memo[1]
@@ -4888,7 +4894,17 @@ def _ps_glued_opener_opens(
     return _PS_GLUED_EXPRESSION_END_RE.search(s[t:i]) is not None
 
 
-def _ps_glued_reading_opens(
+def _ps_closes_braced_name(s: str, k: int) -> bool:
+    """Whether the `}` at ``k`` closes a braced variable name (`${x}`),
+    which ends no token: `Write-Output ${x}<#` is one argument on 5.1. The
+    name holds no brace, so the search stops at the last `}` before it, and
+    a run of them reads each character a bounded number of times."""
+    j = s.rfind("}", 0, k)
+    b = s.rfind("{", j + 1, k)
+    return b >= 1 and s[b - 1] == "$"
+
+
+def _ps_opener_reading(
     s: str,
     out: "list[str]",
     i: int,
@@ -4897,15 +4913,26 @@ def _ps_glued_reading_opens(
     quote_end: int,
     blocks: "list[tuple[int, int]] | None",
     memo: "list[int]",
+    start: bool,
 ) -> bool:
-    """`_ps_glued_opener_opens` where the reading asks it: never with glued
-    opening off (`glued_opening_off`), and an opening is recorded."""
+    """Whether the opener at ``i`` opens, in the reading that asks.
+    ``start`` is the token-start rule's answer, the whole answer with glued
+    opening off (`glued_opening_off`). With it on, an opener glued to the
+    token before it asks `_ps_glued_opener_opens`, and so does one the rule
+    opens after an escaped separator or a braced name's close, which start
+    no token on 5.1 (``a`;<#``, `${x}<#`). Wherever the two answers differ
+    it is recorded, so write_guard judges the call on both readings."""
     if not _PS_GLUED_OPENING.get():
-        return False
-    if _ps_glued_opener_opens(s, out, i, block_end, quote_open, quote_end, blocks, memo):
-        _PS_GLUED_OPENED[0] = True
+        return start
+    if start and (
+        i == 0 or i == block_end
+        or not (_ps_boundary_kind(s, i - 1) == 2 or (s[i - 1] == "}" and _ps_closes_braced_name(s, i - 1)))
+    ):
         return True
-    return False
+    opens = _ps_glued_opener_opens(s, out, i, block_end, quote_open, quote_end, blocks, memo)
+    if opens != start:
+        _PS_GLUED_OPENED[0] = True
+    return opens
 
 
 def _ps_at_line_start(s: str, i: int) -> bool:
@@ -5500,14 +5527,10 @@ def _walk_powershell_spans(
             c == "<"
             and i + 1 < n
             and s[i + 1] == "#"
-            and (
-                i == 0
-                or i == block_end
-                or s[i - 1] in _PS_TOKEN_BOUNDARY
-                # glued: opened where PowerShell opens it (DEF-2073)
-                or _ps_glued_reading_opens(
-                    s, out, i, block_end, quote_open, quote_end, read, glued_memo,
-                )
+            # where PowerShell opens it, glued included (DEF-2073)
+            and _ps_opener_reading(
+                s, out, i, block_end, quote_open, quote_end, read, glued_memo,
+                i == 0 or i == block_end or s[i - 1] in _PS_TOKEN_BOUNDARY,
             )
         ):
             # Block comments do NOT nest in PowerShell -- verified: the first
@@ -5533,14 +5556,10 @@ def _walk_powershell_spans(
             i = block_end = end + 2
             continue
 
-        if c == "#" and (
-            i == 0
-            or i == block_end
-            or s[i - 1] in _PS_TOKEN_BOUNDARY
-            # glued: opened where PowerShell opens it, by the `<#` rule (DEF-2073)
-            or _ps_glued_reading_opens(
-                s, out, i, block_end, quote_open, quote_end, read, glued_memo,
-            )
+        # where PowerShell opens it, by the `<#` rule (DEF-2073)
+        if c == "#" and _ps_opener_reading(
+            s, out, i, block_end, quote_open, quote_end, read, glued_memo,
+            i == 0 or i == block_end or s[i - 1] in _PS_TOKEN_BOUNDARY,
         ):
             # WARNING: START AT i+1 -- the hash ITSELF MUST SURVIVE, for the same
             # reason the Bash pass keeps it: a blanked hash leaves an unbroken
