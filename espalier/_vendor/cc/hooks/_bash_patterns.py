@@ -4707,6 +4707,12 @@ _PS_STATEMENT_STOP = frozenset(";|({}\n\r")
 #: A group closed between the statement's start and the token: the head the
 #: walk would read is not the token's, so the opener is read as glued.
 _PS_GROUP_CLOSE = frozenset(")}")
+#: The longest token, and the longest head number, the glued reader reads.
+#: Past them the opener is unopened -- the token-start rule's answer -- so a
+#: run of glued openers on one growing token costs each a bounded read (both
+#: reviews: 15.5 s on a 54 KB `$a.b+<#` run, quadratic, before the cap).
+_PS_GLUED_TOKEN_CAP = 128
+_PS_GLUED_HEAD_NUMBER_CAP = 64
 
 #: DEF-2073's two readings (air's ruling 8aa088): the glued-opener reader
 #: below models 5.1's tokenizer, and three review rounds each found a shape
@@ -4841,6 +4847,8 @@ def _ps_glued_opener_opens(
             t = block_end if floor == block_end or memo[1] < 0 else memo[1]
             t = max(t, 0)
         memo[0], memo[1] = i, t
+    if i - t > _PS_GLUED_TOKEN_CAP:
+        return False
     # The statement: back to a separator on the mask. A group closed on the
     # way, or a separator a backtick escapes, leaves the statement's head
     # unread from here (`Write-Output (1) $x<#`, `a`;$x<#`): unopened, the
@@ -4890,7 +4898,8 @@ def _ps_glued_opener_opens(
     head = s[p]
     if not (
         head in _PS_EXPRESSION_HEAD
-        or (head.isdigit() and _PS_NUMBER_HEAD_RE.match(s, p) is not None)
+        or (head.isdigit() and _PS_NUMBER_HEAD_RE.match(
+            s, p, min(len(s), p + _PS_GLUED_HEAD_NUMBER_CAP)) is not None)
         or (head in "-.+" and _PS_UNARY_HEAD_RE.match(s, p) is not None)
     ):
         return i != quote_end and _PS_GLUED_ARGUMENT_TOKEN_RE.fullmatch(s, t, i) is not None

@@ -18972,7 +18972,8 @@ class TestAGluedCommentOpens:
             bp._walk_powershell_spans(cmd, None, blocks)
             if tuple(blocks) != comments:
                 off.append((cmd, comments, tuple(blocks)))
-        assert len(_GLUED_POPULATION) >= 300, "the population collapsed"
+        # exact: a row is added or dropped with 5.1's own tokens, never edited
+        assert len(_GLUED_POPULATION) == 418, "the population moved: regenerate it from 5.1, then re-pin"
         assert not off, off
 
     def test_the_walk_keeps_each_separator_powershell_reads_live(self):
@@ -19097,6 +19098,47 @@ class TestAGluedCommentOpens:
         start = time.perf_counter()
         bp._walk_powershell_spans(cmd)
         assert time.perf_counter() - start < 0.5
+
+    @pytest.mark.parametrize("make", [
+        # the two reviews' payloads, each quadratic before the token cap
+        lambda n: "$y = $x" + "[a]" * n + "q<#c#>",
+        lambda n: "$x=" + "a<#" * n,
+        lambda n: "$x=" + "$a.b+<#" * n,
+        lambda n: "1" * n + "x" + "$a<#" * (n // 4),
+        lambda n: "Write-Output " + " $x.y<#a#>" * n,
+    ], ids=["bracket-run", "glued-word-run", "member-plus-run", "digit-head", "member-comments"])
+    def test_a_long_run_of_glued_openers_is_read_in_linear_time(self, make):
+        """15.5 s on the 54 KB member-plus run before the cap (Windows,
+        2026-11-13), about 0.015 s after it."""
+        import time
+        bp = _bash_patterns_module()
+        cmd = make(8000)
+        start = time.perf_counter()
+        bp._walk_powershell_spans(cmd)
+        assert time.perf_counter() - start < 0.5
+
+    def test_the_memo_gives_a_fresh_scans_answer(self, monkeypatch):
+        """The failure-mode review: the memo the walk carries between glued
+        openers is a cost device only, so a walk handing the predicate a
+        fresh memo on every call reads the same mask, over the population
+        and over pairs of its rows joined into one command."""
+        bp = _bash_patterns_module()
+        cmds = [row[0] for row in _GLUED_POPULATION]
+        cmds += [a + "\n" + b for a, b in zip(cmds, cmds[1:])]
+        cmds += [a + "; " + b for a, b in zip(cmds[::7], cmds[3::7])]
+        shared = {}
+        for cmd in cmds:
+            blocks: list = []
+            shared[cmd] = (bp._walk_powershell_spans(cmd, None, blocks), tuple(blocks))
+        real = bp._ps_glued_opener_opens
+
+        def fresh(s, out, i, block_end, quote_open, quote_end, blocks, memo):
+            return real(s, out, i, block_end, quote_open, quote_end, blocks, [-1] * 8)
+
+        monkeypatch.setattr(bp, "_ps_glued_opener_opens", fresh)
+        for cmd in cmds:
+            blocks = []
+            assert (bp._walk_powershell_spans(cmd, None, blocks), tuple(blocks)) == shared[cmd], cmd
 
     def test_a_line_comment_powershell_reads_stays_allowed(self, tmp_path):
         # absorbed: `#>; Get-Content .env` is a line comment on 5.1
