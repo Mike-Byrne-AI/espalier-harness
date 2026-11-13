@@ -127,22 +127,25 @@ def _worst_serial_mark() -> float:
 #: green runs in minutes: the whole job (checkout, install and, on a job that runs
 #: both legs, the parallel one too), read by `python3
 #: scripts/ci_job_bounds_census.py` on the date below, while the serial files were
-#: those below. The reason for the floor: a test that hangs must be cut by its own
-#: timeout, naming it, before the job's bound cuts the job with none named. A test
-#: at its mark adds at most the mark to such a run, so the bound holds the worst
-#: mark plus this worst (one test at its mark; it is conservative on a shallow
-#: checkout, where tests/test_verify_pins.py's controls skip). The margin this
-#: replaced was a flat 600 s on a 7.0-minute leg of 2026-10-16, which had grown to
-#: 23.5 by this read. The census prints the floor at every re-measure, so growth
+#: those below; an entry whose bound was raised since carries the date of the read
+#: it was raised from on its own comment, and the date below stays the day the
+#: serial files were last measured, which the roster test's message reads. The
+#: reason for the floor: a test that hangs must be cut by its own timeout, naming
+#: it, before the job's bound cuts the job with none named. A test at its mark adds
+#: at most the mark to such a run, so the bound holds the worst mark plus this
+#: worst (one test at its mark; it is conservative on a shallow checkout, where
+#: tests/test_verify_pins.py's controls skip). The margin this replaced was a flat
+#: 600 s on a 7.0-minute leg of 2026-10-16, which had grown to 23.5 by the read of
+#: the date below. The census prints the floor at every re-measure, so growth
 #: inside the files reads RAISE there; these figures are what each bound was last
 #: set from, and a serial file added reds the roster test below until they cover it.
 _SERIAL_JOBS_MEASURED_ON = "2026-11-11"
 _SERIAL_JOBS_MEASURED_WORST = {
     ("test.yml", "test-serial"): 23.5,  # median 17.8; 80 cells, 20 runs
-    ("post-merge.yml", "full-tier"): 86.6,  # median 66.9; both legs in series
+    ("post-merge.yml", "full-tier"): 88.1,  # median 65.2, 2026-11-12; both legs in series
     ("post-merge-windows.yml", "serial-leg"): 12.9,  # median 10.7
     ("portability.yml", "portability"): 125.1,  # median 74.4; 55 cells, 20 runs
-    ("clean-checkout.yml", "clean-checkout"): 110.0,  # median 87.3
+    ("clean-checkout.yml", "clean-checkout"): 112.0,  # median 100.7, 2026-11-12
     ("release.yml", "release-check"): 47.8,  # median 37.6
 }
 _SERIAL_FILES_MEASURED = (
