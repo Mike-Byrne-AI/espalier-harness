@@ -7286,6 +7286,7 @@ def _statement_words(
 
 def _pipe_scan(
     command: str, inner: Callable[[int, int], None] | None = None,
+    comment: Callable[[int, int], None] | None = None,
 ) -> str:
     """The command with every quoted span (single, double, ANSI-C), every
     backslash-escaped character and every comment blanked to spaces, the
@@ -7300,9 +7301,47 @@ def _pipe_scan(
     where it holds no backslash: escapes are not read); the scan is the
     same either way. The splicer's program pre-pass is its one caller (it
     collects the spans for `_splice_in_place_bodies`); every other reader
-    takes the blank."""
+    takes the blank. ``comment``, where given, is told about each comment
+    the scan blanks at its own level, as ``comment(lo, hi)``: ``lo`` its
+    ``#``, ``hi`` the newline that ends it (or the end of the text); the
+    splicer's comment reader is its one caller (`_comment_ends`).
+
+    A ``#`` glued behind a backslash-newline opens no comment unless a word
+    could start before the pair: bash removes the pair before it reads a
+    word, so `a` + backslash-newline + `#b` is the one word `a#b` (DEF-2078's
+    oracle, bash 3.2, dash and zsh). A character a backslash escapes is a
+    literal, never a word break, and a ``)`` is one only where it closes a
+    subshell, a group or a case pattern (the same oracle)."""
     out = list(command)
     n = len(command)
+    #: The characters after which a `#` starts a word on this scan.
+    #: Narrower than the masker's `_COMMENT_OPENERS` on purpose: this scan
+    #: blanks a substitution and a backtick span whole, so a `#` glued behind
+    #: one's close is mid-word (`$(x)#y` is one word), and a `)` counts only
+    #: through ``bare_closes``. Widened to the masker's set, `$(x)#y` reads
+    #: as a comment and the continuation after it is left split (DEF-2078's
+    #: failure-mode review); `test_the_splice` pins both sides.
+    openers = " \t\n;|&("
+    #: Each `)` that closes a subshell, a group or a case pattern (one with
+    #: no `(` open), as opposed to a `<( )` or `>( )`: a word starts after it.
+    bare_closes: set[int] = set()
+    #: For each `(` open, whether it opened a process substitution.
+    parens: list[bool] = []
+    #: Where the last escape of an ordinary character ends: the character it
+    #: escapes is a literal, so no word starts after it.
+    escaped_end = -1
+    #: Where the last backslash-newline the scan stepped over ends, and
+    #: whether a word could start before it.
+    joined_at, word_before = -1, False
+
+    def starts_word(k: int) -> bool:
+        """A word could start at ``k``: the text's start, or after a
+        separator the scan reads live."""
+        if k == 0:
+            return True
+        if k == escaped_end:
+            return False
+        return command[k - 1] in openers or k - 1 in bare_closes
 
     def blank(lo: int, hi: int, body_lo: int, body_hi: int) -> None:
         for k in range(lo, hi):
@@ -7317,6 +7356,10 @@ def _pipe_scan(
             out[i] = " "
             if command[i + 1] != "\n":
                 out[i + 1] = " "
+                escaped_end = i + 2
+            else:
+                word_before = word_before if i == joined_at else starts_word(i)
+                joined_at = i + 2
             i += 2
             continue
         # A command or arithmetic substitution, and a backtick one: blanked
@@ -7369,13 +7412,19 @@ def _pipe_scan(
             blank(i, j + 1, i + 1, j)
             i = j + 1
             continue
-        if c == "#" and (i == 0 or command[i - 1] in " \t\n;|&("):
+        if c == "#" and (word_before if i == joined_at else starts_word(i)):
             j = command.find("\n", i)
             j = n if j < 0 else j
             for k in range(i, j):
                 out[k] = " "
+            if comment is not None:
+                comment(i, j)
             i = j
             continue
+        if c == "(":
+            parens.append(i > 0 and command[i - 1] in "<>")
+        elif c == ")" and not (parens and parens.pop()):
+            bare_closes.add(i)
         i += 1
     return "".join(out)
 
@@ -12069,15 +12118,28 @@ if not {interp for interp, _ in _PS_INLINE_PROGRAM_RES} <= set(_STDIN_PROGRAM_WR
 
 #: The heads that read a program from stdin when piped to, ONE literal: the
 #: opener's alternation and the dispatch below are both derived from it.
-_PS_STDIN_HEAD_ALTERNATION = "python|pypy|py|node|ruby|perl|" + _POWERSHELL_HEADS
-#: Head -> `_STDIN_PROGRAM_WRITE_RES` key; the two shells are absent because
-#: their program is PowerShell and is re-scanned, not pattern-matched.
+_PS_STDIN_HEAD_ALTERNATION = (
+    "python|pypy|py|node|ruby|perl|" + _POWERSHELL_HEADS + "|" + _POSIX_SHELL_HEADS
+)
+#: Head -> `_STDIN_PROGRAM_WRITE_RES` key; the two PowerShell shells are
+#: absent because their program is PowerShell and is re-scanned, not
+#: pattern-matched, and the POSIX shells because theirs is Bash (below).
 _PS_STDIN_DISPATCH: dict[str, str] = {
     "python": "python", "pypy": "pypy", "py": "python",
     "node": "node", "ruby": "ruby", "perl": "perl",
 }
 #: The same roster the Bash leg routes out to (DEF-637): one literal, two legs.
 _PS_STDIN_SHELL_HEADS = _STDIN_SHELL_HEADS
+#: The POSIX shells a PowerShell string can be piped into (DEF-3075): Git's
+#: `bash.exe` behind PowerShell 5.1 runs the piped text, so its program is
+#: Bash and reaches the Bash readers through `_ps_shell_program_bodies`, never
+#: the dispatch above. The `-c` reader's roster (`_POSIX_SHELL_HEADS`).
+_PS_STDIN_POSIX_HEADS = _POSIX_SHELL_HEAD_SET
+#: The gate before that reader's pass: a POSIX shell's name as a word of its
+#: own, so a command naming none (nearly every one) pays one linear search.
+_PS_STDIN_POSIX_HINT_RE = re.compile(
+    r"(?<![\w-])(?:" + _POSIX_SHELL_HEADS + r")(?:\.exe)?(?![\w-])", re.IGNORECASE
+)
 #: A bash program behind `bash -c` / `sh -c` on the PowerShell tool (DEF-637,
 #: the other direction): the head may be an executable given by path
 #: (`& 'C:\Program Files\Git\bin\bash.exe' -c "..."`), the switch run is
@@ -12128,7 +12190,7 @@ _PS_BASH_DASH_C_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 if set(_PS_STDIN_HEAD_ALTERNATION.split("|")) != (
-    set(_PS_STDIN_DISPATCH) | _PS_STDIN_SHELL_HEADS
+    set(_PS_STDIN_DISPATCH) | _PS_STDIN_SHELL_HEADS | _PS_STDIN_POSIX_HEADS
 ):
     raise RuntimeError(
         "PowerShell stdin-head roster drift: the alternation and the dispatch disagree"
@@ -12145,11 +12207,20 @@ if not set(_PS_STDIN_DISPATCH.values()) <= set(_STDIN_PROGRAM_WRITE_RES):
 #: is not refused: `-m json.tool` matches, the over-capture direction the
 #: comment above records, and `-File x.ps1` on a shell head matches too and
 #: is dropped by the consumer, since the file is the program there.
+#: The statement may go on past the head with a redirect (`| bash 2>&1`,
+#: `*>&1`, `2>$null`, `> out.txt`, glued or spaced) or a comment after a
+#: blank (`| bash # run`, `<# c #>`): the shell still reads the pipe, and
+#: the first cut's lookahead took neither, so `'...' | bash 2>&1` -- the
+#: suffix an agent appends most -- allowed beside a walled `bash -c '...'
+#: 2>&1`, on every head this opener serves (the failure-mode review,
+#: driven). A redirect can be followed by an operand (`| bash > log x.sh`),
+#: which then reads as the pipe's program: the over-capture direction.
+#: PowerShell 5.1 has no input redirect (`<` is reserved), so none is taken.
 _PS_INTERP_STDIN_RE = re.compile(
     _PS_CMD_POS + _PS_EXE_PREFIX + r"(" + _PS_STDIN_HEAD_ALTERNATION + r")"
-    + r"[\w.-]*" + _QUOTED_VERB_TAIL
+    + r"(?P<suffix>[\w.-]*)" + _QUOTED_VERB_TAIL
     + r"(?:(?=[ \t])(?P<run>" + _PS_SWITCH_RUN + r")(?:-[ \t]*)?)?"
-    + r"(?=$|[;|&\n\r)}])",
+    + r"(?=$|[;|&\n\r)}]|[0-9*]?>|(?<=[ \t])<?#)",
     re.IGNORECASE,
 )
 #: A `-File <script>` (or `/f`) switch with a value that is not `-`: the
@@ -12209,28 +12280,100 @@ def _ps_inline_program_bodies(command: str, scan: str) -> Iterator[tuple[str, st
             yield interp, _ps_unescape_program(command[m.start(kind):m.end(kind)])
 
 
-def _ps_program_literal_before_pipe(segment: str) -> str:
-    """The PowerShell program a piped shell receives: the here-string in the
-    raw segment when the segment ends in one, else the last quoted string,
-    else the whole segment (nothing literal to extract -- `Get-Content x |
-    pwsh -c -` -- and a re-scan of the segment finds nothing, correctly)."""
+def _ps_stage_literals(segment: str) -> list[tuple[str, str]]:
+    """Every literal of the pipeline stage before a piped shell, in source
+    order, as ``(kind, raw_body)``: ``"@'"`` / ``'@"'`` for a here-string,
+    ``"sq"`` / ``"dq"`` for a quoted string. EVERY one, not the last: a comma
+    array (`'set -e', 'cd build', 'rm -rf out' | bash`, the natural
+    PowerShell spelling of a multi-line program) and `Write-Output 'a' 'b'`
+    each pipe one line per element, and the first cut read the last literal
+    alone, so a delete in the first element allowed beside a walled reversed
+    order (both reviews, driven). Here-strings are searched only when the
+    stage ends in a terminator (so an opener never scans to an absent close,
+    the bound the first cut kept), and the quoted strings in the text outside
+    them; a quoted string after a here-string in a stage that ends in a
+    quote is read, the here-string before it is not (a declared limit)."""
+    found: list[tuple[int, str, str]] = []
+    gaps = [0]
     if segment.rstrip().endswith(("'@", '"@')):
-        # The LAST here-string, as the quoted-string branch takes the last
-        # literal: a comma array of two here-strings pipes both, and the
-        # first cut extracted the first and never scanned the second
-        # (review, driven ALLOWING).
-        last_hs = None
-        for last_hs in _PS_HERE_STRING_RE.finditer(segment):
-            pass
-        if last_hs is not None:
-            return last_hs.group(2)
-    last = None
-    for last in _PS_PROGRAM_STRING_RE.finditer(segment):
-        pass
-    if last is not None:
-        kind = "sq" if last.group("sq") is not None else "dq"
-        return _ps_unescape_program(last.group(kind))
-    return segment
+        for hs in _PS_HERE_STRING_RE.finditer(segment):
+            found.append((hs.start(), "@" + hs.group(1), hs.group(2)))
+            gaps += [hs.start(), hs.end()]
+    gaps.append(len(segment))
+    for a, b in zip(gaps[::2], gaps[1::2]):
+        for m in _PS_PROGRAM_STRING_RE.finditer(segment, a, b):
+            kind = "sq" if m.group("sq") is not None else "dq"
+            found.append((m.start(), kind, m.group(kind)))
+    found.sort()
+    return [(kind, body) for _, kind, body in found]
+
+
+def _ps_piped_program_readings(segment: str) -> list[str]:
+    """Every reading of the program a shell piped to on the PowerShell leg
+    receives, from the literals of the stage before the pipe
+    (`_ps_stage_literals`), each literal by `_ps_bash_readings`: the literals
+    joined one per line, by kind and folded, and, when the stage holds more
+    than one, each literal alone, both ways. A wall on any reading is the
+    wall. The BOM and every CR are taken out: Windows PowerShell 5.1 hands a
+    native pipe its text behind a BOM and ends each element in CRLF, and the
+    line a BOM fails or a CR ends is still read here, so the judgment never
+    rests on what the shell would fail to run. The CR out of the separator
+    is a bare LF, which a backslash or a comment at an element's end carries
+    into the next element (`'echo \\', '<a delete> #' | bash`: a backslash
+    before CR LF escapes the CR, so the next element runs), and the joined
+    reading alone hid the delete the first cut walled (batch review, driven
+    ALLOWING); each literal alone keeps every verdict a literal has by
+    itself (`test_the_stage_reads_each_literal_by_itself`). A stage with no
+    literal is no program text this reader can see: nothing."""
+    pairs = [_ps_bash_readings(kind, body) for kind, body in _ps_stage_literals(segment)]
+    candidates = ["\n".join(p[0] for p in pairs), "\n".join(p[1] for p in pairs)]
+    if len(pairs) > 1:
+        candidates += [text for pair in pairs for text in pair]
+    programs: list[str] = []
+    for candidate in candidates:
+        text = candidate.replace("﻿", "").replace("\r", "")
+        if text.strip() and text not in programs:
+            programs.append(text)
+    return programs
+
+
+def _ps_program_literals_before_pipe(segment: str) -> list[str]:
+    """The PowerShell programs a piped PowerShell shell may receive: the
+    readings of `_ps_piped_program_readings`, so a double-quoted literal's
+    `''` is read as the two characters the shell gets beside the fold (the
+    batch review: `"Write-Host ''; <a hook write>; Write-Host ''" | pwsh
+    -Command -` drew no tier, the fold reading the write as quoted); else
+    the whole segment (nothing literal to extract -- `Get-Content x | pwsh -c
+    -` -- and a re-scan of the segment finds nothing, correctly)."""
+    return _ps_piped_program_readings(segment) or [segment]
+
+
+def _ps_bash_readings(kind: str, body: str) -> tuple[str, str]:
+    """``(by_kind, folded)``: the text Bash receives from one PowerShell
+    literal, and the all-four fold of `_ps_unescape_program`. By kind, a
+    single-quoted string folds `''`, a single-quoted here-string nothing, a
+    double-quoted string `""` and the backtick escapes of a quote or a
+    dollar, and a double-quoted here-string the backtick escapes ALONE: in
+    `@"..."@` a doubled quote of either kind is two characters (driven on
+    Windows PowerShell 5.1), and the first cut folded them, so `echo ""; <a
+    delete>; echo ""` read as one quoted span that hid the delete (code
+    review, driven ALLOWING). The fold is kept as a second reading because
+    a program behind a re-parsing wrapper carries the outer span's doubling
+    (`_ps_unescape_program`'s docstring); a wall on either is the wall."""
+    if kind == "@'":
+        return body, body
+    if kind == "sq":
+        text = body.replace("''", "'")
+        return text, text
+    by_kind = body if kind == '@"' else body.replace('""', '"')
+    by_kind = by_kind.replace('`"', '"').replace("`'", "'").replace("`$", "$")
+    return by_kind, _ps_unescape_program(body)
+
+
+def _ps_posix_programs_before_pipe(segment: str) -> list[str]:
+    """The Bash program a POSIX shell piped to on the PowerShell leg receives
+    (DEF-3075), in each of its readings (`_ps_piped_program_readings`)."""
+    return _ps_piped_program_readings(segment)
 
 
 def _ps_shell_program_bodies(command: str, scan: str) -> Iterator[str]:
@@ -12240,13 +12383,19 @@ def _ps_shell_program_bodies(command: str, scan: str) -> Iterator[str]:
     over; the same length guard as the interpreter arm. The yielded text is
     what bash receives, so the Bash extractor runs its own masker on it.
     Then the program a ``Start-Process`` of bash or sh carries in its
-    argument list (DEF-3011, `ps_start_process_shell_programs`), so every
-    consumer of this reader reads that launch form too."""
+    argument list (DEF-3011, `ps_start_process_shell_programs`), and the
+    literals piped into one (DEF-3075, `_ps_posix_programs_before_pipe`), so
+    every consumer of this reader reads those launch forms too."""
     if len(scan) != len(command):
         scan = command
     for grammar, program in ps_start_process_shell_programs(command, scan):
         if grammar == "bash":
             yield program
+    # a string piped into a POSIX shell is its program (DEF-3075): `'...' |
+    # bash`, `| & 'C:\Program Files\Git\bin\bash.exe'`
+    if "|" in scan and _PS_STDIN_POSIX_HINT_RE.search(scan):
+        for _head, segment in _ps_stdin_program_bodies(command, scan, posix=True):
+            yield from _ps_posix_programs_before_pipe(segment)
     for m in _PS_BASH_DASH_C_RE.finditer(scan):
         # By the literal's OWN kind, not `_ps_unescape_program`'s
         # all-four-forms fold: inside a single-quoted PowerShell string `""`
@@ -12255,11 +12404,17 @@ def _ps_shell_program_bodies(command: str, scan: str) -> Iterator[str]:
         # balanced `"..."` span that hid the redirect from the bash masker
         # (code review, driven). The interpreter arm keeps the fold: a program
         # in a language whose strings it pattern-matches is a different
-        # consumer, with the miss its docstring declares.
+        # consumer, with the miss its docstring declares. A double-quoted
+        # literal is read both ways (`_ps_bash_readings`): there `''` is two
+        # characters, and the fold alone made `bash -c "echo ''; <a delete>;
+        # echo ''"` read the delete as quoted (code review, driven ALLOWING).
         if m.group("sq") is not None:
             yield command[m.start("sq"):m.end("sq")].replace("''", "'")
         else:
-            yield _ps_unescape_program(command[m.start("dq"):m.end("dq")])
+            by_kind, folded = _ps_bash_readings("dq", command[m.start("dq"):m.end("dq")])
+            yield by_kind
+            if folded != by_kind:
+                yield folded
 
 
 def _ps_literal_text(command: str, m: "re.Match[str]") -> str:
@@ -12493,25 +12648,41 @@ def _ps_carrier_program_bodies(command: str, scan: str) -> Iterator[str]:
         yield from _ps_array_body(command, *arrays.pop())
 
 
-def _ps_stdin_program_bodies(command: str, scan: str) -> Iterator[tuple[str, str]]:
+def _ps_stdin_program_bodies(
+    command: str, scan: str, *, posix: bool = False,
+) -> Iterator[tuple[str, str]]:
     """Yield ``(head, segment_text)`` for every interpreter or shell that reads
     its program from a PIPE on the PowerShell leg. The opener must have opened
     at a pipe -- `_PS_CMD_POS` also opens after `;`, a newline or a re-parsing
-    wrapper, where the head has no stdin program -- and the body is the raw
-    ``command``'s text of the pipeline stage before it."""
+    wrapper, where the head has no stdin program -- or at a bare call operator
+    right after one (`| & bash`, `| & python -`: `_PS_CMD_POS` opens at the
+    `&`, and the first cut refused that match, the failure-mode review,
+    driven); the body is the raw ``command``'s text of the pipeline stage
+    before the pipe. ``posix`` picks the roster: the POSIX shells alone (their
+    program is Bash, `_ps_shell_program_bodies`), else every other head, so a
+    consumer that indexes `_PS_STDIN_DISPATCH` never meets a POSIX head."""
     if len(scan) != len(command):
         scan = command
     boundaries = [b.start() for b in _PS_STDIN_SEGMENT_BOUNDARY_RE.finditer(scan)]
     for m in _PS_INTERP_STDIN_RE.finditer(scan):
-        if scan[m.start()] != "|":
+        pipe = m.start()
+        if scan[pipe] == "&":
+            pipe -= 1
+            while pipe >= 0 and scan[pipe] in " \t":
+                pipe -= 1
+        if pipe < 0 or scan[pipe] != "|":
             continue
         head = m.group(1).lower()
+        if (head in _PS_STDIN_POSIX_HEADS) is not posix:
+            continue
         run = m.group("run") or ""
         if head in _PS_STDIN_SHELL_HEADS and _PS_STDIN_FILE_SWITCH_RE.search(run):
             continue  # `-File x.ps1`: the file is the program, the pipe is data
-        i = bisect.bisect_left(boundaries, m.start())
+        if posix and m.group("suffix").lower() not in ("", ".exe"):
+            continue  # `| shasum`, `| sha256sum`: another program, not the shell
+        i = bisect.bisect_left(boundaries, pipe)
         start = boundaries[i - 1] + 1 if i else 0
-        yield head, command[start:m.start()]
+        yield head, command[start:pipe]
 
 
 # PowerShell ``New-Item -ItemType SymbolicLink`` symlink creation.
@@ -16081,6 +16252,72 @@ def _blank_or_comment(text: str) -> bool:
     return not word or word.startswith("#")
 
 
+def _comment_ends(command: str, _depth: int = 0) -> frozenset[int]:
+    """The offset of each newline that ends a comment a shell reads in
+    ``command`` (DEF-2078): bash discards a comment raw to its newline, so a
+    backslash ending one continues nothing, and the line after it runs.
+    Read on `_pipe_scan`'s quote state, the splicer's own (not the masker's
+    walk: the two read a comment's opener differently, see `_pipe_scan`'s
+    ``openers``), at the top level and, one level down each time, in each
+    body a shell reads as a command of its own -- a `$( )` body, a
+    single-quoted span (a program where a shell re-reads it; data
+    elsewhere, where a newline kept changes no reader's verdict), and a
+    `$( )` inside double quotes. Driven on bash 3.2, dash and zsh
+    (`TestACommentEndsAtItsNewline`'s oracle): a backtick body, a
+    double-quoted span and an unquoted heredoc body join the pair before
+    their text is read, so this scan, which blanks the first two whole and
+    reaches into a double-quoted span only for its `$( )`, reads no comment
+    in them; inside a `$( )`, bash 3.2 joins it too and then refuses the
+    command unparsed, so the reading that keeps the next line is the one
+    dash and zsh run. A body holding a heredoc operator is not read: this
+    scan does not know where its heredoc body runs, so a data body's
+    apostrophe would read as a quote, and an unquoted body joins the pair
+    before its shell reads it; the splicer joins there as before
+    (DEF-2078's failure-mode review). The top level's heredoc bodies are
+    the splicer's to blank before it asks (`_splice_line_continuations`)."""
+    ends: set[int] = set()
+    bodies: list[tuple[int, int]] = []
+    _pipe_scan(command, lambda lo, hi: bodies.append((lo, hi)),
+               lambda lo, hi: ends.add(hi))
+    if _depth >= _SPLICE_PROGRAM_MAX_DEPTH:
+        return frozenset(ends)
+    for lo, hi in bodies:
+        if "<<" in command[lo:hi]:
+            continue
+        if command[lo - 2:lo] == "$(" or (command[lo - 1:lo] == "'"
+                                         and command[lo - 2:lo] != "$'"):
+            ends.update(lo + k for k in _comment_ends(command[lo:hi], _depth + 1))
+        elif command[lo - 1:lo] == '"' and "$(" in command[lo:hi]:
+            word = command[lo:hi]
+            subs: list[tuple[int, int]] = []
+            _pipe_scan(word, lambda a, b: subs.append((a, b)) if word[a - 2:a] == "$(" else None)
+            for a, b in subs:
+                ends.update(lo + a + k for k in _comment_ends(word[a:b], _depth + 1))
+    return frozenset(ends)
+
+
+def _holds_a_comment_opener(line: str) -> bool:
+    """A ``#`` in ``line`` stands at its start or after a blank or an
+    operator: the only lines whose join the comment reader can refuse, so a
+    `${#x}`, a `$#` or a URL's fragment on a continued line costs no scan.
+    A gate, not a reader (a superset of `_pipe_scan`'s word starts)."""
+    k = line.find("#")
+    while k >= 0:
+        if k == 0 or line[k - 1] in " \t;|&()":
+            return True
+        k = line.find("#", k + 1)
+    return False
+
+
+def _blank_lines_at(command: str, spans: list[tuple[int, int]]) -> str:
+    """``command`` with each ``[lo, hi)`` of ``spans`` blanked to spaces,
+    its length kept."""
+    out = list(command)
+    for lo, hi in spans:
+        out[lo:hi] = " " * (hi - lo)
+    return "".join(out)
+
+
 def _splice_line_continuations(command: str, _depth: int = 0) -> str:
     r"""Join physical lines a trailing backslash continues, into logical ones.
 
@@ -16131,6 +16368,14 @@ def _splice_line_continuations(command: str, _depth: int = 0) -> str:
     before, which is what bash does with the pair there (driven: the same
     shape unquoted ran nothing). The operators are read outside quotes and
     comments (``_pipe_scan``), so a quoted mention of ``<<EOF`` opens no body.
+
+    ⚠ A BACKSLASH THAT ENDS A COMMENT CONTINUES NOTHING (DEF-2078). bash
+    drops a comment raw to its newline, so the line after `echo ok #` plus a
+    backslash runs (driven on bash 3.2, dash and zsh, echo alone). Joined,
+    that line went into the comment for every reader. A line the join would
+    continue is left whole where `_comment_ends` says its newline ends a
+    comment, read on this text with the heredoc body lines met so far
+    blanked; an unquoted heredoc body still joins, as bash does.
     """
     if "\\" not in command and not _PIPE_AT_LINE_END_RE.search(command):
         return command
@@ -16176,6 +16421,14 @@ def _splice_line_continuations(command: str, _depth: int = 0) -> str:
     continued = False
     #: The heredoc delimiters the command names, read on first need.
     delims: frozenset[str] | None = None
+    #: Where each comment ends (`_comment_ends`), read on first need from the
+    #: command with the heredoc body lines met so far blanked: a data body's
+    #: apostrophe is not a quote, and read as one it would make the scan
+    #: call a quoted `#` after it a comment, and break the continuation that
+    #: ends its line. Read again once another body has been met.
+    comment_ends: frozenset[int] = frozenset()
+    bodies_read = -1
+    body_lines: list[tuple[int, int]] = []
     last = len(lines) - 1
     offset = 0
     for idx, line in enumerate(lines):
@@ -16183,6 +16436,7 @@ def _splice_line_continuations(command: str, _depth: int = 0) -> str:
         scan_line = scan[offset:offset + len(line)]
         offset += len(line) + 1
         if body is not None:
+            body_lines.append((start, start + len(line)))
             delim, quoted, strip = body
             probe = line.lstrip("\t") if strip else line
             cut = None if idx == last else _pipe_stage_end(line, scan_line)
@@ -16263,6 +16517,14 @@ def _splice_line_continuations(command: str, _depth: int = 0) -> str:
                 pipe_open = True
                 continue
         text, joined = _spliced_line(line, idx == last)
+        if text != line and _holds_a_comment_opener(line):
+            # A backslash that ends a comment continues nothing: bash drops
+            # the comment raw to its newline, backslash and all (DEF-2078).
+            if bodies_read != len(body_lines):
+                comment_ends = _comment_ends(_blank_lines_at(command, body_lines))
+                bodies_read = len(body_lines)
+            if start + len(line) in comment_ends:
+                text, joined = line, False
         parts.append(text)
         if joined and idx < last:
             continue
@@ -18497,8 +18759,8 @@ def _candidate_paths_from_powershell(command: str, _depth: int = 0) -> list[str]
     for head, segment in _ps_stdin_program_bodies(raw, command):
         if head in _PS_STDIN_SHELL_HEADS:
             if _depth < _PS_STDIN_MAX_DEPTH:
-                program = _ps_program_literal_before_pipe(segment)
-                paths.extend(_candidate_paths_from_powershell(program, _depth + 1))
+                for program in _ps_program_literals_before_pipe(segment):
+                    paths.extend(_candidate_paths_from_powershell(program, _depth + 1))
             continue
         for rx in _STDIN_PROGRAM_WRITE_RES[_PS_STDIN_DISPATCH[head]]:
             for om in rx.finditer(segment):
@@ -18666,8 +18928,8 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
     for head, segment in _ps_stdin_program_bodies(raw, scan):
         if head in _PS_STDIN_SHELL_HEADS:
             if _depth < _PS_STDIN_MAX_DEPTH:
-                program = _ps_program_literal_before_pipe(segment)
-                out.extend(iter_ps_removed_or_relocated_operands(program, _depth + 1))
+                for program in _ps_program_literals_before_pipe(segment):
+                    out.extend(iter_ps_removed_or_relocated_operands(program, _depth + 1))
             continue
         out.extend(_program_effects(_PS_STDIN_DISPATCH[head], segment))
     if _depth < _PS_STDIN_MAX_DEPTH:
