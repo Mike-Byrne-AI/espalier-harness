@@ -1860,7 +1860,7 @@ on the Bash tool (`echo '...' | pwsh -Command -`, `cat <<'EOF' | pwsh
 <script>`, a program held in an unbound variable (a literal binding earlier in the command
 is inlined first), `wsl bash -c`, a switch value holding `~` or `:` before
 the `-c` on the Bash tool (`bash --rcfile ~/.r -c '...'`: only `--rcfile`
-and `--init-file` take one, and bash applies neither under `-c`), a
+and `--init-file` take one, and bash applies neither under a plain `-c`), a
 relative write after a `cd` inside a
 POSIX shell program anywhere but behind a bare `-c` on the Bash tool (`bash
 -lc 'cd tools/cc/hooks && echo x > x.py'`, a here-string, the PowerShell
