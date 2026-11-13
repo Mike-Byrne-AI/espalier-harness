@@ -2216,12 +2216,13 @@ spellings of them are work:
   comment is read where PowerShell opens one, a `<#` glued to the token
   before it included where that token lets PowerShell open it (a variable in
   an expression, a variable's member, a colon-bound switch, a string that
-  starts its token), and three unusual spellings are read as a comment
-  PowerShell does not open, so a statement inside it goes unread. An opener
-  after a backtick-escaped blank (``Write-Output a` <# ; ... #>``) is a
-  declared limit, pinned by
-  `tests/test_write_guard.py::TestAGluedCommentOpens::test_a_backtick_escaped_blank_opens_a_comment_powershell_does_not`.
-  An opener inside a braced variable name (`${<#}; ... #>`) is a declared
+  starts its token), and two unusual spellings are read as a comment
+  PowerShell does not open, so a statement inside it goes unread. Where
+  that glued reading and the plain token-start rule decide an opener
+  differently, the call is judged on both readings and refused where either
+  refuses, so a misread glued opener costs friction, never a statement the
+  token-start rule reads. An opener
+  inside a braced variable name (`${<#}; ... #>`) is a declared
   limit, pinned by
   `tests/test_write_guard.py::TestAGluedCommentOpens::test_a_braced_names_opener_opens_a_comment_powershell_does_not`.
   An opener after the stop-parsing token (`cmd /c --% echo <# & ... #>`),

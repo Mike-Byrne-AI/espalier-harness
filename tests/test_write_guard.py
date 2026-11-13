@@ -18837,6 +18837,41 @@ _GLUED_POPULATION = (
     ("Write-Output a` 'a'<# c #>; gc y.txt", (), ()),
     ('Write-Output a` 1<# c #>; gc y.txt', (), ()),
     ('Write-Output a` $x = $y<# c #>; gc y.txt', (), ()),
+    # the braced name's close and its member (DEF-2073, design A's third
+    # step), each tokenised by 5.1's ParseInput
+    ('Write-Output ${x}<# c #>; gc y.txt', (), ()),
+    ('Write-Output ${x}<# ; gc y.txt #>', (), (20,)),
+    ('$y = ${x}<# c #>; gc y.txt', ((9, 16),), (16,)),
+    ('$y + ${x}<# c #>; gc y.txt', ((9, 16),), (16,)),
+    ('Write-Output ${x}.y<# c #>; gc y.txt', ((19, 26),), (26,)),
+    ('${x}.y<# c #>; gc y.txt', ((6, 13),), (13,)),
+    ('Write-Output ${x}[0]<# c #>; gc y.txt', ((20, 27),), (27,)),
+    ('gc ${env:x}<# c #>; gc y.txt', (), ()),
+    ('gc ${env:x}<# ; gc y.txt #>', (), (14,)),
+    ('& ${x}<# ; gc y.txt #>', (), (9,)),
+    ('Write-Output a${x}<# ; gc y.txt #>', (), (21,)),
+    ('Write-Output ${a b}<# ; gc y.txt #>', (), (22,)),
+    ('{ $x }<# c #>; gc y.txt', ((6, 13),), (13,)),
+    ('Write-Output { $x }<# c #>; gc y.txt', ((19, 26),), (26,)),
+    ('@{a=1}<# c #>; gc y.txt', ((6, 13),), (13,)),
+    ('Write-Output @{a=1}<# c #>; gc y.txt', ((19, 26),), (26,)),
+    ('if ($x) { gc z }<# c #>; gc y.txt', ((16, 23),), (23,)),
+    ('$y = $x + ${x}<# c #>; gc y.txt', ((14, 21),), (21,)),
+    ('Write-Output ${x}# c\n gc y.txt', (), (20,)),
+    ('Write-Output ${x}#; gc y.txt', (), (18,)),
+    ('${x}# c\n gc y.txt', (), (7,)),
+    ('$x = { 1 }<# c #>; gc y.txt', ((10, 17),), (17,)),
+    ('Write-Output $(1)<# c #>; gc y.txt', ((17, 24),), (24,)),
+    ('Write-Output @(1)<# c #>; gc y.txt', ((17, 24),), (24,)),
+    ('Write-Output (1)<# ; gc y.txt #>', ((16, 32),), ()),
+    ('Write-Output $(1)<# ; gc y.txt #>', ((17, 33),), ()),
+    ('Write-Output @(1)<# ; gc y.txt #>', ((17, 33),), ()),
+    ('Write-Output { 1 }<# ; gc y.txt #>', ((18, 34),), ()),
+    ('Write-Output @{a=1}<# ; gc y.txt #>', ((19, 35),), ()),
+    ('Write-Output ${x}<#c#>.y; gc y.txt', (), (24,)),
+    ('Write-Output ${x}-y<# ; gc y.txt #>', (), (22,)),
+    ('$a=${x}<# c #>; gc y.txt', ((7, 14),), (14,)),
+    ('Write-Output ${x},${y}<# ; gc y.txt #>', (), (25,)),
 )
 
 #: Where the walk and 5.1 still differ: (spelling, 5.1's comments, the
@@ -18847,7 +18882,6 @@ _GLUED_POPULATION = (
 #: a drive-qualified name with a second colon and an escaped colon. Each is
 #: a declared limit in docs/HOOKS.md.
 _GLUED_RESIDUE = (
-    ('Write-Output ${x}<# c #>; gc y.txt', (), ((17, 24),), (), (24,)),
     ('$a:b:c<# c #>; gc y.txt', ((6, 13),), (), (13,), ()),
     ('gc -a`:<# c #> y.txt', ((7, 14),), (), (), ()),
     ('if (1) { gc } $x<# c #>; gc y.txt', ((16, 23),), (), (23,), ()),
@@ -19012,18 +19046,16 @@ class TestAGluedCommentOpens:
         # absorbed: `#>; Get-Content .env` is a line comment on 5.1
         assert_hook_allowed(_run_ps_guard("Write-Output $x<# c #>; Get-Content .env", tmp_path))
 
-    def test_a_backtick_escaped_blank_opens_a_comment_powershell_does_not(self):
-        """Declared limit (79ba0b (2)): 5.1 reads no comment here, so its
-        `;` is live; the walk opens one after the escaped blank."""
+    def test_a_backtick_escaped_blank_starts_no_token(self, tmp_path):
+        """Was a declared limit (79ba0b (2)): 5.1 reads no comment after an
+        escaped blank, so its `;` is live. The opener reader now asks the
+        glued rule there, and the read is refused on the guard's readings."""
         bp = _bash_patterns_module()
-        import sys
-        sys.path.insert(0, str(HOOKS_DIR))
-        import write_guard as wg
         cmd = "Write-Output a` <# ; Get-Content .env #>"
         blocks: list = []
         bp._walk_powershell_spans(cmd, None, blocks)
-        assert [a for a, _ in blocks] == [cmd.index("<#")]
-        assert ".env" not in wg._ps_secret_read_targets(cmd)
+        assert blocks == []
+        assert_hook_denied(_run_ps_guard(cmd, tmp_path), contains_reason="Secret-path access blocked")
 
     def test_a_braced_names_opener_opens_a_comment_powershell_does_not(self):
         """Declared limit (79ba0b (2)): `${<#}` is a variable's name on 5.1."""

@@ -320,7 +320,11 @@ class TestTheSentenceSplitter:
 #: drive-qualified name, an escaped colon), a declared false allow pinned by
 #: the residue row; its cite's hit is paid by the matcher section's bare
 #: test-symbol cite, reworded to say what the test enforces.
-_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 39, "docs/SHARP_EDGES.md": 5}
+#: HOOKS 39 -> 38 on 2026-11-13 (DEF-2073, design A): the escaped blank's
+#: limit closed -- the opener reader no longer takes an escaped separator for
+#: a token start, and the call is judged on both readings -- and its sentence
+#: went with it.
+_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 38, "docs/SHARP_EDGES.md": 5}
 
 
 def test_the_census_is_the_pinned_population():
