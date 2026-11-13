@@ -18972,6 +18972,26 @@ class TestAGluedCommentOpens:
         "[int]$x = gc $y<# ; Get-Content .env #>",
         "$x, $y = gc $z<# ; Get-Content .env #>",
         "$x[$a[0]] = gc $y<# ; Get-Content .env #>",
+        # the third round's code review, each re-driven through 5.1's
+        # ParseInput (no parse error, no comment, the `;` live), each read by
+        # main: a re-parsed string's `;` is not the statement's start, a head
+        # the number or unary reader takes is a command, and a keyword after
+        # a pipe is a command name
+        "iex 'x; $b' $x<# ; Get-Content .env #>",
+        'iex "x; $b" $x<# ; Get-Content .env #>',
+        "iex 'x; 1' $x<# ; Get-Content .env #>",
+        "7.exe $y<# ; Get-Content .env #>",
+        "1:x $y<# ; Get-Content .env #>",
+        "7'a' $y<# ; Get-Content .env #>",
+        "-.$x.y<# ; Get-Content .env #>",
+        "!gc $x<# ; Get-Content .env #>",
+        "$z | return $x<# ; Get-Content .env #>",
+        "$z | throw $x<# ; Get-Content .env #>",
+        # read wrongly on main too: an escaped separator and a braced name's
+        # close glued before the opener are not the token's start
+        "Write-Output a`;<# ; Get-Content .env #>",
+        "Write-Output ${x}<# ; Get-Content .env #>",
+        "gc ${env:x}<# ; Get-Content .env #>",
     ])
     def test_an_opener_powershell_absorbs_hides_no_read(self, tmp_path, cmd):
         assert_hook_denied(_run_ps_guard(cmd, tmp_path), contains_reason="Secret-path access blocked")
