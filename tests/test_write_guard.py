@@ -13764,9 +13764,10 @@ class TestSecretPathAccess:
         _INDENTED_DELIMITER_MESSAGE,
         # an unrostered head hands the readers raw text, so the walk's own
         # quote reading decides: a single-quoted opener and a single-quoted
-        # `<<` are text
+        # `<<` are text (the second line of this row's first spelling moved
+        # to `_A_QUOTED_LINE_UNDER_A_RAW_HEAD`, DEF-4109)
         "make check MSG='echo $(cat .env)'",
-        "make notes MSG='see <<EOF\nthen `cat .env` here'",
+        "make notes MSG='see <<EOF then `cat .env` here'",
     )
     # Declared limits (docs/HOOKS.md, the secret-read paragraph): bash reads
     # the file under each and the leg allows it. An operand a nested body
@@ -13858,25 +13859,49 @@ class TestSecretPathAccess:
     def test_each_substitution_body_is_read_once_at_its_own_level(self, text, heredoc, bodies):
         assert _load_write_guard()._substitution_bodies(text, heredoc=heredoc) == bodies
 
-    # The walk names the heredoc operators bash reads, so the heredoc arm
-    # never takes a quoted mention, a here-string or an arithmetic shift for
-    # one, and the heredoc reader ends a body at bash's own delimiter line.
-    def test_the_walk_names_only_the_heredoc_operators_bash_reads(self):
-        text = "cat <<A <<'B' x $((1<<4)) '<<C' \"<<D\" <<<E # <<F\necho \"$(cat <<G"
-        found: list[int] = []
-        _load_write_guard()._substitution_bodies(text, heredocs=found)
-        assert found == [text.index("<<A"), text.index("<<'B'"), text.index("<<G")]
+    # The walk reads the bodies of the heredoc operators bash reads, so it
+    # never takes a quoted mention, a here-string, an arithmetic shift or a
+    # comment's `<<` for one; the bodies of two operators on one line follow
+    # one another, a body is skipped (its `<<H` is the body's text), the walk
+    # resumes on the line after the delimiter (`<<G` there is read), and the
+    # commit idiom's operator line ends inside a substitution (DEF-4109).
+    def test_the_walk_reads_the_bodies_of_only_the_heredoc_operators_bash_reads(self):
+        text = ("cat <<A <<'B' x $((1<<4)) '<<C' \"<<D\" <<<E # <<F\na\nA\nb <<H\nB\n"
+                "echo \"$(cat <<G\ng\nG\n)\"")
+        found: list = []
+        _load_write_guard()._substitution_bodies(text, heredocs=found, source=text)
+        assert [(b.op, nested) for b, nested in found] == [
+            (text.index("<<A"), False), (text.index("<<'B'"), False), (text.index("<<G"), True)]
+        assert [text[b.start:b.end] for b, _ in found] == ["a", "b <<H", "g"]
+        assert [b.after for b, _ in found] == [
+            text.index("b <<H"), text.index("echo"), text.index(")\"")]
+
+    # The newline that starts a body is read on the raw command: the masker
+    # joins a heredoc's lines into its operator's, and a comment's end too,
+    # so an apostrophe in a body or a comment never opens a quote.
+    def test_the_walk_reads_a_body_s_start_on_the_raw_command(self):
+        command = "cat <<EOF # it's\nit's\nEOF\ncat .env"
+        masked = command.replace("\n", " ", 2)
+        found: list = []
+        _load_write_guard()._substitution_bodies(masked, heredocs=found, source=command)
+        assert [(command[b.start:b.end], b.after) for b, _ in found] == [
+            ("it's", command.index("cat .env"))]
 
     def test_the_heredoc_reader_ends_a_body_at_bash_s_own_delimiter_line(self):
         bp = _bash_patterns_module()
         text = "cat <<'EOF'\n  EOF\nx <<Q\nEOF\ny"
-        exact = bp._heredoc_bodies(text, exact=True)
-        assert [(b.start, b.end, b.after) for b in exact] == [
-            (text.index("  EOF"), text.index("\nEOF"), text.index("y"))]
+        exact = bp._heredoc_body_at(text, 4, text.index("  EOF"), exact=True)
+        assert (exact.start, exact.end, exact.after) == (
+            text.index("  EOF"), text.index("\nEOF"), text.index("y"))
         loose = bp._heredoc_bodies(text)       # the masker's rule, kept for its other callers
         assert loose[0].end == loose[0].start and loose[1].op == text.index("<<Q")
-        assert bp._heredoc_bodies(text, exact=True, live=frozenset()) == []
-        assert bp._heredoc_bodies('cat <<E"O"F\nx\nEOF', exact=True)[0].expands is False
+        assert bp._heredoc_body_at("cat <<<x\ny", 4, 9, exact=True) is None     # a here-string
+        assert bp._heredoc_body_at("cat <<'E\nx", 4, 9, exact=True) is None     # a quote never closed
+        unterminated = bp._heredoc_body_at("cat <<E\nx\ny", 4, 8, exact=True)
+        assert (unterminated.end, unterminated.after) == (11, 11)              # to the end, as bash runs it
+        tabs = bp._heredoc_body_at("cat <<-E\n\tx\n\tE\ny", 4, 9, exact=True)
+        assert tabs.after == 15                                                 # `<<-` strips the delimiter's tabs
+        assert bp._heredoc_body_at('cat <<E"O"F\nx\nEOF', 4, 12, exact=True).expands is False
 
     # Bash is the oracle (/bin/bash 3.2.57 on the Air, bash 5 on the Linux
     # cells): the dotenv's marker, a word no shell reads as an assignment,
@@ -13919,6 +13944,265 @@ class TestSecretPathAccess:
                               timeout=scaled(10),
                               env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LC_ALL": "C"})
         assert ("marker-def-5106" in proc.stdout + proc.stderr) is reads
+
+    # DEF-4109: the leg read fewer statements than the shell runs. A lone `&`
+    # was no boundary, so the read after a backgrounded step sat in a
+    # statement headed by the step; and the text was cut at the end of the
+    # line holding the first `<<`, so every line after a heredoc's body went
+    # unread, and so did every line after a here-string, an arithmetic shift
+    # or a quoted `<<` the masker handed back raw. Every row here allowed at
+    # main f32e06e. The named user: an operator whose agent backgrounds a
+    # step and then reads a dotenv, or writes a file by heredoc and reads one
+    # on the next line, and meets no refusal.
+    _BACKGROUND_STEP_READS = (
+        "sleep 0 & cat .env",
+        "true &cat .env",
+        "true& cat .env",
+        "{ true; } & cat .env",
+        "true & head -1 .env",
+        "true & cat .env &",
+    )
+    _AFTER_A_BODY_READS = (
+        "cat <<'EOF'\nhello\nEOF\ncat .env",
+        "cat <<EOF\nhello\nEOF\ncat .env",
+        'cat <<"EOF"\nhello\nEOF\ncat .env',
+        "cat <<-EOF\n\thello\n\tEOF\ncat .env",       # `<<-` closes on a tab-indented delimiter
+        "cat <<A <<B\na\nA\nb\nB\ncat .env",           # two bodies on one line, one after the other
+        "cat <<A; cat <<B\na\nA\nb\nB\ncat .env",
+        "cat <<A\na\nA\ncat <<B\nb\nB\ncat .env",       # a heredoc after an earlier one's delimiter
+        "cat <<A\na\nA\ncat <<B\n$(cat .env)\nB",       # ... whose expanding body is read too
+        "cat <<EOF\nit's\nEOF\ncat .env",               # an apostrophe in a body is the body's text
+        "cat <<'EOF'\nit's `x`\nEOF\ncat .env",
+        "cat <<EOF # it's\nbody\nEOF\ncat .env",        # ... and in a comment on the operator's line
+        "cat <<'EOF'\n  EOF\nEOF\ncat .env",            # an indented line is the body's; the delimiter alone ends it
+        "cat <<'EOF'\nhello\nEOF\necho ok && cat .env",
+        "cat <<EOF >out.txt\nhello\nEOF\ncat .env",
+        "tr a b <<EOF\nhi\nEOF\ncat .env",              # the operator's line ends a statement
+        "echo \"$(cat <<'EOF'\nmsg\nEOF\n)\" && cat .env",   # the commit idiom's shape, then a read
+        "x=$(cat <<EOF\nhi\nEOF\n); cat .env",
+        "(cat <<EOF\nhi\nEOF\n) && cat .env",
+        # what the cut took for an operator: a here-string has no body, and
+        # an arithmetic shift and a quoted mention are no heredoc at all
+        "cat <<<hi\ncat .env",
+        "cat <<< 'hi'\ncat .env",
+        "echo $((1<<4))\ncat .env",
+        "make x MSG='<<A'\ncat .env",
+    )
+    # Where the shell reads nothing: a body is data to its delimiter line, or
+    # to the end when none closes it, as bash runs it; a quoted command and a
+    # `&` beside a redirect are no boundary; and a quoted path after the
+    # commit idiom's shape is one word (the idiom's newline sits inside its
+    # quotes, so it ends no statement there).
+    _BACKGROUND_STEP_NO_READS = (
+        "echo 'sleep 0 & cat .env'",
+        'grep -n "& cat .env" notes.txt',
+        "echo a >&2 cat .env",
+        "echo a 2>&1 cat .env",
+        "echo x &> out.txt cat .env",
+        "echo x &>> out.txt cat .env",
+        "echo a <&0 cat .env",
+        "echo a >& cat .env",                          # `>& word` sends both streams to the file `cat`
+        "echo a <& cat .env",                          # a duplication bash refuses, and runs nothing
+    )
+    _AFTER_A_BODY_NO_READS = (
+        "cat <<'EOF'\ncat .env\nEOF",
+        "cat <<EOF\ncat .env\nEOF",
+        "cat <<'EOF'\nhello\ncat .env",
+        "cat <<EOF\nhello\ncat .env",
+        "cat <<'EOF'\n`cat .env`\nEOF\necho done",
+        "cat <<'EOF'\n$(cat .env)\nEOF\necho done",
+        "cat <<A <<B\ncat .env\nA\ncat .env\nB\necho done",
+        "cat <<-EOF\n\tcat .env\n\tEOF\necho done",
+        "cat <<'EOF'\n  EOF\ncat .env\nEOF\necho done",
+        "cat <<'EOF' > notes.md\nRun: sleep 1 & cat .env\nEOF\necho done",
+        "cat <<EOF\nit's $(echo hi)\nEOF\necho \"it's\"",
+        "echo \"$(cat <<'EOF'\ncat .env and it's\nEOF\n)\"\necho done",
+        "echo \"$(cat <<'EOF'\nmsg\nEOF\n)\" && cat \"docs/Notes on .env setup.md\"",
+        # the review batch: the second body starts after the first one's
+        # delimiter, not at the line its own word appears on; a body starts
+        # after the line that closes a quote opened on the operator's line;
+        # a delimiter the parser cannot read runs its body to the end
+        "cat <<A <<B\nB\nA\ncat .env\nB\necho done",
+        "cat <<EOF; echo \"a\nEOF\nb\"\ncat .env\nEOF",
+        "cat <<!\ncat .env\n!\necho done",
+    )
+    # A body starts after the line that closes a substitution opened on its
+    # operator's line too, and the walk reads it so
+    # (`test_a_newline_in_a_deeper_span_starts_no_body`), but the masker's
+    # own heredoc reader starts that body at the first newline after the
+    # operator and blanks the `)` it holds, so the walk never sees the span
+    # close and the body's text is read: refused, where bash reads nothing.
+    # The masker's heredoc readers are the masker row's (note 66e884); main
+    # allowed this only through the cut this lane took out.
+    _A_BODY_THE_MASKER_STARTS_EARLY = "cat <<EOF $(echo\nx)\ncat .env\nEOF\necho done"
+    # The idiom itself, hook only (no repository or remote here), followed by
+    # the next step on a line or after `&&`: the message is data, and a
+    # quoted path after it is one word, since the idiom's newline ends no
+    # statement of the outer text.
+    _AFTER_A_BODY_HOOK_NO_READS = (
+        "git commit -m \"$(cat <<'EOF'\nfix: `cat .env` and it's\nEOF\n)\"\ngit push",
+        "git commit -m \"$(cat <<'EOF'\nfix: the read of .env\nEOF\n)\" && cat \"docs/Notes on .env setup.md\"",
+        "gh pr create --title t --body \"$(cat <<'EOF'\nRun `cat .env` & check\nEOF\n)\" && "
+        "cat \"docs/Notes on .env setup.md\"",
+    )
+    # Declared limits (docs/HOOKS.md, the statement paragraph): bash reads the
+    # line after each body and the leg does not, as main did not. A delimiter
+    # glued to its substitution's `)` ends the body on bash 3.2 (zsh refuses
+    # the spelling; no bash 5 on the Air, so no oracle cell), and a delimiter
+    # word the operator parser does not take runs the body to the end.
+    _AFTER_A_BODY_LIMITS = (
+        "x=$(cat <<EOF\nhi\nEOF)\ncat .env",
+        "cat <<!\nx\n!\ncat .env",
+    )
+    # A wrapper before a statement of redirects alone reads it too: bash's
+    # `xargs` echoes the file's words, zsh's `time` prints it, and `exec`
+    # opens it for the statements after it. An `exec` that only opens a
+    # descriptor prints nothing on either shell and is refused as the cover
+    # for the read that follows it.
+    _WRAPPED_REDIRECT_READS = (
+        "xargs < .env",
+        "time < .env",
+        "exec < .env; cat",
+        "exec 3< .env; cat <&3",
+    )
+    _A_DESCRIPTOR_OPEN = "exec 3< .env"
+    # Refused at main and still: the reads beside a lone `&` that were
+    # boundaries already, and a read on the operator's own line.
+    _BACKGROUND_STEP_CONTROLS = (
+        "true && cat .env",
+        "cat .env 2>&1",
+        "cat .env &> out.txt",
+        "cat <<'EOF' && cat .env\nhello\nEOF",
+    )
+    # zsh runs `$READNULLCMD` over a statement of input redirects alone, so
+    # it prints the file, `$NULLCMD` beside an output redirect, which copies
+    # it, and with two inputs it prints both (multios); bash and sh run
+    # nothing. The leg reads one at every level, as it read one inside a
+    # substitution's body (DEF-5106; ruled in the contract, ack f925f2). An
+    # assignment beside the redirect runs nothing on zsh either.
+    _ZSH_LONE_REDIRECT_READS = (
+        "< .env",
+        "<.env",
+        "0< .env",
+        "true; < .env",
+        "< .env | head -1",
+        "{ < .env; }",
+        "< .env 2>/dev/null",
+        "< .env > out.txt; cat out.txt",
+        "< notes.txt < .env",
+        "true & < .env",
+        "cat <<EOF\nx\nEOF\n< .env",
+    )
+    _ZSH_LONE_REDIRECT_NO_READS = (
+        "x=1 < .env",
+        "echo '< .env'",
+    )
+    # The masker hands an unrostered head's command back raw, and a quoted
+    # separator there is a statement boundary (`_secret_read_targets_one`'s
+    # stated residue, DEF-681): so this line, inside the quotes to bash, is
+    # read as a statement, as its spellings without a `<<` were at main. At
+    # main it allowed only because the cut at the quoted `<<` dropped it, the
+    # cut this row's lane took out.
+    _A_QUOTED_LINE_UNDER_A_RAW_HEAD = "make notes MSG='see <<EOF\nthen `cat .env` here'"
+
+    @pytest.mark.parametrize("command", _BACKGROUND_STEP_READS + _AFTER_A_BODY_READS
+                             + _ZSH_LONE_REDIRECT_READS + _WRAPPED_REDIRECT_READS
+                             + (_A_DESCRIPTOR_OPEN,) + _BACKGROUND_STEP_CONTROLS)
+    def test_a_read_after_a_background_step_or_a_heredoc_body_is_refused(self, command, tmp_path):
+        assert_hook_denied(run_guard_tool("Bash", {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("command", _AFTER_A_BODY_LIMITS)
+    def test_a_line_after_a_body_the_leg_does_not_read_is_a_declared_limit(self, command, tmp_path):
+        assert_hook_allowed(run_guard_tool("Bash", {"command": command}, tmp_path))
+
+    # A newline inside a substitution opened on an operator's line starts no
+    # body, and a delimiter the parser cannot read runs its body to the end
+    # (the review batch).
+    def test_a_newline_in_a_deeper_span_starts_no_body(self):
+        text = "cat <<A $(b\nc)\na\nA\nd"
+        found: list = []
+        _load_write_guard()._substitution_bodies(text, heredocs=found, source=text)
+        assert [(text[b.start:b.end], b.after) for b, _ in found] == [("a", text.index("d"))]
+
+    def test_a_delimiter_the_parser_cannot_read_runs_its_body_to_the_end(self):
+        text = "cat <<!\nx\n!\ncat y"
+        found: list = []
+        _load_write_guard()._substitution_bodies(text, heredocs=found, source=text)
+        assert [(b.start, b.end, b.after, b.expands) for b, _ in found] == [(8, len(text), len(text), False)]
+
+    @pytest.mark.parametrize("command", _BACKGROUND_STEP_NO_READS + _AFTER_A_BODY_NO_READS
+                             + _AFTER_A_BODY_HOOK_NO_READS + _ZSH_LONE_REDIRECT_NO_READS)
+    def test_a_line_the_shell_never_runs_after_a_body_or_a_background_redirect_is_allowed(
+            self, command, tmp_path):
+        assert_hook_allowed(run_guard_tool("Bash", {"command": command}, tmp_path))
+
+    @pytest.mark.parametrize("command", [_A_QUOTED_LINE_UNDER_A_RAW_HEAD, _A_BODY_THE_MASKER_STARTS_EARLY])
+    def test_a_quoted_line_under_a_raw_head_is_still_a_statement_of_its_own(self, command, tmp_path):
+        assert_hook_denied(run_guard_tool("Bash", {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    # bash (3.2.57 on the Air, 5 on the Linux cells) and zsh (5.9 on the Air;
+    # the Linux cells have none, and skip) are the oracles: each read row
+    # prints the dotenv's marker, no other row does, and a lone input
+    # redirect prints it on zsh alone (behind `time` too). The `make x` row
+    # among the reads runs `cat .env` on its second line whether or not make
+    # finds a rule. A row that reads nothing must also parse, or its cell
+    # proves nothing: two are bash 4 syntax that bash 3.2 refuses (`&>>`, and
+    # an apostrophe in a body inside `$( )`), checked on bash 4 and later and
+    # on zsh.
+    _BACKGROUND_AND_BODY_ORACLE_ROWS = (
+        *((c, True, True) for c in _BACKGROUND_STEP_READS + _AFTER_A_BODY_READS),
+        *((c, False, False) for c in _BACKGROUND_STEP_NO_READS + _AFTER_A_BODY_NO_READS),
+        *((c, False, True) for c in _ZSH_LONE_REDIRECT_READS),
+        *((c, False, False) for c in _ZSH_LONE_REDIRECT_NO_READS),
+        ("xargs < .env", True, True),
+        ("time < .env", False, True),
+        ("exec < .env; cat", True, True),
+        ("exec 3< .env; cat <&3", True, True),
+        (_A_DESCRIPTOR_OPEN, False, False),
+        ("cat <<!\nx\n!\ncat .env", True, True),
+        (_A_QUOTED_LINE_UNDER_A_RAW_HEAD, False, False),
+        (_A_BODY_THE_MASKER_STARTS_EARLY, False, False),
+    )
+    _BASH_4_SYNTAX = frozenset({
+        "echo x &>> out.txt cat .env",
+        "echo \"$(cat <<'EOF'\ncat .env and it's\nEOF\n)\"\necho done",
+    })
+
+    @staticmethod
+    def _shell_reads(argv: list[str], command: str, tmp_path: Path) -> "tuple[bool, bool]":
+        """Whether the shell printed the dotenv's marker, and whether it
+        parsed the row (no syntax or parse error on stderr)."""
+        (tmp_path / ".env").write_text("marker-def-4109\n", encoding="utf-8")
+        (tmp_path / "notes.txt").write_text("notes\n", encoding="utf-8")
+        proc = subprocess.run([*argv, command], cwd=str(tmp_path), stdin=subprocess.DEVNULL,
+                              capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=scaled(10),
+                              env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LC_ALL": "C"})
+        parsed = "syntax error" not in proc.stderr and "parse error" not in proc.stderr
+        return "marker-def-4109" in proc.stdout + proc.stderr, parsed
+
+    @pytest.mark.skipif(not Path("/bin/bash").exists(), reason="the oracle is a real /bin/bash")
+    @pytest.mark.parametrize("command, bash_reads, zsh_reads", _BACKGROUND_AND_BODY_ORACLE_ROWS)
+    def test_bash_reads_the_file_as_each_background_and_heredoc_row_says(
+            self, command, bash_reads, zsh_reads, tmp_path):
+        bash = ["/bin/bash", "--noprofile", "--norc", "-c"]
+        reads, parsed = self._shell_reads(bash, command, tmp_path)
+        assert reads is bash_reads
+        if not bash_reads and command in self._BASH_4_SYNTAX:
+            major = subprocess.run([*bash, "echo ${BASH_VERSINFO[0]}"], capture_output=True, text=True,
+                                   encoding="utf-8", errors="replace", timeout=scaled(10)).stdout.strip()
+            parsed = parsed or major == "3"
+        assert parsed or bash_reads, "bash refused the row as syntax, so its cell proves nothing"
+
+    @pytest.mark.skipif(not Path("/bin/zsh").exists(), reason="the oracle is a real /bin/zsh")
+    @pytest.mark.parametrize("command, bash_reads, zsh_reads", _BACKGROUND_AND_BODY_ORACLE_ROWS)
+    def test_zsh_reads_the_file_as_each_background_and_heredoc_row_says(
+            self, command, bash_reads, zsh_reads, tmp_path):
+        reads, parsed = self._shell_reads(["/bin/zsh", "-f", "-c"], command, tmp_path)
+        assert reads is zsh_reads
+        assert parsed or zsh_reads, "zsh refused the row as syntax, so its cell proves nothing"
 
     # DEF-5107: both legs ended a read verb's operands at the first redirect
     # spelled from `>`, and read one numbered by its stream (`2>`, `*>`) as an
