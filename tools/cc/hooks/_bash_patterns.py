@@ -4660,12 +4660,14 @@ _PS_GLUED_NUMBER = (
 )
 #: In expression mode: a variable (members allowed, a postfix `++`/`--` too),
 #: a type literal or a number ending the token, at its start or after an
-#: operator or a cast glued before it (`$x=1<#`, `[int]$x<#`). The type arm
-#: is ONE literal, so a run of `[a]` has one reading: as `(?:\[..\])+` beside
-#: the index member it backtracked cubically (the code review: 3.1 s on a
-#: 2.4 KB `$x[1]` run).
+#: operator or a cast glued before it (`$x=1<#`, `[int]$x<#`), a dash operator
+#: word included (`$x -eq$y<#`, `-not$x<#`, `$x-is[int]<#`: 5.1 reads the word
+#: as the operator and opens after its operand). The type arm is ONE literal,
+#: so a run of `[a]` has one reading: as `(?:\[..\])+` beside the index
+#: member it backtracked cubically (the code review: 3.1 s on a 2.4 KB `$x[1]`
+#: run).
 _PS_GLUED_EXPRESSION_END_RE = re.compile(
-    r"(?:^|(?<=[!+\-*/%=,.\]]))(?:" + _PS_GLUED_VARIABLE + _PS_GLUED_MEMBER + r"*(?:\+\+|--)?"
+    r"(?:^(?:-[A-Za-z]+)?|(?<=[!+*/%=,.\]])|(?<=-)(?:[A-Za-z]+)?)(?:" + _PS_GLUED_VARIABLE + _PS_GLUED_MEMBER + r"*(?:\+\+|--)?"
     r"|\[[A-Za-z_][\w.]*(?:\[\])?\]" + _PS_GLUED_MEMBER + r"*"
     r"|-?" + _PS_GLUED_NUMBER + r")$"
 )
@@ -4691,6 +4693,11 @@ _PS_UNARY_HEAD_RE = re.compile(
     r"(?:-(?:[\d.]|-(?=\$)|(?:not|bnot|join|split)(?![\w-]))|\.\d|\+(?:\+(?=\$)|[\d.$(]))",
     re.IGNORECASE,
 )
+#: A dash operator word ending right before a string glued to it
+#: (`$x -eq'a'<#`, `-join'a'<#`), read in the last 16 characters only: the
+#: longest operator word is 12 letters, and a longer run stays unopened.
+_PS_OPERATOR_WORD_END_RE = re.compile(r"-[A-Za-z]+$")
+_PS_OPERATOR_WORD_SPAN = 16
 #: The keywords whose operand is a pipeline read for its own mode (`return
 #: $x<#` opens; `return gc $x<#` does not).
 _PS_PIPELINE_KEYWORD_RE = re.compile(r"(?:return|throw|exit)(?=[ \t])", re.IGNORECASE)
@@ -4888,7 +4895,9 @@ def _ps_glued_opener_opens(
     ):
         return i != quote_end and _PS_GLUED_ARGUMENT_TOKEN_RE.fullmatch(s, t, i) is not None
     if i == quote_end:
-        return s[t - 1] in "!+-*/%=,.]"
+        return s[t - 1] in "!+-*/%=,.]" or _PS_OPERATOR_WORD_END_RE.search(
+            s, max(0, t - _PS_OPERATOR_WORD_SPAN), t
+        ) is not None
     # A slice, not `search(s, t, i)`: `^` and the lookbehind must not see
     # past the token's start.
     return _PS_GLUED_EXPRESSION_END_RE.search(s[t:i]) is not None

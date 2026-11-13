@@ -3427,6 +3427,10 @@ class TestCommandPositionClassClose:
         "_bash_patterns._PS_GLUED_MEMBER_TOKEN_RE":
             "TOKENIZER -- a variable with a member, the token a glued comment "
             "opener ends in either mode, fullmatched on that one token (DEF-2073).",
+        "_bash_patterns._PS_OPERATOR_WORD_END_RE":
+            "TOKENIZER -- a dash operator word ending before a string glued to it, "
+            "read in a bounded window, which makes the string an expression's "
+            "operand for a glued comment opener (DEF-2073).",
         "_bash_patterns._PS_NUMBER_HEAD_RE":
             "TOKENIZER -- a number as a statement's whole first word, which makes "
             "the statement an expression for a glued comment opener (DEF-2073).",

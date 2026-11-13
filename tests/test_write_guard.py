@@ -18872,6 +18872,43 @@ _GLUED_POPULATION = (
     ('Write-Output ${x}-y<# ; gc y.txt #>', (), (22,)),
     ('$a=${x}<# c #>; gc y.txt', ((7, 14),), (14,)),
     ('Write-Output ${x},${y}<# ; gc y.txt #>', (), (25,)),
+    # an operator word glued to its operand (DEF-2073), each tokenised by 5.1's ParseInput
+    ("$x = 'a`;' + $y<# c #>; gc y.txt", ((15, 22),), (22,)),
+    ("-not'a'<# c #>; gc y.txt", ((7, 14),), (14,)),
+    ("1'a'<# c #>; gc y.txt", (), ()),
+    ("$x -eq'a'<# c #>; gc y.txt", ((9, 16),), (16,)),
+    ("$x -f'a'<# c #>; gc y.txt", ((8, 15),), (15,)),
+    ("$x -join'a'<# c #>; gc y.txt", ((11, 18),), (18,)),
+    ('$x -like"a"<# c #>; gc y.txt', ((11, 18),), (18,)),
+    ("$x -replace'a'<# c #>; gc y.txt", ((14, 21),), (21,)),
+    ("$x -split'a'<# c #>; gc y.txt", ((12, 19),), (19,)),
+    ("$x -band'a'<# c #>; gc y.txt", ((11, 18),), (18,)),
+    ("$x -as'a'<# c #>; gc y.txt", ((9, 16),), (16,)),
+    ("$x ='a'<# c #>; gc y.txt", ((7, 14),), (14,)),
+    ("$x -ne'a'<# c #>; gc y.txt", ((9, 16),), (16,)),
+    ("-split'a b'<# c #>; gc y.txt", ((11, 18),), (18,)),
+    ("-join'a'<# c #>; gc y.txt", ((8, 15),), (15,)),
+    ('$x -eq$y<# c #>; gc y.txt', ((8, 15),), (15,)),
+    ('$x -eq$y.z<# c #>; gc y.txt', ((10, 17),), (17,)),
+    ('$x -eq1<# c #>; gc y.txt', ((7, 14),), (14,)),
+    ('$x -eq[int]<# c #>; gc y.txt', ((11, 18),), (18,)),
+    ('-not$x<# c #>; gc y.txt', ((6, 13),), (13,)),
+    ('$x -f$y<# c #>; gc y.txt', ((7, 14),), (14,)),
+    ("$x -notcontains'a'<# c #>; gc y.txt", ((18, 25),), (25,)),
+    ("if ($x -eq'a'<# c #>) { gc y.txt }", ((13, 20),), ()),
+    ("$y = $x -eq'a'<# c #>; gc y.txt", ((14, 21),), (21,)),
+    ("Write-Output -eq'a'<# c #>; gc y.txt", (), ()),
+    ("Write-Output $x -eq'a'<# c #>; gc y.txt", (), ()),
+    ("gc -Path'a'<# c #>; gc y.txt", (), ()),
+    ("$x-eq'a'<# c #>; gc y.txt", ((8, 15),), (15,)),
+    ("$x -eq-'a'<# c #>; gc y.txt", ((10, 17),), (17,)),
+    ("$x -EQ'a'<# c #>; gc y.txt", ((9, 16),), (16,)),
+    ("$x -ceq'a'<# c #>; gc y.txt", ((10, 17),), (17,)),
+    ('$x -is[int]<# c #>; gc y.txt', ((11, 18),), (18,)),
+    ("$x -eq'a'<# c #>\n gc y.txt", ((9, 16),), (16,)),
+    ("$x -eq'a'# c\n gc y.txt", (), (12,)),
+    ('$x -eq$y# c\n gc y.txt', (), (11,)),
+    ("$x -eq ('a')<# c #>; gc y.txt", ((12, 19),), (19,)),
 )
 
 #: Where the walk and 5.1 still differ: (spelling, 5.1's comments, the
@@ -18893,6 +18930,10 @@ _GLUED_RESIDUE = (
     ("$x = @'\na\n'@<# c #>; gc y.txt", ((12, 19),), (), (19,), ()),
     ('@"\na\n"@<# c #>; gc y.txt', ((7, 14),), (), (14,), ()),
     ("Write-Output @'\na\n'@<# c #>; gc y.txt", ((20, 27),), (), (27,), ()),
+    # an operator word's operand in a residue shape (DEF-2073), each tokenised by 5.1's ParseInput
+    ("$x -eq'a'.Length<# c #>; gc y.txt", ((16, 23),), (), (23,), ()),
+    ("$x -eq@'\na\n'@<# c #>; gc y.txt", ((13, 20),), (), (20,), ()),
+    ("(1) -eq'a'<# c #>; gc y.txt", ((10, 17),), (), (17,), ()),
 )
 
 
@@ -19029,6 +19070,21 @@ class TestAGluedCommentOpens:
     ])
     def test_an_opener_powershell_absorbs_hides_no_read(self, tmp_path, cmd):
         assert_hook_denied(_run_ps_guard(cmd, tmp_path), contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("cmd", [
+        # air's edge (4) on design A: the readings decide the opener
+        # differently, and a plain command is allowed on both
+        "$x = 1#note",
+        "$x<# note #>; Write-Output ok",
+        "Write-Output ${x}<# note #>",
+        "$x -eq'a'# note",
+    ])
+    def test_a_plain_command_both_readings_allow_is_allowed(self, tmp_path, cmd):
+        bp = _bash_patterns_module()
+        bp._PS_GLUED_OPENED[0] = False
+        bp._walk_powershell_spans(cmd, None, [])
+        assert bp.glued_opener_opened(), "the row must take the two-reading path"
+        assert_hook_allowed(_run_ps_guard(cmd, tmp_path))
 
     def test_a_run_of_bracketed_members_is_read_in_linear_time(self):
         """The code review: the type arm as a run (`(?:\\[..\\])+`) beside
