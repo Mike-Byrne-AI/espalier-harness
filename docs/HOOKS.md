@@ -377,7 +377,7 @@ checkout up and clears the leftover worktrees beside it
 the memory digest and the hooks themselves describe the tree the session works
 in. A lane shipped with auto-merge armed lands while nobody is watching, and
 the next session used to open on the finished branch, behind `main` by
-everything merged since (measured 2026-10-08: 348 commits, so the banner was a
+everything merged since (348 commits once, so the banner was a
 four-day-old build). One bounded `git fetch --prune`; then it moves only
 `main` itself (a fast-forward) or a branch GitHub deleted at the merge (its
 upstream reads `[gone]`) whose every commit is in `origin/main`, and only when
@@ -1744,7 +1744,17 @@ live -- a here-string, a heredoc body or the stage piped in -- and awk's
 "path"`, `>>`, sed's `w path` command and flag) meet the write extractor. A
 program on a POSIX shell's stdin by here-string or pipe (`bash <<< "..."`,
 `sh<<<'...'`, `echo "..." | sh`, `printf '%s' '...' 2>/dev/null | bash`) is
-read the same way.
+read the same way, behind the shell's own output redirects as well (`echo
+"..." | bash 2>&1 -x`, `| 2>/dev/null bash`, `python3 - 2>"e r" <<'PY'`) and
+with its head in capitals or with `.exe` (`| BASH.exe`); an input redirect
+after the head (`| bash < f`) or a script operand gives it another program,
+and the piped text is data. Declared limits, each pinned: a glued redirect
+chain (`2>&1>/dev/null`; the spaced spelling is read), a redirect before an
+interpreter's heredoc operand or flag (`python3 2>&1 - <<EOF`), and on the
+pipe a quoted target with a blank, which the pipe scan blanks, so the word
+after it reads as the target (`| bash > "o u t" x.sh` walls: toward
+friction)
+(`tests/test_write_guard.py::TestAPipedShellReadsItsRedirectAndExeHead::test_the_redirect_units_declared_limits_draw_their_declared_verdict`).
 
 Because the program is read, the rest of it is data: a
 string that only quotes a command, a commit message, a `git grep` pattern, a
@@ -1804,8 +1814,12 @@ the `-c` and its program (`bash -c -- '...'`, `bash -c -x '...'`), and a
 shell's `+` options on either side of the `-c` (`bash +x -c '...'`, `bash -c
 +e '...'`, `bash +O extglob -c '...'`), are read on both tools, and so is
 the cluster on the `+` sign, which runs its program as `-c` does (`bash +c
-'...'`, `bash +xc '...'`). On the
-PowerShell tool a string piped into a POSIX shell (`'...' | bash`, `echo
+'...'`, `bash +xc '...'`). A redirect
+word among them (`bash 2>/dev/null -c '...'`, `bash -lc 2>&1 '...'`,
+`python3 2>&1 -c "..."`) is read on the Bash tool only: the PowerShell
+tool's openers take none, since PowerShell's redirect set is its own
+(declared, pinned).
+On the PowerShell tool a string piped into a POSIX shell (`'...' | bash`, `echo
 '...' | sh`, a here-string, `bash -` or `bash -s`, the head bare, behind the
 call operator `| & bash` or given by path as Git's `bash.exe`, a redirect or
 comment after it, `| bash 2>&1`) is that shell's program and meets the Bash
