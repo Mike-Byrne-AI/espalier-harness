@@ -465,6 +465,38 @@ _glob_reach = _protected_zones.glob_reach
 _glob_reaches_protected = _protected_zones.glob_reaches_protected
 _aliases_protected_inode = _protected_zones.aliases_protected_inode
 
+#: The harness variables a hook reads when it starts, which the session must
+#: not set for itself: the maintenance switch, the stop gate's mode, and the
+#: command its test gate runs as the suite. An assignment made inside the
+#: session reaches no hook already running, and one handed to a nested
+#: `claude` starts that session with the gate it names already loosened or
+#: replaced, so every record below (the Bash prefix, the three PowerShell
+#: arms, cmd's `set`) refuses each name the same way. The stop gate's two
+#: names are literals: the zero-cross-import rule keeps
+#: `stop_gate.STOP_GATE_MODE_ENV` out of reach, and reading
+#: `_hook_utils.STOP_GATE_TEST_CMD_ENV` here would add a name to this guard's
+#: start floor, which a kept older helper then refuses every call for;
+#: tests/test_hook_constant_parity.py pins both to their constants.
+_HARNESS_ENV_NAMES: tuple[str, ...] = (
+    _maintenance_mode.ENV_VAR,
+    "ESPALIER_STOP_GATE",
+    "ESPALIER_STOP_GATE_TEST_CMD",
+)
+#: The names as one alternation, longest first, so no shorter name that opens
+#: a longer one is tried ahead of it (each site's next token refuses the
+#: shorter name's partial match, so the order saves a failed try and the match
+#: is the same). Spelled as a literal, not joined from the tuple: the dot-star
+#: gate (tests/test_redos.py) rebuilds every compiled pattern from module-level
+#: literals, names, `+` and re.escape() f-strings, and a join is a call it
+#: cannot read, as a name inside an f-string is, so the five sites below
+#: compose it with `+`. tests/test_write_guard_env_prefix_polarity.py pins the
+#: literal to the tuple's names, each once and longest first, so the tuple
+#: stays the one home. The pin is a test, not a check at import: a raise here
+#: would refuse every call between the two edits a new name takes, the restore
+#: that undoes the first one aside.
+_HARNESS_ENV_ALTERNATION = (
+    rf"ESPALIER_STOP_GATE_TEST_CMD|{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE")
+
 # BC-028: Bash tool inline-assignment of harness env vars.
 # Contract: set in parent shell BEFORE launching `claude`. Inline
 # assignment via a Bash tool call sets the var for the immediate
@@ -547,7 +579,7 @@ def _build_the_harness_env_prefix() -> None:
     _HARNESS_ENV_PREFIX_RE = re.compile(
         _bash_patterns._CMD_POS_NO_VERB
         + r"(?:(?:export|declare)(?:[ \t]+-[^\s;|&]+)*[ \t]+)?"
-        + rf"(?:{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE)[ \t]*="
+        + r"(?:" + _HARNESS_ENV_ALTERNATION + r")[ \t]*="
     )
 
 # ⚠ POLARITY. The deny above teaches a mental model -- "an inline assignment
@@ -1053,12 +1085,12 @@ def _build_the_ps_harness_env_prefix() -> None:
         r"(?:"
         r"(?P<envcolon>"
         + _bash_patterns._PS_CMD_POS
-        + rf"\$env:(?:{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE)\s*=)"
-        r"|Set-Item\s+(?:-Path\s+)?[\"']?Env:[\\/]?"
-        rf"(?:{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE)\b"
-        r"|SetEnvironmentVariable\(\s*[\"']"
-        rf"(?:{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE)[\"']"
-        r")",
+        + r"\$env:(?:" + _HARNESS_ENV_ALTERNATION + r")\s*=)"
+        + r"|Set-Item\s+(?:-Path\s+)?[\"']?Env:[\\/]?"
+        + r"(?:" + _HARNESS_ENV_ALTERNATION + r")\b"
+        + r"|SetEnvironmentVariable\(\s*[\"']"
+        + r"(?:" + _HARNESS_ENV_ALTERNATION + r")[\"']"
+        + r")",
         re.IGNORECASE,
     )
 
@@ -1190,7 +1222,7 @@ def _ps_harness_env_prefix_is_benign(command: str) -> bool:
 # `/a` or `/p`, its quotes already removed by cmd's word split.
 _CMD_HARNESS_SET_RE = re.compile(
     r"(?:/[ap][ \t]+)?"
-    rf"(?:{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE)[ \t]*=",
+    + r"(?:" + _HARNESS_ENV_ALTERNATION + r")[ \t]*=",
     re.IGNORECASE,
 )
 
