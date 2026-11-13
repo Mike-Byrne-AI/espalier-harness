@@ -93,8 +93,18 @@ _OUTSIDE_THE_HOOKS_CLOCK_S = 0.4
 #: under the wired timeout (`TestTheBudgetSitsBelowTheWiring`).
 _OVERRUN_FLOOR_MS = 80
 _OVERRUN_CEILING_MS = 1000
+#: The PowerShell span walk over a long run of glued openers, after the token
+#: cap: about 10 ms on the 800-bracket run (Windows, 2026-11-12) and about
+#: 15 ms on the 8000-unit runs (Windows, 2026-11-13); the uncapped walk took
+#: 0.44 s and 15.5 s, which is all the ceilings have to catch.
+_BRACKET_RUN_FLOOR_MS = 10
+_BRACKET_RUN_CEILING_MS = 500
+_GLUED_RUN_FLOOR_MS = 15
+_GLUED_RUN_CEILING_MS = 500
 _WALL_CLOCK_FLOORS: dict[str, tuple[str, str, int]] = {
     "_OVERRUN_CEILING_MS": ("_OVERRUN_FLOOR_MS", "2026-11-07", 80),
+    "_BRACKET_RUN_CEILING_MS": ("_BRACKET_RUN_FLOOR_MS", "2026-11-12", 10),
+    "_GLUED_RUN_CEILING_MS": ("_GLUED_RUN_FLOOR_MS", "2026-11-13", 15),
 }
 #: The tiny budget the injected rows run under.
 _TINY_BUDGET_S = 0.05
@@ -375,7 +385,7 @@ class TestAGluedRunIsReadInLinearTime:
         cmd = "$y = $x" + "[a]" * 800 + "q<#c#>"
         start = time.perf_counter()
         bp._walk_powershell_spans(cmd)
-        assert time.perf_counter() - start < 0.5
+        assert time.perf_counter() - start < _BRACKET_RUN_CEILING_MS / 1000
 
     @pytest.mark.parametrize("make", [
         # the two reviews' payloads, each quadratic before the token cap
@@ -393,7 +403,7 @@ class TestAGluedRunIsReadInLinearTime:
         cmd = make(8000)
         start = time.perf_counter()
         bp._walk_powershell_spans(cmd)
-        assert time.perf_counter() - start < 0.5
+        assert time.perf_counter() - start < _GLUED_RUN_CEILING_MS / 1000
 
 
 class TestASlowJudgmentIsRefused:
