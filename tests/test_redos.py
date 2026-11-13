@@ -5928,6 +5928,43 @@ def test_secret_leg_word_cut_linear(label, payload):
     assert elapsed_ms < _CI_SAFE_BUDGET_MS, f"{label}: {elapsed_ms:.1f}ms"
 
 
+@pytest.mark.parametrize("label,payload", [
+    # DEF-5106: the Bash secret leg reads each substitution's body once, at
+    # its own level, a nested one held there as one word, so a nest of
+    # openers that never closes, one that closes, a run of closed spans of
+    # each opener and floods of each quote kind stay linear end to end: the
+    # walk, then the statement read of every body it returns.
+    ("nested_open", "$(cat " * (_WORST_CASE_BODY_LEN // 6)),
+    ("nested_closed", "$(cat " * (_WORST_CASE_BODY_LEN // 12) + ")" * (_WORST_CASE_BODY_LEN // 12)),
+    ("spans", "$(cat a) " * (_WORST_CASE_BODY_LEN // 9)),
+    ("backticks", "`cat a` " * (_WORST_CASE_BODY_LEN // 8)),
+    ("process", "<(cat a) =(cat a) " * (_WORST_CASE_BODY_LEN // 18)),
+    ("single_quoted", "'$(' " * (_WORST_CASE_BODY_LEN // 5)),
+    ("double_quoted", '"$(a)' * (_WORST_CASE_BODY_LEN // 5)),
+    ("ansi_c", "$'\\'$(" * (_WORST_CASE_BODY_LEN // 6)),
+    ("comments", "# $(\n" * (_WORST_CASE_BODY_LEN // 5)),
+])
+def test_secret_leg_substitution_bodies_linear(label, payload):
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    signal.signal(signal.SIGALRM, _alarm)
+    signal.setitimer(signal.ITIMER_REAL, _CI_SAFE_BUDGET_MS / 1000.0)
+    t = time.time()
+    try:
+        for body in write_guard._substitution_bodies(payload):
+            write_guard._secret_statement_reads(body)
+        write_guard._substitution_bodies(payload, heredoc=True)
+        # the costliest new path: an unquoted heredoc's lines, each body read
+        # by the whole leg one level down
+        write_guard._secret_read_targets("cat <<EOF\n" + "$(date)\n" * (_WORST_CASE_BODY_LEN // 40) + "EOF")
+        elapsed_ms = (time.time() - t) * 1000
+    except _Timeout:
+        pytest.fail(f"{label}: the secret leg's substitution walk exceeded {_CI_SAFE_BUDGET_MS}ms")
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    assert elapsed_ms < _CI_SAFE_BUDGET_MS, f"{label}: {elapsed_ms:.1f}ms"
+
+
 class TestPlanModeBridgeReader:
     """The plan-mode bridge's Markdown reader (``reflect_trigger._steps_from_plan``
     and its siblings) runs over a user-authored plan of any size on every

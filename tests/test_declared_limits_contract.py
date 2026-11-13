@@ -305,6 +305,10 @@ class TestTheSentenceSplitter:
 #: HOOKS 33 -> 34 on 2026-11-12 (DEF-5107), merged over DEF-3075's 33: a redirect
 #: into a substitution keeps the operands' old stop, a declared false allow
 #: with its pin.
+#: HOOKS 34 -> 35 on 2026-11-13 (DEF-5106): a substitution's body read as a
+#: program keeps three declared false allows (an operand a nested body
+#: computes, a backtick span nested in another, a case arm's unbalanced `)`),
+#: one sentence with its pin.
 #: HOOKS 34 -> 38 on 2026-11-13 (DEF-2073's lane, air's rulings 79ba0b and
 #: 40ec7f), re-derived from the HOOKS.md merged with main's 34
 #: (DEF-3075 and DEF-5107 above): the PowerShell comment reader's three
@@ -324,7 +328,9 @@ class TestTheSentenceSplitter:
 #: limit closed -- the opener reader no longer takes an escaped separator for
 #: a token start, and the call is judged on both readings -- and its sentence
 #: went with it.
-_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 38, "docs/SHARP_EDGES.md": 5}
+#: HOOKS 38 -> 39 on 2026-11-13: DEF-2073's lane merged over DEF-5106's 35
+#: (the lane's net +4 on main's 34 above, added to main's 35).
+_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 39, "docs/SHARP_EDGES.md": 5}
 
 
 def test_the_census_is_the_pinned_population():

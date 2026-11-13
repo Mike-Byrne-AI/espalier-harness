@@ -1686,7 +1686,7 @@ def _quote_aware_words(
     return out
 
 
-def _secret_read_targets(command: str, _depth: int = 0) -> list[str]:
+def _secret_read_targets(command: str, _depth: int = 0, *, _body: bool = False) -> list[str]:
     """`_secret_read_targets_one` over every reading the walls judge
     (`_bash_patterns._wall_readings`): the command as spelled and, when a
     literal binding changes it, with the binding inlined. The union: a
@@ -1695,11 +1695,13 @@ def _secret_read_targets(command: str, _depth: int = 0) -> list[str]:
     (`eval "$v"`, `bash -c "$v"`) was refused only by accident -- the masker
     failed on the quoted value and the raw text put the read at a command
     position; the lane made the masker read the value, which took the
-    accident away (the failure-mode review, measured)."""
+    accident away (the failure-mode review, measured). ``_body`` marks a
+    substitution's body (DEF-5106), where a statement of redirects alone
+    reads its input: `$(< .env)` is bash's and zsh's own `cat`."""
     _load_the_pattern_path()
     out: list[str] = []
     for text in _bash_patterns._wall_readings(command):
-        for path in _secret_read_targets_one(text, _depth):
+        for path in _secret_read_targets_one(text, _depth, _body=_body):
             if path not in out:
                 out.append(path)
     return out
@@ -1981,6 +1983,144 @@ def _drop_empty_substitutions(text: str) -> str:
     return "".join(out)
 
 
+#: What a nested substitution reads as inside the body around it: one word,
+#: whose text bash knows only once the nested body has run (DEF-5106).
+_SUBSTITUTION_HOLE = "_"
+#: What may stand before zsh's `=( )` (the Bash tool runs the login shell,
+#: zsh on a macOS host): it opens a body only as a word of its own, since
+#: `x=(a b)` is an array assignment in zsh and bash alike. Bash reads the
+#: word as a syntax error and runs nothing. The empty string is a text start.
+_WORD_STARTS = frozenset({"", " ", "\t", "\n", "\r", ";", "|", "&", "(", "`"})
+
+
+def _substitution_bodies(
+    text: str, *, heredoc: bool = False, heredocs: "list[int] | None" = None,
+    source: "str | None" = None,
+) -> list[str]:
+    """The body of each substitution in ``text`` -- `$( )`, a backtick span
+    and, outside double quotes, a process substitution's `<( )` or `>( )`
+    and zsh's `=( )` as a word of its own (`_WORD_STARTS`) -- the programs
+    the shell runs before the command they sit in (DEF-5106). A
+    substitution nested in a body is held there as one word
+    (`_SUBSTITUTION_HOLE`) and is a body of its own in the list, so each
+    character is read once, at the level bash runs it, and a flood of
+    openers stays linear with no depth to budget.
+
+    Quotes are read as bash reads them: nothing opens inside single quotes
+    or an ANSI-C string; inside double quotes `$( )` and a backtick open and
+    a process substitution is text; a backslash escapes the next character,
+    and a `#` opening a word is a comment to the line's end. With
+    ``heredoc`` the outer text is an unquoted heredoc's body, where a quote
+    and a `#` are text and only `$`, a backtick and a backslash are syntax;
+    inside a substitution the ordinary rules hold again. A body that never
+    closes runs to the end: the heredoc cut ends the commit idiom's
+    substitution early (`git commit -m "$(cat <<'EOF'`), and bash runs no
+    command whose substitution is truly left open. Declared limits: a
+    backtick span nested in another (bash wants it escaped, and the escape
+    is read as one), a case arm's `)` inside `$( )`, which closes the body
+    there, and an operand a nested substitution computes (the hole).
+
+    ``heredocs``, when given, collects the offset of each heredoc operator
+    the walk meets outside quotes, a comment and an arithmetic `$(( ))` --
+    the operators bash reads, so a quoted mention of one is never taken for
+    one (`_bash_patterns._heredoc_bodies`'s ``live``). ``source``, when
+    given, is the text each body is taken from, at ``text``'s offsets: the
+    walk reads the masked text, where a quoted opener is blank, and each body
+    comes from the raw command, which the masker can blank inside a live
+    span too (an exec opener in a data head's double-quoted argument)."""
+    _load_the_pattern_path()
+    src = text if source is None else source
+    bodies: list[str] = []
+    # One open span each: its closer (empty for the text itself), where its
+    # opener starts, where its unread segment starts, the segments and holes
+    # read so far, whether it is inside double quotes, its open parentheses,
+    # whether it is an arithmetic `$(( ))`.
+    spans: list[list] = [["", 0, 0, [], False, 0, False]]
+    closed = -1   # just past the last span closed: a `#` there is inside a word
+
+    def close(at: int) -> None:
+        nonlocal closed
+        span = spans.pop()
+        span[3].append(src[span[2]:at])
+        bodies.append("".join(span[3]))
+        parent = spans[-1]
+        if len(spans) > 1:
+            parent[3].append(src[parent[2]:span[1]])
+            parent[3].append(_SUBSTITUTION_HOLE)
+        parent[2] = closed = at + 1
+
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        top = spans[-1]
+        literal = top[4] or (heredoc and len(spans) == 1)
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "`":
+            if top[0] == "`":
+                close(i)
+            else:
+                spans.append(["`", i, i + 1, [], False, 0, False])
+            i += 1
+            continue
+        if ch == "$":
+            follow = text[i + 1:i + 2]
+            if follow == "(":
+                spans.append([")", i, i + 2, [], False, 0, text.startswith("((", i + 1)])
+                i += 2
+                continue
+            if follow == "$":                      # `$$`, the shell's pid: no opener follows
+                i += 2
+                continue
+            if follow == "'" and not literal:      # `$'...'`: its `\'` is no close
+                j = i + 2
+                while j < n and text[j] != "'":
+                    j += 2 if text[j] == "\\" else 1
+                i = n if j >= n else j + 1
+                continue
+        if literal:
+            if ch == '"' and top[4]:
+                top[4] = False
+            i += 1
+            continue
+        if ch == "'":
+            j = text.find("'", i + 1)
+            i = n if j < 0 else j + 1
+            continue
+        if ch == '"':
+            top[4] = True
+        elif ch == "#" and i != closed and _bash_patterns._opens_comment(text, i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        elif ch == "<" and text.startswith("<", i + 1):
+            if heredocs is not None and not top[6] and not text.startswith("<", i + 2):
+                heredocs.append(i)
+            i += 3 if text.startswith("<", i + 2) else 2
+            continue
+        elif ch in "<>" and text.startswith("(", i + 1) or (
+                ch == "=" and text.startswith("(", i + 1) and text[i - 1:i] in _WORD_STARTS):
+            spans.append([")", i, i + 2, [], False, 0, False])
+            i += 2
+            continue
+        elif ch == "(":
+            top[5] += 1
+        elif ch == ")":
+            if top[5]:
+                top[5] -= 1
+            elif top[0] == ")":
+                close(i)
+        i += 1
+    end, tail = n, ""
+    while len(spans) > 1:                          # each one left open runs to the end
+        span = spans.pop()
+        span[3].append(src[span[2]:end])
+        bodies.append("".join(span[3]) + tail)
+        end, tail = span[1], _SUBSTITUTION_HOLE
+    return bodies
+
+
 def _redirect_free_operands(args: "list[tuple[str, str]]", sources: list[str], *,
                             ends_at_output: bool) -> "list[tuple[str, str]]":
     """``args`` up to a comment, every redirect and its target taken out, as
@@ -2017,7 +2157,7 @@ def _redirect_free_operands(args: "list[tuple[str, str]]", sources: list[str], *
     return kept
 
 
-def _secret_read_targets_one(command: str, _depth: int = 0) -> list[str]:
+def _secret_read_targets_one(command: str, _depth: int = 0, *, _body: bool = False) -> list[str]:
     """Path tokens read by a recognized read verb, per statement.
 
     Statement-scoped so `ls docs/ && cat .env` is caught while
@@ -2062,17 +2202,93 @@ def _secret_read_targets_one(command: str, _depth: int = 0) -> list[str]:
     if heredoc != -1:
         line_end = command.find("\n", heredoc)
         masked = masked[:line_end] if line_end != -1 else masked
+    # The cut, masked text before the drop below, at the command's offsets:
+    # the substitution walk reads it and takes each body from `command`.
+    cut = masked
     # A substitution that prints nothing goes before the statement cut, as
     # bash drops it whole: a `;` or a `|` inside `` `# a; b` `` is the
     # comment's text, not a boundary (DEF-2074). Nothing below indexes
     # `command` by an offset into `masked`; the program readers take `command`
-    # and `scan`, which keep every span.
+    # and `scan`, which keep every span, and the body walk `cut`.
     masked = _drop_empty_substitutions(masked)
     # `>|` is one operator, the redirect that overrides noclobber, and its
     # bar no pipe: the cut below would end the statement there and read the
     # operands past it as a command of their own (DEF-5107). Same length.
     masked = masked.replace(">|", "> ")
 
+    out = _secret_statement_reads(masked, a_body=_body)
+    # A SUBSTITUTION'S BODY IS A PROGRAM BASH RUNS FIRST (DEF-5106). The head
+    # read above takes `$(cat .env)` for a `$` statement and `echo "$(cat
+    # .env)"` for an echo, and neither is a read verb, so each body is read
+    # here as a program of its own, by this whole leg one level down (the
+    # program readers included: `echo "$(sh -c 'cat .env')"`), from the same
+    # cut text. A union: the read above is unchanged, and a body can only add
+    # a target. Behind the cheapest witness, an opener in the text. The walk
+    # reads `cut`, the masked text, and takes each body from the raw command,
+    # which the leg masks again as a program of its own. A body holds no
+    # opener but an escaped one (each nested span is a hole), so the descent
+    # ends there.
+    # ⚠ THE CUT IS WHAT KEEPS A HEREDOC'S BODY UNREAD HERE. A quoted heredoc's
+    # body, the commit idiom's message among them, is data only because the
+    # text above ends at the first `<<` line: a change that reads past a body
+    # (DEF-4109) must hand this walk the text with every body taken out,
+    # unquoted ones included, or a body's apostrophe opens a quote that runs
+    # to the end and the backticks in a message are read as programs.
+    if "$(" in cut or "`" in cut or "<(" in cut or ">(" in cut or "=(" in cut:
+        for body in _substitution_bodies(cut, source=command):
+            out.extend(_secret_read_targets(body, _depth + 1, _body=True))
+    # A PowerShell program behind `powershell` / `pwsh` (DEF-637): read with
+    # the PowerShell roster and statement grammar, one level down. The
+    # heredoc cut above is why `scan` is the uncut twin: for `pwsh -Command -
+    # <<'EOF'` the body is the program, not data.
+    if _depth < _bash_patterns._PS_STDIN_MAX_DEPTH:
+        for program in _bash_patterns._shell_program_bodies(command, scan):
+            out.extend(_ps_secret_read_targets(program, _depth + 1))
+        # What a program under a reader head hands to a shell (447-A step 3):
+        # `python3 -c 'os.system("cat .env")'`, `git -c core.pager='cat .env'`.
+        for program in _bash_patterns._shell_out_program_bodies(command, scan):
+            out.extend(_secret_read_targets(program, _depth + 1))
+        # A POSIX shell's `-c` word (§C52): the roster above sees `sh` as the
+        # statement's verb and nothing past it; the read sits in the program.
+        for program in _bash_patterns._posix_shell_c_bodies(command, scan):
+            out.extend(_secret_read_targets(program, _depth + 1))
+        # A carrier's program (DEF-1131): `eval`, `script -c`, `watch` and
+        # `su -c` run their operand as a program the roster sees as one word.
+        for program in _bash_patterns._carrier_program_bodies(command, scan):
+            out.extend(_secret_read_targets(program, _depth + 1))
+        # An unquoted heredoc expands its body's substitutions before the
+        # command reads it (DEF-5106): `cat <<EOF` over a `$(cat .env)` line
+        # prints the dotenv. The cut above took the body off, so it is read
+        # here, raw, for the operators on the cut line that the walk meets
+        # outside quotes and arithmetic (a quoted `<<` is a mention, read on
+        # raw text too), each body ended at bash's own delimiter line: a
+        # quoted delimiter's body is data and is never read. Each body is a
+        # program on raw text, so the whole leg reads it, the masker included.
+        if heredoc != -1 and ("$(" in command or "`" in command):
+            cut = command.find("\n", heredoc)
+            live: list[int] = []
+            _substitution_bodies(scan[:cut] if cut != -1 else scan, heredocs=live)
+            for found in _bash_patterns._heredoc_bodies(command, exact=True, live=frozenset(live)):
+                if found.expands:
+                    for body in _substitution_bodies(command[found.start:found.end], heredoc=True):
+                        out.extend(_secret_read_targets(body, _depth + 1, _body=True))
+    # The operands a verb relocates, archives, aliases or reads by an
+    # interpreter literal (§C52, DEF-796): the same slip as `cp`, spelled
+    # differently. Read once at the top level; the reader descends nested
+    # programs itself.
+    if _depth == 0:
+        for effect, path in _bash_patterns.iter_removed_or_relocated_operands(command):
+            if effect in _SECRET_EFFECTS:
+                out.append(path)
+    return out
+
+
+def _secret_statement_reads(masked: str, *, a_body: bool = False) -> list[str]:
+    """The paths a recognized read verb reads in ``masked``, one statement
+    at a time: the heredoc-cut, masked text of `_secret_read_targets_one`.
+    In a substitution's body (``a_body``, DEF-5106) a statement of redirects
+    alone reads its input sources: `$(< .env)` prints the file, where at a
+    command's top level the same `< .env` runs nothing on bash."""
     out: list[str] = []
     aware = not _a_boundary_sits_in_a_quote(masked, _STATEMENT_BOUNDARY_RE)
     for statement in _STATEMENT_BOUNDARY_RE.split(masked):
@@ -2088,6 +2304,8 @@ def _secret_read_targets_one(command: str, _depth: int = 0) -> list[str]:
         sources: list[str] = []
         head = _secret_read_head(words, sources)
         if head >= len(words):
+            if a_body:
+                out.extend(sources)
             continue
         if words[head][0] in _COMPOUND_CLOSERS:  # `done < .env` feeds the body's reads
             _redirect_free_operands(words[head + 1:], sources, ends_at_output=False)
@@ -2119,33 +2337,6 @@ def _secret_read_targets_one(command: str, _depth: int = 0) -> list[str]:
         read = [word for _, word in args]
         # A copier's destination is a write, not a read (DEF-823).
         out.extend(_copier_sources(read) if verb in _COPIER_VERBS else read)
-    # A PowerShell program behind `powershell` / `pwsh` (DEF-637): read with
-    # the PowerShell roster and statement grammar, one level down. The
-    # heredoc cut above is why `scan` is the uncut twin: for `pwsh -Command -
-    # <<'EOF'` the body is the program, not data.
-    if _depth < _bash_patterns._PS_STDIN_MAX_DEPTH:
-        for program in _bash_patterns._shell_program_bodies(command, scan):
-            out.extend(_ps_secret_read_targets(program, _depth + 1))
-        # What a program under a reader head hands to a shell (447-A step 3):
-        # `python3 -c 'os.system("cat .env")'`, `git -c core.pager='cat .env'`.
-        for program in _bash_patterns._shell_out_program_bodies(command, scan):
-            out.extend(_secret_read_targets(program, _depth + 1))
-        # A POSIX shell's `-c` word (§C52): the roster above sees `sh` as the
-        # statement's verb and nothing past it; the read sits in the program.
-        for program in _bash_patterns._posix_shell_c_bodies(command, scan):
-            out.extend(_secret_read_targets(program, _depth + 1))
-        # A carrier's program (DEF-1131): `eval`, `script -c`, `watch` and
-        # `su -c` run their operand as a program the roster sees as one word.
-        for program in _bash_patterns._carrier_program_bodies(command, scan):
-            out.extend(_secret_read_targets(program, _depth + 1))
-    # The operands a verb relocates, archives, aliases or reads by an
-    # interpreter literal (§C52, DEF-796): the same slip as `cp`, spelled
-    # differently. Read once at the top level; the reader descends nested
-    # programs itself.
-    if _depth == 0:
-        for effect, path in _bash_patterns.iter_removed_or_relocated_operands(command):
-            if effect in _SECRET_EFFECTS:
-                out.append(path)
     return out
 
 

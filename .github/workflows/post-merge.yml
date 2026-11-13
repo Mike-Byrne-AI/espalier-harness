@@ -21,8 +21,8 @@ permissions:
   contents: read
 
 # No concurrency group, on purpose: each push's run proves its own tip to the
-# end, beside the next one. A run takes about an hour (median 59 minutes over
-# the last 20 greens, 2026-11-08) and merges can land
+# end, beside the next one. A run takes about an hour (median 65.2 minutes over
+# the last 20 greens, 2026-11-12; 59 on 2026-11-08) and merges can land
 # closer together than that, so cancelling the older run on a newer push left
 # main with no verdict through whole stretches (DEF-2015: 8 of 23 runs cancelled
 # on 2026-10-15), and a red then named every merge since the last green. A group
@@ -33,11 +33,12 @@ jobs:
   full-tier:
     runs-on: ubuntu-latest
     # DEF-1178's rule, re-measured by scripts/ci_job_bounds_census.py: 1.5x the
-    # worst of the last 20 green runs, 86.6 min (median 66.9, 2026-11-11; 70.7 on
-    # 2026-11-08, when the 75 before 110 cut 2 runs with no verdict). It also
-    # holds the floor every job that runs the serial files keeps (DEF-2038,
-    # tests/test_ci_job_bounds.py): their worst mark, 1800 s, plus that worst.
-    timeout-minutes: 130
+    # worst of the last 20 green runs, 88.1 min (median 65.2, 2026-11-12; 86.6 on
+    # 2026-11-11, and 70.7 on 2026-11-08, when the 75 before 110 cut 2 runs with
+    # no verdict). It also holds the floor every job that runs the serial files
+    # keeps (DEF-2038, tests/test_ci_job_bounds.py): their worst mark, 1800 s,
+    # plus that worst.
+    timeout-minutes: 135
     steps:
       - name: Keep the temp dir on the runner's disk
         # test.yml's `test` job's first step says why (DEF-3027): on GitHub's
