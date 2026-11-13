@@ -4859,6 +4859,23 @@ def glued_opener_opened() -> bool:
     return _PS_GLUED_OPENED[0]
 
 
+#: Set once main's reading asks the opener reader (`_ps_opener_reading`) in
+#: this process. The readings part there alone (every other read of the
+#: reading keys a cache), so a judgment main's reading made without asking it
+#: is the glued reading's answer too, and write_guard does not make it again:
+#: that second judgment of the first leg cost a 32 KiB Bash call about 0.3 s
+#: of the hook's 0.7 (#620's three time-budget reds, 2026-11-13). Sticky like
+#: the record above, so an answer cached by a walk that asked still finds it
+#: raised.
+_PS_OPENER_ASKED = [False]
+
+
+def glued_opener_asked() -> bool:
+    """Whether main's reading has asked the opener reader in this process,
+    so a judgment made on it may differ on the glued one."""
+    return _PS_OPENER_ASKED[0]
+
+
 def glued_reading() -> bool:
     """Whether the enclosing call reads on the glued reading: the key a
     cache outside this module adds (`_speedbump._kill_hit`'s)."""
@@ -5070,6 +5087,7 @@ def _ps_opener_reading(
     no token on 5.1 (``a`;<#``, `${x}<#`). Wherever the two answers differ
     it is recorded, so write_guard judges the call on both readings."""
     if not _PS_GLUED_OPENING.get():
+        _PS_OPENER_ASKED[0] = True
         return start
     if start and (
         i == 0 or i == block_end

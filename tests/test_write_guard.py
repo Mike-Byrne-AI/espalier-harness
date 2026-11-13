@@ -19528,6 +19528,88 @@ class TestTheTwoReadings:
                 sb._kill_hit("PowerShell", tool_input, tmp_path)
         assert made == [False, True]
 
+    def _first_leg_readings(self, monkeypatch, asked: bool) -> list:
+        """The readings `_either_glued_reading` judges a leg on when that leg
+        is the one that loads the pattern path, with main's reading having
+        asked the opener reader (``asked``) or not."""
+        wg = _load_write_guard()
+        wg._load_the_pattern_path()
+        bp = wg._bash_patterns
+        monkeypatch.setattr(bp, "_PS_OPENER_ASKED", [asked])
+        monkeypatch.setattr(wg, "_pattern_path_loaded", False)
+        readings: list = []
+
+        def judge() -> int:
+            wg._pattern_path_loaded = True    # the leg loads the path
+            readings.append(bp.glued_reading())
+            return 0
+
+        assert wg._either_glued_reading(judge) == 0
+        return readings
+
+    def test_a_first_leg_that_never_asked_the_opener_reader_is_judged_once(self, monkeypatch):
+        """#620's time-budget reds (3.13, 3.14 and the perturbed host on the
+        32 KiB gap-across-the-cap row): the leg that loaded the pattern path
+        was judged again on the glued reading although no opener was read,
+        and the readings part nowhere else -- 0.3 s more a call, measured."""
+        assert self._first_leg_readings(monkeypatch, asked=False) == [False]
+
+    def test_a_first_leg_that_asked_the_opener_reader_is_judged_on_both(self, monkeypatch):
+        assert self._first_leg_readings(monkeypatch, asked=True) == [False, True]
+
+    def test_mains_reading_records_an_opener_asked(self, monkeypatch):
+        """The record is raised by main's reading itself, so the gate above
+        is not vacuous: a PowerShell text with a `#` raises it."""
+        import uuid
+        bp = _bash_patterns_module()
+        monkeypatch.setattr(bp, "_PS_OPENER_ASKED", [False])
+        bp._walk_powershell_spans(f"$x{uuid.uuid4().hex} = 1#note", None, [])
+        assert bp.glued_opener_asked()
+
+    def test_a_kept_module_with_no_record_is_judged_on_both(self, monkeypatch):
+        """The code review's NIT: a kept pattern module from before the
+        record (#620 as first pushed) keeps both readings of the first leg."""
+        wg = _load_write_guard()
+        wg._load_the_pattern_path()
+        monkeypatch.delattr(wg._bash_patterns, "glued_opener_asked")
+        assert self._first_leg_readings(monkeypatch, asked=False) == [False, True]
+
+    @pytest.mark.parametrize("cmd", [
+        # the Bash tool carrying a PowerShell program: the first leg loads the
+        # pattern path, so these reach the gate, and each is refused on the
+        # glued reading alone (measured per reading, 2026-11-13)
+        "pwsh -c '$x<# c #>; Get-Content .env'",
+        "pwsh -c 'Write-Output a`;<# ; Get-Content .env #>'",
+    ])
+    def test_a_bash_call_carrying_a_glued_only_read_reaches_the_gate(self, tmp_path, cmd):
+        """Both reviews' WARN: no row sent a glued opener through the Bash
+        tool, the one path that reaches the gate end to end."""
+        assert_hook_denied(run_bash_guard(cmd, tmp_path), contains_reason="Secret-path access blocked")
+
+    def test_a_bash_call_both_readings_allow_is_allowed(self, tmp_path):
+        # the opener is absorbed into the argument and `#>;` opens a line
+        # comment, so the read never runs, on either reading
+        assert_hook_allowed(run_bash_guard("pwsh -c 'Write-Output $x<# c #>; Get-Content .env'", tmp_path))
+
+    def test_the_bash_secret_leg_on_the_gap_row_leaves_the_record_down(self, monkeypatch, tmp_path, capsys):
+        """The failure-mode review's pin of the saving itself: the leg #620
+        measured (the secret read, 0.3 s of a 32 KiB Bash call) never asks
+        the opener reader, so the gate spares its second judgment."""
+        import uuid
+        wg = _load_write_guard()
+        wg._load_the_pattern_path()
+        bp = wg._bash_patterns
+        monkeypatch.setattr(bp, "_PS_OPENER_ASKED", [False])
+        comment = 200
+        before = bp._BASH_COMMAND_HALF_CAP - 9 - comment // 2
+        head = "true\n" * (before // 5)
+        head += "#" * (before - len(head) - 1) + "\n"
+        cmd = (head + "echo x |\n#" + "c" * comment + "\nrm -rf *\n" + "true\n" * 9000
+               + f"true {uuid.uuid4().hex}\n")
+        wg.check_secret_path_access("Bash", {"command": cmd}, tmp_path)
+        assert '"deny"' not in capsys.readouterr().out, "the leg must read the whole command"
+        assert not bp.glued_opener_asked()
+
     @pytest.mark.parametrize("cmd, checkpoint", [
         ("7.exe $y<# ; Remove-Item build -Recurse -Force #>", "CP-RMRF"),
         ("!gc $x<# ; Remove-Item build -Recurse -Force #>", "CP-RMRF"),

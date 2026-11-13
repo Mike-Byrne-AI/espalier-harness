@@ -4633,6 +4633,16 @@ def _readings_differ() -> bool:
     return bool(getattr(_bash_patterns, "glued_opener_opened", lambda: False)())
 
 
+def _opener_asked() -> bool:
+    """Whether main's reading asked the opener reader in this process
+    (`_bash_patterns.glued_opener_asked`), the one place the readings part;
+    True where a kept, older module keeps no such record, so the call is
+    judged on both as before."""
+    if not _pattern_path_loaded:
+        return False
+    return bool(getattr(_bash_patterns, "glued_opener_asked", lambda: True)())
+
+
 def _either_glued_reading(judge: Callable[[], int]) -> int:
     """A hard leg on both of DEF-2073's readings (air's ruling 8aa088): a
     refusal on either is the call's. ``judge()`` on the glued reading, and
@@ -4640,12 +4650,15 @@ def _either_glued_reading(judge: Callable[[], int]) -> int:
     main's, the default. A reading that allows prints nothing, so a deny
     prints once, its text the refusing reading's, inside the call's one time
     budget. A judgment that loaded the pattern path read main's reading, so
-    it is asked again on the glued one; a kept, older pattern module has
-    main's reading alone and judges once."""
+    it is asked again on the glued one where it asked the opener reader
+    (`_opener_asked`: a call that never reached it reads alike on both; a
+    PowerShell call loads the path before its first leg, so only the other
+    tools reach this gate); a kept, older pattern module has main's reading
+    alone and judges once."""
     on = _glued_reading_on()
     if on is None:
         rc = judge()
-        on = None if rc else _glued_reading_on()
+        on = None if rc or not _opener_asked() else _glued_reading_on()
         if on is None:
             return rc
         with on:

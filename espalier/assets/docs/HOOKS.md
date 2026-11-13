@@ -1108,9 +1108,8 @@ first; the dangerous-command catch is a secondary slip-catcher):
    harness infrastructure path are denied -- a write into it, a delete of
    it, a move of it out of the zone, a permission change on it, and, for a
    delete or a move, of a directory that encloses it -- by the verb rosters
-   and the declared limits pinned in the guard's remove/relocate test class,
-   `tests/test_write_guard.py::TestRemovedOrRelocatedOperandIsAMutation::test_zone_row_under_the_plain_root`
-   and
+   and the declared limits pinned in the guard's remove/relocate test class
+   (its zone row under the plain root among them),
    `tests/test_write_guard.py::TestRemovedOrRelocatedOperandIsAMutation::test_every_consumed_arm_has_a_deny_row_and_every_row_names_a_consumed_arm`
    (the operand a verb removes or relocates is classified beside the one it
    writes, on both shells, since 2026-09-14):
