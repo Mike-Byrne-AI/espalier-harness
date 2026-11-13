@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4116",
+ "subject": "tests/test_ci_job_bounds.py",
+ "cmd": "python3 -c \"import ast;t=ast.parse(open('tests/test_ci_job_bounds.py',encoding='utf-8').read());print(any(any(isinstance(n,ast.Name) and n.id=='_SERIAL_JOBS_MEASURED_WORST' for n in ast.walk(f)) and any(isinstance(n,ast.Attribute) and n.attr=='serial_floor' for n in ast.walk(f)) for f in ast.walk(t) if isinstance(f,(ast.FunctionDef,ast.AsyncFunctionDef))))\"",
+ "open_value": "False",
+ "why_not": null,
+ "row_sha": "50d064dfeb7f",
+ "text_sha": "8afd8ea13c08",
+ "verified_2026_11_12": "OPEN (filed 2026-11-12; probe driven at filing here and in the export of HEAD 96fc254b8f3c)"
+}
