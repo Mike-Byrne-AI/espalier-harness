@@ -4701,6 +4701,48 @@ _PS_STATEMENT_STOP = frozenset(";|({}\n\r")
 #: walk would read is not the token's, so the opener is read as glued.
 _PS_GROUP_CLOSE = frozenset(")}")
 
+#: DEF-2073's two readings (air's ruling 8aa088): the glued-opener reader
+#: below models 5.1's tokenizer, and three review rounds each found a shape
+#: where it opened a comment 5.1 absorbs, hiding the statement inside. So it
+#: is never the only reading: where it opened one, write_guard judges the
+#: call again with glued opening off, which is the call sites' token-start
+#: rule alone (the reading before DEF-2073), and refuses where either reading
+#: refuses, `_wall_readings`' rule (DEF-846). The reader's errors then cost
+#: friction, never a statement the token-start rule reads.
+_PS_GLUED_OPENING: "contextvars.ContextVar[bool]" = contextvars.ContextVar(
+    "_PS_GLUED_OPENING", default=True)
+#: Set once the reader opens a glued opener in this process. A hook call is
+#: one process, so there it is per call; a test process keeps it, which only
+#: adds second readings.
+_PS_GLUED_OPENED = [False]
+
+
+def glued_opener_opened() -> bool:
+    """Whether the walk has opened a glued opener in this process."""
+    return _PS_GLUED_OPENED[0]
+
+
+@contextlib.contextmanager
+def glued_opening_off() -> Iterator[None]:
+    """Judge the enclosed call with glued opening off. This module's caches
+    are keyed by text alone, so they are emptied on the way in and out: no
+    answer of one reading is read back by the other."""
+    _clear_text_caches()
+    token = _PS_GLUED_OPENING.set(False)
+    try:
+        yield
+    finally:
+        _PS_GLUED_OPENING.reset(token)
+        _clear_text_caches()
+
+
+def _clear_text_caches() -> None:
+    """Empty every `functools` cache this module defines."""
+    for value in list(globals().values()):
+        clear = getattr(value, "cache_clear", None)
+        if clear is not None and getattr(value, "__module__", None) == __name__:
+            clear()
+
 
 def _ps_backtick_escaped(s: str, k: int) -> bool:
     """Whether the character at ``k`` follows an odd run of backticks."""
@@ -4844,6 +4886,26 @@ def _ps_glued_opener_opens(
     # A slice, not `search(s, t, i)`: `^` and the lookbehind must not see
     # past the token's start.
     return _PS_GLUED_EXPRESSION_END_RE.search(s[t:i]) is not None
+
+
+def _ps_glued_reading_opens(
+    s: str,
+    out: "list[str]",
+    i: int,
+    block_end: int,
+    quote_open: int,
+    quote_end: int,
+    blocks: "list[tuple[int, int]] | None",
+    memo: "list[int]",
+) -> bool:
+    """`_ps_glued_opener_opens` where the reading asks it: never with glued
+    opening off (`glued_opening_off`), and an opening is recorded."""
+    if not _PS_GLUED_OPENING.get():
+        return False
+    if _ps_glued_opener_opens(s, out, i, block_end, quote_open, quote_end, blocks, memo):
+        _PS_GLUED_OPENED[0] = True
+        return True
+    return False
 
 
 def _ps_at_line_start(s: str, i: int) -> bool:
@@ -5443,7 +5505,7 @@ def _walk_powershell_spans(
                 or i == block_end
                 or s[i - 1] in _PS_TOKEN_BOUNDARY
                 # glued: opened where PowerShell opens it (DEF-2073)
-                or _ps_glued_opener_opens(
+                or _ps_glued_reading_opens(
                     s, out, i, block_end, quote_open, quote_end, read, glued_memo,
                 )
             )
@@ -5476,7 +5538,7 @@ def _walk_powershell_spans(
             or i == block_end
             or s[i - 1] in _PS_TOKEN_BOUNDARY
             # glued: opened where PowerShell opens it, by the `<#` rule (DEF-2073)
-            or _ps_glued_opener_opens(
+            or _ps_glued_reading_opens(
                 s, out, i, block_end, quote_open, quote_end, read, glued_memo,
             )
         ):

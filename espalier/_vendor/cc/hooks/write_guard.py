@@ -4424,6 +4424,23 @@ def _judge(seen: list[dict] | None = None) -> int:
         )
 
 
+def _either_glued_reading(judge: Callable[[], int]) -> int:
+    """``judge()``, and where it allowed after the PowerShell walk opened a
+    glued comment opener, ``judge()`` again with glued opening off (DEF-2073,
+    air's ruling 8aa088): a refusal on either reading is the call's. The
+    first reading allowed without printing, so a deny prints once, its text
+    the refusing reading's, inside the call's one time budget. A pattern path
+    not yet loaded never walked; a kept, older pattern module without the
+    readings judges once."""
+    rc = judge()
+    if rc or not _pattern_path_loaded:
+        return rc
+    if not getattr(_bash_patterns, "glued_opener_opened", lambda: False)():
+        return rc
+    with _bash_patterns.glued_opening_off():
+        return judge()
+
+
 def _fold_the_powershell_command(tool_name: str, tool_input: dict) -> dict:
     """``tool_input`` with the PowerShell tool's command read as PowerShell
     pairs its quotes: each typographic quote it acts on folded to its
@@ -4495,7 +4512,7 @@ def _run_main(data: dict | None = None) -> int:
     # adopter's `.env` into the transcript is not that friction, and this is the
     # hook-layer replacement for the `Read()` deny rules espalier no longer
     # emits (see `check_secret_path_access` for why they had to go).
-    rc = check_secret_path_access(tool_name, tool_input, root)
+    rc = _either_glued_reading(lambda: check_secret_path_access(tool_name, tool_input, root))
     if rc:
         return rc
 
@@ -4513,12 +4530,12 @@ def _run_main(data: dict | None = None) -> int:
     # These guard against operations that are dangerous regardless of whether
     # the harness is in maintenance: rm -rf /, fork bombs, hostile PowerShell.
     if tool_name == "Bash":
-        rc = check_bash_dangerous_patterns(tool_input, root, cwd=cwd)
+        rc = _either_glued_reading(lambda: check_bash_dangerous_patterns(tool_input, root, cwd=cwd))
         if rc:
             _audit(root, "pretooluse_blocked_dangerous_command", tool="Bash")
             return rc
     elif tool_name == "PowerShell":
-        rc = check_powershell(tool_input, root, cwd=cwd)
+        rc = _either_glued_reading(lambda: check_powershell(tool_input, root, cwd=cwd))
         if rc:
             _audit(root, "pretooluse_blocked_dangerous_command", tool="PowerShell")
             return rc
@@ -4549,21 +4566,21 @@ def _run_main(data: dict | None = None) -> int:
             # Symlink-creation check FIRST so it isn't masked by the
             # allowlist-aware general write check (legitimate JSON writes to
             # ``cc/blueprints/`` are allowed; symlinks to that prefix are not).
-            rc = check_bash_for_protected_symlinks(command, root, cwd=cwd)
+            rc = _either_glued_reading(lambda: check_bash_for_protected_symlinks(command, root, cwd=cwd))
             # Hardlink-creation check (allowlist-aware, source-keyed) before the
             # general write check, mirroring the symlink ordering.
             if not rc:
-                rc = check_bash_for_protected_hardlinks(command, root, cwd=cwd)
+                rc = _either_glued_reading(lambda: check_bash_for_protected_hardlinks(command, root, cwd=cwd))
             if not rc:
-                rc = check_bash_for_protected_mutations(command, root, cwd=cwd)
+                rc = _either_glued_reading(lambda: check_bash_for_protected_mutations(command, root, cwd=cwd))
         elif tool_name == "PowerShell":
             command = tool_input.get("command", "")
             # Symlink-creation check FIRST (allowlist-blind), like the Bash branch,
             # so a New-Item SymbolicLink into an allowlisted-in-protected path isn't
             # masked by the allowlist-aware write check.
-            rc = check_powershell_for_protected_symlinks(command, root, cwd=cwd)
+            rc = _either_glued_reading(lambda: check_powershell_for_protected_symlinks(command, root, cwd=cwd))
             if not rc:
-                rc = check_powershell_for_protected_mutations(command, root, cwd=cwd)
+                rc = _either_glued_reading(lambda: check_powershell_for_protected_mutations(command, root, cwd=cwd))
         elif tool_name.startswith("mcp__"):
             # MCP tools -- protected-zone check across canonical fields AND the
             # Class-A2 key-agnostic, depth-bounded leaf-walk (move/rename via
