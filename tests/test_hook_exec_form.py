@@ -35,6 +35,7 @@ import pytest
 from tests._hook_runner import LAUNCHER_FLAG as _LAUNCHER_FLAG
 from tests._hook_runner import iter_hooks as _iter_hooks
 from tests._hook_runner import script_arg as _script_arg
+from tests._pwsh_cache import private_cache_env
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -504,7 +505,7 @@ class TestStatusLinePortability:
 
         def under_powershell(command):
             command = command.replace("${CLAUDE_PROJECT_DIR}", "${env:CLAUDE_PROJECT_DIR}")
-            env = {**os.environ, "CLAUDE_PROJECT_DIR": project}
+            env = private_cache_env({**os.environ, "CLAUDE_PROJECT_DIR": project})
             return subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-Command", command],
                                   input="{}", capture_output=True, text=True, env=env, cwd=project,
                                   timeout=30, encoding="utf-8")

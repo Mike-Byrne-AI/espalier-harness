@@ -747,6 +747,7 @@ class TestASpacedWindowsHeadRunsInBothHookShells:
         import venv
 
         from tests.test_json_safe_program_word import git_bash as _git_bash
+        from tests._pwsh_cache import private_cache_env
         from tests._wait_budget import scaled
 
         root = tmp_path / folder / "v"
@@ -764,7 +765,8 @@ class TestASpacedWindowsHeadRunsInBothHookShells:
             shells.append([bash, "--noprofile", "--norc", str(run_sh)])
         for argv in shells:
             proc = subprocess.run(  # spawn: ok the row's oracle is the real hook shell
-                argv, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=scaled(20))
+                argv, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=scaled(20),
+                env=private_cache_env())
             assert "MARK-OK" in proc.stdout, (argv[0], line, proc.returncode, proc.stderr[-400:])
 
 
