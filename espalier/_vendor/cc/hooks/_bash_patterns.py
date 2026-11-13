@@ -4654,32 +4654,92 @@ _PS_TOKEN_BOUNDARY = frozenset(" \t\n\r;|&(){},")
 #: holds the population).
 _PS_GLUED_VARIABLE = r"\$(?:\{[^{}]*\}|[$?^]|(?:[A-Za-z_]\w*:)?\w+)"
 _PS_GLUED_MEMBER = r"(?:\.[A-Za-z_]\w*|\[[^\[\]]*\]|::\w+)"
-#: In expression mode: a variable (members allowed), a type literal or a
-#: number ending the token, at its start or after an operator or a cast glued
-#: before it (`$x=1<#`, `[int]$x<#`).
-_PS_GLUED_EXPRESSION_END = (
-    r"(?:^|(?<=[!+\-*/%=,.\]]))(?:" + _PS_GLUED_VARIABLE + _PS_GLUED_MEMBER + r"*"
-    r"|(?:\[[\w.]+(?:\[\])?\])+" + _PS_GLUED_MEMBER + r"*"
-    r"|-?(?:0[xX][0-9a-fA-F]+|(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?)"
-    r"[lLdD]?(?:[kKmMgGtTpP][bB])?)$"
+_PS_GLUED_NUMBER = (
+    r"(?:0[xX][0-9a-fA-F]+|(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?)"
+    r"[lLdD]?(?:[kKmMgGtTpP][bB])?"
+)
+#: In expression mode: a variable (members allowed, a postfix `++`/`--` too),
+#: a type literal or a number ending the token, at its start or after an
+#: operator or a cast glued before it (`$x=1<#`, `[int]$x<#`). The type arm
+#: is ONE literal, so a run of `[a]` has one reading: as `(?:\[..\])+` beside
+#: the index member it backtracked cubically (the code review: 3.1 s on a
+#: 2.4 KB `$x[1]` run).
+_PS_GLUED_EXPRESSION_END_RE = re.compile(
+    r"(?:^|(?<=[!+\-*/%=,.\]]))(?:" + _PS_GLUED_VARIABLE + _PS_GLUED_MEMBER + r"*(?:\+\+|--)?"
+    r"|\[[A-Za-z_][\w.]*(?:\[\])?\]" + _PS_GLUED_MEMBER + r"*"
+    r"|-?" + _PS_GLUED_NUMBER + r")$"
 )
 #: In argument mode: the whole token is a variable with a member, or a switch
 #: bound by its colon.
-_PS_GLUED_ARGUMENT_TOKEN = (
+_PS_GLUED_ARGUMENT_TOKEN_RE = re.compile(
     r"(?:" + _PS_GLUED_VARIABLE + _PS_GLUED_MEMBER + r"+|-[A-Za-z_?][\w?]*:)"
 )
-#: An assignment's left side, whose right side is read for its own mode
-#: (`$x = $y<#` opens, `$x = gc a<#` does not).
-_PS_GLUED_ASSIGNMENT = _PS_GLUED_VARIABLE + _PS_GLUED_MEMBER + r"*[ \t]*[-+*/%]?=(?!=)[ \t]*"
+#: The token that opens in either mode: a variable with a member. Where the
+#: statement's head is unread (a group closed before the token), it is the
+#: only one read as opening (`Write-Output (1) $x.y<#`); the colon-bound
+#: switch is not, since expression mode absorbs it (`$x -eq:<#`).
+_PS_GLUED_MEMBER_TOKEN_RE = re.compile(_PS_GLUED_VARIABLE + _PS_GLUED_MEMBER + r"+")
 #: A statement whose first character is one of these is an expression; one
-#: that opens on `-` or `.` is one where a number or a unary operator follows
-#: (`-1`, `.5`, `-not $x`), and a command otherwise (`-foo $x<#` and the
+#: that opens on a digit is one only where a number is the whole first word
+#: (`1kb`, `0x1F`; `7z x $y<#` runs the command `7z`); one that opens on `-`,
+#: `.` or `+` only where a number or a unary operator follows (`-1`, `.5`,
+#: `-not $x`, `++$x`), and a command otherwise (`-foo $x<#` and the
 #: dot-source `. $x<#` absorb it).
-_PS_EXPRESSION_HEAD = frozenset("$0123456789'\"[(!@")
-_PS_UNARY_HEAD = r"(?:-(?:[\d.]|(?:not|bnot|join|split)(?![\w-]))|\.\d)"
+_PS_EXPRESSION_HEAD = frozenset("$'\"[!@")
+_PS_NUMBER_HEAD_RE = re.compile(_PS_GLUED_NUMBER + r"(?!\w)")
+_PS_UNARY_HEAD_RE = re.compile(
+    r"(?:-(?:[\d.]|-(?=\$)|(?:not|bnot|join|split)(?![\w-]))|\.\d|\+(?:\+(?=\$)|[\d.$(]))",
+    re.IGNORECASE,
+)
+#: The keywords whose operand is a pipeline read for its own mode (`return
+#: $x<#` opens; `return gc $x<#` does not).
+_PS_PIPELINE_KEYWORD_RE = re.compile(r"(?:return|throw|exit)(?=[ \t])", re.IGNORECASE)
 #: The characters that end the statement before a token (`&&` too, below; a
 #: lone `&` is the call operator, whose statement is a command).
 _PS_STATEMENT_STOP = frozenset(";|({}\n\r")
+#: A group closed between the statement's start and the token: the head the
+#: walk would read is not the token's, so the opener is read as glued.
+_PS_GROUP_CLOSE = frozenset(")}")
+
+
+def _ps_backtick_escaped(s: str, k: int) -> bool:
+    """Whether the character at ``k`` follows an odd run of backticks."""
+    ticks = 0
+    while k > 0 and s[k - 1] == "`":
+        ticks += 1
+        k -= 1
+    return ticks % 2 == 1
+
+
+def _ps_boundary_kind(s: str, k: int) -> int:
+    """How the walk reads a boundary or separator character at ``k`` beside a
+    glued opener: 0 as itself, 1 as a blank (a backtick-newline, CRLF
+    included, continues the line), 2 as text (any other escaped character,
+    part of the word: `a`;$x.y` is one argument)."""
+    if s[k] == "\n" and k > 0 and s[k - 1] == "\r":
+        return 1 if _ps_backtick_escaped(s, k - 1) else 0
+    if not _ps_backtick_escaped(s, k):
+        return 0
+    return 1 if s[k] in "\r\n" else 2
+
+
+def _ps_glued_head(s: str, p: int, t: int, blocks: "list[tuple[int, int]] | None") -> int:
+    """The offset past the blanks, a backtick-newline among them, and the
+    comments read, from ``p`` to ``t``."""
+    while p < t:
+        if s[p] in " \t":
+            p += 1
+            continue
+        if s[p] == "`" and s.startswith(("`\n", "`\r"), p):
+            p += 3 if s.startswith("`\r\n", p) else 2
+            continue
+        if blocks and s.startswith("<#", p):
+            at = bisect.bisect_left(blocks, (p,))
+            if at < len(blocks) and blocks[at][0] == p:
+                p = blocks[at][1]
+                continue
+        break
+    return p
 
 
 def _ps_glued_opener_opens(
@@ -4692,68 +4752,98 @@ def _ps_glued_opener_opens(
     blocks: "list[tuple[int, int]] | None",
     memo: "list[int]",
 ) -> bool:
-    """Whether the ``<#`` at ``i``, glued to the character before it, opens a
-    block comment (DEF-2073; the measurement is above `_PS_GLUED_VARIABLE`).
+    """Whether the ``<#`` or ``#`` at ``i``, glued to the character before
+    it, opens a comment (DEF-2073; the measurement is above
+    `_PS_GLUED_VARIABLE`).
 
     ``quote_open`` and ``quote_end`` are the last quoted span the walk stepped
     over, its opening quote's offset and the offset past its close (-1 before
     any); ``out`` is the walk's mask, final before ``i``, where a separator
-    inside a string is a blank; and ``memo`` holds the token start and the
-    statement start this walk last found, with the offsets they were found
-    from, so a run of glued openers on one statement reads each character
-    once (`[token from, token start, statement from, statement start]`, all
-    -1 at the walk's start)."""
+    inside a string is a blank; and ``memo`` holds what this walk last found,
+    with the offsets it was found from: the token start, the statement start,
+    whether a group closed in that statement, and the statement's head with
+    how far its assignments were read (`[token from, token start, statement
+    from, statement start, closed, head statement, head, head read to]`, all
+    -1 at the walk's start). Each scan resumes where the last one stopped, so
+    a run of glued openers reads each character a bounded number of times."""
     if i == quote_end:
         q = quote_open
-        return q == 0 or q == block_end or s[q - 1] in _PS_TOKEN_BOUNDARY
-    # The token: back to a boundary character or the last comment's close.
-    t, k = -1, i - 1
-    floor = max(block_end, memo[0], 0)
-    while k >= floor:
-        if s[k] in _PS_TOKEN_BOUNDARY:
-            t = k + 1
-            break
-        k -= 1
-    if t < 0:
-        t = block_end if floor == block_end or memo[1] < 0 else memo[1]
-        t = max(t, 0)
-    memo[0], memo[1] = i, t
-    # The statement: back to a separator on the mask.
-    stmt, k = -1, t - 1
+        if q == 0 or q == block_end or (
+            s[q - 1] in _PS_TOKEN_BOUNDARY and _ps_boundary_kind(s, q - 1) != 2
+        ):
+            return True
+        t = q
+    else:
+        # The token: back to a boundary character or the last comment's close.
+        t, k = -1, i - 1
+        floor = max(block_end, memo[0], 0)
+        while k >= floor:
+            if s[k] in _PS_TOKEN_BOUNDARY and _ps_boundary_kind(s, k) != 2:
+                t = k + 1
+                break
+            k -= 1
+        if t < 0:
+            t = block_end if floor == block_end or memo[1] < 0 else memo[1]
+            t = max(t, 0)
+        memo[0], memo[1] = i, t
+    # The statement: back to a separator on the mask. A group closed on the
+    # way, or a separator a backtick escapes, leaves the statement's head
+    # unread from here (`Write-Output (1) $x<#`, `a`;$x<#`): unopened, the
+    # side this rule was on before (the code review's regression class).
+    stmt, k, closed = -1, t - 1, False
     floor = max(memo[2], 0)
     while k >= floor:
         ch = out[k]
-        if ch in _PS_STATEMENT_STOP or (ch == "&" and k > 0 and out[k - 1] == "&"):
-            stmt = k + 1
-            break
+        if ch in _PS_GROUP_CLOSE:
+            closed = True
+        elif ch in _PS_STATEMENT_STOP or (ch == "&" and k > 0 and out[k - 1] == "&"):
+            kind = _ps_boundary_kind(s, k)
+            if kind == 0:
+                stmt = k + 1
+                break
+            if kind == 2:
+                closed = True
         k -= 1
     if stmt < 0:
         stmt = memo[3] if memo[2] >= 0 and memo[3] >= 0 else 0
-    memo[2], memo[3] = t, stmt
-    # Its head, past blanks, the comments read, and an assignment's left side.
-    p = stmt
-    assignment = re.compile(_PS_GLUED_ASSIGNMENT)
+        closed = closed or memo[4] == 1
+    memo[2], memo[3], memo[4] = t, stmt, int(closed)
+    if closed:
+        return i != quote_end and _PS_GLUED_MEMBER_TOKEN_RE.fullmatch(s, t, i) is not None
+    # Its head, past blanks, the comments read, a pipeline keyword and an
+    # assignment's left side: the first `=` on the mask after a `$` or `[`
+    # head is the assignment, whose right side is read for its own mode
+    # (`$x[$a[0]] = gc $y<#`, `$x, $y = gc $z<#`, `[int]$x = $y<#`).
+    if memo[5] != stmt:
+        p = _ps_glued_head(s, stmt, t, blocks)
+        memo[5], memo[6], memo[7] = stmt, p, p
+    p, k = memo[6], memo[7]
     while p < t:
-        if s[p] in " \t":
-            p += 1
+        m = _PS_PIPELINE_KEYWORD_RE.match(s, p, t)
+        if m is not None:
+            p = k = _ps_glued_head(s, m.end(), t, blocks)
             continue
-        if blocks and s.startswith("<#", p):
-            at = bisect.bisect_left(blocks, (p,))
-            if at < len(blocks) and blocks[at][0] == p:
-                p = blocks[at][1]
-                continue
-        m = assignment.match(s, p, t)
-        if m is not None and m.end() > p:
-            p = m.end()
-            continue
-        break
-    head = s[p] if p < len(s) else ""
-    tok = s[t:i]
-    if head in _PS_EXPRESSION_HEAD or (
-        head in ("-", ".") and re.compile(_PS_UNARY_HEAD, re.IGNORECASE).match(s, p) is not None
+        if s[p] not in "$[":
+            break
+        k = max(k, p)
+        while k < t and out[k] != "=":
+            k += 1
+        if k >= t:
+            break
+        p = k = _ps_glued_head(s, k + 1, t, blocks)
+    memo[6], memo[7] = p, max(k, p)
+    head = s[p]
+    if not (
+        head in _PS_EXPRESSION_HEAD
+        or (head.isdigit() and _PS_NUMBER_HEAD_RE.match(s, p) is not None)
+        or (head in "-.+" and _PS_UNARY_HEAD_RE.match(s, p) is not None)
     ):
-        return re.search(_PS_GLUED_EXPRESSION_END, tok) is not None
-    return re.fullmatch(_PS_GLUED_ARGUMENT_TOKEN, tok) is not None
+        return i != quote_end and _PS_GLUED_ARGUMENT_TOKEN_RE.fullmatch(s, t, i) is not None
+    if i == quote_end:
+        return s[t - 1] in "!+-*/%=,.]"
+    # A slice, not `search(s, t, i)`: `^` and the lookbehind must not see
+    # past the token's start.
+    return _PS_GLUED_EXPRESSION_END_RE.search(s[t:i]) is not None
 
 
 def _ps_at_line_start(s: str, i: int) -> bool:
@@ -5241,7 +5331,7 @@ def _walk_powershell_spans(
     #: The last quoted span stepped over (its opening quote, the offset past
     #: its close) and `_ps_glued_opener_opens`' memo, for a glued opener.
     quote_open = quote_end = -1
-    glued_memo = [-1, -1, -1, -1]
+    glued_memo = [-1] * 8
     while i < n:
         c = s[i]
 
@@ -5381,7 +5471,15 @@ def _walk_powershell_spans(
             i = block_end = end + 2
             continue
 
-        if c == "#" and (i == 0 or i == block_end or s[i - 1] in _PS_TOKEN_BOUNDARY):
+        if c == "#" and (
+            i == 0
+            or i == block_end
+            or s[i - 1] in _PS_TOKEN_BOUNDARY
+            # glued: opened where PowerShell opens it, by the `<#` rule (DEF-2073)
+            or _ps_glued_opener_opens(
+                s, out, i, block_end, quote_open, quote_end, read, glued_memo,
+            )
+        ):
             # WARNING: START AT i+1 -- the hash ITSELF MUST SURVIVE, for the same
             # reason the Bash pass keeps it: a blanked hash leaves an unbroken
             # whitespace run from the separator straight to the comment's first
