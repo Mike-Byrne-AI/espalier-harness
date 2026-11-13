@@ -1811,7 +1811,9 @@ as `-lc`) by the Bash ones -- one level down, and a program that re-enters
 the first shell one level further, no more. Switches and a `--` between
 the `-c` and its program (`bash -c -- '...'`, `bash -c -x '...'`), and a
 shell's `+` options on either side of the `-c` (`bash +x -c '...'`, `bash -c
-+e '...'`, `bash +O extglob -c '...'`), are read on both tools. A redirect
++e '...'`, `bash +O extglob -c '...'`), are read on both tools, and so is
+the cluster on the `+` sign, which runs its program as `-c` does (`bash +c
+'...'`, `bash +xc '...'`). A redirect
 word among them (`bash 2>/dev/null -c '...'`, `bash -lc 2>&1 '...'`,
 `python3 2>&1 -c "..."`) is read on the Bash tool only: the PowerShell
 tool's openers take none, since PowerShell's redirect set is its own
@@ -1869,7 +1871,10 @@ on the Bash tool (`echo '...' | pwsh -Command -`, `cat <<'EOF' | pwsh
 -Command -`) is read as the stage before the pipe, like an interpreter's;
 `-File <script>` there means the pipe is data. `-EncodedCommand`, `-File
 <script>`, a program held in an unbound variable (a literal binding earlier in the command
-is inlined first), `wsl bash -c` and a relative write after a `cd` inside a
+is inlined first), `wsl bash -c`, a switch value holding `~` or `:` before
+the `-c` on the Bash tool (`bash --rcfile ~/.r -c '...'`: only `--rcfile`
+and `--init-file` take one, and bash applies neither under a plain `-c`), a
+relative write after a `cd` inside a
 POSIX shell program anywhere but behind a bare `-c` on the Bash tool (`bash
 -lc 'cd tools/cc/hooks && echo x > x.py'`, a here-string, the PowerShell
 tool's `bash -c`: a zone write, which the coverage contract hands to the
@@ -1985,7 +1990,8 @@ before the payload, which then stays inert -- a declared limit, pinned by
 `tests/test_write_guard_command_position.py::TestPowerShellReparsingWrapperCarriesASwitchValue::test_the_declared_limits_are_pinned`
 -- unless the argument list hands the started shell its program: a
 `Start-Process` of powershell or pwsh with `-Command` in the list, or of
-bash or sh with `-c`, as one string or the array spelling
+bash or sh with `-c` (a cluster of either sign holding it, `-lc`, `+c`,
+`-cx`), as one string or the array spelling
 (`-ArgumentList "-Command","..."`), is read for that program, which meets
 every tier its direct form meets. powershell.exe's implicit
 command (a program with no `-Command` before it) and a list given before

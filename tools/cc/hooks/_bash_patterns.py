@@ -2276,7 +2276,8 @@ _POWERSHELL_DASH_COMMAND_RE = re.compile(
 )
 # A POSIX shell's `-c` program on the Bash tool (§C52): `sh -c '...'`,
 # `bash -lc "..."`. The head and quoted-verb tail, the shared switch run
-# (`_POSIX_SHELL_SWITCH_RUN`, below), a cluster ending in `c`, then the
+# (`_POSIX_SHELL_SWITCH_RUN`, below), a cluster holding `c`
+# (`_POSIX_SHELL_C_CLUSTER`, either sign), then the
 # program as ONE bash word that starts with a quoted segment (DEF-832:
 # adjacent segments concatenated by the shell; no bare-first arm -- a bare
 # program is one word and names nothing).
@@ -2297,7 +2298,13 @@ _POWERSHELL_DASH_COMMAND_RE = re.compile(
 #: of them: the DEF-637 receipt's remedy, the second parse taken away
 #: (docs/SHARP_EDGES.md, ReDoS budget receipt). Declared limit: a switch
 #: whose value is a shell's own path (`bash --rcfile /etc/sh -c '...'`)
-#: ends the run there, so that program is not read. The run is UNBOUNDED on
+#: ends the run there, so that program is not read. So does a value holding
+#: `~` or `:` (`bash --rcfile ~/.r -c '...'`, `bash --init-file a:b -c
+#: '...'`), pinned at allow in
+#: `tests/test_write_guard.py::TestCrossShellRouting::test_bash_tool_declared_limits_are_pinned`:
+#: only `--rcfile` and `--init-file` take such a value, and bash applies
+#: neither under a plain `-c` (an `-i` beside it reads the file; air
+#: 413ebb). The run is UNBOUNDED on
 #: purpose: a `{0,64}` bound here let programs that run through behind 65
 #: switches on both openers (DEF-818, driven). The witness rows are
 #: `tests/test_write_guard.py::test_a_long_switch_run_does_not_hide_a_posix_shell_program`
@@ -2319,15 +2326,20 @@ _POSIX_SHELL_SWITCH = (
 _POSIX_SHELL_SWITCH_RUN = r"(?:[ \t]+(?:" + _POSIX_SHELL_SWITCH + r"|" + _SWITCH_REDIRECT + r"))*"
 #: The `-c` cluster: `c` anywhere in it (`-cx`, `-xc`, `-lc`), both letter
 #: runs around the `c` bounded, so the adjacent pair has at most 81 parses
-#: (review: `bash -cx` was missed). ONE home for both tools' openers and the
-#: refusal in the runs after them. Its letters are their own fragment, so
-#: the wall's pipe run (`_SHELL_PIPE_SWITCH_RUN`), which refuses the cluster
-#: of either sign, is built from the same bound. The speed bump composes the
+#: (review: `bash -cx` was missed), on either sign: bash 5.2.37 runs the
+#: operand of `+c`, `+xc` and `+cx` as it runs `-c`'s (DEF-3074, driven with
+#: a harmless program; `bash +c 'rm -rf /'` was a plain allow on both tools
+#: beside a walled `bash -c`, since the switch run took `+c` as a switch and
+#: found no cluster after it). ONE home for both tools' openers, the refusal
+#: in the runs after them and the `Start-Process` argv reader
+#: (`_POSIX_CLI_C_CLUSTER_RE`). Its letters are their own fragment, so the
+#: wall's pipe run (`_SHELL_PIPE_SWITCH_RUN`), which refuses the cluster of
+#: either sign, is built from the same bound. The speed bump composes the
 #: cluster and both runs into `_speedbump._FETCH_EXEC_SUBST_RE` (compiled
 #: IGNORECASE there, so its `-C` reads as a cluster: a nudge, the over-read
 #: direction).
 _POSIX_SHELL_C_LETTERS = r"[A-Za-z]{0,8}c[A-Za-z]{0,8}"
-_POSIX_SHELL_C_CLUSTER = r"-" + _POSIX_SHELL_C_LETTERS
+_POSIX_SHELL_C_CLUSTER = r"[-+]" + _POSIX_SHELL_C_LETTERS
 #: The switches between the `-c` cluster and its program (DEF-3068's batch):
 #: a POSIX shell reads every option before its first operand, so `bash -c -x
 #: '...'` and `bash -c -- '...'` run the quoted word as `bash -c '...'` does,
@@ -7340,8 +7352,8 @@ _POSIX_SHELL_HEAD_SET = frozenset(_POSIX_SHELL_HEADS.split("|"))
 #: interpreter's program flags, so `echo '...' | bash +x` was a plain allow
 #: beside a walled `| bash -x`. Only a `c` cluster of either sign gives a
 #: shell its program (`+c` runs its operand as `-c` does, driven), so it
-#: alone refuses the match, built from the `-c` opener's own letters
-#: (`_POSIX_SHELL_C_LETTERS`). A bare `--` ends the options: every word after
+#: alone refuses the match: the `-c` opener's own cluster
+#: (`_POSIX_SHELL_C_CLUSTER`, either sign since DEF-3074). A bare `--` ends the options: every word after
 #: it is an argument, a cluster included, so `| bash -s -- -lc` and `| bash
 #: -s -- -c cfg` run the piped program (bash 5.2, driven) and are read. A
 #: bare `+` is a switch too (a no-op one; `| bash -x +` ran it). The value
@@ -7370,7 +7382,7 @@ _INTERP_PIPE_SWITCH_RUN = (
     r"|" + _OUTPUT_REDIRECT_UNIT + r"))*"
 )
 _SHELL_PIPE_SWITCH_RUN = (
-    r"(?:[ \t]+(?:(?:(?!--(?:[ \t]|$))(?![-+]" + _POSIX_SHELL_C_LETTERS + r"(?:[ \t]|$))"
+    r"(?:[ \t]+(?:(?:(?!--(?:[ \t]|$))(?!" + _POSIX_SHELL_C_CLUSTER + r"(?:[ \t]|$))"
     r"[-+][\w.-]+|\+(?=[ \t]|$))"
     r"(?:[ \t]+" + _NOT_A_REDIRECT_WORD + r"[\w./:=,@%~][\w./:=,@%+~-]*)?"
     r"|" + _OUTPUT_REDIRECT_UNIT + r"))*"
@@ -12486,8 +12498,9 @@ _PS_STDIN_POSIX_HINT_RE = re.compile(
 #: own, not the interpreter arm's: a POSIX shell CLUSTERS short options, and
 #: `bash -lc "..."` -- the login-shell one-liner -- is the idiomatic spelling
 #: (both reviews drove it ALLOWING against a denying `bash -l -c`); the
-#: cluster ends in `c`, so `-[A-Za-z]{0,8}c` takes `-lc`, `-ec`, `-xc` and
-#: the bare `-c`. The run before it may also consume a cluster as a switch;
+#: cluster is the Bash opener's `_POSIX_SHELL_C_CLUSTER` (either sign, the
+#: `c` anywhere), so it takes `-lc`, `-ec`, `-xc`, `+c` and the bare `-c`.
+#: The run before it may also consume a cluster as a switch;
 #: the run gives it back, and a flood of clusters is one pass (registered).
 #: The cluster and what follows it are the Bash opener's (DEF-3068's batch):
 #: letters after the `c` (`-cx`), then switches and a closing `--` between
@@ -14397,14 +14410,19 @@ _PS_START_PROCESS_FILEPATH_ALIASES = frozenset({"pspath", "path"})
 #: PowerShell's `-File` switch by any prefix: the file is the program, and
 #: what follows it is the script's arguments.
 _PS_CLI_FILE_SWITCH_RE = re.compile(r"[-/]f(?:i(?:l(?:e)?)?)?", re.IGNORECASE)
+#: A POSIX shell's `-c` in the argv a `Start-Process` hands it: the `-c`
+#: openers' own cluster (`_POSIX_SHELL_C_CLUSTER`), the same shells' program
+#: from their own argv: either sign, its `c` anywhere (DEF-3074; the carrier
+#: reader's `-...c` rule, which this reader took until then, missed `+c` and
+#: `-cx`, both run by bash 5.2.37). The carriers keep theirs: `su` and
+#: `script` read `-c` as taking a value, so their `-cx` is `-c x`.
+_POSIX_CLI_C_CLUSTER_RE = re.compile(_POSIX_SHELL_C_CLUSTER)
 #: The process-start cmdlet as a command word, by name or alias, behind a
 #: module qualifier too: the anchored opener of the shells it starts. The
 #: masker keeps a double-quoted string, so the command position is what
 #: refuses a mention there -- one holding a separator included, which the
 #: raw statement-start check alone reads as a statement (the lane's own
 #: draft did) -- as cmd's opener refuses it (`_PS_CMD_REMOVE_OPENER_RE`).
-#: A POSIX shell's `-c` is the carrier reader's cluster rule
-#: (`_CARRIER_C_CLUSTER_RE`), the same shells' program from their own argv.
 _PS_START_PROCESS_OPENER_RE = re.compile(
     _PS_CMD_POS + _PS_EXE_PREFIX + r"(?:Start-Process|saps)" + _QUOTED_VERB_TAIL + r"(?=[ \t]|$)",
     re.IGNORECASE,
@@ -14527,7 +14545,8 @@ def _ps_cli_program(line: str) -> str:
 
 def _posix_cli_program(line: str) -> str:
     """The program bash or sh runs from its command line ``line``: the word
-    after ``-c`` (alone or ending a cluster), past the options before it.
+    after ``-c`` (alone, or anywhere in a cluster of either sign: ``-lc``,
+    ``-cx``, ``+c``, DEF-3074), past the options before it.
     Where that word was bare -- an array argument list, ``'-c','rm -rf x'``,
     which the cmdlet joins by blanks unquoted -- the rest of the line: the
     shell itself runs the first word alone there, with the rest as its
@@ -14540,7 +14559,7 @@ def _posix_cli_program(line: str) -> str:
         word = words[k][0]
         if not word.startswith(("-", "+")):
             return ""
-        if _CARRIER_C_CLUSTER_RE.fullmatch(word):
+        if _POSIX_CLI_C_CLUSTER_RE.fullmatch(word):
             if k + 1 >= len(words):
                 return ""
             program, was_quoted = words[k + 1]
