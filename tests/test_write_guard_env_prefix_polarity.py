@@ -282,6 +282,11 @@ _CMD_SET_REACH = [
     ("ps", f"cmd /c --% set {ENV_VAR}=1 & claude -p x"),
     # and between two switches (`cmd /d --% /c echo a & echo RAN` prints RAN)
     ("ps", f"cmd /d --% /c set {ENV_VAR}=1 & claude -p x"),
+    # the token glued to `,` or `&` is still the token, and a line break in
+    # an open quote ends the as-typed text (the failure-mode re-review)
+    ("ps", f"cmd /c --%, set {ENV_VAR}=1 & claude -p x"),
+    ("ps", f"cmd /c echo a --%& set {ENV_VAR}=1 & claude -p x"),
+    ("ps", f'cmd /c --% echo "x\ncmd /c --% set {ENV_VAR}=1 & claude -p x'),
     ("ps", f"Start-Process cmd -ArgumentList '/c set {ENV_VAR}=1 && claude -p x'"),
     ("ps", f"Start-Process -FilePath cmd.exe -Wait -ArgumentList '/c','set {ENV_VAR}=1 && claude -p x'"),
     # a common parameter's value and a colon-bound list (PowerShell binds both)

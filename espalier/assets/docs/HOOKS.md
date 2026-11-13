@@ -1428,8 +1428,8 @@ first; the dangerous-command catch is a secondary slip-catcher):
    (`cmd //c echo x \& rd /s /q .`, `cmd /c echo x '&' rd /s /q .`) as
    much as alone -- on the PowerShell tool also behind the stop-parsing
    token, before the switch, between two or after it (`cmd --% /c`,
-   `cmd /d --% /c`, `cmd /c --%`), read as typed to a pipe outside double
-   quotes, and
+   `cmd /d --% /c`, `cmd /c --%`, glued to the switch as `cmd --%/c`),
+   read as typed to a line break or a pipe outside double quotes, and
    in a `Start-Process cmd` argument list -- cmd's
    `%USERPROFILE%` read as your home directory) -- the wall on a
    catastrophic target, nothing on a roster build directory, one nudge on

@@ -13749,6 +13749,10 @@ _CMD_VAR_RE = re.compile(r"%(\w+)%|%%?([A-Za-z])\b|!(\w+)!")
 _CMD_CATCHALL_LEAVES = frozenset({"*", "*.*", "**"})
 #: How deep a cmd program that starts cmd again is read.
 _CMD_NEST_MAX = 4
+#: Where a word of cmd's switch walk ends: a blank, or an outer statement's
+#: separator in either shell, which no switch crosses (`cmd --%x;echo /c
+#: ...` starts cmd with no program, then echoes; the failure-mode re-review).
+_CMD_SWITCH_WORD_END = " \t;&|\r\n(){}"
 
 
 def _cmd_program_at(text: str, at: int) -> int | None:
@@ -13775,9 +13779,11 @@ def _cmd_program_at(text: str, at: int) -> int | None:
         if text.startswith(_PS_STOP_PARSING, j):
             # cmd skips a word led by the token before or between its
             # switches, glued or not (`cmd --%x //c echo RAN` and `cmd //d
-            # --% //c echo RAN` print RAN from Git Bash, driven)
+            # --% //c echo RAN` print RAN from Git Bash, driven), up to a
+            # `/` glued to it, which starts a switch (`cmd --%/c echo RAN`
+            # runs, the code review, driven)
             i = j + len(_PS_STOP_PARSING)
-            while i < n and text[i] not in " \t":
+            while i < n and text[i] not in _CMD_SWITCH_WORD_END and text[i] != "/":
                 i += 1
             continue
         j = i
@@ -13788,25 +13794,32 @@ def _cmd_program_at(text: str, at: int) -> int | None:
         if text[j].lower() in "ck":
             return j + 1
         i = j + 1
-        while i < n and text[i] not in " \t\"'/":
+        while i < n and text[i] not in _CMD_SWITCH_WORD_END and text[i] not in "\"'/":
             i += 1
 
 
 #: PowerShell's stop-parsing token (DEF-1071 (e)).
 _PS_STOP_PARSING = "--%"
+#: The characters that glue to `--%` as one plain word on Windows PowerShell
+#: 5.1 (driven, echo only), beside a letter or a digit; `'`, `"` and `|` make
+#: the line a parse error, so nothing runs (`_ps_stop_parsing_len`).
+_PS_TOKEN_GLUE = ".:/\\$@[]_*+!?~<>#=-%`'\""
 
 
 def _ps_stop_parsing_len(text: str, i: int) -> int:
     """The length of PowerShell's stop-parsing token at ``i``, a backtick
-    before it allowed, or 0. The token is a whole word: it ends the text or
-    is followed by a blank, `;`, `|`, `)` or a line break; `--%abc` is a
+    before it allowed, or 0. The token is a whole word, so `--%abc` is a
     plain word (driven on Windows PowerShell 5.1, echo only: `cmd /c echo
-    --%abc ; echo PSRAN` prints both, and `` `--% `` is the token)."""
+    a --%X ; echo PSRAN` prints PowerShell's own PSRAN line for each X of
+    `_PS_TOKEN_GLUE`, a letter or a digit, and hands cmd the rest for a
+    blank and each of ``; , & ( ) { }``; `` `--% `` is the token). A
+    character the drive did not cover reads as the token, the base's
+    reading."""
     j = i + 1 if text.startswith("`", i) else i
     if not text.startswith(_PS_STOP_PARSING, j):
         return 0
     k = j + len(_PS_STOP_PARSING)
-    if k < len(text) and text[k] not in " \t;|)\r\n":
+    if k < len(text) and (text[k].isalnum() or text[k] in _PS_TOKEN_GLUE):
         return 0
     return k - i
 
@@ -13828,16 +13841,19 @@ def _ps_stop_parsing_among(text: str, lo: int, hi: int) -> bool:
 
 def _ps_verbatim_end(text: str, at: int) -> int:
     """Where the text PowerShell hands on as typed behind its stop-parsing
-    token ends: a pipe or a line break outside double quotes, or the end
+    token ends: a line break, a pipe outside double quotes, or the end
     (driven on Windows PowerShell 5.1, echo only: `cmd /c --% echo "a|b" &
-    echo RAN` prints both). Linear."""
+    echo RAN` prints both, and a line break inside an open quote still ends
+    it: `cmd /c --% echo "x` then `echo RAN` prints RAN). Linear."""
     quoted = False
     i, n = at, len(text)
     while i < n:
         c = text[i]
+        if c in "\r\n":
+            break
         if c == '"':
             quoted = not quoted
-        elif not quoted and c in "|\r\n":
+        elif not quoted and c == "|":
             break
         i += 1
     return i
@@ -14691,9 +14707,11 @@ def iter_cmd_programs(
     opener_re = _CMD_REMOVE_OPENER_RE if bash else _PS_CMD_REMOVE_OPENER_RE
     openers = list(opener_re.finditer(scan))
     read_to = 0
+    typed_to = 0                          # the as-typed text read so far
     for k, m in enumerate(openers):
         if m.start() < read_to:
             continue                      # inside a program already read whole
+        covered = m.start() < typed_to
         start = _cmd_program_at(raw, m.end())
         if start is None and not bash:
             # Start-Process hands cmd its program as an argument list, not in
@@ -14710,12 +14728,19 @@ def iter_cmd_programs(
             stop = max(start, openers[k + 1].start())
         if not bash and _ps_stop_parsing_among(raw, m.end(), start):
             # behind the stop-parsing token PowerShell hands cmd the rest of
-            # the line as typed, its `;` and `&&` included, up to a pipe
-            # outside double quotes; a later opener in it is a statement of
-            # the program, read there (the code review: a tail cut at it
-            # left the statements after its own to no reader)
+            # the line as typed, its `;` and `&&` included, up to a line
+            # break or a pipe outside double quotes, past a later opener (the
+            # code review: a tail cut at it left the statements after its
+            # own to no reader); an opener with its own token inside text
+            # already read so is that text's, and one without is still read
+            # on its own, so a chain past the nested reader's depth is read
+            # (the failure-mode re-review); each character once
+            if covered:
+                continue
             end = _ps_verbatim_end(raw, start)
-            read_to = end
+            typed_to = end
+            if to_statement_end:
+                read_to = end
             yield start, _cmd_line_unquoted(raw[start:end])
             continue
         words, end = _cmd_outer_words_to(raw, start, stop, bash=bash)
@@ -14725,11 +14750,14 @@ def iter_cmd_programs(
             # the stop-parsing token after the switch or a later word (`cmd
             # /c --% ...`): PowerShell hands cmd the rest of the line as
             # typed, as it does before the switch (the failure-mode review,
-            # driven echo only), a later opener in it read as a statement
+            # driven echo only), read as that branch reads it
+            if covered:
+                continue
             at = end + token
             end = _ps_verbatim_end(raw, at)
+            typed_to = end
             verbatim = raw[at:end].strip(" \t")
-        if to_statement_end or token:
+        if to_statement_end:
             read_to = end
         if not words and not verbatim:
             continue

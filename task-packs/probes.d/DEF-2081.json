@@ -7,7 +7,7 @@
  "inputs": [
   "tools/cc/hooks/write_guard.py"
  ],
- "row_sha": "3e33e0154b76",
- "text_sha": "c1d0f69df5c7",
- "verified_2026_11_13": "OPEN (filed 2026-11-13; probe driven at filing here and in the export of HEAD 0294d5573a60)"
+ "row_sha": "4be71aa41f2c",
+ "text_sha": "52d4ff7c29fd",
+ "verified_2026_11_13": "OPEN (filed 2026-11-13; probe driven at filing here and in the export of HEAD 4b05e154471d)"
 }

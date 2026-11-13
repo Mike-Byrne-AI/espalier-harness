@@ -1,10 +1,10 @@
 {
  "id": "DEF-2082",
  "subject": "tools/cc/hooks/_bash_patterns.py",
- "cmd": "python -c 'import sys; sys.path[:0] = [\"tools/cc/hooks\", \"tools/cc\"]; import _bash_patterns as b; print(*(len(list(b.iter_cmd_programs(*b.powershell_scan_pair(c), bash=False))) for c in (\"cmd /c echo x\", \"cmd foo /c echo x\", \"cmd -x /c echo x\")))'",
- "open_value": "1 0 0",
+ "cmd": "python -c 'import sys; sys.path[:0] = [\"tools/cc/hooks\", \"tools/cc\"]; import _bash_patterns as b; print(*(len(list(b.iter_cmd_programs(*b.powershell_scan_pair(c), bash=False))) for c in (\"cmd /c echo x\", \"cmd foo /c echo x\", \"cmd -x /c echo x\", \"cmd x/c echo x\")))'",
+ "open_value": "1 0 0 0",
  "why_not": null,
- "row_sha": "5ec1e8e30189",
- "text_sha": "9d5facca0718",
- "verified_2026_11_13": "OPEN (filed 2026-11-13; probe driven at filing here and in the export of HEAD 5d7187125c5d)"
+ "row_sha": "45a5637d1683",
+ "text_sha": "1fa5b3314748",
+ "verified_2026_11_13": "OPEN (filed 2026-11-13; probe driven at filing here and in the export of HEAD 4b05e154471d)"
 }
