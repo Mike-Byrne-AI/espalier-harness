@@ -13669,6 +13669,250 @@ class TestSecretPathAccess:
                               env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LC_ALL": "C"})
         assert ("MARKER_DEF_2074" in proc.stdout) is reads
 
+    # DEF-5106: the head read never read a substitution's body as a program.
+    # A `$( )` at a statement's head read as a `$` statement, and a body among
+    # another verb's operands as that verb's operands, so a read inside one
+    # drew no refusal where the same read alone is refused. Bash runs each
+    # body first, and its output reaches the transcript through the outer
+    # command's output or, at a head, through the not-found error naming it.
+    # Every row here allowed at main dc73ada. The named user: an operator
+    # whose agent prints a dotenv through a substitution (`echo "$(cat
+    # .env)"`, a bare `$(cat .env)` line, an env file compared with another
+    # through process substitutions) and meets no refusal.
+    _SUBSTITUTION_BODY_READS = (
+        "$(cat .env)",
+        "echo $(cat .env)",
+        "echo `cat .env`",
+        'echo "$(cat .env)"',
+        'echo "it\'s $(cat .env)"',               # an apostrophe in double quotes is text
+        "echo $(head -1 .env)",
+        "echo $(cat .env | tr q Q)",
+        "echo $(echo $(cat .env))",                # a nested body is read on its own
+        'echo "$(echo `cat .env`)"',
+        "x=; echo ${x:-$(cat .env)}",
+        "echo $((1)) $(cat .env)",
+        "printf '%s\\n' $(cat .env)",
+        "echo $(case a in (a) cat .env;; esac)",  # a balanced case arm stays inside the body
+        "diff <(cat .env) notes.txt",              # a process substitution's body
+        "bash -c 'echo $(cat .env)'",              # a body inside a shell's program
+        "cat <<EOF\n$(cat .env)\nEOF",             # an unquoted heredoc expands its body
+        "cat <<EOF\nit's `cat .env`\nEOF",         # a quote in that body is text
+        "cat <<-EOF\n\t$(cat .env)\n\tEOF",
+        "x=$(cat <<EOF\n$(cat .env)\nEOF\n); echo \"$x\"",
+        # the review batch: a body of redirects alone is the shell's own `cat`,
+        # a program inside a body is read as its own, a `$` that is the pid's
+        # or an escaped one opens no ANSI-C string, a `#` after a closed span
+        # is inside a word, and a quoted mention of `<<` takes no body
+        'echo "$(< .env)"',
+        'x=$(<.env); echo "$x"',
+        "echo \"$(sh -c 'cat .env')\"",
+        "echo \"`bash -c 'cat .env'`\"",
+        "echo $$'a\\' $(cat .env)",
+        "echo \\$'a\\' $(cat .env)",
+        'echo "<<A"; cat <<B\n$(cat .env)\nB',
+    )
+    # The commit idiom over a message that shows an indented heredoc and then
+    # names the unquoted form (the failure-mode review's row): the message
+    # is the quoted body's text to its last line.
+    _INDENTED_DELIMITER_MESSAGE = (
+        "git commit -m \"$(cat <<'EOF'\nfix: an example\n\n    cat <<EOF\n    $(cat .env)\n    EOF\n\n"
+        "An unquoted <<EOF body\nexpands, so `cat .env` in it is refused.\nEOF\n)\""
+    )
+    # Where bash reads nothing: a single-quoted or escaped opener is text, a
+    # process substitution inside double quotes is text, a comment runs
+    # nothing, a quoted heredoc's body is data, and so is the message of the
+    # commit idiom, run here as an echo (the oracle has no repository).
+    _SUBSTITUTION_BODY_NO_READS = (
+        "echo '$(cat .env)'",
+        "echo '`cat .env`'",
+        'echo "\\$(cat .env)"',
+        'echo "\\`cat .env\\`"',
+        'echo "<(cat .env)"',
+        "echo hi # $(cat .env)",
+        "cat <<'EOF'\n$(cat .env)\nEOF",
+        'cat <<"EOF"\n`cat .env`\nEOF',
+        "cat <<\\EOF\n$(cat .env)\nEOF",
+        "cat <<EOF\n\\$(cat .env)\nEOF",
+        "echo \"$(cat <<'EOF'\nfix: `cat .env` and $(cat .env) are refused\nEOF\n)\"",
+        "awk '{print $(NF)}' notes.txt",
+        # the review batch: an indented delimiter inside a quoted body is the
+        # body's text (bash ends it at the delimiter alone), an arithmetic
+        # shift is no heredoc, and a delimiter quoted in part is quoted
+        _INDENTED_DELIMITER_MESSAGE.replace("git commit -m", "echo", 1),
+        "echo $((1<<4))\necho '$(cat .env)'",
+        'cat <<E"O"F\n$(cat .env)\nEOF',
+    )
+    # The false-deny population the row names, hook only (no repository or
+    # remote here): the commit idiom and pull request bodies naming dotenv
+    # files, in a quoted heredoc, a file the body reads, and single quotes,
+    # one with an unrostered command after it, where the masker hands the
+    # readers the raw text.
+    _SUBSTITUTION_BODY_HOOK_NO_READS = (
+        "git commit -m \"$(cat <<'EOF'\nfix: `cat .env` and $(cat .env) are refused\nEOF\n)\"",
+        "git commit -m \"$(cat <<'EOF'\nfix: the read of .env\nEOF\n)\" && make check",
+        "gh pr create --title \"the .env read\" --body \"$(cat <<'EOF'\n"
+        "A read of .env inside $(cat .env) and `cat .env`.\nEOF\n)\"",
+        'gh pr create --title "a .env read" --body "$(cat body.md)"',
+        "git commit -m 'fix: echo $(cat .env) is refused'",
+        _INDENTED_DELIMITER_MESSAGE,
+        # an unrostered head hands the readers raw text, so the walk's own
+        # quote reading decides: a single-quoted opener and a single-quoted
+        # `<<` are text
+        "make check MSG='echo $(cat .env)'",
+        "make notes MSG='see <<EOF\nthen `cat .env` here'",
+    )
+    # Declared limits (docs/HOOKS.md, the secret-read paragraph): bash reads
+    # the file under each and the leg allows it. An operand a nested body
+    # computes is one word the leg does not evaluate, a backtick span nested
+    # in another is read as its escapes, and a case arm's unbalanced `)`
+    # closes the body there (bash 4 and later run that line; bash 3.2 refuses
+    # it as a syntax error, so its oracle row reads the version). The day a
+    # lane reads one, this row reds and the sentence is rewritten on purpose.
+    _SUBSTITUTION_BODY_LIMITS = (
+        "echo $(cat $(echo .env))",
+        "echo `echo \\`cat .env\\``",
+    )
+    _CASE_ARM_IN_A_BODY = "echo $(case a in a) cat .env;; esac)"
+
+    # zsh's `=( )` runs its body as a word of its own (the Bash tool runs the
+    # login shell, zsh on a macOS host; bash refuses the word as a syntax
+    # error); quoted, it is text. An assignment's `=(` is an array in both
+    # shells (`test_each_substitution_body_is_read_once_at_its_own_level`).
+    _ZSH_SUBSTITUTION_BODY_READS = (
+        "diff =(cat .env) notes.txt",
+        "diff notes.txt =(cat .env)",
+    )
+    _ZSH_SUBSTITUTION_BODY_NO_READS = (
+        'echo "=(cat .env)"',
+        "echo '=(cat .env)'",
+    )
+
+    # Beside the rows: a `>( )` body runs beside the outer command, so its
+    # row is the hook's alone, and `cat <( )` is a control, refused at main
+    # as the roster verb's operand.
+    @pytest.mark.parametrize("command", _SUBSTITUTION_BODY_READS + _ZSH_SUBSTITUTION_BODY_READS
+                             + ("echo x > >(cat .env)", "cat <(cat .env)"))
+    def test_a_read_inside_a_substitution_body_is_refused(self, command, tmp_path):
+        assert_hook_denied(run_guard_tool("Bash", {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("command", _SUBSTITUTION_BODY_NO_READS + _SUBSTITUTION_BODY_HOOK_NO_READS
+                             + _ZSH_SUBSTITUTION_BODY_NO_READS)
+    def test_a_substitution_body_bash_never_runs_is_allowed(self, command, tmp_path):
+        assert_hook_allowed(run_guard_tool("Bash", {"command": command}, tmp_path))
+
+    @pytest.mark.parametrize("command", _SUBSTITUTION_BODY_LIMITS + (_CASE_ARM_IN_A_BODY,))
+    def test_a_substitution_body_the_leg_does_not_read_is_a_declared_limit(self, command, tmp_path):
+        assert_hook_allowed(run_guard_tool("Bash", {"command": command}, tmp_path))
+
+    def test_a_bash_program_the_powershell_tool_carries_reads_its_substitution_body(self, tmp_path):
+        assert_hook_denied(_run_ps_guard("bash -c 'echo \"$(cat .env)\"'", tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    # Each branch of the walk keeps a row: an edit that widens or narrows
+    # what opens a body, what closes one, or what a nested one leaves behind
+    # reds here. Inner bodies close first, so they come first.
+    @pytest.mark.parametrize("text, heredoc, bodies", [
+        ("echo $(a)", False, ["a"]),
+        ("echo `a`", False, ["a"]),
+        ("echo <(a) >(b)", False, ["a", "b"]),
+        ("echo $(a $(b) c)", False, ["b", "a _ c"]),          # a nested body: a hole, and a body
+        ("echo $(a `b` c)", False, ["b", "a _ c"]),
+        ("echo `a $(b) c`", False, ["b", "a _ c"]),
+        ("echo '$(a)' '`b`' '<(c)'", False, []),              # single quotes: text
+        ("echo $'\\'$(a)'", False, []),                        # an ANSI-C string's \' is no close
+        ('echo "$(a) `b` <(c)"', False, ["a", "b"]),           # a process substitution: text in "..."
+        ('echo "it\'s $(a)"', False, ["a"]),
+        ('echo "$(a "b" c)"', False, ['a "b" c']),             # a body's quotes are its own
+        ("echo \\$(a) \\`b\\` \\<(c)", False, []),             # an escape opens nothing
+        ("echo # $(a)", False, []),                            # a comment
+        ("echo a#$(b)", False, ["b"]),                         # a `#` inside a word is text
+        ("echo $(a (b) c)", False, ["a (b) c"]),               # a nested paren
+        ("echo $(a ')' b)", False, ["a ')' b"]),               # a quoted `)` is text
+        ("echo $(a \\) b)", False, ["a \\) b"]),
+        ("echo $(a # x)\n) y", False, ["a # x)\n"]),           # a comment swallows its `)`
+        ("echo $((1 + 2))", False, ["(1 + 2)"]),
+        ("echo $(a", False, ["a"]),                            # left open: to the end
+        ("echo $(a $(b", False, ["b", "a _"]),
+        ("echo `a", False, ["a"]),
+        ("echo ')' $(a)", False, ["a"]),
+        ("it's $(a) \"b\" # $(c)", True, ["a", "c"]),          # a heredoc body: quotes and `#` are text
+        ("<(a) $(b '$(c)')", True, ["b '$(c)'"]),             # ... a process substitution too
+        ("\\$(a) `b`", True, ["b"]),
+        ("diff =(a) x;=(b)", False, ["a", "b"]),              # zsh's `=( )` as a word of its own
+        ("x=(a b) y==(c)", False, []),                        # an array, and a `=(` inside a word
+        ("echo $$'a\\' $(b)", False, ["b"]),                  # `$$` is the pid: its quote is plain
+        ("echo \\$'a\\' $(b)", False, ["b"]),                 # so is an escaped `$`'s
+        ('echo "$$(b)"', False, []),                          # `$$` then a `(` that is text
+        ("echo $(a)#$(b)", False, ["a", "b"]),                # a `#` after a closed span is in a word
+        ("echo `a`#$(b)", False, ["a", "b"]),
+        ("ls -la", False, []),
+    ])
+    def test_each_substitution_body_is_read_once_at_its_own_level(self, text, heredoc, bodies):
+        assert _load_write_guard()._substitution_bodies(text, heredoc=heredoc) == bodies
+
+    # The walk names the heredoc operators bash reads, so the heredoc arm
+    # never takes a quoted mention, a here-string or an arithmetic shift for
+    # one, and the heredoc reader ends a body at bash's own delimiter line.
+    def test_the_walk_names_only_the_heredoc_operators_bash_reads(self):
+        text = "cat <<A <<'B' x $((1<<4)) '<<C' \"<<D\" <<<E # <<F\necho \"$(cat <<G"
+        found: list[int] = []
+        _load_write_guard()._substitution_bodies(text, heredocs=found)
+        assert found == [text.index("<<A"), text.index("<<'B'"), text.index("<<G")]
+
+    def test_the_heredoc_reader_ends_a_body_at_bash_s_own_delimiter_line(self):
+        bp = _bash_patterns_module()
+        text = "cat <<'EOF'\n  EOF\nx <<Q\nEOF\ny"
+        exact = bp._heredoc_bodies(text, exact=True)
+        assert [(b.start, b.end, b.after) for b in exact] == [
+            (text.index("  EOF"), text.index("\nEOF"), text.index("y"))]
+        loose = bp._heredoc_bodies(text)       # the masker's rule, kept for its other callers
+        assert loose[0].end == loose[0].start and loose[1].op == text.index("<<Q")
+        assert bp._heredoc_bodies(text, exact=True, live=frozenset()) == []
+        assert bp._heredoc_bodies('cat <<E"O"F\nx\nEOF', exact=True)[0].expands is False
+
+    # Bash is the oracle (/bin/bash 3.2.57 on the Air, bash 5 on the Linux
+    # cells): the dotenv's marker, a word no shell reads as an assignment,
+    # reaches stdout or stderr under each read row and each declared limit,
+    # and under no row that runs no read. Every row runs in its own scratch
+    # folder and reads its own files.
+    @pytest.mark.skipif(not Path("/bin/bash").exists(), reason="the oracle is a real /bin/bash")
+    @pytest.mark.parametrize("command, reads", [
+        *((c, True) for c in _SUBSTITUTION_BODY_READS),
+        *((c, False) for c in _SUBSTITUTION_BODY_NO_READS),
+        *((c, True) for c in _SUBSTITUTION_BODY_LIMITS),
+        (_CASE_ARM_IN_A_BODY, None),
+    ])
+    def test_bash_reads_the_file_as_each_substitution_body_row_says(self, command, reads, tmp_path):
+        (tmp_path / ".env").write_text("marker-def-5106\n", encoding="utf-8")
+        (tmp_path / "notes.txt").write_text("notes\n", encoding="utf-8")
+
+        def run(text: str) -> subprocess.CompletedProcess:
+            return subprocess.run(["/bin/bash", "--noprofile", "--norc", "-c", text], cwd=str(tmp_path),
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                  timeout=scaled(10),
+                                  env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LC_ALL": "C"})
+        if reads is None:   # the case arm: read where bash parses it, from bash 4 on
+            reads = run("echo ${BASH_VERSINFO[0]}").stdout.strip() not in ("", "3")
+        proc = run(command)
+        assert ("marker-def-5106" in proc.stdout + proc.stderr) is reads
+
+    # zsh is the oracle for its own opener (zsh 5.9 on the Air; the Linux
+    # cells have none, and skip).
+    @pytest.mark.skipif(not Path("/bin/zsh").exists(), reason="the oracle is a real /bin/zsh")
+    @pytest.mark.parametrize("command, reads", [
+        *((c, True) for c in _ZSH_SUBSTITUTION_BODY_READS),
+        *((c, False) for c in _ZSH_SUBSTITUTION_BODY_NO_READS),
+    ])
+    def test_zsh_reads_the_file_as_each_equals_substitution_row_says(self, command, reads, tmp_path):
+        (tmp_path / ".env").write_text("marker-def-5106\n", encoding="utf-8")
+        (tmp_path / "notes.txt").write_text("notes\n", encoding="utf-8")
+        proc = subprocess.run(["/bin/zsh", "-f", "-c", command], cwd=str(tmp_path),
+                              capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=scaled(10),
+                              env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LC_ALL": "C"})
+        assert ("marker-def-5106" in proc.stdout + proc.stderr) is reads
+
     # DEF-5107: both legs ended a read verb's operands at the first redirect
     # spelled from `>`, and read one numbered by its stream (`2>`, `*>`) as an
     # operand, its target too. Bash and PowerShell take each redirect and its

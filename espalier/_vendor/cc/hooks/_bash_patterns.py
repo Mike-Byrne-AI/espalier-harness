@@ -6681,40 +6681,70 @@ def _heredoc_body_after(command: str, op: int) -> str | None:
 
 
 def _heredoc_body_spans(text: str) -> list[tuple[int, int]]:
-    """``[start, end)`` of every heredoc body in ``text``, in order. The
-    bodies of several operators on one line follow one another, as bash
-    reads them, so each line is scanned once (linear); an operator inside a
-    body already read is body text; an unterminated body runs to the end,
-    as bash runs it. The directory walk reads these: a body the masker left
-    live belongs to a program that re-parses it (a shell, `ssh`), so a
+    """``[start, end)`` of every heredoc body in ``text``, in order
+    (`_heredoc_bodies`). The directory walk reads these: a body the masker
+    left live belongs to a program that re-parses it (a shell, `ssh`), so a
     statement inside it is another shell's (the lane's review, its major)."""
-    spans: list[tuple[int, int]] = []
+    return [(body.start, body.end) for body in _heredoc_bodies(text)]
+
+
+class _HeredocBody(NamedTuple):
+    """One heredoc body (`_heredoc_bodies`)."""
+    op: int        # where its `<<` sits
+    start: int     # the body's [start, end)
+    end: int
+    after: int     # where the line after its delimiter starts; the text's end when none closes it
+    expands: bool  # an unquoted delimiter: bash expands the body's `$( )` and backtick spans
+
+
+def _heredoc_bodies(
+    text: str, *, exact: bool = False, live: "frozenset[int] | None" = None,
+) -> list[_HeredocBody]:
+    """Every heredoc body in ``text``, in order (the Bash secret leg reads an
+    expanding one's substitutions, DEF-5106). The bodies of several
+    operators on one line follow one another, as bash reads them, so each
+    line is scanned once (linear); an operator inside a body already read is
+    body text; an unterminated body runs to the end, as bash runs it.
+
+    ``exact`` ends a body only at bash's own delimiter line -- the delimiter
+    alone, its leading tabs stripped under `<<-` -- where the default keeps
+    the `.strip()` rule the masker's other heredoc readers share, which ends
+    a body early at an indented delimiter. ``live``, when given, names the
+    operators to read, every other `<<` being text (a quoted mention), so a
+    mention never takes a real operator's body. A delimiter word followed by
+    a quote or an escape (`<<E"O"F`) is read as quoted, though the parse
+    stops at the quote: its body is data either way."""
+    bodies: list[_HeredocBody] = []
     n, body_from = len(text), 0
     for m in _HEREDOC_OPERATOR_RE.finditer(text):
         op = m.start()
-        if spans and spans[-1][0] <= op < body_from:
+        if live is not None and op not in live:
+            continue
+        if bodies and bodies[-1].start <= op < body_from:
             continue
         try:
-            _, spec = _read_heredoc_operator(text, op)
+            past, spec = _read_heredoc_operator(text, op)
         except _UnresolvedShellSyntax:
             continue
         nl = text.find("\n", op)
         if spec is None or nl < 0:
             continue
-        delim, _expands, strip_tabs = spec
+        delim, expands, strip_tabs = spec
+        expands = expands and text[past:past + 1] not in ("'", '"', "\\")
         start = i = max(nl + 1, body_from)
         end, body_from = start, n
         while i < n:
             e = text.find("\n", i)
             line_end = n if e < 0 else e
             line = text[i:line_end]
-            if (line.lstrip("\t") if strip_tabs else line).strip() == delim:
+            probe = line.lstrip("\t") if strip_tabs else line
+            if (probe if exact else probe.strip()) == delim:
                 body_from = min(line_end + 1, n)
                 break
             end = line_end
             i = line_end + 1
-        spans.append((start, end))
-    return spans
+        bodies.append(_HeredocBody(op, start, end, body_from, expands))
+    return bodies
 
 
 def _heredoc_cursor(text: str) -> "Callable[[int], bool]":

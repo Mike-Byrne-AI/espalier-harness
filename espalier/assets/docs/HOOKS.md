@@ -377,7 +377,7 @@ checkout up and clears the leftover worktrees beside it
 the memory digest and the hooks themselves describe the tree the session works
 in. A lane shipped with auto-merge armed lands while nobody is watching, and
 the next session used to open on the finished branch, behind `main` by
-everything merged since (measured 2026-10-08: 348 commits, so the banner was a
+everything merged since (348 commits once, so the banner was a
 four-day-old build). One bounded `git fetch --prune`; then it moves only
 `main` itself (a fast-forward) or a branch GitHub deleted at the merge (its
 upstream reads `[gone]`) whose every commit is in `origin/main`, and only when
@@ -2023,6 +2023,22 @@ anything else is not evaluated, and a `:` note holding a quote, an escape, an
 expansion or an operator is kept as typed, so `$(true) cat .env` and
 `$(: 'note') cat .env` are a declared false allow, pinned by
 `tests/test_write_guard.py::TestSecretPathAccess::test_a_substitution_the_leg_does_not_evaluate_is_a_declared_limit`.
+A substitution's body is a program the shell runs before the command it sits
+in, so it is read as a program of its own with the same roster and the same
+program readers: a `$( )`, a backtick span, a process substitution's `<( )` or
+`>( )` and zsh's `=( )` as a word of its own, at a statement's head
+(`$(cat .env)`), among another verb's operands (`echo "$(cat .env)"`,
+`diff <(cat .env) .env.example`), nested in another body, and in the body of
+a heredoc whose delimiter is unquoted; a body of redirects alone is the
+shell's own read (`$(< .env)`). Outside an unquoted heredoc's body, a
+single-quoted span, an escaped opener, a comment and a process substitution
+inside double quotes are text, and a quoted heredoc's body is data to its
+delimiter line, so the commit idiom (`git commit -m "$(cat <<'EOF' ... EOF)"`)
+is read for its `cat` alone, whatever its message names. An operand a nested substitution computes
+(`echo $(cat $(echo .env))`) is not evaluated, a backtick span nested in
+another is read as its escapes, and a case arm's unbalanced `)` closes the
+body there: declared false allows, pinned by
+`tests/test_write_guard.py::TestSecretPathAccess::test_a_substitution_body_the_leg_does_not_read_is_a_declared_limit`.
 The two rosters are pinned to
 each other class for class, and a program handed to the other shell
 (`powershell -Command "Get-Content .env"` on Bash, `sh -c 'cat .env'` on

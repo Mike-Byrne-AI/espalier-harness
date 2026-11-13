@@ -1,0 +1,14 @@
+{
+ "id": "DEF-4115",
+ "subject": "tests/test_spaced_paths.py",
+ "cmd": "python3 -c \"import ast;F=('tests/test_write_guard.py','tests/test_hook_exec_form.py','tests/test_spaced_paths.py');N=lambda c:(getattr(c.func,'attr','') or getattr(c.func,'id','')).lower();W=lambda f:any(isinstance(n,ast.Call) and N(n)=='which' and n.args and isinstance(n.args[0],ast.Constant) and n.args[0].value in ('pwsh','powershell') for n in ast.walk(f));C=lambda f:any(isinstance(n,ast.Constant) and n.value=='XDG_CACHE_HOME' for n in ast.walk(f)) or any(isinstance(n,ast.Call) and 'cache' in N(n) for n in ast.walk(f));print(any(W(d) and not C(d) for p in F for d in ast.walk(ast.parse(open(p,encoding='utf-8').read())) if isinstance(d,(ast.FunctionDef,ast.AsyncFunctionDef))))\"",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  "tests/test_write_guard.py",
+  "tests/test_hook_exec_form.py"
+ ],
+ "row_sha": "d887cf71b945",
+ "text_sha": "73b469c029ee",
+ "verified_2026_11_12": "OPEN (filed 2026-11-12; probe driven at filing here and in the export of HEAD 96fc254b8f3c)"
+}
