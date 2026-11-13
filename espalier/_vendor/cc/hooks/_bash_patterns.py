@@ -6610,53 +6610,63 @@ class _HeredocBody(NamedTuple):
     expands: bool  # an unquoted delimiter: bash expands the body's `$( )` and backtick spans
 
 
-def _heredoc_bodies(
-    text: str, *, exact: bool = False, live: "frozenset[int] | None" = None,
-) -> list[_HeredocBody]:
-    """Every heredoc body in ``text``, in order (the Bash secret leg reads an
-    expanding one's substitutions, DEF-5106). The bodies of several
-    operators on one line follow one another, as bash reads them, so each
-    line is scanned once (linear); an operator inside a body already read is
-    body text; an unterminated body runs to the end, as bash runs it.
+def _heredoc_body_at(text: str, op: int, start: int, *, exact: bool = False) -> "_HeredocBody | None":
+    """The body of the heredoc whose `<<` sits at ``op``, read from the line
+    that starts at ``start`` to its delimiter line, or to the end, as bash
+    runs an unterminated body; None where the operator names no delimiter (a
+    here-string, a bare `<<`) or its quote never closes. ``exact`` ends the
+    body only at bash's own delimiter line -- the delimiter alone, its
+    leading tabs stripped under `<<-` -- where the default keeps the
+    `.strip()` rule the masker's other heredoc readers share, which ends a
+    body early at an indented delimiter. A delimiter word followed by a quote
+    or an escape (`<<E"O"F`) is read as quoted, though the parse stops at the
+    quote: its body is data either way. The Bash secret leg's walk reads the
+    bodies one operator at a time with ``exact`` (DEF-4109), so it resumes at
+    ``after``, where the shell reads commands again."""
+    try:
+        past, spec = _read_heredoc_operator(text, op)
+    except _UnresolvedShellSyntax:
+        return None
+    if spec is None:
+        return None
+    delim, expands, strip_tabs = spec
+    expands = expands and text[past:past + 1] not in ("'", '"', "\\")
+    n = len(text)
+    i = end = start
+    after = n
+    while i < n:
+        e = text.find("\n", i)
+        line_end = n if e < 0 else e
+        line = text[i:line_end]
+        probe = line.lstrip("\t") if strip_tabs else line
+        if (probe if exact else probe.strip()) == delim:
+            after = min(line_end + 1, n)
+            break
+        end = line_end
+        i = line_end + 1
+    return _HeredocBody(op, start, end, after, expands)
 
-    ``exact`` ends a body only at bash's own delimiter line -- the delimiter
-    alone, its leading tabs stripped under `<<-` -- where the default keeps
-    the `.strip()` rule the masker's other heredoc readers share, which ends
-    a body early at an indented delimiter. ``live``, when given, names the
-    operators to read, every other `<<` being text (a quoted mention), so a
-    mention never takes a real operator's body. A delimiter word followed by
-    a quote or an escape (`<<E"O"F`) is read as quoted, though the parse
-    stops at the quote: its body is data either way."""
+
+def _heredoc_bodies(text: str) -> list[_HeredocBody]:
+    """Every heredoc body in ``text``, in order, by the masker's `.strip()`
+    delimiter rule (`_heredoc_body_at`). The bodies of several operators on
+    one line follow one another, as bash reads them, so each line is scanned
+    once (linear); an operator inside a body already read is body text; an
+    unterminated body runs to the end, as bash runs it."""
     bodies: list[_HeredocBody] = []
-    n, body_from = len(text), 0
+    body_from = 0
     for m in _HEREDOC_OPERATOR_RE.finditer(text):
         op = m.start()
-        if live is not None and op not in live:
-            continue
         if bodies and bodies[-1].start <= op < body_from:
             continue
-        try:
-            past, spec = _read_heredoc_operator(text, op)
-        except _UnresolvedShellSyntax:
-            continue
         nl = text.find("\n", op)
-        if spec is None or nl < 0:
+        if nl < 0:
             continue
-        delim, expands, strip_tabs = spec
-        expands = expands and text[past:past + 1] not in ("'", '"', "\\")
-        start = i = max(nl + 1, body_from)
-        end, body_from = start, n
-        while i < n:
-            e = text.find("\n", i)
-            line_end = n if e < 0 else e
-            line = text[i:line_end]
-            probe = line.lstrip("\t") if strip_tabs else line
-            if (probe if exact else probe.strip()) == delim:
-                body_from = min(line_end + 1, n)
-                break
-            end = line_end
-            i = line_end + 1
-        bodies.append(_HeredocBody(op, start, end, body_from, expands))
+        body = _heredoc_body_at(text, op, max(nl + 1, body_from))
+        if body is None:
+            continue
+        body_from = body.after
+        bodies.append(body)
     return bodies
 
 
