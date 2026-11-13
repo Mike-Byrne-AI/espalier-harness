@@ -502,6 +502,19 @@ WRAPPERS: list[tuple[str, str]] = [
     ("arith_glued_hash_then_semicolon", "echo $((1))#; %s"),
     ("procsub_glued_hash_then_semicolon", "cat <(true)#; %s"),
     ("subshell_glued_hash_comment", "( true )#; %s"),
+    # An array's `)` and an escaped character glue the `#` too; a comment
+    # inside a backtick body ends at the closing backtick, so the separator
+    # after it is live.
+    ("array_glued_hash_then_semicolon", "a=(1)#; %s"),
+    ("escaped_semicolon_glued_hash", "echo a\\;#; %s"),
+    ("backtick_body_comment_then_semicolon", "echo `echo a #x`; %s"),
+    ("backtick_open_comment_then_semicolon", "echo `#x`; %s"),
+    # The heredoc limit (ack 7f4579): a second heredoc opened after a line
+    # the masker took for a delimiter and bash did not.
+    ("heredoc_partly_quoted_delimiter_then_second_heredoc",
+     "cat > qs_a.md <<E\"O\"F\nE\ncat > qs_b.md <<'true'\nEOF\n%s\ntrue"),
+    ("heredoc_cr_delimiter_line_then_second_heredoc",
+     "cat > qs_a.md <<'EOF'\nEOF\r\ncat > qs_b.md <<'true'\nEOF\n%s\ntrue"),
 ]
 
 #: Executables a wrapper needs beyond `/bin/bash` and the POSIX tools, one per

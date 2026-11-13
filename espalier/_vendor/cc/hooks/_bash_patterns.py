@@ -3963,6 +3963,41 @@ def _walk_shell_roles(
             # takes its text and its stdin as data
             frames[-1].inner_ok = _head_hands_its_text_to_no_shell(word)
 
+    #: The live syntax before a `#`, for the comment branch (the masker
+    #: row): whether a backtick body is open there, and where the last
+    #: closer a `#` glues to stands -- a substitution's or an array's `)`, or
+    #: a backtick body's closing backtick, after which a `#` is word text to
+    #: bash (`echo $(true)#; next` runs `next`), never a comment. Read on the
+    #: masked text so far, which keeps only live syntax (a quoted, escaped or
+    #: commented backtick or paren is blank, the settle's own reading below),
+    #: by a cursor that only moves forward, so a command pays once for its
+    #: whole length and one with no comment opener pays nothing.
+    live_at = 0
+    tick_open = False
+    paren_glues: list[bool] = []
+    glued_close = -2    # never `k - 1`: a `#` at offset 0 follows no closer
+
+    def live_syntax_to(k: int) -> None:
+        nonlocal live_at, tick_open, glued_close
+        while live_at < k:
+            ch = out[live_at]
+            if ch == "`":
+                tick_open = not tick_open
+                if not tick_open:
+                    glued_close = live_at
+            elif ch == "(":
+                # `$(`, `<(`, `>(` and an array's `=(`; a subshell's `(` and
+                # the inner paren of `$((` or `((` glue nothing
+                paren_glues.append(live_at > 0 and s[live_at - 1] in "$<>=")
+            elif ch == ")" and paren_glues and paren_glues.pop():
+                glued_close = live_at
+            live_at += 1
+
+    def glued_after_closer(k: int) -> bool:
+        """The `#` at ``k`` follows a closer it glues to (see above)."""
+        live_syntax_to(k)
+        return glued_close == k - 1
+
     while i < n:
         c = s[i]
 
@@ -4192,8 +4227,18 @@ def _walk_shell_roles(
             i = j + 1
             continue
 
-        if c == "#" and _opens_comment(s, i):
-            j = s.find("\n", i)
+        if (c == "#" and _opens_comment(s, i) and not _glued_after_escape(s, i)
+                and not glued_after_closer(i)):
+            # ⚠ A `#` STARTS A COMMENT WHERE BASH STARTS ONE, AND A COMMENT
+            # INSIDE A BACKTICK BODY ENDS AT ITS CLOSER (the masker row). The
+            # opener table alone read a `#` glued after a substitution's `)`,
+            # a closing backtick or an escaped character as a comment, and a
+            # comment inside a backtick body ran to the line's end: each hid
+            # the statement after it (`echo $(true)#; <delete>`, ``echo `a
+            # #x`; <delete>``), driven on bash 3.2, dash and zsh, echo alone.
+            # bash ends such a comment at the first newline or unescaped
+            # backtick, which closes the body; the closer stays live.
+            j = _backtick_comment_end(s, i) if tick_open else s.find("\n", i)
             j = n if j < 0 else j
             # ⚠ START AT i+1 -- the `#` ITSELF MUST SURVIVE. Blanking it was a real
             # defect: `_CMD_POS` matches a separator followed by `_CMD_POS_WS`
@@ -5922,19 +5967,58 @@ def _close_ansi_c_quote(s: str, quote_idx: int) -> int:
 
 
 #: Characters after which a `#` starts a comment. Verified against real bash rather
-#: than copied from `_CMD_POS_SEP`: a backtick DOES open a fresh command context, so
-#: ``echo `#note ...` `` comments out the rest of that line -- and leaving it out
-#: meant a backtick-glued comment stayed entirely unmasked, so the UNANCHORED
-#: `_REDIRECT_RE` read its text as a real protected-zone write. `>` and `<` are
-#: deliberately ABSENT: `echo hi >#f` is a redirect to a file named `#f` in bash, not
-#: a comment (driven -- bash rejects the line outright), so admitting them would mask
-#: a genuine redirect target.
+#: than copied from `_CMD_POS_SEP`: an opening backtick DOES open a fresh command
+#: context, so ``echo `#note ...` `` comments out the body to its closing backtick
+#: (or a newline before it; driven on bash 3.2, dash and zsh: the statement after
+#: the closer runs) -- and leaving it out meant a backtick-glued comment stayed
+#: entirely unmasked, so the UNANCHORED `_REDIRECT_RE` read its text as a real
+#: protected-zone write. A CLOSING backtick, a substitution's `)` and an escaped
+#: character glue the `#` to their word instead: the masker's walk reads those
+#: (`_walk_shell_roles`, `_glued_after_escape`), since this table cannot tell an
+#: opener from a closer. `>` and `<` are deliberately ABSENT: `echo hi >#f` is a
+#: redirect to a file named `#f` in bash, not a comment (driven -- bash rejects the
+#: line outright), so admitting them would mask a genuine redirect target.
 _COMMENT_OPENERS = " \t\n\r;|&()`"
 
 
 def _opens_comment(s: str, i: int) -> bool:
     """`#` opens a comment only at a word start -- `a#b` and `foo.py#L1` do not."""
     return i == 0 or s[i - 1] in _COMMENT_OPENERS
+
+
+def _glued_after_escape(s: str, i: int) -> bool:
+    """The `#` at ``i`` follows an escaped character, so it is inside that
+    word to bash (`echo a\\;#b` prints `a;#b`, `echo a\\ #b` prints `a #b`:
+    driven on bash 3.2, dash and zsh). A backslash-newline is a line
+    continuation, not an escape, and the masker keeps reading a `#` after
+    one as a comment (DEF-2078's own opener rule), so a line end is left
+    out. Linear: each `#` scans back over the one run of backslashes before
+    the character it follows."""
+    if i < 2 or s[i - 1] in "\n\r":
+        return False
+    j = i - 2
+    while j >= 0 and s[j] == "\\":
+        j -= 1
+    return (i - 2 - j) % 2 == 1
+
+
+def _backtick_comment_end(s: str, i: int) -> int:
+    """Where a comment opened at ``i`` inside a backtick body ends: the first
+    newline, or the first unescaped backtick, which closes the body (bash
+    finds the closer before it reads the body, so a quote in the comment
+    hides nothing: ``echo `echo a #it's`; b`` runs ``b``). -1 when neither
+    comes, as `str.find` says it."""
+    n = len(s)
+    k = i + 1
+    while k < n:
+        ch = s[k]
+        if ch == "\\" and k + 1 < n and s[k + 1] in "\\`":
+            k += 2
+            continue
+        if ch in "\n`":
+            return k
+        k += 1
+    return -1
 
 
 def _read_heredoc_operator(

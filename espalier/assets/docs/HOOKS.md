@@ -2295,6 +2295,25 @@ spellings of them are work:
   sentence above: such a flood before a re-parsed string is refused, by the
   wall or the time budget, pinned by
   `tests/test_write_guard.py::TestABlockCommentIsOneBlank::test_a_comment_flood_before_a_carrier_is_refused`.
+- **The Bash masker, by ruling (2026-11-13).** A `#` starts a comment where
+  bash starts one: glued after a substitution's or an array's `)`, a closing
+  backtick or an escaped character it is the word's text, and a comment
+  inside a backtick body ends at the closing backtick, so the statement after
+  either is read (driven on bash 3.2, dash and zsh). Three readings beside it
+  are declared limits. A heredoc body ends where the masker reads its
+  delimiter line past blanks and its word to `[alnum_-.]`, where bash takes
+  the line only as the whole delimiter word alone, quote-removed: a second
+  heredoc opened on a line bash takes as body text (after an indented or
+  trailing-blank line, one ending in a carriage return its operator's word
+  did not carry, or a delimiter word quoted in part or holding another
+  character, `<<E"O"F`, `<<EOF/`) hides the statement after the real
+  delimiter, a crafted spelling, pinned at allow beside the comment rows'
+  tests. An arithmetic shift (`$((1<<4))`, `(( x << 2 ))`) is read as a heredoc
+  operator, and the masker hands back the raw command: friction, never a
+  statement unread. And a launch wrapper inside a substitution in a data
+  head's double-quoted argument (`echo "$(eval '...')"`) is read, but one
+  spelling whose program's quotes collide with the argument's goes unread (1
+  of 38 reaching rows on the differential's wrappers).
 - The protected-zone write is not one of the three jobs. Its path check lets an
   unresolvable operand through, and the after-check reports the write when it
   lands, for the zones it watches

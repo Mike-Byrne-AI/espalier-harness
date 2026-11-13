@@ -47,13 +47,15 @@ records under test only fire through the dispatch.
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
 from tests._hook_assertions import assert_hook_allowed, assert_hook_denied
-from tests.test_write_guard import run_bash_guard
+from tests._wait_budget import scaled
+from tests.test_write_guard import _delete_verdict, run_bash_guard, run_guard_from
 
 HOOKS_DIR = Path(__file__).resolve().parents[1] / "tools" / "cc" / "hooks"
 PROTECTED_FILE = "tools/cc/hooks/write_guard.py"
@@ -1147,3 +1149,148 @@ class TestInlineInterpreterOpenersAreAnchored:
                                (_bash_patterns._PERL_DASH_E_RE, "perl", "-e")):
             assert rx.search(f"{name}\n{flag} \"open('x','w')\"") is None, name
             assert rx.search(f"{name} {flag} \"a=1\nopen('x','w')\"") is not None, name
+
+
+# ─────────────── the masker row: where a comment starts and ends ───────────────
+
+_DELETE = f"{RM_RF} {ROOT_TARGET}"
+
+#: (program, stdout) the real-shell oracle runs, echo and cat alone, every
+#: variable bound in the program: each row is a fact the rows below rest
+#: on, and bash 3.2, dash and zsh agree on every one (driven on the Air,
+#: 2026-11-13) but where `_ORACLE_DASH_REFUSES` names a spelling dash
+#: does not parse.
+_MASKER_ROW_ORACLE = [
+    # a `#` glued after a closer, or after an escaped character, is word text
+    ("echo $(echo a)#; echo b", b"a#\nb\n"),
+    ("echo `echo a`#; echo b", b"a#\nb\n"),
+    ("echo $((1))#; echo b", b"1#\nb\n"),
+    (": <(true)#; echo b", b"b\n"),
+    ("x=$(echo a)#; echo b", b"b\n"),
+    ("echo a\\;#; echo b", b"a;#\nb\n"),
+    ("echo a\\ #; echo b", b"a #\nb\n"),
+    # ... and after a subshell's or an arithmetic command's `)` a comment
+    ("(echo a)#; echo b", b"a\n"),
+    ("((1))#; echo b", b""),
+    # a comment inside a backtick body ends at the closer, or a newline first
+    ("echo `echo a #x`; echo b", b"a\nb\n"),
+    ("echo `#x; echo c`; echo b", b"\nb\n"),
+    ("echo `#x\necho c`; echo b", b"c\nb\n"),
+    ("echo `echo a #it's`; echo b", b"a\nb\n"),
+    # the declared limits beside the row: a body ends at a line that is its
+    # whole delimiter word alone, quote-removed, so a second heredoc opened
+    # on a line bash takes as body text is body text too; an arithmetic
+    # shift opens no heredoc
+    ("cat <<'EOF'\n  EOF\ncat <<'true'\nEOF\necho LIVE\ntrue", b"  EOF\ncat <<'true'\nLIVE\n"),
+    ("cat <<'EOF'\nEOF \necho x\nEOF\necho after", b"EOF \necho x\nafter\n"),
+    ("cat <<'EOF'\nEOF\r\necho x\nEOF\necho after", b"EOF\r\necho x\nafter\n"),
+    ('cat <<E"O"F\n$(echo hi)\nEOF\necho after', b"$(echo hi)\nafter\n"),
+    ("cat <<EOF/\nbody\nEOF/\necho after", b"body\nafter\n"),
+    ("echo $((1<<4))\necho after", b"16\nafter\n"),
+]
+
+#: The oracle rows dash does not parse (no process substitution): refused
+#: there, never misread.
+_ORACLE_DASH_REFUSES = frozenset({": <(true)#; echo b"})
+
+#: (want, command): the guard's verdict, ``wall`` or ``allow``. Every
+#: ``wall`` row before the controls ALLOWED at main 613b797 and bash runs
+#: its delete; the controls bash reads as a comment, or runs, and they do
+#: not move.
+_MASKER_ROW_DELETES = [
+    ("wall", f"echo $(true)#; {_DELETE}"),
+    ("wall", f"echo `true`#; {_DELETE}"),
+    ("wall", f"echo $((1))#; {_DELETE}"),
+    ("wall", f": <(true)#; {_DELETE}"),
+    ("wall", f"x=$(echo a)#; {_DELETE}"),
+    ("wall", f"a=(1 2)#; {_DELETE}"),
+    ("wall", f"echo a\\;#; {_DELETE}"),
+    ("wall", f"echo a\\)#; {_DELETE}"),
+    ("wall", f"echo a\\ #; {_DELETE}"),
+    ("wall", f"echo `echo a #x`; {_DELETE}"),
+    ("wall", f"echo `#x`; {_DELETE}"),
+    ("wall", f"echo `#x; echo c`; {_DELETE}"),
+    # controls
+    ("allow", f"(true)#; {_DELETE}"),
+    ("allow", f"((1))#; {_DELETE}"),
+    ("allow", f"# {_DELETE}"),
+    ("allow", f"echo `echo a` # ; {_DELETE}"),
+    ("allow", f"echo a\\\\ #; {_DELETE}"),
+    ("wall", f"echo `echo a #x\n{_DELETE}`"),
+    ("wall", f"echo `echo a`; {_DELETE}"),
+]
+
+#: The heredoc half of the masker's residue, ruled a declared limit (ack
+#: 7f4579, docs/HOOKS.md beside the coverage contract): each shape needs a
+#: second heredoc opened after a line the masker took for a delimiter and
+#: bash did not -- an indented or trailing-blank line, one ending in a
+#: carriage return its operator's word did not carry, or a delimiter word
+#: quoted in part or holding a character past `[alnum_-.]` -- a crafted
+#: spelling, not a slip. Pinned at its verdict, so a fix shows as a change
+#: here and never passes unseen.
+_MASKER_ROW_HEREDOC_LIMITS = [
+    f"cat <<'EOF'\n  EOF\ncat <<'X'\nEOF\n{_DELETE}\nX",
+    f"cat <<'EOF'\nEOF \ncat <<'X'\nEOF\n{_DELETE}\nX",
+    f"cat <<'EOF'\nbody\nEOF\r\ncat <<'X'\nEOF\n{_DELETE}\nX",
+    f"cat <<E\"O\"F\nE\ncat <<'X'\nEOF\n{_DELETE}\nX",
+    f"cat <<EOF/\nEOF\ncat <<'X'\nEOF/\n{_DELETE}\nX",
+]
+
+
+class TestTheMaskerReadsACommentAsBashDoes:
+    """The masker row (assign d4bb05, note 66e884, ruled by ack 7f4579): the
+    walk read where a comment starts and where one ends unlike bash, and
+    each hid the statement after it from every reader of the masked text --
+    the delete wall, the speed bumps and the secret-read leg. A `#` glued
+    after a substitution's or an array's `)`, a closing backtick or an
+    escaped character opened a comment, where bash reads it as the word's
+    text; and a comment inside a backtick body ran to the line's end, where
+    bash ends it at the closing backtick. Fixed in `_walk_shell_roles` by a
+    cursor over the masked text that reads the live backticks and parens
+    before each `#` (`_glued_after_escape`, `_backtick_comment_end`)."""
+
+    @pytest.mark.parametrize("argv", [["/bin/bash", "--noprofile", "--norc"], ["/bin/dash"], ["/bin/zsh", "-f"]],
+                             ids=lambda a: Path(a[0]).name)
+    @pytest.mark.parametrize("program, stdout", _MASKER_ROW_ORACLE)
+    def test_each_shell_reads_the_row_s_facts(self, argv, program, stdout, tmp_path):
+        if not Path(argv[0]).exists():
+            pytest.skip(f"the oracle asks {argv[0]}, which this box lacks")
+        env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LC_ALL": "C"}
+        proc = subprocess.run([*argv, "-c", program], cwd=str(tmp_path), capture_output=True,
+                              timeout=scaled(10), env=env)
+        if argv[0].endswith("dash") and program in _ORACLE_DASH_REFUSES:
+            assert proc.returncode != 0 and proc.stderr, (program, proc.stdout)
+            return
+        assert proc.stdout == stdout, (program, proc.stdout, proc.stderr)
+
+    @pytest.mark.parametrize("want, command", _MASKER_ROW_DELETES)
+    def test_the_delete_after_it_is_read_where_bash_runs_it(self, want, command, tmp_path):
+        assert _delete_verdict(run_guard_from("Bash", command, tmp_path, None)) == want, command
+
+    @pytest.mark.parametrize("command", ["echo `echo a #x`; cat .env", "echo $(true)#; cat .env"])
+    def test_the_secret_leg_reads_the_masked_text_too(self, command, tmp_path):
+        assert_hook_denied(run_guard_from("Bash", command, tmp_path, None),
+                           contains_reason="Secret-path access blocked")
+
+    def test_the_speed_bump_reads_the_masked_text_too(self, tmp_path):
+        result = run_guard_from("Bash", "echo `echo a #x`; git reset --hard", tmp_path, None)
+        assert "Speed-bump" in (result.stdout or ""), result.stdout
+
+    @pytest.mark.parametrize("command", _MASKER_ROW_HEREDOC_LIMITS)
+    def test_a_delimiter_line_bash_does_not_take_is_a_declared_limit(self, command, tmp_path):
+        assert _delete_verdict(run_guard_from("Bash", command, tmp_path, None)) == "allow", command
+
+    @pytest.mark.parametrize("text, glued", [
+        ("a\\;#", True), ("a\\ #", True), ("a\\\\;#", False), ("a\\\\\\;#", True),
+        ("a;#", False), ("#", False), ("a\\\n#", False),
+    ])
+    def test_an_escaped_character_glues_the_hash_to_its_word(self, text, glued):
+        bp = _load_bash_patterns()
+        assert bp._glued_after_escape(text, text.index("#")) is glued, text
+
+    @pytest.mark.parametrize("text, end", [
+        ("#x`; b", 2), ("#x\nb`", 2), ("#x\\`y`; b", 5), ("#x\\\\`", 4), ("#it's`", 5), ("#x", -1),
+    ])
+    def test_a_backtick_body_s_comment_ends_at_its_closer(self, text, end):
+        bp = _load_bash_patterns()
+        assert bp._backtick_comment_end(text, 0) == end, text
