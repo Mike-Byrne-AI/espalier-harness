@@ -3648,7 +3648,9 @@ class TestGuardRowsNameTheirContractBasis:
     _speedbump.py or tests/test_write_guard.py) carries one sentence opening
     "Contract basis:" that names the kept job its finding is on (a catastrophic
     delete, a speed bump, a secret read: docs/HOOKS.md, the coverage contract
-    for the jobs the parser keeps) or the real session that recorded the slip.
+    for the jobs the parser keeps), the anti-self-disable floor (the operator's
+    fourth basis, 2026-11-13, named in the same section), or the real session
+    that recorded the slip.
     The guard-row metric read a basis by a regex over each row's text, misread
     two rows and found none in a third, and each was settled by reading the row
     by hand; the rule moves the check to the filing, where `ledger_row.py`
@@ -3706,6 +3708,10 @@ class TestGuardRowsNameTheirContractBasis:
         ("NoContract basis: the secret read.", False),
         # An escaped pipe stays inside the text cell.
         ("a \\| b, and Contract basis: the secret read.", True),
+        # The fourth basis (ack 5cb6f0), in either spelling, and negated in its own clause.
+        ("Contract basis: the anti-self-disable floor, a roster gap.", True),
+        ("Contract basis: the anti-self-disable-floor's roster.", True),
+        ("Contract basis: not the anti-self-disable floor, a spelling family.", False),
     ])
     def test_the_sentence_is_read_where_it_is_written(self, text, named):
         """Dies to: the sentence read to the cell's end (the job after it
