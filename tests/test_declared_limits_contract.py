@@ -344,8 +344,9 @@ class TestTheSentenceSplitter:
 #: three readings beside its comment rule (a delimiter line or word bash does
 #: not take, then a second heredoc; an arithmetic shift; a launch wrapper in a
 #: quoted argument's substitution), one sentence pinned in
-#: `TestTheMaskerReadsACommentAsBashDoes`; its cite's hit is paid by an
-#: internal row id dropped from FAILURE_MODES.md's render-order paragraph, so
+#: `TestTheMaskerReadsACommentAsBashDoes`; its cite's hit is paid in the
+#: next bullet, whose coverage-contract pin sits in no declaring sentence and
+#: is cited by class and test name alone (ack ee0c4c: pay at the source), so
 #: the seeded docs stay at the ceiling.
 _CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 41, "docs/SHARP_EDGES.md": 5}
 

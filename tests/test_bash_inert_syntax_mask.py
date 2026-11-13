@@ -1159,8 +1159,8 @@ _DELETE = f"{RM_RF} {ROOT_TARGET}"
 #: (program, stdout) the real-shell oracle runs, echo and cat alone, every
 #: variable bound in the program: each row is a fact the rows below rest
 #: on, and bash 3.2, dash and zsh agree on every one (driven on the Air,
-#: 2026-11-13) but where `_ORACLE_DASH_REFUSES` names a spelling dash
-#: does not parse.
+#: 2026-11-13) but where `_ORACLE_REFUSES` names a spelling a shell does
+#: not parse.
 _MASKER_ROW_ORACLE = [
     # a `#` glued after a closer, or after an escaped character, is word text
     ("echo $(echo a)#; echo b", b"a#\nb\n"),
@@ -1190,6 +1190,19 @@ _MASKER_ROW_ORACLE = [
     ("x=\"$(echo '`')\"; echo `echo a #x`; echo b", b"a\nb\n"),
     ("cat <<EOF\n$(echo '`')\nEOF\necho `echo a #x`; echo b", b"`\na\nb\n"),
     ("echo $(echo \"`echo ')'`\")#; echo b", b")#\nb\n"),
+    # the code review's batch: a quoted or escaped backtick in a word the
+    # head capture steps over, or in a quoted heredoc delimiter, is the
+    # word's text; bash halves a backslash pair inside a backtick body; a
+    # paren inside a parameter expansion is text (bash 3.2 refuses that
+    # line, `_ORACLE_REFUSES`); and a carriage return is a word's text
+    ("(a='`'); echo `echo a #x`; echo b", b"a\nb\n"),
+    ("(a=\\`); echo `echo a #x`; echo b", b"a\nb\n"),
+    ("'`'/command true; echo `echo a #x`; echo b", b"a\nb\n"),
+    ("cat <<'`'; echo `echo a #x`; echo b\nbody\n`", b"body\na\nb\n"),
+    ("echo `echo a\\\\ #x; echo b`", b"a #x b\n"),
+    ("echo `echo a\\\\\\ #x; echo b`", b"a\\\n"),
+    ("echo $(echo ${x:-)})#; echo b", b")#\nb\n"),
+    ("echo a\r#; echo b", b"a\r#\nb\n"),
     # the declared limits beside the row: a body ends at a line that is its
     # whole delimiter word alone, quote-removed, so a second heredoc opened
     # on a line bash takes as body text is body text too; an arithmetic
@@ -1205,9 +1218,13 @@ _MASKER_ROW_ORACLE = [
     ("x=4; x() { echo ran; }; echo $[1<<x]\necho after\nx", b"16\nafter\nran\n"),
 ]
 
-#: The oracle rows dash does not parse (no process substitution, no
-#: arrays): refused there, never misread.
-_ORACLE_DASH_REFUSES = frozenset({": <(true)#; echo b", "a=(1 2)#; echo b"})
+#: (shell, program): the oracle rows a shell does not parse, refused there,
+#: never misread -- dash has no process substitution and no arrays, and bash
+#: 3.2 ends a `$( )` at the paren inside a parameter expansion.
+_ORACLE_REFUSES = frozenset({
+    ("dash", ": <(true)#; echo b"), ("dash", "a=(1 2)#; echo b"),
+    ("bash", "echo $(echo ${x:-)})#; echo b"),
+})
 
 #: (shell, program) -> stdout where one shell reads a row apart from bash:
 #: zsh reads a `#` after an array's `)` as a comment, and the masker takes
@@ -1245,7 +1262,21 @@ _MASKER_ROW_DELETES = [
     ("wall", f"x=\"$(echo '`')\"; echo `echo a #x`; {_DELETE}"),
     ("wall", f"cat <<EOF\n$(echo '`')\nEOF\necho `echo a #x`; {_DELETE}"),
     ("wall", f"echo $(echo \"`echo ')'`\")#; {_DELETE}"),
+    # the code review's batch: each ALLOWED at main and at the fix batch --
+    # a quoted or escaped backtick in a word the head capture steps over (an
+    # assignment glued after a paren, a skip word) or in a quoted heredoc
+    # delimiter, a backslash pair bash halves inside a backtick body, a
+    # paren inside a parameter expansion (dash and zsh), a carriage return
+    ("wall", f"(a='`'); echo `echo a #x`; {_DELETE}"),
+    ("wall", f"(a=\\`); echo `echo a #x`; {_DELETE}"),
+    ("wall", f"'`'/command true; echo `echo a #x`; {_DELETE}"),
+    ("wall", f"cat <<'`'; echo `echo a #x`; {_DELETE}\nbody\n`"),
+    ("wall", f"echo `echo a\\\\ #x; {_DELETE}`"),
+    ("wall", f"echo $(echo ${{x:-)}})#; {_DELETE}"),
+    ("wall", f"echo a\r#; {_DELETE}"),
     # controls
+    ("allow", f"(a='`') ; echo `echo a` #x; {_DELETE}"),
+    ("allow", f"echo $(echo ${{x:-)}}) #x; {_DELETE}"),
     ("allow", f"(true)#; {_DELETE}"),
     ("allow", f"((1))#; {_DELETE}"),
     ("allow", f"# {_DELETE}"),
@@ -1293,7 +1324,7 @@ class TestTheMaskerReadsACommentAsBashDoes:
         env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LC_ALL": "C"}
         proc = subprocess.run([*argv, "-c", program], cwd=str(tmp_path), capture_output=True,
                               timeout=scaled(10), env=env)
-        if argv[0].endswith("dash") and program in _ORACLE_DASH_REFUSES:
+        if (Path(argv[0]).name, program) in _ORACLE_REFUSES:
             assert proc.returncode != 0 and proc.stderr, (program, proc.stdout)
             return
         stdout = _ORACLE_SHELL_SAYS.get((Path(argv[0]).name, program), stdout)
@@ -1309,6 +1340,8 @@ class TestTheMaskerReadsACommentAsBashDoes:
         "echo a\\;#; echo $(cat .env)", "echo a\\ #; echo $(cat .env)",
         "echo `echo a #x`; echo $(cat .env)", "echo `#x`; echo $(cat .env)",
         "echo a\\;#; echo `cat .env`", "echo a\\;#; diff <(cat .env) x",
+        # ... and an array's `)` glue, which bash reads (the code review)
+        "a=(1 2)#; echo $(cat .env)", "a=(1 2)#; echo `cat .env`",
     ])
     def test_the_secret_leg_reads_the_masked_text_too(self, command, tmp_path):
         assert_hook_denied(run_guard_from("Bash", command, tmp_path, None),
@@ -1340,6 +1373,38 @@ class TestTheMaskerReadsACommentAsBashDoes:
     def test_an_escaped_character_glues_the_hash_to_its_word(self, text, glued):
         bp = _load_bash_patterns()
         assert bp._glued_after_escape(text, text.index("#")) is glued, text
+
+    @pytest.mark.parametrize("command", [
+        "(a='`'); echo hi",           # an assignment glued after a paren
+        "(a=\\`); echo hi",
+        "('`'/command true); echo hi",  # a skip word glued after a paren
+        "('`'/ ); echo hi",           # an empty basename glued after a paren
+        "'`'/command true; echo hi",  # a skip word
+    ])
+    def test_every_step_over_of_the_head_capture_masks_its_word(self, command):
+        """The code review's F1: each step-over of the head capture jumped its
+        word raw, so the comment cursor read a quoted or escaped backtick in
+        it as live (the wall rows above show the delete it hid). The walk's
+        own masked text is what the cursor reads; each held one raw backtick
+        before the fix."""
+        assert "`" not in _load_bash_patterns()._walk_shell_roles(command)[0], command
+
+    @pytest.mark.parametrize("text, glued", [
+        ("a\\\\ #", True), ("a\\\\\\ #", True), ("a\\ #", True), ("a #", False), ("a\\\n#", False),
+    ])
+    def test_inside_a_backtick_body_any_backslash_run_glues(self, text, glued):
+        """bash halves a `\\\\` in a backtick body before reading it, so a
+        run of two glues there (the oracle row); any run glues, a run that
+        halves to even read on as live, friction only."""
+        bp = _load_bash_patterns()
+        assert bp._glued_after_escape(text, text.index("#"), True) is glued, text
+
+    @pytest.mark.parametrize("text, end", [
+        ("${x:-)}", 7), ("${x:-${y:-)}}z", 13), ('${x:-"}"}z', 9), ("${x:-'}'}z", 9),
+        ("${x:-\\}}z", 8), ("${x", 3),
+    ])
+    def test_a_parameter_expansion_ends_at_its_own_close(self, text, end):
+        assert _load_bash_patterns()._param_expansion_end(text, 0) == end, text
 
     @pytest.mark.parametrize("text, end", [
         ("#x`; b", 2), ("#x\nb`", 2), ("#x\\`y`; b", 2), ("#x\\\\`", 4), ("#x\\\\\\`", 4),

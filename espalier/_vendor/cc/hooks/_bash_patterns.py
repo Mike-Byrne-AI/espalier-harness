@@ -3235,8 +3235,44 @@ _BASH_COMMAND_HALF_CAP = _BASH_COMMAND_CAP // 2  # 16384 each side
 _INERTABLE_SYNTAX = frozenset("`(){};|&<>\n\r#")
 
 #: The live syntax the masker's comment cursor reads (`_CommentCursor`): a
-#: backtick, which opens or closes a body, and a paren.
-_CURSOR_SYNTAX_RE = re.compile(r"[`()]")
+#: backtick, which opens or closes a body, a paren, and a parameter
+#: expansion's `${`, which the cursor jumps to its close.
+_CURSOR_SYNTAX_RE = re.compile(r"[`()]|\$\{")
+
+
+def _param_expansion_end(s: str, p: int) -> int:
+    """The index past the `}` that closes the parameter expansion whose `$`
+    is at ``p``, read on the raw text as bash reads it: a backslash escapes,
+    a quoted span is the word's, and a nested `${` opens one more level.
+    The end of ``s`` when none comes. A paren inside is text, never the
+    substitution's closer: ``echo $(echo ${x:-)})#; next`` runs ``next``
+    on dash and zsh (bash 3.2 refuses the line), the masker row's code
+    review."""
+    n, depth, k = len(s), 1, p + 2
+    while k < n:
+        ch = s[k]
+        if ch == "\\":
+            k += 2
+            continue
+        if ch == "'":
+            j = s.find("'", k + 1)
+            if j < 0:
+                return n
+            k = j + 1
+            continue
+        if ch == '"':
+            k = _close_double_quote(s, k) + 1
+            continue
+        if ch == "$" and s[k + 1:k + 2] == "{":
+            depth += 1
+            k += 2
+            continue
+        if ch == "}":
+            depth -= 1
+            if depth == 0:
+                return k + 1
+        k += 1
+    return n
 
 
 class _CommentCursor:
@@ -3245,22 +3281,29 @@ class _CommentCursor:
     open there, and where the last closer a `#` glues to stands -- a
     substitution's or an array's `)`, or a backtick body's closing backtick,
     after which a `#` is word text to bash (`echo $(true)#; next` runs
-    `next`), never a comment. Read on the walk's masked text so far, which
-    keeps only live syntax (a quoted, escaped or commented backtick or paren
-    is blank), by a cursor that only moves forward, so a command pays once
-    for its whole length.
+    `next`), never a comment. Read on the walk's masked text so far, where
+    the quote and escape branches and every step-over of the head capture
+    blank a quoted or escaped backtick or paren, and a comment's, by a
+    cursor that only moves forward, so a command pays once for its whole
+    length.
 
-    ⚠ THE MASKED TEXT KEEPS A SPAN RAW, AND THE CURSOR JUMPS IT. A double-
-    quoted span holding a live `$( )` or backtick, and an unquoted heredoc's
-    body, keep that substitution raw in the masked text
+    ⚠ THE MASKED TEXT KEEPS SOME RANGES RAW, AND THE CURSOR JUMPS THEM. A
+    double-quoted span holding a live `$( )` or backtick, and an unquoted
+    heredoc's body, keep that substitution raw in the masked text
     (`_neutralise_expanding_span`), quotes and all, so a quoted backtick or
     paren inside it read as live flipped the cursor's state:
     ``x="$(echo '`')"; echo `echo a #x`; <delete>`` hid the delete, driven on
     bash 3.2, dash and zsh (the failure-mode review). Each such range is
     balanced to bash (its substitutions open and close inside it), so the
     state across it is the state before it: the walk records each one in
-    walk order (``raw_spans``: the double-quote branches and the heredoc
-    consume) and the cursor steps over it unread.
+    walk order (``raw_spans``: the double-quote branches, the heredoc
+    consume through the terminator line, and a quoted heredoc delimiter,
+    the code review's sibling) and the cursor steps over it unread. A
+    parameter expansion is the cursor's own jump: from its `${` to its
+    close on the raw text (`_param_expansion_end`), so its paren is text.
+    The walk's other readers keep their own rules: a range neither blanked
+    nor recorded is read as live here, which is how each gap above was a
+    false allow.
 
     ⚠ IT COSTS NOTHING WHERE ITS ANSWER CANNOT MATTER. A per-character loop
     in two closures the walk built on every call cost the whole judgment
@@ -3272,7 +3315,7 @@ class _CommentCursor:
     backtick or a paren, the regex walking the rest in C."""
 
     __slots__ = ("s", "out", "raw_spans", "has_tick", "live_at", "raw_at",
-                 "tick_open", "paren_glues", "glued_close")
+                 "tick_open", "paren_glues", "glued_close", "param_end")
 
     def __init__(self, s: str, out: list) -> None:
         self.s = s
@@ -3284,6 +3327,7 @@ class _CommentCursor:
         self.tick_open = False
         self.paren_glues: list[bool] = []
         self.glued_close = -2        # never `k - 1`: a `#` at offset 0 follows no closer
+        self.param_end = 0           # past the last `${ }` jumped
 
     def glued_after_closer(self, k: int) -> bool:
         """The `#` at ``k`` follows a closer it glues to. Reads the live
@@ -3299,14 +3343,20 @@ class _CommentCursor:
             return
         self.live_at = k
         s, spans, at, glues = self.s, self.raw_spans, self.raw_at, self.paren_glues
-        tick, glued = self.tick_open, self.glued_close
+        tick, glued, param_end = self.tick_open, self.glued_close, self.param_end
         for m in _CURSOR_SYNTAX_RE.finditer("".join(self.out[a:k])):
             p = a + m.start()
+            if p < param_end:
+                continue        # inside a parameter expansion
             while at < len(spans) and spans[at][1] <= p:
                 at += 1
             if at < len(spans) and spans[at][0] <= p:
                 continue        # inside a span the walk keeps raw
             ch = m.group()
+            if ch == "${":
+                if s[p - 1:p] != "\\":
+                    param_end = _param_expansion_end(s, p)
+                continue
             if ch == "`":
                 tick = not tick
                 if not tick:
@@ -3318,6 +3368,7 @@ class _CommentCursor:
             elif glues and glues.pop():
                 glued = p
         self.raw_at, self.tick_open, self.glued_close = at, tick, glued
+        self.param_end = param_end
 
 #: Constructs that hand a heredoc body to a consumer the head roster can never
 #: see: command substitution captures it into a buffer the ENCLOSING command
@@ -3838,7 +3889,7 @@ def _walk_shell_roles(
                     continue
                 out[k] = " "
 
-    def step_over_assignment(a: int) -> int:
+    def step_over_assignment(a: int, value: bool = True) -> int:
         """The index past the assignment word at ``a``, where bash ends it:
         the first blank or separator OUTSIDE a quote. Each quoted piece of
         the value -- single, double, ANSI-C -- is masked as the top-level
@@ -3848,7 +3899,16 @@ def _walk_shell_roles(
         `$(` or a backtick is an ordinary character here, as it was: the
         word still stops at the first blank inside one, and
         `_depth_after_step_over` counts its parenthesis. An unterminated
-        quote raises, as the top-level branches do."""
+        quote raises, as the top-level branches do.
+
+        With ``value`` false it steps over a word the head capture skips
+        (a skip word, an empty basename) and records each quoted piece as
+        the quote branches do, never as a value. ⚠ EVERY STEP-OVER MASKS
+        ITS WORD (the masker row DEF-5039, its code review): the capture
+        jumped those words raw, so a quoted or escaped backtick in one
+        stayed live for the comment cursor and flipped its body state:
+        ``(a='`'); echo `echo a #x`; <delete>`` hid the delete, driven on
+        bash 3.2, dash and zsh."""
         k = a
         while k < n and s[k] not in " \t\n\r;|&<>":
             c = s[k]
@@ -3878,7 +3938,7 @@ def _walk_shell_roles(
                 continue
             candidates.append(_SpanCandidate(lo, j, current_pipeline, nesting,
                                              len(statements) - 1,
-                                             is_comment=False, is_value=True,
+                                             is_comment=False, is_value=value,
                                              frame=frames[-1] if frames else None))
             k = j + 1
         return k
@@ -4100,16 +4160,18 @@ def _walk_shell_roles(
                 # progress guard's case below) and the capture stays armed
                 pass
             elif span_last_eq >= m:
-                nesting = _depth_after_step_over(s, i, span_after, nesting)
+                end = step_over_assignment(i)
+                nesting = _depth_after_step_over(s, i, end, nesting)
                 pipe_pending = False
-                i = span_after
+                i = end
                 continue
             else:
                 base = span_last_slash + 1 if span_last_slash >= m else m
                 if base >= len(span_buf):
-                    nesting = _depth_after_step_over(s, i, span_after, nesting)
+                    end = step_over_assignment(i, value=False)
+                    nesting = _depth_after_step_over(s, i, end, nesting)
                     pipe_pending = False
-                    i = span_after
+                    i = end
                     continue
                 if span_buf[base] == "#" or c in "()" or (c in "{}" and span_after == i + 1):
                     # a comment, or a grouping operator or standalone brace the
@@ -4119,9 +4181,10 @@ def _walk_shell_roles(
                     rec = (span_buf[base:] if len(span_buf) - base <= _MAX_ROSTERED_HEAD_LEN
                            else _UNROSTERED_HEAD)
                     if rec in _HEAD_SKIP_WORDS:
-                        nesting = _depth_after_step_over(s, i, span_after, nesting)
+                        end = step_over_assignment(i, value=False)
+                        nesting = _depth_after_step_over(s, i, end, nesting)
                         pipe_pending = False
-                        i = span_after
+                        i = end
                         continue
                     if (rec in _COMPOUND_RESERVED and s[i:span_after] == rec
                             and take_reserved(rec, span_after)):
@@ -4182,9 +4245,10 @@ def _walk_shell_roles(
                 i = after
                 continue
             elif word in _HEAD_SKIP_WORDS:
-                nesting = _depth_after_step_over(s, i, after, nesting)
+                end = step_over_assignment(i, value=False)
+                nesting = _depth_after_step_over(s, i, end, nesting)
                 pipe_pending = False
-                i = after
+                i = end
                 continue
             elif word.startswith("#"):
                 # A comment is not a command. Leave `expect_head` armed so the
@@ -4286,8 +4350,9 @@ def _walk_shell_roles(
             i = j + 1
             continue
 
-        if (c == "#" and _opens_comment(s, i) and not _glued_after_escape(s, i)
-                and not (cursor is not None and cursor.glued_after_closer(i))):
+        if (c == "#" and _opens_comment(s, i)
+                and not (cursor is not None and cursor.glued_after_closer(i))
+                and not _glued_after_escape(s, i, cursor is not None and cursor.tick_open)):
             # ⚠ A `#` STARTS A COMMENT WHERE BASH STARTS ONE, AND A COMMENT
             # INSIDE A BACKTICK BODY ENDS AT ITS CLOSER (the masker row). The
             # opener table alone read a `#` glued after a substitution's `)`,
@@ -4329,6 +4394,10 @@ def _walk_shell_roles(
                 # roster joins the owner set the body is recorded with.
                 current_pipeline.add(_UNROSTERED_HEAD)
             i, spec = _read_heredoc_operator(s, i)
+            if spec is not None and cursor is not None and s[i - 1] in "'\"":
+                # a quoted delimiter is the word's text, its backtick or
+                # paren never syntax (the masker row's code review)
+                cursor.raw_spans.append((i - 1 - len(spec[0]), i - 1))
             if spec is not None:
                 # ⚠ CAPTURE THE OWNER SET BY REFERENCE, AND NEITHER BY VALUE NOR
                 # AT CONSUME TIME. Both of those were tried and both were
@@ -4371,7 +4440,9 @@ def _walk_shell_roles(
                     s, out, i, delim, expands, strip_tabs, neutralise,
                 )
                 if cursor is not None:
-                    cursor.raw_spans.append((body_start, body_end))
+                    # the body and its terminator line, which is the
+                    # delimiter's text alone to bash
+                    cursor.raw_spans.append((body_start, i))
                 # A QUOTED delimiter means bash performs no expansion, so the
                 # body is inert data handed to this statement's stdin. If that
                 # statement's own head does not re-parse, the body cannot become
@@ -6040,8 +6111,11 @@ def _close_ansi_c_quote(s: str, quote_idx: int) -> int:
 #: (`_walk_shell_roles`, `_glued_after_escape`), since this table cannot tell an
 #: opener from a closer. `>` and `<` are deliberately ABSENT: `echo hi >#f` is a
 #: redirect to a file named `#f` in bash, not a comment (driven -- bash rejects the
-#: line outright), so admitting them would mask a genuine redirect target.
-_COMMENT_OPENERS = " \t\n\r;|&()`"
+#: line outright), so admitting them would mask a genuine redirect target. A
+#: carriage return is ABSENT too: it is a word's text to bash, dash and zsh, so
+#: `echo a<CR>#; <delete>` prints `a`, the CR and `#`, then runs the delete
+#: (driven on the Air, the masker row DEF-5039; Git Bash undriven).
+_COMMENT_OPENERS = " \t\n;|&()`"
 
 
 def _opens_comment(s: str, i: int) -> bool:
@@ -6049,7 +6123,7 @@ def _opens_comment(s: str, i: int) -> bool:
     return i == 0 or s[i - 1] in _COMMENT_OPENERS
 
 
-def _glued_after_escape(s: str, i: int) -> bool:
+def _glued_after_escape(s: str, i: int, in_body: bool = False) -> bool:
     """The `#` at ``i`` follows an escaped character, so it is inside that
     word to bash (`echo a\\;#b` prints `a;#b`, `echo a\\ #b` prints `a #b`:
     driven on bash 3.2, dash and zsh). A backslash-newline is a line
@@ -6058,13 +6132,21 @@ def _glued_after_escape(s: str, i: int) -> bool:
     out. A carriage return after a backslash is an escaped character like
     any other (`echo a\\<CR>#; b` prints `a`, the carriage return and `#`,
     then runs `b`, on all three shells), so it glues. Linear: each `#` scans
-    back over the one run of backslashes before the character it follows."""
+    back over the one run of backslashes before the character it follows.
+
+    ``in_body``: the `#` is inside a backtick body, where bash halves each
+    `\\\\` before it reads the body, so a run of two is one escape there
+    (``echo `echo a\\\\ #x; b` `` runs ``b``) and a run of three is not
+    (driven on all three shells, the masker row's code review). Any run
+    glues there: a run that halves to an even count is then read on as
+    live, friction only, at any depth."""
     if i < 2 or s[i - 1] == "\n":
         return False
     j = i - 2
     while j >= 0 and s[j] == "\\":
         j -= 1
-    return (i - 2 - j) % 2 == 1
+    run = i - 2 - j
+    return run % 2 == 1 or (in_body and run > 0)
 
 
 def _backtick_comment_end(s: str, i: int) -> int:

@@ -2092,6 +2092,11 @@ def _substitution_bodies(
     spans: list[list] = [["", 0, 0, [], False, 0, False]]
     closed = -1   # just past the last span closed: a `#` there is inside a word
     ticks = 0     # backtick spans open: a comment in one ends at a backtick
+    # An array's `=(` open in each span, by (span depth, paren count): its
+    # `)` glues a `#` after it as a closer does, where a subshell's does not
+    # (``a=(1)#; echo $(cat .env)`` runs the read on bash; the masker's
+    # cursor reads the same glue).
+    arrays: list[tuple[int, int]] = []
     # Heredoc operators whose bodies start at the next newline, each with the
     # depth of the span it was met in: a newline inside a deeper span (a
     # `$( )` that runs across the operator's line) starts none of them.
@@ -2178,7 +2183,7 @@ def _substitution_bodies(
         if ch == '"':
             top[4] = True
         elif (ch == "#" and i != closed and _bash_patterns._opens_comment(text, i)
-                and not _bash_patterns._glued_after_escape(src, i)):
+                and not _bash_patterns._glued_after_escape(src, i, ticks > 0)):
             # The masker's comment rule (DEF-5039): a `#` after an escaped
             # character is that word's text (read on ``src``, where the
             # masker has not blanked the escaped character), and a comment
@@ -2202,8 +2207,13 @@ def _substitution_bodies(
             continue
         elif ch == "(":
             top[5] += 1
+            if text[i - 1:i] == "=":
+                arrays.append((len(spans), top[5]))
         elif ch == ")":
             if top[5]:
+                if arrays and arrays[-1] == (len(spans), top[5]):
+                    arrays.pop()
+                    closed = i + 1
                 top[5] -= 1
             elif top[0] == ")":
                 close(i)

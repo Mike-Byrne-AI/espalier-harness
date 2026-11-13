@@ -13858,6 +13858,10 @@ class TestSecretPathAccess:
         ("echo a\\ #$(b)", False, ["b"]),
         ("echo a\\\r#$(b)", False, ["b"]),
         ("echo a\\\\ #$(b)", False, []),                      # an escaped backslash: a comment
+        ("echo `a\\\\ #x;$(b)`", False, ["b", "a\\\\ #x;_"]), # ... but bash halves it in a backtick body
+        ("echo a\r#$(b)", False, ["b"]),                       # a carriage return is word text
+        ("a=(1)#$(b)", False, ["b"]),                          # an array's `)` glues
+        ("(a)#$(b)", False, []),                               # ... and a subshell's does not
         ("echo `a #x`;$(b)", False, ["a #x", "b"]),           # a backtick body's comment ends at its closer
         ("echo `a \\`b #x\\`; c`;$(d)", False, ["a \\`b #x\\`; c", "d"]),   # ... a nested one's at its own
         ("echo $(a #x`b`)\n) $(c)", False, ["a #x`b`)\n", "c"]),          # no backtick span open: the line

@@ -2296,11 +2296,14 @@ spellings of them are work:
   wall or the time budget, pinned by
   `tests/test_write_guard.py::TestABlockCommentIsOneBlank::test_a_comment_flood_before_a_carrier_is_refused`.
 - **The Bash masker, by ruling (2026-11-13).** A `#` starts a comment where
-  bash starts one: glued after a substitution's `)`, a closing backtick or an
-  escaped character (a carriage return among them) it is the word's text,
-  and a comment inside a backtick body ends at the closing backtick, a nested
-  body's at its own escaped one, so the statement after either is read
-  (driven on bash 3.2, dash and zsh). After an array's `)` the shells part:
+  bash starts one: glued after a substitution's `)` (a paren inside a
+  parameter expansion is text), a closing backtick, an escaped character or
+  a carriage return it is the word's text, and a comment inside a backtick
+  body ends at the closing backtick or at the first escaped one, a nested
+  body's closer, which ends an outer body's comment there too (friction
+  alone), with any backslash run before the `#` gluing it inside a body,
+  where bash halves a pair, so the statement after either is read (driven
+  on bash 3.2, dash and zsh; Git Bash undriven). After an array's `)` the shells part:
   bash reads the `#` as the word's text, zsh as a comment, and dash has no
   arrays; the masker takes bash's reading, which reads the statement after
   it. Three readings beside it
@@ -2325,7 +2328,7 @@ spellings of them are work:
 - The protected-zone write is not one of the three jobs. Its path check lets an
   unresolvable operand through, and the after-check reports the write when it
   lands, for the zones it watches
-  (`tests/test_write_guard.py::TestTheCoverageContract::test_the_zone_path_check_lets_an_unresolvable_operand_through_to_the_after_check`).
+  (`TestTheCoverageContract::test_the_zone_path_check_lets_an_unresolvable_operand_through_to_the_after_check`).
   A link made inside a watched zone is judged by what it adds there: a file
   link with a live target and a hard link read as added files, and a Windows
   junction is walked, so its target's files do; a directory link and a link
