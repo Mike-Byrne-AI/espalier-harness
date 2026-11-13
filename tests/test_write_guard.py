@@ -12628,6 +12628,12 @@ _CMD_WORD_ORACLE_BASH = [
     # switches, glued or not
     ("token-word-before-switch", "cmd --%x //c echo RAN", "RAN", None),
     ("token-word-between-switches", "cmd //d --% //c echo RAN", "RAN", None),
+    # a single slash glued to the token's word is the switch
+    ("single-slash-after-token", "cmd --%/c echo RAN", "RAN", None),
+    # a switch's word ends at an unescaped separator: an escaped one or a
+    # glued brace is a character of it, and cmd runs its program
+    ("escaped-separator-in-switch", r"cmd //d\; //c echo RAN", "RAN", None),
+    ("brace-in-switch", "cmd //d{ //c echo RAN", "RAN", None),
 ]
 _CMD_WORD_ORACLE_PS = [
     ("separator-word", "cmd /c echo a '&' echo RAN", "RAN", None),
@@ -12645,13 +12651,20 @@ _CMD_WORD_ORACLE_PS = [
     # still the token (the failure-mode re-review)
     ("glued-token-is-a-word", "cmd /c echo --%x '&' echo RAN", "RAN", None),
     ("backtick-token", "cmd /c echo a `--% & echo RAN", "RAN", None),
-    # the as-typed text ends at a pipe outside double quotes only
+    # the as-typed text ends at a line break, or a pipe outside double quotes
     ("stop-parsing-pipe-in-quotes", 'cmd /c --% echo "a|b" & echo RAN', "RAN", None),
     # a later cmd in the as-typed text, then a statement after its own (the
     # code review: cmd runs it)
     ("stop-parsing-nested-cmd", "cmd /c --% echo x & cmd /c echo y & echo RAN", "RAN", None),
     # the token between two switches
     ("stop-parsing-between-switches", "cmd /d --% /c echo a & echo RAN", "RAN", None),
+    # a switch's word ends at an unescaped separator: an escaped one or a
+    # glued group is a character of it, and cmd runs its program
+    ("escaped-separator-in-switch", "cmd /d`; /c echo RAN", "RAN", None),
+    ("paren-in-switch", "cmd /d(1) /c echo RAN", "RAN", None),
+    # `^` glued to the token makes a plain word: PowerShell runs the
+    # statement after the `;` itself
+    ("caret-glued-token-is-a-word", "cmd /c echo x --%^ ; Write-Output PSRAN", "PSRAN", None),
 ]
 
 #: (tool, command, verdict) rows for DEF-2080: a separator word, bare or
@@ -12713,12 +12726,38 @@ _CMD_SEPARATOR_WORD_ROWS = [
     ("PowerShell", "cmd /d --%/c rd /s /q .", "wall"),
     ("PowerShell", "cmd --%x/c rd /s /q .", "wall"),
     ("PowerShell", "Start-Process cmd -ArgumentList '--%/c rd /s /q .'", "wall"),
-    ("Bash", "cmd --%//c rd /s /q .", "wall"),
-    ("Bash", "cmd //d --%//c rd /s /q .", "wall"),
+    # from Git Bash a single slash glued to the word is the switch (`cmd
+    # --%//c echo RAN` starts cmd with no program, DEF-2082's rule, driven)
+    ("Bash", "cmd --%/c rd /s /q .", "wall"),
+    ("Bash", "cmd //d --%/c rd /s /q .", "wall"),
     # an opener with no token of its own in the as-typed text is read on its own
     ("PowerShell", "cmd /c --% echo x & cmd/c rd /s /q .", "wall"),
     ("PowerShell", "cmd /c --% echo x & cmd.exe/c rd /s /q .", "wall"),
     ("PowerShell", 'cmd /c --% echo x & powershell -c "cmd /c rd /s /q ."', "wall"),
+    # a switch's word ends at a blank or an outer separator its shell does
+    # not escape, never at an escaped one or a glued group character, and a
+    # Start-Process argument list has no separator (the code review and the
+    # failure-mode review, driven echo only)
+    ("Bash", "cmd //d\\; //c rd /s /q .", "wall"),
+    ("Bash", "cmd //d\\& //c rd /s /q .", "wall"),
+    ("Bash", "cmd //d\\| //c rd /s /q .", "wall"),
+    ("Bash", "cmd //d\\( //c rd /s /q .", "wall"),
+    ("Bash", "cmd //d{x} //c rd /s /q .", "wall"),
+    ("Bash", "cmd --%{x} //c rd /s /q .", "wall"),
+    ("PowerShell", "cmd /d`;x /c rd /s /q .", "wall"),
+    ("PowerShell", "cmd /d`& /c rd /s /q .", "wall"),
+    ("PowerShell", "cmd /d{x} /c rd /s /q .", "wall"),
+    ("PowerShell", "cmd /d(1) /c rd /s /q .", "wall"),
+    ("PowerShell", "Start-Process cmd -ArgumentList '/d;x /c rd /s /q .'", "wall"),
+    ("PowerShell", "Start-Process cmd -ArgumentList '/d&x /c rd /s /q .'", "wall"),
+    ("PowerShell", "Start-Process cmd -ArgumentList '/d(x) /c rd /s /q .'", "wall"),
+    ("PowerShell", "Start-Process cmd -ArgumentList '/v:on;x /c rd /s /q .'", "wall"),
+    ("PowerShell", "Start-Process cmd -ArgumentList '/d;','/c rd /s /q .'", "wall"),
+    # a character no drive put among the token's ends glues to it as a
+    # plain word, so a later opener with its own token is still read (`--%^`
+    # and an en dash, the failure-mode review)
+    ("PowerShell", "cmd /c echo x --%^ ; cmd /c --% rd /s /q .", "wall"),
+    ("PowerShell", "cmd /c echo x --%" + chr(0x2013) + " ; cmd /c --% rd /s /q .", "wall"),
 ]
 
 
@@ -12907,19 +12946,35 @@ class TestCmdReceivesAWordWithoutABlankBare:
         ("-%", 0, 0), ("'--%'", 0, 0),
         ("--%&", 0, 3), ("--%,", 0, 3), ("--%{", 0, 3), ("--%(", 0, 3), ("--%}", 0, 3),
         ("--%.", 0, 0), ("--%/", 0, 0), ("--%7", 0, 0), ("--%$", 0, 0),
+        ("--%^", 0, 0), ("--%" + chr(0x2013), 0, 0), ("--%" + chr(0xA0), 0, 3),
     ], ids=["alone", "backtick", "mid-line", "semicolon", "pipe", "paren", "newline", "glued",
             "backtick-glued", "doubled", "short", "quoted",
             "ampersand", "comma", "brace", "open-paren", "close-brace",
-            "dot", "slash", "digit", "dollar"])
+            "dot", "slash", "digit", "dollar", "caret", "en-dash", "no-break-space"])
     def test_the_stop_parsing_token_is_a_whole_word(self, text, at, want):
-        """`_ps_stop_parsing_len`: the token is a whole word; a letter, a
-        digit or a character of `_PS_TOKEN_GLUE` glued to it makes a plain
-        word PowerShell hands on (driven echo only: `cmd /c echo --%x '&'
-        echo RAN` prints RAN), and any other next character -- a blank, `;
-        , & ( ) { } |` or a line break -- leaves it the token (the
-        failure-mode re-review). A bare `startswith` took the glued word for
-        the token."""
+        """`_ps_stop_parsing_len`: the token is a whole word; a space-like
+        character or one of `_PS_TOKEN_ENDS` glued to it leaves it the
+        token, and any other makes a plain word PowerShell hands on (driven
+        echo only: `cmd /c echo --%x '&' echo RAN` prints RAN; the
+        failure-mode re-review and review). A bare `startswith` took the
+        glued word for the token."""
         assert _bash_patterns_module()._ps_stop_parsing_len(text, at) == want
+
+    _PS_TOKEN_ENDS_ROSTER = [";", ",", "&", "(", ")", "{", "}", "|"]
+
+    def test_every_printable_character_glued_to_the_token_is_driven(self):
+        """Each printable ASCII character glued to `--%` reads as the drive
+        found it on Windows PowerShell 5.1 (echo only): a blank or one of the
+        token's ends leaves the token, any other makes a plain word. The
+        ends are a hand list pinned EQUAL to `_PS_TOKEN_ENDS`, so no
+        character falls to a default unread (the failure-mode review: `--%^`
+        read as the token hid a later opener)."""
+        bp = _bash_patterns_module()
+        assert list(bp._PS_TOKEN_ENDS) == self._PS_TOKEN_ENDS_ROSTER
+        got = {chr(c): bp._ps_stop_parsing_len("--%" + chr(c), 0) for c in range(0x20, 0x7F)}
+        ends = {c for c, n in got.items() if n == 3}
+        assert ends == {" ", *self._PS_TOKEN_ENDS_ROSTER}, sorted(ends)
+        assert all(n in (0, 3) for n in got.values()), got
 
     def test_the_powershell_leg_reads_cmds_program_from_the_raw_twin(self):
         """The masker blanks a separator inside a quoted word; the unforced

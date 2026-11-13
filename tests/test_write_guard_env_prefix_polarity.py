@@ -287,6 +287,13 @@ _CMD_SET_REACH = [
     ("ps", f"cmd /c --%, set {ENV_VAR}=1 & claude -p x"),
     ("ps", f"cmd /c echo a --%& set {ENV_VAR}=1 & claude -p x"),
     ("ps", f'cmd /c --% echo "x\ncmd /c --% set {ENV_VAR}=1 & claude -p x'),
+    # a switch's word ends at an unescaped separator only, a Start-Process
+    # argument list has none, and `^` glued to the token makes a plain word
+    # (the failure-mode review, driven echo only)
+    ("bash", f"cmd //d{{x}} //c 'set {ENV_VAR}=1 && claude -p x'"),
+    ("ps", f"Start-Process cmd -ArgumentList '/d;x /c set {ENV_VAR}=1 && claude -p x'"),
+    ("ps", f"cmd /c echo x --%^ ; cmd /c set {ENV_VAR}=1 '&' claude -p x"),
+    ("ps", f"cmd /c echo x --%^ ; cmd /c --% set {ENV_VAR}=1 & claude -p x"),
     ("ps", f"Start-Process cmd -ArgumentList '/c set {ENV_VAR}=1 && claude -p x'"),
     ("ps", f"Start-Process -FilePath cmd.exe -Wait -ArgumentList '/c','set {ENV_VAR}=1 && claude -p x'"),
     # a common parameter's value and a colon-bound list (PowerShell binds both)
