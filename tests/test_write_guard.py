@@ -19382,11 +19382,14 @@ class TestAShellsOptionHidesNoPipedProgram:
         """The pipe run's refusal of a `c` cluster is built from the `-c`
         opener's letters, not retyped (the failure-mode review: a hand copy
         would keep the old bound when DEF-3074 widens the cluster's sign), and
-        its value class is the interpreters' own less a leading `+`."""
+        its value class is the interpreters' own less a leading `+`, and in
+        both a value never opens a redirect (DEF-3077: `_NOT_A_REDIRECT_WORD`
+        keeps the run with an output redirect unit to one parse)."""
         bp = _bash_patterns_module()
         assert bp._POSIX_SHELL_C_CLUSTER == "-" + bp._POSIX_SHELL_C_LETTERS
         assert "(?![-+]" + bp._POSIX_SHELL_C_LETTERS + "(?:[ \\t]|$))" in bp._SHELL_PIPE_SWITCH_RUN
-        interp_value = "(?:[ \\t]+[\\w./:=,@%+~][\\w./:=,@%+~-]*)?"
+        interp_value = ("(?:[ \\t]+" + bp._NOT_A_REDIRECT_WORD
+                        + "[\\w./:=,@%+~][\\w./:=,@%+~-]*)?")
         assert interp_value in bp._INTERP_PIPE_SWITCH_RUN
         assert interp_value.replace("%+~]", "%~]", 1) in bp._SHELL_PIPE_SWITCH_RUN
         assert bp._SHELL_PIPE_SWITCH_RUN in bp._INTERP_PIPE_RE.pattern
