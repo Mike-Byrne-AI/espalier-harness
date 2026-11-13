@@ -63,6 +63,45 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import _hook_utils  # noqa: E402
 
+#: DEF-2073's two readings (air's ruling 8aa088): whether a comment opener
+#: glued to the token before it opens a comment. Off, the default, is the
+#: call sites' token-start rule alone, the reading before DEF-2073, so a
+#: caller that never asks for the glued reading (a speed-bump scan, a kept,
+#: older write_guard, any other hook) reads what main read. write_guard turns
+#: it on for each hard leg (`glued_opening_on`) and judges the leg on both
+#: readings wherever they decide an opener differently, refusing where
+#: either refuses (`_wall_readings`' rule, DEF-846), so the glued reader's
+#: errors cost friction, never a statement the token-start rule reads (the
+#: failure-mode review of design A, WARN 4).
+_PS_GLUED_OPENING: "contextvars.ContextVar[bool]" = contextvars.ContextVar(
+    "_PS_GLUED_OPENING", default=False)
+
+
+def reading_cache(maxsize: int) -> Callable[[Any], Any]:
+    """`functools.lru_cache` keyed by the reading too, so a text's answer
+    under one reading is never read back under the other (air's verifier
+    note 38d60b (c)). The cached function keeps ``cache_clear``,
+    ``cache_info`` and ``__wrapped__``; it holds ``maxsize`` entries a
+    reading, one cache for each (``cache_info`` reads the enclosing call's
+    reading's, ``cache_clear`` empties both)."""
+    def wrap(fn: Any) -> Any:
+        caches = {reading: functools.lru_cache(maxsize=maxsize)(fn) for reading in (False, True)}
+
+        @functools.wraps(fn)
+        def cached(*args: Any, **kwargs: Any) -> Any:
+            return caches[bool(_PS_GLUED_OPENING.get())](*args, **kwargs)
+
+        def cache_clear() -> None:
+            for cache in caches.values():
+                cache.cache_clear()
+
+        def cache_info() -> Any:
+            return caches[bool(_PS_GLUED_OPENING.get())].cache_info()
+
+        cached.__dict__.update(cache_clear=cache_clear, cache_info=cache_info)
+        return cached
+    return wrap
+
 # Bash-write extraction patterns. Each produces a candidate path to check.
 # Order matters: heredoc before plain redirect so we match the path before `<<`.
 # `>|` is bash's clobber spelling (past `set -o noclobber`); it was absent, so
@@ -558,7 +597,7 @@ def _keep_the_verb(m: "re.Match[str]") -> str:
     return "".join(out)
 
 
-@functools.lru_cache(maxsize=64)
+@reading_cache(maxsize=64)
 def _resolve_bash_discovered_heads(scan: str) -> str:
     """``scan`` with every command the shell discovered and invoked at a
     command position read as the command it names (DEF-827). Same length.
@@ -4718,9 +4757,347 @@ _PS_INERTABLE_SYNTAX = frozenset(";|(){}&=<>\n\r")
 #: Measured against pwsh 7.6.5 by tokenising `Write-Output note<CH><# ... #>`
 #: for every candidate: 17 of 27 characters leave the opener glued to the
 #: argument, where it opens nothing. Only whitespace and true delimiters start
-#: a token. Being NARROWER than the language here costs friction; being wider
-#: blanks live code, and that is the only one of the two that is a fail-open.
+#: a token. Being wider than the language here blanks live code (the comment's
+#: body, separators and all); being narrower is a fail-open too wherever the
+#: comment's `#>` follows a blank, since that `#` then opens a line comment
+#: that blanks the statements after it (DEF-2073: `$x<# c #>; Get-Content
+#: .env` read as `$x<# c #   ...`). `_ps_glued_opener_opens` reads the glued
+#: openers PowerShell opens after all.
 _PS_TOKEN_BOUNDARY = frozenset(" \t\n\r;|&(){},")
+
+#: DEF-2073: the glued openers PowerShell opens. Measured on Windows
+#: PowerShell 5.1's own tokenizer (`[Parser]::ParseInput`, 175 spellings,
+#: none run): in EXPRESSION mode a `<#` opens after any token (`$x<# c #>; gc
+#: y` is a variable, a comment and a second statement), and in ARGUMENT mode
+#: only after a token the argument reader does not glue on: a variable with a
+#: member or an index (`Write-Output $x.y<#`, `$x[0]<#`), a colon-bound
+#: switch (`gc -Path:<# c #> y`, 79ba0b's residue) and a string that starts
+#: its token (`Write-Output 'a'<#`); after a bare variable, a number or a word
+#: there it is absorbed into the argument (`Write-Output $x<#`, `-x<#`,
+#: `note<#`), and so is it after `-a.b:` and in `$x -eq:<#`. Each arm below
+#: is a shape 5.1 opens; one they do not name stays unopened, the side this
+#: rule was on before (`tests/test_write_guard.py::TestAGluedCommentOpens`
+#: holds the population).
+_PS_GLUED_VARIABLE = r"\$(?:\{[^{}]*\}|[$?^]|(?:[A-Za-z_]\w*:)?\w+)"
+_PS_GLUED_MEMBER = r"(?:\.[A-Za-z_]\w*|\[[^\[\]]*\]|::\w+)"
+_PS_GLUED_NUMBER = (
+    r"(?:0[xX][0-9a-fA-F]+|(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?)"
+    r"[lLdD]?(?:[kKmMgGtTpP][bB])?"
+)
+#: In expression mode: a variable (members allowed, a postfix `++`/`--` too),
+#: a type literal or a number ending the token, at its start or after an
+#: operator or a cast glued before it (`$x=1<#`, `[int]$x<#`), a dash operator
+#: word included (`$x -eq$y<#`, `-not$x<#`, `$x-is[int]<#`: 5.1 reads the word
+#: as the operator and opens after its operand). The type arm is ONE literal,
+#: so a run of `[a]` has one reading: as `(?:\[..\])+` beside the index
+#: member it backtracked cubically (the code review: 3.1 s on a 2.4 KB `$x[1]`
+#: run).
+_PS_GLUED_EXPRESSION_END_RE = re.compile(
+    r"(?:^(?:-[A-Za-z]+)?|(?<=[!+*/%=,.\]])|(?<=-)(?:[A-Za-z]+)?)(?:" + _PS_GLUED_VARIABLE + _PS_GLUED_MEMBER + r"*(?:\+\+|--)?"
+    r"|\[[A-Za-z_][\w.]*(?:\[\])?\]" + _PS_GLUED_MEMBER + r"*"
+    r"|-?" + _PS_GLUED_NUMBER + r")$"
+)
+#: In argument mode: the whole token is a variable with a member, or a switch
+#: bound by its colon.
+_PS_GLUED_ARGUMENT_TOKEN_RE = re.compile(
+    r"(?:" + _PS_GLUED_VARIABLE + _PS_GLUED_MEMBER + r"+|-[A-Za-z_?][\w?]*:)"
+)
+#: The token that opens in either mode: a variable with a member. Where the
+#: statement's head is unread (a group closed before the token), it is the
+#: only one read as opening (`Write-Output (1) $x.y<#`); the colon-bound
+#: switch is not, since expression mode absorbs it (`$x -eq:<#`).
+_PS_GLUED_MEMBER_TOKEN_RE = re.compile(_PS_GLUED_VARIABLE + _PS_GLUED_MEMBER + r"+")
+#: A statement whose first character is one of these is an expression; one
+#: that opens on a digit is one only where a number is the whole first word
+#: (`1kb`, `0x1F`; `7z x $y<#` runs the command `7z`); one that opens on `-`,
+#: `.` or `+` only where a number or a unary operator follows (`-1`, `.5`,
+#: `-not $x`, `++$x`), and a command otherwise (`-foo $x<#` and the
+#: dot-source `. $x<#` absorb it).
+_PS_EXPRESSION_HEAD = frozenset("$'\"[!@")
+_PS_NUMBER_HEAD_RE = re.compile(_PS_GLUED_NUMBER + r"(?!\w)")
+_PS_UNARY_HEAD_RE = re.compile(
+    r"(?:-(?:[\d.]|-(?=\$)|(?:not|bnot|join|split)(?![\w-]))|\.\d|\+(?:\+(?=\$)|[\d.$(]))",
+    re.IGNORECASE,
+)
+#: A dash operator word ending right before a string glued to it
+#: (`$x -eq'a'<#`, `-join'a'<#`), read in the last 16 characters only: the
+#: longest operator word is 12 letters, and a longer run stays unopened.
+_PS_OPERATOR_WORD_END_RE = re.compile(r"-[A-Za-z]+$")
+_PS_OPERATOR_WORD_SPAN = 16
+#: The keywords whose operand is a pipeline read for its own mode (`return
+#: $x<#` opens; `return gc $x<#` does not).
+_PS_PIPELINE_KEYWORD_RE = re.compile(r"(?:return|throw|exit)(?=[ \t])", re.IGNORECASE)
+#: The characters that end the statement before a token (`&&` too, below; a
+#: lone `&` is the call operator, whose statement is a command).
+_PS_STATEMENT_STOP = frozenset(";|({}\n\r")
+#: A group closed between the statement's start and the token: the head the
+#: walk would read is not the token's, so the opener is read as glued.
+_PS_GROUP_CLOSE = frozenset(")}")
+#: The longest token, and the longest head number, the glued reader reads.
+#: Past them the opener is unopened -- the token-start rule's answer -- so a
+#: run of glued openers on one growing token costs each a bounded read (both
+#: reviews: 15.5 s on a 54 KB `$a.b+<#` run, quadratic, before the cap).
+_PS_GLUED_TOKEN_CAP = 128
+_PS_GLUED_HEAD_NUMBER_CAP = 64
+
+#: The glued-opener reader below models 5.1's tokenizer, and three review
+#: rounds each found a shape where it opened a comment 5.1 absorbs, hiding
+#: the statement inside, so it is never the only reading (`_PS_GLUED_OPENING`
+#: at this module's top).
+#: Set once the two readings decide an opener differently in this process
+#: (`_ps_opener_reading`), either way round. A hook call is one process, so
+#: there it is per call; a test process keeps it, which only adds second
+#: readings. It is set by a walk, and a cached answer skips the walk: code
+#: that lowers it between calls in one process clears the reading caches
+#: too, or a cache hit leaves it lowered.
+_PS_GLUED_OPENED = [False]
+
+
+def glued_opener_opened() -> bool:
+    """Whether the two readings have decided an opener differently in this
+    process, so the call is judged on both."""
+    return _PS_GLUED_OPENED[0]
+
+
+#: Set once main's reading asks the opener reader (`_ps_opener_reading`) in
+#: this process. The readings part there alone (every other read of the
+#: reading keys a cache), so a judgment main's reading made without asking it
+#: is the glued reading's answer too, and write_guard does not make it again:
+#: that second judgment of the first leg cost a 32 KiB Bash call about 0.3 s
+#: of the hook's 0.7 (#620's three time-budget reds, 2026-11-13). Sticky like
+#: the record above, so an answer cached by a walk that asked still finds it
+#: raised.
+_PS_OPENER_ASKED = [False]
+
+
+def glued_opener_asked() -> bool:
+    """Whether main's reading has asked the opener reader in this process,
+    so a judgment made on it may differ on the glued one."""
+    return _PS_OPENER_ASKED[0]
+
+
+def glued_reading() -> bool:
+    """Whether the enclosing call reads on the glued reading: the key a
+    cache outside this module adds (`_speedbump._kill_hit`'s)."""
+    return _PS_GLUED_OPENING.get()
+
+
+@contextlib.contextmanager
+def glued_opening_on() -> Iterator[None]:
+    """Read the enclosed call on the glued reading. Every cache that holds a
+    reading's answer is keyed by the reading (`reading_cache`, `_PS_FOLDED`),
+    so neither reading's answer is read back under the other."""
+    token = _PS_GLUED_OPENING.set(True)
+    try:
+        yield
+    finally:
+        _PS_GLUED_OPENING.reset(token)
+
+
+@contextlib.contextmanager
+def glued_opening_off() -> Iterator[None]:
+    """Read the enclosed call on main's reading, the default, from inside
+    `glued_opening_on`."""
+    token = _PS_GLUED_OPENING.set(False)
+    try:
+        yield
+    finally:
+        _PS_GLUED_OPENING.reset(token)
+
+
+def _ps_backtick_escaped(s: str, k: int) -> bool:
+    """Whether the character at ``k`` follows an odd run of backticks."""
+    ticks = 0
+    while k > 0 and s[k - 1] == "`":
+        ticks += 1
+        k -= 1
+    return ticks % 2 == 1
+
+
+def _ps_boundary_kind(s: str, k: int) -> int:
+    """How the walk reads a boundary or separator character at ``k`` beside a
+    glued opener: 0 as itself, 1 as a blank (a backtick-newline, CRLF
+    included, continues the line), 2 as text (any other escaped character,
+    part of the word: `a`;$x.y` is one argument)."""
+    if s[k] == "\n" and k > 0 and s[k - 1] == "\r":
+        return 1 if _ps_backtick_escaped(s, k - 1) else 0
+    if not _ps_backtick_escaped(s, k):
+        return 0
+    return 1 if s[k] in "\r\n" else 2
+
+
+def _ps_glued_head(s: str, p: int, t: int, blocks: "list[tuple[int, int]] | None") -> int:
+    """The offset past the blanks, a backtick-newline among them, and the
+    comments read, from ``p`` to ``t``."""
+    while p < t:
+        if s[p] in " \t":
+            p += 1
+            continue
+        if s[p] == "`" and s.startswith(("`\n", "`\r"), p):
+            p += 3 if s.startswith("`\r\n", p) else 2
+            continue
+        if blocks and s.startswith("<#", p):
+            at = bisect.bisect_left(blocks, (p,))
+            if at < len(blocks) and blocks[at][0] == p:
+                p = blocks[at][1]
+                continue
+        break
+    return p
+
+
+def _ps_glued_opener_opens(
+    s: str,
+    out: "list[str]",
+    i: int,
+    block_end: int,
+    quote_open: int,
+    quote_end: int,
+    blocks: "list[tuple[int, int]] | None",
+    memo: "list[int]",
+) -> bool:
+    """Whether the ``<#`` or ``#`` at ``i``, glued to the character before
+    it, opens a comment (DEF-2073; the measurement is above
+    `_PS_GLUED_VARIABLE`).
+
+    ``quote_open`` and ``quote_end`` are the last quoted span the walk stepped
+    over, its opening quote's offset and the offset past its close (-1 before
+    any); ``out`` is the walk's mask, final before ``i``, where a separator
+    inside a string is a blank; and ``memo`` holds what this walk last found,
+    with the offsets it was found from: the token start, the statement start,
+    whether a group closed in that statement, and the statement's head with
+    how far its assignments were read (`[token from, token start, statement
+    from, statement start, closed, head statement, head, head read to]`, all
+    -1 at the walk's start). Each scan resumes where the last one stopped, so
+    a run of glued openers reads each character a bounded number of times."""
+    if i == quote_end:
+        q = quote_open
+        if q == 0 or q == block_end or (
+            s[q - 1] in _PS_TOKEN_BOUNDARY and _ps_boundary_kind(s, q - 1) != 2
+        ):
+            return True
+        t = q
+    else:
+        # The token: back to a boundary character or the last comment's close.
+        t, k = -1, i - 1
+        floor = max(block_end, memo[0], 0)
+        while k >= floor:
+            if s[k] in _PS_TOKEN_BOUNDARY and _ps_boundary_kind(s, k) != 2:
+                if not (s[k] == "}" and _ps_closes_braced_name(s, k)):
+                    t = k + 1
+                    break
+                # a braced name is part of its token (`${x}<#`, `${x}.y<#`):
+                # on to its `$`, which the step below passes
+                k = s.rfind("{", 0, k) - 1
+            k -= 1
+        if t < 0:
+            t = block_end if floor == block_end or memo[1] < 0 else memo[1]
+            t = max(t, 0)
+        memo[0], memo[1] = i, t
+    if i - t > _PS_GLUED_TOKEN_CAP:
+        return False
+    # The statement: back to a separator on the mask. A group closed on the
+    # way, or a separator a backtick escapes, leaves the statement's head
+    # unread from here (`Write-Output (1) $x<#`, `a`;$x<#`): unopened, the
+    # side this rule was on before (the code review's regression class).
+    stmt, k, closed = -1, t - 1, False
+    floor = max(memo[2], 0)
+    while k >= floor:
+        ch = out[k]
+        if ch in _PS_GROUP_CLOSE:
+            closed = True
+        elif ch in _PS_STATEMENT_STOP or (ch == "&" and k > 0 and out[k - 1] == "&"):
+            kind = _ps_boundary_kind(s, k)
+            if kind == 0:
+                stmt = k + 1
+                break
+            if kind == 2:
+                closed = True
+        k -= 1
+    if stmt < 0:
+        stmt = memo[3] if memo[2] >= 0 and memo[3] >= 0 else 0
+        closed = closed or memo[4] == 1
+    memo[2], memo[3], memo[4] = t, stmt, int(closed)
+    if closed:
+        return i != quote_end and _PS_GLUED_MEMBER_TOKEN_RE.fullmatch(s, t, i) is not None
+    # Its head, past blanks, the comments read, a pipeline keyword and an
+    # assignment's left side: the first `=` on the mask after a `$` or `[`
+    # head is the assignment, whose right side is read for its own mode
+    # (`$x[$a[0]] = gc $y<#`, `$x, $y = gc $z<#`, `[int]$x = $y<#`).
+    if memo[5] != stmt:
+        p = _ps_glued_head(s, stmt, t, blocks)
+        memo[5], memo[6], memo[7] = stmt, p, p
+    p, k = memo[6], memo[7]
+    while p < t:
+        m = _PS_PIPELINE_KEYWORD_RE.match(s, p, t)
+        if m is not None:
+            p = k = _ps_glued_head(s, m.end(), t, blocks)
+            continue
+        if s[p] not in "$[":
+            break
+        k = max(k, p)
+        while k < t and out[k] != "=":
+            k += 1
+        if k >= t:
+            break
+        p = k = _ps_glued_head(s, k + 1, t, blocks)
+    memo[6], memo[7] = p, max(k, p)
+    head = s[p]
+    if not (
+        head in _PS_EXPRESSION_HEAD
+        or (head.isdigit() and _PS_NUMBER_HEAD_RE.match(
+            s, p, min(len(s), p + _PS_GLUED_HEAD_NUMBER_CAP)) is not None)
+        or (head in "-.+" and _PS_UNARY_HEAD_RE.match(s, p) is not None)
+    ):
+        return i != quote_end and _PS_GLUED_ARGUMENT_TOKEN_RE.fullmatch(s, t, i) is not None
+    if i == quote_end:
+        return s[t - 1] in "!+-*/%=,.]" or _PS_OPERATOR_WORD_END_RE.search(
+            s, max(0, t - _PS_OPERATOR_WORD_SPAN), t
+        ) is not None
+    # A slice, not `search(s, t, i)`: `^` and the lookbehind must not see
+    # past the token's start.
+    return _PS_GLUED_EXPRESSION_END_RE.search(s[t:i]) is not None
+
+
+def _ps_closes_braced_name(s: str, k: int) -> bool:
+    """Whether the `}` at ``k`` closes a braced variable name (`${x}`),
+    which ends no token: `Write-Output ${x}<#` is one argument on 5.1. The
+    name holds no brace, so the search stops at the last `}` before it, and
+    a run of them reads each character a bounded number of times."""
+    j = s.rfind("}", 0, k)
+    b = s.rfind("{", j + 1, k)
+    return b >= 1 and s[b - 1] == "$"
+
+
+def _ps_opener_reading(
+    s: str,
+    out: "list[str]",
+    i: int,
+    block_end: int,
+    quote_open: int,
+    quote_end: int,
+    blocks: "list[tuple[int, int]] | None",
+    memo: "list[int]",
+    start: bool,
+) -> bool:
+    """Whether the opener at ``i`` opens, in the reading that asks.
+    ``start`` is the token-start rule's answer, the whole answer on main's
+    reading, the default. On the glued one (`glued_opening_on`), an opener glued to the
+    token before it asks `_ps_glued_opener_opens`, and so does one the rule
+    opens after an escaped separator or a braced name's close, which start
+    no token on 5.1 (``a`;<#``, `${x}<#`). Wherever the two answers differ
+    it is recorded, so write_guard judges the call on both readings."""
+    if not _PS_GLUED_OPENING.get():
+        _PS_OPENER_ASKED[0] = True
+        return start
+    if start and (
+        i == 0 or i == block_end
+        or not (_ps_boundary_kind(s, i - 1) == 2 or (s[i - 1] == "}" and _ps_closes_braced_name(s, i - 1)))
+    ):
+        return True
+    opens = _ps_glued_opener_opens(s, out, i, block_end, quote_open, quote_end, blocks, memo)
+    if opens != start:
+        _PS_GLUED_OPENED[0] = True
+    return opens
 
 
 def _ps_at_line_start(s: str, i: int) -> bool:
@@ -4962,8 +5339,10 @@ _PS_QUOTE_FOLD = tuple(zip(PS_TYPOGRAPHIC_QUOTES, "''''" + '"""'))
 #: Each text folded this process, and each fold as its own fold: the
 #: dispatch folds the command, then every reader's walk folds the text it is
 #: handed again, which is that fold, so a second walk of it is a lookup. A
-#: fold of a fold is itself (pinned). Bounded: cleared past 64 entries.
-_PS_FOLDED: dict[str, str] = {}
+#: fold of a fold is itself (pinned). Keyed by the reading too, since the
+#: fold runs the walk, which reads comment openers (the failure-mode review
+#: of DEF-2073's design A, WARN 2). Bounded: cleared past 64 entries.
+_PS_FOLDED: dict[tuple[bool, str], str] = {}
 
 #: Raised by every fold that moves a quote, a cached one included, so the
 #: two relief gates give no relief wherever one moved, on every route a
@@ -4987,13 +5366,14 @@ def fold_powershell_quotes(command: str, _depth: int = 0) -> str:
     A fold that moved a quote raises `FOLD_MOVED_A_QUOTE`."""
     if command.isascii() or _depth > _PS_FOLD_DEPTH_CAP:
         return command
-    done = _PS_FOLDED.get(command)
+    reading = _PS_GLUED_OPENING.get()
+    done = _PS_FOLDED.get((reading, command))
     if done is None:
         done = _fold_powershell_quotes(command, _depth)
         if len(_PS_FOLDED) > 64:
             _PS_FOLDED.clear()
-        _PS_FOLDED[command] = done
-        _PS_FOLDED[done] = done
+        _PS_FOLDED[(reading, command)] = done
+        _PS_FOLDED[(reading, done)] = done
     if done != command:
         FOLD_MOVED_A_QUOTE.set(True)
     return done
@@ -5205,6 +5585,10 @@ def _walk_powershell_spans(
     #: after one ran). Read as live text, the second comment's `>` blanked
     #: the command-position characters after it.
     block_end = -1
+    #: The last quoted span stepped over (its opening quote, the offset past
+    #: its close) and `_ps_glued_opener_opens`' memo, for a glued opener.
+    quote_open = quote_end = -1
+    glued_memo = [-1] * 8
     while i < n:
         c = s[i]
 
@@ -5285,6 +5669,7 @@ def _walk_powershell_spans(
                 _ps_blank_literal(s, out, i + 1, j)
             if spans is not None:
                 spans.append((i, j, "'"))
+            quote_open, quote_end = i, j + 1
             i = j + 1
             continue
 
@@ -5302,6 +5687,7 @@ def _walk_powershell_spans(
             )
             if spans is not None:
                 spans.append((i, j, '"'))
+            quote_open, quote_end = i, j + 1
             i = j + 1
             continue
 
@@ -5309,7 +5695,11 @@ def _walk_powershell_spans(
             c == "<"
             and i + 1 < n
             and s[i + 1] == "#"
-            and (i == 0 or i == block_end or s[i - 1] in _PS_TOKEN_BOUNDARY)
+            # where PowerShell opens it, glued included (DEF-2073)
+            and _ps_opener_reading(
+                s, out, i, block_end, quote_open, quote_end, read, glued_memo,
+                i == 0 or i == block_end or s[i - 1] in _PS_TOKEN_BOUNDARY,
+            )
         ):
             # Block comments do NOT nest in PowerShell -- verified: the first
             # closing marker ends the comment, and code after it runs.
@@ -5334,7 +5724,11 @@ def _walk_powershell_spans(
             i = block_end = end + 2
             continue
 
-        if c == "#" and (i == 0 or i == block_end or s[i - 1] in _PS_TOKEN_BOUNDARY):
+        # where PowerShell opens it, by the `<#` rule (DEF-2073)
+        if c == "#" and _ps_opener_reading(
+            s, out, i, block_end, quote_open, quote_end, read, glued_memo,
+            i == 0 or i == block_end or s[i - 1] in _PS_TOKEN_BOUNDARY,
+        ):
             # WARNING: START AT i+1 -- the hash ITSELF MUST SURVIVE, for the same
             # reason the Bash pass keeps it: a blanked hash leaves an unbroken
             # whitespace run from the separator straight to the comment's first
@@ -5734,7 +6128,7 @@ def raw_span(raw: str, m: "re.Match[str]", group: int = 1, *,
 _STATEMENT_STOPS = frozenset(";|&\n")
 
 
-@functools.lru_cache(maxsize=16)
+@reading_cache(maxsize=16)
 def _statement_structure(text: str, *, powershell: bool = False) -> tuple[tuple[tuple[int, int], ...], tuple[int, ...]]:
     """One quote-aware pass over ``text``: every quoted span as ``(open,
     close)`` -- ``close`` is the closing quote's offset, or -1 when the text
@@ -8185,7 +8579,7 @@ def nested_shell_programs(command: str) -> list[str]:
     return list(_nested_shell_programs_cached(command))
 
 
-@functools.lru_cache(maxsize=8)
+@reading_cache(maxsize=8)
 def _nested_shell_programs_cached(command: str) -> tuple[str, ...]:
     return tuple(_nested_shell_programs(command, 0))
 
@@ -9916,7 +10310,7 @@ def iter_removed_or_relocated_operands(command: str, _depth: int = 0) -> list[tu
     return list(_removed_or_relocated_cached(command, _depth))
 
 
-@functools.lru_cache(maxsize=8)
+@reading_cache(maxsize=8)
 def _removed_or_relocated_cached(command: str, _depth: int) -> tuple[tuple[str, str], ...]:
     return tuple(_iter_removed_or_relocated_operands(command, _depth))
 
@@ -10486,7 +10880,7 @@ _PS_REPARSED_SPAN_BEFORE = re.compile(
 _PS_REPARSE_LOOKBACK = 2048
 
 
-@functools.lru_cache(maxsize=8)
+@reading_cache(maxsize=8)
 def _ps_reparse_answers(s: str, rx: object, lookback: int) -> "dict[int, bool]":
     """The lookback's answers for one text, by opener offset. The answer is a
     function of the text, the offset, the pattern and the window -- and, under
@@ -11180,7 +11574,7 @@ def _ps_join_command_gaps(raw: str, scan: str, masker_read: bool) -> tuple[str, 
     Remove-Item -Recurse -Force` is one pipeline (pwsh 7.6.5, driven), and
     every pipe reader's stage pattern stopped at the comment's surviving
     `<#`. Found on the MASKED half, where a pipe that survives is live and
-    a comment opener is read by the masker's own token-start rule. Since
+    a comment opener is read by the masker's opener reading. Since
     DEF-2071/2072 the pair arrives here with every block comment the masker
     read already one blank (`_ps_blocks_as_one_blank`), so the block-comment
     branches below meet only the ones it did not read: a gap inside a string
@@ -11216,7 +11610,7 @@ def _ps_join_command_gaps(raw: str, scan: str, masker_read: bool) -> tuple[str, 
     (`_PS_GAP_OPENER_RE`). Such a gap holds blanks and block comments only:
     a line break there is itself a separator, which opens the statement
     after a line comment, so the join leaves both as they are. Only what
-    the masker read as a comment is joined (its own token-start rule), so a
+    the masker read as a comment is joined (its opener reading), so a
     comment's text never reaches a reader, and an argument's comment, after
     a word, is never at an opener. One opener is read past the masker's rule:
     a `<#` glued to `=` (`$x =<# c #> Get-Content .env`, which Windows
@@ -14155,7 +14549,7 @@ def _posix_cli_program(line: str) -> str:
     return ""
 
 
-@functools.lru_cache(maxsize=16)
+@reading_cache(maxsize=16)
 def ps_start_process_shell_launches(raw: str, scan: str) -> tuple[tuple[int, str, str], ...]:
     """``(offset, grammar, program)`` for every shell a ``Start-Process``
     statement starts with its program in the argument list, in offset order:
@@ -15999,7 +16393,7 @@ def _splice_replacement(match: "re.Match[str]") -> str:
     return "\n" if match.group(1) else ""
 
 
-@functools.lru_cache(maxsize=64)
+@reading_cache(maxsize=64)
 def splice_line_continuations(command: str) -> str:
     r"""The Bash readers' ONE raw pre-pass: `_splice_line_continuations`
     (its docstring is the contract -- the order rule, the heredoc rule), then
@@ -16036,7 +16430,7 @@ _PIPE_AT_LINE_END_RE = re.compile(r"\|&?[ \t\r]*[\n#]")
 _SPLICE_PROGRAM_MAX_DEPTH = 8
 
 
-@functools.lru_cache(maxsize=64)
+@reading_cache(maxsize=64)
 def _masked_or_raw(command: str) -> str:
     """`mask_inert_syntax`, or the raw text where the mask would not line up
     by offset (the masker fails closed to the raw text itself). Memoised, as
@@ -16846,7 +17240,7 @@ def has_catastrophic_find_delete(
     return _bash_sweep_walk(command, root, cwd, _find_lands_catastrophic)
 
 
-@functools.lru_cache(maxsize=64)
+@reading_cache(maxsize=64)
 def _wall_readings(command: str) -> tuple[str, ...]:
     """The texts the Bash walls judge (DEF-846): the command as spelled and,
     when a literal binding changes it, the command with the
@@ -16898,7 +17292,7 @@ _PLAIN_JOINERS = frozenset({";", "&&", "||", "\n"})
 _PLAIN_RELIEF_HEADS = frozenset({"rm"})
 
 
-@functools.lru_cache(maxsize=8)
+@reading_cache(maxsize=8)
 def _relief_applies(command: str, *, bash: bool) -> bool:
     """Is ``command`` PLAIN, so the glob relief may read a bare leading glob
     or the location variable as the directory its statement runs in? The

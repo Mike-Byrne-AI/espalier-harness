@@ -1108,9 +1108,8 @@ first; the dangerous-command catch is a secondary slip-catcher):
    harness infrastructure path are denied -- a write into it, a delete of
    it, a move of it out of the zone, a permission change on it, and, for a
    delete or a move, of a directory that encloses it -- by the verb rosters
-   and the declared limits pinned in the guard's remove/relocate test class,
-   `tests/test_write_guard.py::TestRemovedOrRelocatedOperandIsAMutation::test_zone_row_under_the_plain_root`
-   and
+   and the declared limits pinned in the guard's remove/relocate test class
+   (its zone row under the plain root among them),
    `tests/test_write_guard.py::TestRemovedOrRelocatedOperandIsAMutation::test_every_consumed_arm_has_a_deny_row_and_every_row_names_a_consumed_arm`
    (the operand a verb removes or relocates is classified beside the one it
    writes, on both shells, since 2026-09-14):
@@ -1684,7 +1683,7 @@ it is still read as a statement boundary -- so a message variable DECLARED
 with one of those, quoting a delete with a separator in it, is refused where
 the same message stored by a bare assignment is data. Not a simple oversight:
 under an array or an integer attribute (`-a`, `-i`) bash evaluates such a
-value and a substitution inside it runs (measured on bash 3.2, 2026-09-19), so
+value and a substitution inside it runs (on bash 3.2, driven 2026-09-19), so
 the relief a bare assignment gets cannot be handed to these builtins by name
 alone. A name given an evaluating attribute EARLIER in the command has the
 same effect on a later bare assignment to it, and is relieved today: the
@@ -2259,6 +2258,37 @@ spellings of them are work:
   reader unless a real session records the slip (the last bullet's rule). One
   level of a program handed to a shell as a quoted string (`bash -c '...'`,
   `pwsh -Command "..."`) is not this shape; it stays in the contract above.
+- **The PowerShell comment reader, by ruling (2026-11-12).** A `<#` block
+  comment is read where PowerShell opens one, a `<#` glued to the token
+  before it included where that token lets PowerShell open it (a variable in
+  an expression, a variable's member, a colon-bound switch, a string that
+  starts its token), and two unusual spellings are read as a comment
+  PowerShell does not open, so a statement inside it goes unread. Where
+  that glued reading and the plain token-start rule decide an opener
+  differently, every leg that reads the command is judged on both readings,
+  the speed bump and its recovery snapshot included, and the call is refused
+  where either refuses, so a misread glued opener costs friction, never a
+  statement the token-start rule reads. An opener
+  inside a braced variable name (`${<#}; ... #>`) is a declared
+  limit, pinned by
+  `tests/test_write_guard.py::TestAGluedCommentOpens::test_a_braced_names_opener_opens_a_comment_powershell_does_not`.
+  An opener after the stop-parsing token (`cmd /c --% echo <# & ... #>`),
+  whose line PowerShell hands the native program as typed, is a declared
+  limit, pinned by
+  `tests/test_write_guard.py::TestAGluedCommentOpens::test_an_opener_after_stop_parsing_opens_a_comment_powershell_does_not`.
+  The other way, a glued `<#` the reader cannot place goes unopened where
+  PowerShell opens it, so a read after it on that line is taken for an
+  argument and let through, a declared false allow: after a group or block
+  closed earlier in its statement (`if (1) { gc } $x<# c #>; ...`,
+  `(Get-Item a).Name<# c #>; ...`), a string's member (`'a'.Length<#`), a
+  here-string's close, a colon-bound string (`-a:'a'<#`), a drive-qualified
+  name (`$a:b:c<#`) or an escaped colon (``-a`:<#``), pinned by
+  `tests/test_write_guard.py::TestAGluedCommentOpens::test_the_residue_is_where_the_walk_and_powershell_still_differ`.
+  A run of blanks or comments thousands long costs the PowerShell readers
+  time that grows with its square, a declared limit under the timeout
+  sentence above: such a flood before a re-parsed string is refused, by the
+  wall or the time budget, pinned by
+  `tests/test_write_guard.py::TestABlockCommentIsOneBlank::test_a_comment_flood_before_a_carrier_is_refused`.
 - The protected-zone write is not one of the three jobs. Its path check lets an
   unresolvable operand through, and the after-check reports the write when it
   lands, for the zones it watches
@@ -2657,7 +2687,7 @@ block, or `[reflect] clean -- 24 files, surface coherent` on a clean pass:
 The reflect findings are informational — they surface drift, they don't
 block work.
 
-**The plan-mode bridge (INV-8).** The same `*` matcher makes this the hook
+**The plan-mode bridge.** The same `*` matcher makes this the hook
 that sees an APPROVED `ExitPlanMode`: Claude Code fires PostToolUse for that
 tool only once the user approves the plan (a rejection fails the tool and
 reaches PostToolUseFailure, never this hook). On an approval the hook writes
@@ -3185,8 +3215,9 @@ contract; line numbers drift with surface edits, so none are pinned here.
 
 Matcher strings are sourced from `espalier.harness_config.CANONICAL_HOOK_WIRING`
 (engine-internal — it lives in the installed package, not in your tree).
-`tests/test_hook_matcher_precision.py::ALLOWED_STAR_HOOKS` (Espalier source repo)
-enumerates the hooks legitimately on `"*"`.
+Two hooks are on `"*"` by design, `write_guard.py` and `reflect_trigger.py`;
+Espalier's own test suite names them and fails when any other hook's matcher
+is widened to `"*"`.
 
 ### Events that do not support a matcher
 

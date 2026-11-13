@@ -3414,6 +3414,32 @@ class TestCommandPositionClassClose:
             "SYNTAX -- a case arm's pattern opening one already-cut statement "
             "(`x) cat .env`), cut off before the words are read (DEF-1025); the "
             "verb is still checked against the read-verb roster.",
+        # ── DEF-2073: whether a `<#` or `#` glued to a token opens a comment,
+        # read on the masker's walk; none decides a command's invocation ──
+        "_bash_patterns._PS_GLUED_EXPRESSION_END_RE":
+            "TOKENIZER -- the expression-mode token a glued comment opener ends "
+            "(a variable, a type literal, a number), searched in that one token "
+            "(DEF-2073).",
+        "_bash_patterns._PS_GLUED_ARGUMENT_TOKEN_RE":
+            "TOKENIZER -- the argument-mode token a glued comment opener ends (a "
+            "variable with a member, a colon-bound switch), fullmatched on that "
+            "one token (DEF-2073).",
+        "_bash_patterns._PS_GLUED_MEMBER_TOKEN_RE":
+            "TOKENIZER -- a variable with a member, the token a glued comment "
+            "opener ends in either mode, fullmatched on that one token (DEF-2073).",
+        "_bash_patterns._PS_OPERATOR_WORD_END_RE":
+            "TOKENIZER -- a dash operator word ending before a string glued to it, "
+            "read in a bounded window, which makes the string an expression's "
+            "operand for a glued comment opener (DEF-2073).",
+        "_bash_patterns._PS_NUMBER_HEAD_RE":
+            "TOKENIZER -- a number as a statement's whole first word, which makes "
+            "the statement an expression for a glued comment opener (DEF-2073).",
+        "_bash_patterns._PS_UNARY_HEAD_RE":
+            "TOKENIZER -- a unary operator or signed number opening a statement, "
+            "which makes it an expression for a glued comment opener (DEF-2073).",
+        "_bash_patterns._PS_PIPELINE_KEYWORD_RE":
+            "SYNTAX -- `return`, `throw` or `exit` at a statement's head, skipped "
+            "so their operand's mode is read for a glued comment opener (DEF-2073).",
         "write_guard._PS_GLUED_PAREN_RE":
             "SYNTAX -- a `(` glued to a word, `@` or `$` opens an argument, not a "
             "statement; blanked before the PowerShell secret-read cut (DEF-718).",
