@@ -63,8 +63,6 @@ from __future__ import annotations
 import contextlib
 import io
 import re
-import sys
-from pathlib import Path
 
 import pytest
 
@@ -553,30 +551,19 @@ def test_the_roster_holds_each_name_once_and_the_stop_gates_test_command():
     assert {ENV_VAR, STOP, f"{STOP}_TEST_CMD"} <= set(ROSTER), ROSTER
 
 
-_TEST_CMD_LINE = f'    "{STOP}_TEST_CMD",\n'
-
-
-@pytest.mark.parametrize("edit", [
-    pytest.param(lambda s: s.replace(_TEST_CMD_LINE, _TEST_CMD_LINE + '    "ESPALIER_A_NEW_NAME",\n', 1),
-                 id="the-roster-gains-a-name"),
-    pytest.param(lambda s: s.replace(_TEST_CMD_LINE, "", 1), id="the-roster-loses-a-name"),
-])
-def test_the_alternation_refuses_at_import_when_it_and_the_roster_disagree(monkeypatch, edit):
+def test_the_alternation_holds_the_roster_longest_first():
     """The five records compose `_HARNESS_ENV_ALTERNATION`, a literal, since
     the dot-star gate (tests/test_redos.py) cannot read a join over the
-    roster; the guard checks at import that the literal is the roster's
-    longest-first join, so the roster stays the one list. Driven on the
-    guard's own source with one edit to the roster and the literal left as
-    it is: a name gained (the edit a new harness variable invites) and a
-    name lost. Dies to: the check removed or inverted."""
-    path = Path(wg.__file__)
-    source = path.read_text(encoding="utf-8")
-    edited = edit(source)
-    assert edited != source, "the roster's test-command line moved; re-aim the edit"
-    monkeypatch.setattr(sys, "path", list(sys.path))  # the guard inserts its folder at import
-    with pytest.raises(RuntimeError, match="harness variable roster drift"):
-        exec(compile(edited, str(path), "exec"),
-             {"__name__": "_write_guard_roster_drift_probe", "__file__": str(path)})
+    roster. It holds each roster name once, escaped, and no other, longest
+    first, so a name the roster gains or loses without the literal reds
+    here and the roster stays the one list. A test rather than a check at
+    the guard's import, which would refuse every call between the two edits
+    a new name takes. Dies to: a name added to `_HARNESS_ENV_NAMES` alone,
+    one dropped from it alone, or the literal reordered shortest first."""
+    spelled = wg._HARNESS_ENV_ALTERNATION.split("|")
+    assert sorted(spelled) == sorted(re.escape(name) for name in ROSTER), spelled
+    lengths = [len(part) for part in spelled]
+    assert lengths == sorted(lengths, reverse=True), spelled
 
 
 # ── The command-position anchor on the assignment record ────────────────────

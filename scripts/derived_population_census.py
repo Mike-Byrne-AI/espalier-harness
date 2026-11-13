@@ -1987,13 +1987,16 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
     # 8 row(s), shapes: for-assert, parametrize
     "tests/test_write_guard_env_prefix_polarity.py": (
-        8, "21699b438aeab0f40a97b55bf4ab04716c24620ca8c59cb4fca6d28f126c2e0c",
+        9, "c4ef72844d62959d8ed673b85bd9960052f30bc90940065f62e98cbf2b9bba0f",
         "CORRECT_BY_REMEDY",
         "NEW 2026-11-13 (the floor-roster lane): eight rows run this file's hand-written Bash, "
         "PowerShell and cmd populations once per name in `write_guard._HARNESS_ENV_NAMES`, so a "
         "name the guard adds is read by every population. A name dropped leaves with its rows, "
         "and reds tests/test_hook_constant_parity.py:177 (the stop gate's two constants must be "
-        "literals in write_guard.py) and this file's :543 (the three names held by hand).",
+        "literals in write_guard.py) and this file's :543 (the three names held by hand). "
+        "2026-11-13, same lane: a ninth row compares the guard's literal alternation with the "
+        "roster's names; a name the roster gains or drops without the literal reds it, and one "
+        "both drop reds this file's :543 as above.",
     ),
     "tests/test_write_guard_pattern_message_coupling.py": (
         6, "def930a6139b4dfa0f7b9d283d6415c07158b9eb7ed525d13943325fd73b87d5",

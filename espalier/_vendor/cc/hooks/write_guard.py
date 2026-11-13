@@ -465,6 +465,38 @@ _glob_reach = _protected_zones.glob_reach
 _glob_reaches_protected = _protected_zones.glob_reaches_protected
 _aliases_protected_inode = _protected_zones.aliases_protected_inode
 
+#: The harness variables a hook reads when it starts, which the session must
+#: not set for itself: the maintenance switch, the stop gate's mode, and the
+#: command its test gate runs as the suite. An assignment made inside the
+#: session reaches no hook already running, and one handed to a nested
+#: `claude` starts that session with the gate it names already loosened or
+#: replaced, so every record below (the Bash prefix, the three PowerShell
+#: arms, cmd's `set`) refuses each name the same way. The stop gate's two
+#: names are literals: the zero-cross-import rule keeps
+#: `stop_gate.STOP_GATE_MODE_ENV` out of reach, and reading
+#: `_hook_utils.STOP_GATE_TEST_CMD_ENV` here would add a name to this guard's
+#: start floor, which a kept older helper then refuses every call for;
+#: tests/test_hook_constant_parity.py pins both to their constants.
+_HARNESS_ENV_NAMES: tuple[str, ...] = (
+    _maintenance_mode.ENV_VAR,
+    "ESPALIER_STOP_GATE",
+    "ESPALIER_STOP_GATE_TEST_CMD",
+)
+#: The names as one alternation, longest first, so no shorter name that opens
+#: a longer one is tried ahead of it (each site's next token refuses the
+#: shorter name's partial match, so the order saves a failed try and the match
+#: is the same). Spelled as a literal, not joined from the tuple: the dot-star
+#: gate (tests/test_redos.py) rebuilds every compiled pattern from module-level
+#: literals, names, `+` and re.escape() f-strings, and a join is a call it
+#: cannot read, as a name inside an f-string is, so the five sites below
+#: compose it with `+`. tests/test_write_guard_env_prefix_polarity.py pins the
+#: literal to the tuple's names, each once and longest first, so the tuple
+#: stays the one home. The pin is a test, not a check at import: a raise here
+#: would refuse every call between the two edits a new name takes, the restore
+#: that undoes the first one aside.
+_HARNESS_ENV_ALTERNATION = (
+    rf"ESPALIER_STOP_GATE_TEST_CMD|{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE")
+
 # BC-028: Bash tool inline-assignment of harness env vars.
 # Contract: set in parent shell BEFORE launching `claude`. Inline
 # assignment via a Bash tool call sets the var for the immediate
@@ -538,38 +570,6 @@ _aliases_protected_inode = _protected_zones.aliases_protected_inode
 # that and tests/test_redos.py reddened on it (two derived instances). The
 # `export|declare` clause below is safe because those verbs are NOT in
 # `_CMD_POS_WRAP_RUN`'s roster, so it cannot re-consume what `_CMD_POS` consumed.
-#: The harness variables a hook reads when it starts, which the session must
-#: not set for itself: the maintenance switch, the stop gate's mode, and the
-#: command its test gate runs as the suite. An assignment made inside the
-#: session reaches no hook already running, and one handed to a nested
-#: `claude` starts that session with the gate it names already loosened, so
-#: every record below (the Bash prefix, the three PowerShell arms, cmd's `set`)
-#: refuses each name the same way. The stop gate's two names are literals: the
-#: zero-cross-import rule keeps `stop_gate.STOP_GATE_MODE_ENV` out of reach,
-#: and reading `_hook_utils.STOP_GATE_TEST_CMD_ENV` here would add a name to
-#: this guard's start floor, which a kept older helper then refuses every call
-#: for; tests/test_hook_constant_parity.py pins both to their constants.
-_HARNESS_ENV_NAMES: tuple[str, ...] = (
-    _maintenance_mode.ENV_VAR,
-    "ESPALIER_STOP_GATE",
-    "ESPALIER_STOP_GATE_TEST_CMD",
-)
-#: The names as one alternation, longest first, so no shorter name that opens
-#: a longer one is tried ahead of it (each site's next token refuses the
-#: shorter name's partial match, so the order saves a failed try and the match
-#: is the same). Spelled as a literal, not joined from the tuple: the dot-star
-#: gate (tests/test_redos.py) rebuilds every compiled pattern from module-level
-#: literals, names, `+` and re.escape() f-strings, and a join is a call it
-#: cannot read, as a name inside an f-string is, so the five sites below
-#: compose it with `+` (the precedent is _bash_patterns' enumerator heads). The
-#: check under it refuses at import when the literal and the tuple disagree,
-#: so the tuple stays the one home.
-_HARNESS_ENV_ALTERNATION = (
-    rf"ESPALIER_STOP_GATE_TEST_CMD|{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE")
-if _HARNESS_ENV_ALTERNATION != "|".join(
-        re.escape(name) for name in sorted(_HARNESS_ENV_NAMES, key=len, reverse=True)):
-    raise RuntimeError(
-        "harness variable roster drift: _HARNESS_ENV_ALTERNATION and _HARNESS_ENV_NAMES disagree")
 _HARNESS_ENV_PREFIX_RE: re.Pattern[str]
 
 
