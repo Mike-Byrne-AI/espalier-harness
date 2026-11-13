@@ -12461,6 +12461,9 @@ class TestABacktickEscapeInADoubleQuotedProgramIsDecoded:
     #: The escapes that end a statement, each beside the `;` twin it means.
     _SEPARATORS_51 = [("lf", "`n"), ("crlf", "`r`n")]
     _SEPARATORS = [*_SEPARATORS_51, ("pwsh7-code-point", "`u{a}")]
+    #: A lone CR ends a statement for PowerShell and for an interpreter, not
+    #: for a POSIX shell (Git Bash drops it): its rows are those launches'.
+    _SEPARATORS_CR = [*_SEPARATORS, ("cr", "`r")]
     #: The launches of a double-quoted program; ``{s}`` is the separator.
     _BASH_LAUNCHES = [
         ("dash-c", 'bash -c "echo hi{s}{p}"'),
@@ -12476,12 +12479,20 @@ class TestABacktickEscapeInADoubleQuotedProgramIsDecoded:
     _PS_LAUNCHES = [
         ("iex", 'iex "Get-Date{s}{p}"'),
         ("powershell-command", 'powershell -NoProfile -Command "Get-Date{s}{p}"'),
+        # piped into a PowerShell shell: the hard tier reads no wall there (an
+        # open gap, docs/HOOKS.md), so the zone and secret tiers carry it
+        # (both reviews: no row pinned it)
+        ("pwsh-pipe", '"Get-Date{s}{p}" | pwsh -Command -'),
     ]
-    _PY_LAUNCHES = [("python-c", 'python -c "import shutil{s}{p}"')]
+    _PY_LAUNCHES = [
+        ("python-c", 'python -c "import shutil{s}{p}"'),
+        # piped into an interpreter (the code review, driven ALLOWING)
+        ("python-pipe", '"import shutil{s}{p}" | python -'),
+    ]
     _CASES = _escape_twin_cases((_BASH_LAUNCHES, _SEPARATORS, _BASH_PROGRAMS),
                                 (_START_PROCESS_LAUNCHES, _SEPARATORS_51, _BASH_PROGRAMS),
-                                (_PS_LAUNCHES, _SEPARATORS, _PS_PROGRAMS),
-                                (_PY_LAUNCHES, _SEPARATORS, _PY_PROGRAMS))
+                                (_PS_LAUNCHES, _SEPARATORS_CR, _PS_PROGRAMS),
+                                (_PY_LAUNCHES, _SEPARATORS_CR, _PY_PROGRAMS))
 
     @staticmethod
     def _project(tmp_path: Path) -> Path:
@@ -12565,6 +12576,39 @@ class TestABacktickEscapeInADoubleQuotedProgramIsDecoded:
         only)."""
         bp = _bash_patterns_module()
         assert bp._ps_word_at('"a`nb`0c" x', 0) == ("a\nbc", 9)
+
+    def test_a_cr_in_a_start_process_argument_is_dropped_for_bash(self, tmp_path):
+        """Git Bash drops every CR, inside a word too (the code review,
+        driven echo only): a `git` split by `` `r `` in the argument list
+        meets the tiers of its unsplit twin."""
+        project = self._project(tmp_path)
+        launch = "Start-Process bash -ArgumentList '-c', \"`\"{p} reset --hard`\"\""
+        assert _ps_tier_verdicts(launch.format(p="gi`rt"), project) == _ps_tier_verdicts(
+            launch.format(p="git"), project)
+
+    def test_a_single_quoted_program_in_a_double_quoted_wrapper_is_decoded(self, tmp_path):
+        """The outer double-quoted string decodes the escapes before the
+        inner shell sees the single-quoted program (the code review, driven
+        ALLOWING): the `` `n `` spelling meets its `;` twin's tiers."""
+        project = self._project(tmp_path)
+        launch = "powershell -Command \"python -c 'import shutil{s}shutil.rmtree(''tools/cc'')'\""
+        twin = _ps_tier_verdicts(launch.format(s="; "), project)
+        assert twin and _ps_tier_verdicts(launch.format(s="`n"), project) == twin
+
+    def test_each_literal_has_three_readings(self):
+        """`_ps_bash_readings` returns three readings for every kind, so a
+        caller that unpacks it never meets a shorter tuple on rare input
+        (the failure-mode review)."""
+        bp = _bash_patterns_module()
+        for kind, body in (("sq", "a''b"), ("@'", "a"), ("dq", "a"), ("dq", "a`u{23}"), ('@"', "a`e")):
+            assert len(bp._ps_bash_readings(kind, body)) == 3, (kind, body)
+
+    def test_a_nul_is_a_blank_to_powershell_and_dropped_for_bash(self):
+        """PowerShell's tokenizer ends a word at a NUL (the failure-mode
+        review, driven); Git Bash drops one (driven)."""
+        bp = _bash_patterns_module()
+        assert bp._ps_dq_readings("Write-Output`0hello", nul=" ") == ["Write-Output hello"]
+        assert bp._ps_dq_readings("r`0m") == ["rm"]
 
 
 class TestTheCmdDeleteReaderReadsEachBranch:

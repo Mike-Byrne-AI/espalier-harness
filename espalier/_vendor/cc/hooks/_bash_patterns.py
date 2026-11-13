@@ -12204,19 +12204,23 @@ _PS_DQ_ESCAPE_RE = re.compile(r'`(u\{[0-9A-Fa-f]{1,6}\}|[\s\S])|""')
 #: 5.1.26100, 2026-11-13): these control characters, case-sensitive, and any
 #: other character itself (`` `e `` and `` `u{41} `` included, read as `e` and
 #: `u{41}`; pwsh 6 and later read those two as ESC and the code point). The
-#: NUL of `` `0 `` is dropped: Git Bash drops a NUL in the program it reads
-#: (driven), and an argument the NUL cuts short runs less than this reading.
+#: NUL of `` `0 `` (and of `` `u{0} ``) is read by its consumer, the
+#: ``nul`` of `_ps_dq_decode`: dropped for Bash and an interpreter, since
+#: Git Bash drops a NUL in the program it reads (driven) and an argument the
+#: NUL cuts short runs less than that reading; a blank for PowerShell, whose
+#: tokenizer ends a word at one (`iex "Write-Output`0hello"` ran
+#: `Write-Output` with `hello` apart, the failure-mode review, driven).
 _PS_DQ_ESCAPES = {"0": "", "a": "\a", "b": "\b", "f": "\f", "n": "\n", "r": "\r",
                   "t": "\t", "v": "\v"}
 
 
-def _ps_dq_decode(body: str, here: bool, pwsh7: bool) -> str:
+def _ps_dq_decode(body: str, here: bool, pwsh7: bool, nul: str = "") -> str:
     """The text a double-quoted literal's source ``body`` is, by
     `_PS_DQ_ESCAPES`; ``here`` for a double-quoted here-string, where a
-    doubled quote is two characters (driven), and ``pwsh7`` for pwsh 6 and
-    later's reading of `` `e `` and `` `u{...} ``. A code point a Python
-    string cannot carry out to a log (a surrogate) or past Unicode stays as
-    typed."""
+    doubled quote is two characters (driven), ``pwsh7`` for pwsh 6 and
+    later's reading of `` `e `` and `` `u{...} ``, and ``nul`` what a NUL
+    reads as to the consumer. A code point a Python string cannot carry out
+    to a log (a surrogate) or past Unicode stays as typed."""
     def one(m: "re.Match[str]") -> str:
         esc = m.group(1)
         if esc is None:
@@ -12225,14 +12229,16 @@ def _ps_dq_decode(body: str, here: bool, pwsh7: bool) -> str:
             point = int(esc[2:-1], 16)
             if not pwsh7 or 0xD800 <= point <= 0xDFFF or point > 0x10FFFF:
                 return esc
-            return chr(point) if point else ""
+            return chr(point) if point else nul
         if esc == "e" and pwsh7:
             return "\x1b"
+        if esc == "0":
+            return nul
         return _PS_DQ_ESCAPES.get(esc, esc)
     return _PS_DQ_ESCAPE_RE.sub(one, body)
 
 
-def _ps_dq_readings(body: str, here: bool = False) -> list[str]:
+def _ps_dq_readings(body: str, here: bool = False, nul: str = "") -> list[str]:
     """The text PowerShell makes of a double-quoted literal's source
     ``body`` (DEF-2077), by its own kind: Windows PowerShell 5.1's reading,
     then pwsh 7's where `` `e `` or `` `u{...} `` make the two differ. Each
@@ -12240,13 +12246,14 @@ def _ps_dq_readings(body: str, here: bool = False) -> list[str]:
     text on 5.1, `` `u{a} `` a line break on 7 and text on 5.1), so a
     reader judges every reading and a wall on either is the wall. The first
     cut decoded only the backtick before a quote or a dollar, so a delete
-    behind a `` `n `` reached the Bash readers as one line and allowed."""
+    behind a `` `n `` reached the Bash readers as one line and allowed.
+    ``nul`` is what a NUL reads as to the consumer (`_PS_DQ_ESCAPES`)."""
     if "`" not in body:
         return [body if here else body.replace('""', '"')]
-    first = _ps_dq_decode(body, here, pwsh7=False)
+    first = _ps_dq_decode(body, here, pwsh7=False, nul=nul)
     if "`e" not in body and "`u" not in body:
         return [first]
-    second = _ps_dq_decode(body, here, pwsh7=True)
+    second = _ps_dq_decode(body, here, pwsh7=True, nul=nul)
     return [first] if second == first else [first, second]
 
 
@@ -12257,15 +12264,23 @@ def _ps_inline_program_bodies(command: str, scan: str) -> Iterator[tuple[str, st
     two strings ever disagree in length the raw command is searched instead:
     a false match there costs a denial, a missed one a write. A double-quoted
     program is yielded in each reading `_ps_dq_readings` gives (DEF-2077),
-    then in the fold where that differs."""
+    then in the fold where that differs. A single-quoted program holding a
+    backtick is also yielded with the escapes decoded: inside a double-quoted
+    wrapper (`powershell -Command "python -c '...`n...'"`) the outer string
+    decoded them before the inner shell saw the program, and the code review
+    drove the `` `n `` spelling of a zone delete allowing beside its walled
+    `;` twin. Read alone, the over-read is the refusing direction."""
     if len(scan) != len(command):
         scan = command
     for interp, rx in _PS_INLINE_PROGRAM_RES:
         for m in rx.finditer(scan):
             if m.group("sq") is not None:
-                yield interp, _ps_unescape_program(command[m.start("sq"):m.end("sq")])
+                text = _ps_unescape_program(command[m.start("sq"):m.end("sq")])
+                yield interp, text
+                if "`" in text:
+                    yield interp, _ps_dq_decode(text, here=True, pwsh7=False)
                 continue
-            for text in _ps_literal_readings(command, m):
+            for text in _ps_literal_readings(command, m, nul=""):
                 yield interp, text
 
 
@@ -12297,13 +12312,18 @@ def _ps_stage_literals(segment: str) -> list[tuple[str, str]]:
     return [(kind, body) for _, kind, body in found]
 
 
-def _ps_piped_program_readings(segment: str) -> list[str]:
+def _ps_piped_program_readings(segment: str, *, powershell: bool = False) -> list[str]:
     """Every reading of the program a shell piped to on the PowerShell leg
     receives, from the literals of the stage before the pipe
     (`_ps_stage_literals`), each literal by `_ps_bash_readings`: the literals
-    joined one per line, by kind and folded, and, when the stage holds more
-    than one, each literal alone, both ways. A wall on any reading is the
-    wall. The BOM and every CR are taken out: Windows PowerShell 5.1 hands a
+    joined one per line in each of the three readings, and, when the stage
+    holds more than one, each literal alone in each. A wall on any reading
+    is the wall. For a POSIX shell the BOM and every CR are taken out, as
+    below; for a PowerShell shell or an interpreter (``powershell``) a CR
+    is a line break, since PowerShell ends a statement at a lone CR (the
+    failure-mode review drove `"Get-Date`r<a hook write>" | powershell -Command
+    -` running both, walled on its `` `n `` twin and allowed on this one), and
+    a decoded NUL a blank (`_PS_DQ_ESCAPES`). Windows PowerShell 5.1 hands a
     native pipe its text behind a BOM and ends each element in CRLF, and the
     line a BOM fails or a CR ends is still read here, so the judgment never
     rests on what the shell would fail to run. The CR out of the separator
@@ -12314,19 +12334,29 @@ def _ps_piped_program_readings(segment: str) -> list[str]:
     ALLOWING); each literal alone keeps every verdict a literal has by
     itself (`test_the_stage_reads_each_literal_by_itself`). A stage with no
     literal is no program text this reader can see: nothing."""
-    pairs = [_ps_bash_readings(kind, body) for kind, body in _ps_stage_literals(segment)]
-    # one joined reading per position; a literal with no third reading (one
-    # pwsh 7 reads as 5.1 does) stands in that join by its first
-    width = max((len(p) for p in pairs), default=2)
-    candidates = ["\n".join(p[i] if i < len(p) else p[0] for p in pairs) for i in range(width)]
-    if len(pairs) > 1:
-        candidates += [text for pair in pairs for text in pair]
+    cr, nul = ("\n", " ") if powershell else ("", "")
+    readings = [_ps_bash_readings(kind, body, nul=nul) for kind, body in _ps_stage_literals(segment)]
+    candidates = ["\n".join(r[i] for r in readings) for i in range(3)]
+    if len(readings) > 1:
+        candidates += [text for reading in readings for text in reading]
     programs: list[str] = []
     for candidate in candidates:
-        text = candidate.replace("﻿", "").replace("\r", "")
+        text = candidate.replace("﻿", "").replace("\r", cr)
         if text.strip() and text not in programs:
             programs.append(text)
     return programs
+
+
+def _ps_interp_stdin_texts(segment: str) -> list[str]:
+    """The texts an interpreter piped to on the PowerShell leg (`| python -`)
+    is judged on: the stage before the pipe as typed, which its write and
+    effect patterns have always read, and, where that holds a backtick, the
+    piped readings with the escapes decoded (DEF-2077: the code review drove
+    `"import shutil`n<a zone delete>" | python -` allowing beside its walled
+    `;` twin, and Windows PowerShell 5.1 runs both lines)."""
+    if "`" not in segment:
+        return [segment]
+    return [segment, *_ps_piped_program_readings(segment, powershell=True)]
 
 
 def _ps_program_literals_before_pipe(segment: str) -> list[str]:
@@ -12337,14 +12367,15 @@ def _ps_program_literals_before_pipe(segment: str) -> list[str]:
     -Command -` drew no tier, the fold reading the write as quoted); else
     the whole segment (nothing literal to extract -- `Get-Content x | pwsh -c
     -` -- and a re-scan of the segment finds nothing, correctly)."""
-    return _ps_piped_program_readings(segment) or [segment]
+    return _ps_piped_program_readings(segment, powershell=True) or [segment]
 
 
-def _ps_bash_readings(kind: str, body: str) -> tuple[str, ...]:
-    """``(by_kind, folded, *more)``: the text Bash receives from one
-    PowerShell literal, the all-four fold of `_ps_unescape_program`, and,
-    for a double-quoted literal whose editions read it apart, pwsh 7's
-    reading by kind (`_ps_dq_readings`). By kind, a single-quoted string
+def _ps_bash_readings(kind: str, body: str, nul: str = "") -> tuple[str, str, str]:
+    """``(by_kind, folded, by_kind_pwsh7)``, always three: the text a shell
+    receives from one PowerShell literal, the all-four fold of
+    `_ps_unescape_program`, and pwsh 7's reading by kind, the first again
+    where the editions read the literal alike (`_ps_dq_readings`; ``nul`` is
+    passed there). By kind, a single-quoted string
     folds `''`, a single-quoted here-string nothing, a double-quoted string
     `""` and every backtick escape (DEF-2077: the first cut decoded the one
     before a quote or a dollar alone, so a delete behind a `` `n `` read as
@@ -12352,19 +12383,18 @@ def _ps_bash_readings(kind: str, body: str) -> tuple[str, ...]:
     in `@"..."@` a doubled quote of either kind is two characters (driven on
     Windows PowerShell 5.1), and the first cut folded them, so `echo ""; <a
     delete>; echo ""` read as one quoted span that hid the delete (code
-    review, driven ALLOWING). A double-quoted reading by kind loses its CRs,
-    as Git Bash drops every one it reads, inside a word too (driven: `ec`r
-    ho` ran `echo`); a CR is no separator to any Bash, so no reading loses a
-    statement by it. The fold is kept as a second reading because a program
-    behind a re-parsing wrapper carries the outer span's doubling
-    (`_ps_unescape_program`'s docstring); a wall on any is the wall."""
+    review, driven ALLOWING). A CR stays: each consumer reads it its own way
+    (a POSIX shell drops it, PowerShell ends a line at it). The fold is kept
+    as a second reading because a program behind a re-parsing wrapper
+    carries the outer span's doubling (`_ps_unescape_program`'s docstring);
+    a wall on any is the wall."""
     if kind == "@'":
-        return body, body
+        return body, body, body
     if kind == "sq":
         text = body.replace("''", "'")
-        return text, text
-    first, *more = [text.replace("\r", "") for text in _ps_dq_readings(body, kind == '@"')]
-    return (first, _ps_unescape_program(body), *more)
+        return text, text, text
+    first, *more = _ps_dq_readings(body, kind == '@"', nul=nul)
+    return first, _ps_unescape_program(body), (more[0] if more else first)
 
 
 def _ps_posix_programs_before_pipe(segment: str) -> list[str]:
@@ -12388,6 +12418,10 @@ def _ps_shell_program_bodies(command: str, scan: str) -> Iterator[str]:
     for grammar, program in ps_start_process_shell_programs(command, scan):
         if grammar == "bash":
             yield program
+            if "\r" in program:
+                # Git Bash drops every CR, inside a word too (driven): a
+                # decoded `` `r `` in the argument list is no separator there
+                yield program.replace("\r", "")
     # a string piped into a POSIX shell is its program (DEF-3075): `'...' |
     # bash`, `| & 'C:\Program Files\Git\bin\bash.exe'`
     if "|" in scan and _PS_STDIN_POSIX_HINT_RE.search(scan):
@@ -12405,24 +12439,27 @@ def _ps_shell_program_bodies(command: str, scan: str) -> Iterator[str]:
         # literal is read both ways (`_ps_bash_readings`): there `''` is two
         # characters, and the fold alone made `bash -c "echo ''; <a delete>;
         # echo ''"` read the delete as quoted (code review, driven ALLOWING).
+        # A double-quoted reading loses its CRs, as Git Bash drops every one
+        # it reads, inside a word too (driven: `ec`rho` ran `echo`).
         if m.group("sq") is not None:
             yield command[m.start("sq"):m.end("sq")].replace("''", "'")
         else:
-            yield from dict.fromkeys(
-                _ps_bash_readings("dq", command[m.start("dq"):m.end("dq")]))
+            yield from dict.fromkeys(text.replace("\r", "") for text in
+                                     _ps_bash_readings("dq", command[m.start("dq"):m.end("dq")]))
 
 
-def _ps_literal_readings(command: str, m: "re.Match[str]") -> list[str]:
+def _ps_literal_readings(command: str, m: "re.Match[str]", nul: str = " ") -> list[str]:
     """The texts of the `_PS_PROGRAM_STRING` literal ``m`` matched, read
     from the raw ``command``: a single-quoted one by its own kind (the
     reason is `_ps_shell_program_bodies`'s comment); a double-quoted one in
     each reading of `_ps_dq_readings` (DEF-2077), then in the all-four fold
     where that differs, the reading a program behind a re-parsing wrapper
-    needs (`_ps_unescape_program`'s docstring)."""
+    needs (`_ps_unescape_program`'s docstring). ``nul`` as there: a blank by
+    default, since a carrier's program is PowerShell's to tokenize."""
     if m.group("sq") is not None:
         return [command[m.start("sq"):m.end("sq")].replace("''", "'")]
     body = command[m.start("dq"):m.end("dq")]
-    return list(dict.fromkeys((*_ps_dq_readings(body), _ps_unescape_program(body))))
+    return list(dict.fromkeys((*_ps_dq_readings(body, nul=nul), _ps_unescape_program(body))))
 
 
 # The PowerShell carriers of a quoted program (DEF-1131): the re-parsing
@@ -18768,9 +18805,10 @@ def _candidate_paths_from_powershell(command: str, _depth: int = 0) -> list[str]
                 for program in _ps_program_literals_before_pipe(segment):
                     paths.extend(_candidate_paths_from_powershell(program, _depth + 1))
             continue
-        for rx in _STDIN_PROGRAM_WRITE_RES[_PS_STDIN_DISPATCH[head]]:
-            for om in rx.finditer(segment):
-                paths.append(om.group(2))
+        for text in _ps_interp_stdin_texts(segment):
+            for rx in _STDIN_PROGRAM_WRITE_RES[_PS_STDIN_DISPATCH[head]]:
+                for om in rx.finditer(text):
+                    paths.append(om.group(2))
     # A bash program behind `bash -c` / `sh -c` (DEF-637): judged by the
     # grammar that will run it, one level down.
     if _depth < _PS_STDIN_MAX_DEPTH:
@@ -18937,7 +18975,8 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
                 for program in _ps_program_literals_before_pipe(segment):
                     out.extend(iter_ps_removed_or_relocated_operands(program, _depth + 1))
             continue
-        out.extend(_program_effects(_PS_STDIN_DISPATCH[head], segment))
+        for text in _ps_interp_stdin_texts(segment):
+            out.extend(_program_effects(_PS_STDIN_DISPATCH[head], text))
     if _depth < _PS_STDIN_MAX_DEPTH:
         for program in _ps_shell_program_bodies(raw, scan):
             out.extend(iter_removed_or_relocated_operands(program, _depth + 1))
