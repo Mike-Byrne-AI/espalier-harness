@@ -21,8 +21,8 @@ permissions:
   contents: read
 
 # No concurrency group, on purpose: each push's run proves its own tip to the
-# end, beside the next one. A run takes about an hour (median 59 minutes over
-# the last 20 greens, 2026-11-08) and merges can land
+# end, beside the next one. A run takes about an hour (median 65.2 minutes over
+# the last 20 greens, 2026-11-12; 59 on 2026-11-08) and merges can land
 # closer together than that, so cancelling the older run on a newer push left
 # main with no verdict through whole stretches (DEF-2015: 8 of 23 runs cancelled
 # on 2026-10-15), and a red then named every merge since the last green. A group

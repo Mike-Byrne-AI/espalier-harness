@@ -127,8 +127,8 @@ def _worst_serial_mark() -> float:
 #: green runs in minutes: the whole job (checkout, install and, on a job that runs
 #: both legs, the parallel one too), read by `python3
 #: scripts/ci_job_bounds_census.py` on the date below, while the serial files were
-#: those below; an entry whose bound was raised since carries the date of the read
-#: it was raised from on its own comment, and the date below stays the day the
+#: those below; an entry whose bound was raised since carries, on its own comment,
+#: the date of the read that raised it, and the date below stays the day the
 #: serial files were last measured, which the roster test's message reads. The
 #: reason for the floor: a test that hangs must be cut by its own timeout, naming
 #: it, before the job's bound cuts the job with none named. A test at its mark adds
@@ -221,6 +221,18 @@ class TestEveryJobThatRunsTheSerialFilesOutlastsTheirMarks:
         assert bound * 60 >= floor_s, (
             f"{key}: timeout-minutes {bound} is under the serial files' worst mark plus the job's "
             f"measured worst ({floor_s / 60:.1f} min)")
+
+    def test_the_box_lock_names_a_holder_only_past_the_post_merge_worst(self):
+        """tests/_box_lock.py's WAIT_CEILING_MIN names a holder older than the
+        post-merge proof's measured worst run, and its comment cites that worst.
+        Dies to: the full-tier figure re-measured past the ceiling with the
+        ceiling left where it was, so a healthy tier is named for a stop."""
+        from tests._box_lock import WAIT_CEILING_MIN
+
+        worst = _SERIAL_JOBS_MEASURED_WORST[("post-merge.yml", "full-tier")]
+        assert WAIT_CEILING_MIN > worst, (
+            f"tests/_box_lock.py::WAIT_CEILING_MIN {WAIT_CEILING_MIN} is not above the post-merge "
+            f"proof's measured worst, {worst} min: raise it and its comment with the figure")
 
     def test_the_floor_is_the_mark_plus_the_worst_rounded_up_to_five(self):
         """Dies to: the mark read as minutes, or seconds and minutes added raw, or
