@@ -12426,6 +12426,147 @@ class TestAStringPipedIntoAPosixShellMeetsItsDirectFormsTiers:
         assert "zone" in _ps_tier_verdicts(command, self._project(tmp_path)), command
 
 
+def _escape_twin_cases(*groups):
+    """``(id, launch, separator, program)`` for every launch, separator and
+    program of each ``(launches, separators, programs)`` group: built here,
+    since a class-scope comprehension sees only its first iterable by name."""
+    return [(f"{lid}-{sid}-{pid}", launch, sep, program)
+            for launches, separators, programs in groups
+            for (lid, launch), (sid, sep), (pid, program)
+            in itertools.product(launches, separators, programs)]
+
+
+class TestABacktickEscapeInADoubleQuotedProgramIsDecoded:
+    """DEF-2077: a double-quoted PowerShell program's backtick escapes are
+    decoded as PowerShell decodes them before the program is judged, so a
+    statement behind a `` `n `` (or `` `r`n ``, or pwsh 7's `` `u{a} ``)
+    meets the tiers its `;` twin meets, and a blank spelled `` `t `` the
+    tiers of its blank twin. Until this lane the readers undid the backtick
+    before a quote or a dollar alone (`_bash_patterns._ps_unescape_program`),
+    so `bash -c "echo hi`nrm -rf /"` -- which Windows PowerShell 5.1 hands
+    Git's bash as two lines, and bash runs both (driven with harmless
+    programs) -- was a plain allow. A DIFFERENTIAL: the twin is the oracle.
+    Each row is a test fixture for a friction guard, handed to the
+    classifier as text and never run."""
+
+    _BASH_PROGRAMS = TestAShellStartedByStartProcessMeetsItsDirectFormsTiers._BASH_PROGRAMS
+    _PS_PROGRAMS = TestAShellStartedByStartProcessMeetsItsDirectFormsTiers._PS_PROGRAMS
+    #: An interpreter's programs, behind the launch's `import shutil`: a
+    #: delete of the zone through that import (the row's spelling, which
+    #: the base allowed through the hook process) and a protected write.
+    _PY_PROGRAMS = [
+        ("delete-zone", "shutil.rmtree('tools/cc')"),
+        ("write-hook", "open('tools/cc/hooks/write_guard.py','w')"),
+    ]
+    #: The escapes that end a statement, each beside the `;` twin it means.
+    _SEPARATORS_51 = [("lf", "`n"), ("crlf", "`r`n")]
+    _SEPARATORS = [*_SEPARATORS_51, ("pwsh7-code-point", "`u{a}")]
+    #: The launches of a double-quoted program; ``{s}`` is the separator.
+    _BASH_LAUNCHES = [
+        ("dash-c", 'bash -c "echo hi{s}{p}"'),
+        ("pipe", '"echo hi{s}{p}" | bash'),
+        ("dq-here-string", '@"\necho hi{s}{p}\n"@ | bash'),
+    ]
+    #: A `Start-Process` argument is one word read one way, 5.1's
+    #: (`_bash_patterns._ps_word_at`): pwsh 7's `` `u{...} `` there is a
+    #: declared limit, so its separators are 5.1's alone.
+    _START_PROCESS_LAUNCHES = [
+        ("start-process", "Start-Process bash -ArgumentList '-c', \"`\"echo hi{s}{p}`\"\""),
+    ]
+    _PS_LAUNCHES = [
+        ("iex", 'iex "Get-Date{s}{p}"'),
+        ("powershell-command", 'powershell -NoProfile -Command "Get-Date{s}{p}"'),
+    ]
+    _PY_LAUNCHES = [("python-c", 'python -c "import shutil{s}{p}"')]
+    _CASES = _escape_twin_cases((_BASH_LAUNCHES, _SEPARATORS, _BASH_PROGRAMS),
+                                (_START_PROCESS_LAUNCHES, _SEPARATORS_51, _BASH_PROGRAMS),
+                                (_PS_LAUNCHES, _SEPARATORS, _PS_PROGRAMS),
+                                (_PY_LAUNCHES, _SEPARATORS, _PY_PROGRAMS))
+
+    @staticmethod
+    def _project(tmp_path: Path) -> Path:
+        return TestAShellStartedByStartProcessMeetsItsDirectFormsTiers._project(tmp_path)
+
+    def test_the_rows_probe_meets_the_wall(self, tmp_path):
+        """The row's probe, by tier name: the one-line delete of the root,
+        the `` `n `` one behind `bash -c`, and the `` `n `` one piped to bash."""
+        project = self._project(tmp_path)
+        for command in ('bash -c "rm -rf /"', 'bash -c "echo hi`nrm -rf /"',
+                        '"echo hi`nrm -rf /" | bash'):
+            assert "wall" in _ps_tier_verdicts(command, project), command
+
+    @pytest.mark.parametrize("case", _CASES, ids=[c[0] for c in _CASES])
+    def test_a_statement_behind_an_escape_draws_its_semicolon_twins_verdict(self, case, tmp_path):
+        _id, launch, sep, program = case
+        project = self._project(tmp_path)
+        assert _ps_tier_verdicts(launch.format(s=sep, p=program), project) == _ps_tier_verdicts(
+            launch.format(s="; ", p=program), project)
+
+    @pytest.mark.parametrize("row", _BASH_PROGRAMS, ids=[r[0] for r in _BASH_PROGRAMS])
+    def test_a_blank_spelled_as_a_tab_escape_draws_its_twins_verdict(self, row, tmp_path):
+        _id, program = row
+        project = self._project(tmp_path)
+        escaped = program.replace(" ", "`t", 1)
+        assert _ps_tier_verdicts(f'bash -c "{escaped}"', project) == _ps_tier_verdicts(
+            f'bash -c "{program}"', project)
+
+    def test_each_edition_reading_is_judged(self, tmp_path):
+        """Each edition can hide what the other runs: `` `u{23} `` is a `#`
+        on pwsh 7, which comments the delete out, and text on 5.1, which
+        runs it; `` `u{a} `` the reverse. A `` `0 `` is dropped, as Git Bash
+        drops a NUL (driven). Each meets the wall."""
+        project = self._project(tmp_path)
+        for command in ('bash -c "echo `u{23}; rm -rf /"', 'bash -c "echo hi`u{a}rm -rf /"',
+                        'bash -c "r`0m -rf /"', 'bash -c "r`rm -rf /"'):
+            assert "wall" in _ps_tier_verdicts(command, project), command
+
+    def test_a_mention_stays_a_mention(self, tmp_path):
+        """A string handed to no shell is text whatever it holds: the
+        escape twin of a mention draws the mention's verdict, no wall."""
+        project = self._project(tmp_path)
+        for twin in ("; ", "`n"):
+            command = f'Write-Output "echo hi{twin}rm -rf /"'
+            assert "wall" not in _ps_tier_verdicts(command, project), command
+
+    #: (id, body, here-string, the readings `_ps_dq_readings` gives).
+    _READINGS = [
+        ("plain", "echo hi", False, ["echo hi"]),
+        ("doubled-quote", 'echo ""', False, ['echo "']),
+        ("doubled-quote-in-a-here-string", 'echo ""`n', True, ['echo ""\n']),
+        ("control-characters", "a`nb`rc`td`ae`bf`fg`vh", False, ["a\nb\rc\td\ae\bf\fg\vh"]),
+        ("nul-dropped", "r`0m", False, ["rm"]),
+        ("doubled-backtick-stays-one", "a``nb", False, ["a`nb"]),
+        ("case-sensitive", "a`Nb", False, ["aNb"]),
+        ("any-other-character", "`$HOME `\"x`\" `'y", False, ['$HOME "x" \'y']),
+        ("code-point-by-edition", "a`u{23}b", False, ["au{23}b", "a#b"]),
+        ("escape-by-edition", "a`eb", False, ["aeb", "a\x1bb"]),
+        ("surrogate-as-typed", "a`u{D800}", False, ["au{D800}"]),
+        ("trailing-backtick-as-typed", "a`", False, ["a`"]),
+    ]
+
+    @pytest.mark.parametrize("row", _READINGS, ids=[r[0] for r in _READINGS])
+    def test_the_decoder_reads_each_escape_as_powershell_does(self, row):
+        _id, body, here, want = row
+        assert _bash_patterns_module()._ps_dq_readings(body, here) == want
+
+    def test_the_dash_c_reader_yields_each_reading(self):
+        """By kind with its CRs dropped (Git Bash drops each, driven), the
+        fold, and pwsh 7's reading where it differs."""
+        bp = _bash_patterns_module()
+        for command, want in (
+                ('bash -c "echo hi`r`nrm -rf x"', ["echo hi\nrm -rf x", "echo hi`r`nrm -rf x"]),
+                ('bash -c "echo `u{23}; rm -rf x"',
+                 ["echo u{23}; rm -rf x", "echo `u{23}; rm -rf x", "echo #; rm -rf x"])):
+            assert list(bp._ps_shell_program_bodies(*bp.powershell_scan_pair(command))) == want
+
+    def test_a_start_process_argument_is_decoded(self):
+        """`_ps_word_at` reads a double-quoted word as 5.1 does: a `` `n ``
+        in a `Start-Process` argument ran the line after it (driven echo
+        only)."""
+        bp = _bash_patterns_module()
+        assert bp._ps_word_at('"a`nb`0c" x', 0) == ("a\nbc", 9)
+
+
 class TestTheCmdDeleteReaderReadsEachBranch:
     """The cmd delete reader (`_bash_patterns.iter_cmd_recursive_removes`)
     branch by branch, at the reader: the targets each launch hands the

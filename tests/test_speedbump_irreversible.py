@@ -3436,6 +3436,10 @@ class TestCommandPositionClassClose:
         "_bash_patterns._PS_HERE_STRING_RE":
             "TOKENIZER -- a here-string in that same segment, searched only when "
             "the segment ends in a terminator (DEF-712).",
+        "_bash_patterns._PS_DQ_ESCAPE_RE":
+            "SYNTAX -- one backtick escape or doubled quote inside the body of a "
+            "double-quoted literal an anchored opener already read out; decodes "
+            "the text, never sees a command position (DEF-2077).",
         "write_guard._TOKEN_QUOTE_RE":
             "SYNTAX -- folds quote characters (and an ANSI-C `$'` opener) out of "
             "ONE already-split token in `_normalise_target_token`. Never applied "

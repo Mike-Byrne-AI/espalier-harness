@@ -1848,9 +1848,14 @@ launcher before the shell (`| wsl bash`, `| wsl`, `| sudo bash`,
 ends the stage is read only as quoted text, which an apostrophe in its
 body can misplace; each is pinned at allow in
 `tests/test_write_guard.py::TestCrossShellRouting::test_powershell_tool_declared_limits_are_pinned`.
-Open gaps, not limits: a backtick escape inside a
-double-quoted program (`` `n ``, `` `t ``) is read as its two characters,
-on that spelling and behind `bash -c` alike; a comment that ends in a
+A double-quoted program's backtick escapes are decoded as PowerShell
+decodes them before any reader judges it (`` `n ``, `` `r ``, `` `t `` and
+the other control characters, `` `0 `` dropped, a doubled backtick as one),
+on a pipe, behind `bash -c`, an interpreter's `-c`, a carrier and a
+`Start-Process` argument alike; where pwsh 7 reads a literal apart from
+Windows PowerShell 5.1 (`` `e ``, `` `u{...} ``) both readings are judged,
+except in a `Start-Process` argument, read as 5.1 reads it (a declared
+limit). Open gaps, not limits: a comment that ends in a
 backslash hides the next line from the wall, on both tools; and a program
 piped to `pwsh -Command -` meets no wall.
 

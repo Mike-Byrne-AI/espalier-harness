@@ -12194,18 +12194,79 @@ def _ps_unescape_program(body: str) -> str:
                 .replace('`"', '"').replace("`'", "'").replace("`$", "$"))
 
 
+#: One escape of a double-quoted PowerShell literal (DEF-2077): a backtick and
+#: the character after it, or a backtick and `u{...}` (one to six hex digits),
+#: or a doubled double quote. Read left to right in one pass, so a doubled
+#: backtick is one backtick and the character after it stays as typed. Each
+#: branch opens on a fixed character and the hex run is bounded: linear.
+_PS_DQ_ESCAPE_RE = re.compile(r'`(u\{[0-9A-Fa-f]{1,6}\}|[\s\S])|""')
+#: What Windows PowerShell 5.1 makes of a backtick escape (driven on
+#: 5.1.26100, 2026-11-13): these control characters, case-sensitive, and any
+#: other character itself (`` `e `` and `` `u{41} `` included, read as `e` and
+#: `u{41}`; pwsh 6 and later read those two as ESC and the code point). The
+#: NUL of `` `0 `` is dropped: Git Bash drops a NUL in the program it reads
+#: (driven), and an argument the NUL cuts short runs less than this reading.
+_PS_DQ_ESCAPES = {"0": "", "a": "\a", "b": "\b", "f": "\f", "n": "\n", "r": "\r",
+                  "t": "\t", "v": "\v"}
+
+
+def _ps_dq_decode(body: str, here: bool, pwsh7: bool) -> str:
+    """The text a double-quoted literal's source ``body`` is, by
+    `_PS_DQ_ESCAPES`; ``here`` for a double-quoted here-string, where a
+    doubled quote is two characters (driven), and ``pwsh7`` for pwsh 6 and
+    later's reading of `` `e `` and `` `u{...} ``. A code point a Python
+    string cannot carry out to a log (a surrogate) or past Unicode stays as
+    typed."""
+    def one(m: "re.Match[str]") -> str:
+        esc = m.group(1)
+        if esc is None:
+            return '""' if here else '"'
+        if len(esc) > 1:                                  # `u{...}
+            point = int(esc[2:-1], 16)
+            if not pwsh7 or 0xD800 <= point <= 0xDFFF or point > 0x10FFFF:
+                return esc
+            return chr(point) if point else ""
+        if esc == "e" and pwsh7:
+            return "\x1b"
+        return _PS_DQ_ESCAPES.get(esc, esc)
+    return _PS_DQ_ESCAPE_RE.sub(one, body)
+
+
+def _ps_dq_readings(body: str, here: bool = False) -> list[str]:
+    """The text PowerShell makes of a double-quoted literal's source
+    ``body`` (DEF-2077), by its own kind: Windows PowerShell 5.1's reading,
+    then pwsh 7's where `` `e `` or `` `u{...} `` make the two differ. Each
+    edition can hide what the other runs (`` `u{23} `` is a `#` on 7 and
+    text on 5.1, `` `u{a} `` a line break on 7 and text on 5.1), so a
+    reader judges every reading and a wall on either is the wall. The first
+    cut decoded only the backtick before a quote or a dollar, so a delete
+    behind a `` `n `` reached the Bash readers as one line and allowed."""
+    if "`" not in body:
+        return [body if here else body.replace('""', '"')]
+    first = _ps_dq_decode(body, here, pwsh7=False)
+    if "`e" not in body and "`u" not in body:
+        return [first]
+    second = _ps_dq_decode(body, here, pwsh7=True)
+    return [first] if second == first else [first, second]
+
+
 def _ps_inline_program_bodies(command: str, scan: str) -> Iterator[tuple[str, str]]:
     """Yield ``(interpreter, program_text)`` for every ``-c`` / ``-e`` inline
     program on the PowerShell leg. The opener is found on ``scan``; the body
     is read from the raw ``command`` at the same offsets and unescaped. If the
     two strings ever disagree in length the raw command is searched instead:
-    a false match there costs a denial, a missed one a write."""
+    a false match there costs a denial, a missed one a write. A double-quoted
+    program is yielded in each reading `_ps_dq_readings` gives (DEF-2077),
+    then in the fold where that differs."""
     if len(scan) != len(command):
         scan = command
     for interp, rx in _PS_INLINE_PROGRAM_RES:
         for m in rx.finditer(scan):
-            kind = "sq" if m.group("sq") is not None else "dq"
-            yield interp, _ps_unescape_program(command[m.start(kind):m.end(kind)])
+            if m.group("sq") is not None:
+                yield interp, _ps_unescape_program(command[m.start("sq"):m.end("sq")])
+                continue
+            for text in _ps_literal_readings(command, m):
+                yield interp, text
 
 
 def _ps_stage_literals(segment: str) -> list[tuple[str, str]]:
@@ -12254,7 +12315,10 @@ def _ps_piped_program_readings(segment: str) -> list[str]:
     itself (`test_the_stage_reads_each_literal_by_itself`). A stage with no
     literal is no program text this reader can see: nothing."""
     pairs = [_ps_bash_readings(kind, body) for kind, body in _ps_stage_literals(segment)]
-    candidates = ["\n".join(p[0] for p in pairs), "\n".join(p[1] for p in pairs)]
+    # one joined reading per position; a literal with no third reading (one
+    # pwsh 7 reads as 5.1 does) stands in that join by its first
+    width = max((len(p) for p in pairs), default=2)
+    candidates = ["\n".join(p[i] if i < len(p) else p[0] for p in pairs) for i in range(width)]
     if len(pairs) > 1:
         candidates += [text for pair in pairs for text in pair]
     programs: list[str] = []
@@ -12276,26 +12340,31 @@ def _ps_program_literals_before_pipe(segment: str) -> list[str]:
     return _ps_piped_program_readings(segment) or [segment]
 
 
-def _ps_bash_readings(kind: str, body: str) -> tuple[str, str]:
-    """``(by_kind, folded)``: the text Bash receives from one PowerShell
-    literal, and the all-four fold of `_ps_unescape_program`. By kind, a
-    single-quoted string folds `''`, a single-quoted here-string nothing, a
-    double-quoted string `""` and the backtick escapes of a quote or a
-    dollar, and a double-quoted here-string the backtick escapes ALONE: in
-    `@"..."@` a doubled quote of either kind is two characters (driven on
+def _ps_bash_readings(kind: str, body: str) -> tuple[str, ...]:
+    """``(by_kind, folded, *more)``: the text Bash receives from one
+    PowerShell literal, the all-four fold of `_ps_unescape_program`, and,
+    for a double-quoted literal whose editions read it apart, pwsh 7's
+    reading by kind (`_ps_dq_readings`). By kind, a single-quoted string
+    folds `''`, a single-quoted here-string nothing, a double-quoted string
+    `""` and every backtick escape (DEF-2077: the first cut decoded the one
+    before a quote or a dollar alone, so a delete behind a `` `n `` read as
+    one line), and a double-quoted here-string the backtick escapes ALONE:
+    in `@"..."@` a doubled quote of either kind is two characters (driven on
     Windows PowerShell 5.1), and the first cut folded them, so `echo ""; <a
     delete>; echo ""` read as one quoted span that hid the delete (code
-    review, driven ALLOWING). The fold is kept as a second reading because
-    a program behind a re-parsing wrapper carries the outer span's doubling
-    (`_ps_unescape_program`'s docstring); a wall on either is the wall."""
+    review, driven ALLOWING). A double-quoted reading by kind loses its CRs,
+    as Git Bash drops every one it reads, inside a word too (driven: `ec`r
+    ho` ran `echo`); a CR is no separator to any Bash, so no reading loses a
+    statement by it. The fold is kept as a second reading because a program
+    behind a re-parsing wrapper carries the outer span's doubling
+    (`_ps_unescape_program`'s docstring); a wall on any is the wall."""
     if kind == "@'":
         return body, body
     if kind == "sq":
         text = body.replace("''", "'")
         return text, text
-    by_kind = body if kind == '@"' else body.replace('""', '"')
-    by_kind = by_kind.replace('`"', '"').replace("`'", "'").replace("`$", "$")
-    return by_kind, _ps_unescape_program(body)
+    first, *more = [text.replace("\r", "") for text in _ps_dq_readings(body, kind == '@"')]
+    return (first, _ps_unescape_program(body), *more)
 
 
 def _ps_posix_programs_before_pipe(segment: str) -> list[str]:
@@ -12339,19 +12408,21 @@ def _ps_shell_program_bodies(command: str, scan: str) -> Iterator[str]:
         if m.group("sq") is not None:
             yield command[m.start("sq"):m.end("sq")].replace("''", "'")
         else:
-            by_kind, folded = _ps_bash_readings("dq", command[m.start("dq"):m.end("dq")])
-            yield by_kind
-            if folded != by_kind:
-                yield folded
+            yield from dict.fromkeys(
+                _ps_bash_readings("dq", command[m.start("dq"):m.end("dq")]))
 
 
-def _ps_literal_text(command: str, m: "re.Match[str]") -> str:
-    """The text of the `_PS_PROGRAM_STRING` literal ``m`` matched, read
-    from the raw ``command`` and unescaped by the literal's own kind (the
-    reason is `_ps_shell_program_bodies`'s comment)."""
+def _ps_literal_readings(command: str, m: "re.Match[str]") -> list[str]:
+    """The texts of the `_PS_PROGRAM_STRING` literal ``m`` matched, read
+    from the raw ``command``: a single-quoted one by its own kind (the
+    reason is `_ps_shell_program_bodies`'s comment); a double-quoted one in
+    each reading of `_ps_dq_readings` (DEF-2077), then in the all-four fold
+    where that differs, the reading a program behind a re-parsing wrapper
+    needs (`_ps_unescape_program`'s docstring)."""
     if m.group("sq") is not None:
-        return command[m.start("sq"):m.end("sq")].replace("''", "'")
-    return _ps_unescape_program(command[m.start("dq"):m.end("dq")])
+        return [command[m.start("sq"):m.end("sq")].replace("''", "'")]
+    body = command[m.start("dq"):m.end("dq")]
+    return list(dict.fromkeys((*_ps_dq_readings(body), _ps_unescape_program(body))))
 
 
 # The PowerShell carriers of a quoted program (DEF-1131): the re-parsing
@@ -12451,22 +12522,23 @@ def ps_paren_closers(scan: str) -> dict[int, int]:
     return closers
 
 
-def _ps_carrier_operand(command: str, scan: str, i: int, bare: bool) -> tuple[str, int]:
-    """The program text of the operand at ``i`` and the offset past it: a
-    literal (an opening parenthesis skipped), or -- where ``bare`` -- the
-    rest of the statement as typed."""
+def _ps_carrier_operand(command: str, scan: str, i: int, bare: bool) -> tuple[list[str], int]:
+    """The program texts of the operand at ``i`` and the offset past it: a
+    literal's readings (`_ps_literal_readings`; an opening parenthesis
+    skipped), or -- where ``bare`` -- the rest of the statement as typed."""
     n = len(scan)
     while i < n and scan[i] in " \t(":
         i += 1
     lit = _PS_PROGRAM_STRING_RE.match(scan, i)
     if lit:
-        return _ps_literal_text(command, lit), lit.end()
+        return [text for text in _ps_literal_readings(command, lit) if text], lit.end()
     if not bare:
-        return "", i
+        return [], i
     end = i
     while end < n and scan[end] not in ";|\n\r)}":
         end += 1
-    return command[i:end].strip(), end
+    text = command[i:end].strip()
+    return [text] if text else [], end
 
 
 def _ps_switch_operand_at(scan: str, i: int, switch: "re.Pattern[str]") -> int:
@@ -12507,25 +12579,26 @@ def _ps_carrier_program_bodies(command: str, scan: str) -> Iterator[str]:
     for m in _PS_CARRIER_RE.finditer(scan):
         if m.start() < read_to:
             continue
-        program, end = "", m.end()
+        programs: list[str] = []
+        end = m.end()
         if m.group("create") is not None:
-            program, end = _ps_carrier_operand(command, scan, m.end(), bare=False)
+            programs, end = _ps_carrier_operand(command, scan, m.end(), bare=False)
         else:
             head = m.group("head").lower()
             head = head[:-4] if head.endswith(".exe") else head
             if head in ("invoke-expression", "iex"):
                 at = _ps_switch_operand_at(scan, m.end(), _SHELL_COMMAND_SWITCH_RE)
-                program, end = _ps_carrier_operand(
+                programs, end = _ps_carrier_operand(
                     command, scan, m.end() if at < 0 else at, bare=False)
             elif head in ("pwsh", "powershell", "cmd"):
                 switch = _CMD_PROGRAM_SWITCH_RE if head == "cmd" else _SHELL_COMMAND_SWITCH_RE
                 at = _ps_switch_operand_at(scan, m.end(), switch)
                 if at >= 0:
-                    program, end = _ps_carrier_operand(command, scan, at, bare=True)
-        if program:
+                    programs, end = _ps_carrier_operand(command, scan, at, bare=True)
+        if programs:
             read_to = end
             spans.append((m.start(), end))
-            yield program
+            yield from programs
     # a powershell or pwsh started by Start-Process runs the program its
     # argument list carries (DEF-3011); one inside a carrier's program
     # yielded above is read one level down with it (the code review)
@@ -13824,7 +13897,12 @@ _PS_START_PROCESS_VALUED_ALIASES = frozenset({
 def _ps_word_at(text: str, i: int) -> tuple[str, int]:
     """The PowerShell word starting at ``i`` (a single- or double-quoted
     string, its quotes removed, or a bare run up to a blank or a comma) and
-    the offset after it. An unterminated quote runs to the end."""
+    the offset after it. An unterminated quote runs to the end. A
+    double-quoted word's backtick escapes are read as Windows PowerShell 5.1
+    reads them (`_PS_DQ_ESCAPES`, DEF-2077: a `` `n `` in a ``Start-Process``
+    argument ran the line after it, driven echo only); pwsh 7's second
+    reading of `` `e `` and `` `u{...} `` is not read here, one word being
+    one reading (a declared limit)."""
     n = len(text)
     if i < n and text[i] in "'\"":
         quote, j, out = text[i], i + 1, []
@@ -13835,7 +13913,7 @@ def _ps_word_at(text: str, i: int) -> tuple[str, int]:
                 j += 2
                 continue
             if quote == '"' and c == "`" and j + 1 < n:
-                out.append(text[j + 1])
+                out.append(_PS_DQ_ESCAPES.get(text[j + 1], text[j + 1]))
                 j += 2
                 continue
             if c == quote:
