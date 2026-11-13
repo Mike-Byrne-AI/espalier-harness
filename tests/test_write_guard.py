@@ -12624,6 +12624,10 @@ _CMD_WORD_ORACLE_BASH = [
     ("blank-holding-word", r"cmd //c echo 'C:\x y\R&D'", r'"C:\x y\R&D"', None),
     ("caret-escape", r"cmd //c echo 'C:\x\R^&D'", r"C:\x\R&D", None),
     ("quoted-in-program", r"""cmd //c 'echo "C:\x\R&D"'""", r'\"C:\x\R&D\"', None),
+    # cmd skips a word led by the stop-parsing token before or between its
+    # switches, glued or not
+    ("token-word-before-switch", "cmd --%x //c echo RAN", "RAN", None),
+    ("token-word-between-switches", "cmd //d --% //c echo RAN", "RAN", None),
 ]
 _CMD_WORD_ORACLE_PS = [
     ("separator-word", "cmd /c echo a '&' echo RAN", "RAN", None),
@@ -12636,6 +12640,18 @@ _CMD_WORD_ORACLE_PS = [
     # rest of the line reaches cmd as typed (the failure-mode review's gap)
     ("stop-parsing-after-switch", "cmd /c --% echo a & echo RAN", "RAN", None),
     ("stop-parsing-after-a-word", "cmd /c echo a --% & echo RAN", "RAN", None),
+    # the token is a whole word: glued to a letter it is a plain word, so the
+    # quoted separator after it reaches cmd bare; a backtick before it is
+    # still the token (the failure-mode re-review)
+    ("glued-token-is-a-word", "cmd /c echo --%x '&' echo RAN", "RAN", None),
+    ("backtick-token", "cmd /c echo a `--% & echo RAN", "RAN", None),
+    # the as-typed text ends at a pipe outside double quotes only
+    ("stop-parsing-pipe-in-quotes", 'cmd /c --% echo "a|b" & echo RAN', "RAN", None),
+    # a later cmd in the as-typed text, then a statement after its own (the
+    # code review: cmd runs it)
+    ("stop-parsing-nested-cmd", "cmd /c --% echo x & cmd /c echo y & echo RAN", "RAN", None),
+    # the token between two switches
+    ("stop-parsing-between-switches", "cmd /d --% /c echo a & echo RAN", "RAN", None),
 ]
 
 #: (tool, command, verdict) rows for DEF-2080: a separator word, bare or
@@ -12659,6 +12675,25 @@ _CMD_SEPARATOR_WORD_ROWS = [
     ("PowerShell", "cmd /c --% rd /s /q .", "wall"),
     ("PowerShell", "cmd /c --% echo x & rd /s /q .", "wall"),
     ("PowerShell", "cmd /c echo x --% & rd /s /q .", "wall"),
+    # the token is a whole word, a backtick before it allowed
+    ("PowerShell", "cmd /c echo --%x '&' rd /s /q .", "wall"),
+    ("PowerShell", "cmd /c echo x `--% & rd /s /q .", "wall"),
+    ("PowerShell", "cmd /c `--% echo x & rd /s /q .", "wall"),
+    ("PowerShell", "cmd `--% /c echo x & rd /s /q .", "wall"),
+    ("PowerShell", "cmd --%x /c rd /s /q .", "wall"),
+    # a pipe inside double quotes does not end the as-typed text
+    ("PowerShell", 'cmd /c --% echo "a|b" & rd /s /q .', "wall"),
+    ("PowerShell", 'cmd --% /c echo "a|b" & rd /s /q .', "wall"),
+    # a later cmd in the as-typed text, then the delete
+    ("PowerShell", "cmd /c --% echo x & cmd /c y & rd /s /q .", "wall"),
+    ("PowerShell", "cmd /c --% echo x & cmd /c y & rd /s /q C:\\", "wall"),
+    ("PowerShell", "cmd --% /c echo x & cmd /c y & rd /s /q .", "wall"),
+    # the token between two switches
+    ("PowerShell", "cmd /d --% /c rd /s /q .", "wall"),
+    ("PowerShell", "cmd /d /s --% /c rd /s /q .", "wall"),
+    ("PowerShell", "cmd /d --% /c echo x & rd /s /q .", "wall"),
+    ("Bash", "cmd --%x //c rd /s /q .", "wall"),
+    ("Bash", "cmd //d --% //c rd /s /q .", "wall"),
 ]
 
 
@@ -12736,10 +12771,14 @@ class TestCmdReceivesAWordWithoutABlankBare:
         ("Bash", "cmd //c rd /s /q src", "cmd //c echo x \\& rd /s /q src"),
         ("PowerShell", "cmd /c rd /s /q src", "cmd /c echo x '&' rd /s /q src"),
         ("PowerShell", "cmd /c rd /s /q src", "cmd /c --% echo x & rd /s /q src"),
+        ("PowerShell", "cmd /c rd /s /q build", "cmd /d --% /c rd /s /q build"),
+        ("PowerShell", "cmd /c rd /s /q build", "cmd /c --% echo x & cmd /c y & rd /s /q build"),
+        ("PowerShell", "cmd /c rd /s /q src", "cmd /c --% echo x & cmd /c y & rd /s /q src"),
         ("Bash", "cmd //c echo a=1", "cmd //c echo a=1\\&b=2"),
         ("PowerShell", "cmd /c echo a=1", "cmd /c echo 'a=1&b=2'"),
     ], ids=["bash-narrow-delete", "ps-narrow-delete", "bash-src-delete", "ps-src-delete",
-            "ps-stop-parsing-src-delete", "bash-no-delete", "ps-no-delete"])
+            "ps-stop-parsing-src-delete", "ps-between-switches-narrow-delete",
+            "ps-nested-cmd-narrow-delete", "ps-nested-cmd-src-delete", "bash-no-delete", "ps-no-delete"])
     def test_a_separator_word_adds_no_verdict_of_its_own(self, tmp_path, tool, plain, spelled):
         """The friction side: behind a separator word a delete AFTER it gets
         the plain spelling's verdict (a roster target's allow, an off-roster
@@ -12784,15 +12823,36 @@ class TestCmdReceivesAWordWithoutABlankBare:
         ("cmd /c --% echo a & rd /s /q .", "echo a & rd /s /q ."),
         ("cmd /c echo a --% & rd /s /q .", "echo a & rd /s /q ."),
         ('cmd /c --% rd /s /q "my dir"', 'rd /s /q "my dir"'),
-    ], ids=["after-switch", "after-a-word", "quoted-tail"])
+        ("cmd /c echo a `--% & rd /s /q .", "echo a & rd /s /q ."),
+        ('cmd /c --% echo "a|b" & rd /s /q . | more', 'echo "a|b" & rd /s /q .'),
+        ("cmd /c --% echo x & cmd /c y & rd /s /q .", "echo x & cmd /c y & rd /s /q ."),
+        ("cmd /d --% /c echo a & rd /s /q .", " echo a & rd /s /q ."),
+        ('cmd --% /c echo "a|b" & rd /s /q .', ' echo "a|b" & rd /s /q .'),
+    ], ids=["after-switch", "after-a-word", "quoted-tail", "backtick-token", "pipe-in-quotes",
+            "nested-cmd", "between-switches", "before-switch-pipe-in-quotes"])
     def test_the_stop_parsing_token_after_the_switch_hands_cmd_the_rest(self, command, program):
         """PowerShell's `--%` after `/c` or a later word hands cmd the rest of
-        the line as typed, as before the switch; both readers read it."""
+        the line as typed, as before or between the switches, to a pipe
+        outside double quotes, a later cmd in it read as one of its
+        statements; both readers read it, once."""
         bp = _bash_patterns_module()
         raw, scan = bp.powershell_scan_pair(command)
         for kw in ({}, {"to_statement_end": True}):
             got = [p for _at, p in bp.iter_cmd_programs(raw, scan, bash=False, **kw)]
             assert got == [program], (kw, got)
+
+    @pytest.mark.parametrize("text, at, want", [
+        ("--%", 0, 3), ("`--%", 0, 4), ("a --% b", 2, 3), ("--%;", 0, 3), ("--%|x", 0, 3),
+        ("--%)", 0, 3), ("--%\n", 0, 3), ("--%x", 0, 0), ("`--%x", 0, 0), ("--%%", 0, 0),
+        ("-%", 0, 0), ("'--%'", 0, 0),
+    ], ids=["alone", "backtick", "mid-line", "semicolon", "pipe", "paren", "newline", "glued",
+            "backtick-glued", "doubled", "short", "quoted"])
+    def test_the_stop_parsing_token_is_a_whole_word(self, text, at, want):
+        """`_ps_stop_parsing_len`: the token ends the text or meets a blank,
+        `;`, `|`, `)` or a line break; `--%x` is a plain word PowerShell
+        hands on (driven echo only: `cmd /c echo --%x '&' echo RAN` prints
+        RAN). A bare `startswith` took the glued word for the token."""
+        assert _bash_patterns_module()._ps_stop_parsing_len(text, at) == want
 
     def test_the_powershell_leg_reads_cmds_program_from_the_raw_twin(self):
         """The masker blanks a separator inside a quoted word; the unforced

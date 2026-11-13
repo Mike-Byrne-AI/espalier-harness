@@ -1427,7 +1427,9 @@ first; the dangerous-command catch is a secondary slip-catcher):
    runs, after a separator word the outer shell hands cmd bare
    (`cmd //c echo x \& rd /s /q .`, `cmd /c echo x '&' rd /s /q .`) as
    much as alone -- on the PowerShell tool also behind the stop-parsing
-   token, before the switch or after it (`cmd --% /c`, `cmd /c --%`), and
+   token, before the switch, between two or after it (`cmd --% /c`,
+   `cmd /d --% /c`, `cmd /c --%`), read as typed to a pipe outside double
+   quotes, and
    in a `Start-Process cmd` argument list -- cmd's
    `%USERPROFILE%` read as your home directory) -- the wall on a
    catastrophic target, nothing on a roster build directory, one nudge on

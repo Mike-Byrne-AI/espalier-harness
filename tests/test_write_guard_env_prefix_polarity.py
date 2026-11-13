@@ -280,6 +280,8 @@ _CMD_SET_REACH = [
     # (driven echo only on Windows PowerShell 5.1: `cmd /c --% echo a & echo
     # RAN` prints RAN)
     ("ps", f"cmd /c --% set {ENV_VAR}=1 & claude -p x"),
+    # and between two switches (`cmd /d --% /c echo a & echo RAN` prints RAN)
+    ("ps", f"cmd /d --% /c set {ENV_VAR}=1 & claude -p x"),
     ("ps", f"Start-Process cmd -ArgumentList '/c set {ENV_VAR}=1 && claude -p x'"),
     ("ps", f"Start-Process -FilePath cmd.exe -Wait -ArgumentList '/c','set {ENV_VAR}=1 && claude -p x'"),
     # a common parameter's value and a colon-bound list (PowerShell binds both)
@@ -385,6 +387,9 @@ def test_cmd_exe_set_then_claude_denies(shell, command):
     # DEF-1071 (e)'s twins: the two new shapes before a real invocation, and
     # the cmdlet mentioned in a double-quoted string, which the masker keeps
     ("ps", f"cmd --% /c set {ENV_VAR}=1 && pytest -q"),
+    # behind the token the as-typed text ends at a pipe: `claude` after it is
+    # PowerShell's, which never saw cmd's `set` (DEF-2080)
+    ("ps", f"cmd /c --% set {ENV_VAR}=1 | claude -p x"),
     ("ps", f"Start-Process cmd -ArgumentList '/c set {ENV_VAR}=1 && pytest -q'"),
     ("ps", f"Start-Process cmd -ErrorAction Stop -ArgumentList:'/c set {ENV_VAR}=1 && pytest -q'"),
     ("ps", f"Start-Process cmd -Verb RunAs -ArgumentList '/c','set {ENV_VAR}=1','&&','pytest'"),
