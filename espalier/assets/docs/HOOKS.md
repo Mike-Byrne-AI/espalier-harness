@@ -2300,15 +2300,16 @@ spellings of them are work:
   backtick or an escaped character it is the word's text, and a comment
   inside a backtick body ends at the closing backtick, so the statement after
   either is read (driven on bash 3.2, dash and zsh). Three readings beside it
-  are declared limits. A heredoc body ends where the masker reads its
+  are declared limits, the first pinned at allow by
+  `tests/test_bash_inert_syntax_mask.py::TestTheMaskerReadsACommentAsBashDoes::test_a_delimiter_line_bash_does_not_take_is_a_declared_limit`.
+  A heredoc body ends where the masker reads its
   delimiter line past blanks and its word to `[alnum_-.]`, where bash takes
   the line only as the whole delimiter word alone, quote-removed: a second
   heredoc opened on a line bash takes as body text (after an indented or
   trailing-blank line, one ending in a carriage return its operator's word
   did not carry, or a delimiter word quoted in part or holding another
   character, `<<E"O"F`, `<<EOF/`) hides the statement after the real
-  delimiter, a crafted spelling, pinned at allow beside the comment rows'
-  tests. An arithmetic shift (`$((1<<4))`, `(( x << 2 ))`) is read as a heredoc
+  delimiter, a crafted spelling. An arithmetic shift (`$((1<<4))`, `(( x << 2 ))`) is read as a heredoc
   operator, and the masker hands back the raw command: friction, never a
   statement unread. And a launch wrapper inside a substitution in a data
   head's double-quoted argument (`echo "$(eval '...')"`) is read, but one

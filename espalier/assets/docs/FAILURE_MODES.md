@@ -3533,7 +3533,7 @@ before; an adopter who ran `--execute` and re-ran the preview to confirm was
 told the upgrade had not taken, and a second `--execute` converged. Both were
 driven by the failure-mode review of the `DEF-726` fix (2026-09-10): the
 ordering was fixed, the render caveat is declared where the sentence is made
-and pinned (`DEF-757`).
+and pinned.
 
 **Detection.** For every stage that renders from the tree, ask what an
 earlier stage writes that the render reads. Drive it: the preview's named
