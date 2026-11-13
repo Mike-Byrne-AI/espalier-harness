@@ -305,7 +305,11 @@ class TestTheSentenceSplitter:
 #: HOOKS 33 -> 34 on 2026-11-12 (DEF-5107), merged over DEF-3075's 33: a redirect
 #: into a substitution keeps the operands' old stop, a declared false allow
 #: with its pin.
-_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 34, "docs/SHARP_EDGES.md": 5}
+#: HOOKS 34 -> 35 on 2026-11-13 (DEF-5106): a substitution's body read as a
+#: program keeps three declared false allows (an operand a nested body
+#: computes, a backtick span nested in another, a case arm's unbalanced `)`),
+#: one sentence with its pin.
+_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 35, "docs/SHARP_EDGES.md": 5}
 
 
 def test_the_census_is_the_pinned_population():
