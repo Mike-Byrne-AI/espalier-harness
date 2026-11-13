@@ -548,16 +548,28 @@ _aliases_protected_inode = _protected_zones.aliases_protected_inode
 #: zero-cross-import rule keeps `stop_gate.STOP_GATE_MODE_ENV` out of reach,
 #: and reading `_hook_utils.STOP_GATE_TEST_CMD_ENV` here would add a name to
 #: this guard's start floor, which a kept older helper then refuses every call
-#: for; tests/test_hook_constant_parity.py pins both to their constants. The
-#: names are joined longest first, so no shorter name that opens a longer one
-#: is tried ahead of it.
+#: for; tests/test_hook_constant_parity.py pins both to their constants.
 _HARNESS_ENV_NAMES: tuple[str, ...] = (
     _maintenance_mode.ENV_VAR,
     "ESPALIER_STOP_GATE",
     "ESPALIER_STOP_GATE_TEST_CMD",
 )
-_HARNESS_ENV_ALTERNATION = "|".join(
-    re.escape(name) for name in sorted(_HARNESS_ENV_NAMES, key=len, reverse=True))
+#: The names as one alternation, longest first, so no shorter name that opens
+#: a longer one is tried ahead of it (each site's next token refuses the
+#: shorter name's partial match, so the order saves a failed try and the match
+#: is the same). Spelled as a literal, not joined from the tuple: the dot-star
+#: gate (tests/test_redos.py) rebuilds every compiled pattern from module-level
+#: literals, names, `+` and re.escape() f-strings, and a join is a call it
+#: cannot read, as a name inside an f-string is, so the five sites below
+#: compose it with `+` (the precedent is _bash_patterns' enumerator heads). The
+#: check under it refuses at import when the literal and the tuple disagree,
+#: so the tuple stays the one home.
+_HARNESS_ENV_ALTERNATION = (
+    rf"ESPALIER_STOP_GATE_TEST_CMD|{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE")
+if _HARNESS_ENV_ALTERNATION != "|".join(
+        re.escape(name) for name in sorted(_HARNESS_ENV_NAMES, key=len, reverse=True)):
+    raise RuntimeError(
+        "harness variable roster drift: _HARNESS_ENV_ALTERNATION and _HARNESS_ENV_NAMES disagree")
 _HARNESS_ENV_PREFIX_RE: re.Pattern[str]
 
 
@@ -567,7 +579,7 @@ def _build_the_harness_env_prefix() -> None:
     _HARNESS_ENV_PREFIX_RE = re.compile(
         _bash_patterns._CMD_POS_NO_VERB
         + r"(?:(?:export|declare)(?:[ \t]+-[^\s;|&]+)*[ \t]+)?"
-        + rf"(?:{_HARNESS_ENV_ALTERNATION})[ \t]*="
+        + r"(?:" + _HARNESS_ENV_ALTERNATION + r")[ \t]*="
     )
 
 # ⚠ POLARITY. The deny above teaches a mental model -- "an inline assignment
@@ -1073,12 +1085,12 @@ def _build_the_ps_harness_env_prefix() -> None:
         r"(?:"
         r"(?P<envcolon>"
         + _bash_patterns._PS_CMD_POS
-        + rf"\$env:(?:{_HARNESS_ENV_ALTERNATION})\s*=)"
-        r"|Set-Item\s+(?:-Path\s+)?[\"']?Env:[\\/]?"
-        rf"(?:{_HARNESS_ENV_ALTERNATION})\b"
-        r"|SetEnvironmentVariable\(\s*[\"']"
-        rf"(?:{_HARNESS_ENV_ALTERNATION})[\"']"
-        r")",
+        + r"\$env:(?:" + _HARNESS_ENV_ALTERNATION + r")\s*=)"
+        + r"|Set-Item\s+(?:-Path\s+)?[\"']?Env:[\\/]?"
+        + r"(?:" + _HARNESS_ENV_ALTERNATION + r")\b"
+        + r"|SetEnvironmentVariable\(\s*[\"']"
+        + r"(?:" + _HARNESS_ENV_ALTERNATION + r")[\"']"
+        + r")",
         re.IGNORECASE,
     )
 
@@ -1210,7 +1222,7 @@ def _ps_harness_env_prefix_is_benign(command: str) -> bool:
 # `/a` or `/p`, its quotes already removed by cmd's word split.
 _CMD_HARNESS_SET_RE = re.compile(
     r"(?:/[ap][ \t]+)?"
-    rf"(?:{_HARNESS_ENV_ALTERNATION})[ \t]*=",
+    + r"(?:" + _HARNESS_ENV_ALTERNATION + r")[ \t]*=",
     re.IGNORECASE,
 )
 
