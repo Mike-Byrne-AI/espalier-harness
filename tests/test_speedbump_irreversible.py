@@ -3096,6 +3096,10 @@ class TestCommandPositionClassClose:
             "FLAG -- the `-Command` prefix of `pwsh` and `Invoke-Expression`, "
             "fullmatched against one switch word past an anchored `_PS_CARRIER_RE` "
             "head (DEF-1131).",
+        "_bash_patterns._POSIX_CLI_C_CLUSTER_RE":
+            "FLAG -- a POSIX shell's `c` cluster of either sign (`+c`, `-cx`), "
+            "fullmatched against one argv word of a shell an anchored "
+            "`_PS_START_PROCESS_OPENER_RE` match starts (DEF-3074).",
         # ── DEF-3068: whether a `-c` program an anchored
         # `_SHELL_DASH_C_RE` match read is read in place by the outer scan ──
         "_bash_patterns._EXEC_QUOTE_AT_WORD_RE":
