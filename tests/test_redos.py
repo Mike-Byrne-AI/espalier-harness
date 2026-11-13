@@ -850,6 +850,8 @@ _PS_VERB_EXTRACTION_REGEXES = [
     # and the run gives it back one token at a time -- one pass (review)
     ("ps_bash_dash_lc_cluster", _PS_BASH_DASH_C_RE, "bash -lc"),
     ("ps_bash_cluster_flood", _PS_BASH_DASH_C_RE, "-lc"),
+    ("ps_bash_plus_cluster_flood", _PS_BASH_DASH_C_RE, "+lc"),
+    ("ps_bash_plus_c_head", _PS_BASH_DASH_C_RE, "bash +c"),
     ("ps_bash_exe_prefix", _PS_BASH_DASH_C_RE, "& 'C:\\a\\b\\bash.exe' -c"),
     ("ps_dotnet_file", _PS_DOTNET_FILE_RE, "[IO.File]::WriteAllText("),
     ("ps_item_property_assign", _PS_ITEM_PROPERTY_ASSIGN_RE, "(Get-Item x"),
@@ -969,6 +971,9 @@ _C52_BASH_ROWS = [
     ("shell_dash_c_switches", _bash_patterns._SHELL_DASH_C_RE, "bash --norc -x"),
     ("shell_dash_lc_cluster", _bash_patterns._SHELL_DASH_C_RE, "bash -lc"),
     ("shell_cluster_flood", _bash_patterns._SHELL_DASH_C_RE, "-lc"),
+    # DEF-3074: the cluster on the `+` sign, which the run's `+` switch also reads
+    ("shell_plus_cluster_flood", _bash_patterns._SHELL_DASH_C_RE, "+lc"),
+    ("shell_plus_c_head", _bash_patterns._SHELL_DASH_C_RE, "bash +c"),
     # the review batch: a long option in the run, `c` first in the cluster,
     # and the git clean arm on its repeated head
     ("shell_dash_c_long_option", _bash_patterns._SHELL_DASH_C_RE, "bash --norc"),
@@ -3159,6 +3164,12 @@ def test_ps_switch_value_run_linear_on_dash_bearing_values(label, seed):
     ("plus-switch-values-then-open-program", "+O extglob ", "-c 'x"),
     ("plus-and-minus-alternating", "+x -x ", "-c 'x"),
     ("cluster-and-plus-alternating", "-c +e ", "'x"),
+    # DEF-3074: the cluster opens on either sign, so a `+` cluster holding
+    # `c` is refused by the run after it as a `-` one is; a refusal left on
+    # `-` alone gives these the 4 to 11 s the rows above guard against
+    ("plus-c-clusters-then-open-program", "+c ", "'x"),
+    ("plus-lc-clusters-then-open-program", "+lc ", "'x"),
+    ("plus-and-minus-cluster-alternating", "+c -c ", "'x"),
     # DEF-3072's review batch: the pipe run's bare `--`, which only a bare
     # `--` opens (a switch refuses it), its argument words after it, and a
     # bare `+`, which a `+` switch's body never begins

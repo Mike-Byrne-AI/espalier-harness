@@ -1635,7 +1635,8 @@ _FETCH_EXEC_PROCSUB_RE = re.compile(
 # `eval "$(curl ...)"`, the backtick spelling of the same: the fetch's OUTPUT
 # becomes the program. A shell's opener is the `-c` reader's own (DEF-3072):
 # the shared switch run before the cluster (`bash -x -c`, `bash +x -c`), the
-# cluster with its `c` anywhere (`-lc`, `-cx`), and the run after it (`bash -c
+# cluster on either sign with its `c` anywhere (`-lc`, `-cx`, `+c`: DEF-3074),
+# and the run after it (`bash -c
 # -- "$(...)"`), where the bare `-[A-Za-z]*c\b` read the cluster alone and drew
 # no nudge behind any switch. It inherits the wall's limits with the run: a
 # switch value that is a shell's path, or holds `~` or `:` (`--rcfile ~/.r`),
