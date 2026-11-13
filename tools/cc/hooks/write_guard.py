@@ -538,6 +538,26 @@ _aliases_protected_inode = _protected_zones.aliases_protected_inode
 # that and tests/test_redos.py reddened on it (two derived instances). The
 # `export|declare` clause below is safe because those verbs are NOT in
 # `_CMD_POS_WRAP_RUN`'s roster, so it cannot re-consume what `_CMD_POS` consumed.
+#: The harness variables a hook reads when it starts, which the session must
+#: not set for itself: the maintenance switch, the stop gate's mode, and the
+#: command its test gate runs as the suite. An assignment made inside the
+#: session reaches no hook already running, and one handed to a nested
+#: `claude` starts that session with the gate it names already loosened, so
+#: every record below (the Bash prefix, the three PowerShell arms, cmd's `set`)
+#: refuses each name the same way. The stop gate's two names are literals: the
+#: zero-cross-import rule keeps `stop_gate.STOP_GATE_MODE_ENV` out of reach,
+#: and reading `_hook_utils.STOP_GATE_TEST_CMD_ENV` here would add a name to
+#: this guard's start floor, which a kept older helper then refuses every call
+#: for; tests/test_hook_constant_parity.py pins both to their constants. The
+#: names are joined longest first, so no shorter name that opens a longer one
+#: is tried ahead of it.
+_HARNESS_ENV_NAMES: tuple[str, ...] = (
+    _maintenance_mode.ENV_VAR,
+    "ESPALIER_STOP_GATE",
+    "ESPALIER_STOP_GATE_TEST_CMD",
+)
+_HARNESS_ENV_ALTERNATION = "|".join(
+    re.escape(name) for name in sorted(_HARNESS_ENV_NAMES, key=len, reverse=True))
 _HARNESS_ENV_PREFIX_RE: re.Pattern[str]
 
 
@@ -547,7 +567,7 @@ def _build_the_harness_env_prefix() -> None:
     _HARNESS_ENV_PREFIX_RE = re.compile(
         _bash_patterns._CMD_POS_NO_VERB
         + r"(?:(?:export|declare)(?:[ \t]+-[^\s;|&]+)*[ \t]+)?"
-        + rf"(?:{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE)[ \t]*="
+        + rf"(?:{_HARNESS_ENV_ALTERNATION})[ \t]*="
     )
 
 # ⚠ POLARITY. The deny above teaches a mental model -- "an inline assignment
@@ -1053,11 +1073,11 @@ def _build_the_ps_harness_env_prefix() -> None:
         r"(?:"
         r"(?P<envcolon>"
         + _bash_patterns._PS_CMD_POS
-        + rf"\$env:(?:{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE)\s*=)"
+        + rf"\$env:(?:{_HARNESS_ENV_ALTERNATION})\s*=)"
         r"|Set-Item\s+(?:-Path\s+)?[\"']?Env:[\\/]?"
-        rf"(?:{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE)\b"
+        rf"(?:{_HARNESS_ENV_ALTERNATION})\b"
         r"|SetEnvironmentVariable\(\s*[\"']"
-        rf"(?:{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE)[\"']"
+        rf"(?:{_HARNESS_ENV_ALTERNATION})[\"']"
         r")",
         re.IGNORECASE,
     )
@@ -1190,7 +1210,7 @@ def _ps_harness_env_prefix_is_benign(command: str) -> bool:
 # `/a` or `/p`, its quotes already removed by cmd's word split.
 _CMD_HARNESS_SET_RE = re.compile(
     r"(?:/[ap][ \t]+)?"
-    rf"(?:{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE)[ \t]*=",
+    rf"(?:{_HARNESS_ENV_ALTERNATION})[ \t]*=",
     re.IGNORECASE,
 )
 

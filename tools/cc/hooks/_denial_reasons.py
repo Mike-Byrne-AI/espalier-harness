@@ -669,9 +669,12 @@ GOVERNANCE_GATES_UNWIRED = (
 
 # Centralizing the harness-env-prefix deny message here brings it under the
 # tested operator-facing-template contract (test_template_contains_both_markers).
-# The env-var name pins to the SoT (_maintenance_mode.ENV_VAR); ESPALIER_STOP_GATE
-# stays a literal (its SoT is stop_gate.STOP_GATE_MODE_ENV, not importable here
-# under the zero-cross-import rule).
+# The names are write_guard._HARNESS_ENV_NAMES, each refused the same way, and
+# tests/test_write_guard_env_prefix_polarity.py pins this list to that tuple in
+# both directions. The maintenance name pins to its SoT (_maintenance_mode.ENV_VAR);
+# the stop gate's two stay literals (their SoTs, stop_gate.STOP_GATE_MODE_ENV and
+# _hook_utils.STOP_GATE_TEST_CMD_ENV, are not read here: the first is not
+# importable under the zero-cross-import rule).
 # Fires ONLY on an assignment that invokes nothing -- the form that genuinely
 # cannot work. `VAR=1 <cmd>` is ALLOWED (the variable does reach <cmd>), so the
 # message must not tell the operator to avoid it: the previous wording forbade
@@ -679,14 +682,15 @@ GOVERNANCE_GATES_UNWIRED = (
 # the remedy contradicted the prohibition and the rule denied the command it
 # told you to run. Name the narrow thing that is actually refused.
 HARNESS_ENV_PREFIX_INLINE = (
-    f"This harness env var ({_maintenance_mode.ENV_VAR}, ESPALIER_STOP_GATE) "
+    f"This harness env var ({_maintenance_mode.ENV_VAR}, ESPALIER_STOP_GATE, "
+    "ESPALIER_STOP_GATE_TEST_CMD) "
     "assignment is blocked because it reaches nothing useful: each hook process "
     "reads these when it starts, so an assignment that runs no command changes "
     "nothing, and it can never reach the hooks of the session you are already "
     "in. Launching `claude` with one is blocked for a different and stronger "
-    "reason -- it starts a NESTED session with the protected-zone check already "
-    "bypassed, so this raises the cost of spawning an agent that skips the "
-    "guard. Like the rest of this layer it is friction, not a sandbox: "
+    "reason -- it starts a NESTED session with the gate that variable names "
+    "already loosened (the protected-zone check, or the Stop hook's test gate), "
+    "so this raises the cost of spawning an agent that skips a gate. Like the rest of this layer it is friction, not a sandbox: "
     "obfuscated spellings stay out of scope (docs/SHARP_EDGES.md)."
     "\n  Don't: assign one on its own -- "
     f"`{_maintenance_mode.ENV_VAR}=1`, `export {_maintenance_mode.ENV_VAR}=1`, "

@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import re
 
 import pytest
 
@@ -69,6 +70,18 @@ from tools.cc.hooks import write_guard as wg
 from tools.cc.hooks._maintenance_mode import ENV_VAR
 
 STOP = "ESPALIER_STOP_GATE"
+
+#: Every name the guard's harness-variable roster holds, read from the guard and
+#: never retyped. Each population below is written with the maintenance switch's
+#: spelling and runs once per name, that spelling swapped for the name (`_as`):
+#: the guard refuses an in-session assignment of each the same way, so a name
+#: whose deny and allow cases split from the others' is the defect.
+ROSTER = wg._HARNESS_ENV_NAMES
+
+
+def _as(name: str, command: str) -> str:
+    """``command`` with the maintenance switch's spelling swapped for ``name``."""
+    return command.replace(ENV_VAR, name)
 
 
 def _denies(fn, command: str) -> bool:
@@ -110,8 +123,15 @@ def _denies(fn, command: str) -> bool:
     # one word, and the invocation after it is read (the shared value grammar)
     f"{ENV_VAR}=1 MSG='a b' pytest -q",
     f"{ENV_VAR}='1' pytest -q",
+    # The stop gate's own maintenance loop, and a test command's natural value: a
+    # quoted value holding a blank is one word, and the command after it is read.
+    f"{ENV_VAR}=1 python3 tools/cc/hooks/stop_gate.py",
+    f"{ENV_VAR}='pytest -q tests' python3 tools/cc/hooks/stop_gate.py",
+    f'{ENV_VAR}="npm test" git status',
 ])
-def test_bash_env_prefix_on_a_real_invocation_is_allowed(command):
+@pytest.mark.parametrize("name", ROSTER)
+def test_bash_env_prefix_on_a_real_invocation_is_allowed(name, command):
+    command = _as(name, command)
     assert not _denies(wg.check_bash_dangerous_patterns, command), (
         f"{command!r} passes the variable to the invoked process — denying it "
         f"refuses a form that works, and blocks the maintenance loop"
@@ -181,8 +201,15 @@ def test_bash_env_prefix_on_a_real_invocation_is_allowed(command):
     # at its first blank, and read either as an invocation (allowed, inert)
     f"{ENV_VAR}=1 X=1; pytest",
     f"{ENV_VAR}=1 MSG='a b'; pytest",
+    # an export handed to a shell before a launch, and a quoted value holding a
+    # blank before one (a test command's natural value)
+    f'bash -c "export {ENV_VAR}=1; claude -p x"',
+    f"{ENV_VAR}='npm test' claude -p x",
+    f'{ENV_VAR}="pytest -q" claude -p x',
 ])
-def test_bash_env_prefix_inert_or_nested_launch_still_denies(command):
+@pytest.mark.parametrize("name", ROSTER)
+def test_bash_env_prefix_inert_or_nested_launch_still_denies(name, command):
+    command = _as(name, command)
     assert _denies(wg.check_bash_dangerous_patterns, command), (
         f"{command!r} is either inert or a nested-session launch — the two forms "
         f"this record exists for. Losing the `claude` case reopens a real bypass "
@@ -195,8 +222,9 @@ def test_bash_env_prefix_inert_or_nested_launch_still_denies(command):
     f"git commit -m 'document {ENV_VAR}=1 usage'",
     "FOO=1 pytest -q",
 ])
-def test_bash_prose_and_unrelated_vars_are_allowed(command):
-    assert not _denies(wg.check_bash_dangerous_patterns, command)
+@pytest.mark.parametrize("name", ROSTER)
+def test_bash_prose_and_unrelated_vars_are_allowed(name, command):
+    assert not _denies(wg.check_bash_dangerous_patterns, _as(name, command))
 
 
 # ── PowerShell ──────────────────────────────────────────────────────────────
@@ -204,9 +232,11 @@ def test_bash_prose_and_unrelated_vars_are_allowed(command):
 @pytest.mark.parametrize("command", [
     f"$env:{ENV_VAR}='1'; pytest -q",
     "$env:FOO=1; pytest",
+    f"$env:{ENV_VAR}='npm test'; pytest -q",
 ])
-def test_powershell_env_prefix_on_a_real_invocation_is_allowed(command):
-    assert not _denies(wg.check_powershell, command)
+@pytest.mark.parametrize("name", ROSTER)
+def test_powershell_env_prefix_on_a_real_invocation_is_allowed(name, command):
+    assert not _denies(wg.check_powershell, _as(name, command))
 
 
 @pytest.mark.parametrize("command", [
@@ -238,9 +268,14 @@ def test_powershell_env_prefix_on_a_real_invocation_is_allowed(command):
     # contains a `;`. This matches HEAD for these arms (no regression), and the
     # idiomatic `$env:` form above is carved out.
     f"Set-Item Env:\\{ENV_VAR} 1; pytest",
+    # the cmdlet's -Path form, the .NET setter, and a Windows test command's value
+    f"Set-Item -Path Env:{ENV_VAR} -Value 1",
+    f"[Environment]::SetEnvironmentVariable('{ENV_VAR}', '1')",
+    f"$env:{ENV_VAR}='npm.cmd test'",
 ])
-def test_powershell_env_prefix_inert_or_nested_launch_still_denies(command):
-    assert _denies(wg.check_powershell, command)
+@pytest.mark.parametrize("name", ROSTER)
+def test_powershell_env_prefix_inert_or_nested_launch_still_denies(name, command):
+    assert _denies(wg.check_powershell, _as(name, command))
 
 
 # ── cmd.exe `set` (DEF-1070) ────────────────────────────────────────────────
@@ -359,8 +394,9 @@ def _dispatch(shell: str):
 
 
 @pytest.mark.parametrize("shell,command", _CMD_SET_REACH)
-def test_cmd_exe_set_then_claude_denies(shell, command):
-    assert _denies(_dispatch(shell), command)
+@pytest.mark.parametrize("name", ROSTER)
+def test_cmd_exe_set_then_claude_denies(name, shell, command):
+    assert _denies(_dispatch(shell), _as(name, command))
 
 
 @pytest.mark.parametrize("shell,command", [
@@ -415,8 +451,9 @@ def test_cmd_exe_set_then_claude_denies(shell, command):
     # its plain list is the deny row in `_CMD_SET_REACH` above
     ("ps", f"Start-Process cmd -ArgumentList $('/c set {ENV_VAR}=1 && claude -p x')"),
 ])
-def test_cmd_exe_set_before_a_real_invocation_is_allowed(shell, command):
-    assert not _denies(_dispatch(shell), command)
+@pytest.mark.parametrize("name", ROSTER)
+def test_cmd_exe_set_before_a_real_invocation_is_allowed(name, shell, command):
+    assert not _denies(_dispatch(shell), _as(name, command))
 
 
 @pytest.mark.parametrize("suffix", ["first'", "; then pytest'"])
@@ -487,7 +524,31 @@ def test_export_and_declare_forms_are_matched():
         f"export {ENV_VAR}=1; claude -p x",
         f"declare -x {ENV_VAR}=1; claude -p x",
     ):
-        assert _denies(wg.check_bash_dangerous_patterns, command), command
+        for name in ROSTER:
+            assert _denies(wg.check_bash_dangerous_patterns, _as(name, command)), _as(name, command)
+
+
+def test_the_deny_message_names_every_roster_name_and_no_other():
+    """The deny text lists the variables it is about, a list kept by hand in
+    `_denial_reasons` (it cannot import the guard), so it is pinned to the
+    roster both ways: a name the roster gained and the text did not, or a name
+    the text keeps after the roster dropped it, reds here. Read from the
+    module object the guard itself holds. Dies to: a name added to
+    `write_guard._HARNESS_ENV_NAMES` with the message left as it was."""
+    said = re.search(r"This harness env var \(([^)]*)\)", wg._denial_reasons.HARNESS_ENV_PREFIX_INLINE)
+    assert said, wg._denial_reasons.HARNESS_ENV_PREFIX_INLINE[:200]
+    assert sorted(said.group(1).split(", ")) == sorted(ROSTER)
+
+
+def test_the_roster_holds_each_name_once_and_the_stop_gates_test_command():
+    """The roster is the guard's one list of the variables it refuses: each
+    name once, the test-command variable among them (the variable whose
+    in-session assignment the stop gate's own block text tells the agent not
+    to make). Its two stop-gate names are pinned to the constants their
+    reading hooks hold in tests/test_hook_constant_parity.py. Dies to: the
+    name dropped, or a duplicate."""
+    assert len(set(ROSTER)) == len(ROSTER), ROSTER
+    assert {ENV_VAR, STOP, f"{STOP}_TEST_CMD"} <= set(ROSTER), ROSTER
 
 
 # ── The command-position anchor on the assignment record ────────────────────

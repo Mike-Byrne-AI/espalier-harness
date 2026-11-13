@@ -361,9 +361,13 @@ class TestWriteGuard:
 class TestWriteGuardBashPatterns:
     """TP-55 BC-028: Bash tool inline-assignment of harness env vars
     is denied so operators learn the parent-shell discipline. The
-    single `_HARNESS_ENV_PREFIX_RE` covers BOTH `ESPALIER_MAINTENANCE_MODE`
-    and `ESPALIER_STOP_GATE` — the running-hook-inheritance contract is
-    identical for both vars, so distinguishing them is incoherent.
+    single `_HARNESS_ENV_PREFIX_RE` covers every name in
+    `write_guard._HARNESS_ENV_NAMES` -- `ESPALIER_MAINTENANCE_MODE`,
+    `ESPALIER_STOP_GATE` and `ESPALIER_STOP_GATE_TEST_CMD` -- because the
+    running-hook-inheritance contract is identical for all three, so
+    distinguishing them is incoherent (the test command was the one the
+    roster left out until 2026-11-13, while the stop gate's own block text
+    told the agent not to set it from the session).
     """
 
     def test_maintenance_env_prefix_denied(self, tmp_path):
@@ -414,7 +418,9 @@ class TestWriteGuardBashPatterns:
         """BC-028b: ESPALIER_STOP_GATE inline assignment is also denied.
 
         Reasoning: the parent-shell-before-launch contract applies
-        identically to STOP_GATE; the single regex covers both vars.
+        identically to STOP_GATE; the single regex covers all three
+        roster names (tests/test_write_guard_env_prefix_polarity.py runs
+        each population over each).
         """
         result = run_hook(
             "write_guard.py",

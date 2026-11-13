@@ -1985,6 +1985,16 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "`endswith('-prefix')`) killed with 6 red, allow-arm rows among them. On its own this "
         "row is weak; it is kept because it names the intent at the definition site.",
     ),
+    # 8 row(s), shapes: for-assert, parametrize
+    "tests/test_write_guard_env_prefix_polarity.py": (
+        8, "21699b438aeab0f40a97b55bf4ab04716c24620ca8c59cb4fca6d28f126c2e0c",
+        "CORRECT_BY_REMEDY",
+        "NEW 2026-11-13 (the floor-roster lane): eight rows run this file's hand-written Bash, "
+        "PowerShell and cmd populations once per name in `write_guard._HARNESS_ENV_NAMES`, so a "
+        "name the guard adds is read by every population. A name dropped leaves with its rows, "
+        "and reds tests/test_hook_constant_parity.py:177 (the stop gate's two constants must be "
+        "literals in write_guard.py) and this file's :543 (the three names held by hand).",
+    ),
     "tests/test_write_guard_pattern_message_coupling.py": (
         6, "def930a6139b4dfa0f7b9d283d6415c07158b9eb7ed525d13943325fd73b87d5",
         "PRIOR_PASS_UNRECORDED",
