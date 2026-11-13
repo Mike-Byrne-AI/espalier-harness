@@ -14490,7 +14490,9 @@ def iter_cmd_programs(
     the reading stays one pass: the harness-variable check, whose variable a
     cmd started inside the program inherits, reads that one as a statement
     of the program. ``offset`` is where the program begins; offsets
-    ascend."""
+    ascend, and a program the delete reader reads twice (a later word
+    holding a cmd metacharacter: bare as cmd gets it, and quoted whole)
+    yields its offset twice."""
     if "cmd" not in scan.lower():
         return
     if len(raw) != len(scan):
@@ -14531,18 +14533,25 @@ def iter_cmd_programs(
         if not words:
             continue
         # what the outer shell hands cmd, rejoined as its command line: the
-        # first word is the program cmd strips its quotes from; a later word
-        # holding a blank is one quoted argument, and for the delete reader
-        # so is one holding any of cmd's own metacharacters: bare,
-        # `_cmd_statements` would split `R&D\\x.py` at the `&` (the
-        # quoted-operand cut, driven 2026-10-07). The harness-variable check
-        # (``to_statement_end``) quotes for a blank alone: Git Bash and
-        # Windows PowerShell 5.1 hand cmd a separator word bare (`cmd //c
-        # echo a \\& echo b` prints both lines, the code review, driven), and
-        # a split there reads toward the deny.
-        meta = " \t" if to_statement_end else " \t&|()<>^;,"
+        # first word is the program cmd strips its quotes from, and a later
+        # word holding a blank is one quoted argument. Any other later word
+        # goes bare: Git Bash and Windows PowerShell 5.1 hand cmd a word
+        # without a blank as typed, so cmd splits a separator word and
+        # `R&D` alike at the `&` (driven on both, echo only:
+        # `tests/test_write_guard.py::TestCmdReceivesAWordWithoutABlankBare`).
+        # For the delete reader a word holding one of cmd's metacharacters
+        # is read a second time, quoted whole, and a delete is judged on
+        # both readings: a root named `R&D` stays one root (the coverage
+        # contract; the quoted-operand cut, driven 2026-10-07), the
+        # friction direction where cmd splits it. The harness-variable check
+        # (``to_statement_end``) reads cmd's own reading alone.
+        rest = words[1:]
         yield start, _cmd_line_unquoted(" ".join(
-            [words[0]] + ['"' + w + '"' if any(ch in w for ch in meta) else w for w in words[1:]]))
+            [words[0]] + ['"' + w + '"' if (" " in w or "\t" in w) else w for w in rest]))
+        if not to_statement_end and any(ch in w for w in rest for ch in "&|()<>^;,"):
+            meta = " \t&|()<>^;,"
+            yield start, _cmd_line_unquoted(" ".join(
+                [words[0]] + ['"' + w + '"' if any(ch in w for ch in meta) else w for w in rest]))
 
 
 def iter_cmd_remove_targets(command: str) -> Iterator[list[str]]:
@@ -14628,8 +14637,12 @@ def _ps_unforced_recursive_removes(text: str, raw: str | None = None) -> Iterato
                 if part:
                     parts.append(part)
         found.append((m.start("args"), parts, False))
+    # cmd's program is read from the raw twin: the masker blanks a
+    # separator inside a quoted word (`'&'` scans as `' '`), and PowerShell
+    # hands cmd that word bare, so cmd runs the statement after it
+    cmd_raw = raw if raw is not None and len(raw) == len(text) else text
     found.extend((at, targets, True) for at, targets in
-                 iter_cmd_recursive_removes(text, text, bash=False))
+                 iter_cmd_recursive_removes(cmd_raw, text, bash=False))
     found.sort(key=lambda t: t[0])
     yield from found
 

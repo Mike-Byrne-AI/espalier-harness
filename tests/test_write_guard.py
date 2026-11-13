@@ -12608,6 +12608,152 @@ class TestTheCmdDeleteReaderReadsEachBranch:
         assert want in _bash_patterns_module().iter_removed_or_relocated_operands(command)
 
 
+#: (id, program, a stdout line it prints, a text no stdout line holds) for
+#: DEF-2080's oracle: what Git Bash and Windows PowerShell 5.1 hand cmd for a
+#: word holding one of cmd's metacharacters. Echo only. A line ``RAN`` alone
+#: is cmd running the statement after a separator word; ``R`` without
+#: ``R&D`` is cmd splitting the word at its `&`.
+_CMD_WORD_ORACLE_BASH = [
+    ("separator-word", r"cmd //c echo a \& echo RAN", "RAN", None),
+    ("glued-separator", r"cmd //c echo x\&echo RAN", "RAN", None),
+    ("and-word", r"cmd //c echo a \&\& echo RAN", "RAN", None),
+    ("metacharacter-word", r"cmd //c echo R\&D", "R", "R&D"),
+    # whole: a word holding a blank, a caret escape, a quote inside the program
+    ("blank-holding-word", r"cmd //c echo 'C:\x y\R&D'", r'"C:\x y\R&D"', None),
+    ("caret-escape", r"cmd //c echo 'C:\x\R^&D'", r"C:\x\R&D", None),
+    ("quoted-in-program", r"""cmd //c 'echo "C:\x\R&D"'""", r'\"C:\x\R&D\"', None),
+]
+_CMD_WORD_ORACLE_PS = [
+    ("separator-word", "cmd /c echo a '&' echo RAN", "RAN", None),
+    ("glued-separator", "cmd /c echo 'x&echo' RAN", "RAN", None),
+    ("double-quoted-word", 'cmd /c echo "R&D"', "R", "R&D"),
+    ("blank-holding-word", r"cmd /c echo 'C:\x y\R&D'", r'"C:\x y\R&D"', None),
+    ("quoted-in-program", r"""cmd /c 'echo "C:\x\R&D"'""", r'"C:\x\R&D"', None),
+    ("quote-holding-word", r"""cmd /c echo '"C:\x\R&D"'""", r'"C:\x\R&D"', None),
+]
+
+#: (tool, command, verdict) rows for DEF-2080: a separator word, bare or
+#: glued, then a delete of the checkout or the home directory in the program
+#: cmd runs. Each is a fixture handed to the guard as text, never run.
+_CMD_SEPARATOR_WORD_ROWS = [
+    ("Bash", "cmd //c echo x \\& rd /s /q .", "wall"),
+    ("Bash", "cmd //c echo x\\&rd /s /q .", "wall"),
+    ("Bash", "cmd //c echo x \\&\\& rd /s /q .", "wall"),
+    ("Bash", "cmd.exe //c echo x \\& rd /s /q %USERPROFILE%", "wall"),
+    ("PowerShell", "cmd /c echo x '&' rd /s /q .", "wall"),
+    ("PowerShell", 'cmd /c echo x "&" rd /s /q .', "wall"),
+    ("PowerShell", "cmd /c echo 'x&rd' /s /q .", "wall"),
+    ("PowerShell", "cmd /c echo x '&&' rd /s /q .", "wall"),
+]
+
+
+class TestCmdReceivesAWordWithoutABlankBare:
+    """DEF-2080: Git Bash and Windows PowerShell 5.1 hand cmd a word without a
+    blank as typed, so cmd splits a separator word and `R&D` alike at the
+    `&`, and runs the statement after it. The delete reader
+    (`_bash_patterns.iter_cmd_programs`) quoted every later word holding a
+    cmd metacharacter, and the PowerShell leg
+    (`_bash_patterns._ps_unforced_recursive_removes`) read cmd's program from
+    the masked scan, where a quoted `'&'` reads `' '`: a delete of the
+    checkout after a bare `&` word was a plain allow on both tools. The
+    reader now reads cmd's own reading and, for a word holding a
+    metacharacter, the quoted-whole reading beside it, so a root named
+    `R&D` stays one root (the coverage contract's metacharacter-root
+    clause, the friction direction where cmd splits it)."""
+
+    @staticmethod
+    def _lines(proc: subprocess.CompletedProcess) -> list[str]:
+        return [line.strip() for line in proc.stdout.splitlines()]
+
+    @staticmethod
+    def _shell_env() -> dict[str, str]:
+        # cmd is found in System32 and nothing named `D` is on the path, so
+        # the split word's tail runs nothing
+        system = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32"
+        env = os.environ.copy()
+        env["PATH"] = os.pathsep.join([str(system), str(system / "WindowsPowerShell" / "v1.0")])
+        return env
+
+    @pytest.mark.parametrize("row", _CMD_WORD_ORACLE_BASH, ids=[r[0] for r in _CMD_WORD_ORACLE_BASH])
+    def test_git_bash_hands_cmd_the_word_as_the_row_says(self, row, tmp_path):
+        if os.name != "nt":
+            pytest.skip("cmd is Windows's")
+        from espalier._venv import git_bash_path
+        bash = git_bash_path()
+        if bash is None:
+            pytest.skip("no Git Bash on this host")
+        _id, program, line, absent = row
+        proc = subprocess.run([bash], input=program, cwd=str(tmp_path), capture_output=True,
+                              text=True, encoding="utf-8", errors="replace",
+                              timeout=scaled(30), env=self._shell_env())
+        lines = self._lines(proc)
+        assert line in lines, (program, lines, proc.stderr)
+        assert absent is None or not any(absent in s for s in lines), (program, lines)
+
+    @pytest.mark.parametrize("row", _CMD_WORD_ORACLE_PS, ids=[r[0] for r in _CMD_WORD_ORACLE_PS])
+    def test_powershell_51_hands_cmd_the_word_as_the_row_says(self, row, tmp_path):
+        if os.name != "nt":
+            pytest.skip("cmd is Windows's")
+        import base64
+        import shutil
+        shell = shutil.which("powershell")
+        if shell is None:
+            pytest.skip("no Windows PowerShell on this host")
+        _id, program, line, absent = row
+        encoded = base64.b64encode(program.encode("utf-16-le")).decode("ascii")
+        proc = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+                              cwd=str(tmp_path), capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=scaled(30), env=self._shell_env())
+        lines = self._lines(proc)
+        assert line in lines, (program, lines, proc.stderr)
+        assert absent is None or not any(absent in s for s in lines), (program, lines)
+
+    @pytest.mark.parametrize("tool, cmd, expect", _CMD_SEPARATOR_WORD_ROWS)
+    def test_the_delete_after_a_separator_word_walls(self, tmp_path, tool, cmd, expect):
+        assert _delete_verdict(run_guard_from(tool, cmd, tmp_path, None)) == expect, cmd
+
+    @pytest.mark.parametrize("tool, plain, spelled", [
+        ("Bash", "cmd //c rd /s /q build", "cmd //c echo x \\& rd /s /q build"),
+        ("PowerShell", "cmd /c rd /s /q build", "cmd /c echo x '&' rd /s /q build"),
+        ("Bash", "cmd //c echo a=1", "cmd //c echo a=1\\&b=2"),
+        ("PowerShell", "cmd /c echo a=1", "cmd /c echo 'a=1&b=2'"),
+    ], ids=["bash-narrow-delete", "ps-narrow-delete", "bash-no-delete", "ps-no-delete"])
+    def test_a_separator_word_adds_no_verdict_of_its_own(self, tmp_path, tool, plain, spelled):
+        """The friction side: behind a separator word a narrow delete gets the
+        plain spelling's verdict, and a word holding a `&` with no delete
+        after it is allowed."""
+        want = _delete_verdict(run_guard_from(tool, plain, tmp_path, None))
+        assert _delete_verdict(run_guard_from(tool, spelled, tmp_path, None)) == want, spelled
+
+    def test_a_metacharacter_word_is_read_bare_and_quoted_whole(self):
+        """The reader's two readings, at the reader: cmd's own (bare), and for
+        the delete reader the quoted-whole one beside it; the harness-variable
+        check (``to_statement_end``) reads cmd's alone, and a word holding a
+        blank alone is read once, quoted."""
+        bp = _bash_patterns_module()
+
+        def programs(command: str, **kw: bool) -> list[str]:
+            raw, scan = bp._bash_scan_pair(command)
+            return [p for _at, p in bp.iter_cmd_programs(raw, scan, bash=True, **kw)]
+
+        assert programs("cmd //c rd /s /q C:/t/R\\&D") == [
+            "rd /s /q C:/t/R&D", 'rd /s /q "C:/t/R&D"']
+        assert programs("cmd //c rd /s /q C:/t/R\\&D", to_statement_end=True) == [
+            "rd /s /q C:/t/R&D"]
+        assert programs("cmd //c rd /s /q 'my dir'") == ['rd /s /q "my dir"']
+
+    def test_the_powershell_leg_reads_cmds_program_from_the_raw_twin(self):
+        """The masker blanks a separator inside a quoted word; the unforced
+        reader's cmd part reads the raw twin, so the statement after it is
+        read (the second site of this row)."""
+        bp = _bash_patterns_module()
+        command = "cmd /c echo x '&' rd /s /q build"
+        raw, scan = bp.powershell_scan_pair(command)
+        assert scan != raw                # the masker did blank the separator
+        got = [t for _at, t, another in bp._ps_unforced_recursive_removes(scan, raw=raw) if another]
+        assert ["build"] in got, got
+
+
 _PS_LAUNCH_FORMS = [f for f in _LAUNCH_FORMS if f[1] == "PowerShell"]
 
 
