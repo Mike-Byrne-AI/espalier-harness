@@ -1108,9 +1108,8 @@ first; the dangerous-command catch is a secondary slip-catcher):
    harness infrastructure path are denied -- a write into it, a delete of
    it, a move of it out of the zone, a permission change on it, and, for a
    delete or a move, of a directory that encloses it -- by the verb rosters
-   and the declared limits pinned in the guard's remove/relocate test class,
-   `tests/test_write_guard.py::TestRemovedOrRelocatedOperandIsAMutation::test_zone_row_under_the_plain_root`
-   and
+   and the declared limits pinned in the guard's remove/relocate test class
+   (its zone row under the plain root among them),
    `tests/test_write_guard.py::TestRemovedOrRelocatedOperandIsAMutation::test_every_consumed_arm_has_a_deny_row_and_every_row_names_a_consumed_arm`
    (the operand a verb removes or relocates is classified beside the one it
    writes, on both shells, since 2026-09-14):
@@ -1689,7 +1688,7 @@ it is still read as a statement boundary -- so a message variable DECLARED
 with one of those, quoting a delete with a separator in it, is refused where
 the same message stored by a bare assignment is data. Not a simple oversight:
 under an array or an integer attribute (`-a`, `-i`) bash evaluates such a
-value and a substitution inside it runs (measured on bash 3.2, 2026-09-19), so
+value and a substitution inside it runs (on bash 3.2, driven 2026-09-19), so
 the relief a bare assignment gets cannot be handed to these builtins by name
 alone. A name given an evaluating attribute EARLIER in the command has the
 same effect on a later bare assignment to it, and is relieved today: the
@@ -1817,7 +1816,9 @@ as `-lc`) by the Bash ones -- one level down, and a program that re-enters
 the first shell one level further, no more. Switches and a `--` between
 the `-c` and its program (`bash -c -- '...'`, `bash -c -x '...'`), and a
 shell's `+` options on either side of the `-c` (`bash +x -c '...'`, `bash -c
-+e '...'`, `bash +O extglob -c '...'`), are read on both tools. A redirect
++e '...'`, `bash +O extglob -c '...'`), are read on both tools, and so is
+the cluster on the `+` sign, which runs its program as `-c` does (`bash +c
+'...'`, `bash +xc '...'`). A redirect
 word among them (`bash 2>/dev/null -c '...'`, `bash -lc 2>&1 '...'`,
 `python3 2>&1 -c "..."`) is read on the Bash tool only: the PowerShell
 tool's openers take none, since PowerShell's redirect set is its own
@@ -1875,7 +1876,10 @@ on the Bash tool (`echo '...' | pwsh -Command -`, `cat <<'EOF' | pwsh
 -Command -`) is read as the stage before the pipe, like an interpreter's;
 `-File <script>` there means the pipe is data. `-EncodedCommand`, `-File
 <script>`, a program held in an unbound variable (a literal binding earlier in the command
-is inlined first), `wsl bash -c` and a relative write after a `cd` inside a
+is inlined first), `wsl bash -c`, a switch value holding `~` or `:` before
+the `-c` on the Bash tool (`bash --rcfile ~/.r -c '...'`: only `--rcfile`
+and `--init-file` take one, and bash applies neither under a plain `-c`), a
+relative write after a `cd` inside a
 POSIX shell program anywhere but behind a bare `-c` on the Bash tool (`bash
 -lc 'cd tools/cc/hooks && echo x > x.py'`, a here-string, the PowerShell
 tool's `bash -c`: a zone write, which the coverage contract hands to the
@@ -1991,7 +1995,8 @@ before the payload, which then stays inert -- a declared limit, pinned by
 `tests/test_write_guard_command_position.py::TestPowerShellReparsingWrapperCarriesASwitchValue::test_the_declared_limits_are_pinned`
 -- unless the argument list hands the started shell its program: a
 `Start-Process` of powershell or pwsh with `-Command` in the list, or of
-bash or sh with `-c`, as one string or the array spelling
+bash or sh with `-c` (a cluster of either sign holding it, `-lc`, `+c`,
+`-cx`), as one string or the array spelling
 (`-ArgumentList "-Command","..."`), is read for that program, which meets
 every tier its direct form meets. powershell.exe's implicit
 command (a program with no `-Command` before it) and a list given before
@@ -2044,6 +2049,23 @@ is read for its `cat` alone, whatever its message names. An operand a nested sub
 another is read as its escapes, and a case arm's unbalanced `)` closes the
 body there: declared false allows, pinned by
 `tests/test_write_guard.py::TestSecretPathAccess::test_a_substitution_body_the_leg_does_not_read_is_a_declared_limit`.
+A Bash statement ends at `;`, a newline, `&&`, `||`, a pipe and a lone `&`,
+which backgrounds the step before it and runs the next one at once
+(`sleep 1 & cat .env` is refused; a `&` after `>` or `<`, or before `>`, is
+a redirect, as in `2>&1` and `&> out`). A heredoc's body is data to bash's
+own delimiter line (the delimiter alone, its tabs stripped under `<<-`; two
+operators on one line take their bodies one after the other), or to the end
+when none closes it, and the lines after that delimiter are commands again,
+so a `cat .env` there is refused; a here-string (`<<<`) has no body. A
+statement of input redirects alone is read too, behind a wrapper as well:
+zsh, the Bash tool's shell on a macOS host, prints `< .env` and copies it in
+`< .env > out`, where bash runs nothing, `xargs < .env` echoes its words,
+and `exec 3< .env` opens it for the commands after it; an assignment beside
+the redirect runs nothing on either shell. A delimiter glued to its
+substitution's `)` (`EOF)`, which bash 3.2 reads as the end) and a delimiter
+word the operator reader does not take (`<<!`) each run the body to the
+end, so the lines after them are not read, as before this leg read past a
+body at all.
 The two rosters are pinned to
 each other class for class, and a program handed to the other shell
 (`powershell -Command "Get-Content .env"` on Bash, `sh -c 'cat .env'` on
@@ -2247,6 +2269,37 @@ spellings of them are work:
   reader unless a real session records the slip (the last bullet's rule). One
   level of a program handed to a shell as a quoted string (`bash -c '...'`,
   `pwsh -Command "..."`) is not this shape; it stays in the contract above.
+- **The PowerShell comment reader, by ruling (2026-11-12).** A `<#` block
+  comment is read where PowerShell opens one, a `<#` glued to the token
+  before it included where that token lets PowerShell open it (a variable in
+  an expression, a variable's member, a colon-bound switch, a string that
+  starts its token), and two unusual spellings are read as a comment
+  PowerShell does not open, so a statement inside it goes unread. Where
+  that glued reading and the plain token-start rule decide an opener
+  differently, every leg that reads the command is judged on both readings,
+  the speed bump and its recovery snapshot included, and the call is refused
+  where either refuses, so a misread glued opener costs friction, never a
+  statement the token-start rule reads. An opener
+  inside a braced variable name (`${<#}; ... #>`) is a declared
+  limit, pinned by
+  `tests/test_write_guard.py::TestAGluedCommentOpens::test_a_braced_names_opener_opens_a_comment_powershell_does_not`.
+  An opener after the stop-parsing token (`cmd /c --% echo <# & ... #>`),
+  whose line PowerShell hands the native program as typed, is a declared
+  limit, pinned by
+  `tests/test_write_guard.py::TestAGluedCommentOpens::test_an_opener_after_stop_parsing_opens_a_comment_powershell_does_not`.
+  The other way, a glued `<#` the reader cannot place goes unopened where
+  PowerShell opens it, so a read after it on that line is taken for an
+  argument and let through, a declared false allow: after a group or block
+  closed earlier in its statement (`if (1) { gc } $x<# c #>; ...`,
+  `(Get-Item a).Name<# c #>; ...`), a string's member (`'a'.Length<#`), a
+  here-string's close, a colon-bound string (`-a:'a'<#`), a drive-qualified
+  name (`$a:b:c<#`) or an escaped colon (``-a`:<#``), pinned by
+  `tests/test_write_guard.py::TestAGluedCommentOpens::test_the_residue_is_where_the_walk_and_powershell_still_differ`.
+  A run of blanks or comments thousands long costs the PowerShell readers
+  time that grows with its square, a declared limit under the timeout
+  sentence above: such a flood before a re-parsed string is refused, by the
+  wall or the time budget, pinned by
+  `tests/test_write_guard.py::TestABlockCommentIsOneBlank::test_a_comment_flood_before_a_carrier_is_refused`.
 - The protected-zone write is not one of the three jobs. Its path check lets an
   unresolvable operand through, and the after-check reports the write when it
   lands, for the zones it watches
@@ -2268,6 +2321,17 @@ spellings of them are work:
   when it records a slip seen in a real session (a transcript or an audit row
   names it). Otherwise it is recorded under the limits above with the contract
   as its reason, and no reader changes.
+- **A fourth basis: the anti-self-disable floor (ruled 2026-11-13).** The
+  guard's first job (section 4) keeps the session from switching its own
+  hooks off: a kill-switch setting, and an assignment of a variable the hooks
+  read when they start, made inside the session or handed to a nested
+  `claude`. It is none of the three jobs, and the contract above says nothing
+  of it either way. A report that the floor leaves out a setting or a
+  variable that turns a gate off is a defect on this basis; a spelling of one
+  it already reads is judged as the bullets above judge a spelling of the
+  three jobs. A protected-zone write, which section 4's headline also places
+  under the floor, is not on this basis: a report about one, or a spelling of
+  one, is judged as it was before this ruling.
 
 **Configuration:**
 
@@ -2645,7 +2709,7 @@ block, or `[reflect] clean -- 24 files, surface coherent` on a clean pass:
 The reflect findings are informational — they surface drift, they don't
 block work.
 
-**The plan-mode bridge (INV-8).** The same `*` matcher makes this the hook
+**The plan-mode bridge.** The same `*` matcher makes this the hook
 that sees an APPROVED `ExitPlanMode`: Claude Code fires PostToolUse for that
 tool only once the user approves the plan (a rejection fails the tool and
 reaches PostToolUseFailure, never this hook). On an approval the hook writes
@@ -3173,8 +3237,9 @@ contract; line numbers drift with surface edits, so none are pinned here.
 
 Matcher strings are sourced from `espalier.harness_config.CANONICAL_HOOK_WIRING`
 (engine-internal — it lives in the installed package, not in your tree).
-`tests/test_hook_matcher_precision.py::ALLOWED_STAR_HOOKS` (Espalier source repo)
-enumerates the hooks legitimately on `"*"`.
+Two hooks are on `"*"` by design, `write_guard.py` and `reflect_trigger.py`;
+Espalier's own test suite names them and fails when any other hook's matcher
+is widened to `"*"`.
 
 ### Events that do not support a matcher
 

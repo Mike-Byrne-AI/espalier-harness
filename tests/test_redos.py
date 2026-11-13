@@ -850,6 +850,8 @@ _PS_VERB_EXTRACTION_REGEXES = [
     # and the run gives it back one token at a time -- one pass (review)
     ("ps_bash_dash_lc_cluster", _PS_BASH_DASH_C_RE, "bash -lc"),
     ("ps_bash_cluster_flood", _PS_BASH_DASH_C_RE, "-lc"),
+    ("ps_bash_plus_c_head", _PS_BASH_DASH_C_RE, "bash +c"),
+    ("ps_bash_plus_lc_head", _PS_BASH_DASH_C_RE, "bash +lc"),
     ("ps_bash_exe_prefix", _PS_BASH_DASH_C_RE, "& 'C:\\a\\b\\bash.exe' -c"),
     ("ps_dotnet_file", _PS_DOTNET_FILE_RE, "[IO.File]::WriteAllText("),
     ("ps_item_property_assign", _PS_ITEM_PROPERTY_ASSIGN_RE, "(Get-Item x"),
@@ -969,6 +971,11 @@ _C52_BASH_ROWS = [
     ("shell_dash_c_switches", _bash_patterns._SHELL_DASH_C_RE, "bash --norc -x"),
     ("shell_dash_lc_cluster", _bash_patterns._SHELL_DASH_C_RE, "bash -lc"),
     ("shell_cluster_flood", _bash_patterns._SHELL_DASH_C_RE, "-lc"),
+    # DEF-3074: the cluster on the `+` sign, which the run's `+` switch also
+    # reads, on its repeated head (a flood behind ONE head is the switch-run
+    # rows' `plus-c-clusters-then-open-program`)
+    ("shell_plus_c_head", _bash_patterns._SHELL_DASH_C_RE, "bash +c"),
+    ("shell_plus_lc_head", _bash_patterns._SHELL_DASH_C_RE, "bash +lc"),
     # the review batch: a long option in the run, `c` first in the cluster,
     # and the git clean arm on its repeated head
     ("shell_dash_c_long_option", _bash_patterns._SHELL_DASH_C_RE, "bash --norc"),
@@ -3159,6 +3166,12 @@ def test_ps_switch_value_run_linear_on_dash_bearing_values(label, seed):
     ("plus-switch-values-then-open-program", "+O extglob ", "-c 'x"),
     ("plus-and-minus-alternating", "+x -x ", "-c 'x"),
     ("cluster-and-plus-alternating", "-c +e ", "'x"),
+    # DEF-3074: the cluster opens on either sign, so a `+` cluster holding
+    # `c` is refused by the run after it as a `-` one is; a refusal left on
+    # `-` alone gave these 7 to 11 s at 30 KB (mutant, driven by the code
+    # review), and they are milliseconds
+    ("plus-c-clusters-then-open-program", "+c ", "'x"),
+    ("plus-lc-clusters-then-open-program", "+lc ", "'x"),
     # DEF-3072's review batch: the pipe run's bare `--`, which only a bare
     # `--` opens (a switch refuses it), its argument words after it, and a
     # bare `+`, which a `+` switch's body never begins
@@ -6130,6 +6143,71 @@ def test_secret_leg_substitution_bodies_linear(label, payload):
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
     assert elapsed_ms < _CI_SAFE_BUDGET_MS, f"{label}: {elapsed_ms:.1f}ms"
+
+
+@pytest.mark.parametrize("label,payload", [
+    # DEF-4109: the walk reads each heredoc body bash reads and resumes past
+    # its delimiter, and the statement read meets every line after it and
+    # every statement after a lone `&`. Floods of terminated heredocs, of
+    # operators on one line, of one long body full of quotes and openers, of
+    # operators no body closes, of heredocs nested in substitutions (bare and
+    # in double quotes), of here-strings, lone `&` and lone redirects: the
+    # walk, the blanking, the statement read of the text and of every body
+    # (about 22 ms at most on the Air, 2026-11-13). The masker and the
+    # descent into each body are left out here; the whole leg on the
+    # commit idiom is the cell below.
+    ("lone_amp", "a& " * (_WORST_CASE_BODY_LEN // 3)),
+    ("terminated_heredocs", "cat <<A\nA\n" * (_WORST_CASE_BODY_LEN // 10)),
+    ("ops_on_one_line", "cat " + "<<A " * (_WORST_CASE_BODY_LEN // 8) + "\n" + "A\n" * (_WORST_CASE_BODY_LEN // 8)),
+    ("one_long_body", "cat <<'E'\n" + "it's `x` $(y)\n" * (_WORST_CASE_BODY_LEN // 15) + "E\ncat x"),
+    ("unterminated_ops", "cat <<A\n" * (_WORST_CASE_BODY_LEN // 8)),
+    ("nested_heredoc_subst", "x=$(cat <<E\n" * (_WORST_CASE_BODY_LEN // 12) + "E\n)" * (_WORST_CASE_BODY_LEN // 12)),
+    ("heredoc_in_quote", 'echo "$(cat <<E\n' * (_WORST_CASE_BODY_LEN // 16) + 'E\n)"' * (_WORST_CASE_BODY_LEN // 16)),
+    ("here_strings", "cat <<<x\n" * (_WORST_CASE_BODY_LEN // 9)),
+    ("lone_redirects", "< a " * (_WORST_CASE_BODY_LEN // 4)),
+])
+def test_secret_leg_heredoc_bodies_and_background_steps_linear(label, payload):
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    signal.signal(signal.SIGALRM, _alarm)
+    signal.setitimer(signal.ITIMER_REAL, _CI_SAFE_BUDGET_MS / 1000.0)
+    t = time.time()
+    try:
+        heredocs: list = []
+        bodies = write_guard._substitution_bodies(payload, heredocs=heredocs, source=payload)
+        text = write_guard._without_heredoc_bodies(payload, heredocs) if heredocs else payload
+        write_guard._secret_statement_reads(text)
+        for body in bodies:
+            write_guard._secret_statement_reads(body)
+        elapsed_ms = (time.time() - t) * 1000
+    except _Timeout:
+        pytest.fail(f"{label}: the secret leg's heredoc walk exceeded {_CI_SAFE_BUDGET_MS}ms")
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    assert elapsed_ms < _CI_SAFE_BUDGET_MS, f"{label}: {elapsed_ms:.1f}ms"
+
+
+def test_secret_leg_whole_on_a_long_commit_message_linear():
+    # DEF-4109: the commit idiom with a 30 KB message full of apostrophes,
+    # backticks and `$(`, through the whole Bash secret leg (the masker, the
+    # walk, every program reader and the descent into the substitution's
+    # body, which a quoted body leaves). About 120 ms on the Air, 2026-11-13;
+    # main 37 ms on a plainer message of the same length, as this lane.
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    command = ("git commit -m \"$(cat <<'EOF'\n" + "it's `x` and $(y) here\n" * (_WORST_CASE_BODY_LEN // 23)
+               + "EOF\n)\"")
+    signal.signal(signal.SIGALRM, _alarm)
+    signal.setitimer(signal.ITIMER_REAL, _CI_SAFE_BUDGET_MS / 1000.0)
+    t = time.time()
+    try:
+        write_guard._secret_read_targets(command)
+        elapsed_ms = (time.time() - t) * 1000
+    except _Timeout:
+        pytest.fail(f"the secret leg on a long commit message exceeded {_CI_SAFE_BUDGET_MS}ms")
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    assert elapsed_ms < _CI_SAFE_BUDGET_MS, f"{elapsed_ms:.1f}ms"
 
 
 class TestPlanModeBridgeReader:

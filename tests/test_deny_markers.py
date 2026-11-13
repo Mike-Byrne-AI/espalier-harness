@@ -181,6 +181,14 @@ def _dotted(node: ast.AST) -> str | None:
                 return got
         return None
     if isinstance(node, ast.Call):
+        thunk = node.args[0] if len(node.args) == 1 and not node.keywords else None
+        if (isinstance(thunk, ast.Lambda) and not thunk.args.args and not thunk.args.vararg
+                and isinstance(thunk.body, ast.Call)):
+            # a call handed one zero-argument lambda runs it and returns its
+            # answer (`_main_reading_then_glued(lambda: _speedbump.check_fired(...))`,
+            # the speed bump read on each of two readings): the lambda's call
+            # is the producer
+            return _dotted(thunk.body)
         if isinstance(node.func, ast.Name):
             # a same-module producer (`reason = _bash_dangerous_reason(...)`):
             # its bare name is the symbol; a bare NAME that is not a call is

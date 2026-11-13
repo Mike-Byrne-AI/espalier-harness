@@ -317,7 +317,30 @@ class TestTheSentenceSplitter:
 #: `TestAPipedShellReadsItsRedirectAndExeHead`; its citation's hit is paid for by
 #: an internal row id dropped from the kept-helper sentence, so the seeded docs
 #: stay at the ceiling.
-_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 36, "docs/SHARP_EDGES.md": 5}
+#: HOOKS 34 -> 38 on 2026-11-13 (DEF-2073's lane, air's rulings 79ba0b and
+#: 40ec7f), re-derived from the HOOKS.md merged with main's 34
+#: (DEF-3075 and DEF-5107 above): the PowerShell comment reader's three
+#: spellings read wider than the language (a backtick-escaped blank, a braced
+#: name, past `--%`) and the readers' cost on a long run of blanks, each its
+#: own sentence with its row in `TestAGluedCommentOpens` or
+#: `TestABlockCommentIsOneBlank`; the four cites' hits are paid by two internal
+#: ids and two dated "measured"s dropped elsewhere in HOOKS.md, so the seeded
+#: docs stay at the ceiling.
+#: HOOKS 38 -> 39 on 2026-11-13 (DEF-2073's residue): a glued `<#` the reader
+#: cannot place, where PowerShell opens it (a group closed earlier in its
+#: statement, a string's member, a here-string's close, a colon-bound string, a
+#: drive-qualified name, an escaped colon), a declared false allow pinned by
+#: the residue row; its cite's hit is paid by the matcher section's bare
+#: test-symbol cite, reworded to say what the test enforces.
+#: HOOKS 39 -> 38 on 2026-11-13 (DEF-2073, design A): the escaped blank's
+#: limit closed -- the opener reader no longer takes an escaped separator for
+#: a token start, and the call is judged on both readings -- and its sentence
+#: went with it.
+#: HOOKS 38 -> 39 on 2026-11-13: DEF-2073's lane merged over DEF-5106's 35
+#: (the lane's net +4 on main's 34 above, added to main's 35).
+#: HOOKS 36 -> 40 on 2026-11-13: DEF-2073's lane merged over DEF-3077's 36
+#: (the lane's net +4 on main's 34 above, added to main's 36).
+_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 40, "docs/SHARP_EDGES.md": 5}
 
 
 def test_the_census_is_the_pinned_population():

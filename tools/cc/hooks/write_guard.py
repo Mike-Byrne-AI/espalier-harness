@@ -80,7 +80,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterator, NamedTuple
+from typing import TYPE_CHECKING, Any, Callable, Iterator, NamedTuple, TypeVar
 
 # The hook's own start, read before the pattern modules import (about a
 # quarter of a second of a call here). In the hook process Claude Code starts,
@@ -465,6 +465,38 @@ _glob_reach = _protected_zones.glob_reach
 _glob_reaches_protected = _protected_zones.glob_reaches_protected
 _aliases_protected_inode = _protected_zones.aliases_protected_inode
 
+#: The harness variables a hook reads when it starts, which the session must
+#: not set for itself: the maintenance switch, the stop gate's mode, and the
+#: command its test gate runs as the suite. An assignment made inside the
+#: session reaches no hook already running, and one handed to a nested
+#: `claude` starts that session with the gate it names already loosened or
+#: replaced, so every record below (the Bash prefix, the three PowerShell
+#: arms, cmd's `set`) refuses each name the same way. The stop gate's two
+#: names are literals: the zero-cross-import rule keeps
+#: `stop_gate.STOP_GATE_MODE_ENV` out of reach, and reading
+#: `_hook_utils.STOP_GATE_TEST_CMD_ENV` here would add a name to this guard's
+#: start floor, which a kept older helper then refuses every call for;
+#: tests/test_hook_constant_parity.py pins both to their constants.
+_HARNESS_ENV_NAMES: tuple[str, ...] = (
+    _maintenance_mode.ENV_VAR,
+    "ESPALIER_STOP_GATE",
+    "ESPALIER_STOP_GATE_TEST_CMD",
+)
+#: The names as one alternation, longest first, so no shorter name that opens
+#: a longer one is tried ahead of it (each site's next token refuses the
+#: shorter name's partial match, so the order saves a failed try and the match
+#: is the same). Spelled as a literal, not joined from the tuple: the dot-star
+#: gate (tests/test_redos.py) rebuilds every compiled pattern from module-level
+#: literals, names, `+` and re.escape() f-strings, and a join is a call it
+#: cannot read, as a name inside an f-string is, so the five sites below
+#: compose it with `+`. tests/test_write_guard_env_prefix_polarity.py pins the
+#: literal to the tuple's names, each once and longest first, so the tuple
+#: stays the one home. The pin is a test, not a check at import: a raise here
+#: would refuse every call between the two edits a new name takes, the restore
+#: that undoes the first one aside.
+_HARNESS_ENV_ALTERNATION = (
+    rf"ESPALIER_STOP_GATE_TEST_CMD|{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE")
+
 # BC-028: Bash tool inline-assignment of harness env vars.
 # Contract: set in parent shell BEFORE launching `claude`. Inline
 # assignment via a Bash tool call sets the var for the immediate
@@ -547,7 +579,7 @@ def _build_the_harness_env_prefix() -> None:
     _HARNESS_ENV_PREFIX_RE = re.compile(
         _bash_patterns._CMD_POS_NO_VERB
         + r"(?:(?:export|declare)(?:[ \t]+-[^\s;|&]+)*[ \t]+)?"
-        + rf"(?:{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE)[ \t]*="
+        + r"(?:" + _HARNESS_ENV_ALTERNATION + r")[ \t]*="
     )
 
 # ⚠ POLARITY. The deny above teaches a mental model -- "an inline assignment
@@ -1053,12 +1085,12 @@ def _build_the_ps_harness_env_prefix() -> None:
         r"(?:"
         r"(?P<envcolon>"
         + _bash_patterns._PS_CMD_POS
-        + rf"\$env:(?:{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE)\s*=)"
-        r"|Set-Item\s+(?:-Path\s+)?[\"']?Env:[\\/]?"
-        rf"(?:{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE)\b"
-        r"|SetEnvironmentVariable\(\s*[\"']"
-        rf"(?:{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE)[\"']"
-        r")",
+        + r"\$env:(?:" + _HARNESS_ENV_ALTERNATION + r")\s*=)"
+        + r"|Set-Item\s+(?:-Path\s+)?[\"']?Env:[\\/]?"
+        + r"(?:" + _HARNESS_ENV_ALTERNATION + r")\b"
+        + r"|SetEnvironmentVariable\(\s*[\"']"
+        + r"(?:" + _HARNESS_ENV_ALTERNATION + r")[\"']"
+        + r")",
         re.IGNORECASE,
     )
 
@@ -1190,7 +1222,7 @@ def _ps_harness_env_prefix_is_benign(command: str) -> bool:
 # `/a` or `/p`, its quotes already removed by cmd's word split.
 _CMD_HARNESS_SET_RE = re.compile(
     r"(?:/[ap][ \t]+)?"
-    rf"(?:{re.escape(_maintenance_mode.ENV_VAR)}|ESPALIER_STOP_GATE)[ \t]*=",
+    + r"(?:" + _HARNESS_ENV_ALTERNATION + r")[ \t]*=",
     re.IGNORECASE,
 )
 
@@ -1511,7 +1543,14 @@ _SECRET_EFFECTS = frozenset({"move", "archive", "alias", "read"})
 #: substitution that mentions `.env` read as the file).
 _STREAM_EDITORS = frozenset({"sed", "awk", "gawk", "mawk", "nawk"})
 
-_STATEMENT_BOUNDARY_RE = re.compile(r"[;\n]|\|\||&&|\|")
+#: The Bash secret leg's statement boundaries: `;`, a newline, `||`, `&&`, a
+#: pipe and a lone `&`, which runs the step before it in the background and
+#: the one after it at once (DEF-4109: `sleep 1 & cat .env` read as one
+#: statement headed by `sleep`). A `&` beside `>` or `<` is a redirect
+#: (`&>`, `&>>`, `>&2`, `2>&1`, `<&0`, `>& file`) and does not cut; `&&` is
+#: taken whole by the alternative before it. Fixed-width lookarounds, no
+#: quantifier: linear.
+_STATEMENT_BOUNDARY_RE = re.compile(r"[;\n]|\|\||&&|\||(?<![<>])&(?!>)")
 
 #: PowerShell verbs that READ a file's contents into the transcript -- the
 #: bash roster's classes, spelled for the shell that will run them (DEF-718:
@@ -1686,7 +1725,7 @@ def _quote_aware_words(
     return out
 
 
-def _secret_read_targets(command: str, _depth: int = 0, *, _body: bool = False) -> list[str]:
+def _secret_read_targets(command: str, _depth: int = 0) -> list[str]:
     """`_secret_read_targets_one` over every reading the walls judge
     (`_bash_patterns._wall_readings`): the command as spelled and, when a
     literal binding changes it, with the binding inlined. The union: a
@@ -1695,13 +1734,11 @@ def _secret_read_targets(command: str, _depth: int = 0, *, _body: bool = False) 
     (`eval "$v"`, `bash -c "$v"`) was refused only by accident -- the masker
     failed on the quoted value and the raw text put the read at a command
     position; the lane made the masker read the value, which took the
-    accident away (the failure-mode review, measured). ``_body`` marks a
-    substitution's body (DEF-5106), where a statement of redirects alone
-    reads its input: `$(< .env)` is bash's and zsh's own `cat`."""
+    accident away (the failure-mode review, measured)."""
     _load_the_pattern_path()
     out: list[str] = []
     for text in _bash_patterns._wall_readings(command):
-        for path in _secret_read_targets_one(text, _depth, _body=_body):
+        for path in _secret_read_targets_one(text, _depth):
             if path not in out:
                 out.append(path)
     return out
@@ -1994,7 +2031,7 @@ _WORD_STARTS = frozenset({"", " ", "\t", "\n", "\r", ";", "|", "&", "(", "`"})
 
 
 def _substitution_bodies(
-    text: str, *, heredoc: bool = False, heredocs: "list[int] | None" = None,
+    text: str, *, heredoc: bool = False, heredocs: "list[tuple[Any, bool]] | None" = None,
     source: "str | None" = None,
 ) -> list[str]:
     """The body of each substitution in ``text`` -- `$( )`, a backtick span
@@ -2013,21 +2050,37 @@ def _substitution_bodies(
     ``heredoc`` the outer text is an unquoted heredoc's body, where a quote
     and a `#` are text and only `$`, a backtick and a backslash are syntax;
     inside a substitution the ordinary rules hold again. A body that never
-    closes runs to the end: the heredoc cut ends the commit idiom's
-    substitution early (`git commit -m "$(cat <<'EOF'`), and bash runs no
-    command whose substitution is truly left open. Declared limits: a
-    backtick span nested in another (bash wants it escaped, and the escape
-    is read as one), a case arm's `)` inside `$( )`, which closes the body
-    there, and an operand a nested substitution computes (the hole).
+    closes runs to the end, as bash runs no command whose substitution is
+    truly left open. Declared limits: a backtick span nested in another
+    (bash wants it escaped, and the escape is read as one), a case arm's `)`
+    inside `$( )`, which closes the body there, and an operand a nested
+    substitution computes (the hole).
 
-    ``heredocs``, when given, collects the offset of each heredoc operator
-    the walk meets outside quotes, a comment and an arithmetic `$(( ))` --
-    the operators bash reads, so a quoted mention of one is never taken for
-    one (`_bash_patterns._heredoc_bodies`'s ``live``). ``source``, when
-    given, is the text each body is taken from, at ``text``'s offsets: the
-    walk reads the masked text, where a quoted opener is blank, and each body
-    comes from the raw command, which the masker can blank inside a live
-    span too (an exec opener in a data head's double-quoted argument)."""
+    ``heredocs``, when given, turns on the heredoc reading of a command's
+    text: each heredoc operator the walk meets outside quotes, a comment, an
+    arithmetic `$(( ))` and a here-string (`<<<`, no body) -- the operators
+    bash reads, so a quoted mention of one is never taken for one -- has its
+    body read at the next newline outside quotes, by bash's own delimiter
+    line (`_bash_patterns._heredoc_body_at`, ``exact``), the bodies of
+    several operators on one line one after another, and the walk resumes on
+    the line after the last delimiter, where the shell reads commands again
+    (DEF-4109). A body is never walked as commands: an apostrophe or a
+    backtick in it is the body's text, and a body whose delimiter word the
+    operator parser cannot read runs to the end. Each body is appended with
+    whether its operator line ended inside a substitution (the commit
+    idiom's `"$(cat <<'EOF'`), where that newline ends no statement of
+    ``text``. The newline and a comment's end are read on ``source``, since
+    the masker joins a heredoc's lines into its operator's, and only a
+    newline at the operator's own depth or above starts its body. An
+    expanding body inside a substitution stays in that substitution's body,
+    which the leg reads one level down; a quoted one leaves it, as data.
+    Declared limits: a delimiter glued to the substitution's `)` (`EOF)`,
+    which bash 3.2 reads as the end) and a delimiter word the parser cannot
+    read each run the body to the end. ``source``, when given, is the text each body is taken from,
+    at ``text``'s offsets: the walk reads the masked text, where a quoted
+    opener is blank, and each body comes from the raw command, which the
+    masker can blank inside a live span too (an exec opener in a data head's
+    double-quoted argument)."""
     _load_the_pattern_path()
     src = text if source is None else source
     bodies: list[str] = []
@@ -2037,6 +2090,10 @@ def _substitution_bodies(
     # whether it is an arithmetic `$(( ))`.
     spans: list[list] = [["", 0, 0, [], False, 0, False]]
     closed = -1   # just past the last span closed: a `#` there is inside a word
+    # Heredoc operators whose bodies start at the next newline, each with the
+    # depth of the span it was met in: a newline inside a deeper span (a
+    # `$( )` that runs across the operator's line) starts none of them.
+    pending: list[tuple[int, int]] = []
 
     def close(at: int) -> None:
         nonlocal closed
@@ -2054,6 +2111,32 @@ def _substitution_bodies(
         ch = text[i]
         top = spans[-1]
         literal = top[4] or (heredoc and len(spans) == 1)
+        if pending and heredocs is not None and not literal and src[i] == "\n":
+            depth = len(spans)
+            ready = [op for op, at in pending if at >= depth]
+            if ready:
+                # The operator line ends: its bodies follow, one after another.
+                start = i + 1
+                for op in ready:
+                    found = _bash_patterns._heredoc_body_at(src, op, start, exact=True)
+                    if found is None:
+                        # A delimiter word the parser cannot read (`<<!`,
+                        # `<<$X`): its body runs to the end, as main read
+                        # every line after the operator's, never as commands.
+                        found = _bash_patterns._HeredocBody(op, start, n, n, False)
+                    heredocs.append((found, depth > 1))
+                    if depth > 1 and not found.expands and found.end > found.start:
+                        # A quoted body is data to every reader of the
+                        # substitution's body, so it leaves that body's text
+                        # (the commit idiom's message is not read twice). A
+                        # reader taught a shell fed a heredoc (`$(bash
+                        # <<'EOF' ...)`, read at no level today) must keep it.
+                        top[3].append(src[top[2]:found.start])
+                        top[2] = found.end + 1
+                    start = found.after
+                pending[:] = [(op, at) for op, at in pending if at < depth]
+                i = start
+                continue
         if ch == "\\":
             i += 2
             continue
@@ -2091,12 +2174,12 @@ def _substitution_bodies(
         if ch == '"':
             top[4] = True
         elif ch == "#" and i != closed and _bash_patterns._opens_comment(text, i):
-            j = text.find("\n", i)
+            j = src.find("\n", i)
             i = n if j < 0 else j
             continue
         elif ch == "<" and text.startswith("<", i + 1):
             if heredocs is not None and not top[6] and not text.startswith("<", i + 2):
-                heredocs.append(i)
+                pending.append((i, len(spans)))     # never a here-string's `<<<`: it has no body
             i += 3 if text.startswith("<", i + 2) else 2
             continue
         elif ch in "<>" and text.startswith("(", i + 1) or (
@@ -2119,6 +2202,27 @@ def _substitution_bodies(
         bodies.append("".join(span[3]) + tail)
         end, tail = span[1], _SUBSTITUTION_HOLE
     return bodies
+
+
+def _without_heredoc_bodies(text: str, heredocs: "list[tuple[Any, bool]]") -> str:
+    """``text`` with each heredoc body the walk read (`_substitution_bodies`'s
+    ``heredocs``, in order) and its delimiter line taken out, so the
+    statement read meets the lines after the last delimiter as the commands
+    bash runs (DEF-4109) and never a body's text. The newline that ended an
+    operator's line is a statement boundary, made one again where the masker
+    joined the body into that line; where the line ended inside a
+    substitution it ends no statement of ``text`` and is a blank. Nothing
+    reads the result by an offset (the walk ran on ``text``), so the bodies
+    go rather than blank: a long body costs the statement read nothing."""
+    pieces: list[str] = []
+    at = 0
+    for found, nested in heredocs:
+        if found.start > at:                       # the first body after its operator line
+            pieces.append(text[at:found.start - 1])
+            pieces.append(" " if nested else "\n")
+        at = max(at, found.after)
+    pieces.append(text[at:])
+    return "".join(pieces)
 
 
 def _redirect_free_operands(args: "list[tuple[str, str]]", sources: list[str], *,
@@ -2157,7 +2261,7 @@ def _redirect_free_operands(args: "list[tuple[str, str]]", sources: list[str], *
     return kept
 
 
-def _secret_read_targets_one(command: str, _depth: int = 0, *, _body: bool = False) -> list[str]:
+def _secret_read_targets_one(command: str, _depth: int = 0) -> list[str]:
     """Path tokens read by a recognized read verb, per statement.
 
     Statement-scoped so `ls docs/ && cat .env` is caught while
@@ -2168,8 +2272,8 @@ def _secret_read_targets_one(command: str, _depth: int = 0, *, _body: bool = Fal
     (`"heredoc\\|cat \\.env"`) is not a boundary either.
     """
     _load_the_pattern_path()
-    # A HEREDOC BODY IS DATA, NOT COMMANDS. Measured: without this truncation
-    # the guard denied its own test file being written, because
+    # A HEREDOC BODY IS DATA, NOT COMMANDS. Measured: without taking the body
+    # out the guard denied its own test file being written, because
     # `cat >> tests/x.py <<'EOF'` followed by a body line containing
     # `"ls docs/ && cat .env",` splits into a statement whose verb IS `cat`.
     # Authoring a test or doc that QUOTES a secret-reading command is not
@@ -2181,65 +2285,75 @@ def _secret_read_targets_one(command: str, _depth: int = 0, *, _body: bool = Fal
     # "heredoc\\|cat \\.env" docs/` produced a phantom statement whose verb IS
     # `cat`, and the guard denied a search for its own row's evidence (DEF-681,
     # three live hits in one session). The protected-zone leg had masked all
-    # along; this leg is its sister and now does the same. The heredoc cut
-    # keeps its job and moves: the `<<` is found in the MASKED string, where an
-    # operator inside a quoted span has been blanked, and the cut lands at the
-    # RAW newline at the same offset -- masking keeps offsets, and a masked
-    # quoted heredoc body has lost its newlines, which is why a newline search
-    # over the masked text found nothing and would have regressed the body
-    # protection. Residue, stated: when a head is not on the non-reparsing
-    # roster the masker returns the command raw, and a quoted separator in
-    # such a command is still a boundary here.
+    # along; this leg is its sister and now does the same. Residue, stated:
+    # when a head is not on the non-reparsing roster the masker returns the
+    # command raw, and a quoted separator in such a command is still a
+    # boundary here.
     # This leg segments on newlines, so it must splice continuations FIRST or
     # `cat \` + newline + `.env` reads as two statements (the splicer's own
     # docstring names this class; DEF-701 reached the leg). Splice the RAW
-    # command and derive the mask from it: the heredoc cut below indexes
-    # `command` by a masked offset, so both must be the same text.
+    # command and derive the mask from it: the walk below reads `masked` and
+    # `command` at the same offsets, so both must be the same text.
     command = _bash_patterns.splice_line_continuations(command)
     masked = _bash_patterns.mask_inert_syntax(command)
-    scan = masked  # the uncut twin: a heredoc body IS the program for the shell arm below
-    heredoc = masked.find("<<")
-    if heredoc != -1:
-        line_end = command.find("\n", heredoc)
-        masked = masked[:line_end] if line_end != -1 else masked
-    # The cut, masked text before the drop below, at the command's offsets:
-    # the substitution walk reads it and takes each body from `command`.
-    cut = masked
+    scan = masked  # the twin with every body kept: a heredoc body IS the program for the shell arm below
+    # THE SHELL READS COMMANDS AGAIN AFTER A BODY'S DELIMITER LINE (DEF-4109).
+    # One walk over the masked text finds each substitution's body (DEF-5106,
+    # read below) and each heredoc body bash reads, by bash's own delimiter
+    # line, and the statement read gets the masked text with every body and
+    # its delimiter line blanked: the lines after it are read as the commands
+    # they are. Two readings this replaces, each wrong, so neither returns:
+    # - The cut at the end of the line holding the first `<<` found in the
+    #   masked text. It kept every body out, and every line after the first
+    #   body with it (`cat .env` after `EOF` ran unread), and it took a
+    #   here-string's `<<<`, an arithmetic `$((1<<4))` and a `<<` the masker
+    #   handed back quoted (a raw command) for an operator, so each dropped
+    #   the lines after it too.
+    # - Walking past the body as text. A body is data, and an apostrophe in it
+    #   opens a quote that runs to the end, so the lines after it go blank and
+    #   the backticks in a commit message are read as programs. The walk
+    #   skips each body by its delimiter line instead, and reads the newline
+    #   that starts one on the raw command, since the masker joins a heredoc's
+    #   lines into its operator's.
+    # A body whose operator line ended inside a substitution (the commit
+    # idiom's `"$(cat <<'EOF'`) leaves a blank where that newline was, since
+    # it ends no statement of this text: as a newline it would sit inside the
+    # idiom's quotes and send every statement to the quote-blind split.
+    heredocs: list[tuple[Any, bool]] = []
+    bodies: list[str] = []
+    if ("<<" in masked or "$(" in masked or "`" in masked or "<(" in masked
+            or ">(" in masked or "=(" in masked):
+        bodies = _substitution_bodies(masked, heredocs=heredocs, source=command)
+    if heredocs:
+        masked = _without_heredoc_bodies(masked, heredocs)
     # A substitution that prints nothing goes before the statement cut, as
     # bash drops it whole: a `;` or a `|` inside `` `# a; b` `` is the
     # comment's text, not a boundary (DEF-2074). Nothing below indexes
     # `command` by an offset into `masked`; the program readers take `command`
-    # and `scan`, which keep every span, and the body walk `cut`.
+    # and `scan`, which keep every span.
     masked = _drop_empty_substitutions(masked)
     # `>|` is one operator, the redirect that overrides noclobber, and its
     # bar no pipe: the cut below would end the statement there and read the
     # operands past it as a command of their own (DEF-5107). Same length.
     masked = masked.replace(">|", "> ")
 
-    out = _secret_statement_reads(masked, a_body=_body)
+    out = _secret_statement_reads(masked)
     # A SUBSTITUTION'S BODY IS A PROGRAM BASH RUNS FIRST (DEF-5106). The head
     # read above takes `$(cat .env)` for a `$` statement and `echo "$(cat
     # .env)"` for an echo, and neither is a read verb, so each body is read
     # here as a program of its own, by this whole leg one level down (the
-    # program readers included: `echo "$(sh -c 'cat .env')"`), from the same
-    # cut text. A union: the read above is unchanged, and a body can only add
-    # a target. Behind the cheapest witness, an opener in the text. The walk
-    # reads `cut`, the masked text, and takes each body from the raw command,
-    # which the leg masks again as a program of its own. A body holds no
-    # opener but an escaped one (each nested span is a hole), so the descent
-    # ends there.
-    # ⚠ THE CUT IS WHAT KEEPS A HEREDOC'S BODY UNREAD HERE. A quoted heredoc's
-    # body, the commit idiom's message among them, is data only because the
-    # text above ends at the first `<<` line: a change that reads past a body
-    # (DEF-4109) must hand this walk the text with every body taken out,
-    # unquoted ones included, or a body's apostrophe opens a quote that runs
-    # to the end and the backticks in a message are read as programs.
-    if "$(" in cut or "`" in cut or "<(" in cut or ">(" in cut or "=(" in cut:
-        for body in _substitution_bodies(cut, source=command):
-            out.extend(_secret_read_targets(body, _depth + 1, _body=True))
+    # program readers included: `echo "$(sh -c 'cat .env')"`), from the walk
+    # above. A union: the read above is unchanged, and a body can only add a
+    # target. Behind the cheapest witness, an opener in the text. The walk
+    # reads the masked text and takes each body from the raw command, which
+    # the leg masks again as a program of its own. A body holds no opener but
+    # an escaped one (each nested span is a hole) and no heredoc body but its
+    # own operators' (the walk skips them), so the descent ends there.
+    for body in bodies:
+        out.extend(_secret_read_targets(body, _depth + 1))
     # A PowerShell program behind `powershell` / `pwsh` (DEF-637): read with
-    # the PowerShell roster and statement grammar, one level down. The
-    # heredoc cut above is why `scan` is the uncut twin: for `pwsh -Command -
+    # the PowerShell roster and statement grammar, one level down. The bodies
+    # taken out above are why `scan` keeps them: for `pwsh -Command -
     # <<'EOF'` the body is the program, not data.
     if _depth < _bash_patterns._PS_STDIN_MAX_DEPTH:
         for program in _bash_patterns._shell_program_bodies(command, scan):
@@ -2258,20 +2372,17 @@ def _secret_read_targets_one(command: str, _depth: int = 0, *, _body: bool = Fal
             out.extend(_secret_read_targets(program, _depth + 1))
         # An unquoted heredoc expands its body's substitutions before the
         # command reads it (DEF-5106): `cat <<EOF` over a `$(cat .env)` line
-        # prints the dotenv. The cut above took the body off, so it is read
-        # here, raw, for the operators on the cut line that the walk meets
-        # outside quotes and arithmetic (a quoted `<<` is a mention, read on
-        # raw text too), each body ended at bash's own delimiter line: a
-        # quoted delimiter's body is data and is never read. Each body is a
-        # program on raw text, so the whole leg reads it, the masker included.
-        if heredoc != -1 and ("$(" in command or "`" in command):
-            cut = command.find("\n", heredoc)
-            live: list[int] = []
-            _substitution_bodies(scan[:cut] if cut != -1 else scan, heredocs=live)
-            for found in _bash_patterns._heredoc_bodies(command, exact=True, live=frozenset(live)):
+        # prints the dotenv. The walk above took each body out, so each is
+        # read here, raw: every body bash reads, on any line (a heredoc after
+        # an earlier one's delimiter included, DEF-4109), ended at bash's own
+        # delimiter line; a quoted delimiter's body is data and is never
+        # read. Each body is a program on raw text, so the whole leg reads it,
+        # the masker included.
+        if heredocs and ("$(" in command or "`" in command):
+            for found, _nested in heredocs:
                 if found.expands:
                     for body in _substitution_bodies(command[found.start:found.end], heredoc=True):
-                        out.extend(_secret_read_targets(body, _depth + 1, _body=True))
+                        out.extend(_secret_read_targets(body, _depth + 1))
     # The operands a verb relocates, archives, aliases or reads by an
     # interpreter literal (§C52, DEF-796): the same slip as `cp`, spelled
     # differently. Read once at the top level; the reader descends nested
@@ -2283,12 +2394,14 @@ def _secret_read_targets_one(command: str, _depth: int = 0, *, _body: bool = Fal
     return out
 
 
-def _secret_statement_reads(masked: str, *, a_body: bool = False) -> list[str]:
+def _secret_statement_reads(masked: str) -> list[str]:
     """The paths a recognized read verb reads in ``masked``, one statement
-    at a time: the heredoc-cut, masked text of `_secret_read_targets_one`.
-    In a substitution's body (``a_body``, DEF-5106) a statement of redirects
-    alone reads its input sources: `$(< .env)` prints the file, where at a
-    command's top level the same `< .env` runs nothing on bash."""
+    at a time: the masked text of `_secret_read_targets_one`, its heredoc
+    bodies taken out. A statement of redirects alone reads its input
+    sources at every level, with no assignment beside them: in a
+    substitution's body `$(< .env)` prints the file (DEF-5106), and zsh
+    prints `< .env` at a command's top level, where bash runs nothing
+    (DEF-4109); with an assignment beside the redirect neither shell reads."""
     out: list[str] = []
     aware = not _a_boundary_sits_in_a_quote(masked, _STATEMENT_BOUNDARY_RE)
     for statement in _STATEMENT_BOUNDARY_RE.split(masked):
@@ -2304,7 +2417,17 @@ def _secret_statement_reads(masked: str, *, a_body: bool = False) -> list[str]:
         sources: list[str] = []
         head = _secret_read_head(words, sources)
         if head >= len(words):
-            if a_body:
+            # No verb: a statement of redirects alone, which reads its input
+            # in a substitution's body (`$(< .env)`) and, on zsh, at every
+            # level, where `$READNULLCMD` prints a lone input and `$NULLCMD`
+            # copies one beside an output (`< .env > out`); an assignment
+            # beside the redirect runs nothing (DEF-4109). The head reader
+            # steps over the wrapper roster, so a wrapper before the redirect
+            # reads it too, on purpose: `xargs < .env` echoes the file's
+            # words and zsh's `time < .env` prints it, and `exec < .env` (or
+            # `exec 3< .env`) opens it for the statements after it, which
+            # read it with no operand naming it (`cat`, `cat <&3`).
+            if not any(_ASSIGNMENT_WORD_RE.match(raw) for raw, _ in words):
                 out.extend(sources)
             continue
         if words[head][0] in _COMPOUND_CLOSERS:  # `done < .env` feeds the body's reads
@@ -4615,6 +4738,81 @@ def _judge(seen: list[dict] | None = None) -> int:
         )
 
 
+def _glued_reading_on() -> "contextlib.AbstractContextManager[None] | None":
+    """The pattern module's switch to the glued reading, else None (the path
+    not loaded yet, or a kept, older module with main's reading alone)."""
+    if not _pattern_path_loaded:
+        return None
+    on = getattr(_bash_patterns, "glued_opening_on", None)
+    return on() if on is not None else None
+
+
+def _readings_differ() -> bool:
+    """Whether the two readings have decided an opener differently in this
+    process (`_bash_patterns.glued_opener_opened`); False where the path is
+    not loaded or a kept, older module has no such record."""
+    if not _pattern_path_loaded:
+        return False
+    return bool(getattr(_bash_patterns, "glued_opener_opened", lambda: False)())
+
+
+def _opener_asked() -> bool:
+    """Whether main's reading asked the opener reader in this process
+    (`_bash_patterns.glued_opener_asked`), the one place the readings part;
+    True where a kept, older module keeps no such record, so the call is
+    judged on both as before."""
+    if not _pattern_path_loaded:
+        return False
+    return bool(getattr(_bash_patterns, "glued_opener_asked", lambda: True)())
+
+
+def _either_glued_reading(judge: Callable[[], int]) -> int:
+    """A hard leg on both of DEF-2073's readings (air's ruling 8aa088): a
+    refusal on either is the call's. ``judge()`` on the glued reading, and
+    where it allowed after the readings decided an opener differently, on
+    main's, the default. A reading that allows prints nothing, so a deny
+    prints once, its text the refusing reading's, inside the call's one time
+    budget. A judgment that loaded the pattern path read main's reading, so
+    it is asked again on the glued one where it asked the opener reader
+    (`_opener_asked`: a call that never reached it reads alike on both; a
+    PowerShell call loads the path before its first leg, so only the other
+    tools reach this gate); a kept, older pattern module has main's reading
+    alone and judges once."""
+    on = _glued_reading_on()
+    if on is None:
+        rc = judge()
+        on = None if rc or not _opener_asked() else _glued_reading_on()
+        if on is None:
+            return rc
+        with on:
+            return judge()
+    with on:
+        rc = judge()
+    if rc or not _readings_differ():
+        return rc
+    return judge()
+
+
+_T = TypeVar("_T")
+
+
+def _main_reading_then_glued(step: Callable[[], "_T | None"]) -> "_T | None":
+    """A friction leg on both readings, main's first (air's verifier note
+    38d60b (b)): ``step()`` on main's reading, and where it gave nothing and
+    the hard legs saw the readings differ, on the glued one. The snapshot
+    and the bump keep DEF-986's order: every hard leg on both readings, then
+    one snapshot, then the bumps. Both are handed main's fold, so a bump's
+    one-shot key is the same on either reading and a re-issue proceeds."""
+    out = step()
+    if out is not None or not _readings_differ():
+        return out
+    on = _glued_reading_on()
+    if on is None:
+        return out
+    with on:
+        return step()
+
+
 def _fold_the_powershell_command(tool_name: str, tool_input: dict) -> dict:
     """``tool_input`` with the PowerShell tool's command read as PowerShell
     pairs its quotes: each typographic quote it acts on folded to its
@@ -4642,8 +4840,16 @@ def _run_main(data: dict | None = None) -> int:
     tool_input = data.get("tool_input", {})
     if not isinstance(tool_input, dict):
         tool_input = {}
-    # Ahead of every leg that reads the command (DEF-2040).
+    raw_input = tool_input
+    # Ahead of every leg that reads the command (DEF-2040), on main's
+    # reading: the snapshot and the bump read this fold.
     tool_input = _fold_the_powershell_command(tool_name, tool_input)
+
+    def _read() -> dict:
+        """The command folded on the reading the hard leg asks (the fold runs
+        the walk, which reads comment openers: DEF-2073), a lookup after the
+        first."""
+        return _fold_the_powershell_command(tool_name, raw_input)
     root = _resolve_project_root()
     # A payload the guard could not read allows (there is nothing to check)
     # but never silently: the record and the line say so, once a session.
@@ -4686,7 +4892,7 @@ def _run_main(data: dict | None = None) -> int:
     # adopter's `.env` into the transcript is not that friction, and this is the
     # hook-layer replacement for the `Read()` deny rules espalier no longer
     # emits (see `check_secret_path_access` for why they had to go).
-    rc = check_secret_path_access(tool_name, tool_input, root)
+    rc = _either_glued_reading(lambda: check_secret_path_access(tool_name, _read(), root))
     if rc:
         return rc
 
@@ -4704,12 +4910,12 @@ def _run_main(data: dict | None = None) -> int:
     # These guard against operations that are dangerous regardless of whether
     # the harness is in maintenance: rm -rf /, fork bombs, hostile PowerShell.
     if tool_name == "Bash":
-        rc = check_bash_dangerous_patterns(tool_input, root, cwd=cwd)
+        rc = _either_glued_reading(lambda: check_bash_dangerous_patterns(_read(), root, cwd=cwd))
         if rc:
             _audit(root, "pretooluse_blocked_dangerous_command", tool="Bash")
             return rc
     elif tool_name == "PowerShell":
-        rc = check_powershell(tool_input, root, cwd=cwd)
+        rc = _either_glued_reading(lambda: check_powershell(_read(), root, cwd=cwd))
         if rc:
             _audit(root, "pretooluse_blocked_dangerous_command", tool="PowerShell")
             return rc
@@ -4736,25 +4942,23 @@ def _run_main(data: dict | None = None) -> int:
         if tool_name in ("Write", "Edit", "NotebookEdit"):
             rc = check_write_edit(tool_input, root)
         elif tool_name == "Bash":
-            command = tool_input.get("command", "")
             # Symlink-creation check FIRST so it isn't masked by the
             # allowlist-aware general write check (legitimate JSON writes to
             # ``cc/blueprints/`` are allowed; symlinks to that prefix are not).
-            rc = check_bash_for_protected_symlinks(command, root, cwd=cwd)
+            rc = _either_glued_reading(lambda: check_bash_for_protected_symlinks(_read().get("command", ""), root, cwd=cwd))
             # Hardlink-creation check (allowlist-aware, source-keyed) before the
             # general write check, mirroring the symlink ordering.
             if not rc:
-                rc = check_bash_for_protected_hardlinks(command, root, cwd=cwd)
+                rc = _either_glued_reading(lambda: check_bash_for_protected_hardlinks(_read().get("command", ""), root, cwd=cwd))
             if not rc:
-                rc = check_bash_for_protected_mutations(command, root, cwd=cwd)
+                rc = _either_glued_reading(lambda: check_bash_for_protected_mutations(_read().get("command", ""), root, cwd=cwd))
         elif tool_name == "PowerShell":
-            command = tool_input.get("command", "")
             # Symlink-creation check FIRST (allowlist-blind), like the Bash branch,
             # so a New-Item SymbolicLink into an allowlisted-in-protected path isn't
             # masked by the allowlist-aware write check.
-            rc = check_powershell_for_protected_symlinks(command, root, cwd=cwd)
+            rc = _either_glued_reading(lambda: check_powershell_for_protected_symlinks(_read().get("command", ""), root, cwd=cwd))
             if not rc:
-                rc = check_powershell_for_protected_mutations(command, root, cwd=cwd)
+                rc = _either_glued_reading(lambda: check_powershell_for_protected_mutations(_read().get("command", ""), root, cwd=cwd))
         elif tool_name.startswith("mcp__"):
             # MCP tools -- protected-zone check across canonical fields AND the
             # Class-A2 key-agnostic, depth-bounded leaf-walk (move/rename via
@@ -4792,7 +4996,7 @@ def _run_main(data: dict | None = None) -> int:
     # checks -- own denies and fail CLOSED on purpose: a fault there must not
     # become an allow. Only the two friction helpers fail toward allow.
     try:
-        _speedbump.snapshot_discard(tool_name, tool_input, root, cwd=cwd)
+        _main_reading_then_glued(lambda: _speedbump.snapshot_discard(tool_name, tool_input, root, cwd=cwd))
     except Exception as exc:  # noqa: BLE001 -- recovery aid only; a snapshot fault must not wedge the session
         # A stderr line alone reached the debug log only (this hook exits 0,
         # and that stderr never reaches the transcript), so the wedge turned
@@ -4812,7 +5016,7 @@ def _run_main(data: dict | None = None) -> int:
     # longer has -- must not reach main()'s crash guard and wedge every tool
     # call behind WRITE_GUARD_INTERNAL_ERROR (observed 2026-09-08).
     try:
-        _sb_fire = _speedbump.check_fired(tool_name, tool_input, root, cwd=cwd)
+        _sb_fire = _main_reading_then_glued(lambda: _speedbump.check_fired(tool_name, tool_input, root, cwd=cwd))
     except Exception as exc:  # noqa: BLE001 -- friction only; a speed-bump fault must not wedge the session: fail open, with voice
         _sb_fire = None
         _hook_utils.say_once(
