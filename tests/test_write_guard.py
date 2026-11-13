@@ -13854,6 +13854,13 @@ class TestSecretPathAccess:
         ('echo "$$(b)"', False, []),                          # `$$` then a `(` that is text
         ("echo $(a)#$(b)", False, ["a", "b"]),                # a `#` after a closed span is in a word
         ("echo `a`#$(b)", False, ["a", "b"]),
+        ("echo a\\;#$(b)", False, ["b"]),                     # ... and after an escaped character
+        ("echo a\\ #$(b)", False, ["b"]),
+        ("echo a\\\r#$(b)", False, ["b"]),
+        ("echo a\\\\ #$(b)", False, []),                      # an escaped backslash: a comment
+        ("echo `a #x`;$(b)", False, ["a #x", "b"]),           # a backtick body's comment ends at its closer
+        ("echo `a \\`b #x\\`; c`;$(d)", False, ["a \\`b #x\\`; c", "d"]),   # ... a nested one's at its own
+        ("echo $(a #x`b`)\n) $(c)", False, ["a #x`b`)\n", "c"]),          # no backtick span open: the line
         ("ls -la", False, []),
     ])
     def test_each_substitution_body_is_read_once_at_its_own_level(self, text, heredoc, bodies):

@@ -46,6 +46,7 @@ records under test only fire through the dispatch.
 
 from __future__ import annotations
 
+# slow-exempt: the one direct spawn is the masker row's echo-only shell oracle, 25 rows on bash, dash and zsh, about 10 ms a call and 1.3 s for all 75, measured 2026-11-13 on the Air
 import importlib.util
 import subprocess
 import sys
@@ -1169,14 +1170,26 @@ _MASKER_ROW_ORACLE = [
     ("x=$(echo a)#; echo b", b"b\n"),
     ("echo a\\;#; echo b", b"a;#\nb\n"),
     ("echo a\\ #; echo b", b"a #\nb\n"),
-    # ... and after a subshell's or an arithmetic command's `)` a comment
+    ("echo a\\\r#; echo b", b"a\r#\nb\n"),
+    # ... and after a subshell's or an arithmetic command's `)` a comment;
+    # after an array's `)` bash reads word text, zsh a comment
+    # (`_ORACLE_SHELL_SAYS`), and dash has no arrays
     ("(echo a)#; echo b", b"a\n"),
     ("((1))#; echo b", b""),
+    ("a=(1 2)#; echo b", b"b\n"),
     # a comment inside a backtick body ends at the closer, or a newline first
     ("echo `echo a #x`; echo b", b"a\nb\n"),
     ("echo `#x; echo c`; echo b", b"\nb\n"),
     ("echo `#x\necho c`; echo b", b"c\nb\n"),
     ("echo `echo a #it's`; echo b", b"a\nb\n"),
+    # ... and in a nested body at its escaped closer
+    ("echo `echo \\`echo a #x\\`; echo c`; echo b", b"a c\nb\n"),
+    # a quote inside a double-quoted span or an unquoted heredoc body, where
+    # a substitution keeps it, is the substitution's own: the backtick and
+    # the parens around it read as before
+    ("x=\"$(echo '`')\"; echo `echo a #x`; echo b", b"a\nb\n"),
+    ("cat <<EOF\n$(echo '`')\nEOF\necho `echo a #x`; echo b", b"`\na\nb\n"),
+    ("echo $(echo \"`echo ')'`\")#; echo b", b")#\nb\n"),
     # the declared limits beside the row: a body ends at a line that is its
     # whole delimiter word alone, quote-removed, so a second heredoc opened
     # on a line bash takes as body text is body text too; an arithmetic
@@ -1187,11 +1200,23 @@ _MASKER_ROW_ORACLE = [
     ('cat <<E"O"F\n$(echo hi)\nEOF\necho after', b"$(echo hi)\nafter\n"),
     ("cat <<EOF/\nbody\nEOF/\necho after", b"body\nafter\n"),
     ("echo $((1<<4))\necho after", b"16\nafter\n"),
+    # ... nor does the older `$[ ]` spelling: the line after it runs, and a
+    # later line that is the shift's operand alone is a command
+    ("x=4; x() { echo ran; }; echo $[1<<x]\necho after\nx", b"16\nafter\nran\n"),
 ]
 
-#: The oracle rows dash does not parse (no process substitution): refused
-#: there, never misread.
-_ORACLE_DASH_REFUSES = frozenset({": <(true)#; echo b"})
+#: The oracle rows dash does not parse (no process substitution, no
+#: arrays): refused there, never misread.
+_ORACLE_DASH_REFUSES = frozenset({": <(true)#; echo b", "a=(1 2)#; echo b"})
+
+#: (shell, program) -> stdout where one shell reads a row apart from bash:
+#: zsh reads a `#` after an array's `)` as a comment, and the masker takes
+#: bash's reading, the one that reads the statement after it; dash has no
+#: `$[ ]` and reads its `<<` as a heredoc, as the masker does.
+_ORACLE_SHELL_SAYS = {
+    ("zsh", "a=(1 2)#; echo b"): b"",
+    ("dash", "x=4; x() { echo ran; }; echo $[1<<x]\necho after\nx"): b"$[1\n",
+}
 
 #: (want, command): the guard's verdict, ``wall`` or ``allow``. Every
 #: ``wall`` row before the controls ALLOWED at main 613b797 and bash runs
@@ -1210,6 +1235,16 @@ _MASKER_ROW_DELETES = [
     ("wall", f"echo `echo a #x`; {_DELETE}"),
     ("wall", f"echo `#x`; {_DELETE}"),
     ("wall", f"echo `#x; echo c`; {_DELETE}"),
+    # the fix batch (the failure-mode review): each ALLOWED at main and at
+    # the row's first fix -- a backslash before a carriage return, a nested
+    # backtick body's comment, and a quote a substitution keeps inside a
+    # double-quoted span or an unquoted heredoc body, which the cursor read
+    # as live
+    ("wall", f"echo a\\\r#; {_DELETE}"),
+    ("wall", f"echo `echo \\`echo a #x\\`; {_DELETE}`"),
+    ("wall", f"x=\"$(echo '`')\"; echo `echo a #x`; {_DELETE}"),
+    ("wall", f"cat <<EOF\n$(echo '`')\nEOF\necho `echo a #x`; {_DELETE}"),
+    ("wall", f"echo $(echo \"`echo ')'`\")#; {_DELETE}"),
     # controls
     ("allow", f"(true)#; {_DELETE}"),
     ("allow", f"((1))#; {_DELETE}"),
@@ -1261,13 +1296,20 @@ class TestTheMaskerReadsACommentAsBashDoes:
         if argv[0].endswith("dash") and program in _ORACLE_DASH_REFUSES:
             assert proc.returncode != 0 and proc.stderr, (program, proc.stdout)
             return
+        stdout = _ORACLE_SHELL_SAYS.get((Path(argv[0]).name, program), stdout)
         assert proc.stdout == stdout, (program, proc.stdout, proc.stderr)
 
     @pytest.mark.parametrize("want, command", _MASKER_ROW_DELETES)
     def test_the_delete_after_it_is_read_where_bash_runs_it(self, want, command, tmp_path):
         assert _delete_verdict(run_guard_from("Bash", command, tmp_path, None)) == want, command
 
-    @pytest.mark.parametrize("command", ["echo `echo a #x`; cat .env", "echo $(true)#; cat .env"])
+    @pytest.mark.parametrize("command", [
+        "echo `echo a #x`; cat .env", "echo $(true)#; cat .env",
+        # the leg's own substitution walk reads the comment rule too
+        "echo a\\;#; echo $(cat .env)", "echo a\\ #; echo $(cat .env)",
+        "echo `echo a #x`; echo $(cat .env)", "echo `#x`; echo $(cat .env)",
+        "echo a\\;#; echo `cat .env`", "echo a\\;#; diff <(cat .env) x",
+    ])
     def test_the_secret_leg_reads_the_masked_text_too(self, command, tmp_path):
         assert_hook_denied(run_guard_from("Bash", command, tmp_path, None),
                            contains_reason="Secret-path access blocked")
@@ -1280,16 +1322,28 @@ class TestTheMaskerReadsACommentAsBashDoes:
     def test_a_delimiter_line_bash_does_not_take_is_a_declared_limit(self, command, tmp_path):
         assert _delete_verdict(run_guard_from("Bash", command, tmp_path, None)) == "allow", command
 
+    def test_the_older_arithmetic_shift_is_read_as_a_heredoc(self, tmp_path):
+        """docs/HOOKS.md's arithmetic sentence: `$[1<<x]` opens a heredoc to
+        the masker, which masks the lines to one that is `x` alone, where
+        bash 3.2 and zsh run them (the oracle row above). Pinned at its
+        verdict, so a fix shows here; `$((1<<4))` hands back the raw
+        command, and its delete walls."""
+        held = f"x=4; echo $[1<<x]\n{_DELETE}\nx=1\nx"
+        assert _delete_verdict(run_guard_from("Bash", held, tmp_path, None)) == "allow", held
+        raw = f"echo $((1<<4))\n{_DELETE}"
+        assert _delete_verdict(run_guard_from("Bash", raw, tmp_path, None)) == "wall", raw
+
     @pytest.mark.parametrize("text, glued", [
         ("a\\;#", True), ("a\\ #", True), ("a\\\\;#", False), ("a\\\\\\;#", True),
-        ("a;#", False), ("#", False), ("a\\\n#", False),
+        ("a;#", False), ("#", False), ("a\\\n#", False), ("a\\\r#", True),
     ])
     def test_an_escaped_character_glues_the_hash_to_its_word(self, text, glued):
         bp = _load_bash_patterns()
         assert bp._glued_after_escape(text, text.index("#")) is glued, text
 
     @pytest.mark.parametrize("text, end", [
-        ("#x`; b", 2), ("#x\nb`", 2), ("#x\\`y`; b", 5), ("#x\\\\`", 4), ("#it's`", 5), ("#x", -1),
+        ("#x`; b", 2), ("#x\nb`", 2), ("#x\\`y`; b", 2), ("#x\\\\`", 4), ("#x\\\\\\`", 4),
+        ("#it's`", 5), ("#x", -1),
     ])
     def test_a_backtick_body_s_comment_ends_at_its_closer(self, text, end):
         bp = _load_bash_patterns()

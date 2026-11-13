@@ -3781,6 +3781,7 @@ def _walk_shell_roles(
             elif c == '"':
                 j = _close_double_quote(s, k)
                 _neutralise_expanding_span(s, out, k + 1, j)
+                raw_spans.append((k + 1, j))
                 lo = k + 1
             elif c == "$" and k + 1 < n and s[k + 1] == "'":
                 j = _close_ansi_c_quote(s, k + 1)
@@ -3972,14 +3973,32 @@ def _walk_shell_roles(
     #: commented backtick or paren is blank, the settle's own reading below),
     #: by a cursor that only moves forward, so a command pays once for its
     #: whole length and one with no comment opener pays nothing.
+    #:
+    #: ⚠ THE MASKED TEXT KEEPS A SPAN RAW, AND THE CURSOR JUMPS IT. A double-
+    #: quoted span holding a live `$( )` or backtick, and an unquoted
+    #: heredoc's body, keep that substitution raw in ``out``
+    #: (`_neutralise_expanding_span`), quotes and all, so a quoted backtick
+    #: or paren inside it read as live flipped the cursor's state:
+    #: ``x="$(echo '`')"; echo `echo a #x`; <delete>`` hid the delete,
+    #: driven on bash 3.2, dash and zsh (the failure-mode review). Each such
+    #: range is balanced to bash (its substitutions open and close inside
+    #: it), so the state across it is the state before it: the walk records
+    #: each one in walk order (``raw_spans``, the double-quote branches and
+    #: the heredoc consume) and the cursor steps over it unread.
     live_at = 0
     tick_open = False
     paren_glues: list[bool] = []
     glued_close = -2    # never `k - 1`: a `#` at offset 0 follows no closer
+    raw_spans: list[tuple[int, int]] = []
+    raw_at = 0
 
     def live_syntax_to(k: int) -> None:
-        nonlocal live_at, tick_open, glued_close
+        nonlocal live_at, tick_open, glued_close, raw_at
         while live_at < k:
+            if raw_at < len(raw_spans) and raw_spans[raw_at][0] <= live_at:
+                live_at = max(live_at, raw_spans[raw_at][1])
+                raw_at += 1
+                continue
             ch = out[live_at]
             if ch == "`":
                 tick_open = not tick_open
@@ -4209,6 +4228,7 @@ def _walk_shell_roles(
         if c == '"':
             j = _close_double_quote(s, i)
             _neutralise_expanding_span(s, out, i + 1, j)
+            raw_spans.append((i + 1, j))
             if (walk_substitutions and simple_head is not None
                     and _splices_quoted_capture(simple_head, s[cmd_start:j])):
                 mask_quoted_substitutions(i + 1, j)
@@ -4237,7 +4257,8 @@ def _walk_shell_roles(
             # the statement after it (`echo $(true)#; <delete>`, ``echo `a
             # #x`; <delete>``), driven on bash 3.2, dash and zsh, echo alone.
             # bash ends such a comment at the first newline or unescaped
-            # backtick, which closes the body; the closer stays live.
+            # backtick, which closes the body, and a nested body's comment at
+            # its escaped closer, read at any depth; the closer stays live.
             j = _backtick_comment_end(s, i) if tick_open else s.find("\n", i)
             j = n if j < 0 else j
             # ⚠ START AT i+1 -- the `#` ITSELF MUST SURVIVE. Blanking it was a real
@@ -4309,6 +4330,7 @@ def _walk_shell_roles(
                 i, body_end = _consume_heredoc_body(
                     s, out, i, delim, expands, strip_tabs, neutralise,
                 )
+                raw_spans.append((body_start, body_end))
                 # A QUOTED delimiter means bash performs no expansion, so the
                 # body is inert data handed to this statement's stdin. If that
                 # statement's own head does not re-parse, the body cannot become
@@ -5991,10 +6013,12 @@ def _glued_after_escape(s: str, i: int) -> bool:
     word to bash (`echo a\\;#b` prints `a;#b`, `echo a\\ #b` prints `a #b`:
     driven on bash 3.2, dash and zsh). A backslash-newline is a line
     continuation, not an escape, and the masker keeps reading a `#` after
-    one as a comment (DEF-2078's own opener rule), so a line end is left
-    out. Linear: each `#` scans back over the one run of backslashes before
-    the character it follows."""
-    if i < 2 or s[i - 1] in "\n\r":
+    one as a comment (DEF-2078's own opener rule), so a newline is left
+    out. A carriage return after a backslash is an escaped character like
+    any other (`echo a\\<CR>#; b` prints `a`, the carriage return and `#`,
+    then runs `b`, on all three shells), so it glues. Linear: each `#` scans
+    back over the one run of backslashes before the character it follows."""
+    if i < 2 or s[i - 1] == "\n":
         return False
     j = i - 2
     while j >= 0 and s[j] == "\\":
@@ -6006,15 +6030,24 @@ def _backtick_comment_end(s: str, i: int) -> int:
     """Where a comment opened at ``i`` inside a backtick body ends: the first
     newline, or the first unescaped backtick, which closes the body (bash
     finds the closer before it reads the body, so a quote in the comment
-    hides nothing: ``echo `echo a #it's`; b`` runs ``b``). -1 when neither
-    comes, as `str.find` says it."""
+    hides nothing: ``echo `echo a #it's`; b`` runs ``b``), or the backslash
+    of the first escaped backtick. A body nested in another is spelled with
+    escaped backticks, and its comment ends at its own closer: ``echo `echo
+    \\`echo a #x\\`; echo c`; b`` prints ``a c`` (bash 3.2, dash and zsh).
+    One depth down cannot be told from text in the outer body, where the
+    escaped backtick is the comment's own, so the comment ends there at any
+    depth: an over-read, which costs friction only, and the escape stays for
+    the walk's escape branch. -1 when none comes, as `str.find` says it."""
     n = len(s)
     k = i + 1
     while k < n:
         ch = s[k]
-        if ch == "\\" and k + 1 < n and s[k + 1] in "\\`":
-            k += 2
-            continue
+        if ch == "\\" and k + 1 < n:
+            if s[k + 1] == "`":
+                return k
+            if s[k + 1] == "\\":
+                k += 2
+                continue
         if ch in "\n`":
             return k
         k += 1

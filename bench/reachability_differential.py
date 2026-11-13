@@ -509,6 +509,16 @@ WRAPPERS: list[tuple[str, str]] = [
     ("escaped_semicolon_glued_hash", "echo a\\;#; %s"),
     ("backtick_body_comment_then_semicolon", "echo `echo a #x`; %s"),
     ("backtick_open_comment_then_semicolon", "echo `#x`; %s"),
+    # The failure-mode review's batch: an escaped blank or carriage return
+    # glues the `#` too, and a quote a substitution keeps inside a double-
+    # quoted span or an unquoted heredoc body is that substitution's own,
+    # so the backtick and the parens around it read as before.
+    ("escaped_blank_glued_hash", "echo a\\ #; %s"),
+    ("escaped_cr_glued_hash", "echo a\\\r#; %s"),
+    ("dq_value_quoted_backtick_then_body_comment", "x=\"$(echo '`')\"; echo `echo a #x`; %s"),
+    ("heredoc_body_quoted_backtick_then_body_comment",
+     "cat > qs_doc.md <<EOF\n$(echo '`')\nEOF\necho `echo a #x`; %s"),
+    ("dq_quoted_paren_in_cmdsub_glued_hash", "echo $(echo \"`echo ')'`\")#; %s"),
     # The heredoc limit (ack 7f4579): a second heredoc opened after a line
     # the masker took for a delimiter and bash did not.
     ("heredoc_partly_quoted_delimiter_then_second_heredoc",

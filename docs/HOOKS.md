@@ -2296,10 +2296,14 @@ spellings of them are work:
   wall or the time budget, pinned by
   `tests/test_write_guard.py::TestABlockCommentIsOneBlank::test_a_comment_flood_before_a_carrier_is_refused`.
 - **The Bash masker, by ruling (2026-11-13).** A `#` starts a comment where
-  bash starts one: glued after a substitution's or an array's `)`, a closing
-  backtick or an escaped character it is the word's text, and a comment
-  inside a backtick body ends at the closing backtick, so the statement after
-  either is read (driven on bash 3.2, dash and zsh). Three readings beside it
+  bash starts one: glued after a substitution's `)`, a closing backtick or an
+  escaped character (a carriage return among them) it is the word's text,
+  and a comment inside a backtick body ends at the closing backtick, a nested
+  body's at its own escaped one, so the statement after either is read
+  (driven on bash 3.2, dash and zsh). After an array's `)` the shells part:
+  bash reads the `#` as the word's text, zsh as a comment, and dash has no
+  arrays; the masker takes bash's reading, which reads the statement after
+  it. Three readings beside it
   are declared limits, the first pinned at allow by
   `tests/test_bash_inert_syntax_mask.py::TestTheMaskerReadsACommentAsBashDoes::test_a_delimiter_line_bash_does_not_take_is_a_declared_limit`.
   A heredoc body ends where the masker reads its
@@ -2310,8 +2314,11 @@ spellings of them are work:
   did not carry, or a delimiter word quoted in part or holding another
   character, `<<E"O"F`, `<<EOF/`) hides the statement after the real
   delimiter, a crafted spelling. An arithmetic shift (`$((1<<4))`, `(( x << 2 ))`) is read as a heredoc
-  operator, and the masker hands back the raw command: friction, never a
-  statement unread. And a launch wrapper inside a substitution in a data
+  operator, and the masker hands back the raw command: friction alone. The
+  older arithmetic spelling `$[1<<x]` is read as one too, its body masked to
+  a later line that is the shift's operand alone, so a statement between
+  them goes unread where bash and zsh run it (dash reads the heredoc too), a
+  crafted spelling. And a launch wrapper inside a substitution in a data
   head's double-quoted argument (`echo "$(eval '...')"`) is read, but one
   spelling whose program's quotes collide with the argument's goes unread (1
   of 38 reaching rows on the differential's wrappers).

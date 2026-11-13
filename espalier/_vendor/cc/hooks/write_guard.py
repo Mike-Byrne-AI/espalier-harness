@@ -2014,7 +2014,8 @@ def _substitution_bodies(
     Quotes are read as bash reads them: nothing opens inside single quotes
     or an ANSI-C string; inside double quotes `$( )` and a backtick open and
     a process substitution is text; a backslash escapes the next character,
-    and a `#` opening a word is a comment to the line's end. With
+    and a `#` opening a word is a comment to the line's end, or inside a
+    backtick body to its closer (the masker's rule). With
     ``heredoc`` the outer text is an unquoted heredoc's body, where a quote
     and a `#` are text and only `$`, a backtick and a backslash are syntax;
     inside a substitution the ordinary rules hold again. A body that never
@@ -2058,6 +2059,7 @@ def _substitution_bodies(
     # whether it is an arithmetic `$(( ))`.
     spans: list[list] = [["", 0, 0, [], False, 0, False]]
     closed = -1   # just past the last span closed: a `#` there is inside a word
+    ticks = 0     # backtick spans open: a comment in one ends at a backtick
     # Heredoc operators whose bodies start at the next newline, each with the
     # depth of the span it was met in: a newline inside a deeper span (a
     # `$( )` that runs across the operator's line) starts none of them.
@@ -2111,8 +2113,10 @@ def _substitution_bodies(
         if ch == "`":
             if top[0] == "`":
                 close(i)
+                ticks -= 1
             else:
                 spans.append(["`", i, i + 1, [], False, 0, False])
+                ticks += 1
             i += 1
             continue
         if ch == "$":
@@ -2141,8 +2145,17 @@ def _substitution_bodies(
             continue
         if ch == '"':
             top[4] = True
-        elif ch == "#" and i != closed and _bash_patterns._opens_comment(text, i):
-            j = src.find("\n", i)
+        elif (ch == "#" and i != closed and _bash_patterns._opens_comment(text, i)
+                and not _bash_patterns._glued_after_escape(src, i)):
+            # The masker's comment rule (DEF-5039): a `#` after an escaped
+            # character is that word's text (read on ``src``, where the
+            # masker has not blanked the escaped character), and a comment
+            # in a backtick body ends at its closer, or a nested body's
+            # escaped one, which the walk then reads. Each hid the statement
+            # after it: ``echo a\\;#; echo $(cat .env)`` and ``echo `#x`;
+            # echo $(cat .env)`` run the read on bash 3.2, dash and zsh.
+            j = (_bash_patterns._backtick_comment_end(src, i) if ticks
+                 else src.find("\n", i))
             i = n if j < 0 else j
             continue
         elif ch == "<" and text.startswith("<", i + 1):
