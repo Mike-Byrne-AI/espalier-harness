@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4117",
+ "subject": "tools/cc/_post_merge.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "The fix shape is open between two readers (the check named for the tier it ran, in the workflow, or a per-merge tier read in this module), and each leaves a different structure, so no probe keyed on one can read the other; a key on a guessed name would stay open under the other shape.",
+ "row_sha": "e96332a867e1",
+ "text_sha": "582f4a041264",
+ "verified_2026_11_13": "OPEN (filed 2026-11-13; probe driven at filing)"
+}

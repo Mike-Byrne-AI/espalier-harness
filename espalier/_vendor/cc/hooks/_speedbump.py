@@ -1515,6 +1515,10 @@ _FETCH_PIPE_TARGET = (
     # the scripter in quotes closes its quote before the lookaheads, and a
     # closing paren or brace ends its command as a separator does (DEF-5080)
     + r"|" + _FETCH_SCRIPTER + r"\b" + _bash_patterns._QUOTED_VERB_TAIL
+    # output redirects before the next token (DEF-3077: `| python3 2>&1`
+    # read like a script operand); never stopped inside a `>&` or `>|`, whose
+    # `&` or `|` the lookaheads would read as a separator
+    + r"(?:[ \t]*" + _bash_patterns._OUTPUT_REDIRECT_RUN + r")?(?!(?<=>)[&|])"
     + r"(?![ \t]*[^ \t;&|\r\n)}-])(?![ \t]*-[^ \t;&|\r\n)}]))"
 )
 
@@ -1559,6 +1563,10 @@ _FETCH_EXEC_PIPE_RE = re.compile(
     # went silent, the failure-mode review of the quoted-operand lane)
     + r"(?:(?:[^\n;&|\\\"']|(?<=>)&|" + _bash_patterns._SPAN_QUOTED_ARMS_WIDE
     + r"){0,2048}\|(?!\|)){1,8}[ \t]*"
+    # output redirects before the target (DEF-3077, site 5: `| 2>&1 bash`),
+    # bounded as the wrapper run is; an input redirect keeps the text data
+    + r"(?:" + _bash_patterns._OUTPUT_REDIRECT_OP + _bash_patterns._OUTPUT_REDIRECT_TARGET
+    + r"[ \t]+){0,4}"
     # `_CMD_POS_WRAP_RUN` is ONE wrapper with its flags (the anchor stars it
     # inside a wider alternation); starred here, bounded, behind an optional
     # path that must be followed by a wrapper word (`/usr/bin/env bash`):
@@ -1630,9 +1638,13 @@ _FETCH_EXEC_PROCSUB_RE = re.compile(
     _bash_patterns._CMD_POS + r"(?:" + _FETCH_SHELL
     + _bash_patterns._QUOTED_VERB_TAIL   # the verb in quotes (DEF-5080)
     + r"(?:[ \t]+(?:(?:[-+][a-z]*o|--(?:rcfile|init-file))[ \t]+[^-+<\s;&|][^\s;&|]*"
-    + r"|(?!(?:[-+][a-z]*o|--(?:rcfile|init-file))[ \t])[-+][^\s;&|]+)){0,8}"
+    + r"|(?!(?:[-+][a-z]*o|--(?:rcfile|init-file))[ \t])[-+][^\s;&|]+"
+    # a redirect word shares the run (DEF-3077, site 3: `bash 2>/dev/null
+    # <(...)`); an input redirect with no target before the substitution is
+    # stdin taken from it (`bash < <(curl ...)`, driven: the program ran)
+    + r"|" + _bash_patterns._SWITCH_REDIRECT + r")){0,8}"
     + r"|(?:" + _FETCH_SCRIPTER + r"|source|\.)" + _bash_patterns._QUOTED_VERB_TAIL
-    + r"(?:[ \t]+-[^\s;&|]+){0,8})"
+    + r"(?:[ \t]+(?:-[^\s;&|]+|" + _bash_patterns._SWITCH_REDIRECT + r")){0,8})"
     + r"[ \t]+<(?=\()" + _FETCH_INNER_POS + _FETCH_HEAD,
     re.IGNORECASE,
 )
@@ -1650,12 +1662,16 @@ _FETCH_EXEC_PROCSUB_RE = re.compile(
 _FETCH_EXEC_SUBST_RE = re.compile(
     _bash_patterns._CMD_POS
     # either head in quotes closes its quote before the space (DEF-5080)
+    # a redirect word after eval or around python's cluster (DEF-3077,
+    # site 4); the shell arm has it through the shared runs
     + r"(?:eval" + _bash_patterns._QUOTED_VERB_TAIL
+    + r"(?:[ \t]+" + _bash_patterns._SWITCH_REDIRECT + r")*"
     + r"|" + _FETCH_SHELL + _bash_patterns._QUOTED_VERB_TAIL
     + _bash_patterns._POSIX_SHELL_SWITCH_RUN + r"[ \t]+" + _bash_patterns._POSIX_SHELL_C_CLUSTER
     + _bash_patterns._POSIX_SHELL_SWITCH_RUN_AFTER_C
     + r"|python[0-9.]*" + _bash_patterns._QUOTED_VERB_TAIL
-    + r"[ \t]+-[A-Za-z]*c\b)"
+    + r"(?:[ \t]+" + _bash_patterns._SWITCH_REDIRECT + r")*[ \t]+-[A-Za-z]*c\b"
+    + r"(?:[ \t]+" + _bash_patterns._SWITCH_REDIRECT + r")*)"
     r"[ \t]+[\"']?(?:\$(?=\()|(?=`))" + _FETCH_INNER_POS + _FETCH_HEAD,
     re.IGNORECASE,
 )
@@ -1695,7 +1711,12 @@ _PS_PAREN = r"(?:[$@]?\([ \t]*)"
 #: pinned silent: `pwsh`, `powershell` and `py` as the target; a scripter
 #: spelled with `.exe` (no suffix after its version run, whose dot it
 #: would share); a target behind a wrapper word (the wrapper run is the
-#: Bash arm's, not its target grammar's).
+#: Bash arm's, not its target grammar's); a scripter behind PowerShell's
+#: all-streams `*>`, which the Bash arm's output-redirect run does not take
+#: (DEF-3077: that run reaches this target verbatim, and `2>&1` and `> f`
+#: are PowerShell's spellings too). Pinned friction: the Bash-only
+#: spellings the run also takes (`>|`, `&>`, `>&2`, `{fd}>f`), which
+#: PowerShell refuses at parse, nudge here.
 _PS_FETCH_PIPE_TARGET = (
     r"(?:" + _PS_EXEC_HEAD + r"\b|(?:&[ \t]*)?" + _bash_patterns._PS_EXE_PREFIX
     + _FETCH_PIPE_TARGET + r")"

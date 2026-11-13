@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._pwsh_cache import private_cache_env
 from tests._spaced_paths import CMD, PS, SH, fill, quoted, skip_unless_plain, spaced
 
 # slow-exempt: five sub-second bash and pwsh reads of a filled word, 1.7 s for the module on the Air, measured 2026-11-04
@@ -76,6 +77,25 @@ class TestFill:
         assert fill("Start-Process cmd -ArgumentList '/c del /s /q {t}'", "{t}", SPACED, PS) == (
             f"Start-Process cmd -ArgumentList '/c del /s /q \"{SPACED}\"'")
 
+    def test_inside_cmds_outer_quotes_the_word_is_quoted_as_if_bare(self):
+        # cmd strips the pair that opens right after /c or /k and reads the
+        # program inside bare, so that pair quotes nothing (#608's
+        # ps-cmd-stopparse-quoted-* rows)
+        assert fill('cmd --% /c "rd /s /q {t}"', "{t}", SPACED, CMD) == (
+            f'cmd --% /c "rd /s /q "{SPACED}""')
+        assert fill('cmd /C "del /s /q {t}/*"', "{t}", SPACED, CMD) == (
+            f'cmd /C "del /s /q "{SPACED}/*""')
+        assert fill('cmd /r"rd /s /q {t}"', "{t}", SPACED, CMD) == f'cmd /r"rd /s /q "{SPACED}""'
+        assert fill('cmd /k "dir {t}"', "{t}", PLAIN, CMD) == f'cmd /k "dir {PLAIN}"'
+        # Git Bash's //c text is bash's to unquote first: today's rule
+        assert fill('cmd //c "del /s /q {t}"', "{t}", SPACED, CMD) == f'cmd //c "del /s /q {SPACED}"'
+        # any other double-quoted string is the fixture's own quoting, and
+        # another shell's fill keeps today's rule
+        assert fill('cmd /c rd /s /q "{t}"', "{t}", SPACED, CMD) == f'cmd /c rd /s /q "{SPACED}"'
+        assert fill('cmd /c echo x "a {t}"', "{t}", SPACED, CMD) == f'cmd /c echo x "a {SPACED}"'
+        assert fill('cmd --% /c "rd /s /q {t}"', "{t}", SPACED, PS) == (
+            f'cmd --% /c "rd /s /q {SPACED}"')
+
     def test_every_placeholder_is_filled_and_the_rest_kept(self):
         assert fill("cd / ; ls sub ; cd {abs} ; rm -rf sub", "{abs}", SPACED) == (
             f'cd / ; ls sub ; cd "{SPACED}" ; rm -rf sub')
@@ -118,7 +138,7 @@ class TestTheRealShellsReadOneWord:
             pytest.skip("no pwsh or powershell on PATH to read the filled text")
         run = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
                              capture_output=True, text=True, encoding="utf-8", errors="replace",
-                             timeout=45, check=False)
+                             timeout=45, check=False, env=private_cache_env())
         assert run.returncode == 0, run.stderr
         return run.stdout.splitlines()
 
@@ -128,6 +148,20 @@ class TestTheRealShellsReadOneWord:
         assert len(self._pwsh(f"Write-Output {posix}")) == len(posix.split()) >= 2
         names = self._pwsh(fill("Get-ChildItem -Path {t} | ForEach-Object Name", "{t}", posix + "/*", PS))
         assert sorted(names) == ["f1", "f2"]
+
+    def test_cmd_reads_the_path_inside_its_outer_quotes_as_one_word(self, tree):
+        if sys.platform != "win32":
+            pytest.skip("cmd.exe reads the filled text on Windows only")
+        # a string argv reaches CreateProcess as typed, so cmd sees the quotes
+        run = subprocess.run(fill('cmd /c "dir /b {t}"', "{t}", str(tree), CMD),
+                             capture_output=True, text=True, encoding="utf-8",
+                             errors="replace", timeout=30, check=False)
+        assert run.returncode == 0, run.stderr
+        assert sorted(run.stdout.split()) == ["f1", "f2"]
+        # filled bare, as before the rule, the spaced path is two words to dir
+        bare = subprocess.run(f'cmd /c "dir /b {tree}"', capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=30, check=False)
+        assert sorted(bare.stdout.split()) != ["f1", "f2"]
 
 
 class TestSkipUnlessPlain:

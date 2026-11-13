@@ -22,8 +22,9 @@ they make in the system temp dir are named by their prefixes in
 :data:`OWNED_PREFIXES` (``scripts/archive_probe.py``,
 ``tests/_live_tree.py::checkout_copy``, the fresh-clone gate, the pin
 verifier, the wheel smoke, the release check, the merge-cost census, the
-ledger verbs' base exports and the kept-helper plants' warm ``tools/cc``
-template); ``tests/test_temp_sweep.py``'s census holds every
+ledger verbs' base exports, the kept-helper plants' warm ``tools/cc``
+template and each test process's private pwsh startup cache,
+``tests/_pwsh_cache.py``); ``tests/test_temp_sweep.py``'s census holds every
 other Python maker under tests/, scripts/, bench/ and tools/cc/ to a reason it
 needs none. The first sweep on the Air removed 13
 dirs, 32 GB and about 1.9 million inodes, in 150 s (2026-11-01, before the
@@ -76,7 +77,7 @@ CURRENT_LINK = "pytest-current"
 #: reads every maker against it).
 OWNED_PREFIXES = ("espalier-archive-probe-", "checkout-copy-", "espalier-gate-", "verify-pins-", "wheel-smoke-",
                   "espalier-release-check-", "merge-cost-census-", "strike-base-", "file-export-",
-                  "kept-helper-cc-")
+                  "kept-helper-cc-", "test-pwsh-cache-")
 #: The most a start spends deleting, checked between a dir's children: under a
 #: tool call's two-minute default with a dir's child in flight; what is left
 #: keeps its lock for the next start.

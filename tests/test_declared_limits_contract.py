@@ -309,6 +309,14 @@ class TestTheSentenceSplitter:
 #: program keeps three declared false allows (an operand a nested body
 #: computes, a backtick span nested in another, a case arm's unbalanced `)`),
 #: one sentence with its pin.
+#: HOOKS 35 -> 36 on 2026-11-13 (DEF-3077), re-derived from the HOOKS.md merged
+#: with main's 35: the piped
+#: shell's redirect limits (a glued chain, a redirect before a heredoc operand,
+#: a quoted blank target on the pipe), one sentence whose "Declared limits"
+#: opening the widened key reads, pinned in
+#: `TestAPipedShellReadsItsRedirectAndExeHead`; its citation's hit is paid for by
+#: an internal row id dropped from the kept-helper sentence, so the seeded docs
+#: stay at the ceiling.
 #: HOOKS 34 -> 38 on 2026-11-13 (DEF-2073's lane, air's rulings 79ba0b and
 #: 40ec7f), re-derived from the HOOKS.md merged with main's 34
 #: (DEF-3075 and DEF-5107 above): the PowerShell comment reader's three
@@ -330,7 +338,9 @@ class TestTheSentenceSplitter:
 #: went with it.
 #: HOOKS 38 -> 39 on 2026-11-13: DEF-2073's lane merged over DEF-5106's 35
 #: (the lane's net +4 on main's 34 above, added to main's 35).
-_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 39, "docs/SHARP_EDGES.md": 5}
+#: HOOKS 36 -> 40 on 2026-11-13: DEF-2073's lane merged over DEF-3077's 36
+#: (the lane's net +4 on main's 34 above, added to main's 36).
+_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 40, "docs/SHARP_EDGES.md": 5}
 
 
 def test_the_census_is_the_pinned_population():
