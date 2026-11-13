@@ -2228,6 +2228,14 @@ spellings of them are work:
   whose line PowerShell hands the native program as typed, is a declared
   limit, pinned by
   `tests/test_write_guard.py::TestAGluedCommentOpens::test_an_opener_after_stop_parsing_opens_a_comment_powershell_does_not`.
+  The other way, a glued `<#` the reader cannot place goes unopened where
+  PowerShell opens it, so a read after it on that line is taken for an
+  argument and let through, a declared false allow: after a group or block
+  closed earlier in its statement (`if (1) { gc } $x<# c #>; ...`,
+  `(Get-Item a).Name<# c #>; ...`), a string's member (`'a'.Length<#`), a
+  here-string's close, a colon-bound string (`-a:'a'<#`), a drive-qualified
+  name (`$a:b:c<#`) or an escaped colon (``-a`:<#``), pinned by
+  `tests/test_write_guard.py::TestAGluedCommentOpens::test_the_residue_is_where_the_walk_and_powershell_still_differ`.
   A run of blanks or comments thousands long costs the PowerShell readers
   time that grows with its square, a declared limit under the timeout
   sentence above: such a flood before a re-parsed string is refused, by the
@@ -3159,8 +3167,9 @@ contract; line numbers drift with surface edits, so none are pinned here.
 
 Matcher strings are sourced from `espalier.harness_config.CANONICAL_HOOK_WIRING`
 (engine-internal — it lives in the installed package, not in your tree).
-`tests/test_hook_matcher_precision.py::ALLOWED_STAR_HOOKS` (Espalier source repo)
-enumerates the hooks legitimately on `"*"`.
+Two hooks are on `"*"` by design, `write_guard.py` and `reflect_trigger.py`;
+Espalier's own test suite names them and fails when any other hook's matcher
+is widened to `"*"`.
 
 ### Events that do not support a matcher
 

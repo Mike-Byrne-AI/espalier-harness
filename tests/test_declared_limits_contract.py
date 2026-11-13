@@ -314,7 +314,13 @@ class TestTheSentenceSplitter:
 #: `TestABlockCommentIsOneBlank`; the four cites' hits are paid by two internal
 #: ids and two dated "measured"s dropped elsewhere in HOOKS.md, so the seeded
 #: docs stay at the ceiling.
-_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 38, "docs/SHARP_EDGES.md": 5}
+#: HOOKS 38 -> 39 on 2026-11-13 (DEF-2073's residue): a glued `<#` the reader
+#: cannot place, where PowerShell opens it (a group closed earlier in its
+#: statement, a string's member, a here-string's close, a colon-bound string, a
+#: drive-qualified name, an escaped colon), a declared false allow pinned by
+#: the residue row; its cite's hit is paid by the matcher section's bare
+#: test-symbol cite, reworded to say what the test enforces.
+_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 39, "docs/SHARP_EDGES.md": 5}
 
 
 def test_the_census_is_the_pinned_population():
