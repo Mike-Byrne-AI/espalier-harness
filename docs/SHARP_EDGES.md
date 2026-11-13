@@ -3395,9 +3395,10 @@ a value lead): 24 s to 70 ms, run left unbounded. Rule: when a witness flood is
 quadratic, find the token with two parses and take one away — a bound on a run
 a real command can fill is a coverage hole with no receipt, and a must-deny row
 at the padded length is what reds a future bound.
-The exception, with its receipt: the `-c` cluster `-[A-Za-z]{0,8}c[A-Za-z]{0,8}`
-stays bounded in `_SHELL_DASH_C_RE`, `_CARRIER_C_CLUSTER_RE` and
-`_PS_BASH_DASH_C_RE`. Its cost sits inside ONE token, where each `c` in a long
+The exception, with its receipt: the `-c` cluster (`_POSIX_SHELL_C_CLUSTER`,
+either sign, eight letters a side of the `c`) stays bounded in
+`_SHELL_DASH_C_RE` and `_PS_BASH_DASH_C_RE`, and so does the carriers'
+`_CARRIER_C_CLUSTER_RE`. Its cost sits inside ONE token, where each `c` in a long
 letter run is a split point, and no second parse can be taken away without
 dropping clusters bash accepts: unbounded it read 113 / 451 / 1800 ms at
 4 / 8 / 16 KB on one token (measured on review, at load 3.5), so a cluster of
@@ -3564,8 +3565,13 @@ ESPALIER_STOP_GATE_TEST_CMD="go test -short ./..." \
 **Threat model:** the env var is set in the parent shell BEFORE
 `claude` launches; Claude Code inherits the env at spawn time. Mid-
 session `export` does not reach already-spawned hooks. Same posture
-as `disableAllHooks` / `ESPALIER_MAINTENANCE_MODE` — operator-side,
-not LLM-injectable.
+as `ESPALIER_MAINTENANCE_MODE` — operator-side: the write guard
+refuses an in-session assignment of it as it refuses the mode
+variable's, alone and handed to a nested `claude` (whose test gate
+would run the assigned command under an inherited `full`). Until
+2026-11-13 the guard's roster left this variable out, so the
+sentence here ("not LLM-injectable") held only for the hooks
+already running.
 
 **Where it runs, and what happens when it cannot start.** The command runs
 at the repository root, whatever directory the hook process was started in,

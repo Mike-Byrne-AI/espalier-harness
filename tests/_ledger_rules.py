@@ -398,15 +398,19 @@ _NEGATION_RE = re.compile(r"\b(?:no|not|none|neither|nor|never)\b", re.IGNORECAS
 _CLAUSE_BREAK_RE = re.compile(r"[,;:()]")
 #: What the sentence names: one of the three jobs the coverage contract keeps
 #: (docs/HOOKS.md, "The coverage contract for the jobs the parser keeps": a
-#: catastrophic delete, the speed bumps, a secret read) or a real-session
-#: record of the slip. The metric read a basis by a looser regex over the whole
-#: text, which missed one row's words and found another's in a clause naming
-#: no job; a sentence the filer writes is checked when the row is written. A
-#: basis the operator adds is one more line here.
+#: catastrophic delete, the speed bumps, a secret read), the anti-self-disable
+#: floor (the operator's fourth basis, 2026-11-13, ack 5cb6f0: the guard's
+#: first job, which the contract says nothing of either way; the same section
+#: of docs/HOOKS.md names it), or a real-session record of the slip. The metric
+#: read a basis by a looser regex over the whole text, which missed one row's
+#: words and found another's in a clause naming no job; a sentence the filer
+#: writes is checked when the row is written. A basis the operator adds is one
+#: more line here, and one more name in the breach text below.
 BASIS_NAMES: tuple[str, ...] = (
     r"catastrophic[- ]delete",
     r"speed[- ]?bump",
     r"secret[- ]read",
+    r"anti-self-disable[- ]floor",
     r"real[- ]session",
 )
 BASIS_NAMES_RE = re.compile("|".join(BASIS_NAMES), re.IGNORECASE)
@@ -420,9 +424,6 @@ GUARD_ROWS_RULED_WITHOUT_A_BASIS: dict[str, str] = {
     "DEF-682": ("ruling 90a8cc: the gap is declined and the row stays live in the ledger's declared-limit "
                 "form, since neither verb takes a decline; the sync advisory is not one of the three kept "
                 "jobs, and the transcripts it counts hold none of its own case"),
-    "DEF-972": ("operator call 88e7e8: the stop gate's test-command variable is the anti-self-disable "
-                "floor, outside the three kept jobs, and its text records no session; the call decides "
-                "between a fourth basis and a limit"),
 }
 _TABLE_ROW_RE = re.compile(r"^\|\s*(~~)?`")
 _ROW_ID_RE = re.compile(r"`([A-Z]{2,5}-\d+[a-z]*)`")
@@ -488,7 +489,7 @@ def guard_rows(text: str) -> dict[str, tuple[str, str | None]]:
             continue
         said = [m.group(1) for m in BASIS_SENTENCE_RE.finditer(body)]
         why = (None if any(_names_a_basis(s) for s in said)
-               else "its 'Contract basis:' sentence names none of the kept jobs or a real session" if said
+               else "its 'Contract basis:' sentence names none of the kept jobs, the anti-self-disable floor or a real session" if said
                else "no sentence in its text opens with 'Contract basis:'")
         out[rid] = (names[0], why)
     return out
@@ -540,8 +541,9 @@ def _cited_path_breaks(rel: str, text: str) -> list[str]:
 def _basis_breaks(text: str) -> list[str]:
     return [f"{rid} is a guard row (its location names {where}) and {why}: run the finding through the "
             "coverage contract (docs/HOOKS.md, the jobs the parser keeps) and write one sentence opening "
-            "'Contract basis:' that names its kept job (a catastrophic delete, a speed bump, a secret read) "
-            "or the real session that recorded the slip; a finding with neither is a limit sentence, not a row"
+            "'Contract basis:' that names its kept job (a catastrophic delete, a speed bump, a secret read), "
+            "the anti-self-disable floor, or the real session that recorded the slip; a finding with none of "
+            "them is a limit sentence, not a row"
             for rid, (where, why) in guard_rows(text).items()
             if why is not None and rid not in GUARD_ROWS_RULED_WITHOUT_A_BASIS]
 
