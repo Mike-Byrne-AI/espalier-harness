@@ -6132,6 +6132,71 @@ def test_secret_leg_substitution_bodies_linear(label, payload):
     assert elapsed_ms < _CI_SAFE_BUDGET_MS, f"{label}: {elapsed_ms:.1f}ms"
 
 
+@pytest.mark.parametrize("label,payload", [
+    # DEF-4109: the walk reads each heredoc body bash reads and resumes past
+    # its delimiter, and the statement read meets every line after it and
+    # every statement after a lone `&`. Floods of terminated heredocs, of
+    # operators on one line, of one long body full of quotes and openers, of
+    # operators no body closes, of heredocs nested in substitutions (bare and
+    # in double quotes), of here-strings, lone `&` and lone redirects: the
+    # walk, the blanking, the statement read of the text and of every body
+    # (about 22 ms at most on the Air, 2026-11-13). The masker and the
+    # descent into each body are left out here; the whole leg on the
+    # commit idiom is the cell below.
+    ("lone_amp", "a& " * (_WORST_CASE_BODY_LEN // 3)),
+    ("terminated_heredocs", "cat <<A\nA\n" * (_WORST_CASE_BODY_LEN // 10)),
+    ("ops_on_one_line", "cat " + "<<A " * (_WORST_CASE_BODY_LEN // 8) + "\n" + "A\n" * (_WORST_CASE_BODY_LEN // 8)),
+    ("one_long_body", "cat <<'E'\n" + "it's `x` $(y)\n" * (_WORST_CASE_BODY_LEN // 15) + "E\ncat x"),
+    ("unterminated_ops", "cat <<A\n" * (_WORST_CASE_BODY_LEN // 8)),
+    ("nested_heredoc_subst", "x=$(cat <<E\n" * (_WORST_CASE_BODY_LEN // 12) + "E\n)" * (_WORST_CASE_BODY_LEN // 12)),
+    ("heredoc_in_quote", 'echo "$(cat <<E\n' * (_WORST_CASE_BODY_LEN // 16) + 'E\n)"' * (_WORST_CASE_BODY_LEN // 16)),
+    ("here_strings", "cat <<<x\n" * (_WORST_CASE_BODY_LEN // 9)),
+    ("lone_redirects", "< a " * (_WORST_CASE_BODY_LEN // 4)),
+])
+def test_secret_leg_heredoc_bodies_and_background_steps_linear(label, payload):
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    signal.signal(signal.SIGALRM, _alarm)
+    signal.setitimer(signal.ITIMER_REAL, _CI_SAFE_BUDGET_MS / 1000.0)
+    t = time.time()
+    try:
+        heredocs: list = []
+        bodies = write_guard._substitution_bodies(payload, heredocs=heredocs, source=payload)
+        text = write_guard._without_heredoc_bodies(payload, heredocs) if heredocs else payload
+        write_guard._secret_statement_reads(text)
+        for body in bodies:
+            write_guard._secret_statement_reads(body)
+        elapsed_ms = (time.time() - t) * 1000
+    except _Timeout:
+        pytest.fail(f"{label}: the secret leg's heredoc walk exceeded {_CI_SAFE_BUDGET_MS}ms")
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    assert elapsed_ms < _CI_SAFE_BUDGET_MS, f"{label}: {elapsed_ms:.1f}ms"
+
+
+def test_secret_leg_whole_on_a_long_commit_message_linear():
+    # DEF-4109: the commit idiom with a 30 KB message full of apostrophes,
+    # backticks and `$(`, through the whole Bash secret leg (the masker, the
+    # walk, every program reader and the descent into the substitution's
+    # body, which a quoted body leaves). About 120 ms on the Air, 2026-11-13;
+    # main 37 ms on a plainer message of the same length, as this lane.
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    command = ("git commit -m \"$(cat <<'EOF'\n" + "it's `x` and $(y) here\n" * (_WORST_CASE_BODY_LEN // 23)
+               + "EOF\n)\"")
+    signal.signal(signal.SIGALRM, _alarm)
+    signal.setitimer(signal.ITIMER_REAL, _CI_SAFE_BUDGET_MS / 1000.0)
+    t = time.time()
+    try:
+        write_guard._secret_read_targets(command)
+        elapsed_ms = (time.time() - t) * 1000
+    except _Timeout:
+        pytest.fail(f"the secret leg on a long commit message exceeded {_CI_SAFE_BUDGET_MS}ms")
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    assert elapsed_ms < _CI_SAFE_BUDGET_MS, f"{elapsed_ms:.1f}ms"
+
+
 class TestPlanModeBridgeReader:
     """The plan-mode bridge's Markdown reader (``reflect_trigger._steps_from_plan``
     and its siblings) runs over a user-authored plan of any size on every

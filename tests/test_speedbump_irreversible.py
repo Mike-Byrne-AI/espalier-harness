@@ -3271,7 +3271,7 @@ class TestCommandPositionClassClose:
             "(anchored) match: a parenthesised first argument and the recursion "
             "flag the arm's own group stops before; never runs over a command.",
         "write_guard._STATEMENT_BOUNDARY_RE":
-            "SYNTAX TOKEN -- `;`/newline/`&&`/`||`/`|` statement separator. "
+            "SYNTAX TOKEN -- `;`/newline/`&&`/`||`/`|`/lone `&` statement separator. "
             "Feeds `_secret_read_targets`, which then checks whether the "
             "FIRST token of each statement is a read verb; that check is the "
             "command-position gate, so a quoted mention like "
