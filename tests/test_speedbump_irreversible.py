@@ -3397,12 +3397,15 @@ class TestCommandPositionClassClose:
             "(§C66). It decides where a word ends, not whether a command runs; the "
             "verb is still checked against the read-verb roster.",
         "write_guard._INPUT_REDIRECT_RE":
-            "TOKENIZER -- `match`ed on ONE word of a statement the secret-read leg "
-            "cut, to read an input redirect's source as the verb's read (DEF-1132); "
-            "it decides what a word is, not whether a command runs.",
+            "TOKENIZER -- `match`ed on ONE word of a statement the secret-read legs "
+            "cut, to read an input redirect's source as the verb's read on Bash "
+            "(DEF-1132; PowerShell drops the source, `<` being reserved there); it "
+            "decides what a word is, not whether a command runs.",
         "write_guard._OUTPUT_REDIRECT_RE":
-            "TOKENIZER -- `match`ed on ONE word at a statement's head, so a leading "
-            "output redirect and its target are skipped to the verb (DEF-2061).",
+            "TOKENIZER -- `match`ed on ONE word of a statement the secret-read legs "
+            "cut, at its head and among a read verb's operands on both shells, so an "
+            "output redirect and its target are skipped wherever they stand "
+            "(DEF-2061, DEF-5107).",
         "write_guard._ASSIGNMENT_WORD_RE":
             "TOKENIZER -- `match`ed on ONE word at a statement's head: a leading "
             "assignment is skipped to the verb (DEF-1025); the verb is still checked "

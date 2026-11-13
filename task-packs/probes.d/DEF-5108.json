@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5108",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c 'import os, sys; os.environ.pop(\"ESPALIER_MAINTENANCE_MODE\", None); sys.path[:0] = [\"tools/cc/hooks\", \"tools/cc\"]; import write_guard as w; p = lambda c: \".env.err\" in w._ps_secret_read_targets(c); print(p(\"Rename-Item notes.txt b.txt 2> .env.err\"), p(\"Compress-Archive notes.txt a.zip 2> .env.err\"))'",
+ "open_value": "True True",
+ "why_not": null,
+ "row_sha": "71fd5ef1e753",
+ "text_sha": "e28b64849dae",
+ "verified_2026_11_12": "OPEN (filed 2026-11-12; probe driven at filing here and in the export of HEAD 61e0ab4d02e7)"
+}

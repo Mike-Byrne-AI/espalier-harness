@@ -302,7 +302,10 @@ class TestTheSentenceSplitter:
 #: row id dropped from the word-list loop sentence, and the one hit the merge
 #: with main left over the ceiling (267 of 266) by the kept-helper section's
 #: bare test-file cite, reworded to say what the test does.
-_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 33, "docs/SHARP_EDGES.md": 5}
+#: HOOKS 33 -> 34 on 2026-11-12 (DEF-5107), merged over DEF-3075's 33: a redirect
+#: into a substitution keeps the operands' old stop, a declared false allow
+#: with its pin.
+_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 34, "docs/SHARP_EDGES.md": 5}
 
 
 def test_the_census_is_the_pinned_population():
