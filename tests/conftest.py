@@ -1791,6 +1791,10 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # _json_safe.py predates the spelling: a module object in this
             # process cannot stand in for a fresh import (DEF-2062).
             "test_json_safe_program_word",
+            # Starts a real pwsh and reads where its startup cache landed:
+            # whether pwsh honours XDG_CACHE_HOME is the shell's own answer
+            # (DEF-4115).
+            "test_pwsh_cache",
         ),
         "integration",
     ),
