@@ -1,0 +1,13 @@
+{
+ "id": "DEF-2081",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c 'import sys; sys.path[:0] = [\"tools/cc/hooks\", \"tools/cc\"]; import write_guard as w; q = chr(39) + chr(38) + chr(39); print(*(\".env\" in w._ps_secret_read_targets(c) for c in (\"cmd /c type .env\", \"cmd /c --% type .env\", \"cmd /c echo a \" + q + \" type .env\")))'",
+ "open_value": "True False False",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/write_guard.py"
+ ],
+ "row_sha": "3e33e0154b76",
+ "text_sha": "c1d0f69df5c7",
+ "verified_2026_11_13": "OPEN (filed 2026-11-13; probe driven at filing here and in the export of HEAD 0294d5573a60)"
+}
