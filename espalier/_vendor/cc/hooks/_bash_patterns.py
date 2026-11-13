@@ -3234,6 +3234,91 @@ _BASH_COMMAND_HALF_CAP = _BASH_COMMAND_CAP // 2  # 16384 each side
 #: `$` and `\` are deliberately absent -- neither ever acts as a separator.
 _INERTABLE_SYNTAX = frozenset("`(){};|&<>\n\r#")
 
+#: The live syntax the masker's comment cursor reads (`_CommentCursor`): a
+#: backtick, which opens or closes a body, and a paren.
+_CURSOR_SYNTAX_RE = re.compile(r"[`()]")
+
+
+class _CommentCursor:
+    """The live syntax before a `#`, for the masker's comment branch
+    (`_walk_shell_roles`, the masker row DEF-5039): whether a backtick body is
+    open there, and where the last closer a `#` glues to stands -- a
+    substitution's or an array's `)`, or a backtick body's closing backtick,
+    after which a `#` is word text to bash (`echo $(true)#; next` runs
+    `next`), never a comment. Read on the walk's masked text so far, which
+    keeps only live syntax (a quoted, escaped or commented backtick or paren
+    is blank), by a cursor that only moves forward, so a command pays once
+    for its whole length.
+
+    ⚠ THE MASKED TEXT KEEPS A SPAN RAW, AND THE CURSOR JUMPS IT. A double-
+    quoted span holding a live `$( )` or backtick, and an unquoted heredoc's
+    body, keep that substitution raw in the masked text
+    (`_neutralise_expanding_span`), quotes and all, so a quoted backtick or
+    paren inside it read as live flipped the cursor's state:
+    ``x="$(echo '`')"; echo `echo a #x`; <delete>`` hid the delete, driven on
+    bash 3.2, dash and zsh (the failure-mode review). Each such range is
+    balanced to bash (its substitutions open and close inside it), so the
+    state across it is the state before it: the walk records each one in
+    walk order (``raw_spans``: the double-quote branches and the heredoc
+    consume) and the cursor steps over it unread.
+
+    ⚠ IT COSTS NOTHING WHERE ITS ANSWER CANNOT MATTER. A per-character loop
+    in two closures the walk built on every call cost the whole judgment
+    about 5% on comment-heavy commands and the walk 6% on every call (the
+    masker runs some 170 times a judgment), past the cost line ack 40ec7f
+    draws. The walk makes a cursor only for a command holding a `#`; it reads
+    only before a `#` after a `)`, or in a command holding a backtick, where
+    an open body changes where a comment ends; and its scan visits only a
+    backtick or a paren, the regex walking the rest in C."""
+
+    __slots__ = ("s", "out", "raw_spans", "has_tick", "live_at", "raw_at",
+                 "tick_open", "paren_glues", "glued_close")
+
+    def __init__(self, s: str, out: list) -> None:
+        self.s = s
+        self.out = out
+        self.raw_spans: list[tuple[int, int]] = []
+        self.has_tick = "`" in s     # no backtick: no body is ever open
+        self.live_at = 0
+        self.raw_at = 0
+        self.tick_open = False
+        self.paren_glues: list[bool] = []
+        self.glued_close = -2        # never `k - 1`: a `#` at offset 0 follows no closer
+
+    def glued_after_closer(self, k: int) -> bool:
+        """The `#` at ``k`` follows a closer it glues to. Reads the live
+        syntax up to ``k`` first wherever ``tick_open`` can matter after."""
+        if not self.has_tick and self.s[k - 1:k] != ")":
+            return False
+        self._read_to(k)
+        return self.glued_close == k - 1
+
+    def _read_to(self, k: int) -> None:
+        a = self.live_at
+        if a >= k:
+            return
+        self.live_at = k
+        s, spans, at, glues = self.s, self.raw_spans, self.raw_at, self.paren_glues
+        tick, glued = self.tick_open, self.glued_close
+        for m in _CURSOR_SYNTAX_RE.finditer("".join(self.out[a:k])):
+            p = a + m.start()
+            while at < len(spans) and spans[at][1] <= p:
+                at += 1
+            if at < len(spans) and spans[at][0] <= p:
+                continue        # inside a span the walk keeps raw
+            ch = m.group()
+            if ch == "`":
+                tick = not tick
+                if not tick:
+                    glued = p
+            elif ch == "(":
+                # `$(`, `<(`, `>(` and an array's `=(`; a subshell's `(` and
+                # the inner paren of `$((` or `((` glue nothing
+                glues.append(p > 0 and s[p - 1] in "$<>=")
+            elif glues and glues.pop():
+                glued = p
+        self.raw_at, self.tick_open, self.glued_close = at, tick, glued
+
 #: Constructs that hand a heredoc body to a consumer the head roster can never
 #: see: command substitution captures it into a buffer the ENCLOSING command
 #: re-parses (`eval $(cat <<'EOF' ...)`), and a process substitution used as a
@@ -3781,7 +3866,8 @@ def _walk_shell_roles(
             elif c == '"':
                 j = _close_double_quote(s, k)
                 _neutralise_expanding_span(s, out, k + 1, j)
-                raw_spans.append((k + 1, j))
+                if cursor is not None:
+                    cursor.raw_spans.append((k + 1, j))
                 lo = k + 1
             elif c == "$" and k + 1 < n and s[k + 1] == "'":
                 j = _close_ansi_c_quote(s, k + 1)
@@ -3964,58 +4050,10 @@ def _walk_shell_roles(
             # takes its text and its stdin as data
             frames[-1].inner_ok = _head_hands_its_text_to_no_shell(word)
 
-    #: The live syntax before a `#`, for the comment branch (the masker
-    #: row): whether a backtick body is open there, and where the last
-    #: closer a `#` glues to stands -- a substitution's or an array's `)`, or
-    #: a backtick body's closing backtick, after which a `#` is word text to
-    #: bash (`echo $(true)#; next` runs `next`), never a comment. Read on the
-    #: masked text so far, which keeps only live syntax (a quoted, escaped or
-    #: commented backtick or paren is blank, the settle's own reading below),
-    #: by a cursor that only moves forward, so a command pays once for its
-    #: whole length and one with no comment opener pays nothing.
-    #:
-    #: ⚠ THE MASKED TEXT KEEPS A SPAN RAW, AND THE CURSOR JUMPS IT. A double-
-    #: quoted span holding a live `$( )` or backtick, and an unquoted
-    #: heredoc's body, keep that substitution raw in ``out``
-    #: (`_neutralise_expanding_span`), quotes and all, so a quoted backtick
-    #: or paren inside it read as live flipped the cursor's state:
-    #: ``x="$(echo '`')"; echo `echo a #x`; <delete>`` hid the delete,
-    #: driven on bash 3.2, dash and zsh (the failure-mode review). Each such
-    #: range is balanced to bash (its substitutions open and close inside
-    #: it), so the state across it is the state before it: the walk records
-    #: each one in walk order (``raw_spans``, the double-quote branches and
-    #: the heredoc consume) and the cursor steps over it unread.
-    live_at = 0
-    tick_open = False
-    paren_glues: list[bool] = []
-    glued_close = -2    # never `k - 1`: a `#` at offset 0 follows no closer
-    raw_spans: list[tuple[int, int]] = []
-    raw_at = 0
-
-    def live_syntax_to(k: int) -> None:
-        nonlocal live_at, tick_open, glued_close, raw_at
-        while live_at < k:
-            if raw_at < len(raw_spans) and raw_spans[raw_at][0] <= live_at:
-                live_at = max(live_at, raw_spans[raw_at][1])
-                raw_at += 1
-                continue
-            ch = out[live_at]
-            if ch == "`":
-                tick_open = not tick_open
-                if not tick_open:
-                    glued_close = live_at
-            elif ch == "(":
-                # `$(`, `<(`, `>(` and an array's `=(`; a subshell's `(` and
-                # the inner paren of `$((` or `((` glue nothing
-                paren_glues.append(live_at > 0 and s[live_at - 1] in "$<>=")
-            elif ch == ")" and paren_glues and paren_glues.pop():
-                glued_close = live_at
-            live_at += 1
-
-    def glued_after_closer(k: int) -> bool:
-        """The `#` at ``k`` follows a closer it glues to (see above)."""
-        live_syntax_to(k)
-        return glued_close == k - 1
+    #: The comment branch's reading of the live syntax before a `#`
+    #: (`_CommentCursor`), made only for a command holding a `#`: one with
+    #: none pays nothing for it.
+    cursor = _CommentCursor(s, out) if "#" in s else None
 
     while i < n:
         c = s[i]
@@ -4228,7 +4266,8 @@ def _walk_shell_roles(
         if c == '"':
             j = _close_double_quote(s, i)
             _neutralise_expanding_span(s, out, i + 1, j)
-            raw_spans.append((i + 1, j))
+            if cursor is not None:
+                cursor.raw_spans.append((i + 1, j))
             if (walk_substitutions and simple_head is not None
                     and _splices_quoted_capture(simple_head, s[cmd_start:j])):
                 mask_quoted_substitutions(i + 1, j)
@@ -4248,7 +4287,7 @@ def _walk_shell_roles(
             continue
 
         if (c == "#" and _opens_comment(s, i) and not _glued_after_escape(s, i)
-                and not glued_after_closer(i)):
+                and not (cursor is not None and cursor.glued_after_closer(i))):
             # ⚠ A `#` STARTS A COMMENT WHERE BASH STARTS ONE, AND A COMMENT
             # INSIDE A BACKTICK BODY ENDS AT ITS CLOSER (the masker row). The
             # opener table alone read a `#` glued after a substitution's `)`,
@@ -4259,7 +4298,8 @@ def _walk_shell_roles(
             # bash ends such a comment at the first newline or unescaped
             # backtick, which closes the body, and a nested body's comment at
             # its escaped closer, read at any depth; the closer stays live.
-            j = _backtick_comment_end(s, i) if tick_open else s.find("\n", i)
+            j = (_backtick_comment_end(s, i) if cursor is not None and cursor.tick_open
+                 else s.find("\n", i))
             j = n if j < 0 else j
             # ⚠ START AT i+1 -- the `#` ITSELF MUST SURVIVE. Blanking it was a real
             # defect: `_CMD_POS` matches a separator followed by `_CMD_POS_WS`
@@ -4330,7 +4370,8 @@ def _walk_shell_roles(
                 i, body_end = _consume_heredoc_body(
                     s, out, i, delim, expands, strip_tabs, neutralise,
                 )
-                raw_spans.append((body_start, body_end))
+                if cursor is not None:
+                    cursor.raw_spans.append((body_start, body_end))
                 # A QUOTED delimiter means bash performs no expansion, so the
                 # body is inert data handed to this statement's stdin. If that
                 # statement's own head does not re-parse, the body cannot become

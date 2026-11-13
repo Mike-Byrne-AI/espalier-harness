@@ -3600,6 +3600,10 @@ class TestCommandPositionClassClose:
             "SYNTAX TOKEN -- a `<<` operator on a line's quote-blanked twin, so "
             "the splicer can leave a quoted-delimiter body unspliced; never "
             "names a verb.",
+        "_bash_patterns._CURSOR_SYNTAX_RE":
+            "SYNTAX TOKEN -- a backtick or a paren on the masker's own masked "
+            "text, read by its comment cursor to tell a glued closer from an "
+            "opener (DEF-5039); never names a verb.",
         "_bash_patterns._INTERP_PIPE_RE":
             "OPENER -- `| <interpreter or shell> [switches] [-]`: anchored on the "
             "pipe itself, the one separator that hands a stage to its consumer; "
