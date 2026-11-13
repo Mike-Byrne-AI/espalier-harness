@@ -352,6 +352,50 @@ class TestAGluedFloodIsJudgedInTime:
         assert streams.out.getvalue().strip() == "", "allowed on both readings"
 
 
+def _pattern_module():
+    """`tools/cc/hooks/_bash_patterns`, by the sys.path insert the guard's
+    own tests use."""
+    sys.path.insert(0, str(HOOKS_DIR))
+    import _bash_patterns
+    return _bash_patterns
+
+
+class TestAGluedRunIsReadInLinearTime:
+    """The PowerShell comment walk on long glued runs, bounded by the wall
+    clock, so here in a serial file (moved from test_write_guard.py, whose
+    parallel run a timing bound would false-fail)."""
+
+    def test_a_run_of_bracketed_members_is_read_in_linear_time(self):
+        """The code review: the type arm as a run (`(?:\\[..\\])+`) beside
+        the index member backtracked cubically where the token's end failed
+        it: 0.44 s on the 400-bracket text, eight times that at 800 (Windows,
+        2026-11-12); now about 0.01 s."""
+        import time
+        bp = _pattern_module()
+        cmd = "$y = $x" + "[a]" * 800 + "q<#c#>"
+        start = time.perf_counter()
+        bp._walk_powershell_spans(cmd)
+        assert time.perf_counter() - start < 0.5
+
+    @pytest.mark.parametrize("make", [
+        # the two reviews' payloads, each quadratic before the token cap
+        lambda n: "$y = $x" + "[a]" * n + "q<#c#>",
+        lambda n: "$x=" + "a<#" * n,
+        lambda n: "$x=" + "$a.b+<#" * n,
+        lambda n: "1" * n + "x" + "$a<#" * (n // 4),
+        lambda n: "Write-Output " + " $x.y<#a#>" * n,
+    ], ids=["bracket-run", "glued-word-run", "member-plus-run", "digit-head", "member-comments"])
+    def test_a_long_run_of_glued_openers_is_read_in_linear_time(self, make):
+        """15.5 s on the 54 KB member-plus run before the cap (Windows,
+        2026-11-13), about 0.015 s after it."""
+        import time
+        bp = _pattern_module()
+        cmd = make(8000)
+        start = time.perf_counter()
+        bp._walk_powershell_spans(cmd)
+        assert time.perf_counter() - start < 0.5
+
+
 class TestASlowJudgmentIsRefused:
     @pytest.mark.parametrize("tool, tool_input", [
         ("Bash", {"command": "git status"}),
