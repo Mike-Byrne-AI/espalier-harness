@@ -2288,7 +2288,9 @@ spellings of them are work:
   of it either way. A report that the floor leaves out a setting or a
   variable that turns a gate off is a defect on this basis; a spelling of one
   it already reads is judged as the bullets above judge a spelling of the
-  three jobs.
+  three jobs. A protected-zone write, which section 4's headline also places
+  under the floor, is not on this basis: a report about one, or a spelling of
+  one, is judged as it was before this ruling.
 
 **Configuration:**
 
