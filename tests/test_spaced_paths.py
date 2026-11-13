@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._pwsh_cache import private_cache_env
 from tests._spaced_paths import CMD, PS, SH, fill, quoted, skip_unless_plain, spaced
 
 # slow-exempt: five sub-second bash and pwsh reads of a filled word, 1.7 s for the module on the Air, measured 2026-11-04
@@ -118,7 +119,7 @@ class TestTheRealShellsReadOneWord:
             pytest.skip("no pwsh or powershell on PATH to read the filled text")
         run = subprocess.run([pwsh, "-NoProfile", "-NonInteractive", "-Command", command],
                              capture_output=True, text=True, encoding="utf-8", errors="replace",
-                             timeout=45, check=False)
+                             timeout=45, check=False, env=private_cache_env())
         assert run.returncode == 0, run.stderr
         return run.stdout.splitlines()
 
