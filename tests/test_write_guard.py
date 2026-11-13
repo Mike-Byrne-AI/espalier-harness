@@ -22,6 +22,7 @@ import pytest
 from tests._guard_fixture import carry_protected_tree
 from tests._hook_assertions import assert_hook_allowed, assert_hook_denied
 from tests._hook_spawn import BUDGET_FALLBACK, BUDGET_REFUSAL, holds_a_budget_refusal, run_hook_through
+from tests._pwsh_cache import private_cache_env
 from tests._spaced_paths import CMD, PS, SH, fill, quoted, skip_unless_plain
 from tests._symlink_support import requires_symlink
 from tests._wait_budget import scaled
@@ -8040,7 +8041,7 @@ class TestPowerShellWriteSpellingsTheHostBinds:
                   "'{0} {1} {2}' -f $v, $p.Name, ($p.Aliases -join ',') } }")
         out = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command", script],
                              capture_output=True, text=True, encoding="utf-8", errors="replace",
-                             timeout=50).stdout
+                             timeout=50, env=private_cache_env()).stdout
         if out.strip() == "not 5.1":
             pytest.skip("the powershell on this host is not 5.1")
         live: dict[str, dict[str, list[str]]] = {v: {} for v in self._PARAMS_51}
@@ -11415,6 +11416,7 @@ class TestAScratchRootItselfIsTheWall:
                 # the whole test took 5.9 s on 5.1, about 52 spawns four at a
                 # time, so one host is well under a second (2026-11-10)
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20,
+                env=private_cache_env(),  # one cache a pool thread (tests/_pwsh_cache.py)
             ).stdout
 
         def answer(name: str) -> str:
@@ -12557,7 +12559,7 @@ class TestTheCmdDeleteReaderReadsEachBranch:
                   "($v.Aliases -join ',') }")
         out = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command", script],
                              capture_output=True, text=True, encoding="utf-8", errors="replace",
-                             timeout=50).stdout
+                             timeout=50, env=private_cache_env()).stdout
         names: dict[str, bool] = {}         # each name -> is a switch
         spelled: dict[str, bool] = {}       # every name and alias -> is a switch
         for line in out.splitlines():
@@ -14126,7 +14128,7 @@ class TestSecretPathAccess:
         self._plant_the_redirect_folder(tmp_path)
         proc = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command", command],
                               cwd=str(tmp_path), capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=scaled(30))
+                              errors="replace", timeout=scaled(30), env=private_cache_env())
         assert self._the_marker_left_the_dotenv(tmp_path, proc) is reads, (proc.stdout, proc.stderr)
 
     # DEF-1045: a statement that opens with a quoted string is a mention when

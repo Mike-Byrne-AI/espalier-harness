@@ -16,7 +16,7 @@ import functools
 import re
 import sys
 from collections import Counter
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -6565,3 +6565,379 @@ class TestEveryShellGuardSpawnerLaysTheProtectedTree:
             "a nested spawner whose enclosing function lays the tree read as bare")
         prose = "def helper():\n    '''write_guard CLAUDE_PROJECT_DIR \"Bash\"'''\n    return 1\n"
         assert _guard_spawners("tests/test_x.py", prose) == []
+
+
+#: The names a test starts a PowerShell by, on any host.
+_PWSH_NAMES = frozenset({"pwsh", "powershell", "pwsh.exe", "powershell.exe"})
+#: The calls that start a process from an argv list.
+_ARGV_SPAWNS = frozenset({"run", "Popen", "check_output", "check_call", "call"})
+#: The pwsh spawns under tests/ on 2026-11-13 (DEF-4115's five, the two its
+#: reviews found, and the live proof beside the helper): written by hand, so a
+#: walker that stops seeing a shape reds here instead of passing over an empty set.
+_PWSH_SPAWNS_AT_PIN = frozenset({
+    "test_write_guard::TestPowerShellWriteSpellingsTheHostBinds::test_the_parameter_table_is_the_hosts_own",
+    "test_write_guard::TestTheCmdDeleteReaderReadsEachBranch::test_the_process_start_parameter_sets_are_the_cmdlets_own",
+    "test_write_guard::TestSecretPathAccess::test_powershell_reads_the_file_as_each_redirect_row_says",
+    "test_write_guard::TestAScratchRootItselfIsTheWall::test_every_name_a_fresh_host_will_not_rebind_is_refused",
+    "test_hook_exec_form::TestStatusLinePortability::test_the_windows_render_runs_in_either_shell_claude_code_picks",
+    "test_spaced_paths::TestTheRealShellsReadOneWord::_pwsh",
+    "test_init_rewire_interpreter::TestASpacedWindowsHeadRunsInBothHookShells::"
+    "test_git_bash_and_powershell_run_the_written_line",
+    "test_pwsh_cache::TestARealPwshWritesItsCacheHere::test_the_startup_cache_lands_in_this_processs_directory",
+})
+
+
+def _call_name(node: ast.AST) -> str:
+    """The called name of a call node (``x.run`` -> ``run``), or ''."""
+    func = getattr(node, "func", None)
+    return getattr(func, "attr", "") or getattr(func, "id", "")
+
+
+def _is_pwsh_name(node: ast.AST) -> bool:
+    return isinstance(node, ast.Constant) and node.value in _PWSH_NAMES
+
+
+def _is_helper_call(node: ast.AST | None) -> bool:
+    return isinstance(node, ast.Call) and _call_name(node) == "private_cache_env"
+
+
+def _pwsh_name_holders(scope: ast.AST) -> set[str]:
+    """The plain names ``scope`` gives a PowerShell's name: a
+    ``pytest.mark.parametrize`` argument one of whose values is one (a bare
+    value, a row's cell, or a ``pytest.param``'s), or a ``for`` target over a
+    literal list, tuple or set holding one."""
+    names: set[str] = set()
+    for deco in getattr(scope, "decorator_list", ()):
+        if not (isinstance(deco, ast.Call) and _call_name(deco) == "parametrize" and len(deco.args) >= 2):
+            continue
+        fields, rows = deco.args[0], deco.args[1]
+        if not (isinstance(fields, ast.Constant) and isinstance(fields.value, str)
+                and isinstance(rows, (ast.List, ast.Tuple))):
+            continue
+        argnames = [f.strip() for f in fields.value.split(",")]
+        for row in rows.elts:
+            if isinstance(row, ast.Call) and _call_name(row) == "param":
+                cells = list(row.args)
+            elif len(argnames) == 1:
+                cells = [row]
+            else:
+                cells = list(row.elts) if isinstance(row, (ast.List, ast.Tuple)) else []
+            names.update(name for name, cell in zip(argnames, cells) if _is_pwsh_name(cell))
+    for n in ast.walk(scope):
+        if (isinstance(n, ast.For) and isinstance(n.target, ast.Name)
+                and isinstance(n.iter, (ast.List, ast.Tuple, ast.Set)) and any(map(_is_pwsh_name, n.iter.elts))):
+            names.add(n.target.id)
+    return names
+
+
+def _looks_up_pwsh(node: ast.AST, holders: set[str]) -> bool:
+    """True where ``node`` holds ``which(...)`` of a PowerShell's name: a
+    ``_PWSH_NAMES`` literal, or a name in ``holders``."""
+    return any(isinstance(n, ast.Call) and _call_name(n) == "which" and n.args
+               and (_is_pwsh_name(n.args[0]) or (isinstance(n.args[0], ast.Name) and n.args[0].id in holders))
+               for n in ast.walk(node))
+
+
+def _bound_names(nodes: Iterable[ast.AST], holds: Callable[[ast.expr], bool]) -> set[str]:
+    """The plain names ``nodes`` bind (``=``, an annotated ``=``, ``:=``) to a
+    value ``holds`` accepts."""
+    names: set[str] = set()
+    for n in nodes:
+        if isinstance(n, ast.Assign):
+            targets, value = n.targets, n.value
+        elif isinstance(n, (ast.AnnAssign, ast.NamedExpr)) and n.value is not None:
+            targets, value = [n.target], n.value
+        else:
+            continue
+        if holds(value):
+            names.update(t.id for t in targets if isinstance(t, ast.Name))
+    return names
+
+
+def _bindings(func: ast.AST) -> tuple[set[str], set[str]]:
+    """(every name ``func`` itself binds, those it binds to a
+    ``private_cache_env`` call alone). A parameter, a ``for`` or ``with``
+    target, or one more ``=`` of anything else makes a name not the helper's."""
+    helper: set[str] = set()
+    other: set[str] = set()
+    args = getattr(func, "args", None)
+    if args is not None:
+        other.update(a.arg for a in (*args.posonlyargs, *args.args, *args.kwonlyargs, args.vararg, args.kwarg) if a)
+    for n in _own_nodes(getattr(func, "body", [])):
+        pairs: list[tuple[ast.expr, ast.expr | None]]
+        if isinstance(n, ast.Assign):
+            pairs = [(t, n.value) for t in n.targets]
+        elif isinstance(n, (ast.AnnAssign, ast.NamedExpr)) and n.value is not None:
+            pairs = [(n.target, n.value)]
+        elif isinstance(n, (ast.For, ast.AsyncFor)):
+            pairs = [(n.target, None)]
+        elif isinstance(n, (ast.With, ast.AsyncWith)):
+            pairs = [(i.optional_vars, None) for i in n.items if i.optional_vars is not None]
+        else:
+            continue
+        for target, value in pairs:
+            names = {t.id for t in ast.walk(target) if isinstance(t, ast.Name)}
+            (helper if isinstance(target, ast.Name) and _is_helper_call(value) else other).update(names)
+    return helper | other, helper - other
+
+
+def _pwsh_spawns(modules: list[tuple[str, str]]) -> dict[str, list[tuple[int, bool]]]:
+    """``stem::Class::function`` -> ``(line, isolated)`` for each pwsh a
+    top-level function or method under tests/ starts (DEF-4115).
+
+    A spawn is an argv call (``_ARGV_SPAWNS``) whose argv opens with a
+    PowerShell: a ``_PWSH_NAMES`` literal, or a name bound to a lookup of one
+    (``which`` of a literal, or of a name a ``parametrize`` or a ``for`` over
+    literals gives one; bound in the function, its class or the module, read
+    bare or as an attribute), or such a lookup itself; the argv inline, held in a name, or the target
+    of a ``for`` over a list of argvs one of which is a PowerShell's. Nested
+    functions are read with the function that holds them, so a closure that
+    starts the outer function's pwsh is that function's spawn. It is isolated
+    where it passes ``env=`` a call to ``private_cache_env``
+    (``tests/_pwsh_cache.py``), or a name the innermost function binding it
+    binds to such a call alone (``_bindings``). A name a list gives a
+    PowerShell's name among others (a ``parametrize`` over bash and pwsh) is
+    read as a PowerShell for every value, so its bash spawn passes the helper
+    too, which costs bash nothing.
+    Not read: a lookup kept on the instance (``self.ps = which(...)`` in a
+    setup method), a PowerShell path another function returns (the differential's
+    ``find_powershell()`` among them), a fixture's parameter, an argv built by
+    ``+`` or unpacking, an absolute path to the shell, an argv passed by
+    keyword, a pwsh a shell string starts (``bash -c 'pwsh ...'``,
+    ``shell=True``), a spawn inside a lambda, and a nested class. A module holding one of those still
+    reds ``test_every_module_that_looks_pwsh_up_has_a_spawn_the_census_reads``,
+    which reads each file for a lookup of its own."""
+    found: dict[str, list[tuple[int, bool]]] = {}
+    for stem, text in modules:
+        if "pwsh" not in text and "powershell" not in text:
+            continue
+        tree = ast.parse(text)
+        module_shells = _bound_names(tree.body, lambda v: _looks_up_pwsh(v, set()))
+        scopes = [(f"{stem}::{n.name}", n, module_shells) for n in tree.body if isinstance(n, _FuncDef)]
+        for c in tree.body:
+            if isinstance(c, ast.ClassDef):
+                outer = module_shells | _bound_names(c.body, lambda v: _looks_up_pwsh(v, set()))
+                scopes += [(f"{stem}::{c.name}::{n.name}", n, outer) for n in c.body if isinstance(n, _FuncDef)]
+        for site, scope, outer in scopes:
+            holders = _pwsh_name_holders(scope)
+            shells = outer | holders | _bound_names(ast.walk(scope), lambda v, h=holders: _looks_up_pwsh(v, h))
+
+            def opens_with_pwsh(value: ast.AST, shells: set[str] = shells, holders: set[str] = holders) -> bool:
+                if not (isinstance(value, (ast.List, ast.Tuple)) and value.elts):
+                    return False
+                head = value.elts[0]
+                return (_is_pwsh_name(head) or (isinstance(head, ast.Name) and head.id in shells)
+                        or (isinstance(head, ast.Attribute) and head.attr in shells)
+                        or _looks_up_pwsh(head, holders))
+
+            def lists_a_pwsh_argv(value: ast.AST,
+                                  opens_with_pwsh: Callable[[ast.AST], bool] = opens_with_pwsh) -> bool:
+                return isinstance(value, (ast.List, ast.Tuple)) and any(map(opens_with_pwsh, value.elts))
+
+            argvs = _bound_names(ast.walk(scope), opens_with_pwsh)
+            argv_lists = _bound_names(ast.walk(scope), lists_a_pwsh_argv)
+            argvs.update(n.target.id for n in ast.walk(scope) if isinstance(n, ast.For)
+                         and isinstance(n.target, ast.Name) and (lists_a_pwsh_argv(n.iter) or (
+                             isinstance(n.iter, ast.Name) and n.iter.id in argv_lists)))
+
+            def visit(func: ast.AST, chain: tuple[tuple[set[str], set[str]], ...],
+                      site: str = site, opens_with_pwsh: Callable[[ast.AST], bool] = opens_with_pwsh,
+                      argvs: set[str] = argvs) -> None:
+                chain = (*chain, _bindings(func))
+                for n in _own_nodes(getattr(func, "body", [])):
+                    if isinstance(n, _FuncDef):
+                        visit(n, chain)
+                        continue
+                    if not (isinstance(n, ast.Call) and _call_name(n) in _ARGV_SPAWNS and n.args):
+                        continue
+                    argv = n.args[0]
+                    if not (opens_with_pwsh(argv) or (isinstance(argv, ast.Name) and argv.id in argvs)):
+                        continue
+                    env = next((kw.value for kw in n.keywords if kw.arg == "env"), None)
+                    isolated = _is_helper_call(env)
+                    if isinstance(env, ast.Name):  # the innermost function that binds it decides
+                        isolated = next((env.id in only for bound, only in reversed(chain) if env.id in bound), False)
+                    found.setdefault(site, []).append((n.lineno, isolated))
+
+            visit(scope, ())
+    return {site: sorted(spawns) for site, spawns in found.items()}
+
+
+#: pwsh's ``-NonInteractive`` flag, spelt in two parts so this module, which
+#: compares against it, is not read by ``_names_a_pwsh`` as holding it.
+_PWSH_FLAG = "-" + "NonInteractive"
+
+
+def _names_a_pwsh(tree: ast.AST) -> bool:
+    """Whether a module looks a PowerShell up on its own: ``which`` of a
+    ``_PWSH_NAMES`` literal, or pwsh's ``-NonInteractive`` flag as a literal
+    of its own (not a word inside a longer string)."""
+    return any((isinstance(n, ast.Call) and _call_name(n) == "which" and n.args and _is_pwsh_name(n.args[0]))
+               or (isinstance(n, ast.Constant) and n.value == _PWSH_FLAG) for n in ast.walk(tree))
+
+
+def test_every_pwsh_a_test_starts_keeps_its_cache_in_the_tests_process():
+    """Each pwsh a test starts gets ``tests/_pwsh_cache.py``'s environment, so
+    its startup cache is its own thread's and never the user's: parallel
+    workers starting pwsh under the one user cache can corrupt it, and a
+    corrupt cache aborts every later pwsh start on the box until the file is
+    moved aside (the Air, 2026-11-12; DEF-4115). A new spawn passes
+    ``env=private_cache_env(...)``; the census reads both ways in
+    ``TestThePwshSpawnCensusReadsBothWays``."""
+    found = _pwsh_spawns(_all_test_dir_modules())
+    missing = sorted(_PWSH_SPAWNS_AT_PIN - found.keys())
+    assert not missing, (
+        f"the pwsh spawn census no longer sees {missing}: teach _pwsh_spawns the shape each site now "
+        "has, with a row in TestThePwshSpawnCensusReadsBothWays beside it; drop an entry from "
+        "_PWSH_SPAWNS_AT_PIN only where the spawn itself went, never to pass")
+    bare = sorted(f"{site}:{line}" for site, spawns in found.items() for line, isolated in spawns if not isolated)
+    assert not bare, (
+        f"{len(bare)} pwsh spawn(s) under tests/ start under the user's shared startup cache: "
+        "pass env=private_cache_env(...) (tests/_pwsh_cache.py), with the environment the "
+        f"spawn needs as its argument: {bare}")
+
+
+def test_every_module_that_looks_pwsh_up_has_a_spawn_the_census_reads():
+    """The file-granular floor under ``_pwsh_spawns``: a module that looks a
+    PowerShell up on its own (``_names_a_pwsh``) and starts none the census
+    reads is one whose spawn has a shape the walker cannot see, so its cache
+    goes unchecked. Teach the walker the shape."""
+    modules = _all_test_dir_modules()
+    with_a_site = {site.split("::", 1)[0] for site in _pwsh_spawns(modules)}
+    named = {stem for stem, text in modules if ("pwsh" in text or "powershell" in text or "NonInteractive" in text)
+             and _names_a_pwsh(ast.parse(text))}
+    # asserted first, so a clean verdict below is not a floor that read nothing
+    written_for = {"test_write_guard", "test_hook_exec_form", "test_spaced_paths", "test_init_rewire_interpreter",
+                   "test_pwsh_cache"}
+    assert written_for <= named, sorted(written_for - named)
+    unread = sorted(named - with_a_site)
+    assert not unread, (
+        f"these modules look a PowerShell up but start none the pwsh spawn census reads: {unread}; "
+        "teach tests/test_test_suite_contract.py::_pwsh_spawns the spawn's shape, so its cache is checked")
+
+
+class TestThePwshSpawnCensusReadsBothWays:
+    """Calibration for ``_pwsh_spawns`` and ``_names_a_pwsh``: each row drives
+    them on a synthetic module, so a bare spawn, an isolated one and a process
+    that is not a PowerShell are all seen as what they are."""
+
+    @staticmethod
+    def _read(src: str) -> dict[str, list[tuple[int, bool]]]:
+        return _pwsh_spawns([("test_synth", "import os, shutil, subprocess\n" + src)])
+
+    def test_a_looked_up_pwsh_started_bare_or_under_the_users_environment_is_bare(self):
+        assert self._read(
+            "def test_x():\n"
+            "    shell = shutil.which('pwsh') or shutil.which('powershell')\n"
+            "    subprocess.run([shell, '-Command', '1'], timeout=30)\n"
+            "    subprocess.run([shell, '-Command', '2'], env=os.environ, timeout=30)\n"
+            "    subprocess.run([shell, '-Command', '3'], env={**os.environ, 'A': 'b'})\n"
+        ) == {"test_synth::test_x": [(4, False), (5, False), (6, False)]}
+
+    def test_the_helpers_environment_isolates_inline_or_through_a_name(self):
+        assert self._read(
+            "class TestX:\n"
+            "    def test_x(self):\n"
+            "        shell = shutil.which('powershell')\n"
+            "        subprocess.run([shell, '-Command', '1'], env=private_cache_env())\n"
+            "        env = private_cache_env({**os.environ, 'A': 'b'})\n"
+            "        subprocess.Popen([shell, '-Command', '2'], env=env)\n"
+        ) == {"test_synth::TestX::test_x": [(5, True), (7, True)]}
+
+    def test_a_closure_a_literal_head_and_an_argv_held_in_a_name_are_spawns(self):
+        assert self._read(
+            "def test_x():\n"
+            "    ps = shutil.which('pwsh')\n"
+            "    def under(command):\n"
+            "        return subprocess.run([ps, '-Command', command], env=private_cache_env())\n"
+            "    subprocess.check_output(['pwsh', '-Command', '1'])\n"
+            "    argv = [ps, '-NoProfile']\n"
+            "    subprocess.run(argv)\n"
+        ) == {"test_synth::test_x": [(5, True), (6, False), (8, False)]}
+
+    def test_a_parametrized_or_looped_shell_name_is_a_lookup(self):
+        assert self._read(
+            "@pytest.mark.parametrize('host', ['powershell', 'pwsh'])\n"
+            "def test_x(host):\n"
+            "    exe = shutil.which(host)\n"
+            "    def run(s):\n"
+            "        return subprocess.run([exe, '-Command', s])\n"
+            "@pytest.mark.parametrize('n, host', [(1, 'bash'), pytest.param(2, 'pwsh', id='p')])\n"
+            "def test_y(n, host):\n"
+            "    subprocess.run([shutil.which(host) or host, '-c', '1'])\n"
+            "    subprocess.run([host, '-Command', '1'], env=private_cache_env())\n"
+            "def test_z():\n"
+            "    for name in ('pwsh', 'powershell'):\n"
+            "        shell = shutil.which(name)\n"
+            "        subprocess.run([shell, '-Command', '1'], env=private_cache_env())\n"
+        ) == {"test_synth::test_x": [(6, False)], "test_synth::test_y": [(9, False), (10, True)],
+              "test_synth::test_z": [(14, True)]}
+
+    def test_a_shell_bound_on_the_module_or_the_class_is_read(self):
+        assert self._read(
+            "_PWSH = shutil.which('pwsh')\n"
+            "class TestX:\n"
+            "    _PS = shutil.which('powershell')\n"
+            "    def test_a(self):\n"
+            "        subprocess.run([_PWSH, '-Command', '1'])\n"
+            "    def test_b(self):\n"
+            "        subprocess.run([self._PS, '-Command', '1'], env=private_cache_env())\n"
+        ) == {"test_synth::TestX::test_a": [(6, False)], "test_synth::TestX::test_b": [(8, True)]}
+
+    def test_a_loop_over_a_list_of_argvs_is_read(self):
+        assert self._read(
+            "def test_x():\n"
+            "    shells = [['powershell.exe', '-Command', '1']]\n"
+            "    shells.append(['bash', '-c', '1'])\n"
+            "    for argv in shells:\n"
+            "        subprocess.run(argv, env=private_cache_env())\n"
+            "    for argv in [['pwsh', '-Command', '2']]:\n"
+            "        subprocess.run(argv)\n"
+        ) == {"test_synth::test_x": [(6, True), (8, False)]}
+
+    def test_the_innermost_binding_decides_and_a_rebound_name_is_bare(self):
+        assert self._read(
+            "def test_x():\n"
+            "    ps = shutil.which('pwsh')\n"
+            "    def a():\n"
+            "        env = private_cache_env()\n"
+            "        return subprocess.run(['bash'], env=env)\n"
+            "    def b():\n"
+            "        env = dict(os.environ)\n"
+            "        return subprocess.run([ps, '-Command', '1'], env=env)\n"
+            "    def c():\n"
+            "        env = private_cache_env()\n"
+            "        env = os.environ\n"
+            "        return subprocess.run([ps, '-Command', '2'], env=env)\n"
+            "    def d(env):\n"
+            "        return subprocess.run([ps, '-Command', '3'], env=env)\n"
+            "    env = private_cache_env()\n"
+            "    def e():\n"
+            "        return subprocess.run([ps, '-Command', '4'], env=env)\n"
+        ) == {"test_synth::test_x": [(9, False), (13, False), (15, False), (18, True)]}
+
+    def test_a_bash_a_git_and_a_python_spawn_are_not_pwsh(self):
+        assert self._read(
+            "import sys\n"
+            "def test_x():\n"
+            "    bash = shutil.which('bash')\n"
+            "    subprocess.run([bash, '-c', 'pwsh -Command 1'])\n"
+            "    subprocess.run(['git', 'status'])\n"
+            "    subprocess.run([sys.executable, '-c', 'import pwsh'])\n"
+            "@pytest.mark.parametrize('name', ['bash', 'sh'])\n"
+            "def test_y(name):\n"
+            "    subprocess.run([shutil.which(name), '-c', '1'])\n"
+        ) == {}
+
+    def test_a_path_returned_by_another_function_is_a_DOCUMENTED_blind_spot(self):
+        assert self._read(
+            "def _find():\n"
+            "    return shutil.which('pwsh')\n"
+            "def test_x():\n"
+            "    subprocess.run([_find(), '-Command', '1'])\n"
+        ) == {}
+
+    def test_the_file_floor_reads_a_lookup_or_the_flag_of_the_modules_own(self):
+        assert _names_a_pwsh(ast.parse("def _find():\n    return shutil.which('pwsh')\n"))
+        assert _names_a_pwsh(ast.parse("ARGV = ['C:/ps/powershell.exe', '-NonInteractive']\n"))
+        assert not _names_a_pwsh(ast.parse("DOC = 'pwsh -NonInteractive -Command 1'\nX = which(name)\n"))
