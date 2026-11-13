@@ -1,0 +1,10 @@
+{
+ "id": "DEF-3078",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c 'import sys; from pathlib import Path; sys.path[:0] = [\"tools/cc/hooks\", \"tools/cc\"]; import write_guard as w; r = Path.cwd(); q = chr(39); d = q + \"rm -rf /\" + q; print(*[bool(w._bash_dangerous_reason(\"find . -exec bash \" + o + \" \" + d + \" \" + q + \";\" + q, r)) for o in (\"-c\", \"+c\", \"-lc\")])'",
+ "open_value": "True False False",
+ "why_not": null,
+ "row_sha": "db3ede438ac4",
+ "text_sha": "893737baec83",
+ "verified_2026_11_13": "OPEN (filed 2026-11-13; probe driven at filing here and in the export of HEAD 5127d155a6d6)"
+}

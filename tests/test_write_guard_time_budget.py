@@ -93,8 +93,18 @@ _OUTSIDE_THE_HOOKS_CLOCK_S = 0.4
 #: under the wired timeout (`TestTheBudgetSitsBelowTheWiring`).
 _OVERRUN_FLOOR_MS = 80
 _OVERRUN_CEILING_MS = 1000
+#: The PowerShell span walk over a long run of glued openers, after the token
+#: cap: about 10 ms on the 800-bracket run (Windows, 2026-11-12) and about
+#: 15 ms on the 8000-unit runs (Windows, 2026-11-13); the uncapped walk took
+#: 0.44 s and 15.5 s, which is all the ceilings have to catch.
+_BRACKET_RUN_FLOOR_MS = 10
+_BRACKET_RUN_CEILING_MS = 500
+_GLUED_RUN_FLOOR_MS = 15
+_GLUED_RUN_CEILING_MS = 500
 _WALL_CLOCK_FLOORS: dict[str, tuple[str, str, int]] = {
     "_OVERRUN_CEILING_MS": ("_OVERRUN_FLOOR_MS", "2026-11-07", 80),
+    "_BRACKET_RUN_CEILING_MS": ("_BRACKET_RUN_FLOOR_MS", "2026-11-12", 10),
+    "_GLUED_RUN_CEILING_MS": ("_GLUED_RUN_FLOOR_MS", "2026-11-13", 15),
 }
 #: The tiny budget the injected rows run under.
 _TINY_BUDGET_S = 0.05
@@ -337,6 +347,63 @@ class TestAJudgmentInTimeIsUnchanged:
         assert "internal error" in decision["permissionDecisionReason"]
         assert "write_guard crashed" in streams.err.getvalue()
         assert _types() == ["pretooluse_blocked_internal_error"]
+
+
+class TestAGluedFloodIsJudgedInTime:
+    def test_a_flood_of_glued_openers_is_judged_inside_the_budget(self, monkeypatch, guard_root):
+        """Air's verifier note 38d60b (f): every opener in the flood reads
+        differently on DEF-2073's two readings, so each leg is judged on
+        both, and the call is judged inside the real budget (the three `<#`
+        floods before it are spaced, and read alike on both)."""
+        payload = _payload("PowerShell", {"command": "$x<#c#>; " * 2000 + "Write-Output ok"})
+        rc, streams = _drive(monkeypatch, payload)
+        assert rc == 0, streams.err.getvalue()
+        assert "pretooluse_blocked_time_budget" not in _types()
+        assert streams.out.getvalue().strip() == "", "allowed on both readings"
+
+
+def _pattern_module():
+    """`tools/cc/hooks/_bash_patterns`, by the sys.path insert the guard's
+    own tests use."""
+    sys.path.insert(0, str(HOOKS_DIR))
+    import _bash_patterns
+    return _bash_patterns
+
+
+class TestAGluedRunIsReadInLinearTime:
+    """The PowerShell comment walk on long glued runs, bounded by the wall
+    clock, so here in a serial file (moved from test_write_guard.py, whose
+    parallel run a timing bound would false-fail)."""
+
+    def test_a_run_of_bracketed_members_is_read_in_linear_time(self):
+        """The code review: the type arm as a run (`(?:\\[..\\])+`) beside
+        the index member backtracked cubically where the token's end failed
+        it: 0.44 s on the 400-bracket text, eight times that at 800 (Windows,
+        2026-11-12); now about 0.01 s."""
+        import time
+        bp = _pattern_module()
+        cmd = "$y = $x" + "[a]" * 800 + "q<#c#>"
+        start = time.perf_counter()
+        bp._walk_powershell_spans(cmd)
+        assert time.perf_counter() - start < _BRACKET_RUN_CEILING_MS / 1000
+
+    @pytest.mark.parametrize("make", [
+        # the two reviews' payloads, each quadratic before the token cap
+        lambda n: "$y = $x" + "[a]" * n + "q<#c#>",
+        lambda n: "$x=" + "a<#" * n,
+        lambda n: "$x=" + "$a.b+<#" * n,
+        lambda n: "1" * n + "x" + "$a<#" * (n // 4),
+        lambda n: "Write-Output " + " $x.y<#a#>" * n,
+    ], ids=["bracket-run", "glued-word-run", "member-plus-run", "digit-head", "member-comments"])
+    def test_a_long_run_of_glued_openers_is_read_in_linear_time(self, make):
+        """15.5 s on the 54 KB member-plus run before the cap (Windows,
+        2026-11-13), about 0.015 s after it."""
+        import time
+        bp = _pattern_module()
+        cmd = make(8000)
+        start = time.perf_counter()
+        bp._walk_powershell_spans(cmd)
+        assert time.perf_counter() - start < _GLUED_RUN_CEILING_MS / 1000
 
 
 class TestASlowJudgmentIsRefused:

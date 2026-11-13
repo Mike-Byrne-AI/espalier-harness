@@ -80,7 +80,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterator, NamedTuple
+from typing import TYPE_CHECKING, Any, Callable, Iterator, NamedTuple, TypeVar
 
 # The hook's own start, read before the pattern modules import (about a
 # quarter of a second of a call here). In the hook process Claude Code starts,
@@ -4738,6 +4738,81 @@ def _judge(seen: list[dict] | None = None) -> int:
         )
 
 
+def _glued_reading_on() -> "contextlib.AbstractContextManager[None] | None":
+    """The pattern module's switch to the glued reading, else None (the path
+    not loaded yet, or a kept, older module with main's reading alone)."""
+    if not _pattern_path_loaded:
+        return None
+    on = getattr(_bash_patterns, "glued_opening_on", None)
+    return on() if on is not None else None
+
+
+def _readings_differ() -> bool:
+    """Whether the two readings have decided an opener differently in this
+    process (`_bash_patterns.glued_opener_opened`); False where the path is
+    not loaded or a kept, older module has no such record."""
+    if not _pattern_path_loaded:
+        return False
+    return bool(getattr(_bash_patterns, "glued_opener_opened", lambda: False)())
+
+
+def _opener_asked() -> bool:
+    """Whether main's reading asked the opener reader in this process
+    (`_bash_patterns.glued_opener_asked`), the one place the readings part;
+    True where a kept, older module keeps no such record, so the call is
+    judged on both as before."""
+    if not _pattern_path_loaded:
+        return False
+    return bool(getattr(_bash_patterns, "glued_opener_asked", lambda: True)())
+
+
+def _either_glued_reading(judge: Callable[[], int]) -> int:
+    """A hard leg on both of DEF-2073's readings (air's ruling 8aa088): a
+    refusal on either is the call's. ``judge()`` on the glued reading, and
+    where it allowed after the readings decided an opener differently, on
+    main's, the default. A reading that allows prints nothing, so a deny
+    prints once, its text the refusing reading's, inside the call's one time
+    budget. A judgment that loaded the pattern path read main's reading, so
+    it is asked again on the glued one where it asked the opener reader
+    (`_opener_asked`: a call that never reached it reads alike on both; a
+    PowerShell call loads the path before its first leg, so only the other
+    tools reach this gate); a kept, older pattern module has main's reading
+    alone and judges once."""
+    on = _glued_reading_on()
+    if on is None:
+        rc = judge()
+        on = None if rc or not _opener_asked() else _glued_reading_on()
+        if on is None:
+            return rc
+        with on:
+            return judge()
+    with on:
+        rc = judge()
+    if rc or not _readings_differ():
+        return rc
+    return judge()
+
+
+_T = TypeVar("_T")
+
+
+def _main_reading_then_glued(step: Callable[[], "_T | None"]) -> "_T | None":
+    """A friction leg on both readings, main's first (air's verifier note
+    38d60b (b)): ``step()`` on main's reading, and where it gave nothing and
+    the hard legs saw the readings differ, on the glued one. The snapshot
+    and the bump keep DEF-986's order: every hard leg on both readings, then
+    one snapshot, then the bumps. Both are handed main's fold, so a bump's
+    one-shot key is the same on either reading and a re-issue proceeds."""
+    out = step()
+    if out is not None or not _readings_differ():
+        return out
+    on = _glued_reading_on()
+    if on is None:
+        return out
+    with on:
+        return step()
+
+
 def _fold_the_powershell_command(tool_name: str, tool_input: dict) -> dict:
     """``tool_input`` with the PowerShell tool's command read as PowerShell
     pairs its quotes: each typographic quote it acts on folded to its
@@ -4765,8 +4840,16 @@ def _run_main(data: dict | None = None) -> int:
     tool_input = data.get("tool_input", {})
     if not isinstance(tool_input, dict):
         tool_input = {}
-    # Ahead of every leg that reads the command (DEF-2040).
+    raw_input = tool_input
+    # Ahead of every leg that reads the command (DEF-2040), on main's
+    # reading: the snapshot and the bump read this fold.
     tool_input = _fold_the_powershell_command(tool_name, tool_input)
+
+    def _read() -> dict:
+        """The command folded on the reading the hard leg asks (the fold runs
+        the walk, which reads comment openers: DEF-2073), a lookup after the
+        first."""
+        return _fold_the_powershell_command(tool_name, raw_input)
     root = _resolve_project_root()
     # A payload the guard could not read allows (there is nothing to check)
     # but never silently: the record and the line say so, once a session.
@@ -4809,7 +4892,7 @@ def _run_main(data: dict | None = None) -> int:
     # adopter's `.env` into the transcript is not that friction, and this is the
     # hook-layer replacement for the `Read()` deny rules espalier no longer
     # emits (see `check_secret_path_access` for why they had to go).
-    rc = check_secret_path_access(tool_name, tool_input, root)
+    rc = _either_glued_reading(lambda: check_secret_path_access(tool_name, _read(), root))
     if rc:
         return rc
 
@@ -4827,12 +4910,12 @@ def _run_main(data: dict | None = None) -> int:
     # These guard against operations that are dangerous regardless of whether
     # the harness is in maintenance: rm -rf /, fork bombs, hostile PowerShell.
     if tool_name == "Bash":
-        rc = check_bash_dangerous_patterns(tool_input, root, cwd=cwd)
+        rc = _either_glued_reading(lambda: check_bash_dangerous_patterns(_read(), root, cwd=cwd))
         if rc:
             _audit(root, "pretooluse_blocked_dangerous_command", tool="Bash")
             return rc
     elif tool_name == "PowerShell":
-        rc = check_powershell(tool_input, root, cwd=cwd)
+        rc = _either_glued_reading(lambda: check_powershell(_read(), root, cwd=cwd))
         if rc:
             _audit(root, "pretooluse_blocked_dangerous_command", tool="PowerShell")
             return rc
@@ -4859,25 +4942,23 @@ def _run_main(data: dict | None = None) -> int:
         if tool_name in ("Write", "Edit", "NotebookEdit"):
             rc = check_write_edit(tool_input, root)
         elif tool_name == "Bash":
-            command = tool_input.get("command", "")
             # Symlink-creation check FIRST so it isn't masked by the
             # allowlist-aware general write check (legitimate JSON writes to
             # ``cc/blueprints/`` are allowed; symlinks to that prefix are not).
-            rc = check_bash_for_protected_symlinks(command, root, cwd=cwd)
+            rc = _either_glued_reading(lambda: check_bash_for_protected_symlinks(_read().get("command", ""), root, cwd=cwd))
             # Hardlink-creation check (allowlist-aware, source-keyed) before the
             # general write check, mirroring the symlink ordering.
             if not rc:
-                rc = check_bash_for_protected_hardlinks(command, root, cwd=cwd)
+                rc = _either_glued_reading(lambda: check_bash_for_protected_hardlinks(_read().get("command", ""), root, cwd=cwd))
             if not rc:
-                rc = check_bash_for_protected_mutations(command, root, cwd=cwd)
+                rc = _either_glued_reading(lambda: check_bash_for_protected_mutations(_read().get("command", ""), root, cwd=cwd))
         elif tool_name == "PowerShell":
-            command = tool_input.get("command", "")
             # Symlink-creation check FIRST (allowlist-blind), like the Bash branch,
             # so a New-Item SymbolicLink into an allowlisted-in-protected path isn't
             # masked by the allowlist-aware write check.
-            rc = check_powershell_for_protected_symlinks(command, root, cwd=cwd)
+            rc = _either_glued_reading(lambda: check_powershell_for_protected_symlinks(_read().get("command", ""), root, cwd=cwd))
             if not rc:
-                rc = check_powershell_for_protected_mutations(command, root, cwd=cwd)
+                rc = _either_glued_reading(lambda: check_powershell_for_protected_mutations(_read().get("command", ""), root, cwd=cwd))
         elif tool_name.startswith("mcp__"):
             # MCP tools -- protected-zone check across canonical fields AND the
             # Class-A2 key-agnostic, depth-bounded leaf-walk (move/rename via
@@ -4915,7 +4996,7 @@ def _run_main(data: dict | None = None) -> int:
     # checks -- own denies and fail CLOSED on purpose: a fault there must not
     # become an allow. Only the two friction helpers fail toward allow.
     try:
-        _speedbump.snapshot_discard(tool_name, tool_input, root, cwd=cwd)
+        _main_reading_then_glued(lambda: _speedbump.snapshot_discard(tool_name, tool_input, root, cwd=cwd))
     except Exception as exc:  # noqa: BLE001 -- recovery aid only; a snapshot fault must not wedge the session
         # A stderr line alone reached the debug log only (this hook exits 0,
         # and that stderr never reaches the transcript), so the wedge turned
@@ -4935,7 +5016,7 @@ def _run_main(data: dict | None = None) -> int:
     # longer has -- must not reach main()'s crash guard and wedge every tool
     # call behind WRITE_GUARD_INTERNAL_ERROR (observed 2026-09-08).
     try:
-        _sb_fire = _speedbump.check_fired(tool_name, tool_input, root, cwd=cwd)
+        _sb_fire = _main_reading_then_glued(lambda: _speedbump.check_fired(tool_name, tool_input, root, cwd=cwd))
     except Exception as exc:  # noqa: BLE001 -- friction only; a speed-bump fault must not wedge the session: fail open, with voice
         _sb_fire = None
         _hook_utils.say_once(
