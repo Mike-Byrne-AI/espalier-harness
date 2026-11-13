@@ -330,9 +330,12 @@ def _synthesize_match_for(pattern: re.Pattern[str]) -> str:
     # there, not here.
     # ⚠ RE-CONFIRMED 2026-08-23 against the post-anchor pattern before this key
     # was written: `ESPALIER_MAINTENANCE_MODE=1` still matches. Not assumed.
+    # RE-CONFIRMED 2026-11-13 when the roster gained the stop gate's test
+    # command (the alternation is write_guard's literal, longest name first):
+    # the payload still matches and the caller's real-dispatch deny passes.
     _BASH_ENV_PREFIX_TAIL = (
         r"(?:(?:export|declare)(?:[ \t]+-[^\s;|&]+)*[ \t]+)?"
-        r"(?:ESPALIER_MAINTENANCE_MODE|ESPALIER_STOP_GATE)[ \t]*="   # `[ \t]*`: a newline is not an assignment (DEF-701)
+        r"(?:ESPALIER_STOP_GATE_TEST_CMD|ESPALIER_MAINTENANCE_MODE|ESPALIER_STOP_GATE)[ \t]*="   # `[ \t]*`: a newline is not an assignment (DEF-701)
     )
     if source.endswith(_BASH_ENV_PREFIX_TAIL):
         return "ESPALIER_MAINTENANCE_MODE=1"
@@ -353,13 +356,14 @@ def _synthesize_match_for(pattern: re.Pattern[str]) -> str:
     # ⚠ RE-CONFIRMED against the post-composition pattern BEFORE this key was
     # written, and the equality was asserted mechanically rather than eyeballed:
     # the payload still matches, still populates `envcolon`, and still denies
-    # through the real `check_powershell`. Not assumed.
+    # through the real `check_powershell`. Not assumed. RE-CONFIRMED again
+    # 2026-11-13 when the roster gained the stop gate's test command, as above.
     _PS_ENV_PREFIX_TAIL = (
-        r"\$env:(?:ESPALIER_MAINTENANCE_MODE|ESPALIER_STOP_GATE)\s*=)"
+        r"\$env:(?:ESPALIER_STOP_GATE_TEST_CMD|ESPALIER_MAINTENANCE_MODE|ESPALIER_STOP_GATE)\s*=)"
         r"|Set-Item\s+(?:-Path\s+)?[\"']?Env:[\\/]?"
-        r"(?:ESPALIER_MAINTENANCE_MODE|ESPALIER_STOP_GATE)\b"
+        r"(?:ESPALIER_STOP_GATE_TEST_CMD|ESPALIER_MAINTENANCE_MODE|ESPALIER_STOP_GATE)\b"
         r"|SetEnvironmentVariable\(\s*[\"']"
-        r"(?:ESPALIER_MAINTENANCE_MODE|ESPALIER_STOP_GATE)[\"'])"
+        r"(?:ESPALIER_STOP_GATE_TEST_CMD|ESPALIER_MAINTENANCE_MODE|ESPALIER_STOP_GATE)[\"'])"
     )
     if source.endswith(_PS_ENV_PREFIX_TAIL):
         return '$env:' + "ESPALIER_MAINTENANCE_MODE" + ' = "1"; claude'
