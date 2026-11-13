@@ -28,6 +28,8 @@ Not a test module (leading underscore) -- no marker classification needed.
 """
 from __future__ import annotations
 
+import re
+
 import pytest
 
 #: The shell a fill is for: the Bash tool's ``sh``, the PowerShell tool's
@@ -64,15 +66,24 @@ def quoted(word: str, shell: str = SH) -> str:
     return f'"{word}"'
 
 
-def _quote_state(text: str) -> str:
-    """The quote ``text`` leaves open at its end: ``'``, ``"`` or ``""``."""
-    state = ""
-    for ch in text:
+def _open_quote(text: str) -> tuple[str, int]:
+    """The quote ``text`` leaves open at its end (``'``, ``"`` or ``""``) and
+    the index it opened at (-1 when none is open)."""
+    state, opened = "", -1
+    for at, ch in enumerate(text):
         if not state and ch in "'\"":
-            state = ch
+            state, opened = ch, at
         elif ch == state:
-            state = ""
-    return state
+            state, opened = "", -1
+    return state, opened
+
+
+#: cmd.exe's program switch at the end of the text before a quote: ``/c``,
+#: ``/k`` or ``/r`` (cmd's synonym for ``/c``), after a blank or at the start,
+#: the quote glued to it or after blanks. Not Git Bash's ``//c``: bash reads
+#: that text's quotes before cmd sees it, so the rule is cmd's own quoting
+#: only (the failure-mode review).
+_CMD_PROGRAM_SWITCH_END = re.compile(r"(?:^|\s)/[ckrCKR]\s*$")
 
 
 def fill(template: str, name: str, path: str, shell: str = SH) -> str:
@@ -83,7 +94,14 @@ def fill(template: str, name: str, path: str, shell: str = SH) -> str:
     (``'{scratch}/a,b'``) or sits inside a double-quoted one (``"src,
     {scratch}/x"``). One inside a single-quoted string is a word of a program
     handed to another shell (``-ArgumentList '/c rd /s /q {t}'``), so it is
-    double-quoted, which that shell reads and the outer one keeps literal."""
+    double-quoted, which that shell reads and the outer one keeps literal.
+
+    For ``CMD``, a double-quoted string that opens right after cmd's ``/c``,
+    ``/k`` or ``/r`` quotes nothing: cmd strips that outer pair and reads the
+    program inside it bare (``cmd --% /c "rd /s /q {t}"``), so a placeholder
+    in it is quoted as a bare one is (``... /q "<path>""``), which keeps the
+    spaced path one word to cmd (#608's four ``ps-cmd-stopparse-quoted-*``
+    rows, red under a spaced ``--basetemp`` before this)."""
     out: list[str] = []
     at = 0
     while True:
@@ -97,8 +115,12 @@ def fill(template: str, name: str, path: str, shell: str = SH) -> str:
         while stop < len(template) and template[stop] not in _WORD_END:
             stop += 1
         word = path + template[end:stop]
+        state, opened = _open_quote(template[:found])
+        cmd_strips = (shell == CMD and state == '"'
+                      and _CMD_PROGRAM_SWITCH_END.search(template[:opened]) is not None)
         opens = found > 0 and template[found - 1] in "'\""
-        out.append(word if opens or _quote_state(template[:found]) == '"' else quoted(word, shell))
+        bare = (opens or state == '"') and not cmd_strips
+        out.append(word if bare else quoted(word, shell))
         at = stop
 
 
