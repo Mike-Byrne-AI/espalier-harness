@@ -428,7 +428,13 @@ def _bash_reading(text: str) -> tuple[str, str]:
     return _bash_patterns.mask_inert_syntax(raw), raw
 
 
-@functools.lru_cache(maxsize=8)
+#: Keyed by the reading too (DEF-2073, air's verifier note 38d60b (c)): the
+#: bump reads on main's reading and, where the readings differ, on the glued
+#: one. A kept, older pattern module has one reading and no keyed cache.
+_reading_cache: Any = getattr(_bash_patterns, "reading_cache", functools.lru_cache)
+
+
+@_reading_cache(maxsize=8)
 def _ps_scan_pair(command: str) -> tuple[str, str]:
     """`_bash_patterns.powershell_scan_pair`, remembered across the call: the
     started-program reader (DEF-3011) needs the raw twin beside the scan, and
@@ -439,7 +445,7 @@ def _ps_scan_pair(command: str) -> tuple[str, str]:
     return _bash_patterns.powershell_scan_pair(command)
 
 
-@functools.lru_cache(maxsize=8)
+@_reading_cache(maxsize=8)
 def _ps_scan_text(command: str) -> str:
     """`_bash_patterns.powershell_scan_text`, remembered across the call: the
     discard, release, force-push and clean checkpoints all scan the same
@@ -2458,15 +2464,18 @@ def _kill_reading(tool_name: str, tool_input: dict, root: Path) -> tuple[tuple[i
 
 #: The last command's reading: the predicate, the body and the flag key each
 #: ask, and the reading spawns, so it is made once (a hook run judges one call).
-_last_kill: tuple[tuple[str, str, str], tuple[tuple[int, ...], str, bool] | None] | None = None
+#: Keyed by DEF-2073's reading too, as the text caches are.
+_last_kill: tuple[tuple[str, str, str, bool], tuple[tuple[int, ...], str, bool] | None] | None = None
 
 
 def _kill_hit(tool_name: str, tool_input: dict, root: Path | None) -> tuple[tuple[int, ...], str, bool] | None:
     global _last_kill
     command = str(tool_input.get("command", ""))
+    reading = bool(getattr(_bash_patterns, "glued_reading", lambda: False)())
     if root is None:   # the flag key is handed no root: the reading just made is this call's
-        return _last_kill[1] if _last_kill is not None and _last_kill[0][:2] == (tool_name, command) else None
-    key = (tool_name, command, str(root))
+        return (_last_kill[1] if _last_kill is not None
+                and (_last_kill[0][:2], _last_kill[0][3]) == ((tool_name, command), reading) else None)
+    key = (tool_name, command, str(root), reading)
     if _last_kill is None or _last_kill[0] != key:
         _last_kill = (key, _kill_reading(tool_name, tool_input, root))
     return _last_kill[1]

@@ -339,6 +339,19 @@ class TestAJudgmentInTimeIsUnchanged:
         assert _types() == ["pretooluse_blocked_internal_error"]
 
 
+class TestAGluedFloodIsJudgedInTime:
+    def test_a_flood_of_glued_openers_is_judged_inside_the_budget(self, monkeypatch, guard_root):
+        """Air's verifier note 38d60b (f): every opener in the flood reads
+        differently on DEF-2073's two readings, so each leg is judged on
+        both, and the call is judged inside the real budget (the three `<#`
+        floods before it are spaced, and read alike on both)."""
+        payload = _payload("PowerShell", {"command": "$x<#c#>; " * 2000 + "Write-Output ok"})
+        rc, streams = _drive(monkeypatch, payload)
+        assert rc == 0, streams.err.getvalue()
+        assert "pretooluse_blocked_time_budget" not in _types()
+        assert streams.out.getvalue().strip() == "", "allowed on both readings"
+
+
 class TestASlowJudgmentIsRefused:
     @pytest.mark.parametrize("tool, tool_input", [
         ("Bash", {"command": "git status"}),

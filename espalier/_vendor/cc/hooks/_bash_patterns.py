@@ -63,6 +63,45 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import _hook_utils  # noqa: E402
 
+#: DEF-2073's two readings (air's ruling 8aa088): whether a comment opener
+#: glued to the token before it opens a comment. Off, the default, is the
+#: call sites' token-start rule alone, the reading before DEF-2073, so a
+#: caller that never asks for the glued reading (a speed-bump scan, a kept,
+#: older write_guard, any other hook) reads what main read. write_guard turns
+#: it on for each hard leg (`glued_opening_on`) and judges the leg on both
+#: readings wherever they decide an opener differently, refusing where
+#: either refuses (`_wall_readings`' rule, DEF-846), so the glued reader's
+#: errors cost friction, never a statement the token-start rule reads (the
+#: failure-mode review of design A, WARN 4).
+_PS_GLUED_OPENING: "contextvars.ContextVar[bool]" = contextvars.ContextVar(
+    "_PS_GLUED_OPENING", default=False)
+
+
+def reading_cache(maxsize: int) -> Callable[[Any], Any]:
+    """`functools.lru_cache` keyed by the reading too, so a text's answer
+    under one reading is never read back under the other (air's verifier
+    note 38d60b (c)). The cached function keeps ``cache_clear``,
+    ``cache_info`` and ``__wrapped__``; it holds ``maxsize`` entries a
+    reading, one cache for each (``cache_info`` reads the enclosing call's
+    reading's, ``cache_clear`` empties both)."""
+    def wrap(fn: Any) -> Any:
+        caches = {reading: functools.lru_cache(maxsize=maxsize)(fn) for reading in (False, True)}
+
+        @functools.wraps(fn)
+        def cached(*args: Any, **kwargs: Any) -> Any:
+            return caches[bool(_PS_GLUED_OPENING.get())](*args, **kwargs)
+
+        def cache_clear() -> None:
+            for cache in caches.values():
+                cache.cache_clear()
+
+        def cache_info() -> Any:
+            return caches[bool(_PS_GLUED_OPENING.get())].cache_info()
+
+        cached.__dict__.update(cache_clear=cache_clear, cache_info=cache_info)
+        return cached
+    return wrap
+
 # Bash-write extraction patterns. Each produces a candidate path to check.
 # Order matters: heredoc before plain redirect so we match the path before `<<`.
 # `>|` is bash's clobber spelling (past `set -o noclobber`); it was absent, so
@@ -558,7 +597,7 @@ def _keep_the_verb(m: "re.Match[str]") -> str:
     return "".join(out)
 
 
-@functools.lru_cache(maxsize=64)
+@reading_cache(maxsize=64)
 def _resolve_bash_discovered_heads(scan: str) -> str:
     """``scan`` with every command the shell discovered and invoked at a
     command position read as the command it names (DEF-827). Same length.
@@ -4714,20 +4753,16 @@ _PS_GROUP_CLOSE = frozenset(")}")
 _PS_GLUED_TOKEN_CAP = 128
 _PS_GLUED_HEAD_NUMBER_CAP = 64
 
-#: DEF-2073's two readings (air's ruling 8aa088): the glued-opener reader
-#: below models 5.1's tokenizer, and three review rounds each found a shape
-#: where it opened a comment 5.1 absorbs, hiding the statement inside. So it
-#: is never the only reading: where it opened one, write_guard judges the
-#: call again with glued opening off, which is the call sites' token-start
-#: rule alone (the reading before DEF-2073), and refuses where either reading
-#: refuses, `_wall_readings`' rule (DEF-846). The reader's errors then cost
-#: friction, never a statement the token-start rule reads.
-_PS_GLUED_OPENING: "contextvars.ContextVar[bool]" = contextvars.ContextVar(
-    "_PS_GLUED_OPENING", default=True)
+#: The glued-opener reader below models 5.1's tokenizer, and three review
+#: rounds each found a shape where it opened a comment 5.1 absorbs, hiding
+#: the statement inside, so it is never the only reading (`_PS_GLUED_OPENING`
+#: at this module's top).
 #: Set once the two readings decide an opener differently in this process
-#: (`_ps_opener_reading`), either way round. A hook call is
-#: one process, so there it is per call; a test process keeps it, which only
-#: adds second readings.
+#: (`_ps_opener_reading`), either way round. A hook call is one process, so
+#: there it is per call; a test process keeps it, which only adds second
+#: readings. It is set by a walk, and a cached answer skips the walk: code
+#: that lowers it between calls in one process clears the reading caches
+#: too, or a cache hit leaves it lowered.
 _PS_GLUED_OPENED = [False]
 
 
@@ -4737,26 +4772,33 @@ def glued_opener_opened() -> bool:
     return _PS_GLUED_OPENED[0]
 
 
+def glued_reading() -> bool:
+    """Whether the enclosing call reads on the glued reading: the key a
+    cache outside this module adds (`_speedbump._kill_hit`'s)."""
+    return _PS_GLUED_OPENING.get()
+
+
+@contextlib.contextmanager
+def glued_opening_on() -> Iterator[None]:
+    """Read the enclosed call on the glued reading. Every cache that holds a
+    reading's answer is keyed by the reading (`reading_cache`, `_PS_FOLDED`),
+    so neither reading's answer is read back under the other."""
+    token = _PS_GLUED_OPENING.set(True)
+    try:
+        yield
+    finally:
+        _PS_GLUED_OPENING.reset(token)
+
+
 @contextlib.contextmanager
 def glued_opening_off() -> Iterator[None]:
-    """Judge the enclosed call with glued opening off. This module's caches
-    are keyed by text alone, so they are emptied on the way in and out: no
-    answer of one reading is read back by the other."""
-    _clear_text_caches()
+    """Read the enclosed call on main's reading, the default, from inside
+    `glued_opening_on`."""
     token = _PS_GLUED_OPENING.set(False)
     try:
         yield
     finally:
         _PS_GLUED_OPENING.reset(token)
-        _clear_text_caches()
-
-
-def _clear_text_caches() -> None:
-    """Empty every `functools` cache this module defines."""
-    for value in list(globals().values()):
-        clear = getattr(value, "cache_clear", None)
-        if clear is not None and getattr(value, "__module__", None) == __name__:
-            clear()
 
 
 def _ps_backtick_escaped(s: str, k: int) -> bool:
@@ -4934,8 +4976,8 @@ def _ps_opener_reading(
     start: bool,
 ) -> bool:
     """Whether the opener at ``i`` opens, in the reading that asks.
-    ``start`` is the token-start rule's answer, the whole answer with glued
-    opening off (`glued_opening_off`). With it on, an opener glued to the
+    ``start`` is the token-start rule's answer, the whole answer on main's
+    reading, the default. On the glued one (`glued_opening_on`), an opener glued to the
     token before it asks `_ps_glued_opener_opens`, and so does one the rule
     opens after an escaped separator or a braced name's close, which start
     no token on 5.1 (``a`;<#``, `${x}<#`). Wherever the two answers differ
@@ -5192,8 +5234,10 @@ _PS_QUOTE_FOLD = tuple(zip(PS_TYPOGRAPHIC_QUOTES, "''''" + '"""'))
 #: Each text folded this process, and each fold as its own fold: the
 #: dispatch folds the command, then every reader's walk folds the text it is
 #: handed again, which is that fold, so a second walk of it is a lookup. A
-#: fold of a fold is itself (pinned). Bounded: cleared past 64 entries.
-_PS_FOLDED: dict[str, str] = {}
+#: fold of a fold is itself (pinned). Keyed by the reading too, since the
+#: fold runs the walk, which reads comment openers (the failure-mode review
+#: of DEF-2073's design A, WARN 2). Bounded: cleared past 64 entries.
+_PS_FOLDED: dict[tuple[bool, str], str] = {}
 
 #: Raised by every fold that moves a quote, a cached one included, so the
 #: two relief gates give no relief wherever one moved, on every route a
@@ -5217,13 +5261,14 @@ def fold_powershell_quotes(command: str, _depth: int = 0) -> str:
     A fold that moved a quote raises `FOLD_MOVED_A_QUOTE`."""
     if command.isascii() or _depth > _PS_FOLD_DEPTH_CAP:
         return command
-    done = _PS_FOLDED.get(command)
+    reading = _PS_GLUED_OPENING.get()
+    done = _PS_FOLDED.get((reading, command))
     if done is None:
         done = _fold_powershell_quotes(command, _depth)
         if len(_PS_FOLDED) > 64:
             _PS_FOLDED.clear()
-        _PS_FOLDED[command] = done
-        _PS_FOLDED[done] = done
+        _PS_FOLDED[(reading, command)] = done
+        _PS_FOLDED[(reading, done)] = done
     if done != command:
         FOLD_MOVED_A_QUOTE.set(True)
     return done
@@ -5978,7 +6023,7 @@ def raw_span(raw: str, m: "re.Match[str]", group: int = 1, *,
 _STATEMENT_STOPS = frozenset(";|&\n")
 
 
-@functools.lru_cache(maxsize=16)
+@reading_cache(maxsize=16)
 def _statement_structure(text: str, *, powershell: bool = False) -> tuple[tuple[tuple[int, int], ...], tuple[int, ...]]:
     """One quote-aware pass over ``text``: every quoted span as ``(open,
     close)`` -- ``close`` is the closing quote's offset, or -1 when the text
@@ -8345,7 +8390,7 @@ def nested_shell_programs(command: str) -> list[str]:
     return list(_nested_shell_programs_cached(command))
 
 
-@functools.lru_cache(maxsize=8)
+@reading_cache(maxsize=8)
 def _nested_shell_programs_cached(command: str) -> tuple[str, ...]:
     return tuple(_nested_shell_programs(command, 0))
 
@@ -10076,7 +10121,7 @@ def iter_removed_or_relocated_operands(command: str, _depth: int = 0) -> list[tu
     return list(_removed_or_relocated_cached(command, _depth))
 
 
-@functools.lru_cache(maxsize=8)
+@reading_cache(maxsize=8)
 def _removed_or_relocated_cached(command: str, _depth: int) -> tuple[tuple[str, str], ...]:
     return tuple(_iter_removed_or_relocated_operands(command, _depth))
 
@@ -10646,7 +10691,7 @@ _PS_REPARSED_SPAN_BEFORE = re.compile(
 _PS_REPARSE_LOOKBACK = 2048
 
 
-@functools.lru_cache(maxsize=8)
+@reading_cache(maxsize=8)
 def _ps_reparse_answers(s: str, rx: object, lookback: int) -> "dict[int, bool]":
     """The lookback's answers for one text, by opener offset. The answer is a
     function of the text, the offset, the pattern and the window -- and, under
@@ -11340,7 +11385,7 @@ def _ps_join_command_gaps(raw: str, scan: str, masker_read: bool) -> tuple[str, 
     Remove-Item -Recurse -Force` is one pipeline (pwsh 7.6.5, driven), and
     every pipe reader's stage pattern stopped at the comment's surviving
     `<#`. Found on the MASKED half, where a pipe that survives is live and
-    a comment opener is read by the masker's own token-start rule. Since
+    a comment opener is read by the masker's opener reading. Since
     DEF-2071/2072 the pair arrives here with every block comment the masker
     read already one blank (`_ps_blocks_as_one_blank`), so the block-comment
     branches below meet only the ones it did not read: a gap inside a string
@@ -11376,7 +11421,7 @@ def _ps_join_command_gaps(raw: str, scan: str, masker_read: bool) -> tuple[str, 
     (`_PS_GAP_OPENER_RE`). Such a gap holds blanks and block comments only:
     a line break there is itself a separator, which opens the statement
     after a line comment, so the join leaves both as they are. Only what
-    the masker read as a comment is joined (its own token-start rule), so a
+    the masker read as a comment is joined (its opener reading), so a
     comment's text never reaches a reader, and an argument's comment, after
     a word, is never at an opener. One opener is read past the masker's rule:
     a `<#` glued to `=` (`$x =<# c #> Get-Content .env`, which Windows
@@ -14315,7 +14360,7 @@ def _posix_cli_program(line: str) -> str:
     return ""
 
 
-@functools.lru_cache(maxsize=16)
+@reading_cache(maxsize=16)
 def ps_start_process_shell_launches(raw: str, scan: str) -> tuple[tuple[int, str, str], ...]:
     """``(offset, grammar, program)`` for every shell a ``Start-Process``
     statement starts with its program in the argument list, in offset order:
@@ -16159,7 +16204,7 @@ def _splice_replacement(match: "re.Match[str]") -> str:
     return "\n" if match.group(1) else ""
 
 
-@functools.lru_cache(maxsize=64)
+@reading_cache(maxsize=64)
 def splice_line_continuations(command: str) -> str:
     r"""The Bash readers' ONE raw pre-pass: `_splice_line_continuations`
     (its docstring is the contract -- the order rule, the heredoc rule), then
@@ -16196,7 +16241,7 @@ _PIPE_AT_LINE_END_RE = re.compile(r"\|&?[ \t\r]*[\n#]")
 _SPLICE_PROGRAM_MAX_DEPTH = 8
 
 
-@functools.lru_cache(maxsize=64)
+@reading_cache(maxsize=64)
 def _masked_or_raw(command: str) -> str:
     """`mask_inert_syntax`, or the raw text where the mask would not line up
     by offset (the masker fails closed to the raw text itself). Memoised, as
@@ -17005,7 +17050,7 @@ def has_catastrophic_find_delete(
     return _bash_sweep_walk(command, root, cwd, _find_lands_catastrophic)
 
 
-@functools.lru_cache(maxsize=64)
+@reading_cache(maxsize=64)
 def _wall_readings(command: str) -> tuple[str, ...]:
     """The texts the Bash walls judge (DEF-846): the command as spelled and,
     when a literal binding changes it, the command with the
@@ -17057,7 +17102,7 @@ _PLAIN_JOINERS = frozenset({";", "&&", "||", "\n"})
 _PLAIN_RELIEF_HEADS = frozenset({"rm"})
 
 
-@functools.lru_cache(maxsize=8)
+@reading_cache(maxsize=8)
 def _relief_applies(command: str, *, bash: bool) -> bool:
     """Is ``command`` PLAIN, so the glob relief may read a bare leading glob
     or the location variable as the directory its statement runs in? The

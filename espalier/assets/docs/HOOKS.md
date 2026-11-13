@@ -2219,9 +2219,10 @@ spellings of them are work:
   starts its token), and two unusual spellings are read as a comment
   PowerShell does not open, so a statement inside it goes unread. Where
   that glued reading and the plain token-start rule decide an opener
-  differently, the call is judged on both readings and refused where either
-  refuses, so a misread glued opener costs friction, never a statement the
-  token-start rule reads. An opener
+  differently, every leg that reads the command is judged on both readings,
+  the speed bump and its recovery snapshot included, and the call is refused
+  where either refuses, so a misread glued opener costs friction, never a
+  statement the token-start rule reads. An opener
   inside a braced variable name (`${<#}; ... #>`) is a declared
   limit, pinned by
   `tests/test_write_guard.py::TestAGluedCommentOpens::test_a_braced_names_opener_opens_a_comment_powershell_does_not`.

@@ -17993,7 +17993,9 @@ class TestAGapAfterAPipeIsRead:
             if isinstance(t, ast.Name)
         }
         assert context_vars, "the module's context variables were not found"
-        seen, todo, reads = set(), [memo], []
+        # `reading_cache`'s one read is DEF-2073's reading, which keys the
+        # memo, so it serves no answer of another reading.
+        seen, todo, reads = {"reading_cache"}, [memo], []
         while todo:
             name = todo.pop()
             if name in seen:
@@ -18950,6 +18952,13 @@ class TestAGluedCommentOpens:
     `_ps_glued_opener_opens`: the mode of the statement the token sits in, and
     the token's shape."""
 
+    @pytest.fixture(autouse=True)
+    def _the_glued_reading(self):
+        """The walk rows read the glued reading, which the guard's hard legs
+        turn on (`glued_opening_on`); main's reading is the default."""
+        with _bash_patterns_module().glued_opening_on():
+            yield
+
     @staticmethod
     def _live_separators(cmd: str, mask: str) -> set:
         """The separators the walk's mask keeps, by 5.1's token kinds."""
@@ -19175,6 +19184,146 @@ class TestAGluedCommentOpens:
         blocks: list = []
         bp._walk_powershell_spans(cmd, None, blocks)
         assert [a for a, _ in blocks] == [cmd.index("<#")]
+
+
+def _two_reading_population() -> list:
+    """`_GLUED_POPULATION`'s spellings, again with their quotes typographic,
+    and each joined to the next by a line: where the two readings differ,
+    and where the quote fold, which runs the walk, folds differently on each."""
+    cmds = [row[0] for row in _GLUED_POPULATION]
+    cmds += [c.replace("'", chr(0x2019)) for c in cmds if "'" in c]
+    cmds += [c.replace('"', chr(0x201C)) for c in cmds if '"' in c]
+    # a typographic quote inside the comment the glued reading opens
+    q, lq = chr(0x2019), chr(0x2018)
+    cmds += ["$x<# it" + q + "s #>; gc " + q + "a b" + q,
+             "$x<# " + lq + " #>; Get-Content " + lq + ".env" + q,
+             "Write-Output $x<# " + q + " #> " + q + "; Get-Content .env #" + q]
+    cmds += [a + "\n" + b for a, b in zip(cmds, cmds[1:])]
+    return cmds
+
+
+def _reading_row(cmd: str) -> list:
+    """The spelling's mask, comments, quote fold, speed-bump scan pair and
+    secret-read targets, on the reading the caller is in."""
+    bp = _bash_patterns_module()
+    sys.path.insert(0, str(HOOKS_DIR))
+    import _speedbump as sb
+    import write_guard as wg
+    blocks: list = []
+    mask = bp._walk_powershell_spans(cmd, None, blocks)
+    return [cmd, mask, blocks, bp.fold_powershell_quotes(cmd), list(sb._ps_scan_pair(cmd)),
+            list(wg._ps_secret_read_targets(cmd))]
+
+
+#: `_reading_rows` of the two-reading population at dc73ada, the main the
+#: lane last merged (json with ASCII escapes, sha256): main's reading.
+_MAIN_READING_DIGEST = "6990cc6b12f5f49abe8a907d66c7705ad0717a664440ac8d568739a0651bcb7e"
+
+
+def _unwrapped_legs(source: str) -> list:
+    """The calls in `_run_main` that read the command and are not judged on
+    both readings: a hard leg (`check_*`) outside a lambda handed to
+    `_either_glued_reading`, the snapshot or the bump outside one handed to
+    `_main_reading_then_glued`. The Write tools' leg and MCP's read no shell
+    text."""
+    import ast
+    fn = next(n for n in ast.walk(ast.parse(source))
+              if isinstance(n, ast.FunctionDef) and n.name == "_run_main")
+    wrapped: dict = {}
+    for node in ast.walk(fn):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id in ("_either_glued_reading", "_main_reading_then_glued")):
+            for arg in node.args:
+                for inner in ast.walk(arg):
+                    wrapped[id(inner)] = node.func.id
+    out = []
+    for node in ast.walk(fn):
+        if not isinstance(node, ast.Call):
+            continue
+        name = node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", "")
+        if name in ("snapshot_discard", "check_fired"):
+            want = "_main_reading_then_glued"
+        elif name.startswith("check_") and name not in ("check_write_edit", "check_mcp"):
+            want = "_either_glued_reading"
+        else:
+            continue
+        if wrapped.get(id(node)) != want:
+            out.append(name)
+    return sorted(out)
+
+
+class TestTheTwoReadings:
+    """DEF-2073's design A as the two reviews and air's verifier note 38d60b
+    left it: main's reading is the default and reads what main read, every
+    cache that holds a reading's answer is keyed by the reading, and every
+    leg that reads the command reads both."""
+
+    def test_mains_reading_reads_what_main_read(self):
+        """Each spelling read on the glued reading and then on main's, back
+        to back as a hook call reads them, so every cache holds the glued
+        answer when main's is asked: main's reading of the population is
+        main's at dc73ada (the failure-mode review's WARN 2 and ROUGH-EDGE
+        5: the fold read the glued reading, and the caches were keyed by
+        text alone)."""
+        import hashlib
+        bp = _bash_patterns_module()
+        glued, main = [], []
+        for cmd in _two_reading_population():
+            with bp.glued_opening_on():
+                glued.append(_reading_row(cmd))
+            main.append(_reading_row(cmd))
+        assert len(main) == 1037, "the population moved: re-pin the digest at main"
+        assert sum(a[3] != b[3] for a, b in zip(glued, main)) == 11, "the folds must differ for the pin to bite"
+        assert sum(a != b for a, b in zip(glued, main)) == 774, "the readings must differ for the pin to bite"
+        digest = hashlib.sha256(json.dumps(main, ensure_ascii=True).encode("ascii")).hexdigest()
+        assert digest == _MAIN_READING_DIGEST
+
+    def test_every_leg_that_reads_the_command_reads_both(self):
+        """The failure-mode review's WARN 3: unwrapping a leg turned nothing
+        red. Each hard leg is judged on both readings; the snapshot and the
+        bump read main's first."""
+        assert _unwrapped_legs((HOOKS_DIR / "write_guard.py").read_text(encoding="utf-8")) == []
+
+    def test_an_unwrapped_leg_is_named(self):
+        src = (
+            "def _run_main(data):\n"
+            "    rc = _either_glued_reading(lambda: check_secret_path_access(t, i, r))\n"
+            "    rc = check_powershell(i, r)\n"
+            "    _speedbump.check_fired(t, i, r)\n"
+            "    _main_reading_then_glued(lambda: _speedbump.snapshot_discard(t, i, r))\n"
+            "    rc = check_write_edit(i, r)\n"
+        )
+        assert _unwrapped_legs(src) == ["check_fired", "check_powershell"]
+
+    def test_the_kill_reading_is_made_once_a_reading(self, monkeypatch, tmp_path):
+        """Air's verifier note 38d60b (c): `_speedbump._last_kill`, the one
+        plain record of a command's reading outside the pattern module."""
+        bp = _bash_patterns_module()
+        sys.path.insert(0, str(HOOKS_DIR))
+        import _speedbump as sb
+        made: list = []
+        monkeypatch.setattr(sb, "_kill_reading", lambda *a: made.append(bp.glued_reading()))
+        monkeypatch.setattr(sb, "_last_kill", None)
+        tool_input = {"command": "Stop-Process -Id 4242"}
+        for _ in range(2):
+            sb._kill_hit("PowerShell", tool_input, tmp_path)
+        with bp.glued_opening_on():
+            for _ in range(2):
+                sb._kill_hit("PowerShell", tool_input, tmp_path)
+        assert made == [False, True]
+
+    @pytest.mark.parametrize("cmd, checkpoint", [
+        ("7.exe $y<# ; Remove-Item build -Recurse -Force #>", "CP-RMRF"),
+        ("!gc $x<# ; Remove-Item build -Recurse -Force #>", "CP-RMRF"),
+        ("7.exe $y<# ; git reset --hard #>", "CP-DISCARD"),
+        ("7.exe $y<# ; git clean -fd #>", "CP-GITCLEAN"),
+    ])
+    def test_a_statement_the_glued_reading_hides_draws_mains_bump(self, tmp_path, cmd, checkpoint):
+        """The failure-mode review's BLOCK: the snapshot and the bump read
+        the glued reading alone, which opens a comment 5.1 does not open
+        here, so each drew its bump at dc73ada and none at 810eea21."""
+        (tmp_path / "build").mkdir()
+        assert_hook_denied(_run_ps_guard(cmd, tmp_path), contains_reason=f"Speed-bump [{checkpoint}]")
 
 
 class TestShellOutReader:
@@ -22533,6 +22682,14 @@ class TestThePatternPath:
         exempt = {"_load_the_pattern_path", "__getattr__"} | {step.name for step in self._steps(tree)}
 
         def loads(stmt: ast.stmt) -> bool:
+            """A call of the loader, or a return while the path is not loaded
+            (`if not _pattern_path_loaded: return ...`, the shape a helper the
+            read-only secret leg reaches takes: it must not load the path)."""
+            if (isinstance(stmt, ast.If) and isinstance(stmt.test, ast.UnaryOp)
+                    and isinstance(stmt.test.op, ast.Not) and isinstance(stmt.test.operand, ast.Name)
+                    and stmt.test.operand.id == "_pattern_path_loaded" and not stmt.orelse
+                    and stmt.body and isinstance(stmt.body[-1], ast.Return)):
+                return True
             return (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)
                     and isinstance(stmt.value.func, ast.Name) and stmt.value.func.id == "_load_the_pattern_path")
 
