@@ -7077,13 +7077,39 @@ def _pipe_scan(
     A ``#`` glued behind a backslash-newline opens no comment unless a word
     could start before the pair: bash removes the pair before it reads a
     word, so `a` + backslash-newline + `#b` is the one word `a#b` (DEF-2078's
-    oracle, bash 3.2, dash and zsh)."""
+    oracle, bash 3.2, dash and zsh). A character a backslash escapes is a
+    literal, never a word break, and a ``)`` is one only where it closes a
+    subshell, a group or a case pattern (the same oracle)."""
     out = list(command)
     n = len(command)
+    #: The characters after which a `#` starts a word on this scan.
+    #: Narrower than the masker's `_COMMENT_OPENERS` on purpose: this scan
+    #: blanks a substitution and a backtick span whole, so a `#` glued behind
+    #: one's close is mid-word (`$(x)#y` is one word), and a `)` counts only
+    #: through ``bare_closes``. Widened to the masker's set, `$(x)#y` reads
+    #: as a comment and the continuation after it is left split (DEF-2078's
+    #: failure-mode review); `test_the_splice` pins both sides.
     openers = " \t\n;|&("
+    #: Each `)` that closes a subshell, a group or a case pattern (one with
+    #: no `(` open), as opposed to a `<( )` or `>( )`: a word starts after it.
+    bare_closes: set[int] = set()
+    #: For each `(` open, whether it opened a process substitution.
+    parens: list[bool] = []
+    #: Where the last escape of an ordinary character ends: the character it
+    #: escapes is a literal, so no word starts after it.
+    escaped_end = -1
     #: Where the last backslash-newline the scan stepped over ends, and
     #: whether a word could start before it.
     joined_at, word_before = -1, False
+
+    def starts_word(k: int) -> bool:
+        """A word could start at ``k``: the text's start, or after a
+        separator the scan reads live."""
+        if k == 0:
+            return True
+        if k == escaped_end:
+            return False
+        return command[k - 1] in openers or k - 1 in bare_closes
 
     def blank(lo: int, hi: int, body_lo: int, body_hi: int) -> None:
         for k in range(lo, hi):
@@ -7098,9 +7124,9 @@ def _pipe_scan(
             out[i] = " "
             if command[i + 1] != "\n":
                 out[i + 1] = " "
+                escaped_end = i + 2
             else:
-                word_before = (word_before if i == joined_at
-                               else i == 0 or command[i - 1] in openers)
+                word_before = word_before if i == joined_at else starts_word(i)
                 joined_at = i + 2
             i += 2
             continue
@@ -7154,8 +7180,7 @@ def _pipe_scan(
             blank(i, j + 1, i + 1, j)
             i = j + 1
             continue
-        if c == "#" and (word_before if i == joined_at
-                         else i == 0 or command[i - 1] in openers):
+        if c == "#" and (word_before if i == joined_at else starts_word(i)):
             j = command.find("\n", i)
             j = n if j < 0 else j
             for k in range(i, j):
@@ -7164,6 +7189,10 @@ def _pipe_scan(
                 comment(i, j)
             i = j
             continue
+        if c == "(":
+            parens.append(i > 0 and command[i - 1] in "<>")
+        elif c == ")" and not (parens and parens.pop()):
+            bare_closes.add(i)
         i += 1
     return "".join(out)
 
@@ -15995,16 +16024,25 @@ def _comment_ends(command: str, _depth: int = 0) -> frozenset[int]:
     """The offset of each newline that ends a comment a shell reads in
     ``command`` (DEF-2078): bash discards a comment raw to its newline, so a
     backslash ending one continues nothing, and the line after it runs.
-    Read on `_pipe_scan`'s quote state, the splicer's own: at the top level
-    and, one level down each time, in each body a shell reads as a command
-    of its own -- a `$( )` body, a single-quoted span (a program where a
-    shell re-reads it; data elsewhere, where a newline kept changes no
-    reader's verdict), and a `$( )` inside double quotes. Driven on bash
-    3.2, dash and zsh (`TestACommentEndsAtItsNewline`'s oracle): a backtick
-    body, a double-quoted span and an unquoted heredoc body join the pair
-    before their text is read, so none of them ends a comment here; inside a
-    `$( )`, bash 3.2 joins it too and then refuses the command unparsed, so
-    the reading that keeps the next line is the one dash and zsh run."""
+    Read on `_pipe_scan`'s quote state, the splicer's own (not the masker's
+    walk: the two read a comment's opener differently, see `_pipe_scan`'s
+    ``openers``), at the top level and, one level down each time, in each
+    body a shell reads as a command of its own -- a `$( )` body, a
+    single-quoted span (a program where a shell re-reads it; data
+    elsewhere, where a newline kept changes no reader's verdict), and a
+    `$( )` inside double quotes. Driven on bash 3.2, dash and zsh
+    (`TestACommentEndsAtItsNewline`'s oracle): a backtick body, a
+    double-quoted span and an unquoted heredoc body join the pair before
+    their text is read, so this scan, which blanks the first two whole and
+    reaches into a double-quoted span only for its `$( )`, reads no comment
+    in them; inside a `$( )`, bash 3.2 joins it too and then refuses the
+    command unparsed, so the reading that keeps the next line is the one
+    dash and zsh run. A body holding a heredoc operator is not read: this
+    scan does not know where its heredoc body runs, so a data body's
+    apostrophe would read as a quote, and an unquoted body joins the pair
+    before its shell reads it; the splicer joins there as before
+    (DEF-2078's failure-mode review). The top level's heredoc bodies are
+    the splicer's to blank before it asks (`_splice_line_continuations`)."""
     ends: set[int] = set()
     bodies: list[tuple[int, int]] = []
     _pipe_scan(command, lambda lo, hi: bodies.append((lo, hi)),
@@ -16012,6 +16050,8 @@ def _comment_ends(command: str, _depth: int = 0) -> frozenset[int]:
     if _depth >= _SPLICE_PROGRAM_MAX_DEPTH:
         return frozenset(ends)
     for lo, hi in bodies:
+        if "<<" in command[lo:hi]:
+            continue
         if command[lo - 2:lo] == "$(" or (command[lo - 1:lo] == "'"
                                          and command[lo - 2:lo] != "$'"):
             ends.update(lo + k for k in _comment_ends(command[lo:hi], _depth + 1))
@@ -16022,6 +16062,19 @@ def _comment_ends(command: str, _depth: int = 0) -> frozenset[int]:
             for a, b in subs:
                 ends.update(lo + a + k for k in _comment_ends(word[a:b], _depth + 1))
     return frozenset(ends)
+
+
+def _holds_a_comment_opener(line: str) -> bool:
+    """A ``#`` in ``line`` stands at its start or after a blank or an
+    operator: the only lines whose join the comment reader can refuse, so a
+    `${#x}`, a `$#` or a URL's fragment on a continued line costs no scan.
+    A gate, not a reader (a superset of `_pipe_scan`'s word starts)."""
+    k = line.find("#")
+    while k >= 0:
+        if k == 0 or line[k - 1] in " \t;|&()":
+            return True
+        k = line.find("#", k + 1)
+    return False
 
 
 def _blank_lines_at(command: str, spans: list[tuple[int, int]]) -> str:
@@ -16083,6 +16136,14 @@ def _splice_line_continuations(command: str, _depth: int = 0) -> str:
     before, which is what bash does with the pair there (driven: the same
     shape unquoted ran nothing). The operators are read outside quotes and
     comments (``_pipe_scan``), so a quoted mention of ``<<EOF`` opens no body.
+
+    ⚠ A BACKSLASH THAT ENDS A COMMENT CONTINUES NOTHING (DEF-2078). bash
+    drops a comment raw to its newline, so the line after `echo ok #` plus a
+    backslash runs (driven on bash 3.2, dash and zsh, echo alone). Joined,
+    that line went into the comment for every reader. A line the join would
+    continue is left whole where `_comment_ends` says its newline ends a
+    comment, read on this text with the heredoc body lines met so far
+    blanked; an unquoted heredoc body still joins, as bash does.
     """
     if "\\" not in command and not _PIPE_AT_LINE_END_RE.search(command):
         return command
@@ -16224,7 +16285,7 @@ def _splice_line_continuations(command: str, _depth: int = 0) -> str:
                 pipe_open = True
                 continue
         text, joined = _spliced_line(line, idx == last)
-        if text != line and "#" in line:
+        if text != line and _holds_a_comment_opener(line):
             # A backslash that ends a comment continues nothing: bash drops
             # the comment raw to its newline, backslash and all (DEF-2078).
             if bodies_read != len(body_lines):

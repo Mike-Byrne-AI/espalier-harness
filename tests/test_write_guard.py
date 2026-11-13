@@ -17818,6 +17818,8 @@ _COMMENT_BACKSLASH_ROWS = [
     ("Bash", "bash <<'E'\necho ok #\\\nrm -rf /\nE", "wall"),
     ("Bash", "cat <<E # c \\\nbody\nE\nrm -rf /", "wall"),
     ("PowerShell", "bash -c 'echo ok #\\\nrm -rf /'", "wall"),
+    # a comment glued to a subshell's close paren (the failure-mode review)
+    ("Bash", "(cd src)#c \\\nrm -rf /", "wall"),
 ]
 
 #: The other side: a backslash-newline bash does join keeps its join, and a
@@ -17841,8 +17843,9 @@ _COMMENT_BACKSLASH_JOINS = [
     ("Bash", "git commit -m 'one #\\\nrm -rf / is gone'", "allow"),
     # a backtick body joins the pair before it is read: one comment
     ("Bash", "x=`echo ok #\\\nrm -rf /`", "allow"),
-    # ... and the `#` glued behind a continuation is mid-word for the masker
-    # too, so the statement after it is live
+    # a regression guard, walled at main as here: the masker still reads a
+    # `#` glued behind a continuation as a comment (its own opener rule),
+    # and another reader of the command walls the delete after the `;`
     ("Bash", "echo a\\\n#b;rm -rf /", "wall"),
 ]
 
@@ -17867,14 +17870,21 @@ _COMMENT_BACKSLASH_ORACLE = [
     ('echo "one #\\\ntwo"', ("one #two\n",)),
     ("echo one\\\n#two \\\nthree", ("one#two three\n",)),
     ("echo one \\\n#two \\\necho three", ("one\nthree\n",)),
+    # a subshell's close paren starts a word, a substitution's and an
+    # escaped character do not
+    ("(echo one)#c \\\necho two", ("one\ntwo\n",)),
+    ("echo $(echo one)#two \\\nthree", ("one#two three\n",)),
+    ("echo one\\;#two \\\nthree", ("one;#two three\n",)),
 ]
 
-#: The shells the oracle asks, where the box has them: bash (3.2 on the Air,
-#: 5 on the Linux cells), dash and zsh, each with no startup files.
-_COMMENT_ORACLE_SHELLS = [
-    argv for argv in (["/bin/bash", "--noprofile", "--norc"], ["/bin/dash"], ["/bin/zsh", "-f"])
-    if Path(argv[0]).exists()
-]
+#: The rows whose empty stdout is bash 3.2's parse refusal inside a `$( )`.
+_COMMENT_ORACLE_REFUSALS = {
+    program for program, stdouts in _COMMENT_BACKSLASH_ORACLE if "" in stdouts
+}
+
+#: The shells the oracle asks: bash (3.2 on the Air, 5 on the Linux cells),
+#: dash and zsh, each with no startup files; one the box lacks is skipped.
+_COMMENT_ORACLE_SHELLS = [["/bin/bash", "--noprofile", "--norc"], ["/bin/dash"], ["/bin/zsh", "-f"]]
 
 
 class TestACommentEndsAtItsNewline:
@@ -17882,10 +17892,12 @@ class TestACommentEndsAtItsNewline:
     Bash wall, on the Bash tool and in a `bash -c` program on the PowerShell
     tool: the splicer (`_splice_line_continuations`) joined a backslash-newline
     wherever it stood, and bash discards a comment raw to its newline, so the
-    backslash continues nothing. The splicer now reads where a comment ends
-    from the masker's own walk (`_walk_shell_roles`), which the wall already
-    trusts to call a comment inert, so the two agree; in a substitution, a
-    quoted program and a heredoc a shell reads, the same."""
+    backslash continues nothing. The splicer now reads where a comment ends on
+    its own scan (`_comment_ends` over `_pipe_scan`), at the top level and in
+    a substitution, a quoted program and a quoted substitution, with the
+    heredoc bodies it has met blanked first. The masker's walk keeps its own
+    opener rule (a `#` glued behind a continuation is still a comment there),
+    so the two readers are not one reading."""
 
     @pytest.mark.parametrize("tool, cmd, expect", _COMMENT_BACKSLASH_ROWS)
     def test_the_line_after_the_comment_is_read(self, tmp_path, tool, cmd, expect):
@@ -17911,21 +17923,45 @@ class TestACommentEndsAtItsNewline:
         # the quoted `#` after it ends nothing and the continuation joins
         ("cat <<EOF\nit's\nEOF\necho 'a\n#' ; rm -rf \\\n/",
          "cat <<EOF\nit's\nEOF\necho 'a\n#' ; rm -rf /"),
+        # a body holding a heredoc is not read for comments: joined as before
+        # (the failure-mode review's two shapes inside a `$( )`)
+        ("x=$(cat <<EOF\nit's\nEOF\necho 'a\n#' ; rm -rf \\\n/)",
+         "x=$(cat <<EOF\nit's\nEOF\necho 'a\n#' ; rm -rf /)"),
+        ("x=$(bash <<E\necho ok #\\\nb\nE\n)", "x=$(bash <<E\necho ok #b\nE\n)"),
+        # a subshell's close paren starts a word, so a comment; behind it a
+        # quoted heredoc's body keeps its line (the review's relocation shape)
+        ("(a)#c \\\nb", "(a)#c \\\nb"),
+        ("(a)\\\n# it's\ncat <<'E'\nx \\\nE\nb", "(a)# it's\ncat <<'E'\nx \\\nE\nb"),
+        # a substitution's close and an escaped character start no word
+        ("echo $(x)#y \\\nz", "echo $(x)#y z"),
+        ("echo a\\;#b \\\nc", "echo a\\;#b c"),
     ])
     def test_the_splice(self, cmd, spliced):
         assert _bash_patterns_module().splice_line_continuations(cmd) == spliced
 
-    @pytest.mark.skipif(not _COMMENT_ORACLE_SHELLS, reason="the oracle is a real POSIX shell")
     @pytest.mark.parametrize("argv", _COMMENT_ORACLE_SHELLS, ids=lambda a: Path(a[0]).name)
     @pytest.mark.parametrize("program, stdouts", _COMMENT_BACKSLASH_ORACLE)
     def test_each_shell_reads_the_comment_as_the_row_says(self, argv, program, stdouts, tmp_path):
-        proc = subprocess.run([*argv, "-c", program], cwd=str(tmp_path),
-                              capture_output=True, text=True, encoding="utf-8", errors="replace",
-                              timeout=scaled(10),
-                              env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LC_ALL": "C"})
+        if not Path(argv[0]).exists():
+            pytest.skip(f"the oracle asks {argv[0]}, which this box lacks")
+        env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LC_ALL": "C"}
+
+        def run(text):
+            return subprocess.run([*argv, "-c", text], cwd=str(tmp_path),
+                                  capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=scaled(10), env=env)
+
+        proc = run(program)
+        if proc.stdout == "":
+            # bash before 5.2 read a `$( )` with its matched-pair scan: the
+            # pair is joined, the comment swallows the close paren and the
+            # command is refused unparsed. No other shell may refuse a row.
+            assert program in _COMMENT_ORACLE_REFUSALS, (program, proc.stderr)
+            assert argv[0].endswith("bash") and proc.returncode != 0 and proc.stderr, program
+            version = run('echo "${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"').stdout.split()
+            assert tuple(int(v) for v in version) < (5, 2), (program, version)
+            return
         assert proc.stdout in stdouts, (program, proc.stdout, proc.stderr)
-        # an empty stdout is the parse refusal, never a run that printed nothing
-        assert proc.stdout or proc.returncode != 0, (program, proc.stderr)
 
 
 class TestAStatementStartGapIsRead:
