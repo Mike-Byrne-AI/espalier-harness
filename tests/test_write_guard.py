@@ -14187,7 +14187,7 @@ class TestSecretPathAccess:
         assert reads is bash_reads
         if not bash_reads and command in self._BASH_4_SYNTAX:
             major = subprocess.run([*bash, "echo ${BASH_VERSINFO[0]}"], capture_output=True, text=True,
-                                   timeout=scaled(10)).stdout.strip()
+                                   encoding="utf-8", errors="replace", timeout=scaled(10)).stdout.strip()
             parsed = parsed or major == "3"
         assert parsed or bash_reads, "bash refused the row as syntax, so its cell proves nothing"
 
