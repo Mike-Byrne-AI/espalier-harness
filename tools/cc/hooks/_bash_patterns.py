@@ -13600,6 +13600,9 @@ _PS_CMD_REMOVE_OPENER_RE = re.compile(
 #: stepped over (`_cmd_outer_words_to`).
 _CMD_OUTER_STOP_BASH = frozenset(";&|\n\r()`")
 _CMD_OUTER_STOP_PS = frozenset(";&|\n\r(){}")
+#: cmd's own metacharacters: a later word holding one is read a second
+#: time, quoted whole, by the delete reader (`iter_cmd_programs`).
+_CMD_META = "&|()<>^;,"
 #: cmd's delete builtins, by the verb they are: `rmdir` is `rd`, `erase` is
 #: `del`. A builtin wins over a file of the same name on PATH.
 _CMD_DELETE_VERBS = {"rd": "rd", "rmdir": "rd", "del": "del", "erase": "del"}
@@ -14171,6 +14174,8 @@ def _cmd_outer_words_to(text: str, start: int, stop: int, *, bash: bool) -> tupl
             continue
         if c in stops:
             break
+        if not bash and not cur and not have and text.startswith(_PS_STOP_PARSING, i):
+            break                         # PowerShell's stop-parsing token: the caller reads on
         if c == "#" and not cur and not have:
             break                         # a comment
         if c == esc:
@@ -14528,30 +14533,52 @@ def iter_cmd_programs(
             yield start, _cmd_line_unquoted(raw[start:end])
             continue
         words, end = _cmd_outer_words_to(raw, start, stop, bash=bash)
+        verbatim = ""
+        if not bash and raw.startswith(_PS_STOP_PARSING, end):
+            # the stop-parsing token after the switch or a later word (`cmd
+            # /c --% ...`): PowerShell hands cmd the rest of the line as
+            # typed, as it does before the switch (the failure-mode review,
+            # driven echo only)
+            at = end + len(_PS_STOP_PARSING)
+            end = at
+            while end < stop and raw[end] not in "|\r\n":
+                end += 1
+            verbatim = raw[at:end].strip(" \t")
         if to_statement_end:
             read_to = end
-        if not words:
+        if not words and not verbatim:
             continue
         # what the outer shell hands cmd, rejoined as its command line: the
         # first word is the program cmd strips its quotes from, and a later
         # word holding a blank is one quoted argument. Any other later word
         # goes bare: Git Bash and Windows PowerShell 5.1 hand cmd a word
         # without a blank as typed, so cmd splits a separator word and
-        # `R&D` alike at the `&` (driven on both, echo only:
-        # `tests/test_write_guard.py::TestCmdReceivesAWordWithoutABlankBare`).
-        # For the delete reader a word holding one of cmd's metacharacters
-        # is read a second time, quoted whole, and a delete is judged on
-        # both readings: a root named `R&D` stays one root (the coverage
-        # contract; the quoted-operand cut, driven 2026-10-07), the
-        # friction direction where cmd splits it. The harness-variable check
-        # (``to_statement_end``) reads cmd's own reading alone.
-        rest = words[1:]
-        yield start, _cmd_line_unquoted(" ".join(
-            [words[0]] + ['"' + w + '"' if (" " in w or "\t" in w) else w for w in rest]))
-        if not to_statement_end and any(ch in w for w in rest for ch in "&|()<>^;,"):
-            meta = " \t&|()<>^;,"
-            yield start, _cmd_line_unquoted(" ".join(
-                [words[0]] + ['"' + w + '"' if any(ch in w for ch in meta) else w for w in rest]))
+        # `R&D` alike at the `&` (driven on both, echo only, DEF-2080's
+        # oracle). For the delete reader a word holding one of cmd's
+        # metacharacters is read a second time, quoted whole, and a delete is
+        # judged on both readings: a root named `R&D` stays one root (the
+        # coverage contract; the quoted-operand cut, driven 2026-10-07), the
+        # friction direction where cmd splits it. A second reading that
+        # rejoins to the first (the word also holds a blank) is not yielded.
+        # The harness-variable check (``to_statement_end``) reads cmd's own
+        # reading alone.
+        bare = _cmd_rejoined(words, verbatim, " \t")
+        yield start, bare
+        if not to_statement_end:
+            whole = _cmd_rejoined(words, verbatim, " \t" + _CMD_META)
+            if whole != bare:
+                yield start, whole
+
+
+def _cmd_rejoined(words: list[str], verbatim: str, quote_for: str) -> str:
+    """The command line cmd receives from the outer shell's ``words`` (the
+    first unquoted, a later one quoted whole where it holds a character of
+    ``quote_for``), then ``verbatim`` (the text behind PowerShell's
+    stop-parsing token, as typed), through cmd's quote rule once."""
+    parts = words[:1] + ['"' + w + '"' if any(ch in w for ch in quote_for) else w for w in words[1:]]
+    if verbatim:
+        parts.append(verbatim)
+    return _cmd_line_unquoted(" ".join(parts))
 
 
 def iter_cmd_remove_targets(command: str) -> Iterator[list[str]]:

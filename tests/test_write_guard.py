@@ -12632,6 +12632,10 @@ _CMD_WORD_ORACLE_PS = [
     ("blank-holding-word", r"cmd /c echo 'C:\x y\R&D'", r'"C:\x y\R&D"', None),
     ("quoted-in-program", r"""cmd /c 'echo "C:\x\R&D"'""", r'"C:\x\R&D"', None),
     ("quote-holding-word", r"""cmd /c echo '"C:\x\R&D"'""", r'"C:\x\R&D"', None),
+    # the stop-parsing token after the switch, or after a later word: the
+    # rest of the line reaches cmd as typed (the failure-mode review's gap)
+    ("stop-parsing-after-switch", "cmd /c --% echo a & echo RAN", "RAN", None),
+    ("stop-parsing-after-a-word", "cmd /c echo a --% & echo RAN", "RAN", None),
 ]
 
 #: (tool, command, verdict) rows for DEF-2080: a separator word, bare or
@@ -12642,10 +12646,19 @@ _CMD_SEPARATOR_WORD_ROWS = [
     ("Bash", "cmd //c echo x\\&rd /s /q .", "wall"),
     ("Bash", "cmd //c echo x \\&\\& rd /s /q .", "wall"),
     ("Bash", "cmd.exe //c echo x \\& rd /s /q %USERPROFILE%", "wall"),
+    # Bash's quoted spellings of the separator word reach cmd bare alike
+    ("Bash", "cmd //c echo x '&' rd /s /q .", "wall"),
+    ("Bash", 'cmd //c echo x "&" rd /s /q .', "wall"),
+    ("Bash", "cmd //c echo x $'&' rd /s /q .", "wall"),
+    ("Bash", "cmd //c echo x '&'rd /s /q .", "wall"),
     ("PowerShell", "cmd /c echo x '&' rd /s /q .", "wall"),
     ("PowerShell", 'cmd /c echo x "&" rd /s /q .', "wall"),
     ("PowerShell", "cmd /c echo 'x&rd' /s /q .", "wall"),
     ("PowerShell", "cmd /c echo x '&&' rd /s /q .", "wall"),
+    # the stop-parsing token after the switch or a later word
+    ("PowerShell", "cmd /c --% rd /s /q .", "wall"),
+    ("PowerShell", "cmd /c --% echo x & rd /s /q .", "wall"),
+    ("PowerShell", "cmd /c echo x --% & rd /s /q .", "wall"),
 ]
 
 
@@ -12705,7 +12718,8 @@ class TestCmdReceivesAWordWithoutABlankBare:
         encoded = base64.b64encode(program.encode("utf-16-le")).decode("ascii")
         proc = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
                               cwd=str(tmp_path), capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=scaled(30), env=self._shell_env())
+                              errors="replace", timeout=scaled(30), stdin=subprocess.DEVNULL,
+                              env=private_cache_env(self._shell_env()))
         lines = self._lines(proc)
         assert line in lines, (program, lines, proc.stderr)
         assert absent is None or not any(absent in s for s in lines), (program, lines)
@@ -12717,13 +12731,21 @@ class TestCmdReceivesAWordWithoutABlankBare:
     @pytest.mark.parametrize("tool, plain, spelled", [
         ("Bash", "cmd //c rd /s /q build", "cmd //c echo x \\& rd /s /q build"),
         ("PowerShell", "cmd /c rd /s /q build", "cmd /c echo x '&' rd /s /q build"),
+        # `src` is off the roster: plain bumps, so these rows carry the tier
+        # the old reading hid (it allowed both, the code review, driven)
+        ("Bash", "cmd //c rd /s /q src", "cmd //c echo x \\& rd /s /q src"),
+        ("PowerShell", "cmd /c rd /s /q src", "cmd /c echo x '&' rd /s /q src"),
+        ("PowerShell", "cmd /c rd /s /q src", "cmd /c --% echo x & rd /s /q src"),
         ("Bash", "cmd //c echo a=1", "cmd //c echo a=1\\&b=2"),
         ("PowerShell", "cmd /c echo a=1", "cmd /c echo 'a=1&b=2'"),
-    ], ids=["bash-narrow-delete", "ps-narrow-delete", "bash-no-delete", "ps-no-delete"])
+    ], ids=["bash-narrow-delete", "ps-narrow-delete", "bash-src-delete", "ps-src-delete",
+            "ps-stop-parsing-src-delete", "bash-no-delete", "ps-no-delete"])
     def test_a_separator_word_adds_no_verdict_of_its_own(self, tmp_path, tool, plain, spelled):
-        """The friction side: behind a separator word a narrow delete gets the
-        plain spelling's verdict, and a word holding a `&` with no delete
-        after it is allowed."""
+        """The friction side: behind a separator word a delete AFTER it gets
+        the plain spelling's verdict (a roster target's allow, an off-roster
+        one's bump), and a word holding a `&` with no delete after it is
+        allowed. A delete BEFORE the separator is not this row's: the quoted
+        reading's leftovers read it as at base."""
         want = _delete_verdict(run_guard_from(tool, plain, tmp_path, None))
         assert _delete_verdict(run_guard_from(tool, spelled, tmp_path, None)) == want, spelled
 
@@ -12743,6 +12765,34 @@ class TestCmdReceivesAWordWithoutABlankBare:
         assert programs("cmd //c rd /s /q C:/t/R\\&D", to_statement_end=True) == [
             "rd /s /q C:/t/R&D"]
         assert programs("cmd //c rd /s /q 'my dir'") == ['rd /s /q "my dir"']
+        # a word holding a blank and a metacharacter rejoins one way only:
+        # read once, never twice (the code review's duplicate)
+        assert programs("cmd //c rd /s /q 'my (x86) dir'") == ['rd /s /q "my (x86) dir"']
+
+    @pytest.mark.parametrize("meta", list(_bash_patterns_module()._CMD_META))
+    def test_each_cmd_metacharacter_earns_the_quoted_whole_reading(self, meta):
+        """`_CMD_META` is the one set: a word holding any one of them is read
+        bare and quoted whole, and the second reading differs from the
+        first."""
+        bp = _bash_patterns_module()
+        word = "a" + meta + "b"
+        raw, scan = bp.powershell_scan_pair(f"cmd /c rd /s /q '{word}'")
+        got = [p for _at, p in bp.iter_cmd_programs(raw, scan, bash=False)]
+        assert got == [f"rd /s /q {word}", f'rd /s /q "{word}"'], got
+
+    @pytest.mark.parametrize("command, program", [
+        ("cmd /c --% echo a & rd /s /q .", "echo a & rd /s /q ."),
+        ("cmd /c echo a --% & rd /s /q .", "echo a & rd /s /q ."),
+        ('cmd /c --% rd /s /q "my dir"', 'rd /s /q "my dir"'),
+    ], ids=["after-switch", "after-a-word", "quoted-tail"])
+    def test_the_stop_parsing_token_after_the_switch_hands_cmd_the_rest(self, command, program):
+        """PowerShell's `--%` after `/c` or a later word hands cmd the rest of
+        the line as typed, as before the switch; both readers read it."""
+        bp = _bash_patterns_module()
+        raw, scan = bp.powershell_scan_pair(command)
+        for kw in ({}, {"to_statement_end": True}):
+            got = [p for _at, p in bp.iter_cmd_programs(raw, scan, bash=False, **kw)]
+            assert got == [program], (kw, got)
 
     def test_the_powershell_leg_reads_cmds_program_from_the_raw_twin(self):
         """The masker blanks a separator inside a quoted word; the unforced
@@ -17432,13 +17482,32 @@ class TestAMetacharacterRootIsReadWhole:
             'ls | xargs rm -f "{R}/tools/cc/hooks/x.py"', shape,
         )
 
-    @pytest.mark.parametrize("shape", ["paren", "amp", "semi"])
+    @pytest.mark.parametrize("shape", ["paren", "amp"])
     def test_the_powershell_cmd_delete_reader_reads_the_quoted_path_whole(self, shape):
         bp = _bash_patterns_module()
         self._same_as_plain(
             lambda c: list(bp.iter_ps_removed_or_relocated_operands(c)),
             'cmd /c del "{R}/tools/cc/hooks/x.py"', shape,
         )
+
+    def test_the_powershell_cmd_delete_reader_keeps_the_whole_path_beside_cmds_semicolon_split(self):
+        """A `;` root under cmd: PowerShell 5.1 hands cmd a word without a
+        blank bare (DEF-2080's oracle), and `;` is one of cmd's argument
+        delimiters, so `del` really gets the word in two pieces. The reader
+        yields that split (`/t/a` reads as a switch, `b/...` as a target)
+        beside the quoted-whole reading, so the plain root's operands are all
+        still there and the one extra is cmd's own tail."""
+        bp = _bash_patterns_module()
+        template = 'cmd /c del "{R}/tools/cc/hooks/x.py"'
+        plain_root, root = self._ROOTS["plain"], self._ROOTS["semi"]
+        expected = self._rooted(list(bp.iter_ps_removed_or_relocated_operands(template.replace("{R}", plain_root))),
+                                plain_root)
+        got = self._rooted(list(bp.iter_ps_removed_or_relocated_operands(template.replace("{R}", root))), root)
+        extra = list(got)
+        for item in expected:
+            assert item in extra, (item, got)
+            extra.remove(item)
+        assert extra == [("delete", "b/tools/cc/hooks/x.py")], got
 
     def test_a_long_quoted_root_is_still_read_whole(self):
         """The failure-mode review's regression: the quoted arm's bound must

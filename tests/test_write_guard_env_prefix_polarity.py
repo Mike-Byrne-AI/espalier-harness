@@ -276,6 +276,10 @@ _CMD_SET_REACH = [
     # DEF-1071 (e): behind the stop-parsing token, and as a Start-Process
     # argument list (one string, and the array cmd's command line joins)
     ("ps", f"cmd --% /c set {ENV_VAR}=1 && claude -p x"),
+    # DEF-2080's sibling: the token after the switch hands cmd the rest alike
+    # (driven echo only on Windows PowerShell 5.1: `cmd /c --% echo a & echo
+    # RAN` prints RAN)
+    ("ps", f"cmd /c --% set {ENV_VAR}=1 & claude -p x"),
     ("ps", f"Start-Process cmd -ArgumentList '/c set {ENV_VAR}=1 && claude -p x'"),
     ("ps", f"Start-Process -FilePath cmd.exe -Wait -ArgumentList '/c','set {ENV_VAR}=1 && claude -p x'"),
     # a common parameter's value and a colon-bound list (PowerShell binds both)

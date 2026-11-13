@@ -1424,8 +1424,11 @@ first; the dangerous-command catch is a secondary slip-catcher):
    of that roster but `xargs`, whose input the pipeline reader judges); and
    on both tools cmd.exe's own recursive deletes
    (`rd /s`, `rmdir /s`, `del /s` or `erase /s` in a program `cmd /c`
-   runs -- on the PowerShell tool also behind the stop-parsing token,
-   `cmd --% /c`, and in a `Start-Process cmd` argument list -- cmd's
+   runs, after a separator word the outer shell hands cmd bare
+   (`cmd //c echo x \& rd /s /q .`, `cmd /c echo x '&' rd /s /q .`) as
+   much as alone -- on the PowerShell tool also behind the stop-parsing
+   token, before the switch or after it (`cmd --% /c`, `cmd /c --%`), and
+   in a `Start-Process cmd` argument list -- cmd's
    `%USERPROFILE%` read as your home directory) -- the wall on a
    catastrophic target, nothing on a roster build directory, one nudge on
    any other. On both tools the zone
