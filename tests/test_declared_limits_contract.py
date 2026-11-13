@@ -309,7 +309,15 @@ class TestTheSentenceSplitter:
 #: program keeps three declared false allows (an operand a nested body
 #: computes, a backtick span nested in another, a case arm's unbalanced `)`),
 #: one sentence with its pin.
-_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 35, "docs/SHARP_EDGES.md": 5}
+#: HOOKS 35 -> 36 on 2026-11-13 (DEF-3077), re-derived from the HOOKS.md merged
+#: with main's 35: the piped
+#: shell's redirect limits (a glued chain, a redirect before a heredoc operand,
+#: a quoted blank target on the pipe), one sentence whose "Declared limits"
+#: opening the widened key reads, pinned in
+#: `TestAPipedShellReadsItsRedirectAndExeHead`; its citation's hit is paid for by
+#: an internal row id dropped from the kept-helper sentence, so the seeded docs
+#: stay at the ceiling.
+_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 36, "docs/SHARP_EDGES.md": 5}
 
 
 def test_the_census_is_the_pinned_population():
