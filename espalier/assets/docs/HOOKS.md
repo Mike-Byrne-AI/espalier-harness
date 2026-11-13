@@ -2316,6 +2316,17 @@ spellings of them are work:
   when it records a slip seen in a real session (a transcript or an audit row
   names it). Otherwise it is recorded under the limits above with the contract
   as its reason, and no reader changes.
+- **A fourth basis: the anti-self-disable floor (ruled 2026-11-13).** The
+  guard's first job (section 4) keeps the session from switching its own
+  hooks off: a kill-switch setting, and an assignment of a variable the hooks
+  read when they start, made inside the session or handed to a nested
+  `claude`. It is none of the three jobs, and the contract above says nothing
+  of it either way. A report that the floor leaves out a setting or a
+  variable that turns a gate off is a defect on this basis; a spelling of one
+  it already reads is judged as the bullets above judge a spelling of the
+  three jobs. A protected-zone write, which section 4's headline also places
+  under the floor, is not on this basis: a report about one, or a spelling of
+  one, is judged as it was before this ruling.
 
 **Configuration:**
 

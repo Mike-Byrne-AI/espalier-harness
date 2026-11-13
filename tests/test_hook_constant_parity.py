@@ -174,6 +174,26 @@ class TestHookConstantParity:
                 f"the consumer silently"
             )
 
+    def test_the_guard_roster_spells_each_stop_gate_variable_its_reader_holds(self):
+        """``write_guard._HARNESS_ENV_NAMES`` refuses an in-session assignment
+        of the stop gate's two variables, spelled as literals: the mode's
+        constant lives in ``stop_gate.py`` (not importable under the
+        zero-cross-import rule), and reading ``_hook_utils``' test-command
+        constant there would add a name to the guard's start floor. So each
+        literal is pinned to the constant of the hook that reads the variable.
+        Dies to: either constant renamed while the guard keeps refusing the old
+        name, which leaves the new one unguarded."""
+        names = (
+            _module_assign_str(HOOKS_DIR / "stop_gate.py", "STOP_GATE_MODE_ENV"),
+            _module_assign_str(HOOKS_DIR / "_hook_utils.py", "STOP_GATE_TEST_CMD_ENV"),
+        )
+        held = _string_constants(HOOKS_DIR / "write_guard.py")
+        missing = [name for name in names if name not in held]
+        assert not missing, (
+            f"write_guard.py holds no literal {missing}: its harness-variable roster "
+            f"(_HARNESS_ENV_NAMES) no longer names the variable the stop gate reads"
+        )
+
     def test_core_flow_fallback_matches_sot(self):
         """441-E: the SECOND half of the CORE_FLOW_COMMANDS two-site class.
 

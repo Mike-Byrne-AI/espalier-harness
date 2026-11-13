@@ -3565,8 +3565,13 @@ ESPALIER_STOP_GATE_TEST_CMD="go test -short ./..." \
 **Threat model:** the env var is set in the parent shell BEFORE
 `claude` launches; Claude Code inherits the env at spawn time. Mid-
 session `export` does not reach already-spawned hooks. Same posture
-as `disableAllHooks` / `ESPALIER_MAINTENANCE_MODE` — operator-side,
-not LLM-injectable.
+as `ESPALIER_MAINTENANCE_MODE` — operator-side: the write guard
+refuses an in-session assignment of it as it refuses the mode
+variable's, alone and handed to a nested `claude` (whose test gate
+would run the assigned command under an inherited `full`). Until
+2026-11-13 the guard's roster left this variable out, so the
+sentence here ("not LLM-injectable") held only for the hooks
+already running.
 
 **Where it runs, and what happens when it cannot start.** The command runs
 at the repository root, whatever directory the hook process was started in,
