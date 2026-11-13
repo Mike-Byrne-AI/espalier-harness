@@ -1091,8 +1091,8 @@ text is `git restore [--source=HEAD] [--] <file>`, `git checkout -- <file>` or
   Bash call. Their refusals name the same restore, to run from a terminal: a
   Bash call meets `write_guard`, which judges it as any other.
 
-Pinned by `tests/test_hooks_start_on_a_kept_helper.py`, whose end-to-end class
-runs the named command with real git and starts the guard again.
+An end-to-end test runs the named command with real git and starts the guard
+again.
 
 It blocks three categories of tool calls (kill-switch and protected-zone
 first; the dangerous-command catch is a secondary slip-catcher):
@@ -1816,7 +1816,45 @@ shell's `+` options on either side of the `-c` (`bash +x -c '...'`, `bash -c
 word among them (`bash 2>/dev/null -c '...'`, `bash -lc 2>&1 '...'`,
 `python3 2>&1 -c "..."`) is read on the Bash tool only: the PowerShell
 tool's openers take none, since PowerShell's redirect set is its own
-(declared, pinned). On the Bash tool a POSIX shell's `-c` program the outer scan
+(declared, pinned).
+On the PowerShell tool a string piped into a POSIX shell (`'...' | bash`, `echo
+'...' | sh`, a here-string, `bash -` or `bash -s`, the head bare, behind the
+call operator `| & bash` or given by path as Git's `bash.exe`, a redirect or
+comment after it, `| bash 2>&1`) is that shell's program and meets the Bash
+ones the same way: every literal of the stage before the pipe, joined one
+line each (`'set -e', 'rm -rf out' | bash`) and, where the stage holds
+several, each alone too, each by its own quote kind and by the
+doubled-quote fold; a wall on any reading is the wall. The BOM and the
+carriage returns Windows PowerShell hands a native pipe are taken out; the
+CR that ends each element is what keeps a trailing backslash from joining
+the next element to it in the shell, so the each-alone readings are what
+keep that element's verdict. A program piped to a PowerShell shell
+(`| pwsh -Command -`) is re-read in the same readings by the zone and
+remove readers. The opener's redirect, comment and call operator serve
+every piped head, `| python - 2>&1` and `| & pwsh -Command -` included. A
+head that only begins with a shell's name (`shasum`) and a shell given a
+script operand with no switch before it (`| bash script.sh`) leave the pipe
+as data; a switch before the operand (`| bash -x script.sh`) takes it as
+the switch's value, and the pipe is read: an over-read, the refusing
+direction. Declared limits: only the stage immediately before the pipe,
+outside parentheses, is read, so a literal in `(...)` or `@(...)`, one in a
+variable a tier does not inline, one behind a middle stage
+(`| Out-String | bash`), and a string an operator builds (a `+`, `-f`,
+`-join`, a variable inside a double-quoted string, a `.Replace()` or
+`-replace` on a parenthesised here-string) are not read as the program; a
+launcher before the shell (`| wsl bash`, `| wsl`, `| sudo bash`,
+`| env bash`, `| busybox sh`) and a versioned name (`| bash-5.2`,
+`| ksh93`) open no reading; and a here-string before a quoted string that
+ends the stage is read only as quoted text, which an apostrophe in its
+body can misplace; each is pinned at allow in
+`tests/test_write_guard.py::TestCrossShellRouting::test_powershell_tool_declared_limits_are_pinned`.
+Open gaps, not limits: a backtick escape inside a
+double-quoted program (`` `n ``, `` `t ``) is read as its two characters,
+on that spelling and behind `bash -c` alike; a comment that ends in a
+backslash hides the next line from the wall, on both tools; and a program
+piped to `pwsh -Command -` meets no wall.
+
+On the Bash tool a POSIX shell's `-c` program the outer scan
 does not read as the shell receives it -- behind a switch or cluster
 (`bash -lc '...'`, `sh -e -c '...'`, `bash -c -- '...'`), behind a head the
 command position does not open at (`bash.exe -c`, `BASH -c`), opening on a
@@ -1967,7 +2005,17 @@ the words that put a command behind them -- `then`, `do`, `!`, `{`, a
 leading assignment, a case arm, a leading redirect and a wrapper run with
 its flags (`sudo -u root`, `timeout 5`, `nohup`) -- and an input redirect's
 source is a read (`cat < .env`, `done < .env`), except a copier's, which
-never reads its stdin. Before the verb is read, a command substitution that
+never reads its stdin. On both shells a redirect and its target leave the
+verb's operands wherever they stand, as the shell takes them out before it
+runs the verb: `cat > out.txt .env` and `Get-Content > out.txt .env` are
+refused as `cat .env > out.txt` is, and a target is a write, so
+`cp .env.example .env 2>/dev/null` runs. In a statement holding a command
+or process substitution, a PowerShell `$( )` or `@( )` subexpression, or
+an escape (a backslash on Bash, a backtick on PowerShell), where a target
+can be several words, a redirect spelled from `>` still ends the
+operands, so `cat > $(mktemp) .env` is a declared false allow, pinned by
+`tests/test_write_guard.py::TestSecretPathAccess::test_a_redirect_into_a_substitution_is_a_declared_limit`.
+Before the verb is read, a command substitution that
 prints nothing is taken out, as bash takes it out before it runs the next
 word: an empty body, a backtick comment (`` `# note` cat .env ``) or `:` with
 plain words (`$(: note) cat .env`), outside single quotes. A body that runs

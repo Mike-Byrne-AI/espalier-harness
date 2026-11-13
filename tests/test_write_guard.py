@@ -7,6 +7,7 @@ bypass patterns so a future maintainer doesn't mistakenly "fix" them here.
 """
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import re
@@ -12178,6 +12179,251 @@ class TestAShellStartedByStartProcessMeetsItsDirectFormsTiers:
         assert list(bp.ps_start_process_shell_programs(raw, scan)) == want
 
 
+class TestAStringPipedIntoAPosixShellMeetsItsDirectFormsTiers:
+    """DEF-3075: a string piped from PowerShell into a POSIX shell draws, on
+    every tier of the PowerShell tool, the verdict the same program draws as
+    `bash -c '...'`. Windows PowerShell 5.1 pipes the string into Git's
+    `bash.exe`, which runs it (line 1 behind a BOM that fails it, every line
+    ended in CRLF, so line 2 onward runs: driven with harmless programs),
+    and until this lane no POSIX shell head opened the PowerShell stdin
+    reader, so a delete of the root piped that way was a plain allow. The
+    same DIFFERENTIAL as the Start-Process class above: the direct form is
+    the oracle. Each row is a test fixture for a friction guard, handed to
+    the classifier as text and never run."""
+
+    _PROGRAMS = TestAShellStartedByStartProcessMeetsItsDirectFormsTiers._BASH_PROGRAMS
+    #: The pipe spellings; ``{p}`` is the program.
+    _PIPES = [
+        ("bare", "'{p}' | bash"),
+        ("dash", "'{p}' | bash -"),
+        ("sh", "'{p}' | sh"),
+        ("zsh-after-a-statement", "Get-Date; '{p}' | zsh"),
+        ("exe", "'{p}' | bash.exe"),
+        ("switch", "'{p}' | bash -s"),
+        ("echo", "echo '{p}' | bash"),
+        ("write-output", "Write-Output '{p}' | bash"),
+        ("double-quoted", "\"{p}\" | bash"),
+        ("git-by-path", "'{p}' | & 'C:\\Program Files\\Git\\bin\\bash.exe'"),
+        ("git-short-path", "'{p}' | C:\\PROGRA~1\\Git\\bin\\bash.exe"),
+        ("second-line", "\"echo hi\n{p}\" | bash"),
+        ("here-string", "@'\necho hi\n{p}\n'@ | bash"),
+        ("crlf-here-string", "@'\r\necho hi\r\n{p}\r\n'@ | bash"),
+        ("bom", "'\ufeff{p}' | bash"),
+        # the statement goes on past the head (both reviews, driven ALLOWING
+        # before the opener's tail took a redirect and a comment)
+        ("redirect-merge", "'{p}' | bash 2>&1"),
+        ("redirect-all", "'{p}' | bash *>&1"),
+        ("redirect-null", "'{p}' | bash 2>$null"),
+        ("redirect-file", "'{p}' | bash > out.txt"),
+        ("redirect-glued", "'{p}' | bash>out.txt"),
+        ("comment", "'{p}' | bash # run it"),
+        # the bare call operator after the pipe (both reviews, driven ALLOWING)
+        ("call-operator", "'{p}' | & bash"),
+        ("call-operator-exe", "'{p}' | & bash.exe 2>&1"),
+        ("call-operator-short-path", "'{p}' | & C:\\PROGRA~1\\Git\\bin\\bash.exe"),
+        # every literal of the stage, one line each (both reviews, driven
+        # ALLOWING with the program first)
+        ("array-program-first", "'{p}', 'echo ok' | bash"),
+        ("array-program-last", "'echo ok', '{p}' | bash"),
+        ("write-output-two-args", "Write-Output '{p}' 'echo ok' | bash"),
+        ("two-here-strings", "@'\n{p}\n'@, @'\necho ok\n'@ | bash"),
+        # a double-quoted here-string, read by its own kind (code review)
+        ("dq-here-string", "@\"\necho hi\n{p}\n\"@ | bash"),
+        ("dq-here-string-doubled-quotes", "@\"\necho \"\"\n{p}\necho \"\"\n\"@ | bash"),
+    ]
+    # one iterable, the only one a class-scope comprehension can see by name
+    _CASES = [(f"{sid}-{pid}", pipe, program)
+              for (sid, pipe), (pid, program) in itertools.product(_PIPES, _PROGRAMS)]
+
+    @staticmethod
+    def _project(tmp_path: Path) -> Path:
+        return TestAShellStartedByStartProcessMeetsItsDirectFormsTiers._project(tmp_path)
+
+    def test_the_piped_delete_of_the_root_meets_the_wall(self, tmp_path):
+        """The row's own probe, by tier name: the wall, as `bash -c` meets it."""
+        project = self._project(tmp_path)
+        for pipe in ("'rm -rf /' | bash", "'rm -rf /' | & 'C:\\Program Files\\Git\\bin\\bash.exe'"):
+            assert "wall" in _ps_tier_verdicts(pipe, project), pipe
+
+    @pytest.mark.parametrize("case", _CASES, ids=[c[0] for c in _CASES])
+    def test_the_piped_program_draws_its_direct_forms_verdict(self, case, tmp_path):
+        _id, pipe, program = case
+        project = self._project(tmp_path)
+        assert _ps_tier_verdicts(pipe.format(p=program), project) == _ps_tier_verdicts(
+            f"bash -c '{program}'", project)
+
+    #: Not a POSIX shell, or not its piped program: a program whose name
+    #: begins with a shell's (`shasum`), a script operand (the file is the
+    #: program, the pipe is data), a mention, and a string piped nowhere.
+    _NOT_A_PIPED_PROGRAM = [
+        ("shasum", "'rm -rf .' | shasum"),
+        ("sha256sum", "'rm -rf .' | sha256sum -"),
+        ("bashate", "'rm -rf .' | bashate"),
+        ("script-operand", "'rm -rf .' | bash script.sh"),
+        # a redirect after the operand reads no operand away (the opener's tail)
+        ("script-operand-redirect", "'rm -rf .' | bash script.sh 2>&1"),
+        ("shasum-redirect", "'rm -rf .' | shasum 2>&1"),
+        ("call-operator-shasum", "'rm -rf .' | & shasum"),
+        # a call operator that follows no pipe: no stdin program
+        ("call-operator-no-pipe", "'rm -rf .'; & bash"),
+        ("mention", "Write-Output \"'rm -rf .' | bash\""),
+        ("write-host", "Write-Host 'rm -rf .'"),
+        ("no-literal", "Get-Content notes.txt | bash"),
+    ]
+
+    @pytest.mark.parametrize("row", _NOT_A_PIPED_PROGRAM, ids=[r[0] for r in _NOT_A_PIPED_PROGRAM])
+    def test_what_is_not_a_piped_program_draws_no_tier(self, row, tmp_path):
+        _id, command = row
+        assert _ps_tier_verdicts(command, self._project(tmp_path)) == frozenset()
+
+    #: An element that ends in a backslash or in a comment ending in one,
+    #: before the program: PowerShell ends each element in CRLF, so the next
+    #: element runs, and the joined reading (the CR out) spliced it into the
+    #: first (batch review, driven ALLOWING against a first cut that walled).
+    #: ``{p}`` is the program.
+    _ELEMENT_ENDS = [
+        ("backslash", "'echo \\', '{p} #' | bash"),
+        ("backslash-dq", "\"echo \\\", \"{p} #\" | bash"),
+        ("backslash-write-output", "Write-Output 'echo \\' '{p} #' | bash"),
+        ("backslash-here-strings", "@'\necho \\\n'@, @'\n{p} #\n'@ | bash"),
+        ("comment-backslash", "'echo ok #\\', '{p}' | bash"),
+    ]
+    _ELEMENT_CASES = [(f"{sid}-{pid}", pipe, program)
+                      for (sid, pipe), (pid, program) in itertools.product(_ELEMENT_ENDS, _PROGRAMS)]
+
+    @pytest.mark.parametrize("case", _ELEMENT_CASES, ids=[c[0] for c in _ELEMENT_CASES])
+    def test_an_elements_end_hides_no_next_element(self, case, tmp_path):
+        _id, pipe, program = case
+        project = self._project(tmp_path)
+        assert _ps_tier_verdicts(pipe.format(p=program), project) == _ps_tier_verdicts(
+            f"bash -c '{program}'", project)
+
+    @staticmethod
+    def _literal_source(kind: str, body: str) -> str:
+        if kind[0] == "@":
+            return f"{kind}\n{body}\n{kind[1]}@"
+        quote = "'" if kind == "sq" else '"'
+        return f"{quote}{body}{quote}"
+
+    _MULTI_LITERAL_PIPES = [row for row in _PIPES if row[0] in {
+        "array-program-first", "array-program-last", "write-output-two-args", "two-here-strings",
+    }] + _ELEMENT_ENDS
+    _MULTI_LITERAL = [(f"{sid}-{pid}", pipe, program)
+                      for (sid, pipe), (pid, program) in itertools.product(_MULTI_LITERAL_PIPES, _PROGRAMS)]
+
+    @pytest.mark.parametrize("case", _MULTI_LITERAL, ids=[c[0] for c in _MULTI_LITERAL])
+    def test_the_stage_reads_each_literal_by_itself(self, case, tmp_path):
+        """The property the batch review asked for in place of a row per
+        hole: a stage of several literals draws every tier each of its
+        literals draws piped alone, so the joined reading can never lose a
+        verdict a single literal has."""
+        _id, pipe, program = case
+        bp = _bash_patterns_module()
+        command = pipe.format(p=program)
+        segment = command.rsplit("|", 1)[0]
+        literals = bp._ps_stage_literals(segment)
+        assert len(literals) > 1, command
+        project = self._project(tmp_path)
+        whole = _ps_tier_verdicts(command, project)
+        for kind, body in literals:
+            alone = _ps_tier_verdicts(f"{self._literal_source(kind, body)} | bash", project)
+            assert alone <= whole, (command, kind, body)
+
+    def test_the_producer_hands_each_head_to_its_own_reader(self):
+        """`_ps_stdin_program_bodies` yields the POSIX heads with
+        ``posix=True`` and never without it, so the interpreter dispatch,
+        which keys no POSIX head, is never handed one (batch review)."""
+        bp = _bash_patterns_module()
+        for command, is_posix in (("'rm -rf x' | bash", True), ("'rm -rf x' | & bash 2>&1", True),
+                                  ("'print(1)' | python -", False),
+                                  ("'Get-Date' | pwsh -Command -", False)):
+            raw, scan = bp.powershell_scan_pair(command)
+            default = [head for head, _ in bp._ps_stdin_program_bodies(raw, scan)]
+            posix = [head for head, _ in bp._ps_stdin_program_bodies(raw, scan, posix=True)]
+            assert not set(default) & bp._PS_STDIN_POSIX_HEADS, command
+            assert set(posix) <= bp._PS_STDIN_POSIX_HEADS, command
+            assert bool(posix) is is_posix and bool(default) is not is_posix, command
+
+    def test_the_posix_heads_never_reach_the_interpreter_dispatch(self):
+        """The import-time roster check holds with the POSIX heads in it, and
+        the dispatch keys none of them: a head it keyed would be read as an
+        interpreter's program, and the producer hands the POSIX heads to
+        their own reader alone (`test_the_producer_hands_each_head_to_its_own_reader`)."""
+        bp = _bash_patterns_module()
+        heads = set(bp._PS_STDIN_HEAD_ALTERNATION.split("|"))
+        assert bp._PS_STDIN_POSIX_HEADS <= heads
+        assert heads == set(bp._PS_STDIN_DISPATCH) | bp._PS_STDIN_SHELL_HEADS | bp._PS_STDIN_POSIX_HEADS
+        assert not bp._PS_STDIN_POSIX_HEADS & (set(bp._PS_STDIN_DISPATCH) | bp._PS_STDIN_SHELL_HEADS)
+
+    _READER = [
+        ("bare", "'rm -rf /' | bash", ["rm -rf /"]),
+        ("doubled-quote-kept", "'echo ''x''' | bash", ["echo 'x'"]),
+        ("bom-and-crs-out", "@'\r\n\ufeffrm -rf /\r\n'@ | bash", ["rm -rf /"]),
+        ("not-a-shell", "'rm -rf /' | shasum", []),
+        ("python-stays-its-own", "'print(1)' | python -", []),
+        ("redirect", "'rm -rf x' | bash 2>&1", ["rm -rf x"]),
+        ("call-operator", "'rm -rf x' | & bash", ["rm -rf x"]),
+        # joined one per line, then each literal alone (the batch review: a
+        # backslash or a comment at an element's end carried the next one)
+        ("every-literal-one-per-line", "'rm -rf x', 'echo ok' | bash",
+         ["rm -rf x\necho ok", "rm -rf x", "echo ok"]),
+        # a double-quoted here-string folds no doubled quote (by kind), and the
+        # fold is the second reading (code review, the BLOCK)
+        ("dq-here-string-by-kind",
+         "@\"\necho \"\"; rm -rf x; echo \"\"\n\"@ | bash",
+         ['echo ""; rm -rf x; echo ""', 'echo "; rm -rf x; echo "']),
+        ("dq-here-string-backtick", "@\"\necho `$HOME `\"x`\"\n\"@ | bash", ['echo $HOME "x"']),
+        # a double-quoted string keeps `''`, its fold the second reading, on
+        # the pipe and on the `-c` reader alike (code review)
+        ("dq-doubled-single-quote", "\"echo ''; rm -rf x\" | bash",
+         ["echo ''; rm -rf x", "echo '; rm -rf x"]),
+        ("dash-c-dq-doubled-single-quote", "bash -c \"echo ''; rm -rf x\"",
+         ["echo ''; rm -rf x", "echo '; rm -rf x"]),
+    ]
+
+    @pytest.mark.parametrize("row", _READER, ids=[r[0] for r in _READER])
+    def test_the_reader_yields_the_program_the_shell_runs(self, row):
+        _id, command, want = row
+        bp = _bash_patterns_module()
+        raw, scan = bp.powershell_scan_pair(command)
+        assert list(bp._ps_shell_program_bodies(raw, scan)) == want
+
+    def test_a_delete_between_doubled_quotes_meets_the_wall(self, tmp_path):
+        """The code review's BLOCK and its `-c` twin, by tier name: a delete
+        of the root between two `echo ""` lines of a double-quoted
+        here-string, and between two `echo ''` of a double-quoted `-c`
+        program, each meet the wall the single-quoted spelling meets."""
+        project = self._project(tmp_path)
+        for command in ("@\"\necho \"\"\nrm -rf /\necho \"\"\n\"@ | bash",
+                        "@\"\necho \"\"; rm -rf /; echo \"\"\n\"@ | bash",
+                        "bash -c \"echo ''; rm -rf /; echo ''\"",
+                        "\"echo ''; rm -rf /; echo ''\" | bash"):
+            assert "wall" in _ps_tier_verdicts(command, project), command
+
+    #: The opener's tail and call operator serve every head, not the POSIX
+    #: shells alone: the interpreter and PowerShell-shell twins of the rows
+    #: above, each a protected write the zone tier finds (the failure-mode
+    #: review drove each ALLOWING on the opener's first cut).
+    _OTHER_HEADS = [
+        ("python-redirect", "\"open('tools/cc/hooks/write_guard.py','w')\" | python - 2>&1"),
+        ("python-call-operator", "\"open('tools/cc/hooks/write_guard.py','w')\" | & python -"),
+        ("pwsh-redirect",
+         "'Set-Content tools/cc/hooks/write_guard.py x' | pwsh -NoProfile -Command - *>&1"),
+        ("pwsh-every-literal",
+         "'Set-Content tools/cc/hooks/write_guard.py x', 'Get-Date' | pwsh -Command -"),
+        # a double-quoted literal's `''` is two characters, read by kind beside
+        # the fold (batch review: no tier on main, the first cut and the batch)
+        ("pwsh-dq-doubled-single-quote",
+         "\"Write-Host ''; Set-Content tools/cc/hooks/write_guard.py x; Write-Host ''\""
+         " | pwsh -Command -"),
+    ]
+
+    @pytest.mark.parametrize("row", _OTHER_HEADS, ids=[r[0] for r in _OTHER_HEADS])
+    def test_the_opener_serves_every_head_alike(self, row, tmp_path):
+        _id, command = row
+        assert "zone" in _ps_tier_verdicts(command, self._project(tmp_path)), command
+
+
 class TestTheCmdDeleteReaderReadsEachBranch:
     """The cmd delete reader (`_bash_patterns.iter_cmd_recursive_removes`)
     branch by branch, at the reader: the targets each launch hands the
@@ -13422,6 +13668,222 @@ class TestSecretPathAccess:
                               timeout=scaled(10),
                               env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LC_ALL": "C"})
         assert ("MARKER_DEF_2074" in proc.stdout) is reads
+
+    # DEF-5107: both legs ended a read verb's operands at the first redirect
+    # spelled from `>`, and read one numbered by its stream (`2>`, `*>`) as an
+    # operand, its target too. Bash and PowerShell take each redirect and its
+    # target out wherever they stand and read every operand around them, so a
+    # redirect before the operand hid the read, and a stream's redirect after
+    # a copier's destination read the destination as a source. Three spellings
+    # reached the same through the cut: a `>` glued behind a word was never
+    # cut off, the Bash statement cut read the `|` of `>|` as a pipe, and the
+    # PowerShell cut read the `&` of `2>&1` as its call operator. Every read
+    # row allowed at main 61e0ab4 but the three the failure-mode review found
+    # the lane's first cut allowing (refused at main too), every relief row
+    # was refused there but the labelled controls, and the controls kept
+    # their verdicts. The named users: an operator whose agent
+    # runs the project-setup idiom `cp .env.example .env 2>/dev/null` and is
+    # refused a copy that reads no secret, and one whose agent prints a dotenv
+    # with the redirect first and meets no refusal, where `cat .env > out.txt`
+    # is refused.
+    _REDIRECT_FIRST_BASH_READS = (
+        "cat > out.txt .env",
+        "cat >out.txt .env",
+        "cat >/dev/stderr .env",
+        "cat >> out.txt .env",
+        "cat >| out.txt .env",
+        "cat >&2 .env",
+        "cat &> out.txt .env",
+        "cat >& out.txt .env",
+        "cat 2>/dev/null >out.txt .env",
+        "cat > 'out file.txt' .env",          # a quoted target is one word
+        "head -1 > out.txt .env",
+        "sed -n p > out.txt .env",
+        "cp > out.txt .env copy.txt",         # the copy reads its first operand
+        "if true; then cat > out.txt .env; fi",
+        "cat .env>out.txt",                   # a `>` glued behind the operand
+        "cat>out.txt .env",                   # ... and behind the verb
+        "sudo cat > out.txt .env",            # hook only: the oracle never runs sudo
+        # refused at main too: an input redirect glued behind a stream's target
+        # or a duplication, and an arithmetic comparison, are not a target's end
+        "cat 2>err.txt<.env",
+        "cat >&2<.env",
+        "head -n $((3>1?1:2)) .env",
+    )
+    _REDIRECT_FIRST_BASH_NO_READS = (
+        "cp .env.example .env 2>/dev/null",   # the copy reads the template alone
+        "cp .env.example .env 2>/dev/null || true",
+        "cp -n .env.example .env 2>&1",
+        "cat notes.txt 2> .env.err",          # a stream's target is a write
+        "cat notes.txt 1> .env.out",
+        "cat notes.txt > .env.out",           # a control: allowed at main
+        "cat notes.txt>.env.out",             # a control: allowed at main
+        # what the limit below keeps: a substitution's words, as the target,
+        # are never read (a control: allowed at main)
+        "cat notes.txt > $(echo .env.out)",
+    )
+    # Where the leg keeps main's stop: a statement holding a substitution
+    # (`$(`, a backtick, `>(`), which the word split cuts into several words,
+    # so a redirect's target there may be more than the one word it takes. A
+    # redirect spelled from `>` ends the operands in such a statement, as it
+    # ended every one at main, and bash reads the file under each row: a
+    # declared false allow (docs/HOOKS.md, the secret-read paragraph). The day
+    # a lane reads them, this row reds and the sentence is rewritten.
+    _REDIRECT_FIRST_BASH_LIMITS = (
+        "cat > $(echo out.txt) .env",
+        "cat > `echo out.txt` .env",
+        "cat <(echo x) > out.txt .env",
+        "cat > out\\ file.txt .env",           # a backslash: the quote-blind split
+        "cat > >(cat > out.txt) .env",        # hook only: the inner cat outlives the shell
+    )
+    _REDIRECT_FIRST_PS_READS = (
+        "Get-Content > out.txt .env",
+        "Get-Content >out.txt .env",
+        "Get-Content >> out.txt .env",
+        "Get-Content 2>&1 .env",
+        "Get-Content *>&1 .env",
+        "Get-Content > out.txt -Path .env",
+        "gc > out.txt .env",
+        "Copy-Item > log.txt .env copy.txt",
+    )
+    _REDIRECT_FIRST_PS_NO_READS = (
+        "Copy-Item .env.example .env 2>$null",
+        "Get-Content notes.txt 2> .env.err",
+        "Get-Content notes.txt *> .env.out",
+        "Get-Content notes.txt > .env.out",   # a control: allowed at main
+        # a control: allowed at main. pwsh reads a `>` glued behind a word as
+        # part of the path (driven: "Cannot find path '.env>out.txt'"), so the
+        # leg cuts it on Bash alone
+        "Get-Content .env>out.txt",
+        # a control: allowed at main. `<` is reserved on PowerShell (a parse
+        # error), so the leg drops the source the shared predicate reads
+        "Get-Content < .env",
+        'Get-Content notes.txt > $(".env.out")',   # a control: the limit's other half
+    )
+    # The PowerShell twin of the limit above: a `$(` or `@(` subexpression,
+    # or a backtick escape (the quote-blind split), ends the operands there.
+    _REDIRECT_FIRST_PS_LIMITS = (
+        'Get-Content > $("out.txt") .env',
+        'Get-Content > @("out.txt") .env',
+        "Get-Content > out`.txt .env",
+    )
+
+    @pytest.mark.parametrize("tool, command", [
+        *(("Bash", c) for c in _REDIRECT_FIRST_BASH_READS),
+        *(("PowerShell", c) for c in _REDIRECT_FIRST_PS_READS),
+    ])
+    def test_a_read_around_a_redirect_is_refused(self, tool, command, tmp_path):
+        assert_hook_denied(run_guard_tool(tool, {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("tool, command", [
+        *(("Bash", c) for c in _REDIRECT_FIRST_BASH_NO_READS),
+        *(("PowerShell", c) for c in _REDIRECT_FIRST_PS_NO_READS),
+    ])
+    def test_a_redirect_target_is_never_read(self, tool, command, tmp_path):
+        assert_hook_allowed(run_guard_tool(tool, {"command": command}, tmp_path))
+
+    @pytest.mark.parametrize("tool, command", [
+        ("Bash", "cat .env > out.txt"),
+        ("Bash", "cat 2>&1 .env"),
+        ("Bash", "cat .env 2>/dev/null"),
+        ("Bash", "cat > out.txt < .env"),
+        ("Bash", "cat $(echo notes.txt) .env > out.txt"),
+        # a stream's redirect never ends the operands, a substitution beside it or not
+        ("Bash", "cat 2>/dev/null .env $(echo notes.txt)"),
+        ("PowerShell", "Get-Content .env > out.txt"),
+        ("PowerShell", "Get-Content .env 2>&1"),
+        ("PowerShell", "Get-Content 2> err.txt .env"),
+    ])
+    def test_the_redirect_controls_stay_refused(self, tool, command, tmp_path):
+        assert_hook_denied(run_guard_tool(tool, {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("tool, command", [
+        *(("Bash", c) for c in _REDIRECT_FIRST_BASH_LIMITS),
+        *(("PowerShell", c) for c in _REDIRECT_FIRST_PS_LIMITS),
+    ])
+    def test_a_redirect_into_a_substitution_is_a_declared_limit(self, tool, command, tmp_path):
+        assert_hook_allowed(run_guard_tool(tool, {"command": command}, tmp_path))
+
+    # Each branch of the Bash leg's glued cut keeps a row: a verdict cannot
+    # see the stream-number or the operator-run branch (the piece they keep
+    # whole names no secret either way), so the split is read directly.
+    @pytest.mark.parametrize("raw, pieces", [
+        ("cat<.env", ["cat", "<.env"]),
+        ("done<.env", ["done", "<.env"]),
+        (".env>out", [".env", ">out"]),
+        ("cat>out", ["cat", ">out"]),
+        ("cat<.env>out", ["cat", "<.env", ">out"]),   # each glued redirect its own word
+        ("a>>b", ["a", ">>b"]),                       # an operator run is one cut
+        ("x2>y", ["x2", ">y"]),                       # digits behind a word are the word's
+        ("*>x", ["*", ">x"]),                         # a glob, then the redirect
+        ("2>x", ["2>x"]),                             # a stream number opens the redirect
+        ("0<x", ["0<x"]),
+        ("2>x<.env", ["2>x", "<.env"]),               # ... and the scan goes on past it
+        (">x<.env", [">x", "<.env"]),
+        (">x", [">x"]),                               # a redirect word already
+        ("cat<<EOF", ["cat<<EOF"]),                   # a heredoc, as before `>` joined
+        ("a<>b", ["a<>b"]),                           # a read-write open
+        ("ls", ["ls"]),
+    ])
+    def test_the_glued_cut_takes_each_redirect_off_its_word(self, raw, pieces):
+        got = _load_write_guard()._split_glued_redirects([(raw, raw)])
+        assert [r for r, _ in got] == pieces
+        assert _load_write_guard()._split_glued_redirects([(f"'{raw}'", raw)]) == [(f"'{raw}'", raw)]
+
+    @staticmethod
+    def _plant_the_redirect_folder(folder: Path) -> None:
+        (folder / ".env").write_text("MARKER_DEF_5107=1\n", encoding="utf-8")
+        (folder / ".env.example").write_text("EXAMPLE=1\n", encoding="utf-8")
+        (folder / "notes.txt").write_text("notes\n", encoding="utf-8")
+
+    @staticmethod
+    def _the_marker_left_the_dotenv(folder: Path, proc: "subprocess.CompletedProcess[str]") -> bool:
+        """Whether the dotenv's marker reached stdout, stderr or any other
+        file of the folder: UTF-8, or the UTF-16 Windows PowerShell 5.1
+        writes through a redirect."""
+        marker = "MARKER_DEF_5107"
+        if marker in proc.stdout or marker in proc.stderr:
+            return True
+        return any(marker.encode() in p.read_bytes() or marker.encode("utf-16-le") in p.read_bytes()
+                   for p in folder.iterdir() if p.is_file() and p.name != ".env")
+
+    # The shells are the oracle for every row above that they can run (bash
+    # 3.2.57 on the Air and 5 on the Linux cells; pwsh 7 where one is on PATH,
+    # and Windows PowerShell 5.1 beside it): the dotenv's marker leaves the
+    # dotenv under each read row and each declared limit, and under no relief
+    # row. Each row runs in its own scratch folder, every operand relative to
+    # it; the `sudo` row is the hook's alone.
+    @pytest.mark.skipif(not Path("/bin/bash").exists(), reason="the oracle is a real /bin/bash")
+    @pytest.mark.parametrize("command, reads", [
+        *((c, True) for c in _REDIRECT_FIRST_BASH_READS if not c.startswith("sudo ")),
+        *((c, False) for c in _REDIRECT_FIRST_BASH_NO_READS),
+        *((c, True) for c in _REDIRECT_FIRST_BASH_LIMITS if ">(" not in c),
+    ])
+    def test_bash_reads_the_file_as_each_redirect_row_says(self, command, reads, tmp_path):
+        self._plant_the_redirect_folder(tmp_path)
+        proc = subprocess.run(["/bin/bash", "--noprofile", "--norc", "-c", command], cwd=str(tmp_path),
+                              capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=scaled(10),
+                              env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LC_ALL": "C"})
+        assert self._the_marker_left_the_dotenv(tmp_path, proc) is reads, (proc.stdout, proc.stderr)
+
+    @pytest.mark.parametrize("command, reads", [
+        *((c, True) for c in _REDIRECT_FIRST_PS_READS),
+        *((c, False) for c in _REDIRECT_FIRST_PS_NO_READS),
+        *((c, True) for c in _REDIRECT_FIRST_PS_LIMITS),
+    ])
+    def test_powershell_reads_the_file_as_each_redirect_row_says(self, command, reads, tmp_path):
+        import shutil
+        shell = shutil.which("pwsh") or shutil.which("powershell")
+        if shell is None:
+            pytest.skip("no pwsh or powershell on PATH to run the row")
+        self._plant_the_redirect_folder(tmp_path)
+        proc = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command", command],
+                              cwd=str(tmp_path), capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=scaled(30))
+        assert self._the_marker_left_the_dotenv(tmp_path, proc) is reads, (proc.stdout, proc.stderr)
 
     # DEF-1045: a statement that opens with a quoted string is a mention when
     # nothing in the command can run it. A positive gate with two arms, each
@@ -17551,6 +18013,173 @@ class TestAGapAfterAPipeIsRead:
         assert not reads, reads
 
 
+#: (tool, command, verdict) rows for DEF-2078: a comment that ends in a
+#: backslash, then a delete on the next line. bash ends a comment at its
+#: newline whatever the comment holds, so the delete runs; the splicer joined
+#: the pair anyway and the delete went into the comment.
+_COMMENT_BACKSLASH_ROWS = [
+    ("Bash", "echo ok #\\\nrm -rf /", "wall"),
+    ("Bash", "echo ok # note \\\nrm -rf /", "wall"),
+    ("Bash", "# step one \\\nrm -rf /", "wall"),
+    ("Bash", "echo ok #\\\nrm -rf ~", "wall"),
+    ("Bash", "echo ok # c \\\nrm -r src", "bump"),
+    ("Bash", "echo ok # c \\\r\nrm -rf /", "wall"),
+    # the same comment in a program a shell reads: a substitution, a quoted
+    # program, a heredoc fed to a shell, and a heredoc opener's own line
+    ("Bash", "x=$(echo ok #\\\nrm -rf /)", "wall"),
+    ("Bash", "echo $(echo ok #\\\nrm -rf /)", "wall"),
+    ("Bash", 'echo "$(echo ok #\\\nrm -rf /)"', "wall"),
+    ("Bash", "bash -c 'echo ok #\\\nrm -rf /'", "wall"),
+    ("Bash", "eval 'echo ok #\\\nrm -rf /'", "wall"),
+    ("Bash", "bash <<'E'\necho ok #\\\nrm -rf /\nE", "wall"),
+    ("Bash", "cat <<E # c \\\nbody\nE\nrm -rf /", "wall"),
+    ("PowerShell", "bash -c 'echo ok #\\\nrm -rf /'", "wall"),
+    # a comment glued to a subshell's close paren (the failure-mode review)
+    ("Bash", "(cd src)#c \\\nrm -rf /", "wall"),
+]
+
+#: The other side: a backslash-newline bash does join keeps its join, and a
+#: `#` that opens no comment ends nothing.
+_COMMENT_BACKSLASH_JOINS = [
+    ("Bash", "rm -rf \\\n/", "wall"),
+    ("Bash", "echo ok # c\nrm -rf /", "wall"),
+    ("Bash", "find / -type f | # c \\\nxargs rm -rf", "wall"),
+    ("Bash", "find / -type f |\n# c \\\nxargs rm -rf", "wall"),
+    # double quotes and an unquoted heredoc body join the pair before the
+    # program is read, so the program is one comment
+    ("Bash", 'bash -c "echo ok #\\\nrm -rf /"', "allow"),
+    ("Bash", "bash <<E\necho ok #\\\nrm -rf /\nE", "allow"),
+    # a `#` glued to a continued word is mid-word (bash reads `x#y`)
+    ("Bash", "rm -rf /tmp/x\\\n#y \\\n/", "wall"),
+    # a quote the masker reads across lines holds the `#`, a heredoc body's
+    # apostrophe included
+    ("Bash", "echo 'start\n#' ; rm -rf \\\n/", "wall"),
+    ("Bash", "cat <<EOF\nit's\nEOF\necho 'a\n#' ; rm -rf \\\n/", "wall"),
+    # a mention in a message stays a mention
+    ("Bash", "git commit -m 'one #\\\nrm -rf / is gone'", "allow"),
+    # a backtick body joins the pair before it is read: one comment
+    ("Bash", "x=`echo ok #\\\nrm -rf /`", "allow"),
+    # a regression guard, walled at main as here: the masker still reads a
+    # `#` glued behind a continuation as a comment (its own opener rule),
+    # and another reader of the command walls the delete after the `;`
+    ("Bash", "echo a\\\n#b;rm -rf /", "wall"),
+]
+
+#: (program, stdouts) the real-shell oracle runs: echo alone, every variable
+#: bound in the program itself, each row's stdout one of those it names. A
+#: comment ends at its newline in each place a shell reads one; double
+#: quotes, a backtick body and an unquoted heredoc body join first. Inside a
+#: `$( )`, bash 3.2 joins the pair, the comment swallows the closing paren
+#: and the command is refused unparsed (an empty stdout, nothing run); dash
+#: and zsh run the next line, and no shell drops it while running the rest.
+_COMMENT_BACKSLASH_ORACLE = [
+    ("echo one #\\\necho two", ("one\ntwo\n",)),
+    ("echo one # c \\\necho two", ("one\ntwo\n",)),
+    ('x=$(echo one #\\\necho two); echo "$x"', ("one\ntwo\n", "")),
+    ('echo "$(echo one #\\\necho two)"', ("one\ntwo\n", "")),
+    ("bash -c 'echo one #\\\necho two'", ("one\ntwo\n",)),
+    ("eval 'echo one #\\\necho two'", ("one\ntwo\n",)),
+    ("bash <<'E'\necho one #\\\necho two\nE", ("one\ntwo\n",)),
+    ('bash -c "echo one #\\\necho two"', ("one\n",)),
+    ("bash <<E\necho one #\\\necho two\nE", ("one\n",)),
+    ('x=`echo one #\\\necho two`; echo "$x"', ("one\n",)),
+    ('echo "one #\\\ntwo"', ("one #two\n",)),
+    ("echo one\\\n#two \\\nthree", ("one#two three\n",)),
+    ("echo one \\\n#two \\\necho three", ("one\nthree\n",)),
+    # a subshell's close paren starts a word, a substitution's and an
+    # escaped character do not
+    ("(echo one)#c \\\necho two", ("one\ntwo\n",)),
+    ("echo $(echo one)#two \\\nthree", ("one#two three\n",)),
+    ("echo one\\;#two \\\nthree", ("one;#two three\n",)),
+]
+
+#: The rows whose empty stdout is bash 3.2's parse refusal inside a `$( )`.
+_COMMENT_ORACLE_REFUSALS = {
+    program for program, stdouts in _COMMENT_BACKSLASH_ORACLE if "" in stdouts
+}
+
+#: The shells the oracle asks: bash (3.2 on the Air, 5 on the Linux cells),
+#: dash and zsh, each with no startup files; one the box lacks is skipped.
+_COMMENT_ORACLE_SHELLS = [["/bin/bash", "--noprofile", "--norc"], ["/bin/dash"], ["/bin/zsh", "-f"]]
+
+
+class TestACommentEndsAtItsNewline:
+    """DEF-2078: a comment that ends in a backslash hid the next line from the
+    Bash wall, on the Bash tool and in a `bash -c` program on the PowerShell
+    tool: the splicer (`_splice_line_continuations`) joined a backslash-newline
+    wherever it stood, and bash discards a comment raw to its newline, so the
+    backslash continues nothing. The splicer now reads where a comment ends on
+    its own scan (`_comment_ends` over `_pipe_scan`), at the top level and in
+    a substitution, a quoted program and a quoted substitution, with the
+    heredoc bodies it has met blanked first. The masker's walk keeps its own
+    opener rule (a `#` glued behind a continuation is still a comment there),
+    so the two readers are not one reading."""
+
+    @pytest.mark.parametrize("tool, cmd, expect", _COMMENT_BACKSLASH_ROWS)
+    def test_the_line_after_the_comment_is_read(self, tmp_path, tool, cmd, expect):
+        assert _delete_verdict(run_guard_from(tool, cmd, tmp_path, None)) == expect, cmd
+
+    @pytest.mark.parametrize("tool, cmd, expect", _COMMENT_BACKSLASH_JOINS)
+    def test_a_join_bash_makes_is_kept(self, tmp_path, tool, cmd, expect):
+        assert _delete_verdict(run_guard_from(tool, cmd, tmp_path, None)) == expect, cmd
+
+    @pytest.mark.parametrize("cmd, spliced", [
+        ("echo ok #\\\nrm -rf /", "echo ok #\\\nrm -rf /"),
+        ("echo ok # c \\\r\nb", "echo ok # c \\\r\nb"),
+        ("rm -rf \\\n/", "rm -rf /"),
+        ('echo "a #\\\nb"', 'echo "a #b"'),
+        ("x=$(a #\\\nb)", "x=$(a #\\\nb)"),
+        ("bash -c 'a #\\\nb'", "bash -c 'a #\\\nb'"),
+        ("cat <<E\na #\\\nb\nE", "cat <<E\na #b\nE"),
+        ("cat <<E # c \\\nbody\nE\nb", "cat <<E # c \\\nbody\nE\nb"),
+        ("echo a\\\n#b \\\nc", "echo a#b c"),
+        ("echo a \\\n#b \\\nc", "echo a #b \\\nc"),
+        ("a #\\\\\nb", "a #\\\\\nb"),
+        # a data body's apostrophe opens no quote for the comment reader, so
+        # the quoted `#` after it ends nothing and the continuation joins
+        ("cat <<EOF\nit's\nEOF\necho 'a\n#' ; rm -rf \\\n/",
+         "cat <<EOF\nit's\nEOF\necho 'a\n#' ; rm -rf /"),
+        # a body holding a heredoc is not read for comments: joined as before
+        # (the failure-mode review's two shapes inside a `$( )`)
+        ("x=$(cat <<EOF\nit's\nEOF\necho 'a\n#' ; rm -rf \\\n/)",
+         "x=$(cat <<EOF\nit's\nEOF\necho 'a\n#' ; rm -rf /)"),
+        ("x=$(bash <<E\necho ok #\\\nb\nE\n)", "x=$(bash <<E\necho ok #b\nE\n)"),
+        # a subshell's close paren starts a word, so a comment; behind it a
+        # quoted heredoc's body keeps its line (the review's relocation shape)
+        ("(a)#c \\\nb", "(a)#c \\\nb"),
+        ("(a)\\\n# it's\ncat <<'E'\nx \\\nE\nb", "(a)# it's\ncat <<'E'\nx \\\nE\nb"),
+        # a substitution's close and an escaped character start no word
+        ("echo $(x)#y \\\nz", "echo $(x)#y z"),
+        ("echo a\\;#b \\\nc", "echo a\\;#b c"),
+    ])
+    def test_the_splice(self, cmd, spliced):
+        assert _bash_patterns_module().splice_line_continuations(cmd) == spliced
+
+    @pytest.mark.parametrize("argv", _COMMENT_ORACLE_SHELLS, ids=lambda a: Path(a[0]).name)
+    @pytest.mark.parametrize("program, stdouts", _COMMENT_BACKSLASH_ORACLE)
+    def test_each_shell_reads_the_comment_as_the_row_says(self, argv, program, stdouts, tmp_path):
+        if not Path(argv[0]).exists():
+            pytest.skip(f"the oracle asks {argv[0]}, which this box lacks")
+        env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LC_ALL": "C"}
+
+        def run(text):
+            return subprocess.run([*argv, "-c", text], cwd=str(tmp_path),
+                                  capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=scaled(10), env=env)
+
+        proc = run(program)
+        if proc.stdout == "":
+            # bash before 5.2 read a `$( )` with its matched-pair scan: the
+            # pair is joined, the comment swallows the close paren and the
+            # command is refused unparsed. No other shell may refuse a row.
+            assert program in _COMMENT_ORACLE_REFUSALS, (program, proc.stderr)
+            assert argv[0].endswith("bash") and proc.returncode != 0 and proc.stderr, program
+            version = run('echo "${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"').stdout.split()
+            assert tuple(int(v) for v in version) < (5, 2), (program, version)
+            return
+        assert proc.stdout in stdouts, (program, proc.stdout, proc.stderr)
+
+
 class TestAStatementStartGapIsRead:
     """DEF-2070 (assign ef0470, narrowed by 5565c3): a block comment where a
     statement starts hid the statement from every reader of the scan pair.
@@ -18590,6 +19219,33 @@ class TestCrossShellRouting:
             # a relative write after the program's own `cd` (DEF-818's
             # reading; air 34fc8c: a zone write, the after-check's)
             "bash -c 'cd tools/cc/hooks && echo x > x.py'",
+            # the piped reader's declared limits (DEF-3075, docs/HOOKS.md): a
+            # launcher before the shell, a parenthesised stage, a middle
+            # stage, a versioned name
+            "'echo x > tools/cc/hooks/x.py' | wsl bash",
+            "('echo x > tools/cc/hooks/x.py') | bash",
+            "'echo x > tools/cc/hooks/x.py' | Out-String | bash",
+            "'echo x > tools/cc/hooks/x.py' | bash-5.2",
+            # every other limit docs/HOOKS.md lists, and the stage operators it
+            # names beside them (the batch review drove each to allow)
+            "@('echo x > tools/cc/hooks/x.py') | bash",
+            "$prog | bash",
+            "'echo x > tools/cc/hooks/x.py' | wsl",
+            "'echo x > tools/cc/hooks/x.py' | sudo bash",
+            "'echo x > tools/cc/hooks/x.py' | env bash",
+            "'echo x > tools/cc/hooks/x.py' | busybox sh",
+            "'echo x > tools/cc/hooks/x.py' | ksh93",
+            # the plus is not read as one string (a zone write split across
+            # it is seen by an accident of the join; this spelling is not)
+            "'rm -rf ' + '/' | bash",
+            "'echo x > {0}' -f 'tools/cc/hooks/x.py' | bash",
+            "('echo x', 'tools/cc/hooks/x.py') -join ' > ' | bash",
+            "\"echo x > $dir/x.py\" | bash",
+            "(@'\necho x > tools/cc/hooks/x.py\n'@).Replace(\"`r\", '') | bash",
+            "(@'\necho x > tools/cc/hooks/x.py\n'@) -replace \"`r\", '' | bash",
+            # a here-string before a quoted string that ends the stage, its
+            # body holding an odd count of apostrophes
+            "@'\necho it's\necho x > tools/cc/hooks/x.py\n'@, 'echo ok' | bash",
         ):
             assert_hook_allowed(_run_ps_guard(cmd, tmp_path))
 

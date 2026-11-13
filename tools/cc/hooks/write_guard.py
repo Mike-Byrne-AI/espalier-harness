@@ -1465,13 +1465,13 @@ def _copier_sources(operands: list[str]) -> list[str]:
 
 def _ps_copier_sources(tokens: list[tuple[str, str]]) -> list[str]:
     """The PowerShell twin of `_copier_sources` over the ``(typed, word)``
-    pairs after a copier head: the value of a `-Destination` switch (any
-    unambiguous prefix of three letters or more, blank- or colon-bound) is
-    the destination, else the last positional is; every other operand and
-    every other colon-bound switch value is read as the leg reads it. Syntax
-    is judged on the word as typed, as the leg's own loop judges it: a
-    quoted `"#draft.txt"` is a source, not a comment (§C66, the failure-mode
-    review)."""
+    pairs after a copier head, redirects and a comment already taken out
+    (`_redirect_free_operands`, judged on the word as typed: a quoted
+    `"#draft.txt"` is a source, not a comment; §C66, the failure-mode
+    review): the value of a `-Destination` switch (any unambiguous prefix of
+    three letters or more, blank- or colon-bound) is the destination, else
+    the last positional is; every other operand and every other colon-bound
+    switch value is read as the leg reads it."""
     out: list[str] = []
     positionals: list[str] = []
     dest_named = False
@@ -1480,8 +1480,6 @@ def _ps_copier_sources(tokens: list[tuple[str, str]]) -> list[str]:
         if take_next:
             take_next = False
             continue
-        if typed.startswith(("#", ">")) or typed in ("<", ">"):
-            break
         if typed.startswith("-"):
             name, _, value = token.lower().partition(":")
             if len(name) >= 3 and "-destination".startswith(name):
@@ -1720,8 +1718,11 @@ def _secret_read_targets(command: str, _depth: int = 0) -> list[str]:
 #: here-string (`<<`), a duplication (`<&`), a read-write open (`<>`) or a
 #: process substitution (`<(`). Its source is what the verb reads (DEF-1132).
 _INPUT_REDIRECT_RE = re.compile(r"(?<![0-9])[0-9]*<(?![<>&(])")
-#: An output redirect as typed, fd included: `>`, `>>`, `>|`, `2>`.
-_OUTPUT_REDIRECT_RE = re.compile(r"(?<![0-9])[0-9]*>>?\|?")
+#: An output redirect as typed, its stream included: `>`, `>>`, `>|`, `2>`,
+#: and PowerShell's `*>` (every stream, DEF-5107; on Bash a `*` before `>`
+#: is a glob the glued cut takes off when the word is unquoted, and one that
+#: stays names no secret either way).
+_OUTPUT_REDIRECT_RE = re.compile(r"(?<![0-9*])(?:\*|[0-9]*)>>?\|?")
 #: A shell assignment word (`FOO=1`, `FOO="a b"` read as one word).
 _ASSIGNMENT_WORD_RE = re.compile(r"(?<![A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*=")
 #: The characters that end a case arm's unquoted token. The lookbehind and
@@ -1769,15 +1770,22 @@ def _is_head_wrapper(word: str) -> bool:
 
 def _redirect_at(words: "list[tuple[str, str]]", i: int, sources: list[str]) -> int:
     """Past the redirect at ``words[i]`` (0 when it is none), its target
-    word included; an input redirect's source goes to ``sources``."""
+    word included; an input redirect's source goes to ``sources``. What the
+    head reader skips before the verb and what both legs take out of the
+    operands (`_redirect_free_operands`, DEF-5107); the head's wrapper loop
+    asks the two patterns directly."""
     raw, word = words[i]
+    if "<" not in raw and ">" not in raw:
+        return 0
     for rx, is_input in ((_INPUT_REDIRECT_RE, True), (_OUTPUT_REDIRECT_RE, False)):
         m = rx.match(raw)
         if m is None:
             continue
         tail = word[m.end():]
         # `<file` (or a bare `<` ending the words) is one word; `< file` is two.
-        glued = bool(tail) or i + 1 >= len(words)
+        # A bare operator never takes a redirect as its target: the word split
+        # dropped the `&` of `>&3<.env`, whose `3<.env` is a redirect of its own.
+        glued = bool(tail) or i + 1 >= len(words) or _is_a_redirect_word(words[i + 1][0])
         if is_input and (tail or not glued):
             sources.append(tail if glued else words[i + 1][1])
         # A word count, not an exit code; written as one expression because
@@ -1785,6 +1793,11 @@ def _redirect_at(words: "list[tuple[str, str]]", i: int, sources: list[str]) -> 
         # literal `return 2` in a hook as the channel-XOR breach it guards.
         return 1 if glued else 2
     return 0
+
+
+def _is_a_redirect_word(raw: str) -> bool:
+    return ("<" in raw or ">" in raw) and bool(
+        _INPUT_REDIRECT_RE.match(raw) or _OUTPUT_REDIRECT_RE.match(raw))
 
 
 def _secret_read_head(words: "list[tuple[str, str]]", sources: list[str]) -> int:
@@ -1839,20 +1852,41 @@ def _secret_read_head(words: "list[tuple[str, str]]", sources: list[str]) -> int
     return i
 
 
-def _split_glued_input_redirects(words: "list[tuple[str, str]]") -> "list[tuple[str, str]]":
-    """``words`` with an input redirect glued behind an unquoted word cut
-    off as a word of its own: `cat<.env` is `cat` and `<.env`, `done<.env`
-    is `done` and `<.env` (the code review of 630019's lane). A word with
-    a quote, an fd prefix (`0<`) or a `<<`, `<&`, `<(`, `<>` is kept whole."""
+def _glued_redirect_at(raw: str) -> int:
+    """Where a redirect glued behind ``raw``'s text starts, 0 when none
+    does: the first `<` or `>` past the operator the word opens with, a
+    stream number included (`2>x`, `0<x` are one redirect, and `2>x<.env`
+    is two: the failure-mode review), unless the cut would open a heredoc,
+    a here-string, a duplication, a read-write open or a process
+    substitution (`cat<<EOF` stays one word, as it did before `>` joined)."""
+    k = 1
+    while True:
+        lt, gt = raw.find("<", k), raw.find(">", k)
+        k = gt if lt < 0 else lt if gt < 0 else min(lt, gt)
+        if k < 0:
+            return 0
+        if raw[k - 1] not in "<>" and not raw[:k].isdigit():
+            break
+        k += 1
+    return 0 if raw.startswith(("<<", "<&", "<(", "<>"), k) else k
+
+
+def _split_glued_redirects(words: "list[tuple[str, str]]") -> "list[tuple[str, str]]":
+    """``words`` with each redirect glued behind an unquoted word cut off as
+    a word of its own, as bash ends a word at either: `cat<.env` is `cat`
+    and `<.env`, `done<.env` is `done` and `<.env` (the code review of
+    630019's lane), `cat .env>out` is `.env` and `>out`, `cat>out` is `cat`
+    and `>out`, and `cat<.env>out` is three (DEF-5107). A word with a quote
+    is kept whole. Bash's leg alone: pwsh reads a `>` glued behind a word as
+    part of it (7.6.5, driven: no such file `.env>out.txt`)."""
     out: list[tuple[str, str]] = []
     for raw, word in words:
-        k = raw.find("<")
-        if (k > 0 and raw == word and not raw[:k].isdigit()
-                and not raw.startswith(("<<", "<&", "<(", "<>"), k)):
+        k = _glued_redirect_at(raw) if raw == word and ("<" in raw or ">" in raw) else 0
+        while k:
             out.append((raw[:k], word[:k]))
-            out.append((raw[k:], word[k:]))
-        else:
-            out.append((raw, word))
+            raw, word = raw[k:], word[k:]
+            k = _glued_redirect_at(raw)
+        out.append((raw, word))
     return out
 
 
@@ -1947,29 +1981,38 @@ def _drop_empty_substitutions(text: str) -> str:
     return "".join(out)
 
 
-def _input_redirect_sources(args:"list[tuple[str, str]]", sources: list[str]) -> "list[tuple[str, str]]":
-    """``args`` without their input redirects, each source added to
-    ``sources``: `cat < .env` reads `.env` as `cat .env` does (DEF-1132).
-    The scan stops at a comment; an output redirect's target stays an
-    operand here, for the operand loop's own stop."""
+def _redirect_free_operands(args: "list[tuple[str, str]]", sources: list[str], *,
+                            ends_at_output: bool) -> "list[tuple[str, str]]":
+    """``args`` up to a comment, every redirect and its target taken out, as
+    the shell takes them out of a simple command wherever they stand before
+    it runs the verb on what is left (`_redirect_at`, the one predicate). An
+    input redirect's source goes to ``sources``: `cat < .env` reads `.env`
+    as `cat .env` does (DEF-1132). An output redirect's target is a write,
+    and the operands around it are still read: `cat > out .env` reads
+    `.env`, and in `cp .env.example .env 2>/dev/null` the destination stays
+    the copy's last operand (DEF-5107; until then the leg ended the operands
+    at a `>` and kept a stream's `2>` and its target as operands). A comment
+    (a `#` opening a word as typed) ends the words; a quoted `">"` or `"#"`
+    is an operand. With ``ends_at_output`` -- the statement holds a
+    substitution, or an escape the quote-aware cut cannot pair, so a target
+    there may be more than the one word a redirect takes -- a redirect
+    spelled from `>` ends the operands, as every one did before: the
+    declared limit `cat > $(mktemp) .env`, which reads nothing new. Each
+    caller says which (no default: the failure-mode review)."""
     kept: list[tuple[str, str]] = []
+    ended = False
     i, n = 0, len(args)
     while i < n:
-        raw, word = args[i]
+        raw = args[i][0]
         if raw.startswith("#"):
-            kept.extend(args[i:])
             break
-        m = _INPUT_REDIRECT_RE.match(raw)
-        if m is None:
-            kept.append(args[i])
-            i += 1
+        step = _redirect_at(args, i, sources)
+        if step:
+            ended = ended or ends_at_output and raw.startswith(">")
+            i += step
             continue
-        tail = word[m.end():]
-        if tail:
-            sources.append(tail)
-        elif i + 1 < n:
-            sources.append(args[i + 1][1])
-            i += 1
+        if not ended:
+            kept.append(args[i])
         i += 1
     return kept
 
@@ -2025,6 +2068,10 @@ def _secret_read_targets_one(command: str, _depth: int = 0) -> list[str]:
     # `command` by an offset into `masked`; the program readers take `command`
     # and `scan`, which keep every span.
     masked = _drop_empty_substitutions(masked)
+    # `>|` is one operator, the redirect that overrides noclobber, and its
+    # bar no pipe: the cut below would end the statement there and read the
+    # operands past it as a command of their own (DEF-5107). Same length.
+    masked = masked.replace(">|", "> ")
 
     out: list[str] = []
     aware = not _a_boundary_sits_in_a_quote(masked, _STATEMENT_BOUNDARY_RE)
@@ -2035,7 +2082,7 @@ def _secret_read_targets_one(command: str, _depth: int = 0) -> list[str]:
         arm = _CASE_ARM_RE.match(text)  # `x) cat .env` after `;;` or a newline
         if arm is not None:
             text = text[arm.end():]
-        words = _split_glued_input_redirects(
+        words = _split_glued_redirects(
             _quote_aware_words(text, _TOKEN_SPLIT_RE, _BASH_OPAQUE)
             if aware else _split_words(text, _TOKEN_SPLIT_RE))
         sources: list[str] = []
@@ -2043,34 +2090,33 @@ def _secret_read_targets_one(command: str, _depth: int = 0) -> list[str]:
         if head >= len(words):
             continue
         if words[head][0] in _COMPOUND_CLOSERS:  # `done < .env` feeds the body's reads
-            _input_redirect_sources(words[head + 1:], sources)
+            _redirect_free_operands(words[head + 1:], sources, ends_at_output=False)
             out.extend(sources)
             continue
         verb = words[head][1].rsplit("/", 1)[-1]
         if verb not in _SECRET_READ_VERBS:
             continue
-        args = _input_redirect_sources(words[head + 1:], sources)
+        # The operands as the shell hands them over: each redirect and its
+        # target out, wherever they stand, so `cat > out .env` reads `.env`
+        # and the target, a write, is never read (`cat x > secrets/out` names
+        # no secret). Judged on the word as TYPED: a quoted `">"` or `"#"` is
+        # an operand. A `#` opening a word ends them (the masker keeps the
+        # character and blanks what follows), so `cat README.md # not .env`
+        # names no secret; the PowerShell twin reads them the same way.
+        # A substitution (`$(`, a backtick, `<(`, `>(`; an arithmetic `$((`
+        # is none, and its `>` a comparison the glued cut takes off whole) or
+        # a backslash, which sends the statement to the quote-blind split.
+        args = _redirect_free_operands(
+            words[head + 1:], sources,
+            ends_at_output=("`" in text or ">(" in text or "<(" in text or "\\" in text
+                            or "$(" in text.replace("$((", "")))
         if verb not in _COPIER_VERBS:   # a copier never reads its stdin
             out.extend(sources)
         if verb in _STREAM_EDITORS:
             if _stream_editor_in_place([w for _, w in args]):
                 continue                  # a write: it surfaces nothing
             args = _stream_editor_file_operands(args)
-        # Stop at a redirect: in `cat .env > /tmp/x` the SOURCE is the read and
-        # is still caught, but `/tmp/x` is a write target and must not be
-        # mistaken for one -- otherwise `cat x > secrets/out` would report the
-        # wrong path in the deny reason. Judged on the word as TYPED: a quoted
-        # `">"` or `"#"` is an operand, not syntax.
-        read: list[str] = []
-        for raw, word in args:
-            if raw.startswith(">") or raw in ("<", ">"):
-                break
-            # A `#` that starts a token opens a comment (the masker keeps the
-            # character and blanks what follows), so `cat README.md # not
-            # .env` names no secret; the PowerShell twin stops the same way.
-            if raw.startswith("#"):
-                break
-            read.append(word)
+        read = [word for _, word in args]
         # A copier's destination is a write, not a read (DEF-823).
         out.extend(_copier_sources(read) if verb in _COPIER_VERBS else read)
     # A PowerShell program behind `powershell` / `pwsh` (DEF-637): read with
@@ -2247,15 +2293,21 @@ def _ps_secret_read_targets(command: str, _depth: int = 0) -> list[str]:
     the pre-pass declines, all of which the old split refuses (measured
     2026-10-31). So `$hint = 'gc .env'` alone is a mention, and the same
     assignment with a later `iex $hint` is refused as a read. A
-    switch's colon-bound value (`-Path:.env`) is an operand; a bare `#` or a
-    redirect ends the operands; a `(` glued to the head or to `@`/`$` opens
+    switch's colon-bound value (`-Path:.env`) is an operand; a bare `#` ends
+    the operands, and a redirect and its target leave them wherever they
+    stand (`Get-Content > out.txt .env` reads `.env`, DEF-5107); a `(` glued
+    to the head or to `@`/`$` opens
     an argument (`_PS_GLUED_PAREN_RE`), a free-standing one a statement.
     Declared limit: `foreach ($l in Get-Content .env)` -- `in` is a word,
     not a separator, and a word boundary cannot be masked inside a string,
     so it stays out of the cut set.
     """
     _load_the_pattern_path()
-    scan = _ps_blank_argument_parens(_bash_patterns.powershell_scan_text(command))
+    # The `&` of a stream's merge (`2>&1`, `*>&1`) is the redirect's, not the
+    # call operator the cut ends a statement at: spaced out first, so the
+    # operands after it stay the verb's (DEF-5107). Same length.
+    scan = _ps_blank_argument_parens(_bash_patterns.neutralise_redirect_ampersands(
+        _bash_patterns.powershell_scan_text(command)))
     out: list[str] = []
     aware = not _a_boundary_sits_in_a_quote(scan, _PS_STATEMENT_BOUNDARY_RE)
     # The scan keeps the command's offsets wherever no backtick joined a
@@ -2284,14 +2336,23 @@ def _ps_secret_read_targets(command: str, _depth: int = 0) -> list[str]:
             head = head[:-4]
         if head not in _PS_SECRET_READ_VERBS:
             continue
+        # PowerShell takes each redirect and its target out wherever they
+        # stand, a stream numbered or `*` (DEF-5107), and has no input
+        # redirect (`<` is reserved). A word ending in a `$` or `@` is a
+        # subexpression the blanking above opened, and a backtick or a
+        # here-string opener sends the statement to the quote-blind split:
+        # either can make a target several words, and there a redirect
+        # spelled from `>` ends the operands.
+        args = _redirect_free_operands(
+            words[1:], [],
+            ends_at_output=(any(t.endswith(("$", "@")) for t, _ in words)
+                            or any(o in text for o in _PS_OPAQUE)))
         if head in _PS_COPIER_VERBS:
-            out.extend(_ps_copier_sources(words[1:]))   # the destination is a write (DEF-823)
+            out.extend(_ps_copier_sources(args))   # the destination is a write (DEF-823)
             continue
         # Syntax is judged on the word as TYPED (a quoted `'-Path'` or `">"`
         # is a string); the path is the unquoted word.
-        for typed, word in words[1:]:
-            if typed.startswith(("#", ">")) or typed in ("<", ">"):
-                break
+        for typed, word in args:
             if typed.startswith("-"):
                 if ":" in word:
                     out.append(word.split(":", 1)[1])
