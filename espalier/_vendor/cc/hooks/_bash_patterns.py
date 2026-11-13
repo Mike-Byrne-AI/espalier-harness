@@ -6610,15 +6610,16 @@ class _HeredocBody(NamedTuple):
     expands: bool  # an unquoted delimiter: bash expands the body's `$( )` and backtick spans
 
 
-def _heredoc_body_at(text: str, op: int, start: int, *, exact: bool = False) -> "_HeredocBody | None":
+def _heredoc_body_at(text: str, op: int, start: int, *, exact: bool) -> "_HeredocBody | None":
     """The body of the heredoc whose `<<` sits at ``op``, read from the line
     that starts at ``start`` to its delimiter line, or to the end, as bash
-    runs an unterminated body; None where the operator names no delimiter (a
-    here-string, a bare `<<`) or its quote never closes. ``exact`` ends the
-    body only at bash's own delimiter line -- the delimiter alone, its
-    leading tabs stripped under `<<-` -- where the default keeps the
-    `.strip()` rule the masker's other heredoc readers share, which ends a
-    body early at an indented delimiter. A delimiter word followed by a quote
+    runs an unterminated body; None where the operator names no delimiter
+    the parser can read (a here-string, a bare `<<`, a word it does not
+    take, such as `<<!`) or its quote never closes. ``exact`` (no default:
+    each caller says which) ends the body only at bash's own delimiter line
+    -- the delimiter alone, its leading tabs stripped under `<<-` -- where
+    ``exact=False`` keeps the `.strip()` rule the masker's other heredoc
+    readers share, which ends a body early at an indented delimiter. A delimiter word followed by a quote
     or an escape (`<<E"O"F`) is read as quoted, though the parse stops at the
     quote: its body is data either way. The Bash secret leg's walk reads the
     bodies one operator at a time with ``exact`` (DEF-4109), so it resumes at
@@ -6662,7 +6663,7 @@ def _heredoc_bodies(text: str) -> list[_HeredocBody]:
         nl = text.find("\n", op)
         if nl < 0:
             continue
-        body = _heredoc_body_at(text, op, max(nl + 1, body_from))
+        body = _heredoc_body_at(text, op, max(nl + 1, body_from), exact=False)
         if body is None:
             continue
         body_from = body.after
@@ -16156,7 +16157,8 @@ def _splice_line_continuations(command: str, _depth: int = 0) -> str:
     when a downstream reader slices by offset into the raw string -- the masked
     and raw texts must then derive from one spliced text (``_candidate_paths_
     from_bash``, whose stdin-program arm reads both; ``_secret_read_targets``,
-    whose heredoc cut indexes the raw text by a masked offset). Splice AFTER
+    whose substitution walk reads the masked and raw texts at the same
+    offsets). Splice AFTER
     masking when the reader only searches the result -- splice-first joins a
     heredoc body line ending in ``\`` to its terminator and breaks terminator
     detection, so the mask should see the original lines (``iter_rm_

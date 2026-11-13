@@ -14013,14 +14013,54 @@ class TestSecretPathAccess:
         "cat <<EOF\nit's $(echo hi)\nEOF\necho \"it's\"",
         "echo \"$(cat <<'EOF'\ncat .env and it's\nEOF\n)\"\necho done",
         "echo \"$(cat <<'EOF'\nmsg\nEOF\n)\" && cat \"docs/Notes on .env setup.md\"",
+        # the review batch: the second body starts after the first one's
+        # delimiter, not at the line its own word appears on; a body starts
+        # after the line that closes a quote opened on the operator's line;
+        # a delimiter the parser cannot read runs its body to the end
+        "cat <<A <<B\nB\nA\ncat .env\nB\necho done",
+        "cat <<EOF; echo \"a\nEOF\nb\"\ncat .env\nEOF",
+        "cat <<!\ncat .env\n!\necho done",
     )
+    # A body starts after the line that closes a substitution opened on its
+    # operator's line too, and the walk reads it so
+    # (`test_a_newline_in_a_deeper_span_starts_no_body`), but the masker's
+    # own heredoc reader starts that body at the first newline after the
+    # operator and blanks the `)` it holds, so the walk never sees the span
+    # close and the body's text is read: refused, where bash reads nothing.
+    # The masker's heredoc readers are the masker row's (note 66e884); main
+    # allowed this only through the cut this lane took out.
+    _A_BODY_THE_MASKER_STARTS_EARLY = "cat <<EOF $(echo\nx)\ncat .env\nEOF\necho done"
     # The idiom itself, hook only (no repository or remote here), followed by
-    # the next step on a line or after `&&`: the message is data.
+    # the next step on a line or after `&&`: the message is data, and a
+    # quoted path after it is one word, since the idiom's newline ends no
+    # statement of the outer text.
     _AFTER_A_BODY_HOOK_NO_READS = (
         "git commit -m \"$(cat <<'EOF'\nfix: `cat .env` and it's\nEOF\n)\"\ngit push",
-        "git commit -m \"$(cat <<'EOF'\nfix: the read of .env\nEOF\n)\" && git log -1",
-        "gh pr create --title t --body \"$(cat <<'EOF'\nRun `cat .env` & check\nEOF\n)\" && gh pr view",
+        "git commit -m \"$(cat <<'EOF'\nfix: the read of .env\nEOF\n)\" && cat \"docs/Notes on .env setup.md\"",
+        "gh pr create --title t --body \"$(cat <<'EOF'\nRun `cat .env` & check\nEOF\n)\" && "
+        "cat \"docs/Notes on .env setup.md\"",
     )
+    # Declared limits (docs/HOOKS.md, the statement paragraph): bash reads the
+    # line after each body and the leg does not, as main did not. A delimiter
+    # glued to its substitution's `)` ends the body on bash 3.2 (zsh refuses
+    # the spelling; no bash 5 on the Air, so no oracle cell), and a delimiter
+    # word the operator parser does not take runs the body to the end.
+    _AFTER_A_BODY_LIMITS = (
+        "x=$(cat <<EOF\nhi\nEOF)\ncat .env",
+        "cat <<!\nx\n!\ncat .env",
+    )
+    # A wrapper before a statement of redirects alone reads it too: bash's
+    # `xargs` echoes the file's words, zsh's `time` prints it, and `exec`
+    # opens it for the statements after it. An `exec` that only opens a
+    # descriptor prints nothing on either shell and is refused as the cover
+    # for the read that follows it.
+    _WRAPPED_REDIRECT_READS = (
+        "xargs < .env",
+        "time < .env",
+        "exec < .env; cat",
+        "exec 3< .env; cat <&3",
+    )
+    _A_DESCRIPTOR_OPEN = "exec 3< .env"
     # Refused at main and still: the reads beside a lone `&` that were
     # boundaries already, and a read on the operator's own line.
     _BACKGROUND_STEP_CONTROLS = (
@@ -14061,10 +14101,30 @@ class TestSecretPathAccess:
     _A_QUOTED_LINE_UNDER_A_RAW_HEAD = "make notes MSG='see <<EOF\nthen `cat .env` here'"
 
     @pytest.mark.parametrize("command", _BACKGROUND_STEP_READS + _AFTER_A_BODY_READS
-                             + _ZSH_LONE_REDIRECT_READS + _BACKGROUND_STEP_CONTROLS)
+                             + _ZSH_LONE_REDIRECT_READS + _WRAPPED_REDIRECT_READS
+                             + (_A_DESCRIPTOR_OPEN,) + _BACKGROUND_STEP_CONTROLS)
     def test_a_read_after_a_background_step_or_a_heredoc_body_is_refused(self, command, tmp_path):
         assert_hook_denied(run_guard_tool("Bash", {"command": command}, tmp_path),
                            contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("command", _AFTER_A_BODY_LIMITS)
+    def test_a_line_after_a_body_the_leg_does_not_read_is_a_declared_limit(self, command, tmp_path):
+        assert_hook_allowed(run_guard_tool("Bash", {"command": command}, tmp_path))
+
+    # A newline inside a substitution opened on an operator's line starts no
+    # body, and a delimiter the parser cannot read runs its body to the end
+    # (the review batch).
+    def test_a_newline_in_a_deeper_span_starts_no_body(self):
+        text = "cat <<A $(b\nc)\na\nA\nd"
+        found: list = []
+        _load_write_guard()._substitution_bodies(text, heredocs=found, source=text)
+        assert [(text[b.start:b.end], b.after) for b, _ in found] == [("a", text.index("d"))]
+
+    def test_a_delimiter_the_parser_cannot_read_runs_its_body_to_the_end(self):
+        text = "cat <<!\nx\n!\ncat y"
+        found: list = []
+        _load_write_guard()._substitution_bodies(text, heredocs=found, source=text)
+        assert [(b.start, b.end, b.after, b.expands) for b, _ in found] == [(8, len(text), len(text), False)]
 
     @pytest.mark.parametrize("command", _BACKGROUND_STEP_NO_READS + _AFTER_A_BODY_NO_READS
                              + _AFTER_A_BODY_HOOK_NO_READS + _ZSH_LONE_REDIRECT_NO_READS)
@@ -14072,44 +14132,72 @@ class TestSecretPathAccess:
             self, command, tmp_path):
         assert_hook_allowed(run_guard_tool("Bash", {"command": command}, tmp_path))
 
-    def test_a_quoted_line_under_a_raw_head_is_still_a_statement_of_its_own(self, tmp_path):
-        assert_hook_denied(run_guard_tool("Bash", {"command": self._A_QUOTED_LINE_UNDER_A_RAW_HEAD}, tmp_path),
+    @pytest.mark.parametrize("command", [_A_QUOTED_LINE_UNDER_A_RAW_HEAD, _A_BODY_THE_MASKER_STARTS_EARLY])
+    def test_a_quoted_line_under_a_raw_head_is_still_a_statement_of_its_own(self, command, tmp_path):
+        assert_hook_denied(run_guard_tool("Bash", {"command": command}, tmp_path),
                            contains_reason="Secret-path access blocked")
 
     # bash (3.2.57 on the Air, 5 on the Linux cells) and zsh (5.9 on the Air;
     # the Linux cells have none, and skip) are the oracles: each read row
     # prints the dotenv's marker, no other row does, and a lone input
-    # redirect prints it on zsh alone. The make row runs `cat .env` on its
-    # second line whether or not make finds a rule.
+    # redirect prints it on zsh alone (behind `time` too). The `make x` row
+    # among the reads runs `cat .env` on its second line whether or not make
+    # finds a rule. A row that reads nothing must also parse, or its cell
+    # proves nothing: two are bash 4 syntax that bash 3.2 refuses (`&>>`, and
+    # an apostrophe in a body inside `$( )`), checked on bash 4 and later and
+    # on zsh.
     _BACKGROUND_AND_BODY_ORACLE_ROWS = (
         *((c, True, True) for c in _BACKGROUND_STEP_READS + _AFTER_A_BODY_READS),
         *((c, False, False) for c in _BACKGROUND_STEP_NO_READS + _AFTER_A_BODY_NO_READS),
         *((c, False, True) for c in _ZSH_LONE_REDIRECT_READS),
         *((c, False, False) for c in _ZSH_LONE_REDIRECT_NO_READS),
+        ("xargs < .env", True, True),
+        ("time < .env", False, True),
+        ("exec < .env; cat", True, True),
+        ("exec 3< .env; cat <&3", True, True),
+        (_A_DESCRIPTOR_OPEN, False, False),
+        ("cat <<!\nx\n!\ncat .env", True, True),
         (_A_QUOTED_LINE_UNDER_A_RAW_HEAD, False, False),
+        (_A_BODY_THE_MASKER_STARTS_EARLY, False, False),
     )
+    _BASH_4_SYNTAX = frozenset({
+        "echo x &>> out.txt cat .env",
+        "echo \"$(cat <<'EOF'\ncat .env and it's\nEOF\n)\"\necho done",
+    })
 
     @staticmethod
-    def _shell_reads(argv: list[str], command: str, tmp_path: Path) -> bool:
+    def _shell_reads(argv: list[str], command: str, tmp_path: Path) -> "tuple[bool, bool]":
+        """Whether the shell printed the dotenv's marker, and whether it
+        parsed the row (no syntax or parse error on stderr)."""
         (tmp_path / ".env").write_text("marker-def-4109\n", encoding="utf-8")
         (tmp_path / "notes.txt").write_text("notes\n", encoding="utf-8")
         proc = subprocess.run([*argv, command], cwd=str(tmp_path), stdin=subprocess.DEVNULL,
                               capture_output=True, text=True, encoding="utf-8", errors="replace",
                               timeout=scaled(10),
                               env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LC_ALL": "C"})
-        return "marker-def-4109" in proc.stdout + proc.stderr
+        parsed = "syntax error" not in proc.stderr and "parse error" not in proc.stderr
+        return "marker-def-4109" in proc.stdout + proc.stderr, parsed
 
     @pytest.mark.skipif(not Path("/bin/bash").exists(), reason="the oracle is a real /bin/bash")
     @pytest.mark.parametrize("command, bash_reads, zsh_reads", _BACKGROUND_AND_BODY_ORACLE_ROWS)
     def test_bash_reads_the_file_as_each_background_and_heredoc_row_says(
             self, command, bash_reads, zsh_reads, tmp_path):
-        assert self._shell_reads(["/bin/bash", "--noprofile", "--norc", "-c"], command, tmp_path) is bash_reads
+        bash = ["/bin/bash", "--noprofile", "--norc", "-c"]
+        reads, parsed = self._shell_reads(bash, command, tmp_path)
+        assert reads is bash_reads
+        if not bash_reads and command in self._BASH_4_SYNTAX:
+            major = subprocess.run([*bash, "echo ${BASH_VERSINFO[0]}"], capture_output=True, text=True,
+                                   timeout=scaled(10)).stdout.strip()
+            parsed = parsed or major == "3"
+        assert parsed or bash_reads, "bash refused the row as syntax, so its cell proves nothing"
 
     @pytest.mark.skipif(not Path("/bin/zsh").exists(), reason="the oracle is a real /bin/zsh")
     @pytest.mark.parametrize("command, bash_reads, zsh_reads", _BACKGROUND_AND_BODY_ORACLE_ROWS)
     def test_zsh_reads_the_file_as_each_background_and_heredoc_row_says(
             self, command, bash_reads, zsh_reads, tmp_path):
-        assert self._shell_reads(["/bin/zsh", "-f", "-c"], command, tmp_path) is zsh_reads
+        reads, parsed = self._shell_reads(["/bin/zsh", "-f", "-c"], command, tmp_path)
+        assert reads is zsh_reads
+        assert parsed or zsh_reads, "zsh refused the row as syntax, so its cell proves nothing"
 
     # DEF-5107: both legs ended a read verb's operands at the first redirect
     # spelled from `>`, and read one numbered by its stream (`2>`, `*>`) as an

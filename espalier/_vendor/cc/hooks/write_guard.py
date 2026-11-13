@@ -1693,7 +1693,7 @@ def _quote_aware_words(
     return out
 
 
-def _secret_read_targets(command: str, _depth: int = 0, *, _body: bool = False) -> list[str]:
+def _secret_read_targets(command: str, _depth: int = 0) -> list[str]:
     """`_secret_read_targets_one` over every reading the walls judge
     (`_bash_patterns._wall_readings`): the command as spelled and, when a
     literal binding changes it, with the binding inlined. The union: a
@@ -1702,13 +1702,11 @@ def _secret_read_targets(command: str, _depth: int = 0, *, _body: bool = False) 
     (`eval "$v"`, `bash -c "$v"`) was refused only by accident -- the masker
     failed on the quoted value and the raw text put the read at a command
     position; the lane made the masker read the value, which took the
-    accident away (the failure-mode review, measured). ``_body`` marks a
-    substitution's body (DEF-5106), where a statement of redirects alone
-    reads its input: `$(< .env)` is bash's and zsh's own `cat`."""
+    accident away (the failure-mode review, measured)."""
     _load_the_pattern_path()
     out: list[str] = []
     for text in _bash_patterns._wall_readings(command):
-        for path in _secret_read_targets_one(text, _depth, _body=_body):
+        for path in _secret_read_targets_one(text, _depth):
             if path not in out:
                 out.append(path)
     return out
@@ -2035,13 +2033,18 @@ def _substitution_bodies(
     several operators on one line one after another, and the walk resumes on
     the line after the last delimiter, where the shell reads commands again
     (DEF-4109). A body is never walked as commands: an apostrophe or a
-    backtick in it is the body's text. Each body is appended with whether
-    its operator line ended inside a substitution (the commit idiom's
-    `"$(cat <<'EOF'`), where that newline ends no statement of ``text``.
-    The newline and a comment's end are read on ``source``, since the masker
-    joins a heredoc's lines into its operator's. A body inside a
-    substitution stays in that substitution's body, which the leg reads one
-    level down. ``source``, when given, is the text each body is taken from,
+    backtick in it is the body's text, and a body whose delimiter word the
+    operator parser cannot read runs to the end. Each body is appended with
+    whether its operator line ended inside a substitution (the commit
+    idiom's `"$(cat <<'EOF'`), where that newline ends no statement of
+    ``text``. The newline and a comment's end are read on ``source``, since
+    the masker joins a heredoc's lines into its operator's, and only a
+    newline at the operator's own depth or above starts its body. An
+    expanding body inside a substitution stays in that substitution's body,
+    which the leg reads one level down; a quoted one leaves it, as data.
+    Declared limits: a delimiter glued to the substitution's `)` (`EOF)`,
+    which bash 3.2 reads as the end) and a delimiter word the parser cannot
+    read each run the body to the end. ``source``, when given, is the text each body is taken from,
     at ``text``'s offsets: the walk reads the masked text, where a quoted
     opener is blank, and each body comes from the raw command, which the
     masker can blank inside a live span too (an exec opener in a data head's
@@ -2055,7 +2058,10 @@ def _substitution_bodies(
     # whether it is an arithmetic `$(( ))`.
     spans: list[list] = [["", 0, 0, [], False, 0, False]]
     closed = -1   # just past the last span closed: a `#` there is inside a word
-    pending: list[int] = []   # heredoc operators whose bodies start at the next newline
+    # Heredoc operators whose bodies start at the next newline, each with the
+    # depth of the span it was met in: a newline inside a deeper span (a
+    # `$( )` that runs across the operator's line) starts none of them.
+    pending: list[tuple[int, int]] = []
 
     def close(at: int) -> None:
         nonlocal closed
@@ -2074,16 +2080,31 @@ def _substitution_bodies(
         top = spans[-1]
         literal = top[4] or (heredoc and len(spans) == 1)
         if pending and heredocs is not None and not literal and src[i] == "\n":
-            # The operator line ends: its bodies follow, one after another.
-            start = i + 1
-            for op in pending:
-                found = _bash_patterns._heredoc_body_at(src, op, start, exact=True)
-                if found is not None:
-                    heredocs.append((found, len(spans) > 1))
+            depth = len(spans)
+            ready = [op for op, at in pending if at >= depth]
+            if ready:
+                # The operator line ends: its bodies follow, one after another.
+                start = i + 1
+                for op in ready:
+                    found = _bash_patterns._heredoc_body_at(src, op, start, exact=True)
+                    if found is None:
+                        # A delimiter word the parser cannot read (`<<!`,
+                        # `<<$X`): its body runs to the end, as main read
+                        # every line after the operator's, never as commands.
+                        found = _bash_patterns._HeredocBody(op, start, n, n, False)
+                    heredocs.append((found, depth > 1))
+                    if depth > 1 and not found.expands and found.end > found.start:
+                        # A quoted body is data to every reader of the
+                        # substitution's body, so it leaves that body's text
+                        # (the commit idiom's message is not read twice). A
+                        # reader taught a shell fed a heredoc (`$(bash
+                        # <<'EOF' ...)`, read at no level today) must keep it.
+                        top[3].append(src[top[2]:found.start])
+                        top[2] = found.end + 1
                     start = found.after
-            pending.clear()
-            i = start
-            continue
+                pending[:] = [(op, at) for op, at in pending if at < depth]
+                i = start
+                continue
         if ch == "\\":
             i += 2
             continue
@@ -2125,8 +2146,8 @@ def _substitution_bodies(
             i = n if j < 0 else j
             continue
         elif ch == "<" and text.startswith("<", i + 1):
-            if heredocs is not None and not top[6]:     # a here-string's `<<<` reads no body
-                pending.append(i)
+            if heredocs is not None and not top[6] and not text.startswith("<", i + 2):
+                pending.append((i, len(spans)))     # never a here-string's `<<<`: it has no body
             i += 3 if text.startswith("<", i + 2) else 2
             continue
         elif ch in "<>" and text.startswith("(", i + 1) or (
@@ -2153,20 +2174,21 @@ def _substitution_bodies(
 
 def _without_heredoc_bodies(text: str, heredocs: "list[tuple[Any, bool]]") -> str:
     """``text`` with each heredoc body the walk read (`_substitution_bodies`'s
-    ``heredocs``, in order) and its delimiter line blanked, offsets kept, so
-    the statement read meets the lines after the last delimiter as the
-    commands bash runs (DEF-4109) and never a body's text. The newline that
-    ended an operator's line is a statement boundary, made one again where
-    the masker joined the body into that line; where the line ended inside a
-    substitution it ends no statement of ``text`` and is a blank."""
+    ``heredocs``, in order) and its delimiter line taken out, so the
+    statement read meets the lines after the last delimiter as the commands
+    bash runs (DEF-4109) and never a body's text. The newline that ended an
+    operator's line is a statement boundary, made one again where the masker
+    joined the body into that line; where the line ended inside a
+    substitution it ends no statement of ``text`` and is a blank. Nothing
+    reads the result by an offset (the walk ran on ``text``), so the bodies
+    go rather than blank: a long body costs the statement read nothing."""
     pieces: list[str] = []
     at = 0
     for found, nested in heredocs:
         if found.start > at:                       # the first body after its operator line
             pieces.append(text[at:found.start - 1])
             pieces.append(" " if nested else "\n")
-        pieces.append(" " * (found.after - found.start))
-        at = found.after
+        at = max(at, found.after)
     pieces.append(text[at:])
     return "".join(pieces)
 
@@ -2207,7 +2229,7 @@ def _redirect_free_operands(args: "list[tuple[str, str]]", sources: list[str], *
     return kept
 
 
-def _secret_read_targets_one(command: str, _depth: int = 0, *, _body: bool = False) -> list[str]:
+def _secret_read_targets_one(command: str, _depth: int = 0) -> list[str]:
     """Path tokens read by a recognized read verb, per statement.
 
     Statement-scoped so `ls docs/ && cat .env` is caught while
@@ -2242,7 +2264,7 @@ def _secret_read_targets_one(command: str, _depth: int = 0, *, _body: bool = Fal
     # `command` at the same offsets, so both must be the same text.
     command = _bash_patterns.splice_line_continuations(command)
     masked = _bash_patterns.mask_inert_syntax(command)
-    scan = masked  # the uncut twin: a heredoc body IS the program for the shell arm below
+    scan = masked  # the twin with every body kept: a heredoc body IS the program for the shell arm below
     # THE SHELL READS COMMANDS AGAIN AFTER A BODY'S DELIMITER LINE (DEF-4109).
     # One walk over the masked text finds each substitution's body (DEF-5106,
     # read below) and each heredoc body bash reads, by bash's own delimiter
@@ -2283,7 +2305,7 @@ def _secret_read_targets_one(command: str, _depth: int = 0, *, _body: bool = Fal
     # operands past it as a command of their own (DEF-5107). Same length.
     masked = masked.replace(">|", "> ")
 
-    out = _secret_statement_reads(masked, a_body=_body)
+    out = _secret_statement_reads(masked)
     # A SUBSTITUTION'S BODY IS A PROGRAM BASH RUNS FIRST (DEF-5106). The head
     # read above takes `$(cat .env)` for a `$` statement and `echo "$(cat
     # .env)"` for an echo, and neither is a read verb, so each body is read
@@ -2296,10 +2318,10 @@ def _secret_read_targets_one(command: str, _depth: int = 0, *, _body: bool = Fal
     # an escaped one (each nested span is a hole) and no heredoc body but its
     # own operators' (the walk skips them), so the descent ends there.
     for body in bodies:
-        out.extend(_secret_read_targets(body, _depth + 1, _body=True))
+        out.extend(_secret_read_targets(body, _depth + 1))
     # A PowerShell program behind `powershell` / `pwsh` (DEF-637): read with
-    # the PowerShell roster and statement grammar, one level down. The
-    # heredoc cut above is why `scan` is the uncut twin: for `pwsh -Command -
+    # the PowerShell roster and statement grammar, one level down. The bodies
+    # taken out above are why `scan` keeps them: for `pwsh -Command -
     # <<'EOF'` the body is the program, not data.
     if _depth < _bash_patterns._PS_STDIN_MAX_DEPTH:
         for program in _bash_patterns._shell_program_bodies(command, scan):
@@ -2328,7 +2350,7 @@ def _secret_read_targets_one(command: str, _depth: int = 0, *, _body: bool = Fal
             for found, _nested in heredocs:
                 if found.expands:
                     for body in _substitution_bodies(command[found.start:found.end], heredoc=True):
-                        out.extend(_secret_read_targets(body, _depth + 1, _body=True))
+                        out.extend(_secret_read_targets(body, _depth + 1))
     # The operands a verb relocates, archives, aliases or reads by an
     # interpreter literal (§C52, DEF-796): the same slip as `cp`, spelled
     # differently. Read once at the top level; the reader descends nested
@@ -2340,13 +2362,14 @@ def _secret_read_targets_one(command: str, _depth: int = 0, *, _body: bool = Fal
     return out
 
 
-def _secret_statement_reads(masked: str, *, a_body: bool = False) -> list[str]:
+def _secret_statement_reads(masked: str) -> list[str]:
     """The paths a recognized read verb reads in ``masked``, one statement
     at a time: the masked text of `_secret_read_targets_one`, its heredoc
-    bodies blanked. A statement of redirects alone reads its input sources:
-    in a substitution's body (``a_body``, DEF-5106) `$(< .env)` prints the
-    file, and at a command's top level zsh prints `< .env`, where bash runs
-    nothing (DEF-4109); only in a body does an assignment beside it read."""
+    bodies taken out. A statement of redirects alone reads its input
+    sources at every level, with no assignment beside them: in a
+    substitution's body `$(< .env)` prints the file (DEF-5106), and zsh
+    prints `< .env` at a command's top level, where bash runs nothing
+    (DEF-4109); with an assignment beside the redirect neither shell reads."""
     out: list[str] = []
     aware = not _a_boundary_sits_in_a_quote(masked, _STATEMENT_BOUNDARY_RE)
     for statement in _STATEMENT_BOUNDARY_RE.split(masked):
@@ -2366,8 +2389,13 @@ def _secret_statement_reads(masked: str, *, a_body: bool = False) -> list[str]:
             # in a substitution's body (`$(< .env)`) and, on zsh, at every
             # level, where `$READNULLCMD` prints a lone input and `$NULLCMD`
             # copies one beside an output (`< .env > out`); an assignment
-            # beside the redirect runs nothing there (DEF-4109).
-            if a_body or not any(_ASSIGNMENT_WORD_RE.match(raw) for raw, _ in words):
+            # beside the redirect runs nothing (DEF-4109). The head reader
+            # steps over the wrapper roster, so a wrapper before the redirect
+            # reads it too, on purpose: `xargs < .env` echoes the file's
+            # words and zsh's `time < .env` prints it, and `exec < .env` (or
+            # `exec 3< .env`) opens it for the statements after it, which
+            # read it with no operand naming it (`cat`, `cat <&3`).
+            if not any(_ASSIGNMENT_WORD_RE.match(raw) for raw, _ in words):
                 out.extend(sources)
             continue
         if words[head][0] in _COMPOUND_CLOSERS:  # `done < .env` feeds the body's reads

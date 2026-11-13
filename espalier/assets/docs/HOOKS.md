@@ -2027,15 +2027,21 @@ body there: declared false allows, pinned by
 `tests/test_write_guard.py::TestSecretPathAccess::test_a_substitution_body_the_leg_does_not_read_is_a_declared_limit`.
 A Bash statement ends at `;`, a newline, `&&`, `||`, a pipe and a lone `&`,
 which backgrounds the step before it and runs the next one at once
-(`sleep 1 & cat .env` is refused; a `&` beside `>` or `<` is a redirect, as
-in `2>&1` and `&> out`). A heredoc's body is data to bash's own delimiter
-line (the delimiter alone, its tabs stripped under `<<-`; two operators on
-one line take their bodies one after the other), or to the end when none
-closes it, and the lines after that delimiter are commands again, so a
-`cat .env` there is refused; a here-string (`<<<`) has no body. A statement
-of input redirects alone is read too: zsh, the Bash tool's shell on a macOS
-host, prints `< .env` and copies it in `< .env > out`, where bash runs
-nothing, and an assignment beside the redirect runs nothing on zsh either.
+(`sleep 1 & cat .env` is refused; a `&` after `>` or `<`, or before `>`, is
+a redirect, as in `2>&1` and `&> out`). A heredoc's body is data to bash's
+own delimiter line (the delimiter alone, its tabs stripped under `<<-`; two
+operators on one line take their bodies one after the other), or to the end
+when none closes it, and the lines after that delimiter are commands again,
+so a `cat .env` there is refused; a here-string (`<<<`) has no body. A
+statement of input redirects alone is read too, behind a wrapper as well:
+zsh, the Bash tool's shell on a macOS host, prints `< .env` and copies it in
+`< .env > out`, where bash runs nothing, `xargs < .env` echoes its words,
+and `exec 3< .env` opens it for the commands after it; an assignment beside
+the redirect runs nothing on either shell. A delimiter glued to its
+substitution's `)` (`EOF)`, which bash 3.2 reads as the end) and a delimiter
+word the operator reader does not take (`<<!`) each run the body to the
+end, so the lines after them are not read, as before this leg read past a
+body at all.
 The two rosters are pinned to
 each other class for class, and a program handed to the other shell
 (`powershell -Command "Get-Content .env"` on Bash, `sh -c 'cat .env'` on
