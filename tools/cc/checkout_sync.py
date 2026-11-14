@@ -80,7 +80,7 @@ import tempfile
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import IO, Callable
+from typing import IO, Callable, Iterable
 
 # A kept, older sibling is named with its repair, never a traceback that names
 # an attribute: an uncaught exception loads hooks/_start_refusal.py by path and
@@ -150,8 +150,10 @@ _GIT_ENV_OVERRIDES = (
 # agent-aa54... (pid 8671 start Sat Nov  7 02:17:28 2026)" (read 2026-11-10 on
 # macOS). Either shape anywhere in a reason names a holder; a reason with
 # neither (no pid, or a pid in any other shape) is someone's choice. The start
-# tail stops at either parenthesis, so a search stays linear on any reason.
-_LOCK_PID_RE = re.compile(r"\(pid (\d+)(?: start [^()]*)?\)")
+# tail stops at either parenthesis, so a search stays linear on any reason; it
+# is the holder's start as the registry's ``procStart`` spells it (the same
+# reading on the same process), compared off Windows by ``lock_holder_dead``.
+_LOCK_PID_RE = re.compile(r"\(pid (\d+)(?: start ([^()]*))?\)")
 
 # Ignored content a removal may take with it. Anything ignored and not named
 # here keeps the worktree: a `TP-*.md` draft, an `espalier_*.md` note, a
@@ -258,11 +260,13 @@ def _left(deadline: float | None, cap: float) -> float:
     return cap if deadline is None else min(cap, deadline - time.monotonic())
 
 
-def run(argv: list[str], *, cwd: Path, timeout: float) -> "subprocess.CompletedProcess[str] | None":
+def run(argv: list[str], *, cwd: Path, timeout: float,
+        env: dict[str, str] | None = None) -> "subprocess.CompletedProcess[str] | None":
     """One short read-only subprocess, killed at ``timeout``, or None when it
     could not start or ran out of time. Through :func:`spawn`, so its output
-    goes to files and a kill on Windows never waits on a pipe a helper holds."""
-    done = spawn(argv, cwd=cwd, wait=timeout, kill=True)
+    goes to files and a kill on Windows never waits on a pipe a helper holds.
+    ``env`` replaces :func:`git_env` (a ``ps`` read in a zone of its own)."""
+    done = spawn(argv, cwd=cwd, wait=timeout, kill=True, env=env)
     if done is None or not done.done:
         return None
     return subprocess.CompletedProcess(argv, done.returncode, done.stdout, done.stderr)
@@ -279,7 +283,8 @@ class Spawned:
     pid: int = 0
 
 
-def spawn(argv: list[str], *, cwd: Path, wait: float | None, kill: bool) -> Spawned | None:
+def spawn(argv: list[str], *, cwd: Path, wait: float | None, kill: bool,
+          env: dict[str, str] | None = None) -> Spawned | None:
     """Run ``argv`` with its output in temporary files, not pipes, and wait up
     to ``wait`` seconds (None: until it ends). At the wait, ``kill`` decides:
     a fetch is killed (and, with no pipe to drain, the kill returns at once,
@@ -296,7 +301,8 @@ def spawn(argv: list[str], *, cwd: Path, wait: float | None, kill: bool) -> Spaw
         try:
             # subprocess-contract: ok the argv is the caller's by design (every read-only git question, the fetch, the move, a removal); each is pinned by tests/test_checkout_sync.py's real-git cases, the kill policy through the injectable spawner
             proc = subprocess.Popen(  # spawn: ok output to files; a fetch is killed at its cap, a tree change never is
-                argv, cwd=str(cwd), stdout=out, stderr=err, stdin=subprocess.DEVNULL, env=git_env(),
+                argv, cwd=str(cwd), stdout=out, stderr=err, stdin=subprocess.DEVNULL,
+                env=git_env() if env is None else env,
             )
         except OSError:  # fail-open: ok deliberate -- a git that cannot start comes back as a held outcome
             return None
@@ -772,16 +778,90 @@ def _proc_start_windows(pid: int) -> str | None:
         return None
 
 
-def _pid_reused(pid: int, record: dict) -> bool:
+# -- is a pid still the process a record named ------------------------------------
+#
+# Claude Code records a process's start beside its pid: the registry's
+# ``procStart`` and a worktree lock's ``(pid N start <date>)`` tail. Off Windows
+# both are ``ps -o lstart=`` text, read under LC_ALL=C TZ=UTC with a 1 s bound,
+# and Claude Code compares two of them as text (read from its 2.1.321 binary,
+# 2026-11-14; the registry and a lock on the macOS box agree). A read in the
+# box's own zone would differ from every live record, so the zone is the
+# writer's. Compared on macOS alone, which keeps a process's start as a fact:
+# procps derives it from a boot time that moves when the clock steps, so on
+# Linux a live record could read as another process (unmeasured). A start in
+# any other shape, or one that cannot be read, is never compared: the record
+# keeps its process.
+PROC_START_S = 1.0      # one ps for every pid asked, killed at this (and up to 2 s to reap it)
+_LSTART_RE = re.compile(r"[A-Z][a-z]{2} [A-Z][a-z]{2} \d{1,2} \d{2}:\d{2}:\d{2} \d{4}")
+
+
+def _lstart(text: object) -> str | None:
+    """``text`` as one ``ps -o lstart=`` reading with its padding folded, or
+    None for any other shape (a Windows FILETIME, an empty field, a non-str)."""
+    if not isinstance(text, str):
+        return None
+    folded = " ".join(text.split())
+    return folded if _LSTART_RE.fullmatch(folded) else None
+
+
+def proc_starts(pids: Iterable[int], timeout: float | None = None) -> dict[int, str] | None:
+    """``{pid: start}`` for the pids a process holds now, from ONE ``ps`` read
+    in the form Claude Code writes (``ps -o lstart=`` under LC_ALL=C TZ=UTC,
+    ``/bin/ps`` as Claude Code runs it, never a ``ps`` earlier on PATH).
+    ``ps`` lists only the pids that run, sorted by pid, and exits 1 when it
+    lists none, so its output is read whatever the exit code: a pid missing
+    from the map has no start to compare. None off macOS (the start is not
+    compared there), or when ``ps`` did not start or outran ``timeout``
+    (``PROC_START_S`` when None, read at the call); {} with no spawn when no
+    positive pid is asked. Two ``-o`` flags, the spelling every ``ps`` reads:
+    procps takes everything after a ``=`` as the column's header."""
+    if sys.platform != "darwin":
+        return None
+    wanted = sorted({p for p in pids if isinstance(p, int) and not isinstance(p, bool) and p > 0})
+    if not wanted:
+        return {}
+    env = {**os.environ, "LC_ALL": "C", "TZ": "UTC"}
+    got = run(["/bin/ps", "-o", "pid=", "-o", "lstart=", "-p", ",".join(map(str, wanted))],
+              cwd=Path(os.path.abspath("/")), timeout=PROC_START_S if timeout is None else timeout, env=env)
+    if got is None:
+        return None
+    starts: dict[int, str] = {}
+    for line in (got.stdout or "").splitlines():
+        head, _, rest = line.strip().partition(" ")
+        if head.isascii() and head.isdigit() and rest.strip():
+            starts[int(head)] = rest.strip()
+    return starts
+
+
+def _pid_reused(pid: int, record: dict, starts: dict[int, str] | None = None) -> bool:
     """True when the registry entry's ``procStart`` names a process other than
-    the one now holding ``pid``: a crashed session's entry whose pid Windows
+    the one now holding ``pid``: a crashed session's entry whose pid the host
     handed to an unrelated process, which ``pid_alive`` alone reads as live
-    for good. Windows only (the field is measured there); False wherever it
-    cannot be compared."""
+    for good. Windows compares the creation FILETIME; macOS the ``ps`` start
+    text in ``starts``, the caller's :func:`proc_starts` read (None compares
+    nothing), for an entry of this host's pid space alone (``pidDomain``,
+    ``darwin`` on the Mac: another space's pid, a container sharing the
+    registry, names another process). False wherever it cannot be compared."""
     recorded = record.get("procStart")
-    if os.name != "nt" or not isinstance(recorded, str) or not recorded.isdigit():
+    if os.name == "nt":
+        if not isinstance(recorded, str) or not recorded.isdigit():
+            return False
+        now = _proc_start_windows(pid)
+        return now is not None and now != recorded
+    domain = record.get("pidDomain")
+    if domain is not None and domain != sys.platform:
         return False
-    now = _proc_start_windows(pid)
+    return _start_differs(pid, _lstart(recorded), starts)
+
+
+def _start_differs(pid: int, recorded: str | None, starts: dict[int, str] | None) -> bool:
+    """True when ``recorded`` (a folded ``lstart`` reading, or None) is not the
+    start ``starts`` holds for ``pid``; False when either is unknown. Never
+    reads: a caller that passes nothing compares nothing, so a loop can never
+    spawn a ``ps`` per record."""
+    if recorded is None or not starts:
+        return False
+    now = _lstart(starts.get(pid))
     return now is not None and now != recorded
 
 
@@ -799,10 +879,13 @@ def live_sessions(config_dir: Path | None = None) -> list[dict[str, object]] | N
     its file name is a pid that has exited: a crash's half-written leftover),
     an entry with no ``cwd``, or one whose ``pid`` is not a positive integer --
     because a reader that cannot place every session must not delete
-    anything. Undocumented upstream (observed on 2.1.290 and 2.1.294); see
+    anything. An entry whose ``procStart`` names another process than the one
+    holding its pid now is a crashed session's too (:func:`_pid_reused`), read
+    for every entry in one start read after the whole registry has parsed.
+    Undocumented upstream (observed on 2.1.290 and 2.1.294); see
     ``docs/HOOK_ASSUMPTIONS.md`` Assumption 6."""
     bases = [config_dir] if config_dir is not None else claude_config_dirs()
-    rows: list[dict[str, object]] = []
+    alive: list[tuple[int, str, dict]] = []
     for index, base in enumerate(bases):
         sessions_dir = base / "sessions"
         try:
@@ -828,15 +911,23 @@ def live_sessions(config_dir: Path | None = None) -> list[dict[str, object]] | N
                 return None
             if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
                 return None  # a shape we do not know is "cannot tell", never "gone"
-            if pid_alive(pid) is False or _pid_reused(pid, record):
+            if pid_alive(pid) is False:
                 continue  # a crashed session's leftover entry
-            sid, kind, entry = record.get("sessionId"), record.get("kind"), record.get("entrypoint")
-            row = {"pid": pid, "session_id": sid if isinstance(sid, str) else "", "cwd": cwd,
-                   "kind": kind if isinstance(kind, str) else "",
-                   "entrypoint": entry if isinstance(entry, str) else "",
-                   "started_at": _started_at(record.get("startedAt"))}
-            if row not in rows:
-                rows.append(row)
+            alive.append((pid, cwd, record))
+    # One start read for every entry that carries a start, never a spawn per
+    # entry under SessionStart's wall; a read that cannot answer keeps them all.
+    starts = proc_starts([pid for pid, _cwd, record in alive if _lstart(record.get("procStart"))]) or {}
+    rows: list[dict[str, object]] = []
+    for pid, cwd, record in alive:
+        if _pid_reused(pid, record, starts):
+            continue  # its pid runs another process now: a crashed session's leftover
+        sid, kind, entry = record.get("sessionId"), record.get("kind"), record.get("entrypoint")
+        row = {"pid": pid, "session_id": sid if isinstance(sid, str) else "", "cwd": cwd,
+               "kind": kind if isinstance(kind, str) else "",
+               "entrypoint": entry if isinstance(entry, str) else "",
+               "started_at": _started_at(record.get("startedAt"))}
+        if row not in rows:
+            rows.append(row)
     return rows
 
 
@@ -913,8 +1004,8 @@ def window_pid(table: dict[int, tuple[int, str]] | None = None) -> int | None:
 
     def registered(pid: int) -> bool:
         # The entry must be this process's: a crashed session leaves its file
-        # behind, and Windows hands the pid out again (an interpreter launcher
-        # included). A marker records its window pid as one the registry
+        # behind, and the host hands the pid out again (on Windows an
+        # interpreter launcher included); one start read for this one pid. A marker records its window pid as one the registry
         # named, which the Sessions line then reads by its exit, so a stale
         # file must not count: the pid in it must match and its procStart
         # must name the process holding the pid now (``_pid_reused``). An
@@ -929,7 +1020,8 @@ def window_pid(table: dict[int, tuple[int, str]] | None = None) -> int | None:
                 record = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError):  # fail-open: ok deliberate -- an unreadable entry names no window, so the marker's pid is not judged by its exit
                 continue
-            if isinstance(record, dict) and record.get("pid") == pid and not _pid_reused(pid, record):
+            if isinstance(record, dict) and record.get("pid") == pid and not _pid_reused(pid, record,
+                                                                                            proc_starts([pid])):
                 return True
         return False
 
@@ -1219,13 +1311,38 @@ def describe_session(row: dict[str, object]) -> str:
     return _ascii(head + (f" ({', '.join(bits)})" if bits else ""))
 
 
-def lock_holder_dead(reason: str) -> bool:
+def lock_holder_dead(reason: str, starts: dict[int, str] | None = None) -> bool:
     """True when a worktree lock's reason names its holder the way Claude Code
     writes it (``claude agent <id> (pid N)``, or ``(pid N start <date>)``) and
-    process N has exited. A lock with no pid in either form (one you set
-    yourself) is never dead: it is someone's choice."""
+    process N has exited, or, on macOS, N runs a process that started at
+    another time than the lock says (its holder exited and the pid was handed
+    on), read from ``starts``, :func:`lock_starts` over every lock the caller
+    judges. None compares no start: SessionStart's nested-repo warning reads
+    the pid alone, since its remedy is a forced removal. A lock with no pid in
+    either form (one you set yourself) is never dead: it is someone's choice;
+    a start that cannot be read keeps the lock."""
     held = _LOCK_PID_RE.search(reason or "")
-    return held is not None and pid_alive(int(held.group(1))) is False
+    if held is None:
+        return False
+    pid = int(held.group(1))
+    alive = pid_alive(pid)
+    if alive is False:
+        return True
+    return alive is True and os.name != "nt" and _start_differs(pid, _lstart(held.group(2)), starts)
+
+
+def lock_starts(reasons: Iterable[str], timeout: float | None = None) -> dict[int, str]:
+    """:func:`proc_starts` for the live holders of every lock in ``reasons``
+    that names one with a start in the measured shape, in one read (a dead
+    pid is no start to read, and one over the host's pid range would make
+    ``ps`` refuse the whole call); {} when none does or the read cannot
+    answer, which keeps every such lock."""
+    pids = []
+    for reason in reasons:
+        held = _LOCK_PID_RE.search(reason or "")
+        if held is not None and _lstart(held.group(2)) is not None and pid_alive(int(held.group(1))) is True:
+            pids.append(int(held.group(1)))
+    return proc_starts(pids, timeout) or {}
 
 
 def plan_in_progress(tree: Path, merged_and_clean: bool = False) -> bool:
@@ -1769,6 +1886,11 @@ def _reap(git: _Git, root: Path, *, sessions: list[dict[str, object]] | None, ow
             read.append(process_cwds(None, timeout=max(MIN_SPAWN_S, _left(deadline, CWD_READ_S))))
         return read[0]
 
+    # Every lock holder's start in one read (no spawn when no lock carries
+    # one); none read keeps each such lock while its pid answers.
+    locks = [b.get("locked", "") for b in ours if "locked" in b]
+    left = _left(deadline, PROC_START_S)
+    starts = lock_starts(locks, timeout=left) if left >= MIN_SPAWN_S else {}
     prune_these: list[str] = []
     for block in ours:
         path = Path(block["worktree"])
@@ -1784,7 +1906,8 @@ def _reap(git: _Git, root: Path, *, sessions: list[dict[str, object]] | None, ow
         if _left(deadline, REMOVE_FLOOR_S) < MIN_SPAWN_S * 3:
             report.deferred.append(path.name)
             continue
-        reason = _why_kept(git, block, path, upstream, sessions, own_cwd, marker_live, root, no_base=no_base)
+        reason = _why_kept(git, block, path, upstream, sessions, own_cwd, marker_live, root, no_base=no_base,
+                           starts=starts)
         if reason:
             report.keep(path, reason)
             continue
@@ -1857,9 +1980,12 @@ def _reap(git: _Git, root: Path, *, sessions: list[dict[str, object]] | None, ow
 def _why_kept(git: _Git, block: dict[str, str], path: Path, upstream: str | None,
               sessions: list[dict[str, object]], own_cwd: Path | None,
               marker_live: Callable[[Path], bool] | None, root: Path, *,
-              no_base: str = f"no default branch on {REMOTE} to compare with") -> str:
+              no_base: str = f"no default branch on {REMOTE} to compare with",
+              starts: dict[int, str] | None = None) -> str:
     """'' when the worktree may go; else the reason it stays, in words.
-    ``no_base`` is the reason when ``upstream`` is None."""
+    ``no_base`` is the reason when ``upstream`` is None; ``starts`` is
+    :func:`lock_starts` over every lock the caller judges (None: read this
+    worktree's holder alone)."""
     if own_cwd is not None and within(own_cwd, path):
         return "this session is in it"
     for row in sessions:
@@ -1872,7 +1998,10 @@ def _why_kept(git: _Git, block: dict[str, str], path: Path, upstream: str | None
         held = _LOCK_PID_RE.search(block.get("locked", ""))
         if not held:
             return "locked by hand (git worktree unlock releases it)"
-        if not lock_holder_dead(block.get("locked", "")):
+        # A holder the registry lists live is alive whatever its start reads:
+        # Claude Code writes the lock's start and the entry's from one reading.
+        holder = int(held.group(1))
+        if any(row.get("pid") == holder for row in sessions) or not lock_holder_dead(block.get("locked", ""), starts):
             return f"locked by a running process (pid {held.group(1)})"
     if not path.is_dir():
         # git's prune skips a locked record, so a lock whose holder exited is

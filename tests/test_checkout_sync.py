@@ -29,6 +29,7 @@ import pytest
 from tests._git_oracle import _git_env
 from tests._hook_spawn import not_a_budget_miss
 from tests._interpreter_hosts import HOOK_PYTHON
+from tests._platform_standin import as_os
 from tests._wait_budget import scaled
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -82,8 +83,27 @@ def _dead_pid() -> int:
 # agent worktree's lock on the macOS box, the date padded as git's own is).
 _CLAUDE_LOCK_FORMS = {
     "bare": "claude agent {name} (pid {pid})",
-    "start": "claude agent {name} (pid {pid} start Sat Nov  7 02:17:28 2026)",
+    "start": "claude agent {name} (pid {pid} start {start})",
 }
+_MEASURED_START = "Sat Nov  7 02:17:28 2026"
+
+
+def _utc_start(pid: int) -> str:
+    """``pid``'s start as Claude Code writes it off Windows (``ps -o lstart=``
+    under LC_ALL=C TZ=UTC, trimmed, read from its 2.1.321 binary); '' on
+    Windows or for a pid no process holds."""
+    if os.name == "nt":
+        return ""
+    got = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, encoding="utf-8",
+                         errors="replace", env={**os.environ, "LC_ALL": "C", "TZ": "UTC"}, timeout=scaled(30))
+    return got.stdout.strip()
+
+
+def _lock_reason(form: str, name: str, pid: int) -> str:
+    """A Claude Code lock reason in ``form``: the start form carries the
+    holder's own start, as Claude Code writes it, or the measured date where
+    no process holds ``pid`` (or on Windows, where it is not compared)."""
+    return _CLAUDE_LOCK_FORMS[form].format(name=name, pid=pid, start=_utc_start(pid) or _MEASURED_START)
 
 
 @pytest.fixture
@@ -730,7 +750,7 @@ class TestReapWorktrees:
         work = repos["work"]
         wt = _worktree(repos, "agent-dead")
         gone = _dead_pid()
-        _git(work, "worktree", "lock", "--reason", _CLAUDE_LOCK_FORMS[form].format(name="agent-dead", pid=gone),
+        _git(work, "worktree", "lock", "--reason", _lock_reason(form, "agent-dead", gone),
              str(wt))
         report = cs.reap_worktrees(work, sessions=[])
         assert report.removed == ["agent-dead"], report.kept
@@ -742,7 +762,7 @@ class TestReapWorktrees:
         work = repos["work"]
         wt = _worktree(repos, "agent-live")
         _git(work, "worktree", "lock", "--reason",
-             _CLAUDE_LOCK_FORMS[form].format(name="agent-live", pid=os.getpid()), str(wt))
+             _lock_reason(form, "agent-live", os.getpid()), str(wt))
         report = cs.reap_worktrees(work, sessions=[])
         assert report.kept == [("agent-live", f"locked by a running process (pid {os.getpid()})")]
         assert _registered(work, wt)
@@ -754,7 +774,7 @@ class TestReapWorktrees:
         work = repos["work"]
         wt = _worktree(repos, "agent-gone")
         _git(work, "worktree", "lock", "--reason",
-             _CLAUDE_LOCK_FORMS[form].format(name="agent-gone", pid=_dead_pid()), str(wt))
+             _lock_reason(form, "agent-gone", _dead_pid()), str(wt))
         shutil.rmtree(wt)
         report = cs.reap_worktrees(work, sessions=[])
         assert report.kept == [
@@ -1433,9 +1453,9 @@ class TestPieces:
         """A lock names its holder only in a form Claude Code writes; any other
         reason, a pid in it or not, is someone's choice and is never dead."""
         gone = _dead_pid()
-        for form in _CLAUDE_LOCK_FORMS.values():
-            assert cs.lock_holder_dead(form.format(name="agent-x", pid=gone)) is True, form
-            assert cs.lock_holder_dead(form.format(name="agent-x", pid=os.getpid())) is False, form
+        for form in sorted(_CLAUDE_LOCK_FORMS):
+            assert cs.lock_holder_dead(_lock_reason(form, "agent-x", gone)) is True, form
+            assert cs.lock_holder_dead(_lock_reason(form, "agent-x", os.getpid())) is False, form
         for hand in ("", "mine, do not touch", f"(pid {gone} is mine)", f"pid {gone}",
                      f"(pid {gone} start", f"(pid {gone} start (pid {gone} start", f"(pid {gone} start (x)"):
             assert cs.lock_holder_dead(hand) is False, hand
@@ -2083,6 +2103,211 @@ print("CATCH-UP-CALLED", bool(called))
 print("ADVANCED", advanced)
 print("RETIRED", retired)
 '''
+
+
+_JANUARY = "Thu Jan  1 00:00:00 2026"
+
+
+def _no_ps(argv, *, cwd, timeout, env=None):
+    """A start reader that cannot answer: ps did not start, or outran its bound."""
+    return None
+
+
+def _counting(cs, monkeypatch) -> list:
+    """Every ``proc_starts`` call's pids, the real read still made."""
+    asked: list = []
+    real = cs.proc_starts
+
+    def counted(pids, *args, **kwargs):
+        asked.append(sorted(pids))
+        return real(pids, *args, **kwargs)
+
+    monkeypatch.setattr(cs, "proc_starts", counted)
+    return asked
+
+
+class TestAnUnmeasuredHostComparesNoStart:
+    """Off macOS no start is read or compared: procps derives a process's
+    start from a boot time that moves when the clock steps, so a live record
+    could read as another process, and Windows compares its own FILETIME."""
+
+    def test_no_start_is_read_off_macos(self, cs, monkeypatch):
+        monkeypatch.setattr(cs.sys, "platform", "linux")
+        monkeypatch.setattr(cs, "run", lambda *a, **k: pytest.fail("a start was read on an unmeasured host"))
+        me = os.getpid()
+        assert cs.proc_starts([me]) is None and cs.lock_starts([f"claude agent a (pid {me} start {_JANUARY})"]) == {}
+        if os.name != "nt":
+            assert cs._pid_reused(me, {"procStart": _JANUARY}, cs.proc_starts([me]) or {}) is False
+
+
+class TestTheStartIsReadWhereTheHarnessReadsDarwin:
+    """The one harness read that splits macOS from Linux, and the node that
+    proves the ``target_os/macos`` cell of ``tests/_axis_registry.py``:
+    ``proc_starts`` asks ``ps`` for starts only where the harness reads
+    ``darwin``. The reader is stubbed, so the node runs and passes on every
+    host, and the writer's form is pinned on the Linux and Windows cells too."""
+
+    @pytest.mark.parametrize("target_os", ["linux", "macos", "windows"])
+    def test_the_start_reader_asks_once_in_the_writers_form(self, cs, monkeypatch, target_os):
+        as_os(monkeypatch, target_os, os_name=False)
+        seen = []
+
+        def ps(argv, *, cwd, timeout, env=None):
+            seen.append((argv, cwd, timeout, env))
+            # Sorted by pid whatever the order asked, padded as macOS pads it; a
+            # pid no process holds is left out (measured 2026-11-14).
+            return subprocess.CompletedProcess(
+                argv, 0, " 7103 Sat Nov  7 02:09:01 2026    \n 8671 Sat Nov  7 02:17:28 2026    \nnoise\n", "")
+
+        monkeypatch.setattr(cs, "run", ps)
+        if target_os != "macos":
+            assert cs.proc_starts([8671, 7103]) is None and seen == [], f"a start was read as {target_os}"
+            return
+        assert cs.proc_starts([8671, 7103, 60000, 8671]) == {
+            7103: "Sat Nov  7 02:09:01 2026", 8671: "Sat Nov  7 02:17:28 2026"}
+        [(argv, cwd, timeout, env)] = seen
+        assert argv == ["/bin/ps", "-o", "pid=", "-o", "lstart=", "-p", "7103,8671,60000"]
+        # The writer's zone and words; a compare in the box's own zone would
+        # call every live record another process (CI runners are UTC, so this
+        # is the pin, not the real-ps rows below).
+        assert (env["LC_ALL"], env["TZ"]) == ("C", "UTC")
+        assert cwd == Path(os.path.abspath("/")) and timeout == cs.PROC_START_S
+        seen.clear()
+        assert cs.proc_starts([]) == {} and cs.proc_starts([0, -3]) == {} and seen == [], "no pid: no spawn"
+        monkeypatch.setattr(cs, "run", lambda argv, *, cwd, timeout, env=None: subprocess.CompletedProcess(
+            argv, 1, "", "ps: process id too large: 999999\n"))
+        assert cs.proc_starts([999999]) == {}, "ps listed none: no start to compare"
+        monkeypatch.setattr(cs, "run", _no_ps)
+        assert cs.proc_starts([7103]) is None
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="the start is compared on macOS alone, where it is measured")
+class TestAReusedPidReadsGoneOffWindows:
+    """A record names its process by pid and by start: the registry's
+    ``procStart``, a worktree lock's ``start`` tail. On macOS the start is
+    ``ps -o lstart=`` text, which Claude Code reads under LC_ALL=C TZ=UTC
+    (2.1.321), so a pid another process now holds reads as that process, not
+    as the session that crashed. A start that cannot be read keeps the record."""
+
+    @pytest.fixture(autouse=True)
+    def _a_loaded_runner_still_reads(self, cs, monkeypatch):
+        monkeypatch.setattr(cs, "PROC_START_S", scaled(30), raising=False)  # raising=False: the guards run at the base
+
+    def test_a_record_naming_another_start_is_reused_and_its_own_is_not(self, cs):
+        me = os.getpid()
+        own = _utc_start(me)
+        starts = cs.proc_starts([me])
+        assert own and starts, "ps reads this process's start"
+        assert cs._pid_reused(me, {"procStart": _JANUARY}, starts) is True
+        assert cs._pid_reused(me, {"procStart": own}, starts) is False
+        assert cs._pid_reused(me, {"procStart": f"  {own.replace(' ', '   ')} "}, starts) is False, "padding"
+        assert cs._pid_reused(me, {"procStart": _JANUARY, "pidDomain": "darwin"}, starts) is True
+        assert cs._pid_reused(me, {"procStart": _JANUARY, "pidDomain": "linux"}, starts) is False, "another pid space"
+        assert cs._pid_reused(me, {"procStart": _JANUARY}) is False, "no read: nothing compared"
+        for unmeasured in (None, "", "1", "133500000000000000", "soon", 7, f"{own} UTC"):
+            assert cs._pid_reused(me, {"procStart": unmeasured}, starts) is False, unmeasured
+
+    def test_the_registry_drops_an_entry_whose_pid_runs_another_process(self, cs, tmp_path):
+        """Dies to: reading a pid's liveness alone (red at the base)."""
+        me, parent = os.getpid(), os.getppid()
+        cfg = _registry(tmp_path, [
+            {"pid": me, "sessionId": "real", "cwd": str(tmp_path), "procStart": _utc_start(me)},
+            {"pid": parent, "sessionId": "ghost", "cwd": str(tmp_path), "procStart": _JANUARY},
+            {"pid": 1, "sessionId": "unstamped", "cwd": str(tmp_path)},
+        ])
+        assert sorted(_ids(cs.live_sessions(cfg))) == ["real", "unstamped"]
+
+    def test_the_registry_reads_every_start_in_one_spawn(self, cs, monkeypatch, tmp_path):
+        """Dies to: a ps per entry, a spawn each under SessionStart's wall."""
+        asked = _counting(cs, monkeypatch)
+        me, parent = os.getpid(), os.getppid()
+        cfg = _registry(tmp_path, [
+            {"pid": me, "sessionId": "real", "cwd": str(tmp_path), "procStart": _utc_start(me)},
+            {"pid": parent, "sessionId": "ghost", "cwd": str(tmp_path), "procStart": _JANUARY},
+            {"pid": 1, "sessionId": "unstamped", "cwd": str(tmp_path)},
+        ])
+        cs.live_sessions(cfg)
+        assert asked == [sorted({me, parent})], "one read, of the entries that carry a start"
+
+    def test_a_start_that_cannot_be_read_keeps_the_record(self, cs, monkeypatch, tmp_path):
+        monkeypatch.setattr(cs, "run", _no_ps)
+        asked = _counting(cs, monkeypatch)
+        cfg = _registry(tmp_path, [
+            {"pid": os.getpid(), "sessionId": "ghost", "cwd": str(tmp_path), "procStart": _JANUARY},
+            {"pid": os.getppid(), "sessionId": "ghost-2", "cwd": str(tmp_path), "procStart": _JANUARY}])
+        assert sorted(_ids(cs.live_sessions(cfg))) == ["ghost", "ghost-2"]
+        assert len(asked) == 1, "a read that did not answer is not asked again per entry"
+
+    def test_an_entry_whose_start_is_another_process_names_no_window(self, cs, monkeypatch, tmp_path):
+        directory = tmp_path / "cfg" / "sessions"
+        directory.mkdir(parents=True)
+        monkeypatch.setattr(cs, "claude_config_dirs", lambda: [tmp_path / "cfg"])
+        me = os.getpid()
+        monkeypatch.setattr(cs.os, "getppid", lambda: me)
+        record = {"pid": me, "cwd": "x", "procStart": _JANUARY}
+        (directory / f"{me}.json").write_text(json.dumps(record), encoding="utf-8")
+        assert cs.window_pid() is None
+        record["procStart"] = _utc_start(me)
+        (directory / f"{me}.json").write_text(json.dumps(record), encoding="utf-8")
+        assert cs.window_pid() == me
+
+    def test_a_lock_reads_its_start_only_when_the_caller_read_them(self, cs, monkeypatch):
+        me = os.getpid()
+        jan = f"claude agent agent-x (pid {me} start {_JANUARY})"
+        own = _lock_reason("start", "agent-x", me)
+        assert cs.lock_holder_dead(jan, cs.lock_starts([jan])) is True
+        assert cs.lock_holder_dead(own, cs.lock_starts([own])) is False
+        assert cs.lock_holder_dead(jan) is False, "no read: the pid alone answers (the nested-repo warning)"
+        soon = f"claude agent agent-x (pid {me} start soon)"
+        assert cs.lock_holder_dead(soon, cs.lock_starts([soon])) is False, "an unmeasured start"
+        monkeypatch.setattr(cs, "run", _no_ps)
+        assert cs.lock_holder_dead(jan, cs.lock_starts([jan])) is False, "cannot tell"
+
+    def test_every_live_lock_start_is_read_in_one_spawn(self, cs, monkeypatch):
+        me, parent, gone = os.getpid(), os.getppid(), _dead_pid()
+        reasons = [f"claude agent a (pid {me} start {_JANUARY})", _lock_reason("start", "b", parent),
+                   "mine, do not touch", f"claude agent c (pid {me})", "claude agent d (pid 1 start soon)",
+                   f"claude agent e (pid {gone} start {_JANUARY})"]
+        asked = _counting(cs, monkeypatch)
+        starts = cs.lock_starts(reasons)
+        assert asked == [sorted({me, parent})], "one read, of the live holders with a measured start"
+        monkeypatch.setattr(cs, "run", lambda *a, **k: pytest.fail("a lock read its start again"))
+        assert [cs.lock_holder_dead(r, starts) for r in reasons] == [True, False, False, False, False, True]
+        assert cs.lock_holder_dead(reasons[0], {}) is False, "a read that listed nothing keeps the lock"
+
+    def test_the_reaper_releases_a_lock_whose_pid_runs_another_process(self, cs, repos):
+        """Dies to: the pid alone (red at the base)."""
+        work = repos["work"]
+        wt = _worktree(repos, "agent-reused")
+        _git(work, "worktree", "lock", "--reason", f"claude agent agent-reused (pid {os.getpid()} start {_JANUARY})",
+             str(wt))
+        kept = _worktree(repos, "agent-live")
+        _git(work, "worktree", "lock", "--reason", _lock_reason("start", "agent-live", os.getpid()), str(kept))
+        report = cs.reap_worktrees(work, sessions=[])
+        assert report.removed == ["agent-reused"], report.kept
+        assert report.unlocked == [f"agent-reused (pid {os.getpid()})"]
+        assert report.kept == [("agent-live", f"locked by a running process (pid {os.getpid()})")]
+
+    def test_the_reaper_reads_every_lock_start_once(self, cs, repos, monkeypatch):
+        work = repos["work"]
+        for name in ("agent-a", "agent-b"):
+            _git(work, "worktree", "lock", "--reason", f"claude agent {name} (pid {os.getpid()} start {_JANUARY})",
+                 str(_worktree(repos, name)))
+        asked = _counting(cs, monkeypatch)
+        cs.reap_worktrees(work, sessions=[])
+        assert [set(pids) for pids in asked] == [{os.getpid()}], "one start read for every lock"
+
+    def test_a_lock_whose_holder_the_registry_lists_live_stays(self, cs, repos):
+        """Claude Code writes a lock's start and its registry entry's from one
+        reading: a holder the registry keeps is alive whatever its start reads."""
+        work = repos["work"]
+        wt = _worktree(repos, "agent-listed")
+        _git(work, "worktree", "lock", "--reason", f"claude agent agent-listed (pid {os.getpid()} start {_JANUARY})",
+             str(wt))
+        listed = {"pid": os.getpid(), "session_id": "s", "cwd": str(repos["origin"])}
+        report = cs.reap_worktrees(work, sessions=[listed])
+        assert report.kept == [("agent-listed", f"locked by a running process (pid {os.getpid()})")]
+
 
 # Each module the hook first loads after the catch-up, and how it loads it:
 # the six sites the 2026-10-17 measurement found importing a helper the hook

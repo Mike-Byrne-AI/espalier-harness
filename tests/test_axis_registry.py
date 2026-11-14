@@ -429,9 +429,9 @@ class TestTheTargetOsCellsHoldOnEveryHost:
     and two things besides a ``skipif`` can take a host away: the platform roster
     in ``tests/conftest.py``, whose marks are added only on the matching host, so
     a Linux collection never sees them; and the harness growing a read that
-    splits macOS from Linux, which would make the ``macos`` gap text false
-    without a word. Both are pinned here, because the registry's own rules read
-    the collected items and the cell text, never the roster or the source."""
+    splits macOS from Linux that the ``macos`` cell's proof does not drive. Both
+    are pinned here, because the registry's own rules read the collected items
+    and the cell text, never the roster or the source."""
 
     _HOSTS = (("linux", {"GITHUB_ACTIONS": "true"}), ("win32", {"GITHUB_ACTIONS": "true"}),
               ("darwin", {"GITHUB_ACTIONS": "true"}), ("darwin", {}))
@@ -446,15 +446,19 @@ class TestTheTargetOsCellsHoldOnEveryHost:
         ]
         assert not marked, "target_os proving nodes the platform roster marks on a host:\n" + "\n".join(marked)
 
-    # The harness tells the platforms apart by these comparisons alone; the one
-    # Mac-differing read is the SubagentStart host line's platform.system(),
-    # which prints and never branches. A new read that splits darwin from linux
-    # (a comparison to another string, a startswith, a platform.system() branch)
-    # reds here and names its site: re-read the target_os/macos gap text with it.
-    # The allowed site is cited path::symbol, never by line.
+    # The harness tells the platforms apart by these comparisons, and by a
+    # darwin comparison at a _DARWIN_SITES site alone, which the node proving
+    # the target_os/macos cell drives at every value; the one other Mac-differing
+    # read is the SubagentStart host line's platform.system(), which prints and
+    # never branches. A new read that splits darwin from linux (a comparison to
+    # another string or at another site, a startswith, a platform.system()
+    # branch) reds here and names its site: re-read the target_os/macos cell
+    # with it, and give the cell's node the new read. The allowed sites are
+    # cited path::symbol, never by line.
     _PLATFORM_VALUES = {"win32"}
     _OS_NAME_VALUES = {"nt", "posix"}
     _ALLOWED_MAC_READS = {"tools/cc/hooks/_hook_utils.py::host_orientation_line"}
+    _DARWIN_SITES = {"tools/cc/checkout_sync.py::proc_starts"}
 
     @staticmethod
     def _harness_sources():
@@ -463,11 +467,12 @@ class TestTheTargetOsCellsHoldOnEveryHost:
                 if "_vendor" not in path.parts:
                     yield path
 
-    def test_the_harness_reads_the_platform_as_win32_or_not_and_the_macos_gap_holds(self):
+    def test_the_harness_reads_darwin_only_where_the_macos_cell_proves_it(self):
         import ast
         compared: list[str] = []
         other_reads: list[str] = []
         mac_reads: list[str] = []
+        darwin_sites: set[str] = set()
         for path in self._harness_sources():
             rel = path.relative_to(REPO_ROOT).as_posix()
             tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -484,6 +489,11 @@ class TestTheTargetOsCellsHoldOnEveryHost:
                         for other in sides:
                             for value in _constants(other):
                                 compared.append(f"{rel}:{node.lineno} {read} vs {value!r}")
+                                if read == "sys.platform" and value == "darwin":
+                                    site = _site(rel, spans, node.lineno)
+                                    darwin_sites.add(site)
+                                    if site in self._DARWIN_SITES:
+                                        continue
                                 if value not in allowed:
                                     other_reads.append(f"{rel}:{node.lineno} compares {read} with {value!r}")
                 elif isinstance(node, ast.Call):
@@ -496,13 +506,24 @@ class TestTheTargetOsCellsHoldOnEveryHost:
                         mac_reads.append(f"{_site(rel, spans, node.lineno)} platform.{node.func.attr}()")
         assert len(compared) >= 40, f"only {len(compared)} platform comparisons read -- the walk regressed"
         assert not other_reads, (
-            "a harness read that could split macOS from Linux; re-read the target_os/macos gap text in "
+            "a harness read that could split macOS from Linux; re-read the target_os/macos cell in "
             "tests/_axis_registry.py with it:\n" + "\n".join(other_reads)
+        )
+        assert darwin_sites == self._DARWIN_SITES, (
+            f"darwin comparisons read at {sorted(darwin_sites)}, against _DARWIN_SITES "
+            f"{sorted(self._DARWIN_SITES)}: a site gone takes its allowance with it, and the "
+            "target_os/macos cell's proof may go too -- re-read the cell"
+        )
+        macos = next(c for c in reg.AXIS_REGISTRY if c.axis == "target_os" and c.value == "macos")
+        assert not darwin_sites or macos.proven_by, (
+            "the harness compares darwin, so a node can assert what it does as macOS: the "
+            "target_os/macos cell is owed a proof, not a gap"
         )
         unexpected = [r for r in mac_reads if r.split(" ", 1)[0] not in self._ALLOWED_MAC_READS]
         assert mac_reads and not unexpected, (
-            f"platform.* reads under the harness roots: {mac_reads}; the target_os/macos gap text in "
-            f"tests/_axis_registry.py names only {sorted(self._ALLOWED_MAC_READS)} -- re-read it"
+            f"platform.* reads under the harness roots: {mac_reads}; _ALLOWED_MAC_READS names "
+            f"only {sorted(self._ALLOWED_MAC_READS)} -- re-read the target_os/macos cell in "
+            "tests/_axis_registry.py with it"
         )
 
 
