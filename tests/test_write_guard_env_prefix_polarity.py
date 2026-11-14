@@ -311,6 +311,24 @@ _CMD_SET_REACH = [
     # DEF-1071 (e): behind the stop-parsing token, and as a Start-Process
     # argument list (one string, and the array cmd's command line joins)
     ("ps", f"cmd --% /c set {ENV_VAR}=1 && claude -p x"),
+    # DEF-2080's sibling: the token after the switch hands cmd the rest alike
+    # (driven echo only on Windows PowerShell 5.1: `cmd /c --% echo a & echo
+    # RAN` prints RAN)
+    ("ps", f"cmd /c --% set {ENV_VAR}=1 & claude -p x"),
+    # and between two switches (`cmd /d --% /c echo a & echo RAN` prints RAN)
+    ("ps", f"cmd /d --% /c set {ENV_VAR}=1 & claude -p x"),
+    # the token glued to `,` or `&` is still the token, and a line break in
+    # an open quote ends the as-typed text (the failure-mode re-review)
+    ("ps", f"cmd /c --%, set {ENV_VAR}=1 & claude -p x"),
+    ("ps", f"cmd /c echo a --%& set {ENV_VAR}=1 & claude -p x"),
+    ("ps", f'cmd /c --% echo "x\ncmd /c --% set {ENV_VAR}=1 & claude -p x'),
+    # a switch's word ends at an unescaped separator only, a Start-Process
+    # argument list has none, and `^` glued to the token makes a plain word
+    # (the failure-mode review, driven echo only)
+    ("bash", f"cmd //d{{x}} //c 'set {ENV_VAR}=1 && claude -p x'"),
+    ("ps", f"Start-Process cmd -ArgumentList '/d;x /c set {ENV_VAR}=1 && claude -p x'"),
+    ("ps", f"cmd /c echo x --%^ ; cmd /c set {ENV_VAR}=1 '&' claude -p x"),
+    ("ps", f"cmd /c echo x --%^ ; cmd /c --% set {ENV_VAR}=1 & claude -p x"),
     ("ps", f"Start-Process cmd -ArgumentList '/c set {ENV_VAR}=1 && claude -p x'"),
     ("ps", f"Start-Process -FilePath cmd.exe -Wait -ArgumentList '/c','set {ENV_VAR}=1 && claude -p x'"),
     # a common parameter's value and a colon-bound list (PowerShell binds both)
@@ -422,6 +440,9 @@ def test_cmd_exe_set_then_claude_denies(name, shell, command):
     # DEF-1071 (e)'s twins: the two new shapes before a real invocation, and
     # the cmdlet mentioned in a double-quoted string, which the masker keeps
     ("ps", f"cmd --% /c set {ENV_VAR}=1 && pytest -q"),
+    # behind the token the as-typed text ends at a pipe: `claude` after it is
+    # PowerShell's, which never saw cmd's `set` (DEF-2080)
+    ("ps", f"cmd /c --% set {ENV_VAR}=1 | claude -p x"),
     ("ps", f"Start-Process cmd -ArgumentList '/c set {ENV_VAR}=1 && pytest -q'"),
     ("ps", f"Start-Process cmd -ErrorAction Stop -ArgumentList:'/c set {ENV_VAR}=1 && pytest -q'"),
     ("ps", f"Start-Process cmd -Verb RunAs -ArgumentList '/c','set {ENV_VAR}=1','&&','pytest'"),
