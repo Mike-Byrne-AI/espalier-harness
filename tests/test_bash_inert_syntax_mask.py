@@ -46,14 +46,17 @@ records under test only fire through the dispatch.
 
 from __future__ import annotations
 
+# slow-exempt: the one direct spawn is the masker row's echo-only shell oracle, 25 rows on bash, dash and zsh, about 10 ms a call and 1.3 s for all 75, measured 2026-11-13 on the Air
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
 from tests._hook_assertions import assert_hook_allowed, assert_hook_denied
-from tests.test_write_guard import run_bash_guard
+from tests._wait_budget import scaled
+from tests.test_write_guard import _delete_verdict, run_bash_guard, run_guard_from
 
 HOOKS_DIR = Path(__file__).resolve().parents[1] / "tools" / "cc" / "hooks"
 PROTECTED_FILE = "tools/cc/hooks/write_guard.py"
@@ -1147,3 +1150,377 @@ class TestInlineInterpreterOpenersAreAnchored:
                                (_bash_patterns._PERL_DASH_E_RE, "perl", "-e")):
             assert rx.search(f"{name}\n{flag} \"open('x','w')\"") is None, name
             assert rx.search(f"{name} {flag} \"a=1\nopen('x','w')\"") is not None, name
+
+
+# ─────────────── the masker row: where a comment starts and ends ───────────────
+
+_DELETE = f"{RM_RF} {ROOT_TARGET}"
+
+#: (program, stdout) the real-shell oracle runs, echo and cat alone, every
+#: variable bound in the program: each row is a fact the rows below rest
+#: on, and bash 3.2, dash and zsh agree on every one (driven on the Air,
+#: 2026-11-13) but where `_ORACLE_REFUSES` names a spelling a shell does
+#: not parse, or `_ORACLE_BASH_BY_VERSION` one bash reads by its version.
+_MASKER_ROW_ORACLE = [
+    # a `#` glued after a closer, or after an escaped character, is word text
+    ("echo $(echo a)#; echo b", b"a#\nb\n"),
+    ("echo `echo a`#; echo b", b"a#\nb\n"),
+    ("echo $((1))#; echo b", b"1#\nb\n"),
+    (": <(true)#; echo b", b"b\n"),
+    ("x=$(echo a)#; echo b", b"b\n"),
+    ("echo a\\;#; echo b", b"a;#\nb\n"),
+    ("echo a\\ #; echo b", b"a #\nb\n"),
+    ("echo a\\\r#; echo b", b"a\r#\nb\n"),
+    # ... and after a subshell's or an arithmetic command's `)` a comment;
+    # after an array's `)` bash reads word text, zsh a comment
+    # (`_ORACLE_SHELL_SAYS`), and dash has no arrays
+    ("(echo a)#; echo b", b"a\n"),
+    ("((1))#; echo b", b""),
+    ("a=(1 2)#; echo b", b"b\n"),
+    # a comment inside a backtick body ends at the closer, or a newline first
+    ("echo `echo a #x`; echo b", b"a\nb\n"),
+    ("echo `#x; echo c`; echo b", b"\nb\n"),
+    ("echo `#x\necho c`; echo b", b"c\nb\n"),
+    ("echo `echo a #it's`; echo b", b"a\nb\n"),
+    # ... and in a nested body at its escaped closer
+    ("echo `echo \\`echo a #x\\`; echo c`; echo b", b"a c\nb\n"),
+    # a quote inside a double-quoted span or an unquoted heredoc body, where
+    # a substitution keeps it, is the substitution's own: the backtick and
+    # the parens around it read as before
+    ("x=\"$(echo '`')\"; echo `echo a #x`; echo b", b"a\nb\n"),
+    ("cat <<EOF\n$(echo '`')\nEOF\necho `echo a #x`; echo b", b"`\na\nb\n"),
+    ("echo $(echo \"`echo ')'`\")#; echo b", b")#\nb\n"),
+    # the code review's batch: a quoted or escaped backtick in a word the
+    # head capture steps over, or in a quoted heredoc delimiter, is the
+    # word's text; bash halves a backslash pair inside a backtick body; a
+    # paren inside a parameter expansion is text (bash 3.2 refuses that
+    # line, bash 5 runs it, `_ORACLE_BASH_BY_VERSION`); and a carriage
+    # return is a word's text
+    ("(a='`'); echo `echo a #x`; echo b", b"a\nb\n"),
+    ("(a=\\`); echo `echo a #x`; echo b", b"a\nb\n"),
+    ("'`'/command true; echo `echo a #x`; echo b", b"a\nb\n"),
+    ("cat <<'`'; echo `echo a #x`; echo b\nbody\n`", b"body\na\nb\n"),
+    ("echo `echo a\\\\ #x; echo b`", b"a #x b\n"),
+    ("echo `echo a\\\\\\ #x; echo b`", b"a\\\n"),
+    ("echo $(echo ${x:-)})#; echo b", b")#\nb\n"),
+    ("echo a\r#; echo b", b"a\r#\nb\n"),
+    ("cat <<'`'\nbody\n`\necho `echo a #x`; echo b", b"body\na\nb\n"),
+    ("('`'/ ); echo `echo a #x`; echo b", b"a\nb\n"),
+    ("a='`'; echo `echo a #x`; echo b", b"a\nb\n"),
+    ("a=\\`; echo `echo a #x`; echo b", b"a\nb\n"),
+    ("(\\`/ ); echo `echo a #x`; echo b", b"a\nb\n"),
+    ("\\`/command true; echo `echo a #x`; echo b", b"a\nb\n"),
+    # the declared limits beside the row: a body ends at a line that is its
+    # whole delimiter word alone, quote-removed, so a second heredoc opened
+    # on a line bash takes as body text is body text too; an arithmetic
+    # shift opens no heredoc
+    ("cat <<'EOF'\n  EOF\ncat <<'true'\nEOF\necho LIVE\ntrue", b"  EOF\ncat <<'true'\nLIVE\n"),
+    ("cat <<'EOF'\nEOF \necho x\nEOF\necho after", b"EOF \necho x\nafter\n"),
+    ("cat <<'EOF'\nEOF\r\necho x\nEOF\necho after", b"EOF\r\necho x\nafter\n"),
+    ('cat <<E"O"F\n$(echo hi)\nEOF\necho after', b"$(echo hi)\nafter\n"),
+    ("cat <<EOF/\nbody\nEOF/\necho after", b"body\nafter\n"),
+    ("echo $((1<<4))\necho after", b"16\nafter\n"),
+    # ... nor does the older `$[ ]` spelling: the line after it runs, and a
+    # later line that is the shift's operand alone is a command
+    ("x=4; x() { echo ran; }; echo $[1<<x]\necho after\nx", b"16\nafter\nran\n"),
+]
+
+#: (shell, program): the oracle rows a shell does not parse, refused there,
+#: never misread -- dash has no process substitution and no arrays.
+_ORACLE_REFUSES = frozenset({
+    ("dash", ": <(true)#; echo b"), ("dash", "a=(1 2)#; echo b"),
+})
+
+#: program -> {bash's major version: "refuses" or "runs"}: a row bash reads
+#: one way at one major version and another way at the next. Bash 3.2 ends
+#: a `$( )` at the paren inside a parameter expansion and refuses the line
+#: (driven on the Air, 2026-11-13); bash 5 reads the paren as the
+#: expansion's text and runs the row as dash and zsh do (the CI runners,
+#: run 43554467850). A major version not named here is unmeasured: skipped.
+_ORACLE_BASH_BY_VERSION = {
+    "echo $(echo ${x:-)})#; echo b": {"3": "refuses", "5": "runs"},
+}
+
+
+def _run_shell(argv, program, tmp_path):
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LC_ALL": "C"}
+    return subprocess.run([*argv, "-c", program], cwd=str(tmp_path), capture_output=True,
+                          timeout=scaled(10), env=env)
+
+#: (shell, program) -> stdout where one shell reads a row apart from bash:
+#: zsh reads a `#` after an array's `)` as a comment, and the masker takes
+#: bash's reading, the one that reads the statement after it; dash has no
+#: `$[ ]` and reads its `<<` as a heredoc, as the masker does.
+_ORACLE_SHELL_SAYS = {
+    ("zsh", "a=(1 2)#; echo b"): b"",
+    ("dash", "x=4; x() { echo ran; }; echo $[1<<x]\necho after\nx"): b"$[1\n",
+}
+
+#: (want, command): the guard's verdict, ``wall`` or ``allow``. Every
+#: ``wall`` row before the controls ALLOWED at main 613b797 and bash runs
+#: its delete; the controls bash reads as a comment, or runs, and they do
+#: not move.
+_MASKER_ROW_DELETES = [
+    ("wall", f"echo $(true)#; {_DELETE}"),
+    ("wall", f"echo `true`#; {_DELETE}"),
+    ("wall", f"echo $((1))#; {_DELETE}"),
+    ("wall", f": <(true)#; {_DELETE}"),
+    ("wall", f"x=$(echo a)#; {_DELETE}"),
+    ("wall", f"a=(1 2)#; {_DELETE}"),
+    ("wall", f"echo a\\;#; {_DELETE}"),
+    ("wall", f"echo a\\)#; {_DELETE}"),
+    ("wall", f"echo a\\ #; {_DELETE}"),
+    ("wall", f"echo `echo a #x`; {_DELETE}"),
+    ("wall", f"echo `#x`; {_DELETE}"),
+    ("wall", f"echo `#x; echo c`; {_DELETE}"),
+    # the fix batch (the failure-mode review): each ALLOWED at main and at
+    # the row's first fix -- a backslash before a carriage return, a nested
+    # backtick body's comment, and a quote a substitution keeps inside a
+    # double-quoted span or an unquoted heredoc body, which the cursor read
+    # as live
+    ("wall", f"echo a\\\r#; {_DELETE}"),
+    ("wall", f"echo `echo \\`echo a #x\\`; {_DELETE}`"),
+    ("wall", f"x=\"$(echo '`')\"; echo `echo a #x`; {_DELETE}"),
+    ("wall", f"cat <<EOF\n$(echo '`')\nEOF\necho `echo a #x`; {_DELETE}"),
+    ("wall", f"echo $(echo \"`echo ')'`\")#; {_DELETE}"),
+    # the code review's batch: each ALLOWED at main and at the fix batch --
+    # a quoted or escaped backtick in a word the head capture steps over (an
+    # assignment glued after a paren, a skip word) or in a quoted heredoc
+    # delimiter, a backslash pair bash halves inside a backtick body, a
+    # paren inside a parameter expansion (dash, zsh and bash 5), a carriage
+    # return
+    ("wall", f"(a='`'); echo `echo a #x`; {_DELETE}"),
+    ("wall", f"(a=\\`); echo `echo a #x`; {_DELETE}"),
+    ("wall", f"'`'/command true; echo `echo a #x`; {_DELETE}"),
+    ("wall", f"cat <<'`'; echo `echo a #x`; {_DELETE}\nbody\n`"),
+    ("wall", f"echo `echo a\\\\ #x; {_DELETE}`"),
+    ("wall", f"echo $(echo ${{x:-)}})#; {_DELETE}"),
+    ("wall", f"echo a\r#; {_DELETE}"),
+    # the mutant pass's killers, each ALLOWED at 396458a: a statement after a
+    # quoted heredoc delimiter's terminator (the fix batch walled it only
+    # because the delimiter's and the terminator's raw backticks cancelled;
+    # jumping the delimiter alone lets it through), and an empty basename
+    # glued after a paren
+    ("wall", f"cat <<'`'\nbody\n`\necho `echo a #x`; {_DELETE}"),
+    ("wall", f"('`'/ ); echo `echo a #x`; {_DELETE}"),
+    # the cost gate's failure-mode review: each allowed with the gate blind
+    # to a backslash at its site, or jumping the head assignment raw
+    ("wall", f"a='`'; echo `echo a #x`; {_DELETE}"),
+    ("wall", f"a=\\`; echo `echo a #x`; {_DELETE}"),
+    ("wall", f"(\\`/ ); echo `echo a #x`; {_DELETE}"),
+    ("wall", f"\\`/command true; echo `echo a #x`; {_DELETE}"),
+    # controls
+    ("allow", f"(a='`') ; echo `echo a` #x; {_DELETE}"),
+    ("allow", f"echo $(echo ${{x:-)}}) #x; {_DELETE}"),
+    ("allow", f"(true)#; {_DELETE}"),
+    ("allow", f"((1))#; {_DELETE}"),
+    ("allow", f"# {_DELETE}"),
+    ("allow", f"echo `echo a` # ; {_DELETE}"),
+    ("allow", f"echo a\\\\ #; {_DELETE}"),
+    ("wall", f"echo `echo a #x\n{_DELETE}`"),
+    ("wall", f"echo `echo a`; {_DELETE}"),
+]
+
+#: The heredoc half of the masker's residue, ruled a declared limit (ack
+#: 7f4579, docs/HOOKS.md beside the coverage contract): each shape needs a
+#: second heredoc opened after a line the masker took for a delimiter and
+#: bash did not -- an indented or trailing-blank line, one ending in a
+#: carriage return its operator's word did not carry, or a delimiter word
+#: quoted in part or holding a character past `[alnum_-.]` -- a crafted
+#: spelling, not a slip. Pinned at its verdict, so a fix shows as a change
+#: here and never passes unseen.
+_MASKER_ROW_HEREDOC_LIMITS = [
+    f"cat <<'EOF'\n  EOF\ncat <<'X'\nEOF\n{_DELETE}\nX",
+    f"cat <<'EOF'\nEOF \ncat <<'X'\nEOF\n{_DELETE}\nX",
+    f"cat <<'EOF'\nbody\nEOF\r\ncat <<'X'\nEOF\n{_DELETE}\nX",
+    f"cat <<E\"O\"F\nE\ncat <<'X'\nEOF\n{_DELETE}\nX",
+    f"cat <<EOF/\nEOF\ncat <<'X'\nEOF/\n{_DELETE}\nX",
+]
+
+
+class TestTheMaskerReadsACommentAsBashDoes:
+    """The masker row (assign d4bb05, note 66e884, ruled by ack 7f4579): the
+    walk read where a comment starts and where one ends unlike bash, and
+    each hid the statement after it from every reader of the masked text --
+    the delete wall, the speed bumps and the secret-read leg. A `#` glued
+    after a substitution's or an array's `)`, a closing backtick or an
+    escaped character opened a comment, where bash reads it as the word's
+    text; and a comment inside a backtick body ran to the line's end, where
+    bash ends it at the closing backtick. Fixed in `_walk_shell_roles` by a
+    cursor over the masked text that reads the live backticks and parens
+    before each `#` (`_glued_after_escape`, `_backtick_comment_end`)."""
+
+    @pytest.mark.parametrize("argv", [["/bin/bash", "--noprofile", "--norc"], ["/bin/dash"], ["/bin/zsh", "-f"]],
+                             ids=lambda a: Path(a[0]).name)
+    @pytest.mark.parametrize("program, stdout", _MASKER_ROW_ORACLE)
+    def test_each_shell_reads_the_row_s_facts(self, argv, program, stdout, tmp_path):
+        if not Path(argv[0]).exists():
+            pytest.skip(f"the oracle asks {argv[0]}, which this box lacks")
+        refuses = (Path(argv[0]).name, program) in _ORACLE_REFUSES
+        if Path(argv[0]).name == "bash" and program in _ORACLE_BASH_BY_VERSION:
+            major = _run_shell(argv, "echo ${BASH_VERSINFO[0]}", tmp_path).stdout.decode().strip()
+            reading = _ORACLE_BASH_BY_VERSION[program].get(major)
+            if reading is None:
+                pytest.skip(f"bash {major or '(unread)'} reading of this row is unmeasured")
+            refuses = reading == "refuses"
+        proc = _run_shell(argv, program, tmp_path)
+        if refuses:
+            assert proc.returncode != 0 and proc.stderr, (program, proc.stdout)
+            return
+        stdout = _ORACLE_SHELL_SAYS.get((Path(argv[0]).name, program), stdout)
+        assert proc.stdout == stdout, (program, proc.stdout, proc.stderr)
+
+    @pytest.mark.parametrize("want, command", _MASKER_ROW_DELETES)
+    def test_the_delete_after_it_is_read_where_bash_runs_it(self, want, command, tmp_path):
+        assert _delete_verdict(run_guard_from("Bash", command, tmp_path, None)) == want, command
+
+    @pytest.mark.parametrize("command", [
+        "echo `echo a #x`; cat .env", "echo $(true)#; cat .env",
+        # the leg's own substitution walk reads the comment rule too
+        "echo a\\;#; echo $(cat .env)", "echo a\\ #; echo $(cat .env)",
+        "echo `echo a #x`; echo $(cat .env)", "echo `#x`; echo $(cat .env)",
+        "echo a\\;#; echo `cat .env`", "echo a\\;#; diff <(cat .env) x",
+        # ... and an array's `)` glue, which bash reads (the code review)
+        "a=(1 2)#; echo $(cat .env)", "a=(1 2)#; echo `cat .env`",
+    ])
+    def test_the_secret_leg_reads_the_masked_text_too(self, command, tmp_path):
+        assert_hook_denied(run_guard_from("Bash", command, tmp_path, None),
+                           contains_reason="Secret-path access blocked")
+
+    def test_the_speed_bump_reads_the_masked_text_too(self, tmp_path):
+        result = run_guard_from("Bash", "echo `echo a #x`; git reset --hard", tmp_path, None)
+        assert "Speed-bump" in (result.stdout or ""), result.stdout
+
+    @pytest.mark.parametrize("command", _MASKER_ROW_HEREDOC_LIMITS)
+    def test_a_delimiter_line_bash_does_not_take_is_a_declared_limit(self, command, tmp_path):
+        assert _delete_verdict(run_guard_from("Bash", command, tmp_path, None)) == "allow", command
+
+    def test_the_older_arithmetic_shift_is_read_as_a_heredoc(self, tmp_path):
+        """docs/HOOKS.md's arithmetic sentence: `$[1<<x]` opens a heredoc to
+        the masker, which masks the lines to one that is `x` alone, where
+        bash 3.2 and zsh run them (the oracle row above). Pinned at its
+        verdict, so a fix shows here; `$((1<<4))` hands back the raw
+        command, and its delete walls."""
+        held = f"x=4; echo $[1<<x]\n{_DELETE}\nx=1\nx"
+        assert _delete_verdict(run_guard_from("Bash", held, tmp_path, None)) == "allow", held
+        raw = f"echo $((1<<4))\n{_DELETE}"
+        assert _delete_verdict(run_guard_from("Bash", raw, tmp_path, None)) == "wall", raw
+
+    @pytest.mark.parametrize("text, glued", [
+        ("a\\;#", True), ("a\\ #", True), ("a\\\\;#", False), ("a\\\\\\;#", True),
+        ("a;#", False), ("#", False), ("a\\\n#", False), ("a\\\r#", True),
+    ])
+    def test_an_escaped_character_glues_the_hash_to_its_word(self, text, glued):
+        bp = _load_bash_patterns()
+        assert bp._glued_after_escape(text, text.index("#")) is glued, text
+
+    # The five step-over sites of the head capture, each with a word quoted
+    # three ways: (site, command, the character the walk must blank).
+    _STEP_OVER_MATRIX = [
+        (site, tmpl.replace("W", word), trigger)
+        for site, tmpl in [
+            ("suffix assignment", "(a=W); echo hi"),
+            ("suffix empty basename", "(W/ ); echo hi"),
+            ("suffix skip word", "(W/command true); echo hi"),
+            ("head skip word", "W/command true; echo hi"),
+            ("head assignment", "a=W; echo hi"),
+            ("head empty basename", "W/ ; echo hi"),
+        ]
+        for word, trigger in [("'`'", "`"), ("\\`", "`"), ('"x)y"', ")")]
+    ]
+
+    @pytest.mark.parametrize("site, command, trigger", _STEP_OVER_MATRIX,
+                             ids=[f"{r[0]}:{r[1]}" for r in _STEP_OVER_MATRIX])
+    def test_every_step_over_masks_its_word_however_it_is_quoted(self, site, command, trigger):
+        """The code review's F1: each step-over of the head capture jumped its
+        word raw, so the comment cursor read a quoted or escaped backtick in
+        it as live (the wall rows above show the delete it hid); the cost
+        gate then jumps a word raw again unless it holds a quote or a
+        backslash, so every site must take the walk for each of the three.
+        A `)` inside double quotes is text to bash and the walk blanks it.
+        Each row was raw at 396458a; with the gate blind to one quoting at
+        one site (the failure-mode review's mutants), its rows go raw."""
+        out = _load_bash_patterns()._walk_shell_roles(command)[0]
+        assert out[command.index(trigger)] == " ", (site, command, out)
+
+    _GATE_SITES = [
+        ("end = span_after if plain else step_over_assignment(i)\n",
+         "end = step_over_assignment(i)\n"),
+        ("end = span_after if plain else step_over_assignment(i, value=False)\n",
+         "end = step_over_assignment(i, value=False)\n"),
+        ("end = after if plain else step_over_assignment(i, value=False)\n",
+         "end = step_over_assignment(i, value=False)\n"),
+        ("end = after if plain else step_over_assignment(i)\n",
+         "end = step_over_assignment(i)\n"),
+    ]
+
+    def test_the_gated_walk_reads_every_command_as_the_ungated_walk(self, tmp_path):
+        """The cost gate jumps a plain word with no call, on an argument in
+        prose: the head scan's stripped length equals its raw length exactly
+        when the word holds no quote and no backslash, and the scan stops
+        where `step_over_assignment` does. This pins it by construction: the
+        walker's source with the five sites ungated must read a seeded corpus
+        exactly as the gated one. A drift between the two loops (a
+        terminator one of them drops, a body the step-over learns to jump)
+        moves output here, measured by the failure-mode review: 63 and 380
+        differing strings of 20,000. The ungating must patch five sites, so a
+        refactor of them fails here by name."""
+        import random
+        src = (HOOKS_DIR / "_bash_patterns.py").read_text(encoding="utf-8")
+        ungated, patched = src, 0
+        for old, new in self._GATE_SITES:
+            patched += ungated.count(old)
+            ungated = ungated.replace(old, new)
+        assert patched == 5, f"the gate's sites moved: {patched} patched, not 5"
+
+        path = tmp_path / "_bp_ungated.py"
+        path.write_text(ungated, encoding="utf-8")
+        spec = importlib.util.spec_from_file_location("_bp_ungated", path)
+        plain = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = plain      # dataclass annotations resolve here
+        sys.path.insert(0, str(HOOKS_DIR))  # its sibling imports
+        try:
+            spec.loader.exec_module(plain)
+        finally:
+            sys.path.remove(str(HOOKS_DIR))
+        gated = _load_bash_patterns()
+        tokens = ["a", "=", "/", "(", ")", "'", '"', "\\", "`", "#", " ", ";", "\r", "\n",
+                  "$", "{", "}", "command", "time", "x=", "|", "&", "<", ">", "$(", "$'",
+                  "\t", "if", "fi", "<<", "EOF"]
+        rng = random.Random(5039)
+
+        def read(mod, c):
+            try:
+                out, heads, spans = mod._walk_shell_roles(c)
+                return out, frozenset(heads), tuple(spans)
+            except Exception as e:  # noqa: BLE001 -- a raise is compared too
+                return "raise", type(e).__name__
+
+        for _ in range(20000):
+            c = "".join(rng.choice(tokens) for _ in range(rng.randint(1, 18)))
+            assert read(gated, c) == read(plain, c), c
+
+    @pytest.mark.parametrize("text, glued", [
+        ("a\\\\ #", True), ("a\\\\\\ #", True), ("a\\ #", True), ("a #", False), ("a\\\n#", False),
+    ])
+    def test_inside_a_backtick_body_any_backslash_run_glues(self, text, glued):
+        """bash halves a `\\\\` in a backtick body before reading it, so a
+        run of two glues there (the oracle row); any run glues, a run that
+        halves to even read on as live, friction only."""
+        bp = _load_bash_patterns()
+        assert bp._glued_after_escape(text, text.index("#"), True) is glued, text
+
+    @pytest.mark.parametrize("text, end", [
+        ("${x:-)}", 7), ("${x:-${y:-)}}z", 13), ('${x:-"}"}z', 9), ("${x:-'}'}z", 9),
+        ("${x:-\\}}z", 8), ("${x", 3),
+    ])
+    def test_a_parameter_expansion_ends_at_its_own_close(self, text, end):
+        assert _load_bash_patterns()._param_expansion_end(text, 0) == end, text
+
+    @pytest.mark.parametrize("text, end", [
+        ("#x`; b", 2), ("#x\nb`", 2), ("#x\\`y`; b", 2), ("#x\\\\`", 4), ("#x\\\\\\`", 4),
+        ("#it's`", 5), ("#x", -1),
+    ])
+    def test_a_backtick_body_s_comment_ends_at_its_closer(self, text, end):
+        bp = _load_bash_patterns()
+        assert bp._backtick_comment_end(text, 0) == end, text
