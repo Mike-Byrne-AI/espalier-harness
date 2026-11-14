@@ -91,6 +91,11 @@ if mode.endswith("-flagbudget"):
         sys.exit(0)
     print("re-issue" if flag.exists() else "first issue")
     sys.exit(0)
+if miss and mode.endswith(("childbudget", "parentbudget", "oddbudget")):
+    figure = {"childbudget": "3.5", "parentbudget": "4.0", "oddbudget": "9.0"}[mode.split("-")[-1]]
+    print('{"reason": "Command blocked: write_guard could not finish judging this command within its '
+          + figure + ' s time budget, so the call is refused rather than let through unjudged."}')
+    sys.exit(0)
 if miss and mode.endswith("fallback"):
     print('{"reason": "Command blocked: write_guard ran out of its 4.0 s time budget before it had judged this command"}')
     sys.exit(0)
@@ -161,6 +166,32 @@ class TestOneRetryOnAMiss:
             hs.run_hook_through(argv("always-budget"), env=None, input="{}")
         assert str(failed.value).count("budget's refusal after") == 2, str(failed.value)
         assert runs() == 2
+
+    @pytest.mark.parametrize("mode, bound", [
+        # the figure the hook's own constants give each bound (write_guard.py
+        # JUDGMENT_BUDGET_S and HARD_DEADLINE_S, read by the helper)
+        ("always-childbudget", "the judging child's 3.5 s budget"),
+        ("always-parentbudget", "the parent's 4.0 s deadline"),
+        ("always-fallback", "the parent's 4.0 s deadline"),
+        ("always-oddbudget", "a 9.0 s bound that is neither of write_guard's"),
+        ("always-budget", "its refusal names no bound"),
+    ])
+    def test_a_miss_names_the_bound_that_refused(self, child, mode, bound):
+        """76cd5c: a CI miss said only how long each attempt took, so the red
+        on post-merge run 43533008807 could not say whether the judgment
+        (the child's budget) or the parent's deadline ran out first."""
+        assert set(hs._guard_bounds()) == {3.5, 4.0}, (
+            f"write_guard's bounds moved to {sorted(hs._guard_bounds())}: this row's fake child and labels "
+            "carry the old figures 3.5 and 4.0 as its pin, so update them with the bounds")
+        argv, runs = child
+        with pytest.raises(pytest.fail.Exception) as failed:
+            hs.run_hook_through(argv(mode), env=None, input="{}")
+        assert str(failed.value).count(bound) == 2, str(failed.value)
+        hs._RETRIED.clear()  # the row spent its one retry above; the long-bound helper gets its own here
+        with pytest.raises(pytest.fail.Exception) as failed:
+            hs.retry_a_budget_miss(_spawn(argv(mode, "long.txt")), env=None)
+        assert str(failed.value).count(bound) == 2, str(failed.value)
+        assert (runs(), runs("long.txt")) == (2, 2)
 
     def test_a_hook_slow_every_time_fails_every_time(self, child):
         """The retry gets no more time than the first attempt: a regression
@@ -402,6 +433,41 @@ class TestALongerBoundReadsTheRefusalApart:
             stderr="")
         with pytest.raises(pytest.fail.Exception, match="a miss, not a verdict"):
             hs.not_a_budget_miss(fallback)
+
+    def test_a_miss_not_retried_names_its_bound(self):
+        refused = subprocess.CompletedProcess(
+            self.ARGV, 0, stdout=_deny("Command blocked: write_guard ran out of its 4.0 s time budget before it had"
+                                       " judged this command"), stderr="")
+        with pytest.raises(pytest.fail.Exception, match=r"\(the parent's 4\.0 s deadline\): a miss"):
+            hs.not_a_budget_miss(refused)
+
+    def test_the_bound_reader_reads_the_real_refusals(self):
+        """The figure reader against the hook's own words, never a hand copy
+        (the 76cd5c reviews): `_denial_reasons.WRITE_GUARD_TIME_BUDGET`
+        formatted at each of write_guard's two bounds, as the child and the
+        parent format it, and the parent's plain-words fallback taken from
+        its source, found by the phrase the routing pins hold it to. A
+        rewording of either that the reader no longer finds reds here, where
+        before every real miss would have said it names no bound."""
+        import ast
+        bounds = hs._guard_bounds()
+        assert len(bounds) == 2, bounds
+        hooks = hs._WRITE_GUARD.parent
+        reasons = ast.parse((hooks / "_denial_reasons.py").read_text(encoding="utf-8"))
+        template = next(ast.literal_eval(n.value) for n in reasons.body if isinstance(n, ast.Assign)
+                        and any(isinstance(t, ast.Name) and t.id == "WRITE_GUARD_TIME_BUDGET" for t in n.targets))
+        for figure, label in bounds.items():
+            refused = subprocess.CompletedProcess(self.ARGV, 0, stdout=_deny(template.format(budget=figure)))
+            assert hs.refusing_bound(refused) == label, (figure, hs.refusing_bound(refused))
+        guard = ast.parse(hs._WRITE_GUARD.read_text(encoding="utf-8"))
+        fallbacks = [n for n in ast.walk(guard) if isinstance(n, ast.JoinedStr)
+                     and hs.BUDGET_FALLBACK in "".join(v.value for v in n.values if isinstance(v, ast.Constant))]
+        assert len(fallbacks) == 1, [ast.unparse(n) for n in fallbacks]
+        deadline = next(label for figure, label in bounds.items() if "deadline" in label)
+        figure = next(figure for figure, label in bounds.items() if label == deadline)
+        text = "".join(v.value if isinstance(v, ast.Constant) else str(figure) for v in fallbacks[0].values)
+        refused = subprocess.CompletedProcess(self.ARGV, 0, stdout=_deny(text))
+        assert hs.refusing_bound(refused) == deadline, (text, hs.refusing_bound(refused))
 
 
 def _spawn(argv: list[str], env: dict | None = None):
