@@ -1455,8 +1455,10 @@ def settings_files(repo_root: Path) -> list[tuple[str, Path]]:
 def settings_env_name(name: str) -> str:
     """An env name as a process environment matches it: Windows folds case,
     so ``Espalier_Maintenance_Mode`` in a settings map reaches a hook as the
-    maintenance switch."""
-    return name.upper() if sys.platform == "win32" else name
+    maintenance switch. The platform test is bound first, so the type gate
+    (``platform = "linux"``) types the folding arm too."""
+    folds_case = sys.platform == "win32"
+    return name.upper() if folds_case else name
 
 
 def settings_env_text(value: object) -> str | None:
