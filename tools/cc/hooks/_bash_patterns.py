@@ -6713,14 +6713,15 @@ def _redirect_words(tok: str, *, powershell: bool = False) -> int:
     0 when it opens none, 1 when it is whole (`2>x`, `>>log`, `2>&1`), 2
     when it is a bare operator whose target is the next token (`2>`, `>`).
     The pair above as `git clean`'s operand reader and the PowerShell
-    removal parsers (`_ps_redirect_free`) read it. With ``powershell`` the
+    readers (`_ps_redirect_free`) read it. With ``powershell`` the
     all-streams redirect (`*>`, `*>>`, `*>&1`) is read as a stream number
-    is; Bash reads `*>x` as a glob and then a redirect, so there it stays a
-    word (DEF-5108: `git clean -fdx *>$null` read `*>$null` as a pathspec,
-    and the whole-tree clean's zone deny fell to a bump). `_operands`
-    reads the pair inline, on every Bash call's path, and its PowerShell
-    callers (the find family) meet no `*>` that changes a verdict
-    (DEF-5108's census), so it is left as it was."""
+    is (DEF-5108: `git clean -fdx *>$null` read `*>$null` as a pathspec,
+    and the whole-tree clean's zone deny fell to a bump). Without it the
+    token opens no redirect: Bash splits `*>x` into the glob `*`, an
+    operand, and the redirect `>x`. `_operands` reads the pair inline, on
+    every Bash call's path, and stays Bash's reading; its one PowerShell
+    caller that met a `*>` (find's roots, `_find_delete_roots`) reads
+    through `_ps_redirect_free` under its own flag."""
     if powershell and tok.startswith("*>"):
         tok = tok[1:]
     if not _REDIRECT_TOKEN_RE.match(tok):
@@ -6732,13 +6733,17 @@ def _redirect_words(tok: str, *, powershell: bool = False) -> int:
 def _ps_redirect_free(tokens: list[str]) -> list[str]:
     """PowerShell argument tokens with each redirect taken out, a bare
     operator's target with it (`_redirect_words`): a stream's file names
-    nothing the command removes, moves or archives. The two removal
-    parsers (`_ps_removal_target_tokens`, `_powershell_removal_targets`)
-    read their targets from what is left, so a flag never takes a
-    redirect as its value (DEF-5108: kept, `2> .env.err` read as a renamed
-    file on the secret leg, `2>$null` as a target the forced remove's
-    element tier could not vouch for, which walled a build clean, and
-    `2> err.txt` as a target off the roster, which bumped it)."""
+    nothing the command removes, moves, archives or lists. The two removal
+    parsers (`_ps_removal_target_tokens`, `_powershell_removal_targets`),
+    the enumerator's (`_ps_pipeline_roots`), find's roots and the `git
+    mv` / `git rm` arm read what is left, so a flag never takes a redirect
+    as its value and no redirect is an operand (DEF-5108: kept, `2>
+    .env.err` read as a renamed file on the secret leg, `2>$null` as a
+    target the forced remove's element tier could not vouch for, which
+    walled a build clean, `2> err.txt` as a target off the roster, which
+    bumped it, and `2>$null` after a listing's root as its filter, which
+    narrowed a recursive listing of the checkout piped into a forced
+    remove to an allow)."""
     kept: list[str] = []
     skip = 0
     for tok in tokens:
@@ -6751,6 +6756,18 @@ def _ps_redirect_free(tokens: list[str]) -> list[str]:
             continue
         kept.append(tok)
     return kept
+
+
+def _ps_success_stream_to_file(tok: str) -> bool:
+    """True when ``tok`` opens a redirect that sends PowerShell's success
+    stream to a file (`>`, `>>`, `1>`, `*>`, `*>>`, glued or bare), never
+    a merge into it (`2>&1`, `*>&1`) or another stream's file (`2>x`).
+    The stage it ends then hands the pipe nothing: Windows PowerShell 5.1,
+    driven, passed 0 objects to the next stage on each of those five and
+    every object on `2>$null` and each merge (DEF-5108). Plain string
+    tests, no pattern: the enumerator reader asks it per token."""
+    head = tok[1:] if tok[:1] in ("1", "*") else tok
+    return head.startswith(">") and not head.lstrip(">").startswith("&")
 
 #: The `&` of a redirect operator: any `&` glued to the RIGHT of `<`/`>` (the
 #: descriptor forms `2>&1`, `>&2`, `<&0`, `>&-`, and bash's csh-style
@@ -10149,7 +10166,16 @@ def _find_delete_roots(span: str, *, powershell: bool = False) -> tuple[list[str
     action = _FIND_DELETE_ACTION_RE.search(span)
     if not action:
         return [], ""
-    toks = _operands(span, powershell=powershell)
+    if powershell:
+        # every redirect out, PowerShell's all-streams one too: `_operands`
+        # is Bash's reading, where `*>x` is a glob and a redirect, and its
+        # `*` read as a root that swept the checkout (DEF-5108's review:
+        # `find build *>$null -delete` walled where `find build -delete` is
+        # allowed). Under the flag, so a Bash call reads as it did.
+        toks = [t.strip('"').strip("'") for t in _ps_redirect_free(
+            _OPERAND_TOKEN_RE.findall(_strip_span_tail(span, powershell=True)))]
+    else:
+        toks = _operands(span)
     i = 0
     while i < len(toks):
         tok = toks[i]
@@ -11801,7 +11827,9 @@ def powershell_scan_pair(command: str) -> tuple[str, str]:
     PowerShell pairs (DEF-2040). Before either join, each block comment the
     masker read is ONE blank in both halves, its delimiters and words
     included (`_ps_blocks_as_one_blank`, DEF-2071/2072): a third change of
-    length, made where the command holds ``<#``.
+    length, made where the command holds ``<#``. Last, the scan's merge
+    ampersands are spaced out (`neutralise_redirect_ampersands`, as
+    `_extractor_pair` spaces them on Bash), same length.
     """
     command = fold_powershell_quotes(command)
     blocks: "list[tuple[int, int]] | None" = [] if "<#" in command else None
@@ -11826,7 +11854,19 @@ def powershell_scan_pair(command: str) -> tuple[str, str]:
     raw_parts.append(command[last:])
     scan_parts.append(masked[last:])
     raw, scan = _ps_join_command_gaps("".join(raw_parts), "".join(scan_parts), read)
-    return _resolve_ps_command_objects(raw, scan)
+    raw, scan = _resolve_ps_command_objects(raw, scan)
+    # A merge's `&` (`2>&1`, `*>&1`) ends every span class, so a merge
+    # written BEFORE the operand left the target outside the span each reader
+    # of this pair reads: a forced recursive remove of the checkout, a
+    # dotenv's move or archive and a zone file's remove were each allowed,
+    # and with the bare `2>` the span kept read as a redirect, a build clean
+    # walled with no target left (DEF-5108, driven through the hook).
+    # Spaced out, `2> 1` is a bare operator and its descriptor, which the
+    # readers drop; the raw half keeps `2>&1`, one whole redirect. Asked
+    # only where the scan holds `&`.
+    if "&" in scan:
+        scan = neutralise_redirect_ampersands(scan)
+    return raw, scan
 
 
 def _ps_blocks_as_one_blank(
@@ -14247,7 +14287,15 @@ def _ps_removal_below_a_scratch_root(
 #: (its docstring: that only ever TIGHTENS the roster and the bump) -- on the
 #: wall it would have refused `-ErrorAction Stop` at a shallow cwd as the
 #: target `Stop` (failure-mode review, driven, 2026-09-13).
-_PS_REMOVE_SWITCHES = ("recurse", "force", "whatif", "confirm", "verbose", "debug")
+_PS_REMOVE_SWITCHES = (
+    "recurse", "force", "whatif", "confirm", "verbose", "debug", "usetransaction",
+    # the switches' aliases, as Windows PowerShell 5.1 declares them on the
+    # cmdlet (`(Get-Command Remove-Item).Parameters`): read as unknown, each
+    # took the next token as its value, so `-vb .` drew the bump, not the
+    # wall, and `-vb 2>$null .` fell from the wall to the bump once the
+    # redirect left the tokens (DEF-5108's code review)
+    "wi", "cf", "vb", "db", "usetx",
+)
 _PS_REMOVE_VALUED = (
     "path", "literalpath", "filter", "include", "exclude", "credential", "stream",
     "erroraction", "errorvariable", "informationaction", "informationvariable",
@@ -14333,8 +14381,25 @@ def _ps_pipeline_roots(args: str) -> tuple[list[str], bool, bool]:
     (a catch-all narrows nothing; a root whose leaf is a bare `*` is its
     directory); ``files_only`` on `-File` or `-Attributes !Directory`, the
     enumerations that take every file under the root without a recursive
-    remove."""
+    remove.
+
+    A redirect is no root, filter or switch, and is read out with its
+    target first (`_ps_redirect_free`): kept, `2>$null` after the root was
+    the positional filter, so `gci . -Recurse 2>$null | ri -r -fo` read as
+    narrowed and was allowed, and `gci 2>$null tools -Recurse | ...` read
+    the redirect as its root (DEF-5108's reviews, driven through the hook;
+    a stderr redirect hands the pipe every object). One that sends the
+    success stream to a file (`_ps_success_stream_to_file`) hands the pipe
+    nothing, so the span reads as ``([], True, False)``: no root, and
+    every caller removes nothing. That reading is taken only where the span
+    holds no group or block, whose own redirect would not be the listing's;
+    there the redirect is read out like any other, the direction that
+    keeps the root."""
     tokens = _ps_operand_tokens(args)
+    if "(" not in args and "{" not in args and any(
+            _ps_success_stream_to_file(t) for t in tokens):
+        return [], True, False
+    tokens = _ps_redirect_free(tokens)
     flagged: list[str] = []
     positionals: list[str] = []
     narrowed = files_only = False
@@ -19937,7 +20002,10 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
         out.extend(("move", p) for p in named_targets(m))
     for m in _PS_GIT_RM_MV_RE.finditer(scan):
         effect = "delete" if m.group(1).lower() == "rm" else "move"
-        for tok in _ps_operand_tokens(_named_span(raw, m, "args")):
+        # a redirect and its target out first (DEF-5108's review: `git mv
+        # notes.txt b.txt 2> .env.err` read the log as a renamed file on the
+        # secret leg, where the Bash twin runs)
+        for tok in _ps_redirect_free(_ps_operand_tokens(_named_span(raw, m, "args"))):
             if not tok.startswith("-"):
                 out.append((effect, _ps_operand_text(tok)))
     for m in _PS_DOTNET_FILE_RE.finditer(scan):

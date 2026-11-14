@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2087",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c 'import os, sys; os.environ.pop(\"ESPALIER_MAINTENANCE_MODE\", None); sys.path[:0] = [\"tools/cc/hooks\", \"tools/cc\"]; import _bash_patterns as b; h = \"tools/cc/hooks/write_guard.py\"; print(h in b._candidate_paths_from_powershell(\"Set-Content 2>$null \" + h + \" x\"), (\"move\", \".env\") in b.iter_ps_removed_or_relocated_operands(\"Move-Item 2> err.txt .env b.txt\"))'",
+ "open_value": "False False",
+ "why_not": null,
+ "row_sha": "096aa2f33b47",
+ "text_sha": "0524ea286d16",
+ "verified_2026_11_14": "OPEN (filed 2026-11-14; probe driven at filing here and in the export of HEAD ed89b948ae49)"
+}
