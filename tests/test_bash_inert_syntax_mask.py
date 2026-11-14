@@ -1160,7 +1160,7 @@ _DELETE = f"{RM_RF} {ROOT_TARGET}"
 #: variable bound in the program: each row is a fact the rows below rest
 #: on, and bash 3.2, dash and zsh agree on every one (driven on the Air,
 #: 2026-11-13) but where `_ORACLE_REFUSES` names a spelling a shell does
-#: not parse.
+#: not parse, or `_ORACLE_BASH_BY_VERSION` one bash reads by its version.
 _MASKER_ROW_ORACLE = [
     # a `#` glued after a closer, or after an escaped character, is word text
     ("echo $(echo a)#; echo b", b"a#\nb\n"),
@@ -1194,7 +1194,8 @@ _MASKER_ROW_ORACLE = [
     # head capture steps over, or in a quoted heredoc delimiter, is the
     # word's text; bash halves a backslash pair inside a backtick body; a
     # paren inside a parameter expansion is text (bash 3.2 refuses that
-    # line, `_ORACLE_REFUSES`); and a carriage return is a word's text
+    # line, bash 5 runs it, `_ORACLE_BASH_BY_VERSION`); and a carriage
+    # return is a word's text
     ("(a='`'); echo `echo a #x`; echo b", b"a\nb\n"),
     ("(a=\\`); echo `echo a #x`; echo b", b"a\nb\n"),
     ("'`'/command true; echo `echo a #x`; echo b", b"a\nb\n"),
@@ -1225,12 +1226,26 @@ _MASKER_ROW_ORACLE = [
 ]
 
 #: (shell, program): the oracle rows a shell does not parse, refused there,
-#: never misread -- dash has no process substitution and no arrays, and bash
-#: 3.2 ends a `$( )` at the paren inside a parameter expansion.
+#: never misread -- dash has no process substitution and no arrays.
 _ORACLE_REFUSES = frozenset({
     ("dash", ": <(true)#; echo b"), ("dash", "a=(1 2)#; echo b"),
-    ("bash", "echo $(echo ${x:-)})#; echo b"),
 })
+
+#: program -> {bash's major version: "refuses" or "runs"}: a row bash reads
+#: one way at one major version and another way at the next. Bash 3.2 ends
+#: a `$( )` at the paren inside a parameter expansion and refuses the line
+#: (driven on the Air, 2026-11-13); bash 5 reads the paren as the
+#: expansion's text and runs the row as dash and zsh do (the CI runners,
+#: run 43554467850). A major version not named here is unmeasured: skipped.
+_ORACLE_BASH_BY_VERSION = {
+    "echo $(echo ${x:-)})#; echo b": {"3": "refuses", "5": "runs"},
+}
+
+
+def _run_shell(argv, program, tmp_path):
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LC_ALL": "C"}
+    return subprocess.run([*argv, "-c", program], cwd=str(tmp_path), capture_output=True,
+                          timeout=scaled(10), env=env)
 
 #: (shell, program) -> stdout where one shell reads a row apart from bash:
 #: zsh reads a `#` after an array's `)` as a comment, and the masker takes
@@ -1272,7 +1287,8 @@ _MASKER_ROW_DELETES = [
     # a quoted or escaped backtick in a word the head capture steps over (an
     # assignment glued after a paren, a skip word) or in a quoted heredoc
     # delimiter, a backslash pair bash halves inside a backtick body, a
-    # paren inside a parameter expansion (dash and zsh), a carriage return
+    # paren inside a parameter expansion (dash, zsh and bash 5), a carriage
+    # return
     ("wall", f"(a='`'); echo `echo a #x`; {_DELETE}"),
     ("wall", f"(a=\\`); echo `echo a #x`; {_DELETE}"),
     ("wall", f"'`'/command true; echo `echo a #x`; {_DELETE}"),
@@ -1340,10 +1356,15 @@ class TestTheMaskerReadsACommentAsBashDoes:
     def test_each_shell_reads_the_row_s_facts(self, argv, program, stdout, tmp_path):
         if not Path(argv[0]).exists():
             pytest.skip(f"the oracle asks {argv[0]}, which this box lacks")
-        env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LC_ALL": "C"}
-        proc = subprocess.run([*argv, "-c", program], cwd=str(tmp_path), capture_output=True,
-                              timeout=scaled(10), env=env)
-        if (Path(argv[0]).name, program) in _ORACLE_REFUSES:
+        refuses = (Path(argv[0]).name, program) in _ORACLE_REFUSES
+        if Path(argv[0]).name == "bash" and program in _ORACLE_BASH_BY_VERSION:
+            major = _run_shell(argv, "echo ${BASH_VERSINFO[0]}", tmp_path).stdout.decode().strip()
+            reading = _ORACLE_BASH_BY_VERSION[program].get(major)
+            if reading is None:
+                pytest.skip(f"bash {major or '(unread)'} reading of this row is unmeasured")
+            refuses = reading == "refuses"
+        proc = _run_shell(argv, program, tmp_path)
+        if refuses:
             assert proc.returncode != 0 and proc.stderr, (program, proc.stdout)
             return
         stdout = _ORACLE_SHELL_SAYS.get((Path(argv[0]).name, program), stdout)
