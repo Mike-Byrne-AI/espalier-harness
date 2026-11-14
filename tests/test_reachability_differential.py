@@ -1157,3 +1157,52 @@ class TestEveryGuardCallIsJudgedInTheSharedFixture:
         with pytest.raises(SystemExit):
             rd.main(["--quick", "--root-shape", "no-such-shape"])
         assert "no-such-shape" in capsys.readouterr().err
+
+
+class TestANamedWrapperRunsItsRowsAlone:
+    """``--wrapper NAME`` (repeatable) runs the named rows alone, crossed with
+    every body (the quick bodies under ``--quick``), so a lane reads its own
+    rows without the matrix; a name no row has refuses before anything runs.
+    The two rows named here are outside the quick subset and need nothing
+    beyond bash, so a filter that fell back to the quick wrappers, or let
+    another row through, shows in the row lines."""
+
+    NAMES = ("cmdsub_glued_hash_then_semicolon", "subshell_glued_hash_comment")
+
+    @staticmethod
+    def _row_wrappers(out):
+        return [ln.strip().split("  ", 1)[1].split(" / ", 1)[0]
+                for ln in out.splitlines() if ln.lstrip().startswith("reach=")]
+
+    def _drive(self, rd, monkeypatch, tmp_path, capsys, argv):
+        for name in self.NAMES:
+            assert name not in rd.QUICK_WRAPPERS, name
+            assert name not in rd.WRAPPER_NEEDS, name
+        _stub_instrument(rd, monkeypatch, tmp_path, reaches=lambda t: False,
+                         base_denies=lambda c: True, work_denies=lambda c: False)
+        assert rd.main([*argv, "--report"]) == 0
+        return capsys.readouterr().out
+
+    def test_one_name_runs_its_row_across_every_body(
+            self, rd, tmp_path, monkeypatch, capsys):
+        out = self._drive(rd, monkeypatch, tmp_path, capsys, ["--wrapper", self.NAMES[0]])
+        assert self._row_wrappers(out) == [self.NAMES[0]] * len(rd.BODIES), out
+        assert f"false positives relieved: {len(rd.BODIES)}" in out, out
+
+    def test_the_flag_repeats_and_quick_cuts_the_bodies_alone(
+            self, rd, tmp_path, monkeypatch, capsys):
+        argv = ["--quick"] + [a for name in self.NAMES for a in ("--wrapper", name)]
+        out = self._drive(rd, monkeypatch, tmp_path, capsys, argv)
+        quick = [b for b in rd.BODIES if b[0] in rd.QUICK_BODIES]
+        assert quick and len(quick) < len(rd.BODIES), "a vacuous quick subset"
+        assert sorted(self._row_wrappers(out)) == sorted(list(self.NAMES) * len(quick)), out
+
+    def test_a_name_no_row_has_is_refused_before_anything_runs(
+            self, rd, tmp_path, monkeypatch, capsys):
+        ran = []
+        _stub_instrument(rd, monkeypatch, tmp_path, reaches=lambda t: ran.append(t),
+                         base_denies=lambda c: True, work_denies=lambda c: False)
+        with pytest.raises(SystemExit):
+            rd.main(["--wrapper", self.NAMES[0], "--wrapper", "no_such_row"])
+        assert "no wrapper row is named no_such_row" in capsys.readouterr().err
+        assert not ran
