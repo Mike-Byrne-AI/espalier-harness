@@ -864,11 +864,25 @@ class TestMaskControlsAndFailClosed:
         # offset. A third arm (`php -r`, `lua -e`) enrols here by construction.
         helpers = [m.group(1) for m in re.finditer(r"^def (_\w+_program_bodies)\(", src, re.M)]
         assert len(helpers) >= 2, helpers
-        for name in helpers:
+
+        def _source_of(name):
             h0 = src.index(f"def {name}(")
-            h1 = src.index("\ndef ", h0 + 1)
-            helper = src[h0:h1]
-            assert ".finditer(scan)" in helper, (
+            return src[h0:src.index("\ndef ", h0 + 1)]
+
+        # A span core (`_ps_stdin_program_spans`, DEF-2079) matches the opener
+        # for a bodies helper that slices by its offsets: enrolled by name shape
+        # too, and pinned to the MASKED string, so a delegating helper is only as
+        # good as the core it hands both strings to.
+        spans = sorted(set(re.findall(r"^def (_\w+_program_spans)\(", src, re.M)))
+        for name in spans:
+            core = _source_of(name)
+            assert ".finditer(scan)" in core and ".finditer(command)" not in core, (
+                f"{name}: a span core must match the opener on the MASKED string"
+            )
+        for name in helpers:
+            helper = _source_of(name)
+            delegates = [s for s in spans if f"{s}(command, scan" in helper]
+            assert ".finditer(scan)" in helper or delegates, (
                 f"{name}: the opener must be matched on the MASKED string"
             )
             assert "command[" in helper, (

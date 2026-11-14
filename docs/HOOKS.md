@@ -1835,8 +1835,8 @@ carriage returns Windows PowerShell hands a native pipe are taken out; the
 CR that ends each element is what keeps a trailing backslash from joining
 the next element to it in the shell, so the each-alone readings are what
 keep that element's verdict. A program piped to a PowerShell shell
-(`| pwsh -Command -`) is re-read in the same readings by the zone and
-remove readers. The opener's redirect, comment and call operator serve
+(`| pwsh -Command -`) is re-read in the same readings by every tier, one
+level down, as its direct `powershell -Command "..."` form is. The opener's redirect, comment and call operator serve
 every piped head, `| python - 2>&1` and `| & pwsh -Command -` included. A
 head that only begins with a shell's name (`shasum`) and a shell given a
 script operand with no switch before it (`| bash script.sh`) leave the pipe
@@ -1866,10 +1866,9 @@ over. Each consumer reads a CR and a NUL its own way: a POSIX shell drops
 both, as Git Bash does; PowerShell ends a line at a CR and a word at a NUL.
 Where pwsh 7 reads a literal apart from Windows PowerShell 5.1 (`` `e ``,
 `` `u{...} ``) both readings are judged, a `Start-Process` argument
-apart (listed with the limits above). Open gaps, not limits:
+apart (listed with the limits above). Open gap, not a limit:
 a comment that ends in a
-backslash hides the next line from the wall, on both tools; and a program
-piped to `pwsh -Command -` meets no wall.
+backslash hides the next line from the wall, on both tools.
 
 On the Bash tool a POSIX shell's `-c` program the outer scan
 does not read as the shell receives it -- behind a switch or cluster
@@ -2009,7 +2008,11 @@ before the payload, which then stays inert -- a declared limit, pinned by
 bash or sh with `-c` (a cluster of either sign holding it, `-lc`, `+c`,
 `-cx`), as one string or the array spelling
 (`-ArgumentList "-Command","..."`), is read for that program, which meets
-every tier its direct form meets. powershell.exe's implicit
+every tier its direct form meets. So is a program piped to powershell or
+pwsh reading its program from the pipe (`'...' | pwsh -Command -`, a
+here-string or a double-quoted string piped the same way), placed where its
+statement runs, since the piped shell starts in the current location as a
+started one does. powershell.exe's implicit
 command (a program with no `-Command` before it) and a list given before
 the program stay unread, declared and pinned beside it.
 
@@ -2089,7 +2092,8 @@ string (`$a = @(Get-Content .env)`; an array of strings, `@('gc .env')`, is
 a value, and a nest of `@(` spends none of the levels a nest of `$(` does), including a string
 bound to a variable earlier in the same command (`$c = 'gc .env';
 iex $c`), and the program a `Start-Process` of powershell, pwsh, bash or sh
-carries after the started shell's `-Command` or `-c`. A carrier
+carries after the started shell's `-Command` or `-c`, or a program piped
+to powershell or pwsh reading it from the pipe (`@'...'@ | pwsh -c -`). A carrier
 named inside quotes is data. Not read as a program: any other `Start-Process`
 argument list, the colon-bound `-Command:'...'`, a glued
 `cmd /c"..."`, and the words after a quoted program (`cmd /c "type" .env`).
