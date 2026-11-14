@@ -627,8 +627,9 @@ class TestQuotedVerbTailIsUniform:
         # a first-use compile, named as its accessor's call (DEF-3063): the rm
         # nudge's carrier-fed remove, no zone deny. Its emit verb takes no
         # quoted spelling (`"echo" x | xargs rm -rf` draws no carrier nudge
-        # where the bare one does), recorded with the dispatcher as a limit
-        # under ack 40ec7f, not proven in its tier
+        # where the bare one does), a declared limit by SP 16 (no session
+        # quotes the emit verb; air's note 376af5, beside ack 40ec7f), not
+        # proven in its tier
         "_carrier_fed_remove_re()": None,
         "_SHELL_DASH_C_RE": ("sh", "sh -c 'rm tools/cc/hooks/x.py'"),
         # the quoted-program carriers (DEF-1131) feed the secret leg and the
