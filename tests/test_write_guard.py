@@ -15175,8 +15175,17 @@ class TestTwoOperandReadersCutCommentsAsTheMaskerDoes:
         "cat notes.txt # .env",               # a comment: controls, allowed at main
         "cat notes.txt;#x .env",
         "cat a\\\\ #x .env",                  # an escaped backslash, then a word start
-        "cp .env.example .env # copy the template",   # the copy reads the template alone
+        "(cat notes.txt)#x .env",             # a subshell's `)` is no substitution's
+        "cat $'a\\'b' #x .env",               # an ANSI-C quote's escaped `'`
     )
+    _SECRET_NO_READS_HOOK_ONLY = (            # the guard alone: no shell runs these
+        "cp .env.example .env # copy the template",   # the copy reads the template alone
+        'bash -c "cd sub; cat notes.txt" # not .env',  # a wrapper the masker hands back raw
+        "ssh web 'cd app; cat config.yml' # not .env",
+    )
+    #: Each row holds one unquoted `#`; the two readers must agree on it.
+    _AGREEMENT_ROWS = (*_SECRET_READS, *_SECRET_NO_READS, "cat $((1))#x .env",
+                       "cat <(true)#x .env")
     _ZONE_WALLED = (
         "cp $(true)#x .claude/settings.json",     # the cutter reads a closer already
         "cp `true`#x .claude/settings.json",
@@ -15238,9 +15247,20 @@ class TestTwoOperandReadersCutCommentsAsTheMaskerDoes:
         assert_hook_denied(run_bash_guard(command, tmp_path),
                            contains_reason="Secret-path access blocked")
 
-    @pytest.mark.parametrize("command", _SECRET_NO_READS)
+    @pytest.mark.parametrize("command", _SECRET_NO_READS + _SECRET_NO_READS_HOOK_ONLY)
     def test_a_comment_still_ends_the_read_operands(self, command, tmp_path):
         assert_hook_allowed(run_bash_guard(command, tmp_path))
+
+    @pytest.mark.parametrize("command", _AGREEMENT_ROWS)
+    def test_the_blanker_reads_a_comment_where_the_masker_does(self, command):
+        # The masker spaces out a `;` set right after a `#` exactly where it
+        # reads a comment there, so the secret leg's blanker, which follows
+        # the masker's rule by its predicates, is held to the walk's verdict.
+        bp, wg = _bash_patterns_module(), _load_write_guard()
+        k = command.index("#")
+        probe = command[:k + 1] + ";" + command[k + 1:]
+        masker = bp.mask_inert_syntax(probe)[k + 1] == " "
+        assert (wg._blank_bash_comments(command)[k] == " ") is masker, (command, masker)
 
     @pytest.mark.parametrize("command", _ZONE_WALLED)
     def test_a_settings_target_after_a_closers_hash_meets_the_wall(self, command, tmp_path):

@@ -2349,6 +2349,7 @@ spellings of them are work:
   ends a word at a carriage return or an escaped blank before a `#`, which
   bash reads as the word's text, so a protected target after one
   (`cp a\ #x .claude/settings.json`) is let through to the after-check,
+  for the zones it watches,
   pinned by
   `tests/test_write_guard.py::TestTwoOperandReadersCutCommentsAsTheMaskerDoes::test_the_zone_cutter_lets_a_target_after_a_glued_hash_through`.
 - The protected-zone write is not one of the three jobs. Its path check lets an
