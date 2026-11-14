@@ -95,12 +95,14 @@ jobs:
     if: ${{ !cancelled() && (needs.clean-tier.outputs.tier || 'full') == 'full' }}
     runs-on: ubuntu-latest
     # A hang the per-test ceiling cannot reach ends here, not at GitHub's
-    # 360-minute default (DEF-1178): 1.5x the worst of the last 20 green runs,
-    # 112.0 min (median 100.7, 2026-11-12, scripts/ci_job_bounds_census.py; 110.0
-    # on 2026-11-11, 104.4 over 18 on 2026-11-08). It also holds the serial files'
-    # floor (DEF-2038, tests/test_ci_job_bounds.py): their worst mark, 1800 s,
-    # plus that worst.
-    timeout-minutes: 170
+    # 360-minute default (DEF-1178). scripts/ci_job_bounds_census.py's rule is
+    # 1.5x the worst of the last 20 green runs, 124.4 min (median 98.0,
+    # 2026-11-14; 112.0 on 2026-11-12, 110.0 on 2026-11-11), so 190; the bound
+    # is that plus 15 minutes, the operator's ruling of 2026-11-14, which trades
+    # 15 more minutes on a hung run for fewer raises as the suite grows. It also
+    # holds the serial files' floor (DEF-2038, tests/test_ci_job_bounds.py):
+    # their worst mark, 1800 s, plus that worst.
+    timeout-minutes: 205
     strategy:
       # One cell, the floor interpreter: the tagless-clone question (does a
       # history- or tag-reading test skip rather than fail on a shallow
