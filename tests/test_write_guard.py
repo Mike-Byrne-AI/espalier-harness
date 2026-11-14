@@ -9489,6 +9489,11 @@ class TestCatastrophicRmFlagOrderIndependent:
             # transform the span readers consult, which never reaches a judge
             # and carries nothing a flag could change (the quoted-operand cut)
             "_statement_structure", "_wall_readings",
+            # `mask_inert_syntax` (76cd5c, DEF-2083) is keyed on the text alone
+            # and returns its mask: the transform `_masked_or_raw` wraps, which
+            # reads no flag (`test_a_memoised_splice_reads_no_state` walks its
+            # call graph with every other memo's)
+            "mask_inert_syntax",
             # `ps_start_process_shell_launches` (DEF-3011) is keyed on the raw
             # text and its scan and returns each started shell's offset,
             # grammar and program text: a reading the judges are handed,
