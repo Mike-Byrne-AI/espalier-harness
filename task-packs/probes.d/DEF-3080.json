@@ -1,0 +1,13 @@
+{
+ "id": "DEF-3080",
+ "subject": "tools/cc/hooks/write_guard.py",
+ "cmd": "python -c 'import sys, io; from pathlib import Path; sys.path[:0] = [\"tools/cc/hooks\", \"tools/cc\"]; import write_guard as w; q = chr(39); n = chr(10); r = Path.cwd(); d = \"Remove-Item -Recurse -Force C:\" + chr(92); h = lambda b: \"@\" + q + n + b + n + q + \"@ | iex\"; out = sys.stdout; o = io.StringIO(); sys.stdout = o; w.check_secret_path_access(\"PowerShell\", {\"command\": h(\"Get-Content .env\")}, r); sys.stdout = out; print(bool(w._ps_dangerous_reason(\"iex \" + q + d + q, r)), bool(w._ps_dangerous_reason(q + d + q + \" | iex\", r)), bool(w._ps_dangerous_reason(h(d), r)), chr(34) + \"deny\" + chr(34) in o.getvalue())'",
+ "open_value": "True False False False",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/_bash_patterns.py"
+ ],
+ "row_sha": "4fccd955c9bd",
+ "text_sha": "c92f8cb90ee3",
+ "verified_2026_11_14": "OPEN (filed 2026-11-14; probe driven at filing here and in the export of HEAD 49aa63705232)"
+}

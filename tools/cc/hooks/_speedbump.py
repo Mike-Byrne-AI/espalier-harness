@@ -474,14 +474,16 @@ def _ps_discard_readings(tool_input: dict) -> list[tuple[str, str | None, bool]]
 
 
 def _ps_started_program_scans(command: str) -> list[str]:
-    """The scan text of each PowerShell program a ``Start-Process`` of
-    powershell or pwsh carries in its argument list (DEF-3011), read by the
-    PowerShell arms as the command it is: the started-shell twin of the
-    literal a `powershell -Command "..."` hands them, which the masker keeps
-    at a command position already."""
+    """The scan text of each PowerShell program another PowerShell runs --
+    carried by a ``Start-Process`` of powershell or pwsh in its argument
+    list (DEF-3011) or piped to one (DEF-2079: `'git reset --hard' | pwsh
+    -Command -` drew no checkpoint) -- read by the PowerShell arms as the
+    command it is: the twin of the literal a `powershell -Command "..."`
+    hands them, which the masker keeps at a command position already."""
     twin, scan = _ps_scan_pair(command)
     return [_ps_scan_text(program)
-            for program in _bash_patterns.ps_start_process_ps_programs(twin, scan)]
+            for program in (*_bash_patterns.ps_start_process_ps_programs(twin, scan),
+                            *_bash_patterns.ps_piped_ps_programs(twin, scan))]
 
 
 def _discard_readings(tool_name: str, tool_input: dict) -> list[tuple[str, str | None, bool]]:
@@ -511,9 +513,9 @@ def _git_checkpoint_readings(tool_name: str, tool_input: dict) -> list[tuple[str
     literal stays data. A program the PowerShell tool hands to `bash -c` is
     not read here: the tool-keyed carve-out in the module docstring, kept for
     these three (air, 2026-10-16), whose one exception is CP-DISCARD. A
-    PowerShell program a ``Start-Process`` of powershell or pwsh carries is
-    read beside it, by the same PowerShell twins (DEF-3011). Empty for any
-    other tool."""
+    PowerShell program a ``Start-Process`` of powershell or pwsh carries
+    (DEF-3011), or one piped to either (DEF-2079), is read beside it, by the
+    same PowerShell twins. Empty for any other tool."""
     if tool_name == "Bash":
         return [(text, True) for text in _scan_texts(tool_input)]
     if tool_name == "PowerShell":
@@ -924,12 +926,13 @@ def _pred_gitclean(tool_name: str, tool_input: dict, root: Path, cwd: Path | Non
 def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = None,
                _depth: int = 0) -> bool:
     if tool_name == "PowerShell":
-        # A PowerShell program a Start-Process of powershell or pwsh carries
-        # in its argument list (DEF-3011) gets the nudge its own command
-        # would, one level down; a catastrophic target there is the hard
-        # tier's, which reads the same program.
+        # A PowerShell program another PowerShell runs -- carried by a
+        # Start-Process of powershell or pwsh (DEF-3011) or piped to one
+        # (DEF-2079) -- gets the nudge its own command would, one level
+        # down; a catastrophic target there is the hard tier's, which reads
+        # the same program.
         if _depth < _bash_patterns._PS_STDIN_MAX_DEPTH:
-            for program, bases in _bash_patterns.placed_ps_start_process_ps_programs(
+            for program, bases in _bash_patterns.placed_ps_child_ps_programs(
                     str(tool_input.get("command", "")), str(root), cwd or root):
                 places: list[Path | None] = [Path(b) for b in bases if b is not None]
                 for base in places or [cwd]:
@@ -1751,8 +1754,8 @@ def _pred_fetchexec(tool_name: str, tool_input: dict, root: Path, cwd: Path | No
         # The joined scan text, like `_pred_rmrf`'s PowerShell arm: masked, and
         # backtick continuations folded, so `irm ...` + backtick-newline +
         # `| iex` is one statement here too; then the bare pipe continuation.
-        # A program a Start-Process of powershell or pwsh carries is read
-        # beside it (DEF-3011).
+        # A program a Start-Process of powershell or pwsh carries (DEF-3011),
+        # or one piped to either (DEF-2079), is read beside it.
         command = str(tool_input.get("command", ""))
         for text in (_bash_patterns.powershell_scan_text(command), *_ps_started_program_scans(command)):
             cmd = _PIPE_CONTINUATION_RE.sub("| ", text)
@@ -2772,8 +2775,8 @@ def _ps_remove_item_snapshot_candidates(command: str, at: Path) -> list[Path]:
     """The candidate paths `_removal_snapshot_targets` reads from one
     PowerShell command's `Remove-Item` invocations (and aliases), each placed
     in its own statement's directory from ``at``: the command's own, and
-    each program a ``Start-Process`` of powershell or pwsh carries, read from
-    where it starts (DEF-3011)."""
+    each program a ``Start-Process`` of powershell or pwsh carries (DEF-3011)
+    or one is piped (DEF-2079), read from where it starts."""
     candidates: list[Path] = []
     try:
         text, statements = _bash_patterns.powershell_directory_chain(
@@ -2859,7 +2862,7 @@ def _removal_snapshot_targets(
     else:
         command = _bash_patterns._expand_simple_ps_var_assignments(command)   # DEF-801's twin
         candidates.extend(_ps_remove_item_snapshot_candidates(command, at))
-        for program, bases in _bash_patterns.placed_ps_start_process_ps_programs(
+        for program, bases in _bash_patterns.placed_ps_child_ps_programs(
                 command, str(root), at):
             for base in [Path(b) for b in bases if b is not None] or [at]:
                 candidates.extend(_ps_remove_item_snapshot_candidates(program, base))
