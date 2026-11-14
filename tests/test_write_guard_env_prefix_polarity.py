@@ -335,6 +335,11 @@ _CMD_SET_REACH = [
     ("ps", f"Start-Process cmd -ErrorAction Stop -ArgumentList:'/c set {ENV_VAR}=1 && claude -p x'"),
     # the elevation idiom: `-Verb` is Verb's, not a prefix of `-Verbose`
     ("ps", f"Start-Process cmd -Verb RunAs -ArgumentList '/c','set {ENV_VAR}=1','&&','claude'"),
+    # the list built in a `$( )` subexpression, which PowerShell 5.1 hands the
+    # process as it does `@( )` (a declared limit until the operator's ruling
+    # ee002d; driven echo-only)
+    ("ps", f"Start-Process cmd -ArgumentList $('/c set {ENV_VAR}=1 && claude -p x')"),
+    ("ps", f"Start-Process cmd $('/c','set {ENV_VAR}=1','&&','claude')"),
 ]
 
 # DEF-1071 (a): cmd given by path or in quotes. The check's own openers ended
@@ -441,6 +446,8 @@ def test_cmd_exe_set_then_claude_denies(name, shell, command):
     ("ps", f"Start-Process cmd -ArgumentList '/c set {ENV_VAR}=1 && pytest -q'"),
     ("ps", f"Start-Process cmd -ErrorAction Stop -ArgumentList:'/c set {ENV_VAR}=1 && pytest -q'"),
     ("ps", f"Start-Process cmd -Verb RunAs -ArgumentList '/c','set {ENV_VAR}=1','&&','pytest'"),
+    ("ps", f"Start-Process cmd -ArgumentList $('/c set {ENV_VAR}=1 && pytest -q')"),
+    ("ps", f"Start-Process cmd $('/c','set {ENV_VAR}=1','&&','pytest')"),
     ("ps", 'Write-Output "Start-Process cmd -ArgumentList '
            + f"'/c set {ENV_VAR}=1 && claude -p x'" + '"'),
     # DEF-1071 (a)'s twins: each by-path or quoted shape before a real
@@ -467,10 +474,6 @@ def test_cmd_exe_set_then_claude_denies(name, shell, command):
     ("bash", f"cmd //c 'cmd /c set {ENV_VAR}=1 & claude -p x'"),
     ("ps", f'cmd /c "set {ENV_VAR}=claude"'),
     ("ps", f'cmd /c "set {ENV_VAR}=1 & echo x > claude"'),
-    # a declared limit (operator 06a10a's basis, DEF-1071's closing): an
-    # argument list built in a `$( )` subexpression is read by no reader;
-    # its plain list is the deny row in `_CMD_SET_REACH` above
-    ("ps", f"Start-Process cmd -ArgumentList $('/c set {ENV_VAR}=1 && claude -p x')"),
 ])
 @pytest.mark.parametrize("name", ROSTER)
 def test_cmd_exe_set_before_a_real_invocation_is_allowed(name, shell, command):
