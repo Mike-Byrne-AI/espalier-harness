@@ -33,12 +33,14 @@ jobs:
   full-tier:
     runs-on: ubuntu-latest
     # DEF-1178's rule, re-measured by scripts/ci_job_bounds_census.py: 1.5x the
-    # worst of the last 20 green runs, 88.1 min (median 65.2, 2026-11-12; 86.6 on
-    # 2026-11-11, and 70.7 on 2026-11-08, when the 75 before 110 cut 2 runs with
-    # no verdict). It also holds the floor every job that runs the serial files
-    # keeps (DEF-2038, tests/test_ci_job_bounds.py): their worst mark, 1800 s,
-    # plus that worst.
-    timeout-minutes: 135
+    # worst of the last 20 green runs, 92.2 min (median 77.2, 2026-11-14; 88.1 on
+    # 2026-11-12, 86.6 on 2026-11-11, and 70.7 on 2026-11-08, when the 75 before
+    # 110 cut 2 runs with no verdict), so 140; the bound is that plus 15 minutes,
+    # the operator's ruling of 2026-11-14, which trades 15 more minutes on a hung
+    # run for fewer raises as the suite grows. It also holds the floor every job
+    # that runs the serial files keeps (DEF-2038, tests/test_ci_job_bounds.py):
+    # their worst mark, 1800 s, plus that worst.
+    timeout-minutes: 155
     steps:
       - name: Keep the temp dir on the runner's disk
         # test.yml's `test` job's first step says why (DEF-3027): on GitHub's

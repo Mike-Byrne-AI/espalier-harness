@@ -142,10 +142,10 @@ def _worst_serial_mark() -> float:
 _SERIAL_JOBS_MEASURED_ON = "2026-11-11"
 _SERIAL_JOBS_MEASURED_WORST = {
     ("test.yml", "test-serial"): 23.5,  # median 17.8; 80 cells, 20 runs
-    ("post-merge.yml", "full-tier"): 88.1,  # median 65.2, 2026-11-12; both legs in series
+    ("post-merge.yml", "full-tier"): 92.2,  # median 77.2, 2026-11-14; both legs in series
     ("post-merge-windows.yml", "serial-leg"): 12.9,  # median 10.7
     ("portability.yml", "portability"): 125.1,  # median 74.4; 55 cells, 20 runs
-    ("clean-checkout.yml", "clean-checkout"): 112.0,  # median 100.7, 2026-11-12
+    ("clean-checkout.yml", "clean-checkout"): 124.4,  # median 98.0, 2026-11-14
     ("release.yml", "release-check"): 47.8,  # median 37.6
 }
 _SERIAL_FILES_MEASURED = (
