@@ -1381,6 +1381,21 @@ class TestTheCommandPositionGrammarIsOneAcrossTheCarriers:
         assert bp._CMD_POS_WRAPPER_BUILTINS in bp._CMD_POS_SLASHED_WRAPPER_WORD
         assert bp._CMD_POS_SLASHED_DECLINED_BINARIES in bp._CMD_POS_SLASHED_WRAPPER_WORD
 
+    def test_the_carrier_wrappers_are_one_fragment_the_three_rosters_read(self):
+        # DEF-4061's one table (ruling 2dccd4): `watch` and `script` are
+        # wrappers and carrier verbs, so the roster, the carrier opener's
+        # head group and the slashed decline compose one literal fragment;
+        # the two pins around this one hold one relation each, and passed a
+        # head added outside the roster and a carrier wrapper dropped from it
+        bp = _bash_patterns_module()
+        lead, mid, tail = (bp._WRAPPER_LEAD_BINARIES, bp._WRAPPER_CARRIER_BINARIES,
+                           bp._WRAPPER_TAIL_BINARIES)
+        assert bp._CMD_POS_WRAPPER_BINARIES == "(?:" + lead + "|" + mid + "|" + tail + ")"
+        assert bp._CMD_POS_SLASHED_DECLINED_BINARIES == "(?:" + lead + "|" + tail + ")"
+        assert "(?P<head>eval|(?i:" + mid + "|su)" in bp._CARRIER_HEAD_RE.pattern
+        roster = set(re.findall(r"[a-z]+", bp._CMD_POS_WRAPPER_BINARIES))
+        assert set(re.findall(r"[a-z]+", mid)) == roster & self._carrier_heads(bp)
+
     def test_every_wrapper_carrier_keeps_its_program_behind_a_slashed_flag_argument(self, tmp_path):
         # the hand-written rows below name `watch` and `script`; this one
         # derives every wrapper that is also a carrier head, so a later one
@@ -13099,6 +13114,36 @@ class TestCmdReceivesAWordWithoutABlankBare:
         # read once, never twice (the code review's duplicate)
         assert programs("cmd //c rd /s /q 'my (x86) dir'") == ['rd /s /q "my (x86) dir"']
 
+    @pytest.mark.parametrize("switch, twin", [("/r", "/c"), ("/R", "/C"), ("/d/r", "/d/c")],
+                             ids=["r", "upper-r", "glued-run"])
+    def test_cmds_r_switch_hands_on_the_program_its_c_twin_does(self, switch, twin):
+        """DEF-4061's sibling sites (air's 13e01f): cmd runs `/r` as `/c`
+        (driven on Windows, echo only), so every reader of cmd's program
+        switch takes it from one set, `_CMD_PROGRAM_SWITCH_LETTERS`: the
+        outer walk on both tools, Start-Process's argument list and a cmd a
+        cmd statement starts. Each reads `/r` as its `/c` twin, on the
+        catastrophic delete the wall exists for: a zone path would pass with
+        the gap open, since a PowerShell zone reader already refuses it."""
+        bp = _bash_patterns_module()
+
+        def programs(command: str, bash: bool) -> list[str]:
+            raw, scan = bp._bash_scan_pair(command) if bash else bp.powershell_scan_pair(command)
+            return [p for _at, p in bp.iter_cmd_programs(raw, scan, bash=bash)]
+
+        for bash in (False, True):
+            slash = "//" if bash else "/"
+            got, want = (programs("cmd " + s.replace("/", slash) + " rd /s /q %USERPROFILE%", bash)
+                         for s in (switch, twin))
+            assert want and got == want, (bash, got, want)
+        start = "Start-Process cmd -ArgumentList '{} rd /s /q C:\\'"
+        got, want = programs(start.format(switch), False), programs(start.format(twin), False)
+        assert want and got == want, (got, want)
+        if "/d" not in switch:            # a nested glued run: two levels, the limit
+            for s, t in ((switch, twin), ("/" + switch, "/" + twin)):
+                words = ["rd", "/s", "/q", "C:\\"]
+                assert bp._cmd_nested_program([s, *words]) == bp._cmd_nested_program([t, *words])
+                assert bp._cmd_nested_program([t, *words]) == "rd /s /q C:\\"
+
     _CMD_META_ROSTER = ["&", "|", "(", ")", "<", ">", "^", ";", ","]
 
     def test_the_metacharacter_roster_is_pinned(self):
@@ -15737,6 +15782,40 @@ class TestQuotedProgramsAreReadAsPrograms:
         assert_hook_denied(run_guard_tool(tool, {"command": command}, tmp_path),
                            contains_reason="Secret-path access blocked")
 
+    # DEF-4061: a carrier's program bound to its switch with no blank, or
+    # under a long switch the reader did not name, and an `eval` behind the
+    # `builtin` builtin -- one literal launch level each, composed from each
+    # leg's spellings around the one program the leg reads; the spaced
+    # twins are the table above (every row here allowed at 0097b9f)
+    @pytest.mark.parametrize("switch", [
+        "su -c", "su -lc", "su root -c", "script -q -c", "script -qc",
+        "su --session-command=", "su --session-command ",
+    ])
+    def test_a_su_or_script_program_bound_to_its_switch_is_read(self, switch, tmp_path):
+        assert_hook_denied(run_bash_guard(switch + "'cat .env'", tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("head", ["builtin", "builtin command", "command builtin"])
+    def test_an_eval_behind_the_builtin_builtin_is_read(self, head, tmp_path):
+        assert_hook_denied(run_bash_guard(head + " eval 'cat .env'", tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("head", ["iex", "Invoke-Expression", "pwsh", "powershell"])
+    @pytest.mark.parametrize("switch", ["-c:", "-com:", "-Command:"])
+    def test_a_program_bound_to_its_switch_by_a_colon_is_read(self, head, switch, tmp_path):
+        command = head + " " + switch + "'gc .env'"
+        assert_hook_denied(run_guard_tool("PowerShell", {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    # cmd runs `/r` as `/c` (driven on Windows, echo only), so it is read
+    # spaced too; a glued run is one switch after another
+    @pytest.mark.parametrize("head", ["cmd", "cmd.exe"])
+    @pytest.mark.parametrize("switch", ["/c", "/C", "/k", "/r", "/r ", "/s/c", "/q/c", "/q/c "])
+    def test_cmds_program_glued_to_its_switch_is_read(self, head, switch, tmp_path):
+        command = head + " " + switch + '"type .env"'
+        assert_hook_denied(run_guard_tool("PowerShell", {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
     @pytest.mark.parametrize("tool, command", [
         # A string a later statement runs is read where it runs: the four
         # twins DEF-1045 held refused by the old split, now by the reader.
@@ -15771,6 +15850,11 @@ class TestQuotedProgramsAreReadAsPrograms:
         ("PowerShell", "Write-Output 'a; Invoke-Expression \"type .env\"'"),
         # a subexpression inside a single-quoted string is text
         ("PowerShell", "Write-Host 'see $(gc .env)'"),
+        # the bound and walked-past forms are opened on the masked text too
+        ("Bash", "echo 'builtin eval cat .env'"),
+        ("Bash", "echo 'su -c\"cat .env\"'"),
+        ("PowerShell", "Write-Host 'iex -Command:\"gc .env\"'"),
+        ("PowerShell", "Write-Host 'cmd /c\"type .env\"'"),
     ])
     def test_a_string_no_carrier_runs_is_a_mention(self, tool, command, tmp_path):
         assert_hook_allowed(run_guard_tool(tool, {"command": command}, tmp_path))

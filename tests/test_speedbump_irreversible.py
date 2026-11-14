@@ -3089,9 +3089,14 @@ class TestCommandPositionClassClose:
         "_bash_patterns._CARRIER_C_CLUSTER_RE":
             "FLAG -- a short cluster ending in `-c` (`-qc`), fullmatched against one "
             "word an anchored `_CARRIER_HEAD_RE` match read (DEF-1131).",
+        "_bash_patterns._CARRIER_C_GLUED_RE":
+            "FLAG -- a `-c` with its value glued on (`-c<program>`, `-qc<program>`), "
+            "matched at the start of one word an anchored `_CARRIER_HEAD_RE` match "
+            "read (DEF-4061).",
         "_bash_patterns._CMD_PROGRAM_SWITCH_RE":
-            "FLAG -- `cmd`'s `/c` or `/k`, fullmatched against one switch word past "
-            "an anchored `_PS_CARRIER_RE` head (DEF-1131).",
+            "FLAG -- `cmd`'s `/c`, `/k` or `/r`, fullmatched against one switch word, "
+            "or the head of a glued one, past an anchored `_PS_CARRIER_RE` head "
+            "(DEF-1131, DEF-4061).",
         "_bash_patterns._SHELL_COMMAND_SWITCH_RE":
             "FLAG -- the `-Command` prefix of `pwsh` and `Invoke-Expression`, "
             "fullmatched against one switch word past an anchored `_PS_CARRIER_RE` "
