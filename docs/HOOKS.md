@@ -1847,7 +1847,9 @@ launcher before the shell (`| wsl bash`, `| wsl`, `| sudo bash`,
 `| env bash`, `| busybox sh`) and a versioned name (`| bash-5.2`,
 `| ksh93`) open no reading; and a here-string before a quoted string that
 ends the stage is read only as quoted text, which an apostrophe in its
-body can misplace; each is pinned at allow in
+body can misplace; and a `Start-Process` argument is read as Windows
+PowerShell 5.1 reads it, so pwsh 7's `` `e `` and `` `u{...} `` there are
+not read; each is pinned at allow in
 `tests/test_write_guard.py::TestCrossShellRouting::test_powershell_tool_declared_limits_are_pinned`.
 A double-quoted program's backtick escapes are decoded as PowerShell
 decodes them before any reader judges it (`` `n ``, `` `r ``, `` `t `` and
@@ -1858,8 +1860,8 @@ holding a backtick is read decoded too, as a double-quoted wrapper hands it
 over. Each consumer reads a CR and a NUL its own way: a POSIX shell drops
 both, as Git Bash does; PowerShell ends a line at a CR and a word at a NUL.
 Where pwsh 7 reads a literal apart from Windows PowerShell 5.1 (`` `e ``,
-`` `u{...} ``) both readings are judged, except in a `Start-Process`
-argument, read as 5.1 reads it (a declared limit). Open gaps, not limits:
+`` `u{...} ``) both readings are judged, a `Start-Process` argument
+apart (listed with the limits above). Open gaps, not limits:
 a comment that ends in a
 backslash hides the next line from the wall, on both tools; and a program
 piped to `pwsh -Command -` meets no wall.

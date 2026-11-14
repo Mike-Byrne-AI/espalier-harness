@@ -12581,7 +12581,6 @@ class TestABacktickEscapeInADoubleQuotedProgramIsDecoded:
         only)."""
         bp = _bash_patterns_module()
         assert bp._ps_word_at('"a`nb`0c" x', 0) == ("a\nbc", 9)
-
     def test_a_cr_in_a_start_process_argument_is_dropped_for_bash(self, tmp_path):
         """Git Bash drops every CR, inside a word too (the code review,
         driven echo only): a `git` split by `` `r `` in the argument list
@@ -20915,6 +20914,9 @@ class TestCrossShellRouting:
             # a here-string before a quoted string that ends the stage, its
             # body holding an odd count of apostrophes
             "@'\necho it's\necho x > tools/cc/hooks/x.py\n'@, 'echo ok' | bash",
+            # a Start-Process argument is read as Windows PowerShell 5.1 reads
+            # it (DEF-2077): pwsh 7's `u{a} line break there is not read
+            "Start-Process bash -ArgumentList '-c', \"`\"echo hi`u{a}cat .env`\"\"",
         ):
             assert_hook_allowed(_run_ps_guard(cmd, tmp_path))
 
