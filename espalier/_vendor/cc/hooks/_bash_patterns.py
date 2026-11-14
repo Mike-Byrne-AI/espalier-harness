@@ -182,10 +182,11 @@ _CMD_POS_WRAPPER = (
 _CMD_POS_WRAPPER_BUILTINS = r"(?:command|time|exec)"
 #: The binary wrappers in three literal fragments, the one table (DEF-4061):
 #: `watch` and `script` are wrappers AND carriers of a quoted program, so the
-#: middle fragment is read by the roster here, by the carrier opener's head
-#: group (`_CARRIER_HEAD_RE`) and by nothing in the slashed arm's decline
-#: (`_CMD_POS_SLASHED_DECLINED_BINARIES`, ruling 90c7c3): a carrier wrapper
-#: added or dropped moves all three at once.
+#: middle fragment is read by the roster here (and through it by the secret
+#: leg's head skip, `write_guard._secret_head_wrappers`), by the carrier
+#: opener's head group (`_CARRIER_HEAD_RE`) and by nothing in the slashed
+#: arm's decline (`_CMD_POS_SLASHED_DECLINED_BINARIES`, ruling 90c7c3): a
+#: carrier wrapper added or dropped moves all of them at once.
 _WRAPPER_LEAD_BINARIES = r"env|sudo|doas|nohup|timeout|xargs|nice|ionice|stdbuf|setsid|strace|ltrace"
 _WRAPPER_CARRIER_BINARIES = r"watch|script"
 _WRAPPER_TAIL_BINARIES = r"chrt|taskset|unbuffer|torify|proxychains"
@@ -2267,11 +2268,18 @@ _STDIN_SHELL_HEADS = frozenset(_POWERSHELL_HEADS.split("|"))
 # every interpreter -- its own row).
 # Every branch is exclusive of its neighbour (`\\.` vs `[^\\"]`; `[^']`
 # closed by the literal quote), so an unclosed body fails in one pass.
+# The program switch may carry its program glued after a colon
+# (`-c:'...'`, `-Command:'...'`, DEF-4061): Windows PowerShell 5.1 does
+# not bind the switch but runs the whole word as command text, so every
+# statement after the first runs (driven, echo only), and the PowerShell
+# tool's carrier reads the same value. The colon is outside the switch
+# run's word class, so the run never reaches it and no token gains a
+# second parse.
 _SHELL_COMMAND_SWITCH = r"[-/](?i:c(?:o(?:m(?:m(?:a(?:n(?:d)?)?)?)?)?)?)"
 _SHELL_SWITCH_RUN = r"(?:[-/][\w.-]+(?:[ \t]+[\w.:=,@%+~][\w./:=,@%+~-]*)?[ \t]+)*?"
 _SHELL_COMMAND_TAIL = (
     r"""[\w.-]*""" + _QUOTED_VERB_TAIL + r"""[ \t]+""" + _SHELL_SWITCH_RUN
-    + r"""(?:""" + _SHELL_COMMAND_SWITCH + r"""[ \t]+)?"""
+    + r"""(?:""" + _SHELL_COMMAND_SWITCH + r"""(?:[ \t]+|:))?"""
     # the quoted program as one bash word of adjacent segments (DEF-832), or
     # a bare program; exclusive on the first character
     + r"""(?:(?P<word>""" + _BASH_QUOTED_WORD + r""")"""
@@ -2502,12 +2510,20 @@ def _posix_shell_c_programs_unread_in_place(command: str, scan: str) -> Iterator
 # reader dispatches on `_verb_key` of the head. The binary heads are the
 # wrapper table's carrier fragment and `su` (`_WRAPPER_CARRIER_BINARIES`).
 # `builtin` runs the builtin its first word names, so `builtin eval
-# '<program>'` is an `eval`, and so is `builtin command eval` (DEF-4061;
-# `command builtin eval` is `_CMD_POS`'s wrapper run, then this step): the
-# opener walks past it before `eval` here alone, never in `_CMD_POS`'s
-# roster, so no anchor every Bash call compiles grows (ruling 40ec7f).
-# Spelled as typed, since bash matches a builtin case-sensitively.
-_CARRIER_BUILTIN_STEP = r"(?:builtin[ \t]+(?:command[ \t]+)?(?=eval))?"
+# '<program>'` is an `eval`, and so are `builtin command eval` and
+# `builtin builtin eval`, each word quoted or followed by `--`, with a
+# quoted or escaped `eval` after them, as the head itself is read quoted
+# (DEF-4061; eight spellings driven on bash, echo only; `command builtin
+# eval` is `_CMD_POS`'s wrapper run, then this step): the opener walks
+# past them before `eval` here alone, never in `_CMD_POS`'s roster, so no
+# anchor every Bash call compiles grows (ruling 40ec7f). Spelled as
+# typed, since bash matches a builtin case-sensitively. Each word opens
+# on a literal after a blank, so no two quantifiers share a character.
+_CARRIER_BUILTIN_STEP = (
+    r"(?:builtin" + _QUOTED_VERB_TAIL + r"[ \t]+(?:--[ \t]+)?"
+    + r"""(?:\\?["']?(?:builtin|command)""" + _QUOTED_VERB_TAIL + r"[ \t]+(?:--[ \t]+)?){0,2}"
+    + r"""\\?["']?(?=eval))?"""
+)
 _CARRIER_HEAD_RE = re.compile(
     _CMD_POS + _CARRIER_BUILTIN_STEP
     + r"(?P<head>eval|(?i:" + _WRAPPER_CARRIER_BINARIES + r"|su)" + _EXE_SUFFIX + r")"
@@ -2515,20 +2531,13 @@ _CARRIER_HEAD_RE = re.compile(
 )
 #: The `watch` switches whose value is the next word (procps-ng).
 _WATCH_VALUE_SWITCHES = frozenset({"-n", "--interval", "-q", "--equexit"})
-#: A short cluster that ends in the `-c` of `script` / `su` (`-qc`, `-lc`).
-_CARRIER_C_CLUSTER_RE = re.compile(r"-[A-Za-z]{0,8}c")
-#: The same `-c` with its value glued on, which getopt reads as the rest of
-#: the word after the first `c` (DEF-4061): `su -c'<program>'` is the one
-#: quote-removed word `-c<program>`, and `script -qc'<program>'` the same
-#: behind a flag. The letters before the `c` are read as flags, as the
-#: cluster rule reads them, lowercase and never `c`, so the first `c`
-#: decides and an uppercase valued switch (`script -O<file>`) is not one.
-#: Matched at the word's start; the value is the word past the match, so
-#: no dot quantifier reads it.
-_CARRIER_C_GLUED_RE = re.compile(r"-[abd-z]{0,8}c")
-#: The long switches whose value is the program: both carriers' `--command`
-#: and su's `--session-command` (DEF-4061), spaced or glued with `=`.
-_CARRIER_COMMAND_LONG = ("--command", "--session-command")
+#: The long switches whose value is the program, named without their
+#: dashes: both carriers' `command` and su's `session-command` (DEF-4061),
+#: spaced or glued with `=`, and under any prefix of either, since
+#: getopt_long takes a unique one (`su --comm '<program>'`); a prefix two
+#: of su's names share makes su refuse to start, so reading it too only
+#: over-reads.
+_CARRIER_COMMAND_LONG = ("command", "session-command")
 #: The words read past a carrier's head: one simple command, bounded.
 _CARRIER_WORDS_MAX = 256
 
@@ -2554,25 +2563,66 @@ def _carrier_words(command: str, i: int) -> tuple[list[str], int]:
     return words, i
 
 
-def _carrier_command_value(words: list[str]) -> str:
-    """The program `script` / `su` runs: the word after `-c`, a short
-    cluster ending in it, or a long switch (`_CARRIER_COMMAND_LONG`); glued
-    to the long switch with `=` or to the `-c` itself (`_CARRIER_C_GLUED_RE`)."""
+def _eval_programs(words: list[str]) -> list[str]:
+    """`eval`'s program: its words joined with blanks."""
+    return [" ".join(words)]
+
+
+def _watch_programs(words: list[str]) -> list[str]:
+    """`watch`'s program: the words after its switches joined with blanks,
+    a value switch (`_WATCH_VALUE_SWITCHES`) taking the next word."""
+    k = 0
+    while k < len(words) and words[k].startswith("-"):
+        k += 2 if words[k] in _WATCH_VALUE_SWITCHES else 1
+    return [" ".join(words[k:])]
+
+
+def _switch_programs(words: list[str]) -> list[str]:
+    """Every program `script` / `su` can run from its switches (DEF-1131,
+    DEF-4061), read in every word as getopt reads one: in a short word whose
+    characters before its first `c` are all letters, the `c` takes the rest
+    of the word (`-c'<program>'`, `-qc'<program>'`, `-Pc'<program>'`) or,
+    where nothing follows it, the next word (`-c`, `-lc`); a long switch
+    under any prefix of `_CARRIER_COMMAND_LONG` takes the value after `=` or
+    the next word. Every candidate is kept, never the first alone: a valued
+    letter before the `c` (`script -ttrace.log`, `su -stcsh`) makes the rest
+    of its word that letter's value, and which letters take one differs
+    between su's builds (util-linux, busybox, the BSDs), so the reader keeps
+    what the word would hand and reads the next `-c` too; su runs the last
+    of two programs, and both are read. An extra candidate only adds a
+    program to read. A walk over each word, no pattern, so a run of letters
+    of any length costs one pass."""
+    programs: list[str] = []
     for k, word in enumerate(words):
-        name, eq, value = word.partition("=")
-        if eq and name in _CARRIER_COMMAND_LONG:
-            return value
-        glued = _CARRIER_C_GLUED_RE.match(word)
-        if glued and glued.end() < len(word):
-            return word[glued.end():]
-        if word in _CARRIER_COMMAND_LONG or _CARRIER_C_CLUSTER_RE.fullmatch(word):
-            return words[k + 1] if k + 1 < len(words) else ""
-    return ""
+        following = words[k + 1] if k + 1 < len(words) else ""
+        if word.startswith("--"):
+            name, eq, value = word[2:].partition("=")
+            if name and any(long.startswith(name) for long in _CARRIER_COMMAND_LONG):
+                programs.append(value if eq else following)
+        elif word.startswith("-"):
+            at = word.find("c", 1)
+            flags = word[1:at]
+            if at > 0 and (not flags or (flags.isascii() and flags.isalpha())):
+                programs.append(word[at + 1:] or following)
+    return [program for program in programs if program]
+
+
+#: The reader each carrier head takes, keyed by `_verb_key` of the head the
+#: opener read, and indexed, never defaulted (the failure-mode review of
+#: DEF-4061): a head the opener names with no reader here is a KeyError the
+#: guard's crash path refuses, never a fall to the switch reader. Pinned
+#: equal to `_CARRIER_HEAD_RE`'s head group by
+#: tests/test_write_guard.py::TestTheCommandPositionGrammarIsOneAcrossTheCarriers.
+_CARRIER_READERS: dict[str, Callable[[list[str]], list[str]]] = {
+    "eval": _eval_programs, "watch": _watch_programs,
+    "script": _switch_programs, "su": _switch_programs,
+}
 
 
 def _carrier_program_bodies(command: str, scan: str) -> Iterator[str]:
-    """Yield the program each carrier on the Bash tool hands to a shell
-    (DEF-1131): opener on ``scan``, words from the raw ``command`` at the
+    """Yield every program each carrier on the Bash tool hands to a shell
+    (DEF-1131), by the head's reader (`_CARRIER_READERS`): opener on
+    ``scan``, words from the raw ``command`` at the
     same offsets, the length guard of the readers above. The yielded text
     is what the shell receives, so the consumer runs its own masker on it:
     the secret leg reads it with the Bash roster one level down. The
@@ -2587,20 +2637,11 @@ def _carrier_program_bodies(command: str, scan: str) -> Iterator[str]:
     for m in _CARRIER_HEAD_RE.finditer(scan):
         if m.start() < read_to:
             continue
-        head = _verb_key(m.group("head"))
         words, used = _carrier_words(command[m.end():], 0)
         read_to = m.end() + used
-        if head == "eval":
-            program = " ".join(words)
-        elif head == "watch":
-            k = 0
-            while k < len(words) and words[k].startswith("-"):
-                k += 2 if words[k] in _WATCH_VALUE_SWITCHES else 1
-            program = " ".join(words[k:])
-        else:
-            program = _carrier_command_value(words)
-        if program:
-            yield program
+        for program in _CARRIER_READERS[_verb_key(m.group("head"))](words):
+            if program:
+                yield program
 
 
 # Inner write-target patterns per language. Each captures a quoted literal
@@ -13183,7 +13224,8 @@ def _ps_literal_readings(command: str, m: "re.Match[str]", nul: str = " ") -> li
 # openers' one roster (`_PS_REPARSE_OPENER_WORDS`, `_PS_SCRIPTBLOCK_CREATE`)
 # read for the program each one runs. `Invoke-Expression` / `iex` runs its
 # string, `pwsh` / `powershell` the value of `-Command`, `cmd` what follows
-# `/c` or `/k`, `[scriptblock]::Create` its argument, a subexpression
+# `/c`, `/k` or `/r` (`_CMD_PROGRAM_SWITCH_LETTERS`), `[scriptblock]::Create`
+# its argument, a subexpression
 # `$(...)` its own, as an argument or inside an expandable string, and an
 # array subexpression `@(...)` its own outside every string (`$(` alone runs
 # inside one). The operand is a
@@ -14658,7 +14700,7 @@ def _cmd_program_at(text: str, at: int, esc: str | None = None) -> int | None:
     after its ``/c``, ``/k`` or ``/r`` switch (`_CMD_PROGRAM_SWITCH_LETTERS`;
     ``//c`` from Git Bash, glued ``/c"..."`` too), past any other switches
     (``/d``, ``/s``, ``/v:on``).
-    None when it carries neither -- an interactive cmd runs nothing it was
+    None when it carries none of them -- an interactive cmd runs nothing it was
     handed. The one switch walk, for `iter_cmd_programs` (the program
     read of the harness-variable check, DEF-1070, and the delete reader)
     and `start_process_cmd_line`, whose argument list it reads with ``esc``

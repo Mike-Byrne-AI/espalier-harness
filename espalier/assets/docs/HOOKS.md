@@ -2084,11 +2084,16 @@ The two rosters are pinned to
 each other class for class, and a program handed to the other shell
 (`powershell -Command "Get-Content .env"` on Bash, `sh -c 'cat .env'` on
 PowerShell) is read with that shell's roster. A program a carrier runs out
-of a string is read as a program too: Bash `eval` (behind `builtin` too),
-`watch`, `script -c` and `su -c` (su's `--session-command` too, and the
-value glued to a `-c` as one word: `su -c'...'`, `script -qc'...'`);
-PowerShell `Invoke-Expression` / `iex` and `pwsh -Command` (bound by a
-colon too, under any prefix: `iex -Command:'...'`, `pwsh -c:'...'`),
+of a string is read as a program too: Bash `eval` (behind `builtin` and
+`command` too, each quoted or followed by `--`), `watch`, `script -c` and
+`su -c` (su's `--session-command` too, either long switch under any prefix
+getopt_long takes, every `-c` program on the line, and the value glued to a
+`-c` as one word behind flags of either case: `su -c'...'`,
+`script -qc'...'`); PowerShell `Invoke-Expression` / `iex` and
+`pwsh -Command` (bound by a colon too, under any prefix, from either tool:
+`iex -Command:'...'`, `pwsh -c:'...'`; Windows PowerShell 5.1 binds no
+colon but runs the whole word as command text, so a statement after its
+first runs),
 `cmd /c`, `/k` or `/r` (which cmd runs as `/c`; glued to the program or to
 a run of switches too: `cmd /c"..."`, `cmd /s/c"..."`),
 `[scriptblock]::Create`, a `$(...)` subexpression (as an argument or inside
