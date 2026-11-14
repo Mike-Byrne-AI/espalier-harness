@@ -2216,7 +2216,7 @@ check after every shell call (hook 6, `post_write_check.py`) reports a watched
 file that changed when nothing accounts for the change, whatever the command's
 spelling, so a zone write the readers above misread is still caught after the
 fact -- for the zones it watches. It does not watch `cc/` or the two settings
-files (`config_guard` judges those on ConfigChange, for kill-switch and
+files (`config_guard` judges those on ConfigChange, for kill-switch, gate-variable and
 unwiring shapes only), so for a write there the path check above is the one
 live layer. Three jobs cannot move to the after-check at all, because after the
 fact is too late or there is nothing on disk to compare: a catastrophic delete
@@ -2475,6 +2475,57 @@ NEXT session would start without those gates. `config_guard` notes it, and the
 next PostToolUse tells Claude once, with the restore:
 `espalier merge-settings --repair` (or `espalier init .` when the file was
 deleted), then `espalier doctor`.
+
+**The user settings file and a settings `env` map.** Claude Code names a change
+to `~/.claude/settings.json` (or `settings.json` under `CLAUDE_CONFIG_DIR`) by
+its absolute path, with the source `user_settings`; the hook reads that file by
+its source, since no repo-root bound can hold it. Hook lists merge across the
+user, project and local files, so an emptied or no-op hook list there removes
+no project hook and is not judged. `disableAllHooks` and each `env` variable
+take the value of the highest-precedence file that sets it (local, project,
+user). A settings `env` map reaches the hook processes (driven once on Claude
+Code 2.1.319, for a project file: SessionStart and UserPromptSubmit), and a
+user-settings `env` change applies to the running session (the settings
+reference's text, not driven here). So the gate variables -- `ESPALIER_MAINTENANCE_MODE`,
+`ESPALIER_STOP_GATE`, `ESPALIER_STOP_GATE_TEST_CMD`, the roster `write_guard`
+refuses as an in-session assignment -- and the user file's `disableAllHooks`
+are judged in all three files, and the CHANGE is judged, not the files' state:
+SessionStart records the values the three files supply where a process starts
+(`.espalier-state/settings_gate_values.json`, beside the wired-gates snapshot;
+a variable no file sets is kept at its launch value, and one the session runs
+at a value the files do not supply is owned by a source above them, managed
+settings or `--settings`, and never judged), and a change is refused where the
+values after it loosen a gate against that record: the maintenance switch
+turned on, the stop gate moved off `full` (a key deleted or a higher key
+removed over a looser lower one included), the test command changed while the
+stop gate is `full` before the change and after it (with no command in the
+env, Gate 1 runs the declared or detected suite, so one written then replaces
+it; a stop gate a source above the files owns is read at the value the session
+runs; under `light` Gate 1 runs nothing this session, so a command set there,
+or with the gate turned `full` in the same change, is let through, and a later
+session launched `full` runs it), `disableAllHooks` turned on.
+A variable of the roster this check has no rule for is refused on any change,
+until one is written. It is judged
+at the files' layer, so a switch written into the user file by a session whose
+launch already carries it is refused (the file would carry it into every later
+session), and at the session's, so a file value outranking a stricter launch
+value is refused (the test command is judged at the session's layer alone,
+so the command the session already runs, written into a file, is let
+through). A change let through
+becomes the record for the next one. A session with no record (older than this
+hook, or a SessionStart cut short) is judged against the values it runs with:
+a value the files still supply unchanged is a file's, and any other is the
+launch shell's, kept in the record its first let-through writes; with no
+record, a value the change removed from a file reads as the launch shell's,
+so that removal is not judged. The record is
+one per checkout, so a second session started in the same checkout replaces
+the first one's. Each refusal writes
+`configchange_blocked_kill_switch` with `kind: gate_switch` and the file named
+by label (never the home path), and is told once at the next PostToolUse: the
+change was not applied, the file keeps it, and it takes effect at the next
+launch, which the operator decides. A later change let through clears the
+note, and so does a fresh session; SessionStart's banner names the maintenance
+switch it started with, not the other values.
 
 **What you see when blocked:**
 

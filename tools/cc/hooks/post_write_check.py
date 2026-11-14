@@ -1407,15 +1407,20 @@ def _check(data: dict, payloads: list[str], operator: "list[str] | None" = None)
             _hook_utils.advise_exc("post_write_check: zone check failed", e)
 
     # config_guard refused a project settings change that unwires
-    # the gates. That refusal reaches no one (ConfigChange has no channel), so
-    # its note is told here, once, beside the next tool result.
-    try:
-        notice = _integrity.take_unwired_notice(root_for_aj)
-    except Exception as e:  # noqa: BLE001 — advisory; never lose the rest of this hook
-        _hook_utils.advise_exc("post_write_check: settings-unwired notice failed", e)
-        notice = None
-    if notice:
-        _hook_utils.advise(notice)
+    # the gates, or a settings change that switches one off (DEF-3081). That
+    # refusal reaches no one (ConfigChange has no channel), so each note is
+    # told here, once, beside the next tool result.
+    # Each reader is looked up inside its try: under a kept, older _integrity
+    # a missing one costs its own notice, never the rest of this hook.
+    for take, what in (("take_unwired_notice", "settings-unwired"),
+                       ("take_switch_notice", "settings-switch")):
+        try:
+            notice = getattr(_integrity, take)(root_for_aj)
+        except Exception as e:  # noqa: BLE001 — advisory; never lose the rest of this hook
+            _hook_utils.advise_exc(f"post_write_check: {what} notice failed", e)
+            notice = None
+        if notice:
+            _hook_utils.advise(notice)
 
     # Advisory PostToolUse reinject -- delivered next to the tool result, BEFORE
     # the write-only early-return below. The JSON/path validation below keeps
