@@ -19,6 +19,7 @@ from types import ModuleType
 
 import pytest
 
+from tests._first_use_patterns import first_use_patterns
 from tests._guard_fixture import carry_protected_tree
 from tests._hook_assertions import assert_hook_allowed, assert_hook_denied
 from tests._hook_spawn import BUDGET_FALLBACK, BUDGET_REFUSAL, holds_a_budget_refusal, run_hook_through
@@ -1560,7 +1561,7 @@ class TestPowerShellQuotedVerbBehindTheCallOperator:
         "_PS_RUBY_DASH_E_RE": ("ruby", "ruby -e \"File.write('tools/cc/hooks/x.py','x')\""),
         "_PS_PERL_DASH_E_RE": ("perl", "perl -e 'open(F,\">tools/cc/hooks/x.py\")'"),
         "_PS_BASH_DASH_C_RE": ("bash", "bash -c \"echo x > tools/cc/hooks/x.py\""),
-        "_PS_INTERP_STDIN_RE": (
+        "_ps_interp_stdin_re()": (
             "python", "\"open('tools/cc/hooks/x.py','w')\" | python -"),
         # the directory verb (DEF-509): a quoted `& 'Set-Location'` moves the
         # chain exactly as the bare one does
@@ -1596,8 +1597,10 @@ class TestPowerShellQuotedVerbBehindTheCallOperator:
     def test_the_roster_is_the_modules_anchored_arms(self):
         import re
         bp = _bash_patterns_module()
+        # a pattern compiled on first use behind a cache is read through its
+        # accessor, named as its call (DEF-3079's cost: `_ps_interp_stdin_re()`)
         anchored = {
-            name for name, value in vars(bp).items()
+            name for name, value in [*vars(bp).items(), *first_use_patterns(bp).items()]
             if isinstance(value, re.Pattern) and value.pattern.startswith(bp._PS_CMD_POS)
         }
         anchored |= _anchored_records("DANGEROUS_PS_PATTERNS", bp._PS_CMD_POS)
@@ -9397,6 +9400,9 @@ class TestCatastrophicRmFlagOrderIndependent:
             # `_relief_applies` reads the command's text and nothing else: the
             # flag joins the bases beside it, in `_statement_bases`
             "_nested_shell_programs_cached",
+            # `_ps_interp_stdin_re` (DEF-3079's cost) takes no argument and
+            # returns a compiled pattern, as `_carrier_fed_remove_re` does
+            "_ps_interp_stdin_re",
             # `_ps_reparse_answers` (DEF-3039) is keyed on the text, the
             # lookback pattern and its window, and returns, by opener offset,
             # whether a PowerShell literal span is re-parsed as a program --
@@ -9404,6 +9410,9 @@ class TestCatastrophicRmFlagOrderIndependent:
             "_ps_reparse_answers",
             "_relief_applies", "_removed_or_relocated_cached",
             "_resolve_bash_discovered_heads",
+            # `_shell_c_body_open_re` (DEF-3078's cost), like
+            # `_ps_interp_stdin_re` above: no argument, a compiled pattern
+            "_shell_c_body_open_re",
             # `_statement_structure` is keyed on the text and the shell alone
             # and returns the text's quote spans and separator offsets -- a
             # transform the span readers consult, which never reaches a judge
@@ -16670,7 +16679,9 @@ class TestQuotedTargetSurvivesTheRoot:
         "_PS_RUBY_DASH_E_RE": ("PowerShell", f"ruby -e \"File.write('{_TARGET}','x')\""),
         "_PS_PERL_DASH_E_RE": ("PowerShell", f"perl -e \"open(F,'>{_TARGET}')\""),
         "_PS_BASH_DASH_C_RE": ("PowerShell", f"bash -c \"echo x > '{_TARGET}'\""),
-        "_PS_INTERP_STDIN_RE": ("PowerShell", f"@'\nopen('{_TARGET}','w')\n'@ | python -"),
+        "_ps_interp_stdin_re()": ("PowerShell", f"@'\nopen('{_TARGET}','w')\n'@ | python -"),
+        "_carrier_fed_remove_re()": "the rm tier's carrier-fed remove (DEF-3063): a nudge reader of "
+                                    "the emitted word; the zone's piped delete arm is _PIPED_REMOVE_RE",
         "_PS_LINK_LOCATION_RE": "the symlink leg's capture: _PS_NEW_ITEM_RE's fixture drives it",
         "_PS_CARRIER_RE": "the secret leg's carrier opener (DEF-1131); "
                           "no zone deny reads it",
@@ -16763,8 +16774,10 @@ class TestQuotedTargetSurvivesTheRoot:
         # `_CMD_POS_NO_VERB`, which `_CMD_POS` begins with: the Bash
         # discovered-head resolver composes the no-verb anchor alone, and its
         # PowerShell twin composes `_PS_CMD_POS`; one census sees both
+        # the first-use compiles too, named as their accessors' calls (DEF-3063;
+        # DEF-3078/3079's cost)
         anchored = {
-            name for name, value in vars(bp).items()
+            name for name, value in [*vars(bp).items(), *first_use_patterns(bp).items()]
             if isinstance(value, re.Pattern)
             and (bp._CMD_POS_NO_VERB in value.pattern or bp._PS_CMD_POS in value.pattern)
         }

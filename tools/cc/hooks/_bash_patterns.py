@@ -2361,7 +2361,7 @@ _POSIX_SHELL_SWITCH_RUN_AFTER_C = (
 #: where a shell is handed a program (DEF-3078's class): the `-c` opener
 #: below, the masker's exec-opener relief (`_EXEC_OPENER_RE`), which blanks
 #: exactly what the opener reads inside a command that runs no shell, and the
-#: binding pre-pass's child-scope opener (`_SHELL_C_BODY_OPEN_RE`). Each of
+#: binding pre-pass's child-scope opener (`_SHELL_C_BODY_OPEN`). Each of
 #: the two spelled the bare `sh -c` alone until DEF-3078, so `bash -lc`,
 #: `bash +c` and `bash -x -c` opened no child scope and drew no relief. The
 #: one reader left on the bare spelling on purpose is the command position's
@@ -7102,18 +7102,32 @@ _BINDING_SCOPE_CHAR_RE = re.compile(r"[()]")
 #: program leaked into the parent's later reference -- the parent's
 #: `X=/` delete went unread, and a child's `X=tools/cc/hooks` turned the
 #: parent's `rm -rf "$X"` of `build` into a zone delete.
-_SHELL_C_BODY_OPEN_RE = re.compile(
+#: A SOURCE string (DEF-3078's cost, air's redirect D): composed with the
+#: opener's fragment it is the largest compile the lane added, and only a
+#: command holding a live assignment reaches it, so `_shell_c_body_open_re`
+#: compiles it on the first call that passes the quote witness below.
+_SHELL_C_BODY_OPEN = (
     r"\b" + _POSIX_SHELL_C_OPENER + _POSIX_SHELL_SWITCH_RUN_AFTER_C + r"[ \t]*(?P<quote>['\"])"
 )
+
+
+@functools.lru_cache(maxsize=1)
+def _shell_c_body_open_re() -> "re.Pattern[str]":
+    """`_SHELL_C_BODY_OPEN`, compiled once, on first use (DEF-3078)."""
+    return re.compile(_SHELL_C_BODY_OPEN)
 
 
 def _binding_scope_events(command: str, live: str) -> list[tuple[int, bool]]:
     """``(offset, opens)`` for every child scope the binding pre-pass honours
     in ``command`` (``live`` is its masked twin, same length): each live
     paren, and the quoted program of a shell's `-c` from its opening quote to
-    its closing one. An unterminated program opens nothing."""
+    its closing one. An unterminated program opens nothing. The opener ends
+    on a quote it reads from ``live``, so a ``live`` holding none skips its
+    first-use compile."""
     events = [(m.start(), live[m.start()] == "(") for m in _BINDING_SCOPE_CHAR_RE.finditer(live)]
-    for m in _SHELL_C_BODY_OPEN_RE.finditer(live):
+    if "'" not in live and '"' not in live:
+        return events
+    for m in _shell_c_body_open_re().finditer(live):
         quote_at = m.start("quote")
         if command[quote_at] == "'":
             close = command.find("'", quote_at + 1)
@@ -12934,15 +12948,23 @@ _PS_POSIX_STDIN_SWITCH_RUN = (
     + r"(?=[ \t]|$))[^\s\"'\-/+][^\s]*(?=[ \t]|$))?)*"
     r"(?:[ \t]+--(?=[ \t]|$)(?:[ \t]+[^\s;|&)}]+)*)?[ \t]*"
 )
-_PS_INTERP_STDIN_RE = re.compile(
+#: A SOURCE string (DEF-3079's cost, air's redirect D): `_ps_interp_stdin_re`
+#: compiles it on the first PowerShell call whose scan holds a pipe, the one
+#: character every stdin program opens behind (`_ps_stdin_program_spans`).
+_PS_INTERP_STDIN = (
     _PS_CMD_POS + _PS_EXE_PREFIX
     + r"((?:" + _PS_STDIN_OTHER_HEADS + r")|(?P<posix>" + _POSIX_SHELL_HEADS + r"))"
     + r"(?P<suffix>[\w.-]*)" + _QUOTED_VERB_TAIL
     + r"(?:(?=[ \t])(?P<run>(?(posix)" + _PS_POSIX_STDIN_SWITCH_RUN + r"|" + _PS_SWITCH_RUN
     + r"))(?:-[ \t]*)?)?"
-    + r"(?=$|[;|&\n\r)}]|[0-9*]?>|(?<=[ \t])<?#)",
-    re.IGNORECASE,
+    + r"(?=$|[;|&\n\r)}]|[0-9*]?>|(?<=[ \t])<?#)"
 )
+
+
+@functools.lru_cache(maxsize=1)
+def _ps_interp_stdin_re() -> "re.Pattern[str]":
+    """`_PS_INTERP_STDIN`, compiled once, on first use (DEF-3079)."""
+    return re.compile(_PS_INTERP_STDIN, re.IGNORECASE)
 #: A `-File <script>` (or `/f`) switch with a value that is not `-`: the
 #: shell's program is that file, and what is piped to it is data.
 _PS_STDIN_FILE_SWITCH_RE = re.compile(r"[-/]f(?:ile)?[ \t]+[^\s\"'\-/]", re.IGNORECASE)
@@ -13502,11 +13524,15 @@ def _ps_stdin_program_spans(
     stage before the pipe being ``command[start:pipe]`` and ``at`` the head
     word's offset, where a consumer places the program (DEF-2079): the
     directory chain cuts a statement at the pipe, so the pipe itself sits
-    in none."""
+    in none. Every span opens behind a pipe on ``scan``, so a scan holding
+    none returns before the boundaries and the first-use compile: the plain
+    PowerShell call pays one substring test."""
     if len(scan) != len(command):
         scan = command
+    if "|" not in scan:
+        return
     boundaries = [b.start() for b in _PS_STDIN_SEGMENT_BOUNDARY_RE.finditer(scan)]
-    for m in _PS_INTERP_STDIN_RE.finditer(scan):
+    for m in _ps_interp_stdin_re().finditer(scan):
         pipe = m.start()
         if scan[pipe] == "&":
             pipe -= 1

@@ -28,6 +28,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._first_use_patterns import first_use_patterns
 from tests._spaced_paths import PS, fill, quoted
 
 HOOKS_DIR = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
@@ -3455,14 +3456,14 @@ class TestCommandPositionClassClose:
         "_bash_patterns._PS_STDIN_POSIX_HINT_RE":
             "GATE -- a POSIX shell's name as a word, searched only to skip the "
             "piped-stdin reader's pass on a command naming none; the anchored "
-            "`_PS_INTERP_STDIN_RE` decides the command (DEF-3075).",
+            "`_ps_interp_stdin_re()` decides the command (DEF-3075).",
         "_bash_patterns._PS_STDIN_FILE_SWITCH_RE":
             "FLAG -- `-File <script>` inside the switch run an anchored "
-            "`_PS_INTERP_STDIN_RE` match captured; the consumer drops the match "
+            "`_ps_interp_stdin_re()` match captured; the consumer drops the match "
             "because the file, not the pipe, is the program (DEF-712).",
         "_bash_patterns._PS_PROGRAM_STRING_RE":
             "TOKENIZER -- one PowerShell string literal, read out of the statement "
-            "segment an anchored `_PS_INTERP_STDIN_RE` match selected (the last "
+            "segment an anchored `_ps_interp_stdin_re()` match selected (the last "
             "literal before the pipe is the piped program); never sees a command "
             "position (DEF-712).",
         "_bash_patterns._PS_HERE_STRING_RE":
@@ -3670,7 +3671,7 @@ class TestCommandPositionClassClose:
             "SYNTAX -- a paren that opens or closes a child scope (a subshell, a "
             "command substitution), read on the masked text, where a binding "
             "made inside it ENDS; it decides no verdict.",
-        "_bash_patterns._SHELL_C_BODY_OPEN_RE":
+        "_bash_patterns._shell_c_body_open_re()":
             "OPENER -- the quote of a program a POSIX shell's `c` cluster of "
             "either sign receives behind its switch run (the `-c` opener's "
             "fragment, DEF-3078), read on the masked text only to END the "
@@ -3755,7 +3756,10 @@ class TestCommandPositionClassClose:
         write_guard._load_the_pattern_path()
         seen, found = set(), {}
         for mod in (_bash_patterns, _speedbump, write_guard):
-            for name, obj in vars(mod).items():
+            # a pattern compiled on first use behind a cache is no module
+            # attribute: read through its accessor, named as its call
+            # (DEF-3063; DEF-3078/3079's cost moved two more there)
+            for name, obj in [*vars(mod).items(), *first_use_patterns(mod).items()]:
                 if not isinstance(obj, _re.Pattern) or id(obj) in seen:
                     continue
                 seen.add(id(obj))
@@ -4384,7 +4388,8 @@ class TestCommandPositionClassClose:
         verb_re = _re.compile(r"\b(?:" + "|".join(cls._COMMAND_VERBS) + r")\b")
         found = {}
         for mod in (_speedbump, _bash_patterns, write_guard):
-            for name, obj in vars(mod).items():
+            # the first-use compiles too, named as their accessors' calls
+            for name, obj in [*vars(mod).items(), *first_use_patterns(mod).items()]:
                 if not isinstance(obj, _re.Pattern):
                     continue
                 if not verb_re.search(obj.pattern.replace("\\b", " ")):
