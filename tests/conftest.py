@@ -941,6 +941,10 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             "test_write_guard_command_position",
             "test_write_guard_env_prefix_polarity",
             "test_write_guard_long_flags",
+            # A program piped into a PowerShell shell meets its direct form's
+            # tiers (DEF-2079): drives the wall, the zone and secret checks
+            # and the speed bump's predicates in-process.
+            "test_write_guard_piped_pwsh",
             # How a removal's root is read on the Windows-facing tools (a
             # PowerShell group's closer, a drive path bound or judged by
             # depth): drives the wall, the zone deny and the nudge in-process.
