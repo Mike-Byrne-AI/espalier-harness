@@ -840,6 +840,14 @@ _PS_VERB_EXTRACTION_REGEXES = [
     # on a call operator after the pipe; each on its repeated seed.
     ("ps_interp_stdin_redirect", _PS_INTERP_STDIN_RE, "| bash 2>&1 "),
     ("ps_interp_stdin_call_operator", _PS_INTERP_STDIN_RE, "| & bash "),
+    # DEF-3079: a POSIX shell head's own run -- `+` switches with a value,
+    # the bare `+`, and the words after a `--` -- on its repeated pipe
+    ("ps_interp_stdin_plus_switches", _PS_INTERP_STDIN_RE, "| bash +x +o y"),
+    ("ps_interp_stdin_bare_plus", _PS_INTERP_STDIN_RE, "| bash + -x"),
+    ("ps_interp_stdin_dashdash_words", _PS_INTERP_STDIN_RE, "| sh -s -- a"),
+    # the review batch: a POSIX switch is blank-separated, so a glued run is
+    # one word (the shared run's optional blank gave it 2^n splits)
+    ("ps_interp_stdin_glued_switches", _PS_INTERP_STDIN_RE, "| bash -a-a+a-a"),
     ("ps_python_switch_values", _PS_PYTHON_DASH_C_RE, "python -W ignore"),
     # DEF-637 (§C49), registered the day they landed: the cross-shell openers
     # on their repeated heads and repeated switch runs, and the two coverage
@@ -981,6 +989,15 @@ _C52_BASH_ROWS = [
     ("shell_dash_c_long_option", _bash_patterns._SHELL_DASH_C_RE, "bash --norc"),
     ("shell_dash_c_long_option_valued", _bash_patterns._SHELL_DASH_C_RE, "bash --rcfile x"),
     ("shell_dash_cx_cluster", _bash_patterns._SHELL_DASH_C_RE, "bash -cx"),
+    # DEF-3078: the opener also starts at a word boundary, so every head is
+    # a start -- behind a launcher, behind a plain word with switches and a
+    # valued `+` option -- and the masker's relief and the binding
+    # pre-pass's child-scope opener compose the same fragment, each on its
+    # repeated seed through the entry point
+    ("shell_dash_c_after_a_launcher", _bash_patterns._SHELL_DASH_C_RE, "find . -exec bash -lc"),
+    ("shell_dash_c_boundary_switches", _bash_patterns._SHELL_DASH_C_RE, "x bash +o y -x"),
+    ("exec_opener_mention_switches", _bash_patterns._EXEC_OPENER_RE, "echo bash -x +lc"),
+    ("child_scope_opener_switches", _bash_patterns._SHELL_C_BODY_OPEN_RE, "X=1; bash -x -lc --"),
     ("git_clean", _bash_patterns._GIT_CLEAN_RE, "git clean"),
     # the here-string opener shares the switch run: its first unbounded form
     # read a shell head word as a switch value and was quadratic on a repeated
@@ -3216,6 +3233,13 @@ def test_posix_shell_switch_run_linear_on_one_head(label, seed, tail):
         _bash_patterns._SHELL_DASH_C_RE.findall(payload)
         _bash_patterns._SHELL_HERESTRING_RE.findall(payload)
         _bash_patterns._PS_BASH_DASH_C_RE.findall(payload)
+        # DEF-3078: the two readers that compose the opener's fragment, and
+        # the masker, which runs the relief over a command that runs no shell
+        _bash_patterns._EXEC_OPENER_RE.findall(payload)
+        _bash_patterns._SHELL_C_BODY_OPEN_RE.findall(payload)
+        _bash_patterns.mask_inert_syntax("echo " + payload)
+        # DEF-3079: the PowerShell stdin opener's POSIX run behind a pipe
+        _bash_patterns._PS_INTERP_STDIN_RE.findall("x | " + payload)
         # DEF-3072: the wall's pipe reader behind a pipe lead, and the two
         # bump arms that read a shell's switches
         _bash_patterns._INTERP_PIPE_RE.findall("x | " + payload)
@@ -3315,6 +3339,15 @@ _SWITCH_REDIRECT_ROWS = [
     # the unit offered twice, in the run after `--` and the fetch bump's
     # eval and python arms:
     ("shell-after-dashdash-redirects", "bp", "_SHELL_DASH_C_RE", _redirect_flood("2>1 ", "bash -c -- ", "<")),
+    # DEF-3078: the masker's relief and the binding pre-pass's child-scope
+    # opener compose the opener's fragment, so its switch run, and the scope
+    # opener the run after the cluster too
+    ("exec-opener-dash-targets", "bp", "_EXEC_OPENER_RE", _redirect_flood("> -x ", "bash ", "<")),
+    ("child-scope-dash-targets", "bp", "_SHELL_C_BODY_OPEN_RE", _redirect_flood("> -x ", "bash ", "<")),
+    ("child-scope-after-c-dash-targets", "bp", "_SHELL_C_BODY_OPEN_RE",
+     _redirect_flood("> -x ", "bash -c ", "<")),
+    ("child-scope-after-dashdash-redirects", "bp", "_SHELL_C_BODY_OPEN_RE",
+     _redirect_flood("2>1 ", "bash -c -- ", "<")),
     ("eval-arm-redirects", "sb", "_FETCH_EXEC_SUBST_RE", _redirect_flood(">o 2>&1 ", "eval ", "x")),
     ("python-arm-before-c", "sb", "_FETCH_EXEC_SUBST_RE", _redirect_flood(">o 2>&1 ", "python3 ", "x")),
     ("python-arm-after-c", "sb", "_FETCH_EXEC_SUBST_RE", _redirect_flood(">| ", "python3 -c ", "x")),

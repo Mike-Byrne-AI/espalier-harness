@@ -3100,15 +3100,17 @@ class TestCommandPositionClassClose:
             "FLAG -- a POSIX shell's `c` cluster of either sign (`+c`, `-cx`), "
             "fullmatched against one argv word of a shell an anchored "
             "`_PS_START_PROCESS_OPENER_RE` match starts (DEF-3074).",
-        # ── DEF-3068: whether a `-c` program an anchored
-        # `_SHELL_DASH_C_RE` match read is read in place by the outer scan ──
+        # ── DEF-3068: whether a `-c` program a `_SHELL_DASH_C_RE` match read
+        # (at a command position, or at a word start since DEF-3078) is read
+        # in place by the outer scan ──
         "_bash_patterns._EXEC_QUOTE_AT_WORD_RE":
-            "CLASSIFIER -- searched between an anchored `_SHELL_DASH_C_RE` "
-            "match's start and its program word, to ask whether the exec quote "
+            "CLASSIFIER -- searched before the program word of a "
+            "`_SHELL_DASH_C_RE` match (a command position's, or a word "
+            "start's since DEF-3078), to ask whether the exec quote "
             "ends at the word; it opens nothing and decides only which reader "
             "takes the program (DEF-3068).",
         "_bash_patterns._PROGRAM_OPENS_ON_PREFIX_RE":
-            "CLASSIFIER -- matched at the start of one program word an anchored "
+            "CLASSIFIER -- matched at the start of one program word a "
             "`_SHELL_DASH_C_RE` match read, to ask whether it opens on a "
             "wrapper, assignment, keyword, `!` or redirect; it decides only which "
             "reader takes the program (DEF-3068).",
@@ -3669,9 +3671,11 @@ class TestCommandPositionClassClose:
             "command substitution), read on the masked text, where a binding "
             "made inside it ENDS; it decides no verdict.",
         "_bash_patterns._SHELL_C_BODY_OPEN_RE":
-            "OPENER -- the quote of a program a POSIX shell's -c receives, read "
-            "on the masked text only to END the bindings made inside it (a child "
-            "shell); the program itself is judged by the anchored arms.",
+            "OPENER -- the quote of a program a POSIX shell's `c` cluster of "
+            "either sign receives behind its switch run (the `-c` opener's "
+            "fragment, DEF-3078), read on the masked text only to END the "
+            "bindings made inside it (a child shell); the program itself is "
+            "judged by the readers.",
         "_bash_patterns._PS_VAR_ASSIGN_RE":
             "SELF-ANCHORED -- inline `(?:^|[;\\r\\n{]|&&|\\|\\|)`: the PowerShell twin "
             "of `_VAR_ASSIGN_RE`, and the literal (or a temp or home variable's "
@@ -3706,7 +3710,9 @@ class TestCommandPositionClassClose:
             "MASKED -- `cat > X <<`; reads `scan`, so a quoted/comment mention "
             "loses its `>` and `<<` to `mask_inert_syntax`. Driven allow.",
         "_bash_patterns._EXEC_OPENER_RE":
-            "MASKED -- `eval`/`sh -c`; reached only past the head-roster gate, "
+            "MASKED -- `eval`, and a POSIX shell's head where its switch run "
+            "and a `c` cluster follow (the `-c` opener's fragment, DEF-3078); "
+            "reached only past the head-roster gate, "
             "and none of those verbs is in `_NON_REPARSING_HEADS`. Driven allow.",
         "_bash_patterns._PS_REPARSED_SPAN_BEFORE":
             "MASK-DECISION -- `$`-anchored and applied BACKWARDS to `s[:opener]`, "

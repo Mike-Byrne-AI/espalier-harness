@@ -691,7 +691,10 @@ class TestMaskControlsAndFailClosed:
         it reds, quote-splice coverage is already gone whether or not
         :class:`TestQuoteSpliceClassesStillDeny` has noticed yet.
 
-        The ONE sanctioned exception is an exec opener (`eval`, `sh -c`) inside
+        The ONE sanctioned exception is an exec opener (`eval`, or a POSIX
+        shell's head where a switch run and a `c` cluster follow it, the head
+        alone since DEF-3078's review: a redirect in that run is the command's
+        own and stays) inside
         a span already proven inert -- `_EXEC_OPENER_RE`'s own note calls it
         the one place the pass touches token content, and 447-A step 2 applies
         it inside a per-statement safe span as well. A changed character

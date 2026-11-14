@@ -1662,9 +1662,19 @@ _FETCH_EXEC_PROCSUB_RE = re.compile(
 # no nudge behind any switch. It inherits the wall's limits with the run: a
 # switch value that is a shell's path, or holds `~` or `:` (`--rcfile ~/.r`),
 # ends the run, and a cluster past eight letters a side is not one. python
-# keeps its cluster.
+# keeps its cluster. A shell head also opens the arm at the start of a word
+# (DEF-3078), as it opens the wall's `-c` opener: a shell a launcher starts
+# without opening a command position (`find . -exec bash +c "$(curl ...)"`,
+# `fd -x`, `parallel -j4`) ran the fetch with no nudge, in the bare `-c`
+# spelling as in every other (the code review, driven at the base: the
+# exec quote opens a command position at the substitution, and no arm reads
+# a fetch's output there). The lookahead holds the word-start arm to the
+# shell heads, so `eval` and python keep the command position alone. The
+# heads are `_FETCH_SHELL`'s, a hand spelling pinned to the wall's
+# `_POSIX_SHELL_HEADS` by
+# `tests/test_write_guard.py::TestAShellsSwitchRunIsReadWhereverItsBareDashCIs`.
 _FETCH_EXEC_SUBST_RE = re.compile(
-    _bash_patterns._CMD_POS
+    r"(?:" + _bash_patterns._CMD_POS + r"|(?<![\w.-])(?=" + _FETCH_SHELL + r"))"
     # either head in quotes closes its quote before the space (DEF-5080)
     # a redirect word after eval or around python's cluster (DEF-3077,
     # site 4); the shell arm has it through the shared runs
