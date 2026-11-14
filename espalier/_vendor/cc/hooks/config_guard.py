@@ -16,8 +16,9 @@ mid-session, and refusing the change keeps them (``_unwiring_findings``). Its
 third: a change to any of the three settings files that switches a gate off
 beyond the kill-switch shapes -- ``disableAllHooks`` written to the user file,
 which Claude Code names by a path outside the repo, or a gate variable in a
-settings ``env`` map, which reaches every hook process -- is refused the same
-way and told at the next PostToolUse (``_gate_switch_findings``, DEF-3081). It is
+settings ``env`` map, which reaches the hook processes -- judged against the
+values SessionStart recorded, is refused the same way and told at the next
+PostToolUse (``_judge_gate_switch``, DEF-3081). It is
 the ConfigChange twin
 of write_guard's anti-self-disable protected-zone block: together they keep
 the hooks from being trivially silenced mid-session, so the path of least
@@ -174,170 +175,148 @@ def _unwiring_findings(root: Path) -> list[str]:
     ]
 
 
-#: The variables that switch a gate when set: write_guard's harness roster
-#: (``write_guard._HARNESS_ENV_NAMES``, which refuses an in-session assignment
-#: of each; tests/test_hook_constant_parity.py pins the two equal). The stop
-#: gate's two are literals for write_guard's reason (that roster's comment).
-_GATE_ENV_NAMES: tuple[str, ...] = (
-    _maintenance_mode.ENV_VAR,
-    "ESPALIER_STOP_GATE",
-    "ESPALIER_STOP_GATE_TEST_CMD",
-)
+#: The variables that switch a gate when set: ``_integrity``'s roster, which
+#: tests/test_hook_constant_parity.py pins equal to write_guard's
+#: ``_HARNESS_ENV_NAMES`` (the roster an in-session assignment may not set).
+_GATE_ENV_NAMES: tuple[str, ...] = _integrity.SETTINGS_GATE_ENV_NAMES
 _USER_SOURCE = "user_settings"
-#: The two project files, highest precedence first: Claude Code reads
-#: ``disableAllHooks`` and each ``env`` variable from the highest-precedence
-#: file that sets it -- local, then project, then user (the settings reference).
-_PROJECT_FILES = (
-    ("local_settings", ".claude/settings.local.json"),
-    ("project_settings", _integrity.PROJECT_SETTINGS_REL),
-)
+_SOURCE_RANK = {"local_settings": 0, "project_settings": 1, _USER_SOURCE: 2}
 
 
-def _user_settings_label() -> str:
-    """How a finding names the user settings file: never by its absolute path,
-    so the audit log carries no home directory. ``CLAUDE_CONFIG_DIR`` moves the
-    file (the settings reference), and a hook inherits it from the session."""
-    if os.environ.get("CLAUDE_CONFIG_DIR", "").strip():
-        return "$CLAUDE_CONFIG_DIR/settings.json"
-    return "~/.claude/settings.json"
+def _changed_settings_label(file_path: str | None, source: str, root: Path) -> str | None:
+    """The label of the settings file Claude Code says changed, or None for a
+    change no settings file of the three is (a skill, managed policy, a path
+    elsewhere).
 
-
-def _user_settings_path() -> Path:
-    config_dir = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
-    return (Path(config_dir).expanduser() if config_dir else Path.home() / ".claude") / "settings.json"
-
-
-def _changed_settings(file_path: str | None, source: str, root: Path) -> tuple[int, str, Path] | None:
-    """The settings file Claude Code says changed, as (its rank among the
-    three, highest precedence 0; its label; its path), or None for a change no
-    settings file of the three is (a skill, managed policy, a path elsewhere).
-
-    The user file is named by the source: Claude Code gives its absolute path
-    (``source: user_settings``, the hooks reference), which no root bound can
-    hold, so the path is taken as given where it names a ``settings.json``, and
-    looked up where the payload has none. A project file is matched by
-    location inside the root, as ``_names_project_settings`` matches it, so a
-    path outside the tree opens nothing."""
-    if source == _USER_SOURCE:
-        if file_path and Path(file_path).name != "settings.json":
-            return None
-        return len(_PROJECT_FILES), _user_settings_label(), Path(file_path) if file_path else _user_settings_path()
-    for rank, (name, rel) in enumerate(_PROJECT_FILES):
-        if file_path:
-            path = Path(file_path)
-            if not path.is_absolute():
-                path = root / path
-            if path.parent.resolve() / path.name == (root / rel).parent.resolve() / Path(rel).name:
-                return rank, rel, root / rel
-        elif source == name:
-            return rank, rel, root / rel
+    The user file is named by its source or its location: Claude Code gives
+    its absolute path (``source: user_settings``, the hooks reference), which
+    no root bound can hold. A project file is matched by location (the
+    directory resolved, as ``_names_project_settings`` matches it), so a path
+    elsewhere opens nothing. With no path, the source names the file. Raises
+    OSError or RuntimeError where a path cannot be resolved or no home found."""
+    files = _integrity.settings_files(root)
+    if not file_path:
+        rank = _SOURCE_RANK.get(source)
+        return None if rank is None else files[rank][0]
+    path = Path(file_path)
+    if not path.is_absolute():
+        path = root / path
+    if source == _USER_SOURCE and path.name == "settings.json":
+        return files[_SOURCE_RANK[_USER_SOURCE]][0]
+    where = path.parent.resolve() / path.name
+    for label, candidate in files:
+        if where == candidate.parent.resolve() / candidate.name:
+            return label
     return None
 
 
-def _read_settings(path: Path) -> object:
-    """The file's JSON, or None where it is absent or cannot be read."""
-    try:
-        return json.loads(decode_bom(path.read_bytes()))
-    except FileNotFoundError:  # fail-open: ok deliberate -- an absent file sets nothing
-        return None
-
-
-def _read_higher(path: Path) -> object:
-    """A higher-precedence file's JSON, or None: one that cannot be read is
-    taken to set nothing, so the changed file's value is judged (the refusal
-    side); ``_scan_payload`` says an unreadable project file once already."""
-    try:
-        return _read_settings(path)
-    except (OSError, ValueError):  # fail-open: ok deliberate -- an unreadable higher file overrides nothing; the changed file is still judged
-        return None
-
-
-def _env_text(value: object) -> str | None:
-    """An ``env`` value as the string a subprocess receives; None for a value
-    that is not a string or a number."""
-    if isinstance(value, str):
-        return value
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return str(value)
-    return None
-
-
-def _loosens(name: str, value: str, live: str | None) -> bool:
-    """``value`` would loosen the gate ``name`` switches, against the value
-    this hook process runs with (``live``), each read by its gate's own
-    grammar: the maintenance switch turned on, the stop gate moved off
-    ``full`` (``light`` is the default floor, so turning it on tightens), and
-    the suite command the stop gate runs replaced at all, as write_guard
-    refuses every in-session assignment of it."""
+def _loosens(name: str, before: str | None, after: str | None, mode: str) -> bool:
+    """``after`` loosens the gate ``name`` switches against ``before``, each
+    read by its gate's own grammar (None is unset): the maintenance switch
+    turned on; the stop gate moved off ``full`` (``light`` is the default
+    floor, so turning it on tightens); the suite command changed where Gate 1
+    runs one -- the stop gate full (``mode``) and a command already in effect.
+    Under light the gate runs nothing, and a full gate with none is the
+    SessionStart dormancy note's advice to set one: both are tightenings."""
     if name == _maintenance_mode.ENV_VAR:
         active = _maintenance_mode._maintenance_mode_active
-        return active(value) and not active(live)
+        return active(after) and not active(before)
     if name == "ESPALIER_STOP_GATE":
         full = "full"
-        return _hook_utils.stop_gate_mode(live) == full and _hook_utils.stop_gate_mode(value) != full
-    return value != (live or "")
+        return _hook_utils.stop_gate_mode(before) == full and _hook_utils.stop_gate_mode(after) != full
+    return mode == "full" and bool((before or "").strip()) and (after or "") != before
 
 
-def _gate_switch_findings(file_path: str | None, source: str, root: Path) -> list[str]:
-    """The findings for a change to one of the three settings files that
-    switches a gate off (DEF-3081), naming only what the CHANGED file
-    supplies: ``disableAllHooks: true`` from the user file, and a gate
-    variable in any file's ``env`` map that loosens its gate.
+def _judge_gate_switch(file_path: str | None, source: str,
+                       root: Path) -> tuple[list[str], dict | None, str | None]:
+    """(the findings for a change to one of the three settings files that
+    switches a gate off, the snapshot to record if it is let through, the
+    changed file's label) -- ``([], None, None)`` for a change no settings
+    file is (DEF-3081).
 
     Why apart from ``_scan_payload``: hook lists merge across the files (the
     hooks reference), so an emptied hook list in the user file removes no
     project hook and ``_find_kill_switches``' hook arms would be false findings
-    there; and no reader judged an ``env`` map, though one reaches every hook
-    process (driven 2026-11-14) and a user-settings ``env`` change is applied
-    to the running session (the settings reference).
+    there; and no reader judged an ``env`` map, though one reaches the hook
+    processes and a user-settings ``env`` change is applied to the running
+    session (the settings reference).
 
-    A value a higher-precedence file sets for the same key is not this file's
-    to supply, and a gate variable is judged against this hook process's own
-    value, so a switch already in effect when the session started (the
-    operator's launch) refuses nothing. Raises nothing: a path or file it
-    cannot read judges nothing, said once for the user file (a project file's
-    unreadable read is ``_scan_payload``'s to say)."""
+    A CHANGE is judged, not the files' state: the values the three files
+    supply after it (each key from the highest-precedence file that sets it)
+    are compared with SessionStart's snapshot (``_integrity.SETTINGS_GATES_SNAPSHOT``),
+    at two layers. The files' layer catches a switch written for every later
+    session, even where this session's launch already carries it; the
+    session's layer reads a variable no file sets as the launch environment's
+    value, so a file value that outranks a stricter launch value is caught. A
+    variable a source above the three files owns is not the change's to move.
+    No snapshot (a session older than this hook, or a SessionStart cut short)
+    takes the values this process runs with as the start. Raises nothing: a
+    file it cannot locate judges nothing, said once."""
     try:
-        changed = _changed_settings(file_path, source, root)
-        if changed is None:
-            return []
-        rank, label, path = changed
-        data = _read_settings(path)
-        higher = [_read_higher(root / rel) for _name, rel in _PROJECT_FILES[:rank]]
+        label = _changed_settings_label(file_path, source, root)
+        if label is None:
+            return [], None, None
+        after_values = _integrity.effective_settings_values(root)
     except (OSError, RuntimeError, ValueError) as exc:
-        if source == _USER_SOURCE:
-            _hook_utils.say_once(
-                root, "user-settings-unreadable", "config_guard", "configchange_failed_open_user_settings_read",
-                f"the user settings file could not be read or parsed ({type(exc).__name__}); "
-                "its gate-switch check is skipped",
-                fault=type(exc).__name__,
-            )
-        return []
-    if not isinstance(data, dict):
-        return []
-    higher_dicts = [d for d in higher if isinstance(d, dict)]
+        _hook_utils.say_once(
+            root, "settings-gate-unreadable", "config_guard", "configchange_failed_open_settings_read",
+            f"a settings file could not be located or read ({type(exc).__name__}); "
+            "the gate-switch check is skipped",
+            fault=type(exc).__name__,
+        )
+        return [], None, None
+    snapshot = _integrity.read_settings_gate_values(root)
+    if snapshot is None:
+        before: dict = {"env." + n: os.environ[n] for n in _GATE_ENV_NAMES if n in os.environ}
+        launch: dict = {}
+        owned: list = []
+    else:
+        before, launch, owned = snapshot["files"], snapshot["launch"], snapshot["owned"]
+    after = {key: value for key, (value, _label) in after_values.items()}
 
-    def set_above(key: str, env_name: str | None = None) -> bool:
-        for d in higher_dicts:
-            holder = d.get("env") if env_name else d
-            if isinstance(holder, dict) and (env_name or key) in holder:
-                return True
-        return False
+    def text(values: dict, key: str) -> str | None:
+        value = values.get(key)
+        return value if isinstance(value, str) else None
+
+    def session(values: dict, name: str) -> str | None:
+        key = "env." + name
+        return text(values, key) if key in values else text(launch, name)
 
     findings: list[str] = []
-    if rank == len(_PROJECT_FILES) and data.get("disableAllHooks") is True and not set_above("disableAllHooks"):
-        findings.append(f"{label}: disableAllHooks: true")
-    env = data.get("env")
-    if isinstance(env, dict):
-        for name in _GATE_ENV_NAMES:
-            value = _env_text(env.get(name))
-            if value is None or set_above("env", name):
-                continue
-            live = os.environ.get(name)
-            if _loosens(name, value, live):
-                now = json.dumps(live[:80]) if live is not None else "unset"
-                findings.append(f"{label}: env.{name}: {json.dumps(value[:80])} (this session: {now})")
-    return findings
+    dah = _integrity.DISABLE_ALL_HOOKS
+    if after.get(dah) is True and before.get(dah) is not True:
+        findings.append(f"{after_values[dah][1]}: disableAllHooks: true")
+    mode = _hook_utils.stop_gate_mode(session(after, "ESPALIER_STOP_GATE"))
+    for name in _GATE_ENV_NAMES:
+        if name in owned:
+            continue
+        key = "env." + name
+        if not (_loosens(name, text(before, key), text(after, key), mode)
+                or _loosens(name, session(before, name), session(after, name), mode)):
+            continue
+        where = after_values[key][1] if key in after_values else f"{label} (removed)"
+        now, was = text(after, key), session(before, name)
+        findings.append(
+            f"{where}: env.{name}: {json.dumps(now[:80]) if now is not None else 'unset'} "
+            f"(the session runs {json.dumps(was[:80]) if was is not None else 'unset'})"
+        )
+    return findings, {"files": after, "launch": launch, "owned": owned}, label
+
+
+def _accept_gate_values(root: Path, record: dict) -> None:
+    """A settings change let through: Claude Code now runs the changed files,
+    so their values are the start for the next change, and a refused switch
+    noted earlier is no longer in them (each judgment reads every file)."""
+    try:
+        _integrity.write_settings_gate_values(root, record)
+        _integrity.clear_switch_pending(root)
+    except OSError as exc:
+        _hook_utils.say_once(
+            root, "settings-gate-snapshot-write", "config_guard", "configchange_failed_open_snapshot_write",
+            f"the settings gate snapshot could not be written ({type(exc).__name__}); "
+            "the next settings change is judged against the older one",
+            fault=type(exc).__name__,
+        )
 
 
 def _scan_payload(file_path: str | None, root: Path) -> list[str]:
@@ -351,7 +330,7 @@ def _scan_payload(file_path: str | None, root: Path) -> list[str]:
     ``root`` via ``relative_to``. A traversal payload (``../../etc/passwd``)
     is dropped here so the scanner never opens files outside the repo. The
     user settings file, which Claude Code names by its absolute path, is
-    therefore not read here: ``_gate_switch_findings`` reads it by its
+    therefore not read here: ``_judge_gate_switch`` reads it by its
     source, since only ``disableAllHooks`` among these shapes switches
     anything off from that file (hook lists merge across the files).
     """
@@ -477,13 +456,17 @@ def _run_main() -> int:
     say_bad_stdin(root, "config_guard", "configchange_failed_open_bad_stdin", data)
 
     findings = _scan_payload(file_path, root)
-    # The gate switches a settings file can carry beyond the kill-switch scan
+    # The gate switches a settings change can make beyond the kill-switch scan
     # (DEF-3081): the user file's disableAllHooks, and a gate variable in any
-    # file's env map. Refused like a kill-switch, and noted for the next
-    # PostToolUse, since nothing else tells Claude the file still holds it.
+    # file's env map, judged against SessionStart's snapshot. Refused like a
+    # kill-switch, and noted for the next PostToolUse, since nothing else
+    # tells Claude the file still holds it.
     switched: list[str] = []
+    accepted: dict | None = None
+    changed_label: str | None = None
     if not findings and source not in AUDIT_ONLY_SOURCES:
-        switched = findings = _gate_switch_findings(file_path, source, root)
+        switched, accepted, changed_label = _judge_gate_switch(file_path, source, root)
+        findings = switched
 
     # Judged apart from the kill-switch scan (which refuses the
     # change on its own when it finds one): its own record, its own restore.
@@ -501,6 +484,8 @@ def _run_main() -> int:
             return block(_denial_reasons.GOVERNANCE_GATES_UNWIRED.format(findings=unwired))
 
     if not findings:
+        if accepted is not None:
+            _accept_gate_values(root, accepted)
         return 0
 
     # BLOCKING_SOURCES and AUDIT_ONLY_SOURCES are disjoint, so a
@@ -519,7 +504,11 @@ def _run_main() -> int:
             {"event_type": audit_event,
              "details": {
                  "source": source,
-                 "file_path": file_path,
+                 # A gate switch can name the user file, whose payload path
+                 # carries the home directory: its findings name each file by
+                 # label, and so does this field.
+                 "file_path": changed_label if switched else file_path,
+                 "kind": "gate_switch" if switched else "kill_switch",
                  "findings": findings,
              }},
         )
@@ -543,7 +532,15 @@ def _run_main() -> int:
         return 0
 
     if switched:
-        _integrity.record_switch_pending(root, switched)
+        try:
+            _integrity.record_switch_pending(root, switched)
+        except OSError as exc:
+            _hook_utils.say_once(
+                root, "settings-switch-note-write", "config_guard", "configchange_failed_open_switch_note",
+                f"the refused gate switch could not be noted ({type(exc).__name__}); "
+                "the next tool result will not tell it",
+                fault=type(exc).__name__,
+            )
     return block(_denial_reasons.KILL_SWITCH_DETECTED.format(
         context=f" in {source or 'settings'} change",
         findings=findings,

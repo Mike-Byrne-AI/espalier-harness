@@ -1410,10 +1410,12 @@ def _check(data: dict, payloads: list[str], operator: "list[str] | None" = None)
     # the gates, or a settings change that switches one off (DEF-3081). That
     # refusal reaches no one (ConfigChange has no channel), so each note is
     # told here, once, beside the next tool result.
-    for take, what in ((_integrity.take_unwired_notice, "settings-unwired"),
-                       (_integrity.take_switch_notice, "settings-switch")):
+    # Each reader is looked up inside its try: under a kept, older _integrity
+    # a missing one costs its own notice, never the rest of this hook.
+    for take, what in (("take_unwired_notice", "settings-unwired"),
+                       ("take_switch_notice", "settings-switch")):
         try:
-            notice = take(root_for_aj)
+            notice = getattr(_integrity, take)(root_for_aj)
         except Exception as e:  # noqa: BLE001 — advisory; never lose the rest of this hook
             _hook_utils.advise_exc(f"post_write_check: {what} notice failed", e)
             notice = None

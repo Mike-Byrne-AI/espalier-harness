@@ -1395,18 +1395,164 @@ def take_unwired_notice(repo_root: Path) -> str | None:
     )
 
 
-#: A refused change that would switch a gate off (DEF-3081): config_guard's
-#: ``_gate_switch_findings`` -- ``disableAllHooks`` the user settings file
-#: supplies, or a gate variable a settings ``env`` map loosens. Nothing else
-#: tells Claude: the ConfigChange refusal reaches no one, the file keeps the
-#: change, and write_guard's kill-switch gate reads the two project files only.
-#: Told at the next PostToolUse, as the unwired refusal is, and dropped where a
-#: fresh process loads the files again (SessionStart, which names the posture).
+# ── Settings gate values (DEF-3081) ─────────────────────────────────────────
+#
+# A settings file can switch a gate off beyond the kill-switch shapes:
+# ``disableAllHooks`` in the user file, which Claude Code names by a path
+# outside the repo, and a gate variable in any file's ``env`` map, which
+# reaches the hook processes (driven 2026-11-14: SessionStart and
+# UserPromptSubmit, one run). config_guard judges a CHANGE to one, as it judges
+# an unwiring change against WIRED_GATES_SNAPSHOT: SessionStart records the
+# values the three files supply where a process loads them, and config_guard
+# compares the values after a change with that record, rewriting it when it
+# lets a change through, since Claude Code then runs the changed files.
+
+SETTINGS_GATES_SNAPSHOT = (_hook_utils.STATE_DIR, "settings_gate_values.json")
+LOCAL_SETTINGS_REL = ".claude/settings.local.json"
+DISABLE_ALL_HOOKS = "disableAllHooks"
+#: The variables that switch a gate when set: write_guard's harness roster
+#: (``write_guard._HARNESS_ENV_NAMES``, which refuses an in-session assignment
+#: of each; tests/test_hook_constant_parity.py pins the two equal). Literals
+#: here, so this module takes no sibling import for them. The snapshot keeps
+#: these names alone: an ``env`` map can carry a credential.
+SETTINGS_GATE_ENV_NAMES: tuple[str, ...] = (
+    "ESPALIER_MAINTENANCE_MODE",
+    "ESPALIER_STOP_GATE",
+    "ESPALIER_STOP_GATE_TEST_CMD",
+)
+
+
+def user_settings_label() -> str:
+    """How a record names the user settings file: never by its absolute path,
+    so no audit record or note carries the home directory. ``CLAUDE_CONFIG_DIR``
+    moves the file (the settings reference), and a hook inherits it."""
+    if os.environ.get("CLAUDE_CONFIG_DIR", "").strip():
+        return "$CLAUDE_CONFIG_DIR/settings.json"
+    return "~/.claude/settings.json"
+
+
+def user_settings_path() -> Path:
+    """The user settings file; raises RuntimeError where no home is found."""
+    config_dir = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
+    return (Path(config_dir).expanduser() if config_dir else Path.home() / ".claude") / "settings.json"
+
+
+def settings_files(repo_root: Path) -> list[tuple[str, Path]]:
+    """The three settings files as (label, path), highest precedence first:
+    Claude Code takes ``disableAllHooks`` and each ``env`` variable from the
+    highest-precedence file that sets it -- local, project, user (the settings
+    reference). Raises RuntimeError where no home directory is found."""
+    return [
+        (LOCAL_SETTINGS_REL, repo_root / LOCAL_SETTINGS_REL),
+        (PROJECT_SETTINGS_REL, repo_root / PROJECT_SETTINGS_REL),
+        (user_settings_label(), user_settings_path()),
+    ]
+
+
+def settings_env_name(name: str) -> str:
+    """An env name as a process environment matches it: Windows folds case,
+    so ``Espalier_Maintenance_Mode`` in a settings map reaches a hook as the
+    maintenance switch."""
+    return name.upper() if sys.platform == "win32" else name
+
+
+def settings_env_text(value: object) -> str | None:
+    """An ``env`` value as the string a process receives, rendered as
+    JavaScript renders it (``1.0`` is ``"1"``, ``true`` is ``"true"``); None
+    for a null, an object or an array, which set nothing here."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    if isinstance(value, (int, float)):
+        return str(value)
+    return None
+
+
+def _settings_object(path: Path) -> dict:
+    try:
+        data = load_json_dict_safe(path.read_bytes(), default=None)
+    except OSError:  # fail-open: ok deliberate -- an absent or unreadable settings file sets nothing, as Claude Code drops a broken one; the others' values are judged
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def effective_settings_values(repo_root: Path) -> dict[str, tuple[object, str]]:
+    """Each gate key the three settings files set, mapped to (the value Claude
+    Code takes, the label of the file it comes from): ``disableAllHooks`` and
+    ``env.<NAME>`` for each name in ``SETTINGS_GATE_ENV_NAMES``. A file that is
+    absent, unreadable or not an object sets nothing, as Claude Code drops a
+    broken one (driven 2026-10-08 for the project file), and a null value sets
+    nothing. Raises RuntimeError where no home directory is found."""
+    values: dict[str, tuple[object, str]] = {}
+    for label, path in reversed(settings_files(repo_root)):
+        data = _settings_object(path)
+        if data.get(DISABLE_ALL_HOOKS) is not None:
+            values[DISABLE_ALL_HOOKS] = (data[DISABLE_ALL_HOOKS], label)
+        env = data.get("env")
+        if not isinstance(env, dict):
+            continue
+        for name, raw in env.items():
+            text = settings_env_text(raw)
+            if isinstance(name, str) and text is not None and settings_env_name(name) in SETTINGS_GATE_ENV_NAMES:
+                values["env." + settings_env_name(name)] = (text, label)
+    return values
+
+
+def take_settings_gate_values(repo_root: Path) -> dict:
+    """The snapshot a process start records: ``files``, each gate key's value
+    the files supply; ``launch``, each gate variable no file sets, as this
+    process holds it (the launch environment's); ``owned``, each gate variable
+    the files set while this process runs another value, so a source above the
+    three files (managed settings, ``--settings``) owns it and no file change
+    moves it. Raises RuntimeError where no home directory is found."""
+    files = {key: value for key, (value, _label) in effective_settings_values(repo_root).items()}
+    launch: dict[str, str] = {}
+    owned: list[str] = []
+    for name in SETTINGS_GATE_ENV_NAMES:
+        live = os.environ.get(name)
+        if "env." + name not in files:
+            if live is not None:
+                launch[name] = live
+        elif live is not None and live != files["env." + name]:
+            owned.append(name)
+    return {"files": files, "launch": launch, "owned": owned}
+
+
+def read_settings_gate_values(repo_root: Path) -> dict | None:
+    """The snapshot, or None when no readable one exists."""
+    try:
+        record = load_json_dict_safe(repo_root.joinpath(*SETTINGS_GATES_SNAPSHOT).read_bytes(), default=None)
+    except OSError:  # fail-open: ok deliberate -- no snapshot: config_guard judges against the values the session runs with
+        return None
+    if not isinstance(record, dict):
+        return None
+    if not (isinstance(record.get("files"), dict) and isinstance(record.get("launch"), dict)
+            and isinstance(record.get("owned"), list)):
+        return None
+    return record
+
+
+def write_settings_gate_values(repo_root: Path, record: dict) -> None:
+    path = repo_root.joinpath(*SETTINGS_GATES_SNAPSHOT)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _hook_utils.atomic_write_text(path, json.dumps(record, sort_keys=True) + "\n")
+
+
+#: A refused change that would switch a gate off: config_guard's
+#: ``_gate_switch_findings``. Nothing else tells Claude: the ConfigChange
+#: refusal reaches no one and the file keeps the change. Told at the next
+#: PostToolUse, as the unwired refusal is; cleared when a later settings change
+#: is let through (the files then switch nothing off) and where a fresh process
+#: loads the files again (SessionStart).
 SWITCH_PENDING = (_hook_utils.STATE_DIR, "settings_switch_pending.json")
 
 
 def record_switch_pending(repo_root: Path, findings: list[str]) -> None:
-    """Note a refused gate switch for the next PostToolUse to tell Claude."""
+    """Note a refused gate switch for the next PostToolUse to tell Claude.
+    Each refusal judges every file, so its findings replace the last note's."""
     path = repo_root.joinpath(*SWITCH_PENDING)
     path.parent.mkdir(parents=True, exist_ok=True)
     _hook_utils.atomic_write_text(path, json.dumps(
@@ -1431,10 +1577,12 @@ def take_switch_notice(repo_root: Path) -> str | None:
     _hook_utils.atomic_write_text(path, json.dumps({**record, "announced": True}) + "\n")
     return (
         "[WARN] Espalier-Harness: a settings change would switch a gate off: "
-        + "; ".join(findings) + ". Claude Code refused it for this session, so "
-        "the gates still run now, but the file on disk keeps the change and the "
-        "NEXT session will start with it. Remove that setting from the file "
-        "before this session ends."
+        + "; ".join(findings) + ". Claude Code refused it, so it was not applied "
+        "and this session's gates run as they did; the file keeps the change, so "
+        "it takes effect at the next launch of a session that reads that file "
+        "(the user file: every session on this machine). Tell the operator: if "
+        "it was not intended, it comes out of the file; if it was, it is theirs "
+        "and needs a new session."
     )
 
 
