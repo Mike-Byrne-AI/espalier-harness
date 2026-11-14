@@ -1044,6 +1044,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # TP-476 A-0: config_guard denies a project settings change that
             # leaves a governance gate unwired; drives the deployed hook.
             "test_config_guard_wiring",
+            # DEF-3081: config_guard judges the user settings file and a gate
+            # variable in a settings env map; drives the hook over scratch homes.
+            "test_config_guard_user_settings",
             # TP-476 A-1: the zones compared after every shell call; drives
             # post_write_check over scratch trees.
             "test_zone_watch",

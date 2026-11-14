@@ -369,6 +369,23 @@ def _record_wired_gates(root: Path, source: str) -> None:
         root, _integrity.live_governance_gates(data, root))
 
 
+def _record_settings_gate_values(root: Path, source: str) -> None:
+    """The gate values the three settings files supply, the launch values of
+    the gate variables no file sets, and the variables a source above the
+    files owns, which config_guard judges a later settings change against
+    (DEF-3081) -- the twin of ``_record_wired_gates``, with its own job so
+    that one failing leaves the other written. Written where a process loads
+    the files; elsewhere only when none exists. A refused switch from an
+    earlier process is moot once the files are loaded again, so its pending
+    note goes with it."""
+    fresh = source in _PROCESS_START_SOURCES
+    if not fresh and _integrity.read_settings_gate_values(root) is not None:
+        return
+    if fresh:
+        _integrity.clear_switch_pending(root)
+    _integrity.write_settings_gate_values(root, _integrity.take_settings_gate_values(root))
+
+
 def _blueprint_present(root: Path) -> bool:
     """True if a blueprint pointer exists on disk in ANY state — a real file or
     a symlink, including a dangling one.
@@ -5460,6 +5477,7 @@ def _run_main(wall_start: float | None = None) -> int:
         (lambda: _set_cold_open_flag(root, source), "session_start: cold-open flag write failed"),
         (_marker_job, "session_start: session marker write failed"),
         (lambda: _record_wired_gates(root, source), "session_start: wired-gates snapshot failed"),
+        (lambda: _record_settings_gate_values(root, source), "session_start: settings gate snapshot failed"),
     )):
         try:
             _flagjob()

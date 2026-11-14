@@ -194,6 +194,40 @@ class TestHookConstantParity:
             f"(_HARNESS_ENV_NAMES) no longer names the variable the stop gate reads"
         )
 
+    def test_config_guard_judges_the_roster_write_guard_refuses(self):
+        """DEF-3081: ``_integrity.SETTINGS_GATE_ENV_NAMES`` is the set of
+        variables a settings ``env`` map may not switch (config_guard judges
+        it, SessionStart snapshots it), and ``write_guard._HARNESS_ENV_NAMES``
+        the set an in-session assignment may not set; one roster spelled twice
+        (no hook imports another; both name the maintenance switch through
+        ``_maintenance_mode.ENV_VAR``). Read from the two assignments' AST, an
+        attribute of another hook module resolved to that module's literal. Dies to: a name added to one
+        roster, which leaves that variable judged on one route alone."""
+        def assigned(script: str, name: str) -> ast.expr:
+            tree = ast.parse((HOOKS_DIR / script).read_text(encoding="utf-8"))
+            for node in tree.body:
+                target = node.target if isinstance(node, ast.AnnAssign) else (
+                    node.targets[0] if isinstance(node, ast.Assign) and len(node.targets) == 1 else None)
+                if isinstance(target, ast.Name) and target.id == name and node.value is not None:
+                    return node.value
+            raise AssertionError(f"{script} assigns no {name} at module level")
+
+        def roster(script: str, name: str) -> tuple:
+            value = assigned(script, name)
+            assert isinstance(value, ast.Tuple), (script, name, ast.dump(value))
+            names = []
+            for element in value.elts:
+                if isinstance(element, ast.Attribute) and isinstance(element.value, ast.Name):
+                    element = assigned(f"{element.value.id}.py", element.attr)
+                names.append(ast.literal_eval(element))
+            return tuple(names)
+
+        config_guard = assigned("config_guard.py", "_GATE_ENV_NAMES")
+        assert ast.unparse(config_guard) == "_integrity.SETTINGS_GATE_ENV_NAMES", ast.unparse(config_guard)
+        assert roster("_integrity.py", "SETTINGS_GATE_ENV_NAMES") == roster("write_guard.py", "_HARNESS_ENV_NAMES"), (
+            "_integrity.SETTINGS_GATE_ENV_NAMES and write_guard._HARNESS_ENV_NAMES name different variables"
+        )
+
     def test_core_flow_fallback_matches_sot(self):
         """441-E: the SECOND half of the CORE_FLOW_COMMANDS two-site class.
 
