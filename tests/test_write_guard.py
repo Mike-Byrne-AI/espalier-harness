@@ -15132,6 +15132,151 @@ class TestSecretPathAccess:
     # guard. This comment is the pointer; do not re-add the duplicate.
 
 
+class TestTwoOperandReadersCutCommentsAsTheMaskerDoes:
+    """Two operand readers keep their own rule for where a comment begins,
+    and the masker's is the one bash follows (`_bash_patterns._COMMENT_OPENERS`,
+    `_glued_after_escape`, the role walk): a `#` opens a comment only at a word
+    start, so a `#` after a carriage return, after an escaped character, or
+    after a substitution's closer is the word's text, and the operands after
+    it are read. The masker leaves such a `#` and its tail in place, so each
+    reader below meets the text and decides alone:
+
+    - the secret-read leg's word reader (`write_guard._redirect_free_operands`),
+      which ends the operands at any word that opens with `#`, after a split
+      that breaks the word at a closer, a carriage return or an escaped blank;
+    - the zone wall's span cutter (`_bash_patterns._strip_span_tail`), which
+      reads a carriage return as a word break and a `#` after an escaped blank
+      as a word start.
+
+    The operator's ruling on the comment-reader census (B, 2026-11-14): drive
+    both through the hook, fix a red on a kept job by the masker's rule at
+    these two readers only, and land a zone-wall red as a limit sentence
+    unless the lane reads it otherwise. The oracles drive bash and zsh on a
+    throwaway (every operand relative, no variable); the hook rows ask the
+    guard. Driven at main, every secret row was let through and so were the
+    zone rows after an escaped blank or a carriage return. The secret leg
+    is a kept job (a secret read where no sandbox stands), so its reader now
+    ends the operands where the masker put a comment. The zone wall's are
+    zone writes, which the coverage contract hands to the after-check, and
+    its cutter is the one span predicate every zone reader shares, so they
+    stay as the declared limit `docs/HOOKS.md` names, pinned at allow here.
+    The named user: an operator relying on the guard's secret-read refusal,
+    with no sandbox, whose agent prints a dotenv after a file named with an
+    escaped blank and a `#`."""
+
+    _SECRET_READS = (
+        "cat $(true)#x .env",                 # glued to a substitution's closer
+        "cat `true`#x .env",                  # ... and to a closing backtick
+        "cat a\\ #x .env",                    # after an escaped blank
+        "cat a\r#x .env",                     # after a carriage return
+        "cat `true #x` .env",                 # a body's comment ends at its closer
+    )
+    _SECRET_NO_READS = (
+        "cat notes.txt # .env",               # a comment: controls, allowed at main
+        "cat notes.txt;#x .env",
+        "cat a\\\\ #x .env",                  # an escaped backslash, then a word start
+        "(cat notes.txt)#x .env",             # a subshell's `)` is no substitution's
+        "cat $'a\\'b' #x .env",               # an ANSI-C quote's escaped `'`
+    )
+    _SECRET_NO_READS_HOOK_ONLY = (            # the guard alone: no shell runs these
+        "cp .env.example .env # copy the template",   # the copy reads the template alone
+        'bash -c "cd sub; cat notes.txt" # not .env',  # a wrapper the masker hands back raw
+        "ssh web 'cd app; cat config.yml' # not .env",
+    )
+    #: Each row holds one unquoted `#`; the two readers must agree on it.
+    _AGREEMENT_ROWS = (*_SECRET_READS, *_SECRET_NO_READS, "cat $((1))#x .env",
+                       "cat <(true)#x .env")
+    _ZONE_WALLED = (
+        "cp $(true)#x .claude/settings.json",     # the cutter reads a closer already
+        "cp `true`#x .claude/settings.json",
+    )
+    _ZONE_LIMITS = (                              # the declared limit, at allow
+        "cp a\\ #x .claude/settings.json",
+        "cp a\r#x .claude/settings.json",
+    )
+    _ZONE_WRITES = _ZONE_WALLED + _ZONE_LIMITS
+    _ZONE_NO_WRITES = (
+        "cp notes.txt # .claude/settings.json",   # a comment: controls, allowed at main
+        "cp a\\\\ #x .claude/settings.json",
+    )
+    _SOURCES = ("a #x", "a\r#x", "#x", "notes.txt")
+
+    @classmethod
+    def _shell(cls, argv: "list[str]", command: str, tmp_path: Path) -> "tuple[str, bool]":
+        """What the shell printed, and whether it parsed the row. The
+        throwaway holds the dotenv's marker, every source a copy row names,
+        and an empty `.claude/`."""
+        (tmp_path / ".env").write_text("marker-glued-hash\n", encoding="utf-8")
+        for name in cls._SOURCES:
+            (tmp_path / name).write_text("source\n", encoding="utf-8")
+        (tmp_path / ".claude").mkdir(exist_ok=True)
+        proc = subprocess.run([*argv, command], cwd=str(tmp_path), stdin=subprocess.DEVNULL,
+                              capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=scaled(10),
+                              env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "LC_ALL": "C"})
+        parsed = "syntax error" not in proc.stderr and "parse error" not in proc.stderr
+        return proc.stdout + proc.stderr, parsed
+
+    _SHELLS = (
+        pytest.param(["/bin/bash", "--noprofile", "--norc", "-c"], id="bash",
+                     marks=pytest.mark.skipif(not Path("/bin/bash").exists(),
+                                              reason="the oracle is a real /bin/bash")),
+        pytest.param(["/bin/zsh", "-f", "-c"], id="zsh",
+                     marks=pytest.mark.skipif(not Path("/bin/zsh").exists(),
+                                              reason="the oracle is a real /bin/zsh")),
+    )
+
+    @pytest.mark.parametrize("argv", _SHELLS)
+    @pytest.mark.parametrize("command, reads", [
+        *((c, True) for c in _SECRET_READS), *((c, False) for c in _SECRET_NO_READS)])
+    def test_the_shell_reads_the_dotenv_as_each_row_says(self, argv, command, reads, tmp_path):
+        out, parsed = self._shell(argv, command, tmp_path)
+        assert ("marker-glued-hash" in out) is reads, out
+        assert parsed, out
+
+    @pytest.mark.parametrize("argv", _SHELLS)
+    @pytest.mark.parametrize("command, writes", [
+        *((c, True) for c in _ZONE_WRITES), *((c, False) for c in _ZONE_NO_WRITES)])
+    def test_the_shell_writes_the_settings_file_as_each_row_says(self, argv, command, writes, tmp_path):
+        out, parsed = self._shell(argv, command, tmp_path)
+        assert (tmp_path / ".claude" / "settings.json").exists() is writes, out
+        assert parsed, out
+
+    @pytest.mark.parametrize("command", _SECRET_READS)
+    def test_a_dotenv_after_a_glued_hash_is_refused(self, command, tmp_path):
+        assert_hook_denied(run_bash_guard(command, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("command", _SECRET_NO_READS + _SECRET_NO_READS_HOOK_ONLY)
+    def test_a_comment_still_ends_the_read_operands(self, command, tmp_path):
+        assert_hook_allowed(run_bash_guard(command, tmp_path))
+
+    @pytest.mark.parametrize("command", _AGREEMENT_ROWS)
+    def test_the_blanker_reads_a_comment_where_the_masker_does(self, command):
+        # The masker spaces out a `;` set right after a `#` exactly where it
+        # reads a comment there, so the secret leg's blanker, which follows
+        # the masker's rule by its predicates, is held to the walk's verdict.
+        bp, wg = _bash_patterns_module(), _load_write_guard()
+        k = command.index("#")
+        probe = command[:k + 1] + ";" + command[k + 1:]
+        masker = bp.mask_inert_syntax(probe)[k + 1] == " "
+        assert (wg._blank_bash_comments(command)[k] == " ") is masker, (command, masker)
+
+    @pytest.mark.parametrize("command", _ZONE_WALLED)
+    def test_a_settings_target_after_a_closers_hash_meets_the_wall(self, command, tmp_path):
+        _assert_zone_walled(command, tmp_path)
+
+    @pytest.mark.parametrize("command", _ZONE_LIMITS)
+    def test_the_zone_cutter_lets_a_target_after_a_glued_hash_through(self, command, tmp_path):
+        # The declared limit: the day the cutter reads these as bash does,
+        # this reds and the sentence in docs/HOOKS.md is rewritten.
+        assert_hook_allowed(run_bash_guard(command, tmp_path))
+
+    @pytest.mark.parametrize("command", _ZONE_NO_WRITES)
+    def test_a_comment_still_ends_the_copy_operands(self, command, tmp_path):
+        assert_hook_allowed(run_bash_guard(command, tmp_path))
+
+
 #: The typographic quotes, spelled by code point so the rows read plainly.
 _LSQ, _RSQ, _LDQ, _RDQ = chr(0x2018), chr(0x2019), chr(0x201C), chr(0x201D)
 

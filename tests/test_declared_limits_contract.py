@@ -348,7 +348,15 @@ class TestTheSentenceSplitter:
 #: next bullet, whose coverage-contract pin sits in no declaring sentence and
 #: is cited by class and test name alone (ack ee0c4c: pay at the source), so
 #: the seeded docs stay at the ceiling.
-_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 41, "docs/SHARP_EDGES.md": 5}
+#: HOOKS 41 -> 42 on 2026-11-14 (the comment-reader census, ruling 4d5515):
+#: the comment readers beside the masker keep rules of their own, a declared
+#: limit of the class, driven at the zone wall's span cutter (a carriage
+#: return or an escaped blank before a `#`), one sentence pinned in
+#: `TestTwoOperandReadersCutCommentsAsTheMaskerDoes`; its cite's hit is paid
+#: by the coverage contract's kept-job pin, which sits in no declaring
+#: sentence and is now cited by class and test name alone as its section's
+#: zone pin is, so the seeded docs stay at the ceiling.
+_CENSUS_ON_2026_10_11 ={"docs/HOOKS.md": 42, "docs/SHARP_EDGES.md": 5}
 
 
 def test_the_census_is_the_pinned_population():
