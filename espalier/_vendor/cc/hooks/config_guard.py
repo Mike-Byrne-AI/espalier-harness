@@ -84,7 +84,7 @@ try:
     from _json_safe import decode_bom  # noqa: E402
     # Every helper name this hook's import graph takes (write_guard.py says why).
     _CONFIG_GUARD_HELPER_NAMES = (
-        "STATE_DIR", "atomic_write_text", "lock_file", "os_error_text", "plural", "read_stdin_safely",
+        "STATE_DIR", "STOP_GATE_TEST_CMD_ENV", "atomic_write_text", "lock_file", "os_error_text", "plural", "read_stdin_safely",
         "resolve_project_root", "say_bad_stdin", "say_once", "stop_gate_mode", "unlock_file", "warn",
         "warn_exc",
     )
@@ -306,10 +306,16 @@ def _judge_gate_switch(file_path: str | None, source: str,
     if after.get(dah) is True and before.get(dah) is not True:
         findings.append(f"{after_values[dah][1]}: disableAllHooks: true")
     # Gate 1 runs a command only under full, so the command is judged where
-    # the gate is full before the change and after it.
+    # the gate is full before the change and after it. A stop gate a source
+    # above the files owns runs the value this process holds, whatever a
+    # file says.
     full = "full"
-    mode = full if (_hook_utils.stop_gate_mode(session(before, "ESPALIER_STOP_GATE")) == full
-                    and _hook_utils.stop_gate_mode(session(after, "ESPALIER_STOP_GATE")) == full) else "light"
+    gate = "ESPALIER_STOP_GATE"
+    if gate in owned:
+        mode = _hook_utils.stop_gate_mode(os.environ.get(gate))
+    else:
+        mode = full if (_hook_utils.stop_gate_mode(session(before, gate)) == full
+                        and _hook_utils.stop_gate_mode(session(after, gate)) == full) else "light"
     for name in _GATE_ENV_NAMES:
         if name in owned:
             continue

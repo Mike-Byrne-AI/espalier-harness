@@ -2438,19 +2438,24 @@ turned on, the stop gate moved off `full` (a key deleted or a higher key
 removed over a looser lower one included), the test command changed while the
 stop gate is `full` before the change and after it (with no command in the
 env, Gate 1 runs the declared or detected suite, so one written then replaces
-it; under `light` Gate 1 runs nothing, so a command set there, or with the
-gate turned `full` in the same change, tightens), `disableAllHooks` turned on.
+it; a stop gate a source above the files owns is read at the value the session
+runs; under `light` Gate 1 runs nothing this session, so a command set there,
+or with the gate turned `full` in the same change, is let through, and a later
+session launched `full` runs it), `disableAllHooks` turned on.
 A variable of the roster this check has no rule for is refused on any change,
 until one is written. It is judged
 at the files' layer, so a switch written into the user file by a session whose
 launch already carries it is refused (the file would carry it into every later
 session), and at the session's, so a file value outranking a stricter launch
-value is refused (the test command is judged at the session's layer alone:
-its own command written into a file replaces nothing). A change let through
+value is refused (the test command is judged at the session's layer alone,
+so the command the session already runs, written into a file, is let
+through). A change let through
 becomes the record for the next one. A session with no record (older than this
 hook, or a SessionStart cut short) is judged against the values it runs with:
 a value the files still supply unchanged is a file's, and any other is the
-launch shell's, kept in the record its first let-through writes. The record is
+launch shell's, kept in the record its first let-through writes; with no
+record, a value the change removed from a file reads as the launch shell's,
+so that removal is not judged. The record is
 one per checkout, so a second session started in the same checkout replaces
 the first one's. Each refusal writes
 `configchange_blocked_kill_switch` with `kind: gate_switch` and the file named

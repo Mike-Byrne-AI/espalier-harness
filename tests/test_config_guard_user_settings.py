@@ -383,6 +383,15 @@ class TestTheStopGateTestCommand:
         box.write(box.user, {"env": {CMD: "true"}})
         _blocked(box.change("user_settings", live={SG: "full"}), f"env.{CMD}")
 
+    def test_a_command_under_a_full_gate_owned_above_the_files_is_refused(self, box):
+        """The third review: managed settings or ``--settings`` own ``full``
+        over a file's ``light``, so Gate 1 runs full and a command written
+        now replaces its suite; the mode read the file's ``light``."""
+        box.write(box.user, {"env": {SG: "light"}})
+        box.start(live={SG: "full"})
+        box.write(box.user, {"env": {SG: "light", CMD: "true"}})
+        _blocked(box.change("user_settings", live={SG: "full"}), f"env.{CMD}")
+
     def test_turning_the_gate_full_with_a_command_is_let_through(self, box):
         """Gate 1 ran nothing before the change, so nothing is loosened."""
         box.start()
