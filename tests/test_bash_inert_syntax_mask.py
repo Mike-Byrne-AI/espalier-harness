@@ -1205,6 +1205,10 @@ _MASKER_ROW_ORACLE = [
     ("echo a\r#; echo b", b"a\r#\nb\n"),
     ("cat <<'`'\nbody\n`\necho `echo a #x`; echo b", b"body\na\nb\n"),
     ("('`'/ ); echo `echo a #x`; echo b", b"a\nb\n"),
+    ("a='`'; echo `echo a #x`; echo b", b"a\nb\n"),
+    ("a=\\`; echo `echo a #x`; echo b", b"a\nb\n"),
+    ("(\\`/ ); echo `echo a #x`; echo b", b"a\nb\n"),
+    ("\\`/command true; echo `echo a #x`; echo b", b"a\nb\n"),
     # the declared limits beside the row: a body ends at a line that is its
     # whole delimiter word alone, quote-removed, so a second heredoc opened
     # on a line bash takes as body text is body text too; an arithmetic
@@ -1276,13 +1280,19 @@ _MASKER_ROW_DELETES = [
     ("wall", f"echo `echo a\\\\ #x; {_DELETE}`"),
     ("wall", f"echo $(echo ${{x:-)}})#; {_DELETE}"),
     ("wall", f"echo a\r#; {_DELETE}"),
-    # the mutant pass's killers, each ALLOWED at main: a statement after a
+    # the mutant pass's killers, each ALLOWED at 396458a: a statement after a
     # quoted heredoc delimiter's terminator (the fix batch walled it only
     # because the delimiter's and the terminator's raw backticks cancelled;
     # jumping the delimiter alone lets it through), and an empty basename
     # glued after a paren
     ("wall", f"cat <<'`'\nbody\n`\necho `echo a #x`; {_DELETE}"),
     ("wall", f"('`'/ ); echo `echo a #x`; {_DELETE}"),
+    # the cost gate's failure-mode review: each allowed with the gate blind
+    # to a backslash at its site, or jumping the head assignment raw
+    ("wall", f"a='`'; echo `echo a #x`; {_DELETE}"),
+    ("wall", f"a=\\`; echo `echo a #x`; {_DELETE}"),
+    ("wall", f"(\\`/ ); echo `echo a #x`; {_DELETE}"),
+    ("wall", f"\\`/command true; echo `echo a #x`; {_DELETE}"),
     # controls
     ("allow", f"(a='`') ; echo `echo a` #x; {_DELETE}"),
     ("allow", f"echo $(echo ${{x:-)}}) #x; {_DELETE}"),
@@ -1383,37 +1393,91 @@ class TestTheMaskerReadsACommentAsBashDoes:
         bp = _load_bash_patterns()
         assert bp._glued_after_escape(text, text.index("#")) is glued, text
 
-    @pytest.mark.parametrize("command", [
-        "(a='`'); echo hi",           # an assignment glued after a paren
-        "(a=\\`); echo hi",
-        "('`'/command true); echo hi",  # a skip word glued after a paren
-        "('`'/ ); echo hi",           # an empty basename glued after a paren
-        "'`'/command true; echo hi",  # a skip word
-    ])
-    def test_every_step_over_of_the_head_capture_masks_its_word(self, command):
+    # The five step-over sites of the head capture, each with a word quoted
+    # three ways: (site, command, the character the walk must blank).
+    _STEP_OVER_MATRIX = [
+        (site, tmpl.replace("W", word), trigger)
+        for site, tmpl in [
+            ("suffix assignment", "(a=W); echo hi"),
+            ("suffix empty basename", "(W/ ); echo hi"),
+            ("suffix skip word", "(W/command true); echo hi"),
+            ("head skip word", "W/command true; echo hi"),
+            ("head assignment", "a=W; echo hi"),
+            ("head empty basename", "W/ ; echo hi"),
+        ]
+        for word, trigger in [("'`'", "`"), ("\\`", "`"), ('"x)y"', ")")]
+    ]
+
+    @pytest.mark.parametrize("site, command, trigger", _STEP_OVER_MATRIX,
+                             ids=[f"{r[0]}:{r[1]}" for r in _STEP_OVER_MATRIX])
+    def test_every_step_over_masks_its_word_however_it_is_quoted(self, site, command, trigger):
         """The code review's F1: each step-over of the head capture jumped its
         word raw, so the comment cursor read a quoted or escaped backtick in
-        it as live (the wall rows above show the delete it hid). The walk's
-        own masked text is what the cursor reads; each held one raw backtick
-        before the fix."""
-        assert "`" not in _load_bash_patterns()._walk_shell_roles(command)[0], command
-
-    @pytest.mark.parametrize("command", [
-        '(a="x)y"); echo hi',
-        '("x)y"/command true); echo hi',
-        '("x)y"/ ); echo hi',
-        '"x)y"/command true; echo hi',
-    ])
-    def test_a_double_quoted_piece_of_a_stepped_over_word_is_masked(self, command):
-        """The step-over walks a word only when it holds a quote or a
-        backslash (the cost gate: a plain word has nothing to mask), so each
-        of the three must open the walk at each of the four sites. A `)`
-        inside double quotes is text to bash and the walk blanks it; the head
-        scan does not stop there, so the raw jump left it live for the
-        comment cursor's paren reading. Raw at main and with the gate's
-        double-quote test dropped, at all four sites."""
+        it as live (the wall rows above show the delete it hid); the cost
+        gate then jumps a word raw again unless it holds a quote or a
+        backslash, so every site must take the walk for each of the three.
+        A `)` inside double quotes is text to bash and the walk blanks it.
+        Each row was raw at 396458a; with the gate blind to one quoting at
+        one site (the failure-mode review's mutants), its rows go raw."""
         out = _load_bash_patterns()._walk_shell_roles(command)[0]
-        assert out[command.index(")")] == " ", (command, out)
+        assert out[command.index(trigger)] == " ", (site, command, out)
+
+    _GATE_SITES = [
+        ("end = span_after if plain else step_over_assignment(i)\n",
+         "end = step_over_assignment(i)\n"),
+        ("end = span_after if plain else step_over_assignment(i, value=False)\n",
+         "end = step_over_assignment(i, value=False)\n"),
+        ("end = after if plain else step_over_assignment(i, value=False)\n",
+         "end = step_over_assignment(i, value=False)\n"),
+        ("end = after if plain else step_over_assignment(i)\n",
+         "end = step_over_assignment(i)\n"),
+    ]
+
+    def test_the_gated_walk_reads_every_command_as_the_ungated_walk(self, tmp_path):
+        """The cost gate jumps a plain word with no call, on an argument in
+        prose: the head scan's stripped length equals its raw length exactly
+        when the word holds no quote and no backslash, and the scan stops
+        where `step_over_assignment` does. This pins it by construction: the
+        walker's source with the five sites ungated must read a seeded corpus
+        exactly as the gated one. A drift between the two loops (a
+        terminator one of them drops, a body the step-over learns to jump)
+        moves output here, measured by the failure-mode review: 63 and 380
+        differing strings of 20,000. The ungating must patch five sites, so a
+        refactor of them fails here by name."""
+        import random
+        src = (HOOKS_DIR / "_bash_patterns.py").read_text(encoding="utf-8")
+        ungated, patched = src, 0
+        for old, new in self._GATE_SITES:
+            patched += ungated.count(old)
+            ungated = ungated.replace(old, new)
+        assert patched == 5, f"the gate's sites moved: {patched} patched, not 5"
+
+        path = tmp_path / "_bp_ungated.py"
+        path.write_text(ungated, encoding="utf-8")
+        spec = importlib.util.spec_from_file_location("_bp_ungated", path)
+        plain = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = plain      # dataclass annotations resolve here
+        sys.path.insert(0, str(HOOKS_DIR))  # its sibling imports
+        try:
+            spec.loader.exec_module(plain)
+        finally:
+            sys.path.remove(str(HOOKS_DIR))
+        gated = _load_bash_patterns()
+        tokens = ["a", "=", "/", "(", ")", "'", '"', "\\", "`", "#", " ", ";", "\r", "\n",
+                  "$", "{", "}", "command", "time", "x=", "|", "&", "<", ">", "$(", "$'",
+                  "\t", "if", "fi", "<<", "EOF"]
+        rng = random.Random(5039)
+
+        def read(mod, c):
+            try:
+                out, heads, spans = mod._walk_shell_roles(c)
+                return out, frozenset(heads), tuple(spans)
+            except Exception as e:  # noqa: BLE001 -- a raise is compared too
+                return "raise", type(e).__name__
+
+        for _ in range(20000):
+            c = "".join(rng.choice(tokens) for _ in range(rng.randint(1, 18)))
+            assert read(gated, c) == read(plain, c), c
 
     @pytest.mark.parametrize("text, glued", [
         ("a\\\\ #", True), ("a\\\\\\ #", True), ("a\\ #", True), ("a #", False), ("a\\\n#", False),

@@ -3918,7 +3918,11 @@ def _walk_shell_roles(
         ended it, with no call. A plain word has nothing to mask, records no
         span, and ends there: the scan stops at this loop's blanks and
         separators, and the walker stands only at unquoted positions, so no
-        quote opened before ``a``. Walking every skip word cost +1.5% of a
+        quote opened before ``a``. That argument is read, not proven: the
+        differential in `tests/test_bash_inert_syntax_mask.py` runs the five
+        sites gated and ungated on a seeded corpus, so a drift between the
+        scan and this loop (their terminator sets, or a body this loop
+        learns to jump) fails there. Walking every skip word cost +1.5% of a
         judgment of one, measured, since one judgment walks the same command
         about 35 times."""
         k = a
@@ -4261,10 +4265,10 @@ def _walk_shell_roles(
                 i = after
                 continue
             elif word in _HEAD_SKIP_WORDS:
-                # plain exactly when the raw length is the stripped length
-                # (`step_over_assignment`'s docstring)
-                end = (after if after - i == len(span_buf)
-                       else step_over_assignment(i, value=False))
+                # the suffix branch's `plain` test with m = 0: the scan began
+                # here (`step_over_assignment`'s docstring)
+                plain = after - i == len(span_buf)
+                end = after if plain else step_over_assignment(i, value=False)
                 nesting = _depth_after_step_over(s, i, end, nesting)
                 pipe_pending = False
                 i = end
@@ -4308,8 +4312,9 @@ def _walk_shell_roles(
                 # command came back raw -- a separator inside the value stayed
                 # live. `step_over_assignment` walks to where bash ends the
                 # word, masking and recording each quoted piece of the value;
-                # a plain word (raw length the stripped length) is jumped.
-                end = after if after - i == len(span_buf) else step_over_assignment(i)
+                # a plain word is jumped (the suffix branch's test, m = 0).
+                plain = after - i == len(span_buf)
+                end = after if plain else step_over_assignment(i)
                 nesting = _depth_after_step_over(s, i, end, nesting)
                 pipe_pending = False
                 i = end
