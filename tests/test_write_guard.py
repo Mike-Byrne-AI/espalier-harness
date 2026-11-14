@@ -13522,6 +13522,170 @@ def run_guard_tool(tool_name: str, tool_input: dict, tmp_path: Path) -> subproce
     )
 
 
+class TestAPowerShellRedirectIsNotARemovalTarget:
+    """DEF-5108 (§C0): the PowerShell removal-token reader
+    (`_bash_patterns._ps_removal_target_tokens`) kept every token that is not
+    a flag, so a stream's redirect and its target read as what the command
+    removes, renames or archives, in every reader of those tokens. The secret
+    leg refused a rename or an archive whose stderr went to a log named like
+    a dotenv (`Rename-Item notes.txt b.txt 2> .env.err`), where its Bash twin
+    (`mv notes.txt b.txt 2> .env.err`) runs; and the forced remove's element
+    tier could not vouch for `$null`, so a build clean with its errors
+    silenced (`Remove-Item -Recurse -Force build 2>$null`) met the wall, where
+    the same clean without the redirect is allowed. Its sibling, the forced
+    remove's own target parser (`_powershell_removal_targets`, behind the
+    roster and plainly-relative rungs), read `2> err.txt` as a target off the
+    roster and bumped the same clean. Both now take each redirect and its
+    target out before they read a target (`_ps_redirect_free`), through the
+    module's one pattern pair (`_redirect_words`), which reads PowerShell's
+    `*` stream as it reads a digit, on that tool alone: Bash reads `*>x` as a
+    glob and then a redirect. `git clean`'s operand reader reads the same `*` stream,
+    so `git clean -fdx *>$null` is the whole-tree clean it runs as (driven on
+    Windows PowerShell 5.1: every untracked file went), not a pathspec that
+    narrowed the zone deny to a bump. Every relief row below was refused,
+    walled or bumped at main 0097b9f; the controls kept their verdicts. The
+    named users: an operator whose agent renames or archives a file on the
+    PowerShell tool with stderr sent to such a log, and one whose agent
+    cleans a build directory with its errors silenced and meets the wall."""
+
+    _SECRET_RELIEF = (
+        "Rename-Item notes.txt b.txt 2> .env.err",          # the row's two
+        "Compress-Archive notes.txt a.zip 2> .env.err",
+        "Rename-Item notes.txt b.txt 2>> .env.err",
+        "Rename-Item notes.txt b.txt 3> .env.err",
+        "Rename-Item notes.txt b.txt > .env.out",
+        "Rename-Item notes.txt b.txt *> .env.err",          # the `*` stream
+        "Rename-Item notes.txt b.txt *>> .env.err",
+        "Rename-Item 2> .env.err notes.txt b.txt",          # the redirect first
+        "Rename-Item -Path notes.txt -NewName b.txt 2> .env.err",
+        "ren notes.txt b.txt 2> .env.err",
+        "Compress-Archive -Path notes.txt -DestinationPath a.zip 2> .env.err",
+        "Compress-Archive notes.txt a.zip *> .env.err",
+        "Move-Item 2> .env.err notes.txt -Destination b.txt",   # the span before -Destination
+    )
+    # The secret is the operand and the redirect stands beside it: refused at
+    # main and on the lane, whichever side of the operand the redirect is on.
+    _SECRET_CONTROLS = (
+        "Rename-Item .env b.txt 2> err.txt",
+        "Rename-Item 2> err.txt .env b.txt",
+        "Rename-Item *> err.txt .env b.txt",
+        "Compress-Archive .env a.zip 2> err.txt",
+        "Compress-Archive 2>err.txt .env a.zip",
+        "Move-Item 2> err.txt .env -Destination b.txt",
+    )
+
+    @pytest.mark.parametrize("command", _SECRET_RELIEF)
+    def test_a_redirect_target_is_never_a_moved_or_archived_file(self, command, tmp_path):
+        assert_hook_allowed(run_guard_tool("PowerShell", {"command": command}, tmp_path))
+
+    @pytest.mark.parametrize("command", _SECRET_CONTROLS)
+    def test_the_secret_beside_a_redirect_stays_refused(self, command, tmp_path):
+        assert_hook_denied(run_guard_tool("PowerShell", {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("cmd, expect", [
+        ("Remove-Item -Recurse -Force build 2>$null", "allow"),     # walled at main
+        ("Remove-Item -Recurse -Force build 2> $null", "allow"),    # walled at main
+        ("Remove-Item -Recurse -Force build *>$null", "allow"),     # walled at main
+        ("Remove-Item -Recurse -Force build 2> err.txt", "allow"),  # bumped at main
+        ("Remove-Item -Recurse -Force build > out.txt", "allow"),   # bumped at main
+        ("Remove-Item -Recurse build 2>$null", "allow"),            # bumped at main
+        ("ri -r -fo build 2>$null", "allow"),                       # walled at main
+        ("Get-ChildItem build | Remove-Item -Recurse -Force 2>$null", "allow"),  # walled at main
+        ("if ($true) { Remove-Item -Recurse -Force build 2>$null }", "allow"),   # walled at main
+        ("Remove-Item -Recurse -Force src 2>$null", "bump"),        # walled at main
+        ("Remove-Item -Recurse -Force src *> err.txt", "bump"),     # walled at main
+        # controls: what each target earns with no redirect, and a
+        # catastrophic target beside one, before or after it
+        ("Remove-Item -Recurse -Force build", "allow"),
+        ("Remove-Item -Recurse -Force src", "bump"),
+        ("Remove-Item -Recurse -Force . 2>$null", "wall"),
+        ("Remove-Item -Recurse -Force 2> $null .", "wall"),
+        ("Remove-Item -Recurse -Force *> $null .", "wall"),
+        ("Remove-Item -Recurse -Force * 2>$null", "wall"),
+        ("Remove-Item -Recurse -Force ~ 2>$null", "wall"),
+        ("Remove-Item -Recurse -Force 2> $null", "wall"),           # no target left to vouch for
+        ("Remove-Item -Recurse -Force '2>x'", "bump"),              # quoted: a name, not a redirect
+    ])
+    def test_a_forced_remove_is_judged_by_its_targets_alone(self, tmp_path, cmd, expect):
+        (tmp_path / "src").mkdir()
+        (tmp_path / "build").mkdir()
+        assert _delete_verdict(_run_ps_guard(cmd, tmp_path)) == expect
+
+    @pytest.mark.parametrize("cmd", [
+        "git clean -fdx *>$null",       # bumped at main: `*>$null` read as a pathspec
+        "git clean -fdx *> $null",      # bumped at main
+        "git clean -fdx 2>$null",       # a control
+    ])
+    def test_a_git_clean_with_every_stream_silenced_cleans_the_whole_tree(self, cmd, tmp_path):
+        assert_hook_denied(_run_ps_guard(cmd, tmp_path),
+                           contains_reason="Delete of protected harness zone blocked")
+
+    # The effect reader itself, for each of the row's three arms and the
+    # remove verb: what it names is the command's operands, never a redirect
+    # or its target (the native destroy's `delete` is no secret effect, so no
+    # verdict above can see its arm).
+    @pytest.mark.parametrize("cmd, effect, operands", [
+        ("Rename-Item notes.txt b.txt 2> .env.err", "move", {"notes.txt", "b.txt"}),
+        ("Rename-Item notes.txt b.txt *>.env.err", "move", {"notes.txt", "b.txt"}),
+        ("Compress-Archive notes.txt a.zip 2> .env.err", "archive", {"notes.txt", "a.zip"}),
+        ("unlink notes.txt 2> .env.err", "delete", {"notes.txt"}),
+        ("shred notes.txt *> .env.err", "delete", {"notes.txt"}),
+        ("Remove-Item notes.txt 2>$null", "delete", {"notes.txt"}),
+    ])
+    def test_the_effect_reader_names_no_redirect(self, cmd, effect, operands):
+        got = set(_bash_patterns_module().iter_ps_removed_or_relocated_operands(cmd))
+        assert got == {(effect, o) for o in operands}
+
+    # The one reading, per tool: PowerShell's `*` stream opens a redirect,
+    # and on Bash `*>x` stays the word it was (a glob, then a redirect, which
+    # the operand readers there do not cut apart).
+    @pytest.mark.parametrize("token, bash, powershell", [
+        ("2>", 2, 2), ("2>x", 1, 1), ("2>&1", 1, 1), (">", 2, 2), (">>x", 1, 1),
+        ("*>", 0, 2), ("*>>", 0, 2), ("*>x", 0, 1), ("*>&1", 0, 1),
+        ("*", 0, 0), ("*.log", 0, 0), ("x", 0, 0), ("'2>x'", 0, 0),
+    ])
+    def test_the_redirect_reading_takes_the_star_stream_on_powershell_alone(
+            self, token, bash, powershell):
+        read = _bash_patterns_module()._redirect_words
+        assert (read(token), read(token, powershell=True)) == (bash, powershell)
+
+    # The shell is the oracle for each arm (pwsh where one is on PATH, Windows
+    # PowerShell 5.1 beside it): the command acts on its operands, and the
+    # redirect truncates its target and writes the stream there, never
+    # renaming, archiving or deleting it. Each row runs in its own scratch
+    # folder; the log's line is gone because the redirect truncated it.
+    @pytest.mark.parametrize("command, left", [
+        ("Rename-Item notes.txt b.txt 2> .env.err", {".env.err", "b.txt"}),
+        ("Rename-Item notes.txt b.txt *> .env.err", {".env.err", "b.txt"}),
+        ("Compress-Archive notes.txt a.zip 2> .env.err", {".env.err", "a.zip", "notes.txt"}),
+        ("unlink notes.txt 2> .env.err", {".env.err"}),
+    ])
+    def test_powershell_acts_on_the_operands_and_writes_the_redirect_target(
+            self, command, left, tmp_path):
+        import shutil
+        import zipfile
+        shell = shutil.which("pwsh") or shutil.which("powershell")
+        if shell is None:
+            pytest.skip("no pwsh or powershell on PATH to run the row")
+        if command.startswith("unlink") and shutil.which("unlink") is None:
+            pytest.skip("no unlink on PATH for the native destroy")
+        work = tmp_path / "work"      # its own folder: the suite's audit folder sits in tmp_path
+        work.mkdir()
+        (work / "notes.txt").write_bytes(b"NOTES_DEF_5108\n")
+        (work / ".env.err").write_bytes(b"LOG_DEF_5108\n")
+        proc = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command", command],
+                              cwd=str(work), capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=scaled(30), env=private_cache_env())
+        assert {p.name for p in work.iterdir()} == left, (proc.stdout, proc.stderr)
+        assert b"LOG_DEF_5108" not in (work / ".env.err").read_bytes()
+        if "b.txt" in left:
+            assert (work / "b.txt").read_bytes() == b"NOTES_DEF_5108\n"
+        if "a.zip" in left:
+            with zipfile.ZipFile(work / "a.zip") as archive:
+                assert archive.namelist() == ["notes.txt"]
+
+
 class TestSecretPathAccess:
     """The hook-layer replacement for the five `Read()` deny rules.
 

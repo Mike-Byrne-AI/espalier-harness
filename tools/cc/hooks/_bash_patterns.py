@@ -6707,6 +6707,51 @@ def _strip_tail_kept_nonempty(operand: str, *, powershell: bool = False) -> str:
 _REDIRECT_TOKEN_RE = re.compile(r"^(?:[0-9]*[<>]{1,3}|&>{1,2})")
 _BARE_REDIRECT_OPERATOR_RE = re.compile(r"^(?:[0-9]*[<>]{1,3}[&|]?|&>{1,2})$")
 
+
+def _redirect_words(tok: str, *, powershell: bool = False) -> int:
+    """How many words the redirect at ``tok`` takes from an argument span:
+    0 when it opens none, 1 when it is whole (`2>x`, `>>log`, `2>&1`), 2
+    when it is a bare operator whose target is the next token (`2>`, `>`).
+    The pair above as `git clean`'s operand reader and the PowerShell
+    removal parsers (`_ps_redirect_free`) read it. With ``powershell`` the
+    all-streams redirect (`*>`, `*>>`, `*>&1`) is read as a stream number
+    is; Bash reads `*>x` as a glob and then a redirect, so there it stays a
+    word (DEF-5108: `git clean -fdx *>$null` read `*>$null` as a pathspec,
+    and the whole-tree clean's zone deny fell to a bump). `_operands`
+    reads the pair inline, on every Bash call's path, and its PowerShell
+    callers (the find family) meet no `*>` that changes a verdict
+    (DEF-5108's census), so it is left as it was."""
+    if powershell and tok.startswith("*>"):
+        tok = tok[1:]
+    if not _REDIRECT_TOKEN_RE.match(tok):
+        return 0
+    # a word count, written as `_redirect_at`'s is in write_guard
+    return 1 if _BARE_REDIRECT_OPERATOR_RE.match(tok) is None else 2
+
+
+def _ps_redirect_free(tokens: list[str]) -> list[str]:
+    """PowerShell argument tokens with each redirect taken out, a bare
+    operator's target with it (`_redirect_words`): a stream's file names
+    nothing the command removes, moves or archives. The two removal
+    parsers (`_ps_removal_target_tokens`, `_powershell_removal_targets`)
+    read their targets from what is left, so a flag never takes a
+    redirect as its value (DEF-5108: kept, `2> .env.err` read as a renamed
+    file on the secret leg, `2>$null` as a target the forced remove's
+    element tier could not vouch for, which walled a build clean, and
+    `2> err.txt` as a target off the roster, which bumped it)."""
+    kept: list[str] = []
+    skip = 0
+    for tok in tokens:
+        if skip:
+            skip -= 1
+            continue
+        words = _redirect_words(tok, powershell=True)
+        if words:
+            skip = words - 1
+            continue
+        kept.append(tok)
+    return kept
+
 #: The `&` of a redirect operator: any `&` glued to the RIGHT of `<`/`>` (the
 #: descriptor forms `2>&1`, `>&2`, `<&0`, `>&-`, and bash's csh-style
 #: both-streams `>&file` / `>& file`), or glued to the LEFT of `>` (`&>f`,
@@ -10518,12 +10563,14 @@ def _git_clean_operands(span: str, *, powershell: bool = False) -> list[str]:
         if skip:
             skip = False
             continue
-        if _REDIRECT_TOKEN_RE.match(tok):
+        words = _redirect_words(tok, powershell=powershell)
+        if words:
             # a redirection (and a bare operator's target) is never a path,
             # as `_operands` has it: the DEF-831 review drove a silenced
             # stderr to this reader's whole-tree operand -- the same hole
-            # the listing reader had, one class
-            skip = _BARE_REDIRECT_OPERATOR_RE.match(tok) is not None
+            # the listing reader had, one class; PowerShell's `*` stream
+            # too (DEF-5108)
+            skip = words == 2
             continue
         if not end_opts and tok == "--":
             end_opts = True
@@ -14351,7 +14398,9 @@ def _ps_removal_target_tokens(
     # `tokens`: a quote-aware split the zone reader supplies (§C52), so a
     # target with a space is one token; the speed bump keeps the whitespace
     # split it measured against.
-    tokens = args.split() if tokens is None else list(tokens)
+    # a redirect and its target out first, as the Bash twin's `_operands`
+    # drops them (DEF-5108)
+    tokens = _ps_redirect_free(args.split() if tokens is None else tokens)
     out: list[str] = []
     i = 0
     while i < len(tokens):
@@ -16182,8 +16231,10 @@ def _powershell_removal_targets(command: str, raw: str | None = None) -> list[st
         # the operand's own characters, from the raw twin when it indexes the scan
         args = (_named_span(raw, m, "args", through_quotes=True, powershell=True)
                 if raw is not None and len(raw) == len(command) else m.group("args"))
+        # a redirect and its target name no operand (DEF-5108)
         operands = [
-            tok for tok in map(_ps_strip_statement_brace, _ps_join_array_words(args.split()))
+            tok for tok in map(_ps_strip_statement_brace,
+                               _ps_redirect_free(_ps_join_array_words(args.split())))
             if tok and not tok.startswith("-")
         ]
         if not operands:
