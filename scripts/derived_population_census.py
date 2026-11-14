@@ -1780,8 +1780,15 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "than passing.",
     ),
     "tests/test_write_guard.py": (
-        55, "86b097eeb9646bf4d1e85fae537e2e047429dac5a34facb88fb369fa21d3915c",
+        56, "747c0502699f24da16df80d75c70984b395e0e789797bc4e351456abf88a8e15",
         "CORRECT_BY_REMEDY",
+        "GREW 55 -> 56 on 2026-11-14 (DEF-2083): one for-plain, "
+        "TestAGapAfterAPipeIsRead::test_the_masker_memo_holds_a_long_rows_judgment "
+        "walks `list(vars(bp).values())` to `cache_clear()` every memo before it counts "
+        "the masker's walk: a setup loop, never an asserted population. The one memo "
+        "whose warmth could hide a walk is the masker's, a module attribute the walk "
+        "reaches while it exists; the pin's red at the base was earned by assertion and "
+        "by mutants (the memo at maxsize 1, and no memo). "
         "GREW 53 -> 55 on 2026-11-12 (DEF-3072): one new line, counted as an all-any and "
         "a comprehension: TestAShellsOptionHidesNoPipedProgram::"
         "test_a_switched_shell_fetch_meets_the_nudge asserts `any(...)` over "

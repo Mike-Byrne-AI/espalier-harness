@@ -3877,6 +3877,19 @@ def _splices_quoted_capture(head: str, stmt: str) -> bool:
     return False
 
 
+# Memoised by the text and the reading, as `_masked_or_raw` is: its 15 call
+# sites across the secret-read, delete, zone and speed-bump legs mask about
+# forty times in one judgment over a few distinct texts, and on a long quoted
+# argument each pass rescans it (a 40 KB row: about 40 calls on 7 keys, its
+# judgment about halved; a time-budget miss on a loaded runner, DEF-2083).
+# The reading key is deliberate redundancy: nothing on the masker's graph
+# reads the reading, so a text met under both is masked twice, the price of a
+# key that stays right if such a read is ever added. Nothing on the graph
+# reads other state either
+# (`tests/test_write_guard.py::TestAGapAfterAPipeIsRead::test_a_memoised_splice_reads_no_state`),
+# and one long judgment evicts nothing at this size
+# (`::test_the_masker_memo_holds_a_long_rows_judgment`).
+@reading_cache(maxsize=16)
 def mask_inert_syntax(command: str) -> str:
     """Return `command` with literal-by-position syntax characters spaced out.
 

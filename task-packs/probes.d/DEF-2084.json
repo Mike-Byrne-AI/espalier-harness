@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2084",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "a refusal under load is a timing, which no one-liner prints deterministically",
+ "row_sha": "96b174380346",
+ "text_sha": "b77daa388d9f",
+ "verified_2026_11_14": "OPEN (filed 2026-11-14; probe driven at filing)"
+}
