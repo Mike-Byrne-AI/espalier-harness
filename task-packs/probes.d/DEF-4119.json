@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4119",
+ "subject": ".claude/commands/handoff.md",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "The loop lives in Claude Code's memory, read only by the model's CronList, and its creation is recorded only in the transcript of whichever window started it, which later clears leave under other session ids; the fix is a step in a Markdown command body, where a text check would flip on wording, not on the loop being re-created.",
+ "row_sha": "b2eebbbc461b",
+ "text_sha": "4f440c6eb647",
+ "verified_2026_11_14": "OPEN (filed 2026-11-14; probe driven at filing)"
+}

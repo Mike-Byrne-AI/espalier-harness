@@ -319,9 +319,11 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     # The `test` cells' leg on one interpreter, measured on its own: 1.5x the
-    # worst of its last 20 green runs, 63.7 min (median 45.9, 2026-11-12, the
-    # bounds census; 61.6 on 2026-11-11, 58.5 on 2026-11-09).
-    timeout-minutes: 100
+    # worst of its last 20 green runs, 68.7 min (median 49.7, 2026-11-14, the
+    # bounds census; 63.7 on 2026-11-12, 61.6 on 2026-11-11), so 105, plus 15
+    # minutes by the operator's ruling of 2026-11-14 (more time on a hung run
+    # for fewer raises as the suite grows).
+    timeout-minutes: 120
 
     steps:
       - name: Keep the temp dir on the runner's disk

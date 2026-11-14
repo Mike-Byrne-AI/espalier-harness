@@ -321,6 +321,13 @@ _ALLOWED_FLAGS = {
     # ({lost, deleted, announced}); post_write_check tells it once beside the
     # next tool result; a rewire or a new process clears it.
     "settings_unwired_pending.json",
+    # DEF-3081: SessionStart's snapshot of the gate values the three settings
+    # files supply ({files, launch, owned}), rewritten by config_guard when it
+    # lets a settings change through, and config_guard's note of a refused gate
+    # switch ({findings, announced}), told once by post_write_check. Both
+    # rewritten, never accumulated.
+    "settings_gate_values.json",
+    "settings_switch_pending.json",
     # TP-476 A-1: a DIRECTORY of harness-writer records, <writer>.json (and a
     # .lock beside each) -- written by espalier/zone_writes.py when an espalier
     # command or a transforming sync script rewrites protected files while a
