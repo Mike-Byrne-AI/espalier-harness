@@ -587,7 +587,10 @@ class TestQuotedVerbTailIsUniform:
     #: verb). ``None`` marks an anchored arm whose bare fixture is NOT a
     #: protected-zone deny, so the quoted spelling is proven where that arm's own
     #: tier is: ``_RM_SEGMENT_RE`` feeds the hard tier, whose flag-order class
-    #: drives ``"rm" -rf /`` (TestCatastrophicRmFlagOrderIndependent).
+    #: drives ``"rm" -rf /`` (TestCatastrophicRmFlagOrderIndependent). A ``None``
+    #: whose comment names a ruling instead marks an arm whose quoted spelling is
+    #: a declared limit, read nowhere: rostered so the census stays whole, and
+    #: the comment says so.
     _FIXTURES: dict[str, tuple[str, str] | None] = {
         "_TEE_RE": ("tee", "tee -a tools/cc/hooks/x.py"),
         "_SED_INPLACE_RE": ("sed", "sed -i 's/a/b/' tools/cc/hooks/x.py"),
