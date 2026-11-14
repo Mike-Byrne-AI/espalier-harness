@@ -384,7 +384,7 @@ def _budget_refused(result: subprocess.CompletedProcess) -> bool:
 
 #: The guard whose two bounds a refusal names: both refusals share one
 #: template and differ only in its figure.
-_WRITE_GUARD = Path(__file__).resolve().parents[1] / "tools" / "cc" / "hooks" / "write_guard.py"
+_WRITE_GUARD = SUITE_CHECKOUT / "tools" / "cc" / "hooks" / "write_guard.py"
 #: The figure in the refusal's template, and in the parent's plain-words fallback.
 _REFUSAL_FIGURE_RE = re.compile(r"(?:within|ran out of) its ([0-9]+(?:\.[0-9]+)?) s time budget")
 
@@ -411,9 +411,11 @@ def _guard_bounds() -> dict[float, str]:
 
 def refusing_bound(result: subprocess.CompletedProcess) -> str:
     """Which of write_guard's two bounds refused the call, from the figure its
-    refusal names (76cd5c): a CI miss said only how long the attempt took, so
-    a red could not tell a slow judgment (the child's budget) from a slow
-    start (the parent's deadline)."""
+    refusal names (76cd5c): a CI miss said only how long the attempt took.
+    It names the bound, not the cause: the child's budget counts from the
+    child's first line and the parent's deadline from the hook's, so a child
+    that starts late and then judges slowly meets the parent's deadline
+    first, and that label alone does not prove a slow start."""
     found = _REFUSAL_FIGURE_RE.search(_stdout_text(result))
     if found is None:
         return "its refusal names no bound"

@@ -46,6 +46,91 @@ def _bash_patterns_module():
     return _bash_patterns
 
 
+#: Modules whose functions read only their arguments, for the no-state pin.
+_PURE_MODULES = frozenset({"bisect", "collections.abc", "contextlib", "fnmatch", "functools", "itertools",
+                           "posixpath", "re", "shlex", "typing"})
+#: Attributes that read the process's state whatever they are reached through.
+_STATE_ATTRS = frozenset({"cwd", "environ", "expanduser", "expandvars", "getcwd", "getenv", "home", "platform"})
+_MUTATING_METHODS = frozenset({"add", "append", "clear", "discard", "extend", "insert", "pop", "popitem",
+                               "remove", "reverse", "setdefault", "sort", "update"})
+_MUTABLE_FACTORIES = frozenset({"Counter", "OrderedDict", "bytearray", "defaultdict", "deque", "dict", "list", "set"})
+#: The memos whose call graph reaches state their key does not hold, by the
+#: row that owns it: each entry reds once its reads go (shrink-only).
+_MEMOS_WITH_A_FILED_READ = {"_removed_or_relocated_cached": "DEF-2085", "_relief_applies": "DEF-2085"}
+
+
+def _memoised_readers() -> list[str]:
+    """Every top-level function in `_bash_patterns.py` under a cache decorator."""
+    import ast
+    tree = ast.parse((HOOKS_DIR / "_bash_patterns.py").read_text(encoding="utf-8"))
+    return [n.name for n in tree.body if isinstance(n, ast.FunctionDef)
+            and any("cache" in ast.unparse(d) for d in n.decorator_list)]
+
+
+def _state_reads(source: str, root: str) -> tuple[set[str], list[tuple[str, str]]]:
+    """The functions and classes `root`'s call graph reaches in `source`, and
+    each read of state on it: a context variable (bar the reading a
+    `reading_cache` memo keys), a module-level container the module mutates,
+    a `global`, a name from an import outside `_PURE_MODULES`, or a
+    `_STATE_ATTRS` attribute. A static superset: a name read where one shares
+    a function's or class's name is walked as a call."""
+    import ast
+    tree = ast.parse(source)
+    defs = {n.name: n for n in tree.body
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))}
+    values, context_vars, impure = {}, set(), {}
+    for n in tree.body:
+        if isinstance(n, ast.Import):
+            impure.update({(a.asname or a.name.split(".")[0]): a.name
+                           for a in n.names if a.name not in _PURE_MODULES})
+        elif isinstance(n, ast.ImportFrom) and n.module not in _PURE_MODULES | {"__future__"}:
+            impure.update({(a.asname or a.name): f"{n.module}.{a.name}" for a in n.names})
+        elif isinstance(n, (ast.Assign, ast.AnnAssign)) and n.value is not None:
+            for t in (n.targets if isinstance(n, ast.Assign) else [n.target]):
+                if isinstance(t, ast.Name):
+                    values[t.id] = n.value
+                    if isinstance(n.value, ast.Call) and ast.unparse(n.value.func).endswith("ContextVar"):
+                        context_vars.add(t.id)
+    mutated = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AugAssign, ast.Delete)):
+            targets = node.targets if isinstance(node, (ast.Assign, ast.Delete)) else [node.target]
+            mutated.update(t.value.id for t in targets
+                           if isinstance(t, (ast.Subscript, ast.Attribute)) and isinstance(t.value, ast.Name))
+        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+              and node.func.attr in _MUTATING_METHODS and isinstance(node.func.value, ast.Name)):
+            mutated.add(node.func.value.id)
+    mutable = {name for name, value in values.items() if name in mutated and (
+        isinstance(value, (ast.List, ast.Dict, ast.Set, ast.ListComp, ast.DictComp, ast.SetComp))
+        or (isinstance(value, ast.Call) and ast.unparse(value.func).split(".")[-1] in _MUTABLE_FACTORIES))}
+    keyed = set()
+    root_def = defs.get(root)
+    if root_def is not None and any("reading_cache" in ast.unparse(d) for d in getattr(root_def, "decorator_list", [])):
+        keyed = {"_PS_GLUED_OPENING"}
+    # `reading_cache` itself reads the reading, which keys the memo it builds
+    seen, todo, reads = {"reading_cache"}, [root], []
+    while todo:
+        name = todo.pop()
+        if name in seen or name not in defs:
+            continue
+        seen.add(name)
+        for node in ast.walk(defs[name]):
+            if isinstance(node, ast.Name):
+                if node.id in context_vars and node.id not in keyed:
+                    reads.append((name, "context variable " + node.id))
+                elif node.id in mutable:
+                    reads.append((name, "mutable module state " + node.id))
+                elif node.id in impure:
+                    reads.append((name, "impure import " + impure[node.id]))
+                elif node.id in defs:
+                    todo.append(node.id)
+            elif isinstance(node, ast.Global):
+                reads.append((name, "global " + ", ".join(node.names)))
+            elif isinstance(node, ast.Attribute) and node.attr in _STATE_ATTRS:
+                reads.append((name, "state attribute ." + node.attr))
+    return seen, sorted(set(reads))
+
+
 class TestBashPatternsLoaderContract:
     """`_bash_patterns` is imported under two spellings -- bare, with the hooks
     directory on sys.path (write_guard, post_write_check, the loader above),
@@ -19127,48 +19212,85 @@ class TestAGapAfterAPipeIsRead:
         assert bp.mask_inert_syntax(text) == first
         assert bp.mask_inert_syntax.cache_info().hits == 1, bp.mask_inert_syntax.cache_info()
 
-    @pytest.mark.parametrize("memo", ["_masked_or_raw", "splice_line_continuations", "mask_inert_syntax"])
-    def test_a_memoised_splice_reads_no_state(self, memo):
-        """The two memos hold the operator's cost bound (DEF-3071, DEF-3073):
-        an answer is served by the text alone, so nothing on their call graph
-        may read a context variable, the environment or a `global` -- a read
-        added there later would serve a stale answer and red nothing else
-        (the failure-mode review). A static walk over the module's own
-        functions, a name read as a call where one shares a function's name
-        (a superset)."""
-        import ast
+    def test_the_masker_memo_holds_a_long_rows_judgment(self, tmp_path):
+        """The memo's effect, not its decorator (the 76cd5c reviews): the
+        delete reader's judgment of the 40 KB scan-cap row, from empty
+        caches, masks each (text, reading) once and evicts nothing, under
+        either reading. A memo too small for one judgment, or a caller that
+        reaches the masker past it, shows here as an eviction or as no hit."""
+        import contextvars
         bp = _bash_patterns_module()
-        tree = ast.parse(Path(bp.__file__).read_text(encoding="utf-8"))
-        defs = {n.name: n for n in tree.body
-                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
-        context_vars = {
-            t.id for n in tree.body if isinstance(n, (ast.Assign, ast.AnnAssign))
-            and isinstance(n.value, ast.Call)
-            and ast.unparse(n.value.func).endswith("ContextVar")
-            for t in (n.targets if isinstance(n, ast.Assign) else [n.target])
-            if isinstance(t, ast.Name)
-        }
-        assert context_vars, "the module's context variables were not found"
-        # `reading_cache`'s one read is DEF-2073's reading, which keys the
-        # memo, so it serves no answer of another reading.
-        seen, todo, reads = {"reading_cache"}, [memo], []
-        while todo:
-            name = todo.pop()
-            if name in seen:
-                continue
-            seen.add(name)
-            for node in ast.walk(defs[name]):
-                if isinstance(node, ast.Name) and node.id in context_vars:
-                    reads.append((name, node.id))
-                elif isinstance(node, ast.Name) and node.id in defs:
-                    todo.append(node.id)
-                elif isinstance(node, ast.Global):
-                    reads.append((name, "global " + ", ".join(node.names)))
-                elif (isinstance(node, ast.Attribute) and node.attr in ("environ", "getenv")
-                      and isinstance(node.value, ast.Name) and node.value.id == "os"):
-                    reads.append((name, "os." + node.attr))
-        assert "mask_inert_syntax" in seen, sorted(seen)
-        assert not reads, reads
+        wg = _load_write_guard()
+        pad = "\n".join(["x" * 99] * 200)
+        row = 'echo "' + pad + " ; rm -rf * ; " + pad + '" > notes.md'
+        bp.mask_inert_syntax.cache_clear()
+        assert wg._bash_dangerous_reason(row, tmp_path, cwd=tmp_path) is None
+        infos = {}
+        for reading in (False, True):
+            context = contextvars.copy_context()
+            context.run(bp._PS_GLUED_OPENING.set, reading)
+            infos[reading] = context.run(bp.mask_inert_syntax.cache_info)
+        assert sum(info.hits for info in infos.values()) > 0, infos
+        for reading, info in infos.items():
+            assert info.misses == info.currsize, (reading, info)
+
+    @pytest.mark.parametrize("memo", _memoised_readers())
+    def test_a_memoised_splice_reads_no_state(self, memo):
+        """Every memo in the module holds the operator's cost bound
+        (DEF-3071, DEF-3073) by serving an answer from its key alone, so
+        nothing on its call graph may read state the key does not hold: a
+        context variable (a `reading_cache` memo keys the reading, so that
+        one read is allowed), a module-level container the module mutates, a
+        `global`, an import whose functions read the process (`os`, `sys`,
+        `pathlib`, `_hook_utils`), or a process attribute (`environ`,
+        `expanduser`, `getcwd`, `platform`, ...). A read added there later
+        would serve a stale answer and red nothing else (the failure-mode
+        reviews). The roster is every decorated memo, never a hand list;
+        `_MEMOS_WITH_A_FILED_READ` names the two that reach state today, by
+        their row, and reds once their reads go."""
+        bp = _bash_patterns_module()
+        source = Path(bp.__file__).read_text(encoding="utf-8")
+        seen, reads = _state_reads(source, memo)
+        if memo == "mask_inert_syntax":
+            # the walk reached the masker's own scanners, not just its name
+            assert {"_walk_shell_roles", "_scan_head_word"} <= seen, sorted(seen)
+        if memo in _MEMOS_WITH_A_FILED_READ:
+            assert reads, (f"{memo} reads no unkeyed state now: drop it from "
+                           f"_MEMOS_WITH_A_FILED_READ and strike {_MEMOS_WITH_A_FILED_READ[memo]}")
+        else:
+            assert not reads, reads
+
+    def test_the_state_walk_sees_each_kind_of_read(self):
+        """The no-state pin's must-trip control: a synthetic module whose
+        memo reaches each kind of read through a callee, a method and a
+        module flag, every one of which the walk must report."""
+        source = (
+            "import contextvars, functools, os, sys\n"
+            "import _hook_utils\n"
+            "from pathlib import Path\n"
+            "_FLAG = [False]\n"
+            "_TABLE = {'a': 1}\n"
+            "_V = contextvars.ContextVar('_V', default=False)\n"
+            "_PS_GLUED_OPENING = contextvars.ContextVar('_PS_GLUED_OPENING', default=False)\n"
+            "def _set():\n    _FLAG[0] = True\n"
+            "class _Frame:\n    def where(self):\n        return os.getcwd()\n"
+            "def _a():\n    return _hook_utils.x()\n"
+            "def _b():\n    return os.path.expanduser('~') + sys.platform\n"
+            "def _c():\n    return _FLAG[0] and _TABLE['a']\n"
+            "def _d():\n    global _G\n    return _V.get()\n"
+            "def _e():\n    return _Frame().where() + str(Path.home())\n"
+            "def _f():\n    return _PS_GLUED_OPENING.get()\n"
+            "@functools.lru_cache(maxsize=1)\n"
+            "def memo(t):\n    return _a(), _b(), _c(), _d(), _e(), _f()\n"
+        )
+        seen, reads = _state_reads(source, "memo")
+        kinds = {(where, what.split(" ", 1)[0]) for where, what in reads}
+        assert {"_a", "_b", "_c", "_d", "_e", "_Frame", "_f"} <= seen, sorted(seen)
+        for expected in [("_a", "impure"), ("_b", "state"), ("_c", "mutable"), ("_d", "global"),
+                         ("_d", "context"), ("_e", "impure"), ("_Frame", "state"), ("_f", "context")]:
+            assert expected in kinds, (expected, reads)
+        # `_TABLE` is a container nothing mutates: a table, not state
+        assert not any("_TABLE" in what for _, what in reads), reads
 
 
 #: (tool, command, verdict) rows for DEF-2078: a comment that ends in a

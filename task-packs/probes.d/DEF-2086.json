@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2086",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the cost is a timing under load, which no one-liner prints deterministically",
+ "row_sha": "2722da0a6564",
+ "text_sha": "6587265f271d",
+ "verified_2026_11_14": "OPEN (filed 2026-11-14; probe driven at filing)"
+}
