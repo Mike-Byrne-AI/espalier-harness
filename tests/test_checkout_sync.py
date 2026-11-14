@@ -77,6 +77,15 @@ def _dead_pid() -> int:
     return child.pid
 
 
+# The two lock reasons Claude Code writes for a worktree it holds: the bare
+# form, and the one with the holder's start time (read 2026-11-10 from an
+# agent worktree's lock on the macOS box, the date padded as git's own is).
+_CLAUDE_LOCK_FORMS = {
+    "bare": "claude agent {name} (pid {pid})",
+    "start": "claude agent {name} (pid {pid} start Sat Nov  7 02:17:28 2026)",
+}
+
+
 @pytest.fixture
 def repos(tmp_path):
     """origin (bare), seed (the other machine), work (the checkout under test)."""
@@ -714,20 +723,45 @@ class TestReapWorktrees:
         assert report.note.startswith("Claude Code's session registry could not be read")
         assert "keepme" in cs.worktrees_line(report)
 
-    def test_a_lock_held_by_a_dead_pid_is_released_and_removed(self, cs, repos):
+    @pytest.mark.parametrize("form", sorted(_CLAUDE_LOCK_FORMS))
+    def test_a_lock_held_by_a_dead_pid_is_released_and_removed(self, cs, repos, form):
+        """Both forms Claude Code writes: the start-time one read as "locked
+        by hand" and kept a finished agent's worktree forever."""
         work = repos["work"]
         wt = _worktree(repos, "agent-dead")
-        _git(work, "worktree", "lock", "--reason", f"claude agent agent-dead (pid {_dead_pid()})", str(wt))
-        assert cs.reap_worktrees(work, sessions=[]).removed == ["agent-dead"]
+        gone = _dead_pid()
+        _git(work, "worktree", "lock", "--reason", _CLAUDE_LOCK_FORMS[form].format(name="agent-dead", pid=gone),
+             str(wt))
+        report = cs.reap_worktrees(work, sessions=[])
+        assert report.removed == ["agent-dead"], report.kept
+        assert report.unlocked == [f"agent-dead (pid {gone})"]
         assert not _registered(work, wt)
 
-    def test_a_lock_held_by_a_live_pid_keeps_it(self, cs, repos):
+    @pytest.mark.parametrize("form", sorted(_CLAUDE_LOCK_FORMS))
+    def test_a_lock_held_by_a_live_pid_keeps_it(self, cs, repos, form):
         work = repos["work"]
         wt = _worktree(repos, "agent-live")
-        _git(work, "worktree", "lock", "--reason", f"claude agent agent-live (pid {os.getpid()})", str(wt))
+        _git(work, "worktree", "lock", "--reason",
+             _CLAUDE_LOCK_FORMS[form].format(name="agent-live", pid=os.getpid()), str(wt))
         report = cs.reap_worktrees(work, sessions=[])
         assert report.kept == [("agent-live", f"locked by a running process (pid {os.getpid()})")]
         assert _registered(work, wt)
+
+    @pytest.mark.parametrize("form", sorted(_CLAUDE_LOCK_FORMS))
+    def test_a_dead_holders_lock_on_a_missing_folder_names_the_unlock(self, cs, repos, form):
+        """git's prune skips a locked record, so the remedy the line names
+        releases the lock first; run as written, it clears the record."""
+        work = repos["work"]
+        wt = _worktree(repos, "agent-gone")
+        _git(work, "worktree", "lock", "--reason",
+             _CLAUDE_LOCK_FORMS[form].format(name="agent-gone", pid=_dead_pid()), str(wt))
+        shutil.rmtree(wt)
+        report = cs.reap_worktrees(work, sessions=[])
+        assert report.kept == [
+            ("agent-gone", "its folder is missing (git worktree unlock, then git worktree prune clears the record)")]
+        _git(work, "worktree", "unlock", str(wt))
+        _git(work, "worktree", "prune")
+        assert not _registered(work, wt)
 
     @pytest.mark.parametrize("reason", [None, "mine, do not touch"])
     def test_a_hand_set_lock_keeps_it(self, cs, repos, reason):
@@ -1394,6 +1428,17 @@ class TestPieces:
             plan.write_text(body, encoding="utf-8")
             assert cs.plan_in_progress(tree) is open_, body
             assert cs.plan_in_progress(tree, merged_and_clean=True) is False, body
+
+    def test_a_lock_reads_its_holder_in_both_forms_and_no_other(self, cs):
+        """A lock names its holder only in a form Claude Code writes; any other
+        reason, a pid in it or not, is someone's choice and is never dead."""
+        gone = _dead_pid()
+        for form in _CLAUDE_LOCK_FORMS.values():
+            assert cs.lock_holder_dead(form.format(name="agent-x", pid=gone)) is True, form
+            assert cs.lock_holder_dead(form.format(name="agent-x", pid=os.getpid())) is False, form
+        for hand in ("", "mine, do not touch", f"(pid {gone} is mine)", f"pid {gone}",
+                     f"(pid {gone} start", f"(pid {gone} start (pid {gone} start", f"(pid {gone} start (x)"):
+            assert cs.lock_holder_dead(hand) is False, hand
 
     def test_pid_alive_answers_for_this_process_a_finished_one_and_non_pids(self, cs):
         assert cs.pid_alive(os.getpid()) is True

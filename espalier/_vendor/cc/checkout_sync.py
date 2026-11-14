@@ -145,8 +145,13 @@ _GIT_ENV_OVERRIDES = (
     "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
     "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR", "GIT_CEILING_DIRECTORIES",
 )
-# Claude Code's lock reason names the holder: "claude agent agent-a3cc... (pid 25468)".
-_LOCK_PID_RE = re.compile(r"\(pid (\d+)\)")
+# Claude Code's lock reason names the holder in one of two forms: "claude agent
+# agent-a3cc... (pid 25468)", or with the holder's start time, "claude agent
+# agent-aa54... (pid 8671 start Sat Nov  7 02:17:28 2026)" (read 2026-11-10 on
+# macOS). Either shape anywhere in a reason names a holder; a reason with
+# neither (no pid, or a pid in any other shape) is someone's choice. The start
+# tail stops at either parenthesis, so a search stays linear on any reason.
+_LOCK_PID_RE = re.compile(r"\(pid (\d+)(?: start [^()]*)?\)")
 
 # Ignored content a removal may take with it. Anything ignored and not named
 # here keeps the worktree: a `TP-*.md` draft, an `espalier_*.md` note, a
@@ -1216,8 +1221,9 @@ def describe_session(row: dict[str, object]) -> str:
 
 def lock_holder_dead(reason: str) -> bool:
     """True when a worktree lock's reason names its holder the way Claude Code
-    writes it (``claude agent <id> (pid N)``) and process N has exited. A lock
-    with no pid (one you set yourself) is never dead: it is someone's choice."""
+    writes it (``claude agent <id> (pid N)``, or ``(pid N start <date>)``) and
+    process N has exited. A lock with no pid in either form (one you set
+    yourself) is never dead: it is someone's choice."""
     held = _LOCK_PID_RE.search(reason or "")
     return held is not None and pid_alive(int(held.group(1))) is False
 
@@ -1869,7 +1875,10 @@ def _why_kept(git: _Git, block: dict[str, str], path: Path, upstream: str | None
         if not lock_holder_dead(block.get("locked", "")):
             return f"locked by a running process (pid {held.group(1)})"
     if not path.is_dir():
-        return "its folder is missing (git worktree prune clears the record)"
+        # git's prune skips a locked record, so a lock whose holder exited is
+        # released first (an unlock by the missing path still finds it).
+        unlock = "git worktree unlock, then " if "locked" in block else ""
+        return f"its folder is missing ({unlock}git worktree prune clears the record)"
     if not (path / ".git").exists():
         return "its .git link is missing (`git worktree repair`, or remove the folder by hand)"
     if upstream is None:
