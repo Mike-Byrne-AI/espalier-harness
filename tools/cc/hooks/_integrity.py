@@ -1542,7 +1542,7 @@ def write_settings_gate_values(repo_root: Path, record: dict) -> None:
 
 
 #: A refused change that would switch a gate off: config_guard's
-#: ``_gate_switch_findings``. Nothing else tells Claude: the ConfigChange
+#: ``_judge_gate_switch``. Nothing else tells Claude: the ConfigChange
 #: refusal reaches no one and the file keeps the change. Told at the next
 #: PostToolUse, as the unwired refusal is; cleared when a later settings change
 #: is let through (the files then switch nothing off) and where a fresh process

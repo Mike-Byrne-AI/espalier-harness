@@ -345,6 +345,15 @@ class TestTheStopGateTestCommand:
         box.write(box.user, {"env": {CMD: "true"}})
         assert box.change("user_settings") is None
 
+    def test_a_replaced_command_under_the_light_gate_is_let_through(self, box):
+        """A command in effect is replaced while the stop gate is light (no
+        variable sets it, so the default floor): Gate 1 runs no command, so
+        the replacement loosens nothing."""
+        live = {CMD: "pytest -q"}
+        box.start(live=live)
+        box.write(box.user, {"env": {CMD: "true"}})
+        assert box.change("user_settings", live=live) is None
+
     def test_a_command_set_where_the_full_gate_has_none_is_let_through(self, box):
         box.start(live={SG: "full"})
         box.write(box.user, {"env": {CMD: "pytest -q"}})
