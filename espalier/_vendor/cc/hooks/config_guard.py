@@ -215,16 +215,22 @@ def _loosens(name: str, before: str | None, after: str | None, mode: str) -> boo
     read by its gate's own grammar (None is unset): the maintenance switch
     turned on; the stop gate moved off ``full`` (``light`` is the default
     floor, so turning it on tightens); the suite command changed where Gate 1
-    runs one -- the stop gate full (``mode``) and a command already in effect.
-    Under light the gate runs nothing, and a full gate with none is the
-    SessionStart dormancy note's advice to set one: both are tightenings."""
+    runs one -- the stop gate full before the change and after it (``mode``).
+    With no command in the env, Gate 1 runs the declared or detected suite
+    (``stop_gate._resolve_core_tests``), so a command written then replaces
+    it. Under light the gate runs nothing, so a command set there, or with
+    the gate turned full in the same change, tightens. A roster name with no
+    grammar here loosens on any change: a switch added to the roster is
+    refused until it is taught (fail closed)."""
     if name == _maintenance_mode.ENV_VAR:
         active = _maintenance_mode._maintenance_mode_active
         return active(after) and not active(before)
     if name == "ESPALIER_STOP_GATE":
         full = "full"
         return _hook_utils.stop_gate_mode(before) == full and _hook_utils.stop_gate_mode(after) != full
-    return mode == "full" and bool((before or "").strip()) and (after or "") != before
+    if name == _hook_utils.STOP_GATE_TEST_CMD_ENV:
+        return mode == "full" and (after or "").strip() != (before or "").strip()
+    return (after or "") != (before or "")
 
 
 def _judge_gate_switch(file_path: str | None, source: str,
@@ -265,14 +271,27 @@ def _judge_gate_switch(file_path: str | None, source: str,
             fault=type(exc).__name__,
         )
         return [], None, None
+    after = {key: value for key, (value, _label) in after_values.items()}
     snapshot = _integrity.read_settings_gate_values(root)
     if snapshot is None:
-        before: dict = {"env." + n: os.environ[n] for n in _GATE_ENV_NAMES if n in os.environ}
+        # No snapshot: the values this process runs with are the start. A live
+        # value the files still supply unchanged is a file's; any other is the
+        # launch shell's (no file set it, or this change moved it), judged at
+        # the session layer and kept in the start a let-through records --
+        # never a file value the change removed, which refused every change.
+        before: dict = {}
         launch: dict = {}
         owned: list = []
+        for n in _GATE_ENV_NAMES:
+            live = os.environ.get(n)
+            if live is None:
+                continue
+            if after.get("env." + n) == live:
+                before["env." + n] = live
+            else:
+                launch[n] = live
     else:
         before, launch, owned = snapshot["files"], snapshot["launch"], snapshot["owned"]
-    after = {key: value for key, (value, _label) in after_values.items()}
 
     def text(values: dict, key: str) -> str | None:
         value = values.get(key)
@@ -286,13 +305,21 @@ def _judge_gate_switch(file_path: str | None, source: str,
     dah = _integrity.DISABLE_ALL_HOOKS
     if after.get(dah) is True and before.get(dah) is not True:
         findings.append(f"{after_values[dah][1]}: disableAllHooks: true")
-    mode = _hook_utils.stop_gate_mode(session(after, "ESPALIER_STOP_GATE"))
+    # Gate 1 runs a command only under full, so the command is judged where
+    # the gate is full before the change and after it.
+    full = "full"
+    mode = full if (_hook_utils.stop_gate_mode(session(before, "ESPALIER_STOP_GATE")) == full
+                    and _hook_utils.stop_gate_mode(session(after, "ESPALIER_STOP_GATE")) == full) else "light"
     for name in _GATE_ENV_NAMES:
         if name in owned:
             continue
         key = "env." + name
-        if not (_loosens(name, text(before, key), text(after, key), mode)
-                or _loosens(name, session(before, name), session(after, name), mode)):
+        # The command's files layer adds only the session's own command
+        # written into a file, which replaces nothing: its session layer
+        # judges every other write.
+        files_layer = name != _hook_utils.STOP_GATE_TEST_CMD_ENV and _loosens(
+            name, text(before, key), text(after, key), mode)
+        if not (files_layer or _loosens(name, session(before, name), session(after, name), mode)):
             continue
         where = after_values[key][1] if key in after_values else f"{label} (removed)"
         now, was = text(after, key), session(before, name)

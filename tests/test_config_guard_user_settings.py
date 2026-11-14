@@ -247,6 +247,26 @@ class TestTheChangeIsJudgedAgainstTheStart:
         box.write(box.user, {"env": {MM: "1"}})
         _blocked(box.change("user_settings"), f"env.{MM}")
 
+    def test_with_no_snapshot_a_launch_value_no_file_sets_refuses_no_unrelated_change(self, box):
+        """Both reviews' finding (reproduced): with no snapshot the launch
+        shell's ``full`` read as a file value the change removed, so every
+        settings change was refused and named a file that never held it."""
+        live = {SG: "full", CMD: "pytest -q"}
+        box.write(box.user, {"model": "opus"})
+        assert box.change("user_settings", live=live) is None
+
+    def test_with_no_snapshot_a_looser_file_value_over_the_launch_shells_is_refused(self, box):
+        box.write(box.user, {"env": {SG: "light"}})
+        _blocked(box.change("user_settings", live={SG: "full"}), f"env.{SG}")
+
+    def test_a_let_through_with_no_snapshot_keeps_the_launch_value(self, box):
+        """The start it records carries the launch shell's value, so a later
+        looser file value over it is still caught."""
+        box.write(box.user, {"model": "opus"})
+        assert box.change("user_settings", live={SG: "full"}) is None
+        box.write(box.user, {"env": {SG: "light"}})
+        _blocked(box.change("user_settings", live={SG: "full"}), f"env.{SG}")
+
     def test_a_change_let_through_with_no_snapshot_records_one(self, box):
         """The let-through writes the start for the next change."""
         box.write(box.user, {"env": {SG: "full"}})
@@ -329,10 +349,11 @@ class TestAGateVariableInAnEnvMapIsJudged:
 
 
 class TestTheStopGateTestCommand:
-    """Item 2: the command is judged only where Gate 1 runs it -- the stop gate
-    full and an env command already in effect. Under light the gate runs
-    nothing, and a full gate with no command is the dormancy banner's advice
-    to set one: both are tightenings."""
+    """Item 2, narrowed by the code review: the command is judged where Gate 1
+    runs one -- the stop gate full before the change and after it. With no
+    command in the env, Gate 1 runs the declared or detected suite, so a
+    command written then replaces it. Under light the gate runs nothing, and
+    turning it full with a command tightens it."""
 
     def test_a_replaced_command_under_the_full_gate_is_refused(self, box):
         live = {SG: "full", CMD: "pytest -q"}
@@ -354,16 +375,38 @@ class TestTheStopGateTestCommand:
         box.write(box.user, {"env": {CMD: "true"}})
         assert box.change("user_settings", live=live) is None
 
-    def test_a_command_set_where_the_full_gate_has_none_is_let_through(self, box):
+    def test_a_command_set_under_the_full_gate_is_refused(self, box):
+        """The code review's finding: with no command in the env, Gate 1 runs
+        the declared or detected suite (``stop_gate._resolve_core_tests``), so
+        ``true`` written now replaces it unseen."""
         box.start(live={SG: "full"})
-        box.write(box.user, {"env": {CMD: "pytest -q"}})
-        assert box.change("user_settings", live={SG: "full"}) is None
+        box.write(box.user, {"env": {CMD: "true"}})
+        _blocked(box.change("user_settings", live={SG: "full"}), f"env.{CMD}")
+
+    def test_turning_the_gate_full_with_a_command_is_let_through(self, box):
+        """Gate 1 ran nothing before the change, so nothing is loosened."""
+        box.start()
+        box.write(box.user, {"env": {SG: "full", CMD: "pytest -q"}})
+        assert box.change("user_settings") is None
 
     def test_the_command_the_session_already_runs_is_let_through(self, box):
         live = {SG: "full", CMD: "pytest -q"}
         box.start(live=live)
         box.write(box.user, {"env": {CMD: "pytest -q"}})
         assert box.change("user_settings", live=live) is None
+
+
+class TestEveryRosterNameHasAGrammar:
+    def test_the_rows_name_the_roster_integrity_holds(self):
+        assert GATE_VARS == tuple(_integrity().SETTINGS_GATE_ENV_NAMES)
+
+    def test_a_roster_name_with_no_grammar_of_its_own_fails_closed(self):
+        """The failure-mode review: a name added to the roster with no arm in
+        ``_loosens`` fell into the test command's rule and was never refused
+        under light. Any change of such a name loosens until it is taught."""
+        loosens = _load("config_guard.py", "_config_guard_def3081")._loosens
+        assert loosens("ESPALIER_A_NEW_SWITCH", None, "1", "light") is True
+        assert loosens("ESPALIER_A_NEW_SWITCH", "1", "1", "light") is False
 
 
 class TestTheRefusalIsRecordedAndTold:
