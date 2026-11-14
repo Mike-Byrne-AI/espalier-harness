@@ -585,7 +585,7 @@ Upstream, verbatim (`https://code.claude.com/docs/en/hooks.md`, fetched
 > subagent calls a tool, tool events such as `PreToolUse` and `PostToolUse`
 > fire the same configured hooks as in the main conversation, and the input
 > carries the `agent_id` and `agent_type`
-> [common input fields](#common-input-fields) that identify the subagent.
+> [common input fields](https://code.claude.com/docs/en/hooks.md#common-input-fields) that identify the subagent.
 
 > `agent_id` and `agent_type` tell your script which agent a hook fired in,
 > such as a subagent, an
