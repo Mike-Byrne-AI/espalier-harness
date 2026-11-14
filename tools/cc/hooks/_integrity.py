@@ -1415,8 +1415,8 @@ DISABLE_ALL_HOOKS = "disableAllHooks"
 #: (``write_guard._HARNESS_ENV_NAMES``, which refuses an in-session assignment
 #: of each; tests/test_hook_constant_parity.py pins the two equal), spelled
 #: as write_guard spells it: the maintenance switch through
-#: ``_maintenance_mode.ENV_VAR``, its one literal (TP-147 147-F), the rest as
-#: literals. The snapshot keeps these names alone: an ``env`` map can carry a
+#: ``_maintenance_mode.ENV_VAR``, its one literal (a second spelling would
+#: drift; tests/test_maintenance_mode_constant_parity.py), the rest as literals. The snapshot keeps these names alone: an ``env`` map can carry a
 #: credential.
 SETTINGS_GATE_ENV_NAMES: tuple[str, ...] = (
     _maintenance_mode.ENV_VAR,
