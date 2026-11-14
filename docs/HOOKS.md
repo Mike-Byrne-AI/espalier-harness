@@ -2212,7 +2212,7 @@ check after every shell call (hook 6, `post_write_check.py`) reports a watched
 file that changed when nothing accounts for the change, whatever the command's
 spelling, so a zone write the readers above misread is still caught after the
 fact -- for the zones it watches. It does not watch `cc/` or the two settings
-files (`config_guard` judges those on ConfigChange, for kill-switch and
+files (`config_guard` judges those on ConfigChange, for kill-switch, gate-variable and
 unwiring shapes only), so for a write there the path check above is the one
 live layer. Three jobs cannot move to the after-check at all, because after the
 fact is too late or there is nothing on disk to compare: a catastrophic delete
@@ -2413,6 +2413,27 @@ NEXT session would start without those gates. `config_guard` notes it, and the
 next PostToolUse tells Claude once, with the restore:
 `espalier merge-settings --repair` (or `espalier init .` when the file was
 deleted), then `espalier doctor`.
+
+**The user settings file and a settings `env` map.** Claude Code names a change
+to `~/.claude/settings.json` (or `settings.json` under `CLAUDE_CONFIG_DIR`) by
+its absolute path, with the source `user_settings`; the hook reads that file by
+its source, since no repo-root bound can hold it. Hook lists merge across the
+user, project and local files, so an emptied or no-op hook list there removes
+no project hook and is not judged; `disableAllHooks: true` there is refused,
+unless a project or local file sets the key, whose value Claude Code reads
+instead. A settings `env` map reaches every hook process (driven on Claude
+Code 2.1.319), and a user-settings `env` change applies to the running session,
+so a variable that switches a gate -- `ESPALIER_MAINTENANCE_MODE`,
+`ESPALIER_STOP_GATE`, `ESPALIER_STOP_GATE_TEST_CMD`, the roster `write_guard`
+refuses as an in-session assignment -- is refused in any of the three files'
+`env` maps where it loosens its gate against the value the session runs with:
+the maintenance switch turned on, the stop gate moved off `full`, the test
+command replaced. A value a higher-precedence file sets for the same variable
+is that file's, and a value already in effect when the session started (set at
+launch) refuses nothing. Each refusal writes `configchange_blocked_kill_switch`
+and is told once at the next PostToolUse, since the file keeps the change and
+the next session would start with it; a fresh session drops the note, and
+SessionStart names the posture it loaded.
 
 **What you see when blocked:**
 
