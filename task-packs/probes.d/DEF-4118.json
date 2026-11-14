@@ -1,0 +1,13 @@
+{
+ "id": "DEF-4118",
+ "subject": "espalier/audit_accuracy.py",
+ "cmd": "python3 -c \"import espalier.freshness as F, espalier.audit_accuracy as A; from pathlib import Path; R=Path('.'); e={'id':'p','source':'docs/SHARP_EDGES.md:1','reason':'r'}; F.read_state_cache_safe=lambda r: {'computed_at':'x','counts':{},'critical':[e],'stale':[]}; F.is_state_cache_stale=lambda c, repo_root=None: False; a=sum(v.verdict==A.VERDICT_FAIL for v in A.audit_accuracy(R).verdicts); F.read_state_cache_safe=lambda r: None; b=sum(v.verdict==A.VERDICT_FAIL for v in A.audit_accuracy(R).verdicts); print('cache-dependent' if a!=b else 'deterministic')\"",
+ "open_value": "cache-dependent",
+ "why_not": null,
+ "inputs": [
+  "espalier/freshness.py"
+ ],
+ "row_sha": "383fd1fbc30a",
+ "text_sha": "ca1c2b1eefec",
+ "verified_2026_11_14": "OPEN (filed 2026-11-14; probe driven at filing here and in the export of HEAD 3548e80b3c70)"
+}
