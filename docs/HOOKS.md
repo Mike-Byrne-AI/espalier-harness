@@ -2419,21 +2419,37 @@ to `~/.claude/settings.json` (or `settings.json` under `CLAUDE_CONFIG_DIR`) by
 its absolute path, with the source `user_settings`; the hook reads that file by
 its source, since no repo-root bound can hold it. Hook lists merge across the
 user, project and local files, so an emptied or no-op hook list there removes
-no project hook and is not judged; `disableAllHooks: true` there is refused,
-unless a project or local file sets the key, whose value Claude Code reads
-instead. A settings `env` map reaches every hook process (driven on Claude
-Code 2.1.319), and a user-settings `env` change applies to the running session,
-so a variable that switches a gate -- `ESPALIER_MAINTENANCE_MODE`,
+no project hook and is not judged. `disableAllHooks` and each `env` variable
+take the value of the highest-precedence file that sets it (local, project,
+user). A settings `env` map reaches the hook processes (driven once on Claude
+Code 2.1.319, for a project file: SessionStart and UserPromptSubmit), and a
+user-settings `env` change applies to the running session (the settings
+reference's text, not driven here). So the gate variables -- `ESPALIER_MAINTENANCE_MODE`,
 `ESPALIER_STOP_GATE`, `ESPALIER_STOP_GATE_TEST_CMD`, the roster `write_guard`
-refuses as an in-session assignment -- is refused in any of the three files'
-`env` maps where it loosens its gate against the value the session runs with:
-the maintenance switch turned on, the stop gate moved off `full`, the test
-command replaced. A value a higher-precedence file sets for the same variable
-is that file's, and a value already in effect when the session started (set at
-launch) refuses nothing. Each refusal writes `configchange_blocked_kill_switch`
-and is told once at the next PostToolUse, since the file keeps the change and
-the next session would start with it; a fresh session drops the note, and
-SessionStart names the posture it loaded.
+refuses as an in-session assignment -- and the user file's `disableAllHooks`
+are judged in all three files, and the CHANGE is judged, not the files' state:
+SessionStart records the values the three files supply where a process starts
+(`.espalier-state/settings_gate_values.json`, beside the wired-gates snapshot;
+a variable no file sets is kept at its launch value, and one the session runs
+at a value the files do not supply is owned by a source above them, managed
+settings or `--settings`, and never judged), and a change is refused where the
+values after it loosen a gate against that record: the maintenance switch
+turned on, the stop gate moved off `full` (a key deleted or a higher key
+removed over a looser lower one included), the test command changed where Gate
+1 runs one (the stop gate `full` and a command in effect: under `light`, or
+with none set, setting it tightens), `disableAllHooks` turned on. It is judged
+at the files' layer, so a switch written into the user file by a session whose
+launch already carries it is refused (the file would carry it into every later
+session), and at the session's, so a file value outranking a stricter launch
+value is refused. A change let through becomes the record for the next one. A
+session with no record (older than this hook, or a SessionStart cut short) is
+judged against the values it runs with. Each refusal writes
+`configchange_blocked_kill_switch` with `kind: gate_switch` and the file named
+by label (never the home path), and is told once at the next PostToolUse: the
+change was not applied, the file keeps it, and it takes effect at the next
+launch, which the operator decides. A later change let through clears the
+note, and so does a fresh session; SessionStart's banner names the maintenance
+switch it started with, not the other values.
 
 **What you see when blocked:**
 
