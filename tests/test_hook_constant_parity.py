@@ -199,9 +199,9 @@ class TestHookConstantParity:
         variables a settings ``env`` map may not switch (config_guard judges
         it, SessionStart snapshots it), and ``write_guard._HARNESS_ENV_NAMES``
         the set an in-session assignment may not set; one roster spelled twice
-        (no hook imports another, and ``_integrity`` takes no sibling import for
-        it). Read from the two assignments' AST, an attribute of another hook
-        module resolved to that module's literal. Dies to: a name added to one
+        (no hook imports another; both name the maintenance switch through
+        ``_maintenance_mode.ENV_VAR``). Read from the two assignments' AST, an
+        attribute of another hook module resolved to that module's literal. Dies to: a name added to one
         roster, which leaves that variable judged on one route alone."""
         def assigned(script: str, name: str) -> ast.expr:
             tree = ast.parse((HOOKS_DIR / script).read_text(encoding="utf-8"))

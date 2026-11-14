@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import _hook_utils  # noqa: E402
 from _json_safe import decode_bom, load_json_dict_safe, os_error_text  # noqa: E402
+import _maintenance_mode  # noqa: E402
 
 # The state-write lock the audit append writes its line under (write_guard's
 # time budget), read once and guarded: a `_hook_utils.py` that predates it (a
@@ -1412,11 +1413,13 @@ LOCAL_SETTINGS_REL = ".claude/settings.local.json"
 DISABLE_ALL_HOOKS = "disableAllHooks"
 #: The variables that switch a gate when set: write_guard's harness roster
 #: (``write_guard._HARNESS_ENV_NAMES``, which refuses an in-session assignment
-#: of each; tests/test_hook_constant_parity.py pins the two equal). Literals
-#: here, so this module takes no sibling import for them. The snapshot keeps
-#: these names alone: an ``env`` map can carry a credential.
+#: of each; tests/test_hook_constant_parity.py pins the two equal), spelled
+#: as write_guard spells it: the maintenance switch through
+#: ``_maintenance_mode.ENV_VAR``, its one literal (TP-147 147-F), the rest as
+#: literals. The snapshot keeps these names alone: an ``env`` map can carry a
+#: credential.
 SETTINGS_GATE_ENV_NAMES: tuple[str, ...] = (
-    "ESPALIER_MAINTENANCE_MODE",
+    _maintenance_mode.ENV_VAR,
     "ESPALIER_STOP_GATE",
     "ESPALIER_STOP_GATE_TEST_CMD",
 )
