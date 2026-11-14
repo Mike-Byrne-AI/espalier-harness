@@ -1,0 +1,10 @@
+{
+ "id": "DEF-3081",
+ "subject": "tools/cc/hooks/config_guard.py",
+ "cmd": "python -c 'import json, os, subprocess, sys, tempfile; from pathlib import Path; t = Path(tempfile.mkdtemp()); h = t / \"home\"; p = t / \"proj\"; (h / \".claude\").mkdir(parents=True); (p / \".claude\").mkdir(parents=True); u = h / \".claude\" / \"settings.json\"; e = {k: v for k, v in os.environ.items() if not k.startswith((\"ESPALIER_\", \"CLAUDE\"))}; e.update(HOME=str(h), USERPROFILE=str(h), CLAUDE_PROJECT_DIR=str(p)); run = lambda d: (u.write_text(json.dumps(d)), subprocess.run([sys.executable, \"tools/cc/hooks/config_guard.py\"], input=json.dumps({\"hook_event_name\": \"ConfigChange\", \"source\": \"user_settings\", \"file_path\": str(u)}), capture_output=True, text=True, env=e).stdout.strip() != \"\")[1]; print(run({\"disableAllHooks\": True}), run({\"env\": {\"ESPALIER_MAINTENANCE_MODE\": \"1\"}}))'",
+ "open_value": "False False",
+ "why_not": null,
+ "row_sha": "ae5c42e48dfa",
+ "text_sha": "bb05b07988dd",
+ "verified_2026_11_14": "OPEN (filed 2026-11-14; probe driven at filing here and in the export of HEAD d70d0a9ec3c7)"
+}
