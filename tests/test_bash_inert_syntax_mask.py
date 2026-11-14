@@ -1203,6 +1203,8 @@ _MASKER_ROW_ORACLE = [
     ("echo `echo a\\\\\\ #x; echo b`", b"a\\\n"),
     ("echo $(echo ${x:-)})#; echo b", b")#\nb\n"),
     ("echo a\r#; echo b", b"a\r#\nb\n"),
+    ("cat <<'`'\nbody\n`\necho `echo a #x`; echo b", b"body\na\nb\n"),
+    ("('`'/ ); echo `echo a #x`; echo b", b"a\nb\n"),
     # the declared limits beside the row: a body ends at a line that is its
     # whole delimiter word alone, quote-removed, so a second heredoc opened
     # on a line bash takes as body text is body text too; an arithmetic
@@ -1274,6 +1276,13 @@ _MASKER_ROW_DELETES = [
     ("wall", f"echo `echo a\\\\ #x; {_DELETE}`"),
     ("wall", f"echo $(echo ${{x:-)}})#; {_DELETE}"),
     ("wall", f"echo a\r#; {_DELETE}"),
+    # the mutant pass's killers, each ALLOWED at main: a statement after a
+    # quoted heredoc delimiter's terminator (the fix batch walled it only
+    # because the delimiter's and the terminator's raw backticks cancelled;
+    # jumping the delimiter alone lets it through), and an empty basename
+    # glued after a paren
+    ("wall", f"cat <<'`'\nbody\n`\necho `echo a #x`; {_DELETE}"),
+    ("wall", f"('`'/ ); echo `echo a #x`; {_DELETE}"),
     # controls
     ("allow", f"(a='`') ; echo `echo a` #x; {_DELETE}"),
     ("allow", f"echo $(echo ${{x:-)}}) #x; {_DELETE}"),
@@ -1388,6 +1397,23 @@ class TestTheMaskerReadsACommentAsBashDoes:
         own masked text is what the cursor reads; each held one raw backtick
         before the fix."""
         assert "`" not in _load_bash_patterns()._walk_shell_roles(command)[0], command
+
+    @pytest.mark.parametrize("command", [
+        '(a="x)y"); echo hi',
+        '("x)y"/command true); echo hi',
+        '("x)y"/ ); echo hi',
+        '"x)y"/command true; echo hi',
+    ])
+    def test_a_double_quoted_piece_of_a_stepped_over_word_is_masked(self, command):
+        """The step-over walks a word only when it holds a quote or a
+        backslash (the cost gate: a plain word has nothing to mask), so each
+        of the three must open the walk at each of the four sites. A `)`
+        inside double quotes is text to bash and the walk blanks it; the head
+        scan does not stop there, so the raw jump left it live for the
+        comment cursor's paren reading. Raw at main and with the gate's
+        double-quote test dropped, at all four sites."""
+        out = _load_bash_patterns()._walk_shell_roles(command)[0]
+        assert out[command.index(")")] == " ", (command, out)
 
     @pytest.mark.parametrize("text, glued", [
         ("a\\\\ #", True), ("a\\\\\\ #", True), ("a\\ #", True), ("a #", False), ("a\\\n#", False),

@@ -3908,7 +3908,19 @@ def _walk_shell_roles(
         jumped those words raw, so a quoted or escaped backtick in one
         stayed live for the comment cursor and flipped its body state:
         ``(a='`'); echo `echo a #x`; <delete>`` hid the delete, driven on
-        bash 3.2, dash and zsh."""
+        bash 3.2, dash and zsh.
+
+        ⚠ CALLED ONLY FOR A WORD HOLDING A QUOTE OR A BACKSLASH. Each
+        caller first compares the word's raw length with its stripped length
+        from the head scan -- `_scan_head_word` drops each quote and turns a
+        backslash pair into one character, so the two are equal exactly when
+        the word holds neither -- and jumps a plain word to where the scan
+        ended it, with no call. A plain word has nothing to mask, records no
+        span, and ends there: the scan stops at this loop's blanks and
+        separators, and the walker stands only at unquoted positions, so no
+        quote opened before ``a``. Walking every skip word cost +1.5% of a
+        judgment of one, measured, since one judgment walks the same command
+        about 35 times."""
         k = a
         while k < n and s[k] not in " \t\n\r;|&<>":
             c = s[k]
@@ -4155,12 +4167,16 @@ def _walk_shell_roles(
             # no verdict, and the masker gate pins the sets for the glued
             # shapes both reviews named.
             m = span_at[i - span_start]
+            # The suffix is plain (no quote, no backslash) exactly when its raw
+            # length is its stripped length; a plain one is jumped with no
+            # call (`step_over_assignment`'s docstring).
+            plain = span_after - i == len(span_buf) - m
             if c in "\n\r;|&<>":
                 # an escaped terminator: a read here consumes nothing (the
                 # progress guard's case below) and the capture stays armed
                 pass
             elif span_last_eq >= m:
-                end = step_over_assignment(i)
+                end = span_after if plain else step_over_assignment(i)
                 nesting = _depth_after_step_over(s, i, end, nesting)
                 pipe_pending = False
                 i = end
@@ -4168,7 +4184,7 @@ def _walk_shell_roles(
             else:
                 base = span_last_slash + 1 if span_last_slash >= m else m
                 if base >= len(span_buf):
-                    end = step_over_assignment(i, value=False)
+                    end = span_after if plain else step_over_assignment(i, value=False)
                     nesting = _depth_after_step_over(s, i, end, nesting)
                     pipe_pending = False
                     i = end
@@ -4181,7 +4197,7 @@ def _walk_shell_roles(
                     rec = (span_buf[base:] if len(span_buf) - base <= _MAX_ROSTERED_HEAD_LEN
                            else _UNROSTERED_HEAD)
                     if rec in _HEAD_SKIP_WORDS:
-                        end = step_over_assignment(i, value=False)
+                        end = span_after if plain else step_over_assignment(i, value=False)
                         nesting = _depth_after_step_over(s, i, end, nesting)
                         pipe_pending = False
                         i = end
@@ -4245,7 +4261,10 @@ def _walk_shell_roles(
                 i = after
                 continue
             elif word in _HEAD_SKIP_WORDS:
-                end = step_over_assignment(i, value=False)
+                # plain exactly when the raw length is the stripped length
+                # (`step_over_assignment`'s docstring)
+                end = (after if after - i == len(span_buf)
+                       else step_over_assignment(i, value=False))
                 nesting = _depth_after_step_over(s, i, end, nesting)
                 pipe_pending = False
                 i = end
@@ -4288,8 +4307,9 @@ def _walk_shell_roles(
                 # quote read as an opening one, the walk raised, and the whole
                 # command came back raw -- a separator inside the value stayed
                 # live. `step_over_assignment` walks to where bash ends the
-                # word, masking and recording each quoted piece of the value.
-                end = step_over_assignment(i)
+                # word, masking and recording each quoted piece of the value;
+                # a plain word (raw length the stripped length) is jumped.
+                end = after if after - i == len(span_buf) else step_over_assignment(i)
                 nesting = _depth_after_step_over(s, i, end, nesting)
                 pipe_pending = False
                 i = end
