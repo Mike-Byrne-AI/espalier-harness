@@ -2355,53 +2355,9 @@ _POSIX_SHELL_SWITCH_RUN_AFTER_C = (
     + _POSIX_SHELL_SWITCH + r"|" + _SWITCH_REDIRECT + r"))*"
     + r"(?:[ \t]+--(?:[ \t]+" + _SWITCH_REDIRECT + r")*)?"
 )
-#: A POSIX shell from its head through the cluster that hands it a program:
-#: the head in any case with an optional `.exe` and closing quote, the switch
-#: run, the `c` cluster of either sign. ONE home for every reader that asks
-#: where a shell is handed a program (DEF-3078's class): the `-c` opener
-#: below, the masker's exec-opener relief (`_EXEC_OPENER_RE`), which blanks
-#: exactly what the opener reads inside a command that runs no shell, and the
-#: binding pre-pass's child-scope opener (`_SHELL_C_BODY_OPEN`). Each of
-#: the two spelled the bare `sh -c` alone until DEF-3078, so `bash -lc`,
-#: `bash +c` and `bash -x -c` opened no child scope and drew no relief. The
-#: one reader left on the bare spelling on purpose is the command position's
-#: exec quote (`_CMD_POS_EXEC_QUOTE`): it reads the program IN PLACE, which
-#: holds for the bare `sh -c` alone; a program behind a switch or cluster is
-#: read one level down. The speed bump's substitution arm spells its own
-#: shell heads (`_speedbump._FETCH_SHELL`), pinned to `_POSIX_SHELL_HEADS`.
-_POSIX_SHELL_C_OPENER = (
-    r"(?i:" + _POSIX_SHELL_HEADS + r")" + _EXE_SUFFIX + r"\b" + _QUOTED_VERB_TAIL
-    + _POSIX_SHELL_SWITCH_RUN + r"[ \t]+" + _POSIX_SHELL_C_CLUSTER
-)
-#: The opener starts at a command position OR at the start of a word
-#: (DEF-3078; a word starts after a blank, a quote, a slash, a separator or
-#: the text's start, never after a letter, a digit, `.` or `-`, so
-#: `deploy.sh` and `my-bash` are no shell, as the pipe reader holds): the
-#: bare `sh -c` is read wherever it stands as a word, since
-#: the command position's exec-quote arm (`_CMD_POS_EXEC_QUOTE`) is
-#: unanchored, so a shell a launcher starts without opening a command
-#: position -- find's `-exec`, `-execdir`, `-ok`, fd's `-x`, GNU parallel,
-#: `ssh host`, `docker exec c` -- was read in its bare spelling and in no
-#: other: `find . -exec bash -lc '<delete of the root>' ';'`, the
-#: login-shell one-liner per file, was a plain allow beside a walled
-#: `bash -c`. The boundary arm reads the switch run and the cluster wherever
-#: the bare spelling is read, and no launcher is rostered. `_CMD_POS` stays
-#: the FIRST arm: at an outer `bash -c "` it takes the exec quote as its own
-#: prefix and matches the inner opener (`bash -c "bash -lc '...'"`), which
-#: the boundary arm alone would swallow into the outer word and never read.
-#: A mention inside a command that runs no shell stays data because the
-#: masker blanks the same fragment there, less any redirect in its run
-#: (`_EXEC_OPENER_RE`).
-#: The arm moves the bare spelling's reading behind such a launcher too:
-#: every reader that takes each program this opener yields (the write,
-#: remove and secret legs) now sees it there, the refusing direction. Only
-#: this opener and the speed bump's substitution arm open at a word start
-#: (pinned by `tests/test_write_guard.py::TestAShellsSwitchRunIsReadWhereverItsBareDashCIs`).
-#: ReDoS: the arm adds no quantifier; a flood of heads is a start per head,
-#: each reading its own run, which no value can cross (a value is never a
-#: head spelling).
 _SHELL_DASH_C_RE = re.compile(
-    r"(?:" + _CMD_POS + r"|(?<![\w.-]))" + _POSIX_SHELL_C_OPENER
+    _CMD_POS + r"(?i:" + _POSIX_SHELL_HEADS + r")" + _EXE_SUFFIX + r"\b" + _QUOTED_VERB_TAIL
+    + _POSIX_SHELL_SWITCH_RUN + r"[ \t]+" + _POSIX_SHELL_C_CLUSTER
     + _POSIX_SHELL_SWITCH_RUN_AFTER_C + r"[ \t]+"
     + r"(?P<word>" + _BASH_QUOTED_WORD + r")"
 )
@@ -3522,27 +3478,7 @@ _NON_REPARSING_HEADS = frozenset({
 #: position -- was measured and REJECTED: it loses `find -exec sh -c`,
 #: `ssh host '...'`, a flag-embedded `--wrap='eval ...'` and a `git` alias body
 #: (four genuinely-executing shapes) to relieve three inert ones. Wrong trade.
-#:
-#: The shell arm blanks the `-c` opener's own fragment (DEF-3078) from the
-#: head through the cluster, its switch run WITHOUT the redirect arm: the
-#: opener reads a shell's program wherever the bare `sh -c` is read, behind
-#: any switch run or `c` cluster, so the relief must blank `bash -lc` in
-#: `echo find . -exec bash -lc '<delete>' ';'` -- it names a command and
-#: runs none -- as it blanked `sh -c`. Never a redirect: one between the
-#: head and the cluster is the command's own (`echo hi sh >out.txt -c x`
-#: writes `out.txt`), and the first cut, which composed the whole run,
-#: blanked it from the write and secret readers (both reviews, driven); a
-#: run holding one is not relieved, so such a mention can draw a refusal
-#: (the friction direction). Through the cluster, never the head alone: a
-#: reader that takes a quoted word as the program a carrier hands on
-#: (`git bisect run sh -c '...'`) reads it only once the opener is blank
-#: up to that word (the head-only second cut lost that wall; the tier,
-#: driven). The bare `sh -c` blanks exactly as the old spelling did, so no
-#: mention it relieved stops being relieved.
-_EXEC_OPENER_RE = re.compile(
-    r"\b(?:eval|(?i:" + _POSIX_SHELL_HEADS + r")" + _EXE_SUFFIX + r"\b" + _QUOTED_VERB_TAIL
-    + r"(?:[ \t]+" + _POSIX_SHELL_SWITCH + r")*[ \t]+" + _POSIX_SHELL_C_CLUSTER + r")\b"
-)
+_EXEC_OPENER_RE = re.compile(r"\b(?:eval|(?:ba|z|k|da)?sh[ \t]+-c)\b")
 
 #: Prefix words that do not themselves consume the argument -- step over them and
 #: keep looking for the real head.
@@ -7096,39 +7032,17 @@ _BINDING_SCOPE_CHAR_RE = re.compile(r"[()]")
 #: The opener of a program handed to a POSIX shell's `-c` in a quoted word:
 #: the program runs in a CHILD shell, so its bindings end at its closing
 #: quote. `eval` is not here: it runs its program in the current shell.
-#: The `-c` opener's own fragment and the run after its cluster (DEF-3078):
-#: spelled `sh -c` alone, it opened no scope for `bash -lc '...'`, `bash +c
-#: '...'` or `bash -x -c '...'`, so a rebinding after a statement inside the
-#: program leaked into the parent's later reference -- the parent's
-#: `X=/` delete went unread, and a child's `X=tools/cc/hooks` turned the
-#: parent's `rm -rf "$X"` of `build` into a zone delete.
-#: A SOURCE string (DEF-3078's cost, air's redirect D): composed with the
-#: opener's fragment it is the largest compile the lane added, and only a
-#: command holding a live assignment reaches it, so `_shell_c_body_open_re`
-#: compiles it on the first call that passes the quote witness below.
-_SHELL_C_BODY_OPEN = (
-    r"\b" + _POSIX_SHELL_C_OPENER + _POSIX_SHELL_SWITCH_RUN_AFTER_C + r"[ \t]*(?P<quote>['\"])"
-)
-
-
-@functools.lru_cache(maxsize=1)
-def _shell_c_body_open_re() -> "re.Pattern[str]":
-    """`_SHELL_C_BODY_OPEN`, compiled once, on first use (DEF-3078)."""
-    return re.compile(_SHELL_C_BODY_OPEN)
+_SHELL_C_BODY_OPEN_RE = re.compile(r"\b(?:ba|z|k|da)?sh[ \t]+-c[ \t]*(['\"])")
 
 
 def _binding_scope_events(command: str, live: str) -> list[tuple[int, bool]]:
     """``(offset, opens)`` for every child scope the binding pre-pass honours
     in ``command`` (``live`` is its masked twin, same length): each live
     paren, and the quoted program of a shell's `-c` from its opening quote to
-    its closing one. An unterminated program opens nothing. The opener ends
-    on a quote it reads from ``live``, so a ``live`` holding none skips its
-    first-use compile."""
+    its closing one. An unterminated program opens nothing."""
     events = [(m.start(), live[m.start()] == "(") for m in _BINDING_SCOPE_CHAR_RE.finditer(live)]
-    if "'" not in live and '"' not in live:
-        return events
-    for m in _shell_c_body_open_re().finditer(live):
-        quote_at = m.start("quote")
+    for m in _SHELL_C_BODY_OPEN_RE.finditer(live):
+        quote_at = m.start(1)
         if command[quote_at] == "'":
             close = command.find("'", quote_at + 1)
         else:
@@ -12813,12 +12727,10 @@ if not {interp for interp, _ in _PS_INLINE_PROGRAM_RES} <= set(_STDIN_PROGRAM_WR
     )
 
 #: The heads that read a program from stdin when piped to, ONE literal: the
-#: opener's alternation and the dispatch below are both derived from it. The
-#: opener reads the POSIX shells as their own branch (`_PS_STDIN_OTHER_HEADS`
-#: then `_POSIX_SHELL_HEADS`, this literal's two halves), so their switch
-#: run can be a POSIX shell's (DEF-3079).
-_PS_STDIN_OTHER_HEADS = "python|pypy|py|node|ruby|perl|" + _POWERSHELL_HEADS
-_PS_STDIN_HEAD_ALTERNATION = _PS_STDIN_OTHER_HEADS + "|" + _POSIX_SHELL_HEADS
+#: opener's alternation and the dispatch below are both derived from it.
+_PS_STDIN_HEAD_ALTERNATION = (
+    "python|pypy|py|node|ruby|perl|" + _POWERSHELL_HEADS + "|" + _POSIX_SHELL_HEADS
+)
 #: Head -> `_STDIN_PROGRAM_WRITE_RES` key; the two PowerShell shells are
 #: absent because their program is PowerShell and is re-scanned, not
 #: pattern-matched, and the POSIX shells because theirs is Bash (below).
@@ -12915,56 +12827,13 @@ if not set(_PS_STDIN_DISPATCH.values()) <= set(_STDIN_PROGRAM_WRITE_RES):
 #: driven). A redirect can be followed by an operand (`| bash > log x.sh`),
 #: which then reads as the pipe's program: the over-capture direction.
 #: PowerShell 5.1 has no input redirect (`<` is reserved), so none is taken.
-#:
-#: A POSIX shell head reads its own run (DEF-3079), the Bash tool's pipe run
-#: (`_SHELL_PIPE_SWITCH_RUN`) in the PowerShell run's shape: a `+` switch
-#: (`| bash +x`, `| bash +s`, `+o pipefail`, the bare no-op `+`) is a switch,
-#: where the shared run opened on `-` and `/` alone and a `+` word ended it
-#: before any end of statement -- a plain allow beside a walled `| bash -x`.
-#: Only a `c` cluster of either sign gives the shell a program
-#: (`_POSIX_SHELL_C_CLUSTER`), so it refuses the match and the pipe is that
-#: program's stdin; the shared run read `-c x` and `-lc x` as a switch and
-#: its value, an over-read. A bare `--` ends the options and every word
-#: after it is an argument, a cluster included, so `| bash -s -- -c` still
-#: reads the piped program (a `-` switch in the shared run). A POSIX
-#: shell's switch: blank-separated, never glued to the next (the shared
-#: run's optional blank gave a glued run 2^n splits, pre-existing there, and
-#: copied here it ran a glued flood 1.5 times slower than the base: the
-#: failure-mode review), and opening on `-` or `+` only, so an absolute
-#: script path (`| bash /tmp/x.sh`) is a script operand that leaves the pipe
-#: as data, where the shared run's `/` lead read it as a switch. The
-#: cluster refusal is case-sensitive inside the opener's IGNORECASE: bash's
-#: `-C` (noclobber) is a switch, not a `c` cluster (both reviews, driven: it
-#: lost the wall `| bash -C` met at the base and on the Bash tool). The body
-#: of a `+` switch holds no `-` and a value never opens on `+`, so a `+` word
-#: has one parse; the bare `+` needs a blank or the end after it, exclusive
-#: of the `+` switch with a body; the tail's words hold no blank, exclusive
-#: of the blank runs around them. The other heads keep the shared run
-#: (`| python +x` runs the script `+x`; `| pwsh -c -` is the stdin spelling
-#: a cluster refusal would lose).
-_PS_POSIX_STDIN_SWITCH_RUN = (
-    r"(?:[ \t]+(?!--(?=[ \t]|$))(?!(?-i:" + _POSIX_SHELL_C_CLUSTER + r")(?![\w:.]))"
-    r"(?:-[\w:.-]+|\+[\w:.]+|\+(?=[ \t]|$))(?:[ \t]+(?!" + _PS_REPARSE_OPENER_WORDS
-    + r"(?=[ \t]|$))[^\s\"'\-/+][^\s]*(?=[ \t]|$))?)*"
-    r"(?:[ \t]+--(?=[ \t]|$)(?:[ \t]+[^\s;|&)}]+)*)?[ \t]*"
-)
-#: A SOURCE string (DEF-3079's cost, air's redirect D): `_ps_interp_stdin_re`
-#: compiles it on the first PowerShell call whose scan holds a pipe, the one
-#: character every stdin program opens behind (`_ps_stdin_program_spans`).
-_PS_INTERP_STDIN = (
-    _PS_CMD_POS + _PS_EXE_PREFIX
-    + r"((?:" + _PS_STDIN_OTHER_HEADS + r")|(?P<posix>" + _POSIX_SHELL_HEADS + r"))"
+_PS_INTERP_STDIN_RE = re.compile(
+    _PS_CMD_POS + _PS_EXE_PREFIX + r"(" + _PS_STDIN_HEAD_ALTERNATION + r")"
     + r"(?P<suffix>[\w.-]*)" + _QUOTED_VERB_TAIL
-    + r"(?:(?=[ \t])(?P<run>(?(posix)" + _PS_POSIX_STDIN_SWITCH_RUN + r"|" + _PS_SWITCH_RUN
-    + r"))(?:-[ \t]*)?)?"
-    + r"(?=$|[;|&\n\r)}]|[0-9*]?>|(?<=[ \t])<?#)"
+    + r"(?:(?=[ \t])(?P<run>" + _PS_SWITCH_RUN + r")(?:-[ \t]*)?)?"
+    + r"(?=$|[;|&\n\r)}]|[0-9*]?>|(?<=[ \t])<?#)",
+    re.IGNORECASE,
 )
-
-
-@functools.lru_cache(maxsize=1)
-def _ps_interp_stdin_re() -> "re.Pattern[str]":
-    """`_PS_INTERP_STDIN`, compiled once, on first use (DEF-3079)."""
-    return re.compile(_PS_INTERP_STDIN, re.IGNORECASE)
 #: A `-File <script>` (or `/f`) switch with a value that is not `-`: the
 #: shell's program is that file, and what is piped to it is data.
 _PS_STDIN_FILE_SWITCH_RE = re.compile(r"[-/]f(?:ile)?[ \t]+[^\s\"'\-/]", re.IGNORECASE)
@@ -13524,15 +13393,11 @@ def _ps_stdin_program_spans(
     stage before the pipe being ``command[start:pipe]`` and ``at`` the head
     word's offset, where a consumer places the program (DEF-2079): the
     directory chain cuts a statement at the pipe, so the pipe itself sits
-    in none. Every span opens behind a pipe on ``scan``, so a scan holding
-    none returns before the boundaries and the first-use compile: the plain
-    PowerShell call pays one substring test."""
+    in none."""
     if len(scan) != len(command):
         scan = command
-    if "|" not in scan:
-        return
     boundaries = [b.start() for b in _PS_STDIN_SEGMENT_BOUNDARY_RE.finditer(scan)]
-    for m in _ps_interp_stdin_re().finditer(scan):
+    for m in _PS_INTERP_STDIN_RE.finditer(scan):
         pipe = m.start()
         if scan[pipe] == "&":
             pipe -= 1

@@ -3,11 +3,10 @@
 A census that walks a module's namespace for compiled patterns
 (``vars(module)``) cannot see a pattern held as a source string and compiled
 by a cached zero-argument accessor: `_bash_patterns._carrier_fed_remove_re`
-(DEF-3063), and `_shell_c_body_open_re` and `_ps_interp_stdin_re`, moved to
-first use for DEF-3078/3079's per-call cost. A census that must hold every
-pattern of its kind unions these in, each named as its accessor's call
-(``_ps_interp_stdin_re()``), so an entry naming one reads as a call and never
-as a module attribute. The rule matches the compile ratchet's
+(DEF-3063) sat outside every such census until DEF-3078's lane found it. A
+census that must hold every pattern of its kind unions these in, each named
+as its accessor's call (``_carrier_fed_remove_re()``), so an entry naming one
+reads as a call and never as a module attribute. The rule matches the compile ratchet's
 (`tests/test_guard_compile_ratchet.py::first_use_compiles`): a function behind
 ``functools.lru_cache`` or ``functools.cache`` whose body calls ``compile``;
 only a zero-argument one is called here, and only a compiled pattern it

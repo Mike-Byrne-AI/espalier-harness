@@ -745,7 +745,7 @@ from _bash_patterns import (  # noqa: E402
     _PS_COPY_MOVE_POSITIONAL_RE,
     _PS_COPY_MOVE_SRC_FLAG_RE,
     _PS_HERE_STRING_RE,
-    _ps_interp_stdin_re,
+    _PS_INTERP_STDIN_RE,
     _PS_NODE_DASH_E_RE,
     _PS_PATH_FLAG_RE,
     _PS_PERL_DASH_E_RE,
@@ -835,20 +835,12 @@ _PS_VERB_EXTRACTION_REGEXES = [
     ("ps_perl_dash_e", _PS_PERL_DASH_E_RE, "perl -e"),
     ("ps_exe_prefix_quoted", _PS_PYTHON_DASH_C_RE, "& 'C:\\a\\b\\python.exe' -c"),
     ("ps_exe_prefix_bare", _PS_PERMISSION_RE, "C:\\a\\b\\attrib.exe +R"),
-    ("ps_interp_stdin", _ps_interp_stdin_re(), "| python -"),
-    ("ps_interp_stdin_switches", _ps_interp_stdin_re(), "| pwsh -NoProfile -Command -;"),
+    ("ps_interp_stdin", _PS_INTERP_STDIN_RE, "| python -"),
+    ("ps_interp_stdin_switches", _PS_INTERP_STDIN_RE, "| pwsh -NoProfile -Command -;"),
     # DEF-3075: the opener's tail takes a redirect and a comment, and opens
     # on a call operator after the pipe; each on its repeated seed.
-    ("ps_interp_stdin_redirect", _ps_interp_stdin_re(), "| bash 2>&1 "),
-    ("ps_interp_stdin_call_operator", _ps_interp_stdin_re(), "| & bash "),
-    # DEF-3079: a POSIX shell head's own run -- `+` switches with a value,
-    # the bare `+`, and the words after a `--` -- on its repeated pipe
-    ("ps_interp_stdin_plus_switches", _ps_interp_stdin_re(), "| bash +x +o y"),
-    ("ps_interp_stdin_bare_plus", _ps_interp_stdin_re(), "| bash + -x"),
-    ("ps_interp_stdin_dashdash_words", _ps_interp_stdin_re(), "| sh -s -- a"),
-    # the review batch: a POSIX switch is blank-separated, so a glued run is
-    # one word (the shared run's optional blank gave it 2^n splits)
-    ("ps_interp_stdin_glued_switches", _ps_interp_stdin_re(), "| bash -a-a+a-a"),
+    ("ps_interp_stdin_redirect", _PS_INTERP_STDIN_RE, "| bash 2>&1 "),
+    ("ps_interp_stdin_call_operator", _PS_INTERP_STDIN_RE, "| & bash "),
     ("ps_python_switch_values", _PS_PYTHON_DASH_C_RE, "python -W ignore"),
     # DEF-637 (§C49), registered the day they landed: the cross-shell openers
     # on their repeated heads and repeated switch runs, and the two coverage
@@ -990,15 +982,6 @@ _C52_BASH_ROWS = [
     ("shell_dash_c_long_option", _bash_patterns._SHELL_DASH_C_RE, "bash --norc"),
     ("shell_dash_c_long_option_valued", _bash_patterns._SHELL_DASH_C_RE, "bash --rcfile x"),
     ("shell_dash_cx_cluster", _bash_patterns._SHELL_DASH_C_RE, "bash -cx"),
-    # DEF-3078: the opener also starts at a word boundary, so every head is
-    # a start -- behind a launcher, behind a plain word with switches and a
-    # valued `+` option -- and the masker's relief and the binding
-    # pre-pass's child-scope opener compose the same fragment, each on its
-    # repeated seed through the entry point
-    ("shell_dash_c_after_a_launcher", _bash_patterns._SHELL_DASH_C_RE, "find . -exec bash -lc"),
-    ("shell_dash_c_boundary_switches", _bash_patterns._SHELL_DASH_C_RE, "x bash +o y -x"),
-    ("exec_opener_mention_switches", _bash_patterns._EXEC_OPENER_RE, "echo bash -x +lc"),
-    ("child_scope_opener_switches", _bash_patterns._shell_c_body_open_re(), "X=1; bash -x -lc --"),
     ("git_clean", _bash_patterns._GIT_CLEAN_RE, "git clean"),
     # the here-string opener shares the switch run: its first unbounded form
     # read a shell head word as a switch value and was quadratic on a repeated
@@ -3060,9 +3043,9 @@ def test_walker_scaling_judgement_routes_an_under_floor_sample_by_cause(
     (_PS_NODE_DASH_E_RE, "node -e 'require(\"fs\").writeFileSync(\"x\",\"y\")'"),
     (_PS_RUBY_DASH_E_RE, "ruby -e 'File.write(\"x\",\"y\")'"),
     (_PS_PERL_DASH_E_RE, "perl -e 'open(F, \">x\")'"),
-    (_ps_interp_stdin_re(), "@'\nx\n'@ | python -"),
-    (_ps_interp_stdin_re(), "'x' | pwsh -NoProfile -ExecutionPolicy Bypass -Command -"),
-    (_ps_interp_stdin_re(), "'x' | bash 2>&1"),
+    (_PS_INTERP_STDIN_RE, "@'\nx\n'@ | python -"),
+    (_PS_INTERP_STDIN_RE, "'x' | pwsh -NoProfile -ExecutionPolicy Bypass -Command -"),
+    (_PS_INTERP_STDIN_RE, "'x' | bash 2>&1"),
     (_PS_HERE_STRING_RE, "$x = @'\nline one\nline two\n'@"),
 ])
 def test_ps_interpreter_regex_still_matches(pattern, payload):
@@ -3234,13 +3217,6 @@ def test_posix_shell_switch_run_linear_on_one_head(label, seed, tail):
         _bash_patterns._SHELL_DASH_C_RE.findall(payload)
         _bash_patterns._SHELL_HERESTRING_RE.findall(payload)
         _bash_patterns._PS_BASH_DASH_C_RE.findall(payload)
-        # DEF-3078: the two readers that compose the opener's fragment, and
-        # the masker, which runs the relief over a command that runs no shell
-        _bash_patterns._EXEC_OPENER_RE.findall(payload)
-        _bash_patterns._shell_c_body_open_re().findall(payload)
-        _bash_patterns.mask_inert_syntax("echo " + payload)
-        # DEF-3079: the PowerShell stdin opener's POSIX run behind a pipe
-        _bash_patterns._ps_interp_stdin_re().findall("x | " + payload)
         # DEF-3072: the wall's pipe reader behind a pipe lead, and the two
         # bump arms that read a shell's switches
         _bash_patterns._INTERP_PIPE_RE.findall("x | " + payload)
@@ -3310,7 +3286,7 @@ def test_output_redirect_run_linear_at_every_reader(label, owner, name, payload)
         pytest.skip("signal.alarm not available on this platform")
     import _speedbump  # noqa: E402
 
-    pattern = _row_pattern(owner, name, _speedbump)
+    pattern = getattr(_bash_patterns if owner == "bp" else _speedbump, name)
     signal.signal(signal.SIGALRM, _alarm)
     signal.setitimer(signal.ITIMER_REAL, _CI_SAFE_BUDGET_MS / 1000.0)
     t = time.time()
@@ -3340,15 +3316,6 @@ _SWITCH_REDIRECT_ROWS = [
     # the unit offered twice, in the run after `--` and the fetch bump's
     # eval and python arms:
     ("shell-after-dashdash-redirects", "bp", "_SHELL_DASH_C_RE", _redirect_flood("2>1 ", "bash -c -- ", "<")),
-    # DEF-3078: the masker's relief and the binding pre-pass's child-scope
-    # opener compose the opener's fragment, so its switch run, and the scope
-    # opener the run after the cluster too
-    ("exec-opener-dash-targets", "bp", "_EXEC_OPENER_RE", _redirect_flood("> -x ", "bash ", "<")),
-    ("child-scope-dash-targets", "bp", "_shell_c_body_open_re()", _redirect_flood("> -x ", "bash ", "<")),
-    ("child-scope-after-c-dash-targets", "bp", "_shell_c_body_open_re()",
-     _redirect_flood("> -x ", "bash -c ", "<")),
-    ("child-scope-after-dashdash-redirects", "bp", "_shell_c_body_open_re()",
-     _redirect_flood("2>1 ", "bash -c -- ", "<")),
     ("eval-arm-redirects", "sb", "_FETCH_EXEC_SUBST_RE", _redirect_flood(">o 2>&1 ", "eval ", "x")),
     ("python-arm-before-c", "sb", "_FETCH_EXEC_SUBST_RE", _redirect_flood(">o 2>&1 ", "python3 ", "x")),
     ("python-arm-after-c", "sb", "_FETCH_EXEC_SUBST_RE", _redirect_flood(">| ", "python3 -c ", "x")),
@@ -3362,20 +3329,11 @@ _SWITCH_REDIRECT_ROWS = [
 ]
 
 
-def _row_pattern(owner: str, name: str, speedbump) -> "re.Pattern[str]":
-    """A row's pattern by its census name: a module-level pattern by
-    attribute, a first-use one (``name()``) through its accessor."""
-    module = _bash_patterns if owner == "bp" else speedbump
-    if name.endswith("()"):
-        return getattr(module, name[:-2])()
-    return getattr(module, name)
-
-
 def _patterns_composing(fragment: str) -> set[str]:
     """Every compiled pattern in the two hook modules whose source holds
     ``fragment``: the module-level ones, and those compiled on first use
-    behind a cache, named as calls (``_shell_c_body_open_re()``), which a
-    walk of the namespace alone cannot see (DEF-3078's cost)."""
+    behind a cache, named as calls (``_carrier_fed_remove_re()``), which a
+    walk of the namespace alone cannot see (DEF-3063)."""
     import _speedbump  # noqa: E402
 
     found = {name for mod in (_bash_patterns, _speedbump) for name, value in vars(mod).items()
@@ -3424,7 +3382,7 @@ def test_switch_redirect_linear_at_every_switch_run_site(label, owner, name, pay
         pytest.skip("signal.alarm not available on this platform")
     import _speedbump  # noqa: E402
 
-    pattern = _row_pattern(owner, name, _speedbump)
+    pattern = getattr(_bash_patterns if owner == "bp" else _speedbump, name)
     signal.signal(signal.SIGALRM, _alarm)
     signal.setitimer(signal.ITIMER_REAL, _CI_SAFE_BUDGET_MS / 1000.0)
     t = time.time()
@@ -4841,10 +4799,6 @@ def _first_use_regexes() -> list[tuple[str, "re.Pattern[str]"]]:
 
     return [
         ("_bash_patterns._carrier_fed_remove_re()", _bash_patterns._carrier_fed_remove_re()),
-        # DEF-3078/3079's cost (air's redirect D): the child-scope opener and
-        # the PowerShell stdin opener, each behind a witness its consumer reads
-        ("_bash_patterns._shell_c_body_open_re()", _bash_patterns._shell_c_body_open_re()),
-        ("_bash_patterns._ps_interp_stdin_re()", _bash_patterns._ps_interp_stdin_re()),
     ]
 
 

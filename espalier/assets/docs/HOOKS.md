@@ -1842,11 +1842,7 @@ head that only begins with a shell's name (`shasum`) and a shell given a
 script operand with no switch before it (`| bash script.sh`) leave the pipe
 as data; a switch before the operand (`| bash -x script.sh`) takes it as
 the switch's value, and the pipe is read: an over-read, the refusing
-direction. A POSIX shell's switches open on `+` as well as `-` (`| bash
-+x`, `| bash +s`, `| sh +o pipefail`), and a bare `--` ends them, every word
-after it an argument (`| bash -s -- -c`); only a `c` cluster of either sign
-gives the shell a program, so `| bash -lc ls` and `| bash +c 'ls'` leave the
-pipe as that program's stdin. Declared limits: only the stage immediately before the pipe,
+direction. Declared limits: only the stage immediately before the pipe,
 outside parentheses, is read, so a literal in `(...)` or `@(...)`, one in a
 variable a tier does not inline, one behind a middle stage
 (`| Out-String | bash`), and a string an operator builds (a `+`, `-f`,
@@ -1876,11 +1872,7 @@ backslash hides the next line from the wall, on both tools.
 
 On the Bash tool a POSIX shell's `-c` program the outer scan
 does not read as the shell receives it -- behind a switch or cluster
-(`bash -lc '...'`, `sh -e -c '...'`, `bash -c -- '...'`), wherever the bare
-`sh -c` spelling is read, a launcher that opens no command position
-included (`find . -exec bash -lc '...' ';'`, `fd -x`, `parallel -j4`, `ssh
-host`, `docker exec c`; there the bare spelling's program now reaches the
-write, remove and secret readers as well), behind a head the
+(`bash -lc '...'`, `sh -e -c '...'`, `bash -c -- '...'`), behind a head the
 command position does not open at (`bash.exe -c`, `BASH -c`), opening on a
 prefix the exec quote's command position does not read (a wrapper, an
 assignment, a keyword, `!` or a redirect: `bash -c 'sudo ...'`), holding a

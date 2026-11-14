@@ -100,8 +100,7 @@ CAAE022 = {"loader_ran": False, "fragment_found": True, "hooks_patterns": 288, "
 
 #: The pattern modules' functions that compile a pattern on first use behind a
 #: cache, by file: outside the count, each one's per-call cost is its kind's.
-FIRST_USE_COMPILES = {"_bash_patterns.py": {"_carrier_fed_remove_re", "_shell_c_body_open_re",
-                                         "_ps_interp_stdin_re"}}
+FIRST_USE_COMPILES = {"_bash_patterns.py": {"_carrier_fed_remove_re"}}
 _PATTERN_MODULES = ("_bash_patterns.py", "_speedbump.py", "write_guard.py")
 
 WHERE = "scripts/guard_cost_census.py::COMPILE_CHILD reads that name"

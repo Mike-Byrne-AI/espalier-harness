@@ -3101,17 +3101,15 @@ class TestCommandPositionClassClose:
             "FLAG -- a POSIX shell's `c` cluster of either sign (`+c`, `-cx`), "
             "fullmatched against one argv word of a shell an anchored "
             "`_PS_START_PROCESS_OPENER_RE` match starts (DEF-3074).",
-        # ── DEF-3068: whether a `-c` program a `_SHELL_DASH_C_RE` match read
-        # (at a command position, or at a word start since DEF-3078) is read
-        # in place by the outer scan ──
+        # ── DEF-3068: whether a `-c` program an anchored
+        # `_SHELL_DASH_C_RE` match read is read in place by the outer scan ──
         "_bash_patterns._EXEC_QUOTE_AT_WORD_RE":
-            "CLASSIFIER -- searched before the program word of a "
-            "`_SHELL_DASH_C_RE` match (a command position's, or a word "
-            "start's since DEF-3078), to ask whether the exec quote "
+            "CLASSIFIER -- searched between an anchored `_SHELL_DASH_C_RE` "
+            "match's start and its program word, to ask whether the exec quote "
             "ends at the word; it opens nothing and decides only which reader "
             "takes the program (DEF-3068).",
         "_bash_patterns._PROGRAM_OPENS_ON_PREFIX_RE":
-            "CLASSIFIER -- matched at the start of one program word a "
+            "CLASSIFIER -- matched at the start of one program word an anchored "
             "`_SHELL_DASH_C_RE` match read, to ask whether it opens on a "
             "wrapper, assignment, keyword, `!` or redirect; it decides only which "
             "reader takes the program (DEF-3068).",
@@ -3456,14 +3454,14 @@ class TestCommandPositionClassClose:
         "_bash_patterns._PS_STDIN_POSIX_HINT_RE":
             "GATE -- a POSIX shell's name as a word, searched only to skip the "
             "piped-stdin reader's pass on a command naming none; the anchored "
-            "`_ps_interp_stdin_re()` decides the command (DEF-3075).",
+            "`_PS_INTERP_STDIN_RE` decides the command (DEF-3075).",
         "_bash_patterns._PS_STDIN_FILE_SWITCH_RE":
             "FLAG -- `-File <script>` inside the switch run an anchored "
-            "`_ps_interp_stdin_re()` match captured; the consumer drops the match "
+            "`_PS_INTERP_STDIN_RE` match captured; the consumer drops the match "
             "because the file, not the pipe, is the program (DEF-712).",
         "_bash_patterns._PS_PROGRAM_STRING_RE":
             "TOKENIZER -- one PowerShell string literal, read out of the statement "
-            "segment an anchored `_ps_interp_stdin_re()` match selected (the last "
+            "segment an anchored `_PS_INTERP_STDIN_RE` match selected (the last "
             "literal before the pipe is the piped program); never sees a command "
             "position (DEF-712).",
         "_bash_patterns._PS_HERE_STRING_RE":
@@ -3671,12 +3669,10 @@ class TestCommandPositionClassClose:
             "SYNTAX -- a paren that opens or closes a child scope (a subshell, a "
             "command substitution), read on the masked text, where a binding "
             "made inside it ENDS; it decides no verdict.",
-        "_bash_patterns._shell_c_body_open_re()":
-            "OPENER -- the quote of a program a POSIX shell's `c` cluster of "
-            "either sign receives behind its switch run (the `-c` opener's "
-            "fragment, DEF-3078), read on the masked text only to END the "
-            "bindings made inside it (a child shell); the program itself is "
-            "judged by the readers.",
+        "_bash_patterns._SHELL_C_BODY_OPEN_RE":
+            "OPENER -- the quote of a program a POSIX shell's -c receives, read "
+            "on the masked text only to END the bindings made inside it (a child "
+            "shell); the program itself is judged by the anchored arms.",
         "_bash_patterns._PS_VAR_ASSIGN_RE":
             "SELF-ANCHORED -- inline `(?:^|[;\\r\\n{]|&&|\\|\\|)`: the PowerShell twin "
             "of `_VAR_ASSIGN_RE`, and the literal (or a temp or home variable's "
@@ -3711,10 +3707,7 @@ class TestCommandPositionClassClose:
             "MASKED -- `cat > X <<`; reads `scan`, so a quoted/comment mention "
             "loses its `>` and `<<` to `mask_inert_syntax`. Driven allow.",
         "_bash_patterns._EXEC_OPENER_RE":
-            "MASKED -- `eval`, and a POSIX shell from its head through a `c` "
-            "cluster across a switch run with no redirect (the `-c` opener's "
-            "fragment, DEF-3078); "
-            "reached only past the head-roster gate, "
+            "MASKED -- `eval`/`sh -c`; reached only past the head-roster gate, "
             "and none of those verbs is in `_NON_REPARSING_HEADS`. Driven allow.",
         "_bash_patterns._PS_REPARSED_SPAN_BEFORE":
             "MASK-DECISION -- `$`-anchored and applied BACKWARDS to `s[:opener]`, "
@@ -3757,8 +3750,7 @@ class TestCommandPositionClassClose:
         seen, found = set(), {}
         for mod in (_bash_patterns, _speedbump, write_guard):
             # a pattern compiled on first use behind a cache is no module
-            # attribute: read through its accessor, named as its call
-            # (DEF-3063; DEF-3078/3079's cost moved two more there)
+            # attribute: read through its accessor, named as its call (DEF-3063)
             for name, obj in [*vars(mod).items(), *first_use_patterns(mod).items()]:
                 if not isinstance(obj, _re.Pattern) or id(obj) in seen:
                     continue

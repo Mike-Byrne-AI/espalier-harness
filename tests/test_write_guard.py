@@ -621,6 +621,12 @@ class TestQuotedVerbTailIsUniform:
         "_FOR_SUBST_REMOVE_RE": ("find", 'for f in $(find tools/cc/hooks); do rm -rf "$f"; done'),
         "_TAIL_LOOP_REMOVE_RE": ("find", 'while read f; do rm -rf "$f"; done < <(find tools/cc/hooks)'),
         "_FOR_WORDS_REMOVE_RE": None,
+        # a first-use compile, named as its accessor's call (DEF-3063): the rm
+        # nudge's carrier-fed remove, no zone deny. Its emit verb takes no
+        # quoted spelling (`"echo" x | xargs rm -rf` draws no carrier nudge
+        # where the bare one does), recorded with the dispatcher as a limit
+        # under ack 40ec7f, not proven in its tier
+        "_carrier_fed_remove_re()": None,
         "_SHELL_DASH_C_RE": ("sh", "sh -c 'rm tools/cc/hooks/x.py'"),
         # the quoted-program carriers (DEF-1131) feed the secret leg and the
         # nested-launch scan, not a zone deny; the quoted verb is proven where
@@ -668,14 +674,11 @@ class TestQuotedVerbTailIsUniform:
     def test_the_roster_is_the_modules_anchored_arms(self):
         import re
         bp = _bash_patterns_module()
-        # An arm whose first alternative is the command position counts
-        # (`(?:<_CMD_POS>|\b)`: the `-c` opener also opens at a word
-        # boundary since DEF-3078, where the bare `sh -c` is read), as it
-        # counts in the class-close census's reading.
+        # a pattern compiled on first use behind a cache is read through its
+        # accessor, named as its call (`_carrier_fed_remove_re()`, DEF-3063)
         anchored = {
-            name for name, value in vars(bp).items()
-            if isinstance(value, re.Pattern) and value.pattern.startswith(
-                (bp._CMD_POS, "(?:" + bp._CMD_POS + "|"))
+            name for name, value in [*vars(bp).items(), *first_use_patterns(bp).items()]
+            if isinstance(value, re.Pattern) and value.pattern.startswith(bp._CMD_POS)
         }
         anchored |= _anchored_records("DANGEROUS_BASH_PATTERNS", bp._CMD_POS)
         assert anchored == set(self._FIXTURES), (
@@ -1561,7 +1564,7 @@ class TestPowerShellQuotedVerbBehindTheCallOperator:
         "_PS_RUBY_DASH_E_RE": ("ruby", "ruby -e \"File.write('tools/cc/hooks/x.py','x')\""),
         "_PS_PERL_DASH_E_RE": ("perl", "perl -e 'open(F,\">tools/cc/hooks/x.py\")'"),
         "_PS_BASH_DASH_C_RE": ("bash", "bash -c \"echo x > tools/cc/hooks/x.py\""),
-        "_ps_interp_stdin_re()": (
+        "_PS_INTERP_STDIN_RE": (
             "python", "\"open('tools/cc/hooks/x.py','w')\" | python -"),
         # the directory verb (DEF-509): a quoted `& 'Set-Location'` moves the
         # chain exactly as the bare one does
@@ -1598,7 +1601,7 @@ class TestPowerShellQuotedVerbBehindTheCallOperator:
         import re
         bp = _bash_patterns_module()
         # a pattern compiled on first use behind a cache is read through its
-        # accessor, named as its call (DEF-3079's cost: `_ps_interp_stdin_re()`)
+        # accessor, named as its call (`_carrier_fed_remove_re()`, DEF-3063)
         anchored = {
             name for name, value in [*vars(bp).items(), *first_use_patterns(bp).items()]
             if isinstance(value, re.Pattern) and value.pattern.startswith(bp._PS_CMD_POS)
@@ -9400,9 +9403,6 @@ class TestCatastrophicRmFlagOrderIndependent:
             # `_relief_applies` reads the command's text and nothing else: the
             # flag joins the bases beside it, in `_statement_bases`
             "_nested_shell_programs_cached",
-            # `_ps_interp_stdin_re` (DEF-3079's cost) takes no argument and
-            # returns a compiled pattern, as `_carrier_fed_remove_re` does
-            "_ps_interp_stdin_re",
             # `_ps_reparse_answers` (DEF-3039) is keyed on the text, the
             # lookback pattern and its window, and returns, by opener offset,
             # whether a PowerShell literal span is re-parsed as a program --
@@ -9410,9 +9410,6 @@ class TestCatastrophicRmFlagOrderIndependent:
             "_ps_reparse_answers",
             "_relief_applies", "_removed_or_relocated_cached",
             "_resolve_bash_discovered_heads",
-            # `_shell_c_body_open_re` (DEF-3078's cost), like
-            # `_ps_interp_stdin_re` above: no argument, a compiled pattern
-            "_shell_c_body_open_re",
             # `_statement_structure` is keyed on the text and the shell alone
             # and returns the text's quote spans and separator offsets -- a
             # transform the span readers consult, which never reaches a judge
@@ -16679,7 +16676,7 @@ class TestQuotedTargetSurvivesTheRoot:
         "_PS_RUBY_DASH_E_RE": ("PowerShell", f"ruby -e \"File.write('{_TARGET}','x')\""),
         "_PS_PERL_DASH_E_RE": ("PowerShell", f"perl -e \"open(F,'>{_TARGET}')\""),
         "_PS_BASH_DASH_C_RE": ("PowerShell", f"bash -c \"echo x > '{_TARGET}'\""),
-        "_ps_interp_stdin_re()": ("PowerShell", f"@'\nopen('{_TARGET}','w')\n'@ | python -"),
+        "_PS_INTERP_STDIN_RE": ("PowerShell", f"@'\nopen('{_TARGET}','w')\n'@ | python -"),
         "_carrier_fed_remove_re()": "the rm tier's carrier-fed remove (DEF-3063): a nudge reader of "
                                     "the emitted word; the zone's piped delete arm is _PIPED_REMOVE_RE",
         "_PS_LINK_LOCATION_RE": "the symlink leg's capture: _PS_NEW_ITEM_RE's fixture drives it",
@@ -16774,8 +16771,8 @@ class TestQuotedTargetSurvivesTheRoot:
         # `_CMD_POS_NO_VERB`, which `_CMD_POS` begins with: the Bash
         # discovered-head resolver composes the no-verb anchor alone, and its
         # PowerShell twin composes `_PS_CMD_POS`; one census sees both
-        # the first-use compiles too, named as their accessors' calls (DEF-3063;
-        # DEF-3078/3079's cost)
+        # the first-use compiles too, named as their accessors' calls: a
+        # namespace walk alone never saw `_carrier_fed_remove_re()` (DEF-3063)
         anchored = {
             name for name, value in [*vars(bp).items(), *first_use_patterns(bp).items()]
             if isinstance(value, re.Pattern)
@@ -21732,320 +21729,6 @@ class TestAShellsOptionHidesNoPipedProgram:
         assert not _speedbump_fires(sb, "fetchexec", "_FETCH_EXEC_PROCSUB_RE", "Bash", cmd, tmp_path)
 
 
-def _bash_tier_verdicts(command: str, project: Path) -> frozenset[str]:
-    """The Bash-tool twin of `_ps_tier_verdicts`: the tiers a Bash-tool
-    command meets, by name, each asked in-process from the project root --
-    the hard tier (``wall``, `write_guard._bash_dangerous_reason`), the
-    protected-zone check (``zone``) and the secret-path check (``secret``),
-    each a structured deny on stdout, and the speed bump's checkpoints by
-    their predicates: CP-RMRF (``nudge``), CP-DISCARD, CP-GITCLEAN,
-    CP-FORCEPUSH and CP-FETCHEXEC."""
-    import contextlib
-    import io
-
-    wg = _load_write_guard()
-    import _speedbump
-
-    def denies(call) -> bool:
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            code = call()
-        return code == 2 or '"deny"' in out.getvalue()
-
-    payload = {"command": command}
-    met = {
-        "wall": wg._bash_dangerous_reason(command, project, cwd=project) is not None,
-        "zone": denies(lambda: wg.check_bash_for_protected_mutations(command, project, cwd=project)),
-        "secret": denies(lambda: wg.check_secret_path_access("Bash", payload, project)),
-        "nudge": bool(_speedbump._pred_rmrf("Bash", payload, project)),
-        "discard": bool(_speedbump._pred_discard("Bash", payload, project)),
-        "gitclean": bool(_speedbump._pred_gitclean("Bash", payload, project)),
-        "forcepush": bool(_speedbump._pred_forcepush("Bash", payload, project)),
-        "fetchexec": bool(_speedbump._pred_fetchexec("Bash", payload, project)),
-    }
-    return frozenset(name for name, hit in met.items() if hit)
-
-
-class TestAShellsSwitchRunIsReadWhereverItsBareDashCIs:
-    """DEF-3078: a POSIX shell's program behind a switch run or a `c`
-    cluster (`bash -lc`, `bash +c`, `sh -cx`, `bash -x -c`, `bash -c --`)
-    draws, on every tier of the Bash tool, the verdict the bare `bash -c`
-    spelling draws, wherever the bare one is read -- behind a launcher that
-    opens no command position (find's exec actions, fd, GNU parallel, ssh,
-    docker exec) as well as at one.
-
-    The bare spelling is read anywhere it stands as a word (the exec-quote
-    arm of the command position is unanchored), while the opener that knows
-    the switch run and the cluster opened at a command position only, so
-    `find . -exec bash -lc '<delete of the root>' ';'` -- the login-shell
-    one-liner per file -- was a plain allow beside a walled `bash -c`. A
-    DIFFERENTIAL: the bare spelling behind the same launcher is the oracle.
-    Each row is a test fixture for a friction guard, handed to the guard as
-    text and never run."""
-
-    #: The Start-Process class's programs, the root's delete, and a force
-    #: push, so the force-push tier is not equal only by being empty on both
-    #: sides. A force clean is left out: behind find and parallel the bare
-    #: spelling, read in place, draws no clean nudge where the switched one,
-    #: read one level down, draws it -- a gap of the bare reading at the base
-    #: (69f6b58, driven), outside this class, reported to the dispatcher.
-    _PROGRAMS = [("delete-root", "rm -rf /")] + list(
-        TestAShellStartedByStartProcessMeetsItsDirectFormsTiers._BASH_PROGRAMS) + [
-        ("force-push", "git push --force origin main")]
-    #: The launchers, ``{s}`` the shell's invocation: find's exec actions
-    #: (per file, and batched by `{} +`), fd's two, GNU parallel bare and
-    #: with a job count, and two that start the shell elsewhere. None opens
-    #: a command position.
-    _LAUNCHERS = [
-        ("find-exec", "find . -exec {s} ';'"),
-        ("find-execdir", "find . -execdir {s} ';'"),
-        ("find-ok", "find . -ok {s} ';'"),
-        ("find-exec-batch", "find . -exec {s} {} +"),
-        ("fd-x", "fd -x {s}"),
-        ("fd-batch", "fd -X {s}"),
-        ("parallel", "parallel {s} ::: a"),
-        ("parallel-jobs", "parallel -j4 {s} ::: a"),
-        ("ssh", "ssh host {s}"),
-        ("docker-exec", "docker exec c {s}"),
-    ]
-    #: The spellings that hand the shell its program as the bare `-c` does:
-    #: a `+` cluster, a cluster with the `c` last or first, a switch before
-    #: the `-c`, a `--` after it, and a `+` switch before it.
-    _OPENERS = ["bash +c", "bash -lc", "sh -cx", "bash -x -c", "bash -c --", "bash +x -c"]
-
-    @staticmethod
-    def _project(tmp_path: Path) -> Path:
-        return TestAShellStartedByStartProcessMeetsItsDirectFormsTiers._project(tmp_path)
-
-    @staticmethod
-    def _launched(launcher: str, opener: str, program: str) -> str:
-        return launcher.replace("{s}", f"{opener} '{program}'")
-
-    @pytest.mark.parametrize("launcher", [l for _i, l in _LAUNCHERS], ids=[i for i, _l in _LAUNCHERS])
-    def test_the_bare_spelling_draws_the_tiers_the_rows_are_about(self, tmp_path, launcher):
-        """The oracle side, pinned: behind each launcher the bare spelling
-        walls the delete of the root and leaves the read-only program alone,
-        so a differential that agrees with it is about something. The
-        word-start arm moved the bare spelling too (the code review, driven):
-        the readers that take each program the `-c` opener yields now see it
-        behind a launcher, so its secret read meets the secret check, which
-        the base left to no reader."""
-        project = self._project(tmp_path)
-        assert "wall" in _bash_tier_verdicts(self._launched(launcher, "bash -c", "rm -rf /"), project)
-        assert not _bash_tier_verdicts(self._launched(launcher, "bash -c", "ls -la"), project)
-        assert "secret" in _bash_tier_verdicts(self._launched(launcher, "bash -c", "cat .env"), project)
-
-    @pytest.mark.parametrize("cmd,tier", [
-        ("echo hi bash >tools/cc/hooks/x.py -lc x", "zone"),
-        ("printf x sh 2>tools/cc/hooks/x.py +c y", "zone"),
-        ("cat notes bash <.env -lc x", "secret"),
-    ], ids=["write-redirect", "stderr-redirect", "input-redirect"])
-    def test_the_relief_keeps_the_commands_own_redirect(self, tmp_path, cmd, tier):
-        """The masker's relief blanks a shell opener in a command that runs
-        no shell, never a redirect in its switch run: that redirect is the
-        command's own (`echo` writes the file), and blanking it hid it from
-        the zone and secret checks (both reviews, driven against the first
-        cut, which composed the run's redirect arm)."""
-        assert tier in _bash_tier_verdicts(cmd, self._project(tmp_path))
-
-    def test_the_command_position_arm_reads_a_nested_program_first(self):
-        """The `-c` opener's command-position arm comes before its word-start
-        arm: at an outer bare `bash -c "` it takes the exec quote as its own
-        prefix and yields the INNER program, which the word-start arm would
-        swallow into the outer word, where the outer scan reads it in place
-        and no reader takes the inner `-lc` (the code review drove the swap)."""
-        bp = _bash_patterns_module()
-        cmd = "bash -c \"bash -lc 'rm -rf /'\""
-        assert "rm -rf /" in [program for program, _in_place in bp._posix_shell_c_programs(cmd, cmd)]
-
-    def test_only_the_shell_openers_open_at_a_word_start(self):
-        """The word-start arm beside the command position is a deliberate
-        exception to the anchoring rule, which the class-close census reads
-        as anchored (it finds the command position's text in the pattern):
-        this pins its population, so an arm that copies the shape reds here
-        (the failure-mode review)."""
-        import re
-        bp = _bash_patterns_module()
-        sb = _speedbump_module()
-        word_start = "(?:" + bp._CMD_POS + "|(?<![\\w.-])"
-        found = {name for mod in (bp, sb) for name, value in vars(mod).items()
-                 if isinstance(value, re.Pattern) and word_start in value.pattern}
-        assert found == {"_SHELL_DASH_C_RE", "_FETCH_EXEC_SUBST_RE"}
-
-    def test_the_bumps_shell_heads_are_the_walls(self):
-        """The speed bump spells its own shell heads (`_FETCH_SHELL`): the
-        set it reads is the wall's `_POSIX_SHELL_HEADS`, so a head added to
-        one reaches both (the failure-mode review)."""
-        import re
-        bp = _bash_patterns_module()
-        sb = _speedbump_module()
-        heads = set(bp._POSIX_SHELL_HEADS.split("|"))
-        candidates = heads | {p + "sh" for p in ("c", "tc", "fi", "a", "y", "ash", "dsh")}
-        assert {h for h in candidates if re.fullmatch(sb._FETCH_SHELL, h)} == heads
-
-    @pytest.mark.parametrize("opener", _OPENERS)
-    @pytest.mark.parametrize("launcher", [l for _i, l in _LAUNCHERS], ids=[i for i, _l in _LAUNCHERS])
-    def test_a_switched_program_draws_the_bare_spellings_tiers(self, tmp_path, launcher, opener):
-        project = self._project(tmp_path)
-        for _pid, program in self._PROGRAMS:
-            assert _bash_tier_verdicts(self._launched(launcher, opener, program), project) == (
-                _bash_tier_verdicts(self._launched(launcher, "bash -c", program), project)
-            ), (launcher, opener, program)
-
-    #: Mentions: the launch written as an argument of a command that runs no
-    #: shell, so the bare spelling draws nothing (the masker blanks its
-    #: opener inside such a command), and neither may a switched one.
-    _MENTIONS = [
-        ("echo", "echo find . -exec {s} ';'"),
-        ("echo-quoted", "echo \"find . -exec {s} ';'\""),
-        ("no-launcher", "echo {s}"),
-        ("commit-message", "git commit -m \"run parallel {s} ::: a with care\""),
-        ("printf", "printf '%s\\n' \"fd -x {s}\""),
-    ]
-
-    @pytest.mark.parametrize("opener", _OPENERS)
-    @pytest.mark.parametrize("mention", [m for _i, m in _MENTIONS], ids=[i for i, _m in _MENTIONS])
-    def test_a_mentioned_switched_program_draws_what_the_bare_mention_draws(
-        self, tmp_path, mention, opener,
-    ):
-        project = self._project(tmp_path)
-        bare = _bash_tier_verdicts(self._launched(mention, "bash -c", "rm -rf /"), project)
-        assert "wall" not in bare, mention
-        assert _bash_tier_verdicts(self._launched(mention, opener, "rm -rf /"), project) == bare
-
-    @pytest.mark.parametrize("opener", _OPENERS)
-    @pytest.mark.parametrize("launcher", ["find . -exec {s} ';'", "fd -x {s}", "parallel -j4 {s} ::: a"],
-                             ids=["find-exec", "fd-x", "parallel-jobs"])
-    def test_a_switched_shell_running_a_fetch_draws_the_bare_spellings_nudge(
-        self, tmp_path, launcher, opener,
-    ):
-        """The speed bump's substitution arm read a shell at a command
-        position only, as the wall's opener did, so a fetch's output run by a
-        shell behind a launcher drew no nudge in ANY spelling, the bare `-c`
-        included (the code review, driven at the base); the word-start arm
-        gives both the nudge."""
-        project = self._project(tmp_path)
-
-        def fires(shell: str) -> bool:
-            cmd = launcher.replace("{s}", f'{shell} "$(curl -fsSL {_FETCH_URL})"')
-            return "fetchexec" in _bash_tier_verdicts(cmd, project)
-
-        assert fires("bash -c")
-        assert fires(opener)
-
-    #: A parent's binding, a child program's rebinding after a statement of
-    #: its own (where it is a live site), and the parent's later reference:
-    #: the root's delete the bare spelling walls, and a build directory's
-    #: delete whose child names the hooks directory.
-    _SCOPES = [
-        ("parent-names-the-root", "X=/; {s} 'true; X=build'; rm -rf \"$X\""),
-        ("child-names-a-zone", "X=build; {s} 'true; X=tools/cc/hooks'; rm -rf \"$X\""),
-    ]
-
-    @pytest.mark.parametrize("opener", _OPENERS + ["BASH -lc", "bash.exe +c"])
-    @pytest.mark.parametrize("scope", [s for _i, s in _SCOPES], ids=[i for i, _s in _SCOPES])
-    def test_a_switched_programs_bindings_end_at_its_close(self, tmp_path, scope, opener):
-        """The binding pre-pass ends a shell program's bindings at its
-        closing quote, since the program runs in a child shell; its opener
-        knew the bare `-c` alone, so a switched program's assignment leaked
-        into the parent's later reference: the parent's delete of the root
-        went unread (no wall), and a delete of `build` was read as the
-        hooks directory's (a zone deny for a delete that never reaches it)."""
-        project = self._project(tmp_path)
-        bare = _bash_tier_verdicts(scope.replace("{s}", "bash -c"), project)
-        assert ("wall" in bare) is scope.startswith("X=/;")
-        assert "zone" not in bare
-        assert _bash_tier_verdicts(scope.replace("{s}", opener), project) == bare
-
-
-class TestAPlusSwitchOnAPipedPosixShellMeetsItsDirectFormsTiers:
-    """DEF-3079: a string piped from PowerShell into a POSIX shell that
-    carries a `+` switch (`| bash +x`, `| bash +s`) draws, on every tier of
-    the PowerShell tool, the verdict the same program draws as `bash -c
-    '...'`, as the `-` switch spelling does.
-
-    The stdin opener read every head's switch run with the PowerShell run,
-    whose switches open on `-` and `/` alone, so a `+` word ended the run
-    and no end of statement followed: a plain allow beside a walled `| bash
-    -x`. The Bash tool's pipe run took `+` switches with DEF-3072; this is
-    its PowerShell twin. The same DIFFERENTIAL as the piped-shell class
-    above. Each row is a test fixture for a friction guard, handed to the
-    guard as text and never run."""
-
-    _PROGRAMS = TestAShellStartedByStartProcessMeetsItsDirectFormsTiers._BASH_PROGRAMS
-    #: The `+` spellings, ``{p}`` the program: alone, with a value, behind
-    #: `echo`, before a redirect, on the `.exe` head, and the arguments
-    #: after a `--`, which ends the options. Each was a plain allow at the
-    #: base (69f6b58).
-    _PIPES = [
-        ("plus-x", "'{p}' | bash +x"),
-        ("plus-s", "'{p}' | bash +s"),
-        ("plus-o-valued", "'{p}' | sh +o pipefail"),
-        ("echo-plus", "echo '{p}' | bash +x"),
-        ("plus-redirect", "'{p}' | bash +x 2>&1"),
-        ("plus-exe", "'{p}' | bash.exe +x"),
-        ("dashdash-words", "'{p}' | bash -s -- a b"),
-    ]
-    #: Controls the base walled already and the run must keep: a `-` switch;
-    #: a `+` word after one, which the `-` run read as its value (`+e`) and
-    #: the `+` run reads as a switch (`+e`, and the bare no-op `+`); and a
-    #: `c` cluster after a `--`, which is an argument there.
-    _BASE_WALLED = [
-        ("minus-x", "'{p}' | bash -x"),
-        ("plus-after-minus", "'{p}' | bash -x +e"),
-        ("bare-plus", "'{p}' | bash -x +"),
-        ("dashdash-cluster", "'{p}' | bash -s -- -c"),
-        ("dashdash-cluster-valued", "'{p}' | bash -s -- -lc cfg"),
-        # bash's `-C` (noclobber) is a switch, never a `c` cluster: the
-        # opener is case-blind, its cluster refusal is not (both reviews)
-        ("noclobber", "'{p}' | bash -C"),
-    ]
-    _CASES = [(f"{sid}-{pid}", pipe, program)
-              for (sid, pipe), (pid, program) in itertools.product(_PIPES + _BASE_WALLED, _PROGRAMS)]
-
-    @staticmethod
-    def _project(tmp_path: Path) -> Path:
-        return TestAShellStartedByStartProcessMeetsItsDirectFormsTiers._project(tmp_path)
-
-    def test_the_piped_delete_of_the_root_meets_the_wall(self, tmp_path):
-        """The row's own probe, by tier name."""
-        project = self._project(tmp_path)
-        for pipe in ("'rm -rf /' | bash +x", "'rm -rf /' | bash +s"):
-            assert "wall" in _ps_tier_verdicts(pipe, project), pipe
-
-    @pytest.mark.parametrize("case", _CASES, ids=[c[0] for c in _CASES])
-    def test_the_piped_program_draws_its_direct_forms_verdict(self, case, tmp_path):
-        _id, pipe, program = case
-        project = self._project(tmp_path)
-        assert _ps_tier_verdicts(pipe.format(p=program), project) == _ps_tier_verdicts(
-            f"bash -c '{program}'", project)
-
-    @pytest.mark.parametrize("cluster", ["-c", "+c", "-lc", "+lc", "-cx"])
-    @pytest.mark.parametrize("operand", ["'ls'", "ls"], ids=["quoted", "bare"])
-    def test_a_c_cluster_of_either_sign_makes_the_pipe_data(self, tmp_path, cluster, operand):
-        """Only a `c` cluster gives the shell its program, so the piped
-        string is that program's stdin, never the program: refused on either
-        sign, with a quoted operand and with a bare one (which the `-` run
-        read as the switch's value, an over-read)."""
-        project = self._project(tmp_path)
-        assert "wall" not in _ps_tier_verdicts(f"'rm -rf /' | bash {cluster} {operand}", project)
-
-    @pytest.mark.parametrize("cmd", [
-        "'rm -rf /' | python +x",
-        "'rm -rf /' | bashate +x",
-        "'rm -rf /' | bash script.sh +x",
-        "'rm -rf /' | bash /tmp/setup.sh",
-    ], ids=["interpreter-plus-word", "longer-head", "script-operand", "absolute-script-operand"])
-    def test_a_plus_word_that_is_no_shells_switch_reads_no_program(self, tmp_path, cmd):
-        """The other side: an interpreter's `+` word is a script name (its
-        run keeps its `-` switches), a head that only begins with a shell's
-        name is another program, and an operand before the `+` word is a
-        script whose data the pipe is. (A bare word AFTER a switch is read as
-        its value, the `-` run's declared over-read, kept on both signs.)"""
-        project = self._project(tmp_path)
-        assert "wall" not in _ps_tier_verdicts(cmd, project)
-
-
 class TestAPipedShellReadsItsRedirectAndExeHead:
     """DEF-3077: a program piped into a POSIX shell is read when the shell
     carries an output redirect, and when its head is spelled in another case
@@ -22126,10 +21809,7 @@ class TestAPipedShellReadsItsRedirectAndExeHead:
         assert _delete_verdict(run_bash_guard(cmd, tmp_path)) == "allow"
 
     @pytest.mark.parametrize("head", ["bash", "BASH", "Sh.EXE", "bash.exe", "zsh", "shasum",
-                                      "bashrc", "bash.exex", "SHASUM.exe", "/usr/bin/bash.exe",
-                                      # a word ending in a shell's name is no shell: the
-                                      # `-c` reader's word-start arm (DEF-3078) holds it
-                                      "deploy.sh", "my-bash"])
+                                      "bashrc", "bash.exex", "SHASUM.exe", "/usr/bin/bash.exe"])
     def test_the_pipe_head_and_the_c_head_read_the_same_spellings(self, head):
         """Parity, not composition (both reviews: the first pin compared two
         constants and never read the `-c` reader): a head the `-c` reader
