@@ -9404,10 +9404,11 @@ class TestCatastrophicRmFlagOrderIndependent:
         bp = self._bp()
         memos = sorted(n for n, o in vars(bp).items() if hasattr(o, "cache_info"))
         assert memos == [
-            # `_carrier_fed_remove_re` (DEF-3063) takes no argument and returns
+            # `_carrier_builtin_head_re`, `_carrier_fed_remove_re` (DEF-3063)
+            # and `_powershell_head_re` (DEF-4061) take no argument and return
             # a compiled pattern, compiled on first use: no key a flag could
             # be missing from, and no verdict
-            "_carrier_fed_remove_re",
+            "_carrier_builtin_head_re", "_carrier_fed_remove_re",
             # `_masked_or_raw` (DEF-3071, DEF-3073) is keyed on the text and
             # returns its mask, or the text itself: the masker's transform,
             # which reads no flag (its call graph is pinned stateless in
@@ -9415,7 +9416,7 @@ class TestCatastrophicRmFlagOrderIndependent:
             "_masked_or_raw",
             # `_relief_applies` reads the command's text and nothing else: the
             # flag joins the bases beside it, in `_statement_bases`
-            "_nested_shell_programs_cached",
+            "_nested_shell_programs_cached", "_powershell_head_re",
             # `_ps_reparse_answers` (DEF-3039) is keyed on the text, the
             # lookback pattern and its window, and returns, by opener offset,
             # whether a PowerShell literal span is re-parsed as a program --
@@ -15830,7 +15831,7 @@ class TestQuotedProgramsAreReadAsPrograms:
         assert_hook_denied(run_bash_guard(head + " " + verb + " 'cat .env'", tmp_path),
                            contains_reason="Secret-path access blocked")
 
-    @pytest.mark.parametrize("head", ["iex", "Invoke-Expression", "pwsh", "powershell"])
+    @pytest.mark.parametrize("head", ["iex", "Invoke-Expression", "powershell"])
     @pytest.mark.parametrize("switch", ["-c:", "-com:", "-Command:"])
     def test_a_program_bound_to_its_switch_by_a_colon_is_read(self, head, switch, tmp_path):
         command = head + " " + switch + "'gc .env'"
@@ -15839,11 +15840,50 @@ class TestQuotedProgramsAreReadAsPrograms:
 
     # the Bash tool's twin (the failure-mode review): Windows PowerShell 5.1
     # binds no colon-bound switch but runs the whole word as command text,
-    # so a statement after the first runs (driven, echo only)
-    @pytest.mark.parametrize("head", ["pwsh", "powershell"])
+    # so a statement after the first runs (driven, echo only); read on
+    # powershell's head alone (air 63f101 (3))
+    @pytest.mark.parametrize("head", ["powershell", "PowerShell.exe"])
     @pytest.mark.parametrize("switch", ["-c:", "-com:", "-Command:"])
-    def test_a_pwsh_program_bound_by_a_colon_on_the_bash_tool_is_read(self, head, switch, tmp_path):
+    def test_a_powershell_program_bound_by_a_colon_on_the_bash_tool_is_read(self, head, switch, tmp_path):
         command = head + " " + switch + "'Get-Date; gc .env'"
+        assert_hook_denied(run_bash_guard(command, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    # pwsh refuses a colon-bound program switch: 7.6.5 reads the word as a
+    # script file's name (its default is -File), exits 64 and runs nothing
+    # (air's drive, note 24fc34), so neither tool reads a program there
+    @pytest.mark.parametrize("tool", ["Bash", "PowerShell"])
+    @pytest.mark.parametrize("switch", ["-c:", "-com:", "-Command:"])
+    def test_a_pwsh_program_bound_by_a_colon_is_not_read(self, tool, switch, tmp_path):
+        command = "pwsh " + switch + "'Get-Date; gc .env'"
+        assert_hook_allowed(run_guard_tool(tool, {"command": command}, tmp_path))
+
+    # Windows PowerShell 5.1 runs its first word that is no parameter as
+    # command text (its default is -Command), on both tools; which
+    # parameters take a value is not read, so a word after a switch is read
+    # as a program and as that switch's value (air 63f101 (3))
+    @pytest.mark.parametrize("tool", ["Bash", "PowerShell"])
+    @pytest.mark.parametrize("command", [
+        "powershell 'gc .env'",
+        "powershell -NoProfile gc .env",
+        "powershell.exe -NoLogo 'gc .env'",
+        "powershell -ExecutionPolicy Bypass 'gc .env'",
+        "powershell -ExecutionPolicy Bypass -NoProfile 'gc .env'",
+    ])
+    def test_a_powershell_program_with_no_command_switch_is_read(self, tool, command, tmp_path):
+        assert_hook_denied(run_guard_tool(tool, {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    # BSD script (macOS, FreeBSD) has no -c: it runs the words after its file
+    # word, past its switches, `-t` taking a value (air 63f101 (2))
+    @pytest.mark.parametrize("command", [
+        "script out.log cat .env",
+        "script -q out.log cat .env",
+        "script -t 0 out.log cat .env",
+        "script -qt0 out.log cat .env",
+        "script -- out.log cat .env",
+    ])
+    def test_a_bsd_script_program_after_its_file_word_is_read(self, command, tmp_path):
         assert_hook_denied(run_bash_guard(command, tmp_path),
                            contains_reason="Secret-path access blocked")
 
@@ -15909,6 +15949,23 @@ class TestQuotedProgramsAreReadAsPrograms:
         ("PowerShell", 'cmd /d "type .env"'),
     ])
     def test_a_quoted_word_behind_a_switch_that_runs_nothing_is_not_read(self, tool, command, tmp_path):
+        assert_hook_allowed(run_guard_tool(tool, {"command": command}, tmp_path))
+
+    @pytest.mark.parametrize("tool, command", [
+        # pwsh's first word is a script file (its default is -File)
+        ("PowerShell", "pwsh 'gc .env'"),
+        # the script file is the program (a declared limit)
+        ("PowerShell", "powershell -File x.ps1 'gc .env'"),
+        # a word read past a switch as a candidate program names no read
+        ("PowerShell", "powershell -NoProfile Write-Output .env"),
+        ("Bash", "powershell -NoProfile Write-Output .env"),
+        # BSD script with no command after its file word, or one reading
+        # nothing secret
+        ("Bash", "script out.log"),
+        ("Bash", "script -t 0 out.log"),
+        ("Bash", "script -q out.log cat README.md"),
+    ])
+    def test_a_word_no_shell_runs_as_a_secret_read_is_not_read(self, tool, command, tmp_path):
         assert_hook_allowed(run_guard_tool(tool, {"command": command}, tmp_path))
 
 

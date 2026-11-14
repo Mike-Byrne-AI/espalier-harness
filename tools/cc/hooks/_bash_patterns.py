@@ -2268,18 +2268,15 @@ _STDIN_SHELL_HEADS = frozenset(_POWERSHELL_HEADS.split("|"))
 # every interpreter -- its own row).
 # Every branch is exclusive of its neighbour (`\\.` vs `[^\\"]`; `[^']`
 # closed by the literal quote), so an unclosed body fails in one pass.
-# The program switch may carry its program glued after a colon
-# (`-c:'...'`, `-Command:'...'`, DEF-4061): Windows PowerShell 5.1 does
-# not bind the switch but runs the whole word as command text, so every
-# statement after the first runs (driven, echo only), and the PowerShell
-# tool's carrier reads the same value. The colon is outside the switch
-# run's word class, so the run never reaches it and no token gains a
-# second parse.
+# A program bound to the switch by a colon (`-c:'...'`, DEF-4061) is not
+# read here: this tail reads pwsh too, and pwsh runs nothing from a
+# colon-bound first word (7.6.5 exits 64; its default is -File).
+# powershell's is read on its head alone, by `_powershell_word_programs`.
 _SHELL_COMMAND_SWITCH = r"[-/](?i:c(?:o(?:m(?:m(?:a(?:n(?:d)?)?)?)?)?)?)"
 _SHELL_SWITCH_RUN = r"(?:[-/][\w.-]+(?:[ \t]+[\w.:=,@%+~][\w./:=,@%+~-]*)?[ \t]+)*?"
 _SHELL_COMMAND_TAIL = (
     r"""[\w.-]*""" + _QUOTED_VERB_TAIL + r"""[ \t]+""" + _SHELL_SWITCH_RUN
-    + r"""(?:""" + _SHELL_COMMAND_SWITCH + r"""(?:[ \t]+|:))?"""
+    + r"""(?:""" + _SHELL_COMMAND_SWITCH + r"""[ \t]+)?"""
     # the quoted program as one bash word of adjacent segments (DEF-832), or
     # a bare program; exclusive on the first character
     + r"""(?:(?P<word>""" + _BASH_QUOTED_WORD + r""")"""
@@ -2289,6 +2286,54 @@ _POWERSHELL_DASH_COMMAND_RE = re.compile(
     _CMD_POS + r"(?i:" + _POWERSHELL_HEADS + r")" + _SHELL_COMMAND_TAIL,
     re.DOTALL,
 )
+#: powershell at a command position and the blank after it, the opener of
+#: `_powershell_word_programs`: a SOURCE string, compiled by
+#: `_powershell_head_re` on the first command whose scan names the shell
+#: (air 63f101 (3)), so no pattern every Bash call compiles grows.
+_POWERSHELL_HEAD = _CMD_POS + r"(?i:powershell)" + _EXE_SUFFIX + _QUOTED_VERB_TAIL + r"(?=[ \t])"
+
+
+@functools.lru_cache(maxsize=1)
+def _powershell_head_re() -> "re.Pattern[str]":
+    """`_POWERSHELL_HEAD`, compiled once, on first use (DEF-4061)."""
+    return re.compile(_POWERSHELL_HEAD)
+
+
+def _powershell_word_programs(words: list[str]) -> list[str]:
+    """Every program Windows PowerShell 5.1 may run from the words after its
+    head where no spaced `-Command` names one (DEF-4061; that one is
+    `_POWERSHELL_DASH_COMMAND_RE`'s): its first word that is no parameter
+    starts the command text, the words from there joined with blanks as
+    powershell.exe joins its argv. A program switch bound by a colon
+    (`-c:'<program>'`, any prefix) is such a word, since 5.1 binds no colon
+    there, and the text after the colon is read (driven, echo only: 5.1
+    runs the statements after the first and never the first, so reading the
+    first over-reads). Which parameters take a value is not read, so a word
+    after a switch starts a candidate and may also be that switch's value:
+    the walk goes on to the next word, and a word after a word ends it.
+    `-File` ends it (the script is the program, a declared limit). The
+    PowerShell tool reads the same rule over its own words
+    (`_ps_powershell_program_starts`). Not pwsh's: its first word is a
+    script file (its default is -File), and a colon-bound switch makes it
+    exit 64, running nothing."""
+    programs: list[str] = []
+    after_switch = False
+    for k, word in enumerate(words[:_PS_CARRIER_SWITCHES_MAX]):
+        if word.startswith(("-", "/")):
+            name, colon, value = word.partition(":")
+            if _SHELL_COMMAND_SWITCH_RE.fullmatch(name):
+                if colon:
+                    programs.append(" ".join([value, *words[k + 1:]]))
+                break
+            if _PS_CLI_FILE_SWITCH_RE.fullmatch(name):
+                break
+            after_switch = True
+            continue
+        programs.append(" ".join(words[k:]))
+        if not after_switch:
+            break
+        after_switch = False
+    return [program for program in programs if program.strip()]
 # A POSIX shell's `-c` program on the Bash tool (§C52): `sh -c '...'`,
 # `bash -lc "..."`. The head and quoted-verb tail, the shared switch run
 # (`_POSIX_SHELL_SWITCH_RUN`, below), a cluster holding `c`
@@ -2502,7 +2547,8 @@ def _posix_shell_c_programs_unread_in_place(command: str, scan: str) -> Iterator
 # words with blanks and runs them; `watch` joins the words after its
 # switches and runs them under `sh -c` (under `-x`, directly: the same
 # words); `script` and `su` run the value of `-c` / `--command` (and su's
-# `--session-command`), glued to the switch or not. The opener
+# `--session-command`), glued to the switch or not, and BSD script the
+# words after its file word. The opener
 # is found on the scan, so a carrier named inside a quoted string (`echo
 # "eval ..."`) is a mention and opens nothing. `eval` is a builtin, which
 # bash matches case-sensitively; the three binaries are spelled case-blind
@@ -2515,8 +2561,9 @@ def _posix_shell_c_programs_unread_in_place(command: str, scan: str) -> Iterator
 # quoted or escaped `eval` after them, as the head itself is read quoted
 # (DEF-4061; eight spellings driven on bash, echo only; `command builtin
 # eval` is `_CMD_POS`'s wrapper run, then this step): the opener walks
-# past them before `eval` here alone, never in `_CMD_POS`'s roster, so no
-# anchor every Bash call compiles grows (ruling 40ec7f). Spelled as
+# past them before `eval` in its own pattern alone, `_CARRIER_BUILTIN_HEAD`,
+# compiled on first use and never in `_CMD_POS`'s roster, so nothing every
+# Bash call compiles grows (rulings 40ec7f, 63f101). Spelled as
 # typed, since bash matches a builtin case-sensitively. Each word opens
 # on a literal after a blank, so no two quantifiers share a character.
 _CARRIER_BUILTIN_STEP = (
@@ -2524,11 +2571,23 @@ _CARRIER_BUILTIN_STEP = (
     + r"""(?:\\?["']?(?:builtin|command)""" + _QUOTED_VERB_TAIL + r"[ \t]+(?:--[ \t]+)?){0,2}"
     + r"""\\?["']?(?=eval))?"""
 )
-_CARRIER_HEAD_RE = re.compile(
-    _CMD_POS + _CARRIER_BUILTIN_STEP
-    + r"(?P<head>eval|(?i:" + _WRAPPER_CARRIER_BINARIES + r"|su)" + _EXE_SUFFIX + r")"
+#: The carrier's head and the blank after it, the end both openers share.
+_CARRIER_HEAD_TAIL = (
+    r"(?P<head>eval|(?i:" + _WRAPPER_CARRIER_BINARIES + r"|su)" + _EXE_SUFFIX + r")"
     + _QUOTED_VERB_TAIL + r"(?=[ \t])"
 )
+_CARRIER_HEAD_RE = re.compile(_CMD_POS + _CARRIER_HEAD_TAIL)
+#: The opener with `_CARRIER_BUILTIN_STEP` before its head: a SOURCE
+#: string, compiled by `_carrier_builtin_head_re` on the first command whose
+#: scan holds `builtin`. The step opens on that literal, so on a scan
+#: without it this opener reads what `_CARRIER_HEAD_RE` reads.
+_CARRIER_BUILTIN_HEAD = _CMD_POS + _CARRIER_BUILTIN_STEP + _CARRIER_HEAD_TAIL
+
+
+@functools.lru_cache(maxsize=1)
+def _carrier_builtin_head_re() -> "re.Pattern[str]":
+    """`_CARRIER_BUILTIN_HEAD`, compiled once, on first use (DEF-4061)."""
+    return re.compile(_CARRIER_BUILTIN_HEAD)
 #: The `watch` switches whose value is the next word (procps-ng).
 _WATCH_VALUE_SWITCHES = frozenset({"-n", "--interval", "-q", "--equexit"})
 #: The long switches whose value is the program, named without their
@@ -2591,7 +2650,13 @@ def _switch_programs(words: list[str]) -> list[str]:
     what the word would hand and reads the next `-c` too; su runs the last
     of two programs, and both are read. An extra candidate only adds a
     program to read. A walk over each word, no pattern, so a run of letters
-    of any length costs one pass."""
+    of any length costs one pass. Not shared with `_posix_cli_program`'s
+    walk (air 63f101 (1)): a POSIX shell's `-c` takes no value (its program
+    is the first operand after the options, its `c` anywhere in a cluster
+    of either sign, `-cx` and `+c`), its valued options are a fixed set
+    (`_POSIX_CLI_VALUED`) and its walk ends at the first operand, where
+    getopt's valued `c` here takes the rest of its word and the walk reads
+    every word."""
     programs: list[str] = []
     for k, word in enumerate(words):
         following = words[k + 1] if k + 1 < len(words) else ""
@@ -2607,6 +2672,36 @@ def _switch_programs(words: list[str]) -> list[str]:
     return [program for program in programs if program]
 
 
+#: BSD script's switch letters that take a value (`-t time`, `-T fmt`;
+#: macOS and FreeBSD script(1), which has no `-c`).
+_BSD_SCRIPT_VALUED = frozenset("tT")
+
+
+def _script_programs(words: list[str]) -> list[str]:
+    """Every program `script` can run: util-linux's `-c` value
+    (`_switch_programs`) and BSD script's command, the words after its file
+    word joined with blanks as the argv it runs (air 63f101 (2): on the Mac
+    script has no `-c`, and the command is the argv after the file). The
+    file is the first word that is no switch, past a `--`; a switch word is
+    getopt's, whose first valued letter (`_BSD_SCRIPT_VALUED`) takes the
+    rest of the word or, ending it, the next word. Both readings are taken
+    on every script, since which build runs is not known: on util-linux a
+    word after the file is no program, so there the BSD reading only
+    over-reads, as it does past a switch whose value it does not know
+    (`script -O log file` reads `file` as the program)."""
+    programs = _switch_programs(words)
+    k = 0
+    while k < len(words) and words[k].startswith("-") and words[k] != "-":
+        if words[k] == "--":
+            k += 1
+            break
+        at = next((j for j, ch in enumerate(words[k]) if ch in _BSD_SCRIPT_VALUED), 0)
+        k += 2 if at == len(words[k]) - 1 else 1
+    if k + 1 < len(words):
+        programs.append(" ".join(words[k + 1:]))
+    return programs
+
+
 #: The reader each carrier head takes, keyed by `_verb_key` of the head the
 #: opener read, and indexed, never defaulted (the failure-mode review of
 #: DEF-4061): a head the opener names with no reader here is a KeyError the
@@ -2615,7 +2710,7 @@ def _switch_programs(words: list[str]) -> list[str]:
 #: tests/test_write_guard.py::TestTheCommandPositionGrammarIsOneAcrossTheCarriers.
 _CARRIER_READERS: dict[str, Callable[[list[str]], list[str]]] = {
     "eval": _eval_programs, "watch": _watch_programs,
-    "script": _switch_programs, "su": _switch_programs,
+    "script": _script_programs, "su": _switch_programs,
 }
 
 
@@ -2634,7 +2729,8 @@ def _carrier_program_bodies(command: str, scan: str) -> Iterator[str]:
     # A carrier among the words already read (`eval eval ...`) is read one
     # level down, with that program, not again here.
     read_to = 0
-    for m in _CARRIER_HEAD_RE.finditer(scan):
+    opener = _carrier_builtin_head_re() if "builtin" in scan else _CARRIER_HEAD_RE
+    for m in opener.finditer(scan):
         if m.start() < read_to:
             continue
         words, used = _carrier_words(command[m.end():], 0)
@@ -7583,7 +7679,8 @@ def _bash_word_text(word: str) -> str:
 
 def _shell_program_bodies(command: str, scan: str) -> Iterator[str]:
     """Yield every PowerShell program a Bash command hands to `powershell` /
-    `pwsh` (DEF-637): the quoted or bare `-Command` operand, and a heredoc
+    `pwsh` (DEF-637): the quoted or bare `-Command` operand, each program
+    powershell may run with no spaced `-Command` (DEF-4061), and a heredoc
     or here-string fed to the shell on stdin. Opener on ``scan``, body from
     ``command`` at the same offsets, the two-string discipline of
     :func:`_inline_program_bodies`; the same length guard. The yielded text
@@ -7592,13 +7689,26 @@ def _shell_program_bodies(command: str, scan: str) -> Iterator[str]:
     """
     if len(scan) != len(command):
         scan = command
+    read: set[str] = set()
     for m in _POWERSHELL_DASH_COMMAND_RE.finditer(scan):
         # the quoted program is one bash word of adjacent segments (DEF-832),
         # its quote removal by `_bash_word_text`; a bare program verbatim
         if m.group("word") is not None:
-            yield _bash_word_text(command[m.start("word"):m.end("word")])
+            program = _bash_word_text(command[m.start("word"):m.end("word")])
         else:
-            yield command[m.start("bare"):m.end("bare")]
+            program = command[m.start("bare"):m.end("bare")]
+        read.add(program.strip())
+        yield program
+    # each program powershell may run with no spaced `-Command` before it,
+    # on its head alone (`_powershell_word_programs`), less what the opener
+    # above read; the head's opener is compiled on the first command whose
+    # scan names the shell
+    if "powershell" in scan.lower():
+        for m in _powershell_head_re().finditer(scan):
+            for program in _powershell_word_programs(_carrier_words(command[m.end():], 0)[0]):
+                if program.strip() not in read:
+                    read.add(program.strip())
+                    yield program
     for interp, body in _stdin_program_bodies(command, scan):
         if interp in _STDIN_SHELL_HEADS:
             yield body
@@ -13358,13 +13468,18 @@ def _cmd_glued_switch_end(scan: str, i: int, end: int, switch: "re.Pattern[str]"
     return -1
 
 
-def _ps_switch_operand_at(scan: str, i: int, switch: "re.Pattern[str]", glued: bool = False) -> int:
+def _ps_switch_operand_at(
+    scan: str, i: int, switch: "re.Pattern[str]", glued: bool = False, colon: bool = True,
+) -> int:
     """The offset past the first word after ``i`` that ``switch`` matches
-    whole, within the statement's switch words; -1 when there is none. A
-    value bound to the switch by a colon starts after the colon, since
-    PowerShell binds `-Command:'<program>'` (any prefix) as the spaced form;
-    where ``glued`` (cmd's switch, whose remainder is the program), a word
-    of glued switches holding it starts after it (`_cmd_glued_switch_end`)."""
+    whole, within the statement's switch words; -1 when there is none.
+    Where ``colon``, a value bound to the switch by a colon starts after the
+    colon: `Invoke-Expression` binds `-Command:'<program>'` (any prefix) as
+    the spaced form, and Windows PowerShell 5.1 runs the word as command
+    text (`_powershell_word_programs`); pwsh's caller passes False, since
+    pwsh runs nothing from a colon-bound first word (DEF-4061). Where
+    ``glued`` (cmd's switch, whose remainder is the program), a word of
+    glued switches holding it starts after it (`_cmd_glued_switch_end`)."""
     n = len(scan)
     for _ in range(_PS_CARRIER_SWITCHES_MAX):
         while i < n and scan[i] in " \t":
@@ -13376,15 +13491,51 @@ def _ps_switch_operand_at(scan: str, i: int, switch: "re.Pattern[str]", glued: b
             end += 1
         if switch.fullmatch(scan, i, end):
             return end
-        colon = scan.find(":", i, end)
-        if colon > i and switch.fullmatch(scan, i, colon):
-            return colon + 1
+        bound = scan.find(":", i, end) if colon else -1
+        if bound > i and switch.fullmatch(scan, i, bound):
+            return bound + 1
         if glued:
             past = _cmd_glued_switch_end(scan, i, end, switch)
             if past >= 0:
                 return past
         i = end
     return -1
+
+
+def _ps_powershell_program_starts(scan: str, i: int) -> list[int]:
+    """Where each program powershell may run with no `-Command` before it
+    starts on the PowerShell leg (DEF-4061): `_powershell_word_programs`'
+    rule over the statement's own words from ``i``. The first literal or
+    bare word that is no switch starts one, and so does each such word
+    after a switch, which may be that switch's value (the walk goes on; a
+    word after a word ends it). A program switch, spaced or bound by a colon
+    (`_ps_switch_operand_at`'s), or `-File` ends the walk."""
+    starts: list[int] = []
+    n = len(scan)
+    after_switch = False
+    for _ in range(_PS_CARRIER_SWITCHES_MAX):
+        while i < n and scan[i] in " \t":
+            i += 1
+        if i >= n or scan[i] in ";|\n\r)}":
+            break
+        lit = _PS_PROGRAM_STRING_RE.match(scan, i)
+        end = lit.end() if lit else i
+        while not lit and end < n and scan[end] not in " \t;|\n\r)}":
+            end += 1
+        if lit or scan[i] not in "-/":
+            starts.append(i)
+            if not after_switch:
+                break
+            after_switch = False
+        else:
+            bound = scan.find(":", i, end)
+            name_end = bound if bound > i else end
+            if (_SHELL_COMMAND_SWITCH_RE.fullmatch(scan, i, name_end)
+                    or _PS_CLI_FILE_SWITCH_RE.fullmatch(scan, i, name_end)):
+                break
+            after_switch = True
+        i = end
+    return starts
 
 
 def _ps_carrier_program_bodies(command: str, scan: str) -> Iterator[str]:
@@ -13420,9 +13571,15 @@ def _ps_carrier_program_bodies(command: str, scan: str) -> Iterator[str]:
                     command, scan, m.end() if at < 0 else at, bare=False)
             elif head in ("pwsh", "powershell", "cmd"):
                 switch = _CMD_PROGRAM_SWITCH_RE if head == "cmd" else _SHELL_COMMAND_SWITCH_RE
-                at = _ps_switch_operand_at(scan, m.end(), switch, glued=head == "cmd")
-                if at >= 0:
-                    programs, end = _ps_carrier_operand(command, scan, at, bare=True)
+                at = _ps_switch_operand_at(
+                    scan, m.end(), switch, glued=head == "cmd", colon=head != "pwsh")
+                starts = [at] if at >= 0 else []
+                if head == "powershell":
+                    starts += _ps_powershell_program_starts(scan, m.end())
+                for start in starts:
+                    more, past = _ps_carrier_operand(command, scan, start, bare=True)
+                    programs += more
+                    end = max(end, past)
         if programs:
             read_to = end
             spans.append((m.start(), end))
@@ -15134,8 +15291,8 @@ def _ps_cli_program(line: str) -> str:
     ``line``: every word after ``-Command`` (any prefix, ``-c``) joined by
     blanks, as the shell joins them; empty where ``-File`` comes first or no
     ``-Command`` is given (powershell.exe's implicit command, a bare first
-    word, is a declared limit, as the carrier reader declares it for the
-    same shells). ``-Command`` is looked for past a bare word, since a
+    word, is a declared limit here, where the carrier reader on both tools
+    reads it, `_powershell_word_programs`). ``-Command`` is looked for past a bare word, since a
     switch's value is one (``-ExecutionPolicy Bypass``), so one after a
     script operand pwsh hands that script is read too: the over-capture
     direction, declared (the failure-mode review)."""
