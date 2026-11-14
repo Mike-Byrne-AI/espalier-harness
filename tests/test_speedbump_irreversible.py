@@ -3710,8 +3710,9 @@ class TestCommandPositionClassClose:
             "MASKED -- `cat > X <<`; reads `scan`, so a quoted/comment mention "
             "loses its `>` and `<<` to `mask_inert_syntax`. Driven allow.",
         "_bash_patterns._EXEC_OPENER_RE":
-            "MASKED -- `eval`, and a POSIX shell's head where its switch run "
-            "and a `c` cluster follow (the `-c` opener's fragment, DEF-3078); "
+            "MASKED -- `eval`, and a POSIX shell from its head through a `c` "
+            "cluster across a switch run with no redirect (the `-c` opener's "
+            "fragment, DEF-3078); "
             "reached only past the head-roster gate, "
             "and none of those verbs is in `_NON_REPARSING_HEADS`. Driven allow.",
         "_bash_patterns._PS_REPARSED_SPAN_BEFORE":

@@ -21828,11 +21828,11 @@ class TestAShellsSwitchRunIsReadWhereverItsBareDashCIs:
         ("cat notes bash <.env -lc x", "secret"),
     ], ids=["write-redirect", "stderr-redirect", "input-redirect"])
     def test_the_relief_keeps_the_commands_own_redirect(self, tmp_path, cmd, tier):
-        """The masker's relief blanks a shell's HEAD in a command that runs
-        no shell, never the run after it: a redirect there is the command's
-        own (`echo` writes the file), and blanking the run hid it from the
-        zone and secret checks (both reviews, driven against the first cut,
-        which blanked the head through the cluster)."""
+        """The masker's relief blanks a shell opener in a command that runs
+        no shell, never a redirect in its switch run: that redirect is the
+        command's own (`echo` writes the file), and blanking it hid it from
+        the zone and secret checks (both reviews, driven against the first
+        cut, which composed the run's redirect arm)."""
         assert tier in _bash_tier_verdicts(cmd, self._project(tmp_path))
 
     def test_the_command_position_arm_reads_a_nested_program_first(self):

@@ -2390,7 +2390,8 @@ _POSIX_SHELL_C_OPENER = (
 #: prefix and matches the inner opener (`bash -c "bash -lc '...'"`), which
 #: the boundary arm alone would swallow into the outer word and never read.
 #: A mention inside a command that runs no shell stays data because the
-#: masker blanks the head of the same fragment there (`_EXEC_OPENER_RE`).
+#: masker blanks the same fragment there, less any redirect in its run
+#: (`_EXEC_OPENER_RE`).
 #: The arm moves the bare spelling's reading behind such a launcher too:
 #: every reader that takes each program this opener yields (the write,
 #: remove and secret legs) now sees it there, the refusing direction. Only
@@ -3522,24 +3523,25 @@ _NON_REPARSING_HEADS = frozenset({
 #: `ssh host '...'`, a flag-embedded `--wrap='eval ...'` and a `git` alias body
 #: (four genuinely-executing shapes) to relieve three inert ones. Wrong trade.
 #:
-#: The shell arm blanks the HEAD of the `-c` opener's own fragment
-#: (`_POSIX_SHELL_C_OPENER`, DEF-3078), the rest of the fragment a lookahead:
-#: that opener reads a shell's program wherever the bare `sh -c` is read,
-#: behind any switch run or `c` cluster, and every reader that opens on a
-#: shell needs its head, so blanking the head relieves `echo find . -exec
-#: bash -lc '<delete>' ';'` -- it names a command and runs none -- which
-#: blanking only `sh -c` left for the opener to wall. The head ALONE: the
-#: run between it and the cluster can hold the command's own live redirect
-#: (`echo hi sh >out.txt -c x` writes `out.txt`), and blanking the run hid
-#: that target from the write and secret readers (both reviews, driven); a
-#: head word is argument text, a redirect never is. The head a mention's
-#: quoted head leaves keeps both its quotes. Every `sh -c` the old relief
-#: blanked loses its head here, so no mention it relieved stops being
-#: relieved.
+#: The shell arm blanks the `-c` opener's own fragment (DEF-3078) from the
+#: head through the cluster, its switch run WITHOUT the redirect arm: the
+#: opener reads a shell's program wherever the bare `sh -c` is read, behind
+#: any switch run or `c` cluster, so the relief must blank `bash -lc` in
+#: `echo find . -exec bash -lc '<delete>' ';'` -- it names a command and
+#: runs none -- as it blanked `sh -c`. Never a redirect: one between the
+#: head and the cluster is the command's own (`echo hi sh >out.txt -c x`
+#: writes `out.txt`), and the first cut, which composed the whole run,
+#: blanked it from the write and secret readers (both reviews, driven); a
+#: run holding one is not relieved, so such a mention can draw a refusal
+#: (the friction direction). Through the cluster, never the head alone: a
+#: reader that takes a quoted word as the program a carrier hands on
+#: (`git bisect run sh -c '...'`) reads it only once the opener is blank
+#: up to that word (the head-only second cut lost that wall; the tier,
+#: driven). The bare `sh -c` blanks exactly as the old spelling did, so no
+#: mention it relieved stops being relieved.
 _EXEC_OPENER_RE = re.compile(
-    r"\b(?:eval\b|(?i:" + _POSIX_SHELL_HEADS + r")" + _EXE_SUFFIX
-    + r"\b(?=" + _QUOTED_VERB_TAIL + _POSIX_SHELL_SWITCH_RUN + r"[ \t]+"
-    + _POSIX_SHELL_C_CLUSTER + r"\b))"
+    r"\b(?:eval|(?i:" + _POSIX_SHELL_HEADS + r")" + _EXE_SUFFIX + r"\b" + _QUOTED_VERB_TAIL
+    + r"(?:[ \t]+" + _POSIX_SHELL_SWITCH + r")*[ \t]+" + _POSIX_SHELL_C_CLUSTER + r")\b"
 )
 
 #: Prefix words that do not themselves consume the argument -- step over them and
