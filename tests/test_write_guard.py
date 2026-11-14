@@ -19212,27 +19212,43 @@ class TestAGapAfterAPipeIsRead:
         assert bp.mask_inert_syntax(text) == first
         assert bp.mask_inert_syntax.cache_info().hits == 1, bp.mask_inert_syntax.cache_info()
 
-    def test_the_masker_memo_holds_a_long_rows_judgment(self, tmp_path):
+    def test_the_masker_memo_holds_a_long_rows_judgment(self, tmp_path, monkeypatch):
         """The memo's effect, not its decorator (the 76cd5c reviews): the
         delete reader's judgment of the 40 KB scan-cap row, from empty
-        caches, masks each (text, reading) once and evicts nothing, under
-        either reading. A memo too small for one judgment, or a caller that
-        reaches the masker past it, shows here as an eviction or as no hit."""
-        import contextvars
+        caches, runs the masker's walk once a (text, reading) it is asked
+        for. Unmemoised it ran once a call (9 calls on 3 keys here); a memo
+        too small for one judgment, or a caller that reaches the walk past
+        the memo, runs it more often than there are keys. Counted at the
+        walk, which runs once an unmemoised masking and nowhere else on this
+        row, so the pin reads the same on a tree with no memo at all."""
         bp = _bash_patterns_module()
         wg = _load_write_guard()
         pad = "\n".join(["x" * 99] * 200)
         row = 'echo "' + pad + " ; rm -rf * ; " + pad + '" > notes.md'
-        bp.mask_inert_syntax.cache_clear()
+        for reader in list(vars(bp).values()):
+            if callable(reader) and hasattr(reader, "cache_clear"):
+                reader.cache_clear()
+        masker, walk = bp.mask_inert_syntax, bp._walk_shell_roles
+        keys, walks, inside = set(), {"in the masker": 0, "elsewhere": 0}, [0]
+
+        def counting_masker(command, *args, **kwargs):
+            keys.add((command, bool(bp._PS_GLUED_OPENING.get())))
+            inside[0] += 1
+            try:
+                return masker(command, *args, **kwargs)
+            finally:
+                inside[0] -= 1
+
+        def counting_walk(*args, **kwargs):
+            walks["in the masker" if inside[0] else "elsewhere"] += 1
+            return walk(*args, **kwargs)
+
+        monkeypatch.setattr(bp, "mask_inert_syntax", counting_masker)
+        monkeypatch.setattr(bp, "_walk_shell_roles", counting_walk)
         assert wg._bash_dangerous_reason(row, tmp_path, cwd=tmp_path) is None
-        infos = {}
-        for reading in (False, True):
-            context = contextvars.copy_context()
-            context.run(bp._PS_GLUED_OPENING.set, reading)
-            infos[reading] = context.run(bp.mask_inert_syntax.cache_info)
-        assert sum(info.hits for info in infos.values()) > 0, infos
-        for reading, info in infos.items():
-            assert info.misses == info.currsize, (reading, info)
+        assert keys and walks["elsewhere"] == 0, (len(keys), walks)
+        assert walks["in the masker"] <= len(keys), (
+            f"the masker's walk ran {walks['in the masker']} times for {len(keys)} (text, reading) keys")
 
     @pytest.mark.parametrize("memo", _memoised_readers())
     def test_a_memoised_splice_reads_no_state(self, memo):
