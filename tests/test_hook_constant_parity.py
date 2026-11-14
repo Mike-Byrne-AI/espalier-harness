@@ -194,6 +194,26 @@ class TestHookConstantParity:
             f"(_HARNESS_ENV_NAMES) no longer names the variable the stop gate reads"
         )
 
+    def test_config_guard_judges_the_roster_write_guard_refuses(self):
+        """DEF-3081: ``config_guard._GATE_ENV_NAMES`` is the set of variables a
+        settings ``env`` map may not switch, and ``write_guard._HARNESS_ENV_NAMES``
+        the set an in-session assignment may not set; one roster spelled twice
+        (neither hook may import the other). Read as the two assignments' AST,
+        so the attribute both open with is compared too. Dies to: a name added
+        to one roster, which leaves that variable judged on one route alone."""
+        def roster(script: str, name: str) -> str:
+            tree = ast.parse((HOOKS_DIR / script).read_text(encoding="utf-8"))
+            for node in tree.body:
+                target = node.target if isinstance(node, ast.AnnAssign) else (
+                    node.targets[0] if isinstance(node, ast.Assign) and len(node.targets) == 1 else None)
+                if isinstance(target, ast.Name) and target.id == name and node.value is not None:
+                    return ast.dump(node.value)
+            raise AssertionError(f"{script} assigns no {name} at module level")
+
+        assert roster("config_guard.py", "_GATE_ENV_NAMES") == roster("write_guard.py", "_HARNESS_ENV_NAMES"), (
+            "config_guard._GATE_ENV_NAMES and write_guard._HARNESS_ENV_NAMES name different variables"
+        )
+
     def test_core_flow_fallback_matches_sot(self):
         """441-E: the SECOND half of the CORE_FLOW_COMMANDS two-site class.
 

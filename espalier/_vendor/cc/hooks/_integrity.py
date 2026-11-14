@@ -1395,6 +1395,49 @@ def take_unwired_notice(repo_root: Path) -> str | None:
     )
 
 
+#: A refused change that would switch a gate off (DEF-3081): config_guard's
+#: ``_gate_switch_findings`` -- ``disableAllHooks`` the user settings file
+#: supplies, or a gate variable a settings ``env`` map loosens. Nothing else
+#: tells Claude: the ConfigChange refusal reaches no one, the file keeps the
+#: change, and write_guard's kill-switch gate reads the two project files only.
+#: Told at the next PostToolUse, as the unwired refusal is, and dropped where a
+#: fresh process loads the files again (SessionStart, which names the posture).
+SWITCH_PENDING = (_hook_utils.STATE_DIR, "settings_switch_pending.json")
+
+
+def record_switch_pending(repo_root: Path, findings: list[str]) -> None:
+    """Note a refused gate switch for the next PostToolUse to tell Claude."""
+    path = repo_root.joinpath(*SWITCH_PENDING)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _hook_utils.atomic_write_text(path, json.dumps(
+        {"findings": [str(f) for f in findings], "announced": False}) + "\n")
+
+
+def clear_switch_pending(repo_root: Path) -> None:
+    with contextlib.suppress(FileNotFoundError):
+        repo_root.joinpath(*SWITCH_PENDING).unlink()
+
+
+def take_switch_notice(repo_root: Path) -> str | None:
+    """The notice for a refused gate switch not yet told, marked told; else None."""
+    path = repo_root.joinpath(*SWITCH_PENDING)
+    try:
+        record = load_json_dict_safe(path.read_bytes(), default=None)
+    except OSError:  # fail-open: ok deliberate -- nothing pending is the common case
+        return None
+    if not isinstance(record, dict) or record.get("announced") is not False:
+        return None
+    findings = [f for f in record.get("findings") or [] if isinstance(f, str)]
+    _hook_utils.atomic_write_text(path, json.dumps({**record, "announced": True}) + "\n")
+    return (
+        "[WARN] Espalier-Harness: a settings change would switch a gate off: "
+        + "; ".join(findings) + ". Claude Code refused it for this session, so "
+        "the gates still run now, but the file on disk keeps the change and the "
+        "NEXT session will start with it. Remove that setting from the file "
+        "before this session ends."
+    )
+
+
 # ── Audit log ───────────────────────────────────────────────────────────────
 
 

@@ -361,6 +361,9 @@ def _record_wired_gates(root: Path, source: str) -> None:
         return
     if fresh:
         _integrity.clear_unwired_pending(root)
+        # The same for a refused gate switch (DEF-3081): this process loaded
+        # the files, and the banner names the posture they leave.
+        _integrity.clear_switch_pending(root)
     state, data = _integrity.read_project_settings(root)
     if state == "unreadable":
         _integrity.clear_wired_gates(root)
