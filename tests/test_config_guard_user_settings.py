@@ -8,7 +8,9 @@ that path as out of root and scanned the two project files instead, so
 settings ``env`` map reaches the hook process (driven 2026-11-14 on Claude
 Code 2.1.319, one nested headless run: SessionStart and UserPromptSubmit), and
 the settings reference says a user-settings ``env`` change is applied to the
-running session.
+running session. Without this file's rows, a session refused elsewhere could
+write the switch there and its later hooks would start with the gate off,
+silently; the rows pin the refusal and its record.
 
 Precision, from the same references: hook lists merge across settings files,
 so an emptied hook list in the user file removes no project hook and is not a
