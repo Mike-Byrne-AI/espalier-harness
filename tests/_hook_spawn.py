@@ -63,6 +63,7 @@ from __future__ import annotations
 import functools
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -373,9 +374,55 @@ def holds_a_budget_refusal(out: str) -> bool:
     return BUDGET_REFUSAL in (out or "") or BUDGET_FALLBACK in (out or "")
 
 
+def _stdout_text(result: subprocess.CompletedProcess) -> str:
+    return result.stdout if isinstance(result.stdout, str) else (result.stdout or b"").decode("utf-8", "replace")
+
+
 def _budget_refused(result: subprocess.CompletedProcess) -> bool:
-    out = result.stdout if isinstance(result.stdout, str) else (result.stdout or b"").decode("utf-8", "replace")
-    return holds_a_budget_refusal(out)
+    return holds_a_budget_refusal(_stdout_text(result))
+
+
+#: The guard whose two bounds a refusal names: both refusals share one
+#: template and differ only in its figure.
+_WRITE_GUARD = Path(__file__).resolve().parents[1] / "tools" / "cc" / "hooks" / "write_guard.py"
+#: The figure in the refusal's template, and in the parent's plain-words fallback.
+_REFUSAL_FIGURE_RE = re.compile(r"(?:within|ran out of) its ([0-9]+(?:\.[0-9]+)?) s time budget")
+
+
+@functools.lru_cache(maxsize=1)
+def _guard_bounds() -> dict[float, str]:
+    """write_guard's two bounds by figure, read from its source: the judging
+    child's thread budget (``JUDGMENT_BUDGET_S``, from the child's first line)
+    and the parent's hard deadline (``HARD_DEADLINE_S``, from the hook's first
+    line, so it also counts the child's spawn and start). Empty where the
+    source cannot be read."""
+    try:
+        text = _WRITE_GUARD.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    bounds = {}
+    for name, label in (("JUDGMENT_BUDGET_S", "the judging child's {} s budget"),
+                        ("HARD_DEADLINE_S", "the parent's {} s deadline")):
+        found = re.search(rf"^{name} = ([0-9]+(?:\.[0-9]+)?)\s*$", text, re.MULTILINE)
+        if found:
+            bounds[float(found.group(1))] = label.format(found.group(1))
+    return bounds
+
+
+def refusing_bound(result: subprocess.CompletedProcess) -> str:
+    """Which of write_guard's two bounds refused the call, from the figure its
+    refusal names (76cd5c): a CI miss said only how long the attempt took, so
+    a red could not tell a slow judgment (the child's budget) from a slow
+    start (the parent's deadline)."""
+    found = _REFUSAL_FIGURE_RE.search(_stdout_text(result))
+    if found is None:
+        return "its refusal names no bound"
+    figure = found.group(1)
+    return _guard_bounds().get(float(figure), f"a {figure} s bound that is neither of write_guard's")
+
+
+def _miss_text(result: subprocess.CompletedProcess, seconds: float) -> str:
+    return f"the budget's refusal after {seconds:.1f} s, {refusing_bound(result)}"
 
 
 def _script(result: subprocess.CompletedProcess) -> str:
@@ -392,7 +439,8 @@ def not_a_budget_miss(result: subprocess.CompletedProcess) -> subprocess.Complet
     if _budget_refused(result):
         script = _script(result)
         pytest.fail(
-            f"{script} answered with write_guard's budget refusal: a miss, not a verdict. This spawn "
+            f"{script} answered with write_guard's budget refusal ({refusing_bound(result)}): a miss, "
+            "not a verdict. This spawn "
             f"keeps a bound past the helper's {HOOK_S:.0f} s, where a retry would overrun the per-test "
             "ceiling, so it is not retried: a stalled runner misses now and then, a judgment slow "
             "every time misses on every runner.")
@@ -448,7 +496,7 @@ def retry_a_budget_miss(
     if not _budget_refused(first):
         return first
     name = Path(_script(first)).name
-    miss = f"the budget's refusal after {time.monotonic() - began:.1f} s"
+    miss = _miss_text(first, time.monotonic() - began)
     if allowance is not None:
         allowance.take(name, miss)
     else:
@@ -461,8 +509,8 @@ def retry_a_budget_miss(
     second = spawn()
     if _budget_refused(second):
         pytest.fail(
-            f"{name} answered with write_guard's budget refusal on both attempts: {miss}, then after "
-            f"{time.monotonic() - began:.1f} s. A stalled runner misses once; a judgment slow every "
+            f"{name} answered with write_guard's budget refusal on both attempts: {miss}, then "
+            f"{_miss_text(second, time.monotonic() - began)}. A stalled runner misses once; a judgment slow every "
             "time misses every time, on every runner.")
     began_with = f", from the {' and '.join(put_back)} it began with" if put_back else ""
     warnings.warn(HookSpawnRetried(
@@ -595,7 +643,7 @@ def run_hook_through(
                         f"{name}: the first attempt missed ({misses[0]}); "
                         f"the retry answered in {time.monotonic() - began:.1f} s{began_with}"), stacklevel=2)
                 return result
-            misses.append(f"the budget's refusal after {time.monotonic() - began:.1f} s")
+            misses.append(_miss_text(result, time.monotonic() - began))
         if len(misses) == 2:
             break
         row = _row()

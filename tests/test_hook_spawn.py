@@ -91,6 +91,11 @@ if mode.endswith("-flagbudget"):
         sys.exit(0)
     print("re-issue" if flag.exists() else "first issue")
     sys.exit(0)
+if miss and mode.endswith(("childbudget", "parentbudget", "oddbudget")):
+    figure = {"childbudget": "3.5", "parentbudget": "4.0", "oddbudget": "9.0"}[mode.split("-")[-1]]
+    print('{"reason": "Command blocked: write_guard could not finish judging this command within its '
+          + figure + ' s time budget, so the call is refused rather than let through unjudged."}')
+    sys.exit(0)
 if miss and mode.endswith("fallback"):
     print('{"reason": "Command blocked: write_guard ran out of its 4.0 s time budget before it had judged this command"}')
     sys.exit(0)
@@ -161,6 +166,29 @@ class TestOneRetryOnAMiss:
             hs.run_hook_through(argv("always-budget"), env=None, input="{}")
         assert str(failed.value).count("budget's refusal after") == 2, str(failed.value)
         assert runs() == 2
+
+    @pytest.mark.parametrize("mode, bound", [
+        # the figure the hook's own constants give each bound (write_guard.py
+        # JUDGMENT_BUDGET_S and HARD_DEADLINE_S, read by the helper)
+        ("always-childbudget", "the judging child's 3.5 s budget"),
+        ("always-parentbudget", "the parent's 4.0 s deadline"),
+        ("always-fallback", "the parent's 4.0 s deadline"),
+        ("always-oddbudget", "a 9.0 s bound that is neither of write_guard's"),
+        ("always-budget", "its refusal names no bound"),
+    ])
+    def test_a_miss_names_the_bound_that_refused(self, child, mode, bound):
+        """76cd5c: a CI miss said only how long each attempt took, so the red
+        on post-merge run 43533008807 could not say whether the judgment
+        (the child's budget) or the start (the parent's deadline) ran out."""
+        argv, runs = child
+        with pytest.raises(pytest.fail.Exception) as failed:
+            hs.run_hook_through(argv(mode), env=None, input="{}")
+        assert str(failed.value).count(bound) == 2, str(failed.value)
+        hs._RETRIED.clear()  # the row spent its one retry above; the long-bound helper gets its own here
+        with pytest.raises(pytest.fail.Exception) as failed:
+            hs.retry_a_budget_miss(_spawn(argv(mode, "long.txt")), env=None)
+        assert str(failed.value).count(bound) == 2, str(failed.value)
+        assert (runs(), runs("long.txt")) == (2, 2)
 
     def test_a_hook_slow_every_time_fails_every_time(self, child):
         """The retry gets no more time than the first attempt: a regression

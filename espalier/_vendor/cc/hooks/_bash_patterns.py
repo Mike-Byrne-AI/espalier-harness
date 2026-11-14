@@ -3570,6 +3570,13 @@ def _splices_quoted_capture(head: str, stmt: str) -> bool:
     return False
 
 
+# Memoised by the text and the reading, as `_masked_or_raw` is: about forty
+# readers mask the same command again in one judgment, and on a long quoted
+# argument each pass rescans it (39 calls on 7 keys, 0.33 s of a 0.56 s
+# judgment on a 40 KB row, a time-budget miss on a loaded runner). Nothing on
+# its call graph reads a context variable, the environment or a `global`
+# (`tests/test_write_guard.py::test_a_memoised_splice_reads_no_state`).
+@reading_cache(maxsize=16)
 def mask_inert_syntax(command: str) -> str:
     """Return `command` with literal-by-position syntax characters spaced out.
 

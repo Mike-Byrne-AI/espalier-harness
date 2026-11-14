@@ -19115,7 +19115,19 @@ class TestAGapAfterAPipeIsRead:
         assert _delete_verdict(run_guard_from("Bash", twin, tmp_path, None)) == "wall"
         assert _delete_verdict(run_guard_from("Bash", prog, tmp_path, None)) == expect
 
-    @pytest.mark.parametrize("memo", ["_masked_or_raw", "splice_line_continuations"])
+    def test_the_masker_is_memoised(self):
+        """The masker's own memo (76cd5c): one judgment masks the same text
+        about forty times, and unmemoised each pass rescans a long quoted
+        argument, which ran a 40 KB row past the time budget on a loaded
+        runner (post-merge run 43533008807)."""
+        bp = _bash_patterns_module()
+        bp.mask_inert_syntax.cache_clear()
+        text = 'echo "a; b" ; rm -rf build'
+        first = bp.mask_inert_syntax(text)
+        assert bp.mask_inert_syntax(text) == first
+        assert bp.mask_inert_syntax.cache_info().hits == 1, bp.mask_inert_syntax.cache_info()
+
+    @pytest.mark.parametrize("memo", ["_masked_or_raw", "splice_line_continuations", "mask_inert_syntax"])
     def test_a_memoised_splice_reads_no_state(self, memo):
         """The two memos hold the operator's cost bound (DEF-3071, DEF-3073):
         an answer is served by the text alone, so nothing on their call graph
