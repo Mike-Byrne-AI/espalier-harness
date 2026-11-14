@@ -2361,7 +2361,14 @@ spellings of them are work:
 - A new report on these jobs is a defect when its form is in the contract, or
   when it records a slip seen in a real session (a transcript or an audit row
   names it). Otherwise it is recorded under the limits above with the contract
-  as its reason, and no reader changes.
+  as its reason, and no reader changes. One speed-bump report is a ruled limit
+  (2026-11-14) although a real session recorded it: a rewrite of commits the
+  branch has already pushed (an amend or a rebase of them) draws no bump,
+  because the ship driver's `open` refuses the push that follows, whose remote
+  copy then holds commits the rewritten branch lacks, and names a merge as the
+  way past, never a rebase or a force push (its `preflight` forecasts the same
+  refusal); a push you type yourself with `--force-with-lease`, the form the
+  force-push bump leaves silent as the safe one, is outside both.
 - **A fourth basis: the anti-self-disable floor (ruled 2026-11-13).** The
   guard's first job (section 4) keeps the session from switching its own
   hooks off: a kill-switch setting, and an assignment of a variable the hooks
@@ -2372,7 +2379,17 @@ spellings of them are work:
   it already reads is judged as the bullets above judge a spelling of the
   three jobs. A protected-zone write, which section 4's headline also places
   under the floor, is not on this basis: a report about one, or a spelling of
-  one, is judged as it was before this ruling.
+  one, is judged as it was before this ruling. A nested session started with
+  one of Claude Code's launch options that load no hooks or choose which
+  settings load (`--bare` or `CLAUDE_CODE_SIMPLE=1`, `--safe-mode`,
+  `--setting-sources`, `--settings` carrying `disableAllHooks` or an `env`
+  map) is outside the floor by ruling (2026-11-14), and a report of one is
+  recorded with this bullet as its reason, no reader changed: the guard reads
+  none of these options, and such a launch is a deliberate act more than a
+  slip. So, by the same ruling, is an edit to one of the three `espalier.toml`
+  keys that change what a gate does (`plan_exempt_prefixes`,
+  `protected_paths`, `[extra_actions] test`): the file is your own
+  configuration, and the edit shows in the diff.
 
 **Configuration:**
 
@@ -2641,6 +2658,14 @@ new state as the next one to compare with.
   and says so once (`posttooluse_failed_open_zone_off`): narrow
   `protected_paths`, or name the large directories in `dependency_dirs`.
 - **Limits.**
+  - It reports and never stops the session, by ruling (2026-11-14): an
+    unattended run (a `/loop`, a scheduled or headless agent) whose reports
+    nobody reads keeps working after one. A latch that refused every call
+    until you cleared it would bring back the lock-out a refuse-everything
+    state has caused before, cleared only from a terminal, and a report
+    follows the change it names, so no refusal could undo that change. If
+    the question reopens, the shape is a `continue: false` from this check,
+    which stops Claude after the call it reports, never a latch.
   - A bad edit committed in the same shell call (`python fix.py && git commit
     -am wip`) is silent: the file then holds its content at `HEAD`. The
     commit still reaches `main` only through the pull request and CI. Inside a

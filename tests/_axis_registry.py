@@ -201,18 +201,24 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
     # Windows-alarm behaviour (the suite's timers skip where SIGALRM is missing,
     # the alarm taken away through the same stand-in); its timers are the
     # suite's own, not harness code, so it proves no cell.
+    # Proven 2026-11-14 by the reused-pid lane: tools/cc/checkout_sync.py::proc_starts
+    # reads a process's start from ps only where the harness reads darwin (Linux's
+    # procps start moves when the clock steps), the harness's first read that splits
+    # darwin from linux; its node, over all three values with the reader stubbed,
+    # asserts one ps in the writer's form read as macos and no read at the other two.
+    # Until then the cell was a gap: a stand-in could make the harness do nothing as
+    # macOS that it did not do as linux. Its two other Mac-differing reads still
+    # reach no sys.platform patch: platform.system() in
+    # tools/cc/hooks/_hook_utils.py::host_orientation_line, from uname (read
+    # 2026-10-26), and the kernel release file under /proc that
+    # espalier/sandbox_posture.py::_osrelease reads as the Linux witness for the
+    # sandbox's dependency check (2026-11-11), absent on macOS.
     AxisCell("target_os", "linux",
              "tests/test_bounded_spawn.py::TestEveryCopysWindowsBranch::"
              "test_the_timeout_shape_follows_the_platform_the_harness_reads[linux]", ""),
-    AxisCell("target_os", "macos", "",
-             "the harness reads darwin nowhere, and its two Mac-differing reads are "
-             "platform.system() in tools/cc/hooks/_hook_utils.py::host_orientation_line, from uname "
-             "(read 2026-10-26), and the kernel release file under /proc that "
-             "espalier/sandbox_posture.py::_osrelease reads as the Linux witness for the sandbox's "
-             "dependency check (2026-11-11), absent on macOS; no sys.platform patch reaches either: "
-             "a stand-in cannot make "
-             "the harness do anything as macOS that it does not do as linux, so a node at "
-             "this value could assert nothing of its own, the born-blind shape"),
+    AxisCell("target_os", "macos",
+             "tests/test_checkout_sync.py::TestTheStartIsReadWhereTheHarnessReadsDarwin::"
+             "test_the_start_reader_asks_once_in_the_writers_form[macos]", ""),
     AxisCell("target_os", "windows",
              "tests/test_bounded_spawn.py::TestEveryCopysWindowsBranch::"
              "test_the_timeout_shape_follows_the_platform_the_harness_reads[windows]", ""),
@@ -233,7 +239,9 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
 #   wired-hooks matrix (the adopter-axes pack's session-and-stack lane).
 # 2026-11-03: 13 -- tree/clean and tree/dirty, by the dirty-machine install cell
 #   (the adopter-axes pack's dirty-machine lane).
-PROVEN_FLOOR = 13
+# 2026-11-14: 14 -- target_os/macos, by the reused-pid lane (the start reader's node over
+#   linux, macos and windows: the harness's first read that splits darwin from linux).
+PROVEN_FLOOR = 14
 
 
 def proven(cells: tuple[AxisCell, ...] = AXIS_REGISTRY) -> list[AxisCell]:

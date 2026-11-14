@@ -1,0 +1,13 @@
+{
+ "id": "DEF-5109",
+ "subject": "tools/cc/hooks/session_start.py",
+ "cmd": "python3 -c 'import contextlib, io, subprocess, sys, tempfile, pathlib; sys.path.insert(0, \"tools/cc/hooks\"); import session_start as s; t = tempfile.TemporaryDirectory(); d = pathlib.Path(t.name).resolve(); g = lambda *a: subprocess.run([\"git\", \"-C\", str(d), *a], capture_output=True, check=True); g(\"init\", \"-q\"); g(\"-c\", \"user.name=p\", \"-c\", \"user.email=p@p\", \"commit\", \"-q\", \"--allow-empty\", \"-m\", \"i\"); w = d / \".claude\" / \"worktrees\" / \"agent-x\"; g(\"worktree\", \"add\", \"-q\", \"--detach\", str(w)); (w / \"work.txt\").write_text(\"unsaved\"); o = io.StringIO(); c = contextlib.redirect_stdout(o); e = contextlib.redirect_stderr(o); c.__enter__(); e.__enter__(); s._warn_if_nested_repo_litter(d); e.__exit__(None, None, None); c.__exit__(None, None, None); print(\"--force\" in o.getvalue())'",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/_hook_utils.py"
+ ],
+ "row_sha": "23aa3598bcbd",
+ "text_sha": "eb4e785f3bcc",
+ "verified_2026_11_14": "OPEN (filed 2026-11-14; probe driven at filing here and in the export of HEAD af58925a8177)"
+}

@@ -575,6 +575,36 @@ id, then by the transcript's name, with a leading `agent-` dropped from each
 one run. "Runs again for the same subagent" is why the snapshot is written
 once and never replaced.
 
+## Tool events in a subagent carry `agent_id` and `agent_type` (verified 2026-11-14, doc text only)
+
+Upstream, verbatim (`https://code.claude.com/docs/en/hooks.md`, fetched
+2026-11-14):
+
+> Hooks from settings files, managed policy settings, and plugins also run
+> inside [subagents](https://code.claude.com/docs/en/sub-agents.md). When a
+> subagent calls a tool, tool events such as `PreToolUse` and `PostToolUse`
+> fire the same configured hooks as in the main conversation, and the input
+> carries the `agent_id` and `agent_type`
+> [common input fields](https://code.claude.com/docs/en/hooks.md#common-input-fields) that identify the subagent.
+
+> `agent_id` and `agent_type` tell your script which agent a hook fired in,
+> such as a subagent, an
+> [in-process teammate](https://code.claude.com/docs/en/agent-teams.md#choose-a-display-mode),
+> or the agent you chose with `--agent`:
+
+The page's common-input-fields table gives `agent_type` as the agent name,
+present when the session runs with `--agent` or the hook fires inside a
+subagent, the subagent's type taking precedence. Until this page said so, the
+pin verified the two fields on SubagentStart and SubagentStop alone. Read from
+the page, not driven: no payload logger has been wired on `PreToolUse` in a
+subagent on this host. `write_guard.py` reads neither field, so a subagent's
+shell is judged as the main session's is, whatever the agent. A per-agent
+verb policy keyed on `agent_type` would be a new job for the hooks, not a
+missed spelling, and is left out by ruling (2026-11-14); each shipped
+agent's body says instead that nothing in the hooks stops a `git stash` or a
+`sed -i` on the project's own source, and keeps itself to read-only commands
+where it reviews.
+
 ## Context injection: plain stdout vs the `additionalContext` JSON field
 
 The live protocol still distinguishes **two** ways a hook puts text in front of
