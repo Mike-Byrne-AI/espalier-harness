@@ -2248,8 +2248,66 @@ def _without_heredoc_bodies(text: str, heredocs: "list[tuple[Any, bool]]") -> st
     return "".join(pieces)
 
 
+def _blank_bash_comments(text: str) -> str:
+    """``text`` with each comment blanked, `#` and all, where the masker
+    reads one: a `#` opens a comment at a word start
+    (`_bash_patterns._opens_comment`) unless it is glued after an escaped
+    character (`_glued_after_escape`), a `)` or a closing backtick, and a
+    comment inside a backtick body ends at its closer
+    (`_backtick_comment_end`), elsewhere at the text's end (a statement
+    ends at its newline). So a carriage return, an escaped blank and the
+    closer of a substitution, a process substitution, an arithmetic
+    expansion or an array keep the `#` in its word, as bash does, and the
+    word split after this cannot open a word with it; after a subshell's
+    `)` a `#` opens a comment. Quoted spans are skipped whole, an ANSI-C
+    `$'...'` with its escapes; an unterminated quote runs to the end.
+    Narrower than the masker's walk, stated: a backtick is read by its
+    parity in the statement, and a paren inside a parameter expansion or an
+    extended glob is read as syntax, where the walk reads both as text.
+    `TestTwoOperandReadersCutCommentsAsTheMaskerDoes` holds the two readers
+    to one verdict on its rows."""
+    if "#" not in text:
+        return text
+    _load_the_pattern_path()
+    kept: list[str] = []
+    parens: list[bool] = []     # per open `(`: does its `)` glue a `#` after it
+    i, n, ticks, at, glue_close = 0, len(text), 0, 0, -1
+    while i < n:
+        c = text[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c in "'\"":
+            escapes = c == '"' or text[i - 1:i] == "$"     # `$'...'` honours `\'`
+            j = i + 1
+            while j < n and text[j] != c:
+                j += 2 if escapes and text[j] == "\\" else 1
+            i = j + 1
+            continue
+        if c == "`":
+            ticks += 1
+        elif c == "(":
+            before = text[i - 1:i]
+            parens.append(before in ("$", "<", ">", "=") or before == "(" and bool(parens) and parens[-1])
+        elif c == ")":
+            if parens and parens.pop():
+                glue_close = i
+        elif (c == "#" and _bash_patterns._opens_comment(text, i)
+              and not (i and (text[i - 1] == ")" and glue_close == i - 1
+                              or text[i - 1] == "`" and ticks % 2 == 0))
+              and not _bash_patterns._glued_after_escape(text, i, ticks % 2 == 1)):
+            end = _bash_patterns._backtick_comment_end(text, i) if ticks % 2 else -1
+            end = n if end < 0 else end
+            kept += [text[at:i], " " * (end - i)]   # joined once: a flood stays linear
+            i = at = end
+            continue
+        i += 1
+    return "".join(kept) + text[at:] if kept else text
+
+
 def _redirect_free_operands(args: "list[tuple[str, str]]", sources: list[str], *,
-                            ends_at_output: bool) -> "list[tuple[str, str]]":
+                            ends_at_output: bool,
+                            comments_blanked: bool) -> "list[tuple[str, str]]":
     """``args`` up to a comment, every redirect and its target taken out, as
     the shell takes them out of a simple command wherever they stand before
     it runs the verb on what is left (`_redirect_at`, the one predicate). An
@@ -2259,8 +2317,14 @@ def _redirect_free_operands(args: "list[tuple[str, str]]", sources: list[str], *
     `.env`, and in `cp .env.example .env 2>/dev/null` the destination stays
     the copy's last operand (DEF-5107; until then the leg ended the operands
     at a `>` and kept a stream's `2>` and its target as operands). A comment
-    (a `#` opening a word as typed) ends the words; a quoted `">"` or `"#"`
-    is an operand. With ``ends_at_output`` -- the statement holds a
+    ends the words; a quoted `">"` or `"#"` is an operand. With
+    ``comments_blanked`` -- the Bash leg, whose caller blanked each comment
+    by the masker's rule before the split (`_blank_bash_comments`) -- a
+    word the split opens with a `#` is the text of a word bash reads whole
+    (`cat $(true)#x .env`, `cat a\\ #x .env` read `.env`), so it is an
+    operand. Without it -- the PowerShell twin, and a Bash statement cut
+    inside a quote -- any word opening with `#` ends them. With
+    ``ends_at_output`` -- the statement holds a
     substitution, or an escape the quote-aware cut cannot pair, so a target
     there may be more than the one word a redirect takes -- a redirect
     spelled from `>` ends the operands, as every one did before: the
@@ -2271,7 +2335,7 @@ def _redirect_free_operands(args: "list[tuple[str, str]]", sources: list[str], *
     i, n = 0, len(args)
     while i < n:
         raw = args[i][0]
-        if raw.startswith("#"):
+        if raw.startswith("#") and not comments_blanked:
             break
         step = _redirect_at(args, i, sources)
         if step:
@@ -2434,6 +2498,12 @@ def _secret_statement_reads(masked: str) -> list[str]:
         arm = _CASE_ARM_RE.match(text)  # `x) cat .env` after `;;` or a newline
         if arm is not None:
             text = text[arm.end():]
+        # A comment is blanked by the masker's rule only where the split is
+        # quote-aware: a statement cut inside a quote (a wrapper's program the
+        # masker handed back raw) starts mid-quote, and there any `#` word
+        # ends the operands, as before.
+        if aware:
+            text = _blank_bash_comments(text)
         words = _split_glued_redirects(
             _quote_aware_words(text, _TOKEN_SPLIT_RE, _BASH_OPAQUE)
             if aware else _split_words(text, _TOKEN_SPLIT_RE))
@@ -2454,7 +2524,8 @@ def _secret_statement_reads(masked: str) -> list[str]:
                 out.extend(sources)
             continue
         if words[head][0] in _COMPOUND_CLOSERS:  # `done < .env` feeds the body's reads
-            _redirect_free_operands(words[head + 1:], sources, ends_at_output=False)
+            _redirect_free_operands(words[head + 1:], sources, ends_at_output=False,
+                                    comments_blanked=aware)
             out.extend(sources)
             continue
         verb = words[head][1].rsplit("/", 1)[-1]
@@ -2464,16 +2535,18 @@ def _secret_statement_reads(masked: str) -> list[str]:
         # target out, wherever they stand, so `cat > out .env` reads `.env`
         # and the target, a write, is never read (`cat x > secrets/out` names
         # no secret). Judged on the word as TYPED: a quoted `">"` or `"#"` is
-        # an operand. A `#` opening a word ends them (the masker keeps the
-        # character and blanks what follows), so `cat README.md # not .env`
-        # names no secret; the PowerShell twin reads them the same way.
+        # an operand. A comment was blanked above by the masker's rule, so
+        # `cat README.md # not .env` names no secret, and a `#` the split
+        # cuts out of a word bash reads whole (`$(true)#x`, `a\ #x`) is an
+        # operand. The PowerShell twin ends them at any `#` word.
         # A substitution (`$(`, a backtick, `<(`, `>(`; an arithmetic `$((`
         # is none, and its `>` a comparison the glued cut takes off whole) or
         # a backslash, which sends the statement to the quote-blind split.
         args = _redirect_free_operands(
             words[head + 1:], sources,
             ends_at_output=("`" in text or ">(" in text or "<(" in text or "\\" in text
-                            or "$(" in text.replace("$((", "")))
+                            or "$(" in text.replace("$((", "")),
+            comments_blanked=aware)
         if verb not in _COPIER_VERBS:   # a copier never reads its stdin
             out.extend(sources)
         if verb in _STREAM_EDITORS:
@@ -2683,7 +2756,8 @@ def _ps_secret_read_targets(command: str, _depth: int = 0) -> list[str]:
         args = _redirect_free_operands(
             words[1:], [],
             ends_at_output=(any(t.endswith(("$", "@")) for t, _ in words)
-                            or any(o in text for o in _PS_OPAQUE)))
+                            or any(o in text for o in _PS_OPAQUE)),
+            comments_blanked=False)
         if head in _PS_COPIER_VERBS:
             out.extend(_ps_copier_sources(args))   # the destination is a write (DEF-823)
             continue
