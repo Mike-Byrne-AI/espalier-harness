@@ -14521,8 +14521,8 @@ def ps_start_process_arguments(text: str, at: int) -> tuple[int, str] | None:
     opener ending at ``at`` hands the program it starts, or None (DEF-1071
     (e)): ``-ArgumentList`` (or ``-Args``, by any prefix) or the first
     positional word after the program, as one string or a comma-separated
-    array (bare, or in ``@( )`` or ``( )``) joined by blanks, as the process
-    receives it. A named parameter
+    array (bare, or in ``@( )``, ``$( )`` or ``( )``) joined by blanks, as
+    the process receives it. A named parameter
     before it is stepped over with its value -- after a colon
     (``-WindowStyle:Hidden``, ``-Wait: $true``) or as the next word -- unless
     it is one of the cmdlet's switches, as PowerShell 5.1 bound each of
@@ -14555,11 +14555,13 @@ def ps_start_process_arguments(text: str, at: int) -> tuple[int, str] | None:
         i += 1
     if i >= n:
         return None
-    # an array in an array subexpression or a group, `@('/c','rd x')`: its
-    # elements as the bare array's (a `$( )` subexpression is not opened)
-    grouped = text.startswith("@(", i) or text.startswith("(", i)
+    # an array in an array subexpression, a subexpression or a group,
+    # `@('/c','rd x')`, `$('/c','rd x')`: its elements as the bare array's
+    # (PowerShell 5.1 hands the process a `$( )` list as it does `@( )`,
+    # driven echo-only; the operator's ruling, 2026-11-13)
+    grouped = text.startswith(("@(", "$(", "("), i)
     if grouped:
-        i += 2 if text[i] == "@" else 1
+        i += 1 if text[i] == "(" else 2
         while i < n and text[i] in " \t":
             i += 1
     start, parts = i, []

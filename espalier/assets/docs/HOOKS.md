@@ -2273,10 +2273,6 @@ spellings of them are work:
   `env -C '/tmp/a b' mv ...`) hide the verb, each pinned at allow beside its
   denied control by
   `tests/test_write_guard_command_position.py::TestTheAnchorFamilyLimits::test_the_ruled_limits_are_pinned_as_allows`.
-  So is a `Start-Process cmd` argument list built in a `$( )` subexpression
-  (`Start-Process cmd -ArgumentList $('/c rd /s /q C:\')`): the list reader
-  opens `@( )` and `( )` only, so no reader sees the program it hands cmd,
-  pinned at allow beside its plain list in the same test class.
   A crafted input that makes a reader's search outrun the hook's timeout is
   outside the contract too: Claude Code cancels the hook and the call runs
   unjudged, and no reader is rebuilt to bound such an input. Following either

@@ -11666,6 +11666,11 @@ def _recursive_delete_launch_forms() -> list[tuple[str, str, str]]:
         # (the failure-mode review: this one allowed at the lane's first build)
         forms.append((f"ps-cmd-saps-quoted-{verb}", "PowerShell",
                       "Start-Process cmd -ArgumentList '/c \"" + verb + " /s /q {t}\"'"))
+        # the argument list built in a `$( )` subexpression, which PowerShell
+        # 5.1 hands the process as it does `@( )` (driven echo-only, the
+        # operator's ruling ee002d; a declared limit until then)
+        forms.append((f"ps-cmd-saps-subexpression-{verb}", "PowerShell",
+                      "Start-Process cmd -ArgumentList $('/c','" + verb + " /s /q {t}')"))
     for word in re.findall(r"[\w-]+", bp._PS_REMOVE_VERB_WORDS):
         forms.append((f"ps-word-{word.lower()}", "PowerShell", word + " -Recurse {t}"))
     words = {w.lower() for w in re.findall(r"[\w-]+", bp._PS_REMOVE_VERB_WORDS)}
@@ -11745,7 +11750,8 @@ class TestEveryLaunchFormMeetsTheRecursiveDeleteWall:
             "env", "sudo", "doas", "command", "time", "nohup", "timeout", "xargs", "exec",
             "nice", "ionice", "stdbuf", "setsid", "strace", "ltrace", "watch", "script",
             "chrt", "taskset", "unbuffer", "torify", "proxychains"]
-        assert len(_LAUNCH_FORMS) == 88, len(_LAUNCH_FORMS)
+        # 92 since the `$( )` argument-list head joined, one per cmd delete verb
+        assert len(_LAUNCH_FORMS) == 92, len(_LAUNCH_FORMS)
 
     def test_xargs_is_the_pipe_carrier_and_no_wrapper_on_the_powershell_tool(self):
         """`xargs` hands the remove verb its operands from the pipe on this
@@ -11976,6 +11982,7 @@ class TestAShellStartedByStartProcessMeetsItsDirectFormsTiers:
         ("string", "Start-Process powershell -ArgumentList '-NoProfile -Command {p}'"),
         ("array", "Start-Process pwsh -ArgumentList '-c','{p}'"),
         ("subexpression", "Start-Process pwsh -ArgumentList @('-NoProfile','-Command','{p}')"),
+        ("dollar-subexpression", "Start-Process pwsh -ArgumentList $('-NoProfile','-Command','{p}')"),
         ("positional", "Start-Process pwsh '-Command {p}'"),
         ("by-file-name", "Start-Process powershell.exe -ArgumentList '-Command {p}'"),
         ("by-path", "Start-Process C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe "
@@ -11993,6 +12000,7 @@ class TestAShellStartedByStartProcessMeetsItsDirectFormsTiers:
     ]
     _BASH_LAUNCHES = [
         ("array", "Start-Process bash -ArgumentList '-c','{p}'"),
+        ("dollar-subexpression", "Start-Process bash -ArgumentList $('-c','{p}')"),
         ("string", "Start-Process bash -ArgumentList '-c \"{p}\"'"),
         ("sh-cluster", "Start-Process sh -ArgumentList '-lc','{p}'"),
         ("by-path", "Start-Process C:/Git/bin/bash.exe -ArgumentList '-c','{p}'"),
@@ -12055,7 +12063,11 @@ class TestAShellStartedByStartProcessMeetsItsDirectFormsTiers:
         assert _ps_tier_verdicts(launch.format(p=program), project) == _ps_tier_verdicts(
             direct, project)
 
-    _MENTIONS = [c for c in _CASES if '"' not in c[1] and "-module-qualified-" not in c[0]]
+    # a `$( )` is live code inside a double-quoted string, so a launch holding
+    # one is no mention once quoted (the code review: the bash write row drew
+    # the zone tier from the expanded subexpression, on main as on the lane)
+    _MENTIONS = [c for c in _CASES
+                 if '"' not in c[1] and "$(" not in c[1] and "-module-qualified-" not in c[0]]
 
     @pytest.mark.parametrize("case", _MENTIONS, ids=[c[0] for c in _MENTIONS])
     def test_a_double_quoted_mention_draws_no_tier(self, case, tmp_path):
@@ -12709,6 +12721,22 @@ class TestTheCmdDeleteReaderReadsEachBranch:
          [["build"]]),
         ("start-process-group", "Start-Process cmd ('/c', 'rd /s /q build')", [["build"]]),
         ("start-process-group-bare", "Start-Process cmd @('/c', 'rd /s /q', build)", [["build"]]),
+        # ... and in a `$( )` subexpression, which PowerShell 5.1 hands the
+        # process as it does `@( )` (driven echo-only: named, positional,
+        # colon-bound and one string; the operator's ruling ee002d)
+        ("start-process-dollar-subexpression", "Start-Process cmd -ArgumentList $('/c','rd /s /q build')",
+         [["build"]]),
+        ("start-process-dollar-subexpression-positional", "Start-Process cmd $( '/c' , 'rd /s /q build' )",
+         [["build"]]),
+        ("start-process-dollar-subexpression-colon", "Start-Process cmd -ArgumentList:$('/c','rd /s /q build')",
+         [["build"]]),
+        ("start-process-dollar-subexpression-string", "Start-Process cmd -ArgumentList $('/c rd /s /q build')",
+         [["build"]]),
+        # a subexpression that computes its list is not read as words, nor is
+        # a variable's value or a `$( )` glued inside a word
+        ("start-process-dollar-subexpression-computed", "Start-Process cmd $(Get-Content args.txt)", []),
+        ("start-process-dollar-subexpression-variable", "Start-Process cmd $($argv)", []),
+        ("start-process-dollar-subexpression-glued", "Start-Process cmd x$('/c','rd /s /q build')", []),
         # behind a module qualifier, and inside a program a reparsing shell
         # runs (the failure-mode review); a double-quoted mention stays one
         ("start-process-module-qualified",
