@@ -13117,6 +13117,16 @@ def _ps_stdin_program_bodies(
     before the pipe. ``posix`` picks the roster: the POSIX shells alone (their
     program is Bash, `_ps_shell_program_bodies`), else every other head, so a
     consumer that indexes `_PS_STDIN_DISPATCH` never meets a POSIX head."""
+    for head, start, pipe in _ps_stdin_program_spans(command, scan, posix=posix):
+        yield head, command[start:pipe]
+
+
+def _ps_stdin_program_spans(
+    command: str, scan: str, *, posix: bool = False,
+) -> Iterator[tuple[str, int, int]]:
+    """`_ps_stdin_program_bodies` as offsets: ``(head, start, pipe)``, the
+    stage before the pipe being ``command[start:pipe]``, so a consumer can
+    place the program in the statement it runs in (DEF-2079)."""
     if len(scan) != len(command):
         scan = command
     boundaries = [b.start() for b in _PS_STDIN_SEGMENT_BOUNDARY_RE.finditer(scan)]
@@ -13138,7 +13148,7 @@ def _ps_stdin_program_bodies(
             continue  # `| shasum`, `| sha256sum`: another program, not the shell
         i = bisect.bisect_left(boundaries, pipe)
         start = boundaries[i - 1] + 1 if i else 0
-        yield head, command[start:pipe]
+        yield head, start, pipe
 
 
 # PowerShell ``New-Item -ItemType SymbolicLink`` symlink creation.

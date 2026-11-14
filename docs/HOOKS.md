@@ -2004,7 +2004,11 @@ before the payload, which then stays inert -- a declared limit, pinned by
 bash or sh with `-c` (a cluster of either sign holding it, `-lc`, `+c`,
 `-cx`), as one string or the array spelling
 (`-ArgumentList "-Command","..."`), is read for that program, which meets
-every tier its direct form meets. powershell.exe's implicit
+every tier its direct form meets. So is a program piped to powershell or
+pwsh reading its program from the pipe (`'...' | pwsh -Command -`, a
+here-string or a double-quoted string piped the same way), placed where its
+statement runs, since the piped shell starts in the current location as a
+started one does. powershell.exe's implicit
 command (a program with no `-Command` before it) and a list given before
 the program stay unread, declared and pinned beside it.
 
@@ -2084,7 +2088,8 @@ string (`$a = @(Get-Content .env)`; an array of strings, `@('gc .env')`, is
 a value, and a nest of `@(` spends none of the levels a nest of `$(` does), including a string
 bound to a variable earlier in the same command (`$c = 'gc .env';
 iex $c`), and the program a `Start-Process` of powershell, pwsh, bash or sh
-carries after the started shell's `-Command` or `-c`. A carrier
+carries after the started shell's `-Command` or `-c`, or a program piped
+to powershell or pwsh reading it from the pipe (`@'...'@ | pwsh -c -`). A carrier
 named inside quotes is data. Not read as a program: any other `Start-Process`
 argument list, the colon-bound `-Command:'...'`, a glued
 `cmd /c"..."`, and the words after a quoted program (`cmd /c "type" .env`).
