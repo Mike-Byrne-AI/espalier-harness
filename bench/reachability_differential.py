@@ -72,6 +72,7 @@ Usage::
     python3 bench/reachability_differential.py --quick      # smoke subset
     python3 bench/reachability_differential.py --base <ref> # different baseline
     python3 bench/reachability_differential.py --report     # + per-wrapper / per-row bits
+    python3 bench/reachability_differential.py --wrapper <name> --report  # named rows alone
     python3 bench/reachability_differential.py --root-shape spaced  # another project root shape
 
 Each guard call judges the command in a project built by the rehearsal's
@@ -457,6 +458,73 @@ WRAPPERS: list[tuple[str, str]] = [
     ("echo_dq_cmdsub_shell_heredoc", "echo \"$(bash <<'EOF'\n%s\nEOF\n)\""),
     ("echo_dq_cmdsub_heredoc", "echo \"$(cat <<'EOF'\n%s\nEOF\n)\""),
     ("commit_message_heredoc_form", "git commit -m \"$(cat <<'EOF'\n%s\nEOF\n)\""),
+    # ⚠ THE MASKER'S OWN READING OF FIVE CONSTRUCTS (the residue #616's
+    # review left). Each row is a spelling where the masker once read one
+    # construct apart from bash, so the reach bit is bash's own answer for
+    # it, beside the verdict of the reader that misread it.
+    # A delimiter line bash does not take -- indented, or with a trailing
+    # blank -- leaves the body open: the lines after it are data written to
+    # the file, and a second heredoc opened inside the body ends nothing, so
+    # the line after the real delimiter runs.
+    ("heredoc_indented_delimiter_line_to_file", "cat > qs_doc.md <<'EOF'\n  EOF\n%s\nEOF"),
+    ("heredoc_trailing_blank_delimiter_line_to_file", "cat > qs_doc.md <<'EOF'\nEOF \n%s\nEOF"),
+    ("echo_dq_cmdsub_heredoc_indented_delimiter_line",
+     "echo \"$(cat <<'EOF'\n  EOF\n%s\nEOF\n)\""),
+    ("heredoc_shell_indented_delimiter_line", "bash <<'EOF'\n  EOF\n%s\nEOF"),
+    ("heredoc_indented_delimiter_line_then_second_heredoc",
+     "cat > qs_a.md <<'EOF'\n  EOF\ncat > qs_b.md <<'true'\nEOF\n%s\ntrue"),
+    # An arithmetic shift is no heredoc: the lines after it run, and a
+    # heredoc after it is the only body. The variable the shift names is
+    # bound in the row, and the line that would close a heredoc is a
+    # command bash runs.
+    ("arith_shift_newline_bare", "echo $((1<<4))\n%s"),
+    ("arith_shift_semicolon_bare", "echo $((1<<4)); %s"),
+    ("arith_shift_named_line_after", "true=4; echo $((1<<true))\n%s\ntrue"),
+    ("arith_shift_then_heredoc_to_file", "echo $((1<<4))\ncat > qs_doc.md <<'EOF'\n%s\nEOF"),
+    # A delimiter quoted in part, or escaped inside, is quoted: bash expands
+    # nothing in the body and ends it at the word with its quotes removed.
+    ("heredoc_partly_quoted_delimiter_to_file", "cat > qs_doc.md <<E\"O\"F\n%s\nEOF"),
+    ("heredoc_escaped_inner_delimiter_to_file", "cat > qs_doc.md <<E\\OF\n%s\nEOF"),
+    ("heredoc_partly_quoted_delimiter_cmdsub_to_file",
+     "cat > qs_doc.md <<E\"O\"F\n$( %s )\nEOF"),
+    ("heredoc_shell_partly_quoted_delimiter", "bash <<E\"O\"F\n%s\nEOF"),
+    # A substitution inside a double-quoted argument, or inside an unquoted
+    # heredoc body, runs: a launch wrapper inside it hands its program to a
+    # shell however inert the argument's own head is.
+    ("echo_dq_cmdsub_sh_c_sq", "echo \"$(sh -c '%s')\""),
+    ("echo_dq_cmdsub_eval_sq", "echo \"$(eval '%s')\""),
+    ("heredoc_unquoted_cmdsub_sh_c_to_file", "cat > qs_doc.md <<EOF\n$(sh -c '%s')\nEOF"),
+    # A `#` inside a word is text: after a substitution's closer it goes on
+    # the word, so the separator after it is live. After a subshell's closer
+    # it starts a new word, a comment.
+    ("cmdsub_glued_hash_then_semicolon", "echo $(true)#; %s"),
+    ("backtick_glued_hash_then_semicolon", "echo `true`#; %s"),
+    ("arith_glued_hash_then_semicolon", "echo $((1))#; %s"),
+    ("procsub_glued_hash_then_semicolon", "cat <(true)#; %s"),
+    ("subshell_glued_hash_comment", "( true )#; %s"),
+    # An array's `)` and an escaped character glue the `#` too; a comment
+    # inside a backtick body ends at the closing backtick, so the separator
+    # after it is live.
+    ("array_glued_hash_then_semicolon", "a=(1)#; %s"),
+    ("escaped_semicolon_glued_hash", "echo a\\;#; %s"),
+    ("backtick_body_comment_then_semicolon", "echo `echo a #x`; %s"),
+    ("backtick_open_comment_then_semicolon", "echo `#x`; %s"),
+    # The failure-mode review's batch: an escaped blank or carriage return
+    # glues the `#` too, and a quote a substitution keeps inside a double-
+    # quoted span or an unquoted heredoc body is that substitution's own,
+    # so the backtick and the parens around it read as before.
+    ("escaped_blank_glued_hash", "echo a\\ #; %s"),
+    ("escaped_cr_glued_hash", "echo a\\\r#; %s"),
+    ("dq_value_quoted_backtick_then_body_comment", "x=\"$(echo '`')\"; echo `echo a #x`; %s"),
+    ("heredoc_body_quoted_backtick_then_body_comment",
+     "cat > qs_doc.md <<EOF\n$(echo '`')\nEOF\necho `echo a #x`; %s"),
+    ("dq_quoted_paren_in_cmdsub_glued_hash", "echo $(echo \"`echo ')'`\")#; %s"),
+    # The heredoc limit (ack 7f4579): a second heredoc opened after a line
+    # the masker took for a delimiter and bash did not.
+    ("heredoc_partly_quoted_delimiter_then_second_heredoc",
+     "cat > qs_a.md <<E\"O\"F\nE\ncat > qs_b.md <<'true'\nEOF\n%s\ntrue"),
+    ("heredoc_cr_delimiter_line_then_second_heredoc",
+     "cat > qs_a.md <<'EOF'\nEOF\r\ncat > qs_b.md <<'true'\nEOF\n%s\ntrue"),
 ]
 
 #: Executables a wrapper needs beyond `/bin/bash` and the POSIX tools, one per
@@ -1112,14 +1180,24 @@ def _differential(argv: list[str] | None, rehearsal) -> int:
                         help="also print the working tree's bits per wrapper "
                              "and per row (reach / exit / base / work) -- a "
                              "reading of the tree, not a gate")
+    parser.add_argument("--wrapper", action="append", default=[], metavar="NAME",
+                        help="run the named wrapper rows alone (repeatable), "
+                             "crossed with every body, or the quick bodies "
+                             "under --quick; a name no row has refuses")
     args = parser.parse_args(argv)
+    unknown = sorted(set(args.wrapper) - {name for name, _ in WRAPPERS})
+    if unknown:
+        parser.error(f"no wrapper row is named {', '.join(unknown)}")
 
     if not _bash_oracle_available():
         print("bash not available -- cannot run the reachability oracle")
         return 0
 
+    # Named rows run alone, whatever the quick subset holds: a lane reads its
+    # own rows by name without paying for the matrix.
     wrappers = [w for w in WRAPPERS
-                if not args.quick or w[0] in QUICK_WRAPPERS]
+                if (w[0] in args.wrapper if args.wrapper
+                    else not args.quick or w[0] in QUICK_WRAPPERS)]
     bodies = [b for b in BODIES if not args.quick or b[0] in QUICK_BODIES]
     # A row whose interpreter is absent reaches nothing and would be filed as
     # inert. Skip it and say so; a silent skip is a row that looks covered.

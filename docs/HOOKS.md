@@ -2311,10 +2311,40 @@ spellings of them are work:
   sentence above: such a flood before a re-parsed string is refused, by the
   wall or the time budget, pinned by
   `tests/test_write_guard.py::TestABlockCommentIsOneBlank::test_a_comment_flood_before_a_carrier_is_refused`.
+- **The Bash masker, by ruling (2026-11-13).** A `#` starts a comment where
+  bash starts one: glued after a substitution's `)` (a paren inside a
+  parameter expansion is text), a closing backtick, an escaped character or
+  a carriage return it is the word's text, and a comment inside a backtick
+  body ends at the closing backtick or at the first escaped one, a nested
+  body's closer, which ends an outer body's comment there too (friction
+  alone), with any backslash run before the `#` gluing it inside a body,
+  where bash halves a pair, so the statement after either is read (driven
+  on bash 3.2, dash and zsh; Git Bash undriven). After an array's `)` the shells part:
+  bash reads the `#` as the word's text, zsh as a comment, and dash has no
+  arrays; the masker takes bash's reading, which reads the statement after
+  it. Three readings beside it
+  are declared limits, the first pinned at allow by
+  `tests/test_bash_inert_syntax_mask.py::TestTheMaskerReadsACommentAsBashDoes::test_a_delimiter_line_bash_does_not_take_is_a_declared_limit`.
+  A heredoc body ends where the masker reads its
+  delimiter line past blanks and its word to `[alnum_-.]`, where bash takes
+  the line only as the whole delimiter word alone, quote-removed: a second
+  heredoc opened on a line bash takes as body text (after an indented or
+  trailing-blank line, one ending in a carriage return its operator's word
+  did not carry, or a delimiter word quoted in part or holding another
+  character, `<<E"O"F`, `<<EOF/`) hides the statement after the real
+  delimiter, a crafted spelling. An arithmetic shift (`$((1<<4))`, `(( x << 2 ))`) is read as a heredoc
+  operator, and the masker hands back the raw command: friction alone. The
+  older arithmetic spelling `$[1<<x]` is read as one too, its body masked to
+  a later line that is the shift's operand alone, so a statement between
+  them goes unread where bash and zsh run it (dash reads the heredoc too), a
+  crafted spelling. And a launch wrapper inside a substitution in a data
+  head's double-quoted argument (`echo "$(eval '...')"`) is read, but one
+  spelling whose program's quotes collide with the argument's goes unread (1
+  of 38 reaching rows on the differential's wrappers).
 - The protected-zone write is not one of the three jobs. Its path check lets an
   unresolvable operand through, and the after-check reports the write when it
   lands, for the zones it watches
-  (`tests/test_write_guard.py::TestTheCoverageContract::test_the_zone_path_check_lets_an_unresolvable_operand_through_to_the_after_check`).
+  (`TestTheCoverageContract::test_the_zone_path_check_lets_an_unresolvable_operand_through_to_the_after_check`).
   A link made inside a watched zone is judged by what it adds there: a file
   link with a live target and a hard link read as added files, and a Windows
   junction is walked, so its target's files do; a directory link and a link
