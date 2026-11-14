@@ -6579,6 +6579,7 @@ _PWSH_SPAWNS_AT_PIN = frozenset({
     "test_write_guard::TestTheCmdDeleteReaderReadsEachBranch::test_the_process_start_parameter_sets_are_the_cmdlets_own",
     "test_write_guard::TestSecretPathAccess::test_powershell_reads_the_file_as_each_redirect_row_says",
     "test_write_guard::TestAScratchRootItselfIsTheWall::test_every_name_a_fresh_host_will_not_rebind_is_refused",
+    "test_write_guard::TestCmdReceivesAWordWithoutABlankBare::test_powershell_51_hands_cmd_the_word_as_the_row_says",
     "test_hook_exec_form::TestStatusLinePortability::test_the_windows_render_runs_in_either_shell_claude_code_picks",
     "test_spaced_paths::TestTheRealShellsReadOneWord::_pwsh",
     "test_init_rewire_interpreter::TestASpacedWindowsHeadRunsInBothHookShells::"
