@@ -2688,6 +2688,11 @@ def _ps_secret_read_targets(command: str, _depth: int = 0) -> list[str]:
         # a string is read where a carrier runs it, not where it is written.
         for program in _bash_patterns._ps_carrier_program_bodies(raw, pair):
             out.extend(_ps_secret_read_targets(program, _depth + 1))
+        # A program piped to pwsh or powershell (DEF-2079): a here-string's
+        # `Get-Content .env` piped that way met no read here, and the old
+        # split above reads only the single-quoted spelling's first word.
+        for program in _bash_patterns.ps_piped_ps_programs(raw, pair):
+            out.extend(_ps_secret_read_targets(program, _depth + 1))
     # The PowerShell twin of the Bash leg's effect read (§C52, DEF-796).
     if _depth == 0:
         for effect, path in _bash_patterns.iter_ps_removed_or_relocated_operands(command):
@@ -3872,12 +3877,14 @@ def _ps_dangerous_reason_here(
             reason = _bash_dangerous_reason(program, root, _depth + 1, cwd=cwd)
             if reason:
                 return reason
-        # A PowerShell program a Start-Process of powershell or pwsh carries
-        # in its argument list (DEF-3011) meets these same tiers, one level
-        # down, from each directory its statement may run in (the cmdlet
-        # starts it in the current location); its bash twin is among the
-        # programs above.
-        for program, bases in _bash_patterns.placed_ps_start_process_ps_programs(
+        # A PowerShell program another PowerShell runs -- carried by a
+        # Start-Process of powershell or pwsh (DEF-3011) or piped to one
+        # (DEF-2079: the drive root's delete piped to `pwsh -Command -` was a
+        # plain allow beside its walled direct form) -- meets these same
+        # tiers, one level down, from each directory its statement may run
+        # in (each starts in the current location); its bash twin is among
+        # the programs above.
+        for program, bases in _bash_patterns.placed_ps_child_ps_programs(
                 raw, str(root) if root else None, cwd or root):
             places: list[Path | None] = [Path(b) for b in bases if b is not None]
             for base in places or [cwd]:

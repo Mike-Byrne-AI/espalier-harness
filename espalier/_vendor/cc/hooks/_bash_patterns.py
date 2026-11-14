@@ -13117,16 +13117,18 @@ def _ps_stdin_program_bodies(
     before the pipe. ``posix`` picks the roster: the POSIX shells alone (their
     program is Bash, `_ps_shell_program_bodies`), else every other head, so a
     consumer that indexes `_PS_STDIN_DISPATCH` never meets a POSIX head."""
-    for head, start, pipe in _ps_stdin_program_spans(command, scan, posix=posix):
+    for head, start, pipe, _at in _ps_stdin_program_spans(command, scan, posix=posix):
         yield head, command[start:pipe]
 
 
 def _ps_stdin_program_spans(
     command: str, scan: str, *, posix: bool = False,
-) -> Iterator[tuple[str, int, int]]:
-    """`_ps_stdin_program_bodies` as offsets: ``(head, start, pipe)``, the
-    stage before the pipe being ``command[start:pipe]``, so a consumer can
-    place the program in the statement it runs in (DEF-2079)."""
+) -> Iterator[tuple[str, int, int, int]]:
+    """`_ps_stdin_program_bodies` as offsets: ``(head, start, pipe, at)``, the
+    stage before the pipe being ``command[start:pipe]`` and ``at`` the head
+    word's offset, where a consumer places the program (DEF-2079): the
+    directory chain cuts a statement at the pipe, so the pipe itself sits
+    in none."""
     if len(scan) != len(command):
         scan = command
     boundaries = [b.start() for b in _PS_STDIN_SEGMENT_BOUNDARY_RE.finditer(scan)]
@@ -13148,7 +13150,7 @@ def _ps_stdin_program_spans(
             continue  # `| shasum`, `| sha256sum`: another program, not the shell
         i = bisect.bisect_left(boundaries, pipe)
         start = boundaries[i - 1] + 1 if i else 0
-        yield head, start, pipe
+        yield head, start, pipe, m.start(1)
 
 
 # PowerShell ``New-Item -ItemType SymbolicLink`` symlink creation.
@@ -14749,8 +14751,23 @@ def placed_ps_start_process_ps_programs(
     process's own `-WorkingDirectory` is not read, as cmd's reader does not
     read it."""
     raw, text = powershell_scan_pair(command)
-    launches = [(here, program) for here, grammar, program
-                in ps_start_process_shell_launches(raw, text) if grammar == "ps"]
+    yield from _place_ps_launches(
+        command, text,
+        [(here, program) for here, grammar, program
+         in ps_start_process_shell_launches(raw, text) if grammar == "ps"],
+        root, cwd)
+
+
+def _place_ps_launches(
+    command: str, text: str, launches: list[tuple[int, str]],
+    root: str | None, cwd: "str | os.PathLike[str] | None",
+) -> Iterator[tuple[str, list[str | None]]]:
+    """``(program, bases)`` for each ``(offset, program)`` launch of a
+    PowerShell program another PowerShell runs in the current location, the
+    offset into ``text`` (`powershell_scan_pair`'s scan of ``command``): the
+    directories its statement may run in, read by a cursor over the
+    directory chain's statements. The Start-Process placer above and the
+    piped one (DEF-2079) share it."""
     if not launches:
         return
     start = cwd or root
@@ -14806,6 +14823,58 @@ def ps_start_process_ps_programs(raw: str, scan: str) -> Iterator[str]:
     for grammar, program in ps_start_process_shell_programs(raw, scan):
         if grammar == "ps":
             yield program
+
+
+def ps_piped_ps_launches(raw: str, scan: str) -> list[tuple[int, str]]:
+    """``(offset, program)`` for each reading of a program piped to
+    powershell or pwsh reading it from the pipe (DEF-2079): the piped twin
+    of `ps_start_process_shell_launches`' PowerShell launches. The program
+    is `_ps_piped_program_readings` of the stage before the pipe, the
+    readings alone, never the stage as typed, which the outer level judges
+    already (re-judging `Remove-Item -Recurse -Force build | pwsh -c -` one
+    level down would add a wall the direct form never draws). The offset is
+    the shell's head word, as the Start-Process placer's is its cmdlet word
+    (air's bd2c11: the directory chain cuts a statement at the pipe, so a
+    launch placed at the pipe falls to the unplaced directories and a climb
+    before it is lost). Until DEF-2079 the zone and effect readers re-read
+    this program and no other tier did: driven with the wired hook, a
+    recursive force delete of the drive root piped to `pwsh -Command -` was
+    a plain allow while its direct form walled."""
+    launches: list[tuple[int, str]] = []
+    for head, start, pipe, at in _ps_stdin_program_spans(raw, scan):
+        if head in _PS_STDIN_SHELL_HEADS:
+            launches.extend((at, program) for program
+                            in _ps_piped_program_readings(raw[start:pipe], powershell=True))
+    return launches
+
+
+def ps_piped_ps_programs(raw: str, scan: str) -> list[str]:
+    """The programs of `ps_piped_ps_launches`, unplaced: the twin the
+    text-only readers take, as they take `ps_start_process_ps_programs`."""
+    return [program for _at, program in ps_piped_ps_launches(raw, scan)]
+
+
+def placed_ps_piped_ps_programs(
+    command: str, root: str | None, cwd: "str | os.PathLike[str] | None",
+) -> Iterator[tuple[str, list[str | None]]]:
+    """``(program, bases)`` for each program of `ps_piped_ps_launches`, the
+    piped twin of `placed_ps_start_process_ps_programs` by the same cursor,
+    since a piped shell starts in the current location as a started one
+    does: `Set-Location ..; '<a delete of the checkout by its name>' | pwsh
+    -c -` walls as its direct form does (DEF-2079)."""
+    raw, text = powershell_scan_pair(command)
+    yield from _place_ps_launches(command, text, ps_piped_ps_launches(raw, text), root, cwd)
+
+
+def placed_ps_child_ps_programs(
+    command: str, root: str | None, cwd: "str | os.PathLike[str] | None",
+) -> Iterator[tuple[str, list[str | None]]]:
+    """``(program, bases)`` for every PowerShell program a PowerShell command
+    hands to another PowerShell, started (DEF-3011) or piped (DEF-2079), each
+    placed where its statement runs: what the wall, CP-RMRF and the removal
+    snapshot read."""
+    yield from placed_ps_start_process_ps_programs(command, root, cwd)
+    yield from placed_ps_piped_ps_programs(command, root, cwd)
 
 
 def _cmd_outer_words_to(text: str, start: int, stop: int, *, bash: bool) -> tuple[list[str], int]:
